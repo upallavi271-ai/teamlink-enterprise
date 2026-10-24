@@ -175,14 +175,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     check('C1 candidate-facing text: no client name, no pay, no internal note', leakIn(JSON.stringify(cand1)).length === 0, leakIn(JSON.stringify(cand1)));
     check('C2 the generated pack itself (what is stored) holds none of them either', leakIn(JSON.stringify(gp.body.pack)).length === 0, leakIn(JSON.stringify(gp.body.pack)));
     const gb = await call('GET', P(app1.id), T.bde);
-    check('C3 the BDE of the client reads the card: 200, read only (cannot edit or send)', gb.status === 200 && gb.body.canEdit === false && gb.body.canSend === false && !!gb.body.pack, [gb.status, gb.body && gb.body.canEdit]);
-    check('C4 the BDE view has no mail state, no link to share, no candidate number / address / pay / score', gb.body.email === undefined && gb.body.link === null && (await call('GET', `${P(app1.id)}/channels?type=client`, T.bde)).status === 403 && !gb.text.includes(PHONE) && !gb.text.includes(CAND_EMAIL) && !/currentSalary|expectedSalary|aiInterviewScore|matchScore/i.test(gb.text) && !/"(3L|5L)"/.test(gb.text), [gb.body.email, gb.body.link]);
+    // 2026-10-12: ONLY THE BDE BOOKS an interview, so the preparation questions follow whoever books: the client's BDE edits and sends them (through TeamLink: the candidate's number stays hidden).
+    check('C3 the BDE of the client reads the card: 200, and (as the one who books) can edit and send it', gb.status === 200 && gb.body.canEdit === true && gb.body.canSend === true && !!gb.body.pack, [gb.status, gb.body && gb.body.canEdit]);
+    check('C4 the BDE view has no candidate number / address / pay / score (the channel check answers, but shows no address)', (await call('GET', `${P(app1.id)}/channels?type=client`, T.bde)).status === 200 && !gb.text.includes(PHONE) && !gb.text.includes(CAND_EMAIL) && !/currentSalary|expectedSalary|aiInterviewScore|matchScore/i.test(gb.text) && !/"(3L|5L)"/.test(gb.text), [gb.body.email, gb.body.link]);
     check('C5 the BDE view holds no client pay / internal note either', leakIn(gb.text.replace(new RegExp(CLIENT, 'g'), '')).length === 0, leakIn(gb.text));
-    const bput = await call('PUT', P(app1.id), T.bde, { type: 'client', groups, tips: [] });
-    const bsend = await call('POST', `${P(app1.id)}/send`, T.bde, { type: 'client' });
-    const bregen = await call('POST', `${P(app1.id)}/regenerate`, T.bde, {});
+    // the BDE (who books) saves the card AS IT IS (same questions and tips: 'Nothing changed'), so the later checks see the recruiter's pack
+    const bpack = gb.body.pack;
+    const bput = await call('PUT', P(app1.id), T.bde, { type: 'client', groups: Object.fromEntries(bpack.groups.map((g) => [g.key, [...g.questions]])), tips: bpack.tips, version: bpack.version });
     const blink = await call('POST', `${P(app1.id)}/link`, T.bde, {});
-    check('C6 a BDE cannot edit, send, rewrite or share a link (403 each)', [bput, bsend, bregen, blink].every((r) => r.status === 403), [bput.status, bsend.status, bregen.status, blink.status]);
+    check('C6 the BDE (who books) can edit the questions and copy the link: 200 each (the send itself is tried at D12, so D4 still sees a first send)', [bput, blink].every((r) => r.status === 200), [bput.status, blink.status]);
+    const bOtherPut = await call('PUT', P(app1.id), T.bdeOther, { type: 'client', groups, tips: [] });
+    check('C6b a BDE outside the job still cannot edit (403)', bOtherPut.status === 403, bOtherPut.status);
     const gm = await call('GET', P(app1.id), T.mgr);
     const mput = await call('PUT', P(app1.id), T.mgr, { type: 'client', groups, tips: [] });
     check('C7 a Manager reads it, cannot change it', gm.status === 200 && gm.body.canEdit === false && mput.status === 403, [gm.status, mput.status]);
@@ -233,6 +236,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const gcw = await call('GET', `${P(app1.id)}/channels?type=client`, T.rec);
     check('D11 the card shows the mail as blocked for a withdrawn consent', gcw.body.email && gcw.body.email.state === 'blocked', gcw.body.email);
     await prisma.candidate.update({ where: { id: cand.id }, data: { doNotContact: false, consentStatus: 'GIVEN' } });
+    // the BDE (who books) sends the questions through TeamLink: masked, nothing about the number comes back
+    const bsend = await call('POST', `${P(app1.id)}/send`, T.bde, { type: 'client', channels: ['Email'], again: true });
+    check('D13 the BDE sends the preparation questions (server-sent): 200, an honest result, no candidate number / address in the answer', bsend.status === 200 && !!bsend.body.attempts && !bsend.text.includes(PHONE) && !bsend.text.includes(CAND_EMAIL), [bsend.status, bsend.text.slice(0, 200)]);
     // switch off
     await prisma.appSetting.update({ where: { key: SWITCH }, data: { value: JSON.stringify({ enabled: false }) } });
     const so = await call('POST', `${P(app1.id)}/send`, T.rec, { type: 'client', channels: ['Email'], again: true });
@@ -258,6 +264,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const note0 = await PREP.prepNote({ id: 'ZZNOSHARE', candidate: {}, requirement: {} });
     const note1 = await PREP.prepNote(app1);
     check('E7 the reminder note: a link only when a pack was really shared, else a plain line', /^Be ready/.test(note0) && /^How to prepare: .*\/prep\//.test(note1) === (state.state === 'send'), [note0, note1]);
+    // the placeholder reaches a real rendered message (own words with {{prepNote}} for this candidate + job)
+    const pv = await call('POST', '/api/messaging/preview', T.rec, { audience: 'candidates', ids: [cand.id], channels: ['Email'], kind: 'individual', applicationId: app1.id, urgent: true, perChannel: { Email: { subject: 'Reminder', body: 'Hello {{firstName}}. {{prepNote}} Bye.' } } });
+    const pvText = (pv.body && pv.body.first && pv.body.first.text) || '';
+    check('E7b {{prepNote}} renders in a real message for this candidate: the page link after a share, else the plain line; no client name', pv.status === 200 && (state.state === 'send' ? /How to prepare: .*\/prep\//.test(pvText) : /Be ready 10 minutes early/.test(pvText)) && !pvText.includes(CLIENT), [pv.status, pvText.slice(0, 300)]);
+    const savedRemind = await prisma.messageTemplate.findMany({ where: { purpose: 'INTERVIEW_REMIND_DAY', channel: 'Email' }, select: { body: true } }).catch(() => []);
+    console.log('   (info: the saved day-before reminder in this DB ' + (savedRemind.some((t) => /prepNote/.test(t.body)) ? 'already has' : 'does NOT have yet') + ' {{prepNote}}: an Admin adds it in Company Setup -> Message templates; new setups get it from the defaults)');
     const IM = require(path.join(BACK, 'src/utils/interviewMessageDefaults'));
     check('E8 the day-before reminder wording carries {{prepNote}} (mail and short text)', IM.list().filter((r) => r.purpose === 'INTERVIEW_REMIND_DAY' && r.channel !== 'Call').every((r) => r.body.includes('{{prepNote}}')));
     const T2 = require(path.join(BACK, 'src/utils/messageTemplates'));

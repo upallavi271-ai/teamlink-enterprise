@@ -30,11 +30,14 @@ const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.pa
 // open: the not-finished tasks with an end date. users: Map userId -> user.
 // notify / userOk are hrmsNotify's own (passed in, so this file stays free of
 // a circular require). Returns { overdue, reminded, skipped }.
-async function remind({ open, users, today, notify, settings, mailer, now, userOk, testMode = false }) {
+// skipAssignee(user) -> true: the person is told by the pending-work reminders instead (a recruiter's grouped "You missed N things" notice,
+// utils/chainAlerts.js), so the per-task bell is not repeated. The giver below is still told. Null when those reminders are off.
+async function remind({ open, users, today, notify, settings, mailer, now, userOk, testMode = false, skipAssignee = null }) {
   const due = open
     .filter((t) => t.endDate && t.endDate < today)
     .sort((a, b) => (RANK[a.priority] ?? 1) - (RANK[b.priority] ?? 1) || a.endDate.localeCompare(b.endDate));
   const out = { overdue: due.length, reminded: 0, skipped: 0, alreadyToday: 0 };
+  const byGiver = new Map();
   for (const t of due) {
     if (t.overdueRemindedOn === today) { out.alreadyToday += 1; continue; }
     const u = users.get(t.assigneeId);
@@ -43,10 +46,26 @@ async function remind({ open, users, today, notify, settings, mailer, now, userO
     const title = `Task overdue: ${t.name} (was due ${dmy(t.endDate)})`;
     const message = `Your task "${t.name}" is ${late} day${late === 1 ? '' : 's'} late. It was due ${dmy(t.endDate)}. Priority: ${t.priority || 'Medium'}. Status: ${t.status}. Please finish it or ask ${t.assignedByName || 'your manager'} to move the date.`;
     // eslint-disable-next-line no-await-in-loop
-    const r = await notify('taskLate', { userId: u.id, name: u.name, email: u.email }, { title, message }, { now, settings, mailer });
+    const r = skipAssignee && skipAssignee(u) ? { inApp: false, email: false } : await notify('taskLate', { userId: u.id, name: u.name, email: u.email }, { title, message }, { now, settings, mailer });
     // eslint-disable-next-line no-await-in-loop
     await prisma.task.update({ where: { id: t.id }, data: { overdueRemindedOn: today } }).catch(() => {});
     if (r.inApp || r.email) out.reminded += 1;
+    if (t.assignedById && t.assignedById !== t.assigneeId) {
+      if (!byGiver.has(t.assignedById)) byGiver.set(t.assignedById, []);
+      byGiver.get(t.assignedById).push({ t, late, who: u.name });
+    }
+  }
+  // THE PERSON WHO GAVE THE TASK hears too: ONE bell entry a day listing their late tasks (2026-10-12).
+  out.givers = 0;
+  for (const [giverId, list] of byGiver) {
+    // eslint-disable-next-line no-await-in-loop
+    const g = await prisma.user.findUnique({ where: { id: giverId }, select: { id: true, name: true, email: true, status: true } });
+    if (!userOk(g)) continue;
+    const lines = list.map((x) => `- ${x.t.name} (${x.who}, ${x.late} day${x.late === 1 ? '' : 's'} late, was due ${dmy(x.t.endDate)})`).join('\n');
+    const title = `${list.length} task${list.length === 1 ? '' : 's'} you gave ${list.length === 1 ? 'is' : 'are'} late`;
+    // eslint-disable-next-line no-await-in-loop
+    const r2 = await notify('taskLate', { userId: g.id, name: g.name, email: g.email }, { title, message: `${lines}\nOpen: /employee-services?tab=timesheet` }, { now, settings, mailer });
+    if (r2.inApp || r2.email) out.givers += 1;
   }
   if (!testMode && out.reminded && !settings.emailsOn) {
     // eslint-disable-next-line no-console

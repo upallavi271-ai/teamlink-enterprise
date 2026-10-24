@@ -589,7 +589,7 @@ async function aiDraft(r, overrides = {}, base = '', current = null) {
     diff[k] = W.lineDiff(before[k] || '', texts[k] || '');
   });
   return {
-    ...base0, mode: 'ai', label: 'AI draft: please read before posting', master: aiOut.master, boards, texts, diff, dropped, flagged, leak,
+    ...base0, mode: 'ai', label: 'Written by AI: please read before posting', master: aiOut.master, boards, texts, diff, dropped, flagged, leak,
   };
 }
 

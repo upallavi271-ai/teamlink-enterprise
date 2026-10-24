@@ -18,7 +18,7 @@ const KINDS = [
   ['all', 'Everything', '•'],
   ['notes', 'Notes', '📝'],
   ['agreement', 'Agreement', '📄'],
-  ['jobs', 'Jobs', '💼'],
+  ['jobs', 'Requirements', '💼'],
   ['people', 'People sent', '👤'],
   ['interviews', 'Interviews', '📅'],
   ['followups', 'Follow-ups', '🔔'],
@@ -56,8 +56,8 @@ function groupsOf(lists, onGoTab) {
     },
     {
       id: 'shortlisted',
-      title: 'Client shortlisted — fix the interview',
-      rows: (L.shortlisted || []).map((x) => ({ key: x.applicationId, node: <>{cand(x)}{` — ${x.job}`}</> })),
+      title: 'Interviews to book — the client shortlisted, no interview fixed yet',
+      rows: (L.shortlisted || []).map((x) => ({ key: x.applicationId, node: <>{cand(x)}{` — ${x.job}`}{x.requestedBy ? <span className="status pending ask-chip" style={{ marginLeft: 6 }}>{`Interview requested by ${x.requestedBy}`}</span> : null}</> })),
     },
     {
       id: 'feedback',
@@ -75,7 +75,7 @@ function groupsOf(lists, onGoTab) {
     },
     {
       id: 'requests',
-      title: 'Job requests waiting',
+      title: 'Requirement requests waiting',
       rows: (L.requests || []).map((x) => ({ key: x.requirementId, node: <Link to={`/requirements/${x.requirementId}`}>{x.job}</Link> })),
     },
     {

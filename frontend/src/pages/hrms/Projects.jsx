@@ -160,9 +160,9 @@ export default function Projects() {
       >
         <label className="lf-sort">
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
             {PROJECT_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
       </PeopleFilterBar>
 

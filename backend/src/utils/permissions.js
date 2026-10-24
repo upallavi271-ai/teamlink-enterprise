@@ -339,33 +339,41 @@ const DEFAULT_RULES = [
   //   Activate / hold / close   Manager all three · Asst Manager and STL HOLD
   //                  only (routes/requirements.js narrows) · BDE close only
   //                  (kept from the 2026-09-29 spec) · TL none
-  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: [...SET.RAISE, 'HR'] },
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: [...SET.RAISE, 'BDE'] },
+  // 2026-10-13 (user: "Create Req option evariki undakudadu, only for BDE Team & higher"): a job is created by the
+  // BDE team and above (utils/jobCreateRule.js). DIRECT creation is Super Admin / Admin (granted separately) and HR
+  // for TeamLink's own openings; a TL / STL no longer creates one. BDE, BDE TL, Manager and Asst Manager ask with
+  // 'Requirement Request' below. hardLocksFor() keeps every other tick off.
+  { module: 'requirements', features: ['Create Requirement'], actions: ['create'], roles: [...SET.ADMIN, 'HR', 'BDE'] },
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['edit'], roles: [...SET.RAISE.filter((r) => !['TL', 'STL'].includes(r)), 'BDE'] },
   { module: 'requirements', features: ['Requirement Detail'], actions: ['approve'], roles: [...SET.RAISE.filter((r) => r !== 'TL'), 'BDE'] },
   // 'Requirement Request' — ask for a new job (saved as a DRAFT a lead
   // activates). A BDE for their own clients; a CLIENT from the portal.
-  { module: 'requirements', features: ['Requirement Request'], actions: ['view', 'create'], roles: ['BDE', 'CLIENT'] },
+  // 2026-10-13: the Manager and the Assistant Manager (roles above the BDE team) ask the same way, for a client of
+  // their area; a lead still opens the draft.
+  { module: 'requirements', features: ['Requirement Request'], actions: ['view', 'create'], roles: ['BDE', 'CLIENT', 'MANAGER', 'ASSISTANT_MANAGER', ...SET.ADMIN] },
   // …and the leads who activate (approve) a request.
   { module: 'requirements', features: ['Requirement Request'], actions: ['view', 'approve'], roles: [...SET.ADMIN, 'MANAGER'] },
   // ASSIGN is its own action: the assignment chain (TL -> Recruiter(s) -> BDE)
   // is what drives scope, so handing it out is a lead's decision, not a
   // side-effect of being able to edit. A BDE assigns the client side of it.
-  // BDE ASSIGN RECRUITER IS RESTRICTED (user spec 2026-10-10): the BDE asks, the TL picks the recruiter (Role Catalog can tick it on).
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE] },
+  // 2026-10-13 (user: BDE team = complete access except delete): the BDE assigns the TL and the recruiter too (supersedes the 2026-10-10 "restricted").
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['assign'], roles: [...SET.RAISE, 'BDE'] },
   // BDE BUSINESS WORKSPACE (user spec 2026-10-10): pause / resume own jobs, ask to close one (a Manager / Admin decides).
   { module: 'requirements', features: ['Pause Requirement', 'Resume Requirement'], actions: ['edit'], roles: ['BDE'] },
   { module: 'requirements', features: ['Close Request'], actions: ['create'], roles: ['BDE'] },
   // PERMANENT DELETE (per-role spec 2026-10-03): Super Admin only — an Admin
   // closes instead. routes/requirements.js still refuses it (409) while the
   // requirement carries any candidate or invoice.
-  { module: 'requirements', features: ['Requirement Detail'], actions: ['delete'], roles: SET.SUPER },
+  // 2026-10-16 (user): the BDE team (BDE, BDE TL) deletes a job of their own area too, with the same guard.
+  { module: 'requirements', features: ['Requirement Detail'], actions: ['delete'], roles: [...SET.SUPER, 'BDE'] },
   // EXPORT (2026-10-03 import / export rule): everyone exports the jobs in
   // their own scope — a Recruiter their own, HR the internal ones.
   { module: 'requirements', features: ['Requirement Detail'], actions: ['export'], roles: [...SET.REQ_EXPORT, 'RECRUITER', 'HR'] },
-  // A Recruiter UPDATES THE JOB POSTING of their own jobs (spec §7) — edit,
-  // never create a job.
+  // POSTING A JOB IS NOT A RECRUITER'S (user, 2026-10-12: "Req post chesey option Recruiter ki undadu").
+  // The Recruiter works on the job and its candidates and VIEWS the posting; Save & Post, the job sites,
+  // the Job Portal publish / sync, the post-by-hand tasks and the job-post writer belong to the TL, the
+  // BDE (and BDE TL) and Admin. A Recruiter's tick is also locked off in hardLocksFor() below.
   { module: 'requirements', features: ['Job Posting'], actions: ['create', 'edit'], roles: [...SET.RAISE, 'BDE'] },
-  { module: 'requirements', features: ['Job Posting'], actions: ['edit'], roles: ['RECRUITER'] },
   { module: 'requirements', features: ['Requirement List'], actions: ['export'], roles: [...SET.REQ_EXPORT, 'RECRUITER', 'HR'] },
   { module: 'requirements', features: ['Requirement Pipeline'], actions: ['view'], roles: SET.MATCHING },
   // IMPORT (2026-10-03): view = may upload a sheet, create = rows become
@@ -373,7 +381,7 @@ const DEFAULT_RULES = [
   // (internal jobs only) import directly; a BDE imports REQUESTS (view
   // without create — ioAccessFor() importMode 'request').
   // (2026-10-09, Q1: the Manager no longer imports: view + approve only.)
-  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'HR'] },
+  { module: 'requirements', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN, 'HR', 'BDE'] },
   { module: 'requirements', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
 
   // --- ATS: Jobs / Requirements -> Job Portal ---------------------------
@@ -403,7 +411,7 @@ const DEFAULT_RULES = [
   // actions because they are two different buttons: Sync and Open Job Portal
   // are not the same thing and are not granted as one.
   { module: 'requirements', features: ['Job Portal Workspace'], actions: ['edit', 'configure'], roles: SET.PORTAL_ACT },
-  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: SET.RAISE },
+  { module: 'requirements', features: ['Job Portal Workspace'], actions: ['export'], roles: [...SET.RAISE, 'BDE'] },
   // `create` on Job Portal Applications is Import / Send to ATS — the
   // recruiter's own step in the intake flow, so it keeps PORTAL_INTAKE.
   { module: 'requirements', features: ['Job Portal Applications'], actions: ['create'], roles: SET.PORTAL_INTAKE },
@@ -440,7 +448,8 @@ const DEFAULT_RULES = [
   // commercial terms); an STL and a TL read names / basics only
   // (utils/clientRedact.js), a Recruiter nothing (the user, 2026-10-03:
   // "only the client name and the requirement").
-  { module: 'clients', features: '*', actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE'] },
+  // ('Client Invoice Amount' is its own tick, OFF by default: a BDE sees invoice status, not the money - user rule 2026-10-09.)
+  { module: 'clients', features: moduleById('clients').features.filter((f) => f !== 'Client Invoice Amount'), actions: ['view'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'BDE'] },
   // (the agreement STATUS is on every client row; the agreement itself is not)
   { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['ASSISTANT_MANAGER'] },
   // Spec 6 (2026-10-03): the agreement is VIEWED by the BDE (own), Accounts,
@@ -454,8 +463,9 @@ const DEFAULT_RULES = [
   // Client delete — PERMANENT, so Super Admin only (per-role spec
   // 2026-10-03); routes/clients.js refuses it (409) while the client has
   // active requirements. 'Delete Client' is the same decision, named.
-  { module: 'clients', features: ['Client Detail'], actions: ['delete'], roles: SET.SUPER },
-  { module: 'clients', features: ['Delete Client'], actions: ['delete'], roles: SET.SUPER },
+  // 2026-10-16 (user): the whole BDE team (BDE, BDE TL) deletes too, inside their own clients, with the same guards.
+  { module: 'clients', features: ['Client Detail'], actions: ['delete'], roles: [...SET.SUPER, 'BDE'] },
+  { module: 'clients', features: ['Delete Client'], actions: ['delete'], roles: [...SET.SUPER, 'BDE'] },
   // CLIENT LIFECYCLE (2026-10-03). Pause / Reactivate: edit = do it
   // directly (Super Admin, Admin, a Manager on THEIR departments' clients —
   // utils/scope.js clientWhere), create = only REQUEST a pause (the owner
@@ -468,7 +478,7 @@ const DEFAULT_RULES = [
   // Deactivate: edit = do it directly (Admin, Manager of the department), create = ask (UNTICKED for the BDE by default).
   { module: 'clients', features: ['Pause / Reactivate Client'], actions: ['edit'], roles: ['BDE'] },
   { module: 'clients', features: ['Resume Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] },
-  { module: 'clients', features: ['Deactivate Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER'] },
+  { module: 'clients', features: ['Deactivate Client'], actions: ['edit'], roles: [...SET.ADMIN, 'MANAGER', 'BDE'] }, // BDE deactivates directly (user rule 2026-10-13: all but DELETE)
   { module: 'clients', features: ['Client Delete Request', 'Client Ownership Request', 'Client Merge Request'], actions: ['create'], roles: ['BDE'] },
   { module: 'clients', features: ['Client Contacts', 'Client Documents'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
   { module: 'clients', features: ['Client Follow-ups', 'Client Approval Submission'], actions: ['create'], roles: ['BDE'] },
@@ -484,7 +494,9 @@ const DEFAULT_RULES = [
   { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: SET.ADMIN },
   // requireRole('CLIENT','SUPER_ADMIN','ADMIN') — the client confirms/e-signs
   { module: 'clients', features: ['Agreement Lifecycle'], actions: ['approve'], roles: ['SUPER_ADMIN', 'ADMIN', 'CLIENT'] },
-  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: SET.ADMIN },
+  { module: 'clients', features: ['Commercial Terms'], actions: ['edit'], roles: [...SET.ADMIN, 'BDE'] },
+  // The BDE makes, uploads and sends the agreement of their clients (2026-10-13); only the TeamLink-side e-sign / stamp (approve) stays Admin.
+  { module: 'clients', features: ['Agreement Lifecycle'], actions: ['create', 'edit'], roles: ['BDE'] }, // BDE edits the commercial terms of the client record (user rule 2026-10-13)
   // ASSIGN on a client = its portal invite / account manager (a BDE invites
   // their own client). Re-assigning the OWNER BDE itself is Admin only
   // (routes/clients.js PUT refuses a bdeOwner change from anyone not global).
@@ -521,7 +533,7 @@ const DEFAULT_RULES = [
   // departments) directly; a BDE imports REQUESTS (view without create).
   // Merge Duplicates stays Admin-only (routes/clientMerge.js).
   { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: [...SET.ADMIN] },
-  { module: 'clients', features: ['Bulk Import'], actions: ['view'], roles: ['BDE'] },
+  { module: 'clients', features: ['Bulk Import'], actions: ['view', 'create'], roles: ['BDE'] }, // direct client import for a BDE (user rule 2026-10-13)
 
   // --- ATS: Candidates & Pipeline ---------------------------------------
   // No CLIENT / CANDIDATE: outside logins use /api/portal (review #3 access audit).
@@ -557,7 +569,12 @@ const DEFAULT_RULES = [
   // No CLIENT / CANDIDATE: the calendar carries AI results and internal panel
   // feedback. A client decides on the portal; its Client Feedback grant stays.
   { module: 'interviews', features: '*', actions: ['view'], roles: SET.MATCHING },
-  { module: 'interviews', features: ['Schedule Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE },
+  // ONLY THE BDE BOOKS AN INTERVIEW (user, 2026-10-12: "Interview schedule chey option only BDE ki undali.
+  // Recruiter ki, TL ki undakadu"): book, reschedule, cancel, mark "did not attend" with a new time, bulk
+  // schedule. Super Admin and Admin can do everything; the BDE TL books as a BDE (BDE_TL_RIGHTS); HR
+  // books its own INTERNAL interviews only (rule further down + scope). Recruiter / TL / STL / Manager /
+  // Asst Manager can VIEW, give feedback and ASK the BDE to book - and hardLocksFor() keeps their tick off.
+  { module: 'interviews', features: ['Schedule Interview'], actions: ['create', 'edit'], roles: [...SET.ADMIN, 'BDE'] },
   // A BDE confirms CLIENT interviews and records the client's feedback
   // (per-role spec 2026-10-03) — not the AI interview, not the internal panel.
   { module: 'interviews', features: ['AI Interview'], actions: ['create', 'edit'], roles: SET.PIPELINE.filter((r) => r !== 'BDE') },
@@ -623,7 +640,9 @@ const DEFAULT_RULES = [
   // own-dashboard view an employee has. Listing TL here rather than relying
   // on SET.HR is deliberate: the HRMS pass above strips a TL back to reads,
   // and this is a read.
-  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE', 'ACCOUNTANT', 'TL'] },
+  // SECURITY (2026-10-13): STL, Manager and Assistant Manager hold the same OWN-payslip view as everyone (view only,
+  // routes/payroll.js payslipReach reads it as "my own payslips"). They no longer hold Payroll export (everybody's payslips).
+  { module: 'hrms', features: ['HRMS Dashboard', 'Payroll & Compensation'], actions: ['view'], roles: ['EMPLOYEE', 'ACCOUNTANT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'] },
   { module: 'hrms', features: ['HRMS Dashboard'], actions: ['view', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Attendance & Time'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
   { module: 'hrms', features: ['Leave & Holidays'], actions: ['create', 'edit', 'approve', 'export'], roles: SET.HR },
@@ -666,7 +685,10 @@ const DEFAULT_RULES = [
   // and Unlock are checked against). DELETE, ASSIGN and CONFIGURE stay with
   // SET.ADMIN above: removing a person, handing out roles and scope, and
   // changing the lock policy are administration, not HR desk work.
-  { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'approve'], roles: SET.HR_DESK },
+  // 2026-10-24 (founder): "employees ki related anni access HR ki kuda vundali; lock & unlock options" - so the HR desk also holds
+  // configure (Lock / Unlock a profile directly, pause, send credentials) and assign (transfer, edit scope, link a login). DELETE stays
+  // with Super Admin / Admin: removing a person is permanent (an Internal HR delegate is alerted when it happens).
+  { module: 'hrms', features: ['Employee Management'], actions: ['create', 'export', 'approve', 'configure', 'assign'], roles: SET.HR_DESK },
   // requireRole(...PAYROLL_ROLES) — payroll structures, runs, F&F, reports.
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'approve', 'export'], roles: SET.ACCOUNTS },
   // PAYSLIPS (the user's rule, 2026-09-25): "an employee sees only their own
@@ -677,7 +699,7 @@ const DEFAULT_RULES = [
   // write action anyway — and routes/payroll.js payslipReach() reads `export`
   // as "may read payslips inside my scope", which an Employee/TL never hold.
   { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'create', 'edit', 'export'], roles: ['HR'] },
-  { module: 'hrms', features: ['Payroll & Compensation'], actions: ['view', 'export'], roles: ['MANAGER', 'ASSISTANT_MANAGER'] },
+  // (Manager / Assistant Manager payroll export REMOVED 2026-10-13: it let them read every employee's payslip.)
   // requireRole('SUPER_ADMIN','ADMIN') — attendance policy, payroll policy &
   // CTC settings, leave policy (POLICY_ROLES), leave balances.
   { module: 'hrms', features: ['Attendance & Time'], actions: ['configure'], roles: SET.ADMIN },
@@ -742,6 +764,7 @@ const DEFAULT_RULES = [
   { module: 'reports', features: ['ATS Reports', 'Job Portal Reports'], actions: ['view', 'export'], roles: ['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'ASSISTANT_MANAGER', 'STL', 'TL', 'BDE'] },
   { module: 'reports', features: ['ATS Reports'], actions: ['view', 'export'], roles: ['HR'] },
   { module: 'reports', features: ['My Clients Report', 'My Requirements Report', 'My Follow-ups Report'], actions: ['view'], roles: ['BDE'] },
+  { module: 'reports', features: ['Export Assigned Data'], actions: ['export'], roles: ['BDE'] },
   // RECRUITER: their own data only (scope.js RECRUITER branch) + MY RESULTS —
   // submitted, interviews, selected, joined (routes/atsReports.js
   // /my-results). Export of their own data (2026-10-03 import / export rule).
@@ -776,6 +799,9 @@ const DEFAULT_RULES = [
   // Admin / Admin only by default (Role Catalog can widen them). Accounts
   // roles reach vendor bills ONLY through accounts · Office & Expenses.
   { module: 'administration', features: ['Vendor Logins', 'Vendor Audit', 'Vendor Bills Review'], actions: ROLE_FEATURE_ACTIONS, roles: SET.ADMIN },
+  // JOB PUBLISHING (2026-10-13): the company's logins for the job portals (Naukri, Foundit, Shine), their on / off
+  // switches, the kill switch and the field mappings. Super Admin / Admin only by default (src/jobPublish/credentials.js).
+  { module: 'administration', features: ['Job Portal Credentials'], actions: ROLE_FEATURE_ACTIONS, roles: SET.ADMIN },
   // requireRole(...SUPER_ADMIN_ONLY) — create/delete departments and teams.
   { module: 'administration', features: ['Departments & Teams'], actions: ROLE_FEATURE_ACTIONS, roles: SET.SUPER },
   { module: 'administration', features: ['Departments & Teams'], actions: ['view'], roles: SET.ADMIN },
@@ -871,14 +897,14 @@ const VIEW_ONLY_ROLES = ['MANAGER', 'ASSISTANT_MANAGER'];
 // A stored Role Catalog row still re-grants any of it per role.
 const LEAD_ATS_WRITES = {
   MANAGER: {
-    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['approve'] },
+    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['approve', 'create'] },
     clients: { 'Client Notes': ['create'], 'Pause / Reactivate Client': ['edit'], 'Resume Client': ['edit'], 'Deactivate Client': ['edit'], 'Client Portal Logins': ['approve'] },
     candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
     recruiterbde: {},
     interviews: {},
   },
   ASSISTANT_MANAGER: {
-    requirements: { 'Requirement Detail': ['approve'] },
+    requirements: { 'Requirement Detail': ['approve'], 'Requirement Request': ['create'] },
     clients: {},
     candidates: { 'Pipeline Stages': ['approve'], 'Rejection & Hold': ['approve'] },
     recruiterbde: {},
@@ -1027,6 +1053,21 @@ function defaultAccessForRole(role, moduleId) {
 // the product-agnostic '*' row: a role saved before products existed keeps
 // exactly the access it had, and an admin can then differ it per product.
 function mergeAccess(role, moduleId, ...rows) {
+  return clampHard(role, moduleId, mergeAccessRaw(role, moduleId, ...rows));
+}
+// The hard locks (hardLocksFor) always win over a default or a saved Role Catalog row.
+function clampHard(role, moduleId, access) {
+  const locks = hardLocksFor(role, moduleId);
+  if (!locks || !access || !access.features) return access;
+  const features = { ...access.features };
+  Object.entries(locks).forEach(([f, actions]) => {
+    if (!features[f]) return;
+    features[f] = { ...features[f] };
+    actions.forEach((a) => { features[f][a] = false; });
+  });
+  return { ...access, features };
+}
+function mergeAccessRaw(role, moduleId, ...rows) {
   const present = rows.filter(Boolean);
   const base = defaultAccessForRole(role, moduleId);
   if (!present.length) return base;
@@ -1197,6 +1238,15 @@ const BDE_TL_RIGHTS = {
   'clients|Client Documents|create': true,
   'clients|Client Follow-ups|create': true,
   'clients|Client Approval Submission|create': true,
+  'clients|Client Delete Request|create': true,
+  'clients|Deactivate Client|edit': true,
+  'clients|Client Ownership Request|create': true,
+  'clients|Commercial Terms|edit': true,
+  'clients|Agreement Lifecycle|create': true,
+  'clients|Agreement Lifecycle|edit': true,
+  'clients|Bulk Import|create': true,
+  'reports|Export Assigned Data|export': true,
+  'clients|Client Merge Request|create': true,
   'clients|Client Invoice Status|view': true,
   'requirements|Pause Requirement|edit': true,
   'requirements|Resume Requirement|edit': true,
@@ -1205,10 +1255,26 @@ const BDE_TL_RIGHTS = {
   'reports|My Follow-ups Report|view': true,
   'requirements|Requirement Request|view': true,
   'requirements|Requirement Request|create': true,
+  // the BDE team lead sends a sheet of jobs as REQUESTS, like a BDE (utils/jobCreateRule.js)
+  'requirements|Bulk Import|view': true,
+  'requirements|Bulk Import|create': true,
+  // the BDE team lead edits a job like a BDE (a TL no longer edits job details: user, 2026-10-13)
+  'requirements|Requirement Detail|edit': true,
+  // complete access except delete (user, 2026-10-13): create, assign, close / reopen, post
+  'requirements|Create Requirement|create': true,
+  'requirements|Requirement Detail|assign': true,
+  'requirements|Requirement Detail|approve': true,
   'requirements|Requirement Detail|edit': true,
   'requirements|Requirement Detail|approve': true,
   'requirements|Job Posting|create': true,
   'requirements|Job Posting|edit': true,
+  // 2026-10-16: the BDE team deletes too (same guards as ever)
+  'requirements|Requirement Detail|delete': true,
+  'clients|Client Detail|delete': true,
+  'clients|Delete Client|delete': true,
+  // INTERVIEWS ARE BOOKED BY THE BDE (user, 2026-10-12) - the BDE TL leads that desk, so books like a BDE.
+  'interviews|Schedule Interview|create': true,
+  'interviews|Schedule Interview|edit': true,
 };
 const ACCOUNTS_CLIENT_READ = ['Client List', 'Client Detail', 'Client Requirements', 'Agreement Lifecycle', 'Commercial Terms'];
 function accountsClientReader(user) {
@@ -1216,10 +1282,90 @@ function accountsClientReader(user) {
   return !!user && !p.ats && !!p.accounts && roleForProduct(user, 'accounts') === 'ACCOUNTANT';
 }
 
+// ---------------------------------------------------------------------------
+// HARD LOCKS (user, 2026-10-12) - two things that no Role Catalog tick can hand to the wrong role.
+//   1. POSTING A JOB (Save & Post, job sites, Job Portal publish / sync, post-by-hand, the job-post
+//      writer) is never a RECRUITER's: "Req post chesey option Recruiter ki undadu".
+//   2. BOOKING AN INTERVIEW (book, reschedule, cancel, did-not-attend with a new time, bulk schedule) is
+//      the BDE's alone: "Interview schedule chey option only BDE ki undali. Recruiter ki, TL ki undakadu".
+//      Super Admin / Admin do everything; the BDE TL books as a BDE; HR books internal hiring only.
+// Two layers: hardLocksFor() clears the tick of the named system roles in the catalog (mergeAccess), and
+// hardDenied() answers per LOGIN (can() / effectiveMatrix), by the role the login behaves like, so a custom
+// role that behaves like a Recruiter / TL is held to the same rule.
+// ---------------------------------------------------------------------------
+const ALL_ACTIONS_LOCK = ['create', 'edit', 'delete', 'approve', 'assign', 'configure'];
+// (a job is posted when it is created, edited, activated or pushed: those writes are locked too)
+const POSTING_LOCKED = {
+  'Job Posting': ALL_ACTIONS_LOCK,
+  'Job Portal Workspace': ['edit', 'configure'],
+  'Requirement Detail': ['edit', 'approve'],
+  'Create Requirement': ['create'],
+  'Bulk Import': ['create'],
+};
+const BOOKING_LOCKED = { 'Schedule Interview': ALL_ACTIONS_LOCK };
+// the boxes utils/jobCreateRule.js decides per login (who may create a job)
+const JOB_CREATE_FEATURES = { 'Create Requirement': ['create'], 'Requirement Request': ['create'], 'Bulk Import': ['create', 'view'] };
+// edit / hold / close of a job: the BDE team's and above (utils/jobCreateRule.js MANAGE_BOXES)
+const JOB_MANAGE_FEATURES = { 'Requirement Detail': ['edit', 'approve'], 'Pause Requirement': ['edit'], 'Resume Requirement': ['edit'], 'Close Request': ['create'] };
+const NO_POSTING_ROLES = ['RECRUITER'];
+const NO_BOOKING_ROLES = ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'];
+
+// For the Role Catalog: { feature: [actions] } this role can never hold in this module, or null.
+function hardLocksFor(role, moduleId) {
+  let out = null;
+  const add = (map) => { out = out || {}; Object.entries(map).forEach(([f, a]) => { out[f] = [...new Set([...(out[f] || []), ...a])]; }); };
+  if (moduleId === 'requirements' && NO_POSTING_ROLES.includes(role)) add(POSTING_LOCKED);
+  // 3. CREATING A JOB is the BDE team's and above (user, 2026-10-13; utils/jobCreateRule.js).
+  if (moduleId === 'requirements') { const jc = require('./jobCreateRule').locksForRole(role); if (jc) add(jc); } // eslint-disable-line global-require
+  if (moduleId === 'interviews' && NO_BOOKING_ROLES.includes(role)) add(BOOKING_LOCKED);
+  return out;
+}
+
+// For one login: true when the rule above refuses this (module, feature, action) whatever its role row says.
+function hardDenied(user, moduleId, feature, action) {
+  if (moduleId === 'requirements' && JOB_CREATE_FEATURES[feature] && JOB_CREATE_FEATURES[feature].includes(action)
+    && require('./jobCreateRule').deniedFor(user, feature, action)) return true; // eslint-disable-line global-require
+  if (moduleId === 'requirements' && JOB_MANAGE_FEATURES[feature] && JOB_MANAGE_FEATURES[feature].includes(action)
+    && require('./jobCreateRule').manageDeniedFor(user, feature, action)) return true; // eslint-disable-line global-require
+  if (moduleId === 'requirements' && POSTING_LOCKED[feature] && POSTING_LOCKED[feature].includes(action)) {
+    if (stageGlobal(user)) return false;
+    return NO_POSTING_ROLES.includes(stageRoleOf(user));
+  }
+  if (moduleId === 'interviews' && BOOKING_LOCKED[feature] && BOOKING_LOCKED[feature].includes(action)) {
+    if (stageGlobal(user)) return false;
+    const alias = stageRoleOf(user);
+    if (alias === 'BDE' || alias === 'HR') return false;
+    if (require('./scope').isBdeTl(user)) return false; // eslint-disable-line global-require
+    return NO_BOOKING_ROLES.includes(alias) || !['SUPER_ADMIN', 'ADMIN'].includes(alias);
+  }
+  return false;
+}
+
+// The BDE team = a login whose ATS seat is BDE (desk BDE) or the BDE team lead (a TL of the BDE department).
+const BDE_TEAM_DELETE = ['requirements|Requirement Detail', 'clients|Client Detail', 'clients|Delete Client'];
+function bdeTeamUser(user) {
+  try {
+    const S = require('./scope'); // eslint-disable-line global-require
+    if (S.atsScopeOf(user).global) return false;
+    return S.isBdeTl(user) || S.atsViewRole(user) === 'bde';
+  } catch { return false; }
+}
+
 async function can(user, product, moduleId, feature, action, record = undefined) {
   // 1. user identity
   if (!user || !user.id) return false;
   if (user.status && user.status !== 'Active') return false;
+
+  // 1a-. HARD LOCKS: posting is never a Recruiter's, booking an interview is the BDE's alone (see above).
+  if ((moduleId === 'requirements' || moduleId === 'interviews') && hardDenied(user, moduleId, feature, action)) return false;
+
+  // 1a0. AGREEMENTS ARE NOT FOR TLs / STLs / RECRUITERS / HR (user, 2026-10-12) - whatever the Role Catalog says. The BDE team
+  //      lead is not one of them (utils/agreementPrivacy.js).
+  if (moduleId === 'clients' && feature === 'Agreement Lifecycle' && require('./agreementPrivacy').blindTo(user)) return false; // eslint-disable-line global-require
+
+  // 1a1. DELETE FOR THE BDE TEAM (user, 2026-10-16): a job / a client can be deleted by the whole BDE team (BDE, BDE TL) - a saved
+  //      Role Catalog row can no longer take it away. The record scope and the delete guards (people / invoices / payments) stay in the routes.
+  if (action === 'delete' && BDE_TEAM_DELETE.includes(`${moduleId}|${feature}`) && bdeTeamUser(user)) return true;
 
   // 1b. THE ACCOUNTS DESK'S READ OF CLIENTS (P10) — before the ATS product test.
   if (moduleId === 'clients' && action === 'view' && ACCOUNTS_CLIENT_READ.includes(feature) && accountsClientReader(user)) {
@@ -1381,7 +1527,10 @@ const STAGE_OWNERS = {
   SHARED_WITH_CLIENT: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   CLIENT_REVIEW: ['BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   CLIENT_SHORTLISTED: ['CLIENT', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
-  INTERVIEW_SCHEDULED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
+  // THE INTERVIEW IS BOOKED BY THE BDE (user, 2026-10-12): the client manager - and the BDE TL, who leads that
+  // desk (INTERVIEW_BOOKER below) - moves a person into this step, by booking the slot. HR does it for its own
+  // internal hiring (scope pins HR to internal jobs). A Recruiter / TL / STL / Manager / AM asks the BDE instead.
+  INTERVIEW_SCHEDULED: ['BDE', 'HR'],
   INTERVIEW_COMPLETED: ['RECRUITER', 'BDE', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
   SELECTED: ['CLIENT', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER'],
   OFFER: ['RECRUITER', 'TL', 'STL', 'MANAGER', 'ASSISTANT_MANAGER', 'HR'],
@@ -1448,6 +1597,14 @@ async function mayMoveTo(user, stage) {
   return feature ? can(user, 'ats', 'candidates', feature, 'approve') : false;
 }
 
+// The BDE TL leads the BDE desk, so books interviews like a BDE (the step is hers although her role is TL).
+const INTERVIEW_BOOKER_STAGES = ['INTERVIEW_SCHEDULED'];
+// INTERNAL HIRING (TeamLink's own jobs have no BDE): the Dept Head / TL's approval out of TL Review IS the interview booking,
+// so ctx.internalFromTlReview lets a TL / STL do that one move (and only that) - otherwise the chain would stall.
+const isInterviewBooker = (user, stage, ctx = {}) => INTERVIEW_BOOKER_STAGES.includes(stage)
+  && (require('./scope').isBdeTl(user) || (!!ctx.internalFromTlReview && ['TL', 'STL'].includes(stageRoleOf(user)))); // eslint-disable-line global-require
+const BOOKED_BY_BDE = 'Interviews are booked by the client manager (BDE). Your candidate is waiting for them.';
+
 async function allowedStagesFor(user) {
   // Super Admin / Admin own every stage, as they always have.
   const global = stageGlobal(user);
@@ -1462,18 +1619,23 @@ async function allowedStagesFor(user) {
   }
   return Object.keys(STAGE_OWNERS)
     .filter((stage) => mayEdit || (APPROVE_MOVES[stage] && approve[APPROVE_MOVES[stage]]))
-    .filter((stage) => global || STAGE_OWNERS[stage].includes(atsRole));
+    .filter((stage) => global || STAGE_OWNERS[stage].includes(atsRole) || isInterviewBooker(user, stage));
 }
 
 // The guard routes/applications.js calls. Returns null when allowed, or the
 // { status, body } refusal to send.
-async function canMoveToStage(user, stage) {
+async function canMoveToStage(user, stage, ctx = {}) {
   if (!STAGE_OWNERS[stage]) return { status: 400, body: { error: 'Unknown stage' } };
+  // The interview step is reached by the BDE booking it: say so in plain words (before any other refusal).
+  if (stage === 'INTERVIEW_SCHEDULED' && !stageGlobal(user) && !STAGE_OWNERS[stage].includes(stageRoleOf(user)) && !isInterviewBooker(user, stage, ctx)) {
+    return { status: 403, body: { error: BOOKED_BY_BDE, code: 'BDE_BOOKS' } };
+  }
   if (!await mayMoveTo(user, stage)) {
     return { status: 403, body: { error: "This action isn't included in your role's permissions" } };
   }
   const global = stageGlobal(user);
-  if (!global && !STAGE_OWNERS[stage].includes(stageRoleOf(user))) {
+  if (!global && !STAGE_OWNERS[stage].includes(stageRoleOf(user)) && !isInterviewBooker(user, stage, ctx)) {
+    if (stage === 'INTERVIEW_SCHEDULED') return { status: 403, body: { error: BOOKED_BY_BDE, code: 'BDE_BOOKS' } };
     return { status: 403, body: { error: "Moving to this stage isn't included in your role's permissions" } };
   }
   return null;
@@ -1723,6 +1885,19 @@ async function effectiveMatrix(user) {
       list.push({ ...acc, features });
     }
     out[m.id] = list.length ? unionAccess(m.id, list) : defaultAccessForRole(NO_SUCH_ROLE, m.id);
+    // HARD LOCKS (posting / booking an interview): the same refusal can() makes, so no such button is drawn.
+    if ((m.id === 'requirements' || m.id === 'interviews') && out[m.id] && out[m.id].features) {
+      Object.entries(out[m.id].features).forEach(([f, actions]) => {
+        Object.keys(actions).forEach((a) => { if (actions[a] && hardDenied(user, m.id, f, a)) actions[a] = false; });
+      });
+    }
+    // The BDE team's delete (can() 1a1): draw the button's switch ON.
+    if ((m.id === 'requirements' || m.id === 'clients') && out[m.id] && out[m.id].features && bdeTeamUser(user)) {
+      BDE_TEAM_DELETE.filter((k) => k.startsWith(`${m.id}|`)).forEach((k) => {
+        const f = k.split('|')[1];
+        if (out[m.id].features[f]) out[m.id].features[f] = { ...out[m.id].features[f], delete: true };
+      });
+    }
     // The BDE TL's candidate contact + pay is cut by role: draw the switch OFF.
     if (m.id === 'candidates' && require('./scope').isBdeTl(user) // eslint-disable-line global-require
       && out[m.id].features && out[m.id].features['Candidate Contact & Salary']) {
@@ -1787,12 +1962,16 @@ module.exports = {
   // Super Admin / Admin (or an ADMIN-alias custom role) — exempt from the
   // stage-chain rule in routes/applications.js, as from stage ownership.
   stageGlobal,
+  BOOKED_BY_BDE,
   // The ATS role stage ownership resolves against (custom roles -> their alias).
   stageRoleOf,
   DENIED,
   // AI Assistant & Agent gate (see aiAccessFor above).
   aiAccessFor,
   viewOnlyLocksFor,
+  hardLocksFor,
+  clampHard,
+  hardDenied,
   // Import / export per role (2026-10-03) — see ioAccessFor above.
   ioAccessFor,
   IO_MODULES,

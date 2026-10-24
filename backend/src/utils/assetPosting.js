@@ -33,8 +33,20 @@ const {
   ensureAccount, postJournal, reverseJournal, paise, LedgerError, isClosedMonth, closedUpTo, monthOfDate,
 } = require('./ledger');
 const { logAudit } = require('./audit');
+const { AsyncLocalStorage } = require('async_hooks');
 
 const SOURCE = 'HRMS_ASSETS';
+
+// DRY RUN (the Import "Preview", 2026-10-19): inside dryRun(fn) the ledger helpers below only LOOK UP
+// the ledgers; a ledger that does not exist yet is answered with a stand-in (same code the real run
+// would make) and nothing is created or remembered. Outside dryRun nothing here changes.
+const dryStore = new AsyncLocalStorage();
+const isDry = () => !!dryStore.getStore();
+const dryRun = (fn) => dryStore.run(true, fn);
+async function account(def) {
+  if (!isDry()) return ensureAccount(def);
+  return (await prisma.ledgerAccount.findUnique({ where: { code: def.code } })) || { ...def, id: null, standIn: true };
+}
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const today = () => new Date().toISOString().slice(0, 10);
 const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
@@ -55,7 +67,7 @@ async function ensureBaseRaw() {
   const out = {};
   for (const a of BASE) {
     // eslint-disable-next-line no-await-in-loop
-    out[a.code] = await ensureAccount(a);
+    out[a.code] = await account(a);
   }
   return out;
 }
@@ -76,10 +88,10 @@ async function categoryLedgersRaw(category) {
     while (i < 100 && (used.has(String(i).padStart(2, '0')))) i += 1;
     if (i >= 100) throw new LedgerError(422, 'No free ledger code for another asset category');
     nn = String(i).padStart(2, '0');
-    fa = await ensureAccount({ code: `15${nn}`, name: `Fixed Asset — ${cat}`, type: 'ASSET', aliases: tag, description: `HRMS asset category "${cat}" (cost)` });
+    fa = await account({ code: `15${nn}`, name: `Fixed Asset — ${cat}`, type: 'ASSET', aliases: tag, description: `HRMS asset category "${cat}" (cost)` });
   }
-  const dep = await ensureAccount({ code: `16${nn}`, name: `Accumulated Depreciation — ${cat}`, type: 'ASSET', aliases: `${tag}:dep`, description: `Depreciation booked on "${cat}" (contra asset)` });
-  const rm = await ensureAccount({ code: `54${nn}`, name: `Repairs & Maintenance — ${cat}`, type: 'EXPENSE', aliases: `${tag}:rm`, description: `Repairs of "${cat}" assets` });
+  const dep = await account({ code: `16${nn}`, name: `Accumulated Depreciation — ${cat}`, type: 'ASSET', aliases: `${tag}:dep`, description: `Depreciation booked on "${cat}" (contra asset)` });
+  const rm = await account({ code: `54${nn}`, name: `Repairs & Maintenance — ${cat}`, type: 'EXPENSE', aliases: `${tag}:rm`, description: `Repairs of "${cat}" assets` });
   return { fa, dep, rm };
 }
 
@@ -88,9 +100,13 @@ async function categoryLedgersRaw(category) {
 // for the assets already on file: reported as "assumed Bank").
 async function payLedgerRaw(paidVia, bankAccountId) {
   const v = String(paidVia || '').toLowerCase();
-  if (v === 'cash') return { acct: await ensureAccount(BASE[0]), label: 'Cash' };
-  if (v === 'payable' || v === 'vendor payable' || v === 'credit') return { acct: await ensureAccount(BASE[2]), label: 'Vendor Payable' };
-  if (bankAccountId) {
+  if (v === 'cash') return { acct: await account(BASE[0]), label: 'Cash' };
+  if (v === 'payable' || v === 'vendor payable' || v === 'credit') return { acct: await account(BASE[2]), label: 'Vendor Payable' };
+  if (bankAccountId && isDry()) {
+    // look only: the bank's own ledger if it exists, else the default bank
+    const mine = (await prisma.ledgerAccount.findMany({ where: { code: { startsWith: '11' } } })).find((a) => String(a.aliases || '').split(',').includes(`bank:${bankAccountId}`));
+    if (mine) return { acct: mine, label: 'Bank' };
+  } else if (bankAccountId) {
     // eslint-disable-next-line global-require
     const { bankLedger } = require('./payrollPosting');
     try { return { acct: await bankLedger(bankAccountId), label: 'Bank' }; } catch { /* fall through to the default bank */ }
@@ -105,6 +121,7 @@ const memo = new Map();
 function cached(key, fn) {
   const hit = memo.get(key);
   if (hit && hit.until > Date.now()) return hit.value;
+  if (isDry()) return fn(); // a dry run never fills the cache
   const value = fn().catch((err) => { memo.delete(key); throw err; });
   memo.set(key, { value, until: Date.now() + 15000 });
   return value;
@@ -582,6 +599,6 @@ async function hasJournal({ assetId = null, repairId = null } = {}) {
 }
 
 module.exports = {
-  SOURCE, ensureBase, categoryLedgers, depRules, defaultLife, loadAssets, loadRepairs, bookFigures, bookingsOf,
+  SOURCE, dryRun, ensureBase, categoryLedgers, depRules, defaultLife, loadAssets, loadRepairs, bookFigures, bookingsOf,
   purchasePlan, repairPlan, disposalPlan, pendingList, postItem, autoSync, autoFrom, depreciationPreview, runDepreciation, depRuns, hasJournal, r2,
 };

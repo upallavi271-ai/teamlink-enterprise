@@ -8,6 +8,7 @@ import vendorApi, {
 import { PW_HINT } from './VendorLogin.jsx';
 import './vendorPortal.css';
 import './vendorPortal2.css';
+import Combo from '../../components/Combo.jsx';
 
 // /vendor/assets — the vendor's ONLY page (P3, v2). "These are my assigned
 // assets": a top bar, the filters, the table, and a drawer per asset. No
@@ -71,7 +72,8 @@ export default function VendorAssets() {
     try { await vendorApi.post('/logout'); } catch { /* already out */ }
     setVendorToken(null);
     if (notice) { try { sessionStorage.setItem(VENDOR_NOTICE_KEY, notice); } catch { /* ignore */ } }
-    navigate('/vendor-login', { replace: true });
+    // A plain sign-out goes back to the ONE login page; a notice (expired / signed out) is shown on /vendor-login.
+    navigate(notice ? '/vendor-login' : '/login', { replace: true });
   }, [navigate]);
 
   useEffect(() => {
@@ -94,6 +96,8 @@ export default function VendorAssets() {
     return () => { evs.forEach((e) => window.removeEventListener(e, bump)); clearInterval(t); };
   }, [signOut, idleMinutes]);
 
+  // UI ROUTE GUARD: without the Assets module this page is not shown (the API answers 403 as well).
+  useEffect(() => { if (me && me.modules && !me.modules.some((m) => m.key === 'assets')) navigate('/vendor/dashboard', { replace: true }); }, [me, navigate]);
   useEffect(() => { const t = setTimeout(() => setQDeb(f.q), 250); return () => clearTimeout(t); }, [f.q]);
   useEffect(() => { setPage(1); }, [qDeb, f.category, f.status, f.dateField, f.from, f.to, sort.key, sort.dir]);
 
@@ -132,11 +136,16 @@ export default function VendorAssets() {
           <button type="button" className="btn btn-sm" onClick={() => signOut()}>Logout</button>
         </div>
       </header>
+      {me?.preview && (
+        <div className="notice amber" style={{ margin: 0, borderRadius: 0, textAlign: 'center' }}>
+          <span><strong>Preview as {me.vendorName}</strong> — opened by {me.preview}. Read only: nothing can be changed here.</span>
+        </div>
+      )}
       <nav className="vp-tabs" aria-label="Vendor Portal">
-        <NavLink to="/vendor/invoices" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Bills and payments</NavLink>
-        <NavLink to="/vendor/documents" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Documents</NavLink>
-        <NavLink to="/vendor/assets" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Your assets</NavLink>
-        <NavLink to="/vendor/profile" className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>Your details</NavLink>
+        {(me?.nav || [
+          { key: 'overview', label: 'Overview', route: '/vendor/dashboard' }, { key: 'invoices', label: 'Bills and payments', route: '/vendor/invoices' },
+          { key: 'documents', label: 'Documents', route: '/vendor/documents' }, { key: 'assets', label: 'Your assets', route: '/vendor/assets' }, { key: 'profile', label: 'Your details', route: '/vendor/profile' },
+        ]).map((n) => <NavLink key={n.key} to={n.route} className={({ isActive }) => `vp-tab${isActive ? ' on' : ''}`}>{n.label}</NavLink>)}
       </nav>
 
       <main className="vp-main">
@@ -150,21 +159,21 @@ export default function VendorAssets() {
 
         <div className="vp-filters" role="search">
           <input className="vp-search" type="search" placeholder={showCost ? 'Search asset ID, name, serial no., invoice no.' : 'Search asset ID, name, serial no.'} value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} aria-label="Search" />
-          <select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} aria-label="Category">
+          <Combo value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} aria-label="Category">
             <option value="">All categories</option>
             {(data?.facets?.category || []).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
-          </select>
-          <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label="Status">
+          </Combo>
+          <Combo value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label="Status">
             <option value="">All statuses</option>
             {(data?.facets?.status || []).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
-          </select>
+          </Combo>
           <div className="vp-dates">
-            <select value={f.dateField} onChange={(e) => setF({ ...f, dateField: e.target.value })} aria-label="Which date">
+            <Combo value={f.dateField} onChange={(e) => setF({ ...f, dateField: e.target.value })} aria-label="Which date">
               <option value="purchase">Purchase date</option>
               <option value="warranty">Warranty ends</option>
               <option value="amc">AMC ends</option>
               <option value="updated">Last updated</option>
-            </select>
+            </Combo>
             <input type="date" value={f.from} max={f.to || undefined} onChange={(e) => setF({ ...f, from: e.target.value })} aria-label="From date" />
             <span className="vp-to">to</span>
             <input type="date" value={f.to} min={f.from || undefined} onChange={(e) => setF({ ...f, to: e.target.value })} aria-label="To date" />
@@ -178,7 +187,7 @@ export default function VendorAssets() {
           <div className="vp-empty">
             {data.assignedTotal
               ? <><h3>No asset matches these filters</h3><p>Clear the filters to see all {data.assignedTotal} of your assets.</p></>
-              : <><h3>No assets are assigned to you yet.</h3><p>Please contact TeamLink Accounts.</p></>}
+              : <><h3>No assets have been assigned to your account yet.</h3><p>Please contact TeamLink Accounts.</p></>}
           </div>
         ) : (
           <>

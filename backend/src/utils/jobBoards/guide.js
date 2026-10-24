@@ -12,11 +12,12 @@
 //   * every claim that could not be verified from the board's own pages says so.
 // ---------------------------------------------------------------------------
 
+const { POST_URLS } = require('../../config/postUrls'); // where Post opens each site: one list
 const GUIDE = {
   naukri: {
     name: 'Naukri',
     source: 'Naukri', // the ?src= tag on the apply link -> Source = Naukri
-    openUrl: 'https://www.naukri.com/recruit/login',
+    openUrl: POST_URLS.naukri,
     domains: ['naukri.com'],
     skillsLabel: 'Key skills',
     order: ['title', 'type', 'location', 'experience', 'salary', 'skills', 'education', 'openings', 'description', 'apply', 'code'],
@@ -32,7 +33,7 @@ const GUIDE = {
   shine: {
     name: 'Shine',
     source: 'Shine',
-    openUrl: 'https://recruiter.shine.com/',
+    openUrl: POST_URLS.shine,
     domains: ['shine.com'],
     skillsLabel: 'Skills',
     order: ['title', 'type', 'location', 'experience', 'salary', 'skills', 'education', 'openings', 'description', 'apply', 'code'],
@@ -47,7 +48,7 @@ const GUIDE = {
   indeed: {
     name: 'Indeed',
     source: 'Indeed',
-    openUrl: 'https://employers.indeed.com/',
+    openUrl: POST_URLS.indeed,
     domains: ['indeed.com', 'indeed.co.in'],
     skillsLabel: 'Skills',
     order: ['title', 'company', 'type', 'mode', 'location', 'salary', 'experience', 'skills', 'description', 'apply', 'code'],
@@ -62,7 +63,7 @@ const GUIDE = {
   linkedin: {
     name: 'LinkedIn',
     source: 'LinkedIn',
-    openUrl: 'https://www.linkedin.com/talent/post-a-job',
+    openUrl: POST_URLS.linkedin,
     domains: ['linkedin.com'],
     skillsLabel: 'Skills',
     order: ['title', 'company', 'mode', 'location', 'type', 'experience', 'skills', 'salary', 'description', 'apply', 'code'],

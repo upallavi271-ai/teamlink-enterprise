@@ -200,3 +200,17 @@
 .av4 .av4-dtbl th,.av4 .av4-dtbl td{padding-left:5px;padding-right:5px}
 .av4 .av4-th .av4-th-b{white-space:normal;line-height:1.1;max-width:64px;margin-left:auto}
 .av4 .av4-th .av4-th-l{white-space:nowrap}
+
+/* ---- Names fit (founder, 2026-10-17): job titles, client, people wrap instead of "..." ---- */
+.av4 .av4-tbl td.av4-ellip,.av4 .av4-reqs .av4-tbl td.av4-ellip,.av4 .av4-mid .av4-tbl td.av4-ellip{white-space:normal;overflow:visible;text-overflow:clip;max-width:none;overflow-wrap:anywhere;line-height:1.3}
+.av4 .av4-sub{white-space:normal;overflow-wrap:anywhere}
+.av4 .av4-ftxt{white-space:normal;overflow-wrap:anywhere}
+.av4 .av4-reqs .av4-tbl{min-width:560px}
+.av4 .av4-reqs{overflow-x:auto}
+
+/* ---- Team snapshot (founder, 2026-10-22): the name was cut into single letters in a narrow card. The name column keeps a width and wraps at WORDS;
+   when the card is too narrow for every number, the table scrolls sideways inside the card instead of squeezing the name. ---- */
+.av4 .av4-team .av4-tbl{min-width:600px}
+.av4 .av4-team .av4-tbl th:first-child,.av4 .av4-team .av4-tbl td:first-child{min-width:150px}
+.av4 .av4-team .ak-person span:last-child{overflow-wrap:normal;word-break:normal;white-space:normal}
+.av4 .av4-team .av4-tbl .av4-th .av4-th-b{max-width:none}

@@ -1,0 +1,25 @@
+/* My missed items (components/MissedItemsBox.jsx). Four colours: red late, green all good. */
+.msd { background: #fff; border: 1px solid var(--border-soft, #e6e9ef); border-left: 4px solid #c62828; border-radius: 12px; padding: 14px 16px; margin: 0 0 14px; }
+.msd-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.msd-head h3 { margin: 0; font-size: 17px; }
+.msd-pill { display: inline-block; padding: 2px 11px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+.msd-pill.is-red { background: #fdeceb; color: #a31515; }
+.msd-pill.is-green { background: #e6f6ec; color: #166534; }
+.msd-ok { margin: 8px 0 2px; color: #166534; font-weight: 600; }
+.msd-sum { margin: 8px 0 10px; color: #1f2937; font-size: 14.5px; }
+.msd-group { margin: 10px 0 4px; }
+.msd-gh { font-weight: 700; font-size: 13.5px; color: #374151; display: flex; align-items: center; gap: 8px; }
+.msd-n { background: #eef0f3; border-radius: 999px; padding: 0 8px; font-size: 12px; }
+.msd-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.msd-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid #f0f1f4; }
+.msd-row:first-child { border-top: 0; }
+.msd-t { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; font-size: 14px; overflow-wrap: anywhere; }
+.msd-t small { color: var(--muted, #6b7280); font-size: 12px; }
+.msd-late { flex: 0 0 auto; white-space: nowrap; font-size: 12.5px; font-weight: 600; color: #a31515; }
+.msd-late.is-today { color: #9a4a00; }
+.msd-more { margin-top: 4px; }
+@media (max-width: 520px) {
+  .msd { padding: 12px; }
+  .msd-row { flex-wrap: wrap; }
+  .msd-t { flex-basis: 100%; }
+}

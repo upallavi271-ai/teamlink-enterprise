@@ -198,3 +198,16 @@
 @media (prefers-reduced-motion:reduce){.oe-fs-link{transition:none}}
 /* The GST summary table (GstRecon.jsx) scrolls inside itself on a phone instead of widening the page. */
 
+
+/* ---- stable table (2026-10-14) ----
+   The expenses table is a ScrollSync "fit" box: ONE scroller with a native sticky
+   header and TOTAL row (components/accounts/ScrollSync.css). Space is kept for the
+   loading / empty rows so the box does not jump when the first rows arrive. */
+.oe-lg-end-mark{height:1px;width:1px;pointer-events:none}
+.oe-lg2 td.oe-empty{height:150px;text-align:center;vertical-align:middle}
+.oe-lg-more{min-height:34px}
+
+/* ---- Names fit (2026-10-17): vendor / description wrap to 2 lines instead of one cut line ---- */
+.oe-lg-vendor,.oe-lg-desc{white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+.oe-lg-vendor{max-width:170px}
+.oe-lg-sub{white-space:normal;max-width:130px;overflow-wrap:anywhere}

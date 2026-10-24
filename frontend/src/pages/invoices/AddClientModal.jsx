@@ -65,10 +65,10 @@ export default function AddClientModal({ initialName = '', onClose, onSaved }) {
       )}
     >
       <div className="small-muted" style={{ marginBottom: 10 }}>
-        The client goes into the same client list as the ATS. It stays a <b>draft</b> until a BDE or Admin completes it in Clients — so it can be billed here, but it cannot get jobs yet.
+        The client goes into the same client list as the ATS. It stays <b>incomplete</b> until a BDE or Admin completes it in Clients — so it can be billed here, but it cannot get requirements yet.
       </div>
       <div className="inv-acgrid">
-        {field('clientName', 'Client name *', { ph: 'e.g. Orbit Hospitals' })}
+        {field('clientName', 'Client name', { ph: 'e.g. Orbit Hospitals' })}
         {field('company', 'Company (legal name)', { max: 200 })}
         {field('contactName', 'Contact person', { max: 120 })}
         {field('email', 'Email', { type: 'email' })}

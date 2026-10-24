@@ -299,13 +299,13 @@ add({
   test: (t) => /(job|jobs|requirement|requirements|opening|openings|vacanc)/.test(t) && /(how many|status|open|late|without|unassigned|need|count|summary|total|which)/.test(t) && !/interview|candidate/.test(t),
   async run(ctx) {
     const r = await ctx.reader.get('/requirements/summary');
-    if (r.status === 403) return denied('Your role cannot see the jobs summary.');
+    if (r.status === 403) return denied('Your role cannot see the requirements summary.');
     if (!r.ok) return null;
     const c = r.data.cards || {};
     const chain = (r.data.chain || []).map((x) => [x.label, x.count]);
-    return answer(`${num(c.open)} jobs are open out of ${num(r.data.total)}. ${num(c.needsRecruiter)} still need a recruiter, ${num(c.needsTl)} need a team lead, ${num(c.late)} are late, ${num(c.waitingAgreement)} are waiting for the client agreement and ${num(c.hold)} are on hold.`, {
-      numbers: [{ label: 'Open', value: c.open }, { label: 'Need a recruiter', value: c.needsRecruiter }, { label: 'Need a team lead', value: c.needsTl }, { label: 'Late', value: c.late }, { label: 'Waiting for agreement', value: c.waitingAgreement }, { label: 'On hold', value: c.hold }],
-      rows: chain, source: `Counted from Jobs (requirements). Your area: ${scopeText(ctx.user, 'ats')}.`, area: 'ats',
+    return answer(`${num(c.open)} requirements are open out of ${num(r.data.total)}. ${num(c.needsRecruiter)} still need a recruiter, ${num(c.needsTl)} need a team lead, ${num(c.late)} are late, ${c.waitingAgreement === null || c.waitingAgreement === undefined ? '' : `${num(c.waitingAgreement)} are waiting for the client agreement, `}and ${num(c.hold)} are on hold.`, {
+      numbers: [{ label: 'Open', value: c.open }, { label: 'Need a recruiter', value: c.needsRecruiter }, { label: 'Need a team lead', value: c.needsTl }, { label: 'Late', value: c.late }, ...(c.waitingAgreement === null || c.waitingAgreement === undefined ? [] : [{ label: 'Waiting for agreement', value: c.waitingAgreement }]), { label: 'On hold', value: c.hold }],
+      rows: chain, source: `Counted from Requirements. Your area: ${scopeText(ctx.user, 'ats')}.`, area: 'ats',
     });
   },
 });

@@ -23,6 +23,7 @@ import { money2, fmtD } from '../invoices/invFormat';
 import { pct } from '../invoices/invTax';
 import './bank.css';
 import './bankTax.css';
+import Combo from '../../components/Combo.jsx';
 
 // P4 — an invoice's calculation set against this bank line: the bank amount is
 // compared with the NET RECEIVABLE still to come (after GST − TDS − already
@@ -193,7 +194,7 @@ export default function MatchPanel({
 
   const matchIds = (ids) => (isCredit
     ? post(`/bank/${txn.id}/settle-invoices`, { invoiceIds: ids }, (d) => `Settled ${d.parts.map((x) => x.invoiceNumber).join(', ')} — ${money2(d.posted)} recorded against the invoice(s)${d.unallocated > 0.5 ? `; ${money2(d.unallocated)} left unposted` : ''}.`)
-    : post(`/bank/${txn.id}/match-bills`, { billIds: ids }, (d) => `${d.settled} office bill(s) settled from this line${d.unposted > 0.5 ? `; ${money2(d.unposted)} left unposted` : ''}${d.pendingApproval ? ` · ${d.pendingApproval} still waiting for approval` : ''}.`));
+    : post(`/bank/${txn.id}/match-bills`, { billIds: ids }, (d) => `${d.settled} office bill(s) settled from this line${d.unposted > 0.5 ? `; ${money2(d.unposted)} left unposted` : ''}${d.markedPaid ? ` · ${d.markedPaid} marked Paid` : ''}${d.pendingApproval ? ` · ${d.pendingApproval} still Pending - an approver has to mark ${d.pendingApproval === 1 ? 'it' : 'them'} Paid` : ''}.`));
 
   const linkLoan = (loanId) => post(`/bank/hand-loans/${loanId}/link`, { bankTxnId: txn.id }, (d) => (d.cleared
     ? `Linked — the loan is now cleared (${fmtD(d.clearedDate)}).`
@@ -462,17 +463,17 @@ export default function MatchPanel({
           {data && tab === 'cat' && (
             <form className="bkp-form" onSubmit={(e) => { e.preventDefault(); save(false); }} noValidate>
               <label className="field">
-                <span>Category *</span>
-                <select value={f.kind} onChange={set('kind')} aria-invalid={!!errs.kind}>
+                <span>Category</span>
+                <Combo value={f.kind} onChange={set('kind')} aria-invalid={!!errs.kind}>
                   {kinds.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
+                </Combo>
                 <Err msg={errs.kind} />
               </label>
 
               {(f.kind === 'expense' || f.kind === 'other') && (
                 <label className="field">
                   <span>
-                    {f.kind === 'expense' ? 'Expense account *' : 'Income account *'}
+                    {f.kind === 'expense' ? 'Expense account' : 'Income account'}
                     {rec && f.kind === 'expense' && f.expenseAccount === rec.account && (
                       <span className="status priority-low bkp-chip" title={rec.why}>recognised — from {rec.why}</span>
                     )}
@@ -486,16 +487,16 @@ export default function MatchPanel({
               {f.kind === 'hand' && (
                 loans.length ? (
                   <label className="field">
-                    <span>Which hand loan *</span>
-                    <select value={f.loanId} onChange={set('loanId')} aria-invalid={!!errs.loanId}>
+                    <span>Which hand loan</span>
+                    <Combo value={f.loanId} onChange={set('loanId')} aria-invalid={!!errs.loanId}>
                       <option value="">— choose the loan —</option>
                       {loans.map((l) => <option key={l.id} value={l.id}>{l.name}{l.lender ? ` · ${l.lender}` : ''} · {money2(l.pending)} pending</option>)}
-                    </select>
+                    </Combo>
                     <Err msg={errs.loanId} />
                   </label>
                 ) : (
                   <label className="field">
-                    <span>Who the loan is with *</span>
+                    <span>Who the loan is with</span>
                     <input value={f.party} onChange={set('party')} placeholder="Name of the person" aria-invalid={!!errs.party} />
                     <div className="bkp-help">Add the loan under Bank &amp; Reconciliation → Hand loans to track what is repaid.</div>
                     <Err msg={errs.party} />
@@ -521,13 +522,13 @@ export default function MatchPanel({
                   </label>
                   <label className="field">
                     <span>Does the bill carry GST?</span>
-                    <select value={f.gst} onChange={set('gst')}><option>No</option><option>Yes</option></select>
+                    <Combo value={f.gst} onChange={set('gst')}><option>No</option><option>Yes</option></Combo>
                   </label>
                   <label className="field">
                     <span>GST rate</span>
-                    <select value={f.gstRate} onChange={set('gstRate')} disabled={f.gst !== 'Yes'} aria-invalid={!!errs.gstRate}>
+                    <Combo value={f.gstRate} onChange={set('gstRate')} disabled={f.gst !== 'Yes'} aria-invalid={!!errs.gstRate}>
                       {(o.gstRates || [5, 12, 18, 28]).filter((x) => x > 0).map((x) => <option key={x} value={x}>{x}%</option>)}
-                    </select>
+                    </Combo>
                     <Err msg={errs.gstRate} />
                   </label>
                   <label className="field">
@@ -541,9 +542,9 @@ export default function MatchPanel({
                   </label>
                   <label className="field">
                     <span>Goods or service</span>
-                    <select value={f.supplyType} onChange={set('supplyType')}>
+                    <Combo value={f.supplyType} onChange={set('supplyType')}>
                       <option value="">—</option><option>Goods</option><option>Service</option>
-                    </select>
+                    </Combo>
                   </label>
                   <label className="field">
                     <span>HSN / SAC code</span>
@@ -552,30 +553,30 @@ export default function MatchPanel({
                   </label>
                   <label className="field">
                     <span>GST treatment</span>
-                    <select value={f.gstTreatment} onChange={set('gstTreatment')}>
+                    <Combo value={f.gstTreatment} onChange={set('gstTreatment')}>
                       <option value="">— e.g. Registered Business - Regular —</option>
                       {(o.gstTreatments || []).map((x) => <option key={x}>{x}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                   <label className="field">
                     <span>Source of supply (vendor&apos;s state)</span>
-                    <select value={f.sourceState} onChange={set('sourceState')}>
+                    <Combo value={f.sourceState} onChange={set('sourceState')}>
                       <option value="">—</option>
                       {(o.states || []).map((x) => <option key={x}>{x}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                   <label className="field">
                     <span>Destination of supply</span>
-                    <select value={f.destState} onChange={set('destState')}>
+                    <Combo value={f.destState} onChange={set('destState')}>
                       {(o.states || [f.destState]).map((x) => <option key={x}>{x}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                   <label className="field">
                     <span>Reverse charge</span>
-                    <select value={f.reverseCharge} onChange={set('reverseCharge')}>
+                    <Combo value={f.reverseCharge} onChange={set('reverseCharge')}>
                       <option value="No">No — the vendor charges the GST</option>
                       <option value="Yes">Yes — we pay the GST (reverse charge)</option>
-                    </select>
+                    </Combo>
                   </label>
                   <label className="field">
                     <span>Billable to a client</span>
@@ -588,20 +589,20 @@ export default function MatchPanel({
                   </label>
                   <label className="field">
                     <span>TDS cut by us?</span>
-                    <select value={f.tds} onChange={set('tds')}><option>No</option><option>Yes</option></select>
+                    <Combo value={f.tds} onChange={set('tds')}><option>No</option><option>Yes</option></Combo>
                   </label>
                   <label className="field">
                     <span>TDS rate</span>
-                    <select value={f.tdsRate} onChange={set('tdsRate')} disabled={f.tds !== 'Yes'} aria-invalid={!!errs.tdsRate}>
+                    <Combo value={f.tdsRate} onChange={set('tdsRate')} disabled={f.tds !== 'Yes'} aria-invalid={!!errs.tdsRate}>
                       {(o.tdsRates || [1, 2, 5, 10]).map((x) => <option key={x} value={x}>{x}%</option>)}
-                    </select>
+                    </Combo>
                     <Err msg={errs.tdsRate} />
                   </label>
                   <label className="field">
                     <span>Payment mode</span>
-                    <select value={f.paymentMode} onChange={set('paymentMode')}>
+                    <Combo value={f.paymentMode} onChange={set('paymentMode')}>
                       {(o.modes || ['Bank Transfer']).map((x) => <option key={x}>{x}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                 </>
               )}

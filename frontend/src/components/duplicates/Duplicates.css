@@ -65,7 +65,8 @@
 /* worklist */
 .dupx-list .dupx-tabs{margin-bottom:10px}
 .dupx-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-.dupx-filters select,.dupx-filters input{min-width:0;max-width:100%}
+.dupx-filters select,.dupx-filters input{min-width:0;max-width:100%;flex:1 1 150px}
+.dupx-filters input[type=date]{flex:0 1 150px}
 .dupx-bulk{position:sticky;top:0;z-index:5;display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--navy-tint,#eef3fb);border:1px solid var(--navy,#0b3a6e);border-radius:8px;padding:8px 12px;margin-bottom:10px}
 .dupx-pager{display:flex;gap:10px;justify-content:center;align-items:center;margin:12px 0}
 .dupx-sub{margin-top:18px;border:1px solid var(--line,#e3e8f0);border-radius:10px;padding:10px 12px;background:var(--paper-raised,#fff)}

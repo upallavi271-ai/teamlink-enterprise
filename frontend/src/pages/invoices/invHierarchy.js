@@ -51,11 +51,41 @@ export function sectionOptions(h, dept) {
   })));
 }
 
-// The seats a person held inside the department / section in view.
-export function entriesIn(p, dept, section) {
+// The seats a person held inside the department / section / role (seat) in view.
+export function entriesIn(p, dept, section, role = ALL) {
   return ((p && p.entries) || []).filter((e) => (dept === ALL || e.department === dept)
-    && (section === ALL || e.sectionKey === section));
+    && (section === ALL || e.sectionKey === section)
+    && (!role || role === ALL || e.seat === role));
 }
+
+// Role options: the seats of the department / section in view — its TL seat(s)
+// first, then EDU-1, EDU-2… — read from the stored structure, never typed in.
+// With one section the TL seat is just its code; with several, the section
+// is added so two TL seats can be told apart.
+export function roleOptions(h, dept, section = ALL) {
+  const deps = h0(h).departments.filter((d) => dept === ALL || d.name === dept);
+  const out = [];
+  const seen = new Set();
+  deps.forEach((d) => d.sections.forEach((s) => {
+    if (section !== ALL && s.key !== section) return;
+    (s.seats || []).forEach((code) => {
+      if (seen.has(code)) return;
+      seen.add(code);
+      const isTl = code === s.tlSeat;
+      out.push({
+        value: code,
+        label: isTl && d.sections.length > 1 ? `${code} (TL · ${s.label})` : (isTl ? `${code} (TL)` : code),
+        tl: isTl,
+        department: d.name,
+      });
+    });
+  }));
+  return out;
+}
+
+// Does an invoice row sit under this role (seat)? Its own seat, or — for a TL
+// seat — the TL seat the row's TL held.
+export const roleMatch = (r, role) => !role || role === ALL || r.seat === role || r.tlSeat === role;
 
 const latest = (entries) => [...entries].sort((a, b) => String(b.from || '').localeCompare(String(a.from || '')))[0] || null;
 
@@ -67,7 +97,7 @@ export function personLabel(p, entries) {
   if (!e) return p.name;
   let when = '';
   if (!e.current) {
-    if (!p.current) when = `left${e.to ? ` ${monthYear(e.to)}` : ''}`;
+    if (!p.current) when = `Former · left${e.to ? ` ${monthYear(e.to)}` : ''}`;
     else if (e.to) when = `until ${monthYear(e.to)}`;
   }
   const earlier = (entries.length ? entries : p.entries || []).filter((x) => x !== e)
@@ -80,18 +110,20 @@ export function personLabel(p, entries) {
 // recruiters, current first, then former — the stored structure only. (A name
 // an invoice carries that holds no seat in the structure is not offered; its
 // invoices are still reached through their department.)
-export function employeeOptions(h, dept, section) {
-  const list = h0(h).people.filter((p) => !p.unplaced && entriesIn(p, dept, section).length > 0);
-  const scoped = list.map((p) => ({ p, entries: entriesIn(p, dept, section) }));
+export function employeeOptions(h, dept, section, role = ALL) {
+  const list = h0(h).people.filter((p) => !p.unplaced && entriesIn(p, dept, section, role).length > 0);
+  const scoped = list.map((p) => ({ p, entries: entriesIn(p, dept, section, role) }));
   const isCurrent = ({ p, entries }) => (entries.length ? entries.some((e) => e.current) : !!p.current);
   return [...scoped.filter(isCurrent), ...scoped.filter((x) => !isCurrent(x))]
-    .map(({ p, entries }) => ({ value: p.key, label: personLabel(p, entries), person: p }));
+    .map((x) => ({
+      value: x.p.key, label: personLabel(x.p, x.entries), person: x.p, current: isCurrent(x),
+    }));
 }
 
 // The chip beside the Employee name: their actual role and place, e.g.
 //   Recruiter · Education · Section A · Reporting TL: D.Leela Usha Sri
 //   TL · Education · Section B
-export function describeEmployee(h, key, dept = ALL, section = ALL) {
+export function describeEmployee(h, key, dept = ALL, section = ALL, role = ALL) {
   const p = personByKey(h, key);
   if (!p) return null;
   if (p.unplaced) {
@@ -100,7 +132,7 @@ export function describeEmployee(h, key, dept = ALL, section = ALL) {
       text: `${(p.roles || []).join(' / ') || 'Worked'} · ${(p.departments || []).map((d) => deptLabelOf(h, d)).join(', ') || '—'} · not in the team structure`,
     };
   }
-  const inView = entriesIn(p, dept, section);
+  const inView = entriesIn(p, dept, section, role);
   const e = latest(inView.length ? inView : p.entries);
   if (!e) return { role: '', text: p.name };
   const sec = sectionByKey(h, e.sectionKey);
@@ -122,7 +154,9 @@ export function reconcile(f, h, validDepts = null) {
     const s = sectionByKey(h, next.section);
     if (!s || (next.dept !== ALL && s.department !== next.dept)) next.section = ALL;
   }
-  if (next.rec !== ALL && !employeeOptions(h, next.dept, next.section).some((o) => o.value === next.rec)) next.rec = ALL;
+  // A role (seat) must belong to the department / section; an old saved job-title value goes back to All.
+  if (next.role && next.role !== ALL && !roleOptions(h, next.dept, next.section).some((o) => o.value === next.role)) next.role = ALL;
+  if (next.rec !== ALL && !employeeOptions(h, next.dept, next.section, next.role || ALL).some((o) => o.value === next.rec)) next.rec = ALL;
   return next;
 }
 
@@ -136,6 +170,11 @@ export function changeFilter(f, field, value, h, validDepts = null) {
     const s = sectionByKey(h, v);
     if (s) next.dept = s.department;
   }
+  // Picking a seat with All departments selects its department, like a section does.
+  if (field === 'role' && v !== ALL && next.dept === ALL) {
+    const o = roleOptions(h, ALL, next.section).find((x) => x.value === v);
+    if (o) next.dept = o.department;
+  }
   return reconcile(next, h, validDepts);
 }
 
@@ -144,19 +183,20 @@ export function matchesHierarchy(r, f) {
   if (f.dept !== ALL && r.department !== f.dept) return false;
   if (f.section !== ALL && r.sectionKey !== f.section) return false;
   if (f.rec !== ALL && r.recruiterKey !== f.rec && r.tlKey !== f.rec) return false;
+  if (f.role && f.role !== ALL && !roleMatch(r, f.role)) return false;
   return true;
 }
-// The Invoice page (S7) holds Client and Recruiter name as lists (f.clients,
+// The Invoice page (S7) holds Client (client IDS) and Recruiter as lists (f.clients,
 // f.recs — '__none' = Unassigned); a single f.client still works.
 const clientsOf = (f) => (Array.isArray(f.clients) ? f.clients : (f.client && f.client !== ALL ? [f.client] : []));
 export function matchesJoining(r, f) {
   const cl = clientsOf(f);
-  if (cl.length && !cl.includes(r.client)) return false;
+  if (cl.length && !cl.includes(r.clientId)) return false; // by the client's ID, never the name
   if (Array.isArray(f.recs) && f.recs.length && !f.recs.includes(r.recruiterKey || '__none')) return false;
   return matchesHierarchy(r, f);
 }
 export const hierarchyActive = (f) => clientsOf(f).length > 0 || (Array.isArray(f.recs) && f.recs.length > 0)
-  || f.dept !== ALL || f.section !== ALL || f.rec !== ALL;
+  || f.dept !== ALL || f.section !== ALL || f.rec !== ALL || (!!f.role && f.role !== ALL);
 
 // The "joinings have no invoice number yet" card under the filters. With no
 // Client / Department / Section / Employee filter it is the server's own.

@@ -166,13 +166,13 @@ async function jobInScope(user, id) {
   return scope.atsScopeOf(user).global || (await prisma.requirement.count({ where: { AND: [scope.requirementWhere(user), { id }] } })) > 0;
 }
 router.get('/jobs/:requirementId', wrap(async (req, res) => {
-  if (!(await jobInScope(req.user, req.params.requirementId))) return res.status(404).json({ error: 'No such job, or outside your area.' });
+  if (!(await jobInScope(req.user, req.params.requirementId))) return res.status(404).json({ error: 'No such requirement, or outside your area.' });
   const o = await R.jobOverride(req.params.requirementId);
   return res.json({ mode: o ? o.mode : 'inherit', note: o ? o.note || '' : '', by: o ? o.byName || null : null, canSet: R.canAct(req.user) });
 }));
 router.put('/jobs/:requirementId', wrap(async (req, res) => {
   if (!R.canAct(req.user)) return res.status(403).json({ error: 'Only the recruiter, the team lead, HR or an Admin can change this.' });
-  if (!(await jobInScope(req.user, req.params.requirementId))) return res.status(404).json({ error: 'No such job, or outside your area.' });
+  if (!(await jobInScope(req.user, req.params.requirementId))) return res.status(404).json({ error: 'No such requirement, or outside your area.' });
   const out = await R.setJobOverride(req.user, req.params.requirementId, (req.body || {}).mode, (req.body || {}).note);
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   return res.json(out);

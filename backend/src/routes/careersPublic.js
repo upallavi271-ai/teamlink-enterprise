@@ -408,7 +408,8 @@ router.post('/jobs/:id/apply', async (req, res) => {
     return res.status(409).json({ error: 'This job is not taking applications right now.' });
   }
   const src = String(fields.src || '');
-  const board = TRACKED_SOURCES.includes(src) ? src : null;
+  // Job distribution (2026-10-14): a tracked link carries ?src=<platform key>&utm_source=<key> (linkedin, apna, whatsapp ...): the applicant's source reads the platform's name.
+  const board = TRACKED_SOURCES.includes(src) ? src : (require('../jobDist/attribution').labelFor(src) || require('../jobDist/attribution').labelFor(fields.utm_source) || null); // eslint-disable-line global-require
 
   const out = await serial(async () => {
     let candidate = await findByContact(data.email, data.phone);
@@ -523,6 +524,7 @@ router.post('/_test/reset-limits', (req, res) => {
   // eslint-disable-next-line global-require
   if (!require('../utils/sandbox').isSandbox()) return res.status(404).json({ error: 'Not found' });
   hits.clear();
+  sitemapCache = { at: 0, base: '', xml: '' }; // (job distribution tests also look at the site map)
   return res.json({ ok: true });
 });
 

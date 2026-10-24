@@ -36,6 +36,8 @@ const { resolveIdentity } = require('../utils/identity');
 const audience = require('../utils/audience');
 const { NOT_SYSTEM_EMPLOYEE, isSystemEmployee } = require('../utils/systemAccounts');
 const chain = require('../utils/chainRoute');
+const { raiseUpload, FAILED_MESSAGE } = require('../utils/uploadApproval');
+const { isRealTop } = require('../utils/hrSuper');
 
 const router = express.Router();
 
@@ -163,7 +165,8 @@ async function mayViewMaterial(user, material) {
       where: { courseId_employeeId: { courseId: material.courseId, employeeId: emp.id } },
       select: { id: true },
     });
-    if (a) return true;
+    // A learner opens only an APPROVED material; the author and HR can preview one still waiting for the chain.
+    if (a && (material.approvalStatus || 'Approved') === 'Approved') return true;
   }
   const course = material.course || await prisma.course.findUnique({ where: { id: material.courseId } });
   return mayEditCourse(user, course);
@@ -335,7 +338,8 @@ function stateOf(course, materials, progressByMaterial, assignment, questionCoun
 
 async function loadState(course, assignment) {
   const [materials, progress, questionCount] = await Promise.all([
-    prisma.courseMaterial.findMany({ where: { courseId: course.id }, orderBy: { createdAt: 'asc' } }),
+    // 2026-10-24: a material still waiting for the approval chain is not on the course yet, so it can neither be shown nor block completion.
+    prisma.courseMaterial.findMany({ where: { courseId: course.id, approvalStatus: 'Approved' }, orderBy: { createdAt: 'asc' } }),
     assignment
       ? prisma.courseMaterialProgress.findMany({ where: { courseId: course.id, employeeId: assignment.employeeId } })
       : [],
@@ -526,7 +530,7 @@ router.get('/my', VIEW, async (req, res) => {
   const enrolledIds = mine.map((a) => a.courseId);
   const [materials, progress, questionCounts] = enrolledIds.length
     ? await Promise.all([
-      prisma.courseMaterial.findMany({ where: { courseId: { in: enrolledIds } } }),
+      prisma.courseMaterial.findMany({ where: { courseId: { in: enrolledIds }, approvalStatus: 'Approved' } }),
       prisma.courseMaterialProgress.findMany({ where: { employeeId: me.id, courseId: { in: enrolledIds } } }),
       prisma.assessmentQuestion.groupBy({ by: ['courseId'], where: { courseId: { in: enrolledIds } }, _count: true }),
     ])
@@ -699,7 +703,7 @@ router.post('/materials/:id/view-token', VIEW, async (req, res) => {
 // document.
 router.post('/materials/:id/progress', VIEW, async (req, res) => {
   const m = await prisma.courseMaterial.findUnique({ where: { id: req.params.id }, include: { course: true } });
-  if (!m) return res.status(404).json({ error: 'Material not found' });
+  if (!m || (m.approvalStatus || 'Approved') !== 'Approved') return res.status(404).json({ error: 'Material not found' });
   const me = await ownEmployee(req);
   const assignment = me
     ? await prisma.courseAssignment.findUnique({ where: { courseId_employeeId: { courseId: m.courseId, employeeId: me.id } } })
@@ -917,7 +921,7 @@ router.get('/company', VIEW, async (req, res) => {
   const courseIds = [...byCourse.keys()];
   const [allMaterials, allProgress, qCounts] = courseIds.length
     ? await Promise.all([
-      prisma.courseMaterial.findMany({ where: { courseId: { in: courseIds } } }),
+      prisma.courseMaterial.findMany({ where: { courseId: { in: courseIds }, approvalStatus: 'Approved' } }),
       prisma.courseMaterialProgress.findMany({ where: { courseId: { in: courseIds }, employeeId: { in: ids } } }),
       prisma.assessmentQuestion.groupBy({ by: ['courseId'], where: { courseId: { in: courseIds } }, _count: true }),
     ])
@@ -1061,9 +1065,16 @@ router.post('/courses', MANAGE, async (req, res) => {
   // at their STL. Somebody with no employee record behind their login has no
   // ladder to climb and their course publishes directly, as it always did.
   const drafter = await ownEmployee(req);
+  // A login with NO employee record (the shared HR desk login, say) is not let through any more (founder 2026-10-24): a real Super Admin /
+  // Admin publishes directly, anybody else climbs the chain from the rung their stored role names. If the chain cannot be started the
+  // course is not created at all.
   const started = drafter
     ? await chain.raise(WF_COURSE, { recordId: course.id, employee: drafter, applicantUserId: req.user.id })
-    : { pending: false, summary: null };
+    : await raiseUpload(WF_COURSE, req.user, course.id);
+  if (started.failed) {
+    await prisma.course.delete({ where: { id: course.id } }).catch(() => {});
+    return res.status(503).json({ error: FAILED_MESSAGE });
+  }
   if (started.pending) {
     await prisma.course.update({ where: { id: course.id }, data: { approvalStatus: 'Pending' } });
     course.approvalStatus = 'Pending';
@@ -1258,6 +1269,8 @@ router.get('/courses/:id/manage', MANAGE, EDIT_COURSE(byCourseParam), async (req
       sizeBytes: m.sizeBytes, url: m.url, uploadedBy: m.uploadedBy, createdAt: m.createdAt,
       kind: materialKind(m), required: m.required, durationSeconds: m.durationSeconds,
       hasFile: !!m.storedPath,
+      // Approved | Pending | Rejected — a TL / HR upload on a live course waits for the approval chain (2026-10-24).
+      approvalStatus: m.approvalStatus || 'Approved',
       // A stored file is opened through a view token, never a bare URL; a
       // link opens as it is.
       href: m.storedPath ? null : m.url,
@@ -1265,7 +1278,8 @@ router.get('/courses/:id/manage', MANAGE, EDIT_COURSE(byCourseParam), async (req
     questions: questions.map(bankQuestion),
     canAssign: await canAssign(req.user),
     enrolled: assignments.map((a) => {
-      const st = stateOf(course, materials, new Map(progress.filter((p) => p.employeeId === a.employeeId).map((p) => [p.materialId, p])), a, questions.length);
+      // A material still waiting for the chain is not on the course for any learner, so it does not count toward their progress.
+      const st = stateOf(course, materials.filter((m) => (m.approvalStatus || 'Approved') === 'Approved'), new Map(progress.filter((p) => p.employeeId === a.employeeId).map((p) => [p.materialId, p])), a, questions.length);
       return {
         id: a.id,
         employeeId: a.employeeId,
@@ -1333,8 +1347,34 @@ function publicMaterial(m) {
   return { ...rest, hasFile: !!storedPath };
 }
 
+// UPLOAD APPROVAL (founder, 2026-10-24: "whatever TLs or HR upload in LMS takes approvals hierarchy-wise, up to the Super Admin").
+// A material added to a course that is ALREADY LIVE by anybody but a real Super Admin / Admin is created Pending: learners do not see it and
+// it cannot block anyone's completion until the chain (TL -> ... -> Super Admin) approves. The course itself stays live without it. On a
+// course that is still a draft, the course's own approval covers its materials.
+const WF_MATERIAL = 'courseMaterial';
+const holdsMaterial = (user, course) => (course.approvalStatus || 'Approved') === 'Approved' && !isRealTop(user);
+
+// Lays the chain down for a Pending material. Returns { status, body } for the response; on failure nothing is left behind.
+async function settleMaterial(req, course, created, hold) {
+  if (!hold) return { status: 201, body: publicMaterial(created) };
+  const started = await raiseUpload(WF_MATERIAL, req.user, created.id);
+  if (started.failed) {
+    if (created.storedPath) media.remove(created.storedPath);
+    await prisma.courseMaterial.delete({ where: { id: created.id } }).catch(() => {});
+    return { status: 503, body: { error: FAILED_MESSAGE } };
+  }
+  if (started.pending) {
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Course material submitted for approval', entity: 'Course', entityId: course.id, toValue: created.title });
+    return { status: 201, body: { ...publicMaterial(created), pendingApproval: true, workflow: started.summary } };
+  }
+  // Nobody sits above the uploader: nothing to wait for.
+  const live = await prisma.courseMaterial.update({ where: { id: created.id }, data: { approvalStatus: 'Approved' } });
+  return { status: 201, body: publicMaterial(live) };
+}
+
 router.post('/courses/:id/materials', MANAGE, EDIT_COURSE(byCourseParam), async (req, res) => {
   const { course } = req;
+  const hold = holdsMaterial(req.user, course);
 
   const type = String(req.headers['content-type'] || '').toLowerCase();
   if (type.startsWith('application/json')) {
@@ -1345,10 +1385,12 @@ router.post('/courses/:id/materials', MANAGE, EDIT_COURSE(byCourseParam), async 
       data: {
         courseId: course.id, title: String(title).slice(0, 200), url: String(url).trim().slice(0, 2000),
         uploadedBy: req.user.name || null, kind: kindOf(kind, 'Link'), required: requiredOf(required),
+        approvalStatus: hold ? 'Pending' : 'Approved',
       },
     });
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Course material linked', entity: 'Course', entityId: course.id, toValue: created.title });
-    return res.status(201).json(publicMaterial(created));
+    const out = await settleMaterial(req, course, created, hold);
+    return res.status(out.status).json(out.body);
   }
 
   let stored;
@@ -1384,10 +1426,40 @@ router.post('/courses/:id/materials', MANAGE, EDIT_COURSE(byCourseParam), async 
       // Inferred from the file unless the manager said otherwise.
       kind: kindOf(fields.kind, media.kindForMime(stored.mimeType)),
       required: requiredOf(fields.required),
+      approvalStatus: hold ? 'Pending' : 'Approved',
     },
   });
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Course material uploaded', entity: 'Course', entityId: course.id, toValue: title });
-  return res.status(201).json(publicMaterial(created));
+  const out = await settleMaterial(req, course, created, hold);
+  return res.status(out.status).json(out.body);
+});
+
+// One rung deciding on a material. Approving at the top puts it on the live course; a rejection anywhere keeps it off, with the reason on
+// the chain (the uploader can delete it and upload a corrected one).
+router.patch('/materials/:id/decision', requirePerm(null, 'hrms', 'Performance & Development', 'approve'), async (req, res, next) => {
+  try {
+    const { status, reason } = req.body || {};
+    if (!['Approved', 'Rejected'].includes(status)) return res.status(400).json({ error: 'status must be Approved or Rejected' });
+    const m = await prisma.courseMaterial.findUnique({ where: { id: req.params.id } });
+    if (!m) return res.status(404).json({ error: 'Material not found' });
+    if (m.approvalStatus !== 'Pending') return res.status(409).json({ error: `This material was already ${String(m.approvalStatus).toLowerCase()}.` });
+
+    const step = await chain.decide(WF_MATERIAL, m.id, req.user, { decision: status, note: reason });
+    if (step.error) return res.status(step.error.status).json(step.error.body);
+    if (step.chained) {
+      await logAudit({
+        userId: req.user.id,
+        action: `Course material ${status.toLowerCase()} at ${step.result.level}`,
+        entity: 'Course',
+        entityId: m.courseId,
+        fromValue: step.result.level,
+        toValue: step.result.nextLevel || step.result.outcome,
+      });
+      if (!step.result.complete) return res.json({ ...publicMaterial(m), workflow: step.view });
+    }
+    const updated = await prisma.courseMaterial.update({ where: { id: m.id }, data: { approvalStatus: status === 'Rejected' ? 'Rejected' : 'Approved' } });
+    return res.json({ ...publicMaterial(updated), workflow: step.view || null });
+  } catch (err) { return next(err); }
 });
 
 // Change a material's title, kind or whether it is required.
@@ -1421,6 +1493,7 @@ router.delete('/materials/:id', MANAGE, EDIT_COURSE(byMaterialParam), async (req
   const m = await prisma.courseMaterial.findUnique({ where: { id: req.params.id } });
   if (!m) return res.status(404).json({ error: 'Material not found' });
   if (m.storedPath) media.remove(m.storedPath);
+  await prisma.approvalStep.deleteMany({ where: { workflow: WF_MATERIAL, recordId: m.id } });
   await prisma.courseMaterial.delete({ where: { id: m.id } });
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Course material removed', entity: 'Course', entityId: m.courseId, toValue: m.title });
   return res.status(204).end();
@@ -2063,7 +2136,7 @@ router.get('/history', VIEW, async (req, res) => {
   const empIds = [...new Set(rows.map((r) => r.employeeId))];
   const [materials, progress, qCounts, attempts] = rows.length
     ? await Promise.all([
-      prisma.courseMaterial.findMany({ where: { courseId: { in: courseIds } } }),
+      prisma.courseMaterial.findMany({ where: { courseId: { in: courseIds }, approvalStatus: 'Approved' } }),
       prisma.courseMaterialProgress.findMany({ where: { courseId: { in: courseIds }, employeeId: { in: empIds } } }),
       prisma.assessmentQuestion.groupBy({ by: ['courseId'], where: { courseId: { in: courseIds } }, _count: true }),
       prisma.courseAssessmentAttempt.findMany({ where: { assignmentId: { in: rows.map((r) => r.id) } }, orderBy: { startedAt: 'asc' } }),

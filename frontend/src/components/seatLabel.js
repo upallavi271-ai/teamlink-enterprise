@@ -1,5 +1,5 @@
 // How a seat is worded in a picker (Add Employee, Edit employee, Positions):
-// plain words for a 15-20 year old - free, taken, or leaving soon.
+// plain words for a 15-20 year old - free, taken, or leaving soon (a seat whose holder is on notice can take the replacement now).
 //
 //   EDU-10 · Education 10 · free
 //   EDU-8  · Education 8 · Supriya leaves 14 Oct - free after that
@@ -17,7 +17,8 @@ export function seatOptionLabel(r) {
   const base = `${r.code}${r.name ? ` · ${r.name}` : ''}`;
   if (r.mine) return `${base} · their seat now`;
   if (r.onNotice) {
-    return `${base} · ${r.holder || 'the holder'} ${r.freesOn ? `leaves ${niceDay(r.freesOn)} - free after that` : 'is on notice (no last day set yet)'}`;
+    // On notice: a replacement can be added NOW (founder, 2026-10-23); both work the seat until the last working day.
+    return `${base} · ${r.holder || 'the holder'} ${r.freesOn ? `leaves ${niceDay(r.freesOn)}` : 'is on notice (no last day set yet)'} - you can add the replacement now`;
   }
   if (r.holder) return `${base} · held by ${r.holder}`;
   return `${base} · free${r.previousSeat ? ' (their old seat)' : ''}`;
@@ -27,5 +28,5 @@ export function seatOptionLabel(r) {
 export function seatSummary(list, department) {
   const free = list.filter((r) => !r.holder && !r.onNotice).length;
   const leaving = list.filter((r) => r.onNotice).length;
-  return `${free} of ${list.length} free in ${department}${leaving ? `, ${leaving} more free soon (holder leaving)` : ''}.`;
+  return `${free} of ${list.length} free in ${department}${leaving ? `, ${leaving} more can take a replacement now (holder on notice)` : ''}.`;
 }

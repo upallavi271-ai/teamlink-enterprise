@@ -1,0 +1,34 @@
+/* Salary fit chips + the two required salary boxes. Everything is scoped under .sfit- / .sfld- */
+.sfit{display:inline-flex;flex-wrap:wrap;gap:4px 6px;align-items:center;max-width:100%}
+.sfit-chip{display:inline-flex;align-items:center;gap:4px;border-radius:999px;padding:2px 9px;font-size:12px;font-weight:700;line-height:1.5;white-space:nowrap;border:1px solid transparent}
+.sfit-chip .sfit-ico{font-size:11px;font-weight:800}
+.sfit-green{background:var(--st-green-tint,#e5f0ea);color:var(--st-green-ink,#0F6B4F);border-color:#bcd9c9}
+.sfit-amber{background:var(--st-yellow-tint,#fdf3d6);color:var(--st-yellow-ink,#7a5600);border-color:#ecd9a0}
+.sfit-red{background:var(--st-red-tint,#fbebea);color:var(--st-red-ink,#B02318);border-color:#efc0bc}
+.sfit-blue{background:var(--st-blue-tint,#e8effb);color:var(--st-blue-ink,#1B58C0);border-color:#c4d6f3}
+.sfit-grey{background:var(--st-grey-tint,#eef1f0);color:var(--st-grey-ink,#56666E);border-color:#d7dedb}
+.sfit-btn{cursor:pointer;font:inherit;font-size:12px;font-weight:700}
+.sfit-btn:hover{background:#fff;border-color:var(--brand,#4A6F64);color:var(--brand-ink,#2A4139)}
+.sfit-sub{font-size:11.5px;color:var(--ink-soft,#56666E);flex-basis:100%}
+.sfit-box{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line,#dde5e2);border-radius:10px;background:var(--paper-raised,#fff)}
+.sfit-box .sfit-title{font-size:12px;font-weight:700;color:var(--ink-soft,#56666E)}
+.sfit-bar{height:8px;border-radius:999px;background:var(--st-grey-tint,#eef1f0);overflow:hidden}
+.sfit-bar>i{display:block;height:100%;border-radius:999px}
+.sfit-bar>i.sfit-green{background:var(--st-green,#1f9d55)}.sfit-bar>i.sfit-amber{background:var(--st-yellow,#e0a100)}.sfit-bar>i.sfit-red{background:var(--st-red,#d03b3b)}
+
+/* the two salary boxes on Add Candidate */
+.sfld{grid-column:1 / -1;display:grid;grid-template-columns:1fr 1fr;gap:12px 16px}
+.sfld-one{display:flex;flex-direction:column;gap:5px;min-width:0}
+.sfld-one>span.sfld-lbl{font-size:12.5px;font-weight:600}
+.sfld-one .sfld-star{color:var(--red,#B02318);margin-left:2px}
+.sfld-row{display:flex;gap:6px;align-items:stretch}
+.sfld-row input{flex:1 1 auto;min-width:0}
+.sfld-unit{display:inline-flex;border:1px solid var(--line,#dde5e2);border-radius:8px;overflow:hidden;flex:none}
+.sfld-unit button{border:0;background:#fff;padding:0 9px;font-size:12px;font-weight:600;color:var(--ink-soft,#56666E);cursor:pointer;min-height:34px}
+.sfld-unit button+button{border-left:1px solid var(--line,#dde5e2)}
+.sfld-unit button.on{background:var(--brand,#4A6F64);color:#fff}
+.sfld-read{font-size:12px;color:var(--ink-soft,#56666E);min-height:16px}
+.sfld-err{font-size:12.5px;color:var(--red,#B02318);font-weight:600}
+.sfld-warn{grid-column:1 / -1;font-size:12.5px;color:var(--amber,#8A5206);background:var(--amber-tint,#fbf0de);border-radius:8px;padding:6px 10px}
+.sfld-one.bad input{border-color:var(--red,#B02318);box-shadow:0 0 0 2px var(--red-tint,#fbebea)}
+@media (max-width:640px){.sfld{grid-template-columns:1fr}.sfld-unit button{padding:0 8px}}

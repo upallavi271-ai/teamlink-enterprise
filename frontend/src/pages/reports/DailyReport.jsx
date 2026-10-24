@@ -6,6 +6,7 @@ import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import '../../components/followups/followups.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // RECRUITER DAILY REPORT (user spec 2026-10-03, C2; ATS change list §13).
@@ -26,7 +27,7 @@ import '../../components/followups/followups.css';
 
 const IST_TODAY = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const COL_LABEL = {
-  added: 'Added', calls: 'Calls', mails: 'Mails', followUps: 'Follow-ups', sentTl: 'Sent to TL', sentClient: 'Sent to client', interviews: 'Interviews', joined: 'Joined', pending: 'Pending',
+  added: 'Profiles added', calls: 'Calls', mails: 'Mails', followUps: 'Follow-ups', sentTl: 'Sent to TL', sentClient: 'Sent to client', interviews: 'Interviews', joined: 'Joined', pending: 'Pending',
 };
 const DAY_CARDS = ['added', 'calls', 'mails', 'whatsapp', 'followUps', 'missed', 'reviewed', 'sentTl', 'sentClient', 'interviews', 'attended', 'feedback', 'offers', 'joined', 'pending'];
 
@@ -101,9 +102,9 @@ function MailSettings() {
                   <span className="fux-inline">
                     <label className="fux-inline"><input type="checkbox" checked={m.on} onChange={(e) => save({ managerWeekly: { on: e.target.checked } })} /> {m.on ? 'On' : 'Off'}</label>
                     on
-                    <select value={m.weekday} onChange={(e) => save({ managerWeekly: { weekday: Number(e.target.value) } })}>
+                    <Combo value={m.weekday} onChange={(e) => save({ managerWeekly: { weekday: Number(e.target.value) } })}>
                       {s.weekdays.map((w) => <option key={w.value} value={w.value}>{w.label}</option>)}
-                    </select>
+                    </Combo>
                     at <input type="time" value={m.time} onChange={(e) => save({ managerWeekly: { time: e.target.value } })} />
                   </span>
                 ) : <span>{m.on ? `On, ${m.weekdayLabel} at ${m.time}` : 'Off'}</span>}
@@ -163,7 +164,7 @@ function DayRows({ rows }) {
       <div className="fux-section-title">What was done</div>
       <div className="fux-table-wrap">
         <table className="fux-table">
-          <thead><tr><th>Time</th><th>Person</th><th>What</th><th>Candidate</th><th>Job · Client</th><th>Detail</th></tr></thead>
+          <thead><tr><th>Time</th><th>Person</th><th>What</th><th>Candidate</th><th>Requirement · Client</th><th>Detail</th></tr></thead>
           <tbody>
             {page.slice.map((r, i) => (
               // eslint-disable-next-line react/no-array-index-key

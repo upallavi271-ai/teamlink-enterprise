@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
@@ -20,6 +21,7 @@ import {
 import LeaveBalancesTab from './leave/LeaveBalancesTab.jsx';
 import HolidayCalendar from './leave/HolidaysTab.jsx';
 import LeaveKpiCards from './leave/LeaveKpiCards.jsx';
+import PulseSyncTab from './leave/PulseSyncTab.jsx';
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -60,7 +62,7 @@ function ApprovalWorkflowModal({ requestId, onClose, onActed }) {
           <div className="wf-head">
             <div><span className="cell-muted">Leave ID:</span> <b>LV-{String(leave.id).slice(-4).toUpperCase()}</b></div>
           </div>
-          <LeaveFacts leave={leave} handoffs={data.handoffs} />
+          <LeaveFacts leave={leave} handoffs={data.handoffs} early={data.earlyLogout} source={data.source} pulse={data.pulse} />
 
           <SectionLabel style={{ marginTop: 14 }}>Approval Workflow</SectionLabel>
           <ApprovalChain workflow={wf} recordStatus={leave.status} />
@@ -164,7 +166,22 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
       .then((r) => setAvail(r.data.types || [])).catch(() => setAvail(null));
   }, [isHR, form.employeeId]);
   const a = (avail || []).find((t) => t.type === form.type);
-  const span = form.fromDate && form.toDate ? Math.max(1, Math.round((new Date(form.toDate) - new Date(form.fromDate)) / 86400000) + 1) : null;
+  // Sundays and company festival days are not counted (founder, 2026-10-15): the server says how many days
+  // of the chosen dates a leave really uses, and the Days box starts at that number.
+  const [count, setCount] = useState(null); // { calendarDays, countedDays, skipped: [{ date, reason }] }
+  useEffect(() => {
+    if (half || !form.fromDate || !form.toDate || form.toDate < form.fromDate) { setCount(null); return undefined; }
+    let alive = true;
+    api.get('/leave/day-count', { params: { from: form.fromDate, to: form.toDate } }).then((r) => {
+      if (!alive) return;
+      setCount(r.data);
+      setForm((f) => ({ ...f, days: r.data.countedDays }));
+    }).catch(() => { if (alive) setCount(null); });
+    return () => { alive = false; };
+  }, [form.fromDate, form.toDate, half]);
+  const calSpan = form.fromDate && form.toDate ? Math.max(1, Math.round((new Date(form.toDate) - new Date(form.fromDate)) / 86400000) + 1) : null;
+  const allOff = !!(count && count.calendarDays > 0 && count.countedDays === 0);
+  const span = count ? count.countedDays : calSpan;
   const days = half ? 0.5 : Number(form.days) || 0;
   const over = !!(a && a.limited && days > a.available);
 
@@ -172,6 +189,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
     setError('');
     if (!form.fromDate || (!half && !form.toDate)) { setError(half ? 'Choose the date.' : 'From and To dates are required.'); return; }
     if (!half && form.toDate < form.fromDate) { setError('To date cannot be before From date.'); return; }
+    if (allOff) { setError('These dates are all Sundays or company holidays, so no leave is needed for them.'); return; }
     if (!half && (days <= 0 || (span && days > span))) { setError(`Days must be between 0.5 and ${span || 1}.`); return; }
     if (over && !(canOverride && override)) { setError(`Not enough ${form.type} balance: ${a.available} day(s) available, ${days} requested.`); return; }
     try {
@@ -236,6 +254,13 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
         {!half && <div className="field"><label>Days</label><input type="number" min="0.5" step="0.5" max={span || undefined} value={form.days} onChange={(e) => setForm({ ...form, days: e.target.value })} /></div>}
         {half && <div className="field"><label>Days</label><input value="0.5" disabled /></div>}
       </div>
+      {!half && count && count.skipped.length > 0 && (
+        <div className="lvx-muted" style={{ marginBottom: 8 }}>
+          {allOff
+            ? 'These dates are all Sundays or company holidays, so no leave is needed.'
+            : <>Counted: <b>{count.countedDays}</b> day{count.countedDays === 1 ? '' : 's'} of {count.calendarDays}. Not counted: {count.skipped.map((s) => `${s.date.slice(8, 10)}-${s.date.slice(5, 7)} (${s.reason})`).join(', ')}.</>}
+        </div>
+      )}
       <div className="field"><label>Reason</label><textarea rows="2" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>
       {over && canOverride && (
         <label className="lvx-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -411,7 +436,8 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
   async function toggleReason(reason) { await api.put(`/leave/reasons/${reason.id}`, { active: !reason.active }); onReload(); }
 
   const scoped = requests.filter((r) => leaveMatches(r, filters));
-  const pending = scoped.filter((r) => r.status === 'Pending');
+  // Only genuinely pending requests are "pending" here; the rest (left, duplicate, old) are under Sync with Pulse > Old pending.
+  const pending = scoped.filter((r) => r.status === 'Pending' && (!r.pendingState || r.pendingState === 'genuine'));
   const departments = [...new Set(requests.map((r) => r.employee?.department).filter(Boolean))].sort();
 
   return (
@@ -623,7 +649,9 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
   const [requests, setRequests] = useState([]);
   const [types, setTypes] = useState([]);
   const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
-  const [openId, setOpenId] = useState(null);
+  // A notice / email link opens the approval card straight away: /leave?tab=requests&open=<id>
+  const [urlParams] = useSearchParams();
+  const [openId, setOpenId] = useState(urlParams.get('open') || null);
   const [error, setError] = useState('');
   useEffect(() => {
     api.get('/leave').then((res) => setRequests(res.data)).catch((e) => setError(e.response?.data?.error || 'Could not load leave requests'));
@@ -801,6 +829,9 @@ export default function Leave() {
   const [types, setTypes] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [reloadKey, setReloadKey] = useState(0);
+  const [urlTab] = useSearchParams();
+  const [tab, setTab] = useState(urlTab.get('tab') || 'dashboard');
+  const canSync = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'edit');
 
   useEffect(() => {
     api.get('/leave/types').then((res) => setTypes(res.data.filter((t) => t.active)));
@@ -816,6 +847,8 @@ export default function Leave() {
       <TabsPage
         title="Leave Management"
         subtitle={<>Signed in as: <b>{user?.name}</b></>}
+        value={tab}
+        onChange={setTab}
         head={<button className="btn btn-primary" onClick={() => setApplyOpen(true)}>Apply Leave</button>}
         banner={banner}
         tabs={[
@@ -825,6 +858,7 @@ export default function Leave() {
           { key: 'reports', label: 'Reports', element: <ReportsTab reloadKey={reloadKey} canExport={canExport} /> },
           // Managing holidays is a WRITE, so it follows the create permission
           // and not a role name — HR manages holidays, a view-only Manager does not.
+          ...(canSync ? [{ key: 'pulse', label: 'Sync with Pulse', element: <PulseSyncTab onChanged={() => setReloadKey((k) => k + 1)} /> }] : []),
           { key: 'holidays', label: 'Holidays', element: <HolidayCalendar canManage={canManageHolidays} canEdit={canEditHolidays} canExport={canExport} /> },
         ]}
       />

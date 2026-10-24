@@ -1,6 +1,8 @@
 // Shared CSV export used by the HRMS reporting screens (attendance, leave,
 // payroll, the HRMS dashboard). Every cell is quoted and inner quotes doubled so
 // commas, newlines and rupee amounts survive the round trip into Excel.
+import api from '../api';
+
 function encodeCell(value) {
   return `"${String(value ?? '').replace(/"/g, '""')}"`;
 }
@@ -10,6 +12,9 @@ export function toCsv(headers, rows) {
 }
 
 export function downloadCsv(filename, headers, rows) {
+  // A CSV built in the browser never touches the server, so an Internal HR login (utils/hrSuper.js) reports it here:
+  // the Super Admins are told. Anyone else: the server answers 204 and does nothing.
+  api.post('/admin/hr-sensitive/client-export', { name: filename, rows: Array.isArray(rows) ? rows.length : null, page: typeof window !== 'undefined' ? window.location.pathname : '' }).catch(() => {});
   const blob = new Blob([toCsv(headers, rows)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

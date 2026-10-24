@@ -92,3 +92,6 @@
   .ivx-cal-ev{font-size:10px;padding:2px 3px}
   .ivx-cal-head{font-size:10px;padding:4px 2px}
 }
+
+/* ---- Names fit (2026-10-17): candidate sub-line wraps (2 lines) instead of "..." ---- */
+.ivx-who .ivx-who-t div{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.25}

@@ -189,7 +189,7 @@ export default function Positions() {
                 <td className="cell-muted">{p.department || '—'}</td>
                 <td>
                   {p.holder
-                    ? <>{p.holder.name}{p.onNotice && <div className="small-muted">{p.freesOn ? `leaves ${fmt(p.freesOn)} - free after that` : 'on notice - no last day set'}</div>}</>
+                    ? <>{p.holder.name}{p.onNotice && <div className="small-muted">{p.freesOn ? `leaves ${fmt(p.freesOn)} - a replacement can join now` : 'on notice - no last day set'}</div>}</>
                     : <span className="status pending">Vacant</span>}
                 </td>
                 <td className="cell-muted">{p.holder ? fmt(p.holder.since) : '—'}</td>
@@ -238,7 +238,7 @@ export default function Positions() {
         >
           <form id="newPositionForm" onSubmit={create}>
             <label className="field">
-              <span>Position code *</span>
+              <span>Position code</span>
               <input
                 required
                 placeholder="MED-1"
@@ -305,7 +305,7 @@ export default function Positions() {
               </div>
             )}
             <label className="field">
-              <span>Employee *</span>
+              <span>Employee</span>
               <Combo
                 required
                 value={assignForm.employeeId}

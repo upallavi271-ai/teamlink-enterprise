@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
+import Combo from './Combo.jsx';
+import StatementCheck, { ImportSummary, ImportButtons } from '../pages/bank/StatementCheck.jsx';
+import { importPlan, retryPlan } from '../pages/bank/stmtStatus.js';
 
 // ---------------------------------------------------------------------------
 // ACCOUNTS — IMPORT ANY FILE
@@ -40,6 +43,9 @@ export default function AccountsImport({
   const [account, setAccount] = useState(bankAccountId);
   const [dedup, setDedup] = useState(true);
   const [autoPost, setAutoPost] = useState(true);
+  // Statements Matching: the server-side check of a bank statement ({ batchId, accountId, counts }), see pages/bank/StatementCheck.jsx
+  const [stmt, setStmt] = useState(null);
+  const [listKey, setListKey] = useState(0);
   const [createClients, setCreateClients] = useState(false);
 
   function form(f, choice) {
@@ -47,6 +53,7 @@ export default function AccountsImport({
     if (choice.kind) fd.append('kind', choice.kind);
     if (choice.sheet) fd.append('sheet', choice.sheet);
     if (choice.mapping) fd.append('mapping', JSON.stringify(choice.mapping));
+    if (account && (choice.kind || kind) === 'bank') fd.append('bankAccountId', account);
     fd.append('file', f);
     return fd;
   }
@@ -58,8 +65,13 @@ export default function AccountsImport({
       const res = await api.post('/accounts-import/preview', form(f, { kind, ...choice }));
       setPreview(res.data);
       setKind(res.data.kind);
-      if (res.data.kind === 'bank' && !account && res.data.summary.bankAccounts?.length) {
-        setAccount(res.data.summary.bankAccounts[0].id);
+      if (res.data.kind === 'bank' && res.data.summary.stmt) {
+        setStmt(res.data.summary.stmt);
+        setListKey((k) => k + 1);
+        if (!account) setAccount(res.data.summary.stmt.accountId);
+      } else {
+        setStmt(null);
+        if (res.data.kind === 'bank' && !account && res.data.summary.bankAccounts?.length) setAccount(res.data.summary.bankAccounts[0].id);
       }
     } catch (e) {
       setPreview(null);
@@ -91,7 +103,36 @@ export default function AccountsImport({
     read(file, { sheet: preview.sheet, mapping: next });
   };
 
+  // The account was changed: the same file is checked again against THAT account's lines (the server keeps the file's rows).
+  async function changeAccount(id) {
+    setAccount(id);
+    if (!stmt) return;
+    setErr(''); setBusy(true);
+    try {
+      const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/check`, { bankAccountId: id });
+      setStmt({ ...stmt, accountId: id, counts: res.data.counts });
+      setListKey((k) => k + 1);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'The file could not be checked against that account.');
+    } finally { setBusy(false); }
+  }
+
+  // Import New Transactions / Retry failed: the server saves from its own copy of the rows (only Not Imported rows and the rows you chose).
+  async function runStatement(mode) {
+    setErr(''); setBusy(true);
+    try {
+      const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/${mode === 'retry' ? 'retry' : 'import'}`, { bankAccountId: account || stmt.accountId, autoPost });
+      setResult(res.data);
+      setStmt((cur) => (cur ? { ...cur, counts: res.data.stmt } : cur));
+      setListKey((k) => k + 1);
+      if (onDone) onDone(res.data);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'The import did not finish. Lines already saved are never saved twice - you can press the button again.');
+    } finally { setBusy(false); }
+  }
+
   async function commit() {
+    if (preview?.kind === 'bank' && stmt) { runStatement('new'); return; }
     setErr(''); setBusy(true);
     try {
       const fd = form(file, { kind: preview.kind, sheet: preview.sheet, mapping: currentMapping() });
@@ -110,18 +151,45 @@ export default function AccountsImport({
   }
 
   if (result) {
+    const counts = stmt?.counts || result.stmt;
+    const rp = retryPlan(counts);
     return (
-      <Modal title="Import finished" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Done</button>}>
-        <div className="notice">
-          <span>
-            <b>{result.imported}</b> {result.kind === 'bank' ? 'statement line(s)' : result.kind === 'expenses' ? 'expense(s)' : 'invoice(s)'} imported from <b>{file?.name}</b>.
-            {result.duplicates > 0 && <> {result.duplicates} already on file — skipped, nothing overwritten.</>}
-          </span>
-        </div>
+      <Modal
+        wide
+        title="Import finished"
+        onClose={onClose}
+        footer={(
+          <>
+            {result.kind === 'bank' && rp.canRetry && <button className="btn" disabled={busy} onClick={() => runStatement('retry')} title="Try again only the rows that failed">{busy ? 'Working…' : rp.label}</button>}
+            <button className="btn btn-primary" onClick={onClose}>Done</button>
+          </>
+        )}
+      >
+        {err && <div className="notice amber" style={{ marginBottom: 10 }}><span>{err}</span></div>}
+        {result.kind === 'bank' && counts ? (
+          <>
+            <div className="notice">
+              <span>
+                <b>{counts.newlyImported}</b> new statement line(s) imported from <b>{file?.name}</b>.
+                {counts.alreadyImported > 0 && <> {counts.alreadyImported} were already imported — skipped, nothing changed.</>}
+                {counts.failed > 0 && <> <b>{counts.failed} failed</b> — the reason is shown against each one below.</>}
+              </span>
+            </div>
+            <ImportSummary counts={counts} />
+            <StatementCheck batchId={stmt?.batchId || result.uploadBatchId} counts={counts} onCounts={(c) => setStmt((cur) => (cur ? { ...cur, counts: c } : cur))} refreshKey={listKey} canDecide={false} initialFilter={counts.failed > 0 ? 'Failed' : (counts.newlyImported > 0 ? 'Imported' : '')} />
+          </>
+        ) : (
+          <div className="notice">
+            <span>
+              <b>{result.imported}</b> {result.kind === 'bank' ? 'statement line(s)' : result.kind === 'expenses' ? 'expense(s)' : 'invoice(s)'} imported from <b>{file?.name}</b>.
+              {result.duplicates > 0 && <> {result.duplicates} already on file — skipped, nothing overwritten.</>}
+            </span>
+          </div>
+        )}
         {result.kind === 'bank' && result.summary && (
           <div className="notice" role="status" style={{ marginTop: 10 }}>
             <span>
-              <b>Imported {result.summary.imported}</b> · Matched {result.summary.matched} · Not matched yet {result.summary.unmatched} · Already on file {result.summary.duplicate} · Could not read {result.summary.failed}
+              <b>Matching of the new lines:</b> matched {result.summary.matched} · not matched yet {result.summary.unmatched}
               {result.summary.needsReview > 0 && <> · <b>Needs your review {result.summary.needsReview}</b></>}
             </span>
             {result.summary.needsReview > 0 && onReview && (
@@ -144,7 +212,7 @@ export default function AccountsImport({
         {result.balanceCheck && !result.balanceCheck.checked && result.balanceCheck.limitation && (
           <div className="small-muted" style={{ marginTop: 8 }}>{result.balanceCheck.limitation}</div>
         )}
-        {(result.failedRows?.length > 0) && (
+        {(result.failedRows?.length > 0 && !(result.kind === 'bank' && counts)) && (
           <details open style={{ marginTop: 10 }}>
             <summary style={{ cursor: 'pointer', fontWeight: 600 }}>{result.failedRows.length} row(s) were NOT imported — here is why</summary>
             <ul className="small-muted" style={{ margin: '6px 0 0 18px', lineHeight: 1.6 }}>
@@ -165,6 +233,7 @@ export default function AccountsImport({
         <ul className="small-muted" style={{ margin: '10px 0 0 18px', lineHeight: 1.7 }}>
           {result.value != null && <li>Value {inr(result.value)}.</li>}
           {result.openingSetTo != null && <li>Opening balance worked out from the statement: {inr(result.openingSetTo)}.</li>}
+          {result.kind === 'bank' && result.imported > 0 && <li><b>{(result.summary && result.summary.matched) || 0} matched automatically, {result.suggested || 0} need your OK, {Math.max(0, ((result.summary && result.summary.unmatched) || 0) - (result.suggested || 0))} not recognised</b>{result.autoReconcileOn === false ? ' (Auto-reconcile is OFF, so nothing was matched by itself)' : ''} - see Bank &amp; Reconciliation, Auto-Reconcile.</li>}
           {result.autoPosted > 0 && <li>{result.autoPosted} credit(s) posted against client invoices — each can be undone on the Bank screen.</li>}
           {result.kind === 'bank' && result.loansLinked > 0 && <li>{result.loansLinked} hand-loan line(s) filed against the person, with the line as proof.</li>}
           {result.kind === 'bank' && result.billsFiled > 0 && <li>{result.billsFiled} office bill(s) filed or settled, with the line as proof.</li>}
@@ -181,6 +250,8 @@ export default function AccountsImport({
   const s = preview?.summary || {};
   const cols = preview ? SAMPLE_COLUMNS[preview.kind] : [];
   const importable = preview && preview.permitted && s.rows > 0;
+  const checking = preview?.kind === 'bank' && !!stmt;
+  const plan = importPlan(stmt?.counts);
 
   return (
     <Modal
@@ -190,9 +261,13 @@ export default function AccountsImport({
       footer={(
         <>
           <button className="btn" onClick={onClose}>Cancel</button>
-          <button className="btn btn-primary" disabled={busy || !importable} onClick={commit}>
-            {busy ? 'Working…' : importable ? `Import ${s.rows} line${s.rows === 1 ? '' : 's'}` : 'Import'}
-          </button>
+          {checking ? (
+            <ImportButtons counts={stmt.counts} busy={busy || !preview.permitted} onImport={commit} showImport />
+          ) : (
+            <button className="btn btn-primary" disabled={busy || !importable} onClick={commit}>
+              {busy ? 'Working…' : importable ? `Import ${s.rows} line${s.rows === 1 ? '' : 's'}` : 'Import'}
+            </button>
+          )}
         </>
       )}
     >
@@ -225,15 +300,15 @@ export default function AccountsImport({
         <>
           <div style={ROW}>
             <label className="field"><span>This file is</span>
-              <select value={preview.kind} disabled={busy} onChange={(e) => { setKind(e.target.value); read(file, { kind: e.target.value, sheet: preview.sheet, mapping: null }); }}>
+              <Combo value={preview.kind} disabled={busy} onChange={(e) => { setKind(e.target.value); read(file, { kind: e.target.value, sheet: preview.sheet, mapping: null }); }}>
                 {preview.kinds.map((k) => <option key={k.id} value={k.id}>{k.label}</option>)}
-              </select>
+              </Combo>
             </label>
             {preview.sheets.length > 1 && (
               <label className="field"><span>Sheet</span>
-                <select value={preview.sheet} disabled={busy} onChange={(e) => read(file, { sheet: e.target.value, mapping: null })}>
+                <Combo value={preview.sheet} disabled={busy} onChange={(e) => read(file, { sheet: e.target.value, mapping: null })}>
                   {preview.sheets.map((n) => <option key={n}>{n}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
             <div className="small-muted" style={{ alignSelf: 'end', paddingBottom: 8 }}>
@@ -247,6 +322,12 @@ export default function AccountsImport({
             </div>
           )}
 
+          {checking && (
+            <>
+              <StatementCheck batchId={stmt.batchId} counts={stmt.counts} onCounts={(c) => setStmt((cur) => (cur ? { ...cur, counts: c } : cur))} refreshKey={listKey} canDecide={preview.permitted} />
+              <div className={`notice${plan.canImport ? '' : ' amber'}`} style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ flex: '1 1 260px' }}>{plan.note} Nothing is saved until you press <b>Import New Transactions</b>.</span>{preview.permitted && <ImportButtons counts={stmt.counts} busy={busy} onImport={commit} showImport />}</div>
+            </>
+          )}
           <div className="notice" style={{ marginBottom: 8 }}>
             <span>
               <b>{s.rows} line(s) ready</b>
@@ -269,7 +350,7 @@ export default function AccountsImport({
           {preview.kind === 'bank' && s.balanceCheck && !s.balanceCheck.checked && s.balanceCheck.limitation && (
             <div className="small-muted" style={{ marginBottom: 8 }}>{s.balanceCheck.limitation}</div>
           )}
-          {preview.kind === 'bank' && (s.failed > 0 || s.duplicates > 0) && (
+          {preview.kind === 'bank' && !checking && (s.failed > 0 || s.duplicates > 0) && (
             <div className="notice amber" style={{ marginBottom: 8 }}>
               <span>
                 {s.newLines} new line(s) · {s.duplicates} already on file (skipped) · {s.failed} row(s) cannot be read
@@ -294,17 +375,17 @@ export default function AccountsImport({
               <>
                 {s.bankAccounts?.length > 0 && (
                   <label className="field"><span>Into bank account</span>
-                    <select value={account} onChange={(e) => setAccount(e.target.value)}>
+                    <Combo value={account} disabled={busy} onChange={(e) => changeAccount(e.target.value)}>
                       {s.bankAccounts.map((a) => (
                         <option key={a.id} value={a.id}>{a.bank}{a.accNo ? ` · ****${String(a.accNo).slice(-4)}` : ''}{a.name ? ` · ${a.name}` : ''}</option>
                       ))}
-                    </select>
+                    </Combo>
                   </label>
                 )}
                 <label style={CHECK}><input type="checkbox" style={BOX} checked={autoPost} onChange={(e) => setAutoPost(e.target.checked)} /> Post credits that name a client straight to their invoices</label>
               </>
             )}
-            <label style={CHECK}><input type="checkbox" style={BOX} checked={dedup} onChange={(e) => setDedup(e.target.checked)} /> Skip lines already on file</label>
+            {!checking && <label style={CHECK}><input type="checkbox" style={BOX} checked={dedup} onChange={(e) => setDedup(e.target.checked)} /> Skip lines already on file</label>}
             {preview.kind === 'invoices' && preview.clients?.unknown?.length > 0 && (
               <label style={CHECK}>
                 <input type="checkbox" style={BOX} checked={createClients} onChange={(e) => setCreateClients(e.target.checked)} />
@@ -320,11 +401,11 @@ export default function AccountsImport({
                 const value = m.columns.join(',');
                 return (
                   <label className="field" key={m.field}><span>{m.label}</span>
-                    <select value={value} disabled={busy} onChange={(e) => remap(m.field, e.target.value)}>
+                    <Combo value={value} disabled={busy} onChange={(e) => remap(m.field, e.target.value)}>
                       <option value="">— not in this file —</option>
                       {m.columns.length > 1 && <option value={value}>{m.columnNames.join(' + ')}</option>}
                       {preview.columns.map((c, i) => <option key={i} value={String(i)}>{c}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                 );
               })}

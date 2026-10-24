@@ -171,7 +171,7 @@ export default function EmployeeBulkImport({ onImported }) {
         <div className="empio-fields">
           {spec.fields.map((f) => (
             <span key={f.key} className={`empio-chip${f.required ? ' req' : ''}`} title={f.rule}>
-              {f.label}{f.required ? ' *' : ''}
+              {f.label}{f.required ? ' (needed)' : ''}
             </span>
           ))}
         </div>

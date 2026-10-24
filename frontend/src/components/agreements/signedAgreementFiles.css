@@ -1,0 +1,26 @@
+/* Signed agreement files - scoped under .saf* only */
+.saf-card { padding: 16px; }
+.saf-head { font-size: 13px; margin: 0 0 8px; }
+.saf-list { list-style: none; margin: 0; padding: 0; }
+.saf-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 0; border-top: 1px solid var(--line); }
+.saf-row:first-child { border-top: 0; }
+.saf-info { min-width: 0; flex: 1 1 auto; }
+.saf-label { font-weight: 600; font-size: 13.5px; color: var(--ink); overflow-wrap: anywhere; }
+.saf-meta { font-size: 12px; color: var(--ink-soft); margin-top: 2px; }
+.saf-tag { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: var(--line-soft); font-size: 11.5px; }
+.saf-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: 0 0 auto; }
+.saf-pop { position: fixed; z-index: 1200; background: var(--paper-raised, #fff); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0, 0, 0, .18); max-height: 60vh; overflow: auto; box-sizing: border-box; text-align: left; white-space: normal; }
+.saf-pop-head { padding: 10px 12px 4px; font-size: 12px; font-weight: 700; color: var(--ink-soft); }
+.saf-pop .saf-list { padding: 0 12px 6px; }
+@media (max-width: 560px) {
+  .saf-row { flex-direction: column; align-items: stretch; }
+  .saf-actions { justify-content: flex-start; }
+}
+/* the one "View agreement" button + its window */
+.vag-btn { white-space: nowrap; flex: 0 0 auto; }
+.vag-title { display: inline-flex; align-items: center; gap: 8px; }
+.vag-badge { display: inline-block; min-width: 20px; padding: 1px 7px; border-radius: 999px; background: var(--brand-tint, #e8f0fe); color: var(--brand-ink, #1c3d8f); font-size: 12px; font-weight: 700; text-align: center; }
+.vag-body { white-space: normal; }
+.vag-none { margin: 4px 0 12px; font-size: 14.5px; font-weight: 600; color: var(--ink); }
+.vag-up { margin: 0 0 4px; }
+.vag-esign { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

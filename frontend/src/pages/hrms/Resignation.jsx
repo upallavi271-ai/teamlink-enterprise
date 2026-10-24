@@ -10,6 +10,8 @@ import Combo from '../../components/Combo.jsx';
 import { ComposeModal, Field, AiAssist, useSubmit, CheckLine } from '../../components/ComposeForm.jsx';
 import ApprovalChain, { ApprovalChainLine, fmtDateTime } from '../../components/ApprovalChain.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
+import { useSearchParams } from 'react-router-dom';
+import ExitApprovals, { ExitRecordModal } from './ExitCenter.jsx';
 import './Resignation.css';
 
 // ---------------------------------------------------------------------------
@@ -106,11 +108,11 @@ function RO({ label, value }) {
 }
 
 // The picker with a list icon — the shared searchable Combo underneath.
-function LorPicker({ value, onChange, invalid, children, placeholder }) {
+function LorPicker({ value, onChange, invalid, children, placeholder, custom }) {
   return (
     <div className={`rsg-lor-pick${invalid ? ' is-invalid' : ''}`}>
       <span className="rsg-lor-pick-ic"><IconList /></span>
-      <Combo className="rsg-lor-combo" value={value} onChange={onChange} placeholder={placeholder} aria-invalid={invalid || undefined}>
+      <Combo className="rsg-lor-combo" allowCustom={!!custom} value={value} onChange={onChange} placeholder={placeholder} aria-invalid={invalid || undefined}>
         {children}
       </Combo>
     </div>
@@ -245,7 +247,7 @@ function ResignationFormModal({ isHR, employees, me, onClose, onSaved }) {
       <form className="rsg-lor" onSubmit={(e) => { e.preventDefault(); submit(); }} noValidate>
         {isHR && (
           <div className={`field rsg-lor-who${errs.employee ? ' is-invalid' : ''}`}>
-            <label>Employee<span className="rsg-lor-req"> *</span></label>
+            <label>Employee</label>
             <Combo value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
               <option value="">Select employee</option>
               {employees.map((e) => <option key={e.id} value={e.id}>{e.name}{e.employeeCode ? ` · ${e.employeeCode}` : ''}</option>)}
@@ -285,15 +287,15 @@ function ResignationFormModal({ isHR, employees, me, onClose, onSaved }) {
           <p className="rsg-lor-line">The reason for my resignation is as follows:</p>
           <div className="rsg-lor-two">
             <div className={`field${errs.reason ? ' is-invalid' : ''}`}>
-              <label>Reason for resignation<span className="rsg-lor-req"> *</span></label>
-              <LorPicker value={form.reason} onChange={(e) => set('reason', e.target.value)} invalid={!!errs.reason}>
+              <label>Reason for resignation</label>
+              <LorPicker custom value={form.reason} onChange={(e) => set('reason', e.target.value)} invalid={!!errs.reason}>
                 <option value="">Select reason</option>
                 {(cfg?.reasons || []).map((r) => <option key={r} value={r}>{r}</option>)}
               </LorPicker>
               <FieldError msg={errs.reason} />
             </div>
             <div className={`field${errs.submittingTo ? ' is-invalid' : ''}`}>
-              <label>Resignation Submitting To<span className="rsg-lor-req"> *</span></label>
+              <label>Resignation Submitting To</label>
               <LorPicker value={form.submittingToUserId} onChange={(e) => set('submittingToUserId', e.target.value)} invalid={!!errs.submittingTo}>
                 <option value="">Select person</option>
                 {(cfg?.approvers || []).map((a) => <option key={a.userId} value={a.userId}>{a.name} — {a.label}</option>)}
@@ -303,7 +305,7 @@ function ResignationFormModal({ isHR, employees, me, onClose, onSaved }) {
             </div>
           </div>
           <div className={`field${errs.comments ? ' is-invalid' : ''}`}>
-            <label htmlFor="rsg-describe">Describe reason{form.reason === 'Other' && <span className="rsg-lor-req"> *</span>}</label>
+            <label htmlFor="rsg-describe">Describe reason</label>
             <textarea id="rsg-describe" rows="4" value={form.comments} onChange={(e) => set('comments', e.target.value)} placeholder="Anything you want your approvers to know" />
             <FieldError msg={errs.comments} />
           </div>
@@ -561,7 +563,7 @@ function FormSettingsModal({ onClose }) {
   );
 }
 
-export default function Resignation() {
+function ResignationList({ onOpenExit }) {
   const { user } = useAuth();
   // isHR here DRAWS WRITE CONTROLS, so it asks the write permission and not
   // only the read one. Approving is NOT one of them: approve / reject lives in
@@ -733,9 +735,9 @@ export default function Resignation() {
             )}
             <label className="lf-sort">
               Sort
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
                 {RSG_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
           </PeopleFilterBar>
           {shown.length === 0 ? <ListEmpty lf={pfLike} noun="resignations" title="No resignations on file." /> : page.slice.map((r) => (
@@ -769,6 +771,7 @@ export default function Resignation() {
               <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
                 <span className={`status ${statusCls(r.status)}`}>{r.status}</span>
                 <button className="btn btn-sm" onClick={() => setOpenId(r.id)}>{r.workflow && (r.workflow.currentOwnerUserId === user?.id) ? 'Review' : 'View'}</button>
+                {onOpenExit && <button className="btn btn-sm" onClick={() => onOpenExit(r.id)}>Exit record</button>}
                 {isHR && SERVING.includes(r.status) && <button className="btn btn-sm" onClick={() => relieve(r)}>Relieve</button>}
               </span>
             </AssignRow>
@@ -805,6 +808,46 @@ export default function Resignation() {
         </PanelPad>
         </div>
       </TwoCol>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The Resignation / Exit tab: the resignations list as it always was, plus the "Exit approvals" tab
+// (HRMS spec item 6: who is waiting, reminders, the exit record, Edit exit date). No new sidebar entry.
+// A notification links straight to one exit: ?tab=resignation&exit=<id>.
+// ---------------------------------------------------------------------------
+export default function Resignation() {
+  const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+  const urlExit = params.get('exit');
+  const [view, setView] = useState(urlExit || params.get('view') === 'exits' ? 'exits' : 'list');
+  const [openExit, setOpenExit] = useState(urlExit || null);
+  const [waiting, setWaiting] = useState(null);
+  const isDesk = hasHrmsAdmin(user) && canDecideServices(user);
+
+  useEffect(() => {
+    if (urlExit) { setView('exits'); setOpenExit(urlExit); }
+  }, [urlExit]);
+  useEffect(() => {
+    api.get('/resignations/exit/approvals').then((r) => setWaiting(r.data.counts.waiting)).catch(() => setWaiting(null));
+  }, [view, openExit]);
+
+  function openRecord(id) {
+    setOpenExit(id);
+    if (!id && urlExit) { const next = new URLSearchParams(params); next.delete('exit'); setParams(next, { replace: true }); }
+  }
+  return (
+    <div>
+      <div className="tabbar" style={{ marginBottom: 10 }}>
+        <button className={'tab-btn' + (view === 'list' ? ' active' : '')} onClick={() => setView('list')}>Resignations</button>
+        <button className={'tab-btn' + (view === 'exits' ? ' active' : '')} onClick={() => setView('exits')}>
+          Exit approvals{waiting ? ` (${waiting} waiting)` : ''}
+        </button>
+      </div>
+      {view === 'list' && <ResignationList onOpenExit={(id) => { setView('exits'); setOpenExit(id); }} />}
+      {view === 'exits' && <ExitApprovals openId={openExit} onOpen={openRecord} isDesk={isDesk} />}
+      {view === 'list' && openExit && <ExitRecordModal id={openExit} onClose={() => openRecord(null)} onChanged={() => {}} />}
     </div>
   );
 }

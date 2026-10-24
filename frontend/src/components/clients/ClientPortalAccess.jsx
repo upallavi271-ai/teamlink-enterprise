@@ -263,7 +263,7 @@ export default function ClientPortalAccess({ clientId }) {
             <div className="tlpa-label">What can they do?</div>
             <PortalTickList list={permList} presets={types} needsView={needsView} value={form.portalPerms} onChange={(v) => { setForm({ ...form, portalPerms: v }); setFormError(''); }} />
             {!rights.approve && (
-              <label>Why (optional)<input value={form.reason} placeholder="e.g. hiring manager for the Java jobs" onChange={(e) => setForm({ ...form, reason: e.target.value })} /></label>
+              <label>Why (optional)<input value={form.reason} placeholder="e.g. hiring manager for the Java requirements" onChange={(e) => setForm({ ...form, reason: e.target.value })} /></label>
             )}
             {(formError || error) && <div className="notice red" role="alert"><span>{formError || error}</span></div>}
           </div>

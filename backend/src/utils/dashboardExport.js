@@ -72,7 +72,7 @@ function atsTiles(b) {
       t && { id: 'tasks-today', label: 'Due today', value: t.total, zero: 'Nothing due today' },
       iv && { id: 'iv-today', label: 'Interviews today', value: iv.total, drill: iv.drill, zero: iv.zero },
       fb && { id: 'feedback', label: 'Interview done, no feedback', value: fb.total, drill: fb.drill, zero: fb.zero },
-      jobs && { id: 'my-jobs', label: 'My open jobs', value: jobs.total, drill: jobs.drill, zero: jobs.zero },
+      jobs && { id: 'my-jobs', label: 'My open requirements', value: jobs.total, drill: jobs.drill, zero: jobs.zero },
       tg && { id: 'my-joins', label: 'Joinings this month', value: tg.value, drill: tg.drill, zero: tg.zero, sub: tg.target ? `of ${tg.target} target` : null },
     ].filter(Boolean);
   }
@@ -97,7 +97,7 @@ function atsAttention(b) {
   } else if (L === 'bde') {
     const fb = ws.find((w) => w.id === 'client-fb'); const un = ws.find((w) => w.id === 'unsigned');
     if (fb && fb.total) it(fb.title, fb.total, 'Sent to the client, no reply yet', fb.drill);
-    if (un && un.total) it('Clients with unsigned agreement', un.total, 'Open jobs, agreement not signed', un.drill);
+    if (un && un.total) it('Clients with unsigned agreement', un.total, 'Open requirements, agreement not signed', un.drill);
   }
   arr(b.extras).filter((x) => x && !x.button && x.value > 0).forEach((x) => it(x.label, x.value, null, x.drill));
   return { items: out, more: lines ? Number(lines.more) || 0 : 0 };
@@ -107,7 +107,7 @@ function filterRows(b) {
   const opts = b.filterOptions || {};
   const labelOf = (k, v) => ((arr(opts[k]).find((o) => String(o.value) === String(v)) || {}).label) || v;
   const names = {
-    department: 'Department', clientId: 'Client', tl: 'Team lead', recruiter: 'Recruiter', bde: 'Client manager (BDE)', requirementId: 'Job', hiring: 'Hiring type', priority: 'Priority', source: 'Source',
+    department: 'Department', clientId: 'Client', tl: 'Team lead', recruiter: 'Recruiter', bde: 'Client manager (BDE)', requirementId: 'Requirement', hiring: 'Hiring type', priority: 'Priority', source: 'Source',
   };
   const out = [];
   const p = b.period || {};
@@ -133,7 +133,7 @@ async function atsHomeBook(user, b) {
   S.add('About', 'Department', b.department || 'All departments');
   S.add('About', 'Dates', p.key === 'all' ? 'Any time' : `${p.from} to ${p.to}`, p.word || '');
   S.add('About', 'Numbers as of', b.asOf ? String(b.asOf).slice(0, 19).replace('T', ' ') : '', 'Server time');
-  S.add('About', 'What the table columns count', 'As of today / the dates / in total', 'Open jobs, In process, Selected and Late are as of today. Interviews and Joined (the dates) follow the date range. Joined (in total) is everyone marked Joined, whatever the joining date.');
+  S.add('About', 'What the table columns count', 'As of today / the dates / in total', 'Open requirements, In process, Selected and Late are as of today. Interviews and Joined (the dates) follow the date range. Joined (in total) is everyone marked Joined, whatever the joining date.');
 
   const tiles = atsTiles(b);
   tiles.forEach((t) => {
@@ -155,7 +155,7 @@ async function atsHomeBook(user, b) {
     if (w.type === 'target') S.add(w.title || 'Target', 'Done', num(w.value), w.target ? `Target ${w.target}` : (w.noTarget || ''));
     if (w.type === 'cleanup') {
       S.add('Data cleanup', `Not moving (${w.days}+ days)`, num(w.stale), '');
-      S.add('Data cleanup', 'Old jobs, no recruiter', num(w.oldUnassigned), '');
+      S.add('Data cleanup', 'Old requirements, no recruiter', num(w.oldUnassigned), '');
       if (w.joinedNoDate) S.add('Data cleanup', 'Joined, no joining date', num(w.joinedNoDate), 'In the Joined total, in no month');
       if (w.joinedWrongDate) S.add('Data cleanup', 'Joining date looks wrong', num(w.joinedWrongDate), 'A year like 2203 or 1954');
       if (w.health) S.add('Data cleanup', 'System problems', num(w.health.problems), '');
@@ -197,7 +197,7 @@ async function atsHomeBook(user, b) {
   // ---- Team leads (and their recruiters) ----
   if (tlsList && arr(tlsList.rows).length) {
     const cols = ['openJobs', 'inProcess', 'interviews', 'selected', 'joined', 'joinedTotal', 'late'];
-    const TLH = ['Open jobs (as of today)', 'In process (as of today)', `Interviews (${p.word || 'in the dates picked'})`, 'Selected (as of today)', `Joined (${p.word || 'in the dates picked'})`, 'Joined (in total)', 'Late (as of today)'];
+    const TLH = ['Open requirements (as of today)', 'In process (as of today)', `Interviews (${p.word || 'in the dates picked'})`, 'Selected (as of today)', `Joined (${p.word || 'in the dates picked'})`, 'Joined (in total)', 'Late (as of today)'];
     sheets.push({
       name: 'Team leads',
       headers: ['Team lead', 'Department', 'Recruiters', ...TLH],
@@ -219,7 +219,7 @@ async function atsHomeBook(user, b) {
   let jobsSheet = false;
   if (ws.some((w) => w.type === 'openjobs') && b.kx) {
     const jobs = await H.homeList(user, b, '__jobs', { d_size: 100 }).catch(() => null);
-    if (jobs && jobs.total) { const l = listSheet(H, 'Open jobs', { kind: 'jobs', _all: jobs._all }); sheets.push(l.sheet); jobsSheet = true; if (l.cut) notes.push(['Open jobs', l.total]); }
+    if (jobs && jobs.total) { const l = listSheet(H, 'Open requirements', { kind: 'jobs', _all: jobs._all }); sheets.push(l.sheet); jobsSheet = true; if (l.cut) notes.push(['Open requirements', l.total]); }
   }
 
   // ---- the lists behind the numbers ----
@@ -376,7 +376,7 @@ function accountsBook(d) {
   });
   sheets.push({
     name: 'Invoices',
-    headers: ['Invoice', 'Date', 'Due', 'Client', 'Candidate', 'Job', 'Employee', 'Account manager', 'Department', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received', 'Pending', 'Status', 'Days overdue', 'Last payment', 'Proof'],
+    headers: ['Invoice', 'Date', 'Due', 'Client', 'Candidate', 'Requirement', 'Employee', 'Account manager', 'Department', 'Before GST', 'GST', 'After GST', 'TDS', 'Receivable', 'Received', 'Pending', 'Status', 'Days overdue', 'Last payment', 'Proof'],
     rows: arr(d.clients).flatMap((c) => arr(c.invoices)).map((i) => [i.invoiceNumber || '', dayOf(i.invoiceDate), dayOf(i.dueDate), i.client, i.candidateName || '', i.role || '', i.employee || '', i.accountManager || '', i.department || '', r(i.billing), r(i.gst), r(i.invoiceValue), r(i.tds), r(i.receivable), r(i.received), r(i.pending), i.status, r(i.daysOverdue), dayOf(i.lastPayment), i.proof || '']),
   });
   const od = arr(s.overdue.rows);

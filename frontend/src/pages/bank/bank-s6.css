@@ -190,6 +190,17 @@
 .s6-kv-row > span:first-child { flex: 0 0 150px; color: var(--s6-ink-soft); }
 .s6-kv-row > span:last-child { flex: 1; min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 
+/* the Bank statement line window (BankLineModal.jsx): dashed separators, the blue box and the clickable rows */
+.s6-kv.dashed .s6-kv-row { border-bottom: 1px dashed #b9c4d6; }
+.s6-kv.dashed .s6-kv-row:last-child { border-bottom: 0; }
+.bkl-modal { box-shadow: 0 18px 48px rgba(22, 32, 43, .2), 0 2px 6px rgba(22, 32, 43, .08); }
+.bkl-note { align-items: flex-start; line-height: 1.5; }
+.bkl-note.blue { border-color: #9db8dd; background: #f2f6fc; }
+.bks-row { cursor: pointer; }
+.bks-row:hover td { background: #f4f7fc; }
+.bks-row:focus-visible { outline: 2px solid var(--s6-navy); outline-offset: -2px; }
+.bks-row:focus-visible td { background: #eef3fb; }
+
 /* names that need adding (the amber box) */
 .s6-name-pills { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; margin-top: 8px; }
 .s6-name-pills .s6-pill-btn { height: 30px; font-size: 12.5px; }

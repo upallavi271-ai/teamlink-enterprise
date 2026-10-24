@@ -1,0 +1,118 @@
+/* Omni-Channel Dashboard + Analytics extras. Every selector is scoped under .gsx (the prototype's own classes live in ../gs.css). */
+
+/* ---- "How it works" strip ---- */
+.gsx .ov-flow{margin-bottom:16px;padding:14px 16px}
+.gsx .ov-flow-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.gsx .ov-flow-title{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:13px;font-weight:800}
+.gsx .ov-flow-title small{display:block;font-size:9px;font-weight:600;color:var(--muted);margin-top:2px}
+.gsx .ov-flow-next{font-size:10px;color:var(--ink);background:var(--accent-tint);border:1px solid #cdebd7;border-radius:10px;padding:7px 10px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.gsx .ov-flow-next b{color:var(--green-2)}
+.gsx .ov-steps{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(112px,1fr);gap:8px;overflow-x:auto;padding:2px 2px 8px}
+.gsx .ov-step{position:relative;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:9px 9px 10px;display:flex;flex-direction:column;gap:5px;cursor:pointer;color:var(--ink);transition:.15s ease;min-width:0}
+.gsx .ov-step:hover{transform:translateY(-2px);box-shadow:var(--shadow-sm);border-color:#bcdfc9}
+.gsx .ov-step[disabled]{cursor:default;opacity:.85}
+.gsx .ov-step[disabled]:hover{transform:none;box-shadow:none;border-color:var(--line)}
+.gsx .ov-step:not(:last-child)::after{content:'\203A';position:absolute;right:-9px;top:14px;font-size:14px;color:#b6c2bb;z-index:1;pointer-events:none}
+.gsx .ov-step-top{display:flex;align-items:center;gap:6px}
+.gsx .ov-num{flex:0 0 19px;height:19px;border-radius:50%;display:grid;place-items:center;font-size:9px;font-weight:900;background:#eef2f0;color:#6d7871}
+.gsx .ov-step.ok .ov-num{background:var(--green-3);color:var(--green-2)}
+.gsx .ov-step.warn .ov-num{background:#fff6df;color:#9b6d12}
+.gsx .ov-step.warn{border-color:#f0e0b4}
+.gsx .ov-step.todo{border-style:dashed}
+.gsx .ov-step b{font-size:9.5px;line-height:1.25;overflow-wrap:anywhere}
+.gsx .ov-count{font-family:'Space Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:15px;font-weight:800}
+.gsx .ov-count small{font-family:'Inter',ui-sans-serif,system-ui,sans-serif;font-size:8px;font-weight:700;color:var(--muted);margin-left:4px}
+.gsx .ov-hint{font-size:8.5px;line-height:1.4;color:#6f7b73;overflow-wrap:anywhere}
+.gsx .ov-step.warn .ov-hint{color:#8a6410}
+.gsx .ov-end{font-size:7.5px;font-weight:900;letter-spacing:.12em;color:var(--green-2);text-transform:uppercase}
+.gsx .ov-flow-detail{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 18px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+.gsx .ov-flow-detail div{font-size:10px;line-height:1.5;color:#55635b}
+.gsx .ov-flow-detail b{color:var(--ink)}
+.gsx .ov-flow-detail em{display:block;font-style:normal;font-size:9px;color:var(--muted)}
+
+/* ---- dashboard bits ---- */
+.gsx .ov-range-note{font-size:9px;color:#8b968f;margin:0 0 8px;text-align:right}
+.gsx .ov-kpi-meta{display:block;position:relative;z-index:1;min-width:0}
+.gsx .ov-kpi-sub{display:block;font-size:8.5px;font-weight:600;color:#8b968f;margin-top:3px;line-height:1.35}
+.gsx .ov-kpi-sub.first{margin-top:0}
+.gsx .kpi-meta.down{color:#c25058}
+.gsx .kpi-meta.flat{color:#8b968f}
+.gsx .kpi-value.small{font-size:17px;line-height:30px}
+.gsx .chart-shell .chart-empty{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;font-size:10px;color:#8b968f;text-align:center;padding:0 30px}
+.gsx .chart-shell .chart-empty span{background:rgba(255,255,255,.88);border-radius:9px;padding:6px 10px}
+.gsx .ov-state-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.gsx .status-dot.ov-s-off{color:#7a857f}
+.gsx .status-dot.ov-s-off i{background:#a9b4ae;box-shadow:0 0 0 3px #eef1ef}
+.gsx .status-dot.ov-s-warn{color:#9b6d12}
+.gsx .status-dot.ov-s-warn i{background:#e8a93a;box-shadow:0 0 0 3px #fdf1de}
+.gsx .status-dot.ov-s-test{color:#9b6d12}
+.gsx .status-dot.ov-s-test i{background:#e8a93a;box-shadow:0 0 0 3px #fdf1de}
+.gsx .status-dot.ov-s-phone{color:#4d7ddb}
+.gsx .status-dot.ov-s-phone i{background:#4d7ddb;box-shadow:0 0 0 3px #e6eefc}
+.gsx .health small{overflow-wrap:anywhere}
+.gsx .health{min-width:0}
+.gsx .h-icon.voice{background:#7867d9}
+.gsx .h-icon.sms{background:#4d7ddb}
+.gsx .dd-back{border:0;background:transparent;color:var(--accent);font-size:9px;font-weight:850;padding:0 0 6px;display:block}
+.gsx .dd-back:hover{text-decoration:underline}
+.gsx .dd-row b{text-align:right}
+.gsx .dd-note{font-size:11px;color:var(--muted);line-height:1.6;margin:0 0 6px}
+.gsx .ov-banner-link{border:0;background:transparent;color:inherit;text-decoration:underline;font-weight:800;padding:0}
+
+/* ---- Analytics ---- */
+.gsx .an-top{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.gsx .an-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}
+.gsx .an-metric{border-left:3px solid var(--c,#ef9b35);transition:box-shadow .15s;position:relative}
+.gsx .an-metric:hover{box-shadow:0 4px 16px var(--cs,rgba(239,155,53,.2))}
+.gsx .an-metric small{color:var(--muted)}
+.gsx .an-metric .an-ico{position:absolute;right:12px;top:14px;font-size:20px;color:var(--c,#ef9b35);opacity:.45}
+.gsx .an-three{display:grid;grid-template-columns:1fr 1.1fr .9fr;gap:14px;margin-top:16px}
+.gsx .an-note{font-size:9px;color:var(--muted);margin:8px 2px 0;line-height:1.5}
+.gsx .an-pill{display:inline-flex;align-items:center;border-radius:99px;padding:5px 8px;font-size:8px;font-weight:900;border:1px solid transparent}
+.gsx .an-filter-chip{display:inline-flex;align-items:center;gap:6px;background:var(--accent-soft);border:1px solid #cdebd7;color:var(--green-2);border-radius:99px;padding:4px 9px;font-size:9px;font-weight:800;margin:0 0 10px}
+.gsx .an-filter-chip button{border:0;background:transparent;color:inherit;font-weight:900;padding:0}
+.gsx .fail-bar-row.on{background:var(--accent-soft)}
+.gsx .ov-dr-menu{width:560px;right:0;left:auto;padding:14px}
+.gsx .ov-dr-inner{display:flex;gap:14px}
+.gsx .ov-cal-months{display:flex;gap:12px}
+.gsx .ov-cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;font-size:9px;text-align:center;min-width:150px;flex:1}
+.gsx .ov-cal-grid .h{font-weight:800;color:#9ba3a0;padding:3px 0;font-size:8px}
+.gsx .ov-cal-grid .d{padding:4px 2px;cursor:pointer;border:0;background:transparent;font:inherit;font-size:9px;font-weight:600;color:var(--ink);border-radius:4px;transition:opacity .1s}
+.gsx .ov-cal-grid .d:hover{opacity:.75}
+.gsx .ov-cal-grid .d.in{background:#dbeafe;color:var(--blue);font-weight:700}
+.gsx .ov-cal-grid .d.edge{background:var(--blue);color:#fff;font-weight:900}
+.gsx .ov-cal-grid .d.s{border-radius:50% 4px 4px 50%}
+.gsx .ov-cal-grid .d.e{border-radius:4px 50% 50% 4px}
+.gsx .ov-cal-grid .d.s.e{border-radius:50%}
+.gsx .ov-cal-grid .d.today{box-shadow:inset 0 0 0 2px var(--blue)}
+.gsx .ov-social-kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px;margin-top:16px}
+.gsx .an-wide{margin-top:16px}
+.gsx .an-legacy .oc-bar{margin:0 0 10px}
+
+@media (max-width:1100px){
+  .gsx .an-metrics,.gsx .ov-social-kpis{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .gsx .an-three{grid-template-columns:1fr}
+}
+@media (max-width:820px){
+  .gsx .an-metrics,.gsx .ov-social-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .gsx .ov-flow-detail{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .gsx .an-top{position:relative}
+  .gsx .an-top .dropdown{position:static}
+  .gsx .ov-dr-menu{left:0;right:0;top:calc(100% + 6px);width:auto;max-height:80vh;overflow:auto}
+  .gsx .ov-dr-inner{flex-direction:column}
+  .gsx .ov-dr-inner .dr-presets{border-right:0;border-bottom:1px solid var(--line);padding-right:0;padding-bottom:8px;max-height:none;flex-direction:row;flex-wrap:wrap}
+  .gsx .ov-dr-inner .dr-presets .dr-preset{width:auto}
+  .gsx .ov-cal-months{flex-direction:column}
+}
+@media (max-width:540px){
+  .gsx .an-metrics,.gsx .ov-social-kpis{grid-template-columns:1fr}
+}
+
+/* gs.css lines ~1833-1834 (the prototype's Excel-export style) leak onto every table: ".gsx td,.gsx th{border:1px solid #ccc;font-family:Calibri}" and ".gsx th{background:#11985a;color:#fff}".
+   Put the prototype's real table look back for the tables of these two pages (the more specific selector wins). */
+.gsx .table th{background:transparent;color:#8b948e;font-weight:700;font-family:inherit;font-size:8px;border:0;border-bottom:1px solid var(--line)}
+.gsx .table td{border:0;border-bottom:1px solid #eef2ef;font-family:inherit;font-size:10px}
+.gsx .table tr:last-child td{border-bottom:0}
+.gsx .fn-track.na em{color:var(--muted);font-weight:700}

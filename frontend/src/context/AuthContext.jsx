@@ -27,8 +27,23 @@ export function AuthProvider({ children }) {
   // The login response carries the whole resolved identity — employee record,
   // product access, ATS role, data scope, landing page — plus the permission
   // matrix the server enforces. Nothing here is chosen by the user.
+  //
+  // Email and password only. When several separate logins share an email AND the same password, the server answers "Choose your
+  // account" instead of a session: login() then returns { chooseAccount, selectionToken, accounts } and chooseLogin() finishes the sign-in.
   async function login(email, password) {
     const res = await api.post('/auth/login', { email, password });
+    if (res.data.chooseAccount) {
+      return { chooseAccount: true, selectionToken: res.data.selectionToken, accounts: res.data.accounts || [], expiresAt: res.data.expiresAt };
+    }
+    localStorage.setItem('tl_token', res.data.token);
+    setUser(res.data.user);
+    return res.data.user;
+  }
+
+  async function chooseLogin(selectionToken, choice) {
+    const res = await api.post('/auth/login/choose', { selectionToken, choice });
+    // A vendor login on the same email was picked: the page signs it in through the vendor sign-in.
+    if (res.data.useVendor) return { useVendor: true };
     localStorage.setItem('tl_token', res.data.token);
     setUser(res.data.user);
     return res.data.user;
@@ -52,7 +67,7 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, switchWorkspace }}>
+    <AuthContext.Provider value={{ user, loading, login, chooseLogin, logout, switchWorkspace }}>
       {children}
     </AuthContext.Provider>
   );

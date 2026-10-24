@@ -61,9 +61,9 @@ function renderPayslip(p, out) {
     size: 'A4',
     margin: 0,
     info: {
-      Title: `Payslip — ${p.employee.name} — ${p.period}`,
+      Title: `${p.periodTitle || 'Payslip'} — ${p.employee.name}`,
       Author: p.company.name,
-      Subject: `Payslip for ${p.period}`,
+      Subject: `${p.periodTitle || `Payslip for ${p.period}`}${p.periodRange ? ` (${p.periodRange})` : ''}`,
     },
   });
   doc.pipe(out);
@@ -127,7 +127,8 @@ function renderPayslip(p, out) {
     ['Employee Name', e.name, 'UAN Number', e.uanNumber],
     ['ESI Number', e.esiNumber, 'PF Number', e.pfNumber],
     ['Days Worked', p.daysWorked, 'LOP Days', p.lopDays],
-    ['DOJ', e.dateOfJoining, 'Month', p.period],
+    ['DOJ', e.dateOfJoining, 'Salary month', p.periodLabel || p.period],
+    ...(p.periodRange ? [['Pay period', p.periodRange, 'Days in period', p.periodDays]] : []),
     ['Department', e.department, 'Designation', e.designation],
     ['Location', e.location, 'Bank A/C Number', e.bankAccountNumber],
     ['Monthly Gross', `${R}${money(p.monthlyGross)}`, 'Bank Name', e.bankName],
@@ -209,6 +210,14 @@ function renderPayslip(p, out) {
   // Outer frame
   doc.lineWidth(1.4).strokeColor(LINE).rect(X, top, W, y - top).stroke();
 
+  // Absent without leave (2026-10-12): plain words under the table, the rupees are inside the LOP line.
+  if (p.absentNoLeave) {
+    const a = p.absentNoLeave;
+    const dates = [...(a.dates || []), ...(a.halfDates || [])].join(', ');
+    doc.font(F.regular).fontSize(9).fillColor(INK)
+      .text(`${a.text} — ${R}${money(a.amount)} (inside the LOP line).${dates ? ` Dates: ${dates}.` : ''}`, X, y + 8, { width: W, align: 'left' });
+    y += doc.heightOfString(a.text, { width: W }) + 8;
+  }
   // Footer
   doc.font(F.regular).fontSize(10.5).fillColor(BLUE)
     .text('This is a computer generated payslip, needs no signature', X, y + 14, { width: W, align: 'center' });

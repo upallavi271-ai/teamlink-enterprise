@@ -1,0 +1,24 @@
+/* The New button on every dashboard (2026-10-13). App tokens only. */
+.nwi-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin: 0 0 14px; }
+.nwi-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 18px; border-radius: 999px; border: 2px solid var(--line); background: var(--paper-raised, #fff); color: var(--ink); font-size: 15px; font-weight: 800; cursor: pointer; }
+.nwi-btn.has { border-color: var(--blue); background: var(--blue); color: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .15); }
+.nwi-btn:focus-visible { outline: 3px solid var(--brand-ring, var(--blue)); outline-offset: 2px; }
+.nwi-hint { font-size: 13px; color: var(--ink-soft); }
+.nwi-tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.nwi-tabs button, .nwi-kinds button { border: 1px solid var(--line); background: var(--paper-raised, #fff); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; min-height: 36px; color: var(--ink); }
+.nwi-tabs button.on, .nwi-kinds button.on { border-color: var(--blue); background: var(--blue-tint); color: var(--blue); font-weight: 700; }
+.nwi-kinds { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.nwi-empty { padding: 22px 8px; text-align: center; color: var(--ink-soft); font-size: 14px; }
+.nwi-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 56vh; overflow-y: auto; }
+.nwi-list li { display: flex; align-items: center; gap: 12px; border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 8px; padding: 10px 12px; background: var(--paper-raised, #fff); }
+.nwi-list li.is-seen { border-left-color: var(--line); opacity: .8; }
+.nwi-ic { font-size: 20px; flex: none; }
+.nwi-body { flex: 1; min-width: 0; }
+.nwi-title { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+.nwi-kind { font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; color: var(--blue); margin-right: 4px; }
+.nwi-text { font-size: 13px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.nwi-when { font-size: 12px; color: var(--ink-faint); }
+@media (max-width: 560px) {
+  .nwi-list li { flex-wrap: wrap; }
+  .nwi-list li .btn { width: 100%; min-height: 40px; }
+}

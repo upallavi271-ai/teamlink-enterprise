@@ -1,0 +1,74 @@
+{
+  "_comment": "Page settings of the LOCAL MOCK 'shine' board (test-fixtures/mock-portal/server.js). Two-step form. Used by the tests through TL_PORTAL_SELECTORS_SHINE. Local addresses only.",
+  "portal": "shine",
+  "version": "mock-1",
+  "verified": true,
+  "mock": true,
+  "allowedHosts": ["127.0.0.1", "localhost"],
+  "urls": {
+    "login": "{{MOCK_ORIGIN}}/shine/login",
+    "dashboard": "{{MOCK_ORIGIN}}/shine/dashboard",
+    "postJob": "{{MOCK_ORIGIN}}/shine/post-job",
+    "edit": "{{MOCK_ORIGIN}}/shine/edit/{id}",
+    "listing": "{{MOCK_ORIGIN}}/shine/job/{id}",
+    "myJobs": "{{MOCK_ORIGIN}}/shine/my-jobs"
+  },
+  "login": {
+    "username": ["input#id_email"],
+    "password": ["input#id_password"],
+    "submit": ["button[type='submit']"],
+    "loggedInProbe": ["a:has-text('Logout')"],
+    "errorProbe": [".errorlist"],
+    "errorText": ["invalid"],
+    "logout": ["a:has-text('Logout')"],
+    "waitMs": 3500
+  },
+  "blockers": { "urlPatterns": {}, "selectors": {}, "textPatterns": {} },
+  "postJob": {
+    "fields": {
+      "title": { "selector": ["input#id_job_title"], "type": "text" },
+      "location": { "selector": ["select[name='location']"], "type": "select" },
+      "experienceMin": { "selector": ["select[name='min_exp']"], "type": "select" },
+      "experienceMax": { "selector": ["select[name='max_exp']"], "type": "select" },
+      "salaryMin": { "selector": ["select[name='min_sal']"], "type": "select" },
+      "salaryMax": { "selector": ["select[name='max_sal']"], "type": "select" },
+      "employmentType": { "selector": ["select[name='job_type']"], "type": "select" },
+      "industry": { "selector": ["select[name='industry']"], "type": "select" },
+      "functionalArea": { "selector": ["select[name='functional_area']"], "type": "select" },
+      "openings": { "selector": ["input[name='vacancies']"], "type": "text" },
+      "description": { "selector": ["textarea[name='job_description']"], "type": "text" },
+      "skills": { "selector": ["input[placeholder='Add skills']"], "type": "tags", "max": 15 },
+      "education": { "selector": ["input[name='education']"], "type": "text" }
+    },
+    "steps": [
+      { "fields": ["title", "location", "experienceMin", "experienceMax", "salaryMin", "salaryMax", "employmentType", "industry", "functionalArea", "openings", "description"], "next": ["button:has-text('Next')"] },
+      { "fields": ["skills", "education"] }
+    ],
+    "submit": ["button[type='submit']:has-text('Post Job')"],
+    "submitEdit": ["button[type='submit']:has-text('Post Job')"],
+    "errorProbe": [".field-error"],
+    "outcomeTimeoutMs": 5000,
+    "success": {
+      "urlPattern": "/posted",
+      "text": ["job posted successfully"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "job id:\\s*([A-Za-z0-9-]+)",
+      "idFromUrl": "jid=([A-Za-z0-9-]+)",
+      "urlSelector": ["a:has-text('View job')"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1"],
+    "notFoundText": ["job not found", "no longer available"]
+  },
+  "unpublish": {
+    "listUrl": "{{MOCK_ORIGIN}}/shine/my-jobs",
+    "rowSelector": ["tr[data-job-id='{id}']"],
+    "closeButton": ["tr[data-job-id='{id}'] button.close"],
+    "confirm": ["tr[data-job-id='{id}'] button:has-text('Confirm')"],
+    "doneText": ["job closed successfully"]
+  },
+  "timeouts": { "nav": 20000, "action": 12000, "overall": 100000 },
+  "pacing": { "minMs": 0, "maxMs": 0 }
+}

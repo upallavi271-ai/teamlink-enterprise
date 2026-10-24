@@ -1,0 +1,31 @@
+/* CRM pages (CRM Fields, All Customers, Segments, Web Forms). The prototype's own classes live in ../gs.css; only the small extras are here. */
+.gsx .crm-form-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+@media (max-width:760px){.gsx .crm-form-cols{grid-template-columns:1fr}}
+/* names stay whole (wrap), never cut with "..." */
+.gsx .cust-table td{overflow-wrap:anywhere}
+.gsx .cust-table .combo{min-width:0;width:100%}
+.gsx .cust-table th{position:relative}
+.gsx .cf-field .combo,.gsx .nc-field .combo,.gsx .field .combo{width:100%}
+.gsx .nc-field textarea:focus{outline:none;border-color:var(--green);box-shadow:0 0 0 3px rgba(17,152,90,.14)}
+.gsx .template-card .actions .btn{height:34px;padding:0 12px}
+
+/* THE PUBLIC FORM PAGE (/forms-public/:token): outside the shell, so these are not scoped under .gsx */
+.tlpf{min-height:100vh;background:#f4f7f5;padding:24px 14px;display:flex;justify-content:center;align-items:flex-start;color:#16231c;font-family:system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+.tlpf-card{position:relative;width:min(560px,100%);background:#fff;border:1px solid #e3e9e5;border-radius:16px;padding:22px 20px;box-shadow:0 10px 30px rgba(9,31,20,.08);box-sizing:border-box}
+.tlpf-card h1{font-size:22px;margin:0 0 6px;line-height:1.25;overflow-wrap:anywhere}
+.tlpf-lead{font-size:14px;color:#5b6a62;line-height:1.55;margin:0 0 14px;overflow-wrap:anywhere}
+.tlpf-field{margin:0 0 14px}
+.tlpf-field label{display:block;font-size:13px;font-weight:700;margin-bottom:5px}
+.tlpf-field input:not([type=checkbox]),.tlpf-field textarea,.tlpf-field select{width:100%;box-sizing:border-box;font:inherit;font-size:15px;padding:10px 12px;border:1px solid #cfd9d3;border-radius:10px;background:#fff;color:#16231c}
+.tlpf-field textarea{min-height:90px;resize:vertical}
+.tlpf-field small{display:block;font-size:12px;color:#6d7871;margin-top:4px}
+.tlpf-consent{border:1px solid #d4e6db;background:#f3faf6;border-radius:12px;padding:12px 14px;margin:6px 0 14px}
+.tlpf-tick{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.5;cursor:pointer}
+.tlpf-tick input{width:20px;height:20px;margin-top:2px;flex:0 0 20px}
+.tlpf-ways{margin-top:10px;font-size:14px}
+.tlpf-way{display:inline-flex;gap:6px;align-items:center;margin-right:16px;cursor:pointer}
+.tlpf-btn{width:100%;height:46px;border:0;border-radius:11px;background:#11985a;color:#fff;font-size:16px;font-weight:800;cursor:pointer}
+.tlpf-btn:disabled{opacity:.6;cursor:wait}
+.tlpf-err{background:#fdeced;border:1px solid #f4c9cc;color:#9b1c1c;border-radius:10px;padding:9px 12px;font-size:13px;margin:0 0 12px}
+.tlpf-ok{background:#e8f7ef;border:1px solid #bfe3d0;color:#087844;border-radius:12px;padding:16px;font-size:16px;line-height:1.5;overflow-wrap:anywhere}
+.tlpf-foot{font-size:12px;color:#6d7871;text-align:center;margin:12px 0 0}

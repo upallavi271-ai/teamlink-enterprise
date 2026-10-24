@@ -152,7 +152,7 @@ router.get('/jobs.jsonld', async (req, res) => {
   // eslint-disable-next-line global-require
   const jobs = (await feedJobs()).filter((j) => !j.internal && require('../utils/jobPosting').siteTicked(j, 'google'));
   res.set('Access-Control-Allow-Origin', '*');
-  res.type('application/ld+json').send(JSON.stringify(jobs.map((j) => jobPostingLd(j, base)), null, 1));
+  res.type('application/ld+json').send(JSON.stringify(await Promise.all(jobs.map((j) => jobPostingLdSafe(j, base))), null, 1));
 });
 
 // ONE job's JobPosting, for the careers page to embed as <script
@@ -163,9 +163,10 @@ router.get('/jobs/:id/jsonld', async (req, res) => {
   // An id or a readable slug (utils/jobSlug.js).
   const j = await require('../utils/jobSlug').findByIdOrSlug(req.params.id); // eslint-disable-line global-require
   // eslint-disable-next-line global-require
-  const ok = j && !j.internal && j.portalPublished && requirementIsLive(j.status) && require('../utils/jobPosting').siteTicked(j, 'google');
+  // Every job that is live on the careers page carries its JobPosting markup (job distribution 2026-10-14): Google for Jobs is automatic.
+  const ok = j && !j.internal && require('./careersPublic').isListed(j);
   if (!ok) return res.status(404).json({ error: 'Not listed' });
-  return res.type('application/ld+json').send(JSON.stringify(jobPostingLd(j, publicBase(req))));
+  return res.type('application/ld+json').send(JSON.stringify(await jobPostingLdSafe(j, publicBase(req))));
 });
 
 function jobPostingLd(j, base) {
@@ -222,12 +223,8 @@ const TRACKED_SOURCES = ['Naukri', 'Indeed', 'Shine', 'LinkedIn', 'Facebook', 'W
 
 router.post('/jobs/:id/apply', async (req, res) => {
   const { name, email, phone } = req.body;
-  const cameFrom = TRACKED_SOURCES.includes(String(req.body.src || '')) ? String(req.body.src) : null;
+  const cameFrom = TRACKED_SOURCES.includes(String(req.body.src || '')) ? String(req.body.src) : (require('../jobDist/attribution').labelFor(req.body.src) || null); // eslint-disable-line global-require
   if (!name || !email) return res.status(400).json({ error: 'name and email are required' });
-  // Current + expected salary are required (user note 2026-10-10).
-  const sal = require('../utils/salaryFit').validateSalaries(req.body || {}); // eslint-disable-line global-require
-  if (!sal.ok) return res.status(400).json({ error: sal.message, code: 'SALARY_REQUIRED', errors: sal.errors });
-
   const job = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   // Only a job really posted on the portal takes applications here (security review 2026-10-09).
   // eslint-disable-next-line global-require
@@ -238,6 +235,10 @@ router.post('/jobs/:id/apply', async (req, res) => {
   if (!job.internal && await require('../utils/clientLifecycle').newWorkRefusalFor(job.clientId)) {
     return res.status(409).json({ error: 'This job is not accepting applications right now.' });
   }
+
+  // Current + expected salary are required (user note 2026-10-10).
+  const sal = require('../utils/salaryFit').validateSalaries(req.body || {}); // eslint-disable-line global-require
+  if (!sal.ok) return res.status(400).json({ error: sal.message, code: 'SALARY_REQUIRED', errors: sal.errors });
 
   // ONE CANDIDATE MASTER: an applicant already on file — by the normalised
   // email or phone (utils/candidateDedupe.js keys, as the Add Candidate form
@@ -365,20 +366,36 @@ router.get('/set-password/:token', async (req, res) => {
   if (await isCandidateInvite(req.params.token)) return res.json({ portalInvite: true, path: `/portal-invite/${req.params.token}` });
   const info = await inspectSetPasswordToken(req.params.token);
   if (!info.ok) return res.status(404).json({ error: info.reason });
-  res.json({ name: info.name, email: info.email, expiresAt: info.expiresAt });
+  res.json({ name: info.name, email: info.email, expiresAt: info.expiresAt, role: info.role || null, hasOtherLogins: !!info.hasOtherLogins });
+});
+
+// A hint, never a refusal: "this password is already used by your other login on this email" (utils/loginAccounts.js).
+router.post('/set-password/:token/check', async (req, res) => {
+  const hash = require('crypto').createHash('sha256').update(String(req.params.token)).digest('hex'); // eslint-disable-line global-require
+  const user = await prisma.user.findFirst({ where: { setPasswordTokenHash: hash } }).catch(() => null);
+  if (!user || user.setPasswordUsedAt || !user.setPasswordExpiresAt || user.setPasswordExpiresAt < new Date()) return res.status(404).json({ error: 'This link is not valid.' });
+  const same = await require('../utils/loginAccounts').passwordUsedByOtherLogin(user, req.body && req.body.password); // eslint-disable-line global-require
+  return res.json({ sameAsOther: same });
 });
 
 router.post('/set-password/:token', async (req, res) => {
   if (await isCandidateInvite(req.params.token)) {
     return res.status(409).json({ error: 'Open this link on the portal invite page — your email must be confirmed with a code first.' });
   }
+  const preUser = await prisma.user.findFirst({ where: { setPasswordTokenHash: require('crypto').createHash('sha256').update(String(req.params.token)).digest('hex') } }).catch(() => null); // eslint-disable-line global-require
   const result = await redeemSetPasswordToken(req.params.token, req.body && req.body.password);
   if (!result.ok) {
     return res.status(result.code === 'weak' ? 400 : 410).json({ error: result.reason });
   }
   // The audit trail records THAT a password was set, never the password.
-  const user = await prisma.user.findUnique({ where: { email: result.email } });
+  // By the ACCOUNT the link belonged to (never by email: several logins can share one).
+  const user = result.userId ? await prisma.user.findUnique({ where: { id: result.userId } }) : null;
   await logAudit({ userId: user ? user.id : null, action: 'Password set via sign-in link', entity: 'User', entityId: user ? user.id : null });
+  // Ends older sessions; a REAL change (not a new joiner's first password) is told to Super Admin / Admin.
+  if (user) {
+    const pr = require('../utils/passwordReset'); // eslint-disable-line global-require
+    await pr.afterPasswordChange({ user, method: 'signin_link', firstSetup: !pr.hadPasswordBefore(preUser) });
+  }
   res.json({ message: 'Password set — you can sign in now.', email: result.email });
 });
 
@@ -416,4 +433,17 @@ router.get('/company-contact', async (req, res) => {
   });
 });
 
+// The JobPosting markup with the description the careers page shows: the client's name and the team's own notes are never in it
+// (job distribution 2026-10-14; the raw job text can name the client).
+async function jobPostingLdSafe(j, base) {
+  const ld = jobPostingLd(j, base);
+  try {
+    const t = await require('../utils/jobText').masterForCareers(j); // eslint-disable-line global-require
+    if (t) ld.description = t.split(String.fromCharCode(10)).join('<br>');
+  } catch { /* the plain description stays */ }
+  return ld;
+}
+router.jobPostingLdSafe = jobPostingLdSafe;
+router.jobPostingLd = jobPostingLd; // job distribution: the /go page for crawlers carries the same markup
+router.publicBase = publicBase;
 module.exports = router;

@@ -182,11 +182,11 @@ export default function Targets() {
               options={[...(sgFacets.sg || [])].sort((a, b) => SG_ORDER.indexOf(a.value) - SG_ORDER.indexOf(b.value))} />
             <label className="lf-sort">
               Sort
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="month">Month (latest first)</option>
                 <option value="progress">Progress (high to low)</option>
                 <option value="name">Employee A–Z</option>
-              </select>
+              </Combo>
             </label>
           </PeopleFilterBar>
         </div>

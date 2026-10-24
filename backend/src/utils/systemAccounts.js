@@ -25,10 +25,23 @@
 const prisma = require('../db');
 
 const SYSTEM_ACCOUNT_ROLES = ['SUPER_ADMIN'];
+// THE FOUNDER COUNTS (founder, 2026-10-23: "Admin Vasu also in headcount and attendance, marked every day, and my attendance visible to the Admin"):
+// a Super Admin login that has an Employee record is an employee for headcount, daily attendance, leave, payroll and the employee lists. The ROLE
+// stays a system role where it is a SECURITY matter (nobody can "view as" a Super Admin; no Super Admin role can be given through an employee import),
+// so those two keep using SYSTEM_ACCOUNT_ROLES / isStrictSystemAccount below. TL_SUPER_ADMIN_IS_SYSTEM=1 brings the old rule back everywhere.
+const COUNTS_AS_EMPLOYEE = process.env.TL_SUPER_ADMIN_IS_SYSTEM !== '1';
+const EXCLUDED_ROLES = COUNTS_AS_EMPLOYEE ? [] : SYSTEM_ACCOUNT_ROLES;
 
 // Sync test on a resolved identity (req.user) or a User row.
 function isSystemAccount(user) {
   if (!user) return false;
+  if (user.hrSuper) return false; // an HR-super login (utils/hrSuper.js) is still an employee: own attendance, leave, payslip
+  return EXCLUDED_ROLES.includes(user.role) || EXCLUDED_ROLES.includes(user.hrmsRole);
+}
+// The ROLE test, for security decisions (view-as, who may be impersonated): true for a Super Admin whatever the employee rules say.
+function isStrictSystemAccount(user) {
+  if (!user) return false;
+  if (user.hrSuper) return false;
   return SYSTEM_ACCOUNT_ROLES.includes(user.role) || SYSTEM_ACCOUNT_ROLES.includes(user.hrmsRole);
 }
 
@@ -40,8 +53,8 @@ const NOT_SYSTEM_EMPLOYEE = Object.freeze({
     {
       user: {
         is: {
-          role: { notIn: SYSTEM_ACCOUNT_ROLES },
-          OR: [{ hrmsRole: null }, { hrmsRole: { notIn: SYSTEM_ACCOUNT_ROLES } }],
+          role: { notIn: EXCLUDED_ROLES },
+          OR: [{ hrmsRole: null }, { hrmsRole: { notIn: EXCLUDED_ROLES } }],
         },
       },
     },
@@ -64,7 +77,7 @@ async function systemEmployeeIds() {
   const rows = await prisma.employee.findMany({
     where: {
       userId: { not: null },
-      user: { is: { OR: [{ role: { in: SYSTEM_ACCOUNT_ROLES } }, { hrmsRole: { in: SYSTEM_ACCOUNT_ROLES } }] } },
+      user: { is: { OR: [{ role: { in: EXCLUDED_ROLES } }, { hrmsRole: { in: EXCLUDED_ROLES } }] } },
     },
     select: { id: true },
   });
@@ -94,7 +107,10 @@ async function systemRequesterError(employee, what = 'this request') {
 
 module.exports = {
   SYSTEM_ACCOUNT_ROLES,
+  EXCLUDED_ROLES,
+  COUNTS_AS_EMPLOYEE,
   isSystemAccount,
+  isStrictSystemAccount,
   NOT_SYSTEM_EMPLOYEE,
   withoutSystemAccounts,
   recordWithoutSystemAccounts,

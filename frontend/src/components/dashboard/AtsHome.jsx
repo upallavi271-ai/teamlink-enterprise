@@ -17,9 +17,13 @@ import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import DashboardExport from './DashboardExport.jsx';
 import { V3_WIDGETS, Cards } from './AtsHomeV3.jsx';
 import AtsV4 from './ats-v4/AtsV4.jsx';
+import NewItems from './NewItems.jsx'; // the New button (2026-10-13)
 import { Icon } from '../atskit/AtsKit.jsx';
 import PendingOnTeam from './PendingOnTeam.jsx';
+import MissedItemsBox from '../MissedItemsBox.jsx';
+import { BdeWorkspace } from '../clients/ClientBusiness.jsx';
 import './atsHome.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE ATS HOME — one page per role, drawn from ONE widget registry (the
@@ -166,7 +170,7 @@ function LineChart({ w, onDrill }) {
   );
 }
 
-const DEPT_COLS = [['openJobs', 'Open jobs', 'Jobs open now'], ['active', 'In process', 'People on a job now'], ['interviews', 'Interviews', 'Interviews in the dates you picked'], ['selected', 'Selected', 'Selected or offered, not joined yet'], ['joined', 'Joined', 'Joined in the dates you picked'], ['late', 'Late', 'Work past its due date']];
+const DEPT_COLS = [['openJobs', 'Open requirements', 'Requirements open now'], ['active', 'In process', 'People on a requirement now'], ['interviews', 'Interviews', 'Interviews in the dates you picked'], ['selected', 'Selected', 'Selected or offered, not joined yet'], ['joined', 'Joined', 'Joined in the dates you picked'], ['late', 'Late', 'Work past its due date']];
 function Departments({ w, onDrill, onPickDept, tls }) {
   // Team leads per department = the rows of the Team leads section below.
   const tlCount = (d) => { const g = tls && tls.data && (tls.data.groups || []).find((x) => x.department === (d || 'No department')); return g ? g.rows.length : 0; };
@@ -325,7 +329,7 @@ function Cleanup({ w, onDrill }) {
     <Box title={w.title}>
       <div className="ah-kv">
         <div className="ah-kv-r"><span className="ah-kv-l">Not moving ({w.days}+ days)</span><span className="ah-kv-n">{w.stale ? fmt(w.stale) : 'None'}</span></div>
-        <div className="ah-kv-r"><span className="ah-kv-l">Old jobs, no recruiter</span><span className="ah-kv-n">{w.oldUnassigned ? fmt(w.oldUnassigned) : 'None'}</span></div>
+        <div className="ah-kv-r"><span className="ah-kv-l">Old requirements, no recruiter</span><span className="ah-kv-n">{w.oldUnassigned ? fmt(w.oldUnassigned) : 'None'}</span></div>
         {w.joinedNoDate > 0 && <div className="ah-kv-r"><span className="ah-kv-l">Joined, no joining date</span><Num value={w.joinedNoDate} drill="joined-nodate" onDrill={onDrill} className="ah-kv-n ah-cell" /></div>}
         {w.joinedWrongDate > 0 && <div className="ah-kv-r t-red"><span className="ah-kv-l">Joining date looks wrong</span><Num value={w.joinedWrongDate} drill="joined-wrongdate" onDrill={onDrill} className="ah-kv-n ah-cell" /></div>}
         {w.health && (
@@ -354,6 +358,8 @@ const WIDGETS = {
   list: List, tasks: Tasks, review: Review, jobs: Jobs, target: Target, clients: Clients, cleanup: Cleanup, banner: Banner,
   ...V3_WIDGETS,
   chain: PendingOnTeam,
+  missed: MissedItemsBox, // a recruiter's "My missed items" (reads its own rows)
+  workspace: BdeWorkspace,
   today: TodayStrip, tls: TeamLeads, openjobs: OpenJobs,
 };
 
@@ -366,7 +372,7 @@ const EXTRA_FILTERS = [
   ['tl', 'Team lead'],
   ['recruiter', 'Recruiter'],
   ['bde', 'Client manager (BDE)'],
-  ['requirementId', 'Job'],
+  ['requirementId', 'Requirement'],
   ['hiring', 'Hiring type'],
   ['priority', 'Priority'],
   ['source', 'Source'],
@@ -463,7 +469,7 @@ export default function AtsHome() {
   const deptList = ((data && data.deptChoices) || []).filter((o) => o.count > 0 || o.jobs > 0 || o.value === f.department);
   const showDept = deptList.length > 1 || !!f.department;
   const deptName = f.department ? ((deptList.find((o) => o.value === f.department) || {}).label || (f.department === '__none__' ? 'No department' : f.department)) : '';
-  const deptText = (o) => `${o.label} (${o.count ? `${fmt(o.count)} in process` : `${fmt(o.jobs)} open ${o.jobs === 1 ? 'job' : 'jobs'}`})`;
+  const deptText = (o) => `${o.label} (${o.count ? `${fmt(o.count)} in process` : `${fmt(o.jobs)} open ${o.jobs === 1 ? 'requirement' : 'requirements'}`})`;
   const [moreOpen, setMoreOpen] = useState(false);
   // Team leads load on their own (a second request) so the page shows fast.
   const [tls, setTls] = useState(null);
@@ -578,10 +584,10 @@ export default function AtsHome() {
             {showDept && (
               <label className={`lph-facet av4-dept-f${f.department ? ' is-picked' : ''}`}>
                 <span className="lph-facet-lbl">Department</span>
-                <select value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
+                <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
                   <option value="">All departments</option>
                   {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
             <PageFilterBar className="av4-pfb" value={f} onChange={setF} show={{ ...show, department: false }} options={barOptions} ranges={RANGES} extraSet={Object.keys(extra).length > 0} onClear={clearAll}>
@@ -593,6 +599,7 @@ export default function AtsHome() {
             </button>
           </div>
         </header>
+        <NewItems />
         {(f.department || extraChips.length > 0) && (
           <div className="av4-chips">
             {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
@@ -634,15 +641,16 @@ export default function AtsHome() {
           ? <Link className="btn btn-primary" to={data.main.to}>{data.main.label} →</Link>
           : <button type="button" className="btn btn-primary" onClick={() => setDrill(data.main.drill)}>{data.main.label} →</button>)}
       </div>
+      <NewItems />
       {/* Row 1: the department chooser (2+ departments). "Your area" is in the top bar. */}
       {showDept && (
       <div className={`ah-deptbar${f.department ? ' is-picked' : ''}`}>
         <label className="ah-deptpick">
             <span className="ah-deptpick-l">Department:</span>
-            <select value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
+            <Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department">
               <option value="">All departments</option>
               {deptList.map((o) => <option key={o.value} value={o.value}>{deptText(o)}</option>)}
-            </select>
+            </Combo>
           </label>
         {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
         {f.department && <span className="small-muted">Everything below is {deptName} only.</span>}

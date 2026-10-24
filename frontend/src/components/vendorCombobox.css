@@ -1,0 +1,20 @@
+/* VendorCombobox: the list is portalled to <body>; everything is scoped under .vcb-* so nothing else restyles. */
+.vcb input[type=text]:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--brand-ring, rgba(31, 95, 191, .34)); border-color: var(--navy, #22333B); }
+.vcb-pop { z-index: 100000; }
+.vcb-list {
+  background: #fff; border: 1px solid var(--line, #dde5e2); border-radius: 8px; box-shadow: 0 10px 28px rgba(18, 28, 52, .22);
+  overflow-y: auto; padding: 4px 4px 0; scroll-padding-bottom: 44px; font-size: 13.5px;
+}
+.vcb-opt { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 8px 10px; border-radius: 6px; cursor: pointer; min-height: 36px; }
+.vcb-opt.active { background: var(--navy-tint, #e3eae8); }
+.vcb-opt.picked .vcb-name { font-weight: 700; }
+.vcb-opt.off { cursor: not-allowed; opacity: .6; }
+.vcb-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vcb-cat { flex: none; font-size: 11.5px; color: var(--ink-soft, #56666E); text-align: right; }
+.vcb-note { padding: 10px 10px 8px; color: var(--ink-soft, #56666E); font-size: 13px; }
+.vcb-retry { color: var(--red, #B02318); }
+.vcb-retry b { color: var(--blue, #1B58C0); text-decoration: underline; }
+/* "+ Add Vendor": always the last row, pinned to the bottom of the list so it never scrolls out of sight. */
+.vcb-add { position: sticky; bottom: 0; background: #fff; border-top: 1px solid var(--line-soft, #e9efec); border-radius: 0 0 6px 6px; margin-top: 2px; font-weight: 700; color: var(--blue, #1B58C0); }
+.vcb-add.active { background: var(--navy-tint, #e3eae8); }
+.vcb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

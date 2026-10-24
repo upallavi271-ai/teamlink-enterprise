@@ -49,7 +49,7 @@ function renderNote(d, out) {
 
   if (d.draft) {
     doc.rect(X, y - 18, W, 16).fill('#fde8e8');
-    text('DRAFT — not issued yet. Not valid as a credit / debit note until an approver issues it.', X + 6, y - 15, { size: 8.5, bold: true, color: '#b42318', width: W - 12 });
+    text('NOT ISSUED yet. Not valid as a credit / debit note until an approver issues it.', X + 6, y - 15, { size: 8.5, bold: true, color: '#b42318', width: W - 12 });
   }
 
   // Letterhead + title

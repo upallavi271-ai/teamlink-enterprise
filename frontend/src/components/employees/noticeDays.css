@@ -1,0 +1,8 @@
+/* THE NOTICE COUNT: "Day 12 of 45 · 33 days left" + a thin bar. App colour tokens only. */
+.nd { margin-top: 4px; min-width: 150px; }
+.nd-t { font-size: 12.5px; font-weight: 700; color: var(--ink); }
+.nd-bar { height: 5px; margin-top: 3px; border-radius: 999px; background: var(--line-soft); overflow: hidden; }
+.nd-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--amber, #d98e04); }
+.nd-last-day .nd-bar > span, .nd-over .nd-bar > span { background: var(--red); }
+.nd-last-day .nd-t, .nd-over .nd-t { color: var(--red); }
+.nd-block { max-width: 260px; margin: 0; }

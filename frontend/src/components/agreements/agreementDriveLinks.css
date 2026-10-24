@@ -1,0 +1,56 @@
+/* Add agreement links (many at once) — scoped under .adl */
+.adl{font-size:13.5px;color:var(--ink)}
+.adl-steps{display:flex;gap:6px;flex-wrap:wrap;list-style:none;margin:0 0 12px;padding:0}
+.adl-steps li{display:inline-flex;align-items:center;gap:6px;padding:4px 12px 4px 4px;border-radius:999px;background:var(--line-soft);color:var(--ink-soft);font-size:12.5px}
+.adl-steps li span{width:20px;height:20px;border-radius:50%;background:var(--paper-raised);display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:11.5px}
+.adl-steps li.on{background:var(--brand-tint);color:var(--brand-ink);font-weight:600}
+.adl-steps li.done{background:var(--green-tint);color:var(--green)}
+.adl-lead{margin:0 0 10px;line-height:1.45}
+.adl-box{width:100%;box-sizing:border-box;font-family:ui-monospace,Consolas,monospace;font-size:12.5px;line-height:1.5;padding:10px;border:1px solid var(--line);border-radius:8px;resize:vertical;min-height:150px;white-space:pre;overflow:auto}
+.adl-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0 12px}
+.adl-count{margin-right:auto;font-size:12px;color:var(--ink-soft)}
+.adl-count.bad{color:var(--red);font-weight:600}
+.adl-tip{background:var(--blue-tint);color:var(--ink);border-radius:8px;padding:9px 12px;font-size:12.5px;line-height:1.45;margin:10px 0}
+.adl-field{display:flex;flex-direction:column;gap:3px;margin:0 0 10px;font-size:12.5px}
+.adl-field span{color:var(--ink-soft);font-weight:600}
+.adl-field input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;font-size:13.5px;width:100%;box-sizing:border-box}
+.adl-two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.adl-sum{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.adl-chip{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap}
+.adl-chip.green{background:var(--green-tint);color:var(--green)}
+.adl-chip.blue{background:var(--blue-tint);color:var(--blue)}
+.adl-chip.orange{background:var(--amber-tint);color:var(--amber)}
+.adl-chip.red{background:var(--red-tint);color:var(--red)}
+.adl-list{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin:0 0 6px}
+.adl-row{display:grid;grid-template-columns:44px minmax(150px,1.2fr) minmax(110px,.8fr) minmax(220px,2fr) auto;gap:8px 12px;align-items:start;padding:10px 12px;border-top:1px solid var(--line-soft);border-left:4px solid transparent}
+.adl-row:first-child{border-top:0}
+.adl-row.green{border-left-color:var(--green)}
+.adl-row.orange{border-left-color:var(--amber)}
+.adl-row.red{border-left-color:var(--red)}
+.adl-cell{display:flex;flex-direction:column;gap:3px;min-width:0;overflow-wrap:anywhere}
+.adl-no{color:var(--ink-faint);font-weight:700}
+.adl-sub{font-size:11.5px;color:var(--ink-soft)}
+.adl-msg{font-size:12.5px;line-height:1.4}
+.adl-msg.warn{color:var(--amber)}
+.adl-state .adl-chip{align-self:flex-start}
+.adl-pick{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:4px}
+.adl-mark{display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:4px}
+.adl-mark input{width:auto}
+.adl-act{flex-direction:row;gap:6px;flex-wrap:wrap}
+.adl-fix{grid-column:1/-1;background:var(--paper);border-radius:8px;padding:10px 12px}
+.adl-fixbtns{display:flex;gap:8px}
+.adl-progress{height:12px;border-radius:999px;background:var(--line-soft);overflow:hidden;margin:0 0 12px}
+.adl-progress i{display:block;height:100%;background:var(--brand);transition:width .25s}
+/* phone: every line becomes a small card */
+@media (max-width:640px){
+  .adl-two{grid-template-columns:1fr}
+  .adl-row{grid-template-columns:1fr;gap:6px}
+  .adl-cell[data-l]::before{content:attr(data-l);font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--ink-faint);font-weight:700}
+  .adl-cell[data-l=""]::before{display:none}
+  .adl-no{flex-direction:row;gap:6px}
+  .adl-bar .btn{flex:1 1 auto;justify-content:center}
+}
+/* the Agreement card on the client page */
+.adl-card .adl-linkrow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:6px 0}
+.adl-card .adl-hist{margin-top:8px;font-size:12.5px;color:var(--ink-soft)}
+.adl-card .adl-hist li{margin:2px 0}

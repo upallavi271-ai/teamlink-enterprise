@@ -14,6 +14,8 @@ import { useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
 import { PICK_SOURCES } from '../utils/candidateSource.js';
+import Combo from './Combo.jsx';
+import { validateSalaries } from '../utils/salaryFit'; // current + expected salary are required
 
 export default function ResumeUploadDialog({ onClose, onDone }) {
   const [items, setItems] = useState([]); // { token, fileName, fields, error, duplicate, warning, edit:{}, skip }
@@ -46,11 +48,18 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
   }
 
   const val = (it, k) => (it.edit[k] !== undefined ? it.edit[k] : (it.fields[k] || ''));
+  // Current + expected salary are required for a NEW candidate (the CV rarely says it: type it here). Fix these first.
+  const salaryProblem = (it) => {
+    if (it.duplicate && update) return null;
+    const v = validateSalaries({ currentSalary: val(it, 'currentSalary'), expectedSalary: val(it, 'expectedSalary') });
+    return v.ok ? null : v.message;
+  };
   const statusOf = (it) => {
     if (it.skip) return 'left out';
     if (it.error || !it.token) return 'error';
     if (!val(it, 'name') || (!val(it, 'email') && !val(it, 'phone'))) return 'error';
     if (it.duplicate && !update) return 'duplicate';
+    if (salaryProblem(it)) return 'error';
     return 'valid';
   };
   const n = (s) => items.filter((it) => statusOf(it) === s).length;
@@ -65,7 +74,7 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
         source: source || undefined,
         updateExisting: update,
         items: items.filter((it) => it.token).map((it) => ({
-          token: it.token, skip: statusOf(it) !== 'valid', name: val(it, 'name'), email: val(it, 'email'), phone: val(it, 'phone'),
+          token: it.token, skip: statusOf(it) !== 'valid', name: val(it, 'name'), email: val(it, 'email'), phone: val(it, 'phone'), currentSalary: val(it, 'currentSalary'), expectedSalary: val(it, 'expectedSalary'),
         })),
       };
       const r = await api.post('/ats-io/resumes/commit', JSON.stringify(payload), { headers: { 'Content-Type': 'text/plain' } });
@@ -131,10 +140,10 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
             <input value={reqCode} onChange={(e) => setReqCode(e.target.value)} placeholder="e.g. MED-0001" />
           </label>
           <label className="field" style={{ margin: 0, minWidth: 200 }}><span>Where did these resumes come from?</span>
-            <select value={source} onChange={(e) => setSource(e.target.value)}>
+            <Combo allowCustom value={source} onChange={(e) => setSource(e.target.value)}>
               <option value="">Not sure (Other)</option>
               {PICK_SOURCES.filter((s) => s !== 'Other').map((s) => <option key={s} value={s}>{s}</option>)}
-            </select>
+            </Combo>
           </label>
         </div>
         <label className="atsio-check" style={{ marginBottom: 8 }}>
@@ -152,20 +161,20 @@ export default function ResumeUploadDialog({ onClose, onDone }) {
             </div>
             <div className="tbl-wrap atsio-res">
               <table>
-                <thead><tr><th>File</th><th>Name</th><th>Email</th><th>Phone</th><th>Result</th><th /></tr></thead>
+                <thead><tr><th>File</th><th>Name</th><th>Email</th><th>Phone</th><th>Current salary</th><th>Expected salary</th><th>Result</th><th /></tr></thead>
                 <tbody>
                   {items.map((it, i) => {
                     const st = statusOf(it);
                     return (
                       <tr key={`${it.token || it.fileName}-${i}`}>
                         <td title={it.fileName} style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis' }}>{it.fileName}</td>
-                        {['name', 'email', 'phone'].map((k) => (
+                        {['name', 'email', 'phone', 'currentSalary', 'expectedSalary'].map((k) => (
                           <td key={k}><input value={val(it, k)} disabled={!it.token || it.skip} onChange={(e) => setEdit(i, k, e.target.value)} style={{ minWidth: 0, width: '100%' }} aria-label={`${k} for ${it.fileName}`} /></td>
                         ))}
                         <td>
                           <span className={`atsio-act ${st === 'valid' ? 'create' : st === 'duplicate' ? 'duplicate' : st === 'error' ? 'error' : 'skip'}`}>{st}</span>
                           <div className="small-muted" style={{ fontSize: 11 }}>
-                            {it.error || (it.duplicate ? `On file: ${it.duplicate.name}` : it.warning) || ''}
+                            {it.error || (it.token && !it.skip && salaryProblem(it)) || (it.duplicate ? `On file: ${it.duplicate.name}` : it.warning) || ''}
                           </div>
                         </td>
                         <td>{it.token && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setSkip(i, !it.skip)}>{it.skip ? 'Include' : 'Leave out'}</button>}</td>

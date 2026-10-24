@@ -89,3 +89,6 @@
 .ahv3-tbl tfoot td{font-weight:700;border-top:2px solid var(--line);padding:7px 8px}
 .ahv3-joinnote{margin-top:8px}
 .ahv3-joinnote .link-btn{font-weight:600}
+
+/* ---- Names fit (2026-10-17): wrap instead of "..." ---- */
+.ahv3-ellip{max-width:none;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}

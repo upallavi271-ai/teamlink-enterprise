@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import './SavedViews.css';
+import { matchesText, noMatchText } from './searchMatch.js';
 
 // ---------------------------------------------------------------------------
 // SAVED VIEWS (ATS review #2 §19) — "Saved Views ▼" + "Save Current View",
@@ -72,6 +73,7 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
   const [naming, setNaming] = useState(null); // { mode: 'new' } | { mode: 'rename', index }
   const [name, setName] = useState('');
   const [msg, setMsg] = useState('');
+  const [find, setFind] = useState('');
   const ref = useRef(null);
 
   useEffect(() => { setViews(readViews(key)); }, [key]);
@@ -124,16 +126,18 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
 
   return (
     <div className="savedviews" ref={ref}>
-      <button type="button" className="btn btn-sm btn-ghost savedviews-toggle" aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen((o) => !o); setMsg(''); setNaming(null); }}>
+      <button type="button" className="btn btn-sm btn-ghost savedviews-toggle" aria-haspopup="menu" aria-expanded={open} onClick={() => { setOpen((o) => !o); setMsg(''); setNaming(null); setFind(''); }}>
         {active ? <>{`${label}: `}<b>{active}</b></> : label}
         <span aria-hidden="true"> ▾</span>
       </button>
       {open && (
         <div className="savedviews-menu" role="menu">
-          {presets.length > 0 && (
+          <input className="savedviews-find" type="text" autoComplete="off" value={find} placeholder="Type to find a view" aria-label="Find a view" onChange={(e) => setFind(e.target.value)} />
+          {find.trim() && !presets.some((v) => matchesText(v.name, find)) && !views.some((v) => matchesText(v.name, find)) && <div className="savedviews-empty">{noMatchText(find)}</div>}
+          {presets.some((v) => matchesText(v.name, find)) && (
             <>
               <div className="savedviews-head">Suggested</div>
-              {presets.map((v) => (
+              {presets.filter((v) => matchesText(v.name, find)).map((v) => (
                 <button key={`p-${v.name}`} type="button" role="menuitem" className={`savedviews-item${active === v.name ? ' on' : ''}`} onClick={() => apply(v)} title={v.hint || undefined}>
                   <span className="savedviews-check">{active === v.name ? '✓' : ''}</span>
                   <span className="savedviews-name">{v.name}</span>
@@ -144,7 +148,7 @@ export default function SavedViews({ storageKey, current, onApply, presets = [],
           <div className="savedviews-head">My views</div>
           {views.length === 0 && <div className="savedviews-empty">No saved views yet. Set your filters, then Save Current View.</div>}
           {views.map((v, i) => (
-            naming && naming.mode === 'rename' && naming.index === i ? (
+            !matchesText(v.name, find) ? null : naming && naming.mode === 'rename' && naming.index === i ? (
               <form key={`s-${v.name}`} className="savedviews-form" onSubmit={commitName}>
                 <input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} aria-label="New name" />
                 <button type="submit" className="btn btn-sm btn-primary">Save</button>

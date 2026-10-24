@@ -24,3 +24,6 @@
 .cell-source.is-unknown{color:var(--ink-soft, #5b6577)}
 .src-chip{display:inline-block;padding:1px 9px;border-radius:999px;font-size:12px;font-weight:600;background:var(--blue-tint, #eef3ff);color:var(--blue, #2459d6);white-space:nowrap}
 .src-chip.is-unknown{background:var(--line-soft, #eef0f5);color:var(--ink-soft, #5b6577);font-weight:500}
+
+.mfs-search{width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:6px 10px;margin:0 0 4px;border:1px solid var(--line, #d6dbe6);border-radius:8px}
+.mfs-item.is-act{background:var(--blue-tint, #eef3ff);outline:1px solid var(--blue, #2459d6);outline-offset:-1px}

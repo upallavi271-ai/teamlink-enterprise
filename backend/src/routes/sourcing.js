@@ -195,6 +195,7 @@ router.post('/referrals', async (req, res) => {
           referredByEmployeeId: me.employeeId || null, referredByName: me.name,
         },
       });
+      await require('../utils/candidateAddedBy').record(candidate.id, me, 'referral'); // eslint-disable-line global-require
       await logAudit({ userId: me.id, actorName: me.name, action: 'Candidate created (employee referral)', entity: 'Candidate', entityId: candidate.id, toValue: `Referred by ${me.name}` });
     } else if (!candidate.referredByName) {
       candidate = await prisma.candidate.update({ where: { id: candidate.id }, data: { referredByEmployeeId: me.employeeId || null, referredByName: me.name } });
@@ -221,7 +222,7 @@ router.post('/referrals', async (req, res) => {
         candidateId: candidate.id,
         applicationId: application ? application.id : null,
         requirementId: job ? job.id : null,
-        note: [note, alreadyOnFile ? 'Already in our candidate list when referred.' : null, alreadyApplied ? 'Had already applied to this job.' : null].filter(Boolean).join(' ') || null,
+        note: [note, alreadyOnFile ? 'Already in our candidate list when referred.' : null, alreadyApplied ? 'Had already applied to this requirement.' : null].filter(Boolean).join(' ') || null,
         createdById: me.id,
         createdByName: me.name,
       },
@@ -246,7 +247,7 @@ router.post('/referrals', async (req, res) => {
   try { require('../utils/candidateListCache').markCandidateDirty(out.candidate.id); } catch { /* optional */ } // eslint-disable-line global-require
   await logAudit({
     userId: me.id, actorName: me.name, action: 'Employee referral submitted', entity: 'Candidate', entityId: out.candidate.id,
-    toValue: `${out.candidate.name}${job ? ` → ${job.title}` : ' (no job picked)'} · by ${me.name}`,
+    toValue: `${out.candidate.name}${job ? ` → ${job.title}` : ' (no requirement picked)'} · by ${me.name}`,
   });
   if (job) {
     await notifyUsers([job.recruiterId, job.tlId].filter(Boolean), {
@@ -254,7 +255,7 @@ router.post('/referrals', async (req, res) => {
     }).catch(() => null);
   }
   let message = 'Thank you! Your referral is saved. You can follow it below.';
-  if (out.alreadyApplied) message = 'Saved. This person had already applied to this job, so the recruiter already has them.';
+  if (out.alreadyApplied) message = 'Saved. This person had already applied to this requirement, so the recruiter already has them.';
   else if (out.alreadyOnFile) message = 'Saved. This person was already in our list — the team will see that you referred them.';
   return res.status(201).json({ ok: true, message, referralId: out.referral.id });
 });

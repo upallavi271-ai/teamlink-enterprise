@@ -14,9 +14,27 @@ const { notifyDataIo } = require('../utils/dataIoNotify');
 const leaveCharge = require('../utils/leaveCharge');
 const attendancePolicy = require('../utils/attendancePolicy');
 const hrmsNotify = require('../utils/hrmsNotify');
+const earlyLogout = require('../utils/earlyLogoutCheck');
+const genuine = require('../utils/leaveGenuine');
+const leaveMeta = require('../utils/leaveMeta');
 
 const router = express.Router();
 router.use(requireAuth);
+// Pulse HRMS sync, old-pending list, early-logout live check (routes/leavePulse.js). Mounted first so
+// /pulse/... never meets the /:id/... routes below.
+router.use('/pulse', require('./leavePulse'));
+
+// An existing Pending / Approved request of the SAME type on overlapping dates (opposite half days do not clash).
+async function duplicateOf({ employeeId, type, fromDate, toDate, halfDay = null, ignoreId = null }) {
+  const rows = await prisma.leaveRequest.findMany({
+    where: { employeeId, type, status: { in: ['Pending', 'Approved', 'Cancellation Requested'] }, fromDate: { lte: String(toDate).slice(0, 10) }, toDate: { gte: String(fromDate).slice(0, 10) }, ...(ignoreId ? { id: { not: ignoreId } } : {}) },
+    select: { id: true, type: true, status: true, reason: true },
+  });
+  return rows.find((r) => {
+    const h = leaveText.halfOf(r);
+    return !(halfDay && h && h.toLowerCase() !== String(halfDay).toLowerCase());
+  }) || null;
+}
 
 // ---------------------------------------------------------------------------
 // THE APPROVAL CHAIN (§15). Leave is the FIRST workflow wired to the shared
@@ -118,6 +136,7 @@ async function ensureBalances(employeeIds) {
 router.get('/', async (req, res, next) => {
   try {
     const scoped = employeeRecordWhere(req.user);
+    const ownEmp = await prisma.employee.findUnique({ where: { userId: req.user.id }, select: { id: true } });
     const onMyChain = await workflow.recordIdsForParticipant(WF, req.user.id);
     const where = {};
     if (Object.keys(scoped).length) {
@@ -140,10 +159,25 @@ router.get('/', async (req, res, next) => {
     // who approved / decided it — or whom it is waiting on.
     let charged = new Map();
     try { charged = await leaveCharge.chargedMap(leave.filter((l) => l.status !== 'Pending').map((l) => l.id)); } catch { charged = new Map(); }
-    res.json(leave.map((l) => {
+    // HRMS item 8: genuine pending vs not (left / duplicate / old); item 4: the early-logout chip. Same truth on every screen.
+    let pendingState = new Map();
+    try { pendingState = await genuine.classify(leave.filter((l) => l.status === 'Pending')); } catch { pendingState = new Map(); }
+    let earlyOf = new Map();
+    const showEarly = !req.user.caps.hrmsSelfOnly || !!ownEmp;
+    if (showEarly) { try { earlyOf = await earlyLogout.snapshotsOf(leave.map((l) => l.id)); } catch { earlyOf = new Map(); } }
+    let metaOf = new Map();
+    try { metaOf = await leaveMeta.metaMap(leave.map((l) => l.id)); } catch { metaOf = new Map(); }
+    // ?genuine=1 : the Pending Approvals view - leavers' / duplicate / old pending requests are left out (HR sees them under Old pending).
+    const shown = String(req.query.genuine || '') === '1' ? leave.filter((l) => l.status !== 'Pending' || !pendingState.has(l.id)) : leave;
+    res.json(shown.map((l) => {
       const t = leaveText.parse(l.reason);
+      const ev = earlyOf.get(l.id);
+      const mine = !!(ownEmp && l.employeeId === ownEmp.id);
       return {
         ...l,
+        pendingState: l.status === 'Pending' ? (pendingState.get(l.id) || 'genuine') : null,
+        source: (metaOf.get(l.id) || {}).source || 'TeamLink',
+        earlyLogout: ev && (mine || !req.user.caps.hrmsSelfOnly) ? { state: ev.state, chip: ev.chip || null, text: ev.text, date: ev.date || null } : null,
         // Days really taken from the balance (items 4/6), when the ledger has it.
         chargedDays: charged.has(l.id) ? charged.get(l.id) : null,
         reasonText: t.reasonText,
@@ -186,8 +220,23 @@ router.get('/:id/workflow', async (req, res, next) => {
       if (policy.actingAsTl(req.user, current)) tl = await policy.evaluateTlRule(await policy.getTlRule(), request);
     }
     // REASSIGN — the current owner (or a Super Admin) may hand it on.
-    const mayReassign = !!(current && mayAct && (current.approverUserId === req.user.id || workflow.isSuperAdmin(req.user)));
+    const mayReassign = !!(current && mayAct && (current.approverUserId === req.user.id || workflow.hasDirectPower(req.user, WF, steps)));
     const reassignTargets = mayReassign ? await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) }) : [];
+    // Department of every possible new approver, so the picker can narrow by department (cascading filter rule).
+    if (reassignTargets.length) {
+      const emps = await prisma.employee.findMany({ where: { userId: { in: reassignTargets.map((t) => t.userId) } }, select: { userId: true, department: true } });
+      const deptOf = new Map(emps.map((e) => [e.userId, e.department || null]));
+      reassignTargets.forEach((t) => { t.department = deptOf.get(t.userId) || null; });
+    }
+    // HRMS item 4: the early-logout check, for the applicant and for approvers only (never a plain colleague).
+    const isApplicant = !!(request.employee && request.employee.userId === req.user.id);
+    let early = null;
+    if (isApplicant || !req.user.caps.hrmsSelfOnly) {
+      early = await earlyLogout.snapshotOf(request.id);
+      if (early) early = { ...early, snapshot: true };
+      else if (request.employee) { try { early = { ...(await earlyLogout.compute(request.employee, request.fromDate)), snapshot: false }; } catch { early = null; } }
+    }
+    const meta = await leaveMeta.getMeta(request.id);
     const handoffs = (await prisma.auditLog.findMany({
       where: { entity: 'LeaveRequest', entityId: request.id, action: policy.REASSIGNED },
       orderBy: { createdAt: 'asc' },
@@ -219,6 +268,9 @@ router.get('/:id/workflow', async (req, res, next) => {
       workflow: view,
       tl,
       reassign: { allowed: mayReassign && reassignTargets.length > 0, targets: reassignTargets },
+      earlyLogout: early,
+      source: (meta && meta.source) || 'TeamLink',
+      pulse: meta && meta.pulseStatus ? { status: meta.pulseStatus, by: meta.pulseBy || null, at: meta.pulseAt || null } : null,
       handoffs,
     });
   } catch (err) {
@@ -238,7 +290,7 @@ router.get('/approval-levels', async (req, res, next) => {
   }
 });
 
-router.put('/approval-levels/:level', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res, next) => {
+router.put('/approval-levels/:level', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res, next) => {
   try {
     const { mode, slaHours, active } = req.body;
     const row = await workflow.setLevelConfig(WF, req.params.level, { mode, slaHours, active });
@@ -302,11 +354,39 @@ router.post('/', async (req, res, next) => {
     // Super Admin is a system account: never a requester on the chain.
     const sys = await systemRequesterError(employee, 'leave');
     if (sys) return res.status(403).json({ error: sys });
+    // NO DUPLICATES (HRMS item 8): the same person cannot have the same leave type twice on overlapping dates.
+    {
+      const clash = await duplicateOf({ employeeId, type, fromDate, toDate, halfDay });
+      if (clash) return res.status(409).json({ error: `You already have ${/leave$/i.test(clash.type) ? clash.type : `${clash.type} leave`} on these dates (${clash.status === 'Cancellation Requested' ? 'Approved' : clash.status}).`, duplicateOf: clash.id });
+    }
     const capError = await wouldExceedConcurrentCap(employee, fromDate, toDate);
     if (capError) return res.status(409).json({ error: capError });
   }
   if (String(toDate) < String(fromDate)) return res.status(400).json({ error: 'To date cannot be before From date.' });
-  const days = halfDay ? 0.5 : (req.body.days != null ? Number(req.body.days) : daySpan(fromDate, toDate));
+  // LEAVE ENDS WITH THE JOB (HRMS spec item 7, utils/exitDate.js): no leave for days after the last working day.
+  {
+    const exitDate = require('../utils/exitDate'); // eslint-disable-line global-require
+    const exitOn = await exitDate.effectiveExitDate(employeeId).catch(() => null);
+    if (exitOn && String(fromDate) > exitOn) {
+      return res.status(400).json({ error: `${employee ? employee.name : 'This person'}'s last working day is ${exitDate.dmy(exitOn)}, so leave cannot start after it.`, code: 'AFTER_EXIT' });
+    }
+    if (exitOn && String(toDate) > exitOn) {
+      return res.status(400).json({ error: `${employee ? employee.name : 'This person'}'s last working day is ${exitDate.dmy(exitOn)}. Leave can run only until that day: change the end date to ${exitOn}.`, code: 'AFTER_EXIT' });
+    }
+  }
+  // Sundays (week off) and company festival / holiday dates are NOT counted (founder, 2026-10-15; utils/leaveDays.js).
+  let counted = null;
+  if (!halfDay) {
+    try { counted = await require('../utils/leaveDays').countFor(fromDate, toDate); } catch (e) { console.error('[leave] day count failed', e.message); } // eslint-disable-line global-require
+    if (counted && counted.calendarDays > 0 && counted.countedDays === 0) {
+      return res.status(400).json({ error: 'These dates are all Sundays or company holidays, so no leave is needed for them.', code: 'ALL_OFF', skipped: counted.skipped });
+    }
+  }
+  const askedDays = req.body.days != null ? Number(req.body.days) : null;
+  const days = halfDay ? 0.5 : Math.min(
+    askedDays != null && Number.isFinite(askedDays) ? askedDays : Infinity,
+    counted ? counted.countedDays : daySpan(fromDate, toDate),
+  );
   if (!Number.isFinite(days) || days <= 0) return res.status(400).json({ error: 'Days must be more than 0.' });
   if (!halfDay && days > daySpan(fromDate, toDate)) return res.status(400).json({ error: `${days} days do not fit between ${fromDate} and ${toDate}.` });
 
@@ -347,6 +427,11 @@ router.post('/', async (req, res, next) => {
   } catch (err) {
     console.error('[leave] could not start the approval chain', err.message);
   }
+  // HRMS item 4: what the previous working day's attendance said, frozen with the request (approvers see this snapshot).
+  let early = null;
+  try { if (employee) early = await earlyLogout.snapshot(leave, employee); } catch (err) { console.error('[leave] early-logout check failed', err.message); }
+  // HRMS item 2: the first approver on the chain (the TL) hears at once, bell + email, once per request.
+  hrmsNotify.leaveRaised({ leave, employee, early }).catch((e) => console.error('[leave] notify approver failed', e.message));
   return res.status(201).json({ ...leave, workflow: chain });
   } catch (err) {
     return next(err);
@@ -412,7 +497,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     // that actually GRANTS the leave. Asking a TL and then an STL each to pick
     // the same reason off the same list would be noise, not a control.
     // A Super Admin deciding directly (out of turn) IS the final step.
-    const isDirect = workflow.isSuperAdmin(req.user) && pendingStep.approverUserId !== req.user.id;
+    const isDirect = workflow.hasDirectPower(req.user, WF, steps) && pendingStep.approverUserId !== req.user.id;
     const isFinalStep = isDirect || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED);
     if (status === 'Approved' && isFinalStep) {
       const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
@@ -505,6 +590,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
 
   await logAudit({ userId: req.user.id, action: 'Leave ' + status.toLowerCase(), entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: status });
   // Item 14: tell the employee (in-app, and email per the Admin setting).
+  if (status === 'Approved') require('../utils/attendanceTasks').closeFixedFor(existing.employeeId); // an approved leave fixes the day: its attendance task closes
   if (status === 'Approved' || status === 'Rejected') hrmsNotify.leaveDecided({ leave, employee: existing.employee, by: req.user }).catch((e) => console.error('[leave] notify failed', e.message));
   let view = null;
   try { view = await workflow.view(WF, leave.id, req.user, { canAct: false }); } catch { view = null; }
@@ -525,7 +611,7 @@ router.post('/:id/reassign', requirePerm(null, 'hrms', 'Leave & Holidays', 'appr
     const reason = String((req.body && req.body.reason) || '').trim();
     const toUserId = String((req.body && req.body.toUserId) || '').trim();
     if (!toUserId) return res.status(400).json({ error: 'Choose who to reassign this request to.' });
-    if (!reason) return res.status(400).json({ error: 'A reason is required to reassign a leave request.' });
+    // 2026-10-13: the reason is optional (it is still recorded when given).
     const request = await prisma.leaveRequest.findUnique({ where: { id: req.params.id }, include: { employee: true } });
     if (!request) return res.status(404).json({ error: 'Leave request not found' });
     if (request.status !== 'Pending') return res.status(409).json({ error: `This request is ${request.status} — only a pending request can be reassigned.` });
@@ -534,22 +620,32 @@ router.post('/:id/reassign', requirePerm(null, 'hrms', 'Leave & Holidays', 'appr
     const current = steps.find((s) => s.status === 'Pending');
     if (!current) return res.status(409).json({ error: 'This request is not waiting on anybody.' });
     const isOwner = current.approverUserId === req.user.id;
-    if (!isOwner && !workflow.isSuperAdmin(req.user)) {
+    if (!isOwner && !workflow.hasDirectPower(req.user, WF, steps)) {
       return res.status(403).json({ error: `Only the current approver${current.approverName ? ` (${current.approverName})` : ''} can reassign this request.` });
     }
     const targets = await policy.reassignTargets(steps, request.employee ? request.employee.userId : null, { allowTemp: !!(request.employee && policy.isTempAccount(request.employee.name, request.employee.employeeCode)) });
     const target = targets.find((t) => t.userId === toUserId);
     if (!target) return res.status(400).json({ error: "That person is not a valid approver for this request (the TL's manager on its chain, HR or the Super Admin)." });
-    const moved = await policy.performReassign(request.id, steps, target, req.user, reason);
+    const moved = await policy.performReassign(request.id, steps, target, req.user, reason || 'No reason given');
     await logAudit({
       userId: req.user.id, actorName: req.user.name, action: policy.REASSIGNED, entity: 'LeaveRequest', entityId: request.id,
-      fromValue: `${moved.from} (${moved.fromLevel})`, toValue: `${moved.to} (${moved.toLevel})`, reason,
+      fromValue: `${moved.from} (${moved.fromLevel})`, toValue: `${moved.to} (${moved.toLevel})`, reason: reason || null,
     });
-    await pushNotification({
-      userId: target.userId,
-      title: 'Leave request reassigned to you',
-      message: `${request.employee ? request.employee.name : 'An employee'} · ${request.type} ${request.fromDate}${request.toDate && request.toDate !== request.fromDate ? ` – ${request.toDate}` : ''} (${request.days ?? 1} day(s)). Reassigned by ${req.user.name || req.user.email}: ${reason}`,
-    });
+    // BOTH hear about it (HRMS item 2): the new approver gets the bell + the email with the early-logout line,
+    // the one it was taken from gets a bell saying who has it now.
+    const early = await earlyLogout.snapshotOf(request.id).catch(() => null);
+    hrmsNotify.leaveRaised({ leave: request, employee: request.employee, early, reassignedBy: req.user.name || req.user.email, toUserId: target.userId })
+      .catch((e) => console.error('[leave] reassign notify failed', e.message));
+    if (request.employee && request.employee.userId && request.employee.userId !== target.userId) {
+      pushNotification({ userId: request.employee.userId, title: 'Your leave request is with someone else now', message: `${request.type} ${request.fromDate}${request.toDate && request.toDate !== request.fromDate ? ` to ${request.toDate}` : ''} is now waiting for ${target.name}.` }).catch(() => {});
+    }
+    if (current.approverUserId && current.approverUserId !== req.user.id) {
+      pushNotification({
+        userId: current.approverUserId,
+        title: 'Leave request moved to someone else',
+        message: `${request.employee ? request.employee.name : 'An employee'} · ${request.type} ${request.fromDate} is now with ${target.name} (moved by ${req.user.name || req.user.email}${reason ? `: ${reason}` : ''}).`,
+      }).catch(() => {});
+    }
     const view = await workflow.view(WF, request.id, req.user, { canAct: false });
     return res.json({ ok: true, reassignedTo: target.name, workflow: view });
   } catch (err) {
@@ -568,7 +664,7 @@ async function mayConfigureTlRule(user) {
   const hrms = user.hrmsRole && user.hrmsRole !== 'NONE' ? user.hrmsRole : user.role;
   return hrms === 'HR' && can(user, 'hrms', 'hrms', 'Leave & Holidays', 'approve');
 }
-router.put('/tl-rule', async (req, res, next) => {
+router.put('/tl-rule', require('../utils/internalHr').blockRoute('settings'), async (req, res, next) => {
   try {
     if (!await mayConfigureTlRule(req.user)) return res.status(403).json({ error: "This action isn't included in your role's permissions" });
     const before = await policy.getTlRule();
@@ -856,14 +952,14 @@ router.get('/types', async (req, res) => {
   res.json(types);
 });
 
-router.post('/types', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.post('/types', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { code, name, cap, unit, carries } = req.body;
   if (!code || !name) return res.status(400).json({ error: 'code and name are required' });
   const type = await prisma.leaveType.create({ data: { code, name, cap: Number(cap) || 0, unit: unit || 'yr', carries: !!carries } });
   res.status(201).json(type);
 });
 
-router.put('/types/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.put('/types/:id', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { cap, active } = req.body;
   const type = await prisma.leaveType.update({ where: { id: req.params.id }, data: { cap: cap != null ? Number(cap) : undefined, active } });
   await logAudit({ userId: req.user.id, action: 'Leave type updated', entity: 'LeaveType', entityId: type.id });
@@ -875,14 +971,14 @@ router.get('/reasons', async (req, res) => {
   res.json(reasons);
 });
 
-router.post('/reasons', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.post('/reasons', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { label } = req.body;
   if (!label) return res.status(400).json({ error: 'label is required' });
   const reason = await prisma.leaveReason.create({ data: { label } });
   res.status(201).json(reason);
 });
 
-router.put('/reasons/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.put('/reasons/:id', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { active } = req.body;
   const reason = await prisma.leaveReason.update({ where: { id: req.params.id }, data: { active } });
   res.json(reason);
@@ -906,7 +1002,7 @@ router.get('/concurrency-policy', async (req, res) => {
 // Item 6 — the SANDWICH RULE on / off (Leave Policy). On: a holiday or weekly
 // off between two leave days counts as leave. Stored beside the attendance
 // policy (utils/attendancePolicy.js), so the day rule reads the same switch.
-router.put('/sandwich-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.put('/sandwich-policy', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   if (typeof (req.body || {}).sandwichLeave !== 'boolean') return res.status(400).json({ error: 'Say on or off (sandwichLeave: true / false).' });
   const r = await attendancePolicy.saveExtras({ sandwichLeave: req.body.sandwichLeave });
   if (r.error) return res.status(400).json({ error: r.error });
@@ -916,7 +1012,7 @@ router.put('/sandwich-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'co
   res.json({ sandwichLeave: r.extras.sandwichLeave });
 });
 
-router.put('/concurrency-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
+router.put('/concurrency-policy', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {
   const { concurrentLeaveCapPct, concurrentLeaveCapFlat, leaveReasonThresholdDays } = req.body;
   let cfg = await prisma.hrConfig.findFirst();
   if (!cfg) cfg = await prisma.hrConfig.create({ data: {} });
@@ -940,6 +1036,11 @@ router.put('/concurrency-policy', requirePerm(null, 'hrms', 'Leave & Holidays', 
 // applicable-to / description have no column and are NOT stored (every
 // employee is Hyderabad branch; a holiday applies to everyone).
 const HOLIDAY_TYPES = ['National Holiday', 'Festival', 'Optional', 'Company', 'Restricted'];
+// A typed own holiday type is kept (tidied; a case-insensitive match uses the listed spelling) - 2026-10-15.
+function holidayTypeOf(raw, fallback) {
+  const t = require('../utils/openVocab').clean(raw, 40); // eslint-disable-line global-require
+  return HOLIDAY_TYPES.find((x) => x.toLowerCase() === t.toLowerCase()) || t || fallback;
+}
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const validIso = (s) => ISO.test(String(s || '')) && !Number.isNaN(Date.parse(`${s}T00:00:00Z`)) && new Date(`${s}T00:00:00Z`).toISOString().slice(0, 10) === s;
 const addDays = (iso, n) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
@@ -967,6 +1068,14 @@ router.get('/holidays', async (req, res) => {
 
 router.get('/holiday-types', (req, res) => res.json(HOLIDAY_TYPES));
 
+// How many days of from..to a leave request really uses: Sundays and company holidays are not counted.
+router.get('/day-count', async (req, res) => {
+  const from = String(req.query.from || '').slice(0, 10);
+  const to = String(req.query.to || req.query.from || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) return res.status(400).json({ error: 'Send from and to dates (YYYY-MM-DD).' });
+  try { return res.json(await require('../utils/leaveDays').countFor(from, to)); } catch (e) { return res.status(500).json({ error: 'Could not count the days.' }); } // eslint-disable-line global-require
+});
+
 // Add: { name, date, toDate?, type?, optional?, repeatYearly? }
 router.post('/holidays', requirePerm(null, 'hrms', 'Leave & Holidays', 'create'), async (req, res, next) => {
   try {
@@ -980,7 +1089,7 @@ router.post('/holidays', requirePerm(null, 'hrms', 'Leave & Holidays', 'create')
     if (!validIso(toDate) || toDate < date) return res.status(400).json({ error: 'The To date must be on or after the From date.' });
     const span = Math.round((Date.parse(toDate) - Date.parse(date)) / 86400000) + 1;
     if (span > 31) return res.status(400).json({ error: 'A multi-day holiday can cover at most 31 days.' });
-    const type = b.optional ? 'Optional' : (HOLIDAY_TYPES.includes(b.type) ? b.type : 'Festival');
+    const type = b.optional ? 'Optional' : holidayTypeOf(b.type, 'Festival');
     const dates = Array.from({ length: span }, (_, i) => addDays(date, i));
     const wanted = dates.map((d) => ({ name, date: d, type }));
     if (b.repeatYearly) dates.forEach((d) => wanted.push({ name, date: nextYear(d), type, repeat: true }));
@@ -1006,7 +1115,7 @@ router.put('/holidays/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'edit'
     const b = req.body || {};
     const name = b.name !== undefined ? String(b.name).trim() : h.name;
     const date = b.date !== undefined ? String(b.date).trim() : h.date;
-    const type = b.optional ? 'Optional' : (b.type !== undefined ? (HOLIDAY_TYPES.includes(b.type) ? b.type : h.type) : h.type);
+    const type = b.optional ? 'Optional' : (b.type !== undefined ? holidayTypeOf(b.type, h.type) : h.type);
     if (!name) return res.status(400).json({ error: 'Holiday name is required.' });
     if (!validIso(date)) return res.status(400).json({ error: 'Date is required (YYYY-MM-DD).' });
     const dup = await prisma.holiday.findFirst({ where: { date, id: { not: h.id } } });
@@ -1017,7 +1126,7 @@ router.put('/holidays/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'edit'
   } catch (err) { return next(err); }
 });
 
-router.delete('/holidays/:id', requirePerm(null, 'hrms', 'Leave & Holidays', 'edit'), async (req, res) => {
+router.delete('/holidays/:id', require('../utils/internalHr').blockRoute('delete'), requirePerm(null, 'hrms', 'Leave & Holidays', 'edit'), async (req, res) => {
   const holiday = await prisma.holiday.findUnique({ where: { id: req.params.id } });
   if (!holiday) return res.status(404).json({ error: 'Holiday not found' });
   await prisma.holiday.delete({ where: { id: req.params.id } });

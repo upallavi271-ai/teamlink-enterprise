@@ -4,6 +4,7 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import { invalidateFieldLayout } from '../../utils/employeeFieldLayout';
 import './ExtraFields.css';
+import Combo from '../Combo.jsx';
 
 // Employee Management -> MANAGE FIELDS (HRMS spec item 15).
 //
@@ -196,7 +197,7 @@ export default function ManageFieldsModal({ onClose }) {
                 </span>
               </div>
             )}
-            <label className="field xf-wide"><span>Field name *</span>
+            <label className="field xf-wide"><span>Field name</span>
               <input value={editing.label} maxLength={60} onChange={set('label')} placeholder="e.g. T-shirt size" autoFocus />
               {editing.builtin && editing.originalName !== editing.label && <small className="cell-muted">Original name: {editing.originalName}</small>}
             </label>
@@ -207,9 +208,9 @@ export default function ManageFieldsModal({ onClose }) {
               </div>
             ) : (
               <label className="field"><span>Type</span>
-                <select value={editing.type} onChange={set('type')} disabled={!!editing.id && editing.valueCount > 0}>
+                <Combo value={editing.type} onChange={set('type')} disabled={!!editing.id && editing.valueCount > 0}>
                   {data.types.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                </select>
+                </Combo>
                 <small className="cell-muted">{HINT[editing.type]}{editing.id && editing.valueCount > 0 ? ' The type is locked because people already have a value.' : ''}</small>
               </label>
             )}
@@ -227,7 +228,7 @@ export default function ManageFieldsModal({ onClose }) {
               </div>
             )}
             {choiceType && (
-              <label className="field xf-wide"><span>Choices * (one per line)</span>
+              <label className="field xf-wide"><span>Choices (one per line)</span>
                 <textarea rows={5} value={editing.options} onChange={set('options')} placeholder={'Small\nMedium\nLarge'} />
               </label>
             )}
@@ -300,7 +301,7 @@ export default function ManageFieldsModal({ onClose }) {
                       {head && <div className="xf-section">{f.section}</div>}
                       <div className={`xf-row${f.active ? '' : ' off'}`}>
                         <div className="xf-main">
-                          <b>{f.label}</b>{f.required && <span className="xf-req" title="Required"> ✱</span>}
+                          <b>{f.label}</b>{f.required && <span className="xf-req" title="Needed"> (needed)</span>}
                           <span className={`xf-tag ${f.builtin ? 'built' : 'added'}`}>{f.builtin ? 'Built-in' : 'Added by us'}</span>
                           <span className="xf-type">{f.typeLabel}</span>
                           <span className={`status ${f.active ? 'active' : 'pending'}`}>{f.active ? 'Active' : 'Paused'}</span>

@@ -1,0 +1,43 @@
+/* Communication Console + WhatsApp Inbox: only what the prototype stylesheet (gs.css) does not already have. Everything under .gsx. */
+.gsx .con-banner-test{margin:0 0 14px}
+.gsx .con-ps{font-size:9.5px;color:var(--muted);line-height:1.6;margin-top:8px}
+.gsx .con-acc-note{font-size:8.5px;color:var(--muted);margin-top:2px}
+.gsx .con-acc-bad{color:#c25058}
+.gsx .con-rows{width:100%;border-collapse:collapse;margin-top:9px;font-size:10px}
+.gsx .con-rows th{font-size:8px;text-transform:uppercase;letter-spacing:.08em;color:#8b968f;text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}
+.gsx .con-rows td{padding:6px;border-bottom:1px solid #f0f3f1;vertical-align:top;overflow-wrap:anywhere}
+.gsx .con-perm{border:1px solid #f0e3bd;background:#fffbe9;border-radius:11px;padding:11px 13px;margin-top:10px;font-size:10px;line-height:1.6}
+.gsx .con-perm label{display:flex;gap:8px;align-items:flex-start;font-weight:800;color:#6b4e0a;cursor:pointer}
+.gsx .con-perm input[type=text]{width:100%;margin-top:8px;border:1px solid var(--line);border-radius:9px;padding:8px 10px;font-size:10px;background:#fff}
+.gsx .con-readonly{background:#f4f6f5!important;color:#5d6a63}
+.gsx .con-phone-wrap{width:100%;display:flex;justify-content:center}
+.gsx .con-hist td,.gsx .con-hist th{white-space:normal}
+.gsx .con-sel-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:10px;color:var(--muted);margin:0 0 10px}
+.gsx .con-sel-bar b{color:var(--ink)}
+.gsx .con-link{background:none;border:0;padding:0;font:inherit;font-weight:800;color:var(--green-2);text-decoration:underline;cursor:pointer}
+/* the inbox: three columns (list, chat, profile) */
+.gsx .chat-layout.wa3{grid-template-columns:290px minmax(0,1fr) 250px}
+.gsx .chat-item strong{overflow-wrap:anywhere;white-space:normal}
+.gsx .chat-item .con-tag{font-size:7.5px;color:#8a948d;margin-top:3px;display:block}
+.gsx .chat-messages{overflow-y:auto;max-height:520px;min-height:340px}
+.gsx .msg .con-mch{display:block;font-size:7.5px;opacity:.65;margin-bottom:2px;text-transform:uppercase;letter-spacing:.06em}
+.gsx .msg .con-mt{display:block;font-size:7.5px;opacity:.55;margin-top:3px;text-align:right}
+.gsx .con-sysmsg{align-self:center;background:#fdf4c9;color:#7a6318;border-radius:8px;padding:5px 10px;font-size:8.5px;max-width:90%;text-align:center}
+.gsx .chat-compose select{border:1px solid var(--line);border-radius:9px;font-size:9px;padding:0 6px;background:#fff}
+.gsx .con-tabrow{display:flex;gap:5px;margin-bottom:8px}
+.gsx .con-tabrow .wa-tab{border:1px solid var(--line);background:#fff}
+.gsx .con-tabrow .wa-tab.active{border-color:#bfe3d0;background:#e8f7ef}
+.gsx .con-tabrow .wa-tab b{margin-left:4px;color:#25a05f}
+.gsx .con-empty{padding:26px 16px;text-align:center;color:var(--muted);font-size:10px;line-height:1.6}
+.gsx .con-err{background:#fdeced;border:1px solid #f4c9cc;color:#9b1c1c;border-radius:9px;padding:8px 11px;font-size:10px;margin:8px 10px}
+.gsx .con-ok{background:#e8f7ef;border:1px solid #bfe3d0;color:#087844;border-radius:9px;padding:8px 11px;font-size:10px;margin:8px 10px}
+.gsx .con-appd{padding:20px;display:grid;gap:12px;align-content:start}
+.gsx .con-appd .kv-grid{margin-top:4px}
+.gsx .wa-conn{display:inline-flex;align-items:center;gap:6px;font-size:9px;opacity:.95}
+.gsx .wa-conn i{width:8px;height:8px;border-radius:50%;background:#39b56b;display:inline-block}
+.gsx .wa-conn i.off{background:#e6a23c}
+.gsx .con-agent{display:flex;align-items:center;gap:10px;padding:9px 4px;border-bottom:1px solid #f0f3f1}
+.gsx .con-agent b{font-size:11px;display:block;overflow-wrap:anywhere}
+.gsx .con-agent small{font-size:8px;color:#8a948d;text-transform:uppercase;letter-spacing:.06em}
+@media (max-width:1100px){.gsx .chat-layout.wa3{grid-template-columns:290px minmax(0,1fr)}.gsx .chat-layout.wa3 .profile-side{display:none}}
+@media (max-width:900px){.gsx .chat-layout.wa3{grid-template-columns:1fr}}

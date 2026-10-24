@@ -113,13 +113,13 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
   return (
     <div className="pc-panel" role="status" aria-live="polite">
       <div className="pc-head">
-        <b>Your job is saved</b>
+        <b>Your requirement is saved</b>
         <span className="small-muted">{code || title || ''}</span>
         <button type="button" className="pc-x" aria-label="Close" onClick={onClose}>×</button>
       </div>
       {!data && <div className="small-muted">{error || 'Loading…'}</div>}
       {sum && <div className={`pc-sum${sumTone}`}>{sum.line}</div>}
-      {shown && !shown.length && <div className="small-muted">No site was ticked, so the job is not posted anywhere.</div>}
+      {shown && !shown.length && <div className="small-muted">No site was ticked, so the requirement is not posted anywhere.</div>}
       {shown && shown.map((s) => {
         const isWait = s.code === 'WAITING_BY_HAND';
         const h = helpers[s.id];
@@ -137,7 +137,7 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
                 {needsSetup(s) && (s.setupLink ? <>{' '}<Link to={s.setupLink}>Configure integration →</Link></> : ' Ask your admin.')}
               </span>
             )}
-            {(s.code === 'POSTED' || s.code === 'POSTED_BY_HAND') && link && <a className="pc-row-why" href={link} target="_blank" rel="noreferrer">View job ↗</a>}
+            {(s.code === 'POSTED' || s.code === 'POSTED_BY_HAND') && link && <a className="pc-row-why" href={link} target="_blank" rel="noreferrer">View requirement ↗</a>}
             {isWait && (
               <>
                 <span className="pc-row-why">{s.reason}{s.hand && s.hand.overdue ? ` Waiting ${s.hand.waitedHours} hours.` : ''}</span>
@@ -154,7 +154,7 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
                 </div>
                 {linkFor === s.id && (
                   <div className="pc-link">
-                    <label htmlFor={`pc-url-${s.id}`}>Paste the link of the live job from {s.name} (you can leave it empty)</label>
+                    <label htmlFor={`pc-url-${s.id}`}>Paste the link of the live requirement from {s.name} (you can leave it empty)</label>
                     <input id={`pc-url-${s.id}`} type="url" inputMode="url" placeholder={`https://… (from ${s.name})`} value={url} onChange={(e) => setUrl(e.target.value)} />
                     <div className="pc-steps">
                       <button type="button" className="btn btn-sm btn-primary" disabled={busy === `done-${s.id}`} onClick={() => posted(s)}>
@@ -192,7 +192,7 @@ export default function PostingStatusPanel({ requirementId, code, title, onClose
             {busy === 'retry' ? 'Trying…' : `Retry failed (${failed.length})`}
           </button>
         )}
-        <Link className="btn btn-sm" to={`/requirements/${requirementId}`}>Open job</Link>
+        <Link className="btn btn-sm" to={`/requirements/${requirementId}`}>Open requirement</Link>
         {going && <span className="small-muted">Updating…</span>}
       </div>
       {waiting.length > 0 && <div className="small-muted">Not done today? We remind you, the TL and the recruiters once a day until it is posted.</div>}

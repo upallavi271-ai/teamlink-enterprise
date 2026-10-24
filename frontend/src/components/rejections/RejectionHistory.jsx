@@ -45,7 +45,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
     setError('');
     try {
       await api.post(`/rejections/do-not-use/${stepId}/decide`, { decision, note: notes[stepId] || '' });
-      setSaid(decision === 'approve' ? 'Approved. This person is now blocked from every job.' : 'Declined. The reject stays for that one job only.');
+      setSaid(decision === 'approve' ? 'Approved. This person is now blocked from every requirement.' : 'Declined. The reject stays for that one requirement only.');
       forgetStillFits(candidateId);
       load();
       if (onChanged) onChanged();
@@ -61,7 +61,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
     try {
       await api.post(`/rejections/do-not-use/candidate/${candidateId}/lift`, { reason: lift });
       setLift(null);
-      setSaid('Block lifted. This person can be added to jobs again.');
+      setSaid('Block lifted. This person can be added to requirements again.');
       load();
       if (onChanged) onChanged();
     } catch (err) {
@@ -81,7 +81,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
 
       {doNotUse === 'approved' && (
         <div className="rjx-warn">
-          <b>Do not use.</b> The TL approved this. This person is blocked from every job and cannot be added or moved forward.
+          <b>Do not use.</b> The TL approved this. This person is blocked from every requirement and cannot be added or moved forward.
           {data.canLift && lift === null && (
             <div className="rjx-row"><button type="button" className="btn btn-sm" onClick={() => setLift('')}>Lift the block</button></div>
           )}
@@ -95,7 +95,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
         </div>
       )}
       {doNotUse === 'pending' && (
-        <div className="rjx-wait"><b>Do not use — waiting for the TL.</b> Until the TL approves, this person can still be used on other jobs.</div>
+        <div className="rjx-wait"><b>Do not use — waiting for the TL.</b> Until the TL approves, this person can still be used on other requirements.</div>
       )}
 
       {requests.filter((q) => q.canDecide).map((q) => (
@@ -104,7 +104,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
             <b>{`${q.requestedBy || 'Someone'} asked to mark this person "Do not use"`}</b>
             {` — ${q.reason || 'no reason'}${q.detail ? `: ${q.detail}` : ''}`}
           </div>
-          <div className="small-muted">{`${q.requirementTitle || 'Job'}${q.clientName ? ` (${q.clientName})` : ''} · ${shortDate(q.at)}`}</div>
+          <div className="small-muted">{`${q.requirementTitle || 'Requirement'}${q.clientName ? ` (${q.clientName})` : ''} · ${shortDate(q.at)}`}</div>
           <input
             value={notes[q.stepId] || ''}
             onChange={(e) => setNotes((n) => ({ ...n, [q.stepId]: e.target.value }))}
@@ -120,7 +120,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
       {history.map((h) => (
         <div key={h.applicationId} className={`rjx-item${h.kind === 'do_not_use' ? ' is-dnu' : ''}`}>
           <div className="rjx-top">
-            <Link to={`/requirements/${h.requirementId}`}>{h.requirementTitle || 'Job'}</Link>
+            <Link to={`/requirements/${h.requirementId}`}>{h.requirementTitle || 'Requirement'}</Link>
             {h.clientName ? ` (${h.clientName})` : ''}
             {h.kind === 'do_not_use' && (
               <span className={`rjx-badge${h.dnu && h.dnu.status === 'Pending' ? ' is-wait' : ''}`}>
@@ -142,7 +142,7 @@ export default function RejectionHistory({ candidateId, onChanged }) {
         </div>
       )}
       {hiddenCount > 0 && (
-        <div className="small-muted">{`${hiddenCount} more rejection${hiddenCount === 1 ? '' : 's'} on other teams' jobs (not in your area, so not shown).`}</div>
+        <div className="small-muted">{`${hiddenCount} more rejection${hiddenCount === 1 ? '' : 's'} on other teams' requirements (not in your area, so not shown).`}</div>
       )}
       {said && <div className="rjx-ok" role="status">{said}</div>}
       {error && <div className="error-text">{error}</div>}

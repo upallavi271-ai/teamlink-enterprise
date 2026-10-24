@@ -60,8 +60,9 @@ const {
   applicationWhere, requirementWhere, atsScopeOf: scopeOf, atsViewRole, isBdeTl,
 } = require('./scope');
 const { isBdeDepartment, parseBdeSeat } = require('./bdeDesk');
+const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 const {
-  REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel,
+  REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel, requirementStatusUser,
 } = require('./atsVocab');
 const { ATTR_SELECT, attribute, loadDirectory } = require('./workers');
 
@@ -138,9 +139,9 @@ function teamPeopleWhere(user) {
   const s = scopeOf(user);
   if (s.global) return {};
   const departments = uniq([...(s.departments || []), ...((s.positions && s.positions.departments) || [])]);
-  // THE BDE TL (user, 2026-10-10): the BDE desk, nobody else (she is not a recruiting TL
-  // and has no recruiters under her). Her own row is left out in buildWorld.
-  if (isBdeTl(user)) return { atsRole: 'BDE' };
+  // THE BDE TL (user, 2026-10-10 / 2026-10-12): the BDE team, from HRMS (utils/bdeTeam.js),
+  // nobody else: peopleFor() resolves the list. Her own row is left out in buildWorld.
+  if (isBdeTl(user)) return { id: '__bde_team__' };
   // MANAGER (user, 2026-10-09, Q2): reads every department, view-only: the whole team.
   if (s.atsRole === 'MANAGER') return {};
   if (SELF_ONLY.includes(s.atsRole)) return { id: s.userId || '__none__' };
@@ -225,6 +226,10 @@ async function readApplications(where, select) {
 async function peopleFor(user) {
   const s = scopeOf(user);
   let where = teamPeopleWhere(user);
+  if (isBdeTl(user)) {
+    const ids = await require('./bdeTeam').bdeTeamUserIds({ includeTest: isTestPerson(user) }); // eslint-disable-line global-require
+    where = { id: { in: ids.length ? ids : ['__none__'] } };
+  }
   if (s.atsRole === 'HR' && !s.global) {
     // HR — internal hiring: the people assigned to the internal requirements.
     const reqs = await prisma.requirement.findMany({
@@ -446,11 +451,12 @@ async function buildWorld(user) {
       section: sectionOf(seat, r.department || (seat && seat.department)),
       seat: seat ? seat.code : null,
       tl,
+      extraTlIds: RT.extrasOf(r.id),
       recruiters,
       recruiter: recruiters[0] || null,
       bde,
       status: r.status,
-      statusLabel: requirementStatusLabel(r.status) || r.status,
+      statusLabel: requirementStatusUser(r.status) || r.status,
       live: LIVE.has(r.status),
       openings: r.openings,
       createdAt: r.createdAt,
@@ -663,7 +669,7 @@ function personSets(world, person) {
     // TL / STL — the team and its review work.
     const team = world.people.filter((p) => p.roleGroup === 'RECRUITER' && p.tlUserId === id && p.status === 'Active');
     const teamIds = new Set(team.map((p) => p.id));
-    const reqs = world.reqs.filter((r) => r.live && ((r.tl && r.tl.id === id) || r.recruiters.some((x) => teamIds.has(x.id))));
+    const reqs = world.reqs.filter((r) => r.live && ((r.tl && r.tl.id === id) || (r.extraTlIds || []).includes(id) || r.recruiters.some((x) => teamIds.has(x.id))));
     const apps = world.apps.filter((a) => a.tlUserId === id || (a.recruiterUserId && teamIds.has(a.recruiterUserId)));
     sets.recruiters = { kind: 'people', ids: team.map((p) => p.id) };
     sets.requirements = { kind: 'requirements', ids: reqs.map((r) => r.id) };

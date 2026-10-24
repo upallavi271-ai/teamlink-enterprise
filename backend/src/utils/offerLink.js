@@ -191,7 +191,7 @@ async function expireDue({ now = new Date(), applicationId = null } = {}) {
     // eslint-disable-next-line no-await-in-loop
     await notifyUsers(await staffOf(app), {
       title: `🔴 Offer expired: ${app.candidate ? app.candidate.name : 'Candidate'}`,
-      message: `${app.requirement ? app.requirement.title : 'Job'} — the offer (v${v.version}) was not answered by ${v.expiresAt.toISOString().slice(0, 10)}. Open Offers → Offer again, or call the candidate.`,
+      message: `${app.requirement ? app.requirement.title : 'Requirement'} — the offer (v${v.version}) was not answered by ${v.expiresAt.toISOString().slice(0, 10)}. Open Offers → Offer again, or call the candidate.`,
     });
   }
   return n;
@@ -270,13 +270,17 @@ async function publicView(v) {
   const otp = otpState(v);
   // eslint-disable-next-line global-require
   const emudhraReady = await require('./emudhra').isAvailable().catch(() => false);
+  // CLIENT hiring: the letter is the client's own file; no other text names the client.
+  const ctrack = await require('./clientTrack').getTrack(v.applicationId).catch(() => null); // eslint-disable-line global-require
+  const clientLetter = !!(ctrack && ctrack.offer && ctrack.offer.versionId === v.id);
   return {
+    clientFile: clientLetter && ctrack.offer.file ? { name: ctrack.offer.file.name } : null,
     version: v.version,
     status: expired ? 'Expired' : v.status,
     open: v.status === 'Sent' && !expired,
     candidateName: app && app.candidate ? app.candidate.name : '',
     job: r.title || '',
-    company: r.internal ? 'TeamLink' : (r.client && r.client.name) || '',
+    company: r.internal ? 'TeamLink' : (clientLetter ? 'our client' : (r.client && r.client.name) || ''),
     ctc: v.offeredCtc,
     joiningDate: v.joiningDate,
     offerDate: v.offerDate,

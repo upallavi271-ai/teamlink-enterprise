@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import { ViewAgreementButton } from '../agreements/SignedAgreementFiles.jsx'; // the one shared "View agreement" (hidden for TL / STL / Recruiter / HR)
 import './clientsrole.css';
 
 // ---------------------------------------------------------------------------
@@ -77,9 +78,9 @@ export default function ClientRowActions({ c, meta, onEdit, onNote }) {
 
   let main = null;
   if (role === 'bde' && a.newRequirement && !(c.lifecycle === 'Paused' || c.lifecycle === 'Archived')) {
-    main = <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(reqNew(c))}>+ New job</button>;
+    main = <button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(reqNew(c))}>+ New requirement</button>;
   } else if (role === 'tl') {
-    main = <button type="button" className="btn btn-sm" onClick={() => navigate(reqList(c))}>Jobs</button>;
+    main = <button type="button" className="btn btn-sm" onClick={() => navigate(reqList(c))}>Requirements</button>;
   } else if (role === 'accounts') {
     main = (
       <>
@@ -103,8 +104,9 @@ export default function ClientRowActions({ c, meta, onEdit, onNote }) {
   return (
     <div className="clrole-actions" onClick={stop}>
       {main}
+      <ViewAgreementButton clientId={c.id} />
       {showQuickReq && (
-        <button type="button" className="clrole-quick" title="New job for this client" onClick={() => navigate(reqNew(c))}>+ Job</button>
+        <button type="button" className="clrole-quick" title="New requirement for this client" onClick={() => navigate(reqNew(c))}>+ Requirement</button>
       )}
       {a.call && c.contactPhone && (
         <a className="clrole-quick" href={`tel:${String(c.contactPhone).replace(/[^\d+]/g, '')}`} title={`Call ${c.contactName || 'the client'} — ${c.contactPhone}`}>Call</a>

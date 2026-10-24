@@ -1,8 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
+import { LoginStatus, LoginEmail, LoginActions } from './VendorLoginActions.jsx';
+import './VendorLogins.css';
 import Modal from '../../components/Modal.jsx';
 import { checkGstin, clean as cleanId } from '../../utils/gstin';
 import './VendorManagement.css';
+import Combo from '../../components/Combo.jsx';
+// WhatsApp quick chat (free wa.me links): row icon, ticks + 'Send WhatsApp' + 'Mark opted in', Resume bar (components/wa/)
+import WaButton from '../../components/wa/WaButton.jsx';
+import WaBulkModal from '../../components/wa/WaBulkModal.jsx';
+import WaResume from '../../components/wa/WaResume.jsx';
+import { WaOptInModal, WaOptInToggle } from '../../components/wa/WaOptIn.jsx';
+import { useWaConfig, waMayUse } from '../../components/wa/waKit.js';
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION -> VENDORS (Vendor Management), 2026-10-09. The "Vendors" tab of
@@ -20,12 +29,17 @@ const inr = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { maximumFractio
 const BLANK = { name: '', companyName: '', contactPerson: '', email: '', phone: '', gstin: '', pan: '', category: '', paymentTerms: '', address: '', notes: '' };
 const TERMS = ['Immediate', 'Advance', 'Net 7', 'Net 15', 'Net 30', 'Net 45', 'Net 60'];
 
-export default function VendorManagement({ onSaved, onError, onOpenLogins, onLink }) {
+export default function VendorManagement({ onSaved, onError, onOpenLogins, onLink, onMailDone }) {
   const [data, setData] = useState(null);
   const [f, setF] = useState({ q: '', status: '', category: '', login: '' });
   const [qDeb, setQDeb] = useState('');
   const [form, setForm] = useState(null); // { row | null }
   const [openId, setOpenId] = useState(null);
+  const [waSel, setWaSel] = useState(() => new Set()); // vendors ticked for WhatsApp
+  const [waBulk, setWaBulk] = useState(null);
+  const [waOpt, setWaOpt] = useState(null);
+  const [waTick, setWaTick] = useState(0);
+  const waOn = waMayUse(useWaConfig(), 'vendor');
 
   useEffect(() => { const t = setTimeout(() => setQDeb(f.q), 250); return () => clearTimeout(t); }, [f.q]);
   const load = useCallback(() => {
@@ -43,18 +57,18 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
       <div className="vm-top">
         <div className="vp-filters" role="search">
           <input className="vp-search" type="search" placeholder="Search name, code, contact, email, phone, GSTIN" value={f.q} onChange={(e) => setF({ ...f, q: e.target.value })} aria-label="Search vendors" />
-          <select value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label="Status">
+          <Combo value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })} aria-label="Status">
             <option value="">Active or switched off</option>
             {(fc.status || []).map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-          </select>
-          <select value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} aria-label="Category">
+          </Combo>
+          <Combo value={f.category} onChange={(e) => setF({ ...f, category: e.target.value })} aria-label="Category">
             <option value="">All categories</option>
             {(fc.category || []).map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-          </select>
-          <select value={f.login} onChange={(e) => setF({ ...f, login: e.target.value })} aria-label="Login">
+          </Combo>
+          <Combo value={f.login} onChange={(e) => setF({ ...f, login: e.target.value })} aria-label="Login">
             <option value="">With or without a login</option>
             {(fc.login || []).map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-          </select>
+          </Combo>
           {filtered && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ q: '', status: '', category: '', login: '' })}>Clear</button>}
         </div>
         <button type="button" className="btn btn-primary" onClick={() => setForm({ row: null })}>+ Add vendor</button>
@@ -67,13 +81,23 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
         </div>
       ) : (
         <div className="tbl-wrap">
+          {waOn && <WaResume entityType="vendor" refreshKey={waTick} />}
+          {waOn && waSel.size > 0 && (
+            <div className="wa-banner" role="region" aria-label="Selected vendors">
+              <b>{waSel.size} selected</b>
+              <button type="button" className="btn btn-sm wa-go" onClick={() => setWaBulk({ ids: [...waSel] })}>🟢 Send WhatsApp</button>
+              <button type="button" className="btn btn-sm" onClick={() => setWaOpt({ ids: [...waSel] })}>✔ Mark opted in</button>
+              <button type="button" className="btn btn-sm" onClick={() => setWaSel(new Set())}>Cancel</button>
+            </div>
+          )}
           <table>
             <thead>
-              <tr><th>Code</th><th>Vendor</th><th>Contact</th><th>GSTIN</th><th>Category</th><th>Status</th><th className="num">Logins</th><th className="num">Bills to pay</th><th /></tr>
+              <tr>{waOn && <th style={{ width: 30 }}><input type="checkbox" aria-label="Select all vendors" checked={rows.length > 0 && rows.every((x) => waSel.has(x.id))} onChange={(ev) => setWaSel(ev.target.checked ? new Set(rows.map((x) => x.id)) : new Set())} /></th>}<th>Code</th><th>Vendor</th><th>Contact</th><th>GSTIN</th><th>Category</th><th>Status</th><th className="num">Logins</th><th className="num">Bills to pay</th><th /></tr>
             </thead>
             <tbody>
               {rows.map((r) => (
                 <tr key={r.id} className={r.isActive ? '' : 'vm-off'}>
+                  {waOn && <td><input type="checkbox" aria-label={`Select ${r.name} for WhatsApp`} checked={waSel.has(r.id)} onChange={(ev) => setWaSel((prev) => { const n = new Set(prev); if (ev.target.checked) n.add(r.id); else n.delete(r.id); return n; })} /></td>}
                   <td>{r.vendorCode || <span className="cell-muted">—</span>}</td>
                   <td><strong>{r.name}</strong>{r.companyName && r.companyName !== r.name && <div className="cell-muted">{r.companyName}</div>}</td>
                   <td>{r.contactPerson || '—'}{r.phone && <div className="cell-muted">{r.phone}</div>}</td>
@@ -82,7 +106,7 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
                   <td><span className={`vp-tag vp-${r.isActive ? 'green' : 'grey'}`}>{r.statusText}</span></td>
                   <td className="num">{r.logins}</td>
                   <td className="num">{r.unpaidBills}</td>
-                  <td><button type="button" className="btn btn-sm btn-primary" onClick={() => setOpenId(r.id)}>Open</button></td>
+                  <td><button type="button" className="btn btn-sm btn-primary" onClick={() => setOpenId(r.id)}>Open</button> <WaButton entityType="vendor" id={r.id} name={r.name} hasNumber={!!r.phone} /></td>
                 </tr>
               ))}
             </tbody>
@@ -99,6 +123,8 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
           onSaved={(msg, vendor) => { setForm(null); onSaved(msg); load(); if (vendor && !form.row) setOpenId(vendor.id); }}
         />
       )}
+      {waBulk && <WaBulkModal entityType="vendor" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => { setWaSel(new Set()); setWaTick((n) => n + 1); }} />}
+      {waOpt && <WaOptInModal entityType="vendor" ids={waOpt.ids} onClose={() => setWaOpt(null)} />}
       {openId && (
         <VendorDetail
           id={openId}
@@ -108,6 +134,7 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
           onError={onError}
           onOpenLogins={onOpenLogins}
           onLink={onLink}
+          onMailDone={onMailDone}
         />
       )}
     </div>
@@ -115,8 +142,10 @@ export default function VendorManagement({ onSaved, onError, onOpenLogins, onLin
 }
 
 // ---- add / edit ---------------------------------------------------------------
-function VendorForm({ row, onClose, onSaved }) {
+// Exported: the Add vendor login drawer opens this same form from its "+ Add Vendor" row (2026-10-14).
+export function VendorForm({ row, onClose, onSaved, requireCategory }) {
   const isNew = !row;
+  const needCat = isNew || requireCategory === true; // the category decides which modules the vendor's portal gets
   const [v, setV] = useState(() => (row ? Object.fromEntries(Object.keys(BLANK).map((k) => [k, row[k] || ''])) : { ...BLANK }));
   const [cats, setCats] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -124,11 +153,21 @@ function VendorForm({ row, onClose, onSaved }) {
   const [fieldErr, setFieldErr] = useState({});
   const [warn, setWarn] = useState(null); // a possible duplicate the user can confirm
   const set = (k) => (e) => { setV({ ...v, [k]: e.target.value }); setFieldErr({ ...fieldErr, [k]: undefined }); setWarn(null); };
-  useEffect(() => { api.get('/vendor-master/categories').then((r) => setCats(r.data.map((c) => c.name))).catch(() => {}); }, []);
+  const [reg, setReg] = useState(null);
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    api.get('/vendor-master/categories').then((r) => setCats(r.data.map((c) => c.name))).catch(() => {});
+    api.get('/vendor-logins/registry').then((r) => setReg(r.data)).catch(() => {});
+  }, []);
+  useEffect(() => {
+    const t = setTimeout(() => { api.get('/vendor-logins/category-preview', { params: { category: v.category } }).then((r) => setPreview(r.data)).catch(() => setPreview(null)); }, 250);
+    return () => clearTimeout(t);
+  }, [v.category]);
 
   async function save(confirmDuplicate) {
     setErr('');
     if (!v.name.trim()) { setFieldErr({ name: 'Write the vendor name.' }); return; }
+    if (needCat && !v.category.trim()) { setFieldErr({ category: 'Pick or write the category. It decides what this vendor sees in the portal.' }); return; }
     const g = cleanId(v.gstin);
     if (g) { const c = checkGstin(g); if (!c.ok) { setFieldErr({ gstin: c.error }); return; } }
     setBusy(true);
@@ -168,15 +207,25 @@ function VendorForm({ row, onClose, onSaved }) {
       )}
     >
       <div className="vm-grid">
-        {field('name', 'Vendor name *', { max: 120, ph: 'e.g. Sri Sai Stationers' })}
+        {field('name', 'Vendor name', { max: 120, ph: 'e.g. Sri Sai Stationers' })}
         {field('companyName', 'Company name', { max: 160 })}
         {field('contactPerson', 'Contact person', { max: 120 })}
         {field('phone', 'Phone', { max: 30, type: 'tel' })}
         {field('email', 'Email', { max: 160, type: 'email' })}
         {field('gstin', 'GSTIN', { max: 15, ph: '15 characters, optional' })}
         {field('pan', 'PAN', { max: 10, ph: '10 characters, optional' })}
-        {field('category', 'Category', { max: 60, list: 'vm-cats', ph: 'e.g. Internet, Rent, Stationery' })}
-        <datalist id="vm-cats">{cats.map((c) => <option key={c} value={c} />)}</datalist>
+        <div className={`vm-f${fieldErr.category ? ' vm-bad' : ''}`}>
+          <label htmlFor="vm-category">Category</label>
+          <input id="vm-category" value={v.category} maxLength={60} list="vm-cats" placeholder="e.g. Office Rent, ID Cards, Airtel SIM" onChange={set('category')} aria-describedby="vm-catnote" />
+          {fieldErr.category && <em className="vm-err" role="alert">{fieldErr.category}</em>}
+          <div id="vm-catnote" className="cell-muted" style={{ fontSize: 12, marginTop: 3 }}>
+            {(reg?.categories || []).map((c) => (
+              <button type="button" key={c.key} className="link-btn" style={{ marginRight: 8 }} onClick={() => set('category')({ target: { value: c.label } })}>{c.label}</button>
+            ))}
+            {needCat && preview && v.category.trim() && <div>The vendor portal for “{preview.label}” gets: {preview.modules.join(', ')}.</div>}
+          </div>
+        </div>
+        <datalist id="vm-cats">{[...new Set([...(reg?.categories || []).map((c) => c.label), ...cats])].map((c) => <option key={c} value={c} />)}</datalist>
         {field('paymentTerms', 'Payment terms', { max: 200, list: 'vm-terms', ph: 'e.g. Net 30' })}
         <datalist id="vm-terms">{TERMS.map((t) => <option key={t} value={t} />)}</datalist>
         {field('address', 'Address', { area: true, full: true })}
@@ -189,7 +238,7 @@ function VendorForm({ row, onClose, onSaved }) {
 }
 
 // ---- one vendor ---------------------------------------------------------------
-function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, onLink }) {
+function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, onLink, onMailDone }) {
   const [d, setD] = useState(null);
   const [edit, setEdit] = useState(false);
   const [loginFor, setLoginFor] = useState(false);
@@ -199,18 +248,18 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const load = useCallback(() => {
-    api.get(`/vendor-master/${id}`).then((r) => setD(r.data)).catch((e) => onError(errText(e, 'Could not open the vendor.')));
+    Promise.all([api.get(`/vendor-master/${id}`), api.get('/vendor-logins', { params: { vendorId: id } })])
+      .then(([r, l]) => setD({ ...r.data, loginRows: l.data.rows, mail: l.data.mail })).catch((e) => onError(errText(e, 'Could not open the vendor.')));
   }, [id, onError]);
   useEffect(() => { load(); }, [load]);
   const done = (m) => { setMsg(m); onSaved(m); load(); onChanged(); };
   const v = d?.vendor;
 
-  async function link(login) {
-    try {
-      const res = await api.post(`/vendor-logins/${login.id}/invite`, {});
-      onLink({ email: login.email, link: res.data.inviteLink, expiresAt: res.data.inviteExpiresAt, emailed: res.data.emailed });
-      done(res.data.message);
-    } catch (e) { onError(errText(e, 'Could not make the link.')); }
+  // After a send / resend / reset / edit-email from this window: the real outcome (green accepted, red failed) and, only if email is not set up, a backup link.
+  function mailResult(res) {
+    if (res.inviteLink) onLink({ email: res.login?.email, link: res.inviteLink, expiresAt: res.inviteExpiresAt, emailed: false });
+    if (onMailDone) onMailDone(res); else done(res.message);
+    setMsg(res.message || ''); load(); onChanged();
   }
   async function linkBills() {
     try { const res = await api.post(`/vendor-master/${id}/link-bills`, { all: true }); done(res.data.message); } catch (e) { onError(errText(e, 'Could not link the bills.')); }
@@ -247,8 +296,9 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
 
           <section>
             <div className="vm-sec-h"><h4>Details</h4><button type="button" className="btn btn-sm" onClick={() => setEdit(true)}>Edit</button></div>
+            <WaOptInToggle entityType="vendor" id={v.id} />
             <dl className="vm-dl">
-              {[['Company name', v.companyName], ['Contact person', v.contactPerson], ['Phone', v.phone], ['Email', v.email], ['GSTIN', v.gstin], ['PAN', v.pan], ['Category', v.category], ['Payment terms', v.paymentTerms], ['Address', v.address], ['Notes', v.notes]]
+              {[['Company name', v.companyName], ['Contact person', v.contactPerson], ['Phone', v.phone], ['Vendor contact email', v.email], ['GSTIN', v.gstin], ['PAN', v.pan], ['Category', v.category], ['Payment terms', v.paymentTerms], ['Address', v.address], ['Notes', v.notes]]
                 .map(([k, x]) => <div key={k}><dt>{k}</dt><dd>{x || '—'}</dd></div>)}
             </dl>
           </section>
@@ -292,7 +342,7 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
             <div className="vm-sec-h"><h4>Vendor login</h4>
               <span>
                 <button type="button" className="btn btn-sm btn-primary" onClick={() => setLoginFor(true)} disabled={!v.isActive}>+ Create login</button>{' '}
-                <button type="button" className="btn btn-sm btn-ghost" onClick={() => { onClose(); onOpenLogins(); }}>Assets and other login settings</button>
+                <button type="button" className="btn btn-sm btn-ghost" onClick={() => { onClose(); onOpenLogins(); }}>All logins and settings</button>
               </span>
             </div>
             {!d.logins.length ? <div className="vp-none">No login yet. Create one — the vendor gets a secure link and chooses their own password.</div> : (
@@ -313,7 +363,7 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
             <div className="vm-share">
               <input type="file" ref={fileRef} accept=".pdf,.jpg,.jpeg,.png" aria-label="File to share" />
               <input value={doc.title} maxLength={120} placeholder="Name (e.g. Agreement 2026)" onChange={(e) => setDoc({ ...doc, title: e.target.value })} aria-label="Document name" />
-              <select value={doc.docType} onChange={(e) => setDoc({ ...doc, docType: e.target.value })} aria-label="Type">{d.docTypes.map((t) => <option key={t}>{t}</option>)}</select>
+              <Combo allowCustom value={doc.docType} onChange={(e) => setDoc({ ...doc, docType: e.target.value })} aria-label="Type">{d.docTypes.map((t) => <option key={t}>{t}</option>)}</Combo>
               <button type="button" className="btn btn-primary" onClick={upload} disabled={busy}>{busy ? 'Sharing…' : 'Share with vendor'}</button>
             </div>
             {!d.documents.length ? <div className="vp-none">Nothing shared yet.</div> : (
@@ -336,7 +386,7 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
           </section>
 
           {edit && <VendorForm row={v} onClose={() => setEdit(false)} onSaved={(m) => { setEdit(false); done(m); }} />}
-          {loginFor && <NewLogin vendor={v} onClose={() => setLoginFor(false)} onDone={(res) => { setLoginFor(false); if (res.inviteLink) onLink({ email: res.login.email, link: res.inviteLink, expiresAt: res.inviteExpiresAt, emailed: res.emailed }); done(res.message); }} />}
+          {loginFor && <NewLogin vendor={v} onClose={() => setLoginFor(false)} onDone={(res) => { setLoginFor(false); mailResult(res); }} />}
           {offAsk && <SwitchOff vendor={v} onClose={() => setOffAsk(false)} onDone={(m) => { setOffAsk(false); done(m); }} />}
         </div>
       )}
@@ -349,19 +399,21 @@ function NewLogin({ vendor, onClose, onDone }) {
   const [email, setEmail] = useState(vendor.email || '');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const key = useRef(window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : `k${Date.now()}${Math.random().toString(16).slice(2)}`); // one key per opening: a double click is one login
   async function go() {
+    if (busy) return;
     setErr('');
     if (!name.trim() || !email.trim()) { setErr('Write the contact name and email.'); return; }
     setBusy(true);
-    try { const res = await api.post('/vendor-logins', { vendorId: vendor.id, name, email, invite: true }); onDone(res.data); } catch (e) { setErr(errText(e, 'Could not create the login.')); setBusy(false); }
+    try { const res = await api.post('/vendor-logins', { vendorId: vendor.id, name, email, invite: true }, { headers: { 'Idempotency-Key': key.current } }); onDone(res.data); } catch (e) { setErr(errText(e, 'Could not create the login.')); setBusy(false); }
   }
   return (
-    <Modal title={`Create login · ${vendor.name}`} onClose={onClose} footer={(<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={go} disabled={busy}>{busy ? 'Creating…' : 'Create and get the secure link'}</button></>)}>
+    <Modal title={`Create login · ${vendor.name}`} onClose={onClose} footer={(<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={go} disabled={busy}>{busy ? 'Creating…' : 'Create login and email the vendor'}</button></>)}>
       <div className="vm-grid">
         <div className="vm-f"><label htmlFor="nl-n">Contact name</label><input id="nl-n" value={name} maxLength={120} onChange={(e) => setName(e.target.value)} /></div>
-        <div className="vm-f"><label htmlFor="nl-e">Email (their username)</label><input id="nl-e" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
+        <div className="vm-f"><label htmlFor="nl-e">Login email (the invitation goes here)</label><input id="nl-e" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
       </div>
-      <div className="small-muted" style={{ marginTop: 8 }}>You will get a secure link to send to the vendor. They choose their own password; the link works once and runs out in 3 days. Add assets for them later under “Assets and other login settings”.</div>
+      <div className="small-muted" style={{ marginTop: 8 }}>TeamLink emails the vendor a welcome email: the login ID, a temporary password and a secure link to choose their own password. The temporary password and the link run out in 3 days. You never see or copy a password.</div>
       {err && <div className="notice red" style={{ marginTop: 8 }}><span>{err}</span></div>}
     </Modal>
   );

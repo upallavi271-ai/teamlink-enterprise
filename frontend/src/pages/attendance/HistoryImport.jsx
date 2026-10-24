@@ -3,6 +3,7 @@ import api from '../../api';
 import { Panel, PanelHead } from '../../components/proto.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
 import { ScrollTable } from './DayReport.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // ---- Sample files -------------------------------------------------------------
 // The exact headers utils/attendanceHistoryImport.js reads, one file per kind,
@@ -254,17 +255,17 @@ export default function HistoryImport() {
             <input type="date" value={hf.from} onChange={(e) => setH('from', e.target.value)} aria-label="From date" />
             <label className="small-muted" style={{ alignSelf: 'center', margin: 0 }}>To</label>
             <input type="date" value={hf.to} onChange={(e) => setH('to', e.target.value)} aria-label="To date" />
-            <select value={hf.department} onChange={(e) => setH('department', e.target.value)} aria-label="Department">
+            <Combo value={hf.department} onChange={(e) => setH('department', e.target.value)} aria-label="Department">
               <option value="">All departments</option>
               {departments.map((d) => <option key={d}>{d}</option>)}
-            </select>
+            </Combo>
             <input placeholder="Employee ID" value={hf.code} onChange={(e) => setH('code', e.target.value)} />
             <input placeholder="Search name" value={hf.name} onChange={(e) => setH('name', e.target.value)} />
-            <select value={hf.match} onChange={(e) => setH('match', e.target.value)} aria-label="Match">
+            <Combo value={hf.match} onChange={(e) => setH('match', e.target.value)} aria-label="Match">
               <option value="">All rows</option>
               <option value="Matched">Matched</option>
               <option value="Unmatched Employee">Unmatched Employee</option>
-            </select>
+            </Combo>
             {chips.length > 0 && <button type="button" className="btn btn-sm" onClick={() => { setHf(NO_HIST_FILTERS); setApplied(NO_HIST_FILTERS); }}>Clear All</button>}
           </div>
           <div className="att-hist-chips">

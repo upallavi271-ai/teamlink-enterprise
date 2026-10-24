@@ -53,7 +53,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { logAudit } = require('./audit');
-const { requirementIsLive, requirementStatusLabel, REQUIREMENT_LIVE_STATUSES } = require('./atsVocab');
+const { requirementIsLive, requirementStateWords, REQUIREMENT_LIVE_STATUSES } = require('./atsVocab');
 const http = require('./jobBoards/http');
 const indeed = require('./jobBoards/indeed');
 const linkedin = require('./jobBoards/linkedin');
@@ -189,7 +189,7 @@ const OWN_CHECK = {
     path: () => '/api/public/jobs.feed',
     listed: (res, r) => res.code === 200 && Array.isArray(res.body) && res.body.some((j) => j.id === r.id),
     url: (r) => relOrAbs(careersPath(r, 'TeamLink Website')),
-    where: 'the website job list',
+    where: 'the website requirement list',
   },
   google: {
     path: (r) => `/api/public/jobs/${r.id}/jsonld`,
@@ -205,7 +205,7 @@ async function ownIsListed(site, r) {
   if (res.ok && res.code !== 429 && res.code < 500) return { listed: c.listed(res, r), via: `GET ${c.path(r)} → ${res.code}` };
   return { listed: await listedInDb(r.id, site), via: 'checked in the database (own URL not reachable)' };
 }
-const notShowing = (r, where) => `The job is not showing on ${where} yet.${r.portalUnpublishedAt && !r.portalPublished ? ' It was taken off the job portal by hand — press Retry to put it back.' : ' Press Retry.'}`;
+const notShowing = (r, where) => `The requirement is not showing on ${where} yet.${r.portalUnpublishedAt && !r.portalPublished ? ' It was taken off the job portal by hand — press Retry to put it back.' : ' Press Retry.'}`;
 
 function ownConnector(site) {
   const c = OWN_CHECK[site];
@@ -243,7 +243,7 @@ function portalConnector() {
     if (seen.unreachable) return { status: STATUS.FAILED, errorMessage: notAnswering(seen) };
     return {
       status: STATUS.FAILED,
-      errorMessage: sent.ok ? notShowing(r, where) : `The job could not be sent to the job portal: ${sent.error}. Press Retry.`,
+      errorMessage: sent.ok ? notShowing(r, where) : `The requirement could not be sent to the job portal: ${sent.error}. Press Retry.`,
       note: seen.via,
     };
   }
@@ -282,15 +282,15 @@ function googleConnector() {
         ...base,
         status: STATUS.FEED,
         errorMessage: cfg.missing && cfg.missing.length === 2
-          ? 'Ready for Google on our site. Google usually shows new jobs within a few days.'
-          : `Ready for Google on our site. Google usually shows new jobs within a few days. ${cfg.hint}`,
+          ? 'Ready for Google on our site. Google usually shows new requirements within a few days.'
+          : `Ready for Google on our site. Google usually shows new requirements within a few days. ${cfg.hint}`,
       };
     }
     const sent = await google.notify(r, cfg, 'URL_UPDATED');
     if (!sent.ok) return { ...base, status: STATUS.FEED, errorMessage: `Ready for Google on our site, but Google could not be told yet: ${sent.error}`, called: true };
     const seen = await google.inspect(r, cfg);
     if (seen.ok && seen.live) return { ...base, status: STATUS.POSTED, externalUrl: google.pageUrl(r), called: true };
-    return { ...base, status: STATUS.FEED, errorMessage: 'Google was told about the job. It shows Posted once Google shows it (can take a few days).', called: true };
+    return { ...base, status: STATUS.FEED, errorMessage: 'Google was told about the requirement. It shows Posted once Google shows it (can take a few days).', called: true };
   }
   return {
     publish: up,
@@ -343,7 +343,7 @@ async function feedCheck(src, r, wantIn) {
   if (wantIn) {
     return inFeed
       ? { status: STATUS.FEED, externalJobId: r.reqCode || r.id, errorMessage: `In the ${src.label} job feed. Waiting for ${src.label} to confirm it is live.`, note }
-      : { status: STATUS.FAILED, errorMessage: `The job is not in the ${src.label} feed yet. Press Retry.`, note };
+      : { status: STATUS.FAILED, errorMessage: `The requirement is not in the ${src.label} feed yet. Press Retry.`, note };
   }
   return inFeed
     ? { status: STATUS.FEED, errorMessage: `Still in the ${src.label} feed. Press Retry.`, note }
@@ -449,7 +449,7 @@ async function runOne(r, src, row, want, ctx) {
       }
       if (row.status === STATUS.HAND_REMOVE) return row;
       const saved = await saveRow(r.id, src.id, { status: STATUS.HAND_REMOVE, lastTriedAt: now });
-      await audit(ctx, r, src, 'Take down by hand', `The job is ${requirementStatusLabel(r.status)}${requirementIsLive(r.status) ? ' (unticked)' : ''} but is still up on ${src.label} — a person must take it down there.`);
+      await audit(ctx, r, src, 'Take down by hand', `The requirement is ${requirementStateWords(r.status)}${requirementIsLive(r.status) ? ' (unticked)' : ''} but is still up on ${src.label} — a person must take it down there.`);
       return saved;
     }
     if (want === 'down') {
@@ -467,7 +467,7 @@ async function runOne(r, src, row, want, ctx) {
         lastTriedAt: now,
       });
       await audit(ctx, r, src, gone ? 'Removed' : 'Remove failed',
-        gone ? `Taken off ${src.label} — job is ${requirementStatusLabel(r.status)}${requirementIsLive(r.status) ? ' (unticked)' : ''}${out.note ? ` · ${out.note}` : ''}` : out.errorMessage);
+        gone ? `Taken off ${src.label} — requirement is ${requirementStateWords(r.status)}${requirementIsLive(r.status) ? ' (unticked)' : ''}${out.note ? ` · ${out.note}` : ''}` : out.errorMessage);
       return saved;
     }
 
@@ -729,15 +729,15 @@ async function siteStatuses(r, user = null) {
   }));
   const ticked = posting().tickedSites(r);
   const live = requirementIsLive(r.status);
-  const label = requirementStatusLabel(r.status);
+  const label = requirementStateWords(r.status);
   const choices = await sourceChoices(user);
   const handHours = await require('./jobBoards/manual').reminderHours().catch(() => 6); // eslint-disable-line global-require
   if (live) recheckLater(r, rows).catch(() => {});
   const notLive = (() => {
     if (r.status === 'AGREEMENT_CHECK') return { status: 'Waiting', tone: 'orange', reason: 'Will post when the agreement is Active.' };
-    if (r.status === 'DRAFT') return { status: 'Draft', tone: 'grey', reason: 'This job is a draft. It posts when the job is opened.' };
-    if (r.status === 'ON_HOLD') return { status: 'Paused', tone: 'orange', reason: 'The job is paused, so it is off this site. It goes back up when the job is resumed.' };
-    return { status: 'Removed', tone: 'grey', reason: `The job is ${label}, so it is off this site.` };
+    if (r.status === 'DRAFT') return { status: 'Not posted', tone: 'grey', reason: 'This requirement is not live yet. It posts when the requirement is opened.' };
+    if (r.status === 'ON_HOLD') return { status: 'Paused', tone: 'orange', reason: 'The requirement is paused, so it is off this site. It goes back up when the requirement is resumed.' };
+    return { status: 'Removed', tone: 'grey', reason: `The requirement is ${label}, so it is off this site.` };
   })();
 
   return SOURCES.map((s) => withLabel(s, rows.find((x) => x.source === s.id) || null));
@@ -797,7 +797,7 @@ async function siteStatuses(r, user = null) {
     };
     // Posted by hand: still up there until a person takes it down.
     if (handRow && (!isTicked || !live || row.status === STATUS.HAND_REMOVE)) {
-      return { ...base, status: STATUS.HAND_REMOVE, tone: TONE[STATUS.HAND_REMOVE], reason: `This job was posted on ${s.label} by hand and is ${live ? 'not ticked for it any more' : requirementStatusLabel(r.status)}. Take it down on ${s.label}, then press "I took it down".`, canRetry: false };
+      return { ...base, status: STATUS.HAND_REMOVE, tone: TONE[STATUS.HAND_REMOVE], reason: `This requirement was posted on ${s.label} by hand and is ${live ? 'not ticked for it any more' : requirementStateWords(r.status)}. Take it down on ${s.label}, then press "I took it down".`, canRetry: false };
     }
     if (handRow && isTicked && live) {
       const when = new Date(row.postedAt || row.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
@@ -807,7 +807,7 @@ async function siteStatuses(r, user = null) {
     if ((!isTicked || !live) && row && [STATUS.POSTED, ...WAITING].includes(row.status)) {
       return { ...base, status: 'Removing', tone: row.errorMessage ? 'red' : 'blue', reason: row.errorMessage || 'Taking it off this site…', canRetry: !!row.errorMessage };
     }
-    if (!isTicked) return { ...base, status: 'Off', tone: 'none', reason: 'Not ticked for this job.' };
+    if (!isTicked) return { ...base, status: 'Off', tone: 'none', reason: 'Not ticked for this requirement.' };
     if (s.id === 'google' && r.internal) return { ...base, status: 'Off', tone: 'none', reason: 'TeamLink internal hiring stays on our own Job Portal and Website.' };
     if (!live) return { ...base, ...notLive };
     if (!row && !r.portalPublished) {
@@ -825,7 +825,7 @@ async function siteStatuses(r, user = null) {
     }
     if (s.kind === 'board' && [STATUS.NEEDS, STATUS.SETUP].includes(row.status) && choice && choice.ready) {
       // The board got its connection after the by-hand task was made: the same row goes out through the connector.
-      return { ...base, status: row.status, tone: 'blue', readyToSend: true, canRetry: true, reason: `${s.label} is connected now. Press Retry and TeamLink sends this job by itself.` };
+      return { ...base, status: row.status, tone: 'blue', readyToSend: true, canRetry: true, reason: `${s.label} is connected now. Press Retry and TeamLink sends this requirement by itself.` };
     }
     if (s.kind === 'board' && row.status === STATUS.FEED && choice && choice.mode === 'feed') {
       return {
@@ -870,7 +870,7 @@ function summarise(sites) {
   const names = (a) => a.map((x) => x.name).join(', ');
   const is = (a) => (a.length === 1 ? 'is' : 'are');
   const parts = [];
-  if (!t.length) parts.push('No site is ticked, so the job is not posted anywhere.');
+  if (!t.length) parts.push('No site is ticked, so the requirement is not posted anywhere.');
   const nPosted = auto.length + handDone.length;
   if (nPosted) {
     parts.push(handDone.length
@@ -954,7 +954,7 @@ async function boardSetupReport(integrationId) {
   if (hasTable()) {
     last = await prisma.requirementPosting.findFirst({ where: { source: src.id }, orderBy: { updatedAt: 'desc' } }).catch(() => null);
   }
-  const lastText = last ? ` Last job: ${last.status}${last.errorMessage ? ` (${http.plain(last.errorMessage, 140)})` : ''}.` : '';
+  const lastText = last ? ` Last requirement: ${last.status}${last.errorMessage ? ` (${http.plain(last.errorMessage, 140)})` : ''}.` : '';
   if (!cfg.ready) {
     await saveCheck(src.integrationId, { ok: false, text: cfg.hint });
     return { ready: false, result: `Not ready — ${cfg.hint}${lastText}` };
@@ -966,7 +966,7 @@ async function boardSetupReport(integrationId) {
     const ok = mine.ok && mine.code === 200 && /<source>/.test(mine.text);
     const jobs = ok ? (mine.text.match(/<job>/g) || []).length : 0;
     const text = ok
-      ? `Your ${src.label} feed link works and has ${jobs} job(s) in it. ${src.label} must still read it: send the link to them (nothing was sent by this check).${lastText}`
+      ? `Your ${src.label} feed link works and has ${jobs} requirement(s) in it. ${src.label} must still read it: send the link to them (nothing was sent by this check).${lastText}`
       : `Your ${src.label} feed link did not answer. ${mine.ok ? `HTTP ${mine.code}` : mine.error}`;
     await saveCheck(src.integrationId, { ok: false, feedOnly: true, text });
     return { ready: true, result: text };
@@ -976,7 +976,7 @@ async function boardSetupReport(integrationId) {
     await saveCheck(src.integrationId, { ok: !!hs.ok, text: hs.text });
     return { ready: true, verified: !!hs.ok, result: `${hs.ok ? 'Connected' : 'Problem'} — ${hs.text}${lastText}` };
   }
-  const text = `Details are filled in. ${src.label} has no test call, so the first job you post shows whether they work (nothing was sent by this check).${lastText}`;
+  const text = `Details are filled in. ${src.label} has no test call, so the first requirement you post shows whether they work (nothing was sent by this check).${lastText}`;
   await saveCheck(src.integrationId, { ok: false, noTest: true, text });
   return { ready: true, result: text };
 }
@@ -1036,8 +1036,8 @@ async function boardStatus(integrationId) {
   let wordWhy = cfg.ready ? '' : (cfg.configured ? cfg.hint : 'Nothing is set up for this board yet.');
   const proof = (chk && chk.ok === true) || jobsCount.posted > 0 || !!feedRead;
   if (cfg.ready && (plainErr || (chk && chk.ok === false && !chk.feedOnly && !chk.noTest))) { word = 'Problem'; wordWhy = plainErr || chk.text; }
-  else if (cfg.ready && proof) { word = 'Connected'; wordWhy = feedRead ? 'The board has read your job feed.' : (chk && chk.ok ? chk.text : 'A job reached this board and was confirmed live.'); }
-  else if (cfg.ready) { word = 'Waiting for approval'; wordWhy = cfg.feed ? 'Your feed is on. Waiting for the board to start reading it.' : 'The details are saved but nothing has confirmed them yet. The first job you post shows whether they work.'; }
+  else if (cfg.ready && proof) { word = 'Connected'; wordWhy = feedRead ? 'The board has read your job feed.' : (chk && chk.ok ? chk.text : 'A requirement reached this board and was confirmed live.'); }
+  else if (cfg.ready) { word = 'Waiting for approval'; wordWhy = cfg.feed ? 'Your feed is on. Waiting for the board to start reading it.' : 'The details are saved but nothing has confirmed them yet. The first requirement you post shows whether they work.'; }
   else if (applied) { word = 'Waiting for approval'; wordWhy = `Applied by ${applied.by || 'a team member'} on ${new Date(applied.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}${applied.note ? ` (${applied.note})` : ''}. Paste the details in Configure when the board sends them.`; }
   const guideText = require('./jobBoards/connectText').CONNECT[integrationId] || null; // eslint-disable-line global-require
   const feedLinks = [];
@@ -1047,7 +1047,7 @@ async function boardStatus(integrationId) {
   }
   if (integrationId === 'naukri' && cfg.feed) feedLinks.push({ label: 'Naukri job feed link', url: relOrAbs('/api/public/feeds/naukri.xml'), lastRead: feedRead });
   if (integrationId === 'google-jobs') {
-    feedLinks.push({ label: 'Sitemap (submit once in Google Search Console)', url: relOrAbs('/sitemap.xml'), note: 'Lists every job page.' });
+    feedLinks.push({ label: 'Sitemap (submit once in Google Search Console)', url: relOrAbs('/sitemap.xml'), note: 'Lists every requirement page.' });
     feedLinks.push({ label: 'All job data in one file (JobPosting)', url: relOrAbs('/api/public/jobs.jsonld') });
   }
   let connection = 'Not set up';

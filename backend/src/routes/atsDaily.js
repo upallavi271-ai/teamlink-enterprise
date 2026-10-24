@@ -58,7 +58,7 @@ router.get('/export', guarded(async (req, res) => {
   let rows;
   let title;
   if (isDay) {
-    headers = ['Time', 'Person', 'What', 'Candidate', 'Job', 'Client', 'Detail'];
+    headers = ['Time', 'Person', 'What', 'Candidate', 'Requirement', 'Client', 'Detail'];
     rows = b.rows.map((r) => [
       r.timeKnown ? new Date(r.at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) : '—',
       r.person, `${r.what}${r.imported ? ' (imported)' : ''}`, r.candidate || '', r.job || '', r.client || '', r.detail || '',

@@ -64,3 +64,36 @@ dev.db.*
 
 # The embedded Job Portal's runtime files (heartbeat, pid, log) - backend/src/utils/jobPortalEmbed.js
 job-portal-app/run/
+
+# ---- Auto-sync safety (watch-sync.ps1, 2026-10-22): nothing here may ever reach GitHub ----
+# keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+# templates stay allowed even though .env.* is ignored above
+!.env.*.example
+!**/.env.example
+!**/.env.*.example
+# build output, coverage, logs, editor and tool temp files
+coverage/
+dist-ssr/
+logs/
+*.tsbuildinfo
+*.tmp
+*.swp
+*.swo
+~$*
+Thumbs.db
+
+# database engines' data folders and bundled binaries (found by the auto-sync check, 2026-10-22): real records, never source
+pgdata/
+pg_wal/
+green-start-app/run/pgdata/
+green-start-app/run/redis/
+greenstart-app/var/
+*.pdb
+
+# the Job Portal's own live database folder and runtime files: never code (deploy/vps/teamlink-sync.sh also never touches them)
+job-portal-app/**/var/
+job-portal-app/**/run/

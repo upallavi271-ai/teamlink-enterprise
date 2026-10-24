@@ -81,14 +81,14 @@ async function openParkedJobs(clientId, { actorUserId = null, actorName = null }
       }
       // eslint-disable-next-line no-await-in-loop
       await notifyUsers(to, {
-        title: `✅ Job is live: ${r.title}`,
-        message: `${(client && client.name) || 'The client'}'s agreement is Active, so ${r.reqCode || 'this job'} is now ${status === 'OPEN' ? 'Open' : 'live (recruiter already on it)'}. ${status === 'OPEN' ? 'Assign a recruiter to start.' : 'Work can start now.'}`,
+        title: `✅ Requirement is live: ${r.title}`,
+        message: `${(client && client.name) || 'The client'}: ${r.reqCode || 'This requirement'} is now ${status === 'OPEN' ? 'Open' : 'live (recruiter already on it)'}. ${status === 'OPEN' ? 'Assign a recruiter to start.' : 'Work can start now.'}`,
         exceptUserId: actorUserId,
       });
     }
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[openParkedJobs] could not open the parked jobs:', err.message);
+    console.error('[openParkedJobs] could not open the parked requirements:', err.message);
   }
   return out;
 }

@@ -3,6 +3,7 @@ import api from '../api';
 import Modal from './Modal.jsx';
 import Combo from './Combo.jsx';
 import { JobPickerCombo } from './JobPicker.jsx';
+import { goToApplication } from './applications/AlreadyApplied.jsx';
 import { workflowStages } from '../permissions';
 import {
   stageLabel, INTERVIEW_MODES, HOLD_REASON_CATEGORIES, REJECTED_BY_OPTIONS,
@@ -35,7 +36,7 @@ const TITLES = {
   interview: 'Schedule interview',
   hold: 'Put on hold',
   reject: 'Reject',
-  addToJob: 'Add to job',
+  addToJob: 'Add to requirement',
 };
 // Hold → "review again on" (default one week; the server makes it a task).
 const inDaysYmd = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
@@ -108,6 +109,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
     || (kind === 'reject' && rejectReady(form));
 
   async function run() {
+    if (busy) return; // one click = one run
     setError('');
     setBusy(true);
     setProgress(0);
@@ -119,10 +121,15 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
         const x = people[i];
         try {
           // eslint-disable-next-line no-await-in-loop
-          await api.post('/applications', { candidateId: x.id, requirementId: form.requirementId });
+          // noAlreadyPanel: a person who is already on the job is reported on their own row, not as a pop-up per person.
+          await api.post('/applications', { candidateId: x.id, requirementId: form.requirementId }, { noAlreadyPanel: true });
           all.push({ candidateId: x.id, candidateName: x.name, ok: true });
         } catch (err) {
-          all.push({ candidateId: x.id, candidateName: x.name, ok: false, error: err.response?.data?.error || 'Could not be added' });
+          const dup = err.alreadyApplied && err.response?.data?.application;
+          all.push({
+            candidateId: x.id, candidateName: x.name, ok: false, skipped: !!dup, error: err.response?.data?.error || 'Could not be added',
+            ...(dup ? { applicationId: dup.id, link: dup.link } : {}),
+          });
         }
         setProgress(i + 1);
       }
@@ -200,6 +207,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
               <div key={`${x.candidateId}-${i}`} className="cbulk-row">
                 <span>{x.candidateName || x.candidateId}</span>
                 <span className="small-muted">{x.error}</span>
+                {x.link && <button type="button" className="btn btn-sm" onClick={() => { onClose(); goToApplication(x.link); }}>Open this application</button>}
               </div>
             ))}
           </div>
@@ -229,7 +237,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       {kind === 'assign' && (
         <>
           <label className="field">
-            <span>Recruiter *</span>
+            <span>Recruiter</span>
             <Combo value={form.recruiterId} onChange={(e) => set({ recruiterId: e.target.value })}>
               <option value="">Choose…</option>
               {people.map((p) => (
@@ -249,7 +257,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       {kind === 'stage' && (
         <>
           <label className="field">
-            <span>Move to *</span>
+            <span>Move to</span>
             <Combo value={form.stage} onChange={(e) => set({ stage: e.target.value })}>
               <option value="">Choose…</option>
               {movable.map((s) => <option key={s} value={s}>{stageLabel(s)}</option>)}
@@ -265,7 +273,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       {kind === 'interview' && (
         <div className="grid-2">
           <label className="field">
-            <span>Date &amp; time *</span>
+            <span>Date &amp; time</span>
             <input type="datetime-local" value={form.interviewAt} onChange={(e) => set({ interviewAt: e.target.value })} />
           </label>
           <label className="field">
@@ -292,7 +300,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
       {kind === 'hold' && (
         <>
           <label className="field">
-            <span>Reason *</span>
+            <span>Reason</span>
             <Combo
               creatable
               disabled={kind === 'reject' && !form.rejectedBy}
@@ -311,7 +319,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
           </label>
           {kind === 'hold' && (
             <label className="field">
-              <span>Review again on *</span>
+              <span>Review again on</span>
               <input type="date" min={inDaysYmd(0)} max={inDaysYmd(365)} value={form.reviewOn} onChange={(e) => set({ reviewOn: e.target.value })} />
               <span className="small-muted">On this day it comes back to you as a task.</span>
             </label>
@@ -321,7 +329,7 @@ export default function CandidateBulkActions({ kind, items, user, onClose, onDon
 
       {kind === 'addToJob' && (
         <label className="field">
-          <span>Job *</span>
+          <span>Requirement</span>
           <JobPickerCombo
             value={form.requirementId}
             onChange={(e) => set({ requirementId: e.target.value })}

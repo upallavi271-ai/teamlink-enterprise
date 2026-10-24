@@ -1,0 +1,43 @@
+/* Recruitment performance by role (components/rolePerformance/RolePerformance.jsx). Everything is scoped under .rpf. */
+.rpf { font-size: 13px; }
+.rpf-lead { color: var(--muted, #5b6472); margin: 0 0 10px; line-height: 1.5; }
+.rpf-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
+.rpf-bar .rpf-grow { flex: 1 1 auto; }
+.rpf-bar .lph-facet { min-width: 150px; }
+.rpf-bar .lph-facet.rpf-wide { min-width: 260px; flex: 1 1 260px; }
+.rpf-bar input[type="month"], .rpf-bar input[type="date"] { height: 32px; }
+.rpf-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 10px; }
+.rpf-card { border: 1px solid var(--line, #e3e7ee); border-radius: 10px; padding: 10px 12px; background: #fff; text-align: left; font: inherit; }
+.rpf-card b { display: block; font-size: 22px; line-height: 1.2; }
+.rpf-card b.green { color: var(--teal, #0f8a6f); }
+.rpf-card span { color: var(--muted, #5b6472); font-size: 12px; }
+button.rpf-card { cursor: default; }
+button.rpf-card.rpf-click { cursor: pointer; }
+button.rpf-card.rpf-click:hover { border-color: var(--blue, #1f5fd1); }
+.rpf-hint { color: var(--muted, #5b6472); font-size: 12px; line-height: 1.5; margin: 4px 0 8px; }
+.rpf-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+.rpf-chip { border: 1px solid #f0d9a8; background: var(--amber-tint, #fdf3e2); color: var(--amber, #b7700a); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+.rpf-chip:disabled { cursor: default; }
+.rpf-chip-grey { border-color: var(--line, #e3e7ee); background: #f5f6f8; color: #5b6472; cursor: default; }
+.rpf-na { color: var(--muted, #5b6472); font-size: 11.5px; font-style: italic; white-space: nowrap; }
+.rpf-sub { color: var(--muted, #5b6472); font-size: 11.5px; }
+.rpf-empty { color: var(--muted, #5b6472); padding: 14px 0; }
+.rpf-error { background: var(--red-tint, #fdeceb); color: var(--red, #c8372d); border-radius: 8px; padding: 8px 12px; margin-bottom: 10px; }
+.rpf-busy { opacity: .55; transition: opacity .15s; }
+.rpf-table th.rpf-sort { cursor: pointer; white-space: nowrap; user-select: none; }
+.rpf-table td, .rpf-table th { vertical-align: middle; }
+.rpf-group td { background: #f3f6fc; font-weight: 600; border-top: 2px solid #d3e2fb; }
+.rpf-num { background: none; border: 0; padding: 0; color: var(--blue, #1f5fd1); font-weight: 700; cursor: pointer; font-size: 13px; text-decoration: underline dotted; }
+.rpf-tag { display: inline-block; border-radius: 6px; padding: 1px 7px; font-size: 11.5px; }
+.rpf-tag.green { background: var(--teal-tint, #e5f5f1); color: var(--teal, #0f8a6f); }
+.rpf-tag.grey { background: #f0f2f5; color: #6b7280; }
+.rpf-how { background: var(--blue-tint, #eef4ff); border: 1px solid #d3e2fb; border-radius: 8px; padding: 8px 14px; margin: 0 0 12px; line-height: 1.5; }
+.rpf-how h4 { margin: 4px 0 6px; font-size: 13px; }
+.rpf-how ul { margin: 0 0 6px 16px; padding: 0; }
+.rpf-how li { margin-bottom: 3px; }
+.rpf-credit { display: block; margin-top: 6px; }
+.rpf-pager { display: flex; gap: 10px; align-items: center; justify-content: flex-end; margin-top: 8px; }
+@media (max-width: 640px) {
+  .rpf-bar .lph-facet, .rpf-bar .lph-facet.rpf-wide { min-width: 100%; flex: 1 1 100%; }
+  .rpf-cards { grid-template-columns: repeat(2, 1fr); }
+}

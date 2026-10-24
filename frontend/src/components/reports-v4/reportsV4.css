@@ -158,3 +158,8 @@
 .rv4 .rphome-a{font-size:12px}
 
 .rv4 .rv4-row .ak-panel{overflow:hidden}
+
+/* ---- Names fit (2026-10-17): recruiter / TL / department names wrap instead of "..." ---- */
+.rv4 .rv4-trunc{max-width:260px;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+.rv4 .rv4-trunc.ak-person{max-width:none}
+.rv4 .ak-person span:last-child{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}

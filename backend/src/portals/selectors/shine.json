@@ -1,0 +1,120 @@
+{
+  "_comment": ["SHINE page settings. EVERY selector and URL is here, none in code.", "STATUS: UNVERIFIED. Written from the public look of Shine's recruiter pages; NOT checked against the real post-job form.", "Shine's form has two steps (job details, then candidate profile): see postJob.steps.", "Verify with a DRY RUN on the company's own account (docs/job-publishing/PLAYWRIGHT.md). Override with TL_PORTAL_SELECTORS_DIR or TL_PORTAL_SELECTORS_SHINE=<file>.", "STRUCTURED FALLBACKS (2026-10-14): every step lists several ways to find its element, main one first: CSS strings AND { \"role\": .., \"name\": .. } / { \"label\": .. } / { \"text\": .. } / { \"placeholder\": .. } entries (role and label survive a redesign better than CSS). The run tries them in order, records which one worked, and shows \"selector drift\" in Diagnostics when the main one failed. Nothing outside this list is ever tried.", "The role / label / text entries are GUESSES from the public look of the site, exactly like the CSS ones: all of this stays \"verified\": false until docs/job-publishing/CALIBRATION.md has been followed on the real site by a person."],
+  "portal": "shine",
+  "version": "2026-10-14.1",
+  "verified": false,
+  "allowedHosts": ["shine.com"],
+  "logoutAfterRun": false,
+  "urls": {
+    "login": "https://recruiter.shine.com/login",
+    "dashboard": "https://recruiter.shine.com/dashboard",
+    "postJob": "https://recruiter.shine.com/post-job",
+    "edit": "https://recruiter.shine.com/post-job/{id}",
+    "listing": "https://www.shine.com/jobs/{id}",
+    "myJobs": "https://recruiter.shine.com/my-jobs"
+  },
+  "login": {
+    "username": ["input[name='email']", "input#id_email", "input[type='email']", "input[placeholder*='Email' i]", { "label": "Email" }, { "label": "Username" }, { "role": "textbox", "name": "Email" }],
+    "password": ["input[name='password']", "input#id_password", "input[type='password']", { "label": "Password" }, { "placeholder": "Password" }],
+    "submit": ["button[type='submit']", "button:has-text('Login')", "input[type='submit']", { "role": "button", "name": "Login" }, { "role": "button", "name": "Sign in" }, { "role": "button", "name": "Log in" }],
+    "loggedInProbe": ["a:has-text('Logout')", "text=Post a Job", "a[href*='post-job']", { "role": "link", "name": "Logout" }, { "role": "button", "name": "Logout" }],
+    "errorProbe": [".error", ".errorlist", ".alert", "[role='alert']"],
+    "errorText": ["invalid", "incorrect", "wrong", "does not exist"],
+    "logout": ["a:has-text('Logout')"]
+  },
+  "blockers": {
+    "urlPatterns": {},
+    "selectors": {},
+    "textPatterns": {}
+  },
+  "postJob": {
+    "fields": {
+      "title": {
+        "selector": ["input[name='job_title']", "input#id_job_title", "input[placeholder*='Job title' i]", { "label": "Job title" }, { "label": "Designation" }, { "role": "textbox", "name": "Job title" }],
+        "type": "text"
+      },
+      "location": {
+        "selector": ["select[name='location']", "input[name='location']", { "label": "Location" }, { "label": "Job location" }, { "role": "combobox", "name": "Location" }],
+        "type": "select"
+      },
+      "experienceMin": {
+        "selector": ["select[name='min_exp']", "input[name='min_exp']", { "label": "Minimum experience" }, { "label": "Min experience" }, { "role": "combobox", "name": "Minimum experience" }],
+        "type": "select"
+      },
+      "experienceMax": {
+        "selector": ["select[name='max_exp']", "input[name='max_exp']", { "label": "Maximum experience" }, { "label": "Max experience" }, { "role": "combobox", "name": "Maximum experience" }],
+        "type": "select"
+      },
+      "salaryMin": {
+        "selector": ["select[name='min_sal']", "input[name='min_sal']", { "label": "Minimum salary" }, { "label": "Min salary" }, { "role": "combobox", "name": "Minimum salary" }],
+        "type": "select"
+      },
+      "salaryMax": {
+        "selector": ["select[name='max_sal']", "input[name='max_sal']", { "label": "Maximum salary" }, { "label": "Max salary" }, { "role": "combobox", "name": "Maximum salary" }],
+        "type": "select"
+      },
+      "employmentType": {
+        "selector": ["select[name='job_type']", { "label": "Employment type" }, { "label": "Job type" }, { "role": "combobox", "name": "Employment type" }],
+        "type": "select"
+      },
+      "industry": {
+        "selector": ["select[name='industry']", { "label": "Industry" }, { "label": "Industry type" }, { "role": "combobox", "name": "Industry" }],
+        "type": "select"
+      },
+      "functionalArea": {
+        "selector": ["select[name='functional_area']", { "label": "Functional area" }, { "label": "Role category" }, { "role": "combobox", "name": "Functional area" }],
+        "type": "select"
+      },
+      "openings": {
+        "selector": ["input[name='vacancies']", { "label": "Vacancies" }, { "label": "Number of openings" }, { "role": "textbox", "name": "Vacancies" }],
+        "type": "text"
+      },
+      "description": {
+        "selector": ["textarea[name='job_description']", "textarea#id_job_description", "div[contenteditable='true']", { "label": "Job description" }, { "label": "Description" }, { "role": "textbox", "name": "Job description" }],
+        "type": "text"
+      },
+      "skills": {
+        "selector": ["input[placeholder*='skills' i]", "input[name='skills']", { "label": "Key skills" }, { "label": "Skills" }, { "role": "textbox", "name": "Key skills" }],
+        "type": "tags",
+        "max": 15
+      },
+      "education": {
+        "selector": ["input[name='education']", "select[name='education']", { "label": "Education" }, { "label": "Qualification" }, { "role": "textbox", "name": "Education" }],
+        "type": "text"
+      }
+    },
+    "steps": [{ "fields":["title", "location", "experienceMin", "experienceMax", "salaryMin", "salaryMax", "employmentType", "industry", "functionalArea", "openings", "description"],"next":["button:has-text('Next')", "button:has-text('Continue')",{"role": "button", "name": "Next" },{"role": "button", "name": "Continue"}]}, { "fields":["skills", "education"]}],
+    "submit": ["button:has-text('Post Job')", "button:has-text('Submit')", "button[type='submit']", { "role": "button", "name": "Post Job" }, { "role": "button", "name": "Publish" }, { "role": "button", "name": "Submit" }],
+    "confirm": {
+      "dialog": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }]
+    },
+    "errorProbe": [".errorlist", ".field-error", ".error-message", "[role='alert']"],
+    "success": {
+      "urlPattern": "posted|success|confirmation",
+      "text": ["job posted", "posted successfully", "submitted for approval"],
+      "selector": [".success", "[data-testid='posted']"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "(?:job\\s*id|jid)\\s*[:#-]?\\s*([A-Za-z0-9-]{5,})",
+      "idFromUrl": "(?:jobs?/|post-job/)([A-Za-z0-9-]{5,})",
+      "urlSelector": ["a:has-text('View')", "a[href*='/jobs/']"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1", ".job-title"],
+    "notFoundText": ["page not found", "job not found", "no longer available", "expired"]
+  },
+  "unpublish": {
+    "listUrl": "https://recruiter.shine.com/my-jobs",
+    "rowSelector": ["tr:has-text('{id}')", "[data-job-id='{id}']", "li:has-text('{id}')", "[role='row']:has-text('{id}')"],
+    "closeButton": ["button:has-text('Close')", "button:has-text('Deactivate')", "a:has-text('Close job')", { "role": "button", "name": "Close job" }, { "role": "button", "name": "Deactivate" }, { "role": "link", "name": "Close" }],
+    "confirm": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }],
+    "doneText": ["job closed", "closed successfully", "deactivated successfully", "job has been closed"]
+  },
+  "timeouts": { "nav": 20000, "action": 8000, "overall": 180000 },
+  "pacing": { "minMs": 1000, "maxMs": 3000 },
+  "otp": {
+    "input": ["input[autocomplete=\"one-time-code\"]", "input[name*='otp' i]", "input[id*='otp' i]", { "label": "OTP" }, { "placeholder": "OTP" }, { "label": "Verification code" }, "input[inputmode='numeric']"],
+    "submit": [{ "role": "button", "name": "Verify" }, { "role": "button", "name": "Submit" }, { "role": "button", "name": "Continue" }, "button[type='submit']"]
+  }
+}

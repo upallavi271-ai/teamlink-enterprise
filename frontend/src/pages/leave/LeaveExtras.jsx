@@ -95,7 +95,7 @@ export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActio
               <td>{r.employee?.name || 'You'}<div className="lvx-muted">{r.employee?.department || ''}</div></td>
               <td className="lvx-muted">{r.employee?.team || '—'}</td>
               <td className="lvx-muted">{r.employee?.designation || '—'}</td>
-              <td className="lvx-muted">{r.type}</td>
+              <td className="lvx-muted">{r.type}{r.earlyLogout?.chip && <div><span className="lvx-chip lvx-chip-warn" title={r.earlyLogout.text}>{'⏰'} {r.earlyLogout.chip}</span></div>}{r.pendingState && r.pendingState !== 'genuine' && <div><span className="lvx-chip lvx-chip-grey" title="Not counted in Pending Approvals">{r.pendingState === 'leaver' ? 'Employee has left' : r.pendingState === 'duplicate' ? 'Duplicate' : 'Old request'}</span></div>}{r.source && r.source !== 'TeamLink' && <div><span className="lvx-chip lvx-chip-blue" title="Came from Pulse HRMS">From Pulse</span></div>}</td>
               <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{r.fromDate}</td>
               <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{r.toDate || r.fromDate}</td>
               <td className="lvx-muted" style={{ whiteSpace: 'nowrap' }}>{daysLabel(r)}</td>
@@ -118,7 +118,19 @@ export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActio
 }
 
 // The request's own facts in the Approval Workflow modal.
-export function LeaveFacts({ leave, handoffs }) {
+// The early-logout block for approvers (and the applicant): what the previous working day's attendance said.
+export function EarlyLogoutBlock({ early }) {
+  if (!early) return null;
+  const bad = early.state === 'early';
+  return (
+    <div className={`lvx-early ${bad ? 'lvx-early-bad' : ''}`}>
+      <b>{bad ? '⏰ ' : ''}{early.text}</b>
+      {early.rule && <div className="lvx-muted">Rule: {early.rule}{early.snapshot === false ? ' (live check; the request has no saved copy)' : ' (saved when the leave was applied)'}</div>}
+    </div>
+  );
+}
+
+export function LeaveFacts({ leave, handoffs, early = null, source = null, pulse = null }) {
   if (!leave) return null;
   const e = leave.employee || {};
   return (
@@ -127,7 +139,9 @@ export function LeaveFacts({ leave, handoffs }) {
       <div><span>Department · Team</span><b>{e.department || '—'}{e.team ? ` · ${e.team}` : ''}</b></div>
       <div><span>Designation</span><b>{e.designation || '—'}</b></div>
       <div><span>Leave</span><b>{leave.type} · {leave.fromDate}{leave.toDate && leave.toDate !== leave.fromDate ? ` – ${leave.toDate}` : ''} · {leave.halfDay ? `Half day (${leave.halfDay})` : `${leave.days ?? 1} day${(leave.days ?? 1) === 1 ? '' : 's'}`}</b></div>
-      <div><span>Applied on</span><b>{fmtDate(leave.appliedAt)}</b></div>
+      <div><span>Applied on</span><b>{fmtDate(leave.appliedAt)}{source && source !== 'TeamLink' ? ` · from ${source}` : ''}</b></div>
+      {pulse && <div><span>Pulse HRMS says</span><b>{pulse.status}{pulse.by ? ` · ${pulse.by}` : ''}{pulse.at ? ` · ${fmtDate(pulse.at)}` : ''}</b></div>}
+      {early && <div className="lvx-wide"><EarlyLogoutBlock early={early} /></div>}
       <div><span>Status</span><b>{leave.status}</b></div>
       <div className="lvx-wide"><span>Reason</span><b>{leave.reasonText || '—'}</b></div>
       {leave.employeeComments && <div className="lvx-wide"><span>Employee comments</span><b className="lvx-pre">{leave.employeeComments}</b></div>}
@@ -162,15 +176,21 @@ export function LeaveDecidePanel({ data, onDone }) {
   const [remarks, setRemarks] = useState('');
   const [reason, setReason] = useState('');
   const [target, setTarget] = useState('');
+  const [dept, setDept] = useState('');
   const [reasons, setReasons] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  useEffect(() => { setMode(''); setRemarks(''); setTarget(''); setError(''); setReasons(null); }, [data?.leave?.id]);
+  useEffect(() => { setMode(''); setRemarks(''); setTarget(''); setDept(''); setError(''); setReasons(null); }, [data?.leave?.id]);
   useEffect(() => { if (reasons && reasons.length && !reason) setReason(reasons[0]); }, [reasons]);
   if (!wf || wf.state !== 'Pending' || data.leave.status !== 'Pending') return null;
   const mine = wf.canAct || wf.canDirect;
   const canReassign = !!data.reassign?.allowed;
   if (!mine && !canReassign) return null;
+  const allTargets = data.reassign?.targets || [];
+  const deptCount = new Map();
+  allTargets.forEach((t) => { const k = t.department || 'No department'; deptCount.set(k, (deptCount.get(k) || 0) + 1); });
+  const depts = [...deptCount.entries()].map(([name, count]) => ({ name, count }));
+  const shownTargets = dept ? allTargets.filter((t) => (t.department || 'No department') === dept) : allTargets;
   const tl = data.tl;
   const tlBlocked = !!(tl && !tl.allowed);
 
@@ -180,12 +200,11 @@ export function LeaveDecidePanel({ data, onDone }) {
     if (kind === 'Approved' && tl && !remarks.trim()) { setError('A reason is required when a TL approves.'); return; }
     if (kind === 'Reassign') {
       if (!target) { setError('Choose who to reassign it to.'); return; }
-      if (!remarks.trim()) { setError('A reason is required to reassign.'); return; }
     }
     setBusy(true);
     try {
       if (kind === 'Reassign') {
-        await api.post(`/leave/${data.leave.id}/reassign`, { toUserId: target, reason: remarks.trim() });
+        await api.post(`/leave/${data.leave.id}/reassign`, { toUserId: target, reason: remarks.trim() || undefined });
       } else {
         await api.patch(`/leave/${data.leave.id}/decision`, kind === 'Rejected'
           ? { status: 'Rejected', rejectReason: remarks.trim() }
@@ -207,31 +226,43 @@ export function LeaveDecidePanel({ data, onDone }) {
       {reasons && reasons.length > 0 && (
         <label className="lvx-muted" style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
           Approval reason (required for this request)
-          <select value={reason} onChange={(e) => setReason(e.target.value)}>
+          <Combo value={reason} onChange={(e) => setReason(e.target.value)}>
             {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       {mode === 'reassign' && canReassign && (
-        <label className="lvx-muted" style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
-          Reassign to
-          <Combo value={target} onChange={(e) => setTarget(e.target.value)}>
-            <option value="">Choose an approver</option>
-            {data.reassign.targets.map((t) => <option key={t.userId} value={t.userId}>{t.label}</option>)}
-          </Combo>
-        </label>
+        <>
+          {depts.length > 1 && (
+            <label className="lvx-muted" style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+              Department
+              <Combo value={dept} onChange={(e) => { setDept(e.target.value); setTarget(''); }}>
+                <option value="">All departments ({data.reassign.targets.length})</option>
+                {depts.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.count})</option>)}
+              </Combo>
+            </label>
+          )}
+          <label className="lvx-muted" style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 6 }}>
+            Give it to
+            <Combo value={target} onChange={(e) => setTarget(e.target.value)}>
+              <option value="">Choose a person</option>
+              {shownTargets.map((t) => <option key={t.userId} value={t.userId}>{t.label}</option>)}
+            </Combo>
+          </label>
+          {shownTargets.length === 0 && <div className="lvx-muted">No one else can take it in this department.</div>}
+        </>
       )}
       <textarea
         rows={2}
         value={remarks}
         onChange={(e) => setRemarks(e.target.value)}
-        placeholder={mode === 'reassign' ? 'Why are you reassigning it? (required)' : (tl ? 'Reason / remarks (required)' : 'Remarks (required to reject)')}
+        placeholder={mode === 'reassign' ? 'Why are you giving it to someone else? (you can leave this empty)' : (tl ? 'Reason / remarks (required)' : 'Remarks (required to reject)')}
       />
       {error && <div className="error-text" style={{ margin: '4px 0' }}>{error}</div>}
       <div className="lvx-decide-row">
         {mode === 'reassign' ? (
           <>
-            <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => send('Reassign')}>Confirm reassign</button>
+            <button className="btn btn-sm btn-primary" disabled={busy || !target} onClick={() => send('Reassign')}>Give it to them</button>
             <button className="btn btn-sm" disabled={busy} onClick={() => setMode('')}>Back</button>
           </>
         ) : (

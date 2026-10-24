@@ -7,17 +7,23 @@
 // and date taken, the repayments, total repaid, what is pending, and a Cleared
 // tag with the date once nothing is pending. GET/POST /bank/hand-loans…
 import {
-  useCallback, useEffect, useMemo, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { money, money2, fmtD, todayIso } from '../invoices/invFormat';
+import BankLineModal from './BankLineModal.jsx';
+import {
+  entriesOfPerson, entryProblems, localToday, pickerRows, reasonProblem, removeBlock, REASON_CHIPS,
+} from './handLoanActions.js';
 import './bank.css';
 import './bank-s6.css';
+import './handLoanActions.css';
 
 function LoanForm({
-  loan, preset, onClose, onSaved,
+  loan, preset, facts, onClose, onSaved,
 }) {
   const [f, setF] = useState({
     name: loan?.name || preset?.name || '',
@@ -32,17 +38,16 @@ function LoanForm({
   const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
 
   const save = async () => {
-    const e = {};
-    if (!f.name.trim()) e.name = 'Give the loan a name.';
-    if (!(Number(f.amount) > 0)) e.amount = 'Enter the amount taken.';
-    if (!f.dateTaken) e.dateTaken = 'Enter the date taken.';
+    if (busy) return;
+    const e = entryProblems(f);
     setErrs(e);
     if (Object.keys(e).length) return;
     setBusy(true); setFail('');
     try {
-      const body = { ...f, amount: Number(f.amount) };
+      const body = { ...f, amount: Number(String(f.amount).replace(/[,\s]/g, '')) };
+      if (loan) body.expectedUpdatedAt = loan.updatedAt;
       const r = loan ? await api.put(`/bank/hand-loans/${loan.id}`, body) : await api.post('/bank/hand-loans', body);
-      onSaved(`${loan ? 'Loan updated' : 'Loan added'}${r.data.linked ? ` — ${r.data.linked} statement line(s) linked as proof` : ''}.`);
+      onSaved(`${loan ? (r.data.unchanged ? 'Nothing was changed' : `Entry updated - ${f.name.trim()}`) : 'Loan added'}${r.data.linked ? ` — ${r.data.linked} statement line(s) linked as proof` : ''}.`);
     } catch (err) {
       setFail(err.response?.data?.error || 'The loan could not be saved.');
       if (err.response?.data?.fields) setErrs(err.response.data.fields);
@@ -62,31 +67,214 @@ function LoanForm({
       )}
     >
       <div className="bkl-form">
-        <label className="field"><span>Loan name *</span>
+        <label className="field"><span>Loan name</span>
           <input value={f.name} onChange={set('name')} placeholder="e.g. Ravi hand loan" aria-invalid={!!errs.name} />
           {errs.name && <div className="bkp-err">{errs.name}</div>}
         </label>
         <label className="field"><span>Lender / party</span>
           <input value={f.lender} onChange={set('lender')} placeholder="As the name reads on the statement" />
         </label>
-        <label className="field"><span>Amount taken (₹) *</span>
+        <label className="field"><span>Amount taken (₹)</span>
           <input inputMode="decimal" value={f.amount} onChange={set('amount')} aria-invalid={!!errs.amount} />
           {errs.amount && <div className="bkp-err">{errs.amount}</div>}
         </label>
-        <label className="field"><span>Date taken *</span>
-          <input type="date" value={f.dateTaken} onChange={set('dateTaken')} aria-invalid={!!errs.dateTaken} />
+        <label className="field"><span>Date taken</span>
+          <input type="date" value={f.dateTaken} max={localToday()} onChange={set('dateTaken')} aria-invalid={!!errs.dateTaken} />
           {errs.dateTaken && <div className="bkp-err">{errs.dateTaken}</div>}
         </label>
         <label className="field" style={{ gridColumn: '1 / -1' }}><span>Notes</span>
           <textarea rows="2" value={f.notes} onChange={set('notes')} />
         </label>
       </div>
+      {loan && facts && (
+        <div className="hla-facts">
+          <div><b>Paid back so far:</b> {money2(facts.repaid)}{facts.repayments ? ` in ${facts.repayments} repayment${facts.repayments === 1 ? '' : 's'}` : ''}. <b>Still to clear:</b> {money2(facts.pending)}.</div>
+          <div><b>Account:</b> {facts.accounts.length ? facts.accounts.join(', ') : 'no statement line is linked yet'}.</div>
+          <div>The account, the repayments and the statement lines come from the bank statement, so they are not edited here. To change one, use Unlink or Remove on it under Every movement.</div>
+        </div>
+      )}
       <div className="small-muted" style={{ marginTop: 6 }}>
         Statement lines whose narration carries the loan name or the lender are linked as proof: the credit it was taken on, then
         every repayment. Anything less certain waits under Possible matches for you to confirm.
       </div>
       {fail && <div className="notice red" style={{ marginTop: 10 }}><span>{fail}</span></div>}
     </Modal>
+  );
+}
+
+// ---- the Edit / Remove buttons beside the heading ---------------------------------------------------------------
+const PencilIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  </svg>
+);
+const TrashIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="M19 6l-1 14H6L5 6" /><path d="M10 11v6" /><path d="M14 11v6" />
+  </svg>
+);
+
+const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])';
+
+// A small window on top of the Hand loans popup: Escape closes it, Tab stays inside it.
+function Sheet({
+  title, sub, onClose, children, footer, label,
+}) {
+  const box = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); closeRef.current(); return; }
+      if (e.key !== 'Tab' || !box.current) return;
+      const items = [...box.current.querySelectorAll(FOCUSABLE)];
+      if (!items.length) return;
+      const first = items[0]; const last = items[items.length - 1];
+      if (!box.current.contains(document.activeElement)) { e.preventDefault(); first.focus(); }
+      else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, []);
+  return createPortal(
+    <div className="s6-overlay top" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div ref={box} className="s6-modal narrow" role="dialog" aria-modal="true" aria-label={label || title}>
+        <div className="s6-modal-head">
+          <div style={{ minWidth: 0 }}>
+            <h3>{title}</h3>
+            {sub && <div className="s6-sub">{sub}</div>}
+          </div>
+          <button type="button" className="s6-x" aria-label="Close" onClick={onClose}>×</button>
+        </div>
+        <div className="s6-modal-body">{children}</div>
+        {footer && <div className="s6-modal-foot">{footer}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+// "Which entry?" - one row per hand entry (date, amount, what it says), so the right one is picked when a person has
+// several. Picking opens the Edit form or the Remove window for exactly that entry.
+function EntryPicker({
+  mode, loans, onPick, onClose,
+}) {
+  const [q, setQ] = useState('');
+  const rows = useMemo(() => pickerRows(loans, q), [loans, q]);
+  const edit = mode === 'edit';
+  return (
+    <Sheet
+      title={edit ? 'Which entry do you want to edit?' : 'Which entry do you want to remove?'}
+      sub="Press the entry. Date, amount and the note are shown so you pick the right one."
+      onClose={onClose}
+      footer={<button type="button" className="s6-btn" onClick={onClose}>Cancel</button>}
+    >
+      <input
+        className="hla-search"
+        autoFocus
+        placeholder="Type a name, amount or date to find it…"
+        aria-label="Find an entry"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+      />
+      <div className="hla-list" role="list">
+        {rows.map((l) => {
+          const many = entriesOfPerson(loans, l);
+          return (
+            <button key={l.id} type="button" role="listitem" className="hla-pick" onClick={() => onPick(l)}>
+              <div className="hla-pick-top">
+                <span className="hla-pick-name">{l.name}</span>
+                <span className="hla-pick-amt">{money2(l.amount)}</span>
+              </div>
+              <div className="hla-pick-sub">
+                {l.lender ? `${l.lender} · ` : ''}taken on {fmtD(l.dateTaken)} ·{' '}
+                {l.cleared ? 'cleared' : `${money2(l.pending)} still to clear`}
+                {many > 1 ? ` · ${many} entries for this person` : ''}
+              </div>
+              <div className="hla-pick-note">{l.notes ? l.notes : <span className="s6-sub">no note</span>}</div>
+            </button>
+          );
+        })}
+        {!rows.length && <div className="hla-empty">{loans.length ? 'No entry matches that. Clear the box to see all.' : 'There is no hand entry yet.'}</div>}
+      </div>
+    </Sheet>
+  );
+}
+
+// Remove: show exactly which entry, ask why, and only then remove it. The entry is kept in the removed list with the
+// reason, who and when - nothing is lost. An entry that still has statement lines linked cannot be removed yet.
+function RemoveDialog({ loan, onClose, onDone }) {
+  const [reason, setReason] = useState('');
+  const [fail, setFail] = useState('');
+  const [touched, setTouched] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const blocked = removeBlock(loan);
+  const bad = touched ? reasonProblem(reason) : null;
+
+  const confirm = async () => {
+    if (busy) return;
+    setTouched(true);
+    if (reasonProblem(reason)) return;
+    setBusy(true); setFail('');
+    try {
+      const r = await api.delete(`/bank/hand-loans/${loan.id}`, { data: { reason: reason.trim() } });
+      onDone(r.data.already ? `${loan.name} was already removed.` : `Removed ${loan.name}. It is kept in the removed list with your reason.`);
+    } catch (e) {
+      setFail(e.response?.data?.error || 'The entry could not be removed.');
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Sheet
+      title={`Remove ${loan.name}?`}
+      sub="Check that this is the right entry."
+      label="Remove a hand entry"
+      onClose={() => { if (!busy) onClose(); }}
+      footer={(
+        <>
+          <button type="button" className="s6-btn" disabled={busy} onClick={onClose}>Cancel</button>
+          <button type="button" className="hla-btn solid-red" disabled={busy || !!blocked} onClick={confirm}>{busy ? 'Removing…' : 'Confirm Remove'}</button>
+        </>
+      )}
+    >
+      <div className="s6-kv dashed">
+        <div className="s6-kv-row"><span>Name</span><span>{loan.name}</span></div>
+        {loan.lender && <div className="s6-kv-row"><span>Lender / party</span><span>{loan.lender}</span></div>}
+        <div className="s6-kv-row"><span>Amount taken</span><span className="s6-mono">{money2(loan.amount)}</span></div>
+        <div className="s6-kv-row"><span>Date taken</span><span className="s6-mono">{fmtD(loan.dateTaken)}</span></div>
+        <div className="s6-kv-row"><span>Paid back so far</span><span className="s6-mono">{money2(loan.repaid)}</span></div>
+        <div className="s6-kv-row"><span>Still to clear</span><span className="s6-mono">{loan.cleared ? 'cleared' : money2(loan.pending)}</span></div>
+        {loan.notes && <div className="s6-kv-row"><span>Note</span><span>{loan.notes}</span></div>}
+      </div>
+      {blocked ? (
+        <div className="s6-dash amber" role="alert"><span><b>It cannot be removed yet.</b> {blocked}</span></div>
+      ) : (
+        <>
+          <div className="s6-dash bkl-note blue" style={{ marginBottom: 0 }}>
+            <span>The entry goes to the removed list at the bottom of this window, with your reason, your name and the time. Totals update at once. The bank statement is not touched.</span>
+          </div>
+          <label className="hla-label" htmlFor="hla-reason">Why are you removing it?</label>
+          <input
+            id="hla-reason"
+            className="hla-reason"
+            autoFocus
+            maxLength={300}
+            value={reason}
+            aria-invalid={!!bad}
+            placeholder="A few words, e.g. entered by mistake"
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') confirm(); }}
+          />
+          {bad && <div className="hla-err">{bad}</div>}
+          <div className="hla-chips">
+            {REASON_CHIPS.map((c) => <button key={c} type="button" className="s6-pill-btn" style={{ height: 28, fontSize: 12 }} onClick={() => setReason(c)}>{c}</button>)}
+          </div>
+        </>
+      )}
+      {fail && <div className="s6-dash red" role="alert" style={{ marginTop: 12, marginBottom: 0 }}><span>{fail}</span></div>}
+    </Sheet>
   );
 }
 
@@ -108,46 +296,33 @@ const MON3 = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oc
 const monthName = (k) => (/^\d{4}-\d{2}$/.test(k) ? `${MON3[Number(k.slice(5, 7)) - 1]}-${k.slice(0, 4)}` : k);
 const personOf = (l) => l.lender || l.name;
 
-// The statement line behind one movement — the proof (S6 "View line").
+// The statement line behind one movement — the proof (S6 "View line"). It is the SAME window as the Bank
+// statements table's (BankLineModal.jsx); a hand-loan line is filed as the loan, so the facts are known here.
 export function ViewLine({ line, onClose }) {
-  useEffect(() => {
-    const esc = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', esc);
-    return () => window.removeEventListener('keydown', esc);
-  }, [onClose]);
   const out = line.type !== 'Credit';
+  const m = /^(.*?)\s*·\s*(\d{4})$/.exec(String(line.account || ''));
+  const bankName = m ? m[1] : (line.account && line.account !== '—' ? line.account : null);
+  const amount = Number(line.amount) || 0;
+  const detail = {
+    direction: out ? 'out' : 'in',
+    date: line.date,
+    narration: line.description || null,
+    moneyOut: out ? amount : null,
+    moneyIn: out ? null : amount,
+    balanceAfter: line.balance == null ? null : Number(line.balance),
+    bank: { name: bankName, account: m ? `xxxx${m[2]}` : null },
+    filedAs: { kind: 'loan', label: `Hand loan · ${line.person}` },
+    amountFiled: amount,
+    unallocated: null,
+  };
   return (
-    <div className="s6-overlay top" role="dialog" aria-modal="true" aria-label={`Bank statement line · ${line.person}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="s6-modal narrow">
-        <div className="s6-modal-head">
-          <div>
-            <h3>Bank statement line · {line.person}</h3>
-            <div className="s6-sub">{line.account} · {fmtD(line.date)}</div>
-          </div>
-          <button type="button" className="s6-x" aria-label="Close" onClick={onClose}>×</button>
-        </div>
-        <div className="s6-modal-body">
-          <div className="s6-kv">
-            <div className="s6-kv-row"><span>Date on the statement</span><span className="s6-mono">{fmtD(line.date)}</span></div>
-            <div className="s6-kv-row"><span>Account</span><span>{line.account}</span></div>
-            <div className="s6-kv-row"><span>Narration</span><span className="s6-mono">{line.description || '—'}</span></div>
-            <div className="s6-kv-row"><span>Reference</span><span className="s6-mono">{line.reference || '—'}</span></div>
-            <div className="s6-kv-row"><span>{out ? 'Money out' : 'Money in'}</span><span className={`s6-mono ${out ? 's6-red' : 's6-green'}`}>{money2(line.amount)}</span></div>
-            <div className="s6-kv-row"><span>Balance after</span><span className="s6-mono">{line.balance == null ? 'not printed on the statement' : money2(line.balance)}</span></div>
-            <div className="s6-kv-row"><span>Filed as</span><span>{line.person} · {out ? 'money we gave or repaid' : 'money we took by hand'}</span></div>
-            <div className="s6-kv-row"><span>Amount</span><span className="s6-mono">{money2(line.amount)}</span></div>
-          </div>
-          <div className="s6-dash green" style={{ marginBottom: 0 }}>
-            <span>
-              <b>This is the proof.</b> The money moved on this line and it is filed against {line.person} — the statement is the record.
-            </span>
-          </div>
-        </div>
-        <div className="s6-modal-foot">
-          <button type="button" className="s6-btn s6-primary" onClick={onClose}>Close</button>
-        </div>
-      </div>
-    </div>
+    <BankLineModal
+      row={{ id: line.txnId, txnDate: line.date, description: line.description }}
+      bank={null}
+      detail={detail}
+      extraRows={[['Reference', <span className="s6-mono">{line.reference || '—'}</span>]]}
+      onClose={onClose}
+    />
   );
 }
 
@@ -159,6 +334,8 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [person, setPerson] = useState(''); // "Month by month" on one person
   const [viewLine, setViewLine] = useState(null);
+  const [pick, setPick] = useState(null); // null | 'edit' | 'remove' - the "which entry?" window
+  const [removeFor, setRemoveFor] = useState(null); // the entry the Remove window is about
 
   const load = useCallback(() => {
     api.get('/bank/hand-loans').then((r) => setData(r.data)).catch((e) => setError(e.response?.data?.error || 'Hand loans could not be loaded.'));
@@ -167,10 +344,10 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
 
   // Esc closes the popup (unless a form or the line on top of it is open).
   useEffect(() => {
-    const esc = (e) => { if (e.key === 'Escape' && !form && !viewLine) onClose(); };
+    const esc = (e) => { if (e.key === 'Escape' && !form && !viewLine && !pick && !removeFor) onClose(); };
     window.addEventListener('keydown', esc);
     return () => window.removeEventListener('keydown', esc);
-  }, [form, viewLine, onClose]);
+  }, [form, viewLine, pick, removeFor, onClose]);
 
   async function run(fn, said) {
     setBusy(true); setError(''); setNote('');
@@ -187,6 +364,20 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
   }
 
   const s = data?.summary;
+
+  // Edit / Remove beside the heading: one entry goes straight to its window; several ask which one first.
+  const startFromHead = (mode) => {
+    const loans = data?.loans || [];
+    if (!loans.length) return;
+    if (loans.length === 1) { if (mode === 'edit') setForm({ loan: loans[0] }); else setRemoveFor(loans[0]); return; }
+    setPick(mode);
+  };
+  const chosen = (loan) => { const mode = pick; setPick(null); if (mode === 'edit') setForm({ loan }); else setRemoveFor(loan); };
+  // What the Edit form shows about the entry (read only): what is paid back and which account the statement lines are on.
+  const factsOf = (loan) => ({
+    repaid: loan.repaid, pending: loan.pending, repayments: (loan.repayments || []).length,
+    accounts: [...new Set((data?.movements || []).filter((mv) => mv.loanId === loan.id).map((mv) => mv.account).filter((a) => a && a !== '—'))],
+  });
   const lf = useListFilters(data?.loans || [], LOAN_FIELDS, { sorts: LOAN_SORTS });
 
   // Person by person: every hand entry, plus the people money went to with no entry.
@@ -242,8 +433,20 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
     <div className="s6-overlay" role="dialog" aria-modal="true" aria-label="Hand loans" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="s6-modal">
         <div className="s6-modal-head">
-          <div>
-            <h3>Hand loans — taken, cleared, still to clear</h3>
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="hla-title-row">
+              <h3>Hand loans — taken, cleared, still to clear</h3>
+              {canManage && (
+                <div className="hla-acts">
+                  <button type="button" className="hla-btn edit" disabled={!data || !data.loans.length || busy} title={data && !data.loans.length ? 'There is no hand entry to edit yet' : 'Change an entry'} onClick={() => startFromHead('edit')}>
+                    <PencilIcon />Edit
+                  </button>
+                  <button type="button" className="hla-btn remove" disabled={!data || !data.loans.length || busy} title={data && !data.loans.length ? 'There is no hand entry to remove yet' : 'Remove an entry'} onClick={() => startFromHead('remove')}>
+                    <TrashIcon />Remove
+                  </button>
+                </div>
+              )}
+            </div>
             {s && <div className="s6-sub">Taken {money(s.taken)} · cleared {money(s.repaid)} · {money(s.paidOutNoEntry)} paid out with no entry behind it</div>}
           </div>
           <button type="button" className="s6-x" aria-label="Close" onClick={onClose}>×</button>
@@ -435,12 +638,12 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
                       </div>
                       {canManage && (
                         <div className="bkl-acts">
-                          <button type="button" className="s6-btn sm" onClick={() => setForm({ loan: l })}>Edit</button>
+                          <button type="button" className="s6-btn sm" disabled={busy} onClick={() => setForm({ loan: l })}>Edit</button>
                           <button
                             type="button"
                             className="s6-btn sm s6-danger"
                             disabled={busy}
-                            onClick={() => { if (window.confirm(`Remove ${l.name}? Its statement lines go back to uncategorised; the statement itself is not touched.`)) run(() => api.delete(`/bank/hand-loans/${l.id}`), () => 'Loan removed.'); }}
+                            onClick={() => setRemoveFor(l)}
                           >
                             Remove
                           </button>
@@ -484,6 +687,29 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
                   </article>
                 ))}
               </div>
+
+              {(data.removed || []).length > 0 && (
+                <details className="hla-removed">
+                  <summary>Removed entries ({data.removed.length}) - kept for the record, not counted in any total</summary>
+                  <div className="s6-tbl">
+                    <table style={{ minWidth: 760 }}>
+                      <thead><tr><th>Name</th><th className="num">Amount</th><th>Date taken</th><th>Removed on</th><th>By</th><th>Why</th></tr></thead>
+                      <tbody>
+                        {data.removed.map((x) => (
+                          <tr key={x.id}>
+                            <td className="s6-cell-main">{x.lender ? `${x.name} (${x.lender})` : x.name}</td>
+                            <td className="num s6-mono">{money2(x.amount)}</td>
+                            <td className="s6-mono">{fmtD(x.dateTaken)}</td>
+                            <td className="s6-mono">{fmtD(x.removedAt)}</td>
+                            <td>{x.removedByName || '—'}</td>
+                            <td>{x.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
             </>
           )}
         </div>
@@ -497,11 +723,20 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
         <LoanForm
           loan={form.loan}
           preset={form.preset}
+          facts={form.loan ? factsOf(form.loan) : null}
           onClose={() => setForm(null)}
           onSaved={(msg) => { setForm(null); setNote(msg); load(); onChanged?.(); }}
         />
       )}
       {viewLine && <ViewLine line={viewLine} onClose={() => setViewLine(null)} />}
+      {pick && <EntryPicker mode={pick} loans={data?.loans || []} onPick={chosen} onClose={() => setPick(null)} />}
+      {removeFor && (
+        <RemoveDialog
+          loan={removeFor}
+          onClose={() => setRemoveFor(null)}
+          onDone={(msg) => { setRemoveFor(null); setError(''); setNote(msg); load(); onChanged?.(); }}
+        />
+      )}
     </div>
   );
 }

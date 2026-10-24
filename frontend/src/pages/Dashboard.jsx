@@ -12,7 +12,9 @@ import Reminders from './office/Reminders.jsx';
 import { canViewOffice } from './office/approval.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
-import DeskBoard from '../components/dashboard/DeskBoard.jsx';
+import AgreementsWaiting from '../components/agreements/AgreementsWaiting.jsx';
+import NewItems from '../components/dashboard/NewItems.jsx'; // the New button (2026-10-13)
+import ControlTower from '../components/dashboard/ControlTower.jsx'; // the Super Admin / Admin home (2026-10-23)
 
 // ---------------------------------------------------------------------------
 // THE OVERALL DASHBOARD (§18).
@@ -116,12 +118,12 @@ function Panel({ title, right, children }) {
   );
 }
 
-function PageHead({ user, extra, range, setRange }) {
+function PageHead({ user, extra, range, setRange, title = 'Dashboard' }) {
   const name = String(user?.name || '').replace(/\(.*\)/, '').trim();
   return (
     <div className="page-head">
       <div>
-        <h1>Dashboard</h1>
+        <h1>{title}</h1>
         <div className="page-sub">
           Welcome back, {name} · {workRoleLabel(user)}{extra || ''}
         </div>
@@ -215,6 +217,16 @@ export default function Dashboard() {
   // User notes #4 — an outside login's home IS its portal.
   if (isClientUser(user)) return <Navigate to="/client-portal" replace />;
   if (user && user.role === 'CANDIDATE') return <Navigate to="/my-applications" replace />;
+  // Super Admin / Admin (founder, 2026-10-23): the home IS the 360° Control Tower and nothing else. The module rows that used to sit below it
+  // (Details by module, the Administration board, the New bar) are gone; every module has its own screen in the sidebar.
+  if (user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && can(user, null, 'administration', 'Users', 'view')) {
+    return (
+      <>
+        <ControlTower />
+        <AgreementsWaiting />
+      </>
+    );
+  }
   return <ProductDashboard user={user} />;
 }
 
@@ -245,9 +257,11 @@ function ProductDashboard({ user }) {
   // keeps, for the logins that can open that page (GET /office-expenses/due-dates
   // refuses everyone else).
   const seesOffice = canViewOffice(user);
+  // Founder, 2026-10-19: the pushed Accounts reminders (bell / email / WhatsApp) go to the Accountant, not the Admin.
+  // This Dashboard card is a read-only summary (overdue invoices, bills due, GST and TDS dates): the Admin wants it too.
+  const seesReminders = seesOffice;
 
   const reportLinks = visibleItems(user, REPORTS_ITEMS);
-  const adminHome = !!user && ['SUPER_ADMIN', 'ADMIN'].includes(user.role) && can(user, null, 'administration', 'Users', 'view');
 
   const [ats, setAts] = useState(null);      // /dashboard/ats
   const [core, setCore] = useState(null);    // /dashboard
@@ -338,10 +352,12 @@ function ProductDashboard({ user }) {
   return (
     <>
       <PageHead user={user} extra={scoped ? ` · ${departments.join(', ')}` : ''} range={range} setRange={setRange} />
+      <NewItems />
+      {/* Agreement steps (2026-10-13): only when something waits for this login */}
+      <AgreementsWaiting />
 
       {/* Super Admin / Admin home (dashboard spec 2026-09-29 §6): users, sync
           and duplicate health, audit, approvals — GET /dashboard/admin-desk. */}
-      {adminHome && <DeskBoard url="/dashboard/admin-desk" title="Administration" sub="Not date-filtered · every number opens its list" />}
 
       {scoped && (
         <div className="notice">
@@ -362,9 +378,9 @@ function ProductDashboard({ user }) {
           {seesTeam && (
             <Row
               label="Employees (now)"
-              value={hrms.employees ? hrms.employees.length : null}
+              value={hrms.employees ? hrms.employees.filter((e) => ['Active', 'Notice Period'].includes(e.employmentStatus)).length : null}
               sub={hrms.employees
-                ? `${hrms.employees.filter((e) => e.employmentStatus === 'Active').length} active`
+                ? `${hrms.employees.filter((e) => e.employmentStatus === 'Active').length} active · ${hrms.employees.filter((e) => e.employmentStatus === 'Notice Period').length} on notice · ${hrms.employees.filter((e) => ['Relieved', 'Exited'].includes(e.employmentStatus)).length} former (not counted)`
                 : null}
               to="/employees"
             />
@@ -483,7 +499,7 @@ function ProductDashboard({ user }) {
         </Panel>
       )}
 
-      {seesOffice && <Reminders />}
+      {seesReminders && <Reminders />}
 
       {/* --- Charts (hrms-24 §9): the same range, the viewer's own scope -- */}
       {((hasHrms && seesAttendance) || hasAts) && (

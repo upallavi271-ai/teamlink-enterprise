@@ -1,0 +1,92 @@
+/* pages/hrms/ExitCenter.jsx - the Exit approvals tab, the exit record and Edit exit date. Everything under .exc-* */
+.exc { display: flex; flex-direction: column; gap: 10px; }
+.exc-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+.exc-sub { font-size: 11.5px; color: var(--ink-faint); }
+.exc-grow { flex: 1; }
+.exc-req { color: var(--red); font-weight: 600; }
+.exc-hint { font-size: 11.5px; color: var(--ink-faint); }
+.exc-ok { color: var(--teal); font-weight: 600; font-size: 13px; }
+.exc-warn { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--amber-tint); color: var(--amber); }
+.exc-info { font-size: 12.5px; padding: 8px 10px; border-radius: 8px; background: var(--blue-tint); color: var(--blue); }
+
+.exc-tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.exc-tile { border: 1px solid var(--line-soft); border-radius: var(--radius); padding: 10px 12px; background: var(--paper); display: flex; flex-direction: column; gap: 2px; }
+.exc-tile b { font-size: 22px; line-height: 1.1; color: var(--ink); }
+.exc-tile span { font-size: 12px; color: var(--ink-soft); }
+.exc-tile-warn { border-color: var(--amber); background: var(--amber-tint); }
+.exc-tile-warn b { color: var(--amber); }
+
+.exc-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.exc-filters > * { min-width: 0; }
+.exc-check { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+
+.exc-row { display: flex; justify-content: space-between; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); }
+.exc-row-main { min-width: 0; }
+.exc-row-btns { display: flex; gap: 6px; align-items: center; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+
+.exc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.exc-name { font-size: 16px; font-weight: 700; }
+.exc-dates { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 16px; padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--paper); }
+.exc-dates > div { display: flex; flex-direction: column; gap: 2px; font-size: 13px; min-width: 0; }
+.exc-dates span { font-size: 11px; color: var(--ink-faint); }
+.exc-dates em { font-size: 11.5px; color: var(--ink-soft); font-style: normal; }
+
+.exc-card { border: 1px solid var(--brand-bright); border-radius: var(--radius); padding: 12px; background: var(--paper-raised); display: flex; flex-direction: column; gap: 8px; }
+.exc-card textarea { width: 100%; box-sizing: border-box; }
+.exc-card-title { font-weight: 700; font-size: 13.5px; }
+.exc-card-red { border-color: var(--red); background: var(--red-tint); }
+.exc-three { display: flex; gap: 8px; flex-wrap: wrap; }
+.exc-three .btn { flex: 1 1 110px; min-height: 40px; }
+.exc-reject { border-color: var(--red); color: var(--red); }
+.exc-back { border-color: var(--amber); color: var(--amber); }
+.exc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+.exc-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0; }
+.exc-timeline li { display: flex; gap: 10px; padding: 8px 0 8px 2px; border-left: 2px solid var(--line-soft); margin-left: 10px; position: relative; }
+.exc-mark { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0; margin-left: -13px; background: var(--paper); border: 2px solid var(--line); color: var(--ink-faint); }
+.exc-timeline li > div { min-width: 0; }
+.exc-timeline b { font-size: 13.5px; }
+.exc-when { font-size: 11.5px; color: var(--ink-faint); margin-left: 8px; }
+.exc-who { font-size: 12px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.exc-done .exc-mark { background: var(--teal); border-color: var(--teal); color: #fff; }
+.exc-done { border-left-color: var(--teal); }
+.exc-now .exc-mark { background: var(--blue); border-color: var(--blue); color: #fff; }
+.exc-now { border-left-color: var(--blue); }
+.exc-bad .exc-mark { background: var(--red); border-color: var(--red); color: #fff; }
+.exc-bad { border-left-color: var(--red); }
+.exc-skip b, .exc-skip .exc-who { color: var(--ink-faint); text-decoration: line-through; }
+.exc-todo b { color: var(--ink-soft); font-weight: 600; }
+
+.exc-list { margin: 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.exc-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.exc-use { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; border: 1px solid var(--line-soft); border-radius: 8px; font-size: 13px; background: var(--paper); min-width: 0; }
+.exc-use > div { min-width: 0; overflow-wrap: anywhere; }
+.exc-state { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 20px; flex-shrink: 0; }
+.exc-state-ok { background: var(--teal-tint); color: var(--teal); }
+.exc-state-mismatch { background: var(--red-tint); color: var(--red); }
+.exc-state-check { background: var(--amber-tint); color: var(--amber); }
+
+.exc-form { display: flex; flex-direction: column; gap: 8px; }
+.exc-form input[type=date], .exc-form input[type=text], .exc-form input[type=number], .exc-form textarea { width: 100%; box-sizing: border-box; }
+.exc-label { font-size: 12px; font-weight: 600; color: var(--ink-soft); margin-top: 4px; }
+.exc-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.exc-now-date { font-size: 13px; }
+.exc-chip-btn { border: 0; cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; }
+.exc-scroll { overflow-x: auto; }
+.exc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.exc-table th, .exc-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+
+@media (max-width: 640px) {
+  .exc-tiles { grid-template-columns: 1fr 1fr 1fr; }
+  .exc-tile b { font-size: 18px; }
+  .exc-dates { grid-template-columns: 1fr 1fr; }
+  .exc-usage { grid-template-columns: 1fr; }
+  .exc-row { flex-direction: column; }
+  .exc-row-btns { justify-content: flex-start; }
+}
+@media (max-width: 420px) {
+  .exc-tiles { grid-template-columns: 1fr; }
+  .exc-dates { grid-template-columns: 1fr; }
+  .exc-three .btn { flex: 1 1 100%; }
+}
+.exc-profile-btns{display:inline-flex;gap:6px;margin-left:8px;flex-wrap:wrap}

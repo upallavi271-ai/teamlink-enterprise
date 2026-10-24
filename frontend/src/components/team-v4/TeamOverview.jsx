@@ -228,7 +228,7 @@ export default function TeamOverview({
     canAdd && { key: 'add', icon: 'plus', label: 'Add team member', sub: 'Employee record and login', to: '/employees', tone: 'blue' },
     isAdmin
       ? { key: 'org', icon: 'team', label: 'Team structure', sub: 'Departments, team leads, seats', onClick: () => goView('org'), tone: 'violet' }
-      : !selfMode && { key: 'asg', icon: 'team', label: 'Team structure', sub: 'Who works on which job', onClick: () => goView('assignments'), tone: 'violet' },
+      : !selfMode && { key: 'asg', icon: 'team', label: 'Team structure', sub: 'Who works on which requirement', onClick: () => goView('assignments'), tone: 'violet' },
     reportTo && { key: 'rep', icon: 'chart', label: selfMode ? 'My results' : 'Performance report', sub: selfMode ? 'Your numbers, day by day' : 'Recruiter performance', to: reportTo, tone: 'green' },
     {
       key: 'fu', icon: 'clock', label: 'Pending follow-ups',
@@ -324,9 +324,9 @@ export default function TeamOverview({
     const me = active.find((r) => r.id === (user && user.id)) || active[0];
     const c = (me && me.counts) || {};
     const tiles = me && me.roleGroup === 'BDE'
-      ? [['clients', 'My clients', 'building', 'blue'], ['openRequirements', 'Open jobs', 'briefcase', 'violet'], ['submitted', 'Sent to client', 'send', 'amber'],
+      ? [['clients', 'My clients', 'building', 'blue'], ['openRequirements', 'Open requirements', 'briefcase', 'violet'], ['submitted', 'Sent to client', 'send', 'amber'],
         ['interviews', 'Interviews', 'calendar', 'teal'], ['selected', 'Selected', 'star', 'pink'], ['joined', 'Joined', 'handshake', 'green']]
-      : [['openRequirements', 'Open jobs', 'briefcase', 'blue'], ['activeCandidates', 'People in process', 'users', 'violet'], ['needsAction', 'Needs action', 'alert', 'red'],
+      : [['openRequirements', 'Open requirements', 'briefcase', 'blue'], ['activeCandidates', 'People in process', 'users', 'violet'], ['needsAction', 'Needs action', 'alert', 'red'],
         ['interviews', 'Interviews', 'calendar', 'teal'], ['selected', 'Selected', 'star', 'amber'], ['joined', 'Joined', 'handshake', 'green']];
     return (
       <div className="tv4">
@@ -422,7 +422,7 @@ export default function TeamOverview({
               <div className="tv4-scroll">
                 <table className="ak-table tv4-tl">
                   <thead>
-                    <tr><th>#</th><th>Team lead</th><th className="num" title="Recruiters whose seat reports to them">Recruiters</th><th className="num">Open jobs</th><th className="num" title="Candidates in process in their team">In process</th><th className="num">Joined</th></tr>
+                    <tr><th>#</th><th>Team lead</th><th className="num" title="Recruiters whose seat reports to them">Recruiters</th><th className="num">Open requirements</th><th className="num" title="Candidates in process in their team">In process</th><th className="num">Joined</th></tr>
                   </thead>
                   <tbody>
                     {tlRows.slice(0, TOP).map((t, i) => {

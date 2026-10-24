@@ -25,7 +25,9 @@ export default function RecruiterJoiningsPopup() {
   const load = useCallback((keepOpen) => {
     api.get('/recruiter-joinings/popup', { params: keepOpen ? { peek: '1' } : {} }).then((res) => {
       setData(res.data);
-      if (!keepOpen) setOpen(!!res.data.show);
+      // 2026-10-15 (founder): no popup when HRMS opens. The same decisions live in
+      // HRMS > Performance & Development > Monthly Targets (Recruiter joinings).
+      if (!keepOpen) setOpen(false);
     }).catch(() => { /* no popup */ });
   }, []);
   useEffect(() => { load(false); }, [load]);

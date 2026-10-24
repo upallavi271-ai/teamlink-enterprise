@@ -216,8 +216,8 @@ export default function AgreementPanel({
             </button>
           )}
           {!s.pdfAvailable && data.document && (
-            <button type="button" className="btn btn-sm" title="A draft PDF with a grey DRAFT mark. It is not the signed copy." disabled={busy === 'pdf'} onClick={() => run('pdf', () => downloadAgreementPdf(clientId, `${s.agreementId || 'agreement'}-${title}-DRAFT`))}>
-              {busy === 'pdf' ? 'Preparing…' : 'Download draft PDF'}
+            <button type="button" className="btn btn-sm" title="A preview PDF with a grey NOT SIGNED mark. It is not the signed copy." disabled={busy === 'pdf'} onClick={() => run('pdf', () => downloadAgreementPdf(clientId, `${s.agreementId || 'agreement'}-${title}-NOT-SIGNED`))}>
+              {busy === 'pdf' ? 'Preparing…' : 'Download preview PDF'}
             </button>
           )}
           {edit && s.pdfAvailable && (
@@ -243,8 +243,8 @@ export default function AgreementPanel({
         {voidReason !== null && (
           <div className="agr-card">
             <h3>Cancel agreement</h3>
-            <div className="small-muted" style={{ marginBottom: 6 }}>Both signatures are cleared. It goes back to Draft.</div>
-            <label className="field"><span>Reason *</span>
+            <div className="small-muted" style={{ marginBottom: 6 }}>Both signatures are cleared. It goes back to Made, not sent.</div>
+            <label className="field"><span>Reason</span>
               <input value={voidReason} onChange={(e) => setVoidReason(e.target.value)} autoFocus />
             </label>
             <div className="agr-actions">
@@ -253,7 +253,7 @@ export default function AgreementPanel({
                 type="button"
                 className="btn btn-danger"
                 disabled={busy === 'void' || !voidReason.trim()}
-                onClick={() => run('void', () => api.post(`/agreement/${clientId}/void`, { reason: voidReason }), 'Cancelled. Make a new draft and send it.').then(() => setVoidReason(null))}
+                onClick={() => run('void', () => api.post(`/agreement/${clientId}/void`, { reason: voidReason }), 'Cancelled. Make a new agreement and send it.').then(() => setVoidReason(null))}
               >
                 {busy === 'void' ? 'Saving…' : 'Cancel agreement'}
               </button>
@@ -264,7 +264,7 @@ export default function AgreementPanel({
         {countersign && (
           <div className="agr-card">
             <h3>Sign for TeamLink</h3>
-            <label className="field"><span>Your name *</span>
+            <label className="field"><span>Your name</span>
               <input value={signer} onChange={(e) => setSigner(e.target.value)} placeholder="Authorised signatory" />
             </label>
             <SignatureCapture name={signer} onChange={setSig} />

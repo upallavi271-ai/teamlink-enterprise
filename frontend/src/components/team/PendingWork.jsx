@@ -135,7 +135,7 @@ function Items({ row, bde, canRemind, onSent }) {
       )}
       {!bde && row.jobs && row.jobs.length > 0 && (
         <div className="pwk-jobs">
-          <div className="pwk-jobs-title">Jobs with no profile sent yet</div>
+          <div className="pwk-jobs-title">Requirements with no profile sent yet</div>
           {row.jobs.map((j, i) => (
             // eslint-disable-next-line react/no-array-index-key
             <div key={i} className="small-muted">{`${j.job}${j.client ? ` (${j.client})` : ''}${j.daysOpen ? ` · open ${j.daysOpen} day${j.daysOpen === 1 ? '' : 's'}` : ''}`}</div>
@@ -324,7 +324,7 @@ export default function PendingWork() {
           <li><b>Late</b> = the due day has passed. <b>Due today</b> = the due day is today. Both are part of Waiting.</li>
           <li><b>Not moving</b> = old imported work. It is shown small and nobody is reminded about it.</li>
           <li><b>Follow-ups late</b> = people they were meant to contact by a date that has passed.</li>
-          <li><b>Jobs with no profile sent</b> = open jobs where nobody has been sent to the client yet.</li>
+          <li><b>Requirements with no profile sent</b> = open requirements where nobody has been sent to the client yet.</li>
         </ul>
         {data.note && <div className="small-muted">{data.note}</div>}
       </details>

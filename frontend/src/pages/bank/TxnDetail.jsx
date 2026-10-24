@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { money2, fmtD } from '../invoices/invFormat';
+import Combo from '../../components/Combo.jsx';
 
 const Row = ({ k, children }) => (<div className="td-kv"><i>{k}</i><b>{children}</b></div>);
 
@@ -127,10 +128,10 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
               <b>This payment came back (bounced cheque / returned)</b>
               <p className="small-muted">The original receipt stays on record; a dated reversal is added and the invoice owes the money again.</p>
               <label className="field"><span>The line where it came back (optional)</span>
-                <select value={returnLine} onChange={(e) => setReturnLine(e.target.value)}>
+                <Combo value={returnLine} onChange={(e) => setReturnLine(e.target.value)}>
                   <option value="">— none: I will type the date —</option>
                   {returns.map((t) => <option key={t.id} value={t.id}>{fmtD(t.date)} · {String(t.description).slice(0, 60)}</option>)}
-                </select>
+                </Combo>
               </label>
               {!returnLine && <label className="field"><span>Date it came back</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>}
               <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What happened? (for example: cheque bounced - insufficient funds)" style={{ width: '100%' }} />
@@ -148,10 +149,10 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
                 const fits = notes.filter((n) => Math.round(Number(n.refundDue) * 100) === Math.round(Number(d.debit) * 100));
                 return fits.length ? (
                   <>
-                    <select value={noteId} onChange={(e) => setNoteId(e.target.value)} style={{ width: '100%' }}>
+                    <Combo value={noteId} onChange={(e) => setNoteId(e.target.value)} style={{ width: '100%' }}>
                       <option value="">— choose —</option>
                       {fits.map((n) => <option key={n.id} value={n.id}>{n.number} · {n.client || n.invoiceNumber} · refund {money2(n.refundDue)}</option>)}
-                    </select>
+                    </Combo>
                     <div className="qa-row">
                       <button type="button" className="btn btn-primary btn-sm" disabled={busy || !noteId} onClick={() => run('link-refund', { creditNoteId: noteId }, 'Linked. The credit note now shows the refund as paid on the statement date.')}>Link the refund</button>
                       <button type="button" className="btn btn-sm" onClick={() => setForm(null)}>Cancel</button>

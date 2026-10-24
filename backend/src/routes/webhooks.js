@@ -34,28 +34,60 @@ const safeEq = (a, b) => {
 };
 
 // ---- WhatsApp -----------------------------------------------------------------
+// MANY NUMBERS (utils/waNumbers.js). While no number is added to the list this is exactly the old single-number webhook. With a list:
+//   GET   the verify token of ANY switched-on number (or the shared one) answers Meta's one-time check
+//   POST  every change names its number (value.metadata.phone_number_id): the signature is checked with THAT number's app secret (its own, else the
+//         shared one) and its messages / reports are routed to THAT number only. An id nobody added is kept as an "unknown number" event and never routed.
 router.get('/whatsapp', async (req, res) => {
-  const cfg = await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+  const wa = require('../utils/whatsappCloud'); // eslint-disable-line global-require
+  const cfg = await wa.legacyConfig().catch(() => null);
   const { 'hub.mode': mode, 'hub.verify_token': token, 'hub.challenge': challenge } = req.query;
   if (cfg && cfg.verifyToken && mode === 'subscribe' && safeEq(token, cfg.verifyToken)) return res.status(200).type('text/plain').send(String(challenge || ''));
+  if (mode === 'subscribe' && token) {
+    try {
+      const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+      if (await WN.hasNumbers()) {
+        for (const t of await WN.verifyTokens()) { // eslint-disable-line no-restricted-syntax
+          if (safeEq(token, t)) return res.status(200).type('text/plain').send(String(challenge || ''));
+        }
+      }
+    } catch { /* the shared token above already had its chance */ }
+  }
   return res.status(403).type('text/plain').send('Forbidden');
 });
 
-async function handleWhatsApp(body) {
-  let statuses = 0; let replies = 0;
+// ctx (only with a list of numbers): { valid: Set of number ids whose app secret signed this call, anyValid }
+async function handleWhatsApp(body, ctx) {
+  let statuses = 0; let replies = 0; let unknown = 0; let rejected = 0; let mismatched = 0;
+  const WN = ctx ? require('../utils/waNumbers') : null; // eslint-disable-line global-require
   const entries = Array.isArray(body && body.entry) ? body.entry : [];
   for (const entry of entries) {
     for (const change of (Array.isArray(entry.changes) ? entry.changes : [])) {
       const v = change && change.value;
       if (!v || change.field !== 'messages') continue; // eslint-disable-line no-continue
+      let numberId = null;
+      if (ctx) {
+        const phoneId = v.metadata && v.metadata.phone_number_id ? String(v.metadata.phone_number_id) : '';
+        const row = phoneId ? await WN.rowByPhoneId(phoneId) : null; // eslint-disable-line no-await-in-loop
+        if (!row) {
+          for (const st of (Array.isArray(v.statuses) ? v.statuses : [])) { unknown += 1; await WN.noteUnknown({ phoneNumberId: phoneId || 'missing', display: v.metadata && v.metadata.display_phone_number, kind: 'status', ref: `${st.id}:${st.status}` }); } // eslint-disable-line no-await-in-loop
+          for (const m of (Array.isArray(v.messages) ? v.messages : [])) { unknown += 1; await WN.noteUnknown({ phoneNumberId: phoneId || 'missing', display: v.metadata && v.metadata.display_phone_number, kind: 'message', ref: m.id }); } // eslint-disable-line no-await-in-loop
+          continue; // eslint-disable-line no-continue
+        }
+        if (!ctx.valid.has(row.id)) { rejected += (Array.isArray(v.statuses) ? v.statuses.length : 0) + (Array.isArray(v.messages) ? v.messages.length : 0); continue; } // eslint-disable-line no-continue
+        numberId = row.id;
+        await delivery.markSeen(`whatsapp.${row.id}`); // eslint-disable-line no-await-in-loop
+      }
       for (const st of (Array.isArray(v.statuses) ? v.statuses : [])) {
         const err = Array.isArray(st.errors) && st.errors[0] ? st.errors[0] : null;
         // eslint-disable-next-line no-await-in-loop
         const out = await delivery.applyStatus({
           channel: 'WhatsApp', providerRef: st.id, status: st.status, at: st.timestamp ? new Date(Number(st.timestamp) * 1000) : new Date(),
           error: err ? `${err.title || err.message || 'Failed'}${err.code ? ` (${err.code})` : ''}${err.error_data && err.error_data.details ? ` — ${err.error_data.details}` : ''}` : null,
+          ...(numberId ? { numberId } : {}),
         });
         if (out.matched) statuses += 1;
+        if (out.mismatch) mismatched += 1;
       }
       const names = {};
       (Array.isArray(v.contacts) ? v.contacts : []).forEach((c) => { names[c.wa_id] = c.profile && c.profile.name; });
@@ -65,25 +97,60 @@ async function handleWhatsApp(body) {
         else if (m.type === 'button') text = m.button && (m.button.text || m.button.payload);
         else if (m.type === 'interactive') text = m.interactive && ((m.interactive.button_reply && m.interactive.button_reply.title) || (m.interactive.list_reply && m.interactive.list_reply.title));
         else text = `[${m.type || 'message'}]`;
+        // a picture / file / voice note (utils/waChats.js keeps the bytes): the words are the caption, or [Photo] / [Document: name] / [Voice note]
+        let media = null;
+        if (['image', 'document', 'audio', 'video', 'sticker'].includes(m.type) && m[m.type] && m[m.type].id) {
+          const mm = m[m.type];
+          media = { id: String(mm.id), type: m.type, mime: mm.mime_type, filename: mm.filename, caption: mm.caption, voice: !!mm.voice, _testBytes: mm._testBytes };
+          text = require('../utils/waChats').mediaWords(media); // eslint-disable-line global-require
+        }
         // eslint-disable-next-line no-await-in-loop
-        await delivery.applyInbound({ channel: 'WhatsApp', from: m.from, text: text || '', id: m.id, at: m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date(), name: names[m.from] });
+        await delivery.applyInbound({ channel: 'WhatsApp', from: m.from, text: text || '', id: m.id, at: m.timestamp ? new Date(Number(m.timestamp) * 1000) : new Date(), name: names[m.from], ...(media ? { media } : {}), ...(numberId ? { numberId } : {}) });
         replies += 1;
       }
     }
   }
-  return { statuses, replies };
+  return ctx ? { statuses, replies, unknown, rejected, mismatched } : { statuses, replies };
 }
 
 router.post('/whatsapp', async (req, res) => {
   try {
-    const cfg = await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
-    if (!cfg || !cfg.appSecret) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
+    const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+    const listed = await WN.hasNumbers().catch(() => false);
+    if (!listed) {
+      const cfg = await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+      if (!cfg || !cfg.appSecret) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
+      const sent = String(req.get('x-hub-signature-256') || '').replace(/^sha256=/i, '');
+      const want = crypto.createHmac('sha256', cfg.appSecret).update(req.rawBody || Buffer.from('')).digest('hex');
+      if (!safeEq(sent, want)) return res.status(403).json({ error: 'Bad signature' });
+      await delivery.markSeen('whatsapp');
+      const out = await handleWhatsApp(req.body);
+      // Meta wants a quick 200; anything else makes it retry.
+      return res.status(200).json({ ok: true, ...out });
+    }
+    // --- a list of numbers: the call names the number(s) it is for ---
     const sent = String(req.get('x-hub-signature-256') || '').replace(/^sha256=/i, '');
-    const want = crypto.createHmac('sha256', cfg.appSecret).update(req.rawBody || Buffer.from('')).digest('hex');
-    if (!safeEq(sent, want)) return res.status(403).json({ error: 'Bad signature' });
+    const raw = req.rawBody || Buffer.from('');
+    const sigOf = (secret) => crypto.createHmac('sha256', secret).update(raw).digest('hex');
+    const phoneIds = new Set();
+    (Array.isArray(req.body && req.body.entry) ? req.body.entry : []).forEach((e) => (Array.isArray(e.changes) ? e.changes : []).forEach((c) => {
+      const id = c && c.value && c.value.metadata && c.value.metadata.phone_number_id; if (id) phoneIds.add(String(id));
+    }));
+    const valid = new Set(); let knownReferenced = 0;
+    for (const id of phoneIds) { // eslint-disable-line no-restricted-syntax
+      const row = await WN.rowByPhoneId(id); // eslint-disable-line no-await-in-loop
+      if (!row) continue; // eslint-disable-line no-continue
+      knownReferenced += 1;
+      const secret = await WN.appSecretOf(row); // eslint-disable-line no-await-in-loop
+      if (secret && safeEq(sent, sigOf(secret))) valid.add(row.id);
+    }
+    const all = await WN.allAppSecrets();
+    if (!all.length) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
+    let anyValid = valid.size > 0;
+    if (!anyValid && knownReferenced === 0) anyValid = all.some((sec) => safeEq(sent, sigOf(sec)));
+    if (!anyValid) return res.status(403).json({ error: 'Bad signature' });
     await delivery.markSeen('whatsapp');
-    const out = await handleWhatsApp(req.body);
-    // Meta wants a quick 200; anything else makes it retry.
+    const out = await handleWhatsApp(req.body, { valid, anyValid });
     return res.status(200).json({ ok: true, ...out });
   } catch (err) {
     console.error('[webhook] whatsapp:', err && err.message); // eslint-disable-line no-console
@@ -96,6 +163,9 @@ router.post('/whatsapp', async (req, res) => {
 //        { requestId, telNum, status: "1" delivered | "2" failed | "0" sent …, event, failureReason }
 //   /api/webhooks/sms/fast2sms?key=<secret>                           POST/GET/PUT, JSON or form
 //        { request_id, mobile, status: delivered | failed …, failure_reason, description }
+//   /api/webhooks/sms/smsgw?key=<secret>                              SMS Push Platform (web.smsgw.in): GET/POST, JSON or form. The provider's
+//        report format is not documented here, so the usual names are read (msgid | messageid | requestid | id; status | dlrstatus; errorcode |
+//        errordesc | reason). A report whose id or status cannot be read changes nothing.
 //   /api/webhooks/sms/twilio                                          form, signed (X-Twilio-Signature)
 //        { MessageSid, MessageStatus: queued | sent | delivered | undelivered | failed, ErrorCode }
 // Sources: docs.msg91.com / msg91.com/help/webhook-new, docs.fast2sms.com/reference/sms-webhook.md,
@@ -126,7 +196,7 @@ function twilioSignatureOk(req, token) {
 router.all('/sms/:provider', async (req, res) => {
   try {
     const provider = String(req.params.provider || '').toLowerCase();
-    if (!['msg91', 'fast2sms', 'twilio'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
+    if (!['msg91', 'fast2sms', 'twilio', 'smsgw'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
     const cfg = await require('../utils/smsGateway').smsConfig().catch(() => null); // eslint-disable-line global-require
     if (!cfg) return res.status(403).json({ error: 'SMS is not set up' });
     if (provider === 'twilio') {
@@ -138,9 +208,16 @@ router.all('/sms/:provider', async (req, res) => {
     const raw = req.method === 'GET' ? req.query : req.body;
     const items = (Array.isArray(raw) ? raw : [raw]).filter((x) => x && typeof x === 'object');
     let matched = 0;
-    for (const it of items) {
+    for (const it0 of items) {
       let ref; let status; let error = null; let at = null;
-      if (provider === 'msg91') {
+      // SMS Push Platform: names are matched without caring about capitals
+      const it = provider === 'smsgw' ? Object.fromEntries(Object.entries(it0).map(([k, v]) => [String(k).toLowerCase(), v])) : it0;
+      if (provider === 'smsgw') {
+        ref = it.msgid || it.messageid || it.message_id || it.requestid || it.request_id || it.mid || it.jobid || it.id;
+        status = String(it.status || it.dlrstatus || it.deliverystatus || it.dlr || it.state || '').toLowerCase();
+        error = it.errordesc || it.reason || it.errorcode || it.err || null;
+        at = it.deliverytime || it.donetime || it.timestamp || null;
+      } else if (provider === 'msg91') {
         ref = it.requestId || it.request_id; status = msg91Status(it); error = it.failureReason || null; at = it.deliveryTime || it.ts || null;
       } else if (provider === 'fast2sms') {
         ref = it.request_id; status = String(it.status || '').toLowerCase(); error = it.failure_reason || (status === 'failed' ? it.description : null) || null; at = it.delivery_timestamp || null;
@@ -167,7 +244,7 @@ router.all('/sms/:provider', async (req, res) => {
 router.all('/sms-inbound/:provider', async (req, res) => {
   try {
     const provider = String(req.params.provider || '').toLowerCase();
-    if (!['msg91', 'fast2sms', 'twilio', 'other'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
+    if (!['msg91', 'fast2sms', 'twilio', 'smsgw', 'other'].includes(provider)) return res.status(404).json({ error: 'Unknown provider' });
     const cfg = await require('../utils/smsGateway').smsConfig().catch(() => null); // eslint-disable-line global-require
     if (!cfg) return res.status(403).json({ error: 'SMS is not set up' });
     if (provider === 'twilio') {
@@ -192,6 +269,18 @@ router.all('/sms-inbound/:provider', async (req, res) => {
   } catch (err) {
     console.error('[webhook] sms-inbound:', err && err.message); // eslint-disable-line no-console
     return res.status(200).json({ ok: true });
+  }
+});
+
+// ---- Android phone as SMS gateway (channels/androidWebhook.js) ---------------------------------
+// POST /api/webhooks/sms-android   signed (X-Signature + X-Timestamp) or ?key=<shared word>
+router.post('/sms-android', async (req, res) => {
+  try {
+    const out = await require('../channels/androidWebhook').handle(req); // eslint-disable-line global-require
+    return res.status(out.status).json(out.body);
+  } catch (err) {
+    console.error('[webhook] sms-android:', err && err.message); // eslint-disable-line no-console
+    return res.status(200).json({ ok: true }); // never make the phone retry a bug of ours for two days
   }
 });
 

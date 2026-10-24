@@ -33,7 +33,6 @@ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 const sum = (list, f) => ROUND(list.reduce((s, x) => s + (Number(f(x)) || 0), 0));
 const daysBetween = (fromIso, toIso) => Math.round((new Date(`${toIso}T00:00:00Z`) - new Date(`${fromIso}T00:00:00Z`)) / 86400000);
 const lc = (v) => String(v == null ? '' : v).toLowerCase();
-const TEST_MARK = /zztest|example\.test/i;
 
 // The route modules are required lazily: they are Express routers that also
 // hand out their builders (router.buildRegister, router.officeScope …).
@@ -112,8 +111,10 @@ function receiptProof(raw) {
 // needs the vendor's own tax invoice (routes/office.js decorate()).
 // A bill whose proof is only a typed file name (no stored file, no bank line)
 // is "Reference only — document missing", like a receipt's typed UTR.
-function expenseProof(r, paidLike) {
+function expenseProof(r, paidLike, pay) {
   if (!paidLike) return null;
+  // A paid bill whose only proof is a bank-line link that no longer checks out has no proof.
+  if (pay && r.bankTxnId && !r.proofFile && !pay.proof.valid) return { missing: true, refOnly: !!r.proofName, type: 'Bank line (the proof link is broken)' };
   if (!r.proofFile && !r.bankTxnId) {
     return { missing: true, refOnly: !!r.proofName, type: 'Expense bill / vendor invoice' };
   }
@@ -122,14 +123,19 @@ function expenseProof(r, paidLike) {
 }
 
 // ---- who the accountant is -------------------------------------------------
+// FOUNDER RULE (2026-10-19): the proof reminders go to the ACCOUNTANT, never to the Admin. The old 'no Accountant, so the Admin
+// is the Accounts desk' fallback is gone: with no Accountant the desk is empty ('No accountant set') and the Admin is told once
+// that no accountant exists (utils/accountsRecipients.js). A record is also never 'owned' by an Admin who happened to record it.
+// An Admin is on the desk only if the Admin put them there (Accounts > Dashboard > Proof reminder > Who gets each reminder, 2026-10-21).
+// Two table rows feed it: 'Payment proof is missing' (the bell) and '... (every day)'. Their people are the desk; each row keeps its own list.
 async function accountsDesk() {
-  const users = await prisma.user.findMany({
-    where: { status: 'Active', accountsRole: { in: ['ACCOUNTANT', 'ADMIN', 'SUPER_ADMIN'] } },
-    select: { id: true, name: true, email: true, accountsRole: true },
-  });
-  const real = users.filter((u) => !TEST_MARK.test(`${u.name} ${u.email}`));
-  const accountants = real.filter((u) => u.accountsRole === 'ACCOUNTANT');
-  const desk = accountants.length ? accountants : real.filter((u) => ['ADMIN', 'SUPER_ADMIN'].includes(u.accountsRole));
+  const AR = require('./accountsRecipients'); // eslint-disable-line global-require
+  const bell = await AR.reminderRecipients({ kind: 'proofBell' });
+  const daily = await AR.reminderRecipients({ kind: 'proofDaily' });
+  const team = bell.on ? bell : daily;
+  const real = [...bell.users, ...daily.users].filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i);
+  const accountants = [...bell.accountants, ...daily.accountants];
+  const deskList = team.users;
   const emps = await prisma.employee.findMany({
     where: { userId: { in: real.map((u) => u.id) } },
     select: { userId: true, phone: true },
@@ -138,8 +144,13 @@ async function accountsDesk() {
   return {
     byId: new Map(real.map((u) => [u.id, { ...u, phone: phone.get(u.id) || null }])),
     byName: new Map(real.map((u) => [lc(u.name).trim(), u.id])),
-    desk: desk.map((u) => ({ ...u, phone: phone.get(u.id) || null })),
+    desk: deskList.map((u) => ({ ...u, phone: phone.get(u.id) || null })),
     label: accountants.length ? 'Accountant' : 'Accounts desk (Admin)',
+    none: team.none,
+    routing: {
+      bell: { on: bell.on, custom: !!bell.custom, owner: !!bell.owner, ids: bell.users.map((u) => u.id), repeatDays: Number((bell.timing || {}).repeatDays) || 1 },
+      daily: { on: daily.on, custom: !!daily.custom, owner: !!daily.owner, ids: daily.users.map((u) => u.id) },
+    },
   };
 }
 function assignee(desk, ids = [], names = []) {
@@ -248,7 +259,15 @@ async function buildControl(user, q = {}) {
     };
   });
   const inPeriod = all.filter((r) => inRange(r.invoiceDate, range) && hit(r.hay));
-  const pass = (r, skip) => (skip === 'client' || !want.client || r.client === want.client)
+  // CLIENT = the client's ID (names repeat, get renamed or are spelt two ways). An old link that still carries a
+  // client NAME is read as a name only when no client has that id.
+  const clientIds = new Set(all.map((r) => r.clientId).filter(Boolean));
+  const clientByName = !!want.client && !clientIds.has(want.client);
+  const clientNames = new Map();
+  all.forEach((r) => { if (r.clientId && !clientNames.has(r.clientId)) clientNames.set(r.clientId, r.client); });
+  const sharedName = new Set([...clientNames.values()].filter((n, i, a) => a.indexOf(n) !== i));
+  const clientLabel = (id) => (sharedName.has(clientNames.get(id)) ? `${clientNames.get(id)} (id …${String(id).slice(-5)})` : (clientNames.get(id) || id));
+  const pass = (r, skip) => (skip === 'client' || !want.client || (clientByName ? r.client === want.client : r.clientId === want.client))
     && (skip === 'dept' || !want.dept || r.department === want.dept)
     && (skip === 'section' || !want.section || r.sectionKey === want.section)
     && (skip === 'role' || !want.role || r.role === want.role)
@@ -262,12 +281,16 @@ async function buildControl(user, q = {}) {
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
   const facets = {
-    client: facet('client', (r) => [r.client], (v) => v),
+    client: facet('client', (r) => [r.clientId], clientLabel),
     dept: facet('dept', (r) => [r.department], (v) => deptLabel.get(v) || v),
     section: facet('section', (r) => [r.sectionKey], (v) => secLabel.get(v) || v),
     role: facet('role', (r) => [r.role], (v) => v),
     emp: facet('emp', (r) => r.employees, (v) => personName.get(v) || v),
   };
+  // The picked client stays in its list (with its name) even when the other filters leave it no invoice.
+  if (want.client && !clientByName && !facets.client.some((o) => o.value === want.client)) {
+    facets.client.unshift({ value: want.client, label: clientLabel(want.client), count: 0 });
+  }
   const inv = inPeriod.filter((r) => pass(r));
   const peopleFilter = !!(want.client || want.dept || want.section || want.role || want.emp);
 
@@ -276,11 +299,14 @@ async function buildControl(user, q = {}) {
   const userIds = [...new Set(scope.inPeriod.flatMap((r) => [r.paidById, r.approvedById, r.createdById]).filter(Boolean))];
   const people = userIds.length ? await prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true } }) : [];
   const nameOf = new Map(people.map((u) => [u.id, u.name]));
+  // A bank line linked to a bill is a proof LINK, not a payment: ask the one truth table (utils/expensePaymentState.js).
+  const payBy = await require('./expensePaymentState').describeMany(prisma, scope.inPeriod.filter((r) => r.bankTxnId)); // eslint-disable-line global-require
   const exp = scope.inPeriod.map((r) => {
+    const pay = payBy.get(r.id) || null;
     const paidLike = PAID_LIKE.includes(r.approvalStatus);
     const pendLike = PENDING_LIKE.includes(r.approvalStatus);
     const daysOver = pendLike && r.dueOn ? daysBetween(String(r.dueOn).slice(0, 10), today) : null;
-    const proof = expenseProof(r, paidLike);
+    const proof = expenseProof(r, paidLike, pay);
     return {
       id: r.id,
       code: r.expenseCode || null,
@@ -302,7 +328,9 @@ async function buildControl(user, q = {}) {
       overdue: pendLike && daysOver != null && daysOver > 0,
       daysOverdue: daysOver != null && daysOver > 0 ? daysOver : null,
       approvalStatus: r.approvalStatus,
-      payStatus: paidLike ? (r.approvalStatus === 'REIMBURSED' ? 'Reimbursed' : 'Paid') : (r.approvalStatus === 'APPROVED' ? 'Approved — to pay' : 'Waiting for approval'),
+      payStatus: paidLike ? (r.approvalStatus === 'REIMBURSED' ? 'Reimbursed' : 'Paid')
+        : (pay && pay.state !== 'no_link' ? pay.short : (r.approvalStatus === 'APPROVED' ? 'Approved — to pay' : 'Waiting for approval')),
+      payNote: pay ? pay.reason : null,
       proofStatus: proof ? (proof.missing ? (proof.refOnly ? 'Reference only — document missing' : 'Proof missing') : 'Proof attached') : 'Not paid yet',
       proofMissing: !!(proof && proof.missing),
       proofRefOnly: !!(proof && proof.refOnly),
@@ -330,8 +358,12 @@ async function buildControl(user, q = {}) {
     const l = overdue.filter((r) => bucketOf(r.daysOverdue) === b);
     return { bucket: b, count: l.length, amount: sum(l, (r) => r.pending) };
   });
+  // CLIENT BY CLIENT means by the client's ID: two clients that share a name stay two (told apart by a short id).
+  const ckey = (r) => r.clientId || `name:${r.client}`;
+  const shownClient = (r) => (r.clientId ? clientLabel(r.clientId) : r.client);
   const owesMap = new Map();
-  pendingRows.forEach((r) => owesMap.set(r.client, ROUND((owesMap.get(r.client) || 0) + r.pending)));
+  const owesName = new Map();
+  pendingRows.forEach((r) => { owesMap.set(ckey(r), ROUND((owesMap.get(ckey(r)) || 0) + r.pending)); owesName.set(ckey(r), shownClient(r)); });
   const nextDue = pendingRows.map((r) => r.dueDate).filter(Boolean).sort()[0] || null;
 
   const expPaid = exp.filter((e) => PAID_LIKE.includes(e.approvalStatus));
@@ -348,10 +380,10 @@ async function buildControl(user, q = {}) {
   const collectedOf = (r) => (r.receivable > 0 ? r.gst * Math.min(1, r.received / r.receivable) : 0);
   const gstCollected = sum(inv, collectedOf);
   const gstPendingRows = inv.filter((r) => r.gst - collectedOf(r) > 0.5).map((r) => ({
-    id: r.id, invoiceNumber: r.invoiceNumber, client: r.client, dueDate: r.dueDate, gst: r.gst, pending: ROUND(r.gst - collectedOf(r)), daysOverdue: r.overdue ? r.daysOverdue : null,
+    id: r.id, invoiceNumber: r.invoiceNumber, client: shownClient(r), ckey: ckey(r), dueDate: r.dueDate, gst: r.gst, pending: ROUND(r.gst - collectedOf(r)), daysOverdue: r.overdue ? r.daysOverdue : null,
   })).sort((a, b) => b.pending - a.pending);
-  const gstPendingByClient = [...gstPendingRows.reduce((m, r) => m.set(r.client, ROUND((m.get(r.client) || 0) + r.pending)), new Map()).entries()]
-    .map(([client, amount]) => ({ client, amount, invoices: gstPendingRows.filter((r) => r.client === client).length })).sort((a, b) => b.amount - a.amount);
+  const gstPendingByClient = [...gstPendingRows.reduce((m, r) => m.set(r.ckey, ROUND((m.get(r.ckey) || 0) + r.pending)), new Map()).entries()]
+    .map(([key, amount]) => ({ client: gstPendingRows.find((r) => r.ckey === key).client, amount, invoices: gstPendingRows.filter((r) => r.ckey === key).length })).sort((a, b) => b.amount - a.amount);
   const withGst = exp.filter((e) => e.gst > 0.5);
   const notClaimable = withGst.filter((e) => !e.gstinOnFile);
   const missingProofItc = withGst.filter((e) => e.gstinOnFile && !e.taxInvoiceOnFile);
@@ -429,13 +461,13 @@ async function buildControl(user, q = {}) {
   // ---- 7. PENDING & RECEIVED — CLIENT BY CLIENT ----------------------------
   const clientMap = new Map();
   inv.forEach((r) => {
-    const c = clientMap.get(r.client) || {
-      client: r.client, clientId: r.clientId, departments: new Set(), managers: new Set(), invoices: [],
+    const c = clientMap.get(ckey(r)) || {
+      client: shownClient(r), clientId: r.clientId, departments: new Set(), managers: new Set(), invoices: [],
     };
     c.departments.add(deptLabel.get(r.department) || r.department);
     if (r.accountManager) c.managers.add(r.accountManager);
     c.invoices.push(r);
-    clientMap.set(r.client, c);
+    clientMap.set(ckey(r), c);
   });
   const slim = (r) => ({
     id: r.id,
@@ -534,7 +566,7 @@ async function buildControl(user, q = {}) {
         amount: pending,
         count: pendingRows.length,
         clients: owesMap.size,
-        whoOwes: [...owesMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([client, amount]) => ({ client, amount })),
+        whoOwes: [...owesMap.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([key, amount]) => ({ client: owesName.get(key), amount })),
         nextDue,
         oldestDays: pendingRows.length ? Math.max(...pendingRows.map((r) => (r.invoiceDate ? daysBetween(String(r.invoiceDate).slice(0, 10), today) : 0))) : null,
       },
@@ -599,6 +631,7 @@ async function buildControl(user, q = {}) {
         resolved: resolved.length,
       },
       accountants: desk.desk.map((u) => u.name),
+      routing: desk.routing,
       resolved,
       channels: { inApp: true, whatsapp: 'wa.me link (no WhatsApp account connected)', sms: 'needs an SMS account', email: false },
     },
@@ -616,18 +649,22 @@ async function remind(user, keys, q = {}) {
   const byKey = new Map(data.proof.records.map((r) => [r.key, r]));
   const want = (Array.isArray(keys) && keys.length ? keys : data.proof.records.map((r) => r.key)).map(String);
   const out = { sent: 0, skipped: 0, notMissing: 0, noAccountant: 0 };
-  const dayAgo = new Date(Date.now() - 86400000);
+  const route = data.proof.routing.bell;
+  if (!route.on) return { ...out, off: true }; // the Admin switched this reminder OFF
+  const dayAgo = new Date(Date.now() - route.repeatDays * 86400000);
   for (const key of want) {
     const r = byKey.get(key);
     if (!r) { out.notMissing += 1; continue; } // eslint-disable-line no-continue
-    if (!r.who.ids.length) { out.noAccountant += 1; continue; } // eslint-disable-line no-continue
+    // An Admin-changed row decides the people by itself; an unchanged row keeps the record's own accountant, else the desk.
+    const target = (r.who.own && route.owner && route.ids.includes(r.who.ids[0])) ? r.who.ids : route.ids;
+    if (!target.length) { out.noAccountant += 1; continue; } // eslint-disable-line no-continue
     // eslint-disable-next-line no-await-in-loop
     const prior = await prisma.notification.findMany({
-      where: { recipient: `${REMIND_PREFIX}${key}`, userId: { in: r.who.ids } },
+      where: { recipient: `${REMIND_PREFIX}${key}`, userId: { in: target } },
       select: { userId: true, read: true, createdAt: true },
     });
     const blocked = new Set(prior.filter((p) => !p.read || p.createdAt > dayAgo).map((p) => p.userId));
-    const to = r.who.ids.filter((id) => !blocked.has(id));
+    const to = target.filter((id) => !blocked.has(id));
     if (!to.length) { out.skipped += 1; continue; } // eslint-disable-line no-continue
     // eslint-disable-next-line no-await-in-loop
     await prisma.notification.createMany({
@@ -642,6 +679,8 @@ async function remind(user, keys, q = {}) {
     });
     out.sent += 1;
   }
+  // Nobody to tell: never the Admin in its place. The Admin hears once that no Accountant exists.
+  if (out.noAccountant) await require('./accountsRecipients').warnNoRecipients('proofBell', `${out.noAccountant} missing proof${out.noAccountant === 1 ? '' : 's'}`); // eslint-disable-line global-require
   return out;
 }
 

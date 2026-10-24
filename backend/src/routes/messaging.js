@@ -167,16 +167,16 @@ router.post('/script', async (req, res, next) => {
 router.post('/preview', async (req, res, next) => {
   try {
     const out = await bulk.preview(req.user, req.body || {});
-    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    if (out.error) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
     return res.json(out.preview);
   } catch (err) { return next(err); }
 });
 
 // ONE person: build, send and answer with the outcome (Sent / Failed / Blocked).
-router.post('/send', async (req, res, next) => {
+router.post('/send', require('../channels/rateLimit').limiter(), async (req, res, next) => {
   try {
     const out = await bulk.sendIndividual(req.user, req.body || {});
-    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    if (out.error) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
     return res.json(out);
   } catch (err) { return next(err); }
 });
@@ -189,6 +189,7 @@ router.post('/device-log', async (req, res, next) => {
     const audience = ['clients', 'employees'].includes(b.audience) ? b.audience : null;
     const channel = ['Email', 'SMS', 'WhatsApp', 'Call'].includes(b.channel) ? b.channel : null;
     if (!audience || !channel || !b.id) return res.status(400).json({ error: 'Say who and how.' });
+    if (audience === 'employees' && channel === 'WhatsApp' && !access.mayWhatsAppEmployees(req.user)) return res.status(403).json({ error: access.WA_EMPLOYEE_DENIED });
     const rule = await access.ruleFor(req.user, audience);
     if (!rule.allowed) return res.status(403).json({ error: rule.reason || 'Not available to this login' });
     const people = await require('../utils/messageContext').recipientsFor(req.user, audience, [String(b.id)], { contactKind: rule.kind }); // eslint-disable-line global-require
@@ -210,7 +211,7 @@ router.post('/device-log', async (req, res, next) => {
 router.post('/bulk', async (req, res, next) => {
   try {
     const out = await bulk.createJob(req.user, req.body || {});
-    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    if (out.error) return res.status(out.status || 400).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
     return res.status(202).json(out.job);
   } catch (err) { return next(err); }
 });
@@ -260,6 +261,16 @@ router.get('/bulk/:id/report.xlsx', async (req, res, next) => {
     res.set('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.set('Content-Disposition', `attachment; filename="message-result-${job.id}.xlsx"`);
     return res.send(bulk.reportXlsx(job, await maskedFor(req.user, job)));
+  } catch (err) { return next(err); }
+});
+
+// Continue a send that is waiting (its WhatsApp number was switched off): the sender or an Admin.
+router.post('/bulk/:id/resume', async (req, res, next) => {
+  try {
+    const job = loadVisible(req, res);
+    if (!job) return undefined;
+    const out = await bulk.resumeJob(job.id);
+    return res.json(bulk.summary(out || job, { masked: await maskedFor(req.user, job) }));
   } catch (err) { return next(err); }
 });
 

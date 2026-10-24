@@ -18,7 +18,7 @@ function Term({ k, v }) {
 const day = (ymd) => (ymd ? new Date(`${ymd}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : null);
 const ddmmyyyy = (ymd) => { const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : null; };
 
-export default function AgreementLivePreview({ preview, state, className = '', title = 'Agreement preview', note = 'This is the draft we save when you press Save & create agreement.' }) {
+export default function AgreementLivePreview({ preview, state, className = '', title = 'Agreement preview', note = 'This is the agreement we save when you press Save & create agreement.' }) {
   const t = preview?.keyTerms || {};
   const fixed = t.feeType && t.feeType !== 'PERCENT_CTC';
   const words = [

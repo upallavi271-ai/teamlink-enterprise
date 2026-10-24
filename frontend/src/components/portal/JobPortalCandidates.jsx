@@ -6,6 +6,8 @@ import { canSeePortalApplications, canImportPortalApplication } from '../../perm
 import Pager, { usePaged } from '../Pager.jsx';
 import Combo from '../Combo.jsx';
 import AtsDataTools from '../AtsDataTools.jsx';
+import AppOmniPanel from '../omni/AppOmniPanel.jsx'; // the shared template library + applicant campaigns of the Job Portal (inside this screen, no sidebar entry)
+import SendManyDialog from '../messaging/SendMessage.jsx';
 import { DupChip, AlreadyInAtsChip } from '../duplicates/DupChip.jsx';
 
 // ---------------------------------------------------------------------------
@@ -41,7 +43,7 @@ const TABS = [
   ['ai_pending', 'AI interview sent', 'Waiting for the AI interview result'],
   ['ai_completed', 'AI interview done', 'Recruiter checks next'],
   ['ready', 'Check by recruiter', 'Send to ATS when ready'],
-  ['sent', 'Sent to ATS', 'Now on a job'],
+  ['sent', 'Sent to ATS', 'Now on a requirement'],
   ['rejected', 'Rejected', 'Not taken forward'],
 ];
 
@@ -73,6 +75,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
   const [tab, setTab] = useState('all');
+  const [msgApplicants, setMsgApplicants] = useState(false);
   // ?source=Naukri (the Naukri card's "New from Naukri" link) opens this list already narrowed to that board.
   const [filters, setFilters] = useState(() => {
     try { return { ...EMPTY_FILTERS, origin: new URLSearchParams(window.location.search).get('source') || '' }; } catch { return EMPTY_FILTERS; }
@@ -121,7 +124,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       'ai-result': (r) => `${a.candidate}: AI interview score ${r.data.screening?.aiInterviewScore}% recorded.`,
       'ai-manual': () => `${a.candidate}: the recruiter will check them (no AI score).`,
       review: () => `${a.candidate} is ready for your check — send to the ATS when ready.`,
-      send: (r) => `Sent. ${a.candidate} is now on the job at ${r.data.stageLabel}.`,
+      send: (r) => `Sent. ${a.candidate} is now on the requirement at ${r.data.stageLabel}.`,
     }[act];
     run(a.id, call, said, act === 'send' ? onSentToAts : undefined);
   }
@@ -177,7 +180,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       <div className="filter-row">
         <input
           type="text"
-          placeholder="Search name, phone, email or job…"
+          placeholder="Search name, phone, email or requirement…"
           value={filters.search}
           onChange={(e) => setFilter({ search: e.target.value })}
         />
@@ -187,7 +190,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
         </Combo>
         <Combo value={filters.hiring} onChange={(e) => setFilter({ hiring: e.target.value })}>
           <option value="">Client or internal</option>
-          <option value="Client">Client jobs</option>
+          <option value="Client">Client requirements</option>
           <option value="Internal">TeamLink internal</option>
         </Combo>
         {(origins.length > 1 || filters.origin) && (
@@ -197,7 +200,10 @@ export default function JobPortalCandidates({ onSentToAts }) {
           </Combo>
         )}
         <button type="button" className="btn btn-sm" disabled={!filtersOn} onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</button>
-        <span style={{ marginLeft: 'auto' }}>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
+          <AppOmniPanel app="Job Portal" />
+          {filtered.length > 0 && filtered.length <= 500 && <button type="button" className="btn btn-sm" onClick={() => setMsgApplicants(true)} title="Email, SMS or WhatsApp to the applicants shown below, or make it a campaign">Message these {filtered.length}</button>}
+          {msgApplicants && <SendManyDialog app="Job Portal" audience="candidates" ids={[...new Set(filtered.map((a) => a.candidateId).filter(Boolean))]} note="Only people you may contact can be reached. You see who is left out, and why, before anything is sent." onClose={() => setMsgApplicants(false)} />}
           <AtsDataTools
             module="portal"
             kinds={[]}
@@ -210,7 +216,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
         <table>
           <thead>
             <tr>
-              <th>Candidate</th><th>Source</th><th>Job</th>
+              <th>Candidate</th><th>Source</th><th>Requirement</th>
               <th style={{ textAlign: 'right' }}>Resume %</th><th style={{ textAlign: 'right' }}>AI interview %</th><th>Next step</th>
             </tr>
           </thead>
@@ -237,7 +243,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {(() => {
-                    if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`On the job${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''}`}</Link>;
+                    if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`On the requirement${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''}`}</Link>;
                     if (!canImport || !a.mayScreen) return <span className="small-muted">{`${a.stageLabelWorkflow || a.stageLabel} · view only`}</span>;
                     const next = screeningAction(a);
                     if (!next) return <span className="small-muted">{a.stageLabelWorkflow || a.stageLabel}</span>;
@@ -280,7 +286,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
       </div>
       <Pager page={paged} noun="applications" />
       <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
-        Check each person, then press <strong>Send to ATS</strong> to put them on the job.
+        Check each person, then press <strong>Send to ATS</strong> to put them on the requirement.
       </div>
     </div>
   );

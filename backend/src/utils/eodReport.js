@@ -437,7 +437,7 @@ function recruitingRows(r) {
     ['Rejected', t.rejected, null, null],
     ['On hold', t.hold, null, null],
     ['Steps moved (all)', t.stepsMoved, null, null],
-    ['Jobs with no profile sent today', t.jobsNoSubmission, null, null],
+    ['Requirements with no profile sent today', t.jobsNoSubmission, null, null],
     ['Late (SLA broken) now', pd.late, null, null],
     ['Due today now', pd.dueToday, null, null],
     ['Waiting now', pd.waiting, null, null],
@@ -543,7 +543,7 @@ function renderHtml(r, base = '') {
     inner += M.h2('Individual reports');
     inner += r.people.map((p) => `<table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:6px;margin:6px 0"><tr><td style="padding:8px 10px;font-size:13px"><b>${M.esc(p.name)}</b>${p.noActivity ? ` ${M.pill('No activity today', 'orange')}` : ''}
 <div style="color:#374151;margin-top:3px">Calls ${p.calls.total} (${p.calls.connected} spoke) · steps moved ${p.stepsMoved} · sent to client ${p.sentClient} · interviews ${p.interviews} · selected ${p.selected} · joined ${p.joined}</div>
-<div style="color:#374151">Waiting ${p.pending.waiting} · late ${M.esc(p.pending.late)} · follow-ups due, not done ${p.followUps.openDue}${p.jobsNoSubmissionToday ? ` · jobs with no profile sent today ${p.jobsNoSubmissionToday}` : ''}</div>
+<div style="color:#374151">Waiting ${p.pending.waiting} · late ${M.esc(p.pending.late)} · follow-ups due, not done ${p.followUps.openDue}${p.jobsNoSubmissionToday ? ` · requirements with no profile sent today ${p.jobsNoSubmissionToday}` : ''}</div>
 ${p.lateItems.length ? `<div style="color:#b91c1c;font-size:12px;margin-top:3px">Late: ${p.lateItems.map((i) => `${M.esc(i.candidate)} (${M.esc(i.step)}, ${i.daysLate}d)`).join('; ')}</div>` : ''}</td></tr></table>`).join('');
   }
   if (r.noActivity.length) inner += M.p(`No activity today: ${r.noActivity.join(', ')}.`);
@@ -577,12 +577,12 @@ function workbook(r) {
   });
   sheets.push({
     name: 'Individual',
-    headers: ['Recruiter', 'Calls', 'Spoke', 'Steps moved', 'Sent to team lead', 'Sent to client', 'Interviews fixed', 'Interviews done', 'Selected', 'Offers', 'Joined', 'Rejected', 'On hold', 'Follow-ups done', 'Follow-ups due today', 'Follow-ups due, not done', 'Waiting', 'Due today', 'Late', 'Jobs with no profile sent', 'Activity'],
+    headers: ['Recruiter', 'Calls', 'Spoke', 'Steps moved', 'Sent to team lead', 'Sent to client', 'Interviews fixed', 'Interviews done', 'Selected', 'Offers', 'Joined', 'Rejected', 'On hold', 'Follow-ups done', 'Follow-ups due today', 'Follow-ups due, not done', 'Waiting', 'Due today', 'Late', 'Requirements with no profile sent', 'Activity'],
     rows: r.people.map((p) => [p.name, p.calls.total, p.calls.connected, p.stepsMoved, p.sentTl, p.sentClient, p.interviews, p.interviewsDone, p.selected, p.offers, p.joined, p.rejected, p.hold, p.followUps.done, p.followUps.dueToday, p.followUps.openDue, p.pending.waiting, p.pending.dueToday, p.pending.late, p.pending.jobsNoProfile, p.noActivity ? 'No activity' : 'Active']),
   });
   sheets.push({
     name: 'Late items',
-    headers: ['Recruiter', 'Candidate', 'Job', 'Step', 'Days late'],
+    headers: ['Recruiter', 'Candidate', 'Requirement', 'Step', 'Days late'],
     rows: r.people.flatMap((p) => p.lateItems.map((i) => [p.name, i.candidate, i.job, i.step, i.daysLate])),
   });
   return sheets;

@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 // The actual workflow with live counts (the Workflow tab).
 import WorkflowDiagram from '../../components/workflow/WorkflowDiagram.jsx';
 import DailyReport from './DailyReport.jsx';
+// Team-wise / person-wise reports with Excel + PDF downloads, packs for the team lead (a tab here, never a sidebar entry).
+import TeamReports from './TeamReports.jsx';
 // Job portal numbers — a tab here now, not a sidebar entry of its own.
 import JobPortalReports from './JobPortalReports.jsx';
 import { Link, Navigate, useLocation, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
+import OwnReports from './OwnReports.jsx';
 import { canExportReports } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
 import ListPageHeader, {
@@ -15,6 +18,7 @@ import ListPageHeader, {
 // Section 17 (2026-10-03): the landing page of report cards, and the small
 // pieces every report uses (compare, "12 of 20", Excel / PDF buttons).
 import ReportsHome, { cardOfTab } from './ReportsHome.jsx';
+import MyBusinessReports from './MyBusinessReports.jsx';
 // Reports & Analytics overview on the landing page (redesign 2026-10-08).
 import ReportsOverview from '../../components/reports-v4/ReportsOverview.jsx';
 // Everyday words + one-line ? tips (user, 2026-10-05: "a new person gets it in 20–30 s").
@@ -28,8 +32,8 @@ const TILE_HELP = [
   [/select|offer/i, 'People the client chose'],
   [/interview/i, 'Interviews booked or done in this period'],
   [/sent|submit|shared/i, 'People we sent to clients'],
-  [/open (job|requirement)|jobs|requirement/i, 'Jobs in this period (open ones are still being filled)'],
-  [/applic|candidate|people/i, 'One person applying to one job counts once'],
+  [/open (job|requirement)|jobs|requirement/i, 'Requirements in this period (open ones are still being filled)'],
+  [/applic|candidate|people/i, 'One person applying to one requirement counts once'],
   [/%|ratio|conversion|rate/i, 'Out of 100 people, how many got this far'],
   [/days|time|avg|average/i, 'Average number of days'],
   [/revenue|invoice|paid|received|amount/i, 'Money for this period'],
@@ -53,6 +57,8 @@ import SameClientRule from '../../components/rejections/SameClientRule.jsx';
 import SourcingManager from '../../components/referrals/SourcingManager.jsx';
 // ATS-100 B7: agency / freelancer partner performance (its own cascading filters).
 import PartnersReport from './PartnersReport.jsx';
+import JoinDropReport from './JoinDropReport.jsx'; // Joinings and drops + Client history
+import CandidateSources from '../../components/candidate/CandidateSources.jsx'; // 'Where candidates come from' (also a tab of Candidates & Pipeline)
 
 // ---------------------------------------------------------------------------
 // ATS REPORTS (§18) — Reports -> ATS Reports.
@@ -89,18 +95,24 @@ export const ATS_REPORT_TABS = [
   ['recruiters', 'Recruiter Performance'],
   // Day / month view of each recruiter's work (spec 2026-10-03 C2; routes/atsDaily.js).
   ['daily', 'Daily report'],
+  // Every number for each team and each person, Today / Week / Month / Custom, day or month columns, Excel + PDF (routes/atsReportPack.js).
+  ['teamwise', 'Team & person'],
   ['clients', 'Client Performance'],
   ['departments', 'Department'],
   // spec D: Department → Specialization, demand (open jobs) vs supply (candidates).
   ['specialisations', 'Specialization'],
   ['sources', 'Source'],
+  // People by source and WHEN they came (components/candidate/CandidateSources.jsx; also the Sources tab of Candidates & Pipeline).
+  ['came', 'Where candidates come from'],
   ['recruitment', 'Progress by team'],
-  ['requirements', 'Jobs'],
+  ['requirements', 'Requirements'],
   ['candidates', 'Candidates'],
   ['interviews', 'Interviews'],
   ['ai', 'AI Interviews'],
   ['followups', 'Follow-ups'],
   ['joining', 'Joining'],
+  // Joinings and drops + Client history (2026-10-17): joined, dropped, drop rate, replacements, top reasons; one client date by date.
+  ['joindrop', 'Joinings and drops'],
   ['sla', 'Late & waiting'],
   // Why people are rejected: by reason, side, client, department, recruiter (spec 2026-10-03 §A3).
   ['rejections', 'Rejection reasons'],
@@ -119,6 +131,8 @@ export const ATS_REPORT_TABS = [
   ['revenue', 'Client revenue'], // Super Admin / Admin / Accounts only (server-enforced)
   // ATS-100 B9.7: invoices net of credit notes per recruiter / month / client (same gate as Client revenue).
   ['recruiter-revenue', 'Recruiter revenue'],
+  // BDE business workspace (2026-10-10): My clients / My requirements / My follow-ups (pages/reports/MyBusinessReports.jsx).
+  ['mybusiness', 'My business'],
   ['jobportal', 'Job portal'], // the old Reports → Job Portal Reports page, as a tab
   // The actual workflow (2026-09-29), live counts per box, each box opening its list.
   ['workflow', 'Workflow'],
@@ -190,6 +204,8 @@ export function AtsReportsRedirect() {
 }
 
 const REF_PATH = { cand: '/candidates/', req: '/requirements/', client: '/clients/', inv: '/invoices/' };
+// Columns of a drill-down list that stay on one line (dates, phone, seat, days) so the list fits a 1366 px screen with the names whole.
+const NO_WRAP_KEYS = new Set(['phone', 'joiningDate', 'added', 'interviewAt', 'seat', 'days', 'late', 'value', 'ivStatus', 'due']);
 
 // One cell. A drillable figure is a button; zero is not, because an empty
 // list is not worth a click (and it reads "—", never a bare 0). In a
@@ -216,8 +232,9 @@ function Cell({
   }
   const text = fmt(value, col.type);
   const id = col.ref && refs && refs[col.ref];
+  const cls = [col.type !== 'text' ? 'num' : '', NO_WRAP_KEYS.has(col.key) ? 'nw' : '', col.key === 'source' ? 'src' : ''].filter(Boolean).join(' ') || undefined;
   return (
-    <td className={col.type !== 'text' ? 'num' : undefined}>
+    <td className={cls} title={col.key === 'source' ? String(text) : undefined}>
       {id ? <Link to={`${REF_PATH[col.ref]}${id}`}>{text}</Link> : text}
       {delta}
     </td>
@@ -265,9 +282,9 @@ function Section({
       {sec.groupings && (
         <label className="lph-facet" style={{ maxWidth: 260, marginBottom: 8 }}>
           <span className="lph-facet-lbl">Show by</span>
-          <select value={sec.groupBy || ''} onChange={(e) => onGroupBy(e.target.value)}>
+          <Combo value={sec.groupBy || ''} onChange={(e) => onGroupBy(e.target.value)}>
             {sec.groupings.map((g) => <option key={g.id} value={g.id}>{plainWords(g.label)}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       <div className={`tbl-wrap${sec.paged ? ' tbl-fit' : ''}`}>
@@ -341,8 +358,11 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
   const [offset, setOffset] = useState(0);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  // Sorting by a heading (user, 2026-10-17): the server orders the WHOLE list, then pages it.
+  const [sort, setSort] = useState({ key: '', dir: 'asc' });
   const LIMIT = 100;
-  const base = `${query}${query ? '&' : ''}${new URLSearchParams({ section: target.section, row: target.row, col: target.col }).toString()}`;
+  const sortQ = sort.key ? `&sort=${encodeURIComponent(sort.key)}&dir=${sort.dir}` : '';
+  const base = `${query}${query ? '&' : ''}${new URLSearchParams({ section: target.section, row: target.row, col: target.col }).toString()}${sortQ}`;
 
   useEffect(() => {
     setData(null);
@@ -352,7 +372,7 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
   }, [tab, base, offset]);
 
   const to = data ? Math.min(offset + LIMIT, data.total) : 0;
-  const noun = data ? ({ req: 'jobs', cand: 'people', fu: 'follow-ups', inv: 'invoices', pay: 'payments' }[data.kind] || 'people') : '';
+  const noun = data ? ({ req: 'requirements', cand: 'people', fu: 'follow-ups', inv: 'invoices', pay: 'payments' }[data.kind] || 'people') : '';
   return (
     <Modal
       size="xwide"
@@ -390,9 +410,28 @@ function DrillModal({ tab, query, target, canExport, onClose }) {
       {!data && !error && <div className="small-muted">Loading the list…</div>}
       {data && (
         <div className="tbl-wrap tbl-fit">
-          <table>
+          <table className="ats-drill-table">
             <thead>
-              <tr>{data.columns.map((c) => <th key={c.key} className={c.type === 'num' ? 'num' : undefined}>{c.label}</th>)}</tr>
+              <tr>{data.columns.map((c) => {
+                const sortable = !['req', 'cand', 'fu'].includes(data.kind);
+                const on = sort.key === c.key;
+                const dateCol = ['joiningDate', 'interviewAt', 'added'].includes(c.key);
+                return (
+                  <th key={c.key} className={[c.type === 'num' ? 'num' : '', NO_WRAP_KEYS.has(c.key) ? 'nw' : ''].filter(Boolean).join(' ') || undefined} aria-sort={on ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+                    {sortable ? (
+                      <button
+                        type="button"
+                        className="link-btn"
+                        style={{ font: 'inherit', fontWeight: 'inherit', color: 'inherit', padding: 0, textAlign: 'left' }}
+                        title={`Sort by ${c.label}`}
+                        onClick={() => { setOffset(0); setSort(on ? { key: c.key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: dateCol ? 'desc' : 'asc' }); }}
+                      >
+                        {c.label}{on ? (sort.dir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      </button>
+                    ) : c.label}
+                  </th>
+                );
+              })}</tr>
             </thead>
             <tbody>
               {data.rows.map((r, i) => (
@@ -427,7 +466,7 @@ const FACETS = [
   ['tl', 'Team lead (TL)', 'All team leads'],
   ['recruiter', 'Recruiter', 'All recruiters'],
   ['clientId', 'Client', 'All clients'],
-  ['requirementId', 'Job', 'All jobs'],
+  ['requirementId', 'Requirement', 'All requirements'],
   ['bde', 'Client manager (BDE)', 'All client managers'],
   ['stl', 'STL', 'All STLs'],
   ['source', 'Source', 'All sources'],
@@ -444,7 +483,7 @@ const CLEARS = {
   tl: ['recruiter'],
   clientId: ['requirementId'],
 };
-const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners'];
+const NO_FILTER_TABS = ['workflow', 'daily', 'jobportal', 'partners', 'teamwise', 'mybusiness', 'came', 'joindrop'];
 // v3 colours on the cards: green good / yellow pending / red late or rejected.
 const BAD_WORDS = /late|overdue|reject|pending|waiting|not add up|no joining|still to come|drop|no-show|did not/i;
 function tileTone(label) {
@@ -480,9 +519,10 @@ function barFilters(pf) {
 
 // fixedTab: one report embedded in another page (Accounts Reports shows
 // Client revenue this way) — no landing page, no back link, no views.
-export default function AtsReports({ fixedTab = '' } = {}) {
+function AtsReportsFull({ fixedTab = '' } = {}) {
   const { user } = useAuth();
   const cat = useReportCatalog();
+  const own = !!(cat && cat.ownOnly); // a Recruiter's own reports: no people / compare controls, own titles (OwnReports.jsx)
   const [params, setParams] = useSearchParams();
   const asked = fixedTab || params.get('tab');
   const legacyView = RECRUITMENT_VIEWS.includes(asked) ? asked : '';
@@ -637,8 +677,8 @@ export default function AtsReports({ fixedTab = '' } = {}) {
     );
   }
 
-  const card = cardOfTab(tab, ATS_REPORT_TABS, params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
-  const views = (card.views || []).filter(([id]) => TAB_IDS.includes(id));
+  const card = (own && OWN_CARDS[tab]) || cardOfTab(tab, ATS_REPORT_TABS, params.get('card')) || { title: 'Report', answers: '', views: [[tab, tab]] };
+  const views = own ? [] : (card.views || []).filter(([id]) => TAB_IDS.includes(id));
   const back = fixedTab ? null : <button type="button" className="rpv-back" onClick={() => goTab('')}>← All reports</button>;
   const viewSwitch = !fixedTab && views.length > 1 ? (
     <span className="rpv-views" role="tablist" aria-label="Views of this report">
@@ -734,7 +774,7 @@ export default function AtsReports({ fixedTab = '' } = {}) {
       {NO_FILTER_TABS.includes(tab) ? (
         <>
           {viewSwitch && <div style={{ marginBottom: 10 }}>{viewSwitch}</div>}
-          {tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : <DailyReport />}
+          {tab === 'workflow' ? <WorkflowDiagram /> : tab === 'jobportal' ? <JobPortalReports embedded /> : tab === 'partners' ? <PartnersReport canExport={canExport} /> : tab === 'teamwise' ? <TeamReports /> : tab === 'came' ? <CandidateSources embedded user={user} /> : tab === 'joindrop' ? <JoinDropReport /> : tab === 'mybusiness' ? <MyBusinessReports /> : <DailyReport />}
         </>
       ) : (<>
       {/* The same filters as every page (ATS layout v3): Department · Date
@@ -744,7 +784,7 @@ export default function AtsReports({ fixedTab = '' } = {}) {
           value={pf}
           onChange={setPf}
           options={barOptions}
-          show={{ dateRange: !compare, people: tab !== 'revenue' }}
+          show={{ dateRange: !compare, people: tab !== 'revenue' && !own }}
         />
         {compare && <span className="small-muted">Compare is on — it shows {compare === 'quarter' ? 'this quarter and last quarter' : 'this month and last month'}.</span>}
       </div>
@@ -754,7 +794,7 @@ export default function AtsReports({ fixedTab = '' } = {}) {
         filterCount={active}
         chips={chips}
         onClearAll={countOf(draft) || active ? clearAll : undefined}
-        right={<span className="rpv-right">{viewSwitch}<CompareToggle value={compare} onChange={setCompare} /></span>}
+        right={<span className="rpv-right">{viewSwitch}{!own && <CompareToggle value={compare} onChange={setCompare} />}</span>}
         panelFooter={(
           <>
             {dirty && <span className="small-muted">Not applied yet</span>}
@@ -876,4 +916,22 @@ export default function AtsReports({ fixedTab = '' } = {}) {
       </>)}
     </div>
   );
+}
+
+// A Recruiter's Reports screen is their own (OwnReports.jsx): the catalog says so (GET /ats-reports/catalog -> ownOnly) and the
+// server cuts every number to them anyway. Their report pages carry their own titles.
+const OWN_CARDS = {
+  funnel: { title: 'My progress', answers: 'How many of my candidates are screened, sent, interviewed, selected and joined?', views: [] },
+  candidates: { title: 'My candidates', answers: 'Where are my candidates now, and for how long?', views: [] },
+  followups: { title: 'My follow-ups', answers: 'Which follow-ups are done, due today or late?', views: [] },
+  interviews: { title: 'My interviews', answers: 'Which of my candidates have interviews, and how did they go?', views: [] },
+  joining: { title: 'My joinings', answers: 'Who was selected, who joined, who did not?', views: [] },
+};
+
+export default function AtsReports(props = {}) {
+  const cat = useReportCatalog();
+  const fixed = props && props.fixedTab;
+  if (!fixed && cat && cat.ownOnly) return <OwnReports />;
+  if (!fixed && !cat) return <div className="small-muted">Opening your reports…</div>;
+  return <AtsReportsFull {...props} />;
 }

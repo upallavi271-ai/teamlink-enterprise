@@ -1,0 +1,49 @@
+/* MultiPick (2026-10-13): chips + an in-page list. App tokens only. */
+.mpk { display: block; }
+.mpk-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; min-height: 34px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised, #fff); }
+.mpk.is-off .mpk-chips { background: var(--line-soft); }
+.mpk-none { color: var(--ink-faint); font-size: 13px; padding: 0 4px; }
+.mpk-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--blue-tint); color: var(--blue); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 13px; font-weight: 600; max-width: 100%; }
+.mpk-chip.is-main { background: var(--teal-tint); color: var(--teal); }
+.mpk-main { font-style: normal; font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; background: var(--paper-raised, #fff); border-radius: 999px; padding: 1px 6px; }
+.mpk-x, .mpk-up { border: 0; background: transparent; color: inherit; cursor: pointer; min-width: 26px; min-height: 26px; border-radius: 50%; font-size: 16px; line-height: 1; padding: 0; }
+.mpk-up { font-size: 13px; }
+.mpk-x:hover, .mpk-up:hover { background: rgba(0, 0, 0, .08); }
+/* The box IS the dropdown: click it or its caret to open the list (no text links). */
+.mpk-chips.is-ctl { position: relative; cursor: pointer; padding-right: 30px; }
+.mpk-chips.is-ctl:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+.mpk-chips.is-ctl.is-open { border-color: var(--blue); }
+.mpk-caret { position: absolute; right: 11px; top: 50%; width: 7px; height: 7px; margin-top: -6px; border-right: 2px solid var(--ink-soft); border-bottom: 2px solid var(--ink-soft); transform: rotate(45deg); pointer-events: none; }
+.mpk-chips.is-open .mpk-caret { margin-top: -2px; transform: rotate(-135deg); }
+.mpk-custom { color: var(--blue); }
+.mpk-panel { margin-top: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised, #fff); padding: 8px; }
+.mpk-special { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.mpk-sp { border: 1px solid var(--line); background: var(--paper-raised, #fff); border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer; min-height: 36px; color: var(--ink); }
+.mpk-sp.on { border-color: var(--blue); background: var(--blue-tint); color: var(--blue); font-weight: 700; }
+.mpk-search { width: 100%; box-sizing: border-box; margin-bottom: 6px; }
+.mpk-list { max-height: 240px; overflow-y: auto; }
+.mpk-group { font-size: 11.5px; font-weight: 800; color: var(--ink-soft); text-transform: uppercase; letter-spacing: .04em; padding: 8px 4px 2px; }
+.mpk-opt { display: flex; align-items: center; gap: 10px; padding: 7px 6px; border-radius: 6px; cursor: pointer; min-height: 40px; font-weight: 400; }
+.mpk-opt:hover { background: var(--line-soft); }
+.mpk-opt.on { background: var(--blue-tint); }
+.mpk-opt input { width: auto; flex: none; }
+.mpk-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.mpk-txt b { font-size: 13.5px; font-weight: 600; }
+.mpk-txt small { font-size: 12px; color: var(--ink-soft); }
+.mpk-tag { font-size: 11px; font-weight: 800; color: var(--teal); background: var(--teal-tint); border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
+.mpk-empty { color: var(--ink-soft); font-size: 13px; padding: 10px 4px; }
+.mpk-add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; border-top: 1px solid var(--line); padding-top: 8px; }
+.mpk-add input { flex: 1; min-width: 160px; }
+/* a field that still needs an answer (no asterisks): the label and the box turn red */
+.field.is-missing > span:first-child { color: var(--red); }
+.field.is-missing input, .field.is-missing textarea, .field.is-missing .mpk-chips { border-color: var(--red); background: var(--red-tint); }
+.rf-missing-note { font-size: 12px; color: var(--red); font-weight: 600; margin-top: 3px; }
+
+/* Other (type it) row + typed-value note (2026-10-14) */
+.mpk-nil { font-size: 10.5px; font-weight: 700; color: var(--amber); background: var(--amber-tint); border-radius: 999px; padding: 1px 6px; }
+.mpk-other { margin-top: 6px; border-top: 1px solid var(--line); padding-top: 6px; }
+.mpk-other-btn { width: 100%; border: 0; background: transparent; text-align: left; color: var(--blue); cursor: pointer; }
+.mpk-other-box { border-top: 0; margin-top: 0; padding: 4px 6px 6px; }
+.mpk-other-l { flex: 1 1 100%; font-size: 12.5px; font-weight: 700; color: var(--ink-soft); }
+
+.mpk-opt.act { background: var(--line-soft); outline: 1px solid var(--blue, #2563eb); outline-offset: -1px; }

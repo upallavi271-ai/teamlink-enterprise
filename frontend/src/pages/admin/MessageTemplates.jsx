@@ -9,6 +9,9 @@ import {
 } from '../../components/messaging/msgKit.js';
 import AutomaticMessagesTab from '../../components/automsg/AutomaticMessagesTab.jsx'; // Automatic messages: a message at every step
 import '../../components/messaging/messaging.css';
+import Combo from '../../components/Combo.jsx';
+import WaQuickChatTab from '../../components/wa/WaQuickChatTab.jsx'; // free WhatsApp click-to-chat: templates, log, settings
+import { useAuth } from '../../context/AuthContext.jsx';
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION → COMPANY SETUP → MESSAGE TEMPLATES
@@ -24,22 +27,28 @@ import '../../components/messaging/messaging.css';
 // console / SMS provider. Nothing here marks a template Approved by itself.
 // ---------------------------------------------------------------------------
 
-const AUD_WORD = { candidate: 'People applying', client: 'Clients', employee: 'Our employees' };
+const AUD_WORD = { candidate: 'People applying', client: 'Clients', employee: 'Our employees', vendor: 'Vendors' };
 const CHANNELS = ['Email', 'SMS', 'WhatsApp', 'Call']; // Call = the script shown while phoning (never sent)
 const LANGS = ['English', 'Telugu', 'Hindi'];
 const ago = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) : '');
 
 export default function MessageTemplates() {
   const [sp, setSp] = useSearchParams();
-  const tab = sp.get('tab') || 'templates';
+  const { user } = useAuth() || {};
+  const tab = sp.get('tab') || (user && ![user.role, user.hrmsRole, user.atsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r)) ? 'whatsapp' : 'templates');
   const setTab = (t) => setSp(t === 'templates' ? {} : { tab: t });
-  const tabs = [['templates', 'Templates'], ['automatic', 'Automatic messages'], ['channels', 'Channels'], ['sent', 'Sent messages'], ['limits', 'Limits']];
+  // an Accounts login (no HR / Admin / team role) only has the WhatsApp quick chat tab here; the other tabs are the Email / SMS desk
+  const deskRoles = [user && user.role, user && user.hrmsRole, user && user.atsRole];
+  const fullDesk = deskRoles.some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r));
+  const tabs = fullDesk
+    ? [['templates', 'Templates'], ['automatic', 'Automatic messages'], ['channels', 'Channels'], ['sent', 'Sent messages'], ['limits', 'Limits'], ['whatsapp', 'WhatsApp quick chat']]
+    : [['whatsapp', 'WhatsApp quick chat']];
   return (
     <div className="mt-page">
       <div className="page-head">
         <div>
           <h1>Message templates</h1>
-          <div className="page-sub">The words of every Email, SMS and WhatsApp message. Change them here once and every screen uses them.</div>
+          <div className="page-sub">The words of every Email, SMS and WhatsApp message. Change them here once and every screen uses them. <b>Also managed in Omni-Channel &gt; Templates</b> (all templates in one place).</div>
         </div>
       </div>
       <div className="tabs" role="tablist" style={{ marginBottom: 14 }}>
@@ -50,6 +59,7 @@ export default function MessageTemplates() {
       {tab === 'channels' && <ChannelsTab />}
       {tab === 'sent' && <SentTab />}
       {tab === 'limits' && <LimitsTab />}
+      {tab === 'whatsapp' && <WaQuickChatTab />}
     </div>
   );
 }
@@ -61,8 +71,10 @@ function TemplatesTab() {
   const [error, setError] = useState('');
   const [channel, setChannel] = useState('');
   const [language, setLanguage] = useState('');
-  const [audience, setAudience] = useState('');
-  const [q, setQ] = useState('');
+  // The Vendor logins > Settings "Edit wording" buttons open this tab already filtered (?audience=vendor&q=...).
+  const [sp0] = useSearchParams();
+  const [audience, setAudience] = useState(sp0.get('audience') || '');
+  const [q, setQ] = useState(sp0.get('q') || '');
   const [sel, setSel] = useState(null); // id | 'new'
   const [flash, setFlash] = useState('');
 
@@ -102,7 +114,7 @@ function TemplatesTab() {
           <span className="small-muted" style={{ alignSelf: 'center', marginLeft: 8 }}>For:</span>
           {Object.keys(AUD_WORD).map((a) => chip(audience, setAudience, a, AUD_WORD[a], count('audience', a)))}
           <span className="small-muted" style={{ alignSelf: 'center', marginLeft: 8 }}>Language:</span>
-          {LANGS.map((l) => chip(language, setLanguage, l, l, count('language', l)))}
+          {(data.languages || LANGS).map((l) => chip(language, setLanguage, l, l, count('language', l)))}
         </div>
         <div className="msg-btnrow">
           <input style={{ flex: 1, minWidth: 180 }} placeholder="Search the words or the name…" value={q} onChange={(e) => setQ(e.target.value)} />
@@ -118,7 +130,8 @@ function TemplatesTab() {
             <div key={key} className="mt-purpose">
               <h4>{g.label} <span className="small-muted">· {AUD_WORD[g.audience] || g.audience}</span></h4>
               {g.items.map((t) => (
-                <button key={t.id} type="button" className={`mt-tpl${sel === t.id ? ' on' : ''}${t.active ? '' : ' off'}`} onClick={() => setSel(t.id)}>
+                <div key={t.id} style={{ display: 'flex', gap: 6, alignItems: 'stretch' }}>
+                <button type="button" style={{ flex: 1 }} className={`mt-tpl${sel === t.id ? ' on' : ''}${t.active ? '' : ' off'}`} onClick={() => setSel(t.id)}>
                   <span>{CHANNEL_ICON[t.channel]} {t.channel}</span>
                   <span className="small-muted">{t.language}</span>
                   <span className="small-muted">v{t.version}</span>
@@ -126,6 +139,8 @@ function TemplatesTab() {
                   {t.channel === 'WhatsApp' && <span className={`status ${WA_STATUS_CLASS[t.waStatus]}`}>{WA_STATUS_WORD[t.waStatus]}</span>}
                   {t.channel === 'SMS' && !t.dltTemplateId && <span className="small-muted">no DLT id</span>}
                 </button>
+                <button type="button" className="btn btn-sm" onClick={() => setSel(t.id)} title={data.canEdit ? 'Change the words of this template' : 'Read this template'}>{data.canEdit ? 'Edit' : 'Read'}</button>
+                </div>
               ))}
             </div>
           ))}
@@ -140,6 +155,7 @@ function TemplatesTab() {
               canEdit={data.canEdit}
               isAdmin={data.isAdmin}
               purposes={data.purposes}
+              languages={data.languages || LANGS}
               onSaved={(t, msg) => { setFlash(msg); load(); setSel(t ? t.id : null); }}
               onClose={() => setSel(null)}
             />
@@ -150,7 +166,7 @@ function TemplatesTab() {
   );
 }
 
-function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, onSaved, onClose }) {
+function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onSaved, onClose }) {
   const isNew = !id;
   const [t, setT] = useState(null);
   const [f, setF] = useState(null);
@@ -229,20 +245,24 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, onSaved, onClo
       {isNew && (
         <div className="mt-row2" style={{ marginTop: 10 }}>
           <div className="field"><label>What is it for?</label>
-            <select value={f.purpose} onChange={(e) => set('purpose', e.target.value)}>
+            {/* pick one, or just type a new purpose name (e.g. Salary discussion): a typed name is saved as its own purpose */}
+            <Combo allowCustom placeholder="Pick one, or type a new name" value={f.purpose === 'CUSTOM' ? f.purposeLabel : f.purpose}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (purposes.some((p) => p.purpose === v)) setF((x) => ({ ...x, purpose: v, purposeLabel: '' }));
+                else setF((x) => ({ ...x, purpose: 'CUSTOM', purposeLabel: v }));
+              }}>
               {purposes.map((p) => <option key={p.purpose} value={p.purpose}>{p.label}</option>)}
-              <option value="CUSTOM">A new purpose…</option>
-            </select>
-            {f.purpose === 'CUSTOM' && <input style={{ marginTop: 6 }} placeholder="Name it, e.g. Salary discussion" value={f.purposeLabel} onChange={(e) => set('purposeLabel', e.target.value)} />}
+            </Combo>
           </div>
           <div className="field"><label>For whom?</label>
-            <select value={f.audience} onChange={(e) => set('audience', e.target.value)}>{Object.entries(AUD_WORD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+            <Combo value={f.audience} onChange={(e) => set('audience', e.target.value)}>{Object.entries(AUD_WORD).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Combo>
           </div>
           <div className="field"><label>How?</label>
-            <select value={f.channel} onChange={(e) => set('channel', e.target.value)}>{CHANNELS.map((c) => <option key={c}>{c}</option>)}</select>
+            <Combo value={f.channel} onChange={(e) => set('channel', e.target.value)}>{CHANNELS.map((c) => <option key={c}>{c}</option>)}</Combo>
           </div>
           <div className="field"><label>Language</label>
-            <select value={f.language} onChange={(e) => set('language', e.target.value)}>{LANGS.map((c) => <option key={c}>{c}</option>)}</select>
+            <Combo allowCustom placeholder="Pick one, or type e.g. Tamil" value={f.language} onChange={(e) => set('language', e.target.value)}>{languages.map((c) => <option key={c}>{c}</option>)}</Combo>
           </div>
         </div>
       )}
@@ -282,9 +302,9 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, onSaved, onClo
             <div className="field"><label>Template name in Meta</label>
               <input value={f.waTemplateName || ''} disabled={!adminFields} placeholder="e.g. interview_scheduled" onChange={(e) => set('waTemplateName', e.target.value)} /></div>
             <div className="field"><label>Meta says</label>
-              <select value={f.waStatus || 'None'} disabled={!adminFields} onChange={(e) => set('waStatus', e.target.value)}>
+              <Combo value={f.waStatus || 'None'} disabled={!adminFields} onChange={(e) => set('waStatus', e.target.value)}>
                 {['None', 'Pending', 'Approved', 'Rejected'].map((s) => <option key={s} value={s}>{WA_STATUS_WORD[s]}</option>)}
-              </select></div>
+              </Combo></div>
             <div className="field"><label>Language code in Meta</label>
               <input value={f.waLanguageCode || ''} disabled={!adminFields} placeholder="en, te or hi" onChange={(e) => set('waLanguageCode', e.target.value)} /></div>
           </div>
@@ -294,9 +314,9 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, onSaved, onClo
             {vars.map((k, i) => (
               <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 4 }}>
                 <code>{`{{${i + 1}}}`}</code> →
-                <select value={k} disabled={!editable} onChange={(e) => { const v = [...vars]; v[i] = e.target.value; set('waVars', v); }}>
+                <Combo value={k} disabled={!editable} onChange={(e) => { const v = [...vars]; v[i] = e.target.value; set('waVars', v); }}>
                   {(tokens ? tokens.tokens : []).map((tk) => <option key={tk.key} value={tk.key}>{tk.label}</option>)}
-                </select>
+                </Combo>
               </div>
             ))}
             {f.waVars && f.waVars.length > 0 && editable && <button type="button" className="btn btn-sm" onClick={() => set('waVars', [])}>Use the order they appear in the words</button>}

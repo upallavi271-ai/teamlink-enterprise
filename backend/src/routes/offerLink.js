@@ -125,7 +125,7 @@ router.post('/:token/email-code', codeLimit, async (req, res, next) => {
     const r = await require('../utils/messaging').send('Email', {
       to: email,
       subject: `Your offer code — ${infoOf(app).job}`,
-      text: ['Hello,', '', `${otp} is your code to sign your offer for ${infoOf(app).job}${infoOf(app).company ? ` at ${infoOf(app).company}` : ''}.`,
+      text: ['Hello,', '', `${otp} is your code to sign your offer for ${infoOf(app).job}${infoOf(app).company && !(await require('../utils/clientTrack').getTrack(v.applicationId).then((t) => !!(t && t.offer && t.offer.versionId === v.id))) ? ` at ${infoOf(app).company}` : ''}.`,
         `It works for ${OL.OTP_TTL_MINUTES} minutes. Do not share it with anyone.`, '', 'If you did not ask for this code, ignore this email.', '', '— TeamLink'].join('\n'),
       fromName: '',
     });
@@ -151,6 +151,8 @@ async function applyAccept(app, v, actorName) {
   // eslint-disable-next-line global-require
   await require('../utils/stageEvents').recordWorkflowMove({ user: pseudo, existing: app, toStage: 'OFFER_ACCEPTED', action: 'Offer accepted and signed by the candidate (offer link)' });
   await notifyUsers(await require('../utils/clientBdes').withClientBdes(staffIds(app), app.requirement), { title: `✅ Offer accepted: ${app.candidate.name}`, message: `${app.requirement.title} — signed on the offer link (v${v.version}). Next: joining.` });
+  // CLIENT hiring (utils/clientTrack.js): the client, the BDE TL and the BDE are told too.
+  await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Accepted', { via: `the offer link v${v.version}`, actorName }); // eslint-disable-line global-require
   return true;
 }
 
@@ -204,8 +206,26 @@ router.post('/:token/decline', signLimit, async (req, res, next) => {
       await prisma.application.update({ where: { id: app.id }, data: { offerStatus: 'Offer Declined', offerNotes: `Candidate (offer link): ${reason}` } });
       await logAudit({ action: `Offer declined by the candidate (offer link v${v.version}) — ${reason}`, entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Declined' });
       await notifyUsers(await require('../utils/clientBdes').withClientBdes(staffIds(app), app.requirement), { title: `Offer declined: ${app.candidate.name}`, message: `${app.requirement.title}: ${reason}` });
+      await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Declined', { via: `the offer link v${v.version}`, reason, actorName: app.candidate.name }); // eslint-disable-line global-require
     }
     return res.json({ ...(await OL.publicView(await prisma.offerVersion.findUnique({ where: { id: v.id } }))), message: 'Your answer is saved. Your recruiter has been told.' });
+  } catch (err) { return next(err); }
+});
+
+// The CLIENT'S letter file (client hiring: the offer is the client's own document, so the client's name is in it).
+router.get('/:token/client-file', async (req, res, next) => {
+  try {
+    const v = await byToken(req, res, { open: false });
+    if (!v) return undefined;
+    const CT = require('../utils/clientTrack'); // eslint-disable-line global-require
+    const t = await CT.getTrack(v.applicationId);
+    if (!t || !t.offer || t.offer.versionId !== v.id) return res.status(404).json({ error: 'There is no letter file on this offer.' });
+    const f = CT.fileOf(t, 'offer');
+    if (!f) return res.status(404).json({ error: 'The letter file was not found. Ask your recruiter.' });
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Type', f.mime || 'application/octet-stream');
+    res.set('Content-Disposition', `inline; filename="${String(f.name || 'offer-letter').replace(/[^\w.\- ()]/g, '_')}"`);
+    return res.sendFile(f.full);
   } catch (err) { return next(err); }
 });
 

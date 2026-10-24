@@ -1,0 +1,53 @@
+/* Wide employee table with frozen columns (2026-10-14).
+   ONE shared class for any wide employee table (pay register / month sheet):
+     <div class="tbl-wrap acc-scroll"> <table class="tl-sticky-table"> ...
+       th/td.tl-stick-id    Employee ID  (frozen left, fixed width)
+       th/td.tl-stick-name  Name         (frozen next to it, shadow on its right edge)
+       tr.tl-stick-total    optional TOTAL row, frozen at the bottom
+   The wrapper scrolls both ways (the .acc-scroll box), the page does not.
+   Layers: body-left 2, total others 3, total-left 4, header others 5, header-left 6.
+   border-collapse must be "separate" (sticky cells lose collapsed borders), so the row
+   lines are drawn as border-bottom on the cells. */
+.tl-sticky-table {
+  --tl-id-w: 110px;
+  --tl-name-w: 220px;
+  width: auto;
+  min-width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.tl-sticky-table th, .tl-sticky-table td { border-bottom: 1px solid var(--line-soft, #e9efec); white-space: nowrap; }
+.tl-sticky-table tbody tr:last-child td { border-bottom: 1px solid var(--line-soft, #e9efec); }
+
+/* header row: sticky at the top, solid */
+.tl-sticky-table thead th {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--card2, #f1f4f9);
+  border-bottom: 1px solid var(--line, #dde3ec);
+  box-shadow: none;
+}
+
+/* frozen left columns: same width in th, td and the total row */
+.tl-sticky-table .tl-stick-id, .tl-sticky-table .tl-stick-name { position: sticky; z-index: 2; }
+.tl-sticky-table .tl-stick-id { left: 0; width: var(--tl-id-w); min-width: var(--tl-id-w); max-width: var(--tl-id-w); box-sizing: border-box; overflow: hidden; text-overflow: ellipsis; }
+.tl-sticky-table .tl-stick-name { left: var(--tl-id-w); min-width: var(--tl-name-w); box-sizing: border-box; box-shadow: 2px 0 4px rgba(0, 0, 0, 0.08); }
+
+/* opaque backgrounds, also for zebra and hover rows */
+.tl-sticky-table tbody tr td.tl-stick-id, .tl-sticky-table tbody tr td.tl-stick-name { background: var(--paper-raised, #fff); }
+.tl-sticky-table tbody tr:nth-child(even) td.tl-stick-id, .tl-sticky-table tbody tr:nth-child(even) td.tl-stick-name { background: #fafbfd; }
+.tl-sticky-table tbody tr:hover td { background: var(--navy-tint, #eef2f9); }
+.tl-sticky-table tbody tr:hover td.tl-stick-id, .tl-sticky-table tbody tr:hover td.tl-stick-name { background: var(--navy-tint, #eef2f9); }
+
+/* header corner cells over the frozen columns */
+.tl-sticky-table thead th.tl-stick-id, .tl-sticky-table thead th.tl-stick-name { z-index: 6; background: var(--card2, #f1f4f9); }
+
+/* TOTAL row: stays at the bottom while the rows scroll, first two cells frozen left too */
+.tl-sticky-table tbody tr.tl-stick-total td {
+  position: sticky; bottom: 0; z-index: 3;
+  background: var(--paper, #f5f7fa);
+  border-top: 1px solid var(--line, #dde3ec);
+  border-bottom: 0;
+  font-weight: 700;
+}
+.tl-sticky-table tbody tr.tl-stick-total:hover td { background: var(--paper, #f5f7fa); }
+.tl-sticky-table tbody tr.tl-stick-total td.tl-stick-id, .tl-sticky-table tbody tr.tl-stick-total td.tl-stick-name { z-index: 4; background: var(--paper, #f5f7fa); }

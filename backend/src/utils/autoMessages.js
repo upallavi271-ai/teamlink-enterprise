@@ -215,7 +215,7 @@ async function handleStageMove(args) {
   let sendAt = now;
   let whenMode = rule.when.mode;
   if (settings.killSwitch) { status = 'SKIPPED'; reason = 'Automatic messages are switched off for the whole company.'; sendAt = null; }
-  else if (jobOv && jobOv.mode === 'off') { status = 'SKIPPED'; reason = 'Automatic messages are switched off for this job.'; sendAt = null; }
+  else if (jobOv && jobOv.mode === 'off') { status = 'SKIPPED'; reason = 'Automatic messages are switched off for this requirement.'; sendAt = null; }
   else if (paused) { status = 'SKIPPED'; reason = `Automatic messages are paused for this person${paused.byName ? ` (by ${paused.byName})` : ''}.`; sendAt = null; }
   else {
     if (jobOv && jobOv.mode === 'approval') whenMode = 'approval';
@@ -431,7 +431,7 @@ async function dispatch(row, opts, now) {
   if (settings.killSwitch && !force) return skip('Automatic messages are switched off for the whole company.');
   if (!rule.on && !force) return skip('This step\'s automatic message was switched off before it went.');
   const jobOv = await R.jobOverride(row.requirementId);
-  if (jobOv && jobOv.mode === 'off') return skip('Automatic messages are switched off for this job.');
+  if (jobOv && jobOv.mode === 'off') return skip('Automatic messages are switched off for this requirement.');
   const paused = await R.pauseOf(row.candidateId);
   if (paused) return skip('Automatic messages are paused for this person.');
 
@@ -453,7 +453,7 @@ async function dispatch(row, opts, now) {
   // duplicate guard: the same step message to the same application is not sent twice in a row
   if (!force && settings.dupHours > 0) {
     const dup = await q(`SELECT id, sentAt FROM "ScheduledMessage" WHERE applicationId = ? AND stageTo = ? AND status = 'SENT' AND id <> ? AND sentAt >= ? LIMIT 1`, row.applicationId, row.stageTo, id, now - settings.dupHours * 3600000);
-    if (dup.length) return skip(`The same message already went to this person for this job at ${new Date(ms(dup[0].sentAt)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`);
+    if (dup.length) return skip(`The same message already went to this person for this requirement at ${new Date(ms(dup[0].sentAt)).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}.`);
   }
   if (settings.skipIfCalledToday && !force) {
     const called = await prisma.candidateMessage.count({ where: { candidateId: candidate.id, channel: 'Call', createdAt: { gte: new Date(R.dayStartIst(now)) } } }).catch(() => 0);
@@ -472,7 +472,7 @@ async function dispatch(row, opts, now) {
   const statusMap = await messaging.channelStatus().catch(() => ({}));
   // eslint-disable-next-line global-require
   const delivery = require('./messageDelivery');
-  const windowOpenFor = (to) => delivery.windowOpen(to).catch(() => false);
+  const windowOpenFor = (to) => require('./waNumbers').windowOpenSystem(to).catch(() => false); // the window of the number system messages use (utils/waNumbers.js)
   let channels = [...row.plan.channels];
   const strategy = row.plan.strategy;
   // the person's own preferred channel goes first when we only need one
@@ -623,6 +623,7 @@ let timer = null;
 function startSweep() {
   const every = Number(process.env.AUTO_MESSAGES_SWEEP_MS == null ? 60000 : process.env.AUTO_MESSAGES_SWEEP_MS);
   if (!every || timer || sandbox.isSandbox()) return null;
+  // Every pass re-reads the setting: nothing is sent unless the scheduler was started by a person (default: not started).
   const tick = () => processDue().then(() => dailySummaryOnce()).catch(() => {});
   timer = setInterval(tick, every);
   if (timer.unref) timer.unref();
@@ -923,7 +924,7 @@ async function preview(user, { stage, rule, applicationId, useAi }) {
   const out = [];
   for (const channel of eff.channels) {
     // eslint-disable-next-line no-await-in-loop
-    const st = await channelState(channel, ctx, fake, statusMap, (to) => delivery.windowOpen(to).catch(() => false));
+    const st = await channelState(channel, ctx, fake, statusMap, (to) => require('./waNumbers').windowOpenSystem(to).catch(() => false));
     // the preview shows the wording even when the channel cannot send; the reason is shown beside it
     const wantAi = eff.wording === 'AI' && useAi === true;
     // eslint-disable-next-line no-await-in-loop
@@ -974,6 +975,9 @@ function summaryLine(s) {
 }
 // Once a day (after 18:00 IST) each TL gets one bell line about their jobs. Deduped in AppSetting.
 async function dailySummaryOnce(now = Date.now()) {
+  // INERT until an Admin / HR has started the scheduler (the first save of the rules). A code reload on the real server
+  // starts this timer again; with no 'auto-messages' setting it does nothing at all.
+  if (!R.started(await R.loadSettings())) return { skipped: 'not started' };
   const day = R.ymdIst(now);
   if (R.minutesOfDay(now) < 18 * 60) return { skipped: 'too early' };
   const key = `auto-messages.summary.${day}`;

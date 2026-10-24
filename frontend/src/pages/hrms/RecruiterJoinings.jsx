@@ -16,6 +16,7 @@ import {
   JoiningsTable, RuleBox, DeptRules, SummaryCards, errText, nowMonth, addMonths,
 } from '../../components/recruiterJoinings/RjParts.jsx';
 import '../../components/recruiterJoinings/rj.css';
+import Combo from '../../components/Combo.jsx';
 
 const FIELDS = [
   { key: 'status', get: (r) => r.statusGroup || 'Active' },
@@ -71,18 +72,18 @@ function TargetDialog({ board, onClose, onSaved }) {
         </div>
         {form.scope === 'DEPARTMENT' && (
           <div className="field"><label>Department</label>
-            <select value={form.scopeKey} onChange={(e) => set('scopeKey', e.target.value)}>
+            <Combo value={form.scopeKey} onChange={(e) => set('scopeKey', e.target.value)}>
               <option value="">Pick a department</option>
               {depts.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
+            </Combo>
           </div>
         )}
         {form.scope === 'EMPLOYEE' && (
           <div className="field"><label>Person</label>
-            <select value={form.scopeKey} onChange={(e) => set('scopeKey', e.target.value)}>
+            <Combo value={form.scopeKey} onChange={(e) => set('scopeKey', e.target.value)}>
               <option value="">Pick a person</option>
               {people.map((p) => <option key={p.employeeId} value={p.employeeId}>{p.name}{p.seat ? ` · ${p.seat}` : ''}</option>)}
-            </select>
+            </Combo>
           </div>
         )}
         <div className="rj-row2">

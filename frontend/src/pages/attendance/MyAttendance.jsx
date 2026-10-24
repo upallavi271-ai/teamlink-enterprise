@@ -1,4 +1,7 @@
 import { useEffect, useState } from 'react';
+import ErrorBoundary from '../../components/ErrorBoundary.jsx';
+import { stopCamera } from '../../utils/cameraHold.js';
+import { distanceWords } from '../../utils/checkinGeo.js';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { to12h } from '../../utils/csv.js';
@@ -6,9 +9,12 @@ import { Panel, PanelPad, PanelHead, StatRow } from '../../components/proto.jsx'
 import FaceCheckIn from './FaceCheckIn.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
+import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../../components/PunchSourceChip.jsx';
 import { HalfLeaveChip } from './DayReport.jsx';
 import { TellWhyDialog } from './LatePermission.jsx';
+import '../../components/payroll/payrollCycleCard.css';
 import './attendance-self.css';
+import Combo from '../../components/Combo.jsx';
 
 // A half day, and where the leave for the other half stands (from the day's own status).
 const halfStateOf = (r) => (r.status === 'Half Day + Half Leave' || r.status === 'Half Leave + Absent' ? 'Approved' : r.status === 'Half Day, Under Review' ? 'Pending' : r.status === 'Half Day' ? 'None' : '');
@@ -90,16 +96,16 @@ export function RangePicker({ onApply, allowYear = true }) {
 
   return (
     <div className="filter-row att-range">
-      <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Range type">
+      <Combo value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Range type">
         <option value="month">Month</option>
         {allowYear && <option value="year">Year</option>}
         <option value="custom">Custom range</option>
-      </select>
+      </Combo>
       {mode === 'month' && <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} aria-label="Month" />}
       {mode === 'year' && (
-        <select value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
+        <Combo value={year} onChange={(e) => setYear(e.target.value)} aria-label="Year">
           {years.map((y) => <option key={y}>{y}</option>)}
-        </select>
+        </Combo>
       )}
       {mode === 'custom' && (
         <>
@@ -124,6 +130,11 @@ function CheckInPanel() {
     api.get('/attendance/checkin/status').then((r) => setSt(r.data)).catch(() => setSt({ hasEmployee: false, methods: [] }));
   }
   useEffect(load, []);
+  // Get the face models and my registered photo ready on the server NOW, so Check In is quick when tapped.
+  useEffect(() => {
+    api.post('/attendance/face/warm', {}, { timeout: 10000 }).catch(() => {});
+    return () => stopCamera(); // leaving the page switches the camera off
+  }, []);
 
   if (!st) return <PanelPad><div className="small-muted">Loading…</div></PanelPad>;
   const web = (st.methods || []).filter((m) => m.web);
@@ -155,8 +166,8 @@ function CheckInPanel() {
             </span>
           </span>
           <span style={{ display: 'flex', gap: 6 }}>
-            <button type="button" className="btn btn-sm btn-primary" disabled={!st.hasPhoto} onClick={() => { setMessage(''); setOpen({ method: web[0].key, direction: 'In' }); }}>Check In</button>
-            <button type="button" className="btn btn-sm" disabled={!st.hasPhoto} onClick={() => { setMessage(''); setOpen({ method: web[0].key, direction: 'Out' }); }}>Check Out</button>
+            <button type="button" className="btn btn-sm btn-primary" disabled={!st.hasPhoto || !!st.open} title={st.open ? `Already checked in at ${to12h(last.time)}` : undefined} onClick={() => { setMessage(''); setOpen({ method: web[0].key, direction: 'In' }); }}>Check In</button>
+            <button type="button" className="btn btn-sm" disabled={!st.hasPhoto || !st.open} title={!st.open ? 'Check in first' : undefined} onClick={() => { setMessage(''); setOpen({ method: web[0].key, direction: 'Out' }); }}>Check Out</button>
           </span>
         </div>
       )}
@@ -172,12 +183,15 @@ function CheckInPanel() {
           : 'No punches recorded today yet.'}
       </div>
       {open && (
-        <FaceCheckIn
-          direction={open.direction}
-          method={open.method}
-          onClose={() => { setOpen(null); load(); }}
-          onDone={(d) => { setMessage(`${d.punch.direction === 'In' ? 'Checked in' : 'Checked out'} at ${to12h(d.punch.time)} — face verified.`); load(); }}
-        />
+        <ErrorBoundary compact onClose={() => { setOpen(null); load(); }}>
+          <FaceCheckIn
+            direction={open.direction}
+            method={open.method}
+            geofence={st.geofence}
+            onClose={() => { setOpen(null); load(); }}
+            onDone={(d) => { setMessage(d.duplicate ? d.message : `${d.punch.direction === 'In' ? 'Checked in' : 'Checked out'} at ${to12h(d.punch.time)} — face verified.`); load(); }}
+          />
+        </ErrorBoundary>
       )}
     </PanelPad>
   );
@@ -198,12 +212,33 @@ function LateChip({ r, windowDays, onTell }) {
   );
 }
 
+// A gentle note to the employee after a day absent with no leave applied (payroll rule, 2026-10-12).
+function AwlBanner() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api.get('/payroll/cycle/my-absences').then((r) => setD(r.data)).catch(() => setD(null)); }, []);
+  if (!d || !d.days || !d.days.length) return null;
+  const open = d.days.filter((x) => x.canFix);
+  if (!open.length) return null;
+  const fmt = (iso) => new Date(iso + 'T00:00:00Z').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const lop = open.reduce((n, x) => n + x.lop, 0);
+  return (
+    <div className="pc-banner" data-testid="awl-banner">
+      You were absent on <b>{open.map((x) => fmt(x.date)).join(', ')}</b> and did not apply leave: <b>{lop} LOP day{lop === 1 ? '' : 's'}</b> will be deducted from the {open[0].payrollLabel} salary.
+      {' '}Apply leave for {open.length === 1 ? 'that day' : 'those days'} before the payroll is locked to correct it. <Link to="/leave">Apply leave</Link>
+    </div>
+  );
+}
+
+const srcTotalsOf = (rows) => { const t = { all: rows.length }; ['web', 'biometric', 'pulse', 'hr'].forEach((g) => { t[g] = rows.filter((x) => x.sourceCounts && x.sourceCounts[g] > 0).length; }); return t; };
+
 export default function MyAttendance() {
   const [params, setParams] = useState({ month: thisMonth() });
   const [data, setData] = useState(null);
   const [tellFor, setTellFor] = useState(null); // the date the "Tell why I was late" popup is open for
   const [windowDays, setWindowDays] = useState(7);
   const [reload, setReload] = useState(0);
+  const [src, setSrc] = useState('');
+  const [openRow, setOpenRow] = useState(null);
   useEffect(() => { api.get('/late-permissions/settings').then((r) => setWindowDays(r.data.pastDays)).catch(() => {}); }, []);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -225,10 +260,12 @@ export default function MyAttendance() {
 
   const s = data && data.summary;
   const lf = useListFilters(data?.rows || [], DAY_FIELDS, { sorts: DAY_SORTS });
-  const page = usePaged(lf.rows, 50);
+  const srcRows = src ? lf.rows.filter((x) => x.sourceCounts && x.sourceCounts[src] > 0) : lf.rows;
+  const page = usePaged(srcRows, 50);
   return (
     <div className="att-self">
       <CheckInPanel />
+      <AwlBanner />
       <Panel>
         <PanelHead title="My attendance">
           <div style={{ display: 'flex', gap: 6 }}>
@@ -265,30 +302,32 @@ export default function MyAttendance() {
             </div>
           )}
           {data && data.rows && data.rows.length > 0 && <ListFilterBar lf={lf} storageKey="my-attendance-days" noun="days" />}
+          {data && data.rows && data.rows.length > 0 && <SourceFilter value={src} onChange={setSrc} totals={srcTotalsOf(lf.rows.filter((x) => (x.punchList || []).length))} />}
         </div>
         <div className="tbl-wrap">
           <table>
             <thead>
               <tr>
                 <th>Date</th><th>Check-In</th><th>Check-Out</th><th>Total Hours</th><th>Status</th>
-                <th>Check-in method</th><th>Location</th><th>Regularization</th>
+                <th>Check-in method</th><th>Punches by source</th><th>Location</th><th>Regularization</th>
               </tr>
             </thead>
             <tbody>
-              {page.slice.map((r) => (
+              {page.slice.map((r) => [(
                 <tr key={r.date}>
                   <td>{r.date}</td>
                   <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
                   <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                   <td className="cell-muted">{r.hours != null ? r.hours : '—'}</td>
-                  <td><DayStatus status={r.status} colour={r.colour} earlyLogout={r.earlyLogout} />{r.reason || r.note ? <div className="small-muted att-note">{r.reason || r.note}</div> : null}{(r.notes || []).map((k) => <span key={k} className="hl-chip tone-orange">{{ late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' }[k] || k}</span>)}{halfStateOf(r) ? <div><HalfLeaveChip state={halfStateOf(r)} half={r.leaveHalf ? (/first/i.test(r.leaveHalf) ? '1st half' : /second/i.test(r.leaveHalf) ? '2nd half' : '') : ''} /></div> : null}<LateChip r={r} windowDays={windowDays} onTell={setTellFor} /></td>
+                  <td><DayStatus status={r.status} colour={r.colour} earlyLogout={r.earlyLogout} />{r.reason || r.note ? <div className="small-muted att-note">{r.reason || r.note}</div> : null}{(r.notes || []).map((k) => <span key={k} className="hl-chip tone-orange">{{ late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' }[k] || k}</span>)}{halfStateOf(r) ? <div><HalfLeaveChip state={halfStateOf(r)} half={r.leaveHalf ? (/first/i.test(r.leaveHalf) ? '1st half' : /second/i.test(r.leaveHalf) ? '2nd half' : '') : ''} /></div> : null}<LateChip r={r} windowDays={windowDays} onTell={setTellFor} />{r.awlText ? <div><span className="pc-tag" data-testid="awl-tag" title="No leave was applied for this day, so payroll counts extra loss of pay. Apply leave before the payroll is locked to correct it.">{r.awlText}</span></div> : null}</td>
                   <td className="cell-muted">{r.howText || r.method || '—'}{r.verification ? <div className="small-muted att-note">{r.verification}</div> : null}</td>
-                  <td className="cell-muted">{r.locationStatus || '—'}</td>
+                  <td className="cell-muted"><SourceChips counts={r.sourceCounts} />{(r.punchList || []).length > 0 && <div><PunchToggle open={openRow === r.date} count={r.punchList.length} onClick={() => setOpenRow(openRow === r.date ? null : r.date)} /></div>}</td>
+                  <td className="cell-muted">{r.locationStatus || '—'}{r.distanceM != null ? ` · ${distanceWords(r.distanceM, r.accuracyM)}` : ''}</td>
                   <td className="cell-muted">{r.regularization || '—'}</td>
                 </tr>
-              ))}
-              {data && data.rows && data.rows.length === 0 && <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No days in this range.</td></tr>}
-              {data && data.rows && data.rows.length > 0 && lf.rows.length === 0 && <tr><td colSpan="8"><ListEmpty lf={lf} noun="days" /></td></tr>}
+              ), openRow === r.date && <tr key={`${r.date}-d`}><td colSpan="9"><PunchDetails list={r.punchList} /></td></tr>])}
+              {data && data.rows && data.rows.length === 0 && <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>No days in this range.</td></tr>}
+              {data && data.rows && data.rows.length > 0 && srcRows.length === 0 && <tr><td colSpan="9"><ListEmpty lf={lf} noun="days" /></td></tr>}
             </tbody>
           </table>
         </div>

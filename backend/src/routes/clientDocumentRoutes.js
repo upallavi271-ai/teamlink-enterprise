@@ -26,6 +26,11 @@ const profile = require('../utils/clientProfile');
 const { clientLevelFor } = require('../utils/clientRedact');
 const { atsViewRole } = require('../utils/scope');
 const CL = require('../utils/clientLifecycle');
+// Drive links of signed agreements (2026-10-12): kind AGREEMENT_LINK rows - utils/agreementDriveLinks.js.
+const DL = require('../utils/agreementDriveLinks');
+// Documents (section 8) are filled by Purna Sir (HR) and Admin; the BDE desk does not see or add them (user, 2026-10-13).
+const WF = require('../utils/agreementWorkflow');
+const HR_ONLY = 'HR adds the documents after you send the client to HR.';
 
 const ALLOWED_EXT = /\.(pdf|png|jpg)$/i;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
@@ -38,9 +43,12 @@ function shapeDoc(d) {
   };
 }
 
-module.exports = function mountClientDocuments(router) {
+// opts.mayRead(req,res) / opts.mayEdit(req,res) replace the default rights (the HR step of the agreement workflow,
+// routes/agreementFlow.js, mounts the same handlers with its own rule). opts.canEdit(req) tells the list.
+module.exports = function mountClientDocuments(router, opts = {}) {
   const unavailable = (res) => res.status(503).json({ error: 'Documents can be added after the database update. Please try again later.' });
   async function mayRead(req, res) {
+    if (opts.mayRead) return opts.mayRead(req, res);
     if (!profile.docsAvailable()) { unavailable(res); return false; }
     const level = clientLevelFor(req.user);
     if (atsViewRole(req.user) === 'client' || !['full', 'billing'].includes(level)) {
@@ -50,6 +58,7 @@ module.exports = function mountClientDocuments(router) {
     return true;
   }
   async function mayEdit(req, res) {
+    if (opts.mayEdit) return opts.mayEdit(req, res);
     if (!(await mayRead(req, res))) return false;
     if (!(await can(req.user, 'ats', 'clients', 'Client Detail', 'edit')) || !(await can(req.user, 'ats', 'clients', 'Client Documents', 'create'))) {
       res.status(403).json({ error: 'Only an Admin or the client\'s BDE can change its documents.' });
@@ -63,7 +72,7 @@ module.exports = function mountClientDocuments(router) {
     return true;
   }
   async function docOf(req, res) {
-    const d = await prisma.clientDocument.findFirst({ where: { id: req.params.docId, clientId: req.client.id } });
+    const d = await prisma.clientDocument.findFirst({ where: { id: req.params.docId, clientId: req.client.id, kind: { not: 'AGREEMENT_SIGNED' } } }); // the signed agreement files have their own route (agreementSignedFiles.js)
     if (!d) res.status(404).json({ error: 'That document is not on this client.' });
     return d;
   }
@@ -71,12 +80,26 @@ module.exports = function mountClientDocuments(router) {
   router.get('/:id/documents', async (req, res) => {
     if (!profile.docsAvailable()) return res.json({ available: false, rows: [] });
     if (!(await mayRead(req, res))) return undefined;
-    const rows = await prisma.clientDocument.findMany({ where: { clientId: req.client.id }, orderBy: { createdAt: 'desc' } });
-    return res.json({ available: true, kinds: profile.DOC_KINDS, canEdit: await can(req.user, 'ats', 'clients', 'Client Detail', 'edit'), rows: rows.map(shapeDoc) });
+    const all = await prisma.clientDocument.findMany({ where: { clientId: req.client.id }, orderBy: { createdAt: 'desc' } });
+    const rows = WF.hidesHrFor(req.user) && !opts.mayRead ? [] : all.filter((d) => !DL.isLinkDoc(d) && d.kind !== 'AGREEMENT_SIGNED').map(shapeDoc);
+    // The Drive links of the signed agreement: only those who may read them see them (never a colleague BDE, a TL, a client).
+    if (all.some(DL.isLinkDoc) && DL.canSeeFor(DL.viewMode(req.user), req.user, req.client)) {
+      (await DL.docsWithMeta({ clientId: req.client.id })).filter(DL.isActive).forEach((x) => {
+        const l = DL.shapeLink(x);
+        rows.push({
+          id: x.doc.id, kind: DL.KIND, kindLabel: DL.KIND_LABEL, name: 'Signed agreement: open in Drive', fileName: l.label, uploadedAt: x.doc.createdAt,
+          uploadedByName: x.doc.uploadedByName, expiryDate: x.doc.expiryDate, pending: false, status: profile.documentStatus(x.doc),
+          isLink: true, linkUrl: l.url, linkHost: l.host, agreementDate: l.agreementDate, note: l.note, signedCopy: l.signedCopy,
+        });
+      });
+      rows.sort((a, b) => new Date(b.uploadedAt) - new Date(a.uploadedAt));
+    }
+    return res.json({ available: true, kinds: profile.DOC_KINDS, canEdit: opts.canEdit ? await opts.canEdit(req) : await can(req.user, 'ats', 'clients', 'Client Detail', 'edit'), rows });
   });
 
   router.post('/:id/documents', async (req, res) => {
     if (!(await mayEdit(req, res))) return undefined;
+    if (!opts.mayEdit && WF.hidesHrFor(req.user)) return res.status(403).json({ error: HR_ONLY });
     let parsed;
     try { parsed = await attachments.parseMultipart(req); } catch (err) {
       if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'That file is over 5 MB. Please upload a smaller one.' });
@@ -92,7 +115,7 @@ module.exports = function mountClientDocuments(router) {
       return res.status(400).json({ error: 'Only PDF, JPG or PNG files can be uploaded.' });
     }
     const f = parsed.fields || {};
-    const kind = profile.DOC_KINDS[String(f.kind || '').toUpperCase()] ? String(f.kind).toUpperCase() : 'OTHER';
+    const kind = profile.DOC_KINDS[String(f.kind || '').toUpperCase()] ? String(f.kind).toUpperCase() : 'OTHER'; // AGREEMENT_LINK is not in DOC_KINDS: links come only through agreement-links
     const expiry = String(f.expiryDate || '').trim();
     if (expiry && !YMD.test(expiry)) { attachments.remove(stored.billFile); return res.status(400).json({ error: 'The expiry date does not look right.' }); }
     const doc = await prisma.clientDocument.create({
@@ -112,6 +135,8 @@ module.exports = function mountClientDocuments(router) {
     if (!(await mayEdit(req, res))) return undefined;
     const d = await docOf(req, res);
     if (!d) return undefined;
+    if (!opts.mayEdit && WF.hidesHrFor(req.user) && !DL.isLinkDoc(d)) return res.status(403).json({ error: HR_ONLY });
+    if (DL.isLinkDoc(d)) return res.status(400).json({ error: 'A Drive link cannot be edited here. Use "Replace the Drive link" on the Agreement card.' });
     const b = req.body || {};
     const data = {};
     if (b.name !== undefined) data.name = String(b.name || '').trim().slice(0, 200) || d.name;
@@ -128,10 +153,16 @@ module.exports = function mountClientDocuments(router) {
 
   router.delete('/:id/documents/:docId', async (req, res) => {
     if (!(await mayEdit(req, res))) return undefined;
-    // A BDE adds documents; taking one away for good is an Admin's (the BDE cannot erase a signed agreement or a GST paper).
-    if (CL.isDeskBde(req.user)) return res.status(403).json({ error: 'A BDE can add documents but not remove them. Ask an Admin.' });
+    // (2026-10-13: a BDE uploads AND replaces / removes the documents of their own clients - only DELETING a client is a request.)
     const d = await docOf(req, res);
     if (!d) return undefined;
+    if (!opts.mayEdit && WF.hidesHrFor(req.user) && !DL.isLinkDoc(d)) return res.status(403).json({ error: HR_ONLY });
+    if (DL.isLinkDoc(d)) {
+      // soft: the link stays in the client's history as "Removed" (Admin only)
+      if (!(await DL.rightsOf(req.user)).canRemove) return res.status(403).json({ error: 'Only an Admin or the BDE team can remove an agreement link.' });
+      await DL.removeLink(req.user, req.client, d.id, req.body && req.body.reason);
+      return res.json({ ok: true });
+    }
     await prisma.clientDocument.delete({ where: { id: d.id } });
     attachments.remove(d.fileStored);
     await logAudit({ userId: req.user.id, action: 'Client document removed', entity: 'Client', entityId: req.client.id, toValue: d.name.slice(0, 300) });
@@ -141,9 +172,11 @@ module.exports = function mountClientDocuments(router) {
   router.get('/:id/documents/:docId/file', async (req, res) => {
     if (!(await mayRead(req, res))) return undefined;
     // The papers of a colleague's client (agreement, GST, PAN ...) are opened by that client's BDE, not the whole desk.
-    if (!CL.ownsClient(req.user, req.client)) return res.status(403).json({ error: 'The documents of this client are opened by its own BDE, the BDE team lead or an Admin.' });
+    if (!opts.mayRead && !CL.ownsClient(req.user, req.client)) return res.status(403).json({ error: 'The documents of this client are opened by its own BDE, the BDE team lead or an Admin.' });
     const d = await docOf(req, res);
     if (!d) return undefined;
+    if (DL.isLinkDoc(d)) return res.status(400).json({ error: 'This is a Drive link, not a file. Use "Open in Drive".' });
+    if (!opts.mayRead && WF.hidesHrFor(req.user)) return res.status(403).json({ error: HR_ONLY });
     const file = attachments.resolveStored(d.fileStored);
     if (!file) return res.status(404).json({ error: 'That file is no longer on disk.' });
     res.set('Cache-Control', 'private, no-store');

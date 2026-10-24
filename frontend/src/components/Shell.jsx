@@ -1,10 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { workRoleLabel } from '../permissions';
 import {
   sectionLabel, mayRenderSection, groupsForUser, flattenGroups, sectionOf, scoreMatch,
-  SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel,
+  SECTION_ICON, SETUP_TABS, INTERVIEW_TABS, moduleTabLabel, isExternalUser,
 } from '../nav';
 import ModuleTabs from './ModuleTabs.jsx';
 import Logo from './Logo.jsx';
@@ -18,9 +18,27 @@ import JobRequestPopup from './JobRequestPopup.jsx';
 import HealthDot from './dashboard/HealthDot.jsx';
 import TodayTasks from './dashboard/TodayTasks.jsx';
 import GlobalSearch from './GlobalSearch.jsx';
+import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
 import { hasAtsWork } from '../utils/useAtsAlerts';
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
+import { useOmniEntry } from './outreach/useOmniChildren.js';
+import { resolveGreenStartUrl } from './outreach/greenStartLink.js';
+import OmniTopChips from './omni/OmniTopChips.jsx';
 import './ShellPhone.css';
+import AiCallOfferHost from './aicalling/AiCallOfferHost.jsx'; // "Tell them with the AI assistant?" after a Shortlisted move / an interview booking
+import './MobileNav.css';
+
+// Where the sidebar Omni-Channel opens Green Start (components/outreach/greenStartLink.js decides):
+//   on the PC (localhost) and anywhere VITE_GREENSTART_URL=local: the in-page frame at /omni-channel, as before;
+//   on the live site (any *.teamlinks.in address): a NEW TAB at TeamLink's own /omni page, which shows Green Start inside it (like /jobs for the Job Portal);
+//     Green Start also opens on its own at https://greenstart.teamlinks.in whenever wanted;
+//   VITE_GREENSTART_URL=<address> (set when building) overrides both.
+// The /omni page asks TeamLink for the door pass (POST /api/omni-gs/session) by itself (components/outreach/GreenStart.jsx).
+const GREENSTART_PUBLIC_URL = resolveGreenStartUrl({
+  envUrl: import.meta.env && import.meta.env.VITE_GREENSTART_URL,
+  hostname: typeof window !== 'undefined' ? window.location.hostname : '',
+});
+import useMobileDrawer, { useMediaQuery, PHONE_MQ } from './useMobileDrawer.js';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
 // which tabs appear is decided entirely by the permission engine — see that
@@ -32,6 +50,21 @@ import './ShellPhone.css';
 
 function Ico({ char }) {
   return <span className="sb-ico" aria-hidden="true">{char || ''}</span>;
+}
+
+// A sidebar row is a <div> with a click handler; this makes it work from the
+// keyboard too (Tab to it, Enter or Space to press it) and tells a screen
+// reader what it is.
+function press(fn, role = 'button') {
+  return {
+    role,
+    tabIndex: 0,
+    onClick: fn,
+    onKeyDown: (e) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); }
+    },
+  };
 }
 
 function initials(name) {
@@ -46,11 +79,29 @@ export default function Shell() {
   // The TeamLink Job Portal is its own application; its URL is JOB_PORTAL_URL
   // on the server (GET /api/public/job-portal/config).
   const jobPortalUrl = useJobPortalUrl();
-  const [open, setOpen] = useState(false);           // mobile sidebar
+  // The phone menu: a slide-in drawer under 900px (./useMobileDrawer.js).
+  const drawer = useMobileDrawer(pathname + search);
+  const open = drawer.open;
+  const isPhone = useMediaQuery(PHONE_MQ);
+  // Old client names (ClientAlias) for every type-to-search box: loaded once per sign-in, refreshed when the tab comes back.
+  // They are for matching only; boxes keep showing the official name.
+  useEffect(() => {
+    if (!user) { forgetClientAliases(); return undefined; }
+    loadClientAliases({ force: true });
+    const again = () => { if (document.visibilityState === 'visible') loadClientAliases(); };
+    document.addEventListener('visibilitychange', again);
+    return () => document.removeEventListener('visibilitychange', again);
+  }, [user && user.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const [manual, setManual] = useState({});          // prototype's sidebarManualToggle
   const [manualSub, setManualSub] = useState({});    // the ATS sub-sections
 
-  const groups = useMemo(() => groupsForUser(user), [user]);
+  const baseGroups = useMemo(() => groupsForUser(user), [user]);
+  // OMNI-CHANNEL (founder, 2026-10-17): opens like ATS: a group whose children are the hubs this login may open (from /api/outreach/me).
+  // The same group row, arrow, icons and active highlight as every other group; the page itself then shows only the sub-tabs of the open hub.
+  // 2026-10-21: for the logins that may open the founder's Green Start product, Omni-Channel is ONE sidebar entry that opens it (below Administration,
+  // above Job Portal (public)). The other logins (BDE, BDE TL, Recruiter, Marketing, Finance) keep the group with the native pages.
+  const { kids: omniKids, greenStart: omniGreenStart } = useOmniEntry(user);
+  const groups = useMemo(() => (omniKids && omniKids.length && !omniGreenStart ? [...baseGroups, ['omni', 'Omni-Channel', omniKids, '📣']] : baseGroups), [baseGroups, omniKids, omniGreenStart]);
   const section = sectionOf(pathname, user);
   // The 🔔 count and its dropdown live in ./NotificationBell.jsx (§33).
 
@@ -91,48 +142,64 @@ export default function Shell() {
   }
   function toggleSub(id) { setManualSub({ ...manualSub, [id]: !isSubOpen(id) }); }
   function navTo(path) { closeSidebar(); navigate(path); }
-  function closeSidebar() { setOpen(false); }
+  function closeSidebar() { drawer.close(); }
 
   const isActive = (to) => !!(current && current.to === to);
   const currentPath = current ? current.to.split('?')[0] : null;
 
   return (
     <div className="app-shell">
-      <aside className={'sidebar' + (open ? ' open' : '')} id="sidebar">
+      <aside
+        className={'sidebar' + (open ? ' open' : '')}
+        id="sidebar"
+        ref={drawer.drawerRef}
+        {...(drawer.isMobile ? {
+          role: 'dialog',
+          'aria-label': 'Main menu',
+          'aria-modal': open ? 'true' : undefined,
+          'aria-hidden': open ? undefined : 'true',
+          inert: open ? undefined : '',
+        } : {})}
+        {...drawer.touch}
+      >
         <div className="sidebar-brand">
           <Link to="/" onClick={closeSidebar} aria-label="TeamLink Consultants — home">
             <Logo />
           </Link>
-          <button className="sidebar-close" onClick={closeSidebar} aria-label="Close menu">✕</button>
+          <button type="button" className="sidebar-close" ref={drawer.closeRef} onClick={closeSidebar} aria-label="Close menu">✕</button>
         </div>
-        <nav className="sidebar-nav">
+        {/* Search moves in here on a phone, where the top bar has no room for it. */}
+        {isPhone && hasAtsWork(user) && <div className="sidebar-search"><GlobalSearch /></div>}
+        <nav className="sidebar-nav" aria-label="Sections">
           <div
             className={'sb-item' + (section === 'dashboard' ? ' top-active' : '')}
-            onClick={() => navTo('/')}
+            {...press(() => navTo('/'), 'link')}
+            aria-current={section === 'dashboard' ? 'page' : undefined}
           >
             <Ico char={SECTION_ICON.dashboard} />Dashboard
           </div>
           {groups.map(([s, label, items, icon]) => (
             <div className={'sb-group' + (isGroupOpen(s) ? ' open' : '')} key={s}>
-              <div className="sb-group-head" onClick={() => toggleGroup(s, items)}>
+              <div className="sb-group-head" {...press(() => toggleGroup(s, items))} aria-expanded={isGroupOpen(s)}>
                 <span className="sb-group-label"><Ico char={icon} />{label}</span>
-                <span className="chev">▸</span>
+                <span className="chev" aria-hidden="true">▸</span>
               </div>
               <div className="sb-sub">
                 {items.map((item) => (item.children ? (
                   <div className={'sb-sub-group' + (isSubOpen(item.id) ? ' open' : '')} key={item.id}>
-                    <div className="sb-sub-head" onClick={() => toggleSub(item.id)}>
+                    <div className="sb-sub-head" {...press(() => toggleSub(item.id))} aria-expanded={isSubOpen(item.id)}>
                       <span className="sb-group-label"><Ico char={item.icon} />{item.label}</span>
-                      <span className="chev">▸</span>
+                      <span className="chev" aria-hidden="true">▸</span>
                     </div>
                     <div className="sb-leaf-list">
                       {item.children.map((c) => (
                         <div
                           key={c.to}
                           className={'sb-leaf' + (isActive(c.to) ? ' active' : '')}
-                          onClick={() => navTo(c.to)}
+                          {...press(() => navTo(c.to), 'link')}
+                          aria-current={isActive(c.to) ? 'page' : undefined}
                         >
-                          <Ico char={c.icon} />{c.label}
+                          <Ico char={c.icon} />{c.label}{c.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{c.badge}</span> : null}
                         </div>
                       ))}
                     </div>
@@ -141,17 +208,37 @@ export default function Shell() {
                   <div
                     key={item.to}
                     className={'sb-sub-item' + (isActive(item.to) ? ' active' : '')}
-                    onClick={() => navTo(item.to)}
+                    {...press(() => navTo(item.to), 'link')}
+                    aria-current={isActive(item.to) ? 'page' : undefined}
                   >
-                    <Ico char={item.icon} />{item.label}
+                    <Ico char={item.icon} />{item.label}{item.badge ? <span className="count" style={{ marginLeft: 'auto', background: '#1d9b5a', color: '#fff', borderRadius: 999, fontSize: 10, padding: '1px 7px' }}>{item.badge}</span> : null}
                   </div>
                 )))}
               </div>
             </div>
           ))}
+          {omniKids && omniKids.length > 0 && omniGreenStart && (
+            <div className="sb-group">
+              {/* Founder, 2026-10-21: clicking Omni-Channel opens the Green Start product on its own address (https://greenstart.teamlinks.in) in a separate tab,
+                  with all its features and its own login. VITE_GREENSTART_URL changes the address; VITE_GREENSTART_URL=local keeps the in-page frame (/omni-channel). */}
+              {GREENSTART_PUBLIC_URL ? (
+                <a className="sb-item" href="/omni" target="_blank" rel="noopener noreferrer" title="Opens Green Start inside TeamLink in a new tab (it also opens on its own at greenstart.teamlinks.in)">
+                  <Ico char="📣" />Omni-Channel ↗
+                </a>
+              ) : (
+                <div
+                  className={'sb-item' + (section === 'omni' ? ' top-active' : '')}
+                  {...press(() => navTo('/omni-channel'), 'link')}
+                  aria-current={section === 'omni' ? 'page' : undefined}
+                >
+                  <Ico char="📣" />Omni-Channel
+                </div>
+              )}
+            </div>
+          )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
               nothing to do with the job portal). */}
-          {user?.products?.ats && (
+          {user?.products?.ats && !isExternalUser(user) && (
             <div className="sb-group">
               <a className="sb-item" href={`${jobPortalUrl}/`} target="_blank" rel="noreferrer">
                 <Ico char="🌐" />Job Portal (public) ↗
@@ -159,12 +246,32 @@ export default function Shell() {
             </div>
           )}
         </nav>
+        {/* Who is signed in, and Sign out — on a phone the top bar has no room for the button. */}
+        <div className="sidebar-user">
+          <div className="avatar" aria-hidden="true">{initials(user?.name)}</div>
+          <div className="su-who">
+            <b>{user?.name}</b>
+            <span>{workRoleLabel(user, ['hrms', 'ats', 'accounts'].includes(section) ? section : undefined)}</span>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={logout}>Sign out</button>
+        </div>
       </aside>
-      <div className={'sidebar-overlay' + (open ? ' show' : '')} onClick={closeSidebar} />
+      <div className={'sidebar-overlay' + (open ? ' show' : '')} onClick={closeSidebar} aria-hidden="true" />
 
       <div className="content-col">
         <div className="topbar">
-          <button className="hamburger" onClick={() => setOpen(true)} title="Menu">☰</button>
+          <button
+            type="button"
+            className="hamburger"
+            ref={drawer.toggleRef}
+            onClick={drawer.openDrawer}
+            aria-label="Open menu"
+            aria-expanded={open}
+            aria-controls="sidebar"
+          >
+            <span className="hb-ico" aria-hidden="true">☰</span>
+            <span className="hb-label">Menu</span>
+          </button>
           <div className="topbar-title">{sectionLabel(section, user)}</div>
           {/* Review #3 §13 — "Search TeamLink": typed, grouped, scoped results
               (./GlobalSearch.jsx). The search API is part of ATS, so a login
@@ -180,6 +287,7 @@ export default function Shell() {
             <AiStatusDot />
             {/* Today's tasks (dashboard spec 2026-09-29): follow-ups, interviews and actions due today. */}
             <TodayTasks />
+            {section === 'omni' && pathname.startsWith('/omni-channel-native') && <OmniTopChips />}
             <NotificationBell />
             {/* The login popup: 'You have 6 tasks, 2 are late' (spec §14). */}
             {hasAtsWork(user) && <TaskPopup />}
@@ -188,7 +296,7 @@ export default function Shell() {
             {/* Admin health dot: system problems only (dashboard review #2). */}
             {hasAtsWork(user) && <HealthDot />}
             <div className="avatar">{initials(user?.name)}</div>
-            <button className="btn btn-ghost btn-sm" onClick={logout}>Sign Out</button>
+            <button className="btn btn-ghost btn-sm tb-signout" onClick={logout}>Sign Out</button>
           </div>
         </div>
 
@@ -254,6 +362,7 @@ export default function Shell() {
           <SetupTabs pathname={pathname} />
           <InterviewTabs pathname={pathname} />
           <ModuleTabs pathname={pathname} />
+          <AiCallOfferHost />
           {mayRenderSection(user, pathname) ? <Outlet /> : (
             <div className="card">
               <h1>Not available</h1>

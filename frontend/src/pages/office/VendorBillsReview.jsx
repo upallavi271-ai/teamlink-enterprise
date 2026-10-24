@@ -5,6 +5,9 @@ import Modal from '../../components/Modal.jsx';
 import Section from './Section.jsx';
 import '../vendor/vendorPortal.css';
 import './VendorBillsReview.css';
+import '../vendor/billUploads.css';
+import Combo from '../../components/Combo.jsx';
+import UploadedBills from './VendorBillUploadsReview.jsx'; // repair bills vendors uploaded as photos / PDFs, read by AI (2026-10-21)
 
 // ---------------------------------------------------------------------------
 // OFFICE & ACCOUNTS → "BILLS FROM VENDORS" (P3, 2026-10-05).
@@ -41,6 +44,11 @@ export default function VendorBillsReview({ onChanged }) {
   const [open, setOpen] = useState(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
+  const [tab, setTab] = useState(''); // '' = decide below | 'sent' | 'uploads'
+  const [up, setUp] = useState({ waiting: 0, total: 0 });
+
+  const loadUp = useCallback(() => { api.get('/vendor-bills/uploads/count').then((r) => setUp(r.data)).catch(() => {}); }, []);
+  useEffect(() => { loadUp(); const t = setInterval(loadUp, 30000); return () => clearInterval(t); }, [loadUp]);
 
   const load = useCallback(() => {
     api.get('/vendor-bills', { params: { status: status || undefined, vendorId: vendorId || undefined, q: q || undefined } })
@@ -52,8 +60,11 @@ export default function VendorBillsReview({ onChanged }) {
 
   if (!d) return null;
   const total = Object.values(d.counts || {}).reduce((s, n) => s + n, 0);
-  if (!total) return null; // no vendor has sent a bill yet: nothing to show
-  const waiting = d.pending ?? ((d.counts.PENDING_REVIEW || 0) + (d.counts.VERIFIED || 0));
+  if (!total && !up.total) return null; // no vendor has sent or uploaded a bill yet: nothing to show
+  const waitingSent = d.pending ?? ((d.counts.PENDING_REVIEW || 0) + (d.counts.VERIFIED || 0));
+  const waiting = waitingSent + (up.waiting || 0);
+  // the tab nobody chose yet: uploaded bills when only they are waiting (or there are no sent bills at all), else the sent bills
+  const tabNow = tab || ((up.total && (!total || (!waitingSent && up.waiting))) ? 'uploads' : 'sent');
   const statusCount = Object.fromEntries((d.facets.status || []).map((x) => [x.value, x.count]));
 
   return (
@@ -66,6 +77,14 @@ export default function VendorBillsReview({ onChanged }) {
     >
       {msg && <div className="notice green" style={{ marginBottom: 8 }}><span>{msg}</span></div>}
       {err && <div className="notice red" style={{ marginBottom: 8 }}><span>{err}</span></div>}
+      {(up.total > 0 || tabNow === 'uploads') && (
+        <div className="bu-tabs" role="tablist">
+          <button type="button" role="tab" aria-selected={tabNow === 'sent'} className={tabNow === 'sent' ? 'on' : ''} onClick={() => setTab('sent')}>Bills sent by vendors{waitingSent ? ` (${waitingSent} waiting)` : ''}</button>
+          <button type="button" role="tab" aria-selected={tabNow === 'uploads'} className={tabNow === 'uploads' ? 'on' : ''} onClick={() => setTab('uploads')}>Uploaded bills (AI read){up.waiting ? ` (${up.waiting} waiting)` : ''}</button>
+        </div>
+      )}
+      {tabNow === 'uploads' && <UploadedBills onChanged={onChanged} onCounts={() => loadUp()} />}
+      {tabNow === 'sent' && (<>
       <div className="vb-bar">
         <div className="vb-status">
           {STATUS_ORDER.map(([k, label]) => (
@@ -74,10 +93,10 @@ export default function VendorBillsReview({ onChanged }) {
             </button>
           ))}
         </div>
-        <select value={vendorId} onChange={(e) => setVendorId(e.target.value)} aria-label="Vendor">
+        <Combo value={vendorId} onChange={(e) => setVendorId(e.target.value)} aria-label="Vendor">
           <option value="">All vendors</option>
           {(d.facets.vendor || []).map((v) => <option key={v.value} value={v.value}>{v.label} ({v.count})</option>)}
-        </select>
+        </Combo>
         <input type="search" placeholder="Search bill no., asset, vendor" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search vendor bills" />
       </div>
       {!d.rows.length ? (
@@ -113,6 +132,7 @@ export default function VendorBillsReview({ onChanged }) {
           </table>
         </div>
       )}
+      </>)}
       {open && (
         <BillReview
           bill={open}
@@ -216,16 +236,16 @@ function BillReview({ bill, access, onClose, onDone }) {
             <div className="vp-two">
               <div>
                 <label htmlFor="vbC">Category</label>
-                <select id="vbC" value={ap.category} onChange={(e) => setAp({ ...ap, category: e.target.value })}>
+                <Combo creatable id="vbC" value={ap.category} onChange={(e) => setAp({ ...ap, category: e.target.value })}>
                   <option value="">Pick…</option>
                   {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-                </select>
+                </Combo>
               </div>
               <div>
                 <label htmlFor="vbM">Payment mode</label>
-                <select id="vbM" value={ap.paymentMode} onChange={(e) => setAp({ ...ap, paymentMode: e.target.value })}>
+                <Combo id="vbM" value={ap.paymentMode} onChange={(e) => setAp({ ...ap, paymentMode: e.target.value })}>
                   {MODES.map((m) => <option key={m} value={m}>{m}</option>)}
-                </select>
+                </Combo>
               </div>
             </div>
             <label htmlFor="vbD">Pay by (optional)</label>

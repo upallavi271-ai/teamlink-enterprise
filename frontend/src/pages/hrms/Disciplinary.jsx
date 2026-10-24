@@ -108,7 +108,7 @@ function LogCaseModal({ onClose, onSaved }) {
       submitLabel={n ? `Save for ${nWord}` : 'Save'} disabled={!n}
     >
       <div className="aud-picker field disc-pick">
-        <label>Who is this for? <span className="compose-req">*</span></label>
+        <label>Who is this for?</label>
         <div className="disc-help">Tick departments, pick people, or both. Each person is counted once.</div>
         {optsError && <div className="error-text">{optsError}</div>}
         {!opts && !optsError && <div className="aud-summary">Loading your people…</div>}
@@ -140,21 +140,21 @@ function LogCaseModal({ onClose, onSaved }) {
               </div>
             )}
             <div className="disc-cascade">
-              <select value={fDept} aria-label="Department" onChange={(e) => { setFDept(e.target.value); setFTeam(''); setFTl(''); }}>
+              <Combo value={fDept} aria-label="Department" onChange={(e) => { setFDept(e.target.value); setFTeam(''); setFTl(''); }}>
                 <option value="">All departments ({people.length})</option>
                 {deptList.map((d) => <option key={d} value={d}>{d} ({countBy[d]})</option>)}
-              </select>
+              </Combo>
               {teamOpts.length > 0 && (
-                <select value={fTeam} aria-label="Team" onChange={(e) => { setFTeam(e.target.value); setFTl(''); }}>
+                <Combo value={fTeam} aria-label="Team" onChange={(e) => { setFTeam(e.target.value); setFTl(''); }}>
                   <option value="">All teams ({inDept.length})</option>
                   {teamOpts.map(([t, c]) => <option key={t} value={t}>{t} ({c})</option>)}
-                </select>
+                </Combo>
               )}
               {tlOpts.length > 0 && (
-                <select value={fTl} aria-label="TL" onChange={(e) => setFTl(e.target.value)}>
+                <Combo value={fTl} aria-label="TL" onChange={(e) => setFTl(e.target.value)}>
                   <option value="">All TLs ({inTeam.length})</option>
                   {tlOpts.map(([t, c]) => <option key={t} value={t}>TL {t} ({c})</option>)}
-                </select>
+                </Combo>
               )}
             </div>
             <input

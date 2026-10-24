@@ -1,6 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import api from '../api';
 import './EmployeeDocuments.css';
+import Combo from './Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Documents on an employee's file — Aadhaar, PAN, certificates, joining
@@ -266,7 +267,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
       {canUpload && (
         <div className="small-muted" style={{ marginBottom: 8 }}>
           PDF, PNG, JPEG or WebP, up to {maxMb}MB each.
-          {required.size > 0 && <> <b className="edocs-req">✱</b> = required.</>}
+          {required.size > 0 && <> Documents that are needed are marked “Needed”.</>}
         </div>
       )}
       {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
@@ -276,10 +277,10 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
         <div className="edocs-add">
           <label className="edocs-add-type">
             <span>Document type</span>
-            <select value={newType} onChange={(e) => setNewType(e.target.value)}>
+            <Combo value={newType} onChange={(e) => setNewType(e.target.value)}>
               <option value="">Choose a type…</option>
               {docTypes.map((t) => <option key={t} value={t}>{t === OTHER ? 'Other' : t}</option>)}
-            </select>
+            </Combo>
           </label>
           <label className={`btn btn-primary edocs-pick${newType ? '' : ' is-off'}`} aria-disabled={!newType}>
             + Add file
@@ -308,7 +309,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
             return (
               <div className="edocs-row" key={type}>
                 <div className="edocs-type">
-                  <b>{type}</b>{required.has(type) && <b className="edocs-req" title="Required"> ✱</b>}
+                  <b>{type}</b>{required.has(type) && <b className="edocs-req" title="Needed"> (needed)</b>}
                   {type === PHOTO && <div className="cell-muted">Profile photo — images only</div>}
                 </div>
                 <div className="edocs-files">
@@ -350,7 +351,7 @@ const EmployeeDocuments = forwardRef(function EmployeeDocuments({
                             value={p.docName}
                             maxLength={120}
                             disabled={p.status === 'uploading'}
-                            placeholder={type === OTHER ? 'Document name *' : 'Name (optional)'}
+                            placeholder={type === OTHER ? 'Document name' : 'Name (optional)'}
                             onChange={(e) => patch(p.key, { docName: e.target.value, ...(p.status === 'failed' ? { status: 'ready', error: '' } : {}) })}
                             // Inside the employee form: Enter must not submit it.
                             onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }}

@@ -65,6 +65,17 @@ async function requireAuth(req, res, next) {
   try {
     const identity = await resolveIdentity(claims.id);
     if (!identity) return res.status(401).json({ error: 'Invalid or expired token' });
+    // A sign-in older than the last password change is over (utils/passwordReset.js).
+    // Without this a reset would not log out someone who already holds a session.
+    if (await require('../utils/passwordReset').tokenIsStale(claims)) { // eslint-disable-line global-require
+      return res.status(401).json({ error: 'Your password was changed. Please sign in again.', code: 'PASSWORD_CHANGED' });
+    }
+    // "Sign this login out" by an Admin (utils/loginAccounts.js): ends this ONE account's older sessions, never a sibling's.
+    if (await require('../utils/loginAccounts').tokenIsRevoked(claims)) { // eslint-disable-line global-require
+      return res.status(401).json({ error: 'This login was signed out by an administrator. Please sign in again.', code: 'LOGIN_REVOKED' });
+    }
+    // A person who has left is signed out on their next request (utils/leftLogin.js).
+    if (require('../utils/leftLogin').hasLeft(identity)) return res.status(401).json({ error: require('../utils/leftLogin').MESSAGE, code: 'EMPLOYMENT_ENDED' }); // eslint-disable-line global-require
     if (identity.status && identity.status !== 'Active') {
       return res.status(403).json({ error: `This login is ${identity.status.toLowerCase()}` });
     }
@@ -84,11 +95,48 @@ async function requireAuth(req, res, next) {
       };
       viewAs.enterContext(claims.viewAs);
     }
+    // ACT AS (utils/actAs.js): req.user is the TARGET with exactly their own
+    // rights; req.actingAs says who is really at the keyboard. req.viewAs stays
+    // unset — nothing treats these requests as read-only. The hard-blocked
+    // list, send confirmations and audit rows are in actAs.guard (index.js,
+    // through viewAs.viewAsGuard).
+    if (claims.actAs && !claims.viewAs) {
+      const actAs = require('../utils/actAs'); // eslint-disable-line global-require
+      const refused = await actAs.checkSession(claims, identity);
+      if (refused) return res.status(refused.status).json(refused.body);
+      req.actingAs = {
+        byUserId: claims.actAs.byUserId, byName: claims.actAs.byName, mode: 'act', sid: claims.actAs.sid,
+        expiresAt: new Date(claims.exp * 1000).toISOString(),
+      };
+      actAs.enterContext(req);
+    }
     // A handful of coarse capabilities, resolved from the SAME engine, so the
     // dozens of "is this an employee?" data-scoping branches inside handlers
     // can stay synchronous without reintroducing role checks.
+    // STARTING PASSWORD (security fix 2026-10-13): a login that never changed its seed / demo password may call only
+    // /api/auth/* (to see its status and change the password) until it has chosen its own. See utils/seedPasswords.js.
+    if (!claims.viewAs && !claims.actAs && !/^\/api\/auth(\/|\?|$)/.test(String(req.originalUrl || req.url || ''))) {
+      if (await require('../utils/seedPasswords').mustChange(identity.id)) { // eslint-disable-line global-require
+        return res.status(403).json({ error: 'Change your password now. This account still uses a starting password.', code: 'PASSWORD_CHANGE_REQUIRED' });
+      }
+    }
+    // INTERNAL HR (utils/internalHr.js): sees every employee on the attendance / leave / directory
+    // requests only; every other request keeps the person's own scope.
+    if (identity.internalHr) require('../utils/internalHr').setScopeFor(identity.internalHr, req); // eslint-disable-line global-require
     identity.caps = await capsFor(identity);
     req.user = identity;
+    // HR SUPER ACCESS (utils/hrSuper.js): the guards kept Super-Admin-only, and the delete / export / import alerts.
+    if (identity.hrSuper) {
+      const hrSuper = require('../utils/hrSuper'); // eslint-disable-line global-require
+      const refused = await hrSuper.checkRequest(req, identity);
+      if (refused) return res.status(refused.status).json({ error: refused.error, hrSuperGuard: refused.guard });
+      require('../utils/hrSensitiveAlert').watch(req, res); // eslint-disable-line global-require
+    }
+    // HR WATCH (utils/hrWatch.js): a request by a watched person is reported to their team lead when it finishes.
+    try {
+      const hrWatch = require('../utils/hrWatch'); // eslint-disable-line global-require
+      if (await hrWatch.lookup(identity.id)) hrWatch.enter(req, res);
+    } catch { /* a watch problem never blocks a request */ }
     return next();
   } catch (err) {
     return next(err);

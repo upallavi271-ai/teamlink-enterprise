@@ -10,8 +10,12 @@ const {
 } = require('../utils/accounts');
 // P4 — the invoice's GST / TDS breakdown for the matching panel.
 const TAX = require('../utils/invoiceTax');
+// Is an office bill really paid, and may a matched line pay it? (utils/expensePaymentState.js)
+const PAYSTATE = require('../utils/expensePaymentState');
 // Statement import rules shared with the "Import any file" screen.
 const BIC = require('../utils/bankImportCore');
+// Duplicate detection + selective import of statement lines (2026-10-19).
+const SD = require('../utils/bankStatementDedupe');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -145,10 +149,15 @@ const tightName = (s) => normName(s).replace(/ /g, '');
 
 // How many client names share each word — a word in one or two names identifies
 // a client, so it is worth double.
+// The words a client is known by in a bank narration: the official name AND its old names (ClientAlias, c.aliasNames) -
+// a client renamed to its legal name is still recognised when the bank prints the name it used to have.
+// A client by the name a bank line / rule / screen stored: the official name, else (a stored copy older than a rename) an old name.
+const clientByName = (clients, name) => (name ? (clients.find((c) => c.name === name) || clients.find((c) => (c.aliasNames || []).includes(name)) || null) : null);
+const nameWords = (c) => normName(`${c.name} ${(c.aliasNames || []).join(' ')}`);
 function clientDf(clients) {
   const df = {};
   clients.forEach((c) => {
-    new Set(normName(c.name).split(' ').filter((w) => w.length >= 4))
+    new Set(nameWords(c).split(' ').filter((w) => w.length >= 4))
       .forEach((w) => { df[w] = (df[w] || 0) + 1; });
   });
   return df;
@@ -161,7 +170,7 @@ function readClient(description, clients, df) {
   let best = null;
   let bestScore = 0;
   clients.forEach((c) => {
-    const words = [...new Set(normName(c.name).split(' ').filter((w) => w.length >= 4))];
+    const words = [...new Set(nameWords(c).split(' ').filter((w) => w.length >= 4))];
     if (!words.length) return;
     let score = 0;
     words.forEach((w) => {
@@ -177,7 +186,7 @@ function readClient(description, clients, df) {
   let solo = null;
   let hits = 0;
   clients.forEach((c) => {
-    const words = [...new Set(normName(c.name).split(' ').filter((w) => w.length >= 5))];
+    const words = [...new Set(nameWords(c).split(' ').filter((w) => w.length >= 5))];
     if (words.some((w) => (df[w] || 9) <= 1 && d.indexOf(w) >= 0)) { hits += 1; solo = c; }
   });
   return hits === 1 ? solo : null;
@@ -473,7 +482,7 @@ function readCreditLine(txn, ctx) {
   // 2 — who the narration names: the client (by name) and, before anything
   //     else, the invoice itself (by number, or by the candidate billed).
   const named = txn.clientName
-    ? ctx.clients.find((c) => c.name === txn.clientName)
+    ? clientByName(ctx.clients, txn.clientName)
     : (readClient(txn.description, ctx.clients, ctx.df) || ruleClient(txn, ctx));
   const byInvoice = readInvoiceNamed(txn, ctx, named);
   if (byInvoice) return byInvoice;
@@ -613,6 +622,9 @@ async function matchContext() {
     prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' } }),
     prisma.company.findFirst().catch(() => null),
   ]);
+  // The old names of each client: matching only (the screens keep printing c.name, the official name).
+  const oldNames = await require('../utils/clientSearch').aliasMap(); // eslint-disable-line global-require
+  clients.forEach((c) => { c.aliasNames = (oldNames.get(c.id) || []).filter((a) => a.toLowerCase() !== String(c.name || '').toLowerCase()); });
   return {
     invoices,
     clients,
@@ -1087,8 +1099,10 @@ router.post('/preview', async (req, res) => {
   const account = accounts.find((a) => a.id === req.body?.bankAccountId) || accounts[0];
   const v = BIC.validateRows(parsed.rows);
   const failed = [...(parsed.failed || []), ...v.failed];
-  const existing = onAccount(await prisma.bankTransaction.findMany(), account.id, firstId);
-  const plan = BIC.planDuplicates(v.ok, existing);
+  // The same classifier the import uses (utils/bankStatementDedupe.js); nothing is written.
+  const existing = await SD.loadExisting(account.id, firstId);
+  const cls = SD.classifyRows([...v.ok].sort((a, b) => (a.line || 0) - (b.line || 0)), existing);
+  const tally = (st) => cls.filter((c) => c.status === st).length;
   const rows = v.ok;
   const credits = rows.filter((r) => r.type === 'Credit');
   const debits = rows.filter((r) => r.type === 'Debit');
@@ -1104,9 +1118,12 @@ router.post('/preview', async (req, res) => {
     to: dates[dates.length - 1] || null,
     skipped: failed.length,
     failed: failed.slice(0, 100),
-    newLines: plan.fresh.length,
-    duplicates: plan.duplicates.length,
-    needsReview: plan.fresh.filter((r) => r.reviewReason).length,
+    newLines: tally(SD.STATUS.NI),
+    duplicates: tally(SD.STATUS.AI) + tally(SD.STATUS.DUP),
+    alreadyImported: tally(SD.STATUS.AI),
+    duplicateInUpload: tally(SD.STATUS.DUP),
+    needsReview: tally(SD.STATUS.NR),
+    total: rows.length + failed.length,
     balanceCheck: BIC.checkBalances(rows, parsed.stated || {}),
     fileAlreadyImported: prior ? { batch: prior.id, on: prior.date } : null,
     sample: rows.slice(0, 8),
@@ -1137,7 +1154,7 @@ router.post('/import', async (req, res) => {
     out = await importStatement(req, {
       rows,
       bankAccountId: req.body?.bankAccountId,
-      dedup: req.body?.dedup !== 'No' && req.body?.dedup !== false,
+      decisions: Array.isArray(req.body?.decisions) ? req.body.decisions : null,
       file: req.body?.file,
       autoPost: req.body?.autoPost !== 'no' && req.body?.autoPost !== false,
       failedRows,
@@ -1151,105 +1168,65 @@ router.post('/import', async (req, res) => {
 });
 
 // The write half of a statement import, shared with the Accounts "Import any
-// file" screen (routes/accountsImport.js) so a spreadsheet upload gets exactly
-// the same validation, de-duplication, batch record, balance check, opening
-// balance and auto-matching as this screen's own import.
+// file" screen (routes/accountsImport.js).
 //
-// ALL-OR-NOTHING: the lines and the batch record are written in ONE database
-// transaction. A crash half way leaves nothing behind, and running the same
-// import again is safe (the duplicate rules recognise whatever did get saved).
-async function importStatement(req, {
-  rows, bankAccountId, dedup = true, file, autoPost = true, failedRows = [], stated = {}, sourceHash = null,
+// DUPLICATE DETECTION AND SELECTIVE IMPORT (2026-10-19, utils/bankStatementDedupe.js):
+// every uploaded transaction is first classified against EVERY line already on the
+// account (Already Imported / Not Imported / Duplicate in Current Upload / Needs
+// Review) and saved as a batch of rows on the server. Importing then saves ONLY the
+// "Not Imported" rows (plus rows a person explicitly chose), one database transaction
+// per line, with a unique key per line so two uploads at once can never both save it.
+// A line that fails keeps its reason and can be retried alone.
+//
+// prepareStatement() reads + classifies + stores the batch (nothing is imported);
+// importBatch() saves it. importStatement() does both for callers that import in one step.
+async function prepareStatement(req, {
+  rows, bankAccountId, file, failedRows = [], stated = {}, sourceHash = null, sheet = null, source = 'upload',
 }) {
   const accounts = await ensureAccounts();
   const firstId = accounts[0].id;
-  const accountId = bankAccountId || firstId;
-  const account = accounts.find((a) => a.id === accountId) || accounts[0];
+  const account = accounts.find((a) => a.id === (bankAccountId || firstId)) || accounts[0];
   file = String(file || 'pasted text');
-
   const v = BIC.validateRows(rows);
   const failed = [...failedRows, ...v.failed];
   const balanceCheck = BIC.checkBalances(v.ok, stated);
+  const hash = sourceHash || BIC.sha256(JSON.stringify(rows));
+  const made = await SD.createBatch({
+    accountId: account.id, firstId, file, sourceHash: hash, sheet, source, user: { id: req.user.id, name: actor(req) }, ok: v.ok, unreadable: failed, stated, balanceCheck,
+  });
+  const prior = await prisma.bankImport.findFirst({ where: { sourceHash: hash, bankAccountId: account.id }, orderBy: { createdAt: 'desc' } });
+  return {
+    batchId: made.batchId, counts: made.counts, account, balanceCheck, failed, validCount: v.ok.length, sourceHash: hash,
+    fileAlreadyImported: prior ? { batch: prior.id, on: prior.date } : null,
+  };
+}
 
-  let created = [];
-  let duplicates = [];
-  let batch = null;
-  let priorImport = null;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const existing = onAccount(await prisma.bankTransaction.findMany(), account.id, firstId);
-    const plan = dedup ? BIC.planDuplicates(v.ok, existing) : { fresh: v.ok.map((r) => ({ ...r, externalId: null })), duplicates: [] };
-    duplicates = plan.duplicates;
-    priorImport = sourceHash ? await prisma.bankImport.findFirst({ where: { sourceHash, bankAccountId: account.id }, orderBy: { createdAt: 'desc' } }) : null;
-    batch = `IMP-${Date.now()}`;
-    const dates = plan.fresh.map((r) => r.date).sort();
-    const credits = plan.fresh.filter((r) => r.type === 'Credit');
-    const debits = plan.fresh.filter((r) => r.type === 'Debit');
-    try {
-      created = await prisma.$transaction(async (tx) => {
-        const made = [];
-        for (const r of plan.fresh) {
-          made.push(await tx.bankTransaction.create({
-            data: {
-              date: r.date,
-              valueDate: r.valueDate,
-              description: r.description,
-              type: r.type,
-              amount: r.amount,
-              reference: r.reference,
-              externalId: r.externalId,
-              balance: r.balance,
-              importBatch: batch,
-              importFile: file,
-              bankAccountId: account.id,
-              sourceLine: r.line,
-              sourceRow: JSON.stringify(r.raw || {
-                date: r.date, valueDate: r.valueDate, description: r.description, reference: r.reference, externalId: r.externalId, type: r.type, amount: r.amount, balance: r.balance,
-              }),
-              reviewReason: r.reviewReason || null,
-            },
-          }));
-        }
-        // A batch record is kept when lines were saved, or when a first look at a file found unreadable rows.
-        // Uploading the very same file again adds no second record.
-        if (made.length || (failed.length && !priorImport)) {
-          await tx.bankImport.create({
-            data: {
-              id: batch,
-              bankAccountId: account.id,
-              date: BIC.istToday(),
-              file,
-              recordedBy: actor(req),
-              lines: made.length,
-              skipped: duplicates.length + failed.length,
-              credits: ROUND(credits.reduce((s, r) => s + r.amount, 0)),
-              debits: ROUND(debits.reduce((s, r) => s + r.amount, 0)),
-              fromDate: dates[0] || null,
-              toDate: dates[dates.length - 1] || null,
-              sourceHash,
-              openingBalance: balanceCheck.opening ? balanceCheck.opening.value : null,
-              closingBalance: balanceCheck.closing ? balanceCheck.closing.value : null,
-              balanceCheck: JSON.stringify(balanceCheck),
-              failedRows: failed.length ? JSON.stringify(failed.slice(0, 500)) : null,
-              status: failed.length ? (made.length ? 'Partial' : (duplicates.length ? 'Done' : 'Failed')) : 'Done',
-            },
-          });
-        }
-        return made;
-      }, { timeout: 120000, maxWait: 20000 });
-      break;
-    } catch (err) {
-      // Someone saved the same bank transaction id a moment ago: look again, once.
-      if (err && err.code === 'P2002' && attempt === 0) continue;
-      throw err;
-    }
-  }
+async function importBatch(req, {
+  batchId, mode = 'new', bankAccountId, autoPost = true,
+}) {
+  const accounts = await ensureAccounts();
+  const firstId = accounts[0].id;
+  const pre = await SD.getBatch(batchId);
+  if (!pre) return { status: 404, error: 'That upload is no longer available. Choose the file again.' };
+  const account = accounts.find((a) => a.id === (bankAccountId || pre.bankAccountId || firstId)) || accounts[0];
+  const ran = await SD.runBatch(batchId, { mode, accountId: account.id, firstId, user: { id: req.user.id, name: actor(req) } });
+  if (ran.error) return ran;
+  const { created, counts } = ran;
+  const batch = ran.batch;
+  let balanceCheck = null;
+  try { balanceCheck = batch.balanceCheckJson ? JSON.parse(batch.balanceCheckJson) : null; } catch { balanceCheck = null; }
+  const failed = await SD.failedRowsOf(batchId);
+  const file = batch.file || 'upload';
+  const prior = batch.sourceHash
+    ? await prisma.bankImport.findFirst({ where: { sourceHash: batch.sourceHash, bankAccountId: account.id, NOT: { id: ran.importId } }, orderBy: { createdAt: 'desc' } })
+    : null;
 
   await logAudit({
     userId: req.user.id,
-    action: 'Bank statement imported',
+    action: mode === 'retry' ? 'Bank statement import retried' : 'Bank statement imported',
     entity: 'BankTransaction',
-    entityId: batch,
-    toValue: `${created.length} imported, ${duplicates.length} duplicate, ${failed.length} failed - ${file}${balanceCheck.checked ? (balanceCheck.ok ? ' - balances tie' : ' - BALANCES DO NOT TIE') : ''}`,
+    entityId: batchId,
+    toValue: `${created.length} imported, ${counts.alreadyImported + counts.duplicateInUpload} duplicate (${counts.alreadyImported} already imported, ${counts.duplicateInUpload} repeated in the file), ${counts.needsReview} to review, ${counts.failed} failed - ${file}${balanceCheck && balanceCheck.checked ? (balanceCheck.ok ? ' - balances tie' : ' - BALANCES DO NOT TIE') : ''}`,
   });
 
   // The statement carries its own running balance, so the opening balance can
@@ -1266,47 +1243,71 @@ async function importStatement(req, {
     }
   }
 
-  // Automatic matching of the new lines (see autoMatchNewLines).
-  // A retry of an import that already saved its lines (the first run died before matching) saves nothing new
-  // but still gets the matching pass over the lines it recognised as already on file - so retrying is how a
-  // half-finished import is completed, and it can never duplicate anything.
-  const healIds = created.length ? [] : [...new Set(duplicates.map((d) => d.of).filter(Boolean))];
-  const auto = created.length || healIds.length
-    ? await autoMatchNewLines({ ids: created.length ? created.map((t) => t.id) : healIds, account, firstId, req, autoPost })
+  // Automatic matching of the NEW lines only (see autoMatchNewLines). Lines that were already on file are never touched again.
+  const auto = created.length
+    ? await autoMatchNewLines({ ids: created.map((t) => t.id), account, firstId, req, autoPost })
     : {
       autoPosted: 0, loansLinked: 0, billsFiled: 0, chargesFiled: 0, autoMatched: 0, needsReview: 0, unmatched: 0,
     };
-  const reviewFlagged = created.filter((t) => t.reviewReason).length;
   const summary = {
-    imported: created.length,
+    imported: counts.newlyImported,
     matched: auto.autoMatched,
     unmatched: auto.unmatched,
-    duplicate: duplicates.length,
-    failed: failed.length,
-    needsReview: Math.max(auto.needsReview, reviewFlagged),
+    duplicate: counts.alreadyImported + counts.duplicateInUpload,
+    failed: counts.failed,
+    needsReview: auto.needsReview,
+    // the duplicate check (Statements Matching)
+    total: counts.total,
+    alreadyImported: counts.alreadyImported,
+    notImported: counts.notImported,
+    duplicateInUpload: counts.duplicateInUpload,
+    rowsToReview: counts.needsReview,
+    newlyImported: counts.newlyImported,
+    eligible: counts.eligible,
   };
-  const batchSaved = created.length > 0 || (failed.length > 0 && !priorImport);
-  if (batch && batchSaved) {
-    await prisma.bankImport.update({ where: { id: batch }, data: { summary: JSON.stringify(summary) } }).catch(() => {});
-  }
+  const history = await SD.finishHistory(batch, {
+    counts, failedRows: failed.map((f) => ({ line: f.line, reason: f.reason })), balanceCheck, summary, saved: ran.saved,
+  });
+  const skippedRows = [
+    ...(await SD.listRows(batchId, { filter: 'Already Imported', limit: 50 })).rows,
+    ...(await SD.listRows(batchId, { filter: 'Duplicate in Current Upload', limit: 50 })).rows,
+  ].slice(0, 50);
 
   return {
-    batch: batchSaved ? batch : null,
+    batch: history ? history.id : null,
+    uploadBatchId: batchId,
     account: account.name || account.id,
+    accountId: account.id,
+    mode,
     imported: created.length,
-    duplicates: duplicates.length,
-    duplicateRows: duplicates.slice(0, 50).map((d) => ({ line: d.row.line, date: d.row.date, amount: d.row.amount, type: d.row.type, description: d.row.description, why: d.why })),
-    // Older callers read `skipped` as the lines not imported.
-    skipped: [...duplicates.map((d) => ({ row: d.row, reason: d.why })), ...failed.map((f) => ({ row: f.row, reason: f.reason, line: f.line }))],
-    failed: failed.length,
-    failedRows: failed.slice(0, 100),
+    duplicates: counts.alreadyImported + counts.duplicateInUpload,
+    duplicateRows: skippedRows.map((r) => ({ line: r.line, date: r.date, amount: r.amount, type: r.type, description: r.description, why: r.reason })),
+    skipped: skippedRows.map((r) => ({ reason: r.reason, line: r.line })),
+    failed: counts.failed,
+    failedRows: failed.slice(0, 100).map((f) => ({ line: f.line, rowNo: f.rowNo, reason: f.reason, unreadable: f.unreadable })),
     summary,
+    stmt: counts,
+    existedWhileSaving: ran.existedNow.length,
     balanceCheck,
-    fileAlreadyImported: priorImport ? { batch: priorImport.id, on: priorImport.date } : null,
+    fileAlreadyImported: prior ? { batch: prior.id, on: prior.date } : null,
     openingSetTo,
     ...auto,
     transactions: created,
   };
+}
+
+// Read + classify + import in one step, for callers that have no review screen.
+// Needs Review / repeated rows are NOT imported without an explicit choice (decisions: [{ rowNo, decision }]).
+async function importStatement(req, {
+  rows, bankAccountId, file, autoPost = true, failedRows = [], stated = {}, sourceHash = null, decisions = null,
+}) {
+  const prep = await prepareStatement(req, {
+    rows, bankAccountId, file, failedRows, stated, sourceHash, source: 'api',
+  });
+  if (decisions && decisions.length) await SD.setDecisions(prep.batchId, decisions);
+  const out = await importBatch(req, { batchId: prep.batchId, mode: 'new', bankAccountId: prep.account.id, autoPost });
+  if (out.error) { const e = new Error(out.error); e.status = out.status; throw e; }
+  return out;
 }
 
 // What happens to the lines a statement has just brought in. (Replaced by the
@@ -1485,7 +1486,7 @@ router.post('/:id/post-to-client', async (req, res) => {
   if (txn.type !== 'Credit') return res.status(400).json({ error: 'Only money received can be matched to an invoice' });
 
   const ctx = await matchContext();
-  const client = ctx.clients.find((c) => c.name === req.body?.client || c.id === req.body?.clientId);
+  const client = clientByName(ctx.clients, req.body?.client) || ctx.clients.find((c) => c.id === req.body?.clientId);
   if (!client) return res.status(404).json({ error: 'Client not found' });
   // With an invoiceId (a clear match that named one invoice) the credit goes
   // to that invoice; otherwise across the client's open invoices, oldest first.
@@ -1962,63 +1963,109 @@ router.post('/:id/link-payment', async (req, res) => {
 
 // A debit: settle the ticked office bill(s). Oldest bill first; each one that
 // fits inside what is left of the line is linked (OfficeExpense.bankTxnId —
-// the proof of payment) and, if it was APPROVED, moved on to PAID, exactly as
-// the approval chain would. A bill still PENDING approval is linked but keeps
-// its approval state. Whatever the ticked bills do not use stays unposted.
+// the proof of payment). The link alone never pays a bill: the money has left
+// the bank, so a bill the line covers is moved to PAID when the person matching
+// it is an approver (the same people who may press "Mark as Paid" - for them
+// this is that press, recorded as such). For anybody else the bill stays PENDING
+// and the screens say "bank payment matched - waiting to be marked Paid"
+// (utils/expensePaymentState.js decides, and writes nothing itself).
+// Whatever the ticked bills do not use stays unposted.
+// The whole thing is ONE transaction that re-reads the line and the bills first, so two clicks (or two
+// people) at once can never settle the same line or pay the same bill twice.
 router.post('/:id/match-bills', async (req, res) => {
   const txn = await loadTxn(req.params.id);
   if (!txn) return res.status(404).json({ error: 'Transaction not found' });
   if (txn.type !== 'Debit') return res.status(400).json({ error: 'Only money paid out can settle an office bill' });
-  if (txnState(txn) === 'Ignored') return res.status(400).json({ error: 'This line is ignored — restore it first' });
+  if (txnState(txn) === 'Ignored' || txn.excluded || txnState(txn) === 'Reversed') return res.status(400).json({ error: 'This line is ignored — restore it first' });
   if (txn.category || txn.categoryKind || txn.createdBillId || txn.billLinks) {
     return res.status(400).json({ error: 'This line is already filed — undo that first' });
   }
-  const ids = Array.isArray(req.body?.billIds) ? req.body.billIds.map(String) : [];
+  const ids = Array.isArray(req.body?.billIds) ? [...new Set(req.body.billIds.map(String))] : [];
   if (!ids.length) return res.status(400).json({ error: 'Tick the bill(s) this payment settles.' });
-  const bills = (await prisma.officeExpense.findMany({ where: { id: { in: ids } } }))
-    .filter((e) => billFree(e, txn.id))
-    .sort((a, b) => String(a.expenseDate || '').localeCompare(String(b.expenseDate || ''))
-      || new Date(a.createdAt) - new Date(b.createdAt));
-  if (!bills.length) return res.status(400).json({ error: 'None of the ticked bills can take this payment.' });
-  let left = ROUND(txn.amount);
-  const links = [];
-  for (const b of bills) {
-    const net = expenseNet(b);
-    if (net > left + BANK_TOL) break;
-    // The payment date is the date on the statement line, not the day this ran.
-    const data = { bankTxnId: txn.id, paymentDate: b.paymentDate || String(txn.date).slice(0, 10) };
-    if (b.approvalStatus === 'APPROVED') {
-      Object.assign(data, { approvalStatus: 'PAID', paidStatus: 'Paid', paidAt: new Date(), paidById: req.user.id });
-    } else if (['PAID', 'REIMBURSED'].includes(b.approvalStatus)) {
-      data.paidStatus = 'Paid';
-    }
-    await prisma.officeExpense.update({ where: { id: b.id }, data });
-    links.push({
-      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net,
-    });
-    left = ROUND(Math.max(0, left - net));
+  const canApprove = await require('./office').isApprover(req.user); // eslint-disable-line global-require
+  const conflict = (message) => Object.assign(new Error(message), { http: 409 });
+  let out;
+  try {
+    out = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.bankTransaction.findUnique({ where: { id: txn.id } });
+      if (!fresh || fresh.category || fresh.categoryKind || fresh.createdBillId || fresh.billLinks) throw conflict('This line was just filed by someone else — reload and look again.');
+      const bills = (await tx.officeExpense.findMany({ where: { id: { in: ids } } }))
+        .filter((e) => billFree(e, txn.id))
+        .sort((a, b) => String(a.expenseDate || '').localeCompare(String(b.expenseDate || ''))
+          || new Date(a.createdAt) - new Date(b.createdAt));
+      if (!bills.length) throw Object.assign(new Error('None of the ticked bills can take this payment.'), { http: 400 });
+      let left = ROUND(txn.amount);
+      const links = [];
+      const moved = [];
+      for (const b of bills) {
+        const net = expenseNet(b);
+        if (net > left + BANK_TOL) break;
+        // The payment date is the date on the statement line, not the day this ran.
+        const m = PAYSTATE.dataForMatch(b, txn, req.user, canApprove);
+        // Conditional on the state the bill had when read: a bill paid / linked a moment ago by someone else is not touched twice.
+        const done = await tx.officeExpense.updateMany({
+          where: { id: b.id, approvalStatus: b.approvalStatus, OR: [{ bankTxnId: null }, { bankTxnId: txn.id }] },
+          data: m.data,
+        });
+        if (done.count !== 1) throw conflict(`Bill ${b.expenseCode || b.id} was changed by someone else a moment ago — reload and try again.`);
+        links.push({
+          id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net,
+          ...(m.moved ? { movedToPaid: true, approvedById: b.approvedById || null, approvedAt: b.approvedAt || null, approvedBy: b.approvedBy || null } : {}),
+        });
+        if (m.moved) moved.push(b);
+        left = ROUND(Math.max(0, left - net));
+      }
+      if (!links.length) throw Object.assign(new Error(`The oldest ticked bill is more than this ${fmtMoney(txn.amount)} payment — tick the right bill.`), { http: 400 });
+      const first = bills.find((b) => b.id === links[0].id);
+      const updated = await tx.bankTransaction.update({
+        where: { id: txn.id },
+        data: {
+          category: first.category,
+          categoryKind: 'expense',
+          vendor: first.vendor || null,
+          billLinks: JSON.stringify(links),
+          excess: left > 0.5 ? left : null,
+        },
+      });
+      return { updated, links, left, first, moved };
+    }, { timeout: 30000, maxWait: 15000 });
+  } catch (err) {
+    if (err && err.http) return res.status(err.http).json({ error: err.message });
+    throw err;
   }
-  if (!links.length) {
-    return res.status(400).json({ error: `The oldest ticked bill is more than this ${fmtMoney(txn.amount)} payment — tick the right bill.` });
-  }
-  const first = bills.find((b) => b.id === links[0].id);
-  const updated = await prisma.bankTransaction.update({
-    where: { id: txn.id },
-    data: {
-      category: first.category,
-      categoryKind: 'expense',
-      vendor: first.vendor || null,
-      billLinks: JSON.stringify(links),
-      excess: left > 0.5 ? left : null,
-    },
-  });
+  const {
+    updated, links, left, first, moved,
+  } = out;
   await learnRule(txn, { kind: 'expense', category: first.category, vendor: first.vendor || null });
   await logAudit({
     userId: req.user.id, action: 'Office bill(s) settled from the bank statement', entity: 'BankTransaction', entityId: txn.id,
-    toValue: `${links.length} bill(s) · ${fmtMoney(ROUND(txn.amount - left))}${left > 0.5 ? ` · ${fmtMoney(left)} unposted` : ''}`,
+    toValue: `${links.length} bill(s) · ${fmtMoney(ROUND(txn.amount - left))}${left > 0.5 ? ` · ${fmtMoney(left)} unposted` : ''}${moved.length ? ` · ${moved.length} marked Paid` : ''}`,
   });
+  // Each bill that became Paid says so in its own history: who, when, from what, and which statement line.
+  for (const b of moved) {
+    await logAudit({
+      userId: req.user.id,
+      actorName: actor(req),
+      action: 'Office expense status: Paid',
+      entity: 'OfficeExpense',
+      entityId: b.id,
+      field: 'approvalStatus',
+      fieldLabel: 'Approval status',
+      fromValue: PAYSTATE.approvalOf(b),
+      toValue: 'PAID',
+      reason: `Paid from the bank statement line of ${txn.date}${txn.reference ? ` (Ref ${txn.reference})` : ''}, matched by ${actor(req)}`,
+      approvalStatus: 'PAID',
+      approvedByName: actor(req),
+      approvedAt: new Date(),
+    });
+  }
   return res.json({
-    ...updated, state: txnState(updated), settled: links.length, unposted: left, pendingApproval: links.filter((l) => l.approvalStatus === 'PENDING').length,
+    ...updated,
+    state: txnState(updated),
+    settled: links.length,
+    unposted: left,
+    markedPaid: moved.length,
+    pendingApproval: links.length - moved.length - links.filter((l) => ['PAID', 'REIMBURSED'].includes(l.approvalStatus)).length,
   });
 });
 
@@ -2244,8 +2291,15 @@ router.post('/:id/uncategorise', async (req, res) => {
           paidAt: l.paidAt ? new Date(l.paidAt) : null,
           paidById: l.paidById || null,
           paymentDate: l.paymentDate || null,
+          // a bill this match moved to Paid also gets back the sign-off it had (none, when it was Pending)
+          ...(l.movedToPaid ? { approvedById: l.approvedById || null, approvedAt: l.approvedAt ? new Date(l.approvedAt) : null, approvedBy: l.approvedBy || null } : {}),
         },
       });
+      if (l.movedToPaid) {
+        await logAudit({
+          userId: req.user.id, actorName: actor(req), action: 'Office expense status: Pending', entity: 'OfficeExpense', entityId: bill.id, field: 'approvalStatus', fieldLabel: 'Approval status', fromValue: 'PAID', toValue: l.approvalStatus || 'PENDING', reason: `Bank match undone by ${actor(req)}: the bill goes back to how it was`, approvalStatus: l.approvalStatus || 'PENDING',
+        });
+      }
       restored += 1;
     }
   }
@@ -2428,6 +2482,7 @@ async function linkLoanLine(loan, txn, req, { auto = false } = {}) {
 }
 
 async function autoLinkLoans(req) {
+  const closedLoans = await closedMonth();
   const loans = await prisma.handLoan.findMany({ include: { links: true } });
   if (!loans.length) return { linked: 0 };
   const txns = await prisma.bankTransaction.findMany();
@@ -2437,6 +2492,7 @@ async function autoLinkLoans(req) {
     const r = reads.get(loan.id);
     const lines = [r.takenClear, ...r.repayClear].filter(Boolean);
     for (const t of lines) {
+      if (await autoHold(t, closedLoans)) continue;
       try {
         await linkLoanLine(loan, t, req, { auto: true });
         linked += 1;
@@ -2506,7 +2562,7 @@ function payeePattern(txn) {
 function ruleClient(txn, ctx) {
   const rule = ruleHit(txn, (ctx.rules || []).filter((r) => r.kind === 'client'));
   if (!rule) return null;
-  return ctx.clients.find((c) => c.name === rule.category) || null;
+  return clientByName(ctx.clients, rule.category);
 }
 
 // A line the auto pass (and Accept) may act on: nothing filed on it yet.
@@ -2528,7 +2584,7 @@ function linePlan(txn, ctx, loans) {
     module: 'loan',
     why,
     rule: null,
-    label: txn.type === 'Credit' ? `${l.name} — money taken by hand` : `${l.name} — cleared, paid back`,
+    label: txn.type === 'Credit' ? `${l.name || l.lender || 'Hand loan'} — money taken by hand` : `${l.name || l.lender || 'Hand loan'} — cleared, paid back`,
     action: { type: 'loan', loanId: l.loanId },
   });
   if (txn.type === 'Credit') {
@@ -2598,7 +2654,7 @@ function linePlan(txn, ctx, loans) {
     if (rule.kind === 'hand') {
       const loan = loans.find((l) => normName(l.name) === normName(rule.category));
       // The rule names a loan on file: high when the loan reading agrees, else a suggestion.
-      if (loan) return { ...loanPlan({ loanId: loan.id, name: loan.name }, loanCands.some((c) => c.loanId === loan.id) ? 'high' : 'medium', ruleWhy), rule: rule.match };
+      if (loan) return { ...loanPlan({ loanId: loan.id, name: loan.name || loan.lender || rule.category },loanCands.some((c) => c.loanId === loan.id) ? 'high' : 'medium', ruleWhy), rule: rule.match };
       return {
         confidence: 'high', module: 'hand', why: ruleWhy, rule: rule.match, label: `${rule.category || 'Hand loan'} — paid out by hand`, action: { type: 'categorise', kind: 'hand', party: rule.category || null },
       };
@@ -2677,7 +2733,7 @@ function planKey(plan) {
 
 // Run one plan: write the record in its own module with this line as proof.
 // Returns { record } on success or { error }.
-async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) {
+async function applyPlan(txn, plan, ctx, loans, req, { accepted = false, noApprove = false } = {}) {
   const a = plan.action;
   if (a.type === 'linkPayment') {
     const out = await linkPayment(txn, a.paymentId, req);
@@ -2718,20 +2774,36 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false } = {}) 
   if (a.type === 'linkBill') {
     const b = await prisma.officeExpense.findUnique({ where: { id: a.billId } });
     if (!b || !billFree(b, txn.id) || (b.bankTxnId && b.bankTxnId !== txn.id)) return { error: 'That bill is no longer free.' };
-    const data = { bankTxnId: txn.id, paymentDate: b.paymentDate || String(txn.date).slice(0, 10) };
-    if (b.approvalStatus === 'APPROVED') Object.assign(data, { approvalStatus: 'PAID', paidStatus: 'Paid', paidAt: new Date(), paidById: req.user.id });
-    else if (['PAID', 'REIMBURSED'].includes(b.approvalStatus)) data.paidStatus = 'Paid';
-    await prisma.officeExpense.update({ where: { id: b.id }, data });
-    const links = [{
-      id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net: expenseNet(b),
-    }];
+    // Same rule as "Match bills": the link never pays a bill by itself (utils/expensePaymentState.js dataForMatch).
+    // noApprove: an automatic pass (no person decided this line) only links - it never marks a bill Paid by itself.
+    const canApprove = !noApprove && !!(req && req.user) && await require('./office').isApprover(req.user); // eslint-disable-line global-require
+    const m = PAYSTATE.dataForMatch(b, txn, req.user || {}, canApprove);
     const left = ROUND(Math.max(0, ROUND(txn.amount) - expenseNet(b)));
-    await prisma.bankTransaction.update({
-      where: { id: txn.id },
-      data: {
-        category: b.category, categoryKind: 'expense', vendor: b.vendor || null, billLinks: JSON.stringify(links), excess: left > 0.5 ? left : null,
-      },
-    });
+    // One transaction, conditional on what was read: a repeat run (or a second person) cannot link or pay twice.
+    const claimed = await prisma.$transaction(async (tx) => {
+      const done = await tx.officeExpense.updateMany({
+        where: { id: b.id, approvalStatus: b.approvalStatus, OR: [{ bankTxnId: null }, { bankTxnId: txn.id }] },
+        data: m.data,
+      });
+      if (done.count !== 1) return false;
+      const links = [{
+        id: b.id, approvalStatus: b.approvalStatus, paidStatus: b.paidStatus, paidAt: b.paidAt, paidById: b.paidById, paymentDate: b.paymentDate || null, net: expenseNet(b),
+        ...(m.moved ? { movedToPaid: true, approvedById: b.approvedById || null, approvedAt: b.approvedAt || null, approvedBy: b.approvedBy || null } : {}),
+      }];
+      await tx.bankTransaction.update({
+        where: { id: txn.id },
+        data: {
+          category: b.category, categoryKind: 'expense', vendor: b.vendor || null, billLinks: JSON.stringify(links), excess: left > 0.5 ? left : null,
+        },
+      });
+      return true;
+    }, { timeout: 30000, maxWait: 15000 });
+    if (!claimed) return { error: 'That bill was changed a moment ago - nothing was linked.' };
+    if (m.moved) {
+      await logAudit({
+        userId: req.user.id, actorName: actor(req), action: 'Office expense status: Paid', entity: 'OfficeExpense', entityId: b.id, field: 'approvalStatus', fieldLabel: 'Approval status', fromValue: PAYSTATE.approvalOf(b), toValue: 'PAID', reason: `Paid from the bank statement line of ${txn.date}${txn.reference ? ` (Ref ${txn.reference})` : ''}, matched by ${actor(req)}`, approvalStatus: 'PAID', approvedByName: actor(req), approvedAt: new Date(),
+      });
+    }
     return { record: `bill ${b.expenseCode || b.billNumber || b.id}` };
   }
   if (a.type === 'newBill') {
@@ -2837,7 +2909,17 @@ async function logAutoMatch(req, txn, plan, record, how) {
 
 // The import's own pass over the debits of one account (credits go through
 // postAllNamed and hand loans through autoLinkLoans first, exactly as before).
+// A line the automatic passes must leave to a person: a suspected duplicate, or a date in a closed month.
+async function autoHold(t, closed) {
+  if (/^(Possible duplicate|Identical to another)/.test(String(t.reviewReason || ''))) return true;
+  return !!(closed && String(t.date || '').slice(0, 7) <= closed);
+}
+async function closedMonth() {
+  try { return await require('../utils/ledger').closedUpTo(); } catch { return null; } // eslint-disable-line global-require
+}
+
 async function autoFileDebits(accountId, firstId, req) {
+  const closed = await closedMonth();
   const [all, loans, ctx] = await Promise.all([
     prisma.bankTransaction.findMany(),
     prisma.handLoan.findMany({ include: { links: true } }),
@@ -2847,6 +2929,7 @@ async function autoFileDebits(accountId, firstId, req) {
   const mine = oldestFirst(onAccount(all, accountId, firstId)).filter((t) => t.type === 'Debit' && lineOpen(t, linked));
   const done = [];
   for (const txn of mine) {
+    if (await autoHold(txn, closed)) continue;
     const plan = linePlan(txn, ctx, loans);
     if (!plan || plan.confidence !== 'high' || plan.module === 'loan') continue; // loans: autoLinkLoans
     // Linking an existing bill is decided by the exact-match ladder (routes/bankRecon.js), not by this looser reading.
@@ -2956,6 +3039,7 @@ router.get('/hand-loans', async (req, res) => {
       txnId: t.id, date: t.date, amount: ROUND(t.amount), description: t.description, reference: t.reference || null, balance: t.balance == null ? null : ROUND(t.balance), account: accountLabel(accounts, t.bankAccountId), filed: t.categoryKind === 'hand',
     });
   });
+  const removed = await HLC.listRemoved().catch(() => []);
   const unentered = [...people.values()].map((p) => ({
     name: p.name, out: p.out, count: p.count, last: p.last, account: [...p.accountIds].map((id) => accountLabel(accounts, id)).join(', '), lines: p.lines.sort((a, b) => String(b.date).localeCompare(String(a.date))),
   })).sort((a, b) => b.out - a.out);
@@ -2969,6 +3053,8 @@ router.get('/hand-loans', async (req, res) => {
       amount: ROUND(l.amount),
       dateTaken: l.dateTaken,
       notes: l.notes,
+      updatedAt: l.updatedAt,
+      linkCount: (l.links || []).length,
       taken: f.taken ? {
         linkId: f.taken.id, txnId: f.taken.bankTxnId, date: f.taken.date, reference: f.taken.reference, amount: ROUND(f.taken.amount), auto: f.taken.auto,
       } : null,
@@ -2990,6 +3076,7 @@ router.get('/hand-loans', async (req, res) => {
     loans: rows,
     movements,
     unentered,
+    removed,
     summary: {
       loans: rows.length,
       taken: ROUND(rows.reduce((s, l) => s + l.amount, 0)),
@@ -3004,71 +3091,103 @@ router.get('/hand-loans', async (req, res) => {
   });
 });
 
-function loanProblems(b) {
-  const e = {};
-  if (!String(b.name || '').trim()) e.name = 'Give the loan a name.';
-  if (!(Number(b.amount) > 0)) e.amount = 'Enter the amount taken.';
-  if (!b.dateTaken || !/^\d{4}-\d{2}-\d{2}$/.test(String(b.dateTaken))) e.dateTaken = 'Enter the date taken.';
-  return e;
-}
+const HLC = require('../utils/handLoanChanges');
+
+const loanProblems = (b) => HLC.loanProblems(b);
 
 router.post('/hand-loans', async (req, res) => {
   const b = req.body || {};
   const problems = loanProblems(b);
   if (Object.keys(problems).length) return res.status(400).json({ error: 'Some fields need attention.', fields: problems });
   const loan = await prisma.handLoan.create({
-    data: {
-      name: String(b.name).trim().slice(0, 120),
-      lender: String(b.lender || '').trim().slice(0, 120) || null,
-      amount: ROUND(b.amount),
-      dateTaken: String(b.dateTaken).slice(0, 10),
-      notes: String(b.notes || '').trim().slice(0, 1000) || null,
-      createdById: req.user.id,
-    },
+    data: { ...HLC.clean(b), createdById: req.user.id },
   });
   await logAudit({ userId: req.user.id, action: 'Hand loan added', entity: 'HandLoan', entityId: loan.id, toValue: `${loan.name} · ${fmtMoney(loan.amount)}` });
   const { linked } = await autoLinkLoans(req);
   res.status(201).json({ ...loan, linked });
 });
 
+// EDIT one entry (Edit button beside the heading, and on each entry card). Updates THAT row in place - never a second row.
+// The rules (what may change, what the statement forbids, duplicates, closed books) are utils/handLoanChanges.js planEdit.
+// Several people saving the same entry: the screen sends the updatedAt it loaded; if the row has moved on since, the save
+// is refused (409) instead of overwriting the other person's change.
 router.put('/hand-loans/:id', async (req, res) => {
-  const loan = await prisma.handLoan.findUnique({ where: { id: req.params.id } });
-  if (!loan) return res.status(404).json({ error: 'Loan not found' });
-  const b = { ...loan, ...req.body };
-  const problems = loanProblems(b);
-  if (Object.keys(problems).length) return res.status(400).json({ error: 'Some fields need attention.', fields: problems });
-  const updated = await prisma.handLoan.update({
-    where: { id: loan.id },
-    data: {
-      name: String(b.name).trim().slice(0, 120),
-      lender: String(b.lender || '').trim().slice(0, 120) || null,
-      amount: ROUND(b.amount),
-      dateTaken: String(b.dateTaken).slice(0, 10),
-      notes: String(b.notes || '').trim().slice(0, 1000) || null,
-    },
-  });
-  // The lines already linked carry the loan's name on the statement view.
-  const links = await prisma.handLoanLink.findMany({ where: { loanId: loan.id } });
-  if (links.length && updated.name !== loan.name) {
-    await prisma.bankTransaction.updateMany({ where: { id: { in: links.map((l) => l.bankTxnId) } }, data: { counterparty: updated.name } });
+  const loan = await prisma.handLoan.findUnique({ where: { id: req.params.id }, include: { links: true } });
+  if (!loan) {
+    const gone = await HLC.wasRemoved(req.params.id);
+    return res.status(gone ? 410 : 404).json({ error: gone ? 'This entry was removed, so it cannot be edited.' : 'Loan not found' });
   }
-  await logAudit({ userId: req.user.id, action: 'Hand loan updated', entity: 'HandLoan', entityId: loan.id, fromValue: `${loan.name} · ${fmtMoney(loan.amount)}`, toValue: `${updated.name} · ${fmtMoney(updated.amount)}` });
+  const body = req.body || {};
+  if (body.expectedUpdatedAt && new Date(body.expectedUpdatedAt).getTime() !== loan.updatedAt.getTime()) {
+    return res.status(409).json({ error: 'Someone else changed this entry while you had it open. Close this window and open it again.' });
+  }
+  const plan = HLC.planEdit({
+    loan,
+    figures: loanFigures(loan),
+    others: await prisma.handLoan.findMany({ where: { id: { not: loan.id } }, select: { id: true, name: true, amount: true, dateTaken: true } }),
+    body,
+    closedUpTo: await closedMonth(),
+  });
+  if (plan.error) return res.status(plan.status || 400).json({ error: plan.error, fields: plan.fields });
+  if (plan.unchanged) return res.json({ ...loan, links: undefined, linked: 0, unchanged: true });
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      const hit = await tx.handLoan.updateMany({ where: { id: loan.id, updatedAt: loan.updatedAt }, data: plan.data });
+      if (hit.count !== 1) throw new Error('HAND_LOAN_MOVED');
+      // The lines already linked carry the entry's name on the statement view (a label only - the statement facts stay).
+      if (loan.links.length && plan.data.name !== loan.name) {
+        await tx.bankTransaction.updateMany({ where: { id: { in: loan.links.map((l) => l.bankTxnId) }, categoryKind: 'hand' }, data: { counterparty: plan.data.name } });
+      }
+      return tx.handLoan.findUnique({ where: { id: loan.id } });
+    });
+  } catch (err) {
+    if (err.message === 'HAND_LOAN_MOVED') return res.status(409).json({ error: 'Someone else changed this entry while you were saving. Close this window and open it again.' });
+    throw err;
+  }
+  await logAudit({
+    userId: req.user.id, action: 'Hand loan updated', entity: 'HandLoan', entityId: loan.id, fromValue: plan.summary.from, toValue: plan.summary.to,
+  });
   const { linked } = await autoLinkLoans(req);
   res.json({ ...updated, linked });
 });
 
-// Removing a loan unlinks its lines (they go back to uncategorised); the
-// statement itself is never touched.
+// REMOVE one entry, with a reason. It is not deleted: it moves, whole, to the removed list (HandLoanRemoved) with who / when / why,
+// and the audit log keeps the line. An entry that still has statement lines linked is refused (409) - unlink those first (the
+// existing Remove on each movement); that way no linked line is ever left pointing at nothing, and the statement is never touched.
+// Pressing twice (or two tabs) is safe: the second answer is 200 { already: true } and nothing changes.
 router.delete('/hand-loans/:id', async (req, res) => {
-  const loan = await prisma.handLoan.findUnique({ where: { id: req.params.id }, include: { links: true } });
-  if (!loan) return res.status(404).json({ error: 'Loan not found' });
-  const ids = loan.links.map((l) => l.bankTxnId);
-  if (ids.length) {
-    await prisma.bankTransaction.updateMany({ where: { id: { in: ids }, categoryKind: 'hand' }, data: { categoryKind: null, counterparty: null } });
+  const reason = req.body && req.body.reason;
+  const bad = HLC.reasonProblem(reason);
+  if (bad) return res.status(400).json({ error: bad, fields: { reason: bad } });
+  const first = await prisma.handLoan.findUnique({ where: { id: req.params.id } });
+  if (first) {
+    const closed = await closedMonth();
+    if (closed && String(first.dateTaken).slice(0, 7) <= closed) {
+      return res.status(400).json({ error: `The books are closed up to ${closed}. An entry taken in a closed month cannot be removed.` });
+    }
   }
-  await prisma.handLoan.delete({ where: { id: loan.id } });
-  await logAudit({ userId: req.user.id, action: 'Hand loan removed', entity: 'HandLoan', entityId: loan.id, fromValue: `${loan.name} · ${fmtMoney(loan.amount)}`, toValue: `${ids.length} line(s) unlinked` });
-  res.json({ removed: loan.id, unlinked: ids.length });
+  let out;
+  try {
+    out = await HLC.removeLoan(req.params.id, { reason, user: { id: req.user.id, name: actor(req) } });
+  } catch (err) {
+    if (err.message === 'HAND_LOAN_GONE') return res.json({ removed: req.params.id, already: true });
+    throw err;
+  }
+  if (out.notFound) return res.status(404).json({ error: 'Loan not found' });
+  if (out.already) return res.json({ removed: req.params.id, already: true, name: out.name });
+  if (out.blocked) {
+    const parts = [out.hasTaken && 'the line it was taken on', out.repayments && `${out.repayments} repayment line${out.repayments === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
+    return res.status(409).json({
+      error: `${out.loan.name} still has bank statement lines linked (${parts}). Unlink them first (Every movement, Remove), then remove the entry. The statement itself is never changed.`,
+      blocked: true, links: out.links, repayments: out.repayments,
+    });
+  }
+  await logAudit({
+    userId: req.user.id, action: 'Hand loan removed', entity: 'HandLoan', entityId: out.loan.id, reason: String(reason).trim(),
+    fromValue: `${out.loan.name} · ${fmtMoney(out.loan.amount)} · taken ${out.loan.dateTaken}`, toValue: `Removed (kept in the removed list) - ${String(reason).trim()}`,
+  });
+  res.json({ removed: out.loan.id, name: out.loan.name, already: false });
 });
 
 // Confirm a possible line (or link any eligible line) as this loan's taking
@@ -3439,11 +3558,15 @@ router.get('/imports', async (req, res) => {
     prisma.bankTransaction.findMany(),
   ]);
   const rows = onAccount(all, accountId, firstId);
+  // What the duplicate check found in each upload (Already Imported / Not Imported / Failed ...), when the upload went through it.
+  let uploads = new Map();
+  try { uploads = await SD.countsByImport(imports.map((i) => i.id)); } catch { uploads = new Map(); }
   res.json(imports.filter((i) => (i.bankAccountId || firstId) === accountId).map((i) => {
     const mine = rows.filter((t) => t.importBatch === i.id);
     const credits = mine.filter((t) => t.type === 'Credit');
     return {
       ...i,
+      upload: uploads.get(i.id) || null,
       onFile: mine.length,
       removed: Math.max(0, i.lines - mine.length),
       open: credits.filter((t) => txnState(t) !== 'Reconciled').length,
@@ -3636,13 +3759,21 @@ function parseCsv(text) {
 }
 
 // Matching, allocation, Unallocated queue, reversals, mappings (routes/bankRecon.js).
-const recon = require('./bankRecon')({
+const autoRef = { api: null };
+const reconHelpers = {
   prisma, logAudit, actor, ROUND, toIsoDate, deriveInvoiceStatus, invoiceOutstanding, ensureAccounts, onAccount, lineOpen, txnState,
-  linkPayment, applyPlan, fmtMoney, loadTxn, autoLinkLoans, autoFileDebits,
-});
+  linkPayment, applyPlan, fmtMoney, loadTxn, autoLinkLoans, autoFileDebits, autoRef,
+};
+const recon = require('./bankRecon')(reconHelpers);
 recon.install(router);
+// Auto-Reconcile: confidence bands, review queue, historical run, suggest-only switch (routes/bankAuto.js).
+autoRef.api = require('./bankAuto')(reconHelpers, recon);
+autoRef.api.install(router);
 
+router.autoApi = autoRef.api;
 router.importStatement = importStatement;
+router.prepareStatement = prepareStatement;
+router.importBatch = importBatch;
 router.reconsiderOpenLines = reconsiderOpenLines;
 router.lineDetail = recon.lineDetail;
 router.releaseLineForBill = releaseLineForBill;

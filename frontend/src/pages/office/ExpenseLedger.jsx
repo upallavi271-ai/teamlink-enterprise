@@ -27,6 +27,8 @@ import ExpenseDrawer from './ExpenseDrawer.jsx';
 import BillPreview from './BillPreview.jsx';
 import AddVendorModal from './AddVendorModal.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
+import { payChip } from './paymentProof';
+import './payproof.css';
 import { money, money2, fmtD, saveBlob } from './officeUtil';
 import './officefilters.css';
 
@@ -66,7 +68,8 @@ export default function ExpenseLedger({
   const rowsRef = useRef([]);
   rowsRef.current = rows;
   const lastKey = useRef(null);
-  const sentinel = useRef(null);
+  const boxRef = useRef(null); // the table's scrolling box (ScrollSync fit mode)
+  const endMark = useRef(null); // an empty line at the END of the box's rows
   const [openId, setOpenId] = useState(null);
   const [bill, setBill] = useState(null);
   const [del, setDel] = useState(null);
@@ -123,17 +126,21 @@ export default function ExpenseLedger({
     fetchRows(Math.floor(rowsRef.current.length / PAGE_SIZE) + 1, PAGE_SIZE, true);
   }, [busy, more, moreErr, hasMore, fetchRows]);
 
-  // The sentinel under the table: when it scrolls into view (or is already in
-  // view because the rows are few), the next page is asked for.
+  // The end mark sits at the foot of the rows INSIDE the table's own scrolling
+  // box (the box is capped to the window, so a mark under it would never move
+  // and would pull every page in at once): when the rows are scrolled to the
+  // end - or are so few that the mark is already in view - the next page is asked for.
   useEffect(() => {
-    const el = sentinel.current;
+    const el = endMark.current;
     if (!el || !hasMore || typeof IntersectionObserver === 'undefined') return undefined;
     const io = new IntersectionObserver((entries) => {
       if (entries.some((en) => en.isIntersecting)) loadMore();
-    }, { rootMargin: '0px 0px 240px 0px' });
+    }, { root: boxRef.current || null, rootMargin: '0px 0px 240px 0px' });
     io.observe(el);
     return () => io.disconnect();
   }, [hasMore, loadMore, rows.length]);
+  // A new filter / sort shows the first rows again (the box keeps its scroll otherwise).
+  useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = 0; }, [key]);
   // The page's filters and its New Expense modal read the options.
   useEffect(() => { if (data?.options && onOptions) onOptions(data.options); }, [data, onOptions]);
 
@@ -204,7 +211,7 @@ export default function ExpenseLedger({
         </div>
       </div>
 
-      <ScrollSync className={`tbl-wrap oe-lg-tbl oe-lg2${busy ? ' busy' : ''}`} deps={[rows.length, !!data]}>
+      <ScrollSync fit bodyRef={boxRef} className={`tbl-wrap oe-lg-tbl oe-lg2${busy ? ' busy' : ''}`} deps={[rows.length, !!data]}>
         <table>
           <thead>
             <tr>
@@ -256,7 +263,10 @@ export default function ExpenseLedger({
                 <td className="num" title={money2(r.total)}><b>{money(r.total)}</b></td>
                 <Money v={r.paid} cls="oe-paid" />
                 <Money v={r.pending} cls="oe-pend" />
-                <td className="oe-nowrap"><ApprovalBadge s={r.status} /></td>
+                <td className="oe-nowrap">
+                  <ApprovalBadge s={r.status} />
+                  {payChip(r.payment) && <div className="oe-lg-pay"><span className={payChip(r.payment).cls} title={payChip(r.payment).title}>{payChip(r.payment).text}</span></div>}
+                </td>
                 <td className="oe-nowrap">
                   {r.paymentDate
                     ? <span title={r.paymentDateSource === 'bank' ? 'The date on the bank statement line that paid it' : (r.paymentDateSource === 'marked' ? 'The day it was marked paid - no bank line or payment date is on record' : 'The payment date recorded on the bill')}>{fmtD(r.paymentDate)}{r.paymentDateSource === 'marked' && <span className="cell-muted"> (marked)</span>}</span>
@@ -265,8 +275,10 @@ export default function ExpenseLedger({
                 <td className="oe-nowrap">
                   {r.bill && r.bill.onServer && <button type="button" className="link-btn" onClick={() => setBill(r)}>View</button>}
                   {r.bill && !r.bill.onServer && <span className="cell-muted" title={`Only the file name is on record: ${r.bill.name}`}>name only</span>}
-                  {!r.bill && r.bankLine && <span className="cell-muted" title="Paid off an imported bank statement line">bank line</span>}
-                  {!r.bill && !r.bankLine && <span className="cell-muted">—</span>}
+                  {/* The bank line is shown EXPLICITLY (date, amount, matched or not) from the one truth table - never a bare "bank line". It sits beside a bill file when both exist. */}
+                  {r.bankLine && <div className={`oe-lg-prooftext oe-pt-${(r.payment && r.payment.tone) || 'grey'}`} title={r.payment ? r.payment.reason : 'An imported bank statement line is linked'}>{(r.payment && r.payment.proof && r.payment.proof.text) || 'Bank line'}</div>}
+                  {!r.bankLine && r.proofLink && <span className="cell-muted oe-pay-bad" title={r.payment ? r.payment.reason : 'The linked bank line cannot be used'}>{(r.payment && r.payment.proof && r.payment.proof.text) || 'link broken'}</span>}
+                  {!r.bill && !r.bankLine && !r.proofLink && <span className="cell-muted">—</span>}
                 </td>
                 <td className="oe-lg-actions">
                   <button type="button" className="link-btn" onClick={() => setOpenId(r.id)}>View</button>
@@ -301,10 +313,11 @@ export default function ExpenseLedger({
             </tfoot>
           )}
         </table>
+        <div className="oe-lg-end-mark" ref={endMark} aria-hidden="true" />
       </ScrollSync>
 
       {data && data.total > 0 && (
-        <div className="oe-lg-more" ref={sentinel} aria-live="polite">
+        <div className="oe-lg-more" aria-live="polite">
           <span className="small-muted">Showing {rows.length} of {data.total} expense{data.total === 1 ? '' : 's'} · the TOTAL row counts all {data.total}</span>
           {more && <span className="oe-lg-more-s"><span className="oe-spin oe-spin-sm" aria-hidden="true" /> Loading more…</span>}
           {moreErr && (

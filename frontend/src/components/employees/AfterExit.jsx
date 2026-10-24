@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import Combo from '../Combo.jsx';
 
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
@@ -45,7 +46,7 @@ export default function AfterExit({ canEdit = false, onChanged }) {
 
   const bits = [];
   if (c.clients) bits.push(`${plural(c.clients, 'client needs', 'clients need')} a new BDE`);
-  if (c.jobs) bits.push(`${plural(c.jobs, 'job needs', 'jobs need')} a new team lead or recruiter`);
+  if (c.jobs) bits.push(`${plural(c.jobs, 'requirement needs', 'requirements need')} a new team lead or recruiter`);
   if (c.people) bits.push(`${plural(c.people, 'person needs', 'people need')} a new manager`);
   const waiting = (c.approvals || 0) + (c.followUps || 0) + (c.tasks || 0);
   if (waiting) bits.push(`${plural(waiting, 'item is', 'items are')} waiting on someone who left`);
@@ -97,7 +98,7 @@ export default function AfterExit({ canEdit = false, onChanged }) {
 
           {(data.jobs || []).length > 0 && (
             <section style={{ marginBottom: 16 }}>
-              <h4 style={{ margin: '0 0 6px' }}>Jobs that lost their {`team lead / recruiter`} ({data.jobs.length})</h4>
+              <h4 style={{ margin: '0 0 6px' }}>Requirements that lost their {`team lead / recruiter`} ({data.jobs.length})</h4>
               <ul style={{ margin: 0, paddingLeft: 18 }}>
                 {data.jobs.map((j, i) => (
                   <li key={`${j.id}-${j.missing}-${i}`}>
@@ -121,10 +122,10 @@ export default function AfterExit({ canEdit = false, onChanged }) {
                     <div style={{ fontWeight: 600 }}>{dept || 'No department'}</div>
                     {canEdit && (
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '4px 0 6px' }}>
-                        <select value={chosen[dept] || ''} onChange={(e) => setChosen({ ...chosen, [dept]: e.target.value })} aria-label={`New manager for ${dept}`} style={{ minWidth: 220 }}>
+                        <Combo value={chosen[dept] || ''} onChange={(e) => setChosen({ ...chosen, [dept]: e.target.value })} aria-label={`New manager for ${dept}`} style={{ minWidth: 220 }}>
                           <option value="">{opts.length ? 'Choose the new manager' : ((m && m.empty) || 'Loading...')}</option>
                           {opts.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
-                        </select>
+                        </Combo>
                         <button type="button" className="btn btn-primary" disabled={busy || !n || !chosen[dept]} onClick={() => move(dept, people)}>
                           {busy ? 'Moving...' : `Move ${n || ''} ${n === 1 ? 'person' : 'people'} to them`}
                         </button>

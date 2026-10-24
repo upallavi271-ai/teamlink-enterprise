@@ -8,7 +8,10 @@ import { useContactRule } from './useMayMessage.js';
 import {
   smsInfo, CHANNEL_ICON, canManageTemplates, useTokens, useUsable, useChannels, purposesFor, templateFor,
 } from './msgKit.js';
+import { ProviderLine, StatusTicks } from '../comm/commKit.jsx';
+import { useWaSender } from './WaSender.jsx';
 import './messaging.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // ONE WINDOW FOR EVERY WAY OF REACHING ONE PERSON — Call, Mail, WhatsApp, SMS.
@@ -73,6 +76,9 @@ export default function ContactDialog({
   const [note, setNote] = useState('');
   const [logged, setLogged] = useState('');
   const [copied, setCopied] = useState(false);
+  const [attach, setAttach] = useState({ resume: false, offer: false }); // WhatsApp: send the resume / offer letter file with the message
+  // WhatsApp: which company number the message leaves from (only the numbers the Admin gave this login; none = no sending)
+  const wa = useWaSender(ch === 'WhatsApp', pv && pv.waNumber);
   // call
   const [script, setScript] = useState(null);
   const [vocab, setVocab] = useState(null);
@@ -134,7 +140,7 @@ export default function ContactDialog({
       setPvErr('');
       const own = purpose === '' || touched;
       api.post('/messaging/preview', {
-        audience, ids: [personId], channels: [ch], kind: 'individual', purposeKey: purpose || undefined, language, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined,
+        audience, ids: [personId], channels: [ch], kind: 'individual', purposeKey: purpose || undefined, language, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined, waNumberId: ch === 'WhatsApp' ? wa.numberId : undefined,
         perChannel: { [ch]: { templateId: tpl ? tpl.id : undefined, ...(own ? { subject, body: text } : {}) } },
       }).then((r) => {
         tries.current = 0;
@@ -147,7 +153,7 @@ export default function ContactDialog({
       });
     }, 250);
     return () => clearTimeout(t);
-  }, [audience, personId, ch, purpose, language, tpl && tpl.id, touched, touched ? text : '', touched ? subject : '', usable, isCall, tick]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [audience, personId, ch, purpose, language, tpl && tpl.id, touched, touched ? text : '', touched ? subject : '', usable, isCall, tick, wa.numberId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The call script
   useEffect(() => {
@@ -164,9 +170,24 @@ export default function ContactDialog({
   const hasAddr = address === undefined ? true : !!address;
   const why = first && first.status !== 'queued' ? first.reason : null;
   // details that are not on this profile stay as {{placeholders}} in the text: they must be replaced by hand
-  const leftover = [...new Set((String(text).match(/{{s*w+s*}}/g) || []).map((m) => m.replace(/[{}s]/g, '')))];
+  const leftoverAll = [...new Set((String(text).match(/\{\{\s*\w+\s*\}\}/g) || []).map((m) => m.replace(/[{}\s]/g, '')))];
   const labelOf = (k) => { const t = tokenInfo && tokenInfo.tokens.find((x) => x.key === k || (x.aliases || []).includes(k)); return t ? t.label : k; };
-  const needsHand = leftover.length > 0;
+  // The agreement link is not "filled by hand": it is made with one button (below).
+  const linkMissing = audience === 'clients' && !isCall && (leftoverAll.includes('agreementLink') || !!(first && (first.missing || []).includes('agreementLink')));
+  const leftover = leftoverAll.filter((k) => k !== 'agreementLink');
+  const needsHand = leftover.length > 0 || linkMissing;
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkErr, setLinkErr] = useState('');
+  async function makeLink() {
+    setLinkBusy(true); setLinkErr('');
+    try {
+      const r = await api.post(`/agreement/${personId}/link`, {});
+      const url = r.data && r.data.url;
+      // text you already changed keeps your words: only the placeholder is filled
+      if (url && touched) setText((t) => String(t).replace(/\{\{\s*agreementLink\s*\}\}/g, url));
+      setTick((x) => x + 1);
+    } catch (e) { setLinkErr(e.response?.data?.error || 'The link could not be made. Please try again.'); } finally { setLinkBusy(false); }
+  }
 
   // ---- logging an open-in-own-app contact --------------------------------------
   async function logDevice() {
@@ -199,8 +220,9 @@ export default function ContactDialog({
     try {
       const own = purpose === '' || touched;
       const r = await api.post('/messaging/send', {
-        audience, id: personId, channel: ch, purposeKey: purpose || undefined, language, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined,
+        audience, id: personId, channel: ch, purposeKey: purpose || undefined, language, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined, waNumberId: ch === 'WhatsApp' ? wa.numberId : undefined,
         perChannel: { [ch]: { templateId: tpl ? tpl.id : undefined, ...(own ? { subject, body: text } : {}) } },
+        attachments: ch === 'WhatsApp' && audience === 'candidates' && !masked ? [attach.resume && { type: 'resume' }, attach.offer && applicationId && { type: 'offer', applicationId }].filter(Boolean) : undefined,
       });
       setJobId(r.data.jobId); setResult(r.data);
       if (onLogged) onLogged({ channel: ch });
@@ -216,7 +238,7 @@ export default function ContactDialog({
         await new Promise((res) => { setTimeout(res, 500); });
         // eslint-disable-next-line no-await-in-loop
         const j = await api.get(`/messaging/bulk/${jobId}`);
-        if (j.data.status === 'done') { const row = j.data.recipients[0]; setResult({ jobId, result: { status: row.status, reason: row.reason, address: row.address, sandbox: row.sandbox }, finished: true }); break; }
+        if (j.data.status === 'done') { const row = j.data.recipients[0]; setResult({ jobId, result: { status: row.status, reason: row.reason, address: row.address, sandbox: row.sandbox, provider: row.provider, via: row.via, queued: row.queued, providerRef: row.providerRef }, finished: true }); break; }
       }
     } catch (e) { setResult({ error: e.response?.data?.error || 'Could not try again.' }); } finally { setBusy(false); }
   }
@@ -311,10 +333,10 @@ export default function ContactDialog({
             </div>
             <div className="field">
               <label>What to say{manage}</label>
-              <select value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPicked(true); setPurpose(e.target.value === '__own' ? '' : e.target.value); }}>
+              <Combo value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPicked(true); setPurpose(e.target.value === '__own' ? '' : e.target.value); }}>
                 {purposes.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
                 <option value="__own">No script</option>
-              </select>
+              </Combo>
               {script && script.text && <div className="msg-preview" style={{ marginTop: 6 }}>{script.text}</div>}
             </div>
             <div className="field">
@@ -335,13 +357,32 @@ export default function ContactDialog({
   // ================== MAIL / WHATSAPP / SMS ====================================
   const r = result && result.result;
   let box = null;
+  const word = ch === 'Email' ? 'Mail' : ch;
+  const when = r && r.at ? ` at ${new Date(r.at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}` : '';
   if (result) {
-    if (result.error) box = <div className="msg-box red">{result.error}</div>;
-    else if (!r) box = <div className="msg-box blue">Still sending. You can close this: it will finish by itself.</div>;
-    else if (r.status === 'sent') box = <div className="msg-box green"><b>Sent</b> to {name} ({r.address}).{r.sandbox && <div>This is the test copy of TeamLink: nothing was really sent.</div>}</div>;
-    else if (r.status === 'failed') box = <div className="msg-box red"><b>Failed.</b> {r.reason}</div>;
-    else if (r.status === 'blocked') box = <div className="msg-box red"><b>Blocked.</b> {r.reason}</div>;
-    else box = <div className="msg-box orange"><b>Not sent.</b> {r.reason}</div>;
+    if (result.error) box = <div className="msg-box red"><b>{word} status: Not sent.</b> {result.error}</div>;
+    else if (!r) box = <div className="msg-box blue"><b>{word} status: Waiting.</b> Still sending. You can close this: it will finish by itself.</div>;
+    else if (r.status === 'sent') {
+      const how = r.via ? ` via ${r.via}` : '';
+      box = (
+        <div className={`msg-box ${r.queued ? 'blue' : 'green'}`}>
+          <b>{word} status: {r.queued ? 'Queued' : 'Sent'}</b>{how} to {name} ({r.address}){when}.
+          {r.queued && <div>{r.provider === 'whatsapp.qr' ? 'It waits in line: this number sends one message at a time with a pause, so it can take a few minutes.' : 'The phone has it and will send it in a moment.'}</div>}
+          {r.tried && <div>Another way was tried first: {r.tried}</div>}
+          {r.sandbox && <div>This is the test copy of TeamLink: nothing was really sent.</div>}
+          {r.providerRef && ch !== 'Email' && <StatusTicks providerRef={r.providerRef} channel={ch} initial={r.queued ? 'queued' : 'sent'} />}
+          {ch === 'WhatsApp' && (
+            <div style={{ marginTop: 6 }}>
+              Their reply comes in the same chat as this message (Follow-ups → WhatsApp chats), sent and received together.{' '}
+              <Link className="btn btn-sm" to={`/ats/followups?sub=chats&chat=${{ candidates: 'CANDIDATE', clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(personId)}`} onClick={onClose}>Open this conversation</Link>
+            </div>
+          )}
+        </div>
+      );
+    }
+    else if (r.status === 'failed') box = <div className="msg-box red"><b>{word} status: Failed{when}.</b> {r.reason} Press Try again.</div>;
+    else if (r.status === 'blocked') box = <div className="msg-box red"><b>{word} status: Blocked.</b> {r.reason}</div>;
+    else box = <div className="msg-box orange"><b>{word} status: Not sent.</b> {r.reason}</div>;
   }
   const channelReady = !!(status && status[ch] && status[ch].configured);
   const sendWord = { Email: 'Send mail', SMS: 'Send SMS', WhatsApp: 'Send WhatsApp' }[ch];
@@ -361,9 +402,9 @@ export default function ContactDialog({
           <button type="button" className="btn" onClick={onClose}>{result && !result.error ? 'Close' : 'Cancel'}</button>
           {r && r.status === 'failed' && <button type="button" className="btn btn-primary" disabled={busy} onClick={retry}>{busy ? 'Trying…' : 'Try again'}</button>}
           {!result && (sendable || !!(first && first.missing && first.missing.length > 0 && !first.reason.startsWith('No ') && first.status === 'skipped' && channelReady)) && (
-            <button type="button" className="btn btn-primary" title={needsHand ? 'Replace the {{details}} in the message first' : ''} disabled={busy || !text.trim() || needsHand || !sendable && !touched} onClick={send}>{busy ? 'Sending…' : sendWord}</button>
+            <button type="button" className="btn btn-primary" title={needsHand ? 'Replace the {{details}} in the message first' : ''} disabled={busy || !text.trim() || needsHand || (!sendable && !touched) || (ch === 'WhatsApp' && !wa.canSend)} onClick={send}>{busy ? 'Sending…' : sendWord}</button>
           )}
-          {!masked && !result && !sendable && !(channelReady && first && first.status === 'skipped') && ch === 'WhatsApp' && <button type="button" className="btn btn-primary" disabled={!phone || !text.trim() || needsHand} onClick={openWhatsApp}>Open in WhatsApp</button>}
+          {!masked && !result && !sendable && !(channelReady && first && first.status === 'skipped') && ch === 'WhatsApp' && wa.canSend && <button type="button" className="btn btn-primary" disabled={!phone || !text.trim() || needsHand} onClick={openWhatsApp}>Open in WhatsApp</button>}
           {!masked && !result && !sendable && !(channelReady && first && first.status === 'skipped') && ch === 'Email' && <button type="button" className="btn btn-primary" disabled={!email || !text.trim() || needsHand} onClick={openMail}>Open in my mail app</button>}
           {!masked && !result && !sendable && !(channelReady && first && first.status === 'skipped') && ch === 'SMS' && <button type="button" className="btn btn-primary" disabled={!text.trim()} onClick={copy}>{copied ? 'Copied' : 'Copy message'}</button>}
           {masked && !result && !sendable && !(channelReady && first && first.status === 'skipped') && <button type="button" className="btn btn-primary" disabled={!!(asked && asked.ok)} onClick={() => askColleague(ch)}>Ask the recruiter to send it</button>}
@@ -372,6 +413,8 @@ export default function ContactDialog({
     >
       {showChooser && <ChannelButtons ch={ch} setCh={setCh} status={status} email={email} phone={phone} />}
       <ChannelStrip showHelp={false} />
+      {ch === 'WhatsApp' && !result && wa.node}
+      {(ch === 'WhatsApp' || ch === 'SMS') && !result && !(ch === 'WhatsApp' && wa.active) && <ProviderLine channel={ch} />}
       <div className="small-muted" style={{ marginBottom: 8 }}>
         To: {masked ? ((first && first.address) || 'hidden') : (address === undefined ? (first && first.address) : (address || (ch === 'Email' ? 'no email address on this profile' : 'no phone number on this profile')))}
         {masked && ' (the number stays hidden: TeamLink sends it for you)'}
@@ -381,10 +424,10 @@ export default function ContactDialog({
         <>
       <div className="field">
         <label htmlFor="cd-tpl">Template{manage}</label>
-        <select id="cd-tpl" value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPicked(true); setPurpose(e.target.value === '__own' ? '' : e.target.value); }}>
+        <Combo id="cd-tpl" value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPicked(true); setPurpose(e.target.value === '__own' ? '' : e.target.value); }}>
           {purposes.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
           <option value="__own">Write my own message</option>
-        </select>
+        </Combo>
       </div>
       {langs.length > 1 && purpose && (
         <div className="field"><label>Language</label>
@@ -410,12 +453,31 @@ export default function ContactDialog({
             {locked && <div className="small-muted">{ch === 'WhatsApp' ? 'WhatsApp sends the wording Meta approved, so it cannot be changed here.' : 'This SMS is a registered template, so its words cannot be changed here.'}</div>}
             {touched && tpl && !locked && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setTouched(false)}>Back to the template words</button>}
           </div>
+          {ch === 'WhatsApp' && audience === 'candidates' && !masked && sendable && (
+            <div className="cm-attach">
+              <label><input type="checkbox" checked={attach.resume} onChange={(e) => setAttach({ ...attach, resume: e.target.checked })} /> Send the resume file with this message</label>
+              {applicationId && <label><input type="checkbox" checked={attach.offer} onChange={(e) => setAttach({ ...attach, offer: e.target.checked })} /> Send the offer letter file</label>}
+            </div>
+          )}
         </>
       )}
 
       {pvErr && <div className="msg-box red">{pvErr}</div>}
       {box}
-      {!result && needsHand && (
+      {!result && linkMissing && (
+        <div className="msg-box orange" role="alert">
+          <b>The agreement link is not ready yet.</b> The message has a place for it, but this client has no working link. Make the link here: it is filled into the message by itself. Nothing is sent until you press Send mail.
+          <div style={{ marginTop: 6 }}>
+            <button type="button" className="btn btn-primary" disabled={linkBusy} onClick={makeLink}>{linkBusy ? 'Making the link…' : 'Create agreement link'}</button>
+          </div>
+          {linkErr && <div className="msg-box red" style={{ marginTop: 6 }}>{linkErr}</div>}
+        </div>
+      )}
+      {!result && !sendable && first && !needsHand && first.status === 'skipped' && channelReady && !touched && (
+        <div className="msg-box orange" role="alert"><b>Send is off for now.</b> {why || 'Something in the message is missing.'} Change the message or fix the detail, then you can send it.</div>
+      )}
+      {!result && first && first.warning && <div className="msg-box orange" role="status">{first.warning}</div>}
+      {!result && leftover.length > 0 && (
         <div className="msg-box orange"><b>Not on this profile yet:</b> {leftover.map(labelOf).join(', ')}. Replace {leftover.map((k) => `{{${k}}}`).join(', ')} in the message by hand, then you can send it.</div>
       )}
       {!result && !sendable && first && !(first.missing && first.missing.length && channelReady && first.status === 'skipped') && (

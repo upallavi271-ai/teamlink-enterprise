@@ -32,6 +32,9 @@ const { renderPayslip } = require('../utils/payslipPdf');
 // Payroll -> Accounts (SPEC B): versioned structures, the per-employee engine.
 const SV = require('../utils/salaryVersions');
 const PE = require('../utils/payrollEngine');
+const PEdit = require('../utils/payrollEdit'); // payroll edit and recalculate (2026-10-13)
+const PC = require('../utils/payrollCycle'); // payroll cycle (16th to 15th) - the dates behind a payroll month
+const ANL = require('../utils/absentNoLeave');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -66,9 +69,7 @@ async function payslipReach(req) {
   const own = await prisma.employee.findUnique({ where: { userId: req.user.id }, select: { id: true } });
   const ownId = own ? own.id : null;
   if (req.user.caps.payrollManage) return { ownId, where: payrollEmployeeWhere(req) };
-  if (!req.user.caps.hrmsSelfOnly && await can(req.user, 'hrms', 'hrms', 'Payroll & Compensation', 'export')) {
-    return { ownId, where: employeeWhere(req.user) };
-  }
+  // SECURITY (2026-10-13): no other reach. Manager / Assistant Manager / STL / TL read their OWN payslip only.
   return { ownId, where: null };
 }
 function reachWhere(reach) {
@@ -327,7 +328,8 @@ router.put('/ctc-settings', requirePerm(null, 'hrms', 'Payroll & Compensation', 
 router.get('/policy', async (req, res) => {
   // The PT slab rides along so the settings screen can show it; it is edited
   // in utils/salaryRules.js, its one home.
-  res.json({ ...(await getPolicy()), ptSlab: PT_SLAB, ptState: PT_STATE });
+  const st = await PC.getSettings({ fresh: true });
+  res.json({ ...(await getPolicy()), ptSlab: PT_SLAB, ptState: PT_STATE, payrollCycle: st.cycle, absentNoLeave: st.absent, payrollCycleSaved: st.saved });
 });
 
 router.put('/policy', requirePerm(null, 'hrms', 'Payroll & Compensation', 'configure'), async (req, res) => {
@@ -360,7 +362,16 @@ router.put('/policy', requirePerm(null, 'hrms', 'Payroll & Compensation', 'confi
 
 router.get('/fnf', requirePerm(null, 'hrms', 'Payroll & Compensation', 'edit'), async (req, res) => {
   const requests = await prisma.fnfRequest.findMany({ include: { employee: true }, orderBy: { createdAt: 'desc' } });
-  res.json(requests);
+  // Full & Final follows the payroll cycle: the payroll month the last working day falls in,
+  // and how many of its days were worked (the rest are not paid).
+  const st = await PC.getSettings();
+  res.json(requests.map((r) => {
+    const m = PC.monthOfDate(String(r.lastWorkingDate).slice(0, 10), st.cycle);
+    if (!m) return r;
+    const c = PC.cycleOf(m.month, st.cycle);
+    const last = String(r.lastWorkingDate).slice(0, 10);
+    return { ...r, payrollMonth: c.key, payrollHeading: c.heading, payrollFrom: c.from, payrollTo: c.to, daysWorkedInCycle: Math.max(0, PC.daysBetween(c.from, last > c.to ? c.to : last)), cycleDays: c.days };
+  }));
 });
 
 router.patch('/fnf/:id/process', requirePerm(null, 'hrms', 'Payroll & Compensation', 'approve'), async (req, res) => {
@@ -421,7 +432,7 @@ router.post('/run', requirePerm(null, 'hrms', 'Payroll & Compensation', 'create'
       return res.status(409).json({ error: 'Nobody in this run has a salary structure effective this month — set a CTC on Salary Structure first.', skipped: r.skipped });
     }
     return res.status(201).json({
-      month, period: r.period, count: r.rows.length, created: r.created, updated: r.updated,
+      month, period: r.period, cycle: r.cycle, count: r.rows.length, created: r.created, updated: r.updated,
       locked: r.locked, skipped: r.skipped, run: r.run, totals: r.totals,
     });
   } catch (err) {
@@ -532,6 +543,10 @@ function fmtDoj(d) {
 
 async function payslipPayload(slip) {
   const company = await prisma.company.findFirst();
+  // The pay period behind the month name (utils/payrollCycle.js): "Pay period 16 Aug 2026 - 15 Sep 2026".
+  const cyc = await PC.cycleFor(slip.month);
+  const snap = slip.payrollEntryId ? await PE.readSnapshot(slip.month) : null;
+  const awl = snap && snap.people && snap.people[slip.employeeId] ? snap.people[slip.employeeId].awl : null;
   const e = slip.employee;
   const isStipend = slip.payMode === 'Stipend';
   const gross = Number(slip.gross) || (slip.basic + slip.hra + (slip.bonus || 0) + (slip.specialAllowance || 0));
@@ -549,6 +564,8 @@ async function payslipPayload(slip) {
   // Recruiter-joinings incentive (Super Admin's decision, utils/recruiterJoinings.js):
   // its own earning line, already inside the run's gross.
   const incentive = Math.max(0, Number(slip.incentive) || 0);
+  // Payroll edit (2026-10-13): added earning / deduction rows keep their own names on the payslip.
+  const editLines = slip.payrollEntryId ? await PEdit.payslipLines(slip.id) : null;
   const earnings = [
     ...(isStipend
       ? [{ label: 'Stipend', amount: gross - incentive }]
@@ -560,15 +577,22 @@ async function payslipPayload(slip) {
         { label: 'Bonus', amount: slip.bonus || 0 },
         { label: 'Special Allowance', amount: slip.specialAllowance || 0 },
       ]),
-    ...(Number(slip.arrears) > 0 ? [{ label: 'Arrears', amount: Number(slip.arrears) }] : []),
+    ...(editLines && editLines.earnings.reduce((n, x) => n + x.amount, 0) === Math.round(Number(slip.arrears) || 0)
+      ? editLines.earnings
+      : (Number(slip.arrears) > 0 ? [{ label: 'Arrears', amount: Number(slip.arrears) }] : [])),
     ...(incentive > 0 ? [{ label: 'Incentive', amount: incentive }] : []),
   ];
+  // Absent without leave: plain lines + the rupee amount (it is inside the LOP figure below).
+  const awlLop = awl ? Number(awl.lop) || 0 : 0;
+  const awlAmount = awlLop > 0 && workingDays ? Math.round(((Number(gross) - incentive - (Number(slip.arrears) || 0)) * awlLop) / workingDays) : 0;
   const deductions = [
     ...(isStipend ? [] : [{ label: 'PF', amount: pf }, { label: 'PT', amount: pt }]),
     // SPEC B lines, printed only when the run deducted them.
     ...(Number(slip.esiEmployee) > 0 ? [{ label: 'ESI', amount: Number(slip.esiEmployee) }] : []),
     ...(Number(slip.tds) > 0 ? [{ label: 'TDS', amount: Number(slip.tds) }] : []),
-    ...(Number(slip.otherDeductions) > 0 ? [{ label: 'Other Deductions', amount: Number(slip.otherDeductions) }] : []),
+    ...(editLines && editLines.deductions.reduce((n, x) => n + x.amount, 0) === Math.round(Number(slip.otherDeductions) || 0)
+      ? editLines.deductions
+      : (Number(slip.otherDeductions) > 0 ? [{ label: 'Other Deductions', amount: Number(slip.otherDeductions) }] : [])),
     ...(lopDeduction > 0 ? [{ label: `LOP (${lopDays} day${lopDays === 1 ? '' : 's'})`, amount: lopDeduction }] : []),
     ...(lateCut > 0 ? [{ label: `Late arrivals (${slip.lateDays || 0})`, amount: lateCut }] : []),
   ];
@@ -578,6 +602,10 @@ async function payslipPayload(slip) {
     id: slip.id,
     month: slip.month,
     period: monthLabel(slip.month),
+    // Name + dates, so nobody is confused: "Sep 2026" is the 16 Aug - 15 Sep period.
+    periodTitle: `Salary slip: ${cyc.label}`, periodLabel: cyc.label,
+    periodFrom: cyc.from, periodTo: cyc.to, periodDays: cyc.days, periodRange: cyc.fullRangeText,
+    periodLine: `Pay period ${cyc.fullRangeText}`,
     payMode: slip.payMode || 'Package',
     generatedAt: slip.generatedAt,
     company: {
@@ -610,6 +638,10 @@ async function payslipPayload(slip) {
     netPay: Number(slip.netPay) || 0,
     lopDeduction,
     lateCut,
+    absentNoLeave: awlLop > 0 ? {
+      days: awl.days, halfDays: awl.halfDays || 0, dates: awl.dates || [], halfDates: awl.halfDates || [], perDay: awl.perDay, perHalf: awl.perHalf,
+      lopDays: awlLop, amount: awlAmount, text: ANL.lineText(awl),
+    } : null,
   };
 }
 
@@ -627,7 +659,10 @@ async function slipForReader(req, res) {
 router.get('/payslips/:id', async (req, res) => {
   const slip = await slipForReader(req, res);
   if (!slip) return undefined;
-  return res.json(await payslipPayload(slip));
+  const payload = await payslipPayload(slip);
+  // "Edited" badge + the superseded older payslips: for people who can edit payroll only, never the employee.
+  if (await can(req.user, 'hrms', 'hrms', 'Payroll & Compensation', 'edit')) payload.editInfo = await PEdit.editInfoFor(slip);
+  return res.json(payload);
 });
 
 router.get('/payslips/:id/pdf', async (req, res) => {
@@ -645,6 +680,7 @@ router.get('/payslips/:id/pdf', async (req, res) => {
 
 // SPEC B — per-employee payroll records, attendance input, approval, sync to
 // Accounts, mark paid and the compliance report (routes/payrollRuns.js).
+require('./payrollCycle')(router, { payrollEmployeeWhere });
 require('./payrollRuns')(router, { payrollEmployeeWhere });
 
 module.exports = router;

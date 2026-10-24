@@ -282,7 +282,10 @@ async function agreementAccess(user, client) {
   if (held.includes('ACCOUNTANT')) return { view: true, edit: false, as: 'accounts' };
   // A TL / STL VIEWS the agreements of the clients in their own team's scope
   // (clients rule, 2026-10-05 — read only, like Accounts).
+  // USER RULE 2026-10-12: "TLs ki, recruiters ki agreements visible avvakudadu" - a TL / STL (and a recruiter / HR) reads NO agreement.
+  // Only the BDE team lead (a TL of the BDE department) keeps the BDE desk's view.
   if (['TL', 'STL'].includes(s.atsRole)) {
+    if (!scope.isBdeTl(user)) return { view: false, edit: false, as: null };
     const inScope = !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
     return { view: inScope, edit: false, as: inScope ? 'tl' : null };
   }
@@ -307,7 +310,7 @@ async function visibleClientWhere(user) {
   const held = [user.role, s.atsRole, s.accountsRole].filter(Boolean);
   if (held.includes('ACCOUNTANT')) return {};
   if (s.atsRole === 'BDE') return { OR: [scope.clientWhere(user), ...(user.name ? [{ bdeOwner: user.name }] : [])] };
-  if (['TL', 'STL'].includes(s.atsRole)) return scope.clientWhere(user);
+  if (['TL', 'STL'].includes(s.atsRole)) return scope.isBdeTl(user) ? scope.clientWhere(user) : null; // 2026-10-12: not for a recruiting TL / STL
   return null;
 }
 

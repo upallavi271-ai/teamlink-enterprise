@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const RT = require('../utils/reqTeamLeads');
 const { requireAuth, requirePerm } = require('../middleware/auth');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus, txnState,
@@ -10,6 +11,9 @@ const CSRC = require('../utils/candidateSource'); // the clean source list (one 
 
 const router = express.Router();
 router.use(requireAuth);
+// A RECRUITER'S REPORTS ARE THEIR OWN (user, 2026-10-12; utils/ownOnly.js): these older team / client / owner groupings
+// count whole jobs, other recruiters included, so a plain Recruiter is sent to My results instead.
+router.use(require('../utils/ownOnly').refuseOwnOnly());
 
 // A REPORT IS DATA, SO IT IS GUARDED LIKE DATA.  (§20)
 //
@@ -86,7 +90,7 @@ router.get('/ats', requirePerm(null, 'reports', 'ATS Reports', 'view'), async (r
   if (q.clientId) reqWhere.clientId = q.clientId;
   if (q.recruiterId) reqWhere.recruiterId = q.recruiterId;
   if (q.bdeId) reqWhere.bdeId = q.bdeId;
-  if (q.tlId) reqWhere.tlId = q.tlId;
+  if (q.tlId) Object.assign(reqWhere, { AND: [...(reqWhere.AND || []), RT.tlArm([q.tlId])] });
   if (q.stlId) reqWhere.stlId = q.stlId;
   if (q.requirementId) where.requirementId = q.requirementId;
   // AND, never an assignment: `where.requirement` may be the caller's own scope.

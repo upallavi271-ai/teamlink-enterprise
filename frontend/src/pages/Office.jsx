@@ -12,6 +12,7 @@ import Section from './office/Section.jsx';
 import ExpenseLedger from './office/ExpenseLedger.jsx';
 import GstPosition from './office/GstPosition.jsx';
 import VendorBillsReview from './office/VendorBillsReview.jsx'; // P3 vendor portal bills
+import VendorModuleBillsReview from './office/VendorModuleBillsReview.jsx'; // vendor invoices / monthly bills of the vendor modules
 import {
   OfficeFilterBar, OfficeCards, OFFICE_BLANK, officeParams,
 } from './office/OfficeFilters.jsx';
@@ -205,6 +206,7 @@ export default function Office() {
       </Section>
 
       <VendorBillsReview onChanged={changed} />
+      <VendorModuleBillsReview onChanged={changed} />
       <Section id="expenses" title="Expenses & Bills" sub="Click a row for its details, bill and payment" openSignal={openSig.expenses}
         info="After GST = Before GST + GST. Total = After GST − TDS (what the vendor is paid). Paid + Pending = Total.">
         <ExpenseLedger

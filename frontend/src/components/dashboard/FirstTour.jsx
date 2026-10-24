@@ -15,7 +15,7 @@ export function tourPending(user) {
 function finish(user) { try { localStorage.setItem(KEY(user), new Date().toISOString()); } catch { /* no storage */ } }
 
 const WORK = {
-  recruiter: 'Your jobs and your candidates. “Do this now” lists what to do first.',
+  recruiter: 'Your requirements and your candidates. “Do this now” lists what to do first.',
   tl: 'Your team’s work. “Waiting for my check” is the list you act on.',
   bde: 'Your clients. The top lines show which clients owe you feedback.',
   hr: 'Who needs your check, offers and joinings.',
@@ -24,12 +24,14 @@ const WORK = {
 export default function FirstTour({ user, layout }) {
   const navigate = useNavigate();
   const [step, setStep] = useState(0);
-  const [open, setOpen] = useState(() => tourPending(user));
+  // 2026-10-15: the first-login tour no longer opens by itself (no popups on opening ATS); AUTO_OPEN stays false.
+  const AUTO_OPEN = false;
+  const [open, setOpen] = useState(() => AUTO_OPEN && tourPending(user));
   if (!open) return null;
   const steps = [
     { title: '1 of 3 · This is your work', text: `${WORK[layout] || 'How your area is doing and where the problems are.'} Click any number to see the list behind it, right here.` },
     { title: '2 of 3 · These are candidates', text: 'Candidates shows every person and the step they are at. Open one to call, message or move them on.', to: '/candidates', go: 'Open Candidates' },
-    { title: '3 of 3 · This is search', text: 'Search finds any person, job or client by name, phone or skill.', to: '/ats/search', go: 'Open Search' },
+    { title: '3 of 3 · This is search', text: 'Search finds any person, requirement or client by name, phone or skill.', to: '/ats/search', go: 'Open Search' },
   ];
   const s = steps[step];
   const close = () => { finish(user); setOpen(false); };

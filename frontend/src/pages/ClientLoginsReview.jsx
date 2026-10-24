@@ -4,6 +4,7 @@ import api from '../api';
 import Modal from '../components/Modal.jsx';
 import StatusChip from '../components/ui/StatusChip.jsx';
 import '../components/clients/portalAccess.css';
+import Combo from '../components/Combo.jsx';
 
 // /clients/portal-logins — the QUARTERLY REVIEW of client portal logins and
 // the Admin queue (spec B1 / B2, 2026-10-03):
@@ -111,10 +112,10 @@ export default function ClientLoginsReview() {
                   <button type="button" key={k} className={`tlpa-filter${filter === k ? ' on' : ''}`} onClick={() => setFilter(k)}>{label} ({n})</button>
                 ))}
                 {clients.length > 1 && (
-                  <select value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} aria-label="Client">
+                  <Combo value={clientFilter} onChange={(e) => setClientFilter(e.target.value)} aria-label="Client">
                     <option value="">All clients ({byFlag.length})</option>
                     {clients.map((c) => <option key={c.id} value={c.id}>{c.name} ({c.n})</option>)}
-                  </select>
+                  </Combo>
                 )}
               </div>
               {shown.map((l) => (

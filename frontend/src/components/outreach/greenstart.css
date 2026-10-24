@@ -1,0 +1,46 @@
+/* Omni-Channel: the Green Start view and the Green Start | TeamLink Outreach switch. */
+.gs-switch { display: flex; gap: 4px; padding: 10px 16px 0; align-items: center; flex-wrap: wrap; }
+.gs-switch .gs-sw { border: 1px solid var(--line, #d7dee6); background: var(--card, #fff); color: inherit; font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+.gs-switch .gs-sw.on { background: #14532d; border-color: #14532d; color: #fff; }
+.gs-switch .gs-sw:focus-visible { outline: 3px solid #86efac; outline-offset: 2px; }
+.gs-wrap { padding: 8px 16px 0; }
+.gs-bar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 6px 0 8px; }
+.gs-title { font-weight: 700; font-size: 1.05rem; }
+.gs-link { margin-left: auto; font-weight: 600; color: #14532d; }
+.gs-frame { display: block; width: 100%; border: 1px solid var(--line, #d7dee6); border-radius: 8px; background: #fff; }
+.gs-state { background: #fffbeb; border: 1px solid #f5d98b; border-radius: 10px; padding: 16px 18px; max-width: 760px; }
+.gs-state p { margin: 6px 0; }
+.gs-state code { background: rgba(0,0,0,.06); padding: 1px 6px; border-radius: 4px; }
+.gs-checks { list-style: none; padding: 0; margin: 8px 0; display: flex; gap: 18px; flex-wrap: wrap; }
+.gs-checks li::before { display: inline-block; width: 1.2em; font-weight: 700; }
+.gs-checks .ok::before { content: '\2713'; color: #15803d; }
+.gs-checks .no::before { content: '\2717'; color: #b91c1c; }
+.gs-redis { background: #fff; border: 1px solid #f5d98b; border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.gs-redis ol { margin: 6px 0 0 18px; padding: 0; }
+.gs-redis li { margin: 6px 0; }
+.gs-btn { margin-top: 6px; border: 0; background: #14532d; color: #fff; font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+.gs-btn:disabled { opacity: .6; cursor: default; }
+@media (max-width: 600px) { .gs-wrap { padding: 8px 8px 0; } .gs-switch { padding: 8px 8px 0; } }
+/* 2026-10-22: states, steps, copy-friendly commands, admin buttons, log, help */
+.gs-state.gs-wait { background: #fff7e6; border-color: #f0c36d; }
+.gs-state.gs-bad { background: #fef2f2; border-color: #f1a5a5; }
+.gs-head { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.gs-step { background: #14532d; color: #fff; border-radius: 999px; padding: 2px 10px; font-size: .85rem; font-weight: 600; }
+.gs-checks .wait::before { content: '\2026'; color: #b45309; }
+.gs-checks .bad::before { content: '\2717'; color: #b91c1c; }
+.gs-cmd { display: flex; gap: 8px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.gs-cmd code { flex: 1 1 280px; word-break: break-all; padding: 6px 8px; }
+.gs-copy { border: 1px solid #14532d; background: #fff; color: #14532d; font: inherit; font-weight: 600; padding: 4px 12px; border-radius: 6px; cursor: pointer; }
+.gs-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.gs-actions .gs-btn { margin-top: 0; }
+.gs-btn2 { background: #fff; color: #14532d; border: 1px solid #14532d; }
+.gs-logpick { display: inline-flex; gap: 6px; align-items: center; }
+.gs-logpick select { font: inherit; padding: 6px; border-radius: 6px; border: 1px solid var(--line, #d7dee6); }
+.gs-log { background: #0f172a; color: #e2e8f0; border-radius: 8px; padding: 10px 12px; max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: .82rem; }
+.gs-small { font-size: .85rem; opacity: .85; margin: 6px 0; }
+.gs-links { margin-left: auto; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.gs-links .gs-link { margin-left: 0; }
+.gs-linkbtn { background: none; border: 0; font: inherit; cursor: pointer; padding: 0; text-decoration: underline; }
+.gs-help { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px 16px; max-width: 760px; margin-bottom: 8px; }
+.gs-help dl { margin: 0; } .gs-help dt { font-weight: 700; margin-top: 6px; } .gs-help dd { margin: 0 0 2px; }
+@media (max-width: 600px) { .gs-actions .gs-btn, .gs-actions select { flex: 1 1 100%; } .gs-links { margin-left: 0; } }

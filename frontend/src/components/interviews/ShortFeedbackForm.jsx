@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Modal } from '../proto.jsx';
 import { RejectFields, EMPTY_REJECT, rejectReady } from '../rejections/rejectionUi.jsx';
+import MissingHint from '../ui/MissingHint.jsx';
 import './Interviews.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE SHORT INTERVIEW FEEDBACK FORM (change list §11, 2026-10-03)
@@ -94,7 +96,7 @@ export default function ShortFeedbackForm({
         </div>
 
         <div className="ivx-sec">
-          <b>Result *</b>
+          <b>Result</b>
           <div className="ivx-outs ivv3-outs" role="radiogroup" aria-label="Result">
             {outcomes.map(([v, label, tone]) => (
               <button key={v} type="button" role="radio" aria-checked={result === v} className={`ivx-out ${tone}${result === v ? ' is-on' : ''}`} onClick={() => setResult(v)}>{label}</button>
@@ -108,11 +110,11 @@ export default function ShortFeedbackForm({
         {noShow ? (
           <>
             <div className="ivx-sec">
-              <b>Why? *</b>
-              <select value={reason} onChange={(e) => setReason(e.target.value)} style={{ width: '100%' }}>
+              <b>Why?</b>
+              <Combo value={reason} onChange={(e) => setReason(e.target.value)} style={{ width: '100%' }}>
                 <option value="">Choose a reason…</option>
                 {NO_SHOW_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
-              </select>
+              </Combo>
               {(reason === 'Other' || reason) && (
                 <input style={{ width: '100%', marginTop: 6 }} placeholder={reason === 'Other' ? 'What happened?' : 'Anything to add? (optional)'} value={reasonText} onChange={(e) => setReasonText(e.target.value)} />
               )}
@@ -126,7 +128,7 @@ export default function ShortFeedbackForm({
         ) : (
           <>
             <div className="ivx-sec">
-              <b>Rating *</b>
+              <b>Rating</b>
               <div className="ivx-stars" role="radiogroup" aria-label="Rating 1 to 5">
                 {[1, 2, 3, 4, 5].map((n) => (
                   <button key={n} type="button" role="radio" aria-checked={rating === n} className={`ivx-star${rating >= n ? ' is-on' : ''}`} onClick={() => setRating(n)}>{n}</button>
@@ -135,7 +137,7 @@ export default function ShortFeedbackForm({
               <div className="ivx-hint">1 = poor · 5 = excellent</div>
             </div>
             <div className="ivx-sec">
-              <b>Comment *</b>
+              <b>Comment</b>
               <textarea rows="3" maxLength={4000} placeholder={result === 'NEXT' ? 'What went well? What should the next round check?' : 'One or two lines, e.g. 5 years ICU, calm, clear English. 60-day notice.'} value={comment} onChange={(e) => setComment(e.target.value)} />
             </div>
             {result === 'NEXT' && <div className="ivx-hint">After saving, the booking window opens for round {nextNo}.</div>}
@@ -143,6 +145,7 @@ export default function ShortFeedbackForm({
             {result === 'Rejected' && !rejectForm && kind === 'Internal' && <div className="ivx-hint">Your TL or client manager confirms the reject on the Feedback tab.</div>}
           </>
         )}
+        {result && <MissingHint items={noShow ? [['why they did not attend', !fullReason]] : [['a rating', !(rating > 0)], ['a comment', !comment.trim()]]} />}
       </div>
     </Modal>
   );

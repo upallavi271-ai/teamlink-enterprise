@@ -20,11 +20,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
+import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../../components/PunchSourceChip.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import ScrollTable from '../../components/ScrollTable.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
 import { fmtDay, clock12, localToday, HalfLeaveChip } from './DayReport.jsx';
 import './attendance-calendar.css';
+import Combo from '../../components/Combo.jsx';
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const WEEK = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -79,6 +81,8 @@ export default function MonthCalendar() {
   const [month, setMonth] = useState(today.slice(0, 7));
   const [f, setF] = useState(EMPTY);
   const [pickedDay, setPickedDay] = useState('');
+  const [src, setSrc] = useState('');
+  const [openRow, setOpenRow] = useState(null);
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -149,7 +153,8 @@ export default function MonthCalendar() {
 
   const dayRows = pickedDay ? (byDate.get(pickedDay) || []) : [];
   const s = q.trim().toLowerCase();
-  const list = dayRows.filter((x) => !s || `${x.name} ${x.employeeCode} ${x.department}`.toLowerCase().includes(s))
+  const srcTotals = (() => { const t = { all: 0 }; const withP = dayRows.filter((x) => (x.punchList || []).length); t.all = withP.length; ['web', 'biometric', 'pulse', 'hr'].forEach((g) => { t[g] = withP.filter((x) => x.sourceCounts && x.sourceCounts[g] > 0).length; }); return t; })();
+  const list = dayRows.filter((x) => (!src || (x.sourceCounts && x.sourceCounts[src] > 0)) && (!s || `${x.name} ${x.employeeCode} ${x.department}`.toLowerCase().includes(s)))
     .sort((a, b) => a.name.localeCompare(b.name));
   const page = usePaged(list, 25);
   const pick = (date) => {
@@ -185,12 +190,12 @@ export default function MonthCalendar() {
       <div className="att-cal-bar">
         <div className="att-cal-nav" role="group" aria-label="Month and year">
           <button type="button" className="btn btn-sm" aria-label="Previous month" onClick={() => shift(-1)}>◀</button>
-          <select value={mm} onChange={(e) => setYM(yy, Number(e.target.value))} aria-label="Month">
+          <Combo value={mm} onChange={(e) => setYM(yy, Number(e.target.value))} aria-label="Month">
             {MONTHS.map((n, i) => <option key={n} value={i + 1}>{n}</option>)}
-          </select>
-          <select value={yy} onChange={(e) => setYM(Number(e.target.value), mm)} aria-label="Year">
+          </Combo>
+          <Combo value={yy} onChange={(e) => setYM(Number(e.target.value), mm)} aria-label="Year">
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
+          </Combo>
           <button type="button" className="btn btn-sm" aria-label="Next month" onClick={() => shift(1)}>▶</button>
           {month !== today.slice(0, 7) && <button type="button" className="btn btn-sm" onClick={() => { setMonth(today.slice(0, 7)); setPickedDay(''); }}>This month</button>}
         </div>
@@ -280,11 +285,12 @@ export default function MonthCalendar() {
                   <button type="button" className="btn btn-sm" onClick={() => setPickedDay('')}>Close</button>
                   <input type="search" placeholder="Search name or ID" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search this day" />
                 </div>
+                <SourceFilter value={src} onChange={setSrc} totals={srcTotals} />
                 <ScrollTable maxHeight="50vh">
                   <table>
-                    <thead><tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Status</th><th>In</th><th>Out</th><th>Check-in method</th><th>Why</th></tr></thead>
+                    <thead><tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Status</th><th>In</th><th>Out</th><th>Check-in method</th><th>Punches by source</th><th>Why</th></tr></thead>
                     <tbody>
-                      {page.slice.map((x) => (
+                      {page.slice.map((x) => [(
                         <tr key={x.employeeId}>
                           <td><b>{x.name}</b></td>
                           <td>{x.employeeCode}</td>
@@ -294,14 +300,16 @@ export default function MonthCalendar() {
                             {(x.notes || []).map((k) => <span key={k} className="att-cal-pill tone-orange">{CAT[k].label}</span>)}
                             {x.halfLeave ? <div><HalfLeaveChip state={x.halfLeave} half={x.halfLeaveHalf} by={x.halfLeaveBy} /></div> : null}
                             {x.latePermissionText ? <div><span className={`att-cal-pill tone-${x.lateExcused ? 'green' : 'orange'}`}>{x.latePermissionText}</span></div> : null}
+                            {x.awlText ? <div><span className="att-cal-pill tone-red" title="No leave applied: payroll counts extra loss of pay">{x.awlText}</span></div> : null}
                           </td>
                           <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkIn)}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkOut)}</td>
                           <td>{x.howText || x.how || <span className="small-muted">Nothing recorded</span>}</td>
+                          <td><SourceChips counts={x.sourceCounts} />{(x.punchList || []).length > 0 && <div><PunchToggle open={openRow === x.employeeId} count={x.punchList.length} onClick={() => setOpenRow(openRow === x.employeeId ? null : x.employeeId)} /></div>}</td>
                           <td className="att-cal-why">{x.reason}</td>
                         </tr>
-                      ))}
-                      {list.length === 0 && <tr><td colSpan="8" className="att-cal-empty">{anyFilter ? 'Nobody on this day matches your filters.' : 'Nobody is on the rolls on this day.'}</td></tr>}
+                      ), openRow === x.employeeId && <tr key={`${x.employeeId}-d`}><td colSpan="9"><PunchDetails list={x.punchList} /></td></tr>])}
+                      {list.length === 0 && <tr><td colSpan="9" className="att-cal-empty">{anyFilter ? 'Nobody on this day matches your filters.' : 'Nobody is on the rolls on this day.'}</td></tr>}
                     </tbody>
                   </table>
                 </ScrollTable>

@@ -1,0 +1,56 @@
+/* The vendor SIDEBAR (2026-10-19). Same structure and look as the Recruiter Portal's clean light sidebar: white, fixed on the left, brand on top,
+   menu = icon + label, profile block at the bottom with a divider above it. Scoped .vsb-* / .vp-side*. */
+.vp-sidelayout { display: flex; align-items: flex-start; min-height: 100vh; background: var(--paper); }
+.vp-sidemain { flex: 1 1 auto; min-width: 0; }
+.vp-sidemain > .vp-main { max-width: 1280px; margin: 0 auto; }
+.vp-slimtop { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 10px; padding: 8px 20px; background: var(--paper-raised); border-bottom: 1px solid var(--line); min-height: 52px; box-sizing: border-box; }
+.vp-slimtop .vp-spacer { flex: 1; }
+.vp-slimtop .vp-slim-title { font-weight: 700; color: var(--brand, #1F3864); font-size: 15px; }
+.vp-menu-btn { display: none; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 6px 10px; font-weight: 700; cursor: pointer; font-size: 13px; }
+
+.vsb { flex: 0 0 248px; width: 248px; position: sticky; top: 0; height: 100vh; align-self: flex-start; box-sizing: border-box; display: flex; flex-direction: column;
+  background: #fff; color: #33465c; border-right: 1px solid var(--line, #e5e9f0); z-index: 25; }
+.vsb-brand { display: flex; align-items: center; gap: 10px; padding: 16px 14px; border-bottom: 1px solid var(--line, #eceef4); min-height: 40px; }
+.vsb-tag { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 2px 8px; border-radius: 99px; margin-left: auto; background: var(--brand-tint, #E7EDF7); color: var(--brand, #1F3864); }
+.vsb-nav { flex: 1; overflow-y: auto; padding: 12px 10px; }
+.vsb-link { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 10px; font-size: 13.5px; font-weight: 550; color: #5b6e84; text-decoration: none; margin-bottom: 1px; }
+.vsb-link:hover { background: #f1f4f8; color: #33465c; }
+.vsb-link.active { background: var(--brand-tint, #E7EDF7); color: var(--brand, #1F3864); font-weight: 700; }
+.vsb-link:focus-visible, .vsb-toggle:focus-visible, .vsb-exit:focus-visible, .vp-menu-btn:focus-visible, .vsb-x:focus-visible { outline: 3px solid var(--brand-ring, rgba(31, 95, 191, .45)); outline-offset: 1px; }
+.vsb-ic { flex: 0 0 18px; }
+.vsb-lbl { line-height: 1.25; overflow-wrap: anywhere; }
+.vsb-foot { padding: 14px; border-top: 1px solid var(--line, #eceef4); display: flex; align-items: center; gap: 10px; }
+.vsb-avatar { width: 32px; height: 32px; border-radius: 99px; background: var(--brand, #1F3864); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 12.5px; flex-shrink: 0; }
+.vsb-who { flex: 1; min-width: 0; }
+.vsb-who b { display: block; font-size: 12.5px; color: #33465c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vsb-who span { font-size: 11px; color: #8a93a6; }
+.vsb-exit { background: #fff; border: 1px solid #cfd6e0; color: #5b6e84; border-radius: 6px; padding: 5px 10px; font-size: 11.5px; cursor: pointer; margin-left: auto; }
+.vsb-exit:hover { background: #f1f4f8; color: #33465c; }
+.vsb-toggle { margin-left: auto; border: 1px solid var(--line); background: #fff; border-radius: 8px; width: 30px; height: 28px; cursor: pointer; font-size: 15px; }
+.vsb-x { display: none; margin-left: auto; border: 1px solid var(--line); background: #fff; border-radius: 8px; width: 32px; height: 30px; font-size: 20px; line-height: 1; cursor: pointer; }
+.vsb-backdrop { position: fixed; inset: 0; background: rgba(22, 32, 43, .45); z-index: 59; }
+
+/* tablet: icons only (the toggle shows the names) */
+.vsb.narrow { flex-basis: 76px; width: 76px; }
+.vsb.narrow .vsb-brand { justify-content: center; padding: 14px 6px; flex-direction: column; gap: 6px; }
+.vsb.narrow .vsb-toggle { margin: 0; }
+.vsb.narrow .vsb-lbl, .vsb.narrow .vsb-who { display: none; }
+.vsb.narrow .vsb-link { justify-content: center; padding: 10px 0; }
+.vsb.narrow .vsb-foot { flex-direction: column; padding: 10px 4px; }
+.vsb.narrow .vsb-exit { margin: 0; padding: 5px 6px; }
+
+/* phone: a drawer opened by the menu button */
+@media (max-width: 767px) {
+  .vp-sidelayout { display: block; }
+  .vp-menu-btn { display: inline-flex; }
+  .vp-slimtop { padding: 8px 12px; }
+  .vsb.drawer { position: fixed; top: 0; left: 0; bottom: 0; height: 100%; width: min(290px, 86vw); flex: none; z-index: 60; transform: translateX(-102%); transition: transform .18s ease; box-shadow: var(--shadow-md); }
+  .vsb.drawer.open { transform: none; }
+  .vsb-x { display: inline-flex; align-items: center; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) { .vsb.drawer { transition: none; } }
+/* A count on a menu entry (2026-10-19): the Repairs menu of an Assets vendor shows the jobs the company is waiting for you to take. */
+.vsb-badge { margin-left: auto; min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--st-red, #d03b3b); color: #fff; font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.vsb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.vsb.narrow .vsb-badge { position: absolute; top: 2px; right: 2px; min-width: 16px; height: 16px; font-size: 10px; padding: 0 4px; }
+.vsb-link { position: relative; }

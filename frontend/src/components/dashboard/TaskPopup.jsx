@@ -36,6 +36,7 @@ export function taskLine(alerts) {
   return { text: `You have ${t.count} ${s}${late}.`, short: `${t.count} ${s}${t.late ? `, ${t.late} late` : ''}.`, late: t.late, count: t.count };
 }
 
+const AUTO_OPEN = false;
 const SEEN_KEY = 'tl_taskpop_seen';
 const tokenTail = () => { try { return String(localStorage.getItem('tl_token') || '').slice(-24); } catch { return ''; } };
 const seen = () => { try { return localStorage.getItem(SEEN_KEY) === tokenTail(); } catch { return true; } };
@@ -50,6 +51,8 @@ export default function TaskPopup() {
   const [open, setOpen] = useState(false);
   const t = myTasks(alerts);
   useEffect(() => {
+    // 2026-10-15: the login popup is OFF (user: no popups on opening HRMS / ATS). The same line lives in the Today button, the bell and the dashboard greeting.
+    if (!AUTO_OPEN) return;
     if (!user || !t || !t.count || seen() || tourPending(user)) return;
     // Not on top of a form the person is filling in.
     if (/\/(new|edit)\b/.test(pathname)) return;

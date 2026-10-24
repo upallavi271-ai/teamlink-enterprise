@@ -21,14 +21,12 @@ import { money, monthLabel, errText, downloadFile, STATUS_LABEL } from '../../co
 import '../../components/payroll/payrollRun.css';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
-import { JournalTab, LedgerTab, BooksReportsTab, PayrollMappingTab } from '../../components/accounts/JournalTabs.jsx';
+import { BooksReportsTab, PayrollMappingTab } from '../../components/accounts/JournalTabs.jsx';
 import FixedAssetsTab from '../../components/accounts/FixedAssetsTab.jsx';
-import EmployeeSalaryTab from '../../components/accounts/EmployeeSalaryTab.jsx';
 import '../../components/ui/ui.css';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
-
-// Journal and Ledger tabs: components/accounts/JournalTabs.jsx (S2 / S3).
+const TAB_KEYS = ['reports', 'assets', 'mapping', 'recon', 'sync'];
 
 const FLAG_TEXT = {
   NOT_BOOKED: 'Not booked', MISMATCH: 'Amount mismatch', UNBALANCED: 'Unbalanced entry', PAYMENT_MISSING: 'Payment not booked', ORPHAN: 'No approved run',
@@ -126,9 +124,13 @@ export function ReconciliationPanel({ initialMonth }) {
 
 export default function JournalLedger() {
   const { user } = useAuth();
-  const [tab, setTab] = useState('journal');
-  const [, setParams] = useSearchParams();
-  const [salaryOf, setSalaryOf] = useState('');
+  // 2026-10-14: Journal, Ledger and Employee salary tabs removed; Payroll Mapping opens first.
+  // An old deep link (?tab=journal, ?je=...) lands here and is cleaned to the plain page.
+  const [params, setParams] = useSearchParams();
+  const [tab, setTab] = useState(() => (TAB_KEYS.includes(params.get('tab')) ? params.get('tab') : 'mapping'));
+  useEffect(() => {
+    if (params.get('tab') || params.get('je')) setParams({}, { replace: true });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (!can(user, 'accounts', 'accounts', 'Journal & Ledger', 'view')) {
     return <div className="small-muted" style={{ padding: 20 }}>The journal and ledger aren&apos;t included in your role&apos;s permissions.</div>;
   }
@@ -137,14 +139,11 @@ export default function JournalLedger() {
   return (
     <TabsPage
       title="Journal & Ledger"
-      subtitle="Double-entry books. HRMS payroll posts one journal a month; HRMS assets and repairs post their own entries. Entries from HRMS are read-only here."
+      subtitle="Payroll Mapping, books reports, fixed assets and the HRMS payroll check. HRMS posts its entries by itself."
       banner={<ScopeNote>Accounts roles and Super Admin / Admin only.</ScopeNote>}
       value={tab}
       onChange={setTab}
       tabs={[
-        { key: 'journal', label: 'Journal', element: <JournalTab canPost={canPost} onOpenSalaryOf={(id) => { setSalaryOf(id); setTab('salary'); }} /> },
-        { key: 'ledger', label: 'Ledger', element: <LedgerTab canPost={canPost} onOpenEmployees={() => { setSalaryOf(''); setTab('salary'); }} /> },
-        { key: 'salary', label: 'Employee salary', element: <EmployeeSalaryTab key={salaryOf} initialEmployeeId={salaryOf} onOpenVoucher={(id) => { setParams({ je: id }); setTab('journal'); }} /> },
         { key: 'reports', label: 'Reports', element: <BooksReportsTab /> },
         { key: 'assets', label: 'Fixed Assets', element: <FixedAssetsTab canPost={canPost} canEdit={canEdit} /> },
         { key: 'mapping', label: 'Payroll Mapping', element: <PayrollMappingTab /> },

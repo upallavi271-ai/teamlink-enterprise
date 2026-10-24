@@ -392,7 +392,7 @@ const READ_TOOLS = [
         and.push({
           OR: [
             { invoiceNumber: { contains: input.query } },
-            { client: { name: { contains: input.query } } },
+            await require('./clientSearch').clientRelationTerm(input.query), // official name OR an old name (ClientAlias) // eslint-disable-line global-require
           ],
         });
       }
@@ -446,7 +446,9 @@ const READ_TOOLS = [
         take: 200,
       });
       const shared = await clientSharedGate(user, rows);
-      const visible = shared ? rows.filter((a) => shared.has(a.id)) : rows;
+      let visible = shared ? rows.filter((a) => shared.has(a.id)) : rows;
+      const own = await require('./ownOnly').ownApplicationIds(user); // eslint-disable-line global-require
+      if (own) visible = visible.filter((a) => own.has(a.id)); // a recruiter: their own candidates' interviews
       return {
         windowDays: days,
         count: visible.length,
@@ -493,6 +495,8 @@ const READ_TOOLS = [
       });
       const shared = await clientSharedGate(user, rows);
       let visible = shared ? rows.filter((a) => shared.has(a.id)) : rows;
+      const own = await require('./ownOnly').ownApplicationIds(user); // eslint-disable-line global-require
+      if (own) visible = visible.filter((a) => own.has(a.id)); // a recruiter: their own candidates' offers and joinings
       if (input.openOffersOnly) visible = visible.filter((a) => a.offerStatus === 'Offer Released');
       return {
         count: visible.length,

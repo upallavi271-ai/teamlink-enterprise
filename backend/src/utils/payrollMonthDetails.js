@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { monthLabel } = require('./attendanceMath');
+const PC = require('./payrollCycle');
 
 const paise = (n) => Math.round((Number(n) || 0) * 100);
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -125,8 +126,10 @@ async function monthDetails(month, filters = {}) {
   const departments = [...deptCounts.entries()].map(([value, n]) => ({ value, label: value, count: n })).sort((a, b) => a.label.localeCompare(b.label));
   if (dept && !deptCounts.has(dept)) departments.push({ value: dept, label: dept, count: 0 });
   const statuses = ['Paid', 'Not paid yet'].map((value) => ({ value, label: value, count: payCounts.get(value) || 0 })).filter((o) => o.count > 0 || o.value === pay);
+  const cyc = await PC.cycleFor(month);
   return {
-    month, period: monthLabel(month), records: all.length, shown: rows.length,
+    month, period: monthLabel(month), cycle: { label: cyc.label, from: cyc.from, to: cyc.to, days: cyc.days, rangeText: cyc.rangeText, heading: cyc.heading, custom: cyc.custom },
+    records: all.length, shown: rows.length,
     filtered: !!(q || dept || pay),
     rows, totals: totalsOf(rows), monthTotals: totalsOf(all),
     facets: { departments, statuses },

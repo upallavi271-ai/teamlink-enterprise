@@ -1,0 +1,48 @@
+/* Interview prep card + the booking-window line. Scoped: .ipc-* (components/interviews/InterviewPrep.jsx). */
+.ipc { display: flex; flex-direction: column; gap: 10px; min-width: 0; font-size: 14px; }
+.ipc-load { padding: 18px 4px; color: var(--ink-soft, #667); text-align: center; }
+.ipc-types { display: flex; gap: 6px; flex-wrap: wrap; }
+.ipc-type { border: 1.5px solid var(--line, #dde3ee); background: #fff; border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px; cursor: pointer; color: inherit; }
+.ipc-type.is-on { border-color: var(--blue, #1d5fd1); background: #eaf1ff; color: #1a3f8f; font-weight: 700; }
+.ipc-type[disabled] { opacity: .6; cursor: not-allowed; }
+.ipc-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.ipc-chip { font-size: 12px; font-weight: 700; padding: 3px 10px; border-radius: 999px; }
+.ipc-chip.blue { background: #e3edfd; color: #1a3f8f; }
+.ipc-chip.orange { background: #fff0d6; color: #7a4a00; }
+.ipc-why { margin-top: -4px; }
+.ipc-group { border: 1px solid var(--line, #dde3ee); border-radius: 12px; background: #fff; padding: 10px 14px 12px; }
+.ipc-group h4 { margin: 0 0 6px; font-size: 14px; }
+.ipc-group h4 small { font-weight: 400; color: var(--ink-soft, #667); font-size: 12px; }
+.ipc-group ol, .ipc-group ul { margin: 0 0 6px; padding-left: 20px; display: flex; flex-direction: column; gap: 5px; }
+.ipc-group ol.ipc-dash { list-style: disc; }
+.ipc-group li { line-height: 1.4; }
+.ipc-edit { display: flex; gap: 6px; align-items: flex-start; }
+.ipc-edit textarea, .ipc-edit input { flex: 1; min-width: 0; font: inherit; padding: 6px 8px; border: 1px solid var(--line, #dde3ee); border-radius: 8px; resize: vertical; }
+.ipc-x { flex: none; color: #8a1c14; }
+.ipc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.ipc-actions .btn-primary { font-size: 15px; padding: 10px 16px; }
+.ipc-sure { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; background: #fff4e0; border: 1px solid #f1d199; border-radius: 10px; padding: 4px 8px; font-size: 13px; }
+.ipc-also { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; font-size: 13px; }
+.ipc-copied { word-break: break-all; }
+.ipc-preview { border: 1px dashed var(--line, #c9d2e3); border-radius: 12px; background: #f8faff; padding: 10px 14px; font-size: 13.5px; }
+.ipc-preview ol { margin: 4px 0 8px; padding-left: 20px; }
+.ipc-log ul { list-style: none; padding-left: 0; }
+.ipc-log li { font-size: 13px; color: #334; }
+.ipc-section { border: 1px solid var(--line, #dde3ee); border-radius: 12px; background: #fff; margin-top: 10px; }
+.ipc-head { width: 100%; display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 10px 14px; background: transparent; border: 0; font: inherit; cursor: pointer; text-align: left; color: inherit; }
+.ipc-section > .ipc { padding: 0 12px 12px; }
+/* the booking-window line */
+.ipc-opt { border: 2px solid #c6dafc; background: #f3f8ff; border-radius: 12px; padding: 9px 12px; margin: 4px 0; }
+.ipc-opt.is-bad { border-color: #f3b7b0; background: #fdf3f1; }
+.ipc-opt-row { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; font-size: 14px; }
+.ipc-opt-row input { margin-top: 3px; width: 18px; height: 18px; flex: none; }
+.ipc-opt-row small { color: #667; font-weight: 400; }
+.ipc-opt-sub { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 0 28px; font-size: 12.5px; color: #556; }
+.ipc-ok { color: #14633f; font-weight: 700; }
+.ipc-bad { color: #8a1c14; font-weight: 700; }
+@media (max-width: 480px) {
+  .ipc-actions .btn { flex: 1 1 100%; }
+  .ipc-opt-sub { margin-left: 0; }
+  .ipc-edit { flex-direction: column; }
+  .ipc-x { align-self: flex-end; }
+}

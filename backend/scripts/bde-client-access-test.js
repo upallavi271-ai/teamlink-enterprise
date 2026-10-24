@@ -71,10 +71,10 @@ const SHOW = process.argv.includes('--matrix');
     }
 
     // ---- who may do what, by design -------------------------------------------------------------
-    // expectation per actor per client: 'own' = full access, 'view' = read only, 'none' = refused
+    // 2026-10-13 desk-wide rule: a colleague of the same desk is 'own' too. expectation per actor per client: 'own' = full access, 'view' = read only, 'none' = refused
     const DESIGN = {
-      A: { A: 'own', B: 'view', U: 'own', M: 'none', N: 'none' },
-      B: { A: 'view', B: 'own', U: 'own', M: 'none', N: 'none' },
+      A: { A: 'own', B: 'own', U: 'own', M: 'none', N: 'none' },
+      B: { A: 'own', B: 'own', U: 'own', M: 'none', N: 'none' },
       M: { A: 'none', B: 'none', U: 'none', M: 'own', N: 'none' },
       bdeTl: { A: 'own', B: 'own', U: 'own', M: 'own', N: 'own' },
     };
@@ -123,7 +123,9 @@ const SHOW = process.argv.includes('--matrix');
         if (level === 'none') {
           check(`${actor} on ${ck}: every sub-resource is refused (another desk / no desk)`, reads.every(([, v]) => [403, 404].includes(v.status)), reads.map(([k, v]) => [k, v.status]));
         } else {
-          const need = level === 'view' ? reads.filter(([, v]) => !v.jobLevel) : reads;
+          // 2026-10-13: a desk colleague's client and JOB open; the follow-ups of a person (candidate-level scope) still stay with the person's own BDE.
+          const colleague = (actor === 'A' && ck === 'B') || (actor === 'B' && ck === 'A');
+          const need = level === 'view' ? reads.filter(([, v]) => !v.jobLevel) : colleague ? reads.filter(([k]) => k !== 'follow-ups of a shared person') : reads;
           check(`${actor} on ${ck}: ${level === 'view' ? 'the client record and everything on it can be viewed (jobs, follow-ups and the agreement link stay with the client own BDE (Q3 2026-10-09))' : 'every sub-resource can be viewed'}`, need.every(([, v]) => allowedRead(v.status)), need.filter(([, v]) => !allowedRead(v.status)).map(([k, v]) => [k, v.status, v.body && v.body.error]));
           if (level === 'view') check(`${actor} on ${ck}: the colleague's jobs / follow-ups / agreement link are refused`, reads.filter(([, v]) => v.jobLevel).every(([, v]) => v.status === 403), reads.filter(([, v]) => v.jobLevel).map(([k, v]) => [k, v.status]));
         }
@@ -182,19 +184,19 @@ const SHOW = process.argv.includes('--matrix');
     const seen = async (user, re) => (await prisma.notification.findMany({ where: { userId: user.id }, select: { title: true, message: true } })).filter((n) => re.test(`${n.title} ${n.message || ''}`)).length;
     const mv = await call('PATCH', `/api/applications/${APPS.A.bde.id}/stage`, T.admin, { stage: 'SHARED_WITH_CLIENT', comment: 'ZZTEST CA share' });
     check('V1 a person is moved to "Shared with client"', mv.status === 200, [mv.status, mv.body]);
-    check('V2 the owner BDE of the client is told (the job names no BDE)', (await seen(uA, /moved to Shared/i)) >= 1, null);
-    check('V3 the BDE of the other desk and the same-desk colleague are NOT told', (await seen(uM, /moved to Shared/i)) === 0 && (await seen(uB, /moved to Shared/i)) === 0, null);
+    check('V2 the owner BDE of the client is told (the job names no BDE)', (await seen(uA, /moved to (Shared with client|Sent to client)/i)) >= 1, null);
+    check('V3 the BDE of the other desk and the same-desk colleague are NOT told', (await seen(uM, /moved to (Shared with client|Sent to client)/i)) === 0 && (await seen(uB, /moved to (Shared with client|Sent to client)/i)) === 0, null);
     const fu = await prisma.applicationFollowUp.findFirst({ where: { applicationId: APPS.A.bde.id, purpose: 'Client Review' } });
     check('V4 the chase-the-client follow-up is owned by the owner BDE of the client (not left to the recruiter)', !!fu && fu.ownerUserId === uA.id && fu.ownerRole === 'BDE' && fu.bdeUserId === uA.id, fu && [fu.ownerName, fu.ownerRole]);
     const mv2 = await call('PATCH', `/api/applications/${APPS.A.review.id}/stage`, T.admin, { stage: 'TL_REVIEW', comment: 'ZZTEST CA tl' });
-    check('V5 a move inside the recruiter steps (before the BDE step) does not tell the BDE', mv2.status === 200 && (await seen(uA, /moved to (TL|Team lead)/i)) === 0, [mv2.status, mv2.body && mv2.body.error]);
+    check('V5 a move inside the recruiter steps (before the BDE step) does not tell the BDE', mv2.status === 200 && (await seen(uA, /moved to .*(team lead|TL)/i)) === 0, [mv2.status, mv2.body && mv2.body.error]);
     const fb = await call('POST', `/api/ats/interviews/${APPS.A.done.id}/client-feedback`, T.admin, { overall: 'ZZTEST CA good fit', recommendation: 'Selected' });
     check('V6 client feedback is saved', fb.status === 200, [fb.status, fb.body]);
     check('V7 the owner BDE is told the client has answered', (await seen(uA, /Client feedback/i)) >= 1, null);
     const wk2 = await call('GET', `/api/clients/${C.A.id}/work?kind=interviews`, T.A);
     check('V8 the client feedback shows in Client work → All activity (Interviews)', wk2.status === 200 && (wk2.body.events || []).some((e) => /Client feedback/.test(e.title)), (wk2.body.events || []).map((e) => e.title));
     const wk3 = await call('GET', `/api/clients/${C.A.id}/work?kind=people`, T.A);
-    check('V9 the share shows in All activity (People) with the step name', (wk3.body.events || []).some((e) => /Shared with client/i.test(e.title)), (wk3.body.events || []).map((e) => e.title));
+    check('V9 the share shows in All activity (People) with the step name', (wk3.body.events || []).some((e) => /Shared with client|Sent to client/i.test(e.title)), (wk3.body.events || []).map((e) => e.title));
   } catch (e) {
     Z.fail += 1; console.error('TEST SCRIPT ERROR', (e && e.stack) || e);
   } finally {

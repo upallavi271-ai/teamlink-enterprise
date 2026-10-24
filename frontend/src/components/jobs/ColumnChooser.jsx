@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import './jobs.css';
+import { matchesText, noMatchText } from '../searchMatch.js';
 
 // ---------------------------------------------------------------------------
 // "Columns ⚙" (UX spec §29). A checkbox per column the login MAY see; the
@@ -42,6 +43,7 @@ export function useColumns(storageKey, allowed, defaults) {
 export default function ColumnChooser({ columns, value, onChange, defaults }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const [find, setFind] = useState('');
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
@@ -56,12 +58,14 @@ export default function ColumnChooser({ columns, value, onChange, defaults }) {
   };
   return (
     <div className="jobsws-cols" ref={ref}>
-      <button type="button" className="btn btn-sm btn-ghost" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+      <button type="button" className="btn btn-sm btn-ghost" aria-haspopup="true" aria-expanded={open} onClick={() => { setOpen((v) => !v); setFind(''); }}>
         Columns ⚙
       </button>
       {open && (
         <div className="jobsws-cols-menu">
-          {columns.map((c) => (
+          <input className="jobsws-cols-find" type="text" autoFocus autoComplete="off" value={find} placeholder="Type to find" aria-label="Find" onChange={(e) => setFind(e.target.value)} />
+          {!columns.some((c) => matchesText(c.label, find)) && <label>{noMatchText(find)}</label>}
+          {columns.filter((c) => matchesText(c.label, find)).map((c) => (
             <label key={c.key}>
               <input type="checkbox" checked={value.includes(c.key)} onChange={() => toggle(c.key)} />
               {c.label}

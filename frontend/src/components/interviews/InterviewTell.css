@@ -49,3 +49,6 @@
   .ivt-st { grid-column: 1 / -1; align-items: flex-start; order: 3; }
   .ivt-small { text-align: left; max-width: none; }
 }
+
+/* ---- Names fit (2026-10-17): panel / team member names wrap instead of "..." ---- */
+.ivt-who b { white-space: normal; overflow-wrap: anywhere; line-height: 1.25; }

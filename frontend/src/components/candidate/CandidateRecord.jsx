@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import './CandidateRecord.css';
+import Combo from '../Combo.jsx';
 
 const errText = (err, fallback) => err?.response?.data?.error || fallback;
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
@@ -458,10 +459,10 @@ function CampusPicker({ value, onChange }) {
   return (
     <div className="field">
       <span>Campus drive</span>
-      <select value={value || ''} onChange={(e) => onChange(e.target.value)}>
+      <Combo value={value || ''} onChange={(e) => onChange(e.target.value)}>
         <option value="">{drives && drives.length ? 'Pick the drive' : 'No drives yet'}</option>
         {(drives || []).map((d) => <option key={d.id} value={d.id}>{`${d.collegeName} · ${day(d.driveDate)}`}</option>)}
-      </select>
+      </Combo>
       {canManage && !adding && <button type="button" className="link-btn crx-mt" onClick={() => setAdding(true)}>+ New drive</button>}
       {adding && (
         <div className="crx-ask">

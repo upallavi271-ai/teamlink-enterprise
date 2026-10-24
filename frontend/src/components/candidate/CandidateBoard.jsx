@@ -5,7 +5,14 @@ import { initials } from '../../atsVocab';
 import { workflowStages } from '../../permissions';
 import { FunnelChart } from '../charts';
 import StepPopup, { popupForDrop } from './StepPopups.jsx';
+import { SalaryFitChips } from '../SalaryFit.jsx'; // Salary fit chips on the card
+import FitBreakdown, { useFitBreakdown } from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
+import ReachRowButtons from '../reach/ReachRowButtons.jsx';
+import AskToBook, { askable, InterviewRequested } from '../interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
+import '../reach/reach.css';
 import './CandidateBoard.css';
+import Combo from '../Combo.jsx';
+import { longDay } from '../../utils/candidateSource.js';
 
 // ATS LAYOUT v3 (2026-10-03): columns Sourced → Verified → TL check → BDE
 // Review → Shared with Client → Interview → Selected → Joined, plus Rejected
@@ -35,9 +42,18 @@ const shortMoney = (v) => (v ? String(v) : '');
 const shortDate = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '');
 const daysText = (n) => (n == null ? '' : n === 0 ? 'Today in this step' : `${n} day${n === 1 ? '' : 's'} in this step`);
 
+// The Fit on a card: total + the four chips, asked for the cards on screen (one request per page of cards).
+function CardFit({ id }) {
+  const b = useFitBreakdown(id);
+  if (!b) return null;
+  return <div className="cboard-meta cboard-fit"><FitBreakdown b={b} compact /></div>;
+}
+
 export default function CandidateBoard({
   params, user, reloadKey = 0, onOpen, onNeedInterview, onChanged,
   jobOptions = null, jobId = '', onJob = null,
+  // Bulk Call / Message: { selected: Map(card id -> item), toggle(card), selectColumn(col), contactOf(card), onTotal(n), onLogged() } — null = no ticking.
+  pick = null,
 }) {
   const [popup, setPopup] = useState(null);
   const [data, setData] = useState(null);
@@ -80,6 +96,7 @@ export default function CandidateBoard({
     }
   }
 
+  useEffect(() => { if (pick && pick.onTotal) pick.onTotal(data ? data.total : 0); }, [data && data.total]); // eslint-disable-line react-hooks/exhaustive-deps
   const colOf = (cardId) => (data ? (data.columns.find((c) => c.cards.some((x) => x.id === cardId)) || {}).key : null);
 
   async function drop(col) {
@@ -147,18 +164,18 @@ export default function CandidateBoard({
       {onJob && (
         <div className="cboard-job-pick">
           <label className="lph-facet">
-            <span className="lph-facet-lbl">Job</span>
-            <select value={jobId} onChange={(e) => onJob(e.target.value)}>
-              <option value="">All jobs</option>
+            <span className="lph-facet-lbl">Requirement</span>
+            <Combo value={jobId} onChange={(e) => onJob(e.target.value)}>
+              <option value="">All requirements</option>
               {(jobOptions || []).map((o) => <option key={o.value} value={o.value}>{`${o.label}${o.count != null ? ` (${Number(o.count).toLocaleString('en-IN')})` : ''}`}</option>)}
-            </select>
+            </Combo>
           </label>
-          {!jobId && <span className="small-muted">Pick a job to see its own board.</span>}
+          {!jobId && <span className="small-muted">Pick a requirement to see its own board.</span>}
         </div>
       )}
       {rq && (
         <div className="cboard-top2">
-        <div className="cboard-sum" aria-label="Job summary">
+        <div className="cboard-sum" aria-label="Requirement summary">
           <div className="cboard-sum-main">
             <b>{rq.title}</b>
             <span className="small-muted">{[rq.reqCode, rq.clientName, rq.department, rq.location].filter(Boolean).join(' · ')}</span>
@@ -211,7 +228,12 @@ export default function CandidateBoard({
                 <span className="cboard-title">{col.label}</span>
                 {col.count > 0 && <span className="cboard-n">{col.count.toLocaleString('en-IN')}</span>}
               </header>
-              {dropHere && !col.canDrop && <div className="cboard-lock small-muted">Your role can&apos;t move people here</div>}
+              {dropHere && !col.canDrop && <div className="cboard-lock small-muted">{col.key === 'interview' ? 'Only the client manager (BDE) books interviews' : 'Your role can&apos;t move people here'}</div>}
+              {pick && !col.side && col.count > 0 && (
+                <div className="rch-coltools">
+                  <button type="button" className="link-btn" onClick={() => pick.selectColumn(col)}>{`Select all ${col.count.toLocaleString('en-IN')} in this step`}</button>
+                </div>
+              )}
               <div className="cboard-cards">
                 {col.cards.length === 0 && <div className="small-muted cboard-empty">No one here</div>}
                 {col.cards.map((card) => (
@@ -238,6 +260,9 @@ export default function CandidateBoard({
                         ? (card.daysInStep ? `Rejected ${card.daysInStep} day${card.daysInStep === 1 ? '' : 's'} ago` : 'Rejected today')
                         : (card.dueStatus === 'overdue' ? `Late · ${daysText(card.daysInStep)}` : daysText(card.daysInStep))}
                     </div>
+                    {col.key === 'joined' && card.joiningDay !== undefined && (
+                      <div className="cboard-meta small-muted" title="The day this person joined">{`Joined · ${card.joiningDay ? longDay(card.joiningDay) : 'date not recorded'}`}</div>
+                    )}
                     <div className="cboard-meta">
                       {card.recruiter ? `Recruiter: ${card.recruiter}` : 'No recruiter named'}
                     </div>
@@ -246,11 +271,25 @@ export default function CandidateBoard({
                     )}
                     {!jobId && (
                       <div className="cboard-job small-muted">
-                        {card.requirementTitle || 'No job'}
+                        {card.requirementTitle || 'No requirement'}
                         {card.clientName && ` · ${card.clientName}`}
                       </div>
                     )}
+                    <CardFit id={card.id} />
+                    {card.salaryFit && <div className="cboard-meta"><SalaryFitChips fit={card.salaryFit} compact /></div>}
                     {card.movedBy && <div className="small-muted cboard-moved">{`Moved by ${card.movedBy}, ${shortDate(card.movedAt)}`}</div>}
+                    {askable(user, card.stage, card.interviewStatus, card.internal) && !col.side && (
+                      <div className="cboard-meta" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                        <AskToBook applicationId={card.id} requested={card.interviewRequest || null} />
+                      </div>
+                    )}
+                    {card.interviewRequest && !askable(user, card.stage, card.interviewStatus, card.internal) && <div className="cboard-meta"><InterviewRequested request={card.interviewRequest} /></div>}
+                    {pick && pick.contactOf && !col.side && (
+                      <div className="rch-card-foot" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} role="presentation">
+                        <label className="rch-pickbox"><input type="checkbox" checked={pick.selected.has(card.id)} onChange={() => pick.toggle(card)} aria-label={`Select ${card.name}`} /> Select</label>
+                        <ReachRowButtons person={pick.contactOf(card)} onLogged={pick.onLogged} />
+                      </div>
+                    )}
                   </article>
                 ))}
                 {col.more && (

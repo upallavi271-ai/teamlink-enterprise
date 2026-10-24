@@ -68,7 +68,7 @@ defineTool({
   name: 'move_candidate_stage',
   module: 'ats',
   label: 'Move a candidate to another step',
-  description: 'Move one candidate on one job to another step of the hiring process.',
+  description: 'Move one candidate on one requirement to another step of the hiring process.',
   parameters: {
     candidate: { type: 'person', required: true, description: 'The candidate (their name).' },
     stage: { type: 'stage', required: true, description: 'The step to move to (Interview, Hold, Rejected ...).' },
@@ -92,7 +92,7 @@ defineTool({
       });
     }
     if (stage === 'INTERVIEW_SCHEDULED') return T.redirect('schedule_interview', { choices: { application: app.id } });
-    if (stage === app.stage) return T.refuse(`${app.candidate} is already at "${app.stageLabel}" on ${app.requirement || 'that job'}. Nothing to change.`);
+    if (stage === app.stage) return T.refuse(`${app.candidate} is already at "${app.stageLabel}" on ${app.requirement || 'that requirement'}. Nothing to change.`);
 
     const params = { applicationId: app.id, stage, expectedFrom: app.stage };
     let reasonLine = null;
@@ -124,7 +124,7 @@ defineTool({
       params,
       summary: `Move ${app.candidate} (${app.requirement || 'job'}) from ${app.stageLabel} to ${stageLabel(stage)}.`,
       display: T.card('Move Candidate', [
-        ['Candidate', app.candidate], ['Job', app.requirement], ['Client', app.client],
+        ['Candidate', app.candidate], ['Requirement', app.requirement], ['Client', app.client],
         ['Current', app.stageLabel], ['New', stageLabel(stage)], ['Reason', reasonLine],
       ]),
     });
@@ -167,7 +167,7 @@ defineTool({
   },
   permission: { product: 'ats', module: 'candidates', feature: 'Applications', action: 'view' },
   confirm: 'default',
-  examples: ['Shortlist Rahul', 'Please shortlist candidate Priya for the Java job', 'Rahul ni shortlist cheyyi'],
+  examples: ['Shortlist Rahul', 'Please shortlist candidate Priya for the Java requirement', 'Rahul ni shortlist cheyyi'],
   async validate(ctx, input) {
     const picked = await S.pickApplication(ctx, input, { question: 'Which candidate do you want to shortlist?', needOpen: true });
     if (picked.ret) return picked.ret;
@@ -186,7 +186,7 @@ defineTool({
       params: { applicationId: app.id, stage, expectedFrom: app.stage },
       summary: `Shortlist ${app.candidate} (${app.requirement || 'job'}): move from ${app.stageLabel} to ${stageLabel(stage)}.`,
       display: T.card('Shortlist Candidate', [
-        ['Candidate', app.candidate], ['Job', app.requirement], ['Client', app.client], ['Current', app.stageLabel], ['New', stageLabel(stage)],
+        ['Candidate', app.candidate], ['Requirement', app.requirement], ['Client', app.client], ['Current', app.stageLabel], ['New', stageLabel(stage)],
       ]),
     });
   },
@@ -214,7 +214,7 @@ defineTool({
   name: 'schedule_interview',
   module: 'ats',
   label: 'Schedule an interview',
-  description: 'Book an interview date and time for a candidate on a job.',
+  description: 'Book an interview date and time for a candidate on a requirement.',
   parameters: {
     candidate: { type: 'person', required: true, description: 'The candidate (their name).' },
     date: { type: 'date', required: true, description: 'The interview day.' },
@@ -237,9 +237,9 @@ defineTool({
     const mode = INTERVIEW_MODES.includes(input.choices && input.choices.mode) ? input.choices.mode : modeFrom(input.text);
     return T.done({
       params: { applicationId: app.id, when: `${date}T${time}`, mode, expectedFrom: app.stage },
-      summary: `Schedule ${app.candidate}'s interview for ${app.requirement || 'the job'} on ${niceDate(date)} at ${niceTime(time)}${mode ? ` (${mode})` : ''}.`,
+      summary: `Schedule ${app.candidate}'s interview for ${app.requirement || 'the requirement'} on ${niceDate(date)} at ${niceTime(time)}${mode ? ` (${mode})` : ''}.`,
       display: T.card('Schedule Interview', [
-        ['Candidate', app.candidate], ['Job', app.requirement], ['Client', app.client], ['Current', app.stageLabel],
+        ['Candidate', app.candidate], ['Requirement', app.requirement], ['Client', app.client], ['Current', app.stageLabel],
         ['Date', niceDate(date)], ['Time', niceTime(time)], ['Mode', mode],
       ]),
     });
@@ -289,7 +289,7 @@ defineTool({
     if (picked.ret) return picked.ret;
     const app = picked.one;
     if (app.stage !== 'INTERVIEW_SCHEDULED' || !app.interviewAt) {
-      return T.refuse(`${app.candidate} has no booked interview on ${app.requirement || 'that job'} (now at "${app.stageLabel}"), so there is nothing to move. Say "schedule an interview for ${app.candidate}" instead.`);
+      return T.refuse(`${app.candidate} has no booked interview on ${app.requirement || 'that requirement'} (now at "${app.stageLabel}"), so there is nothing to move. Say "schedule an interview for ${app.candidate}" instead.`);
     }
     const cur = new Date(app.interviewAt);
     const curDate = ymd(cur);
@@ -305,7 +305,7 @@ defineTool({
       params: { applicationId: app.id, when: `${newDate}T${newTime}`, reason, expectedAt: app.interviewAt ? new Date(app.interviewAt).toISOString() : null },
       summary: `Move ${app.candidate}'s interview from ${niceDate(curDate)} ${niceTime(curTime)} to ${niceDate(newDate)} ${niceTime(newTime)}.`,
       display: T.card('Reschedule Interview', [
-        ['Candidate', app.candidate], ['Job', app.requirement], ['Client', app.client],
+        ['Candidate', app.candidate], ['Requirement', app.requirement], ['Client', app.client],
         ['Now', `${niceDate(curDate)} at ${niceTime(curTime)}`], ['New', `${niceDate(newDate)} at ${niceTime(newTime)}`], ['Reason', reason],
       ]),
     });

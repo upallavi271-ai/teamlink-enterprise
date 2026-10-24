@@ -5,11 +5,13 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
 import { canExportReports, can } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
+import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 import MoreFilters from '../../components/ui/MoreFilters.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 // Client revenue (ATS change list §17): invoiced / received / late per client, compare periods.
 import AtsReports from './AtsReports.jsx';
+import TeamReports from './TeamReports.jsx';
 // B2 — Placement margin (fee − credit notes − incentive − partner payouts) per placement / client / recruiter / month.
 import PlacementMargin from './PlacementMargin.jsx';
 // Every number opens its list (reconciliation 2026-10-06): the same list component the Accounts Dashboard uses.
@@ -60,7 +62,7 @@ export default function AccountsReports() {
   if (!data) return error ? <div className="notice red"><span>{error}</span></div> : <div className="small-muted">Loading…</div>;
 
   const needle = q.trim().toLowerCase();
-  const keepClient = (r) => (!client || r.client === client) && (!needle || String(r.client).toLowerCase().includes(needle));
+  const keepClient = (r) => (!client || r.client === client) && (!needle || `${r.client} ${clientAliasText(r.client)}`.toLowerCase().includes(needle));
   const cmp = (RECV_SORTS.find(([k]) => k === sort) || RECV_SORTS[0])[2];
   const receivables = data.receivables.filter(keepClient).sort(cmp);
   const byClient = data.byClient.filter(keepClient);
@@ -93,12 +95,14 @@ export default function AccountsReports() {
 
   const viewSwitch = (
     <div className="report-groupby" style={{ margin: '0 0 12px' }} role="tablist" aria-label="Accounts reports">
-      {[['ledger', 'Receivables'], ['revenue', 'Client revenue'], ...(canMargin ? [['margin', 'Placement margin']] : [])].map(([id, label]) => (
+      {[['ledger', 'Receivables'], ['revenue', 'Client revenue'], ['teamcash', 'Team-wise cash'], ...(canMargin ? [['margin', 'Placement margin']] : [])].map(([id, label]) => (
         <button key={id} type="button" role="tab" aria-selected={view === id} className={`report-tab${view === id ? ' is-on' : ''}`} onClick={() => setView(id)}>{label}</button>
       ))}
     </div>
   );
   if (view === 'revenue') return <div>{viewSwitch}<AtsReports fixedTab="revenue" /></div>;
+  // Billed / collected / still to come for each team and person, with Excel + PDF (server-scoped; read-only).
+  if (view === 'teamcash') return <div>{viewSwitch}<TeamReports fixedReport="cash" embedded /></div>;
   if (view === 'margin') return <div>{viewSwitch}<PlacementMargin canExport={canExport} /></div>;
 
   return (
@@ -130,9 +134,9 @@ export default function AccountsReports() {
         extra={(
           <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
             Sort
-            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
               {RECV_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
+            </Combo>
           </label>
         )}
       />

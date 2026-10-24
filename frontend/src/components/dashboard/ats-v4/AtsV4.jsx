@@ -5,7 +5,7 @@ import {
   KpiRow, KpiTile, Panel, AttentionList, QuickActions, Avatar, Icon, Pill, fmtNum,
 } from '../../atskit/AtsKit.jsx';
 import { LineChart, DonutChart } from '../../charts';
-import { can, canRaiseRequirement } from '../../../permissions';
+import { can, canRaiseRequirement, canStartJob } from '../../../permissions';
 import './atsV4.css';
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ export function buildTiles(data, ws) {
       if (v !== null) tiles.push({ id: 'overdue', label: 'Late', value: v, drill: 'overdue', zero: 'Nothing is late', help: 'Work that is past its due date.', goodWhen: 'down', tone: 'red' });
     } else if (L === 'bde' && !has('agreement-pending')) {
       const u = ws.find((w) => w.id === 'unsigned' && w.type === 'clients');
-      if (u) tiles.push({ id: 'agreement-pending', label: 'Unsigned agreements', value: u.total, drill: u.drill, zero: 'All agreements are signed', help: 'Clients with open jobs and no signed agreement.' });
+      if (u) tiles.push({ id: 'agreement-pending', label: 'Unsigned agreements', value: u.total, drill: u.drill, zero: 'All agreements are signed', help: 'Clients with open requirements and no signed agreement.' });
     }
   }
   if (!kpi && L === 'recruiter') {
@@ -98,7 +98,7 @@ export function buildTiles(data, ws) {
       t && { id: 'tasks-today', label: 'Due today', value: t.total, zero: 'Nothing due today', help: 'Steps and calls due today (late ones included).' },
       iv && { id: 'iv-today', label: 'Interviews today', value: iv.total, drill: iv.drill, zero: iv.zero },
       fb && { id: 'feedback', label: 'Interview done, no feedback', help: 'Interviews that have happened but nobody has recorded the feedback yet.', value: fb.total, drill: fb.drill, zero: fb.zero },
-      jobs && { id: 'my-jobs', label: 'My open jobs', value: jobs.total, drill: jobs.drill, zero: jobs.zero },
+      jobs && { id: 'my-jobs', label: 'My open requirements', value: jobs.total, drill: jobs.drill, zero: jobs.zero },
       tg && { id: 'my-joins', label: 'Joinings this month', value: tg.value, drill: tg.drill, zero: tg.zero, sub: tg.target ? `of ${fmt(tg.target)} target` : null },
     ].filter(Boolean);
   }
@@ -150,7 +150,7 @@ function attentionOf(data, ws, onDrill) {
   } else if (L === 'bde') {
     const fb = ws.find((w) => w.id === 'client-fb'); const un = ws.find((w) => w.id === 'unsigned');
     if (fb && fb.total) items.push(it('client-fb', fb.total, fb.title, 'Sent to the client, no reply yet', 'amber', 'Chase', fb.drill));
-    if (un && un.total) items.push(it('unsigned', un.total, 'Clients with unsigned agreement', 'Open jobs, agreement not signed', 'red', 'Review', un.drill));
+    if (un && un.total) items.push(it('unsigned', un.total, 'Clients with unsigned agreement', 'Open requirements, agreement not signed', 'red', 'Review', un.drill));
   }
   // The follow-ups line ("N candidates not followed up yet") is a problem to act on.
   const notes = [];
@@ -185,8 +185,8 @@ function LateJobs({ params, reload, total, drill, onDrill, mayOpen }) {
       action={total && drill ? { label: `View all ${fmt(total)}`, onClick: () => onDrill(drill) } : null}
     >
       {st.error && <div className="notice red av4-pad">{st.error}</div>}
-      {!st.data && !st.error && <div className="ak-empty">Loading the open jobs…</div>}
-      {st.data && !rows.length && <div className="ak-empty">No open job has late work or is missing a recruiter.</div>}
+      {!st.data && !st.error && <div className="ak-empty">Loading the open requirements…</div>}
+      {st.data && !rows.length && <div className="ak-empty">No open requirement has late work or is missing a recruiter.</div>}
       {rows.length > 0 && (
         <table className="ak-table av4-tbl">
           <colgroup><col className="av4-c1" /><col className="av4-c2" /><col className="av4-c3" /><col className="av4-c4" /></colgroup>
@@ -230,8 +230,8 @@ function JobsTable({ w, onDrill }) {
         <table className="ak-table av4-tbl">
           <thead>
             {isClients
-              ? <tr><th>Client</th>{withNote && <th>Note</th>}<th className="num">Open jobs</th></tr>
-              : <tr><th>Job</th><th>Priority</th><th className="num">In process</th></tr>}
+              ? <tr><th>Client</th>{withNote && <th>Note</th>}<th className="num">Open requirements</th></tr>
+              : <tr><th>Requirement</th><th>Priority</th><th className="num">In process</th></tr>}
           </thead>
           <tbody>
             {rows.map((r) => (isClients ? (
@@ -259,7 +259,7 @@ function JobsTable({ w, onDrill }) {
 // w.columns with a plain "basis"): as of today / the dates picked / in total. A real zero is
 // a quiet grey 0 (never a dash: a dash would look like "no data loaded"); a dash only
 // means "does not apply" (the No department row has no team leads).
-const DEPT_COLS = [['openJobs', 'Open jobs', 'Jobs open now'], ['active', 'In process', 'People on a job now'], ['interviews', 'Interviews', 'Interviews in the dates you picked'], ['selected', 'Selected', 'Selected or offered, not joined yet'], ['joined', 'Joined', 'Joined in the dates you picked'], ['late', 'Late', 'Work past its due date']];
+const DEPT_COLS = [['openJobs', 'Open requirements', 'Requirements open now'], ['active', 'In process', 'People on a requirement now'], ['interviews', 'Interviews', 'Interviews in the dates you picked'], ['selected', 'Selected', 'Selected or offered, not joined yet'], ['joined', 'Joined', 'Joined in the dates you picked'], ['late', 'Late', 'Work past its due date']];
 const DOTS = ['blue', 'green', 'amber', 'violet', 'teal', 'pink', 'red', 'slate'];
 const BASIS_TIP = { now: 'as of today', period: 'in the dates you picked', total: 'in total, whatever the date' };
 function Zero({ what }) {
@@ -313,7 +313,7 @@ function DeptPerf({ w, onDrill, onPickDept, tls }) {
                     {cols.map((c) => <td key={c.key} className={`num av4-c-${c.kind}`}>{cell(r, c, r.drills)}</td>)}
                     <td className="num">
                       {r.fixNeeded
-                        ? <span className="av4-dash" title="Does not apply: these jobs have no department">–</span>
+                        ? <span className="av4-dash" title="Does not apply: these requirements have no department">–</span>
                         : tlCount(r.department)
                           ? <button type="button" className="av4-n" title={`Show ${r.department || 'this department'} and its team leads`} onClick={(e) => { e.stopPropagation(); if (r.department) onPickDept(r.department); }}>{fmt(tlCount(r.department))}</button>
                           : <Zero what="team leads" />}
@@ -334,7 +334,7 @@ function DeptPerf({ w, onDrill, onPickDept, tls }) {
           </div>
           <div className="av4-dnotes">
             <div className="av4-note">
-              {'Open jobs, In process, Selected and Late are as of today. '}
+              {'Open requirements, In process, Selected and Late are as of today. '}
               {w.periodAll ? 'Everything else counts from the start. ' : `Interviews and Joined (${joinWord || 'in the dates picked'}) follow the dates you picked. `}
               {'Joined in total is everyone marked Joined, whatever the date.'}
             </div>
@@ -365,7 +365,7 @@ function DeptPerf({ w, onDrill, onPickDept, tls }) {
 
 // ---- Team snapshot: team leads (or a TL's recruiters) · recruiters' waiting work --------
 // [key, label, basis]: the second header line says what the column counts.
-const TL_COLS = [['openJobs', 'Open jobs', 'today'], ['inProcess', 'In process', 'today'], ['interviews', 'Interviews', 'dates'], ['selected', 'Selected', 'today'], ['joined', 'Joined', 'dates'], ['joinedTotal', 'Joined', 'in total'], ['late', 'Late', 'today']];
+const TL_COLS = [['openJobs', 'Open requirements', 'today'], ['inProcess', 'In process', 'today'], ['interviews', 'Interviews', 'dates'], ['selected', 'Selected', 'today'], ['joined', 'Joined', 'dates'], ['joinedTotal', 'Joined', 'in total'], ['late', 'Late', 'today']];
 function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
   const periodAll = !!(tls && tls.data && tls.data.periodAll);
   const word = (tls && tls.data && tls.data.word) || 'in the dates picked';
@@ -400,7 +400,7 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
       {cur === 'tls' && (
         !tls || tls.loading ? <div className="ak-empty">Loading the team...</div>
           : tls.error ? <div className="notice red av4-pad">{tls.error}{tls.retry && <> <button type="button" className="btn btn-sm" onClick={tls.retry}>Try again</button></>}</div>
-            : !shown.length ? <div className="ak-empty">No team lead here yet. Team leads show once jobs or recruiters are given to them.</div> : (
+            : !shown.length ? <div className="ak-empty">No team lead here yet. Team leads show once requirements or recruiters are given to them.</div> : (
               <div className="av4-scroll">
                 <table className="ak-table av4-tbl">
                   <thead><tr><th>{single ? 'Recruiter' : 'Team lead'}</th>{tlCols.map(([k, l, bs]) => <th key={k} className="num av4-th"><span className="av4-th-l">{l}</span><small className="av4-th-b">{basisOf(bs)}</small></th>)}</tr></thead>
@@ -409,7 +409,7 @@ function TeamSnapshot({ tlsW, tls, peopleW, onDrill, onShowAll }) {
                       <tr key={r.id}>
                         <td><span className="ak-person"><Avatar name={r.name} size={24} /><span title={r.department ? `${r.name} · ${r.department}` : r.name}>{r.name}</span></span></td>
                         {tlCols.every(([k]) => !r[k])
-                          ? <td colSpan={tlCols.length} className="small-muted">No jobs yet</td>
+                          ? <td colSpan={tlCols.length} className="small-muted">No requirements yet</td>
                           : tlCols.map(([k]) => <td key={k} className="num">{N(r, k)}</td>)}
                       </tr>
                     ))}
@@ -497,7 +497,7 @@ function Hiring({ w, onDrill }) {
   ] : [];
   const step = (r) => r && (
     <li key={r.label} title={r.def}>
-      <span>{r.label}</span>
+      <span>{r.label === 'Added' ? 'Added in the dates picked' : r.label}</span>
       {r.value ? <button type="button" className="av4-n" onClick={() => onDrill(r.drill)}>{fmt(r.value)}</button> : <span className="av4-dash">0</span>}
     </li>
   );
@@ -554,7 +554,7 @@ function Fold({ id, title, count, open, onToggle, children }) {
     </section>
   );
 }
-const FOLD_NAMES = { banner: 'Activity not logged', cleanup: 'Data cleanup', tls: 'Team leads', openjobs: 'Open jobs', today: 'Today' };
+const FOLD_NAMES = { banner: 'Activity not logged', cleanup: 'Data cleanup', tls: 'Team leads', openjobs: 'Open requirements', today: 'Today' };
 const foldCount = (w) => (w.type === 'openjobs' ? w.total : w.type === 'people' || w.type === 'list' || w.type === 'jobs' || w.type === 'clients' || w.type === 'review' ? w.total : undefined);
 
 // ---- The page ----------------------------------------------------------------------------
@@ -568,6 +568,8 @@ export default function AtsV4({
     if (w) used.add(w.id);
     return w || null;
   };
+  const workspace = take((w) => w.type === 'workspace'); // BDE: My Business Workspace (2026-10-10), first on the page
+  const missed = take((w) => w.type === 'missed'); // a recruiter's "My missed items" (2026-10-12), above the rest
   const kpi = take((w) => w.type === 'kpis');
   const tiles = buildTiles(data, ws);
   const lines = take((w) => w.type === 'lines');
@@ -596,9 +598,10 @@ export default function AtsV4({
 
   // Quick actions — only what this login may do (the same can() checks the screens use).
   const qa = [
-    canRaiseRequirement(user) && { key: 'post', icon: 'plus', label: 'Post a job', to: '/requirements?new=1' },
+    // creating a job is the BDE team's and above (2026-10-13): Admin / HR add it, a BDE / Manager asks for it; a TL / Recruiter see no such action
+    canStartJob(user) && { key: 'post', icon: 'plus', label: canRaiseRequirement(user) ? 'Post a requirement' : 'Request a requirement', to: '/requirements?new=1' },
     can(user, 'ats', 'candidates', 'Add Candidate', 'create') && { key: 'add-cand', icon: 'user', label: 'Add candidate', to: '/candidates?add=1' },
-    can(user, 'ats', 'requirements', 'Requirement List', 'view') && { key: 'jobs', icon: 'briefcase', label: 'View all jobs', to: '/requirements' },
+    can(user, 'ats', 'requirements', 'Requirement List', 'view') && { key: 'jobs', icon: 'briefcase', label: 'View all requirements', to: '/requirements' },
     can(user, 'ats', 'candidates', 'Candidate List', 'view') && { key: 'cands', icon: 'users', label: 'View candidates', to: '/candidates' },
     can(user, 'ats', 'clients', 'Client List', 'view') && { key: 'clients', icon: 'building', label: 'View clients', to: '/clients' },
     can(user, 'ats', 'interviews', 'Calendar View', 'view') && { key: 'cal', icon: 'calendar', label: 'Interview calendar', to: '/ats/calendar' },
@@ -628,6 +631,8 @@ export default function AtsV4({
 
   return (
     <div className="av4">
+      {workspace && draw(workspace)}
+      {missed && draw(missed)}
       {(kpi || tiles.length > 0) && (
         <KpiRow className={`av4-kpis av4-kpis-${Math.min(6, tiles.length)}`}>
           {tiles.slice(0, 6).map((t) => <Tile key={t.id} t={t} onDrill={onDrill} prevWord={prevWord} />)}

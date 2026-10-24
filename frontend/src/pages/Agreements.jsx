@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
 import Combo from '../components/Combo.jsx';
+import { rowClickProps } from '../utils/rowClick.js';
 import AtsDataTools from '../components/AtsDataTools.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
@@ -9,15 +10,20 @@ import { agreementIsActive } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import { downloadAgreementPdf } from '../components/agreements/AgreementPanel.jsx';
+import { ViewAgreementButton, ViewAgreementWindow } from '../components/agreements/SignedAgreementFiles.jsx'; // the signed agreement files kept on a client (PDF / picture)
 // Spec 6 — the step badge, and the Admin's agreement settings.
 import { AgreementStepChip, AGREEMENT_STEPS, agreementStepLabel, agreementStepOf } from '../components/clients/AgreementStep.jsx';
 import { AgreementSettingsButton } from '../components/agreements/AgreementSettings.jsx';
 import AgreementLinkCard from '../components/agreements/AgreementLinkCard.jsx';
+// Drive links of signed agreements, many clients at once (2026-10-12)
+import AgreementLinksDialog from '../components/agreements/AgreementLinksDialog.jsx';
+import '../components/agreements/agreementDriveLinks.css';
 import Modal from '../components/Modal.jsx';
 // Clients & Requirements v4 (2026-10-08): the module header + KPI tiles on the
 // ATS routes only (/agreements, /ats/agreements); /accounts/agreements keeps its look.
 import { KpiRow, KpiTile } from '../components/atskit/AtsKit.jsx';
 import { CrqHead } from '../components/clientsreq-v4/ListBits.jsx';
+import useClientLabel from '../components/clients/useClientLabel.js'; // "Name - Location" for same-name clients (2026-10-22)
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the ticked clients (agreement link / reminder)
 import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
 
@@ -48,6 +54,7 @@ const MONTH = (value) => {
 const isSignedByClient = (c) => !!c.agreementSignedAt || ['SIGNED', 'ACTIVE', 'EXPIRED'].includes(c.agreementStatus);
 
 export default function Agreements() {
+  const clientLabel = useClientLabel();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const v4 = !pathname.startsWith('/accounts');
@@ -80,6 +87,21 @@ export default function Agreements() {
   const mayMessageClients = useMayMessage('clients', true);
   const [ticked, setTicked] = useState([]);
   const [msgMany, setMsgMany] = useState(false);
+  // Add agreement links (many at once): the button only for who may (the server says), and the "Agreement on Drive" chip data.
+  const [linkRights, setLinkRights] = useState(null);
+  const [linksOpen, setLinksOpen] = useState(false);
+  const [onDrive, setOnDrive] = useState(new Map());
+  // Clients that have NO agreement at all (nothing made, no signed file, no own file, no Drive link): the server lists them (GET /agreement/missing).
+  const [missing, setMissing] = useState(null);
+  const [showMissing, setShowMissing] = useState(false);
+  const [uploadFor, setUploadFor] = useState('');
+  const loadMissing = () => api.get('/agreement/missing').then((r) => setMissing(r.data)).catch(() => setMissing(null));
+  useEffect(() => { if (desk) loadMissing(); }, [desk]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loadDrive = () => api.get('/clients/agreement-links/summary').then((r) => setOnDrive(new Map((r.data.rows || []).map((x) => [x.clientId, x])))).catch(() => {});
+  useEffect(() => {
+    if (!desk) return;
+    api.get('/clients/agreement-links/rights').then((r) => { setLinkRights(r.data); if (r.data.canSee) loadDrive(); }).catch(() => {});
+  }, [desk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (blocked) return;
@@ -143,7 +165,8 @@ export default function Agreements() {
       // Works for "AGR0003", "agr 3", "0003" — spaces and dashes are ignored.
       const flat = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       const q = flat(search);
-      const hay = `${flat(c.name)} ${flat(c.agreementId)} ${flat(c.clientCode)} ${flat(c.displayCode)}`;
+      // (c.aliases = the client's old names: they find the row; the row shows the official name)
+      const hay = `${flat(c.name)} ${flat(c.agreementId)} ${flat(c.clientCode)} ${flat(c.displayCode)} ${(c.aliases || []).map(flat).join(' ')}`;
       const num = /^\d{1,4}$/.test(q) ? String(Number(q)).padStart(4, '0') : '';
       if (!(q && hay.includes(q)) && !(num && (hay.includes(`agr${num}`) || hay.includes(`cli${num}`)))) return false;
     }
@@ -171,13 +194,16 @@ export default function Agreements() {
 
   const headTools = (
     <>
-      {canSettings && <AgreementSettingsButton />}
+      {canSettings && <AgreementSettingsButton label="Edit agreement template and terms" />}
       {desk && <AtsDataTools
         module="agreements"
         kinds={['agreements']}
         onImported={() => api.get('/clients').then((res) => setClients(res.data)).catch(() => {})}
         body={() => ({ ids: statusFilter || search ? rows.map((c) => c.id) : null })}
       />}
+      {desk && linkRights && linkRights.canAdd && (
+        <button type="button" className="btn" title="The signed agreements are in Google Drive: paste or upload the list of Drive links for many clients" onClick={() => setLinksOpen(true)}>🔗 Add agreement links (many at once)</button>
+      )}
     </>
   );
   const headSub = desk ? 'Which client agreements need a next step?' : 'Signed client agreements. Read and download.';
@@ -209,7 +235,7 @@ export default function Agreements() {
       {v4 && (
         <KpiRow className="crq4-kpis">
           <KpiTile icon="handshake" tone="blue" label="Total Agreements" value={loaded ? clients.length : null} loading={!loaded} sub="In your area" onClick={statusFilter ? () => setStatusFilter('') : undefined} />
-          {stepTile('DRAFT', 'file', 'slate', 'Draft', 'Not sent yet')}
+          {stepTile('DRAFT', 'file', 'slate', 'Made', 'Not sent yet')}
           {stepTile('SENT', 'send', 'violet', 'Sent', 'With the client')}
           {/* Signed = every agreement the client has signed. A fully signed one turns Active at once, so it counts under Active too. */}
           <KpiTile
@@ -217,7 +243,7 @@ export default function Agreements() {
             active={statusFilter === 'SIGNED_ALL'}
             onClick={signedCount ? () => setStatusFilter(statusFilter === 'SIGNED_ALL' ? '' : 'SIGNED_ALL') : undefined}
           />
-          {stepTile('ACTIVE', 'check', 'green', 'Active', 'Jobs can go live')}
+          {stepTile('ACTIVE', 'check', 'green', 'Active', 'Requirements can go live')}
           {stepTile('EXPIRED', 'x', 'red', 'Expired', 'Needs a renewal')}
         </KpiRow>
       )}
@@ -235,6 +261,40 @@ export default function Agreements() {
           </button>
         </div>
       )}
+      {desk && missing && missing.total > 0 && (
+        <div className="card section" style={{ margin: '0 0 10px' }} aria-label="Clients with no agreement">
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b style={{ color: 'var(--amber)' }}>{`⚠ ${missing.total} client${missing.total === 1 ? '' : 's'} with no agreement`}</b>
+            <span className="cell-muted" style={{ fontSize: 12 }}>These clients show "Upload" because nothing is on file for them.</span>
+            <button type="button" className={`btn btn-sm${showMissing ? ' btn-primary' : ''}`} onClick={() => setShowMissing((v) => !v)}>{showMissing ? 'Hide the list' : 'Show the list'}</button>
+          </div>
+          {showMissing && (
+            <div className="tbl-wrap" style={{ marginTop: 8, maxHeight: 360, overflow: 'auto' }}>
+              <table>
+                <thead><tr><th>Client</th><th>Client no.</th><th>Place</th><th>Client manager (BDE)</th><th>Client status</th><th /></tr></thead>
+                <tbody>
+                  {missing.rows.map((c) => (
+                    <tr key={c.id} {...rowClickProps(() => navigate(`/clients/${c.id}?tab=agreement`))}>
+                      <td>
+                        <b>{c.name}</b>
+                        {c.fileLost && <span className="clrel-sub" style={{ color: 'var(--amber)' }}>An agreement was saved, but its file cannot be found on this server.</span>}
+                      </td>
+                      <td className="cell-muted">{c.clientCode || '—'}</td>
+                      <td className="cell-muted">{c.location || '—'}</td>
+                      <td className="cell-muted">{c.bdeOwner || '—'}</td>
+                      <td className="cell-muted">{c.status === 'Active' ? 'Active' : `${c.status} (stopped)`}</td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                        <button type="button" className="btn btn-sm" onClick={() => setUploadFor(c.id)}>Upload agreement</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+      {uploadFor && <ViewAgreementWindow clientId={uploadFor} onClose={() => setUploadFor('')} onChanged={() => { loadMissing(); loadDrive(); api.get('/clients').then((res) => setClients(res.data)).catch(() => {}); }} />}
       <div className="filter-row">
         <input placeholder="Search client or agreement number…" value={search} onChange={(e) => setSearch(e.target.value)} />
         <Combo value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
@@ -267,12 +327,12 @@ export default function Agreements() {
                 </th>
               )}
               <th>Client</th>{desk && <th>Client manager (BDE)</th>}<th>Agreement no.</th><th>Step</th><th>Fee</th><th>Ends</th>
-              {desk && <><th>Open jobs</th><th>Jobs waiting</th></>}<th />
+              {desk && <><th>Open requirements</th><th>Requirements waiting</th></>}<th />
             </tr>
           </thead>
           <tbody>
             {paged.slice.map((c) => (
-              <tr key={c.id} className="row-link" onClick={() => openRow(c)}>
+              <tr key={c.id} {...rowClickProps(() => openRow(c))}>
                 {mayMessage && (
                   <td onClick={(e) => e.stopPropagation()}>
                     <input
@@ -282,11 +342,12 @@ export default function Agreements() {
                     />
                   </td>
                 )}
-                <td><b>{c.name}</b></td>
+                <td><b>{clientLabel(c)}</b></td>
                 {desk && <td className="cell-muted">{c.bdeLabel || c.bdeOwner || c.bdeName || '—'}</td>}
-                <td style={{ whiteSpace: 'nowrap' }}>{c.agreementId ? <b>{c.agreementId}</b> : <span className="cell-muted" title="A number is added when the agreement draft is made.">Not numbered yet</span>}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{c.agreementId ? <b>{c.agreementId}</b> : <span className="cell-muted" title="A number is added when the agreement is made.">Not numbered yet</span>}</td>
                 <td>
                   <AgreementStepChip status={c.agreementStatus} />
+                  {onDrive.get(c.id) && <span className={`adl-chip ${onDrive.get(c.id).signedCopy ? 'green' : 'blue'}`} style={{ marginLeft: 6 }} title="The Drive link of the signed agreement is saved on the client">{onDrive.get(c.id).signedCopy ? 'Signed copy on file' : 'Agreement on Drive'}</span>}
                   {execution.get(c.id)?.awaitingCountersign && <span className="clrel-sub">Waiting for TeamLink to sign</span>}
                   {execution.get(c.id)?.linkExpired && <span className="clrel-sub" style={{ color: 'var(--red)' }}>Link ended. Make a new link.</span>}
                 </td>
@@ -302,9 +363,7 @@ export default function Agreements() {
                 )}
                 <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
                   {/* The row itself opens the agreement (no separate "Open"). */}
-                  {execution.has(c.id) && (
-                    <button type="button" className="btn btn-sm" onClick={() => navigate(`/agreements/${c.id}`)}>📄 View agreement</button>
-                  )}
+                  <ViewAgreementButton clientId={c.id} esign={execution.has(c.id)} />
                   {canSettings && execution.has(c.id) && ['DRAFT', 'SENT', 'VIEWED'].includes(agreementStepOf(c.agreementStatus)) && (
                     <button type="button" className="btn btn-sm" onClick={() => setLinkFor(c)}>
                       {agreementStepOf(c.agreementStatus) === 'DRAFT' ? '🔗 Create agreement link' : '🔗 Link'}
@@ -335,6 +394,7 @@ export default function Agreements() {
           onClose={() => setMsgMany(false)}
         />
       )}
+      {linksOpen && <AgreementLinksDialog onClose={() => setLinksOpen(false)} onDone={loadDrive} />}
       {linkFor && (
         <Modal title={`Agreement link · ${linkFor.name}`} onClose={() => setLinkFor(null)}>
           <AgreementLinkCard
@@ -354,7 +414,7 @@ export default function Agreements() {
         : (
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>Month</th><th>Drafts made</th><th>Signed</th><th>Active</th><th>Ended</th><th>Waiting</th></tr></thead>
+              <thead><tr><th>Month</th><th>Made</th><th>Signed</th><th>Active</th><th>Ended</th><th>Waiting</th></tr></thead>
               <tbody>
                 {months.map(([key, m]) => (
                   <tr key={key}>

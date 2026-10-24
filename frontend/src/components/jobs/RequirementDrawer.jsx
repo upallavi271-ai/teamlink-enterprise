@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { requirementStatusLabel } from '../../atsVocab';
+import { jobNoteOf } from './reqStatus.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import {
   PriorityChip, PipelineSteps, slaInfo, lastActivityText, fmtWhen, fmtShort, nf, reqStatusTone,
@@ -62,7 +63,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign, actions, 
   );
   return (
     <div className="reqdrw-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <aside className="reqdrw reqdrw-big" role="dialog" aria-label={`Job ${r.reqCode || r.title}`}>
+      <aside className="reqdrw reqdrw-big" role="dialog" aria-label={`Requirement ${r.reqCode || r.title}`}>
         <div className="reqdrw-head">
           <div style={{ minWidth: 0 }}>
             <div className="reqdrw-code">{r.reqCode || r.id.slice(0, 8)}</div>
@@ -70,7 +71,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign, actions, 
             <div className="reqdrw-sub">
               <StatusChip status={requirementStatusLabel(r.status)} tone={reqStatusTone(r.status)} />
               <PriorityChip value={r.priority} />
-              {r.agreementPending && <StatusChip tone="amber">Waiting for agreement</StatusChip>}
+              {jobNoteOf(r) && <span className="small-muted">{jobNoteOf(r)}</span>}
             </div>
           </div>
           <button type="button" className="reqdrw-x" aria-label="Close" onClick={onClose}>×</button>
@@ -78,7 +79,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign, actions, 
         <div className="reqdrw-body">
           {/* Open job + every other action of the row, as plain buttons. */}
           <div className="reqdrw-actions">
-            <button type="button" className="btn btn-primary" onClick={() => navigate(`/requirements/${r.id}`)}>Open job</button>
+            <button type="button" className="btn btn-primary" onClick={() => navigate(`/requirements/${r.id}`)}>Open requirement</button>
             {/* Everyday actions first; Pause / Close / Delete / Export sit in a
                 quieter second row (user, 2026-10-03: "neat ga"). */}
             {actions ? actions.filter((a) => !a.danger && !/export|pause/i.test(a.label)).map((a) => (
@@ -101,7 +102,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign, actions, 
           <div className="reqdrw-grid">
           <div className="reqdrw-col">
           <div className="req360-sec">
-            <h4>Job</h4>
+            <h4>Requirement</h4>
             {kv('Type', r.internal ? 'Internal' : 'Client')}
             {!r.internal && kv('Client', (sum ? sum.clientLink : r.clientLink) && r.clientId
               ? <Link to={`/clients/${r.clientId}`}>{r.client?.name}</Link>

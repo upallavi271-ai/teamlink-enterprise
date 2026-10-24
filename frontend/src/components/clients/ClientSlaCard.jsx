@@ -61,7 +61,7 @@ export default function ClientSlaCard({ clientId, initial = null, canEdit = fals
         <>
           {line('Feedback within', 'feedbackDays')}
           {line('Send first profiles within', 'firstProfilesDays')}
-          <div className="small-muted" style={{ marginTop: 6 }}>Profiles with this client past the feedback days show as Late. Jobs with no profile sent inside the first-profiles days show in Reports → Late &amp; waiting → Client promises.</div>
+          <div className="small-muted" style={{ marginTop: 6 }}>Profiles with this client past the feedback days show as Late. Requirements with no profile sent inside the first-profiles days show in Reports → Late &amp; waiting → Client promises.</div>
         </>
       ) : (
         <div style={{ display: 'grid', gap: 8 }}>

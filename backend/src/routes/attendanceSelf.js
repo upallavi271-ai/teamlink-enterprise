@@ -28,17 +28,31 @@ const { withoutSystemAccounts } = require('../utils/systemAccounts');
 const attachments = require('../utils/attachments');
 const face = require('../utils/faceEngine');
 const D = require('../utils/attendanceDays');
+const PSRC = require('../utils/punchSources'); // punch source labels (Web / Biometric / Pulse / HR)
 const { employeeMatchesFilters, monthStats } = require('../utils/attendanceMath');
 const { hrStatusOf } = require('../utils/hrStatus');
 const { toCsv, toXlsx } = require('../utils/tabularExport');
 const { notifyDataIo } = require('../utils/dataIoNotify');
 const leaveCharge = require('../utils/leaveCharge');
+const fence = require('../utils/geofence');
+const guard = require('../utils/punchGuard');
+const CS = require('../utils/checkinSettings'); // face mode, GPS-accuracy allowance, retention
+const faceRef = require('../utils/faceRef'); // each person's reference face, computed once
+const faceReview = require('../utils/faceReview'); // HR list of web check-ins whose face was not matched / not checked
 
 const WEB_METHODS = ['GPS', 'Face'];
 const FAILED = 'Face verification failed. Please try again.';
 const NO_PHOTO = 'Add your photo in My Employee Profile first';
 const EXITED = ['Relieved', 'Exited'];
 const FRAME_MAX_BYTES = 700 * 1024;
+
+// One check-in at a time per person, and a repeated tap / retry with the same
+// idempotency key gets the first answer back instead of a second punch.
+const WARMED = new Map(); // employeeId -> last warm-up
+const BUSY = new Map(); // userId -> start time of the check-in being worked on
+const IDEM = new Map(); // `${userId}:${key}` -> { state, status, body, at }
+const IDEM_TTL_MS = 15 * 60 * 1000;
+const BUSY_MAX_MS = 2 * 60 * 1000;
 
 // Great-circle distance in metres.
 function haversine(lat1, lon1, lat2, lon2) {
@@ -63,6 +77,19 @@ function geofenceCheck(cfg, lat, lng, accuracy) {
 
 async function latestPhoto(employeeId) {
   return prisma.employeeDocument.findFirst({ where: { employeeId, docType: 'Photo' }, orderBy: { uploadedAt: 'desc' } });
+}
+
+// The reference face of this person: kept after the first time (faceRef.js), so the profile photo is analysed once.
+async function referenceFace(own, photo, photoPath) {
+  if (!photo || !photoPath) return null;
+  const key = faceRef.photoKey(photo);
+  const stored = await faceRef.get(own.id, key);
+  if (stored) face.seedPhoto(key, [stored]);
+  const faces = await face.analysePhoto(key, fs.readFileSync(photoPath));
+  if (!faces || !faces.length) return null;
+  const main = [...faces].sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0];
+  if (!stored && main && main.descriptor) faceRef.put(own.id, key, main).catch(() => {});
+  return main;
 }
 
 const num = (v) => (v === undefined || v === null || v === '' ? NaN : Number(v));
@@ -99,8 +126,8 @@ function sendTable(res, format, filename, headers, rows, sheet) {
   return res.send(toCsv(headers, rows));
 }
 
-const DAY_HEADERS = ['Date', 'Check-In', 'Check-Out', 'Total Hours', 'Status', 'Early Logout', 'Present', 'Leave', 'Absent (unpaid)', 'Paid', 'Method', 'Location Status', 'Verification', 'Regularization', 'Note', 'Result', 'Reason', 'Late coming'];
-const dayCells = (d) => [d.date, d.checkIn || '', d.checkOut || '', d.hours ?? '', d.status, d.earlyLogout ? 'Yes' : '', d.present ?? '', d.leave ?? '', d.absent ?? '', d.paid ?? '', d.howText || d.method || '', d.locationStatus || '', d.verification || '', d.regularization || '', d.note || '', d.kpi ? (D.KPI_LABEL[d.kpi] || d.kpi) : '', d.reason || '', (d.late || d.lateExcused) ? (d.latePermissionText || 'Not explained') : ''];
+const DAY_HEADERS = ['Date', 'Check-In', 'Check-Out', 'Total Hours', 'Status', 'Early Logout', 'Present', 'Leave', 'Absent (unpaid)', 'Paid', 'Method', 'Location Status', 'Verification', 'Regularization', 'Note', 'Result', 'Reason', 'Late coming', 'Punches by source'];
+const dayCells = (d) => [d.date, d.checkIn || '', d.checkOut || '', d.hours ?? '', d.status, d.earlyLogout ? 'Yes' : '', d.present ?? '', d.leave ?? '', d.absent ?? '', d.paid ?? '', d.howText || d.method || '', d.locationStatus || '', d.verification || '', d.regularization || '', d.note || '', d.kpi ? (D.KPI_LABEL[d.kpi] || d.kpi) : '', d.reason || '', (d.late || d.lateExcused) ? (d.latePermissionText || 'Not explained') : '', d.sourceCounts ? PSRC.GROUPS.filter((g) => d.sourceCounts[g]).map((g) => `${PSRC.GROUP_LABEL[g]} ${d.sourceCounts[g]}`).join(', ') : ''];
 
 module.exports = function registerSelfAttendance(router, { getConfig, methodsOf, CHECKIN_ASSIGNABLE, isSuperAdmin, ownEmployee }) {
   // ---- readiness ------------------------------------------------------------
@@ -108,6 +135,7 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     const own = await ownEmployee(req);
     if (!own) return res.json({ hasEmployee: false, methods: [], hasPhoto: false });
     const cfg = await getConfig();
+    const cs = await CS.load();
     const photo = await latestPhoto(own.id);
     const today = D.localDate();
     const punches = await prisma.attendancePunch.findMany({ where: { employeeId: own.id, date: today }, orderBy: { time: 'asc' } });
@@ -116,27 +144,65 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
       employeeId: own.id,
       methods: methodsOf(own).map((k) => ({ key: k, label: CHECKIN_ASSIGNABLE[k], web: WEB_METHODS.includes(k) })),
       hasPhoto: !!photo,
-      geofence: { enabled: !!(cfg.geofenceEnabled && cfg.officeLatitude != null), radiusM: cfg.geofenceRadiusM },
+      geofence: { enabled: !!(cfg.geofenceEnabled && cfg.officeLatitude != null), radiusM: cfg.geofenceRadiusM, accuracyCounts: cs.accuracyCounts, accuracyCapM: cs.accuracyCapM, ...fence.publicOffices(await fence.loadOffices(cfg)) },
+      face: { mode: cs.faceMode, privacy: 'Your photo is used only to check your attendance.' },
       today,
-      todayPunches: punches.map((p) => ({ id: p.id, time: p.time, direction: p.direction, method: p.method, verificationStatus: p.verificationStatus })),
+      open: punches.length ? punches[punches.length - 1].direction === 'In' : false,
+      minGapSec: await guard.minGapSec(),
+      todayPunches: punches.map((p) => ({ id: p.id, time: p.time, direction: p.direction, method: p.method, verificationStatus: p.verificationStatus, sourceKey: PSRC.sourceKeyOf(p), sourceLabel: PSRC.LABEL[PSRC.sourceKeyOf(p)] })),
     });
+  });
+
+  // ---- warm-up: called when My Attendance opens, so the face models and this
+  // person's registered photo are ready BEFORE they tap Check In ------------
+  router.post('/face/warm', async (req, res) => {
+    const own = await ownEmployee(req);
+    if (!own || !methodsOf(own).some((k) => WEB_METHODS.includes(k))) return res.json({ warming: false });
+    const photo = await latestPhoto(own.id);
+    res.json({ warming: !!photo });
+    if (!photo) return;
+    const last = WARMED.get(own.id) || 0;
+    if (Date.now() - last < 5 * 60 * 1000) return;
+    WARMED.set(own.id, Date.now());
+    try {
+      const p = attachments.resolveStored(photo.file);
+      await face.warm();
+      if (p) await referenceFace(own, photo, p);
+    } catch (err) { WARMED.delete(own.id); }
+  });
+
+  // The employee's OWN profile photo, so the check-in screen can show the picture the face is compared with (own record only).
+  router.get('/face/my-photo', async (req, res) => {
+    const own = await ownEmployee(req);
+    if (!own) return res.status(404).json({ error: 'No employee record is linked to this login.' });
+    const doc = await latestPhoto(own.id);
+    const full = doc && attachments.resolveStored(doc.file);
+    if (!full || !['image/jpeg', 'image/png', 'image/webp'].includes(doc.mime)) return res.status(404).json({ error: 'No profile photo yet.' });
+    res.setHeader('Content-Type', doc.mime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    return res.sendFile(full);
   });
 
   // ---- the liveness challenge ---------------------------------------------
   router.get('/face/challenge', async (req, res) => {
     const own = await ownEmployee(req);
-    if (!own) return res.status(404).json({ error: 'No employee record is linked to this login, so there is no attendance to record.' });
+    if (!own) return res.status(404).json({ error: require('../utils/ownEmployee').NO_LINK_MESSAGE });
     const methods = methodsOf(own).filter((k) => WEB_METHODS.includes(k));
     if (!methods.length) return res.status(403).json({ error: 'Web / mobile check-in is not assigned to you. Super Admin assigns check-in methods.' });
-    if (!(await latestPhoto(own.id))) return res.status(400).json({ error: NO_PHOTO, code: 'NO_PHOTO' });
+    // A profile photo is NOT needed to check in (the punch is then recorded as 'Face not checked').
+    const cs = await CS.load();
     const direction = req.query.direction === 'Out' ? 'Out' : 'In';
     // Load the model while the person is getting ready.
     face.warm().catch(() => {});
-    res.json(face.issueChallenge(req.user.id, direction));
+    // Strict keeps the head-turn / blink challenge; Easy and Record-anyway use a plain 'look at the camera' (3 small pictures).
+    // QUICK unless an Admin asked for the live move: 'look at the camera' (3 small pictures) is compared with the profile photo; Required still refuses a face that
+    // does not match. The blink / head-turn challenge only when Strict / Required AND the Admin switched "Also ask for a blink or head turn" on.
+    res.json({ ...face.issueChallenge(req.user.id, direction, ['strict', 'required'].includes(cs.faceMode) && cs.livenessCheck ? undefined : 'look'), mode: cs.faceMode });
   });
 
   // ---- the verified punch ---------------------------------------------------
-  router.post('/punches/verified', async (req, res) => {
+  async function verifiedPunch(req, res) {
     let parsed;
     try {
       parsed = await attachments.parseMultipart(req, { maxBytes: 12 * 1024 * 1024 });
@@ -153,35 +219,65 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
     if (challenge.error) return res.status(400).json({ error: challenge.error, code: 'CHALLENGE' });
 
     const own = await ownEmployee(req);
-    if (!own) return res.status(404).json({ error: 'No employee record is linked to this login, so there is no attendance to record.' });
+    if (!own) return res.status(404).json({ error: require('../utils/ownEmployee').NO_LINK_MESSAGE });
     const allowed = methodsOf(own).filter((k) => WEB_METHODS.includes(k));
     const key = WEB_METHODS.includes(f.method) ? f.method : allowed[0];
     if (!key || !allowed.includes(key)) return res.status(403).json({ error: 'Web / mobile check-in is not assigned to you. Super Admin assigns check-in methods.' });
 
-    // Location — required for check-in AND check-out.
+    // Location — asked for at check-in AND check-out. What a missing location does is Admin's setting (default: refuse).
+    const cs = await CS.load();
     const lat = num(f.latitude); const lng = num(f.longitude); const acc = num(f.accuracy);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180 || (lat === 0 && lng === 0)) {
+    const locValid = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 && !(lat === 0 && lng === 0);
+    const locRule = CS.locationRule({ valid: locValid, setting: cs.noLocation });
+    if (!locRule.record) {
       return res.status(400).json({ error: 'Your location is required. Allow location access for this site and try again.', code: 'LOCATION' });
     }
-    const accuracy = Number.isFinite(acc) && acc >= 0 ? acc : null;
+    const accuracy = locValid && Number.isFinite(acc) && acc >= 0 ? acc : null;
     const locTs = f.locationAt ? new Date(Number(f.locationAt) || f.locationAt) : null;
     const locationAt = locTs && !Number.isNaN(locTs.getTime()) ? locTs : new Date();
-    if (Math.abs(Date.now() - locationAt.getTime()) > 10 * 60 * 1000) {
+    if (locValid && Math.abs(Date.now() - locationAt.getTime()) > 10 * 60 * 1000) {
       return res.status(400).json({ error: 'That location reading is too old. Try again.', code: 'LOCATION' });
     }
     const cfg = await getConfig();
-    const fence = geofenceCheck(cfg, lat, lng, accuracy);
-    if (!fence.inside) {
-      await logAudit({ userId: req.user.id, action: `Check-${challenge.direction === 'In' ? 'in' : 'out'} refused: outside geofence`, entity: 'Employee', entityId: own.id, toValue: `${fence.distance} m from office (allowed ${cfg.geofenceRadiusM} m)` });
-      return res.status(403).json({ error: `You are outside the permitted check-in area — about ${fence.distance} m from the office (allowed ${cfg.geofenceRadiusM} m).`, code: 'GEOFENCE', distanceM: fence.distance });
+    const offices = await fence.loadOffices(cfg);
+    const fenceInfo = locValid
+      ? fence.check(offices, lat, lng, accuracy, { accuracyCounts: cs.accuracyCounts, accuracyCapM: cs.accuracyCapM })
+      : { inside: true, status: locRule.status, distance: null, office: null, radiusM: null, others: [], lowAccuracy: false };
+    if (!fenceInfo.inside) {
+      // The refused attempt is kept for HR: who, when, how far away (GET /attendance/refused-attempts).
+      const dirWord = challenge.direction === 'In' ? 'check in' : 'check out';
+      const text = `Tried to ${dirWord} ${fence.distanceText(fenceInfo.distance)} away at ${D.localTime()}`;
+      await logAudit({
+        userId: req.user.id, action: `Check-${challenge.direction === 'In' ? 'in' : 'out'} refused: outside geofence`, entity: 'Employee', entityId: own.id,
+        fromValue: JSON.stringify({ distanceM: fenceInfo.distance, office: fenceInfo.office.name, radiusM: fenceInfo.radiusM, accuracyM: accuracy, direction: challenge.direction, date: D.localDate(), time: D.localTime(), latitude: lat, longitude: lng }),
+        toValue: `${text} (${fenceInfo.office.name}, allowed ${fence.distanceText(fenceInfo.radiusM)})`,
+      });
+      return res.status(403).json({
+        error: fence.outsideMessage(fenceInfo, challenge.direction),
+        code: 'GEOFENCE',
+        distanceM: fenceInfo.distance,
+        geofence: { distanceM: fenceInfo.distance, radiusM: fenceInfo.radiusM, office: fenceInfo.office, others: fenceInfo.others, accuracyM: accuracy, weakGps: fenceInfo.weakGps, lowAccuracy: fenceInfo.lowAccuracy, swapped: fenceInfo.swapped },
+      });
+    }
+    // Sanity flags (never a refusal): a "too perfect" GPS or a jump faster than any vehicle since the last web punch.
+    let gpsFlags = [];
+    if (locValid) {
+      const prev = await prisma.attendancePunch.findFirst({ where: { employeeId: own.id, latitude: { not: null }, source: { in: ['Web', 'Mobile'] } }, orderBy: { createdAt: 'desc' } });
+      gpsFlags = fence.spoofFlags({ accuracy, lat, lng, prev: prev ? { latitude: prev.latitude, longitude: prev.longitude, at: prev.createdAt } : null });
     }
 
-    // Registered photo.
+    // Cheap checks first: no point in a face comparison for a punch the day does not allow.
+    const early = await guard.webPunchGuard(prisma, own.id, D.localDate(), challenge.direction);
+    if (!early.ok) return answerGuard(res, early);
+
+    // Registered photo. NOT required to punch: without one the check-in is recorded as "Face not checked".
     const photo = await latestPhoto(own.id);
     const photoPath = photo && attachments.resolveStored(photo.file);
-    if (!photoPath) return res.status(400).json({ error: NO_PHOTO, code: 'NO_PHOTO' });
+    // TEST SANDBOX ONLY (never on the real server): X-Test-Face: pass | weak | fail | noface | timeout | engine stands in for
+    // the face model, so tests can exercise the punch rules with fake camera frames. Without TEST_MODE the header is ignored.
+    const stub = require('../utils/sandbox').isSandbox() ? req.get('X-Test-Face') : null; // eslint-disable-line global-require
 
-    // Frames: JPEG data URLs from the camera canvas.
+    // Frames: JPEG data URLs from the camera canvas (none when the camera was not available).
     const frames = [];
     for (let i = 0; i < face.MAX_FRAMES; i += 1) {
       const v = f[`frame${i}`];
@@ -194,78 +290,176 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
       }
       frames.push(buf);
     }
-    if (frames.length < face.MIN_FRAMES) return res.status(400).json({ error: 'Not enough camera frames were captured. Try again.', code: 'FRAMES' });
 
-    let decision;
-    try {
-      const photoFaces = await face.analysePhoto(`${photo.id}:${photo.file}`, fs.readFileSync(photoPath));
-      const { results, diffs } = await face.analyseFrames(frames);
-      decision = face.decide({ photoFaces, frames: results, diffs, action: challenge.action, threshold: cfg.faceMatchThreshold ?? 0.45 });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[face] verification error', err);
-      return res.status(503).json({ error: 'Face verification is unavailable right now. Try again in a minute.', code: 'ENGINE' });
+    // The face check. Result: { code, distance, bestIdx, liveness } — judged by CS.faceVerdict() per the Admin's mode.
+    const mode = cs.faceMode;
+    const strictThr = cfg.faceMatchThreshold ?? 0.45;
+    const threshold = CS.thresholdFor(mode, strictThr);
+    const fullCheck = ['strict', 'required'].includes(mode) && challenge.action !== 'look' && frames.length >= face.MIN_FRAMES;
+    const runCheck = async () => {
+      const ref = await referenceFace(own, photo, photoPath);
+      if (!ref) return { code: 'NO_FACE_IN_PHOTO', distance: null, bestIdx: 0 };
+      if (fullCheck) {
+        const { results, diffs } = await face.analyseFrames(frames);
+        const d = face.decide({ photoFaces: [ref], frames: results, diffs, action: challenge.action, threshold });
+        return { code: d.code, distance: d.distance ?? null, bestIdx: d.bestFrame ?? 0, liveness: d.liveness || null, multiple: d.code === 'MULTIPLE_FACES', reason: d.reason || null };
+      }
+      const q = await face.analyseQuick(ref, frames, { threshold, maxFrames: 3, deadlineAt: Date.now() + cs.analysisMs });
+      if (q.best == null) return { code: q.multiple ? 'MULTIPLE_FACES' : (q.timedOut ? 'TIMEOUT' : 'NO_FACE'), distance: null, bestIdx: 0 };
+      return { code: q.best <= threshold ? 'VERIFIED' : 'NO_MATCH', distance: q.best, bestIdx: Math.max(0, q.bestIdx) };
+    };
+    let outcome = null;
+    let lateRun = null;
+    if (stub) {
+      const S = {
+        pass: { code: 'VERIFIED', distance: 0.07 }, weak: { code: 'NO_MATCH', distance: 0.6 }, fail: { code: 'NO_MATCH', distance: 0.9 },
+        noface: { code: 'NO_FACE', distance: null }, timeout: { code: 'TIMEOUT', distance: null }, engine: { code: 'ENGINE', distance: null },
+      };
+      outcome = { bestIdx: 0, ...(S[stub] || S.engine), liveness: stub === 'pass' ? { passed: true, stub: true } : null };
+    } else if (!frames.length) {
+      outcome = { code: 'NO_CAMERA', distance: null, bestIdx: 0 };
+    } else if (!photoPath) {
+      outcome = { code: 'NO_PHOTO', distance: null, bestIdx: 0 };
+    } else {
+      try {
+        const work = runCheck();
+        const limit = fullCheck ? 25000 : cs.analysisMs + 1500;
+        outcome = await Promise.race([work, new Promise((r) => { setTimeout(() => r(null), limit).unref(); })]);
+        if (!outcome) { lateRun = work; outcome = { code: 'TIMEOUT', distance: null, bestIdx: 0 }; }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[face] verification error', err);
+        outcome = { code: 'ENGINE', distance: null, bestIdx: 0 };
+      }
     }
+    const verdict = CS.faceVerdict({ mode, code: outcome.code, distance: outcome.distance, strictThreshold: strictThr });
+    // The engine's own plain sentence says what was wrong (no blink / not clearly visible / more than one face) - the screen shows that one.
+    if (!verdict.matched && outcome.reason && ['LIVENESS', 'NO_FACE', 'MULTIPLE_FACES', 'INCONSISTENT'].includes(outcome.code)) verdict.reason = outcome.reason;
 
-    if (!decision.ok) {
+    if (!verdict.record) {
       await logAudit({
         userId: req.user.id, action: `Face verification failed (check-${challenge.direction === 'In' ? 'in' : 'out'})`, entity: 'Employee', entityId: own.id,
-        toValue: `${decision.code}${decision.distance != null ? ` · distance ${decision.distance} (threshold ${decision.threshold})` : ''}`,
+        toValue: `${outcome.code}${outcome.distance != null ? ` · distance ${outcome.distance} (threshold ${verdict.threshold})` : ''} · mode ${mode}`,
       });
-      if (decision.code === 'NO_FACE_IN_PHOTO') {
-        return res.status(400).json({ error: 'No face could be found in your registered photo. Upload a clear, front-facing photo in My Employee Profile.', code: decision.code });
-      }
-      return res.status(422).json({ error: FAILED, reason: decision.reason, code: decision.code, score: decision.score ?? null, liveness: decision.liveness || null });
+      return res.status(422).json({ error: mode === 'required' ? `Check-in not taken. ${verdict.reason} Please try again in good light, face the camera, and do the move it asks.` : FAILED, reason: verdict.reason, code: outcome.code, score: outcome.distance != null ? Number(Math.max(0, 1 - outcome.distance).toFixed(4)) : null, liveness: outcome.liveness || null });
     }
+    const score = outcome.distance != null ? Number(Math.max(0, 1 - outcome.distance).toFixed(4)) : null;
 
-    // Verified: keep the best-matching live frame as the punch's image.
-    let stored;
-    try {
-      stored = attachments.store({ filename: 'live-capture.jpg', contentType: 'image/jpeg', data: frames[decision.bestFrame] });
-    } catch (err) {
-      return res.status(500).json({ error: 'Could not store the capture. Try again.' });
+    // A small selfie (320 px, JPEG quality 60) kept with the punch for HR; deleted after the retention days.
+    let stored = null;
+    if (frames.length) {
+      try {
+        const small = await require('sharp')(frames[Math.min(outcome.bestIdx || 0, frames.length - 1)]).rotate().resize({ width: 320, withoutEnlargement: true }).jpeg({ quality: 60 }).toBuffer(); // eslint-disable-line global-require
+        stored = attachments.store({ filename: 'live-capture.jpg', contentType: 'image/jpeg', data: small });
+      } catch (err) { stored = null; } // no selfie is no reason to lose an attendance
     }
     const ua = String(req.headers['user-agent'] || '').slice(0, 400);
+    // The person closed the page / pressed Cancel while we were comparing faces: record nothing.
+    if (req.socket && req.socket.destroyed) { if (stored) attachments.remove(stored.billFile); return undefined; }
     let punch;
+    let blocked = null;
+    const liveText = verdict.matched
+      ? (outcome.liveness && outcome.liveness.passed ? `Passed (${challenge.action === 'turn' ? 'head turn' : challenge.action === 'blink' ? 'blink' : 'live camera'})` : (outcome.code === 'LIVENESS' ? 'Liveness not seen' : 'Not required'))
+      : verdict.reason;
     try {
-      punch = await prisma.attendancePunch.create({
+      // Check again and insert under one lock: two taps that both passed the early check cannot both write.
+      punch = await guard.withLock(own.id, async () => {
+        const again = await guard.webPunchGuard(prisma, own.id, D.localDate(), challenge.direction);
+        if (!again.ok) { blocked = again; return null; }
+        return prisma.attendancePunch.create({
         data: {
           employeeId: own.id,
           date: D.localDate(),
           time: D.localTime(),
           direction: challenge.direction,
           method: CHECKIN_ASSIGNABLE[key],
-          location: `${lat.toFixed(5)},${lng.toFixed(5)}${accuracy != null ? ` (±${Math.round(accuracy)} m)` : ''}`,
+          location: locValid ? `${lat.toFixed(5)},${lng.toFixed(5)}${accuracy != null ? ` (±${Math.round(accuracy)} m)` : ''}${gpsFlags.length ? ` · ${gpsFlags.join('; ')}` : ''}` : 'Location not captured',
           source: deviceSource(ua),
-          latitude: lat,
-          longitude: lng,
+          latitude: locValid ? lat : null,
+          longitude: locValid ? lng : null,
           accuracyM: accuracy,
-          locationAt,
-          locationStatus: fence.status,
-          distanceM: fence.distance,
-          imageFile: stored.billFile,
-          verificationStatus: 'Verified',
-          verificationScore: decision.score,
-          livenessStatus: `Passed (${challenge.action === 'turn' ? 'head turn' : 'blink'})`,
+          locationAt: locValid ? locationAt : null,
+          locationStatus: fenceInfo.status,
+          distanceM: fenceInfo.distance,
+          imageFile: stored ? stored.billFile : null,
+          verificationStatus: verdict.status,
+          verificationScore: score,
+          livenessStatus: liveText,
           userAgent: ua,
         },
+        });
       });
     } catch (err) {
-      attachments.remove(stored.billFile);
+      if (stored) attachments.remove(stored.billFile);
       throw err;
     }
+    if (blocked) { if (stored) attachments.remove(stored.billFile); return answerGuard(res, blocked); }
     await D.applyPunchToDay(prisma, punch, cfg);
     // Items 4/6: working on a leave day changes what the leave uses.
     leaveCharge.afterAttendanceChange(own.id, punch.date);
     await logAudit({
-      userId: req.user.id, action: `Punch ${punch.direction} recorded (face verified)`, entity: 'AttendancePunch', entityId: punch.id,
-      toValue: `${punch.date} ${punch.time} · score ${decision.score} · ${fence.status}`,
+      userId: req.user.id, action: `Punch ${punch.direction} recorded (${verdict.matched ? 'face verified' : verdict.status.toLowerCase()})`, entity: 'AttendancePunch', entityId: punch.id,
+      toValue: `${punch.date} ${punch.time} · ${score != null ? `score ${score} · ` : ''}${verdict.matched ? '' : `${verdict.reason} · `}${fenceInfo.status}${fenceInfo.distance != null ? ` · ${fenceInfo.distance} m` : ''}${gpsFlags.length ? ` · ${gpsFlags.join('; ')}` : ''}`,
     });
+    // The check took longer than we waited: it keeps running, and when it ends the punch's face status is brought up to date.
+    if (lateRun) {
+      lateRun.then(async (late) => {
+        const v = CS.faceVerdict({ mode, code: late.code, distance: late.distance, strictThreshold: strictThr });
+        const fresh = await prisma.attendancePunch.findUnique({ where: { id: punch.id } });
+        if (!fresh || fresh.verificationStatus !== 'Face not checked') return;
+        await prisma.attendancePunch.update({ where: { id: punch.id }, data: { verificationStatus: v.status, verificationScore: late.distance != null ? Number(Math.max(0, 1 - late.distance).toFixed(4)) : null, livenessStatus: v.matched ? 'Not required' : v.reason } });
+      }).catch(() => {});
+    }
     const { imageFile, userAgent, ...safe } = punch;
     res.status(201).json({
       punch: safe,
-      verification: { status: 'Verified', score: decision.score, distance: decision.distance, threshold: decision.threshold, liveness: decision.liveness },
+      verification: { status: verdict.status, matched: verdict.matched, reason: verdict.reason, mode, score, distance: outcome.distance, threshold: verdict.threshold, liveness: outcome.liveness || null },
+      location: { distanceM: fenceInfo.distance, accuracyM: accuracy, lowAccuracy: !!fenceInfo.lowAccuracy, flags: gpsFlags },
     });
+    return undefined;
+  }
+
+  // A punch the day does not allow (already in / already out / not in yet): a plain answer.
+  // An 'already' answer is a 200 with the existing punch; the others are 409.
+  function answerGuard(res, g) {
+    if (g.duplicate) {
+      const { imageFile, userAgent, ...safe } = g.punch;
+      return res.status(200).json({ duplicate: true, code: g.code, message: g.message, punch: safe });
+    }
+    return res.status(409).json({ error: g.message, code: g.code });
+  }
+
+  router.post('/punches/verified', async (req, res) => {
+    const uid = req.user.id;
+    const now = Date.now();
+    IDEM.forEach((v, k) => { if (now - v.at > IDEM_TTL_MS) IDEM.delete(k); });
+    const rawKey = String(req.get('Idempotency-Key') || '').trim().slice(0, 80);
+    const idem = rawKey ? `${uid}:${rawKey}` : null;
+    const seen = idem ? IDEM.get(idem) : null;
+    // The same tap / retry again: give the first answer back.
+    if (seen && seen.state === 'done') return res.status(seen.status).json({ ...seen.body, replayed: true });
+    const started = BUSY.get(uid);
+    if ((seen && seen.state === 'pending') || (started && now - started < BUSY_MAX_MS)) {
+      return res.status(409).json({ error: 'Your check-in is already being checked. Please wait a few seconds.', code: 'IN_FLIGHT' });
+    }
+    BUSY.set(uid, now);
+    if (idem) IDEM.set(idem, { state: 'pending', at: now });
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      if (idem) {
+        if (res.statusCode === 200 || res.statusCode === 201) IDEM.set(idem, { state: 'done', status: res.statusCode, body, at: Date.now() });
+        else IDEM.delete(idem);
+      }
+      return send(body);
+    };
+    try {
+      await verifiedPunch(req, res);
+    } catch (err) {
+      if (idem) IDEM.delete(idem);
+      throw err;
+    } finally {
+      BUSY.delete(uid);
+    }
   });
 
   // ---- the stored live capture ---------------------------------------------
@@ -459,9 +653,12 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
   router.get('/geofence', async (req, res) => {
     if (!(await isSuperAdmin(req.user))) return res.status(403).json({ error: 'Only Super Admin configures the check-in geofence.' });
     const cfg = await getConfig();
+    const o = await fence.loadOffices(cfg);
     res.json({
       geofenceEnabled: cfg.geofenceEnabled, officeLatitude: cfg.officeLatitude, officeLongitude: cfg.officeLongitude,
       geofenceRadiusM: cfg.geofenceRadiusM, faceMatchThreshold: cfg.faceMatchThreshold,
+      officeName: o.mainName, otherOffices: o.offices.filter((x) => !x.main), minPunchGapSec: await guard.minGapSec(),
+      checkin: await CS.load(),
     });
   });
 
@@ -496,15 +693,93 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
       return res.status(400).json({ error: 'Set the office latitude and longitude before turning the geofence on.' });
     }
     const updated = await prisma.hrConfig.update({ where: { id: cfg.id }, data });
+    // Office name, the other offices and the minimum gap live in the small settings store (no schema change).
+    const putSetting = (key, value) => prisma.appSetting.upsert({
+      where: { key }, create: { key, value: JSON.stringify(value), updatedById: req.user.id }, update: { value: JSON.stringify(value), updatedById: req.user.id },
+    });
+    if (b.officeName !== undefined) await putSetting('attendance.officeName', String(b.officeName || '').trim().slice(0, 60));
+    if (b.otherOffices !== undefined) {
+      const rows = Array.isArray(b.otherOffices) ? b.otherOffices : [];
+      const clean = fence.cleanOffices(rows);
+      if (clean.length !== rows.length) return res.status(400).json({ error: 'Each other office needs a name, a latitude between -90 and 90 and a longitude between -180 and 180.' });
+      await putSetting('attendance.offices', clean);
+    }
+    if (b.minPunchGapSec !== undefined) {
+      const g = Math.round(Number(b.minPunchGapSec));
+      if (!(g >= 0 && g <= 3600)) return res.status(400).json({ error: 'The minimum gap must be between 0 and 3600 seconds.' });
+      await putSetting('attendance.minPunchGapSec', g);
+      guard.resetGapCache();
+    }
+    if (b.checkin && typeof b.checkin === 'object') {
+      const c = b.checkin;
+      if (c.faceMode !== undefined && !CS.MODES.includes(c.faceMode)) return res.status(400).json({ error: 'Face check must be Required, Strict, Easy or Record anyway.' });
+      const saved = await CS.save({ faceMode: c.faceMode, accuracyCounts: c.accuracyCounts, accuracyCapM: c.accuracyCapM, noLocation: c.noLocation, selfieRetentionDays: c.selfieRetentionDays, livenessCheck: c.livenessCheck }, req.user.id);
+      await logAudit({ userId: req.user.id, action: 'Web check-in settings updated', entity: 'AppSetting', entityId: 'attendance.checkin', toValue: JSON.stringify(saved) });
+    }
     await logAudit({
       userId: req.user.id, action: 'Check-in geofence updated', entity: 'HrConfig', entityId: cfg.id,
       toValue: `${updated.geofenceEnabled ? 'on' : 'off'} · ${updated.officeLatitude ?? '—'},${updated.officeLongitude ?? '—'} · ${updated.geofenceRadiusM} m · threshold ${updated.faceMatchThreshold}`,
     });
+    const o = await fence.loadOffices(updated);
     res.json({
       geofenceEnabled: updated.geofenceEnabled, officeLatitude: updated.officeLatitude, officeLongitude: updated.officeLongitude,
       geofenceRadiusM: updated.geofenceRadiusM, faceMatchThreshold: updated.faceMatchThreshold,
+      officeName: o.mainName, otherOffices: o.offices.filter((x) => !x.main), minPunchGapSec: await guard.minGapSec(),
+      checkin: await CS.load(),
     });
   });
+
+  // ---- refused attempts: who tried to check in / out from outside the area, and how far away.
+  // For HR (people in their scope): 'Tried to check in 340 m away at 09:12'.
+  router.get('/refused-attempts', requirePerm(null, 'hrms', 'Attendance & Time', 'export'), async (req, res) => {
+    const r = rangeOf(req.query);
+    if (r.error) return res.status(400).json({ error: r.error });
+    const rows = await prisma.auditLog.findMany({
+      where: { action: { startsWith: 'Check-' }, entity: 'Employee', createdAt: { gte: new Date(`${r.from}T00:00:00`), lte: new Date(`${r.to}T23:59:59`) } },
+      orderBy: { createdAt: 'desc' }, take: 500,
+    });
+    const ids = [...new Set(rows.map((x) => x.entityId).filter(Boolean))];
+    const emps = await prisma.employee.findMany({ where: { id: { in: ids } } });
+    const byId = new Map(emps.map((e) => [e.id, e]));
+    const out = [];
+    rows.forEach((x) => {
+      if (!/refused: outside geofence/.test(x.action)) return;
+      const e = byId.get(x.entityId);
+      if (!e || !employeeInScope(req.user, e)) return;
+      let d = {};
+      try { d = JSON.parse(x.fromValue || '{}'); } catch { d = {}; }
+      out.push({
+        id: x.id, employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department || null,
+        date: d.date || D.localDate(x.createdAt), time: d.time || D.localTime(x.createdAt), direction: d.direction || (/check-in/.test(x.action) ? 'In' : 'Out'),
+        distanceM: d.distanceM ?? null, office: d.office || null, radiusM: d.radiusM ?? null, accuracyM: d.accuracyM ?? null, text: x.toValue,
+      });
+    });
+    res.json({ from: r.from, to: r.to, rows: out });
+  });
+
+  // ---- the screen asks the server to judge a location BEFORE the camera opens; an outside answer is kept for HR too
+  // (the screen used to refuse by itself, so HR never saw those attempts). Nothing is recorded as a punch here.
+  router.post('/checkin/location-check', async (req, res) => {
+    const own = await ownEmployee(req);
+    if (!own) return res.status(404).json({ error: 'No employee record is linked to this login.' });
+    const b = req.body || {};
+    const lat = num(b.latitude); const lng = num(b.longitude); const acc = num(b.accuracy);
+    if (!(Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180)) return res.status(400).json({ error: 'Your location is required.', code: 'LOCATION' });
+    const direction = b.direction === 'Out' ? 'Out' : 'In';
+    const cs = await CS.load();
+    const accuracy = Number.isFinite(acc) && acc >= 0 ? acc : null;
+    const info = fence.check(await fence.loadOffices(await getConfig()), lat, lng, accuracy, { accuracyCounts: cs.accuracyCounts, accuracyCapM: cs.accuracyCapM });
+    if (!info.inside) {
+      await logAudit({
+        userId: req.user.id, action: `Check-${direction === 'In' ? 'in' : 'out'} refused: outside geofence`, entity: 'Employee', entityId: own.id,
+        fromValue: JSON.stringify({ distanceM: info.distance, office: info.office.name, radiusM: info.radiusM, accuracyM: accuracy, direction, date: D.localDate(), time: D.localTime(), latitude: lat, longitude: lng }),
+        toValue: `Tried to ${direction === 'In' ? 'check in' : 'check out'} ${fence.distanceText(info.distance)} away at ${D.localTime()} (${info.office.name}, allowed ${fence.distanceText(info.radiusM)})`,
+      });
+    }
+    return res.json({ inside: info.inside, distanceM: info.distance, radiusM: info.radiusM, office: info.office, others: info.others, accuracyM: accuracy, lowAccuracy: info.lowAccuracy, weakGps: info.weakGps, swapped: info.swapped, message: info.inside ? '' : fence.outsideMessage(info, direction) });
+  });
+
+  faceReview.register(router);
 };
 
 module.exports.haversine = haversine;

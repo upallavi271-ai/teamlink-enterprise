@@ -37,6 +37,7 @@ import {
 } from '../rejections/rejectionUi.jsx';
 import StillFits, { forgetStillFits } from '../rejections/StillFits.jsx';
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../CtcConfirm.jsx';
+import { SalaryFitBox, AddSalaryDialog } from '../SalaryFit.jsx'; // Salary fit + "Add salary" before the person goes to the client
 import './StepPopups.css';
 
 const SOURCED = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_INTERVIEW_COMPLETED'];
@@ -87,11 +88,11 @@ function Choice({
 
 // --- Verify: the checklist → Send to team lead ---------------------------------
 const CHECKS = [
-  ['skills', 'Skills match the job', (f) => f.skills],
+  ['skills', 'Skills match the requirement', (f) => f.skills],
   ['experience', 'Experience checked', (f) => (f.experienceYears != null ? `${f.experienceYears} yrs` : '')],
   ['ctc', 'Current and expected CTC known', (f) => [f.currentSalary && `now ${f.currentSalary}`, f.expectedSalary && `wants ${f.expectedSalary}`].filter(Boolean).join(' · ')],
   ['notice', 'Notice period known', (f) => f.noticePeriod],
-  ['interest', 'Interested in this job', () => ''],
+  ['interest', 'Interested in this requirement', () => ''],
   ['documents', 'Resume and documents on file', () => ''],
 ];
 function VerifyDialog({ app, onClose, onDone }) {
@@ -99,6 +100,7 @@ function VerifyDialog({ app, onClose, onDone }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [addSalary, setAddSalary] = useState(false); // the server says: salary needed before TL check
   const f = app.facts || {};
   const missing = CHECKS.filter(([k]) => !ticks[k]);
   const ready = missing.length === 0 || note.trim().length >= 3;
@@ -112,6 +114,7 @@ function VerifyDialog({ app, onClose, onDone }) {
       onDone({ text: `Sent to team lead. ${app.name} is now at TL check.`, undo: { id: app.id, stage: app.stage, name: app.name } });
       onClose();
     } catch (err) {
+      if (err.response && err.response.data && err.response.data.code === 'SALARY_NEEDED') setAddSalary(true);
       setError(errText(err, 'Could not send. Please try again.'));
       setBusy(false);
     }
@@ -130,6 +133,18 @@ function VerifyDialog({ app, onClose, onDone }) {
       )}
     >
       <div className="small-muted" style={{ marginBottom: 8 }}>Tick what you checked with the person. The team lead sees this list.</div>
+      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' ? () => setAddSalary(true) : undefined} /></div>}
+      {addSalary && (
+        <AddSalaryDialog
+          candidateId={app.candidateId}
+          name={app.name}
+          current={f.currentSalary || ''}
+          expected={f.expectedSalary || ''}
+          why="Both are needed before the person goes to the team lead and the client."
+          onClose={() => setAddSalary(false)}
+          onSaved={() => { setError(''); setAddSalary(false); send(); }}
+        />
+      )}
       <div className="stp-checks">
         {CHECKS.map(([k, label, fact]) => (
           <label key={k} className={`stp-check${ticks[k] ? ' is-on' : ''}`}>
@@ -142,7 +157,7 @@ function VerifyDialog({ app, onClose, onDone }) {
         ))}
       </div>
       <label className="field" style={{ marginTop: 8 }}>
-        <span>{missing.length ? `Note * (${missing.length} not ticked — say why)` : 'Note (optional)'}</span>
+        <span>{missing.length ? `Note (${missing.length} not ticked — say why)` : 'Note (optional)'}</span>
         <textarea rows="2" maxLength={600} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Documents come tomorrow" />
       </label>
       {error && <div className="error-text">{error}</div>}
@@ -159,6 +174,7 @@ function ReviewDialog({
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [addSalary, setAddSalary] = useState(false); // the server says: salary needed before sharing with the client
   async function go() {
     setBusy(true); setError('');
     try {
@@ -175,6 +191,7 @@ function ReviewDialog({
       }
       onClose();
     } catch (err) {
+      if (err.response && err.response.data && err.response.data.code === 'SALARY_NEEDED') setAddSalary(true);
       setError(errText(err, 'That did not work. Please try again.'));
       setBusy(false);
     }
@@ -197,13 +214,25 @@ function ReviewDialog({
         </>
       )}
     >
+      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' ? () => setAddSalary(true) : undefined} /></div>}
+      {addSalary && (
+        <AddSalaryDialog
+          candidateId={app.candidateId}
+          name={app.name}
+          current={(app.facts || {}).currentSalary || ''}
+          expected={(app.facts || {}).expectedSalary || ''}
+          why="Both are needed before the person goes to the client."
+          onClose={() => setAddSalary(false)}
+          onSaved={() => { setError(''); setAddSalary(false); go(); }}
+        />
+      )}
       <div className="stp-choices">
         <Choice on={pick === 'approve'} onClick={() => setPick('approve')} tone="green" title="Approve" text={tl ? 'Good profile. It goes to the client manager (BDE).' : 'Good profile. It is shared with the client now.'} />
         <Choice on={pick === 'back'} onClick={() => setPick('back')} tone="red" title="Send back" text={tl ? 'Back to the recruiter, with your reason.' : 'Back to the team lead, with your reason.'} />
       </div>
       {pick === 'back' && (
         <label className="field" style={{ marginTop: 8 }}>
-          <span>Why is it going back? *</span>
+          <span>Why is it going back?</span>
           <textarea autoFocus rows="3" maxLength={1000} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. CTC not confirmed, notice period too long" />
         </label>
       )}
@@ -227,7 +256,7 @@ function RejectDialog({
       await boardMove(app.id, 'rejected', rest);
       forgetStillFits(app.candidateId);
       onDone({
-        text: v.rejectKind === 'do_not_use' ? `Rejected. "Do not use" sent to the team lead to approve.` : `Rejected for this job. Saved.`,
+        text: v.rejectKind === 'do_not_use' ? `Rejected. "Do not use" sent to the team lead to approve.` : `Rejected for this requirement. Saved.`,
         undo: v.rejectKind === 'do_not_use' ? null : { id: app.id, stage: app.stage, name: app.name },
       });
       setDone(true);
@@ -245,8 +274,8 @@ function RejectDialog({
         footer={<button type="button" className="btn btn-primary" onClick={onClose}>Done</button>}
       >
         <div className="notice" style={{ marginBottom: 10 }}>Saved. Nothing is deleted — the person stays in People.</div>
-        <div className="stp-label">Other matching jobs (same department)</div>
-        {app.candidateId ? <StillFits candidateId={app.candidateId} full /> : <span className="small-muted">No other job to suggest.</span>}
+        <div className="stp-label">Other matching requirements (same department)</div>
+        {app.candidateId ? <StillFits candidateId={app.candidateId} full /> : <span className="small-muted">No other requirement to suggest.</span>}
       </Modal>
     );
   }
@@ -258,7 +287,7 @@ function RejectDialog({
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="button" className="btn btn-danger" disabled={busy || !rejectReady(v)} onClick={go}>
-            {busy ? 'Saving…' : v.rejectKind === 'do_not_use' ? 'Reject and ask team lead' : 'Reject for this job'}
+            {busy ? 'Saving…' : v.rejectKind === 'do_not_use' ? 'Reject and ask team lead' : 'Reject for this requirement'}
           </button>
         </>
       )}
@@ -282,7 +311,7 @@ function ClientDialog({
     try {
       if (pick === 'short') {
         await api.patch(`/applications/${app.id}/stage`, { stage: 'CLIENT_SHORTLISTED', comment: 'Client response: shortlisted' });
-        onDone({ text: `Saved. The client shortlisted ${app.name}. Next: book the interview.`, undo: { id: app.id, stage: app.stage, name: app.name } });
+        onDone({ text: `Saved. The client shortlisted ${app.name}. Next: the client manager (BDE) books the interview.`, undo: { id: app.id, stage: app.stage, name: app.name } });
       } else {
         await api.patch(`/applications/${app.id}/stage`, { stage: 'HOLD', comment: 'Client response: on hold', ...hold });
         onDone({ text: `Saved. ${app.name} is on hold. It comes back to you on ${hold.reviewOn}.`, undo: { id: app.id, stage: app.stage, name: app.name } });
@@ -308,21 +337,21 @@ function ClientDialog({
     >
       <div className="small-muted" style={{ marginBottom: 8 }}>What did the client say?</div>
       <div className="stp-choices is-3">
-        <Choice on={pick === 'short'} onClick={() => setPick('short')} tone="green" title="Shortlisted" text="The client wants to meet. Book the interview next." />
+        <Choice on={pick === 'short'} onClick={() => setPick('short')} tone="green" title="Shortlisted" text="The client wants to meet. The client manager (BDE) books the interview next." />
         <Choice on={false} onClick={() => onReject()} tone="red" title="Rejected" text="The client said no. Say why." />
         <Choice on={pick === 'hold'} onClick={() => setPick('hold')} tone="yellow" title="On hold" text="The client will decide later." />
       </div>
       {pick === 'hold' && (
         <div className="stp-hold">
           <label className="field">
-            <span>Reason *</span>
+            <span>Reason</span>
             <Combo creatable value={hold.reasonCategory} onChange={(e) => setHold({ ...hold, reasonCategory: e.target.value })}>
               <option value="">Choose a reason…</option>
               {HOLD_REASON_CATEGORIES.map((x) => <option key={x} value={x}>{x}</option>)}
             </Combo>
           </label>
           <label className="field">
-            <span>Ask the client again on *</span>
+            <span>Ask the client again on</span>
             <input type="date" min={istToday()} value={hold.reviewOn} onChange={(e) => setHold({ ...hold, reviewOn: e.target.value })} />
           </label>
           <label className="field">
@@ -401,19 +430,19 @@ function JoinedDialog({ app, onClose, onDone }) {
       {terms && !dropped && (
         <>
           <label className="field">
-            <span>Joining date *</span>
+            <span>Joining date</span>
             <input type="date" value={form.joiningDate} onChange={(e) => setForm({ ...form, joiningDate: e.target.value })} />
           </label>
           {!internal && (
             <label className="field">
-              <span>Final CTC (₹ per year) *</span>
+              <span>Final CTC (₹ per year)</span>
               <input type="number" min="1" step="1000" inputMode="numeric" placeholder="e.g. 850000" value={form.offeredCtc} onChange={(e) => { setForm({ ...form, offeredCtc: e.target.value }); setAsk(null); }} />
               <span className="small-muted">{rupees(form.offeredCtc) || (terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : 'The yearly CTC in the offer letter')}</span>
             </label>
           )}
           {!internal && terms.canSetFee && (
             <label className="field">
-              <span>Commission % *</span>
+              <span>Commission %</span>
               <input type="number" min="0.1" max="50" step="0.01" value={form.feePercent} onChange={(e) => setForm({ ...form, feePercent: e.target.value })} />
               <span className="small-muted">
                 {`Agreement with ${terms.clientName || 'the client'}: ${terms.feePercent}%.`}
@@ -422,7 +451,7 @@ function JoinedDialog({ app, onClose, onDone }) {
             </label>
           )}
           {!internal && !terms.canSetFee && (
-            <div className="small-muted" style={{ marginBottom: 6 }}>Commission: the client&apos;s agreement % is used. Accounts checks it on the invoice.</div>
+            <div className="small-muted" style={{ marginBottom: 6 }}>Commission: the fee already set for this client is used. Accounts checks it on the invoice.</div>
           )}
           <div className="notice" style={{ marginTop: 6 }}>
             {internal ? 'Save adds this person as an employee in HRMS.' : 'Save sends the joining to Accounts — the invoice is made from it.'}

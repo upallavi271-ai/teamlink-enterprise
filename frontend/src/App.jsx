@@ -1,6 +1,8 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Shell from './components/Shell.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
+import OmniEntry, { OmniLegacyRedirect } from './components/outreach/OmniEntry.jsx'; // what the sidebar Omni-Channel opens (Green Start, 2026-10-21)
+import OmniApp from './components/omni/OmniApp.jsx'; // Omni-Channel (the Green Start page tree, 2026-10-17; the five-hub OutreachHome.jsx is kept on disk for its parts)
 import Login from './pages/Login.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 
@@ -9,6 +11,7 @@ import RequirementDetail from './pages/RequirementDetail.jsx';
 import ClientJobPortal from './pages/ats/ClientJobPortal.jsx';
 import Clients from './pages/Clients.jsx';
 import ClientDetail from './pages/ClientDetail.jsx';
+import AgreementFlowPage, { AgreementFlowList } from './pages/AgreementFlowPage.jsx';
 import ClientDuplicates from './pages/ClientDuplicates.jsx';
 import ClientLoginsReview from './pages/ClientLoginsReview.jsx';
 import Agreements from './pages/Agreements.jsx';
@@ -18,6 +21,7 @@ import CandidateDuplicates from './pages/CandidateDuplicates.jsx';
 import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
+import AiCallingPage from './components/aicalling/AiCallingPage.jsx'; // Exotel AI Calling (a tab of Reports & Team)
 import { FollowUpsRoute } from './pages/ats/FollowUps.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
 import InterviewFeedback from './pages/ats/InterviewFeedback.jsx';
@@ -70,8 +74,13 @@ import Profile from './pages/admin/Profile.jsx';
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
+import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
+import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
+import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
+import ForgotPassword from './pages/ForgotPassword.jsx';
+import NewPassword from './pages/NewPassword.jsx';
 import PortalInvite from './pages/PortalInvite.jsx';
 import HomeRoute from './pages/home/HomeRoute.jsx';
 // Super Admin "View as" (read-only): the picker and the banner on every page.
@@ -81,10 +90,21 @@ import ListMastersLoader from './components/ListMastersLoader.jsx'; // spec D / 
 import MasterLists from './pages/admin/MasterLists.jsx'; // spec D / §18: Admin → Master lists
 // VENDOR PORTAL (P3): its own sign-in and its only page, outside the staff Shell.
 import VendorLogin from './pages/vendor/VendorLogin.jsx';
-import VendorAssets from './pages/vendor/VendorAssets.jsx';
 import VendorInvoices from './pages/vendor/VendorInvoices.jsx';
-import VendorDocuments from './pages/vendor/VendorDocuments.jsx';
-import VendorProfile from './pages/vendor/VendorProfile.jsx';
+import VendorPayments from './pages/vendor/VendorPayments.jsx';
+import VendorServices from './pages/vendor/VendorServices.jsx';
+import VendorDashboard from './pages/vendor/VendorDashboard.jsx';
+import AssetPortalDashboard from './pages/vendor/AssetPortalDashboard.jsx';
+import AssetPortalAssets from './pages/vendor/AssetPortalAssets.jsx';
+import AssetPortalOrders from './pages/vendor/AssetPortalOrders.jsx';
+import AssetPortalRepairs from './pages/vendor/AssetPortalRepairs.jsx';
+import AssetPortalHistory from './pages/vendor/AssetPortalHistory.jsx';
+import AssetPortalInvoices from './pages/vendor/AssetPortalInvoices.jsx';
+import IdCardDashboard from './pages/vendor/IdCardDashboard.jsx';
+import IdCardRequests from './pages/vendor/IdCardRequests.jsx';
+import AirtelBills from './pages/vendor/AirtelBills.jsx';
+import AirtelHistory from './pages/vendor/AirtelHistory.jsx';
+import AirtelSims from './pages/vendor/AirtelSims.jsx';
 import VendorLogins from './pages/admin/VendorLogins.jsx'; // Admin → Company Setup → Vendor logins
 import { useVendorRedirect } from './pages/vendor/vendorGate.js';
 // PARTNER PORTAL (B7): agencies / freelancers — own sign-in, one page, outside the staff Shell.
@@ -107,6 +127,9 @@ export default function App() {
     <ListMastersLoader />
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Forgot password (2026-10-12). /new-password, NOT /reset-password: that path is the Job Portal's. */}
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/new-password" element={<NewPassword />} />
       {/* Vendor Portal — separate login, own top bar, no sidebar. */}
       {/* Partner Portal (B7) — separate login, own top bar, no sidebar. */}
       <Route path="/partner-login" element={<PartnerLogin />} />
@@ -114,12 +137,32 @@ export default function App() {
       <Route path="/partner/*" element={<Navigate to="/partner/jobs" replace />} />
       <Route path="/partner" element={<Navigate to="/partner/jobs" replace />} />
       <Route path="/vendor-login" element={<VendorLogin />} />
-      <Route path="/vendor/assets" element={<VendorAssets />} />
+      <Route path="/vendor/dashboard" element={<VendorDashboard />} />
       <Route path="/vendor/invoices" element={<VendorInvoices />} />
-      <Route path="/vendor/documents" element={<VendorDocuments />} />
-      <Route path="/vendor/profile" element={<VendorProfile />} />
-      <Route path="/vendor/*" element={<Navigate to="/vendor/invoices" replace />} />
-      <Route path="/vendor" element={<Navigate to="/vendor/invoices" replace />} />
+      <Route path="/vendor/payments" element={<VendorPayments />} />
+      <Route path="/vendor/services" element={<VendorServices />} />
+      {/* the fourth module used to be called Purchase Orders (before 2026-10-23): an old bookmark lands on its new page */}
+      <Route path="/vendor/purchase-orders" element={<Navigate to="/vendor/services" replace />} />
+      {/* The Assets Vendor Portal (2026-10-19): the four pages an ASSET vendor sees instead of the four above (the shell sends a vendor to its own portal). */}
+      <Route path="/vendor/asset-portal/dashboard" element={<AssetPortalDashboard />} />
+      <Route path="/vendor/asset-portal/assets" element={<AssetPortalAssets />} />
+      <Route path="/vendor/asset-portal/orders" element={<AssetPortalOrders />} />
+      <Route path="/vendor/asset-portal/repairs" element={<AssetPortalRepairs />} />
+      <Route path="/vendor/asset-portal/history" element={<AssetPortalHistory />} />
+      <Route path="/vendor/asset-portal/invoices" element={<AssetPortalInvoices />} />
+      {/* The ID Card Vendor Portal (2026-10-19): the Dashboard + the four modules (one screen, four views) in the vendor sidebar. */}
+      <Route path="/vendor/idcard-portal/dashboard" element={<IdCardDashboard />} />
+      <Route path="/vendor/idcard-portal/requests" element={<IdCardRequests />} />
+      <Route path="/vendor/idcard-portal/pending" element={<IdCardRequests />} />
+      <Route path="/vendor/idcard-portal/completed" element={<IdCardRequests />} />
+      <Route path="/vendor/idcard-portal/delivered" element={<IdCardRequests />} />
+      {/* The Airtel Bills Portal (2026-10-19): the three pages of a telecom vendor (Bills, Monthly History, SIMs) in the same vendor sidebar. */}
+      <Route path="/vendor/airtel-portal/bills" element={<AirtelBills />} />
+      <Route path="/vendor/airtel-portal/history" element={<AirtelHistory />} />
+      <Route path="/vendor/airtel-portal/sims" element={<AirtelSims />} />
+      {/* The vendor portal has exactly four modules (2026-10-19). The old addresses (assets, documents, profile, /m/...) lead to the Dashboard. */}
+      <Route path="/vendor/*" element={<Navigate to="/vendor/dashboard" replace />} />
+      <Route path="/vendor" element={<Navigate to="/vendor/dashboard" replace />} />
 
       {/* Public home page. A logged-out "/" shows it too (ProtectedRoute). */}
       <Route path="/home" element={<HomeRoute />} />
@@ -145,6 +188,9 @@ export default function App() {
       {/* Client-facing agreement signing link — no login, token is the key */}
       <Route path="/agreement/:token" element={<AgreementSigning />} />
       <Route path="/offer/:token" element={<OfferSigning />} />
+      <Route path="/joining/:token" element={<JoiningLink />} />
+      <Route path="/prep/:token" element={<InterviewPrepPage />} />
+      <Route path="/forms-public/:token" element={<PublicForm />} />
 
       {/* New employee sign-in link — single-use, expiring, no login required */}
       <Route path="/set-password/:token" element={<SetPassword />} />
@@ -183,6 +229,16 @@ export default function App() {
 
         {/* ATS */}
         <Route path="requirements" element={<Requirements />} />
+        {/* OMNI-CHANNEL outreach (2026-10-14): one sidebar entry, its areas are tabs inside the page. */}
+        {/* 2026-10-21: clicking Omni-Channel opens the founder's Green Start product (components/outreach/OmniEntry.jsx -> GreenStart.jsx) for the logins that may
+            open it; the others, and anybody who types /omni-channel-native/..., get the native Omni-Channel pages (nothing was deleted). */}
+        <Route path="omni" element={<OmniEntry />} />
+        <Route path="omni-channel" element={<OmniEntry />} />
+        <Route path="omni-channel/:hub" element={<OmniLegacyRedirect />} />
+        <Route path="omni-channel/:hub/:view" element={<OmniLegacyRedirect />} />
+        <Route path="omni-channel-native" element={<OmniApp />} />
+        <Route path="omni-channel-native/:hub" element={<OmniApp />} />
+        <Route path="omni-channel-native/:hub/:view" element={<OmniApp />} />
         {/* The Job Portal is candidate INTAKE (2026-09-29): its applications /
             screening / Send to ATS view is Candidates & Pipeline → Job Portal
             Candidates. The old workspace URL redirects there. A static
@@ -201,6 +257,9 @@ export default function App() {
         {/* Client portal logins: quarterly review + Admin queue (spec B1/B2) */}
         <Route path="clients/portal-logins" element={<ClientLoginsReview />} />
         <Route path="clients/:id" element={<ClientDetail />} />
+        {/* Agreement steps (2026-10-13): Purna Sir's page + "waiting for you" - opened from the bell and the dashboard, no sidebar entry. */}
+        <Route path="tax-billing" element={<AgreementFlowList />} />
+        <Route path="tax-billing/:id" element={<AgreementFlowPage />} />
         <Route path="agreements" element={<Agreements />} />
         {/* One agreement: client login, its BDE, Accounts, Admin (routes/agreementSeal.js decides). */}
         <Route path="agreements/:clientId" element={<AgreementView />} />
@@ -211,6 +270,7 @@ export default function App() {
             The route did not exist, so logging in as one hit a dead page. */}
         <Route path="my-applications" element={<CandidateHome />} />
         <Route path="ats/team" element={<Team />} />
+        <Route path="ats/ai-calling" element={<AiCallingPage />} />
         {/* ATS → Reports & Team → Settings: links to Administration only (layout v3). */}
         <Route path="ats/settings" element={<Navigate to="/admin/company" replace />} />
         {/* NOT a seventh sidebar module (§1) — Follow-ups is reached from the

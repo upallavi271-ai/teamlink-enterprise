@@ -19,6 +19,7 @@
 import { useState } from 'react';
 import api from '../api';
 import { Modal } from './proto.jsx';
+import Combo from './Combo.jsx';
 
 function saveBlob(res, fallback) {
   const cd = res.headers?.['content-disposition'] || '';
@@ -41,7 +42,7 @@ const ACTION = {
 };
 const DUP_RULE = {
   clients: 'same client name or GST number',
-  requirements: 'same requirement code, or the same job title for the same client',
+  requirements: 'same requirement code, or the same requirement title for the same client',
   candidates: 'same phone or email',
   applications: 'already on that requirement',
 };
@@ -201,13 +202,13 @@ export default function AtsImportDialog({
         <div className="atsio-row">
           {kinds.length > 1 && (
             <label className="field" style={{ margin: 0 }}><span>What to import</span>
-              <select
+              <Combo
                 value={kind}
                 disabled={busy}
                 onChange={(e) => { setKind(e.target.value); setReport(null); if (file) check(file, {}, e.target.value); }}
               >
                 {kinds.map((k) => <option key={k} value={k}>{labels[k] || k}</option>)}
-              </select>
+              </Combo>
             </label>
           )}
           <button type="button" className="btn btn-sm" onClick={template}>1 · Download template</button>
@@ -242,9 +243,9 @@ export default function AtsImportDialog({
               Sheet <b>{report.sheet}</b>, headings on row {report.headerRow}.
               {report.sheets.length > 1 && (
                 <> Other sheets:{' '}
-                  <select value={report.sheet} disabled={busy} onChange={(e) => check(file, { sheet: e.target.value })} style={{ width: 'auto' }}>
+                  <Combo value={report.sheet} disabled={busy} onChange={(e) => check(file, { sheet: e.target.value })} style={{ width: 'auto' }}>
                     {report.sheets.map((n) => <option key={n}>{n}</option>)}
-                  </select>
+                  </Combo>
                 </>
               )}
               {t.examples > 0 && ` · ${t.examples} example row(s) ignored.`}
@@ -275,11 +276,11 @@ export default function AtsImportDialog({
               <div className="atsio-map">
                 {report.mapping.map((m) => (
                   <label key={m.header} className={m.required ? 'req' : ''}>
-                    <span>{m.header}{m.required ? ' *' : ''}</span>
-                    <select value={m.column === null ? '' : String(m.column)} disabled={busy} onChange={(e) => remap(m.header, e.target.value)}>
+                    <span>{m.header}{m.required ? ' (needed)' : ''}</span>
+                    <Combo value={m.column === null ? '' : String(m.column)} disabled={busy} onChange={(e) => remap(m.header, e.target.value)}>
                       <option value="">— not in this file —</option>
                       {report.fileColumns.map((c, i) => (c ? <option key={i} value={String(i)}>{c}</option> : null))}
-                    </select>
+                    </Combo>
                   </label>
                 ))}
               </div>

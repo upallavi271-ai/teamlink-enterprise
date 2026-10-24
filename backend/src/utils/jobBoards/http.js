@@ -80,6 +80,7 @@ async function call(label, url, { method = 'GET', headers = {}, json, form, secr
     let body;
     if (json !== undefined) { h['content-type'] = 'application/json'; body = JSON.stringify(json); }
     if (form) { h['content-type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }
+    await require('../safeFetch').assertSafeUrl(url); // SSRF guard (2026-10-13)
     const res = await fetch(url, { method, headers: h, body, signal: ctl.signal });
     const text = await res.text().catch(() => '');
     let parsed = null;

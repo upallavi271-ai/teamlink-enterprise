@@ -28,6 +28,8 @@ import TeamOverview from '../../components/team-v4/TeamOverview.jsx';
 import {
   PERIODS, periodRange, dmy, todayLocal,
 } from '../../components/team-v4/teamData.js';
+import Combo from '../../components/Combo.jsx';
+import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 
 // ---------------------------------------------------------------------------
 // RECRUITER & BDE — the operational control centre for Recruiter / TL / BDE
@@ -149,24 +151,24 @@ function SortTh({ id, label, sort, setSort, title, num }) {
 // ===========================================================================
 const PEOPLE_COLUMNS = {
   RECRUITER: [
-    ['openRequirements', 'Open jobs', 'Open jobs given to them'],
-    ['activeCandidates', 'People in process', 'People they are moving through a job now'],
+    ['openRequirements', 'Open requirements', 'Open requirements given to them'],
+    ['activeCandidates', 'People in process', 'People they are moving through a requirement now'],
     ['needsAction', 'Needs action', 'Next steps that are theirs to do'],
   ],
   BDE: [
     ['clients', 'Clients', 'Clients they look after'],
-    ['openRequirements', 'Open jobs', 'Open jobs of their clients'],
+    ['openRequirements', 'Open requirements', 'Open requirements of their clients'],
     ['submitted', 'Sent to client', 'People sent to their clients'],
     ['feedbackPending', 'Client has not replied', 'Sent to the client and the client has not replied yet'],
     ['interviews', 'Interviews', 'Interviews booked or done'],
     ['selected', 'Selected', 'Selected or offered, not joined yet'],
-    ['activeClients', 'Active clients', 'Their clients with an open job'],
+    ['activeClients', 'Active clients', 'Their clients with an open requirement'],
     ['clientActions', 'Client tasks', 'Client next steps that are theirs'],
     ['joined', 'Joined', 'People who joined on their clients'],
   ],
   TL: [
     ['recruiters', 'Recruiters', 'Recruiters whose seat reports to them'],
-    ['requirements', 'Jobs', 'Open jobs of their team'],
+    ['requirements', 'Requirements', 'Open requirements of their team'],
     ['candidates', 'Candidates', 'People in process in their team'],
     ['pendingReviews', 'Waiting for check', 'Candidates waiting for their check'],
   ],
@@ -350,9 +352,9 @@ function PeopleTab({
             <>
               {presentRoles.length > 1 && (
                 <PanelField label="Role">
-                  <select value={role} onChange={(e) => setRoleSel(e.target.value)} aria-label="Role">
+                  <Combo value={role} onChange={(e) => setRoleSel(e.target.value)} aria-label="Role">
                     {presentRoles.map(([id, label]) => <option key={id} value={id}>{`${label} (${fmt(roleCount(id))})`}</option>)}
-                  </select>
+                  </Combo>
                 </PanelField>
               )}
               <FacetSelect label="Department" value={dept} onChange={(v) => { setDept(v); setSection(''); }} options={facets.dept} allLabel="All departments" />
@@ -394,7 +396,7 @@ function PeopleTab({
                 <thead>
                   <tr>
                     <SortTh id="name" label={nameLabel} sort={sort} setSort={setSort} />
-                    {role === 'RECRUITER' && <><th>Department · Section</th><th title="TL = team lead">Team lead</th><th>Clients<Help text="Clients of the open jobs given to them" /></th></>}
+                    {role === 'RECRUITER' && <><th>Department · Section</th><th title="TL = team lead">Team lead</th><th>Clients<Help text="Clients of the open requirements given to them" /></th></>}
                     {role === 'TL' && <><th>Department</th><th>Section</th></>}
                     {showCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
                     {extraCols.map(([id, label, title]) => <SortTh key={id} id={id} label={label} title={title} sort={sort} setSort={setSort} num />)}
@@ -442,14 +444,14 @@ function PeopleTab({
                           ? (
                             // A person with nothing yet: one plain line, never a row of dashes.
                             <td colSpan={showCols.length + extraCols.length} className="small-muted pw-nodata">
-                              {role === 'BDE' ? 'No clients yet' : 'No jobs yet'}
+                              {role === 'BDE' ? 'No clients yet' : 'No requirements yet'}
                             </td>
                           )
                           : r.former
                           ? (
                             <td colSpan={showCols.length + extraCols.length} className="small-muted">
                               {t.added
-                                ? `Their work: ${fmt(t.jobs)} job(s) · ${fmt(t.added)} candidate(s) added · ${fmt(t.sent)} sent to client · ${fmt(t.interviews)} interview(s) · ${fmt(t.joined)} joined`
+                                ? `Their work: ${fmt(t.jobs)} requirement(s) · ${fmt(t.added)} candidate(s) added · ${fmt(t.sent)} sent to client · ${fmt(t.interviews)} interview(s) · ${fmt(t.joined)} joined`
                                 : 'No ATS work recorded under their name'}
                             </td>
                           )
@@ -488,7 +490,7 @@ function PeopleTab({
 // ASSIGNMENTS
 // ===========================================================================
 const ASSIGNMENT_STATUSES = ['Fully Assigned', 'Recruiter Missing', 'BDE Missing', 'TL Missing', 'Needs Assignment'];
-const REQ_STATUS = [['live', 'Open'], ['ON_HOLD', 'On Hold'], ['CLOSED', 'Closed']];
+const REQ_STATUS = [['live', 'Open'], ['CLOSED', 'Closed']]; // only Open / Closed (2026-10-13)
 const ASSIGN_TONE = {
   'Fully Assigned': 'green', 'Recruiter Missing': 'amber', 'BDE Missing': 'amber', 'TL Missing': 'amber', 'Needs Assignment': 'red',
 };
@@ -498,7 +500,7 @@ const ASSIGN_PLAIN = { 'TL Missing': 'Team lead missing', 'BDE Missing': 'Client
 const personMatch = (value, p) => !!p && (value.startsWith('id:') ? p.id === value.slice(3) : lc(p.name) === lc(value.slice(5)));
 const REQ_STATUS_LABEL = Object.fromEntries(REQ_STATUS);
 const ASSIGN_FIELDS = [
-  { key: 'status', get: (r) => [r.live ? 'live' : null, ['ON_HOLD', 'CLOSED'].includes(r.status) ? r.status : null], label: (v) => REQ_STATUS_LABEL[v] || v },
+  { key: 'status', get: (r) => [r.status === 'CLOSED' ? 'CLOSED' : 'live'], label: (v) => REQ_STATUS_LABEL[v] || v },
   { key: 'dept', get: (r) => r.department },
   { key: 'section', get: (r) => r.section },
   { key: 'tl', get: (r) => personKey(r.tl), label: (v, r) => r.tl.name },
@@ -510,7 +512,7 @@ const ASSIGN_FIELDS = [
 ];
 function assignPred(r, k, v) {
   switch (k) {
-    case 'status': return v === 'live' ? !!r.live : r.status === v;
+    case 'status': return v === 'live' ? r.status !== 'CLOSED' : r.status === v;
     case 'dept': return r.department === v;
     case 'section': return r.section === v;
     case 'tl': return personMatch(v, r.tl);
@@ -541,7 +543,7 @@ function AssignmentsTab({ rows, error, initial }) {
   const noStaff = all.length > 0 && all.every((r) => r.recruiters === undefined && r.tl === undefined);
 
   const [sort, setSort] = useState('');
-  const searched = useMemo(() => all.filter((r) => !q || `${r.reqCode || ''} ${r.title} ${r.client}`.toLowerCase().includes(lc(q))), [all, q]);
+  const searched = useMemo(() => all.filter((r) => !q || `${r.reqCode || ''} ${r.title} ${r.client} ${clientAliasText(r.client)}`.toLowerCase().includes(lc(q))), [all, q]);
   const values = useMemo(() => ({
     status, dept, section, tl, recruiter, bde, client, type, assign,
   }), [status, dept, section, tl, recruiter, bde, client, type, assign]);
@@ -586,10 +588,10 @@ function AssignmentsTab({ rows, error, initial }) {
       <ListToolbar
         search={q}
         onSearch={setQ}
-        placeholder="Search job, job code or client"
+        placeholder="Search requirement, requirement code or client"
         filterCount={chips.length}
         sort={sort}
-        sortOptions={[['', 'Default order'], ['title', 'Job A–Z'], ['client', 'Client A–Z'], ['assign', 'Needs assignment first']]}
+        sortOptions={[['', 'Default order'], ['title', 'Requirement A–Z'], ['client', 'Client A–Z'], ['assign', 'Needs assignment first']]}
         onSort={setSort}
         chips={[...chips, q && { key: 'q', label: 'Search', value: q, onRemove: () => setQ('') }].filter(Boolean)}
         onClearAll={clearAll}
@@ -627,7 +629,7 @@ function AssignmentsTab({ rows, error, initial }) {
           <table className="pw-table pw-assign">
             <thead>
               <tr>
-                <th>Job</th><th>Client · type</th><th>Department · Section</th>{!noStaff && <th>Team lead</th>}{!noStaff && <th>Recruiter</th>}<th>Client manager</th><th>Status</th>
+                <th>Requirement</th><th>Client · type</th><th>Department · Section</th>{!noStaff && <th>Team lead</th>}{!noStaff && <th>Recruiter</th>}<th>Client manager</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
@@ -646,7 +648,7 @@ function AssignmentsTab({ rows, error, initial }) {
                     {r.section && <div className="small-muted">{r.section}</div>}
                   </td>
                   {!noStaff && <td>
-                    {r.tl ? <span title={r.tl.source === 'seat' ? "From the recruiter's seat (not set on the job)" : undefined}>{r.tl.name}{r.tl.source === 'seat' && <span className="small-muted"> (seat)</span>}</span>
+                    {r.tl ? <span title={r.tl.source === 'seat' ? "From the recruiter's seat (not set on the requirement)" : undefined}>{r.tl.name}{r.tl.source === 'seat' && <span className="small-muted"> (seat)</span>}</span>
                       : <span className="pw-missing">Missing</span>}
                   </td>}
                   {!noStaff && <td>
@@ -656,9 +658,9 @@ function AssignmentsTab({ rows, error, initial }) {
                   </td>}
                   <td>
                     {!r.bdeRequired
-                      ? <span className="cell-muted" title="Internal job — no client manager needed">—</span>
+                      ? <span className="cell-muted" title="Internal requirement — no client manager needed">—</span>
                       : r.bde
-                        ? <span title={r.bde.source === 'client' ? "The client's client manager" : 'Named on the job'}>{r.bde.name}{r.bde.source === 'client' && <span className="small-muted"> (client owner)</span>}</span>
+                        ? <span title={r.bde.source === 'client' ? "The client's client manager" : 'Named on the requirement'}>{r.bde.name}{r.bde.source === 'client' && <span className="small-muted"> (client owner)</span>}</span>
                         : <span className="pw-missing">Missing</span>}
                   </td>
                   <td>
@@ -673,7 +675,7 @@ function AssignmentsTab({ rows, error, initial }) {
                     <EmptyState
                       compact
                       icon="📋"
-                      title={all.length ? 'No jobs match these filters.' : 'No jobs in your area yet.'}
+                      title={all.length ? 'No requirements match these filters.' : 'No requirements in your area yet.'}
                       action={chips.length || q ? <button type="button" className="btn btn-sm" onClick={clearAll}>Clear filters</button> : null}
                     />
                   </td>
@@ -682,15 +684,15 @@ function AssignmentsTab({ rows, error, initial }) {
             </tbody>
           </table>
           {list.length > 0 && (
-            <ListFooter from={page.from} to={page.to} total={list.length} noun="jobs">
-              <Pager page={page} noun="jobs" />
+            <ListFooter from={page.from} to={page.to} total={list.length} noun="requirements">
+              <Pager page={page} noun="requirements" />
             </ListFooter>
           )}
         </div>
       )}
-      {rows && layout === 'tree' && list.length > 0 && <ListFooter from={1} to={list.length} total={list.length} noun="jobs" />}
+      {rows && layout === 'tree' && list.length > 0 && <ListFooter from={1} to={list.length} total={list.length} noun="requirements" />}
       <div className="small-muted pw-legend">
-        <b>Fully Assigned</b> = {noStaff ? 'the client manager is named.' : 'team lead, recruiter and client manager named. Internal jobs need no client manager.'}
+        <b>Fully Assigned</b> = {noStaff ? 'the client manager is named.' : 'team lead, recruiter and client manager named. Internal requirements need no client manager.'}
       </div>
     </>
   );
@@ -704,7 +706,7 @@ function group(rows, keyOf) {
 }
 function MissingCount({ rows }) {
   const n = rows.filter((r) => r.assignment !== 'Fully Assigned').length;
-  return <span className="small-muted">{`${fmt(rows.length)} job${rows.length === 1 ? '' : 's'}${n ? ` · ${fmt(n)} need people` : ''}`}</span>;
+  return <span className="small-muted">{`${fmt(rows.length)} requirement${rows.length === 1 ? '' : 's'}${n ? ` · ${fmt(n)} need people` : ''}`}</span>;
 }
 function AssignmentTree({ rows }) {
   const REQS_SHOWN = 12;
@@ -753,7 +755,7 @@ function AssignmentTree({ rows }) {
                 {byBde.map(([b, br]) => (
                   <li key={b}>
                     {b === 'Client manager missing' ? <span className="pw-missing">Client manager missing</span> : b}
-                    {' '}<span className="small-muted">{`${fmt(br.length)} job(s)`}</span>
+                    {' '}<span className="small-muted">{`${fmt(br.length)} requirement(s)`}</span>
                   </li>
                 ))}
               </ul>
@@ -805,7 +807,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
   const [due, setDue] = useState(initial.due || '');
   const [sort, setSort] = useState('');
   const all = rows || [];
-  const searched = useMemo(() => all.filter((r) => !q || `${r.candidate} ${r.requirement} ${r.reqCode || ''} ${r.client || ''}`.toLowerCase().includes(lc(q))), [all, q]); // eslint-disable-line react-hooks/exhaustive-deps
+  const searched = useMemo(() => all.filter((r) => !q || `${r.candidate} ${r.requirement} ${r.reqCode || ''} ${r.client || ''} ${clientAliasText(r.client)}`.toLowerCase().includes(lc(q))), [all, q]); // eslint-disable-line react-hooks/exhaustive-deps
   const values = useMemo(() => ({
     dept, section, tl, owner, action, due,
   }), [dept, section, tl, owner, action, due]);
@@ -852,7 +854,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
       <ListToolbar
         search={q}
         onSearch={setQ}
-        placeholder="Search name, job or client"
+        placeholder="Search name, requirement or client"
         filterCount={chips.length}
         sort={sort}
         sortOptions={[['', 'Default order'], ['due', 'Due soonest'], ['candidate', 'Name A–Z']]}
@@ -884,7 +886,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
         <div className="tbl-wrap">
           <table className="pw-table">
             <thead>
-              <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>
+              <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>
             </thead>
             <tbody>
               {page.slice.map((r) => (
@@ -899,8 +901,8 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
                   <td><span className="link-btn">{r.action} →</span>{r.waitingOn && <div className="small-muted">{`waiting for the ${r.waitingOn.toLowerCase()}`}</div>}</td>
                   <td>
                     {r.owner
-                      ? <span title={r.ownerSource === 'attributed' ? 'Not named on the job — the person doing this work' : undefined}>{r.owner}</span>
-                      : <span className="pw-missing" title="The job names nobody for this step">No {r.ownerRole || 'owner'} named</span>}
+                      ? <span title={r.ownerSource === 'attributed' ? 'Not named on the requirement — the person doing this work' : undefined}>{r.owner}</span>
+                      : <span className="pw-missing" title="The requirement names nobody for this step">No {r.ownerRole || 'owner'} named</span>}
                     {r.owner && r.ownerRole && <div className="small-muted">{r.ownerRole}</div>}
                     {mayRemind && r.ownerUserId && r.ownerUserId !== selfId && r.id && !/team lead|manager$|tl$/i.test(String(r.ownerRole || '')) && (
                       <div className="pwk-task-remind"><RemindButton recruiterId={r.ownerUserId} applicationId={r.applicationId || r.id} /></div>
@@ -931,7 +933,7 @@ function PendingTab({ data, error, initial, selfId, selfMode }) {
         </div>
       )}
       <div className="small-muted pw-legend">
-        One row per person on a job: the next step, who does it, and by when. <b>Late</b> = the due date has passed.
+        One row per person on a requirement: the next step, who does it, and by when. <b>Late</b> = the due date has passed.
       </div>
     </>
   );
@@ -952,7 +954,7 @@ function MetricList({ personId, metric, onOpen }) {
       .then((r) => setD(r.data))
       .catch((e) => setError(e.response?.data?.error || 'Could not open this list. Please try again.'));
   }, [personId, metric]);
-  const rows = useMemo(() => (d ? d.rows.filter((r) => !q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, r.reqCode]).toLowerCase().includes(lc(q))) : []), [d, q]);
+  const rows = useMemo(() => (d ? d.rows.filter((r) => !q || JSON.stringify([r.candidate, r.requirement, r.title, r.name, r.client, clientAliasText(r.client), r.reqCode]).toLowerCase().includes(lc(q))) : []), [d, q]);
   const page = usePaged(rows);
   if (error) return <div className="notice red">{error}</div>;
   if (!d) return <div className="small-muted" style={{ padding: 16 }}>Loading...</div>;
@@ -973,11 +975,11 @@ function MetricList({ personId, metric, onOpen }) {
       <div className="tbl-wrap">
         <table className="pw-table">
           <thead>
-            {kind === 'requirements' && <tr><th>Job</th><th>Client</th><th>Type</th><th>Department · Section</th><th>Team lead</th><th>Recruiter</th><th>Status</th></tr>}
-            {(kind === 'applications' || kind === 'joined') && <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Updated</th></tr>}
-            {kind === 'clients' && <tr><th>Client</th><th className="num">Open jobs</th><th className="num">All jobs</th><th>Status</th></tr>}
-            {kind === 'people' && <tr><th>Recruiter</th><th>Section</th><th className="num">Open jobs</th><th className="num">People in process</th><th className="num">Needs action</th></tr>}
-            {kind === 'actions' && <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>}
+            {kind === 'requirements' && <tr><th>Requirement</th><th>Client</th><th>Type</th><th>Department · Section</th><th>Team lead</th><th>Recruiter</th><th>Status</th></tr>}
+            {(kind === 'applications' || kind === 'joined') && <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>Next step</th><th>Updated</th></tr>}
+            {kind === 'clients' && <tr><th>Client</th><th className="num">Open requirements</th><th className="num">All requirements</th><th>Status</th></tr>}
+            {kind === 'people' && <tr><th>Recruiter</th><th>Section</th><th className="num">Open requirements</th><th className="num">People in process</th><th className="num">Needs action</th></tr>}
+            {kind === 'actions' && <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>Next step</th><th>Owner</th><th>Due</th></tr>}
           </thead>
           <tbody>
             {kind === 'requirements' && page.slice.map((r) => (
@@ -1095,7 +1097,8 @@ export default function Team() {
   const today = todayLocal();
   const range = periodRange(period, today);
   const canAddMember = can(user, 'hrms', 'hrms', 'Employee Management', 'create');
-  const canReports = can(user, null, 'reports', 'ATS Reports', 'view');
+  // A Recruiter's reports are their own (My reports): the team-wise interview numbers are not drawn for them, and the server refuses them anyway.
+  const canReports = can(user, null, 'reports', 'ATS Reports', 'view') && !(selfMode && atsRole === 'RECRUITER');
   const canLeave = can(user, 'hrms', 'hrms', 'Leave & Holidays', 'export');
   // Where "Performance report" / "Daily report" go: a Recruiter / BDE to their
   // own results when the role has them, everyone else to ATS Reports.
@@ -1122,7 +1125,7 @@ export default function Team() {
     if (assignments.rows === null && !assignments.error) {
       api.get('/ats/team', { params: { view: 'assignments' } })
         .then((res) => setAssignments({ rows: res.data.rows || [], error: '' }))
-        .catch((e) => setAssignments({ rows: null, error: e.response?.data?.error || 'Could not load the jobs list. Please try again.' }));
+        .catch((e) => setAssignments({ rows: null, error: e.response?.data?.error || 'Could not load the requirements list. Please try again.' }));
     }
   }, [view, assignments, reloadKey]);
   useEffect(() => {
@@ -1192,7 +1195,7 @@ export default function Team() {
   const [replyBadge] = useUnreadReplies(true);
   const VIEWS = [
     ['people', selfMode ? 'My Workload' : 'People & Workload', people.loading ? null : peopleRows.length, 'Recruiters, client managers and team leads in your area'],
-    ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => r.live).length : null, 'Open jobs and who works on them'],
+    ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => r.live).length : null, 'Open requirements and who works on them'],
     ['pending', selfMode ? 'My tasks' : 'Tasks', pendingCount, selfMode ? 'Next steps that are yours' : 'Every next step and who does it'],
     ...(leadView ? [['whohas', 'Pending work', null, 'Who has work waiting, and a Remind button']] : []),
     ['followups', selfMode ? 'My follow-ups' : 'Follow-ups', replyBadge > 0 ? replyBadge : null, 'Who to contact, why, and by when. Replies from Mail, WhatsApp and SMS are in the Inbox'],
@@ -1206,7 +1209,7 @@ export default function Team() {
       <div className="ak-page-head tv4-head">
         <div>
           <h1>{selfMode ? 'My Workload' : 'Team'}</h1>
-          <p>{selfMode ? 'Your jobs, your numbers and your tasks — all in one place.' : 'Manage your team, track performance, workload and stay on top of activities.'}</p>
+          <p>{selfMode ? 'Your requirements, your numbers and your tasks — all in one place.' : 'Manage your team, track performance, workload and stay on top of activities.'}</p>
         </div>
         <div className="ak-page-tools">
           {view !== 'list' && (
@@ -1217,12 +1220,12 @@ export default function Team() {
                 <span className="tv4-arrow" aria-hidden="true">→</span>
                 {dmy(range.to)}
               </span>
-              <select className="tv4-period" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
+              <Combo className="tv4-period" value={period} onChange={(e) => setPeriod(e.target.value)} aria-label="Period">
                 {PERIODS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-              </select>
+              </Combo>
             </>
           )}
-          {isLead && exportTab ? (
+          {exportTab ? (
             <AtsDataTools
               module="team"
               kinds={['requirement-assignments']}
@@ -1239,7 +1242,7 @@ export default function Team() {
           <b>You lead the BDE team.</b>
           {' '}
           {people.bdeTl.clientManagers
-            ? `${fmt(people.bdeTl.clientManagers)} client manager${people.bdeTl.clientManagers === 1 ? '' : 's'} (BDE EDU, MED, MFG ...) work for you. Their clients, jobs and people are below.`
+            ? `${fmt(people.bdeTl.clientManagers)} client manager${people.bdeTl.clientManagers === 1 ? '' : 's'} (BDE EDU, MED, MFG ...) work for you. Their clients, requirements and people are below.`
             : 'No client manager is on the BDE desk yet.'}
         </div>
       )}

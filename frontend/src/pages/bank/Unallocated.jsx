@@ -6,8 +6,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { money2, fmtD } from '../invoices/invFormat';
 import './unallocated.css';
+import Combo from '../../components/Combo.jsx';
+import useClientLabel from '../../components/clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
 
 export default function Unallocated({ accountId, canManage, onChanged, onOpen }) {
+  const clientLabel = useClientLabel();
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
@@ -114,10 +117,10 @@ export default function Unallocated({ accountId, canManage, onChanged, onOpen })
       )}
       <div className="filter-row" style={{ alignItems: 'center' }}>
         <input className="ua-search" placeholder="Search narration, reference, client…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <select value={client} onChange={(e) => setClient(e.target.value)} aria-label="Client">
+        <Combo value={client} onChange={(e) => setClient(e.target.value)} aria-label="Client">
           <option value="">All clients ({facets.reduce((s, f) => s + f.n, 0)})</option>
           {facets.map((f) => <option key={f.value} value={f.value}>{f.value} ({f.n})</option>)}
-        </select>
+        </Combo>
       </div>
       {!data && !err && <div className="small-muted">Loading…</div>}
       {empty && <div className="card section">Nothing is waiting. Every payment that came in is against an invoice.</div>}
@@ -138,10 +141,10 @@ export default function Unallocated({ accountId, canManage, onChanged, onOpen })
             <div className="ua-client">
               {r.client && !other[r.txnId] ? <span>Client: <b>{r.client}</b></span> : <span className="small-muted">Client not recognised from the narration.</span>}
               {canManage && (
-                <select onFocus={loadClients} onChange={(e) => chooseClient(r, e.target.value)} value={other[r.txnId]?.clientId || ''} aria-label="Choose another client">
+                <Combo onFocus={loadClients} onChange={(e) => chooseClient(r, e.target.value)} value={other[r.txnId]?.clientId || ''} aria-label="Choose another client">
                   <option value="">{r.client ? 'Pay a different client…' : 'Choose the client…'}</option>
-                  {(clients || []).map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-                </select>
+                  {(clients || []).map((c) => <option key={c.id} value={c.id}>{clientLabel(c)}</option>)}
+                </Combo>
               )}
             </div>
             {shown.length === 0 ? <div className="small-muted">No open invoice to pick. Choose the client above.</div> : (

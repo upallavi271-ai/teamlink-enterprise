@@ -51,7 +51,7 @@ const KEY_TABLES = [
   ['User', 'user', 'Logins'],
   ['Employee', 'employee', 'Employees'],
   ['Client', 'client', 'Clients'],
-  ['Requirement', 'requirement', 'Jobs'],
+  ['Requirement', 'requirement', 'Requirements'],
   ['Candidate', 'candidate', 'Candidates'],
   ['Application', 'application', 'Applications'],
   ['Attendance', 'attendance', 'Attendance days'],

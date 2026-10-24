@@ -1,0 +1,108 @@
+/* Communication Automation: everything is scoped under cm-* so nothing else is restyled. */
+.cm-line { border-radius: 8px; padding: 8px 12px; margin: 6px 0 10px; font-size: 13.5px; line-height: 1.45; border: 1px solid transparent; }
+.cm-green { background: #ecf8f0; border-color: #bfe6cb; color: #14532d; }
+.cm-blue { background: #eaf2fe; border-color: #bcd4f7; color: #1e3a8a; }
+.cm-orange { background: #fff4e5; border-color: #f6d3a0; color: #7a4100; }
+.cm-red { background: #fdecec; border-color: #f4b8b8; color: #8a1c1c; }
+.cm-redtext { color: #b42318; }
+.cm-sub { font-size: 12.5px; opacity: .9; margin-top: 3px; }
+.cm-badge { display: inline-block; margin-left: 8px; padding: 1px 8px; font-size: 11.5px; border-radius: 10px; background: #f6d3a0; color: #6b3a00; font-weight: 600; }
+
+.cm-ticks { margin: 8px 0; }
+.cm-tickrow { display: flex; gap: 6px; flex-wrap: wrap; }
+.cm-tick { padding: 3px 12px; border-radius: 14px; background: #eef1f5; color: #667085; font-size: 12.5px; font-weight: 600; }
+.cm-tick.on { background: #dff3e6; color: #14532d; }
+.cm-tick.now { background: #1f9d55; color: #fff; }
+.cm-tick.fail { background: #d92d20; color: #fff; }
+
+.cm-page { max-width: 1100px; }
+.cm-section { margin: 0 0 18px; }
+.cm-section h3 { font-size: 15px; margin: 0 0 4px; }
+.cm-help { font-size: 12.5px; color: #667085; margin: 0 0 8px; line-height: 1.5; }
+.cm-card { background: #fff; border: 1px solid #dfe5ee; border-radius: 12px; padding: 14px 16px; margin: 0 0 14px; }
+.cm-card.proto { border-color: #f1b15b; }
+.cm-cardhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+.cm-cardhead h3 { margin: 0; font-size: 15px; flex: 1; min-width: 200px; }
+.cm-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 8px 0; }
+.cm-stat { background: #f6f8fb; border-radius: 10px; padding: 8px 10px; }
+.cm-stat b { display: block; font-size: 20px; line-height: 1.1; }
+.cm-stat span { font-size: 12px; color: #667085; }
+.cm-btnrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 2px; }
+.cm-choice { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.cm-choice button { border: 1.5px solid #cfd8e6; background: #fff; border-radius: 10px; padding: 8px 14px; font-size: 13.5px; cursor: pointer; text-align: left; }
+.cm-choice button.on { border-color: #2563eb; background: #eaf2fe; font-weight: 600; }
+.cm-choice button small { display: block; font-weight: 400; color: #667085; font-size: 12px; }
+.cm-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 14px; }
+.cm-form label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+.cm-form input, .cm-form select { width: 100%; box-sizing: border-box; }
+.cm-warn { background: #fff4e5; border: 2px solid #f1b15b; border-radius: 10px; padding: 10px 14px; margin: 8px 0; color: #6b3a00; font-size: 13.5px; line-height: 1.5; }
+.cm-warn b { color: #8a2c00; }
+.cm-qrbox { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; margin: 10px 0; }
+.cm-qrbox svg { width: 220px; height: 220px; border: 1px solid #dfe5ee; border-radius: 8px; background: #fff; }
+.cm-qrstate { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+.cm-steps { padding-left: 20px; margin: 6px 0; font-size: 13.5px; line-height: 1.6; }
+.cm-tabs { display: flex; gap: 6px; margin: 0 0 14px; flex-wrap: wrap; }
+.cm-tabs button { border: 0; background: #eef1f5; border-radius: 18px; padding: 7px 16px; cursor: pointer; font-size: 13.5px; }
+.cm-tabs button.on { background: #2563eb; color: #fff; font-weight: 600; }
+.cm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.cm-table th { text-align: left; background: #f6f8fb; padding: 7px 8px; font-size: 12px; white-space: nowrap; }
+.cm-table td { padding: 7px 8px; border-top: 1px solid #edf0f5; vertical-align: top; }
+.cm-pill { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 12px; font-weight: 600; }
+.cm-pill.queued { background: #eaf2fe; color: #1e3a8a; }
+.cm-pill.sent { background: #eaf2fe; color: #1e3a8a; }
+.cm-pill.delivered { background: #dff3e6; color: #14532d; }
+.cm-pill.read { background: #1f9d55; color: #fff; }
+.cm-pill.failed { background: #d92d20; color: #fff; }
+.cm-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.cm-filters label { font-size: 12px; font-weight: 600; display: block; margin-bottom: 2px; }
+.cm-filters select, .cm-filters input { width: 100%; box-sizing: border-box; }
+.cm-attach { margin: 6px 0; font-size: 13.5px; }
+.cm-attach label { display: flex; gap: 8px; align-items: center; }
+
+@media (max-width: 640px) {
+  .cm-qrbox svg { width: 100%; height: auto; max-width: 260px; }
+  .cm-table { display: block; overflow-x: auto; }
+  .cm-form { grid-template-columns: 1fr; }
+}
+
+/* WhatsApp numbers (Administration > Integrations > WhatsApp & SMS > WhatsApp numbers) */
+.wn-page { max-width: 1240px; }
+.wn-stats { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.wn-toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0 12px; }
+.wn-toolbar .wn-search { flex: 1 1 220px; min-width: 180px; max-width: 360px; }
+.wn-toolbar .wn-filter { flex: 0 1 180px; min-width: 140px; }
+.wn-tablewrap { overflow-x: auto; border: 1px solid #dfe5ee; border-radius: 12px; background: #fff; }
+.wn-table { min-width: 880px; }
+.wn-table th, .wn-table td { padding: 9px 10px; }
+.wn-name { font-weight: 600; word-break: break-word; overflow-wrap: anywhere; }
+.wn-num { white-space: nowrap; }
+.wn-star { display: inline-block; margin-left: 6px; font-size: 11.5px; font-weight: 700; color: #8a5a00; background: #fff4e5; border-radius: 10px; padding: 1px 8px; }
+.wn-tag { display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 600; color: #1e3a8a; background: #eaf2fe; border-radius: 10px; padding: 1px 8px; }
+.wn-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.wn-chip { display: inline-block; font-size: 12px; background: #eef1f5; color: #344054; border-radius: 10px; padding: 1px 9px; word-break: break-word; }
+.wn-chip-warn { background: #fff4e5; color: #7a4100; }
+.wn-chip-more { background: #dfe5ee; cursor: help; }
+.wn-status .wn-why { max-width: 300px; line-height: 1.35; }
+.wn-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+.wn-table td.wn-actions { display: table-cell; }
+.wn-table td.wn-actions .btn { margin: 0 4px 4px 0; }
+.wn-cards { display: none; }
+.wn-card .wn-card-head { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 2px; }
+.wn-card .wn-lab { font-size: 11.5px; font-weight: 600; color: #667085; margin: 8px 0 2px; }
+.wn-card .wn-actions { margin-top: 10px; }
+.wn-help { margin-top: 14px; }
+.wn-help summary { cursor: pointer; font-size: 13.5px; }
+.wn-form .wn-inline { align-self: end; }
+.wn-h4 { font-size: 12.5px; margin: 14px 0 6px; }
+.wn-tick { display: flex; gap: 8px; align-items: center; font-size: 13.5px; margin: 12px 0 4px; }
+.wn-tick input { width: auto; }
+.wn-adv { margin: 10px 0 6px; }
+.wn-tall { max-height: 320px; }
+.wn-people label { flex-basis: 100%; }
+.wn-depts label { flex-basis: calc(50% - 10px); }
+@media (max-width: 960px) {
+  .wn-tablewrap { display: none; }
+  .wn-cards { display: block; }
+  .wn-toolbar .wn-search, .wn-toolbar .wn-filter { flex: 1 1 100%; max-width: none; }
+  .wn-depts label { flex-basis: 100%; }
+}

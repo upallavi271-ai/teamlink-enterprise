@@ -7,11 +7,11 @@
 //   reversal); "Mark salary paid" (Dr Salary Payable / Cr the bank).
 // The API decides who may press what; buttons are shown from `access`.
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import api from '../../api';
 import { Modal } from '../proto.jsx';
 import { money, monthLabel, errText } from './payrollUi';
 import '../accounts/ledgerBooks.css';
+import Combo from '../Combo.jsx';
 
 function PayModal({ month, net, onClose, onDone }) {
   const [banks, setBanks] = useState([]);
@@ -54,19 +54,19 @@ function PayModal({ month, net, onClose, onDone }) {
       <div className="grid-2" style={{ marginTop: 10 }}>
         <div className="field">
           <label>Paid from which bank</label>
-          <select value={bank} onChange={(e) => setBank(e.target.value)}>
+          <Combo value={bank} onChange={(e) => setBank(e.target.value)}>
             <option value="">The default bank ledger</option>
             {banks.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-          </select>
+          </Combo>
         </div>
         <div className="field"><label>Paid on</label><input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} /></div>
       </div>
       <div className="field">
         <label>Bank statement line (optional)</label>
-        <select value={txn} onChange={(e) => setTxn(e.target.value)}>
+        <Combo value={txn} onChange={(e) => setTxn(e.target.value)}>
           <option value="">— Not on a statement yet —</option>
           {cands.map((t) => <option key={t.id} value={t.id}>{t.date} · {t.description} · {money(t.amount)}</option>)}
-        </select>
+        </Combo>
         {cands.length === 0 && <div className="lb-note">No unmatched bank debit of exactly {money(net)} on file{bank ? ' for this bank' : ''} yet. You can still mark it paid and match the line later.</div>}
         {chosen && <div className="lb-note">The date of the statement line is used when you leave “Paid on” as it is.</div>}
       </div>
@@ -97,12 +97,12 @@ export default function PayrollAccountsStrip({ month, reloadKey = 0, onChanged =
     } catch (err) { setError(errText(err, 'Could not post to Accounts.')); } finally { setBusy(''); load(); onChanged(); }
   }
   async function reopen() {
-    const reason = window.prompt(`Why are you re-opening ${monthLabel(month)}? The posted journal will be reversed and the records go back to Draft.`);
+    const reason = window.prompt(`Why are you re-opening ${monthLabel(month)}? The posted journal will be reversed and the records go back to Calculated.`);
     if (!reason) return;
     setBusy('reopen'); setMsg(''); setError('');
     try {
       const r = await api.post(`/payroll/runs/${month}/reopen`, { reason });
-      setMsg(`Re-opened — ${r.data.moved} record(s) are Draft again.${r.data.voucherNo ? ` Reversal ${r.data.voucherNo} booked.` : ''} Fix them, then approve again to post a new journal.`);
+      setMsg(`Re-opened — ${r.data.moved} record(s) are back to Calculated.${r.data.voucherNo ? ` Reversal ${r.data.voucherNo} booked.` : ''} Fix them, then approve again to post a new journal.`);
     } catch (err) { setError(errText(err, 'Could not re-open the month.')); } finally { setBusy(''); load(); onChanged(); }
   }
   const je = st.journalEntry;
@@ -116,7 +116,6 @@ export default function PayrollAccountsStrip({ month, reloadKey = 0, onChanged =
           {je && (
             <span className="lb-note">
               {' '}{st.voucherNo} · {je.date} · {money(je.totalDebit)}
-              {a.ledger && <> · <Link to={`/accounts/journal?je=${je.id}`}>Open in the journal</Link></>}
             </span>
           )}
           {!st.posted && !compact && <div className="lb-note">{st.blockReason || (st.canPost ? 'Every record is approved — the month is ready to post.' : '')}</div>}
@@ -124,7 +123,7 @@ export default function PayrollAccountsStrip({ month, reloadKey = 0, onChanged =
         <div className="lb-actions">
           {st.canPost && (a.approve || a.post) && <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={post}>{busy === 'post' ? 'Posting…' : 'Post to Accounts'}</button>}
           {st.posted && !st.paid && a.post && <button type="button" className="btn btn-primary btn-sm" disabled={!!busy} onClick={() => setPaying(true)}>Mark salary paid</button>}
-          {!st.paid && (st.posted || st.finalized) && (a.approve || a.post) && <button type="button" className="btn btn-sm" disabled={!!busy} onClick={reopen}>{busy === 'reopen' ? 'Re-opening…' : 'Re-open to correct'}</button>}
+          {!st.paid && (st.posted || st.finalized) && (a.approve || a.post) && a.reopen && <button type="button" className="btn btn-sm" disabled={!!busy} onClick={reopen}>{busy === 'reopen' ? 'Re-opening…' : 'Re-open to correct'}</button>}
         </div>
       </div>
       {st.lastError && !st.posted && <div className="lb-err"><b>Not posted:</b> {st.lastError}</div>}

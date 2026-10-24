@@ -3,6 +3,7 @@ import api from '../../api';
 import { FacetSelect, useLocalFacets } from '../ui/ListPageHeader.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import '../followups/followups.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // DEPARTMENTS & TEAMS (ATS change list §13, Admin): give a TL or STL one or
@@ -57,19 +58,19 @@ function MoveForm({ person, data, onDone, onCancel }) {
       <div className="fux-dr-bar" style={{ marginBottom: 6 }}>
         <div className="field">
           <label htmlFor={`mv-dept-${person.userId}`}>New department</label>
-          <select id={`mv-dept-${person.userId}`} value={dept} onChange={(e) => { setDept(e.target.value); setSeat(''); }}>
+          <Combo id={`mv-dept-${person.userId}`} value={dept} onChange={(e) => { setDept(e.target.value); setSeat(''); }}>
             <option value="">Choose…</option>
             {data.departments.filter((d) => d !== person.department).map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
+          </Combo>
         </div>
         {dept && (
           <div className="field">
             <label htmlFor={`mv-seat-${person.userId}`}>Seat</label>
             {seats.length ? (
-              <select id={`mv-seat-${person.userId}`} value={seat} onChange={(e) => setSeat(e.target.value)}>
+              <Combo id={`mv-seat-${person.userId}`} value={seat} onChange={(e) => setSeat(e.target.value)}>
                 <option value="">Choose an empty seat…</option>
                 {seats.map((s) => <option key={s.id} value={s.id}>{s.code}{s.team ? ` · ${s.team}` : ''}</option>)}
-              </select>
+              </Combo>
             ) : <div className="fux-note" style={{ marginTop: 6 }}>No empty seat in {dept} — they move without a seat. Add one in Administration → Positions.</div>}
           </div>
         )}
@@ -168,7 +169,7 @@ export default function DeptTeamsAdmin() {
                       ) : <span className="cell-muted">Only their own</span>}
                     </td>
                     <td>
-                      <select
+                      <Combo
                         aria-label={`Add a department for ${l.name}`}
                         value=""
                         disabled={busy === l.userId || !addable.length}
@@ -176,7 +177,7 @@ export default function DeptTeamsAdmin() {
                       >
                         <option value="">{addable.length ? 'Add…' : 'All added'}</option>
                         {addable.map((d) => <option key={d} value={d}>{d}</option>)}
-                      </select>
+                      </Combo>
                     </td>
                   </tr>
                 );

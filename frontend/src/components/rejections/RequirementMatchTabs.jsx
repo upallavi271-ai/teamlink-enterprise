@@ -21,6 +21,8 @@ import api from '../../api';
 import { RequirementMatchesPanel } from '../resume/MatchSplit.jsx';
 import { shortDate } from './rejectionUi.jsx';
 import './Rejections.css';
+import Combo from '../Combo.jsx';
+import FitBreakdown from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
 
 const tone = (n) => (n >= 70 ? 'hi' : n >= 50 ? 'mid' : 'lo');
 const FIT_CHOICES = [[50, '50% or more'], [30, '30% or more'], [0, 'Any fit']];
@@ -46,6 +48,7 @@ export default function RequirementMatchTabs({
 
   async function reconsider(row, confirmSameClient = false) {
     if (row.sameClient && !confirmSameClient) { setConfirmFor(row.id); return; }
+    if (busy) return; // one application per click
     setBusy(row.id);
     setError('');
     setSaid('');
@@ -54,11 +57,12 @@ export default function RequirementMatchTabs({
         candidateId: row.id, requirementId, reconsider: true, ...(confirmSameClient ? { confirmSameClient: true } : {}),
       });
       setConfirmFor('');
-      setSaid(`${row.name} added to this job. The note says why they were rejected before.`);
+      setSaid(`${row.name} added to this requirement. The note says why they were rejected before.`);
       load();
       if (onChanged) onChanged();
     } catch (err) {
-      setError(err.response?.data?.error || `Could not add ${row.name}. Please try again.`);
+      if (err.alreadyApplied) { setConfirmFor(''); load(); } // the box says where
+      else setError(err.response?.data?.error || `Could not add ${row.name}. Please try again.`);
     } finally {
       setBusy('');
     }
@@ -69,12 +73,12 @@ export default function RequirementMatchTabs({
   const TABS = [
     ['matching', 'Good fit', matchN],
     ['previous', 'Rejected before, good fit', prev ? prev.total : null],
-    ['here', 'Rejected on this job', here ? here.total : null],
+    ['here', 'Rejected on this requirement', here ? here.total : null],
   ];
 
   return (
     <div className="card section rjx-matchcard">
-      <h3 style={{ fontSize: 14, margin: 0 }}>{`Good fit for ${title || 'this job'}${clientName ? ` (${clientName})` : ''}`}</h3>
+      <h3 style={{ fontSize: 14, margin: 0 }}>{`Good fit for ${title || 'this requirement'}${clientName ? ` (${clientName})` : ''}`}</h3>
       <div className="rjx-tabs" role="tablist">
         {TABS.map(([id, label, n]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={`rjx-tab${tab === id ? ' is-on' : ''}`} onClick={() => setTab(id)}>
@@ -96,14 +100,14 @@ export default function RequirementMatchTabs({
       {tab === 'previous' && (
         <>
           <div className="small-muted" style={{ fontSize: 12, margin: '0 0 6px' }}>
-            People rejected on another job who fit this one. Check why before you add them again.
+            People rejected on another requirement who fit this one. Check why before you add them again.
           </div>
           <div className="rjx-row" style={{ marginBottom: 8 }}>
             <label className="small-muted">
               {'Fit % '}
-              <select value={minMatch} onChange={(e) => setMinMatch(Number(e.target.value))}>
+              <Combo value={minMatch} onChange={(e) => setMinMatch(Number(e.target.value))}>
                 {FIT_CHOICES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
             {prev && prev.total > prev.shown && <span className="small-muted">{`Showing the best ${prev.shown} of ${prev.total}`}</span>}
           </div>
@@ -120,20 +124,20 @@ export default function RequirementMatchTabs({
                         <Link to={`/candidates/${c.id}`}>{c.name}</Link>
                         {c.rejectedTimes > 1 && <span className="rjx-badge">{`Rejected ${c.rejectedTimes}×`}</span>}
                         <span className="msp-src">{[c.location, c.experienceYears != null ? `${c.experienceYears} yrs` : null].filter(Boolean).join(' · ')}</span>
-                        {c.blocked && <span className="rjx-flag is-red"><b>Do not use</b> — blocked from every job.</span>}
+                        {c.blocked && <span className="rjx-flag is-red"><b>Do not use</b> — blocked from every requirement.</span>}
                         {!c.blocked && c.doNotUse === 'pending' && <span className="rjx-flag is-orange">"Do not use" asked — waiting for the team lead.</span>}
                         {c.sameClient && <span className="rjx-flag is-red">{c.sameClient}</span>}
                         {c.mayNotApply && <span className="rjx-ok">{`Reason may not apply here: ${c.mayNotApply}`}</span>}
                       </td>
                       <td>
                         <span className={`msp-pct ${tone(c.match.overall)}`}>{`${c.match.overall}%`}</span>
-                        <span className="msp-src">{`Resume ${c.match.resumePct}% · Location ${c.match.locationPct}%`}</span>
+                        <FitBreakdown b={c.match.breakdown} compact showTotal={false} />
                       </td>
                       <td>
                         {last
-                          ? <>{last.requirementTitle || 'Job'}{last.clientName ? ` (${last.clientName})` : ''}</>
-                          : <span className="small-muted">A job on another team</span>}
-                        {c.hiddenCount > 0 && last && <span className="msp-src">{`+${c.hiddenCount} on other teams' jobs`}</span>}
+                          ? <>{last.requirementTitle || 'Requirement'}{last.clientName ? ` (${last.clientName})` : ''}</>
+                          : <span className="small-muted">A requirement on another team</span>}
+                        {c.hiddenCount > 0 && last && <span className="msp-src">{`+${c.hiddenCount} on other teams' requirements`}</span>}
                       </td>
                       <td>{last ? (last.byLabel || last.sideLabel) : '—'}</td>
                       <td>{last ? (last.reason || 'Not recorded') : '—'}</td>
@@ -151,7 +155,7 @@ export default function RequirementMatchTabs({
                         <td colSpan="7">
                           <div className="rjx-warn">
                             <b>{c.sameClient}.</b>
-                            {' Add them to this job again anyway?'}
+                            {' Add them to this requirement again anyway?'}
                             <div className="rjx-row">
                               <button type="button" className="btn btn-sm btn-danger" disabled={busy === c.id} onClick={() => reconsider(c, true)}>Yes, add again</button>
                               <button type="button" className="btn btn-sm" onClick={() => setConfirmFor('')}>Cancel</button>
@@ -163,7 +167,7 @@ export default function RequirementMatchTabs({
                   ];
                 })}
                 {prev && prev.rows.length === 0 && (
-                  <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No one rejected on another job fits this one right now.</td></tr>
+                  <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No one rejected on another requirement fits this one right now.</td></tr>
                 )}
               </tbody>
             </table>
@@ -173,7 +177,7 @@ export default function RequirementMatchTabs({
 
       {tab === 'here' && (
         <>
-          <div className="small-muted" style={{ fontSize: 12, margin: '0 0 6px' }}>Everyone rejected on this job, and why. Use it to see what keeps going wrong.</div>
+          <div className="small-muted" style={{ fontSize: 12, margin: '0 0 6px' }}>Everyone rejected on this requirement, and why. Use it to see what keeps going wrong.</div>
           {here && here.total > 0 && (
             <div className="rjx-why">
               {here.byReason.slice(0, 5).map((x) => <span key={x.label}>{`${x.label}: ${x.count}`}</span>)}
@@ -188,7 +192,7 @@ export default function RequirementMatchTabs({
                 {here && here.rows.map((x) => (
                   <tr key={x.applicationId}>
                     <td>
-                      <Link to={`/candidates/${x.candidateId}`}>{x.name}</Link>
+                      <Link to={`/candidates/${x.candidateId}?application=${x.applicationId}`}>{x.name}</Link>
                       {x.kind === 'do_not_use' && <span className="rjx-badge">Do not use</span>}
                     </td>
                     <td>{x.byLabel || x.sideLabel}</td>
@@ -201,7 +205,7 @@ export default function RequirementMatchTabs({
                   </tr>
                 ))}
                 {here && here.rows.length === 0 && (
-                  <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No one has been rejected on this job.</td></tr>
+                  <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No one has been rejected on this requirement.</td></tr>
                 )}
               </tbody>
             </table>

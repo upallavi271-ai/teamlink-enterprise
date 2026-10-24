@@ -20,6 +20,8 @@
 // ---------------------------------------------------------------------------
 
 const { isBdeDepartment } = require('./bdeDesk');
+const RD = require('./reqDepartments'); // extra departments of a job (2026-10-13)
+const RT = require('./reqTeamLeads'); // extra team leads of a job (2026-10-14)
 
 // Roles that see everything, always.
 const GLOBAL_SCOPE_ROLES = ['SUPER_ADMIN', 'ADMIN'];
@@ -169,8 +171,8 @@ function seatAssignedArms(s) {
   if (p.role === 'RECRUITER') {
     return [{ recruiterId: s.userId }, { recruiterIds: { contains: s.userId } }];
   }
-  const arms = [p.role === 'STL' ? { stlId: s.userId } : { tlId: s.userId }];
-  if (p.role === 'STL') arms.push({ tlId: { in: p.holderUserIds } });
+  const arms = [p.role === 'STL' ? { stlId: s.userId } : RT.tlArm([s.userId])];
+  if (p.role === 'STL') arms.push(RT.tlArm(p.holderUserIds));
   arms.push({ recruiterId: { in: p.holderUserIds } });
   p.holderUserIds.forEach((id) => arms.push({ recruiterIds: { contains: id } }));
   if (p.positionCodes.length) arms.push({ positionCode: { in: p.positionCodes } });
@@ -180,7 +182,7 @@ function seatPoolArm(s) {
   const p = s.positions;
   if (p.role !== 'STL') return null;
   const departments = [...new Set([...(s.departments || []), ...(p.departments || [])])];
-  return departments.length ? { department: { in: departments }, tlId: null, recruiterId: null } : null;
+  return departments.length ? { AND: [RD.deptArm(departments), { tlId: null, recruiterId: null }] } : null;
 }
 // UNASSIGNED = no TL, no primary recruiter, no co-recruiter. The same rule
 // the Unassigned chip / badge / alert and POST /requirements/:id/assign's
@@ -200,7 +202,7 @@ function tlPoolArm(s) {
   // Not CLOSED: the pool is work to pick up, not the department's history.
   // (`notIn`, not `not`, so matches() checks a single record exactly.)
   return departments.length
-    ? { department: { in: departments }, status: { notIn: ['CLOSED'] }, AND: [UNASSIGNED_WHERE] }
+    ? { AND: [RD.deptArm(departments), { status: { notIn: ['CLOSED'] } }, UNASSIGNED_WHERE] }
     : null;
 }
 function seatRequirementWhere(s, { pool: withPool = true } = {}) {
@@ -296,11 +298,11 @@ function requirementWhere(user, opts = {}) {
       // teamRequirementWhere). No team configured -> only what they lead.
       const arms = s.teamUserIds
         ? [
-          { tlId: s.userId },
+          RT.tlArm([s.userId]),
           { recruiterId: { in: s.teamUserIds } },
           ...s.teamUserIds.map((id) => ({ recruiterIds: { contains: id } })),
         ]
-        : [{ tlId: s.userId }];
+        : [RT.tlArm([s.userId])];
       const pool = withPool ? tlPoolArm(s) : null;
       if (pool) arms.push(pool);
       // THE BDE TL also sees the NEW JOB REQUESTS nobody has picked up yet
@@ -313,7 +315,7 @@ function requirementWhere(user, opts = {}) {
     }
     case 'STL': {
       const or = [{ stlId: s.userId }];
-      if (s.departments.length) or.push({ department: { in: s.departments } });
+      if (s.departments.length) or.push(RD.deptArm(s.departments));
       return { OR: or };
     }
     case 'ASSISTANT_MANAGER':
@@ -324,7 +326,7 @@ function requirementWhere(user, opts = {}) {
       // assigned on Users -> their department(s), as for a Manager.
       if (s.teamUserIds) {
         const arms = [
-          { tlId: { in: s.teamUserIds } },
+          RT.tlArm(s.teamUserIds),
           { stlId: s.userId },
           { recruiterId: { in: s.teamUserIds } },
           ...s.teamUserIds.map((id) => ({ recruiterIds: { contains: id } })),
@@ -333,7 +335,7 @@ function requirementWhere(user, opts = {}) {
         if (pool) arms.push(pool);
         return { OR: arms };
       }
-      return s.departments.length ? { department: { in: s.departments } } : { id: '__none__' };
+      return s.departments.length ? RD.deptArm(s.departments) : { id: '__none__' };
     case 'MANAGER':
       // Q2 (user, 2026-10-09): the Manager READS every department: jobs,
       // candidates, interviews, reports and the dashboard. Reading is not editing:
@@ -367,6 +369,7 @@ function isAssignedTo(user, requirement) {
   return requirement.recruiterId === s.userId
     || co.includes(s.userId)
     || requirement.tlId === s.userId
+    || RT.extrasOf(requirement.id).includes(s.userId)
     || requirement.stlId === s.userId
     || requirement.bdeId === s.userId
     // A BDE owns the requirements of THEIR clients (role spec 2026-09-29:
@@ -861,6 +864,8 @@ function departmentsOf(user) {
 // invoiceWhere() — call departmentsOf() rather than scopeDepartments().
 function hrmsGlobal(user) {
   const s = scopeOf(user);
+  // Internal HR (floor HR, utils/internalHr.js): every employee on attendance / leave / directory requests.
+  if (user && user.internalHr && user.internalHr.scopeAll) return true;
   return s.global || HRMS_GLOBAL_ROLES.includes(s.hrmsRole);
 }
 

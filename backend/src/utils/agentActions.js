@@ -456,12 +456,14 @@ async function buildContext(user, auth, { message = '', history = [], ids = {} }
           where: { AND: [requirementWhere(user), { id: String(ids.requirementId) }] }, include,
         });
       } else if (tokens.length) {
+        // a client's OLD name (ClientAlias) finds its jobs too
+        const oldIds = [...new Set((await Promise.all(tokens.map((t) => require('./clientSearch').aliasClientIds(t)))).flat())]; // eslint-disable-line global-require
         rows = await prisma.requirement.findMany({
           where: {
             AND: [requirementWhere(user), {
-              OR: tokens.flatMap((t) => [
+              OR: [...tokens.flatMap((t) => [
                 { title: { contains: t } }, { reqCode: { contains: t } }, { client: { name: { contains: t } } },
-              ]),
+              ]), ...(oldIds.length ? [{ clientId: { in: oldIds } }] : [])],
             }],
           },
           include,

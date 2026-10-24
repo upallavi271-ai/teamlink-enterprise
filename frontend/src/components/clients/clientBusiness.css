@@ -1,0 +1,48 @@
+/* BDE business workspace (2026-10-10) - scoped under .cbz-* */
+.cbz-ws, .cbz-card { padding: 14px 16px; margin: 0 0 14px; }
+.cbz-ws-head h3, .cbz-card-head h3 { margin: 0; font-size: 15px; }
+.cbz-card-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.cbz-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 10px 0 12px; }
+.cbz-tile {
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 10px; text-decoration: none;
+  background: var(--blue-tint, #eef5ff); border: 1px solid var(--line); color: var(--ink); min-width: 0;
+}
+.cbz-tile:hover { border-color: var(--blue); }
+.cbz-tile.t-amber { background: var(--amber-tint); border-color: #f0dcb8; }
+.cbz-tile.t-green { background: var(--green-tint); border-color: transparent; }
+.cbz-tile-l { font-size: 12.5px; color: var(--ink-soft); }
+.cbz-tile-n { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.cbz-tile-s { font-size: 11.5px; color: var(--ink-soft); overflow-wrap: anywhere; }
+.cbz-qa-title { font-size: 12px; color: var(--ink-soft); margin: 4px 0 6px; }
+.cbz-qa { display: flex; gap: 8px; flex-wrap: wrap; }
+.cbz-flash { margin-top: 10px; }
+.cbz-form { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.cbz-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cbz-kinds { display: flex; gap: 6px; flex-wrap: wrap; }
+.cbz-steps { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.cbz-step { display: flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); }
+.cbz-dot {
+  width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line); display: inline-flex; align-items: center;
+  justify-content: center; font-size: 11px; color: #fff; flex: none;
+}
+.cbz-step.s-done { color: var(--ink); }
+.cbz-step.s-done .cbz-dot { background: var(--green); border-color: var(--green); }
+.cbz-step.s-current { color: var(--ink); font-weight: 600; }
+.cbz-step.s-current .cbz-dot { border-color: var(--blue); }
+.cbz-step.s-rejected { color: var(--red); }
+.cbz-step.s-rejected .cbz-dot { background: var(--red); border-color: var(--red); }
+.cbz-step-note { font-size: 11px; }
+.cbz-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.cbz-list { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.cbz-list-t { font-size: 12px; color: var(--ink-soft); margin-bottom: 4px; }
+.cbz-item { display: flex; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: 12.5px; flex-wrap: wrap; border-bottom: 1px dashed var(--line); }
+.cbz-item:last-child { border-bottom: 0; }
+.cbz-item-act { display: flex; gap: 6px; align-items: center; }
+.cbz-note { overflow-wrap: anywhere; }
+.cbz-late { color: var(--red); }
+.cllc-pick { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+@media (max-width: 760px) {
+  .cbz-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .cbz-row { grid-template-columns: 1fr; }
+  .cbz-qa .btn { flex: 1 1 140px; }
+}

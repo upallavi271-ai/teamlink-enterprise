@@ -1,10 +1,18 @@
 const { PrismaClient } = require('@prisma/client');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const prisma = new PrismaClient();
 
+// SECURITY (2026-10-13): the demo logins no longer share one well-known password. Each seed run makes a random
+// one-time password and prints it ONCE at the end (below). Test runs (TEST_MODE=1 / TEAMLINK_SANDBOX=1) keep the
+// fixed demo value so the test fixtures keep working; those accounts are marked as already changed so the
+// "starting password" gate (utils/seedPasswords.js) never blocks a test.
+const TEST_MODE = /^(1|true|yes)$/i.test(String(process.env.TEST_MODE || process.env.TEAMLINK_SANDBOX || ''));
+const DEMO_PASSWORD = TEST_MODE ? 'password123' : `${crypto.randomBytes(9).toString('base64url')}!a1`;
+
 async function main() {
-  const password = await bcrypt.hash('password123', 10);
+  const password = await bcrypt.hash(DEMO_PASSWORD, 10);
 
   const departmentNames = ['IT', 'HR', 'R&D', 'QA', 'Manufacturing', 'Medical', 'Educational', 'BDE', 'Accounts'];
   const departmentsByName = {};
@@ -747,7 +755,6 @@ async function main() {
 
   await prisma.holiday.create({ data: { name: 'Gandhi Jayanti', date: '2026-10-02', type: 'National Holiday' } });
   await prisma.holiday.create({ data: { name: 'Diwali', date: '2026-11-08', type: 'Festival' } });
-  await prisma.holiday.create({ data: { name: 'Diwali (2nd day)', date: '2026-11-09', type: 'Festival' } });
   await prisma.holiday.create({ data: { name: 'Christmas', date: '2026-12-25', type: 'National Holiday' } });
   await prisma.holiday.create({ data: { name: 'Republic Day', date: '2027-01-26', type: 'National Holiday' } });
   await prisma.holiday.create({ data: { name: 'Independence Day', date: '2026-08-15', type: 'National Holiday' } });
@@ -1367,8 +1374,13 @@ async function main() {
 
   console.log('Seed complete.');
   console.log('');
-  console.log('DEMO PASSWORD for every login below: password123');
-  console.log('(documented here and in the README; never shown in the UI)');
+  if (TEST_MODE) {
+    await prisma.user.updateMany({ data: { passwordChangedAt: new Date() } });
+    console.log('TEST MODE: the demo logins below use the fixed demo password from the test fixtures.');
+  } else {
+    console.log(`ONE-TIME DEMO PASSWORD for every login below: ${DEMO_PASSWORD}`);
+    console.log('(printed this once only; it is not stored in plain text anywhere. Change it at first sign-in.)');
+  }
   console.log('');
   console.log('  admin@teamlink.test       Super Admin              — all products, global');
   console.log('  divya@teamlink.test       Medical / TL             — HRMS + ATS (TL, Medical)');

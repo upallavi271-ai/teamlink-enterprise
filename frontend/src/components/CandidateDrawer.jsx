@@ -14,10 +14,11 @@ import { DupBanner } from './duplicates/DupChip.jsx'; // dup_: red "Duplicate: r
 // cand7_: the profile top + the other agents' mount points.
 import ProfileTop from './candidate/ProfileTop.jsx';
 import ConversationView from './messaging/ConversationView.jsx'; // omnichannel Conversation tab
+import CommunicationTimeline from './messaging/CommunicationTimeline.jsx'; // one communication timeline (Omni-Channel)
 import ProfileLeft, { ResumeTabCard } from './candidate/ProfileLeft.jsx';
 import { RecordDocuments } from './candidate/CandidateRecord.jsx'; // ATS-100 B5
 import {
-  FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot,
+  FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot,
 } from './candidate/ProfileSlots.jsx';
 
 // ---------------------------------------------------------------------------
@@ -187,12 +188,14 @@ export default function CandidateDrawer({
             {/* Fit (was its own tab): AI scores, the match detail, jobs this person fits. */}
             {tab === 'applications' && internal && (
               <>
+                <AddApplicationSlot {...slot} />
                 <div className="pfl-label" style={{ marginTop: 12 }}>Fit</div>
                 <FitSlot {...slot} />
                 <AlsoGoodFitSlot {...slot} />
               </>
             )}
 
+            {tab === 'conversation' && internal && <CommunicationTimeline candidateId={c.id} />}
             {tab === 'conversation' && internal && <ConversationView audience="candidates" personId={c.id} name={c.name} applicationId={app ? app.id : undefined} requirementId={app ? app.requirementId : undefined} onChanged={changed} />}
 
             {tab === 'history' && (

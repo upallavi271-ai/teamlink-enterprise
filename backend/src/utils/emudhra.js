@@ -191,6 +191,7 @@ async function closeSession(ref, status) {
 
 async function apiGet(s, path, params) {
   const url = `${s.apiBase}/${path}?${new URLSearchParams(params)}`;
+  await require('./safeFetch').assertSafeUrl(url); // SSRF guard (2026-10-13)
   const r = await fetch(url, { method: 'GET', headers: { Accept: 'application/json' } });
   const body = await r.json().catch(() => null);
   if (!r.ok || !body) throw Object.assign(new Error(`eMudhra answered ${r.status}`), { code: 'BAD_ANSWER' });

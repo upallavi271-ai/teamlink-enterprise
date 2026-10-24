@@ -18,3 +18,11 @@
 .pfl-right > .pfl-tabs{position:sticky;top:-16px;z-index:3;background:var(--paper-raised,#fff);margin-bottom:10px}
 /* The big window's body is a multi-column box; the two-column frame lays out itself. */
 .cdw-tabbed .cdw-body.is-tabbed{column-count:auto;columns:auto}
+
+/* Conversation tab (founder, 2026-10-22): only the conversation. The profile cards on the left step aside and the chat takes the full width. */
+.pfl-frame.pfl-conv{grid-template-columns:minmax(0,1fr)}
+.pfl-frame.pfl-conv > :not(.pfl-right){display:none}
+
+/* every tab but Overview: only that tab's content, full width (the profile cards belong to Overview) */
+.pfl-tabs-top{margin:0 0 12px}
+.pfl-frame.pfl-conv > .pfl-right > .pfl-tabs{position:static}

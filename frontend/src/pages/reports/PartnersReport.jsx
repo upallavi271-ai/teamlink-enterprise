@@ -79,7 +79,7 @@ export default function PartnersReport({ canExport }) {
                 <tr>{th('partner', 'Partner')}{th('type', 'Type')}{th('submitted', 'Sent', true)}{th('duplicates', 'Duplicates', true)}{th('screening', 'Screening', true)}{th('interviews', 'Interviews', true)}{th('selected', 'Selected', true)}{th('joined', 'Joined', true)}{th('rejected', 'Rejected', true)}{th('dropped', 'Dropped', true)}{th('joinPct', 'Join %', true)}{th('payout', 'Payout', true)}{th('costPerJoining', 'Cost / joining', true)}</tr>
               </thead>
               <tbody>
-                {!rows.length && <tr><td colSpan={13} className="small-muted">No partner submissions in this range. Partners send candidates from /partner-login once a job is shared with them.</td></tr>}
+                {!rows.length && <tr><td colSpan={13} className="small-muted">No partner submissions in this range. Partners send candidates from /partner-login once a requirement is shared with them.</td></tr>}
                 {rows.map((r) => (
                   <tr key={r.partnerId}>
                     <td><b>{r.partner}</b>{r.status !== 'Active' && <span className="small-muted"> · {r.status}</span>}</td>

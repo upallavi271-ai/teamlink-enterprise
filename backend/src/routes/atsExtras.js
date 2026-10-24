@@ -23,6 +23,7 @@ const {
 // Former people (user, 2026-10-05): leavers from HRMS and their whole work
 // history, under the departments they worked in. utils/formerPeople.js.
 const { formerPeopleRows, formerPersonHistory } = require('../utils/formerPeople');
+const clientSearch = require('../utils/clientSearch');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -67,6 +68,8 @@ router.use('/team', (req, res, next) => {
   }
   next();
 });
+// A Recruiter reads only their own people on the Team page (utils/ownOnly.js): co-recruiters' names and colleagues' rows are taken out.
+router.use('/team', require('../utils/ownOnly').scrubTeamMiddleware);
 router.get('/team', async (req, res, next) => {
   try {
     if (!(await teamGate(req, res))) return undefined;
@@ -331,6 +334,7 @@ router.get('/calendar', async (req, res) => {
   // eslint-disable-next-line global-require
   const panels = bdeView ? new Map() : await require('../utils/interviewPanel').panelsFor(recruitmentApps);
   recruitment.forEach((r) => { r.panel = bdeView ? [] : (panels.get(r.id) || []); });
+  await decorateStart(req.user, recruitment, recruitmentApps);
   // The BDE filter reads "Name · BDE MED" (the position), like the Add Client form.
   if (recruitment.some((r) => r.requirement.bde)) {
     const bdeDir = await require('../utils/bdeSeats').bdeDirectory(); // eslint-disable-line global-require
@@ -373,6 +377,8 @@ router.get('/calendar', async (req, res) => {
     shortlistedAt: a.updatedAt,
     hiringType: hiringTypeOf(a, a.requirement),
   }));
+  // "Interview requested by <recruiter>" (utils/interviewRequest.js)
+  await require('../utils/interviewRequest').attachTo(shortlisted); // eslint-disable-line global-require
   res.json({
     recruitment,
     ai,
@@ -422,6 +428,7 @@ router.get('/calendar/ai', async (req, res) => {
 //             Schedule Interview / edit
 //   feedback  (record the internal feedback)  Interview Feedback / create
 //   either    (did not attend: asked from the feedback form)  either one
+const SCHEDULE_BY_BDE = 'Interviews are booked, moved and cancelled by the client manager (BDE). Press "Ask the client manager to book" on the candidate and they will do it.';
 async function loadInterview(req, res, need = 'schedule') {
   const asks = {
     schedule: [['Schedule Interview', 'edit']],
@@ -434,7 +441,11 @@ async function loadInterview(req, res, need = 'schedule') {
     if (await can(req.user, 'ats', 'interviews', feature, action)) { allowed = true; break; }
   }
   if (!allowed) {
-    res.status(403).json({ error: "This action isn't included in your role's permissions" });
+    // BOOKING IS THE BDE'S (user, 2026-10-12): say it in plain words, and point to the way forward.
+    res.status(403).json({
+      error: need === 'schedule' ? SCHEDULE_BY_BDE : "This action isn't included in your role's permissions",
+      ...(need === 'schedule' ? { code: 'BDE_BOOKS' } : {}),
+    });
     return null;
   }
   // SCOPE: acting needs the record to be in YOUR scope, the same fragment the
@@ -459,12 +470,38 @@ async function recordEvent(applicationId, status, extra = {}) {
   await prisma.interviewEvent.create({ data: { applicationId, status, ...extra } });
 }
 
+// "Start interview": for each row, what THIS login may do (utils/interviewMeet.js startState). The panel's user ids are
+// read from the application's own panel rows (the BDE team's rows carry no panel, so they are read separately).
+async function decorateStart(user, rows, apps) {
+  try {
+    if (!user) return;
+    const IM = require('../utils/interviewMeet'); // eslint-disable-line global-require
+    const ctx = await IM.startCtx(user);
+    const ids = apps.map((a) => a.id);
+    let pan = [];
+    for (let i = 0; i < ids.length; i += 500) {
+      // eslint-disable-next-line no-await-in-loop
+      pan = pan.concat(await prisma.interviewPanelist.findMany({ where: { applicationId: { in: ids.slice(i, i + 500) }, userId: { not: null } }, select: { applicationId: true, round: true, userId: true } }).catch(() => []));
+    }
+    const byId = new Map(apps.map((a) => [a.id, a]));
+    rows.forEach((r) => {
+      const a = byId.get(r.id);
+      if (!a) return;
+      const pu = pan.filter((p) => p.applicationId === a.id && p.round === (a.interviewRound || 1)).map((p) => p.userId);
+      r.start = IM.startState(ctx, user, a, pu);
+      r.startedAt = a.interviewStartedAt || null;
+      r.canSetLink = IM.mayStart(ctx, user, a, pu) && IM.STARTABLE.includes(a.interviewStatus) && IM.isOnline(a);
+    });
+  } catch { /* the button is a convenience: the list still loads */ }
+}
+
 async function respondWith(res, id, extra = {}) {
   const app = await prisma.application.findUnique({ where: { id }, include: CALENDAR_INCLUDE });
   const bdeView = isBdeView(res.req && res.req.user);
   const row = shapeRecruitment(app, bdeView);
   // eslint-disable-next-line global-require
   row.panel = bdeView ? [] : ((await require('../utils/interviewPanel').panelsFor([app])).get(app.id) || []);
+  await decorateStart(res.req && res.req.user, [row], [app]);
   res.json({ ...row, ...extra });
 }
 
@@ -552,7 +589,7 @@ router.post('/interviews/:id/meeting-link', async (req, res) => {
   const r = app.requirement || {};
   const company = r.internal ? 'TeamLink' : (r.client && r.client.name) || '';
   const made = await ML.createMeeting({
-    title: `Interview: ${app.candidate.name} — ${r.title || 'Job'}${company ? ` (${company})` : ''}`,
+    title: `Interview: ${app.candidate.name} — ${r.title || 'Requirement'}${company ? ` (${company})` : ''}`,
     description: `Round ${app.interviewRound || 1}. Interviewer(s): ${app.interviewer || 'to be confirmed'}. Booked in TeamLink.`,
     start: app.interviewAt,
   });
@@ -570,8 +607,9 @@ router.post('/interviews/:id/meeting-link', async (req, res) => {
 });
 
 // Scheduled -> Confirmed -> Started -> Completed -> Pending Feedback. No skipping.
+// Confirm / start / complete is RUNNING the interview, not booking it: whoever may book OR give feedback may do it.
 router.patch('/interviews/:id/advance', async (req, res) => {
-  const app = await loadInterview(req, res);
+  const app = await loadInterview(req, res, 'either');
   if (!app) return;
   const { to } = req.body;
   if (INTERVIEW_TERMINAL.includes(app.interviewStatus)) {
@@ -636,8 +674,10 @@ router.post('/interviews/:id/cancel', async (req, res) => {
     entityId: app.id, fromValue: interviewStatusLabel(app.interviewStatus), toValue: 'Cancelled',
   });
   // Everyone who was told about the booking is told it is off (§11).
-  await require('../utils/interviewNotices').announceInterview(app.id, 'cancelled', { actor: req.user, reason, candidateEmail: req.body.viaPopup !== true }); // eslint-disable-line global-require
-  await respondWith(res, app.id);
+  await require('../utils/interviewNotices').announceInterview(app.id, 'cancelled', { actor: req.user, reason, candidateEmail: false }); // eslint-disable-line global-require
+  // The e-mail with the calendar CANCEL (same entry in the calendar). Never blocks the cancel.
+  const mailOut = await require('../utils/interviewMeet').sendInvites(app.id, 'cancelled', { actor: req.user, reason }); // eslint-disable-line global-require
+  await respondWith(res, app.id, { invites: { sent: mailOut.sent, failed: mailOut.failed, notConfigured: mailOut.notConfigured, message: mailOut.message } });
 });
 
 // "Did not attend" (change list §11, 2026-10-03) — asked from the interview's
@@ -654,6 +694,10 @@ router.post('/interviews/:id/no-show', async (req, res) => {
   }
   let when = null;
   if (req.body.rescheduleAt) {
+    // A NEW TIME is a booking: the BDE's (the plain "did not attend" stays with the feedback holders).
+    if (!(await can(req.user, 'ats', 'interviews', 'Schedule Interview', 'edit'))) {
+      return res.status(403).json({ error: SCHEDULE_BY_BDE, code: 'BDE_BOOKS' });
+    }
     when = new Date(req.body.rescheduleAt);
     if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'The new time is not valid.' });
     if (when.getTime() < Date.now() - 5 * 60000) return res.status(400).json({ error: 'The new time has already passed — pick a later time.' });
@@ -672,7 +716,8 @@ router.post('/interviews/:id/no-show', async (req, res) => {
       data: { interviewStatus: 'RESCHEDULED', interviewAt: when, interviewRescheduleCount: app.interviewRescheduleCount + 1, interviewCancelReason: null },
     });
     await recordEvent(app.id, 'RESCHEDULED', { reason: `New time after did not attend — ${reason}`, by: req.user.name, fromSlot, toSlot: when.toISOString() });
-    await IN.announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend — a new time is booked', candidateEmail: req.body.viaPopup !== true });
+    await IN.announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend — a new time is booked', candidateEmail: false });
+    await require('../utils/interviewMeet').sendInvites(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason: 'The candidate did not attend - a new time is booked' }); // eslint-disable-line global-require
   } else {
     await IN.announceInterview(app.id, 'no_show', { actor: req.user, reason, candidateEmail: true });
   }
@@ -706,8 +751,10 @@ router.post('/interviews/:id/reschedule', async (req, res) => {
     entityId: app.id, fromValue: fromSlot, toValue: when.toISOString(),
   });
   // Everyone is told the new time; the reminders re-arm for the new slot.
-  await require('../utils/interviewNotices').announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason, candidateEmail: req.body.viaPopup !== true }); // eslint-disable-line global-require
-  await respondWith(res, app.id);
+  await require('../utils/interviewNotices').announceInterview(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason, candidateEmail: false }); // eslint-disable-line global-require
+  // The e-mail with the updated calendar invite (same UID, higher SEQUENCE). Never blocks the reschedule.
+  const mailOut = await require('../utils/interviewMeet').sendInvites(app.id, 'rescheduled', { actor: req.user, fromSlot: app.interviewAt, reason }); // eslint-disable-line global-require
+  await respondWith(res, app.id, { invites: { sent: mailOut.sent, failed: mailOut.failed, notConfigured: mailOut.notConfigured, message: mailOut.message } });
 });
 
 // INTERNAL interview feedback — the panel’s own record.
@@ -932,17 +979,22 @@ router.get('/search', async (req, res) => {
       { title: { contains: q } },
       { reqCode: { contains: q } },
       { id: q },
-      { client: { is: { name: { contains: q } } } },
+      // the client's official name OR an old name (ClientAlias) — utils/clientSearch.js
+      await clientSearch.clientRelationTerm(q),
     ],
   };
   const candWhere = { AND: [candScope, candMatch] };
   const reqWhere = { AND: [requirementWhere(req.user), reqMatch] };
   // A client by name, legal name, GSTIN, stored client code or display code.
+  // ... or an OLD name of the client (ClientAlias): typing "vcare" finds "Prabs VCare Health Clinic"; the row shows the official name.
   const clientWhereQ = {
     AND: [clientWhere(req.user), {
       OR: [
-        { name: { contains: q } }, { legalName: { contains: q } },
-        { gst: { contains: q.toUpperCase() } }, { clientCode: { contains: q } }, { agreementId: { contains: q } },
+        ...(await clientSearch.clientTermWhere(q, {
+          legalName: true, gst: true, clientCode: true,
+          // (an agreement number finds a client for the desk only - not for a TL / STL / Recruiter / HR)
+          agreementId: !require('../utils/agreementPrivacy').blindTo(req.user), // eslint-disable-line global-require
+        })).OR,
         ...(/^cl[-\s#:]/i.test(q) ? idArms : []),
       ],
     }],

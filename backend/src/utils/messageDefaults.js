@@ -71,6 +71,12 @@ function list() {
   // Interview booked / moved / cancelled and the reminders before it (utils/interviewMessageDefaults.js).
   // eslint-disable-next-line global-require
   require('./interviewMessageDefaults').list().forEach((d) => out.push(d));
+  // Candidate joined / dropped and the client's replacement decision (joindrop/messageDefaults.js).
+  // eslint-disable-next-line global-require
+  require('../joindrop/messageDefaults').list().forEach((d) => out.push(d));
+  // The emails a vendor gets: welcome + set password, password reset, new email address (utils/vendorMessageDefaults.js).
+  // eslint-disable-next-line global-require
+  require('./vendorMessageDefaults').list().forEach((d) => out.push(d));
   // eslint-disable-next-line global-require
   require('./messageScripts').SCRIPTS.forEach((s) => out.push({ purpose: s.purpose, label: s.label, audience: s.audience, channel: 'Call', language: 'English', subject: '', body: s.body }));
   cache = out;

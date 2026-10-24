@@ -87,7 +87,7 @@ function ClassBadge({ cls }) {
 }
 
 function AgreementCell({ m }) {
-  if (!m.agreementStatus || m.agreementStatus === 'DRAFT') return <span className="cell-muted">Draft</span>;
+  if (!m.agreementStatus || m.agreementStatus === 'DRAFT') return <span className="cell-muted">Made</span>;
   return (
     <span className={m.agreementStatus === 'ACTIVE' ? 'status active' : 'status pending'}>
       {m.agreementStatus === 'ACTIVE' ? 'Active' : m.agreementStatus === 'SIGNED' ? 'Signed' : m.agreementStatus}
@@ -475,16 +475,16 @@ export default function ClientDuplicates() {
         primary={(
           <>
             <input type="search" placeholder="Search a client name…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search" />
-            <select value={cls} onChange={(e) => setCls(e.target.value)} title="Class">
+            <Combo value={cls} onChange={(e) => setCls(e.target.value)} title="Class">
               <option value="">All classes</option>
               <option value="SAFE">SAFE</option>
               <option value="NEAR">NEAR</option>
               <option value="AMBIGUOUS">AMBIGUOUS</option>
-            </select>
-            <select value={dept} onChange={(e) => setDept(e.target.value)} title="Department">
+            </Combo>
+            <Combo value={dept} onChange={(e) => setDept(e.target.value)} title="Department">
               <option value="">All departments</option>
               {depts.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
+            </Combo>
             {skippedCount > 0 && (
               <label className="cdup-check"><input type="checkbox" checked={showSkipped} onChange={(e) => setShowSkipped(e.target.checked)} /> Show {skippedCount} skipped</label>
             )}
@@ -494,12 +494,12 @@ export default function ClientDuplicates() {
           <>
             <label className="small-muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
               Sort
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
                 <option value="">Detector order</option>
                 <option value="reqs">Most requirements first</option>
                 <option value="members">Most records first</option>
                 <option value="name">Name A–Z</option>
-              </select>
+              </Combo>
             </label>
             <span className="cell-muted">{visible.length} group(s)</span>
           </>

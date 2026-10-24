@@ -352,7 +352,7 @@ export function CourseFormModal({ course, onClose, onSaved }) {
       )}
       {!course && (
         <div className="small-muted">
-          A course drafted by a TL goes up the approval chain before learners can see it; add materials and questions in the meantime.
+          A course made by a TL goes up the approval chain before learners can see it; add materials and questions in the meantime.
         </div>
       )}
       {error && <div className="error-text">{error}</div>}
@@ -638,8 +638,9 @@ export default function CourseManage({ courseId, onBack }) {
       patchUpload(it.key, { status: 'uploading', pct: 0 });
       try {
         // eslint-disable-next-line no-await-in-loop
-        await uploadMaterial(courseId, { ...it, required }, (pct) => patchUpload(it.key, { pct }));
+        const saved = await uploadMaterial(courseId, { ...it, required }, (pct) => patchUpload(it.key, { pct }));
         patchUpload(it.key, { status: 'done', pct: 100 });
+        if (saved && saved.pendingApproval) setNote('Uploaded. It is waiting for approval — learners see it after the last approver (the Super Admin) approves.');
       } catch (err) {
         patchUpload(it.key, { status: 'failed', error: err.message });
       }
@@ -654,9 +655,11 @@ export default function CourseManage({ courseId, onBack }) {
     if (!/^https?:\/\//i.test(link.trim())) { setError('Paste a full link that starts with http:// or https://'); return; }
     setBusy(true);
     try {
-      await api.post(`/lms/courses/${courseId}/materials`, { title: title.trim() || link.trim(), url: link.trim(), kind: 'Link', required });
+      const res = await api.post(`/lms/courses/${courseId}/materials`, { title: title.trim() || link.trim(), url: link.trim(), kind: 'Link', required });
       setTitle(''); setLink('');
-      setNote('Saved. The link is added.');
+      setNote(res.data && res.data.pendingApproval
+        ? 'Saved. The link is waiting for approval — learners see it after the last approver (the Super Admin) approves.'
+        : 'Saved. The link is added.');
       load();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not add that link.');
@@ -771,6 +774,14 @@ export default function CourseManage({ courseId, onBack }) {
                       {m.durationSeconds ? ` · ${fmtWatch(m.durationSeconds)}` : ''}
                     </span>
                   </span>
+                  {m.approvalStatus && m.approvalStatus !== 'Approved' && (
+                    <>
+                      <span className={`status ${m.approvalStatus === 'Rejected' ? 'rejected' : 'pending'}`} title="Learners do not see this until the approval chain approves it">
+                        {m.approvalStatus === 'Rejected' ? 'Rejected' : 'Waiting for approval'}
+                      </span>
+                      <button className="btn btn-sm" onClick={() => setModal({ chainMaterial: m.id })}>Approval Chain</button>
+                    </>
+                  )}
                   {m.hasFile
                     ? <button className="btn btn-sm" onClick={() => setModal({ preview: m })}>View</button>
                     : <a className="btn btn-sm" href={m.href} target="_blank" rel="noreferrer noopener">Open Link</a>}
@@ -779,9 +790,9 @@ export default function CourseManage({ courseId, onBack }) {
                 <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 12, marginLeft: 30 }}>
                   <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                     Kind
-                    <select value={m.kind} style={{ width: 'auto', minHeight: 28, padding: '2px 6px' }} onChange={(e) => updateMaterial(m, { kind: e.target.value })}>
+                    <Combo value={m.kind} style={{ width: 'auto', minHeight: 28, padding: '2px 6px' }} onChange={(e) => updateMaterial(m, { kind: e.target.value })}>
                       {(m.hasFile ? ['Video', 'Document'] : ['Link', 'Document']).map((k) => <option key={k} value={k}>{k}</option>)}
-                    </select>
+                    </Combo>
                   </label>
                   <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}>
                     <input type="checkbox" style={{ width: 'auto' }} checked={m.required} onChange={(e) => updateMaterial(m, { required: e.target.checked })} />
@@ -903,6 +914,7 @@ export default function CourseManage({ courseId, onBack }) {
       {modal === 'assign' && (
         <AssignModal courseId={data.course.id} onClose={() => { setModal(null); load(); }} onDone={load} />
       )}
+      {modal?.chainMaterial && <ApprovalChainModal type="courseMaterial" recordId={modal.chainMaterial} onClose={() => setModal(null)} onChanged={load} />}
       {modal?.preview && <MaterialPreview material={modal.preview} onClose={() => setModal(null)} />}
       {modal?.cert && <CertificateModal assignmentId={modal.cert} onClose={() => setModal(null)} />}
     </div>

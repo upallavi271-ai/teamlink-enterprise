@@ -71,11 +71,11 @@ export function lastActivityText(la) {
 
 // §7 — the five counts, in order. `key` is the field of row.pipeline.
 export const COUNT_TILES = [
-  { key: 'candidates', label: 'Candidates', hint: 'Everyone on this job' },
+  { key: 'candidates', label: 'Candidates', hint: 'Everyone on this requirement' },
   { key: 'shortlisted', label: 'Shortlisted', hint: 'Shortlisted by the client' },
   { key: 'interview', label: 'Interview', hint: 'Interview booked or done' },
   { key: 'selected', label: 'Selected', hint: 'Selected, not joined yet' },
-  { key: 'joined', label: 'Joined', hint: 'Joined the job' },
+  { key: 'joined', label: 'Joined', hint: 'Joined the requirement' },
 ];
 
 export function CountTiles({ pipeline, onPick }) {
@@ -149,5 +149,6 @@ export function PipelineSteps({ requirementId, pipeline, compact = false }) {
 // the tone is passed explicitly: live = blue (going on), waiting = orange,
 // closed = green (done).
 const LIVE_CODES = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
-export const reqStatusTone = (code) => (LIVE_CODES.includes(code) ? 'blue'
-  : ['ON_HOLD', 'AGREEMENT_CHECK', 'DRAFT'].includes(code) ? 'amber' : code === 'CLOSED' ? 'green' : 'grey');
+// 2026-10-13: only Open (blue) and Closed (grey) are shown.
+export const reqStatusTone = (code) => (code === 'CLOSED' ? 'grey' : 'blue');
+void LIVE_CODES;

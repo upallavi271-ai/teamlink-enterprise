@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { ViewAsButton, ViewAsNotice } from '../../components/ViewAs.jsx';
+import { ActAsButton, ViewAsButton, ViewAsNotice } from '../../components/ViewAs.jsx';
 import '../../components/ViewAs.css';
+import Combo from '../../components/Combo.jsx';
 
 // Administration -> View as (Super Admin only). Every active login a Super
 // Admin may view as, grouped by role, with department / section / seat, so
@@ -66,19 +67,21 @@ export default function ViewAsPicker() {
           Open the app exactly as another person sees it — their menu, their screens, their data scope — to check
           a role. It is <b>read-only</b>: nothing can be saved, sent or approved while viewing as, and their own
           session and password are never touched. It opens in <b>this tab only</b> for 60 minutes; your other tabs
-          stay signed in as you. Every start and exit is written to the Audit Logs.
+          stay signed in as you. Every start and exit is written to the Audit Logs.{' '}
+          Want to test with <b>real edit rights</b>? Use <b>Act as (edit)</b> — you work as that person with only their rights,
+          every change is recorded as done by you acting as them, and passwords, roles and security settings stay blocked.
         </div>
 
         <div className="tl-va-filters">
           <input type="search" placeholder="Search name, email, seat, designation…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search people" />
-          <select value={dept} onChange={(e) => { setDept(e.target.value); setSection(''); }} aria-label="Department">
+          <Combo value={dept} onChange={(e) => { setDept(e.target.value); setSection(''); }} aria-label="Department">
             <option value="">All departments</option>
             {departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <select value={section} onChange={(e) => setSection(e.target.value)} aria-label="Section / team">
+          </Combo>
+          <Combo value={section} onChange={(e) => setSection(e.target.value)} aria-label="Section / team">
             <option value="">All sections / teams</option>
             {sections.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          </Combo>
           {(q || dept || section || group) && (
             <button type="button" className="btn btn-sm" onClick={() => { setQ(''); setDept(''); setSection(''); setGroup(''); }}>Clear</button>
           )}
@@ -122,7 +125,10 @@ export default function ViewAsPicker() {
                         </span>
                       ))}
                     </div>
-                    <ViewAsButton userId={p.id} name={p.name} />
+                    <div className="tl-va-btns">
+                      <ViewAsButton userId={p.id} name={p.name} />
+                      <ActAsButton userId={p.id} name={p.name} admin={p.group === 'ADMIN'} />
+                    </div>
                   </div>
                 ))}
               </div>

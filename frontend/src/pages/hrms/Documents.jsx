@@ -3,6 +3,7 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
+import { ApprovalChainModal } from '../../components/ApprovalChain.jsx';
 import PeopleFilterBar, { peopleMatches, textMatches } from '../../components/PeopleFilterBar.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
@@ -15,8 +16,10 @@ import {
 // A policy document is company-wide, not per employee, so its filters are its
 // own: title, category, and — for HR, who sees unpublished ones — whether it
 // is published to employees, hidden, or company paperwork that never is.
-const DOC_STATUSES = ['Published', 'Hidden', 'Internal only'];
-const docStatusOf = (d) => (d.publishable === false ? 'Internal only' : d.published ? 'Published' : 'Hidden');
+const DOC_STATUSES = ['Published', 'Hidden', 'Internal only', 'Waiting for approval', 'Rejected'];
+// 2026-10-24: what a TL or HR uploads waits for the approval chain (TL -> ... -> Super Admin) before it is published.
+const docStatusOf = (d) => (d.approvalStatus === 'Pending' ? 'Waiting for approval' : d.approvalStatus === 'Rejected' ? 'Rejected'
+  : d.publishable === false ? 'Internal only' : d.published ? 'Published' : 'Hidden');
 const EMPTY_DOC_FILTERS = { q: '', category: '', status: '', mandatory: '', target: '', from: '', to: '' };
 const docDateOf = (d) => d.uploadedDate || d.createdAt;
 const DOC_SORTS = [
@@ -87,6 +90,10 @@ export default function Documents() {
   const [sort, setSort] = useState('new');
   const [publishing, setPublishing] = useState(false);
   const [sent, setSent] = useState('');
+  const [chainFor, setChainFor] = useState(null); // the document whose approval chain is open
+  // A team lead may SUBMIT a document; the server never publishes it without the approval chain.
+  const isLead = ['TL', 'STL'].includes(user.hrmsRole) || ['TL', 'STL'].includes(user.role);
+  const mayUpload = isHR || isLead;
 
   function load() {
     api.get('/documents').then((res) => setDocuments(res.data));
@@ -136,14 +143,21 @@ export default function Documents() {
           Employee Services tabs the page head is hidden (.tab-content
           .page-head), which is where the old export button went missing. */}
       <div className="qa-row" style={{ marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        {isHR && <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>+ Publish Document</button>}
+        {mayUpload && <button className="btn btn-primary btn-sm" onClick={() => setPublishing(true)}>+ Publish Document</button>}
         <span style={{ marginLeft: 'auto' }}><DataIoBar ioKey="documents" exportUrl="/insights/documents/export" showImport={false} /></span>
       </div>
       {sent && <div className="notice">{sent}</div>}
       {publishing && (
         <PublishDocumentModal
           onClose={() => setPublishing(false)}
-          onSaved={(d) => { setPublishing(false); setSent(d.reached == null ? `"${d.title}" saved — internal only, not published to employees.` : `"${d.title}" published to ${d.target} — ${d.reached} employee(s). ${d.deliveryText || ''}`); load(); }}
+          onSaved={(d) => {
+            setPublishing(false);
+            const who = d.workflow && d.workflow.currentOwnerName ? ` — now with ${d.workflow.currentOwnerName}${d.workflow.currentLabel ? ` (${d.workflow.currentLabel})` : ''}` : '';
+            setSent(d.pendingApproval
+              ? `"${d.title}" is waiting for approval${who}. Employees get it only after the last approver (the Super Admin) approves.`
+              : d.reached == null ? `"${d.title}" saved — internal only, not published to employees.` : `"${d.title}" published to ${d.target} — ${d.reached} employee(s). ${d.deliveryText || ''}`);
+            load();
+          }}
         />
       )}
 
@@ -171,9 +185,9 @@ export default function Documents() {
         </Combo>
         <label className="lf-sort">
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
             {DOC_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
       </PeopleFilterBar>
 
@@ -191,8 +205,17 @@ export default function Documents() {
                 <td>{d.uploadedDate}</td>
                 <td>{d.acknowledgments.length} of {d.totalEmployees}</td>
                 <td>
-                  {!isHR && <button className="btn btn-sm" onClick={() => acknowledge(d.id)}>Acknowledge</button>}
-                  {isHR && (
+                  {d.approvalStatus && d.approvalStatus !== 'Approved' && (
+                    <>
+                      <span className={`status ${d.approvalStatus === 'Rejected' ? 'rejected' : 'pending'}`}>
+                        {d.approvalStatus === 'Rejected' ? 'Rejected' : `Waiting for ${d.workflow && d.workflow.currentOwnerName ? d.workflow.currentOwnerName : 'approval'}${d.workflow && d.workflow.currentLabel ? ` (${d.workflow.currentLabel})` : ''}`}
+                      </span>
+                      <button className="btn btn-sm" onClick={() => setChainFor(d)}>Approval Chain</button>
+                      {isHR && <button className="btn btn-sm" onClick={() => remove(d.id)}>Delete</button>}
+                    </>
+                  )}
+                  {(!d.approvalStatus || d.approvalStatus === 'Approved') && !isHR && <button className="btn btn-sm" onClick={() => acknowledge(d.id)}>Acknowledge</button>}
+                  {(!d.approvalStatus || d.approvalStatus === 'Approved') && isHR && (
                     <>
                       {d.publishable === false ? (
                         <span className="small-muted" title="Company paperwork is never pushed to employee self-service">Internal only</span>
@@ -210,6 +233,7 @@ export default function Documents() {
         </table>
       </div>
       {shown.length > 0 && <Pager page={page} noun="documents" />}
+      {chainFor && <ApprovalChainModal type="document" recordId={chainFor.id} onClose={() => setChainFor(null)} onChanged={load} />}
     </div>
   );
 }

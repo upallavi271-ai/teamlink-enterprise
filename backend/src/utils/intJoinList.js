@@ -82,7 +82,9 @@ function offerStepId(app) {
   if (st === OFFER_PREPARED) return 'approval';
   if (st === 'Offer Released') return 'candidate';
   if (st === 'Offer Accepted' || ['OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(app.stage)) return 'accepted';
-  return 'prepare'; // not issued / declined / expired
+  // CLIENT hiring (2026-10-13): the client makes the offer - 'client' = waiting for the client's letter, 'share' = the client released it, the recruiter shares it.
+  if (app.clientJob) return app.trackOfferState === 'RELEASED' ? 'share' : 'client';
+  return 'prepare'; // not issued / declined / expired (an internal hire: TeamLink prepares it)
 }
 
 function waitingToJoin(app) {
@@ -112,7 +114,7 @@ const ts = (v) => { const n = v ? new Date(v).getTime() : NaN; return Number.isN
 
 const SPECS = {
   offers: {
-    views: ['prepare', 'approval', 'candidate', 'accepted'],
+    views: ['client', 'share', 'prepare', 'approval', 'candidate', 'accepted'],
     viewOf: (it) => offerStepId(it.app),
     dateOf: (it) => it.app.offerDate,
     open: (it) => !['JOINED', 'HIRED'].includes(it.app.stage),
@@ -201,7 +203,7 @@ async function leanApps(req, where, kind) {
   if (ids.some((id) => !SAFE_ID.test(id))) throw new Error('unexpected id');
   const out = [];
   for (let i = 0; i < ids.length; i += 4000) {
-    const list = ids.slice(i, i + 4000).map((id) => `'${id}'`).join(',');
+    const list = ids.slice(i, i + 4000).filter((id) => /^[A-Za-z0-9_-]+$/.test(String(id))).map((id) => `'${id}'`).join(',');
     // eslint-disable-next-line no-await-in-loop
     const rows = await prisma.$queryRawUnsafe(
       `SELECT a.id, a.stage, a.updatedAt, a.hiringType, a.offerStatus, a.offerDate, a.joiningDate, a.joiningStatus, a.joinedAt,
@@ -264,9 +266,16 @@ async function leanItems(req, where, kind) {
     });
   }
   const now = Date.now();
+  const aliasByName = await require('./clientSearch').aliasNameMap().catch(() => new Map()); // eslint-disable-line global-require
+  const tracks = kind === 'offers' ? await require('./clientTrack').loadAll().catch(() => new Map()) : null; // eslint-disable-line global-require
   return apps.map((app) => {
     const r = app.requirement || {};
     const hiring = hiringTypeOf(app, r);
+    if (tracks) {
+      app.clientJob = hiring !== INTERNAL_HIRE;
+      const tr = tracks.get(app.id);
+      app.trackOfferState = tr && tr.offer ? tr.offer.state : null;
+    }
     const it = {
       id: app.id,
       app,
@@ -274,6 +283,8 @@ async function leanItems(req, where, kind) {
       title: r.title || '',
       department: r.department || null,
       clientName: r.client ? r.client.name : '',
+      // the client's OLD names (ClientAlias): the search box matches them; nothing shows them
+      clientOldNames: r.client ? (aliasByName.get(String(r.client.name || '').trim().toLowerCase()) || []).join(' ') : '',
       clientShown: hiring === INTERNAL_HIRE ? 'TeamLink (internal)' : (r.client ? r.client.name : null),
       recruiterId: r.recruiter ? r.recruiter.id : null,
       recruiterName: r.recruiter ? r.recruiter.name : '',
@@ -291,7 +302,7 @@ function run(items, kind, a) {
   const fields = fieldsFor(spec);
   const cutoff = Date.now() - WINDOW_DAYS * DAY;
   const inWindow = a.window === 'all' ? items : items.filter((it) => spec.open(it, cutoff));
-  const textOk = (it) => !a.q || `${it.name} ${it.title} ${it.clientName}`.toLowerCase().includes(a.q);
+  const textOk = (it) => !a.q || `${it.name} ${it.title} ${it.clientName} ${it.clientOldNames || ''}`.toLowerCase().includes(a.q);
   const fieldOk = (it, skip) => fields.every((f) => f.key === skip || !a.filters[f.key] || String(f.get(it) ?? '') === a.filters[f.key]);
   const searched = inWindow.filter(textOk);
 

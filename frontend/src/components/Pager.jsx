@@ -25,6 +25,7 @@
 // where you left it.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useState } from 'react';
+import Combo from './Combo.jsx';
 
 export const PAGE_SIZES = [25, 50, 100, 250];
 
@@ -101,9 +102,9 @@ export default function Pager({ page, noun = 'rows', className = '', sizes = PAG
       {total > sizes[0] && (
         <label className="pager-size">
           Rows
-          <select value={size} onChange={(e) => setSize(Number(e.target.value))}>
+          <Combo value={size} onChange={(e) => setSize(Number(e.target.value))}>
             {sizes.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
     </div>

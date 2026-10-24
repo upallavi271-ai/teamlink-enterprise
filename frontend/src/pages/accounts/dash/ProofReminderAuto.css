@@ -1,0 +1,34 @@
+.prr-box{border:1px solid var(--line,#dfe5ec);border-radius:10px;padding:14px;margin:14px 0;background:#fff}
+.prr-box h3{font-size:14.5px;margin:0 0 4px}
+.prr-top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;justify-content:space-between}
+.prr-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin:10px 0}
+.prr-row label{display:flex;flex-direction:column;gap:3px;font-size:12.5px;font-weight:600}
+.prr-row input[type=time]{padding:6px 8px;border:1px solid #cfd8e3;border-radius:6px}
+.prr-who{display:flex;flex-direction:column;gap:4px;margin:6px 0;font-size:13px}
+.prr-who label{display:flex;align-items:center;gap:6px;font-weight:500}
+.prr-ready{font-size:12.5px;margin:6px 0;display:flex;flex-direction:column;gap:2px}
+.prr-pre{white-space:pre-wrap;background:#f6f8fb;border:1px solid #e3e8ef;border-radius:6px;padding:8px 10px;font-size:12.5px;margin:6px 0}
+.prr-tbl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:8px}
+.prr-tbl th,.prr-tbl td{text-align:left;padding:5px 8px;border-bottom:1px solid #eef1f4;vertical-align:top}
+.prr-tbl th{font-size:11.5px;color:#5b6773}
+.prr-wrap{overflow-x:auto}
+/* Who gets each reminder (AccountsReminderSettings.jsx) */
+.arr-chip{display:inline-block;margin:2px 4px 2px 0;padding:2px 9px;border-radius:12px;background:#eef2f7;border:1px solid #dfe5ec;font-size:12px;line-height:1.5;white-space:normal;overflow-wrap:anywhere}
+.arr-chip.green{background:#e6f6ec;border-color:#bfe5cc}
+.arr-chip.grey{background:#f1f2f4;color:#5b6773}
+.arr-chip.blue{background:#e8f0fe;border-color:#c5d6f8}
+.arr-chip.amber{background:#fff4dc;border-color:#f0d9a0}
+.arr-chip.red{background:#fde8e8;border-color:#f3c0c0}
+.arr-warn{color:#8a5a00;font-size:12px;margin-top:2px}
+.arr-err{color:#b42318;font-size:13px;margin-right:auto}
+.arr-h{margin:14px 0 4px;font-size:13px}
+.arr-line{display:flex;align-items:center;gap:6px;margin:10px 0;font-size:13px;font-weight:600}
+.arr-search{width:100%;max-width:420px;margin:8px 0 4px;padding:7px 9px;border:1px solid #cfd8e3;border-radius:6px}
+.arr-list{display:flex;flex-direction:column;gap:4px;max-height:200px;overflow:auto;border:1px solid #e3e8ef;border-radius:6px;padding:6px 8px;font-size:13px}
+.arr-list label{display:block;font-weight:500}
+.arr-x{border:0;background:transparent;cursor:pointer;font-size:14px;padding:0 0 0 2px}
+.arr-tbl td{vertical-align:top}
+.arr-tbl th,.arr-tbl td{overflow-wrap:anywhere}
+.arr-tbl td:nth-child(3){min-width:170px}
+.arr-tbl td:nth-child(4){min-width:150px}
+@media (max-width:640px){.arr-tbl{min-width:760px}}

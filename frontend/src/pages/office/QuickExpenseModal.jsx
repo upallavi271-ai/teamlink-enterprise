@@ -212,7 +212,7 @@ export default function QuickExpenseModal({
   return (
     <Modal
       title={editing ? `Edit expense · ${row.expenseCode || ''}` : 'New Expense'}
-      note={editing ? (overriding ? `${APPROVAL[status]?.long || status} — correction` : null) : 'Fields marked * are required'}
+      note={editing ? (overriding ? `${APPROVAL[status]?.long || status} — correction` : null) : null}
       size="oe-qx"
       onClose={onClose}
       footer={(
@@ -247,24 +247,24 @@ export default function QuickExpenseModal({
         </div>
 
         <FormSection id="oe-qx-s-expense" title="Expense" className="oe-qx-full" />
-        <label className={`field${bad('expenseDate') ? ' oe-qx-bad' : ''}`} data-invalid={inv('expenseDate')} onBlur={touch('expenseDate')}><span>Expense Date *</span>
+        <label className={`field${bad('expenseDate') ? ' oe-qx-bad' : ''}`} data-invalid={inv('expenseDate')} onBlur={touch('expenseDate')}><span>Expense Date</span>
           <input type="date" value={f.expenseDate} onChange={set('expenseDate')} max="2100-12-31" aria-invalid={bad('expenseDate') ? true : undefined} />
           {bad('expenseDate') && <em className="oe-qx-err">{errors.expenseDate}</em>}
         </label>
-        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category *</span>
+        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category</span>
           <Combo creatable={!!acc.approver} value={f.category} onChange={set('category')} placeholder="Pick a category" aria-label="Category">
             {[...new Set([...cats, ...(f.category ? [f.category] : [])])].map((c) => <option key={c} value={c}>{c}</option>)}
           </Combo>
           {bad('category') && <em className="oe-qx-err">{errors.category}</em>}
         </div>
 
-        <label className={`field oe-qx-full${bad('description') ? ' oe-qx-bad' : ''}`} data-invalid={inv('description')} onBlur={touch('description')}><span>Description *</span>
+        <label className={`field oe-qx-full${bad('description') ? ' oe-qx-bad' : ''}`} data-invalid={inv('description')} onBlur={touch('description')}><span>Description</span>
           <input value={f.description} maxLength={500} onChange={set('description')} placeholder="What the money was for — e.g. Cab to client meeting, Madhapur" aria-invalid={bad('description') ? true : undefined} />
           {bad('description') && <em className="oe-qx-err">{errors.description}</em>}
         </label>
 
         <FormSection id="oe-qx-s-vendor" title="Vendor & payment" className="oe-qx-full" />
-        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To *</span>
+        <div className={`field${bad('vendor') ? ' oe-qx-bad' : ''}`} data-invalid={inv('vendor')} onBlur={touch('vendor')}><span>Vendor / Paid To</span>
           <Combo creatable value={f.vendor} onChange={set('vendor')} placeholder="Pick or type who was paid" aria-label="Vendor / Paid To">
             {[...new Set([...vendors, ...(f.vendor ? [f.vendor] : [])])].map((v) => <option key={v} value={v}>{v}</option>)}
           </Combo>
@@ -274,23 +274,23 @@ export default function QuickExpenseModal({
             + Add Vendor
           </button>
         </div>
-        <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode *</span>
-          <select value={f.paymentMode} onChange={set('paymentMode')} aria-invalid={bad('paymentMode') ? true : undefined}>
+        <label className={`field${bad('paymentMode') ? ' oe-qx-bad' : ''}`} data-invalid={inv('paymentMode')} onBlur={touch('paymentMode')}><span>Payment Mode</span>
+          <Combo value={f.paymentMode} onChange={set('paymentMode')} aria-invalid={bad('paymentMode') ? true : undefined}>
             <option value="">— Pick —</option>
             {modes.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          </Combo>
           {bad('paymentMode') && <em className="oe-qx-err">{errors.paymentMode}</em>}
         </label>
 
         <FormSection id="oe-qx-s-amount" title="Amount & GST" className="oe-qx-full" />
-        <label className={`field${bad('amount') ? ' oe-qx-bad' : ''}`} data-invalid={inv('amount')} onBlur={touch('amount')}><span>Amount (₹, before GST) *</span>
+        <label className={`field${bad('amount') ? ' oe-qx-bad' : ''}`} data-invalid={inv('amount')} onBlur={touch('amount')}><span>Amount (₹, before GST)</span>
           <input type="number" min="0" step="0.01" inputMode="decimal" value={f.amount} onChange={set('amount')} placeholder="0.00" aria-invalid={bad('amount') ? true : undefined} />
           {bad('amount') && <em className="oe-qx-err">{errors.amount}</em>}
         </label>
         <label className={`field${bad('gstPct') ? ' oe-qx-bad' : ''}`} data-invalid={inv('gstPct')} onBlur={touch('gstPct')}><span>GST %</span>
-          <select value={String(gstPct)} onChange={set('gstPct')}>
+          <Combo value={String(gstPct)} onChange={set('gstPct')}>
             {rates.map((x) => <option key={x} value={String(x)}>{x}%</option>)}
-          </select>
+          </Combo>
         </label>
 
         <div className="oe-qx-calc oe-qx-full" aria-live="polite">
@@ -316,15 +316,15 @@ export default function QuickExpenseModal({
 
         {!editing && (
           <label className="field"><span>Status</span>
-            <select value={f.status} onChange={set('status')} disabled={!acc.approver}>
+            <Combo value={f.status} onChange={set('status')} disabled={!acc.approver}>
               <option value="PENDING">Pending</option>
               {acc.approver && <option value="PAID">Paid</option>}
-            </select>
+            </Combo>
             <em className="oe-qx-hint">{acc.approver ? 'Paid is recorded as your sign-off' : 'A new expense waits for the Accounts Admin / Approver to mark it paid'}</em>
           </label>
         )}
         {overriding && (
-          <label className={`field${bad('reason') ? ' oe-qx-bad' : ''}`} data-invalid={inv('reason')} onBlur={touch('reason')}><span>Reason for the correction *</span>
+          <label className={`field${bad('reason') ? ' oe-qx-bad' : ''}`} data-invalid={inv('reason')} onBlur={touch('reason')}><span>Reason for the correction</span>
             <input value={f.reason} onChange={set('reason')} placeholder="e.g. Vendor sent a revised invoice" aria-invalid={bad('reason') ? true : undefined} />
             {bad('reason') && <em className="oe-qx-err">{errors.reason}</em>}
           </label>

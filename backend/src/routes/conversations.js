@@ -82,7 +82,7 @@ router.get('/person/:audience/:id', async (req, res, next) => {
       await convo.markRead(a.type, a.id);
       thread = await convo.getThread(a.type, a.id);
     }
-    const timeline = await convo.timeline(a.type, a.id, { masked });
+    const timeline = await convo.timeline(a.type, a.id, { masked, viewer: req.user });
     const mb = await require('../utils/imapInbox').status().catch(() => ({ configured: false })); // eslint-disable-line global-require
     return res.json({
       person: { type: a.type, audience: a.audience, id: a.id, name: p.name || info.name || null, department: info.department || null, doNotContact: !!p.doNotContact },
@@ -184,10 +184,10 @@ router.get('/assignees', async (req, res, next) => {
 });
 
 // ---- send / reply -------------------------------------------------------------------------------
-router.post('/send', async (req, res, next) => {
+router.post('/send', require('../channels/rateLimit').limiter(), async (req, res, next) => {
   try {
     const out = await omni.send(req.user, req.body || {});
-    if (out.error && out.status && out.status !== 200) return res.status(out.status).json({ error: out.error });
+    if (out.error && out.status && out.status !== 200) return res.status(out.status).json({ error: out.error, ...(out.code ? { code: out.code } : {}) });
     return res.json(out);
   } catch (err) { return next(err); }
 });
@@ -263,3 +263,4 @@ router.post('/mailbox/poll', async (req, res, next) => {
 });
 
 module.exports = router;
+module.exports.assigneesFor = assigneesFor; // the WhatsApp chats screen (routes/waChats.js) gives a chat to the same people

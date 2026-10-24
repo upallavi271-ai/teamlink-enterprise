@@ -77,6 +77,8 @@ async function dupCards(cards, rows) {
     await require('../utils/candidateDupes').attachFlags(tmp); // eslint-disable-line global-require
     tmp.forEach((t) => { if (t.dup) t.card.dup = t.dup; t.card.candidateId = t.card.candidateId || t.candidateId; });
   } catch { /* optional */ }
+  // "Interview requested by <recruiter>" on the card (utils/interviewRequest.js)
+  await require('../utils/interviewRequest').attachTo(cards); // eslint-disable-line global-require
   return cards;
 }
 
@@ -108,6 +110,7 @@ function cardOf(r, moved, now, heldAt = null) {
     internal: !!r.internal,
     stage: r.currentStage,
     stageLabel: r.currentStageLabel,
+    interviewStatus: r.interviewStatus || null,
     owner: r.owner && r.owner !== '—' ? r.owner : null,
     ownerRole: r.ownerRole && r.ownerRole !== '—' ? r.ownerRole : null,
     daysInStep: days,
@@ -116,6 +119,8 @@ function cardOf(r, moved, now, heldAt = null) {
     movedAt: moved ? moved.at : null,
     matchScore: r.matchScore ?? null,
     pipelineStatus: r.pipelineStatus,
+    // A joined card says WHEN (the joining day; null = not recorded). Only joined cards carry the field.
+    ...(r.pipelineStatus === 'Joined' ? { joiningDay: r.joiningDay || null } : {}),
     // Salary fit chips on the card (utils/salaryFit.js): already shaped for this viewer on the pipeline row.
     ...(r.salaryFit ? { salaryFit: r.salaryFit } : {}),
   };

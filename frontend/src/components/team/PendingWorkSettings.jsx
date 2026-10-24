@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { errText } from './pendingWorkKit.jsx';
 import './pendingWork.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // REMINDERS TO TEAM LEADS — every switch in plain words.
@@ -84,6 +85,9 @@ function ChainResult({ res }) {
       <div className="pwk-test-title">Pending approvals and follow-ups <span className="small-muted">(nothing was sent)</span></div>
       {res.skipped && <div className="small-muted">{res.skipped}</div>}
       {!res.skipped && !Number(res.items) && <div className="small-muted">Nothing is pending right now.</div>}
+      {(res.recruiters > 0 || res.tlPeople > 0) && <div className="small-muted">{`${res.recruiters || 0} recruiter${res.recruiters === 1 ? '' : 's'} and ${res.tlPeople || 0} team lead${res.tlPeople === 1 ? '' : 's'} would be told about what a recruiter missed.`}</div>}
+      {res.sample && res.sample.recruiter && <div className="pwk-sample"><b>Example for a recruiter:</b> {res.sample.recruiter.text}</div>}
+      {res.sample && res.sample.tl && <div className="pwk-sample"><b>Example for a team lead:</b> {res.sample.tl.text}</div>}
       {Number(res.items) > 0 && (
         <div className="small-muted">
           {`${res.items} pending item${res.items === 1 ? '' : 's'}`}
@@ -210,16 +214,18 @@ export default function PendingWorkSettings({ onSaved, onClose, embedded = false
           </Switch>
           <Switch checked={form.chain.approvals} disabled={!edit} onChange={(v) => upd((f) => { f.chain.approvals = v; })}>Approvals (leave, late coming, offers, ...)</Switch>
           <Switch checked={form.chain.followUps} disabled={!edit} onChange={(v) => upd((f) => { f.chain.followUps = v; })}>Follow-ups past their day</Switch>
+          <Switch checked={form.chain.tasks} disabled={!edit} onChange={(v) => upd((f) => { f.chain.tasks = v; })}>Tasks and to-dos past their day</Switch>
+          <Switch checked={form.chain.steps} disabled={!edit} onChange={(v) => upd((f) => { f.chain.steps = v; })} hint="Late steps, interview feedback not recorded, candidates waiting for the recruiter's check, and calls due today that were not made (after the end-of-day time).">What a recruiter missed: late steps, feedback, calls</Switch>
           <Switch checked={form.chain.repeatDaily} disabled={!edit} onChange={(v) => upd((f) => { f.chain.repeatDaily = v; })}>Remind again every working day until it is done</Switch>
           <div className="pwk-line">
             Tell up to
             {' '}
-            <select className="pwk-sel" value={form.chain.maxLevel} disabled={!edit} aria-label="Tell up to" onChange={(e) => upd((f) => { f.chain.maxLevel = Number(e.target.value); })}>
+            <Combo className="pwk-sel" value={form.chain.maxLevel} disabled={!edit} aria-label="Tell up to" onChange={(e) => upd((f) => { f.chain.maxLevel = Number(e.target.value); })}>
               <option value={1}>the Team lead</option>
               <option value={2}>the STL</option>
               <option value={3}>the Manager</option>
               <option value={4}>the Admin</option>
-            </select>
+            </Combo>
           </div>
           <div className="small-muted">Wait this many hours before telling each person (0 = at once):</div>
           <div className="pwk-hours">
@@ -236,6 +242,36 @@ export default function PendingWorkSettings({ onSaved, onClose, embedded = false
                 />
               </label>
             ))}
+          </div>
+        </section>
+      )}
+
+      {form.self && (
+        <section className="pwk-set-sec">
+          <h4>Remind the person themselves</h4>
+          <Switch
+            checked={form.self.enabled}
+            disabled={!edit}
+            onChange={(v) => upd((f) => { f.self.enabled = v; })}
+            hint="When a recruiter misses a follow-up, a task, a call or a step, the recruiter gets the message too, not only the team lead. Switched on together with the reminders above."
+          >
+            <b>Also remind the person themselves</b>
+          </Switch>
+          <div className="small-muted">The person gets it by:</div>
+          <Switch checked={form.self.bell} disabled={!edit || !form.self.enabled} onChange={(v) => upd((f) => { f.self.bell = v; })}>The bell</Switch>
+          {[['email', 'E-mail', 'Email'], ['whatsapp', 'WhatsApp', 'WhatsApp'], ['sms', 'SMS', 'SMS']].map(([k, label, chKey]) => (
+            <Switch
+              key={k}
+              checked={form.self[k]}
+              disabled={!edit || !form.self.enabled || ch[chKey] === false}
+              onChange={(v) => upd((f) => { f.self[k] = v; })}
+              hint={ch[chKey] === false ? `${label} is not connected yet, so nothing goes out that way.` : undefined}
+            >
+              {label}
+            </Switch>
+          ))}
+          <div className="pwk-line">
+            Send it from <Time value={form.self.time} disabled={!edit || !form.self.enabled} onChange={(v) => upd((f) => { f.self.time = v; })} label="Remind the person from" /> (the morning after; never on a Sunday or a holiday)
           </div>
         </section>
       )}
@@ -268,7 +304,7 @@ export default function PendingWorkSettings({ onSaved, onClose, embedded = false
         <div className="pwk-line">
           A team with no activity today gets
           {' '}
-          <select
+          <Combo
             className="pwk-sel"
             value={form.eod.quiet}
             disabled={!edit}
@@ -277,7 +313,7 @@ export default function PendingWorkSettings({ onSaved, onClose, embedded = false
           >
             <option value="short">a short &quot;no activity&quot; line</option>
             <option value="skip">nothing</option>
-          </select>
+          </Combo>
         </div>
         {tls.length > 0 && (
           <div className="pwk-tls">

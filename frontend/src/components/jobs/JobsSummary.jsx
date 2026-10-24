@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatCard, { StatRow } from '../ui/StatCard.jsx';
+import { useAgreementBlind } from '../../utils/agreementPrivacy.js';
 import { BarChart, DonutChart } from '../charts';
 import '../clients/ccr.css';
 
@@ -26,6 +27,7 @@ export default function JobsSummary({
   params, views = [], onView, onFilter, onDepartment, reloadKey, activeStatus,
 }) {
   const [sum, setSum] = useState(null);
+  const blind = useAgreementBlind(); // TL / Recruiter / HR: no agreement words (2026-10-12)
   const key = JSON.stringify(params || {});
   useEffect(() => {
     let live = true;
@@ -54,38 +56,35 @@ export default function JobsSummary({
   return (
     <>
       <StatRow>
-        <StatCard label="Open jobs" help="Jobs we are still finding people for" value={c.open} tone="blue" zeroText="No open jobs yet — press + Add job" onClick={has('open') ? () => onView('open') : undefined} hint={sum.total ? `of ${sum.total.toLocaleString('en-IN')} jobs` : undefined} />
+        <StatCard label="Open requirements" help="Requirements we are still finding people for" value={c.open} tone="blue" zeroText="No open requirements yet. New requirements show here when they are opened." onClick={has('open') ? () => onView('open') : undefined} hint={sum.total ? `of ${sum.total.toLocaleString('en-IN')} requirements` : undefined} />
         {c.needsTl !== null && c.needsTl !== undefined && has('needstl') && (
-          <StatCard label="Needs a team lead" help="Jobs nobody leads yet — give each one a team lead (TL)" value={c.needsTl} tone="amber" zeroText="Every job has a team lead" upIsGood={false} onClick={() => onView('needstl')} />
+          <StatCard label="Needs a team lead" help="Requirements nobody leads yet — give each one a team lead (TL)" value={c.needsTl} tone="amber" zeroText="Every requirement has a team lead" upIsGood={false} onClick={() => onView('needstl')} />
         )}
         {c.needsRecruiter !== null && c.needsRecruiter !== undefined && has('unassigned') && (
-          <StatCard label="Needs a recruiter" help="Jobs with no recruiter finding people yet" value={c.needsRecruiter} tone="amber" zeroText="Every job has a recruiter" upIsGood={false} onClick={() => onView('unassigned')} />
+          <StatCard label="Needs a recruiter" help="Requirements with no recruiter finding people yet" value={c.needsRecruiter} tone="amber" zeroText="Every requirement has a recruiter" upIsGood={false} onClick={() => onView('unassigned')} />
         )}
-        <StatCard label="Late" help="Open jobs past the date the client wanted" value={c.late} tone="red" zeroText="Nothing late 🎉" upIsGood={false} onClick={() => onFilter({ deadline: 'overdue' })} hint="Past the due date" />
-        {c.waitingAgreement !== null && c.waitingAgreement !== undefined && (
-          <StatCard label="Waiting for agreement" help="Jobs that start once the client signs the agreement" value={c.waitingAgreement} tone="amber" zeroText="No job waiting" upIsGood={false} onClick={() => onFilter({ agreement: 'pending' })} />
-        )}
-        <StatCard label="On hold" help="Jobs paused for now (the client asked us to wait)" value={c.hold} tone="amber" zeroText="Nothing on hold" onClick={() => onFilter({ status: 'ON_HOLD' })} />
+        <StatCard label="Late" help="Open requirements past the date the client wanted" value={c.late} tone="red" zeroText="Nothing late 🎉" upIsGood={false} onClick={() => onFilter({ deadline: 'overdue' })} hint="Past the due date" />
+        {/* 2026-10-13: a job is only Open or Closed. "Waiting for agreement" and "On hold" are no longer cards or states. */}
       </StatRow>
       {sum.total > 0 && (
         <div className="ccr-charts">
           <div className="ccr-chart">
-            <h3>Jobs by status</h3>
-            <div className="ccr-sub">Draft → Agreement Approved → Assigned → Open → On Hold → Filled / Closed. Click a bar.</div>
-            <BarChart data={chain} height={210} title="Jobs by status" />
+            <h3>Requirements by status</h3>
+            <div className="ccr-sub">Every requirement is either Open or Closed. Click a bar to see them.</div>
+            <BarChart data={chain} height={210} title="Requirements by status" />
           </div>
           {depts.length > 0 && (
             <div className="ccr-chart">
-              <h3>Open jobs by department</h3>
-              <div className="ccr-sub">{onDepartment ? 'Click a department to see its jobs.' : 'Open jobs in your area.'}</div>
-              <DonutChart data={depts} title="Open jobs by department" centerValue={(c.open || 0).toLocaleString('en-IN')} centerLabel="open" empty="No open jobs" />
+              <h3>Open requirements by department</h3>
+              <div className="ccr-sub">{onDepartment ? 'Click a department to see its requirements.' : 'Open requirements in your area.'}</div>
+              <DonutChart data={depts} title="Open requirements by department" centerValue={(c.open || 0).toLocaleString('en-IN')} centerLabel="open" empty="No open requirements" />
             </div>
           )}
           {clients.length > 0 && (
             <div className="ccr-chart">
-              <h3>Open jobs by client</h3>
-              <div className="ccr-sub">The clients with the most open jobs. Click one.</div>
-              <BarChart data={clients} horizontal title="Open jobs by client" />
+              <h3>Open requirements by client</h3>
+              <div className="ccr-sub">The clients with the most open requirements. Click one.</div>
+              <BarChart data={clients} horizontal title="Open requirements by client" />
             </div>
           )}
         </div>

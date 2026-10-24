@@ -18,10 +18,13 @@
 //                                                              card for a "Fit" tab
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { rowClickProps } from '../../utils/rowClick.js'; // click anywhere on a row opens the person / job
 import api from '../../api';
 import { Help } from '../ui/Guide.jsx';
+import FitBreakdown from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary, four small chips
 import './ResumePanel.css';
+import Combo from '../Combo.jsx';
 
 const tone = (n) => (n >= 70 ? 'hi' : n >= 50 ? 'mid' : 'lo');
 function Pct({ n, sub, title }) {
@@ -33,8 +36,36 @@ function Pct({ n, sub, title }) {
   );
 }
 
+// The Salary part of the Fit on Matching candidates: counts as chips and two OFF-by-default filters.
+//   salary = { hasBudget, budgetText, counts: { within, slightly, above, unknown } } from the server.
+function SalaryTools({ opts, setOpts, salary }) {
+  if (!salary) return null;
+  const c = salary.counts || {};
+  const over = (c.slightly || 0) + (c.above || 0);
+  return (
+    <div className="fb-tools" data-testid="salary-tools">
+      <label title="Leaves out people who want more than the client's maximum. People whose salary is not known stay in the list.">
+        <input type="checkbox" checked={!!opts.hideAbove} disabled={!salary.hasBudget} onChange={(e) => setOpts({ ...opts, hideAbove: e.target.checked, salaryWithin: e.target.checked ? false : opts.salaryWithin })} />
+        Hide people above budget
+        {salary.hasBudget ? <span className="small-muted">{` (${over})`}</span> : null}
+      </label>
+      <span className="fb-count">
+        <button type="button" className={`fb-chip fb-grey fb-btn${opts.salaryWithin ? ' on' : ''}`} disabled={!salary.hasBudget} onClick={() => setOpts({ ...opts, salaryWithin: !opts.salaryWithin, hideAbove: false })} title="Show only people who want pay inside the client's budget">
+          {`Salary within budget (${c.within || 0})`}
+        </button>
+        <span className="small-muted" title="Everyone who passes the minimum Fit, by how their salary fits the budget">
+          {`Slightly above ${c.slightly || 0} · Above ${c.above || 0} · Not known ${c.unknown || 0}`}
+        </span>
+      </span>
+      <span className="small-muted">
+        {salary.hasBudget ? `Client budget: ${salary.budgetText}` : 'The client has not given a budget for this requirement yet, so Salary is left out of the Fit.'}
+      </span>
+    </div>
+  );
+}
+
 function Tools({
-  opts, setOpts, info, withAi = false,
+  opts, setOpts, info, withAi = false, restricted = false,
 }) {
   return (
     <div className="msp-tools">
@@ -45,13 +76,14 @@ function Tools({
       </label>
       <label>
         Sort by
-        <select value={opts.sort} onChange={(e) => setOpts({ ...opts, sort: e.target.value })}>
+        <Combo value={opts.sort} onChange={(e) => setOpts({ ...opts, sort: e.target.value })}>
           <option value="overall">Overall</option>
-          <option value="resume">Resume</option>
-          <option value="location">Location</option>
-          {withAi && <option value="ai">AI score</option>}
+          {!restricted && <option value="resume">Resume</option>}
+          {!restricted && <option value="location">Location</option>}
+          {!restricted && <option value="salary">Salary</option>}
+          {withAi && !restricted && <option value="ai">AI score</option>}
           {withAi && <option value="name">Name (A–Z)</option>}
-        </select>
+        </Combo>
       </label>
       <label>
         <input type="checkbox" checked={opts.eligibleOnly} onChange={(e) => setOpts({ ...opts, eligibleOnly: e.target.checked })} />
@@ -69,12 +101,12 @@ function useMatchList(path, opts, reloadKey, onData, limit = 50) {
     let live = true;
     const t = setTimeout(() => {
       setError('');
-      api.get(path, { params: { minMatch: opts.minMatch === '' ? 0 : opts.minMatch, sort: opts.sort, eligibleOnly: opts.eligibleOnly ? 1 : 0, limit } })
+      api.get(path, { params: { minMatch: opts.minMatch === '' ? 0 : opts.minMatch, sort: opts.sort, eligibleOnly: opts.eligibleOnly ? 1 : 0, limit, ...(opts.hideAbove ? { hideAbove: 1 } : {}), ...(opts.salaryWithin ? { salaryWithin: 1 } : {}) } })
         .then((res) => { if (live) { setData(res.data); if (onData) onData(res.data); } })
         .catch((err) => { if (live) { setData(null); setError(err.response?.data?.error || 'The Fit list could not be loaded. Please try again.'); } });
     }, 250);
     return () => { live = false; clearTimeout(t); };
-  }, [path, opts.minMatch, opts.sort, opts.eligibleOnly, reloadKey, limit]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [path, opts.minMatch, opts.sort, opts.eligibleOnly, opts.hideAbove, opts.salaryWithin, reloadKey, limit]); // eslint-disable-line react-hooks/exhaustive-deps
   return { data, error };
 }
 
@@ -126,9 +158,9 @@ function MinFit({ requirementId, data, onSaved }) {
       <span>
         {'Eligible means: Fit '}
         <b>{`${data.threshold}% or more`}</b>
-        {data.minFitIsDefault ? ' (the usual minimum)' : ' (set for this job)'}
+        {data.minFitIsDefault ? ' (the usual minimum)' : ' (set for this requirement)'}
         , no must-have skill missing, location fits.
-        {' '}<Help text="Fit % = how well the resume matches this job (skills, experience, location). People below the lowest Fit % are not shown as eligible." />
+        {' '}<Help text="Fit % = how well the resume matches this requirement (skills, experience, location). People below the lowest Fit % are not shown as eligible." />
       </span>
       {data.canSetMinFit && !editing && (
         <button type="button" className="btn btn-sm" onClick={() => { setVal(String(data.threshold)); setEditing(true); setMsg(''); }}>Change minimum</button>
@@ -152,28 +184,32 @@ function MinFit({ requirementId, data, onSaved }) {
 export function RequirementMatchesPanel({
   requirementId, onAdd, onData, embedded = false, limit = 50, onOpenAll = null,
 }) {
-  const [opts, setOpts] = useState({ minMatch: 50, sort: 'overall', eligibleOnly: false });
+  const navigate = useNavigate();
+  const [opts, setOpts] = useState({ minMatch: 50, sort: 'overall', eligibleOnly: false, hideAbove: false, salaryWithin: false });
   const [reload, setReload] = useState(0);
   const { data, error } = useMatchList(`/candidate-resumes/requirement/${requirementId}/matches`, opts, reload, onData, limit);
+  const restricted = !!(data && data.restricted);
   const [busyId, setBusyId] = useState('');
   const [added, setAdded] = useState('');
   async function add(c) {
     setBusyId(c.id);
     setAdded('');
-    try { await onAdd(c.id); setAdded(`✓ ${c.name} added to this job.`); setReload((n) => n + 1); } catch (e) { setAdded(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusyId(''); }
+    try { await onAdd(c.id); setAdded(`✓ ${c.name} added to this requirement.`); setReload((n) => n + 1); } catch (e) { if (e && e.alreadyApplied) setReload((k) => k + 1); setAdded(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusyId(''); }
   }
   return (
     // embedded: inside another card with its own title (rejections/RequirementMatchTabs.jsx).
     <div className={embedded ? 'msp' : 'card section msp'} id={embedded ? undefined : 'matching'}>
-      {!embedded && <h3 style={{ fontSize: 14, margin: 0 }}>Good fit for this job</h3>}
+      {!embedded && <h3 style={{ fontSize: 14, margin: 0 }}>Good fit for this requirement</h3>}
       <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 6px' }}>
-        Fit = Overall · Resume (skills, experience, education read from the resume) · Location. AI score is the person&apos;s AI interview score, shown beside the Fit (not part of it). A recruiter checks every person before sending to the client.
+        Fit = Resume (skills, experience, education) · Location · Salary (what the person wants against the client budget). If a part is not known it is left out, so nobody is marked down for it. The AI score is the person&apos;s AI interview score. A recruiter checks every person before sending to the client.
       </div>
       <MinFit requirementId={requirementId} data={data} onSaved={() => setReload((n) => n + 1)} />
+      <SalaryTools opts={opts} setOpts={setOpts} salary={data ? data.salary : null} />
       <Tools
         opts={opts}
         setOpts={setOpts}
         withAi
+        restricted={restricted}
         info={data ? `${countWord(data.eligible, 'person eligible', 'people eligible')} · showing ${data.shown} of ${data.total}${data.fitVersion ? ` · Fit ${data.fitVersion}` : ''}${data.semantic && data.semantic.on ? ' · matching by meaning' : ''}` : ''}
       />
       {added && <div className={`notice ${added.startsWith('✗') ? 'red' : 'rsm-ok'}`} style={{ margin: '0 0 8px' }}>{added}</div>}
@@ -183,30 +219,31 @@ export function RequirementMatchesPanel({
           <thead>
             <tr>
               <SortTh k="name" label="Candidate" opts={opts} setOpts={setOpts} />
-              <SortTh k="overall" label="Overall" opts={opts} setOpts={setOpts} />
-              <SortTh k="resume" label="Resume" opts={opts} setOpts={setOpts} />
-              <SortTh k="location" label="Location" opts={opts} setOpts={setOpts} />
-              <SortTh k="ai" label="AI score" opts={opts} setOpts={setOpts} />
+              <SortTh k="overall" label="Fit" opts={opts} setOpts={setOpts} />
+              <th>{restricted ? 'Salary' : 'Resume · AI · Location · Salary'}</th>
               <th>Missing</th>
               <th>Add</th>
             </tr>
           </thead>
           <tbody>
-            {!data && !error && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>Working out the Fit…</td></tr>}
+            {!data && !error && <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>Working out the Fit…</td></tr>}
             {data && data.rows.map((c) => (
-              <tr key={c.id}>
+              <tr key={c.id} {...rowClickProps(() => navigate(`/candidates/${c.id}`), { href: `/candidates/${c.id}` })}>
                 <td className="msp-main">
                   <Link to={`/candidates/${c.id}`}>{c.name}</Link>
                   {eligibleChip(c.match)}
                   <span className="msp-src">{[c.location, c.experienceYears != null ? `${c.experienceYears} yrs` : null, c.hasResume ? null : 'no resume yet'].filter(Boolean).join(' · ')}</span>
                   <Reason m={c.match} />
                 </td>
-                <td data-k="Overall"><Pct n={c.match.overall} /></td>
-                <td data-k="Resume"><Pct n={c.match.resumePct} sub={c.match.resumeSource === 'resume' ? 'from resume' : 'from profile'} /></td>
-                <td data-k="Location"><Pct n={c.match.locationPct} title={c.match.locationReason} /></td>
-                <td data-k="AI score">{c.aiScore != null ? <span className={`msp-pct ${tone(c.aiScore)}`}>{`${c.aiScore}%`}</span> : <span className="cell-muted">—</span>}</td>
+                <td data-k="Fit">
+                  <Pct n={c.match.overall} sub={c.match.approx ? 'about' : c.match.label} title={c.match.breakdown ? c.match.breakdown.text : undefined} />
+                </td>
+                <td data-k={restricted ? 'Salary' : 'Resume · AI · Location · Salary'}>
+                  <FitBreakdown b={c.match.breakdown} compact showTotal={false} />
+                  {!restricted && c.match.resumeSource && <span className="msp-src">{c.match.resumeSource === 'resume' ? 'Resume part read from the resume' : 'Resume part read from the profile'}</span>}
+                </td>
                 <td data-k="Missing">
-                  {c.match.missingMandatory.length
+                  {(c.match.missingMandatory || []).length
                     ? c.match.missingMandatory.slice(0, 4).map((s) => <span className="skillpill miss" key={s}>{s}</span>)
                     : <span className="status active">None missing</span>}
                 </td>
@@ -218,7 +255,7 @@ export function RequirementMatchesPanel({
               </tr>
             ))}
             {data && data.rows.length === 0 && (
-              <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>{`No one new fits this job at ${data.minMatch}% or more${opts.eligibleOnly ? ' and is eligible' : ''}. Try a lower number.`}</td></tr>
+              <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>{`No one new fits this requirement at ${data.minMatch}% or more${opts.eligibleOnly ? ' and is eligible' : ''}${opts.hideAbove || opts.salaryWithin ? ' with this salary filter' : ''}. Try a lower number${opts.hideAbove || opts.salaryWithin ? ' or switch the salary filter off' : ''}.`}</td></tr>
             )}
           </tbody>
         </table>
@@ -240,7 +277,7 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
   async function add(r) {
     setBusyId(r.id);
     setAdded('');
-    try { await onAdd(r.id); setAdded(`✓ Added to ${r.title}.`); setReload((n) => n + 1); } catch (e) { setAdded(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusyId(''); }
+    try { await onAdd(r.id); setAdded(`✓ Added to ${r.title}.`); setReload((n) => n + 1); } catch (e) { if (e && e.alreadyApplied) setReload((k) => k + 1); setAdded(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusyId(''); }
   }
   if (error && /internal|not available|outside/i.test(error)) return null;
   return (
@@ -248,15 +285,16 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
       <Tools
         opts={opts}
         setOpts={setOpts}
-        info={data ? `${countWord(data.eligible, 'job eligible', 'jobs eligible')} · showing ${data.shown} of ${data.total}${data.hasResume ? '' : ' · no resume yet, so Resume % uses the profile'}${data.fitVersion ? ` · Fit ${data.fitVersion}` : ''}` : ''}
+        restricted={!!(data && data.restricted)}
+        info={data ? `${countWord(data.eligible, 'requirement eligible', 'requirements eligible')} · showing ${data.shown} of ${data.total}${data.hasResume ? '' : ' · no resume yet, so Resume % uses the profile'}${data.fitVersion ? ` · Fit ${data.fitVersion}` : ''}` : ''}
       />
       {added && <div className={`notice ${added.startsWith('✗') ? 'red' : 'rsm-ok'}`} style={{ margin: '0 0 8px' }}>{added}</div>}
       {error && <div className="notice red">{error}</div>}
       <div className="tbl-wrap msp-wrap">
         <table className="msp-table">
-          <thead><tr><th>Job</th><th>Overall</th><th>Resume</th><th>Location</th><th>Add</th></tr></thead>
+          <thead><tr><th>Requirement</th><th>Fit</th><th>{data && data.restricted ? 'Salary' : 'Resume · AI · Location · Salary'}</th><th>Add</th></tr></thead>
           <tbody>
-            {!data && !error && <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>Working out the Fit…</td></tr>}
+            {!data && !error && <tr><td colSpan="4" className="small-muted" style={{ padding: 16 }}>Working out the Fit…</td></tr>}
             {data && data.rows.map((r) => (
               <tr key={r.id}>
                 <td className="msp-main">
@@ -264,12 +302,11 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
                   {eligibleChip(r.match)}
                   <span className="msp-src">{[r.client, r.location].filter(Boolean).join(' · ')}</span>
                   <Reason m={r.match} />
-                  {r.alreadyRejected && <span className="msp-flag">{`Rejected for this job${r.alreadyRejected.reason ? `: ${r.alreadyRejected.reason}` : ''}`}</span>}
+                  {r.alreadyRejected && <span className="msp-flag">{`Rejected for this requirement${r.alreadyRejected.reason ? `: ${r.alreadyRejected.reason}` : ''}`}</span>}
                   {r.clientRejected && <span className="msp-flag warn">{r.clientRejected.warning || `${r.clientRejected.clientName} rejected this person before`}</span>}
                 </td>
-                <td data-k="Overall"><Pct n={r.match.overall} /></td>
-                <td data-k="Resume"><Pct n={r.match.resumePct} sub={r.match.resumeSource === 'resume' ? 'from resume' : 'from profile'} /></td>
-                <td data-k="Location"><Pct n={r.match.locationPct} title={r.match.locationReason} /></td>
+                <td data-k="Fit"><Pct n={r.match.overall} sub={r.match.approx ? 'about' : r.match.label} title={r.match.breakdown ? r.match.breakdown.text : undefined} /></td>
+                <td data-k="Resume · AI · Location · Salary"><FitBreakdown b={r.match.breakdown} compact showTotal={false} /></td>
                 <td data-k="">
                   {data.canAdd && !r.blocked
                     ? <button type="button" className="btn btn-sm btn-primary" disabled={busyId === r.id} onClick={() => add(r)}>{busyId === r.id ? 'Adding…' : 'Add'}</button>
@@ -278,7 +315,7 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
               </tr>
             ))}
             {data && data.rows.length === 0 && (
-              <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>{`No open job in your area fits at ${data.minMatch}% or more${opts.eligibleOnly ? ' and is eligible' : ''}.`}</td></tr>
+              <tr><td colSpan="4" className="small-muted" style={{ padding: 16 }}>{`No open requirement in your area fits at ${data.minMatch}% or more${opts.eligibleOnly ? ' and is eligible' : ''}.`}</td></tr>
             )}
           </tbody>
         </table>
@@ -291,9 +328,9 @@ export function EligibleRequirementsPanel({ candidateId, onAdd, onData }) {
 export function CandidateFitPanel({ candidateId, onAdd }) {
   return (
     <div className="rsm-card msp-card">
-      <h3 style={{ fontSize: 14, margin: '0 0 2px' }}>Eligible jobs</h3>
+      <h3 style={{ fontSize: 14, margin: '0 0 2px' }}>Eligible requirements</h3>
       <div className="small-muted" style={{ fontSize: 12, marginBottom: 6 }}>
-        Fit = Overall · Resume (skills, experience, education from the resume) · Location.
+        Fit = Resume (skills, experience, education) · Location · Salary against the client budget.
       </div>
       <EligibleRequirementsPanel candidateId={candidateId} onAdd={onAdd} />
     </div>
@@ -317,19 +354,20 @@ export function AlsoGoodFitCard({ candidateId, onSeeTab, onAdd }) {
   if (!data) return null;
   async function add(r) {
     setBusy(r.id); setSaid('');
-    try { await onAdd(r.id); setSaid(`✓ Added to ${r.title}.`); setN((x) => x + 1); } catch (e) { setSaid(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusy(''); }
+    try { await onAdd(r.id); setSaid(`✓ Added to ${r.title}.`); setN((x) => x + 1); } catch (e) { if (e && e.alreadyApplied) setN((x) => x + 1); setSaid(`✗ ${(e && e.response && e.response.data && e.response.data.error) || (e && e.message) || 'Could not add. Please try again.'}`); } finally { setBusy(''); }
   }
   return (
     <div className="c360t-card msp-also">
       <div className="c360t-label">Also a good fit for</div>
       {said && <div className={`notice ${said.startsWith('✗') ? 'red' : 'rsm-ok'}`} style={{ margin: '0 0 6px' }}>{said}</div>}
-      {data.rows.length === 0 && <div className="small-muted">No other open job fits this person right now.</div>}
+      {data.rows.length === 0 && <div className="small-muted">No other open requirement fits this person right now.</div>}
       {data.rows.map((r) => (
         <div key={r.id} className="rsm-hrow">
           <span className="rsm-grow">
             <Link to={`/requirements/${r.id}`}>{r.title}</Link>
             {[r.client, r.location].filter(Boolean).length > 0 && <span className="small-muted">{` · ${[r.client, r.location].filter(Boolean).join(' · ')}`}</span>}
             <span className="msp-reason ok">{r.match.reason}</span>
+            <FitBreakdown b={r.match.breakdown} compact showTotal={false} />
           </span>
           <span className={`msp-pct ${tone(r.match.overall)}`}>{`Fit ${r.match.overall}%`}</span>
           {onAdd && data.canAdd && !r.blocked && (

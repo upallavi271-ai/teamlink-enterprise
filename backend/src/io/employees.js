@@ -486,7 +486,7 @@ async function apply(valid, ctx) {
           // The login follows a department / designation change, exactly as the Edit form does.
           if (data.department !== undefined || data.designation !== undefined) {
             // eslint-disable-next-line no-await-in-loop
-            const synced = await syncLoginToEmployee(after, before, { designationChanged: data.designation !== undefined && data.designation !== before.designation });
+            const synced = await syncLoginToEmployee(after, before, { designationChanged: data.designation !== undefined && data.designation !== before.designation, actor: ctx.user });
             if (synced) audit.push({ field: 'login', label: 'Login re-derived', from: '', to: synced.changes.join('; ').slice(0, 200) });
             if (data.department !== undefined && data.department !== before.department) {
               // A seat belongs to a department: close the tenure (never delete it).

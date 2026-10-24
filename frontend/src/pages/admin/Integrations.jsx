@@ -13,6 +13,16 @@ import JobBoardIntegration from '../../components/jobs/JobBoardIntegration.jsx';
 import NaukriMethods from '../../components/jobs/NaukriMethods.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged, PAGE_SIZES } from '../../components/Pager.jsx';
+// WhatsApp & SMS: send straight from TeamLink (providers, QR-link prototype, Android phone, Communication log).
+import CommCenter from '../../components/comm/CommCenter.jsx';
+// SMS Push Platform (web.smsgw.in): status, send, templates, history, dashboard (Admin / Super Admin).
+import SmsPlatform from '../../components/comm/SmsPlatform.jsx';
+// Exotel AI Calling settings (its own tab; the secrets are encrypted on the server and never come back).
+import AiCallingAdmin from '../../components/aicalling/AiCallingAdmin.jsx';
+// Job portals (Naukri / Foundit / Shine logins, switches, words) for the job publishing engine: Super Admin and Admin only.
+import JobPortalsAdmin from '../../components/jobpublish/JobPortalsAdmin.jsx';
+import { useAuth } from '../../context/AuthContext';
+import Combo from '../../components/Combo.jsx';
 
 // Integrations — the prototype's integrationsView() (line 10367).
 //
@@ -46,7 +56,9 @@ export default function Integrations() {
   // Health opens first: what is broken and how to fix it (?tab=health|connections|jobportal).
   const [tab, setTab] = useState(() => (
     searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal'
-      : searchParams.get('tab') === 'connections' ? 'connections' : 'health'));
+      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : searchParams.get('tab') === 'jobportals' ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : 'health'));
+  const { user: me } = useAuth();
+  const mayJobPortals = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || ['SUPER_ADMIN', 'ADMIN'].includes(me.atsRole));
   const [data, setData] = useState(null);
   const [jp, setJp] = useState(null);
   const [configuring, setConfiguring] = useState(null); // { channel, values }
@@ -112,7 +124,9 @@ export default function Integrations() {
       () => api.put(`/admin/integrations/${configuring.channel.id}/configure`, { values: configuring.values }),
       bio
         ? (r) => `Biometric device ${r.data.device?.serialNumber} saved — ${r.data.state}.`
-        : `${configuring.channel.name} connected (configuration saved — no live call made).`,
+        : configuring.channel.id === 'whatsapp'
+          ? (r) => (r.data && r.data.waCheck && r.data.waCheck.summary) || 'WhatsApp saved.'
+          : `${configuring.channel.name} connected (configuration saved — no live call made).`,
     );
     if (ok) setConfiguring(null);
   }
@@ -144,7 +158,7 @@ export default function Integrations() {
     <div>
       <div className="page-head">
         <div><h1>Integrations</h1>
-          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'connections'
+          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'jobportals' ? 'Logins, switches and limits for posting jobs to Naukri, Foundit and Shine.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
             ? 'Every outside channel the platform talks to — messaging, email, calling, scheduling, job boards, storage, finance and developer access.'
             : 'Synchronisation between the TeamLink Job Portal and this ATS — status, controls and the record of every sync.'}</div></div>
       </div>
@@ -156,12 +170,33 @@ export default function Integrations() {
         <div className={`tab${tab === 'connections' ? ' active' : ''}`} onClick={() => setTab('connections')}>
           Connections — all channels <span className="status active">{data.connected} of {data.total}</span>
         </div>
+        <div className={`tab${tab === 'messaging' ? ' active' : ''}`} onClick={() => setTab('messaging')}>
+          WhatsApp &amp; SMS
+        </div>
+        {mayJobPortals && (
+          <div className={`tab${tab === 'sms' ? ' active' : ''}`} onClick={() => setTab('sms')}>
+            SMS Push Platform
+          </div>
+        )}
+        <div className={`tab${tab === 'aicalling' ? ' active' : ''}`} onClick={() => setTab('aicalling')}>
+          AI Calling
+        </div>
+        {mayJobPortals && (
+          <div className={`tab${tab === 'jobportals' ? ' active' : ''}`} onClick={() => setTab('jobportals')}>
+            Job portals
+          </div>
+        )}
         <div className={`tab${tab === 'jobportal' ? ' active' : ''}`} onClick={() => setTab('jobportal')}>
           Job Portal <span className={`status ${jpBadge.cls}`}>{jpBadge.txt}</span>
         </div>
       </div>
 
-      {tab !== 'health' && <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
+      {tab === 'messaging' && <CommCenter />}
+      {tab === 'sms' && mayJobPortals && <SmsPlatform onOpenSettings={() => setTab('connections')} />}
+      {tab === 'aicalling' && <AiCallingAdmin />}
+      {tab === 'jobportals' && mayJobPortals && <JobPortalsAdmin />}
+
+      {tab !== 'health' && tab !== 'messaging' && tab !== 'jobportals' && tab !== 'aicalling' && tab !== 'sms' && <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
         {tab === 'jobportal'
           ? "Job Portal sync status, errors and logs — whether the portal answers, requirements that did not reach it (with Retry), what has come across and the log of every record. Publishing is done per requirement; the applications themselves are screened in Candidates & Pipeline → Job Portal Candidates. The portal's own connection and credentials sit on the Connections tab, under Job Boards."
           : 'The connection side of every channel — switch one on, add its credentials, test it or disconnect it. What actually syncs from the TeamLink Job Portal is on the Job Portal tab.'}
@@ -186,7 +221,7 @@ export default function Integrations() {
         <BiometricPanel onConfigure={() => openConfigure(bioChannel)} onChanged={load} />
       )}
 
-      {tab === 'health' ? <IntegrationHealthPanel /> : tab === 'connections' ? (
+      {tab === 'messaging' || tab === 'jobportals' || tab === 'aicalling' || tab === 'sms' ? null : tab === 'health' ? <IntegrationHealthPanel /> : tab === 'connections' ? (
         <div className="panel panel-pad">
           <h3 style={{ fontSize: 14, marginBottom: 2 }}>Integrations</h3>
           <div className="cell-muted" style={{ fontSize: 12.5, marginBottom: 10 }}>
@@ -282,9 +317,9 @@ export default function Integrations() {
               return (
                 <div className="field" key={label}>
                   <label>Posting method</label>
-                  <select value={configuring.values[label] || opts[0]} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
+                  <Combo value={configuring.values[label] || opts[0]} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
                     {opts.map((o) => <option key={o}>{o}</option>)}
-                  </select>
+                  </Combo>
                 </div>
               );
             }
@@ -292,10 +327,10 @@ export default function Integrations() {
               return (
                 <div className="field" key={label}>
                   <label>{label}</label>
-                  <select value={configuring.values[label] || 'Active'} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
+                  <Combo value={configuring.values[label] || 'Active'} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
                     <option>Active</option>
                     <option>Inactive</option>
-                  </select>
+                  </Combo>
                 </div>
               );
             }
@@ -555,12 +590,12 @@ function JobPortalTab({ jp, stats, run }) {
               <span>Your Job Portal, opened from this site at <code>{portalUrl}/</code>. It keeps its own database and starts with TeamLink.</span></div>
             <div className="kv"><span className="k">Real-time channel</span>
               <span><span className="conn-dot ok" />Within seconds — an application on the portal lands in Candidates → New from job portal, with its resume</span></div>
-            <div className="kv"><span className="k">Sync direction</span><span>Both ways — a job published in ATS is on the portal within seconds; closing it takes it off</span></div>
+            <div className="kv"><span className="k">Sync direction</span><span>Both ways — a requirement published in ATS is on the portal within seconds; closing it takes it off</span></div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 190 }}>
             <button className="btn btn-primary btn-sm" onClick={() => run(() => api.post('/admin/integrations/job-portal/sync'), (r) => (r.data.portal && !r.data.portal.ok
               ? `Job Portal check failed: ${r.data.portal.error}`
-              : `Synced.${r.data.portal ? ` ${r.data.portal.jobs} job(s) on the portal now, ${r.data.portal.created || 0} new application(s) brought in.` : ''}`))}>Sync now</button>
+              : `Synced.${r.data.portal ? ` ${r.data.portal.jobs} requirement(s) on the portal now, ${r.data.portal.created || 0} new application(s) brought in.` : ''}`))}>Sync now</button>
             <a className="btn btn-sm" href={`${portalUrl}/`} target="_blank" rel="noreferrer">Open Job Portal ↗</a>
             <button className="btn btn-sm" onClick={() => run(() => api.post('/admin/integrations/jobportal/test'), (r) => `TeamLink Job Portal: ${r.data.result}`)}>Test Connection</button>
             <button className="btn btn-sm" onClick={() => setShowConfig(true)}>Configure</button>
@@ -581,9 +616,9 @@ function JobPortalTab({ jp, stats, run }) {
           triggers a sync.
           <br />
           <strong>How it works.</strong> The Job Portal is your own portal, unchanged, opened from this site at /jobs.
-          It keeps its own database. A job published here is on the portal within seconds; an application (with its
+          It keeps its own database. A requirement published here is on the portal within seconds; an application (with its
           resume) is in Candidates within seconds, with the duplicate check (by email, then phone).
-          <strong> Sync now</strong> sends every published job again and brings in any application that was missed.
+          <strong> Sync now</strong> sends every published requirement again and brings in any application that was missed.
         </div>
       </div>
 

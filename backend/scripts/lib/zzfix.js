@@ -14,7 +14,7 @@ module.exports = function zzfix(TAG) {
     console.error('Refusing: set TL_API=http://localhost:4011 (the sandbox) or another sandbox port 4011-4099, never 4010.');
     process.exit(2);
   }
-  const SBX = `file:${path.join(BACK, 'prisma', process.env.TL_TEST_DB || 'sandbox.db').split(path.sep).join('/')}`;
+  const SBX = `file:${path.join(BACK, 'prisma', process.env.TL_TEST_DB || 'sandbox.db').split(path.sep).join('/')}?socket_timeout=180`;
   process.env.DATABASE_URL = SBX;
   require(path.join(BACK, 'node_modules/dotenv')).config({ path: path.join(BACK, '.env'), override: false });
   process.env.DATABASE_URL = SBX;
@@ -45,7 +45,7 @@ module.exports = function zzfix(TAG) {
         const text = buf.toString('utf8');
         let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
         return { status: r.status, body: json, text, buf, headers: r.headers };
-      } catch (e) { if (i >= 120 || (e && (e.name === 'TimeoutError' || e.name === 'AbortError'))) throw e; await new Promise((res) => setTimeout(res, 2000)); }
+      } catch (e) { if (i >= 600 || (e && (e.name === 'TimeoutError' || e.name === 'AbortError'))) throw e; await new Promise((res) => setTimeout(res, 3000)); }
     }
   };
   Z.mint = async (u) => jwt.sign(tokenPayload(await resolveIdentity(u.id)), process.env.JWT_SECRET, { expiresIn: '2h' });
@@ -94,8 +94,8 @@ module.exports = function zzfix(TAG) {
     await del(() => prisma.approvalStep.deleteMany({ where: { OR: [{ recordId: { startsWith: 'ZZPW' } }, { approverUserId: { in: userIds } }] } }));
     await del(() => prisma.requirementPosting.deleteMany({ where: { requirementId: { in: reqIds } } }));
     await del(() => prisma.requirement.deleteMany({ where: { id: { in: reqIds } } }));
-    await del(() => prisma.notification.deleteMany({ where: { OR: [{ userId: { in: userIds } }, { title: { contains: 'ZZTEST' } }, { message: { contains: 'ZZTEST' } }, { recipient: { contains: 'zz-' } }] } }));
-    await del(() => prisma.auditLog.deleteMany({ where: { OR: [{ userId: { in: userIds } }, { entityId: { in: allIds } }, { reason: { contains: 'ZZTEST' } }, { toValue: { contains: 'ZZTEST' } }, { actorName: { contains: 'ZZTEST' } }] } }));
+    await del(() => prisma.notification.deleteMany({ where: { OR: [{ userId: { in: userIds } }, { title: { contains: `ZZTEST ${TAG}` } }, { message: { contains: `ZZTEST ${TAG}` } }, { recipient: { contains: `zz-${TAG.toLowerCase()}-` } }] } }));
+    await del(() => prisma.auditLog.deleteMany({ where: { OR: [{ userId: { in: userIds } }, { entityId: { in: allIds } }, { reason: { contains: `ZZTEST ${TAG}` } }, { toValue: { contains: `ZZTEST ${TAG}` } }, { actorName: { contains: `ZZTEST ${TAG}` } }] } }));
     await del(() => prisma.user.updateMany({ where: { clientId: { in: clientIds } }, data: { clientId: null } }));
     await del(() => prisma.user.deleteMany({ where: { clientId: { in: clientIds } } }));
     await del(() => prisma.candidate.deleteMany({ where: { id: { in: m.cands } } }));
@@ -111,8 +111,8 @@ module.exports = function zzfix(TAG) {
       clients: await prisma.client.count({ where: { name: { contains: `ZZTEST ${TAG}` } } }),
       reqs: await prisma.requirement.count({ where: { title: { contains: `ZZTEST ${TAG}` } } }),
       cands: await prisma.candidate.count({ where: { name: { contains: `ZZTEST ${TAG}` } } }),
-      notes: await prisma.notification.count({ where: { OR: [{ title: { contains: 'ZZTEST' } }, { message: { contains: 'ZZTEST' } }] } }),
-      audit: await prisma.auditLog.count({ where: { OR: [{ reason: { contains: 'ZZTEST' } }, { actorName: { contains: 'ZZTEST' } }] } }),
+      notes: await prisma.notification.count({ where: { OR: [{ title: { contains: `ZZTEST ${TAG}` } }, { message: { contains: `ZZTEST ${TAG}` } }] } }),
+      audit: await prisma.auditLog.count({ where: { OR: [{ reason: { contains: `ZZTEST ${TAG}` } }, { actorName: { contains: `ZZTEST ${TAG}` } }] } }),
     };
     return left;
   };

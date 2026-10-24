@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { rowClickProps } from '../../utils/rowClick.js';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import { nf, fmtShort } from './reqFormat.jsx';
@@ -116,6 +117,7 @@ export function PostedOnPanel({ requirementId, compact = false, onChanged }) {
 
 // "Eligible candidates in Hyderabad: 1,240 · 212 strong" — with the list.
 export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = false, onOpenList }) {
+  const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState('');
@@ -129,13 +131,15 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
   }, [requirementId]);
 
   async function add(c) {
+    if (busy) return; // one application per click
     setBusy(c.id); setError('');
     try {
       await api.post('/applications', { candidateId: c.id, requirementId });
       setAdded((a) => [...a, c.id]);
       if (onAdded) onAdded();
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not add this person. Please try again.');
+      if (e.alreadyApplied) { setAdded((a) => [...a, c.id]); if (onAdded) onAdded(); } // the box says where
+      else setError(e.response?.data?.error || 'Could not add this person. Please try again.');
     } finally {
       setBusy('');
     }
@@ -150,7 +154,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
       <div className="card section rq-reach">
         <h3>People nearby</h3>
         <div className="small-muted">
-          {data.location ? `We don't know the city “${data.location}”.` : 'Add a location in Edit job to see people nearby.'}
+          {data.location ? `We don't know the city “${data.location}”.` : 'Add a location in Edit requirement to see people nearby.'}
         </div>
       </div>
     );
@@ -161,7 +165,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
       <b>{`People in ${place}: ${data.total ? nf(data.total) : 'none yet'}`}</b>
       <span className="small-muted">
         {data.strong ? ` · ${nf(data.strong)} good fit (${data.threshold}%+)` : ''}
-        {data.alreadyLinked ? ` · ${nf(data.alreadyLinked)} already on this job` : ''}
+        {data.alreadyLinked ? ` · ${nf(data.alreadyLinked)} already on this requirement` : ''}
       </span>
     </>
   );
@@ -184,7 +188,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
       {data.byCity.length > 1 && <div className="small-muted">{data.byCity.map((b) => `${b.city}: ${nf(b.count)}`).join(' · ')}</div>}
       <div className="small-muted" style={{ margin: '4px 0 8px' }}>
         {`Lives in or wants to work in ${place}.`}
-        {added.length > 0 && ` ${added.length} added to this job.`}
+        {added.length > 0 && ` ${added.length} added to this requirement.`}
       </div>
       {error && <div className="error-text">{error}</div>}
       <div className="tbl-wrap">
@@ -192,7 +196,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
           <thead><tr><th>Candidate</th><th>Location</th><th>Experience</th><th>Matching skills</th><th>Fit %</th>{data.canAdd && <th />}</tr></thead>
           <tbody>
             {rows.map((c) => (
-              <tr key={c.id}>
+              <tr key={c.id} {...rowClickProps(() => navigate(`/candidates/${c.id}`), { href: `/candidates/${c.id}` })}>
                 <td><Link to={`/candidates/${c.id}`}>{c.name}</Link></td>
                 <td className="cell-muted">
                   {c.location || '—'}
@@ -204,7 +208,7 @@ export function LocationCandidatesPanel({ requirementId, onAdded, summaryOnly = 
                 {data.canAdd && (
                   <td>
                     <button type="button" className="btn btn-sm" disabled={busy === c.id} onClick={() => add(c)}>
-                      {busy === c.id ? 'Adding…' : 'Add to job'}
+                      {busy === c.id ? 'Adding…' : 'Add to requirement'}
                     </button>
                   </td>
                 )}

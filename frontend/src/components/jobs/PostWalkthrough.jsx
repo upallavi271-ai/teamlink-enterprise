@@ -45,7 +45,7 @@ export default function PostWalkthrough({ pairs, onClose, onChanged }) {
     setH(null); setUrl(''); setNote(''); setError('');
     api.get(`/requirements/${cur.requirementId}/posting-sites/${cur.board}/by-hand`)
       .then((r) => setH(r.data))
-      .catch((e) => setError(e.response?.data?.error || 'Could not prepare this job.'));
+      .catch((e) => setError(e.response?.data?.error || 'Could not prepare this requirement.'));
   }, [i]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function doCopy() {
@@ -97,7 +97,7 @@ export default function PostWalkthrough({ pairs, onClose, onChanged }) {
                   <a className="btn" href={h.openUrl} target="_blank" rel="noreferrer">2. Open {cur.boardName} ↗</a>
                 </div>
                 <div className="field">
-                  <label htmlFor="pw-url">3. Paste the link of the live job (optional), then press the button</label>
+                  <label htmlFor="pw-url">3. Paste the link of the live requirement (optional), then press the button</label>
                   <input id="pw-url" type="url" inputMode="url" placeholder={`https://… (from ${cur.boardName})`} value={url} onChange={(e) => setUrl(e.target.value)} />
                 </div>
                 <div className="pw-btns">

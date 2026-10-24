@@ -168,11 +168,11 @@ function checklistFor({ facts, missing, warnings, leak, publicLink }) {
   const item = (key, label, status, detail) => ({ key, label, status, detail });
   const out = [];
 
-  if (!has('salary')) out.push(item('salary', 'Salary', 'fix', 'The job has no salary, so the posts show [ ]. Type it, or write "Best in industry" if that is the plan.'));
+  if (!has('salary')) out.push(item('salary', 'Salary', 'fix', 'The requirement has no salary, so the posts show [ ]. Type it, or write "Best in industry" if that is the plan.'));
   else if (/best in industry/i.test(facts.salary)) out.push(item('salary', 'Salary', 'check', 'It says "Best in industry". Check that the client agreed to hide the pay.'));
   else out.push(item('salary', 'Salary', 'check', `Posts show: ${facts.salary}. Check it is the pay the client agreed, and per year (LPA) or per month.`));
 
-  if (!has('location')) out.push(item('location', 'Location and work mode', 'fix', 'The job has no location, so the posts show [ ]. Type the city.'));
+  if (!has('location')) out.push(item('location', 'Location and work mode', 'fix', 'The requirement has no location, so the posts show [ ]. Type the city.'));
   else out.push(item('location', 'Location and work mode', 'check', `Posts show: ${facts.location}${facts.workMode ? ` (${facts.workMode})` : ''}. Check the city and onsite / hybrid / remote.`));
 
   const contactMissing = !has('contactEmail');
@@ -181,7 +181,7 @@ function checklistFor({ facts, missing, warnings, leak, publicLink }) {
   else out.push(item('contact', 'Contact details', 'check', `Contact: ${[facts.contactName, facts.contactEmail].filter(Boolean).join(', ') || 'apply link only'}. Open the apply link once to see that it works.`));
 
   const gaps = [!has('experience') && 'experience', !has('skills') && 'must-have skills', !has('education') && 'education', !has('responsibilities') && 'responsibilities'].filter(Boolean);
-  if (gaps.length) out.push(item('experience', 'Experience, skills and duties', 'fix', `Missing: ${gaps.join(', ')}. The posts show [ ] for them. Naukri and Shine need skills to show the job to the right people.`));
+  if (gaps.length) out.push(item('experience', 'Experience, skills and duties', 'fix', `Missing: ${gaps.join(', ')}. The posts show [ ] for them. Naukri and Shine need skills to show the requirement to the right people.`));
   else out.push(item('experience', 'Experience, skills and duties', 'check', `Experience ${facts.experience}; ${facts.skills.length} must-have skill${facts.skills.length === 1 ? '' : 's'}. Check they match what the client wants.`));
 
   const w = warnings || [];

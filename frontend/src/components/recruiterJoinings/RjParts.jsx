@@ -219,6 +219,12 @@ export function PersonDetail({ row, month }) {
         {row.notCountedCount ? <> · {row.notCountedCount} more had a joining date but did not join</> : null}.
         {' '}Who joined, and for which client, is in ATS.
       </p>
+      {(row.joiningList || []).some((j) => j.drop) && (
+        <p className="rj-hint">
+          {(row.joiningList || []).filter((j) => j.drop).length} of these joinings dropped after joining (a note only: they are still counted, and no past count or incentive is changed)
+          {(row.joiningList || []).some((j) => j.drop && j.drop.afterIncentive) ? '. For at least one, the incentive had already been decided: HR to review' : ''}.
+        </p>
+      )}
       {carry.length > 0 && (
         <>
           <h4>Target month by month (the missing joinings are carried forward)</h4>
@@ -282,7 +288,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
   }
   function saved(data) {
     setDialog(null);
-    const re = data.recalculate && data.recalculate.length ? ` Recalculate the ${data.recalculate.map(monthLabel).join(', ')} payroll draft before submitting it.` : '';
+    const re = data.recalculate && data.recalculate.length ? ` Recalculate the ${data.recalculate.map(monthLabel).join(', ')} payroll before submitting it.` : '';
     setMsg(`${data.message || 'Saved.'}${re}`);
     onChanged && onChanged();
   }

@@ -158,7 +158,7 @@ module.exports = function mountExtra(router, { loadForView, readUpload, dropFile
       const { client } = loaded;
       const st = signing.statusOf(client);
       if (!['SIGNED', 'ACTIVE', 'EXPIRED'].includes(st)) {
-        return res.status(409).json({ error: 'This agreement is not signed yet — just change the terms and make a new draft.' });
+        return res.status(409).json({ error: 'This agreement is not signed yet — just change the terms and make a new agreement.' });
       }
       const reason = String((req.body || {}).reason || '').trim().slice(0, 300) || 'Terms edited by Admin';
       // The signed copy stays in history: keep one now if none is kept yet.

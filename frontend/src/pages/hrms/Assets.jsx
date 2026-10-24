@@ -12,8 +12,10 @@ import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Combo from '../../components/Combo.jsx';
 import { ComposeModal, Field, Row, useSubmit } from '../../components/ComposeForm.jsx';
 import AssetReport from './AssetReport.jsx';
+import SimConnections from './SimConnections.jsx'; // vendor modules: the company's SIM numbers
 import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
+import AssetComplaintModal from './AssetComplaintModal.jsx';
 import { SendRepairModal, BackRepairModal, RepairHistoryModal, repairEntries } from './AssetRepair.jsx';
 // Accounts spec S2: the fields Accounts needs + the repair log.
 import { AccountsFields, DisposalFields, AssetRepairsModal, accountsDefaults, accountsNote } from './AssetAccountsFields.jsx';
@@ -48,6 +50,7 @@ export const AS_FEATURES = [
   ['approval', 'Asset Approval'],
   ['reports', 'Asset Reports & Analytics'],
   ['audit', 'Asset Audit'],
+  ['sim', 'SIM & Connections (vendor)'],
 ];
 
 // SIM Card / Mobile Phone / Phone Charger: the SIM + phone import (2026-10-05).
@@ -169,9 +172,9 @@ function EditAssetModal({ asset, categories, onClose, onSaved }) {
           </Combo>
         </Field>
         <Field label="Status">
-          <select value={form.status} onChange={set('status')}>
+          <Combo value={form.status} onChange={set('status')}>
             {[...new Set([form.status, ...statusChoices])].map((s) => <option key={s}>{s}</option>)}
-          </select>
+          </Combo>
         </Field>
       </Row>
       <Row>
@@ -202,6 +205,10 @@ export default function Assets({ view, onOpen, onBack }) {
   const isHR = hrView && canManageServices(user);
   const [assets, setAssets] = useState([]);
   const [requests, setRequests] = useState([]);
+  // asset COMPLAINTS ("Report a problem"): ticket id -> { ticketRef, kind, repair }
+  const [complaints, setComplaints] = useState(new Map());
+  const [reporting, setReporting] = useState(false);
+  const [myAssetCount, setMyAssetCount] = useState(0);
   // GET /asset-inventory/people — departments + active employees for Assign.
   const [people, setPeople] = useState(null);
   // GET /asset-inventory/options — every active department, and canEdit.
@@ -223,6 +230,8 @@ export default function Assets({ view, onOpen, onBack }) {
   function load() {
     api.get('/asset-inventory').then((res) => setAssets(res.data)).catch(() => setAssets([]));
     api.get('/assets').then((res) => setRequests(res.data)).catch(() => setRequests([]));
+    api.get('/asset-complaints').then((res) => setComplaints(new Map(res.data.rows.map((c) => [c.id, c])))).catch(() => setComplaints(new Map()));
+    api.get('/asset-complaints/my-assets').then((res) => setMyAssetCount(res.data.rows.length)).catch(() => setMyAssetCount(0));
     api.get('/asset-inventory/options').then((res) => setOpts(res.data)).catch(() => setOpts(null));
     if (isHR) api.get('/asset-inventory/people').then((res) => setPeople(res.data)).catch(() => setPeople({ departments: [], employees: [] }));
   }
@@ -248,7 +257,21 @@ export default function Assets({ view, onOpen, onBack }) {
     if (message) { setRepair(null); setRepairFlash(message); }
   }
   async function retire(asset) { await api.patch(`/asset-inventory/${asset.id}/retire`); load(); }
-  async function decideRequest(r, status) { await api.patch(`/assets/${r.id}/status`, { status }); load(); }
+  // A complaint (Report a problem) is decided through its own door so the answer can say what happened to the repair; a plain asset request as before.
+  async function decideRequest(r, status) {
+    setFlash('');
+    try {
+      if (complaints.has(r.id)) {
+        const res = await api.post(`/asset-complaints/${r.id}/decision`, { decision: status });
+        const f = res.data.follow || {};
+        if (status === 'Approved' && f.kind === 'Repair') setFlash(f.repairNo ? `Approved. Repair ${f.repairNo} was made${f.vendor ? ` and sent to ${f.vendor}` : '. No repair vendor is set up for this kind of asset yet, so Admin has to link one'}.` : 'Approved.');
+        else setFlash(status === 'Approved' ? 'Approved. Nothing goes to a repair vendor for this kind of complaint.' : 'Saved.');
+      } else {
+        await api.patch(`/assets/${r.id}/status`, { status });
+      }
+    } catch (e) { setFlash(e?.response?.data?.error || 'Could not save the decision.'); }
+    load();
+  }
 
   // THE INVENTORY FILTERS — asset code/name, the HOLDER's ID, name,
   // department and role (an unassigned asset has no holder, so it drops out
@@ -298,9 +321,9 @@ export default function Assets({ view, onOpen, onBack }) {
       </Combo>
       <label className="lf-sort">
         Sort
-        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+        <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
           {ASSET_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
+        </Combo>
       </label>
     </PeopleFilterBar>
   );
@@ -492,7 +515,8 @@ export default function Assets({ view, onOpen, onBack }) {
   }
   if (view === 'approval') {
     return (
-      <FeatureScreen title="Asset Approval" sub="Employee asset requests awaiting a decision." onBack={onBack}>
+      <FeatureScreen title="Asset Approval" sub="Employee asset requests and Report a problem complaints awaiting a decision." onBack={onBack}>
+        {flash && <div className="asrep-flash" role="status">{flash}</div>}
         <PeopleFilterBar
           filters={rf} setFilters={setRf} search="Asset requested" people={hrView}
           departments={hrView ? requestOpts.departments : undefined} roles={hrView ? requestOpts.roles : undefined}
@@ -505,7 +529,11 @@ export default function Assets({ view, onOpen, onBack }) {
           rows={page.slice.map((r) => (
             <tr key={r.id}>
               <td>{r.employee?.name || '—'}</td>
-              <td>{r.title}</td>
+              <td>
+                {r.title}
+                {r.detail ? <div className="small-muted">{r.detail}</div> : null}
+                {complaints.get(r.id) && <div className="small-muted"><b>{complaints.get(r.id).ticketRef}</b> · {complaints.get(r.id).kind}{complaints.get(r.id).repair ? ` · repair ${complaints.get(r.id).repair.repairNo} ${complaints.get(r.id).repair.vendor ? `with ${complaints.get(r.id).repair.vendor}` : '(no repair vendor linked yet)'}` : ''}</div>}
+              </td>
               <td><span className={`status ${r.status === 'Approved' ? 'active' : r.status === 'Rejected' ? 'rejected' : 'pending'}`}>{r.status}</span></td>
               <td>{isHR && ['Pending', 'Open'].includes(r.status) ? (
                 <>
@@ -537,6 +565,14 @@ export default function Assets({ view, onOpen, onBack }) {
       </FeatureScreen>
     );
   }
+  if (view === 'sim') {
+    return (
+      <FeatureScreen title="SIM & Connections" sub="The company's numbers and the requests to the telecom vendor." onBack={onBack}>
+        <SimConnections canEdit={isHR || canEdit} />
+      </FeatureScreen>
+    );
+  }
+
   if (view === 'audit') {
     return (
       <FeatureScreen title="Asset Audit" sub="Each asset's movement history for audit." onBack={onBack}>
@@ -567,6 +603,8 @@ export default function Assets({ view, onOpen, onBack }) {
 
       <QaRow style={{ margin: '14px 0' }}>
         {isHR && <button className="btn btn-primary btn-sm" onClick={addAsset}>+ Add Asset</button>}
+        {myAssetCount > 0 && <button className="btn btn-sm" onClick={() => { setFlash(''); setReporting(true); }}>Report a problem</button>}
+        {reporting && <AssetComplaintModal onClose={() => setReporting(false)} onSaved={(m) => { setReporting(false); setFlash(m); load(); }} />}
         {/* The asset register: export all (company stock + holders in scope)
             / the assets one employee holds, and import with the compulsory
             sample (src/io/assets.js). Rights come from the server. */}

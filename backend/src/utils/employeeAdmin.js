@@ -183,7 +183,7 @@ function csvList(value) {
   return String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-async function syncLoginToEmployee(employee, previous, { designationChanged = false } = {}) {
+async function syncLoginToEmployee(employee, previous, { designationChanged = false, actor = null } = {}) {
   if (!employee || !employee.userId) return null;
   const user = await prisma.user.findUnique({ where: { id: employee.userId } });
   if (!user) return null;
@@ -235,6 +235,19 @@ async function syncLoginToEmployee(employee, previous, { designationChanged = fa
     }
   }
 
+  // SECURITY (2026-10-13): a designation change re-derives roles - the same guard as a direct role edit.
+  // No actor (system code) = no role change; the department / team / scope parts above still follow.
+  if (designationChanged && (data.role !== undefined || data.hrmsRole !== undefined || data.atsRole !== undefined || data.accountsRole !== undefined)) {
+    const guard = require('./roleGuard'); // eslint-disable-line global-require
+    const refusal = actor ? await guard.checkRoleChange({ actor, current: user, next: data }) : 'no actor';
+    if (refusal) {
+      ['role', 'hrmsRole', 'atsRole', 'accountsRole', 'hrmsAccess', 'atsAccess', 'accountsAccess', 'landingWorkspace'].forEach((k) => { delete data[k]; });
+      for (let i = changes.length - 1; i >= 0; i -= 1) if (/^role /.test(changes[i])) changes.splice(i, 1);
+      changes.push('role NOT changed (needs a Super Admin or an Admin)');
+    } else {
+      await guard.noteRoleChange({ actor, current: user, next: data, source: 'designation change' });
+    }
+  }
   if (!Object.keys(data).length) return null;
   const updated = await prisma.user.update({ where: { id: employee.userId }, data });
   return { user: updated, changes };
@@ -403,7 +416,8 @@ async function liveVerification(email) {
 // ---------------------------------------------------------------------------
 // The resignation statuses that mean "has resigned, not yet gone" — mirrors
 // routes/resignations.js (PENDING + SERVING).
-const OPEN_RESIGNATION = ['Pending', 'Notice Period', 'Accepted'];
+// ('Pending Approval' is the word the resignation record really uses; 'Pending' alone matched nothing, so an exit waiting for approval never showed here.)
+const OPEN_RESIGNATION = ['Pending', 'Pending Approval', 'Notice Period', 'Accepted'];
 async function employeeListExtras(employeeIds) {
   const ids = employeeIds && employeeIds.length ? employeeIds : ['__none__'];
   const [docs, resignations] = await Promise.all([
@@ -439,6 +453,10 @@ async function employeeListExtras(employeeIds) {
     const lwd = r.date || (d && (d.approvedLastWorkingDate || d.requestedLastWorkingDate)) || null;
     if (!lwd) return;
     x.lastWorkingDate = lwd;
+    // EXIT STATUS chip for the directory (HRMS spec item 6): the same words as the Exit record.
+    x.exitStage = r.status === 'Pending Approval' || r.status === 'Pending' ? 'waiting' : (lwd <= new Date().toISOString().slice(0, 10) ? 'ready' : 'notice');
+    x.exitStageLabel = x.exitStage === 'waiting' ? 'Waiting for approval' : (x.exitStage === 'ready' ? 'Last day reached' : 'Serving notice');
+    x.exitRecordId = r.id;
     x.lastWorkingDateSource = d && d.approvedLastWorkingDate ? 'Resignation (approved)'
       : d ? 'Resignation (requested)' : 'Recorded by HR';
     x.resignationId = r.id;

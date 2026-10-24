@@ -34,7 +34,7 @@ function ClientsModal({ clients, onClose }) {
   return (
     <Modal title="Who the invoices went to" note={plural(clients.length, 'client')} onClose={onClose} size="wide"
       footer={<button type="button" className="btn btn-primary" onClick={onClose} autoFocus>Close</button>}>
-      <ScrollSync className="gp-tbl">
+      <ScrollSync className="gp-tbl" stickyHead={false} stickyFoot={false}>
         <table>
           <thead>
             <tr><th>Client</th><th className="num">Invoices</th><th className="num">Before GST</th><th className="num">GST amount</th><th className="num">After GST</th></tr>

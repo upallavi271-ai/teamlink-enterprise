@@ -1,0 +1,117 @@
+{
+  "_comment": ["FOUNDIT (Monster) page settings. EVERY selector and URL is here, none in code.", "STATUS: UNVERIFIED. Written from the public look of Foundit's recruiter pages; NOT checked against the real post-job form.", "Verify with a DRY RUN on the company's own account (docs/job-publishing/PLAYWRIGHT.md). Override with TL_PORTAL_SELECTORS_DIR or TL_PORTAL_SELECTORS_FOUNDIT=<file>.", "A selector can be one string or a list of alternatives: the first visible one wins. {value} in a radio / option selector is the value to pick.", "STRUCTURED FALLBACKS (2026-10-14): every step lists several ways to find its element, main one first: CSS strings AND { \"role\": .., \"name\": .. } / { \"label\": .. } / { \"text\": .. } / { \"placeholder\": .. } entries (role and label survive a redesign better than CSS). The run tries them in order, records which one worked, and shows \"selector drift\" in Diagnostics when the main one failed. Nothing outside this list is ever tried.", "The role / label / text entries are GUESSES from the public look of the site, exactly like the CSS ones: all of this stays \"verified\": false until docs/job-publishing/CALIBRATION.md has been followed on the real site by a person."],
+  "portal": "foundit",
+  "version": "2026-10-14.1",
+  "verified": false,
+  "allowedHosts": ["foundit.in", "monsterindia.com"],
+  "logoutAfterRun": false,
+  "urls": {
+    "login": "https://recruiter.foundit.in/login",
+    "dashboard": "https://recruiter.foundit.in/dashboard",
+    "postJob": "https://recruiter.foundit.in/jobs/post",
+    "edit": "https://recruiter.foundit.in/jobs/{id}/edit",
+    "listing": "https://www.foundit.in/job/{id}",
+    "myJobs": "https://recruiter.foundit.in/jobs"
+  },
+  "login": {
+    "username": ["input[name='username']", "input[name='email']", "input[type='email']", "input[placeholder*='Email' i]", { "label": "Email" }, { "label": "Username" }, { "role": "textbox", "name": "Email" }],
+    "password": ["input[name='password']", "input[type='password']", { "label": "Password" }, { "placeholder": "Password" }],
+    "submit": ["button[type='submit']", "button:has-text('Login')", "button:has-text('Sign in')", { "role": "button", "name": "Login" }, { "role": "button", "name": "Sign in" }, { "role": "button", "name": "Log in" }],
+    "loggedInProbe": ["a:has-text('Logout')", "button:has-text('Logout')", "text=Post a Job", "a[href*='jobs/post']", { "role": "link", "name": "Logout" }, { "role": "button", "name": "Logout" }],
+    "errorProbe": [".error", ".alert-danger", "[role='alert']"],
+    "errorText": ["invalid", "incorrect", "wrong", "not found"],
+    "logout": ["a:has-text('Logout')", "button:has-text('Logout')"]
+  },
+  "blockers": {
+    "urlPatterns": {},
+    "selectors": {},
+    "textPatterns": {}
+  },
+  "postJob": {
+    "fields": {
+      "title": {
+        "selector": ["input[name='title']", "input[name='jobTitle']", "input[placeholder*='Job title' i]", { "label": "Job title" }, { "label": "Designation" }, { "role": "textbox", "name": "Job title" }],
+        "type": "text"
+      },
+      "skills": {
+        "selector": ["input[placeholder*='skills' i]", "input[name='skills']", { "label": "Key skills" }, { "label": "Skills" }, { "role": "textbox", "name": "Key skills" }],
+        "type": "tags",
+        "max": 20
+      },
+      "experienceMin": {
+        "selector": ["select[name='minExperience']", "input[name='minExperience']", { "label": "Minimum experience" }, { "label": "Min experience" }, { "role": "combobox", "name": "Minimum experience" }],
+        "type": "select"
+      },
+      "experienceMax": {
+        "selector": ["select[name='maxExperience']", "input[name='maxExperience']", { "label": "Maximum experience" }, { "label": "Max experience" }, { "role": "combobox", "name": "Maximum experience" }],
+        "type": "select"
+      },
+      "location": {
+        "selector": ["input[name='location']", "input[placeholder*='Location' i]", { "label": "Location" }, { "label": "Job location" }, { "role": "combobox", "name": "Location" }],
+        "type": "autocomplete",
+        "optionSelector": ["li:has-text('{value}')", "[role='option']:has-text('{value}')"]
+      },
+      "employmentType": {
+        "selector": ["input[type='radio'][value='{value}']", "label:has-text('{value}')", { "label": "Employment type" }, { "label": "Job type" }, { "role": "radio", "name": "Employment type" }, { "text": "{value}" }],
+        "type": "radio"
+      },
+      "salary": {
+        "selector": ["input[name='salary']", "input[placeholder*='Salary' i]", { "label": "Salary" }, { "label": "Annual salary" }, { "role": "textbox", "name": "Salary" }],
+        "type": "text"
+      },
+      "openings": {
+        "selector": ["input[name='openings']", "input[name='vacancies']", { "label": "Vacancies" }, { "label": "Number of openings" }, { "role": "textbox", "name": "Vacancies" }],
+        "type": "text"
+      },
+      "industry": {
+        "selector": ["select[name='industry']", { "label": "Industry" }, { "label": "Industry type" }, { "role": "combobox", "name": "Industry" }],
+        "type": "select"
+      },
+      "functionalArea": {
+        "selector": ["select[name='category']", "select[name='functionalArea']", { "label": "Functional area" }, { "label": "Role category" }, { "role": "combobox", "name": "Functional area" }],
+        "type": "select"
+      },
+      "description": {
+        "selector": ["textarea[name='description']", "textarea#description", "div[contenteditable='true']", { "label": "Job description" }, { "label": "Description" }, { "role": "textbox", "name": "Job description" }],
+        "type": "text"
+      },
+      "contactEmail": {
+        "selector": ["input[name='contactEmail']", { "label": "Contact email" }, { "label": "Recruiter email" }, { "role": "textbox", "name": "Contact email" }],
+        "type": "text"
+      }
+    },
+    "order": ["title", "skills", "experienceMin", "experienceMax", "location", "employmentType", "salary", "openings", "industry", "functionalArea", "description", "contactEmail"],
+    "submit": ["button:has-text('Publish')", "button:has-text('Post Job')", "button[type='submit']:has-text('Post')", { "role": "button", "name": "Post Job" }, { "role": "button", "name": "Publish" }, { "role": "button", "name": "Submit" }],
+    "confirm": {
+      "dialog": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }]
+    },
+    "errorProbe": [".field-error", ".error-message", ".invalid-feedback", "[role='alert']"],
+    "success": {
+      "urlPattern": "posted|success|confirmation",
+      "text": ["job posted", "published successfully", "submitted for review"],
+      "selector": [".success-banner", "[data-testid='job-published']"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "(?:job\\s*(?:id|code)|reference)\\s*[:#-]?\\s*([A-Za-z0-9-]{5,})",
+      "idFromUrl": "(?:jobs?/|jobId=)([A-Za-z0-9-]{5,})",
+      "urlSelector": ["a:has-text('View')", "a[href*='/job/']"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1", "[data-testid='job-title']"],
+    "notFoundText": ["page not found", "job not found", "no longer available", "expired"]
+  },
+  "unpublish": {
+    "listUrl": "https://recruiter.foundit.in/jobs",
+    "rowSelector": ["tr:has-text('{id}')", "[data-job-id='{id}']", "li:has-text('{id}')", "[role='row']:has-text('{id}')"],
+    "closeButton": ["button:has-text('Close')", "button:has-text('Deactivate')", "button:has-text('Remove')", { "role": "button", "name": "Close job" }, { "role": "button", "name": "Deactivate" }, { "role": "link", "name": "Close" }],
+    "confirm": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }],
+    "doneText": ["job closed", "closed successfully", "deactivated successfully", "job has been closed"]
+  },
+  "timeouts": { "nav": 20000, "action": 8000, "overall": 180000 },
+  "pacing": { "minMs": 1000, "maxMs": 3000 },
+  "otp": {
+    "input": ["input[autocomplete=\"one-time-code\"]", "input[name*='otp' i]", "input[id*='otp' i]", { "label": "OTP" }, { "placeholder": "OTP" }, { "label": "Verification code" }, "input[inputmode='numeric']"],
+    "submit": [{ "role": "button", "name": "Verify" }, { "role": "button", "name": "Submit" }, { "role": "button", "name": "Continue" }, "button[type='submit']"]
+  }
+}

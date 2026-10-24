@@ -23,11 +23,11 @@ function OverrideBox({ info, onDone }) {
     <div className="overlay show" role="dialog" aria-modal="true" aria-labelledby="b8ov-title" onMouseDown={(e) => { if (e.target === e.currentTarget) onDone(null); }}>
       <div className="modal b8ov">
         <div className="modal-head">
-          <h3 id="b8ov-title" style={{ margin: 0, fontSize: 16 }}>{`${info.candidateName || 'This person'} does not meet this job's rules`}</h3>
+          <h3 id="b8ov-title" style={{ margin: 0, fontSize: 16 }}>{`${info.candidateName || 'This person'} does not meet this requirement's rules`}</h3>
           <button type="button" className="close-x" aria-label="Close" onClick={() => onDone(null)}>×</button>
         </div>
         <div className="modal-body">
-          {info.requirementTitle && <div className="small-muted" style={{ marginBottom: 6 }}>{`Job: ${info.requirementTitle}${info.fit != null ? ` · Fit ${info.fit}%` : ''}${info.minFit != null ? ` (needs ${info.minFit}%)` : ''}`}</div>}
+          {info.requirementTitle && <div className="small-muted" style={{ marginBottom: 6 }}>{`Requirement: ${info.requirementTitle}${info.fit != null ? ` · Fit ${info.fit}%` : ''}${info.minFit != null ? ` (needs ${info.minFit}%)` : ''}`}</div>}
           <ul className="b8ov-why">
             {(info.why || []).map((w) => <li key={w}>{w}</li>)}
           </ul>
@@ -44,7 +44,7 @@ function OverrideBox({ info, onDone }) {
           <div className="b8ov-quick">
             {QUICK.map((q) => <button key={q} type="button" className="btn btn-sm" onClick={() => setReason(q)}>{q}</button>)}
           </div>
-          <div className="small-muted">Your name and reason are saved, and the person shows “Added by override” on this job.</div>
+          <div className="small-muted">Your name and reason are saved, and the person shows “Added by override” on this requirement.</div>
         </div>
         <div className="modal-foot">
           <button type="button" className="btn" onClick={() => onDone(null)}>Cancel</button>

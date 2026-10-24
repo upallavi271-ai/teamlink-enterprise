@@ -1,0 +1,70 @@
+{
+  "_comment": "Page settings of the LOCAL MOCK 'foundit' board (test-fixtures/mock-portal/server.js). Used by the tests through TL_PORTAL_SELECTORS_FOUNDIT. Local addresses only.",
+  "portal": "foundit",
+  "version": "mock-1",
+  "verified": true,
+  "mock": true,
+  "allowedHosts": ["127.0.0.1", "localhost"],
+  "urls": {
+    "login": "{{MOCK_ORIGIN}}/foundit/login",
+    "dashboard": "{{MOCK_ORIGIN}}/foundit/dashboard",
+    "postJob": "{{MOCK_ORIGIN}}/foundit/post-job",
+    "edit": "{{MOCK_ORIGIN}}/foundit/edit/{id}",
+    "listing": "{{MOCK_ORIGIN}}/foundit/job/{id}",
+    "myJobs": "{{MOCK_ORIGIN}}/foundit/my-jobs"
+  },
+  "login": {
+    "username": ["input#u"],
+    "password": ["input#p"],
+    "submit": ["button[type='submit']"],
+    "loggedInProbe": ["a:has-text('Logout')"],
+    "errorProbe": [".error"],
+    "errorText": ["invalid"],
+    "logout": ["a:has-text('Logout')"],
+    "waitMs": 3500
+  },
+  "blockers": { "urlPatterns": {}, "selectors": {}, "textPatterns": {} },
+  "postJob": {
+    "fields": {
+      "title": { "selector": ["input[name='title']"], "type": "text" },
+      "skills": { "selector": ["input[placeholder='Add skills']"], "type": "tags", "max": 20 },
+      "experienceMin": { "selector": ["select[name='minExperience']"], "type": "select" },
+      "experienceMax": { "selector": ["select[name='maxExperience']"], "type": "select" },
+      "location": { "selector": ["input[name='location']"], "type": "autocomplete", "optionSelector": ["li[role='option']:has-text('{value}')"] },
+      "employmentType": { "selector": ["input[type='radio'][value='{value}']"], "type": "radio" },
+      "salary": { "selector": ["input[name='salary']"], "type": "text" },
+      "openings": { "selector": ["input[name='openings']"], "type": "text" },
+      "industry": { "selector": ["select[name='industry']"], "type": "select" },
+      "functionalArea": { "selector": ["select[name='category']"], "type": "select" },
+      "description": { "selector": ["textarea[name='description']"], "type": "text" },
+      "contactEmail": { "selector": ["input[name='contactEmail']"], "type": "text" }
+    },
+    "order": ["title", "skills", "experienceMin", "experienceMax", "location", "employmentType", "salary", "openings", "industry", "functionalArea", "description", "contactEmail"],
+    "submit": ["button[type='submit']:has-text('Publish')"],
+    "submitEdit": ["button[type='submit']:has-text('Publish')"],
+    "errorProbe": [".field-error"],
+    "outcomeTimeoutMs": 5000,
+    "success": {
+      "urlPattern": "/posted",
+      "text": ["job posted successfully"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "job id:\\s*([A-Za-z0-9-]+)",
+      "idFromUrl": "jid=([A-Za-z0-9-]+)",
+      "urlSelector": ["a:has-text('View job')"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1"],
+    "notFoundText": ["job not found", "no longer available"]
+  },
+  "unpublish": {
+    "listUrl": "{{MOCK_ORIGIN}}/foundit/my-jobs",
+    "rowSelector": ["tr[data-job-id='{id}']"],
+    "closeButton": ["tr[data-job-id='{id}'] button.close"],
+    "confirm": ["tr[data-job-id='{id}'] button:has-text('Confirm')"],
+    "doneText": ["job closed successfully"]
+  },
+  "timeouts": { "nav": 20000, "action": 12000, "overall": 100000 },
+  "pacing": { "minMs": 0, "maxMs": 0 }
+}

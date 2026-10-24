@@ -14,7 +14,7 @@ export default function LeaveKpiCards({ requests }) {
   const list = Array.isArray(requests) ? requests : [];
   const today = todayIso();
   const approved = list.filter((r) => r.status === 'Approved' || r.status === 'Cancellation Requested');
-  const waiting = list.filter((r) => r.status === 'Pending');
+  const waiting = list.filter((r) => r.status === 'Pending' && (!r.pendingState || r.pendingState === 'genuine'));
   const rejected = list.filter((r) => r.status === 'Rejected');
   const onLeaveToday = new Set(approved.filter((r) => r.fromDate <= today && (r.toDate || r.fromDate) >= today).map((r) => r.employeeId)).size;
   const daysTaken = round1(approved.reduce((n, r) => n + daysOf(r), 0));

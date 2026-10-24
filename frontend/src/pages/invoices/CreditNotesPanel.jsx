@@ -12,10 +12,11 @@ import { saveBlob } from '../office/officeUtil';
 import NoteModal, { openNotePdf } from './NoteModal.jsx';
 import { money2, fmtD, todayIso } from './invFormat';
 import './creditNotes.css';
+import { creditNoteStatus } from '../../utils/statusWords.js';
 
 const FIELDS = [
   { key: 'kind', get: (r) => r.kind, label: (v) => (v === 'debit' ? 'Debit notes' : 'Credit notes') },
-  { key: 'status', get: (r) => r.status },
+  { key: 'status', get: (r) => r.status, label: (v) => creditNoteStatus(v) },
   { key: 'client', get: (r) => r.client },
 ];
 
@@ -72,7 +73,7 @@ export default function CreditNotesPanel({
     try {
       const res = await api.post('/invoices/credit-notes/export.xlsx', {
         ids: rows.map((r) => r.id),
-        filters: [f.kind && `Type: ${f.kind}`, f.status && `Status: ${f.status}`, f.client && `Client: ${f.client}`, needle && `Search: ${q.trim()}`].filter(Boolean).join(' · '),
+        filters: [f.kind && `Type: ${f.kind}`, f.status && `Status: ${creditNoteStatus(f.status)}`, f.client && `Client: ${f.client}`, needle && `Search: ${q.trim()}`].filter(Boolean).join(' · '),
       }, { responseType: 'blob' });
       saveBlob(res, 'credit-notes.xlsx');
       setSaid(`Downloaded ${rows.length} note(s).`);
@@ -86,7 +87,7 @@ export default function CreditNotesPanel({
   const waiting = data.waiting || [];
 
   const cards = [
-    { k: 'drafts', n: c.Draft, l: c.Draft ? 'Drafts waiting to be issued' : 'No drafts waiting', tone: c.Draft ? 'orange' : 'green', count: true },
+    { k: 'drafts', n: c.Draft, l: c.Draft ? 'Notes waiting to be issued' : 'No notes waiting', tone: c.Draft ? 'orange' : 'green', count: true },
     { k: 'credits', n: money2(t.creditNet), l: `Credit notes issued · ${all.filter(CARD_TEST.credits).length}`, tone: 'blue' },
     { k: 'debits', n: money2(t.debitNet), l: `Debit notes issued · ${all.filter(CARD_TEST.debits).length}`, tone: 'blue' },
     { k: 'refunds', n: money2(t.refundOpen), l: c.refundOpen ? `Refunds still to pay back · ${c.refundOpen}` : 'No refund owed to a client', tone: c.refundOpen ? 'red' : 'green' },
@@ -150,7 +151,7 @@ export default function CreditNotesPanel({
                   <td className="inv-mono">{r.displayNumber}</td>
                   <td>{r.kindLabel}</td>
                   <td>
-                    <span className={`cn-chip ${r.status}`}>{r.status === 'Draft' ? 'Draft — to issue' : r.status}</span>
+                    <span className={`cn-chip ${r.status}`}>{r.status === 'Draft' ? 'Not issued — to issue' : r.status}</span>
                     {r.refundOpen > 0.005 && <div><span className="cn-chip refund">Refund due {money2(r.refundOpen)}</span></div>}
                     {r.refundPaidOn && <div className="small-muted">Refund paid {fmtD(r.refundPaidOn)}</div>}
                   </td>
@@ -172,7 +173,7 @@ export default function CreditNotesPanel({
                       {r.status === 'Draft' && (mine || data.canApprove) && (
                         <>
                           <button type="button" className="btn btn-sm" onClick={() => setModal({ draft: r })}>Change</button>
-                          <button type="button" className="btn btn-sm" disabled={busy === r.id} onClick={() => act(r.id, () => api.delete(`/invoices/credit-notes/${r.id}`), 'Draft removed.')}>Remove</button>
+                          <button type="button" className="btn btn-sm" disabled={busy === r.id} onClick={() => act(r.id, () => api.delete(`/invoices/credit-notes/${r.id}`), 'Removed.')}>Remove</button>
                         </>
                       )}
                       {r.refundOpen > 0.005 && <button type="button" className="btn btn-sm" onClick={() => setRefundFor(r)}>Refund paid</button>}
@@ -221,7 +222,7 @@ export function CancelNote({ note, onClose, onDone }) {
     <Modal title={`Cancel ${note.displayNumber}`} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Keep it</button><button type="button" className="btn btn-primary" disabled={busy || !reason.trim()} onClick={go}>Cancel the note</button></>}>
       <div className="cn-form">
         <div className="small-muted">The invoice balance goes back to what it was before this note. The note stays on file as Cancelled.</div>
-        <label className="field"><span>Why? *</span><input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Raised on the wrong invoice" /></label>
+        <label className="field"><span>Why?</span><input value={reason} maxLength={500} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Raised on the wrong invoice" /></label>
         {fail && <div className="notice red"><span>{fail}</span></div>}
       </div>
     </Modal>

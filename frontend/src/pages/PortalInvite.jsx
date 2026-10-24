@@ -71,7 +71,7 @@ export default function PortalInvite() {
         ) : (
           <form onSubmit={accept}>
             <div className="notice" style={{ marginBottom: 10 }}><span>{sent}</span></div>
-            <div className="field"><label htmlFor="piCode">6-digit code *</label>
+            <div className="field"><label htmlFor="piCode">6-digit code</label>
               <input id="piCode" required inputMode="numeric" autoComplete="one-time-code" maxLength={6}
                 style={{ fontSize: 22, letterSpacing: 6, textAlign: 'center' }}
                 value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))} /></div>

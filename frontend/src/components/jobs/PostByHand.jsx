@@ -3,6 +3,7 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import JobTextPanel from './JobTextPanel.jsx';
+import FieldByFieldCopy from './FieldByFieldCopy.jsx';
 import './postByHand.css';
 import './jobTextPanel.css';
 
@@ -55,7 +56,7 @@ export default function PostByHand({ requirementId, source, name, onClose, onCha
   const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user && (user.role || user.atsRole));
 
   useEffect(() => {
-    api.get(base).then((r) => setH(r.data)).catch((e) => setError(e.response?.data?.error || 'Could not prepare the job.'));
+    api.get(base).then((r) => setH(r.data)).catch((e) => setError(e.response?.data?.error || 'Could not prepare the requirement.'));
   }, [base]);
 
   async function doCopy(label, text) {
@@ -86,23 +87,23 @@ export default function PostByHand({ requirementId, source, name, onClose, onCha
   const state = h ? h.state : 'todo';
   return (
     <Modal
-      title={`Post this job on ${name} by hand`}
+      title={`Post this requirement on ${name} by hand`}
       size="wide"
       onClose={onClose}
       foot={<button type="button" className="btn" onClick={onClose}>Close</button>}
     >
-      {!h && <div className="small-muted">{error || 'Getting the job ready…'}</div>}
+      {!h && <div className="small-muted">{error || 'Getting the requirement ready…'}</div>}
       {h && (
         <div className="pbh">
           <div className="small-muted">{h.note}</div>
-          {!h.live && <div className="pbh-warn">This job is not open, so it should not be posted now.</div>}
+          {!h.live && <div className="pbh-warn">This requirement is not open, so it should not be posted now.</div>}
           {!h.publicLink && <div className="pbh-warn">The apply link below only works on this computer until the server&rsquo;s public address (APP_BASE_URL) is set. Ask your admin.</div>}
 
           {state === 'done' && (
             <div className="pbh-done" role="status">
               <b>✓ Posted by hand.</b> {h.doneText}{h.doneAt ? ` · ${when(h.doneAt)}` : ''}.
-              {h.link ? <> <a href={h.link} target="_blank" rel="noreferrer">Open the live job ↗</a></> : ' No link was saved.'}
-              <div className="small-muted">TeamLink cannot see whether {name} still shows it. If the job closes, you will be asked to take it down.</div>
+              {h.link ? <> <a href={h.link} target="_blank" rel="noreferrer">Open the live requirement ↗</a></> : ' No link was saved.'}
+              <div className="small-muted">TeamLink cannot see whether {name} still shows it. If the requirement closes, you will be asked to take it down.</div>
               <div className="pbh-row">
                 <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => act('removed')}>I took it down</button>
                 <button type="button" className="btn btn-sm btn-ghost" disabled={!!busy} onClick={() => act('undo')}>I did not post it after all</button>
@@ -111,7 +112,7 @@ export default function PostByHand({ requirementId, source, name, onClose, onCha
           )}
           {state === 'remove' && (
             <div className="pbh-warn" role="status">
-              This job is closed, paused or no longer ticked, but it was posted on {name} by hand. Take it down on {name}, then press the button.
+              This requirement is closed, paused or no longer ticked, but it was posted on {name} by hand. Take it down on {name}, then press the button.
               <div className="pbh-row"><button type="button" className="btn btn-primary" disabled={!!busy} onClick={() => act('removed')}>{busy === 'removed' ? 'Saving…' : 'I took it down'}</button></div>
             </div>
           )}
@@ -127,8 +128,9 @@ export default function PostByHand({ requirementId, source, name, onClose, onCha
               {view === 'fields' && (
                 <>
                   <div className="small-muted">{h.usesSaved ? `These fields use the ${name} text saved by ${(h.saved && h.saved.by) || 'a team member'}${h.saved && h.saved.at ? ` on ${when(h.saved.at)}` : ''}.` : `These fields use the text TeamLink writes for ${name} (the client name is hidden). Save your own version in Job text and it is used here.`}</div>
+                  <FieldByFieldCopy fields={h.fields} siteName={name} />
                   <div className="pbh-row">
-                    <button type="button" className="btn" onClick={() => doCopy('the whole job', h.text)}>Copy all</button>
+                    <button type="button" className="btn" onClick={() => doCopy('the whole requirement', h.text)}>Copy all</button>
                   </div>
                   <div className="pbh-fields">
                     {h.fields.map((f) => (
@@ -155,7 +157,7 @@ export default function PostByHand({ requirementId, source, name, onClose, onCha
                     ))}
                   </div>
                   <div className="field">
-                    <label htmlFor="pbh-url">Link of the live job (optional)</label>
+                    <label htmlFor="pbh-url">Link of the live requirement (optional)</label>
                     <input id="pbh-url" type="url" inputMode="url" placeholder={`https://… (from ${name})`} value={url} onChange={(e) => setUrl(e.target.value)} />
                   </div>
                   <div className="pbh-row">

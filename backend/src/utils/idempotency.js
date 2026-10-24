@@ -58,7 +58,7 @@ function idempotent(scope) {
           // eslint-disable-next-line no-await-in-loop
           await sleep(200);
         }
-        if (!mine) return res.status(409).json({ error: 'This job is still being saved. Wait a moment — it will appear once.' });
+        if (!mine) return res.status(409).json({ error: 'This requirement is still being saved. Wait a moment — it will appear once.' });
       }
     } catch (err) {
       return next(err);

@@ -73,8 +73,8 @@ async function shape(req, client) {
     status: st,
     canMake: LINKABLE.includes(st) && !!client.agreementDocument,
     // Why a link cannot be made now, in plain words.
-    blocked: !client.agreementDocument ? 'Make the agreement draft first.'
-      : (LINKABLE.includes(st) ? null : (['SIGNED', 'ACTIVE'].includes(st) ? 'Already signed. No link needed.' : 'Make a new draft first.')),
+    blocked: !client.agreementDocument ? 'Make the agreement first.'
+      : (LINKABLE.includes(st) ? null : (['SIGNED', 'ACTIVE'].includes(st) ? 'Already signed. No link needed.' : 'Make a new agreement first.')),
     live,
     url,
     createdAt: client.agreementSentAt || null,
@@ -124,10 +124,12 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
       const client = await loadForLink(req, res);
       if (!client) return undefined;
       const st = signing.statusOf(client);
-      if (!client.agreementDocument) return res.status(409).json({ error: 'Make the agreement draft first.' });
+      if (!client.agreementDocument) return res.status(409).json({ error: 'Make the agreement first.' });
       if (!LINKABLE.includes(st)) {
-        return res.status(409).json({ error: ['SIGNED', 'ACTIVE'].includes(st) ? 'This agreement is already signed. No link is needed.' : 'Make a new draft first, then make the link.' });
+        return res.status(409).json({ error: ['SIGNED', 'ACTIVE'].includes(st) ? 'This agreement is already signed. No link is needed.' : 'Make a new agreement first, then make the link.' });
       }
+      // Only the BDE TL (after the checks) or an Admin makes the link (user, 2026-10-13: the agreement workflow).
+      { const refusal = await require('../utils/agreementWorkflow').sendGate(req.user, client, req.body); if (refusal) return res.status(403).json({ error: refusal }); }
       const settings = await settingsStore.agreementSettings();
       const asked = (req.body || {}).days;
       const days = asked === undefined || asked === null || asked === '' ? settings.linkDays : Number(asked);
@@ -156,6 +158,7 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
       // Pre-signed: TeamLink's saved signature + stamp go on before the client opens it.
       // eslint-disable-next-line global-require
       await require('../utils/teamlinkSeal').applyDefaults(updated, { actorUserId: req.user.id });
+      if (st === 'DRAFT') await require('../utils/agreementWorkflow').afterSend(req.user, client).catch(() => {});
       await logAudit({
         userId: req.user.id, action: ACT.created, entity: 'Client', entityId: client.id,
         fromValue: st, toValue: signing.statusOf(updated),
@@ -211,7 +214,7 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
       });
       if (!r.ok) {
         const why = r.outcome === 'Not configured' ? 'Email is not set up yet. Copy the link or use WhatsApp.'
-          : (r.outcome === 'Skipped' ? 'This email address cannot receive mail. Check the client\'s email.' : 'The email did not go. Please try again, or copy the link.');
+          : (r.outcome === 'Skipped' ? 'This email address cannot receive mail. Check the client\'s email.' : `The email did not go: ${String(r.error || 'the mail server said no').slice(0, 200)}. Press "Email to client" again, or copy the link.`);
         return res.status(502).json({ error: why, outcome: r.outcome });
       }
       // eslint-disable-next-line global-require

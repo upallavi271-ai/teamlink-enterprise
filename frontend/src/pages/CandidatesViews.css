@@ -63,3 +63,7 @@
 /* The page filter bar, now inside the Filters panel (simplest layout, 2026-10-03). */
 .cpl-panelbar{grid-column:1/-1;width:100%}
 .cpl-panelbar > *{margin:0;border:0;padding:0;box-shadow:none;background:transparent}
+
+/* Joining date (user, 2026-10-22: "which date did they join?"): a narrow column right after Step; the small grey lines under the Joined chip wrap, never clip. */
+.cpl-table.cviews-master th.cpl-joincol{width:92px;min-width:84px;white-space:normal;line-height:1.25}
+.cpl-joinedline{max-width:230px;line-height:1.35;overflow-wrap:anywhere}

@@ -3,7 +3,7 @@
 import api from '../../api';
 
 export const STATUS_LABEL = {
-  DRAFT: 'Draft', PENDING_APPROVAL: 'Pending Approval', APPROVED: 'Approved', SYNCED_TO_ACCOUNTS: 'Synced', PAID: 'Paid',
+  DRAFT: 'Calculated', PENDING_APPROVAL: 'Pending Approval', APPROVED: 'Approved', SYNCED_TO_ACCOUNTS: 'Synced', PAID: 'Paid',
 };
 // Maps onto the app's existing .status pill colours (styles.css).
 export const STATUS_CLS = {

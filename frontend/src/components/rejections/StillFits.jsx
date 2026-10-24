@@ -67,9 +67,9 @@ export default function StillFits({ candidateId, full = false }) {
     return () => { live = false; };
   }, [candidateId]);
 
-  if (!v) return <span className="small-muted" aria-label="Checking other jobs">…</span>;
-  if (v.error) return <span className="small-muted">Could not check other jobs.</span>;
-  if (v.blocked) return <span className="rjx-flag is-red">Do not use — not offered for any job.</span>;
+  if (!v) return <span className="small-muted" aria-label="Checking other requirements">…</span>;
+  if (v.error) return <span className="small-muted">Could not check other requirements.</span>;
+  if (v.blocked) return <span className="rjx-flag is-red">Do not use — not offered for any requirement.</span>;
   const top = v.top || [];
   const reds = v.rejectedClients || [];
   const redLine = reds.length > 0 && (
@@ -80,7 +80,7 @@ export default function StillFits({ candidateId, full = false }) {
   if (!top.length) {
     return (
       <span>
-        <span className="small-muted">No other open job fits right now.</span>
+        <span className="small-muted">No other open requirement fits right now.</span>
         {redLine}
       </span>
     );
@@ -96,7 +96,7 @@ export default function StillFits({ candidateId, full = false }) {
             <span className="small-muted">{f.clientName ? ` · ${f.clientName}` : ''}{f.location ? ` · ${f.location}` : ''}</span>
           </div>
         ))}
-        {v.total > top.length && <div className="small-muted">{`+${v.total - top.length} more open jobs fit — see Eligible jobs.`}</div>}
+        {v.total > top.length && <div className="small-muted">{`+${v.total - top.length} more open requirements fit — see Eligible requirements.`}</div>}
         {redLine}
       </div>
     );

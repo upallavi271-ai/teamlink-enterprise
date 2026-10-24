@@ -123,6 +123,19 @@ function sourceOf(punches, record, history) {
   return [...s].join(', ') || '—';
 }
 
+// Raw punches of ALL sources for one person-day + how many of each group, and the Source filter's counts for a row list.
+const withPunchSources = (ps, h) => {
+  const rawPunches = PSRC.rawPunchList(ps, h && h.punchTimes, !!(h && h.lastCheckOut) || ps.some((p) => p.direction === 'Out'));
+  return { rawPunches, sourceCounts: PSRC.countsOf(rawPunches) };
+};
+const sourceCountsText = (c) => (c ? PSRC.GROUPS.filter((g) => c[g]).map((g) => `${PSRC.GROUP_LABEL[g]} ${c[g]}`).join(', ') : '');
+const sourceTotalsOf = (rows) => {
+  const t = { all: rows.length };
+  PSRC.GROUPS.forEach((g) => { t[g] = rows.filter((x) => x.sourceCounts && x.sourceCounts[g] > 0).length; });
+  return t;
+};
+const bySourceGroup = (rows, g) => (PSRC.GROUPS.includes(g) ? rows.filter((x) => x.sourceCounts && x.sourceCounts[g] > 0) : rows);
+
 function sendTabular(res, format, name, headers, data, sheet) {
   // Every export tells the Super Admin (utils/dataIoNotify.js; never throws).
   notifyDataIo(res.req, { kind: 'export', module: 'Attendance & Time', count: data.length, what: `rows of ${sheet}`, format, detail: name }).catch(() => {});
@@ -175,7 +188,8 @@ function methodKey(v) {
 }
 // can() is async — it must be awaited, or every login passes this check.
 const isSuperAdmin = (user) => can(user, null, 'administration', 'Departments & Teams', 'create');
-const ownEmployee = (req) => prisma.employee.findUnique({ where: { userId: req.user.id } });
+const ownEmployee = (req) => require('../utils/ownEmployee').ownEmployeeOf(req.user); // eslint-disable-line global-require
+const NO_LINK = require('../utils/ownEmployee').NO_LINK_MESSAGE;
 const EXITED = ['Relieved', 'Exited', 'Exit Process'];
 
 // A requested employeeId is honoured only when it is INSIDE the caller's scope;
@@ -183,7 +197,7 @@ const EXITED = ['Relieved', 'Exited', 'Exit Process'];
 async function resolveEmployeeId(req, requestedEmployeeId) {
   // ?mine=1 — any login (HR, Manager, TL… included) reading ITS OWN rows.
   if (req.user.caps.hrmsSelfOnly || req.query.mine === '1') {
-    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    const own = await require('../utils/ownEmployee').ownEmployeeOf(req.user); // eslint-disable-line global-require
     return own ? own.id : null;
   }
   if (!requestedEmployeeId) return null;
@@ -274,6 +288,8 @@ router.post('/regularizations', async (req, res) => {
   // whoever raised it, raise() comes back not pending and the request simply
   // waits for a decision the way it always did.
   const started = await chain.raise(WF_REG, { recordId: regularization.id, employee: own });
+  // HRMS item 2: the first approver hears at once (bell + email). Additive; never blocks the request.
+  require('../utils/hrmsNotify').regularizationRaised({ reg: regularization, employee: own }).catch((e) => console.error('[attendance] notify approver failed', e.message));
   res.status(201).json({ ...regularization, workflow: started.summary });
 });
 
@@ -319,6 +335,7 @@ router.patch('/regularizations/:id/decision', requirePerm(null, 'hrms', 'Attenda
       create: { employeeId: existing.employeeId, date: existing.date, status: 'Present', checkIn: existing.requestedCheckIn, checkOut: existing.requestedCheckOut },
     });
   }
+  if (status === 'Approved') require('../utils/attendanceTasks').closeFixedFor(regularization.employeeId);
   await logAudit({ userId: req.user.id, action: 'Regularization ' + status.toLowerCase(), entity: 'AttendanceRegularization', entityId: regularization.id, toValue: status });
   // Items 4/6: a corrected day can change what an approved leave uses.
   if (status === 'Approved') leaveCharge.afterAttendanceChange(existing.employeeId, existing.date);
@@ -400,7 +417,7 @@ router.get('/policy', async (req, res) => {
   res.json(await attendancePolicy.withExtras(config));
 });
 
-router.put('/policy', requirePerm(null, 'hrms', 'Attendance & Time', 'configure'), async (req, res) => {
+router.put('/policy', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Attendance & Time', 'configure'), async (req, res) => {
   const { graceTimeMinutes, graceTime, halfDayHours, fullDayHours, freeLateArrivalsPerMonth, missingCheckInRule, weeklyOffDays, halfDayBySession } = req.body;
   const config = await getConfig();
   // Items 2/3/6: working day, half-day split, early-logout allowance, sandwich.
@@ -461,7 +478,7 @@ router.get('/punches', async (req, res) => {
     if (req.query.to) where.date.lte = req.query.to;
   }
   const punches = await prisma.attendancePunch.findMany({ where, include: { employee: true }, orderBy: [{ date: 'desc' }, { time: 'desc' }] });
-  res.json(punches);
+  res.json(punches.map((p) => ({ ...p, sourceKey: PSRC.sourceKeyOf(p), sourceLabel: PSRC.LABEL[PSRC.sourceKeyOf(p)] })));
 });
 
 // Record a punch. Employees punch for themselves; HR can punch on anyone's behalf
@@ -478,7 +495,7 @@ router.post('/punches', async (req, res) => {
   const forSelf = req.user.caps.hrmsSelfOnly || !employeeId || (own && employeeId === own.id);
   let employee;
   if (forSelf) {
-    if (!own) return res.status(404).json({ error: 'No employee record is linked to this login, so there is no attendance to record.' });
+    if (!own) return res.status(404).json({ error: NO_LINK });
     employee = own;
   } else {
     if (!req.user.caps.hrmsManage) return res.status(403).json({ error: "This isn't included in your role's permissions" });
@@ -517,12 +534,20 @@ router.post('/punches', async (req, res) => {
   if (toMinutes(punchTime) == null) return res.status(400).json({ error: 'time must be a 24-hour HH:MM clock time' });
   if (direction && !DIRECTIONS.includes(direction)) return res.status(400).json({ error: 'direction must be In or Out' });
 
-  const punch = await prisma.attendancePunch.create({
-    data: {
-      employeeId, date: punchDate, time: punchTime, direction: direction || 'In', method, location,
-      source: 'Manual entry', verificationStatus: 'Not applicable (entered by HR)', userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
-    },
+  const punchData = {
+    employeeId, date: punchDate, time: punchTime, direction: direction || 'In', method, location,
+    source: 'Manual entry', verificationStatus: 'Not applicable (entered by HR)', userAgent: String(req.headers['user-agent'] || '').slice(0, 400),
+  };
+  // The same person, day and direction within a minute is the SAME punch (a stronger one, e.g. the device's, is kept).
+  const punchGuard = require('../utils/punchGuard'); // eslint-disable-line global-require
+  const punch = await punchGuard.withLock(employeeId, async () => {
+    const dup = await punchGuard.nearDuplicate(prisma, punchData);
+    if (dup) return { duplicate: dup };
+    return prisma.attendancePunch.create({ data: punchData });
   });
+  if (punch.duplicate) {
+    return res.status(200).json({ duplicate: true, code: 'ALREADY_RECORDED', message: `Already recorded: ${punch.duplicate.direction === 'In' ? 'check-in' : 'check-out'} at ${punchGuard.clock12(punch.duplicate.time)}.`, punch: punch.duplicate });
+  }
 
   // First check-in of the day also marks the day, so the punch log and the daily
   // marking sheet never disagree. Late is decided against the grace clock time.
@@ -859,6 +884,7 @@ const TILE_OF_BUCKET = { present: 'present', absent: 'absent', halfDay: 'halfDay
 const TILE_KEYS = ['present', 'absent', 'halfDay', 'onLeave', 'offDay', 'noData', 'notYet'];
 const TILE_LABEL = { present: 'Present', absent: 'Absent', halfDay: 'Half day', onLeave: 'On leave', offDay: 'Week off / Holiday', noData: 'No device data', notYet: 'Not checked in yet' };
 const dayKpi = require('../utils/attendanceDays');
+const PSRC = require('../utils/punchSources'); // where each punch came from: Web check-in / Biometric device / Biometric import / Pulse import / Typed by HR
 const halfLeave = require('../utils/halfDayLeave');
 // The tile filter: ?tile=present|absent|halfDay|onLeave|offDay|noData|notYet and, inside
 // Present only, ?note=late|earlyLogout|missingCheckIn|missingCheckOut.
@@ -904,8 +930,11 @@ router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export
         leaveKind: dayKpi.leaveKindOf(d), late: !!(d.late || d.lateExcused), lateDay: dayKpi.isLateDay(d), colour: d.colour || '',
         // LATE COMING: where the person's request for this late day stands (approved ones are excused, not a policy late).
         lateState: (d.late || d.lateExcused) ? (d.lateState || 'none') : '', lateExcused: !!d.lateExcused, latePermissionText: d.latePermissionText || '',
+        awlText: d.awlText || '', awlLop: d.awlLop || 0, // absent with no leave applied (payroll rule, 2026-10-12)
         workedOnOff: d.workedOnOff || null,
         how: d.how || '', howOut: d.howOut || '', howText: d.howText || '', dayStatus: d.status,
+        // every raw punch of the day, all sources (utils/punchSources.js)
+        punchList: d.punchList || [], sourceCounts: d.sourceCounts || { web: 0, biometric: 0, pulse: 0, hr: 0 },
         _day: bk === 'halfDay' ? d : null,
       });
     });
@@ -948,7 +977,10 @@ router.get('/kpi-report', requirePerm(null, 'hrms', 'Attendance & Time', 'export
     how: [...howOpts.entries()].map(([v, n]) => ({ value: v, label: v, count: n }))
       .sort((a, b) => (dayKpi.HOW_ORDER.indexOf(a.value) + 1 || 99) - (dayKpi.HOW_ORDER.indexOf(b.value) + 1 || 99) || a.label.localeCompare(b.label)),
   };
-  const rows = all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId) && (!howQ || howOf(x) === howQ));
+  // SOURCE filter (Web check-in / Biometric / Pulse import / Typed by HR): days with at least one punch of that kind, counted with the other filters on.
+  const srcQ = PSRC.GROUPS.includes(String(req.query.punchSource || '')) ? String(req.query.punchSource) : '';
+  facets.punchSource = sourceTotalsOf(all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId) && (!howQ || howOf(x) === howQ) && x.punchList.length));
+  const rows = all.filter((x) => (!dept || x.department === dept) && (!empId || x.employeeId === empId) && (!howQ || howOf(x) === howQ) && (!srcQ || x.sourceCounts[srcQ] > 0));
   // Late arrivals by the state of their late-coming request (over the same rows the cards count).
   const lateStates = { late: 0, approved: 0, pending: 0, rejected: 0, none: 0 };
   rows.forEach((x) => { if (x.lateDay && x.lateState) { lateStates.late += 1; lateStates[x.lateState] += 1; } });
@@ -1055,6 +1087,7 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         note: d.note || '',
         late: !!(d.late || d.lateExcused || d.status === 'Late'),
         lateState: (d.late || d.lateExcused || d.status === 'Late') ? (d.lateState || 'none') : '', lateExcused: !!d.lateExcused, latePermissionText: d.latePermissionText || '',
+        awlText: d.awlText || '', awlLop: d.awlLop || 0,
         // Notes on Present / Half day / On leave (a missing punch stays visible when a leave is applied).
         notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
         earlyLogout: !!d.earlyLogout, colour: d.colour || '',
@@ -1074,6 +1107,7 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
         punchRows: ps.length, // stored punch rows (what the KPI "People with punches" counts)
         imported: disp.imported,
         source: sourceOf(ps, facts.record.get(key), h),
+        ...withPunchSources(ps, h),
         location: (fin && fin.location) || (ps[0] && ps[0].location) || (h && h.workLocation) || '—',
         mtd,
       });
@@ -1117,6 +1151,8 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   if (req.query.status) rows = rows.filter((x) => shownStatus(x) === String(req.query.status));
   if (req.query.method) rows = rows.filter((x) => x.method === String(req.query.method));
   if (req.query.source) rows = rows.filter((x) => x.source === String(req.query.source));
+  const sourceTotals = sourceTotalsOf(rows.filter((x) => x.rawPunches.length)); // the Source buttons' counts (before they narrow the rows)
+  if (req.query.punchSource) rows = bySourceGroup(rows, String(req.query.punchSource));
   // Like the old report: only person-days with a check-in, unless the caller
   // asks for everyone (?all=1) or narrowed by a card / status (then every
   // matching person is listed, check-in or not).
@@ -1130,16 +1166,16 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   if (format === 'csv' || format === 'xlsx') {
     // Exactly the old "First Check-In & Last Check-Out Report" columns.
     const headers = ['Employee No', 'Employee Ref No', 'Employee Name', 'Department', 'Designation', 'Date', 'First Check In', 'Last Check Out',
-      'Work Location', 'Total Time Worked', 'Total Time In Break', 'Total Hours'];
+      'Work Location', 'Total Time Worked', 'Total Time In Break', 'Total Hours', 'Punches by source'];
     const data = rows.map((x) => [x.employeeNo, x.employeeRef, x.name, x.department || '', x.designation || '', x.dateLabel,
-      x.firstCheckIn || '', x.lastCheckOut || '', x.workLocation || '', x.totalTimeWorked || '', x.totalBreak || '', x.totalHours || '']);
+      x.firstCheckIn || '', x.lastCheckOut || '', x.workLocation || '', x.totalTimeWorked || '', x.totalBreak || '', x.totalHours || '', sourceCountsText(x.sourceCounts)]);
     return sendTabular(res, format, `first-check-in-last-check-out-${single ? from : `${from}_to_${to}`}`, headers, data, 'First In Last Out');
   }
 
   res.json({
     range: !single, date: to, from, to, weekday: weekdayOf(to), month, today: rep.today, latestDataDate: latest, headcount: note,
     lateAfter: dayKpi.clock(toMinutes(rep.cfg.graceTime)), // the Late note follows the configured grace time
-    totals, summary, days, rows, facets, everyone, withoutCheckIn,
+    totals, summary, days, rows, facets, everyone, withoutCheckIn, sourceTotals,
   });
 });
 
@@ -1233,6 +1269,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
       hours: mins != null ? Number((mins / 60).toFixed(1)) : null,
       method: ps.length ? (dayKpi.methodOfPunch(fin || ps[0]) || methodLabel(fin || ps[0])) : dayKpi.HOW.IMPORTED,
       source: sourceOf(ps, null, h),
+      ...withPunchSources(ps0, h),
       location: (fin && fin.location) || '—',
       // HRMS-24 §5 — how the first check-in was verified, and where it was.
       verification: fin ? (fin.verificationStatus || (fin.method === 'Biometric' ? 'Device' : 'Not verified')) : '—',
@@ -1257,7 +1294,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
           inLog: false, status: null, dayStatus: bucket === 'noRecord' ? 'No record' : d.status, bucket, bucketLabel: BUCKET_LABEL[bucket],
           note: d.note || '', late: false, checkIn: d.checkIn || null, checkOut: d.checkOut || null,
           notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
-          punches: 0, punchRows: 0, imported: false,
+          punches: 0, punchRows: 0, imported: false, rawPunches: [], sourceCounts: { web: 0, biometric: 0, pulse: 0, hr: 0 },
           checkInTimes: d.checkIn ? [d.checkIn] : [], checkOutTimes: d.checkOut ? [d.checkOut] : [], importedTimes: null,
           firstIn: '—', lastOut: '—', firstInClock: null, lastOutClock: null, workedSpan: null, hours: null,
           method: d.how || '—', methodOut: d.howOut || '', methodText: d.howText || '—', _day: bucket === 'halfDay' ? d : null,
@@ -1276,6 +1313,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
     .filter((x) => !req.query.dayStatus || x.dayStatus === String(req.query.dayStatus))
     .filter((x) => !req.query.method || x.method === String(req.query.method))
     .filter((x) => !req.query.source || x.source === String(req.query.source))
+    .filter((x) => !req.query.punchSource || !PSRC.GROUPS.includes(String(req.query.punchSource)) || (x.sourceCounts && x.sourceCounts[String(req.query.punchSource)] > 0))
     // Employee by employee, dates ascending — the old Bio-Metric Logs order.
     .sort((a, b) => String(a.employeeCode).localeCompare(String(b.employeeCode), undefined, { numeric: true }) || a.date.localeCompare(b.date));
 
@@ -1299,12 +1337,13 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   }
   if (format === 'csv' || format === 'xlsx') {
     // Exactly the old Bio-Metric Logs columns (every row filled in, for Excel).
-    const headers = ['Employee', 'Department', 'Designation', 'Attendance Date', 'Time Interval'];
-    const data = shown.map((x) => [x.employeeLabel, x.department || '', x.designation || '', x.dateLabel, x.timeInterval]);
+    const headers = ['Employee', 'Department', 'Designation', 'Attendance Date', 'Time Interval', 'Punches by source'];
+    const data = shown.map((x) => [x.employeeLabel, x.department || '', x.designation || '', x.dateLabel, x.timeInterval, sourceCountsText(x.sourceCounts)]);
     return sendTabular(res, format, `bio-metric-logs-${from}_to_${to}`, headers, data, 'Bio-Metric Logs');
   }
 
-  res.json({ from, to, today: rep.today, latestDataDate: latest, absentees: withAbsentees, days, rows: shown, facets });
+  const sourceTotals = sourceTotalsOf(base.filter((x) => x.inLog));
+  res.json({ from, to, today: rep.today, latestDataDate: latest, absentees: withAbsentees, days, rows: shown, facets, sourceTotals });
 });
 
 // ---- Past attendance import (old HRMS CSV exports) — utils/attendanceHistoryImport.js ----

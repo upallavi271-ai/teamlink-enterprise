@@ -37,7 +37,7 @@ export function SemanticCard({
       <h3 style={{ fontSize: 15, margin: '0 0 4px' }}>Match by meaning</h3>
       <div className="small-muted">
         Also counts skills written another way (ReactJS = React.js, accountant = accounts executive) and how close the
-        profile is to the job in meaning. Off = every Fit % stays exactly as it is.
+        profile is to the requirement in meaning. Off = every Fit % stays exactly as it is.
       </div>
       <div className="b8-fs-switch" role="group" aria-label="Match by meaning">
         <button type="button" className={!sem.on ? 'btn on' : 'btn'} disabled={!edit} aria-pressed={!sem.on} onClick={() => setSem({ on: false })}>Off</button>

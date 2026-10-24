@@ -45,6 +45,23 @@ module.exports = function mountClientRequests(router, { shapeFor }) {
   });
 
   // ---- the workspace (before /:id) ---------------------------------------------------------------------
+  // The three BDE reports (ATS Reports -> My business): /clients/my-reports/clients|requirements|followups[?format=csv]
+  router.get('/my-reports/:kind', async (req, res, next) => {
+    try {
+      const out = await biz.reportFor(req.user, req.params.kind);
+      if (out.status !== 200) return res.status(out.status).json(out.body);
+      if (String(req.query.format || '') === 'csv') {
+        if (!out.body.canExport) return res.status(403).json({ error: 'Downloading this data is not ticked for your role (Export assigned data).' });
+        const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+        const csv = [out.body.columns.map((c) => esc(c.label)).join(','), ...out.body.rows.map((r) => out.body.columns.map((c) => esc(r[c.key])).join(','))].join('\r\n');
+        await require('../utils/audit').logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Report exported', entity: 'Report', entityId: req.params.kind, toValue: `${out.body.rows.length} rows`, reason: out.body.title }); // eslint-disable-line global-require
+        res.set('Content-Type', 'text/csv; charset=utf-8');
+        res.set('Content-Disposition', `attachment; filename="${out.body.title.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.csv"`);
+        return res.send(csv);
+      }
+      return res.json(out.body);
+    } catch (e) { return next(e); }
+  });
   router.get('/my-business', async (req, res, next) => {
     try { return res.json(await biz.workspaceFor(req.user)); } catch (e) { return next(e); }
   });
@@ -107,6 +124,31 @@ module.exports = function mountClientRequests(router, { shapeFor }) {
       return res.status(out.status).json(out.body);
     } catch (e) { return next(e); }
   });
+  // DIRECT change of owner BDE (user rule 2026-10-13): the client's BDE for their own clients, the BDE TL for any, Admin for any.
+  router.post('/:id/change-owner', async (req, res, next) => {
+    try {
+      const rights = await rightsOf(req);
+      const admin = !!require('../utils/scope').scopeOf(req.user).adminGlobal; // eslint-disable-line global-require
+      if (!rights.changeOwner && !admin) return deny(res, 'You cannot change the owner of this client.');
+      const r = CR.reasonOf(req.body && req.body.reason);
+      if (r.error) return res.status(400).json({ error: r.error });
+      const newOwner = String((req.body && req.body.newOwner) || '').trim();
+      if (!newOwner) return res.status(400).json({ error: 'Pick the BDE who should get this client.' });
+      if (newOwner.toLowerCase() === String(req.client.bdeOwner || '').trim().toLowerCase()) return res.status(400).json({ error: `${newOwner} already looks after this client.` });
+      const { bdeDirectory, bdeDepartmentProblem } = require('../utils/bdeSeats'); // eslint-disable-line global-require
+      const dir = await bdeDirectory();
+      if (!dir.infoFor(newOwner)) return res.status(400).json({ error: 'Pick a BDE from the list.' });
+      const problem = bdeDepartmentProblem(dir, newOwner, req.client.ownerDepartment, 'The new owner');
+      if (problem) return res.status(400).json({ error: problem });
+      const prev = req.client.bdeOwner;
+      const updated = await prisma.client.update({ where: { id: req.client.id }, data: { bdeOwner: newOwner } });
+      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Client owner changed', entity: 'Client', entityId: req.client.id, field: 'bdeOwner', fieldLabel: 'Owner BDE', fromValue: prev || '—', toValue: newOwner, reason: r.reason });
+      const people = await prisma.user.findMany({ where: { status: 'Active', atsRole: 'BDE' }, select: { id: true, name: true } });
+      const names = [newOwner, prev].filter(Boolean).map((x) => x.toLowerCase());
+      await require('../utils/notify').notifyUsers(people.filter((p) => names.includes(String(p.name || '').toLowerCase())).map((p) => p.id), { title: `Client owner changed — ${req.client.name}`, message: `${req.client.name} now belongs to ${newOwner}${prev ? ` (was ${prev})` : ''}.`, exceptUserId: req.user.id }).catch(() => null); // eslint-disable-line global-require
+      return res.json({ ok: true, message: `${req.client.name} now belongs to ${newOwner}.`, client: await shapeFor({ ...req, client: updated }, updated) });
+    } catch (e) { return next(e); }
+  });
   router.post('/:id/request-merge', async (req, res, next) => {
     try {
       const rights = await rightsOf(req);
@@ -126,14 +168,16 @@ module.exports = function mountClientRequests(router, { shapeFor }) {
       const note = String((req.body && (req.body.note ?? req.body.reason)) || '').trim();
       const r = CR.reasonOf(note || 'Please check and approve this client', 'note');
       if (r.error) return res.status(400).json({ error: r.error });
-      const out = await CR.createRequest({ user: req.user, kind: 'approval', client: req.client, reason: r.reason, ask: { field: 'approval', fieldLabel: 'Approval', fromValue: 'Draft', toValue: 'Submitted for approval' } });
+      const out = await CR.createRequest({ user: req.user, kind: 'approval', client: req.client, reason: r.reason, ask: { field: 'approval', fieldLabel: 'Approval', fromValue: 'Not submitted', toValue: 'Submitted for approval' } });
       return res.status(out.status).json(out.body);
     } catch (e) { return next(e); }
   });
 
   // ---- business activities on one client -----------------------------------------------------------------
   router.get('/:id/business', async (req, res, next) => {
-    try { return res.json(await biz.clientBusiness(req.user, req.client, await rightsOf(req))); } catch (e) { return next(e); }
+    try {
+      if (require('../utils/clientRedact').clientLevelFor(req.user) !== 'full') return deny(res, 'Business activities are for the client desk (BDE, Manager, Admin).'); // eslint-disable-line global-require
+      return res.json(await biz.clientBusiness(req.user, req.client, await rightsOf(req))); } catch (e) { return next(e); }
   });
   router.post('/:id/followups', async (req, res, next) => {
     try {

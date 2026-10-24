@@ -21,3 +21,5 @@
 .vb-src{display:inline-block;margin-top:3px;font-size:11px;font-weight:600;color:var(--blue);background:var(--blue-tint);border-radius:999px;padding:1px 8px}
 .vb-table td{font-size:13px}
 .vb-badge{display:inline-block;min-width:20px;padding:0 6px;border-radius:999px;background:var(--amber);color:#fff;font-weight:700;font-size:12px;text-align:center}
+/* the vendor filter is a searchable Combo now: keep it one compact box on the filter line */
+.vb-bar .combo{flex:0 1 220px;width:auto;min-width:160px}

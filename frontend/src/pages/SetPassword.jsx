@@ -19,6 +19,8 @@ export default function SetPassword() {
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
+  // "This password is already used by your other login on this email": a hint, asked once; pressing the button again uses it anyway.
+  const [sameHint, setSameHint] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -38,9 +40,13 @@ export default function SetPassword() {
     if (password !== confirm) return setError('The two passwords do not match.');
     setSaving(true);
     try {
+      if (state.hasOtherLogins && !sameHint) {
+        const chk = await api.post(`/public/set-password/${token}/check`, { password }).catch(() => ({ data: {} }));
+        if (chk.data && chk.data.sameAsOther) { setSameHint(true); setSaving(false); return; }
+      }
       await api.post(`/public/set-password/${token}`, { password });
       setDone(true);
-      setTimeout(() => navigate('/login'), 2500);
+      setTimeout(() => navigate('/login'), 4000);
     } catch (err) {
       setError(err.response?.data?.error || 'That did not work. Ask HR to send a new link.');
     } finally {
@@ -66,7 +72,9 @@ export default function SetPassword() {
           </>
         ) : done ? (
           <>
-            <div className="notice">Your password is set. Taking you to the sign-in screen…</div>
+            <div className="notice">
+              Your password is set. Sign in with your email and this password. Taking you to the sign-in screen…
+            </div>
             <Link className="btn btn-primary" style={{ marginTop: 14 }} to="/login">Sign in now</Link>
           </>
         ) : (
@@ -75,16 +83,28 @@ export default function SetPassword() {
               Hello {state.name}. This link works once and expires on{' '}
               {state.expiresAt ? new Date(state.expiresAt).toLocaleString('en-GB') : 'its expiry date'}.
             </div>
-            <div className="field"><label>Sign-in email</label><input value={state.email || ''} disabled /></div>
-            <div className="field"><label>New password *</label>
+            {state.role && (
+              <div className="field"><label>This password is for</label>
+                <input value={`${state.role} login`} disabled style={{ fontWeight: 700 }} />
+                <span className="small-muted">It opens this login only. Your other logins keep their own passwords.</span>
+              </div>
+            )}
+            <div className="field"><label>Email</label><input value={state.email || ''} disabled /></div>
+            <div className="field"><label>New password</label>
               <input type="password" required minLength={8} autoComplete="new-password"
-                value={password} onChange={(e) => setPassword(e.target.value)} /></div>
-            <div className="field"><label>Confirm password *</label>
+                value={password} onChange={(e) => { setPassword(e.target.value); setSameHint(false); }} /></div>
+            <div className="field"><label>Confirm password</label>
               <input type="password" required minLength={8} autoComplete="new-password"
                 value={confirm} onChange={(e) => setConfirm(e.target.value)} /></div>
             {error && <div className="error-text">{error}</div>}
+            {sameHint && (
+              <div className="notice amber" style={{ display: 'block', marginTop: 8 }} data-testid="same-password-hint">
+                This password is already used by your other login on this email. Choose a different one so each login can be opened
+                separately. If you keep it, TeamLink will ask which login to open each time you sign in.
+              </div>
+            )}
             <button className="btn btn-primary" type="submit" disabled={saving} style={{ marginTop: 10, width: '100%' }}>
-              {saving ? 'Saving…' : 'Set password and continue'}
+              {saving ? 'Saving…' : (sameHint ? 'Use this password anyway' : 'Set password and continue')}
             </button>
             <div className="small-muted" style={{ marginTop: 12 }}>
               After signing in, open My Profile, fill in the rest of your details and submit them

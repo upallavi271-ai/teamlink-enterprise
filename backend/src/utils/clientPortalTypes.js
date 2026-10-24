@@ -12,6 +12,9 @@
 //   INTERVIEW  Ask for an interview with a candidate (the decision route,
 //              REQUEST_INTERVIEW)
 //   FEEDBACK   Give feedback after an interview (POST /ats/interviews/:id/client-feedback)
+//   OFFERS     Release the offer letter and the joining letter, confirm the candidate's acceptance and
+//              the joining (2026-10-13). OFF unless a login is given it: an older login with no ticks
+//              does NOT get it (routes/portal.js offersTick). Needs VIEW.
 //   AGREEMENT  See our agreement (and sign it by its secure link)
 //   INVOICES   See invoices and payments
 //
@@ -30,16 +33,17 @@
 // Only ever NARROWS: this runs after the role matrix has said yes.
 // ---------------------------------------------------------------------------
 const CAPS = [
-  { key: 'VIEW', group: 'Look', label: 'See our jobs and candidates', hint: 'View only. Also shows interviews, who joined and company reports.' },
+  { key: 'VIEW', group: 'Look', label: 'See our requirements and candidates', hint: 'View only. Also shows interviews, who joined and company reports.' },
   { key: 'AGREEMENT', group: 'Look', label: 'See our agreement', hint: 'Open the agreement with TeamLink and sign it when it is waiting.' },
   { key: 'INVOICES', group: 'Look', label: 'See invoices and payments', hint: 'Bills from TeamLink, due dates and whether they are paid.' },
-  { key: 'REQUEST', group: 'Do', label: 'Ask for a new job', hint: 'Send TeamLink a request for a new hire.' },
+  { key: 'REQUEST', group: 'Do', label: 'Ask for a new requirement', hint: 'Send TeamLink a request for a new hire.' },
   { key: 'DECIDE', group: 'Do', label: 'Shortlist, hold or reject candidates', hint: 'Give a yes, a wait or a no on the people we send.' },
   { key: 'INTERVIEW', group: 'Do', label: 'Ask for an interview', hint: 'Tell us you want to meet a candidate and suggest days and times.' },
   { key: 'FEEDBACK', group: 'Do', label: 'Give feedback after an interview', hint: 'Tell us how the interview went: selected, hold or rejected.' },
+  { key: 'OFFERS', group: 'Do', label: 'Send offer and joining letters', hint: 'Upload your offer letter and joining letter for a selected candidate, and confirm when they accept or join.' },
 ];
 const CAP_KEYS = CAPS.map((c) => c.key);
-const NEEDS_VIEW = ['DECIDE', 'INTERVIEW', 'FEEDBACK'];
+const NEEDS_VIEW = ['DECIDE', 'INTERVIEW', 'FEEDBACK', 'OFFERS'];
 
 // The three old types, now only quick starting points.
 const PORTAL_TYPES = ['REVIEWER', 'VIEWER', 'BILLING'];
@@ -49,7 +53,7 @@ const PRESET_CAPS = {
   BILLING: ['INVOICES'],
 };
 const PORTAL_TYPE_LABELS = {
-  REVIEWER: 'Reviewer — shortlist / reject / feedback, ask for interviews, ask for jobs',
+  REVIEWER: 'Reviewer — shortlist / reject / feedback, ask for interviews, ask for requirements',
   VIEWER: 'Viewer — view only',
   BILLING: 'Billing — invoices only',
 };
@@ -96,8 +100,8 @@ function hasCap(user, key) {
 
 // Short words for the list / mail: "See jobs · Ask for a job · …"
 const CHIP_WORDS = {
-  VIEW: 'See jobs and candidates', AGREEMENT: 'See agreement', INVOICES: 'See invoices',
-  REQUEST: 'Ask for a job', DECIDE: 'Shortlist / reject', INTERVIEW: 'Ask for interviews', FEEDBACK: 'Give feedback',
+  VIEW: 'See requirements and candidates', AGREEMENT: 'See agreement', INVOICES: 'See invoices',
+  REQUEST: 'Ask for a requirement', DECIDE: 'Shortlist / reject', INTERVIEW: 'Ask for interviews', FEEDBACK: 'Give feedback', OFFERS: 'Send offer / joining letters',
 };
 const chipsOf = (caps) => normalise(caps).map((k) => CHIP_WORDS[k]);
 const TYPE_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', CUSTOM: 'Custom' };

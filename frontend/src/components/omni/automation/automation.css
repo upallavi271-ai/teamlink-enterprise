@@ -1,0 +1,23 @@
+/* Omni-Channel Automations / Bot Builder / Bot Data: the few extras the prototype stylesheet (gs.css) does not have. Scoped under .gsx. */
+.gsx button.toggle{border:0;cursor:pointer;display:block;flex:none}
+.gsx button.toggle[disabled]{opacity:.55;cursor:not-allowed}
+.gsx .au-sub{font-size:10px;color:var(--muted);line-height:1.5}
+.gsx .au-line{display:flex;gap:10px;flex-wrap:wrap;align-items:center;font-size:10px;color:var(--muted);margin-top:10px}
+.gsx .au-line b{color:var(--ink)}
+.gsx .au-box{border:1px dashed var(--line);border-radius:11px;padding:11px 13px;background:var(--surface-2);font-size:10.5px;line-height:1.6;margin:10px 0}
+.gsx .au-box b{color:var(--ink)}
+.gsx .au-err{background:#fdeced;border:1px solid #f4c9cc;color:#9b1c1c;border-radius:10px;padding:8px 11px;font-size:11px;margin-top:10px}
+.gsx .au-ok{background:#e8f7ef;border:1px solid #bfe3d0;color:#087844;border-radius:10px;padding:8px 11px;font-size:11px;margin-top:10px}
+.gsx .au-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.gsx .au-check{display:flex;gap:8px;align-items:center;font-size:11px;margin:6px 0;cursor:pointer}
+.gsx .au-picklist{border:1px solid var(--line);border-radius:10px;max-height:240px;overflow-y:auto;margin-top:8px}
+.gsx .au-picklist label{display:flex;gap:9px;align-items:center;padding:8px 11px;border-bottom:1px solid #eef2ef;font-size:11px;cursor:pointer;overflow-wrap:anywhere}
+.gsx .au-picklist label:last-child{border-bottom:0}
+.gsx .au-card-gap{margin-bottom:14px}
+.gsx .au-name{font-weight:800;overflow-wrap:anywhere;white-space:normal}
+.gsx .au-wrap{white-space:normal;overflow-wrap:anywhere}
+.gsx .au-flowtabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:16px;overflow-x:auto}
+.gsx .au-textarea{width:100%;min-height:90px;border:1px solid var(--line);border-radius:9px;padding:9px 11px;font:inherit;font-size:11px;resize:vertical}
+.gsx .au-two{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.gsx .au-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+@media (max-width:700px){.gsx .au-two{grid-template-columns:1fr}}

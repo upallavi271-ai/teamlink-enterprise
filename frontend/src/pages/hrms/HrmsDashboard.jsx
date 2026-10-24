@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import DashboardExport from '../../components/dashboard/DashboardExport.jsx';
+import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13)
 import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, SectionLabel, ScopeNote, TwoCol, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, can } from '../../permissions';
 import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
@@ -168,6 +169,14 @@ function HrDashboard() {
         Active <b>{eo.active}</b> + Notice period <b>{eo.servingNotice}</b> + Exit process <b>{eo.exitProcess}</b> + Left <b>{eo.left}</b> (Relieved {eo.relieved} · Exited {eo.exited}){eo.other ? <> + Other <b>{eo.other}</b></> : null} = Total employees <b>{eo.total}</b>.
         {' '}The system Super Admin account is not counted as an employee.
       </div>
+      {/* EXIT APPROVALS (HRMS spec item 6): for the Super Admin and HR desk only (the server sends it only to them). */}
+      {data.exitApprovals && (
+        <div className="hd-eq">
+          {data.exitApprovals.waiting > 0 ? <>Exit approvals waiting: <b>{data.exitApprovals.waiting}</b></> : <>No exit is waiting for approval</>}
+          {' · '}{data.exitApprovals.exitsThisMonth > 0 ? <>Left in {data.exitApprovals.monthLabel}: <b>{data.exitApprovals.exitsThisMonth}</b></> : <>Nobody has left in {data.exitApprovals.monthLabel} so far</>}.
+          {' '}<Link to="/employee-services?tab=resignation&view=exits">Open Exit approvals</Link>
+        </div>
+      )}
       <div className="hd-subhead">{`For ${p.name}`}</div>
       <Tiles section="emp" drill={drill} onPick={pick} cells={[
         { id: 'new', tile: 'newJoiners', value: eo.newJoiners, label: inP('New Joiners') },
@@ -256,7 +265,7 @@ function HrDashboard() {
       <div className="hd-eq hd-lv-sentence" data-testid="leave-sentence">
         <b>Leave requests {lo.total}</b> = Approved <b>{lo.approved}</b>
         {lr.requests > 0 && landWords.length > 0 ? <> → {landWords.join(' + ')}</> : null}
-        {lo.pending || lo.rejected || lo.cancelled || lo.cancellationRequests ? <> + Pending <b>{lo.pending}</b> + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null}</> : null}.
+        {lo.pending || lo.rejected || lo.cancelled || lo.cancellationRequests ? <> + Pending <b>{lo.pending}</b>{lo.pendingOther ? <> + Old or left pending <b>{lo.pendingOther}</b></> : null} + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null}</> : null}.
         {' '}This overview counts <b>requests</b>; the attendance tiles count <b>people</b> on {ao.asOf}.
         {lo.approvedPeople != null && lo.approvedPeople !== lo.approved ? <> The {lo.approved} approved requests are from <b>{lo.approvedPeople}</b> {lo.approvedPeople === 1 ? 'person' : 'people'} (a person with two requests counts twice here).</> : null}
         {lr.peopleWithMore ? <> {lr.peopleWithMore} {lr.peopleWithMore === 1 ? 'person has' : 'people have'} two approved requests on {ao.asOf}.</> : null}
@@ -275,7 +284,7 @@ function HrDashboard() {
         { id: 'upcoming', tile: 'leaveUpcoming', value: lo.upcoming, label: 'Upcoming Leaves (from today)', sub: 'Approved, starting after today. Not part of the total.' },
       ]} />
       <div className="hd-eq">
-        Pending <b>{lo.pending}</b> + Approved <b>{lo.approved}</b> + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null} = Leave Requests <b>{lo.total}</b>.
+        Pending <b>{lo.pending}</b>{lo.pendingOther ? <> + Old or left pending <b>{lo.pendingOther}</b></> : null} + Approved <b>{lo.approved}</b> + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null} = Leave Requests <b>{lo.total}</b>.
         {/* The split of the approved requests is the sentence above the tiles and the chips under Approved. */}
       </div>
       {drill && drill.section === 'leave' && (
@@ -297,7 +306,7 @@ function HrDashboard() {
         <PanelPad>
           <h3 style={{ marginBottom: 12, fontSize: 14 }}>Pending Tasks &amp; Approvals (now)</h3>
           <Tiles section="tasks" drill={drill} onPick={pick} cells={[
-            { id: 'leave', tile: 'taskLeave', value: pt.leaveApprovals, label: 'Leave Approvals', sub: `Every pending request, any dates${pt.leaveApprovalsFromLeft ? `. ${pt.leaveApprovalsFromLeft} of these are from people who have left` : ''}` },
+            { id: 'leave', tile: 'taskLeave', value: pt.leaveApprovals, label: 'Leave Approvals', sub: `Really waiting, any dates${(pt.leaveApprovalsFromLeft || pt.leaveOldPending || pt.leaveDuplicatePending) ? `. Not counted: ${pt.leaveApprovalsFromLeft || 0} from people who left, ${pt.leaveOldPending || 0} old, ${pt.leaveDuplicatePending || 0} repeated (Leave > Sync with Pulse)` : ''}` },
             { id: 'reg', tile: 'taskRegularization', value: pt.attendanceRegularization, label: 'Attendance Regularization' },
             ...(pt.lateComing != null ? [{ id: 'latec', tile: 'taskLateComing', value: pt.lateComing, label: 'Late coming', sub: 'Waiting for approval' }] : []),
             { id: 'assets', tile: 'taskAssets', value: pt.assetsAssigned, label: 'Assets Assigned' },
@@ -462,6 +471,7 @@ export default function HrmsDashboard() {
   return (
     <div>
       <div className="page-head"><div><h1>HRMS Dashboard</h1><div className="page-sub">Employee &amp; Workforce Management</div></div></div>
+      <NewItems />
 
       {/* FIRST LOGIN. A new employee used to land here with nothing telling
           them a profile was waiting to be filled in. The banner says so, and

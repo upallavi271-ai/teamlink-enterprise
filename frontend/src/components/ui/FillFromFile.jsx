@@ -33,7 +33,7 @@ const OK_EXT = /\.(pdf|docx|doc|txt|jpe?g|png)$/i;
 const LABELS = {
   job: {
     uploadTitle: 'Upload the requirement', uploadHint: 'The client sent a JD, an e-mail or a photo? We read it and fill the form.',
-    typeTitle: 'Type it myself', typeHint: 'Fill the job form by hand, as before.',
+    typeTitle: 'Type it myself', typeHint: 'Fill the requirement form by hand, as before.',
     what: 'the requirement', pasteHint: 'Paste the e-mail or message the client sent',
   },
   candidate: {

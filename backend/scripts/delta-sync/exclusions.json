@@ -1,0 +1,95 @@
+{
+  "_readme": "WHAT NEVER TRAVELS from localhost to the live site. You may edit this file. Every report prints it. Anything not listed here travels (new rows and changed rows only).",
+
+  "excludedTables": {
+    "_prisma_migrations": "database version bookkeeping (prisma migrate deploy owns it)",
+    "Integration": "integration credentials and tokens (WhatsApp, Meta, SMTP, SMS, Naukri, Shine, AI keys...). The live site's own connections must never be overwritten",
+    "IntegrationEvent": "integration activity log of this machine",
+    "PortalCredential": "job portal login passwords (encrypted)",
+    "PortalPosting": "job posting worker state of this machine",
+    "PostingQueue": "job posting worker queue",
+    "PostingLog": "job posting worker log",
+    "ScheduledMessage": "outbound message queue (would send messages twice)",
+    "SyncLog": "sync/heartbeat log of this machine",
+    "PayrollSyncLog": "sync log of this machine",
+    "SemanticVector": "search cache (rebuilt automatically)",
+    "Notification": "bell notifications belong to the machine that raised them",
+    "EmailVerification": "one-time email codes",
+    "VendorSession": "login sessions",
+    "PartnerSession": "login sessions",
+    "VendorLoginToken": "login tokens",
+    "BiometricDevice": "device connection settings of this machine",
+    "BiometricDeviceUser": "device connection settings of this machine",
+    "BiometricPunchLog": "raw punch log fed by the device on the live site",
+    "Conversation": "live WhatsApp/chat conversations belong to the live site",
+    "ConversationMessage": "live WhatsApp/chat messages belong to the live site",
+    "CandidateMessage": "messages already sent from this machine (test sends); live messages belong to the live site"
+  },
+
+  "excludedNamePatterns": [
+    { "pattern": "(Session|Queue|Cache|Heartbeat|Token)$", "reason": "name looks like session / queue / cache / heartbeat" },
+    { "pattern": "^Wa[A-Z]", "reason": "WhatsApp account data (templates, opt-ins, logs, bulk sessions) belongs to the live WhatsApp connection" },
+    { "pattern": "Log$", "reason": "name looks like a log" }
+  ],
+
+  "alwaysPushTables": {
+    "AuditLog": "the audit trail documents the work (insert-only)",
+    "AssetAuditLog": "the audit trail documents the work (insert-only)",
+    "CandidateMergeLog": "records which duplicate candidates were merged",
+    "JobMergeLog": "records which duplicate jobs were merged"
+  },
+
+  "rowFilters": {
+    "AuditLog": {
+      "excludeWhere": { "column": "action", "regex": "^(Signed in|Signed out|Sign-in|Sign in|Login|Logged|Logout|Session|Token|Password reset link|Failed login)", "reason": "login/session noise" }
+    }
+  },
+
+  "ignoreColumns": {
+    "User": ["lastLoginAt", "failedLoginCount", "lockedUntil"],
+    "Employee": ["verifyOtpHash", "verifyOtpExpiresAt", "verifyOtpAttempts"],
+    "Client": ["esignToken", "agreementOtpHash", "agreementOtpExpiresAt", "agreementOtpAttempts"],
+    "OfferVersion": ["otpHash", "otpExpiresAt", "otpAttempts", "otpSends", "otpSentTo", "otpVerifiedAt"]
+  },
+  "ignoreColumnsNote": "Login counters / one-time codes are never compared and never written. New rows get the column default on the live site.",
+
+  "softColumns": ["updatedAt", "modifiedAt", "lastModifiedAt"],
+  "softColumnsNote": "Time-stamp columns never cause a conflict. They are written only when the live site's value is still the old one. A row that differs ONLY in these columns is not a change.",
+
+  "testRowPattern": "ZZTEST|example[.]test",
+  "testRowNote": "Any new/changed row whose text contains one of these is test data and never travels (nor rows that point to it).",
+
+  "appSetting": {
+    "allowPrefixes": [
+      "leave.meta.",
+      "attendance.load.",
+      "ats.openList.",
+      "employee_field_groups"
+    ],
+    "allowExact": [
+      "ats.jobLocations",
+      "stationery.defaultKit",
+      "job-templates"
+    ],
+    "reasons": {
+      "leave.meta.": "extra leave-day notes (data typed by HR)",
+      "attendance.load.": "attendance load records (data typed by HR)",
+      "ats.openList.": "type-in dropdown lists (skills, industries...) that users extend",
+      "employee_field_groups": "custom employee profile field groups (HR-made)",
+      "ats.jobLocations": "job location list (typed in)",
+      "stationery.defaultKit": "default joining kit (HR choice); NOT its .lastRun marker",
+      "job-templates": "job description templates (text written by the team)"
+    },
+    "note": "Every other AppSetting key is EXCLUDED by default (counters like autoNumber:*, WhatsApp wa.* / comm.* / msg.optout.* / webhook.seen.*, posting state, payroll snapshots, reminders, agreement links, one-time idem.*). The report lists excluded keys that differ so you can add one to the allow lists above."
+  },
+
+  "fileReferences": [
+    { "table": "CandidateResume", "columns": ["file", "docxFile"] },
+    { "table": "EmployeeDocument", "columns": ["file"] },
+    { "table": "CandidateDocument", "columns": ["file"] },
+    { "table": "ClientDocument", "columns": ["fileStored"] },
+    { "table": "AssetDocument", "columns": ["file"] },
+    { "table": "SourceDocument", "columns": ["file"] },
+    { "table": "CourseMaterial", "columns": ["storedPath"] }
+  ]
+}

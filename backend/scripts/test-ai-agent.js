@@ -19,7 +19,7 @@ const fs = require('fs');
 const path = require('path');
 
 const BACK = path.resolve(__dirname, '..');
-const SANDBOX_DB = path.join(BACK, 'prisma', 'sandbox.db');
+const SANDBOX_DB = path.join(BACK, 'prisma', (process.env.TL_TEST_DB || 'sandbox.db'));
 const API_ORIGIN = String(process.env.TL_API || 'http://localhost:4011').replace(/\/+$/, '').replace(/\/api$/, '');
 if (/:4010$/.test(API_ORIGIN)) { console.error('Refusing: that is the REAL server (4010). Use the sandbox (4011).'); process.exit(2); }
 if (!fs.existsSync(SANDBOX_DB)) { console.error(`Sandbox database missing: ${SANDBOX_DB}. Start it: node scripts/sandbox.js --detach --frontend --keep`); process.exit(2); }
@@ -293,11 +293,11 @@ const PHRASES = {
   shortlist_candidate: ['Shortlist Priya', 'Please shortlist candidate Anil for the Java job', 'Priya ni shortlist cheyyi', 'Add Kiran to the shortlist', 'Mark Meena as shortlisted'],
   schedule_interview: ["Schedule Priya's interview tomorrow at 3pm", 'Book an interview for Anil on Friday at 11', 'Arrange an interview with Kiran next Monday at 10am', 'Priya ki repu 4 gantalaku interview pettu', 'Fix Meena interview on 20 Oct at 2:30 pm'],
   reschedule_interview: ["Reschedule Priya's interview to Friday 4pm", "Postpone Anil's interview to tomorrow", "Move Kiran's interview to next Monday at 11am", 'Prepone Meena interview to today 3pm', 'Priya interview ni repu 5 gantalaku marchu'],
-  assign_recruiter: ['Assign Priya to the Java Developer job', 'Give the Java Developer opening to Anil', 'Allocate Meena as recruiter for the QA job', 'Put Kiran on the Sales Manager requirement', 'Java Developer job ni Priya ki assign cheyyi'],
+  assign_recruiter: ['Assign Priya to the Java Developer requirement', 'Give the Java Developer opening to Anil', 'Allocate Meena as recruiter for the QA job', 'Put Kiran on the Sales Manager requirement', 'Java Developer job ni Priya ki assign cheyyi'],
   create_client: ['Create a client Sunrise Pharma', 'Add new customer Zenith Hospitals', 'Register client Greenfield Schools', 'Onboard client Bluewave Foods', 'Kotta client Sunrise Pharma create cheyyi'],
   update_client: ['Update client Acme contact phone to 9876543210', 'Edit client Sunrise Pharma email to hr@sunrise.in', 'Change the location of client Orbit Tech to Pune', 'Correct Acme client industry to Manufacturing', 'Modify client Zenith details'],
-  create_requirement: ['Create a requirement for Java Developer at Acme', 'Add a new job Sales Manager for Sunrise Pharma', 'Raise a requirement QA Engineer for Orbit Tech 3 openings', 'Open a vacancy for Plant Manager at Acme', 'Acme ki Java Developer requirement create cheyyi'],
-  update_requirement: ['Update the Java Developer requirement openings to 5', 'Change location of the Sales Manager job to Pune', 'Edit requirement REQ-0012 priority to High', 'Set openings to 3 on the QA Engineer job', 'Java Developer requirement openings 4 ki marchu'],
+  create_requirement: ['Create a requirement for Java Developer at Acme', 'Add a new requirement Sales Manager for Sunrise Pharma', 'Raise a requirement QA Engineer for Orbit Tech 3 openings', 'Open a vacancy for Plant Manager at Acme', 'Acme ki Java Developer requirement create cheyyi'],
+  update_requirement: ['Update the Java Developer requirement openings to 5', 'Change location of the Sales Manager requirement to Pune', 'Edit requirement REQ-0012 priority to High', 'Set openings to 3 on the QA Engineer job', 'Java Developer requirement openings 4 ki marchu'],
   create_candidate: ['Add candidate Rahul Sharma phone 9876543210 email rahul@example.com', 'Create a new candidate Priya skills Java and SQL', 'Register candidate Anil Kumar mobile 9123456780', 'New applicant Kiran Reddy 9000011111 kiran@mail.com', 'Enter a new candidate profile for Suresh'],
   update_candidate: ['Update candidate Rahul phone to 9876543210', "Change candidate Priya's email to priya@mail.com", 'Edit candidate Anil location to Pune', 'Correct the mobile number of candidate Meena to 9123456780', 'Rahul candidate phone number marchu 9876543210'],
   send_candidate_communication: ['Send Rahul a WhatsApp about the interview', 'Email Priya the interview details', 'Send an SMS to Anil about his offer', 'WhatsApp Kiran to confirm availability', 'Rahul ki whatsapp pampu interview gurinchi'],
@@ -560,7 +560,14 @@ async function testTools() {
   r = await call(P.SA.user, 'POST', '/agent/do', { message: `zztest.aia.new.${RUN}@zz-sandbox.in`, frame: r.frame }).then((x) => x.body);
   check('create_candidate: then asks for a skill', r.kind === 'clarify' && /skill/i.test(r.message), JSON.stringify(r).slice(0, 250));
   r = await call(P.SA.user, 'POST', '/agent/do', { message: 'Java, SQL', frame: r.frame }).then((x) => x.body);
-  check('create_candidate: Confirm card with all details', r.kind === 'confirm' && r.card.rows.some((x) => x.label === 'Skills' && /Java/.test(x.value)), JSON.stringify(r).slice(0, 300));
+  // The app asks for current + expected salary on every new candidate (2026-10-10): the agent asks for both, never guesses.
+  check('create_candidate: then asks for the current salary', r.kind === 'clarify' && /current salary/i.test(r.message), JSON.stringify(r).slice(0, 250));
+  r = await call(P.SA.user, 'POST', '/agent/do', { message: '4.5 LPA', frame: r.frame }).then((x) => x.body);
+  check('create_candidate: then asks for the expected salary', r.kind === 'clarify' && /expect/i.test(r.message), JSON.stringify(r).slice(0, 250));
+  r = await call(P.SA.user, 'POST', '/agent/do', { message: 'six', frame: r.frame }).then((x) => x.body);
+  check('create_candidate: an unclear salary is asked again in plain words (nothing is written)', r.kind === 'clarify' && /expected salary/i.test(r.message) && !(await prisma.candidate.findFirst({ where: { name: { contains: 'Zzaicandnew' } } })), JSON.stringify(r).slice(0, 250));
+  r = await call(P.SA.user, 'POST', '/agent/do', { message: '6 LPA', frame: r.frame }).then((x) => x.body);
+  check('create_candidate: Confirm card with all details', r.kind === 'confirm' && r.card.rows.some((x) => x.label === 'Skills' && /Java/.test(x.value)) && r.card.rows.some((x) => x.label === 'Current salary') && r.card.rows.some((x) => x.label === 'Expected salary'), JSON.stringify(r).slice(0, 300));
   b = bodyOf(await confirmIt(P.SA.user, r.card.pendingId));
   check('create_candidate: executed and verified', b.kind === 'done' && b.verified === true, JSON.stringify(b).slice(0, 300));
   const newCand = await prisma.candidate.findFirst({ where: { name: { contains: 'Zzaicandnew' } } });
@@ -702,7 +709,7 @@ async function testAsk() {
     'Move Zzaicandalpha to Interview', 'Reject Zzaicandbeta', 'Create a client Zzaiasktest', 'Delete the Zzaijob Developer job', 'Apply casual leave tomorrow', 'Mark Zzaiemp present today', 'Announce that the office is closed',
     'Assign laptop AST-0001 to Ravi', 'Cancel invoice 1827', 'Record a payment of 500 on invoice 1827', 'Add an expense of 1500 for cab fare', 'Schedule Zzaicandalpha interview tomorrow at 3pm', 'Shortlist Zzaicandbeta',
     'Send Zzaicandbeta a WhatsApp about the interview', 'Update candidate Zzaicandalpha phone to 9876543210', 'Create an invoice for Zzaiclient of 1000', 'Add employee Test Person email t@x.in department Medical',
-    'Zzaicandalpha ni interview ki move cheyyi', 'Rahul ki repu interview pettu', 'Give Ravi an incentive of 5000', 'Update employee Suresh phone to 9876543210', 'Assign Priya to the Java Developer job', 'Create a requirement for Java Developer at Acme',
+    'Zzaicandalpha ni interview ki move cheyyi', 'Rahul ki repu interview pettu', 'Give Ravi an incentive of 5000', 'Update employee Suresh phone to 9876543210', 'Assign Priya to the Java Developer requirement', 'Create a requirement for Java Developer at Acme',
   ];
   const tables = {
     client: () => prisma.client.count(), candidate: () => prisma.candidate.count(), requirement: () => prisma.requirement.count(), application: () => prisma.application.count(),
@@ -730,7 +737,7 @@ async function testAsk() {
   r = await ask(P.SA.user, 'How much is outstanding?');
   check('invoices outstanding with its source', r.handled && /Invoices and Payments/.test(r.source) && r.numbers.length >= 3, JSON.stringify(r).slice(0, 300));
   r = await ask(P.SA.user, 'How many jobs are open?');
-  check('requirements status with its source', r.handled && /Jobs/.test(r.source), JSON.stringify(r).slice(0, 300));
+  check('requirements status with its source', r.handled && /Requirements/.test(r.source), JSON.stringify(r).slice(0, 300));
   r = await ask(P.SA.user, 'What should I do first?');
   check('recommended actions', r.handled && /do|nothing/i.test(r.answer), JSON.stringify(r).slice(0, 300));
   r = await ask(P.SA.user, 'Compare absent days this week vs last week');

@@ -1,16 +1,18 @@
 const express = require('express');
 const prisma = require('../db');
+const joinDayShared = require('../utils/joinDayShared');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
   // atsScopeOf: a Manager / Asst Manager is held to their departments in ATS
   // (per-role spec 2026-10-03), so `global` here is Super Admin / Admin only.
-  clientWhere, requirementWhere, applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE, clientViewRole, teamRequirementWhere, isBdeTl,
+  clientWhere, clientPickerWhere, requirementWhere, applicationWhere, atsScopeOf: scopeOf, OUT_OF_SCOPE, clientViewRole, teamRequirementWhere, isBdeTl,
 } = require('../utils/scope');
 // "Name · Position" for the client's BDE (user, 2026-10-09) — utils/bdeSeats.js.
 const { bdeDirectory, bdeDepartmentProblem } = require('../utils/bdeSeats');
 const { canonicalDepartment, parseBdeSeat } = require('../utils/bdeDesk');
 const { logAudit, logFieldChanges } = require('../utils/audit');
 const { redactClientFor, clientLevelFor } = require('../utils/clientRedact');
+const clientSearch = require('../utils/clientSearch');
 const { notifyUsers } = require('../utils/notify');
 const {
   buildAgreementDocument, nextAgreementId, withAgreementId, newEsignToken, consultantParty, keyTermsOf, madeOnPatch,
@@ -31,6 +33,8 @@ const CNU = require('../utils/creditNotes');
 // B9.2: the client's own SLA ("Feedback within N days", "Send first profiles within N days").
 const CS = require('../utils/clientSla');
 const { findClientDuplicates, describeMatches, displayCode } = require('../utils/clientDuplicates');
+// One company, many locations (2026-10-22): the friendly "already exists - add another location?" question and the Name - Location labels.
+const CLOC = require('../utils/clientLocations');
 // Client Pause / Archive / Delete (spec 2026-10-03 §A) — utils/clientLifecycle.js.
 const clientLifecycle = require('../utils/clientLifecycle');
 // ATS layout v3 — the job status chain shown to people (display only).
@@ -39,9 +43,36 @@ const reqDisplay = require('../utils/requirementDisplayStatus');
 const agreementSettingsStore = require('../utils/agreementSettings');
 // Add client in 9 sections (2026-10-05): new fields, rules, documents.
 const clientProfile = require('../utils/clientProfile');
+// Agreement preparation workflow (2026-10-13): Draft > With Purna Sir > With BDE TL > Sent > Signed > Active.
+const AWF = require('../utils/agreementWorkflow');
 
 const router = express.Router();
 router.use(requireAuth);
+// GET /clients/aliases — the OLD names of the clients THIS login may see by name: { rows: [{ name, aliases: [..] }] }.
+// For the browser's type-to-search only (utils/clientSearch.js; frontend components/clientAliases.js): typing an old name in ANY
+// client box finds the client, which is still listed under its official `name`. Same client scope as the Client picker
+// (names only, never a record); a client login and a login with no client scope get an empty list. Mounted ahead of the
+// Client List permission on purpose: a recruiter / TL / accountant reads client NAMES on their own screens, so they may type old ones.
+router.get('/aliases', async (req, res, next) => {
+  try {
+    if (roleOf(req.user) === 'client') return res.json({ rows: [] });
+    const map = await clientSearch.aliasMap();
+    const ids = [...map.keys()];
+    // 2026-10-22: the clients (of this login's scope) that share their name with another client -> "Name - Location" for every box.
+    const places = await CLOC.placeRows({ AND: [clientPickerWhere(req.user), { OR: [{ status: null }, { status: { not: 'Archived' } }] }] }).catch(() => []);
+    if (!ids.length) return res.json({ rows: [], places });
+    const found = await prisma.client.findMany({
+      where: { AND: [clientPickerWhere(req.user), { id: { in: ids } }, { OR: [{ status: null }, { status: { not: 'Archived' } }] }] },
+      select: { id: true, name: true },
+    });
+    const rows = found
+      .map((c) => ({ name: c.name, aliases: (map.get(c.id) || []).filter((a) => a.toLowerCase() !== String(c.name).toLowerCase()) }))
+      .filter((r) => r.aliases.length);
+    return res.json({ rows, places });
+  } catch (err) { return next(err); }
+});
+// THE HR DESK works internal hiring only: no client, client detail or agreement (utils/hrDesk.js).
+router.use(require('../utils/hrDesk').blockHrDesk);
 // The whole router belongs to ATS: a login without ATS access, or without
 // view permission on this module, is refused at the door rather than handed
 // an empty list.
@@ -119,6 +150,15 @@ const COLLEAGUE_HIDDEN = [
   'paymentMethod', 'paymentBankName', 'paymentUpi', 'paymentReferenceNote', 'bankAccountHolder', 'bankAccountNoEnc', 'bankAccountLast4', 'bankAccountMasked', 'bankIfsc',
   'internalNotes', 'internalRemarks', 'riskNotes',
 ];
+// The BDE desk never reads Tax & billing / Payment / Notes (Purna Sir's sections): not even in the activity lines.
+const HR_ACTIVITY_LABEL = /^(Legal Name|GSTIN|PAN|TAN|Billing |Invoice Email|Accounts |Payment Method|Bank|UPI|Payment Reference|Account Holder|IFSC|Client Notes|Special Instructions|Recruitment Instructions|Internal Remarks|Tax & billing step)/;
+function scrubHrActivity(user, a) {
+  if (!AWF.hidesHrFor(user)) return a;
+  const keep = (v) => (v == null ? v : (String(v).split('; ').filter((p) => !HR_ACTIVITY_LABEL.test(p.trim())).join('; ') || 'Tax & billing details updated'));
+  const labelled = a.fieldLabel || a.field || '';
+  if (HR_ACTIVITY_LABEL.test(String(labelled))) return { ...a, field: null, fieldLabel: null, fromValue: null, toValue: 'Tax & billing details updated', reason: null };
+  return { ...a, toValue: keep(a.toValue), fromValue: a.fromValue && /→/.test(String(a.fromValue)) ? keep(a.fromValue) : a.fromValue };
+}
 function shapeClient(client, permissions, { list = false, user = null } = {}) {
   if (!client) return client;
   const out = {
@@ -148,6 +188,8 @@ function shapeClient(client, permissions, { list = false, user = null } = {}) {
   // overview + contact NAMES, Accounts everything but the non-billing
   // contacts. /api/clients is not behind the index.js response guard, so the
   // cut happens here, once, for every route that shapes a client.
+  // Sections 6-9 (Tax & billing, Payment details, Notes) are filled by Purna Sir (HR) and Admin: the BDE desk never reads them.
+  if (user) AWF.redactFor(user, out);
   return user ? redactClientFor(user, out) : out;
 }
 // shapeClient() with this caller's permissions and field level.
@@ -180,7 +222,7 @@ const roleOf = (user) => {
 function bdeEditRefusal(user, client) {
   const s = scopeOf(user);
   if (s.global || roleOf(user) !== 'bde' || isBdeTl(user)) return null;
-  if ((s.bdeOwnClientIds || []).includes(client.id)) return null;
+  if (clientLifecycle.ownsClient(user, client)) return null;
   const owner = String(client.bdeOwner || '').trim();
   return owner
     ? `This client is looked after by ${owner}. Only ${owner} (or the BDE team lead / an Admin) can change it.`
@@ -407,7 +449,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   const invoiceMode = invoiceModeOf(role);
   const canSeeInvoices = invoiceMode !== 'none';
 
-  const [reqRows, liveApps, submittedRows, interviewRows, selectedRows, invoices, activityRows, allAppRows] = await Promise.all([
+  const [reqRows, liveApps, submittedRows, interviewRows, selectedRows, invoices, activityRows, allAppRows, jobsEverRows] = await Promise.all([
     prisma.requirement.findMany({
       // AND, not a spread: requirementWhere() may itself carry clientId.
       where: { AND: [bdeTl ? {} : teamRequirementWhere(user), clientIn ? { clientId: clientIn } : {}] },
@@ -470,6 +512,9 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
       where: { AND: [appScope, appClient] },
       _count: { _all: true },
     }),
+    // "Does this client have ANY job?" — whatever the caller's scope (a TL / BDE only see their own
+    // jobs above, so a client with jobs elsewhere would look job-less and be counted as a Prospect).
+    prisma.requirement.groupBy({ by: ['clientId'], where: clientIn ? { clientId: clientIn } : {}, _count: { _all: true } }),
   ]);
 
   // Requirement -> client, and only the requirements this caller may see.
@@ -495,6 +540,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
   const selectedBy = sumBy(selectedRows);
   const joinedBy = sumBy(selectedRows.filter((g) => JOINED_SET.includes(g.stage)));
   const candidatesBy = sumBy(allAppRows);
+  const jobsEverBy = new Map((jobsEverRows || []).map((g) => [g.clientId, g._count._all]));
 
   // Invoices: count · invoiced · received · outstanding · overdue (count and
   // the oldest overdue in days) · paid / pending (Cancelled excluded).
@@ -649,6 +695,7 @@ async function clientWorkload(user, clients, { allClients = false } = {}) {
       candidatesPending: candidatesPending.length,
       gatedRequirements: gated.length,
       totalRequirements: allReqs.length,
+      jobsEver: jobsEverBy.get(c.id) || 0,
       nextActionOwner: nextAction ? owner : null,
       nextActionDue: dates[0] || null,
       nextActionOverdue: overdue.length > 0,
@@ -713,12 +760,47 @@ router.get('/', async (req, res) => {
   res.set('X-Can-See-Invoices', canSeeInvoices ? '1' : '0');
   // Each row cut to the caller's field level (§5 / §6), THEN its
   // relationship numbers (already shaped per role by clientWorkload).
-  res.json(clients.map((c) => ({
+  let rowsOut = clients.map((c) => ({
     ...shapeClient(c, permissions, { list: true, user: req.user }),
     ...(work.get(c.id) || {}),
     // The row's ⋯ menu: Pause / Reactivate / Request pause / Archive / Delete.
     lifecycleActions: clientLifecycle.rightsFor(req.user, c, lifecycleBase),
-  })));
+  }));
+  // The OLD names of each client (ClientAlias) — for the screen's own search box only; the row still shows `name`.
+  if (roleOf(req.user) !== 'client') await clientSearch.attachAliases(rowsOut);
+  // The places of each client's REQUIREMENTS (founder, 2026-10-22): one company, requirements in many places (Vcare: Uppal, Banjara Hills, Kochi ...). They feed the
+  // Location filter of the Clients screen, so it is not limited to the one place written on the client record. Places only: no amounts, no people.
+  if (roleOf(req.user) !== 'client' && rowsOut.length) {
+    try {
+      const byClient = new Map();
+      const ids = rowsOut.map((r) => r.id);
+      for (let i = 0; i < ids.length; i += 500) {
+        // eslint-disable-next-line no-await-in-loop
+        const got = await prisma.requirement.groupBy({ by: ['clientId', 'location'], where: { clientId: { in: ids.slice(i, i + 500) }, location: { not: null } } });
+        got.forEach((g) => {
+          const place = String(g.location || '').replace(/s*,s*/g, ', ').replace(/s+/g, ' ').trim();
+          if (!place) return;
+          const m = byClient.get(g.clientId) || new Map();
+          if (!m.has(place.toLowerCase())) m.set(place.toLowerCase(), place);
+          byClient.set(g.clientId, m);
+        });
+      }
+      rowsOut.forEach((r) => {
+        const m = byClient.get(r.id) || new Map();
+        const own = String(r.location || '').replace(/s+/g, ' ').trim();
+        if (own && !m.has(own.toLowerCase())) m.set(own.toLowerCase(), own);
+        r.locations = [...m.values()].sort((x, y) => x.localeCompare(y));
+      });
+    } catch (e) { /* the list works without the places */ }
+  }
+  // Same name, other location: "Name - Location" on the row (a unique name has no placeLabel).
+  { const labels = await scopeLabelMap(req.user); rowsOut.forEach((r) => { const l = labels.get(r.id); if (l) r.placeLabel = l; }); }
+  // The step each agreement is at (a chip) and "Waiting for me" (?waiting=1). A TL / Recruiter / HR login gets neither.
+  if (!require('../utils/agreementPrivacy').blindTo(req.user)) {
+    await AWF.decorate(req.user, rowsOut);
+    if (['1', 'true', 'yes'].includes(String(req.query.waiting || '').toLowerCase())) rowsOut = rowsOut.filter((r) => r.agreementWaiting);
+  }
+  res.json(rowsOut);
 });
 
 // GET /clients/picker — the LIGHT pick list: { rows: [{ id, name }], total }.
@@ -727,6 +809,12 @@ router.get('/', async (req, res) => {
 // ?archived=1), without the workload numbers, so a "choose a client" box does
 // not download 1.7 MB.   ?q= name search · ?limit= (30, max 1000) · ?ids=a,b the
 // named clients, so a chosen one can be labelled even when it is past the limit.
+// "Name - Location" for the clients (of the caller's scope) that share their name with another client (2026-10-22).
+async function scopeLabelMap(user) {
+  if (roleOf(user) === 'client') return new Map();
+  return CLOC.labelMap();
+}
+
 router.get('/picker', async (req, res, next) => {
   try {
     const withArchived = ['1', 'true', 'yes'].includes(String(req.query.archived || '').toLowerCase())
@@ -737,13 +825,23 @@ router.get('/picker', async (req, res, next) => {
     const ids = String(req.query.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 1000);
     if (req.query.ids !== undefined) and.push({ id: { in: ids.length ? ids : ['__none__'] } });
     const s = String(req.query.q || '').trim();
-    if (s) and.push({ name: { contains: s } });
+    // The official name OR an old name (ClientAlias, utils/clientSearch.js): typing 'vcare' finds 'Prabs VCare Health Clinic'.
+    // Legal name / client code only for a login that may read them (the same level that sees them in the list).
+    if (s) {
+      const deep = ['full', 'billing', 'basics', 'status'].includes(clientLevelFor(req.user));
+      and.push(await clientSearch.clientTermWhere(s, { legalName: deep, clientCode: deep }));
+    }
     const where = { AND: and };
     const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 30));
     const [rows, total] = await Promise.all([
       prisma.client.findMany({ where, select: { id: true, name: true }, orderBy: { name: 'asc' }, take: req.query.ids !== undefined ? Math.max(limit, ids.length) : limit }),
       prisma.client.count({ where }),
     ]);
+    // The old names ride along (matching only; the box shows `name`) so a list the browser filters itself finds them too.
+    if (roleOf(req.user) !== 'client') await clientSearch.attachAliases(rows);
+    // Two clients with one name (two locations): the box shows "Name - Location"; a unique name is untouched.
+    const labels = await scopeLabelMap(req.user);
+    rows.forEach((r) => { const l = labels.get(r.id); if (l) r.placeLabel = l; });
     res.json({ rows, total });
   } catch (err) {
     next(err);
@@ -802,7 +900,8 @@ router.get('/meta', async (req, res) => {
     can(user, 'ats', 'clients', 'Client Detail', 'delete'),
     can(user, 'ats', 'clients', 'Agreement Lifecycle', 'view'),
     can(user, 'ats', 'clients', 'Commercial Terms', 'view'),
-    can(user, 'ats', 'requirements', 'Create Requirement', 'create'),
+    // "+ New job" on a client: the BDE team and above (a request for a BDE / Manager, the form for an Admin); never a TL / Recruiter (2026-10-13)
+    Promise.resolve(require('../utils/jobCreateRule').canCreateJob(user, {}).allowed), // eslint-disable-line global-require
     can(user, 'accounts', 'accounts', 'Invoices', 'create'),
   ]);
   const global = !!scopeOf(user).global;
@@ -851,13 +950,13 @@ router.get('/meta', async (req, res) => {
       import: bulkImport,
       export: exportable,
       // Merge Duplicates — routes/clientMerge.js: Super Admin / Admin only.
-      merge: role === 'admin',
+      merge: role === 'admin' || !!lifecycleBase.mergeRequest,
       edit,
       // Permanent delete — Super Admin only, empty clients only (spec §A).
       delete: lifecycleBase.delete,
       legacyDelete: del,
       // Owner BDE reassignment is global-only (PUT refuses anyone else).
-      reassign: edit && (global || isBdeTl(user)),
+      reassign: edit && (global || isBdeTl(user) || !!lifecycleBase.ownerRequest),
       // Deactivate is replaced by Pause / Reactivate (with a reason).
       deactivate: false,
       pause: lifecycleBase.pauseEdit,
@@ -965,7 +1064,9 @@ router.post('/check-duplicate', async (req, res) => {
     return res.status(403).json({ error: 'Only a login that can add or edit clients can run the duplicate check.' });
   }
   const result = await findClientDuplicates(req.body || {}, { excludeId: req.body?.excludeId || null });
-  return res.json(result);
+  // 2026-10-22: the same friendly question the save would ask (null = nothing to ask), so the form can show it before saving.
+  const question = await CLOC.buildQuestion(result, req.body || {}).catch(() => null);
+  return res.json({ ...result, question });
 });
 
 // Live "Agreement Template Preview" pane in the Add Client modal (the
@@ -1074,6 +1175,8 @@ router.put('/agreement-settings', async (req, res) => {
 require('./clientLifecycleRoutes')(router, { shapeFor, executionFiles, dropExecutionFiles });
 // Client documents (Add client section 8, 2026-10-05).
 require('./clientDocumentRoutes')(router);
+// Agreement Drive links - many clients' signed agreements in one go (2026-10-12).
+require('./agreementDriveLinkRoutes')(router);
 // Client work: all activity of one client + the client work waiting on it (2026-10-10).
 require('./clientWorkRoutes')(router);
 // BDE business workspace: requests a Manager / Admin decides, follow-ups, meetings, feedback, onboarding (2026-10-10).
@@ -1115,6 +1218,7 @@ router.get('/:id', async (req, res) => {
     if (req.client.secondaryBde) out.secondaryBdeLabel = dir.labelFor(req.client.secondaryBde);
   }
   out.lifecycleActions = await clientLifecycle.lifecycleRights(req.user, req.client);
+  if (!require('../utils/agreementPrivacy').blindTo(req.user)) await AWF.decorate(req.user, [out]);
   // B9.2: the client's SLA (own numbers or the Step-timing defaults).
   out.sla = await CS.slaOf(req.client.id);
   // TeamLink's signer (Agreement settings) for the agreement's signature block.
@@ -1167,6 +1271,8 @@ function shapeApplication(a, forClient) {
     interviewer: a.interviewer,
     interviewResult: a.interviewResult,
     joiningDate: a.joiningDate,
+    // the day a JOINED person joined (one rule for every list: utils/joinDayShared.js); null = not recorded
+    joinedDay: ['JOINED', 'HIRED'].includes(a.stage) ? joinDayShared.joinDay(a, null) : null,
   };
   if (forClient) return base;
   // Internal-only: the evaluation trail, the sourcing trail and the money.
@@ -1291,6 +1397,59 @@ router.get('/:id/overview', async (req, res) => {
       guaranteeEnds: commercial && end ? end.toISOString().slice(0, 10) : undefined,
     };
   }).filter(Boolean) : undefined;
+
+  // REPLACEMENTS card (founder, 2026-10-22): every placement that LEFT (inside or after the guarantee) with the date it left, whose place it was, and
+  // who came in his / her place and when. Left dates come from the joining & drop record (JoiningRecord); an older "Replacement due / Replaced"
+  // mark with no drop record is listed too (left date blank). Same viewers as the guarantee list above.
+  let replacementCases;
+  if (show('replacements')) {
+    const byApp = new Map(applications.map((a) => [a.id, a]));
+    const ids = [...byApp.keys()];
+    const recs = [];
+    for (let i = 0; i < ids.length; i += 400) {
+      const part = ids.slice(i, i + 400);
+      // eslint-disable-next-line no-await-in-loop
+      const got = await prisma.$queryRawUnsafe(
+        `SELECT applicationId, joinedOn, droppedOn, dropReason, dropWithinGuarantee, guaranteeEndsOn, replacementStatus, replacementApplicationId, replacementLinkedAt FROM JoiningRecord WHERE applicationId IN (${part.map(() => '?').join(',')}) AND droppedOn IS NOT NULL`,
+        ...part,
+      ).catch(() => []);
+      recs.push(...got);
+    }
+    const recOf = new Map(recs.map((r) => [r.applicationId, r]));
+    const subIds = [...new Set(recs.map((r) => r.replacementApplicationId).filter(Boolean))];
+    const subs = subIds.length ? await prisma.application.findMany({ where: { id: { in: subIds } }, select: { id: true, stage: true, joiningDate: true, joinedAt: true, candidateId: true, candidate: { select: { name: true } } } }) : [];
+    const subOf = new Map(subs.map((s) => [s.id, s]));
+    const dayOf = (v) => { const d = toDate(v); return d ? d.toISOString().slice(0, 10) : null; };
+    replacementCases = applications
+      .filter((a) => recOf.has(a.id) || REPLACEMENT_STATUSES.includes(a.joiningStatus))
+      .map((a) => {
+        const rec = recOf.get(a.id) || {};
+        const sub = rec.replacementApplicationId ? subOf.get(rec.replacementApplicationId) : null;
+        const subJoined = sub && JOINED_STAGES.includes(sub.stage);
+        let caseStatus = 'Left';
+        if (a.joiningStatus === JOINING_REPLACED) caseStatus = 'Replaced';
+        else if (a.joiningStatus === JOINING_REPLACEMENT_DUE) caseStatus = sub ? 'Replacement coming' : 'Replacement due';
+        else if (a.joiningStatus === JOINING_LEFT_AFTER_GUARANTEE) caseStatus = 'Left after guarantee (no replacement owed)';
+        return {
+          id: a.id,
+          candidateId: a.candidateId,
+          candidateName: a.candidate ? a.candidate.name : null, // the one who left
+          requirementId: a.requirementId,
+          requirementCode: a.requirement ? a.requirement.reqCode : null,
+          requirementTitle: a.requirement ? a.requirement.title : null,
+          joinedOn: rec.joinedOn || dayOf(a.joiningDate) || dayOf(a.joinedAt),
+          leftOn: rec.droppedOn || null,
+          reason: rec.dropReason || null,
+          caseStatus,
+          replacementId: sub ? sub.candidateId : null,
+          replacementName: sub && sub.candidate ? sub.candidate.name : null, // who came in his / her place
+          replacementJoinedOn: subJoined ? (dayOf(sub.joiningDate) || dayOf(sub.joinedAt)) : null,
+          replacementStage: sub ? sub.stage : null,
+          guaranteeEnds: commercial && rec.guaranteeEndsOn ? rec.guaranteeEndsOn : undefined,
+        };
+      })
+      .sort((x, y) => String(y.leftOn || '').localeCompare(String(x.leftOn || '')));
+  }
 
   // Invoices + Payments shaped per mode.
   let invoiceRows;
@@ -1428,7 +1587,7 @@ router.get('/:id/overview', async (req, res) => {
     // these names, and the counts header.
     requirementCount: requirements.length,
     activity: [
-      ...activity.map((a) => ({
+      ...activity.map((a0) => { const a = scrubHrActivity(req.user, a0); return ({
         id: a.id,
         kind: a.action === 'Client note' ? 'note' : 'audit',
         action: a.action,
@@ -1440,7 +1599,7 @@ router.get('/:id/overview', async (req, res) => {
         reason: forClient || valuesHidden(a) ? null : (a.reason || null),
         createdAt: a.createdAt,
         by: forClient ? null : (a.actorName || (a.user ? a.user.name : 'System')),
-      })),
+      }); }),
       ...stageEvents.map((e) => ({
         id: `se-${e.id}`,
         kind: 'stage',
@@ -1483,6 +1642,16 @@ router.get('/:id/overview', async (req, res) => {
   if (!forClient && pipelineVisible) {
     out.rejections = { total: seenRej.size, reasons: tally(rejectionTally.reasons), sides: tally(rejectionTally.sides) };
   }
+  // joined people with no joining date and no joined-at time are dated by their move into Joined (the ATS reports' rule)
+  {
+    const need = shaped.filter((a) => ['JOINED', 'HIRED'].includes(a.stage) && !a.joinedDay).map((a) => a.id);
+    for (let i = 0; i < need.length; i += 500) {
+      // eslint-disable-next-line no-await-in-loop
+      const evs = await prisma.applicationStageEvent.findMany({ where: { applicationId: { in: need.slice(i, i + 500) }, toStage: { in: ['JOINED', 'HIRED'] } }, orderBy: { createdAt: 'asc' }, select: { applicationId: true, createdAt: true } });
+      const last = new Map(); evs.forEach((e) => last.set(e.applicationId, e.createdAt));
+      shaped.forEach((a) => { if (!a.joinedDay && last.has(a.id)) a.joinedDay = joinDayShared.istDay(last.get(a.id)); });
+    }
+  }
   if (show('candidates')) out.candidates = shaped;
   if (show('interviews')) out.interviews = shaped.filter((a) => a.interviewAt || a.interviewStatus || a.interviewCode);
   if (show('selected')) {
@@ -1490,6 +1659,11 @@ router.get('/:id/overview', async (req, res) => {
     out.joinings = shaped.filter((a) => JOINED_STAGES.includes(a.stage));
   }
   if (replacements) out.replacements = replacements;
+  if (replacementCases) {
+    out.replacementCases = replacementCases;
+    // the header card: how many placements left (the number comes with the list, so it never shows to a login that cannot open the list)
+    if (out.summary && replacementCases.length) out.summary = { ...out.summary, replacementCount: replacementCases.length };
+  }
   if (invoiceRows && (show('invoices') || forClient)) out.invoices = invoiceRows;
   if (paymentRows && show('payments')) out.payments = paymentRows;
   res.json(out);
@@ -1550,7 +1724,13 @@ function pickClient(body) {
   for (const key of CLIENT_FIELDS.numeric) {
     if (body[key] !== undefined && body[key] !== '') data[key] = Number(body[key]);
   }
+  // typed Industry / Company type (2026-10-14): no HTML, spaces collapsed, at most 80 characters
+  ['industry', 'companyType'].forEach((k) => { if (typeof data[k] === 'string') data[k] = require('../utils/openVocab').clean(data[k]); }); // eslint-disable-line global-require
   return data;
+}
+// the same Industry spelling as other clients use (case-insensitive)
+async function canonIndustry(data) {
+  if (data && data.industry) data.industry = await require('../utils/openVocab').canonicalColumn('client', 'industry', data.industry); // eslint-disable-line global-require
 }
 
 // Human-readable client code (CLI0001 …), assigned at creation if the form
@@ -1565,6 +1745,7 @@ async function nextClientCode() {
 // the saved draft come from the same values and the same template.
 async function draftClientData(req) {
   const data = pickClient(req.body || {});
+  await canonIndustry(data);
   // Sections 1–9 (2026-10-05): the new columns this database has.
   const profile = clientProfile.pickProfile(req.body || {});
   Object.assign(data, profile.data);
@@ -1665,21 +1846,46 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
   // "Create Anyway" click) — and an override is audit-logged with the reason.
   // Weaker signals (phone, email, near-typo, address) never block the API;
   // the form shows them before it saves.
-  const dup = await findClientDuplicates(req.body);
-  const override = req.body.allowDuplicate === true;
-  if (dup.blocking && !override) {
-    return res.status(409).json({
-      error: 'Possible duplicate client found. Open the existing client, or confirm "Create Anyway".',
-      code: 'DUPLICATE_CLIENT',
-      duplicates: dup.matches,
-      blocking: true,
-    });
+  // 2026-10-22 ONE COMPANY, MANY LOCATIONS: a same-name client is usually another branch. The save never says "error": it
+  // answers with a QUESTION (409 + question: the matching clients, why, and what to press). Confirmed (confirmSeparate, or the
+  // older allowDuplicate) it is added as its own client - its own agreement, renewal and requirements. Same name needs a
+  // Location; the same name AND the same location needs one line of reason. Nothing is merged, no alias is made.
+  const dup = await findClientDuplicates({ ...req.body, location: data.location, state: data.state });
+  const override = CLOC.isConfirmed(req.body);
+  const question = await CLOC.buildQuestion(dup, { ...req.body, location: data.location });
+  if (question && !override) return res.status(409).json(CLOC.questionResponse(question, dup));
+  if (question) {
+    const problem = CLOC.confirmProblem(question, req.body, data.location);
+    if (problem) return res.status(problem.status).json(problem.body);
+  }
+  // Sections 6-9 are filled by Purna Sir (HR) / Admin after the BDE sends the client on - never typed on the Add form by a BDE.
+  {
+    const wfRoles = await AWF.rolesOf(req.user);
+    const hrSent = wfRoles.admin ? [] : AWF.HR_KEYS.filter((k) => k !== 'billingSameAsAddress' && data[k] !== undefined && data[k] !== null && String(data[k]).trim() !== '');
+    if (hrSent.length) {
+      return res.status(403).json({ error: `Tax & billing, Payment details, Documents and Notes are filled by ${wfRoles.cfg.hrLabel} after you send the client to ${wfRoles.cfg.hrLabel}.`, fields: hrSent });
+    }
   }
   if (!data.clientCode) data.clientCode = await nextClientCode();
 
   const client = await prisma.client.create({ data: { ...data, agreementStatus: 'DRAFT' } });
-  if (override && dup.total > 0) {
-    const note = String(req.body.duplicateNote || '').trim().slice(0, 500);
+  CLOC.forgetLabels();
+  if (override && question && question.level !== 'sameId') {
+    // Another location of a client we already have: say which one, who added it, when (the audit row has both) and why.
+    const mates = question.matches.filter((m) => m.sameName);
+    const main = mates[0];
+    await logAudit({
+      userId: req.user.id,
+      actorName: req.user.name || null,
+      action: `Added as another location of ${main.displayCode}`,
+      entity: 'Client',
+      entityId: client.id,
+      fromValue: main.id,
+      toValue: `${main.name}${main.location ? ` (${main.location})` : ''} ${main.displayCode} - /clients/${main.id}${mates.length > 1 ? `; also: ${mates.slice(1).map((m) => `${m.displayCode} /clients/${m.id}`).join(', ')}` : ''}`.slice(0, 1000),
+      reason: CLOC.reasonOf(req.body) || (question.level === 'likelySame' ? 'Added as a separate client' : `New location: ${data.location || ''}`),
+    });
+  } else if (override && dup.total > 0) {
+    const note = String(req.body.duplicateNote || req.body.separateReason || '').trim().slice(0, 500);
     await logAudit({
       userId: req.user.id,
       action: 'Client created despite possible duplicate',
@@ -1707,14 +1913,14 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
       },
     })
     : client;
-  await logAudit({ userId: req.user.id, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Draft' });
+  await logAudit({ userId: req.user.id, action: 'Client created', entity: 'Client', entityId: client.id, toValue: 'Saved for later' });
   // Same text as the live preview the user was looking at? (previewHash is
   // the sha256 the preview returned; absent = no preview was shown.)
   const matchesPreview = withDoc.agreementDocument && req.body.previewHash
     ? docHash(withDoc.agreementDocument) === String(req.body.previewHash) : null;
   if (withDoc.agreementDocument) {
     await logAudit({
-      userId: req.user.id, action: 'Agreement draft created from template', entity: 'Client', entityId: client.id,
+      userId: req.user.id, action: 'Agreement created from template', entity: 'Client', entityId: client.id,
       toValue: 'DRAFT',
       reason: `${withDoc.agreementTemplate || 'Standard template'} · fee ${withDoc.agreementFeePercent}% · guarantee ${withDoc.guaranteePeriod} · ${withDoc.paymentDue || withDoc.paymentTerms}${matchesPreview === true ? ' · same as the preview shown' : (matchesPreview === false ? ' · DIFFERENT from the preview shown' : '')}`.slice(0, 1000),
     });
@@ -1763,6 +1969,7 @@ const IDENTITY_FIELDS = ['name', 'legalName', 'gst', 'pan', 'contactPhone', 'con
 router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async (req, res) => {
   { const refusal = bdeEditRefusal(req.user, req.client); if (refusal) return res.status(403).json({ error: refusal }); }
   const data = pickClient(req.body);
+  await canonIndustry(data);
   const before = req.client;
   // Sections 1–9 (2026-10-05).
   const formatErrs = clientProfile.formatErrors(req.body || {});
@@ -1787,13 +1994,30 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
   if (changed.some((k) => CONTACT_KEYS.includes(k)) && !(await can(req.user, 'ats', 'clients', 'Client Contacts', 'create'))) {
     return res.status(403).json({ error: 'Adding or changing the client\'s contact people is not ticked for your role. Ask an Admin.' });
   }
+  // THE AGREEMENT WORKFLOW (2026-10-13). Sections 6-9 are written by the HR step / Admin only; sections 1-5 are locked
+  // while the client is with Purna Sir or the BDE TL (Admin can still edit = unlock).
+  {
+    const wfRow = await AWF.loadRow(before.id);
+    const rights = await AWF.rightsFor(req.user, before, wfRow);
+    const hrNow = (k) => (k === 'billingSameAsAddress' ? (data[k] !== false) !== (before[k] !== false) : AWF.HR_KEYS.includes(k));
+    const hrChanged = changed.filter(hrNow);
+    if (hrChanged.length && !rights.editHr) {
+      return res.status(403).json({ error: `Tax & billing, Payment details, Documents and Notes are filled by ${(await AWF.settings()).hrLabel} or an Admin.`, fields: hrChanged });
+    }
+    const rest = changed.filter((k) => !AWF.HR_KEYS.includes(k));
+    if (rest.length && rights.lockedCommercial && (rights.roles.bdeDesk || rights.roles.bdeTl)) {
+      const who = rights.stage === 'WITH_HR' ? (await AWF.settings()).hrLabel : 'the BDE team lead';
+      return res.status(403).json({ error: `It is with ${who} now, so you cannot change it. Ask ${who} to send it back, or ask an Admin.` });
+    }
+  }
   // STATUS moves only through Pause / Reactivate / Archive (reason + audit).
   if (changed.includes('status')) {
     return res.status(400).json({ error: 'Client status changes through Pause / Reactivate / Archive (each needs a reason) — not the edit form.', field: 'status' });
   }
   // §7 / contract — re-assigning the OWNER BDE is Admin only. A BDE editing
   // their own client may change everything else, never who owns it.
-  if (changed.includes('bdeOwner') && !scopeOf(req.user).global && !isBdeTl(req.user)) {
+  if (changed.includes('bdeOwner') && !scopeOf(req.user).global && !isBdeTl(req.user)
+    && !(clientLifecycle.ownsClient(req.user, before) && await can(req.user, 'ats', 'clients', 'Client Ownership Request', 'create'))) {
     return res.status(403).json({ error: 'Only an Admin or the BDE team lead can reassign the Owner BDE of a client.' });
   }
   // The BDE must fit the department, whichever of the two changed.
@@ -1839,22 +2063,26 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
   // does not block an unrelated edit.
   const identity = changed.filter((k) => IDENTITY_FIELDS.includes(k));
   let dup = { matches: [], total: 0, blocking: false };
+  let question = null;
   if (identity.length) {
     const probe = {};
     identity.forEach((k) => { probe[k] = data[k]; });
-    dup = await findClientDuplicates(probe, { excludeId: before.id });
+    const place = { location: data.location !== undefined ? data.location : before.location, state: data.state !== undefined ? data.state : before.state };
+    dup = await findClientDuplicates({ ...probe, ...place }, { excludeId: before.id });
+    // 2026-10-22: another location of the same company is expected - a same-name client at a DIFFERENT place never stops this save.
+    const nameNow = data.name !== undefined ? data.name : before.name;
+    dup = CLOC.withoutOtherLocations(dup, before, await CLOC.siblingsOf({ ...before, name: nameNow }), place);
+    question = await CLOC.buildQuestion(dup, { ...probe, ...place });
   }
-  const override = req.body.allowDuplicate === true;
-  if (dup.blocking && !override) {
-    return res.status(409).json({
-      error: 'This change makes the client look like an existing one. Open the existing client, or confirm "Save Anyway".',
-      code: 'DUPLICATE_CLIENT',
-      duplicates: dup.matches,
-      blocking: true,
-    });
+  const override = CLOC.isConfirmed(req.body);
+  if (question && !override) return res.status(409).json(CLOC.questionResponse(question, dup));
+  if (question) {
+    const problem = CLOC.confirmProblem(question, req.body, data.location !== undefined ? data.location : before.location);
+    if (problem) return res.status(problem.status).json(problem.body);
   }
 
   const client = await prisma.client.update({ where: { id: req.params.id }, data });
+  CLOC.forgetLabels();
   const summary = changed
     .map((k) => (k === 'bankAccountNoEnc' ? 'Bank account changed' : `${FIELD_LABELS[k] || k}: ${String(before[k] ?? '').trim() || '—'} → ${String(data[k] ?? '').trim() || '—'}`))
     .join('; ');
@@ -1891,7 +2119,7 @@ router.put('/:id', requirePerm('ats', 'clients', 'Client Detail', 'edit'), async
       entity: 'Client',
       entityId: client.id,
       toValue: describeMatches(dup.matches).slice(0, 1000),
-      reason: String(req.body.duplicateNote || '').trim().slice(0, 500) || 'Save Anyway confirmed without a note',
+      reason: CLOC.reasonOf(req.body) || 'Save Anyway confirmed without a note',
     });
   }
   res.json({ ...(await shapeFor(req, client)), pendingFields: profile.pending });
@@ -2016,8 +2244,13 @@ router.post('/:id/agreement/upload', requirePerm('ats', 'clients', 'Agreement Li
   return out;
 });
 
+// The client's own agreement as a FILE (PDF / Word / picture, up to 10 MB): routes/agreementOwnFile.js.
+require('./agreementOwnFile').mountUpload(router, { requirePerm, agreementTransition, executionFiles, dropExecutionFiles, OPEN_FOR_AUTHORING, agreementIsSigned, statusOf });
+
 router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
   const client = req.client;
+  // Only the BDE TL (after the checks) or an Admin sends the link (user, 2026-10-13).
+  { const refusal = await AWF.sendGate(req.user, client, req.body); if (refusal) return res.status(403).json({ error: refusal }); }
   if (!client.agreementDocument) return res.status(400).json({ error: 'Generate or upload the agreement document first' });
   if (agreementIsSigned(client.agreementStatus)) {
     return res.status(400).json({ error: 'This agreement is already signed' });
@@ -2046,6 +2279,7 @@ router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Life
     },
   });
   dropExecutionFiles(staleClientFiles);
+  await AWF.afterSend(req.user, client).catch(() => {});
   await logAudit({
     userId: req.user.id, action: 'Agreement sent to client', entity: 'Client',
     entityId: client.id, fromValue: current, toValue: 'SENT',
@@ -2174,7 +2408,8 @@ router.post('/:id/agreement/confirm', requirePerm('ats', 'clients', 'Agreement L
     where: { clientId: client.id },
     select: { recruiterId: true, bdeId: true, tlId: true },
   });
-  await notifyUsers(await require('../utils/clientBdes').withClientBdes(owners.flatMap((r) => [r.recruiterId, r.bdeId, r.tlId]), { clientId: client.id, client }), { // eslint-disable-line global-require
+  // (the agreement is the BDE team's business: the job's recruiter / TL are not told - user, 2026-10-12)
+  await notifyUsers(await require('../utils/clientBdes').withClientBdes(owners.flatMap((r) => [r.bdeId]), { clientId: client.id, client }), { // eslint-disable-line global-require
     title: `${client.name} signed the service agreement`,
     message: `${updated.agreementId || 'Agreement'} signed by ${updated.agreementSignedBy}.`,
     exceptUserId: req.user.id,
@@ -2239,9 +2474,25 @@ router.post('/:id/agreement/resend', requirePerm('ats', 'clients', 'Agreement Li
   });
 });
 
+// OPEN / CLOSE AN AGREEMENT (user, 2026-10-16): Super Admin / Admin and the whole BDE team (desk BDE, BDE TL) - for the clients
+// of their own area only. TL / STL / Recruiter / HR never reach an agreement (agreementPrivacy.blindTo). Every press is audited.
+async function requireOpenClose(req, res, next) {
+  try {
+    if (require('../utils/agreementPrivacy').blindTo(req.user)) return res.status(403).json({ error: 'This is not available for your role.' }); // eslint-disable-line global-require
+    const lc = require('../utils/clientLifecycle'); // eslint-disable-line global-require
+    const team = lc.isBdeTeam(req.user);
+    if (team) {
+      if (!lc.ownsClient(req.user, req.client)) return res.status(403).json({ error: 'This client is not in your area.' });
+      return next();
+    }
+    if (await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'create')) return next();
+    return res.status(403).json({ error: 'You do not have access to this action.' });
+  } catch (err) { return next(err); }
+}
+
 // The final step: TeamLink activates the signed agreement, which is what
 // unblocks requirements for this client. Signing alone is not enough.
-router.post('/:id/agreement/activate', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
+router.post('/:id/agreement/activate', requireOpenClose, async (req, res) => {
   const client = req.client;
   if (agreementIsActive(client.agreementStatus)) return res.status(400).json({ error: 'This agreement is already Active' });
   if (statusOf(client) !== 'SIGNED') {
@@ -2277,14 +2528,32 @@ router.post('/:id/agreement/activate', requirePerm('ats', 'clients', 'Agreement 
 });
 
 // Expire an agreement past its end date. Client requirements stop going live.
-router.post('/:id/agreement/expire', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => (
+router.post('/:id/agreement/expire', requireOpenClose, async (req, res) => (
   agreementTransition(req, res, {
     id: req.client.id,
     from: ['ACTIVE', 'SIGNED'],
     action: 'Agreement expired',
     to: 'EXPIRED',
     data: { agreementStatus: 'EXPIRED' },
+    reason: String((req.body && req.body.reason) || 'Closed by the user').slice(0, 500),
   })
 ));
+
+// Open an ended agreement again (only one that was signed before - a never-signed one is made new instead).
+router.post('/:id/agreement/reopen', requireOpenClose, async (req, res) => {
+  const client = req.client;
+  if (statusOf(client) !== 'EXPIRED') return res.status(400).json({ error: 'Only an ended agreement can be opened again.' });
+  if (!client.agreementSignedAt && !client.agreementActivatedAt) {
+    return res.status(409).json({ error: 'This agreement was never signed, so it cannot be opened again. Make a new agreement instead.' });
+  }
+  return agreementTransition(req, res, {
+    id: client.id,
+    from: ['EXPIRED'],
+    action: 'Agreement reopened',
+    to: 'ACTIVE',
+    data: { agreementStatus: 'ACTIVE', agreementActivatedAt: new Date() },
+    reason: String((req.body && req.body.reason) || 'Opened again by the user').slice(0, 500),
+  });
+});
 
 module.exports = router;

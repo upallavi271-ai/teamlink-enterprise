@@ -10,6 +10,7 @@ import api from '../../api';
 import { Modal } from '../../components/proto.jsx';
 import { Field, Row } from '../../components/ComposeForm.jsx';
 import '../../components/accounts/ledgerBooks.css';
+import Combo from '../../components/Combo.jsx';
 
 export const ACCOUNT_FIELD_KEYS = ['vendor', 'invoiceNo', 'gstPaid', 'paidVia', 'usefulLifeYears', 'depreciationMethod', 'depreciationRate', 'salvageValue', 'disposalDate', 'disposalAmount', 'disposalPaidVia'];
 export const accountsDefaults = (a = {}) => Object.fromEntries(ACCOUNT_FIELD_KEYS.map((k) => [k, a[k] ?? '']));
@@ -39,17 +40,17 @@ export function AccountsFields({ form, setForm }) {
           <Row>
             <Field label="GST paid (₹)"><input inputMode="decimal" value={form.gstPaid} onChange={set('gstPaid')} placeholder="e.g. 9900" /></Field>
             <Field label="Paid via">
-              <select value={form.paidVia} onChange={set('paidVia')}>
+              <Combo value={form.paidVia} onChange={set('paidVia')}>
                 <option value="">Bank (default)</option><option>Bank</option><option>Cash</option><option value="Payable">Not paid yet (vendor payable)</option>
-              </select>
+              </Combo>
             </Field>
           </Row>
           <Row>
             <Field label="Useful life (years)"><input inputMode="decimal" value={form.usefulLifeYears} onChange={set('usefulLifeYears')} placeholder="IT items: 3" /></Field>
             <Field label="Depreciation">
-              <select value={form.depreciationMethod} onChange={set('depreciationMethod')}>
+              <Combo value={form.depreciationMethod} onChange={set('depreciationMethod')}>
                 <option value="">Straight line (default)</option><option value="SL">Straight line (SL)</option><option value="WDV">Written down value (WDV)</option>
-              </select>
+              </Combo>
             </Field>
           </Row>
           <Row>
@@ -71,7 +72,7 @@ export function DisposalFields({ form, setForm, status }) {
       {status === 'Sold' && <Field label="Sold for (₹)"><input inputMode="decimal" value={form.disposalAmount} onChange={set('disposalAmount')} placeholder="e.g. 12000" /></Field>}
       {status === 'Sold' && (
         <Field label="Money received in">
-          <select value={form.disposalPaidVia} onChange={set('disposalPaidVia')}><option value="">Bank</option><option>Bank</option><option>Cash</option></select>
+          <Combo value={form.disposalPaidVia} onChange={set('disposalPaidVia')}><option value="">Bank</option><option>Bank</option><option>Cash</option></Combo>
         </Field>
       )}
     </Row>
@@ -85,16 +86,16 @@ export function RepairFields({ form, setForm }) {
     <>
       <Row>
         <Field label="Type">
-          <select value={form.repairType || 'Repair'} onChange={set('repairType')}>{REPAIR_TYPES.map((t) => <option key={t}>{t}</option>)}</select>
+          <Combo value={form.repairType || 'Repair'} allowCustom onChange={set('repairType')}>{REPAIR_TYPES.map((t) => <option key={t}>{t}</option>)}</Combo>
         </Field>
         <Field label="GST paid (₹)"><input inputMode="decimal" value={form.gstPaid ?? ''} onChange={set('gstPaid')} placeholder="0" /></Field>
       </Row>
       <Row>
         <Field label="Invoice no."><input value={form.invoiceNo ?? ''} onChange={set('invoiceNo')} /></Field>
         <Field label="Paid via">
-          <select value={form.paidVia ?? ''} onChange={set('paidVia')}>
+          <Combo value={form.paidVia ?? ''} onChange={set('paidVia')}>
             <option value="">Bank (default)</option><option>Bank</option><option>Cash</option><option value="Payable">Not paid yet (payable)</option>
-          </select>
+          </Combo>
         </Field>
       </Row>
       <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', margin: '4px 0 8px' }}>
@@ -134,7 +135,7 @@ function RepairEditor({ asset, repair, onClose, onSaved }) {
       <Row>
         <Field label="Vendor / service centre"><input value={form.vendor} onChange={set('vendor')} /></Field>
         <Field label="Status">
-          <select value={form.status} onChange={set('status')}>{['Reported', 'In Repair', 'Completed', 'Cancelled'].map((s) => <option key={s}>{s}</option>)}</select>
+          <Combo value={form.status} onChange={set('status')}>{['Reported', 'In Repair', 'Completed', 'Cancelled'].map((s) => <option key={s}>{s}</option>)}</Combo>
         </Field>
       </Row>
       <Row>

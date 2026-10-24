@@ -14,6 +14,7 @@ import { Panel, PanelHead, EmptyMini } from '../proto.jsx';
 import { money, monthLabel, errText, downloadFile } from '../payroll/payrollUi';
 import PeriodPicker, { ALL_TIME, isAllTime, periodText } from './PeriodPicker.jsx';
 import PayrollMonthDetail from './PayrollMonthDetail.jsx';
+import './payrollCycleRows.css';
 import BooksImport from './BooksImport.jsx';
 import SalaryVoucherPanel from './SalaryVoucherPanel.jsx';
 import SearchSelect from './SearchSelect.jsx';
@@ -21,6 +22,7 @@ import Pager, { usePaged } from '../Pager.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import './ledgerBooks.css';
 import './salaryVoucher.css';
+import Combo from '../Combo.jsx';
 
 export const periodQs = (v) => (isAllTime(v) ? '' : `from=${v.from}&to=${v.to}`);
 const join = (...parts) => parts.filter(Boolean).join('&');
@@ -114,10 +116,10 @@ export function JournalTab({ canPost = false, onOpenSalaryOf = null }) {
         <FacetSelect label="Voucher type" value={vtype} onChange={setVtype} options={typeOptions} allLabel="All types" />
         <FacetSelect label="Source" value={source} onChange={setSource} options={sourceOptions} allLabel="All sources" />
         <label className="lb-f"><span>Account</span>
-          <select value={account} onChange={(e) => setAccount(e.target.value)}>
+          <Combo value={account} onChange={(e) => setAccount(e.target.value)}>
             <option value="">All accounts</option>
             {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
-          </select>
+          </Combo>
         </label>
         {salaryOn && (
           <>
@@ -263,10 +265,10 @@ export function LedgerTab({ canPost = false, onOpenEmployees = null }) {
         <PeriodPicker value={period} onChange={setPeriod} presets />
         {!account && <FacetSelect label="Group" value={group} onChange={setGroup} options={groupOptions} allLabel="All groups" />}
         <label className="lb-f"><span>Account</span>
-          <select value={account} onChange={(e) => setAccount(e.target.value)}>
+          <Combo value={account} onChange={(e) => setAccount(e.target.value)}>
             <option value="">All accounts</option>
             {accounts.map((a) => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
-          </select>
+          </Combo>
         </label>
         {(account || group || !isAllTime(period)) && <button type="button" className="btn btn-sm" onClick={() => { setAccount(''); setGroup(''); setPeriod(ALL_TIME); }}>Clear filters</button>}
       </div>
@@ -477,7 +479,7 @@ export function PayrollMappingTab() {
                 <tbody>
                   {months.map((x) => (
                     <tr key={x.month}>
-                      <td><b>{x.period}</b></td>
+                      <td><b>{x.period}</b>{x.rangeText ? <span className="pcr-range">{x.rangeText} · {x.periodDays} days</span> : null}</td>
                       <td className="cell-muted">{x.records}{x.notFinal ? ` · ${x.notFinal} not approved` : ''}</td>
                       <td className="lb-num">{money(x.net)}</td>
                       <td>{x.paid ? <span className="lb-badge green">Paid</span> : x.posted ? <span className="lb-badge green">Posted to Accounts</span> : x.lastError ? <span className="lb-badge red">Not posted — problem</span> : <span className="lb-badge grey">Not posted</span>}</td>
@@ -504,10 +506,10 @@ export function PayrollMappingTab() {
         {m.components.map((c) => (
           <div className="lb-map" key={c.key}>
             <div><b>{c.label}</b><div className="lb-side">{c.key === 'bank' ? 'Credit when salary is paid' : c.side === 'debit' ? 'Debit' : 'Credit'} · {c.group}</div></div>
-            <select value={draft[c.key] || ''} disabled={!m.canEdit} onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}>
+            <Combo value={draft[c.key] || ''} disabled={!m.canEdit} onChange={(e) => setDraft((d) => ({ ...d, [c.key]: e.target.value }))}>
               {!accountsFor(c).some((a) => a.code === draft[c.key]) && <option value={draft[c.key] || ''}>{draft[c.key] ? `${draft[c.key]} (missing — pick one)` : 'Pick a ledger'}</option>}
               {accountsFor(c).map((a) => <option key={a.code} value={a.code}>{a.code} · {a.name}</option>)}
-            </select>
+            </Combo>
             <span className="lb-note">{draft[c.key] === c.defaultCode ? 'Default' : 'Changed'}</span>
           </div>
         ))}

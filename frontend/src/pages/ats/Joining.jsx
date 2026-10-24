@@ -10,7 +10,7 @@
 // (backend: routes/interviewsJoining.js + utils/joining.js onApplicationJoined)
 
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import CandidateDrawer from '../../components/CandidateDrawer.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
@@ -20,7 +20,10 @@ import Pager from '../../components/Pager.jsx';
 import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
+import { ReleaseLetterModal, ShareModal, TrackChip, openLetter } from '../../components/clientTrack/ClientTrack.jsx';
 import '../../components/interviews/Interviews.css';
+import JoinDropList from '../../components/joindrop/JoinDropList.jsx';
+import { DropDialog, errText } from '../../components/joindrop/JdParts.jsx';
 import {
   fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
 } from './intjoinShared.jsx';
@@ -54,6 +57,9 @@ const VIEWS = [['waiting', 'Waiting to join'], ['joined', 'Joined'], ['dropped',
 
 export default function Joining() {
   const { user } = useAuth();
+  // "Joined and dropped" (Joining & Drop, 2026-10-17): every joining with its dates, place, replacement period and drops. A bell link opens it.
+  const [sp] = useSearchParams();
+  const [mode, setMode] = useState(sp.get('view') === 'joindrop' || sp.get('record') ? 'joindrop' : 'work');
   const [dialog, setDialog] = useState(null);
   const [joinedMsg, setJoinedMsg] = useState('');
   const [openCand, setOpenCand] = useState(null); // the candidate window, opened right here
@@ -76,10 +82,10 @@ export default function Joining() {
   const live = dialog && dialog.id ? (data.rows || []).find((r) => r.id === dialog.id) : null;
   const close = () => setDialog(null);
 
-  async function markJoined(r) {
+  async function markJoined(r, body) {
     setJoinedMsg('');
     const ok = await act(async () => {
-      const res = await api.post(`/ats/joining/${r.id}/joined`);
+      const res = await api.post(`/ats/joining/${r.id}/joined`, body || {});
       setJoinedMsg(res.data.message || `🎉 ${first(r.candidate.name)} joined.`);
       return res;
     }, ' ');
@@ -104,6 +110,12 @@ export default function Joining() {
       {/* The Interviews · Feedback · Offers · Joining tabs are drawn above the page by
           Shell.jsx (components/InterviewTabs.jsx) — tabs of Interview Calendar. */}
 
+      <div className="jd-filters" role="tablist" aria-label="Joining screens" style={{ margin: '0 0 10px' }}>
+        <button type="button" role="tab" aria-selected={mode === 'work'} className={`btn btn-sm${mode === 'work' ? ' btn-primary' : ''}`} onClick={() => setMode('work')}>Waiting to join and joined</button>
+        <button type="button" role="tab" aria-selected={mode === 'joindrop'} className={`btn btn-sm${mode === 'joindrop' ? ' btn-primary' : ''}`} onClick={() => setMode('joindrop')}>Joined and dropped (dates, replacement period, drops)</button>
+      </div>
+      {mode === 'joindrop' && <JoinDropList onOpen={setOpenCand} />}
+      {mode !== 'joindrop' && (<>
       {joinedMsg && <div className="ivx-success" role="status">{joinedMsg}</div>}
       <Banner error={error} notice={notice && notice.trim() ? notice : ''} />
 
@@ -119,7 +131,7 @@ export default function Joining() {
       <div className="tbl-wrap" style={data.loading && rows.length ? { opacity: 0.55, transition: "opacity .15s" } : undefined} aria-busy={data.loading ? "true" : undefined}>
         <table>
           <thead>
-            <tr><th>Candidate</th><th>Job</th><th>Joining date</th><th>{view === 'joined' ? 'Guarantee' : 'Checklist'}</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Candidate</th><th>Requirement</th><th>Joining date</th><th>{view === 'joined' ? 'Guarantee' : 'Checklist'}</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
@@ -134,15 +146,24 @@ export default function Joining() {
                     <div>{r.requirement.title}</div>
                     <div className="small-muted" style={{ fontSize: 12 }}>{internal ? 'TeamLink (internal)' : r.requirement.client?.name || ''}</div>
                   </td>
-                  <td className="small-muted">{r.joiningDate ? fmtDate(r.joiningDate) : '—'}</td>
+                  <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtDate(r.joiningDate) : (v === 'joined' && r.joinedAt ? fmtDate(r.joinedAt) : 'Not recorded')}</td>
                   <td>
-                    {v === 'joined' ? <Guarantee r={r} internal={internal} /> : (
+                    {v === 'joined' ? <Guarantee r={r} internal={internal} /> : (r.clientTrack && v === 'waiting' ? (
+                      <div>
+                        <TrackChip track={r.clientTrack} />
+                        {r.clientTrack.joining?.releasedAt && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{`Client released it ${fmtDate(r.clientTrack.joining.releasedAt)}${r.clientTrack.joining.onBehalf ? ' (recorded by the BDE)' : ''}`}</div>}
+                        <div className="ivx-check" aria-label="Checklist" style={{ marginTop: 4 }}>
+                          <span className={c.docs ? 'is-done' : ''}>{c.docs ? '✓ ' : ''}Documents</span>
+                          <span className={r.clientTrack.joining?.confirmedAt ? 'is-done' : ''}>{r.clientTrack.joining?.confirmedAt ? '✓ ' : ''}Candidate confirmed</span>
+                        </div>
+                      </div>
+                    ) : (
                       <div className="ivx-check" aria-label="Checklist">
                         <span className={c.docs ? 'is-done' : ''}>{c.docs ? '✓ ' : ''}Documents</span>
                         <span className={c.date ? 'is-done' : ''}>{c.date ? '✓ ' : ''}Date</span>
                         <span className={r.call && /not/i.test(r.call.note || '') ? 'is-bad' : c.call ? 'is-done' : ''}>{c.call ? '✓ ' : ''}Call</span>
                       </div>
-                    )}
+                    ))}
                   </td>
                   <td>
                     {v === 'waiting' && (late
@@ -155,13 +176,29 @@ export default function Joining() {
                         {canSeeInvoice ? <Link to={`/invoices/${r.invoice.id}`}>Bill ready</Link> : 'Bill ready for Accounts'}
                       </div>
                     )}
+                    {v === 'joined' && r.clientTrack?.invoice && <div style={{ marginTop: 3 }}><StatusChip status={`Invoice: ${r.clientTrack.invoice.label}`} tone={r.clientTrack.invoice.tone} /></div>}
                     {v === 'joined' && internal && <div className="small-muted" style={{ fontSize: 11, marginTop: 2 }}>{r.hrmsEmployeeId ? 'Employee added' : 'Not added as employee yet'}</div>}
                   </td>
                   <td>
                     <div className="ivx-actions">
                       {!canAct && <span className="small-muted">—</span>}
+                      {canAct && v === 'waiting' && r.clientTrack && !r.clientTrack.joining?.releasedAt && (r.clientTrack.mayRelease
+                        ? <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'clientRelease', id: r.id })}>Record the client&apos;s joining letter</button>
+                        : <span className="small-muted">Waiting for the client&apos;s joining letter.</span>)}
+                      {canAct && v === 'waiting' && r.clientTrack?.joining?.state === 'RELEASED' && (
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'share', id: r.id })}>Share joining letter with candidate</button>
+                      )}
+                      {canAct && v === 'waiting' && r.clientTrack?.joining?.state === 'SHARED' && (
+                        <>
+                          <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'share', id: r.id })}>Share again</button>
+                          <button type="button" className="btn btn-sm" onClick={() => act(() => api.post(`/ats/joining/${r.id}/candidate-confirm`, {}), `Saved. ${first(r.candidate.name)} confirmed joining.`)}>Candidate confirmed</button>
+                        </>
+                      )}
+                      {r.clientTrack?.joining?.file?.canOpen && v === 'waiting' && (
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => openLetter(`/ats/offers/${r.id}/client-letter/joining`)}>Open the client&apos;s letter</button>
+                      )}
                       {canAct && v === 'waiting' && (
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'checklist', id: r.id })}>{nextStep(r)}</button>
+                        <button type="button" className={`btn btn-sm${r.clientTrack && r.clientTrack.joining?.state !== 'CONFIRMED' ? '' : ' btn-primary'}`} onClick={() => setDialog({ kind: 'checklist', id: r.id })}>{nextStep(r)}</button>
                       )}
                       {canAct && v === 'dropped' && (
                         <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'checklist', id: r.id })}>Set a new date</button>
@@ -206,24 +243,37 @@ export default function Joining() {
         openText="Showing people waiting to join, and those who joined in the last 90 days."
       />
 
+      </>)}
+
       {dialog?.kind === 'checklist' && live && (
         <Checklist
           r={live}
           canDocs={canDocs}
           act={act}
           onClose={close}
-          onJoined={() => markJoined(live)}
+          onJoined={(body) => markJoined(live, body)}
+        />
+      )}
+      {dialog?.kind === 'clientRelease' && live && (
+        <ReleaseLetterModal
+          kind="joining"
+          onBehalf
+          endpoint={`/ats/joining/${live.id}/client-release`}
+          candidateName={live.candidate.name}
+          onClose={close}
+          onDone={(r) => { close(); act(async () => {}, r.message); }}
+        />
+      )}
+      {dialog?.kind === 'share' && live && (
+        <ShareModal
+          kind="joining"
+          endpoint={`/ats/joining/${live.id}/share`}
+          candidateName={first(live.candidate.name)}
+          onClose={() => { close(); load(); }}
         />
       )}
       {dialog?.kind === 'left' && live && (
-        <LeftForm
-          row={live}
-          onClose={close}
-          onSubmit={(leftOn, reason) => act(
-            () => api.post(`/ats/joining/${live.id}/left`, { leftOn, reason }),
-            'Saved. If inside the guarantee, a replacement is due.',
-          ).then((ok) => ok && close())}
-        />
+        <LeftViaDrop row={live} onClose={close} onDone={(m) => { close(); act(async () => {}, m); }} />
       )}
       {openCand && (
         <CandidateDrawer
@@ -266,6 +316,10 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
   const [drop, setDrop] = useState(false);
   const [dropReason, setDropReason] = useState('');
   const [busy, setBusy] = useState(false);
+  // The day and the place they joined (the job's place is the default); both are kept in the joining record.
+  const [joinedOn, setJoinedOn] = useState(r.joiningDate || todayIso());
+  const [place, setPlace] = useState(r.requirement?.location || r.requirement?.client?.location || '');
+  const [placeErr, setPlaceErr] = useState('');
   const step = async (fn, msg) => { setBusy(true); try { return await act(fn, msg); } finally { setBusy(false); } };
   useEffect(() => { setDate(r.joiningDate || ''); }, [r.joiningDate]);
   const docText = { Pending: 'Not received', Submitted: 'Received — check them', Verified: 'Checked' }[r.documentsStatus] || r.documentsStatus;
@@ -279,7 +333,7 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
       ) : (
         <>
           <button type="button" className="btn btn-ghost" onClick={() => setDrop(true)}>Did not join</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !c.date} title={c.date ? '' : 'Set the joining date first'} onClick={onJoined}>Joined ✓</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !c.date} title={c.date ? '' : 'Set the joining date first'} onClick={() => { if (!place.trim()) { setPlaceErr('Type the place (city or branch) where they joined.'); return; } setPlaceErr(''); onJoined({ joinedOn, location: place.trim() }); }}>Joined ✓</button>
         </>
       )}
     >
@@ -288,7 +342,7 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
 
         {drop ? (
           <div className="ivx-sec">
-            <b>Why did they not join? *</b>
+            <b>Why did they not join?</b>
             <textarea rows="3" maxLength={1000} placeholder="e.g. Took another job, family reasons" value={dropReason} onChange={(e) => setDropReason(e.target.value)} />
             <button type="button" className="btn btn-sm btn-ghost" style={{ marginTop: 6 }} onClick={() => setDrop(false)}>Back to the checklist</button>
           </div>
@@ -333,8 +387,17 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
               )}
             </div>
 
+            <div className="ivx-sec">
+              <b>When and where did they join?</b>
+              <div className="ivx-actions">
+                <input type="date" max={todayIso()} value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} aria-label="Day they joined" />
+                <input style={{ flex: 1, minWidth: 160 }} placeholder="Place (city or branch)" value={place} onChange={(e) => setPlace(e.target.value)} aria-label="Place they joined" />
+              </div>
+              {placeErr && <div className="error-text">{placeErr}</div>}
+            </div>
+
             <div className="ivx-hint">
-              {internal ? 'Joined adds them as an employee.' : 'Joined makes the bill for Accounts and starts the guarantee.'}
+              {internal ? 'Joined adds them as an employee.' : 'Joined makes the bill for Accounts, starts the replacement period and tells the client, recruiter, TL, BDE and HR.'}
             </div>
           </>
         )}
@@ -343,7 +406,21 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
   );
 }
 
-// A placement who left: inside the client's guarantee → replacement due.
+// "Left the job" now opens the full Report-a-drop form (day, last working day, reason, details, who will be told).
+function LeftViaDrop({ row, onClose, onDone }) {
+  const [rec, setRec] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api.get(`/join-drop/application/${row.id}`).then((r) => setRec(r.data.record)).catch((e) => setErr(errText(e, 'Could not open the drop form.')));
+    api.get('/join-drop/meta').then((r) => setMeta(r.data)).catch(() => {});
+  }, [row.id]);
+  if (err) return <Modal title="Report a drop" onClose={onClose}><div className="error-text">{err}</div></Modal>;
+  if (!rec || !meta) return null;
+  return <DropDialog rec={rec} meta={meta} endpoint={`/join-drop/${rec.id}/drop`} onClose={onClose} onDone={(r) => onDone(r.message || 'Saved.')} />;
+}
+
+// (the older one-line form, kept for reference)
 function LeftForm({ row, onClose, onSubmit }) {
   const [leftOn, setLeftOn] = useState(todayIso());
   const [reason, setReason] = useState('');
@@ -355,8 +432,8 @@ function LeftForm({ row, onClose, onSubmit }) {
     >
       <div className="ivx-fb">
         <div className="ivx-hint" style={{ marginTop: 0, marginBottom: 12 }}>{`Guarantee ${row.guaranteeTerm || '—'}${row.guaranteeEnds ? ` to ${fmtDate(row.guaranteeEnds)}` : ''}`}</div>
-        <div className="ivx-sec"><b>Left on *</b><input type="date" value={leftOn} onChange={(e) => setLeftOn(e.target.value)} /></div>
-        <div className="ivx-sec"><b>Why? *</b><input style={{ width: '100%' }} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Resigned in week 3" /></div>
+        <div className="ivx-sec"><b>Left on</b><input type="date" value={leftOn} onChange={(e) => setLeftOn(e.target.value)} /></div>
+        <div className="ivx-sec"><b>Why?</b><input style={{ width: '100%' }} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Resigned in week 3" /></div>
       </div>
     </Modal>
   );

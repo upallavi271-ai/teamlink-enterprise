@@ -209,3 +209,6 @@
   .ahome .ah-deptbar .ah-scope-chip{margin-left:0}
 }
 .ahome .ah-about{font-size:13.5px;color:var(--ink-soft);margin:2px 0 4px}
+
+/* ---- Names fit (2026-10-17): wrap instead of "..." ---- */
+.ahome .ah-ellip{max-width:none;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}

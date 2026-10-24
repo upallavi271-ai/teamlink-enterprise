@@ -213,7 +213,7 @@ module.exports = {
   columns,
   instructions: [
     'One row = one employee\'s salary structure from a month (Effective From, YYYY-MM). Every change is saved as a VERSION, exactly like the Salary Structure screen: the same month edits that version, a new month adds a revision.',
-    'A month whose payroll is already submitted, approved, synced or paid is refused — an import never changes a past run. Drafts from that month on must be recalculated afterwards.',
+    'A month whose payroll is already submitted, approved, synced or paid is refused — an import never changes a past run. Payroll from that month on must be recalculated afterwards.',
     'Components (Basic, HRA, Special Allowance, PF, PT, ESI …) are computed from the Standard Package rules and are read-only here. Blank cells keep the current value.',
     'A row with only the Employee ID filled in (the export lists everybody on the register) is skipped.',
   ],

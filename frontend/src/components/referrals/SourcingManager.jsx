@@ -14,6 +14,7 @@ import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import ReferPanel from './ReferPanel.jsx';
 import '../candidate/CandidateRecord.css';
+import Combo from '../Combo.jsx';
 
 const errText = (err, fallback) => err?.response?.data?.error || fallback;
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
@@ -41,11 +42,11 @@ function LinkMaker() {
       <div className="crx-grid">
         <label className="field"><span>Campaign name</span><input value={f.campaign} onChange={set('campaign')} placeholder="e.g. diwali-nurses-2026" /></label>
         <label className="field">
-          <span>Job (optional)</span>
-          <select value={f.job} onChange={set('job')}>
-            <option value="">All jobs</option>
+          <span>Requirement (optional)</span>
+          <Combo value={f.job} onChange={set('job')}>
+            <option value="">All requirements</option>
             {jobs.map((j) => <option key={j.id} value={j.id}>{[j.title, j.location].filter(Boolean).join(' · ')}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Where you post it (utm_source)</span><input value={f.source} onChange={set('source')} /></label>
         <label className="field"><span>How (utm_medium)</span><input value={f.medium} onChange={set('medium')} /></label>
@@ -128,7 +129,7 @@ function CampusDrives() {
       <Flash msg={msg} />
       <div className="tbl-wrap">
         <table>
-          <thead><tr><th>College</th><th>Drive date</th><th style={{ textAlign: 'right' }}>People</th><th style={{ textAlign: 'right' }}>Added to jobs</th><th style={{ textAlign: 'right' }}>Joined</th>{showCost && <th>Cost</th>}</tr></thead>
+          <thead><tr><th>College</th><th>Drive date</th><th style={{ textAlign: 'right' }}>People</th><th style={{ textAlign: 'right' }}>Added to requirements</th><th style={{ textAlign: 'right' }}>Joined</th>{showCost && <th>Cost</th>}</tr></thead>
           <tbody>
             {data.drives.map((d) => (
               <tr key={d.id}>
@@ -180,13 +181,13 @@ function Referrals() {
       <div className="small-muted" style={{ marginBottom: 6 }}>{data.note}</div>
       <div className="tbl-wrap">
         <table>
-          <thead><tr><th>Person</th><th>Referred by</th><th>Job</th><th>Status</th><th>Bonus</th>{(canRecordBonus || canApproveBonus) && <th />}</tr></thead>
+          <thead><tr><th>Person</th><th>Referred by</th><th>Requirement</th><th>Status</th><th>Bonus</th>{(canRecordBonus || canApproveBonus) && <th />}</tr></thead>
           <tbody>
             {data.referrals.map((r) => (
               <tr key={r.id}>
                 <td>{r.candidateName}</td>
                 <td>{r.referrerName}</td>
-                <td className="cell-muted">{r.job ? r.job.title : 'No job yet'}</td>
+                <td className="cell-muted">{r.job ? r.job.title : 'No requirement yet'}</td>
                 <td><StatusChip tone={r.status.tone}>{r.status.label}</StatusChip></td>
                 <td>
                   {r.bonus ? (

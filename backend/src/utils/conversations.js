@@ -197,11 +197,16 @@ async function recordIn(m) {
     at, at, m.channel, 'IN', snippet(m.body), Date.now(), t.id,
   );
   await stopWaiting(type, m.personId, m.channel).catch(() => {});
+  // Omni-Channel reply tagging (outreach/replies.js): fire and forget, never blocks or breaks the inbox
+  try { require('../outreach/replies').onReply({ address: m.address, channel: m.channel, at, personType: type, personId: m.personId }).catch(() => {}); } catch { /* tagging is optional */ } // eslint-disable-line global-require
   // tell whoever deals with this person (the bell)
   try {
     const fresh = await getThread(type, m.personId);
     const who = fresh && fresh.ownerUserId;
-    if (who) {
+    if (m.channel === 'WhatsApp') {
+      // WhatsApp chats screen (utils/waChats.js): "Candidate replied: review" on the open follow-up, and ONE bell per chat per 10 minutes
+      await require('./waChats').afterReply({ personType: type, personId: m.personId, name: t.personName || info.name, ownerUserId: who, body: m.body, at }); // eslint-disable-line global-require
+    } else if (who) {
       await require('./notify').pushNotification({ // eslint-disable-line global-require
         userId: who,
         title: `New reply from ${t.personName || info.name || 'a person'} (${m.channel === 'Email' ? 'Mail' : m.channel})`,
@@ -209,6 +214,8 @@ async function recordIn(m) {
       });
     }
   } catch { /* the bell is a courtesy */ }
+  // Omni-Channel WhatsApp bot (outreach/bots.js): fire-and-forget; it replies only when an Admin has switched it on, and always honours STOP
+  try { require('../outreach/bots').onInbound({ personType: type, personId: m.personId, channel: m.channel, body: m.body, address: m.address, numberId: m.numberId || null }).catch(() => {}); } catch { /* the bot is optional */ } // eslint-disable-line global-require
   return { threadId: t.id, messageId };
 }
 
@@ -274,17 +281,19 @@ function itemOf(src, r, masked) {
   const body = r.body == null ? '' : String(r.body);
   return {
     id: `${src}:${r.id}`,
+    providerRef: r.providerRef || null,
     at: toDate(r.createdAt),
     channel: ch === 'Mail' ? 'Email' : ch,
     direction: inbound ? 'in' : 'out',
     state: stateOf(r.status),
     stateWord: STATUS_WORD[String(r.status || '').toUpperCase()] || String(r.status || '').toLowerCase(),
     who: inbound ? null : (r.senderName || null),
-    subject: r.subject || null,
+    subject: masked ? (r.subject ? access.scrubFor(r.subject) : null) : (r.subject || null),
     body: masked ? access.scrubFor(body) : body,
     template: r.templateLabel && !['Reply received', 'Asked us to stop'].includes(r.templateLabel) ? r.templateLabel : (r.templateLabel || null),
-    detail: r.statusDetail || null,
-    note: r.note || null,
+    // A delivery error often quotes the address it failed on: hidden for a masked viewer (security fix 2026-10-13).
+    detail: masked && r.statusDetail ? access.scrubFor(r.statusDetail) : (r.statusDetail || null),
+    note: masked && r.note ? access.scrubFor(r.note) : (r.note || null),
     to: masked ? access.maskedHint(address) : (address || null),
     stop: r.templateLabel === 'Asked us to stop',
     auto: src === 'cand' && !!r.trigger && r.trigger !== 'Manual' && r.trigger !== 'Bulk' && r.trigger !== 'Reply',
@@ -292,7 +301,7 @@ function itemOf(src, r, masked) {
   };
 }
 
-async function timeline(type, id, { masked = false, limit = 300 } = {}) {
+async function timeline(type, id, { masked = false, limit = 300, viewer = null } = {}) {
   let items = [];
   if (type === 'CANDIDATE') {
     const rows = await prisma.candidateMessage.findMany({ where: { candidateId: String(id) }, orderBy: { createdAt: 'desc' }, take: limit }).catch(() => []);
@@ -305,7 +314,9 @@ async function timeline(type, id, { masked = false, limit = 300 } = {}) {
     }
   }
   items.sort((a, b) => a.at - b.at || a.id.localeCompare(b.id));
-  return items;
+  // WHATSAPP NUMBERS: a chat on a number this viewer may not see is not shown; the others say which number they used
+  items = viewer ? await require('./waNumbers').filterRows(viewer, items) : items; // eslint-disable-line global-require
+  return items.map(({ providerRef, ...rest }) => rest);
 }
 
 // ---- who may see which people ---------------------------------------------------------
@@ -409,6 +420,19 @@ async function inbox(user, query = {}) {
     of.filter((t) => vis.has(t.personId)).forEach((t) => mine.push(rowOf(t, rules[type].mode === 'masked')));
   }
   mine.sort((a, b) => b.lastAt - a.lastAt);
+  // WHATSAPP NUMBERS (utils/waNumbers.js): a chat that ran only on numbers this login may not use is not listed; every row names the numbers it ran on
+  try {
+    const WN = require('./waNumbers'); // eslint-disable-line global-require
+    if (await WN.hasNumbers()) {
+      const items = mine.map((r) => ({ personType: r.personType, personId: r.personId, channel: r.channel }));
+      const hide = await WN.hiddenPersons(user, items);
+      const nums = await WN.threadNumbers(items);
+      for (let i = mine.length - 1; i >= 0; i -= 1) {
+        const k = `${mine[i].personType}:${mine[i].personId}`;
+        if (hide.has(k)) mine.splice(i, 1); else if (nums.get(k)) mine[i].waNumbers = nums.get(k);
+      }
+    }
+  } catch { /* the list stays as it was */ }
   const team = await myTeamIds(user);
   const ctx = { userId: user.id, team };
   const f = {
@@ -472,7 +496,9 @@ async function unreadCount(user) {
     const of = raw.filter((t) => t.personType === type);
     // eslint-disable-next-line no-await-in-loop
     const vis = await visibleIds(user, type, of.map((t) => t.personId));
-    of.filter((t) => vis.has(t.personId)).forEach((t) => {
+    let hidden = new Set();
+    try { hidden = await require('./waNumbers').hiddenPersons(user, of.filter((t) => vis.has(t.personId)).map((t) => ({ personType: t.personType, personId: t.personId, channel: t.lastChannel }))); } catch { hidden = new Set(); } // eslint-disable-line global-require
+    of.filter((t) => vis.has(t.personId) && !hidden.has(`${t.personType}:${t.personId}`)).forEach((t) => {
       if (t.unread > 0) { conversations += 1; messages += t.unread; }
       if (t.awaitUntil) waiting += 1;
     });

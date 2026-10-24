@@ -77,7 +77,7 @@ export function rowPrimary(r, role = '') {
   const promote = !r.mayAssign || ['bde', 'recruiter', 'accounts'].includes(role) ? false : r.live !== false;
   if (promote && r.needs === 'tl') return { key: 'assign-tl', label: 'Assign a team lead', strong: true };
   if (promote && r.needs === 'recruiter') return { key: 'assign-recruiter', label: 'Assign a recruiter', strong: true };
-  if (['open', 'edit', 'assign-recruiter', 'assign-tl'].includes(server.key)) return { key: 'open', label: 'Open job', strong: false };
+  if (['open', 'edit', 'assign-recruiter', 'assign-tl'].includes(server.key)) return { key: 'open', label: 'Open requirement', strong: false };
   const words = {
     'add-candidate': 'Add a person', 'view-candidates': 'See people', 'submit-client': 'Send to client', 'generate-invoice': 'Create invoice',
   };
@@ -86,14 +86,14 @@ export function rowPrimary(r, role = '') {
 
 // One sentence for the NEXT STEP box.
 export function nextStepSentence(r, primary, waiting) {
-  if (r.live !== false && r.needs === 'tl') return 'This job has no team lead yet. Pick one so work can start.';
-  if (r.live !== false && r.needs === 'recruiter') return 'This job has a team lead but no recruiter yet. Pick one to find people.';
+  if (r.live !== false && r.needs === 'tl') return 'This requirement has no team lead yet. Pick one so work can start.';
+  if (r.live !== false && r.needs === 'recruiter') return 'This requirement has a team lead but no recruiter yet. Pick one to find people.';
   if (waiting) return `${waiting}.`;
   switch (primary.key) {
-    case 'add-candidate': return 'Add people for this job.';
+    case 'add-candidate': return 'Add people for this requirement.';
     case 'submit-client': return 'People are ready to send to the client.';
     case 'generate-invoice': return 'Someone joined. The invoice can be made.';
-    case 'view-candidates': return 'This job is not open now. You can still see its people.';
-    default: return r.live === false ? 'This job is not open. Open it to see the details.' : 'Nothing is waiting. Open the job to see the details.';
+    case 'view-candidates': return 'This requirement is not open now. You can still see its people.';
+    default: return r.live === false ? 'This requirement is not open. Open it to see the details.' : 'Nothing is waiting. Open the requirement to see the details.';
   }
 }

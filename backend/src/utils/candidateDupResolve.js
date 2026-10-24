@@ -46,9 +46,10 @@ function actorKind(user) {
 
 // The profiles behind a set of flags, straight from the database (NOT the list's big in-memory copy, so the worklist
 // opens fast even right after a restart). Rows are kept for a few seconds so a click-through does not re-read them.
-const PROFILE_TTL = 3000;
-const PROFILE_CACHE = new Map(); // id -> { at, row }
-const WORK_SELECT = {
+const PROFILE_TTL = 4000;
+const PROFILE_CACHE = new Map(); // id -> { at, row, light }
+// Everything scope checks read (a TL / recruiter is held to their area) ...
+const WORK_FULL = {
   id: true, name: true, phone: true, email: true, source: true, firstSource: true, createdAt: true,
   applications: {
     include: {
@@ -62,15 +63,25 @@ const WORK_SELECT = {
     },
   },
 };
-async function profilesFor(ids) {
+// ... and the lighter shape for an Admin / Super Admin (sees everything, so only the facets are needed).
+const WORK_LIGHT = {
+  id: true, name: true, phone: true, email: true, source: true, firstSource: true, createdAt: true,
+  applications: {
+    select: {
+      id: true, candidateId: true, requirementId: true, stage: true, createdAt: true, updatedAt: true, source: true, firstSource: true,
+      requirement: { select: { id: true, department: true, recruiterId: true, recruiter: { select: { id: true, name: true } } } },
+    },
+  },
+};
+async function profilesFor(ids, light = false) {
   const now = Date.now();
-  const need = [...new Set(ids)].filter((id) => { const h = PROFILE_CACHE.get(id); return !h || now - h.at > PROFILE_TTL; });
+  const need = [...new Set(ids)].filter((id) => { const h = PROFILE_CACHE.get(id); return !h || now - h.at > PROFILE_TTL || (h.light && !light); });
   for (const part of DUP.chunks(need, 300)) {
     // eslint-disable-next-line no-await-in-loop
-    const rows = await prisma.candidate.findMany({ where: { id: { in: part } }, select: WORK_SELECT });
+    const rows = await prisma.candidate.findMany({ where: { id: { in: part } }, select: light ? WORK_LIGHT : WORK_FULL });
     const got = new Set();
-    rows.forEach((r) => { PROFILE_CACHE.set(r.id, { at: now, row: r }); got.add(r.id); });
-    part.forEach((id) => { if (!got.has(id)) PROFILE_CACHE.set(id, { at: now, row: null }); });
+    rows.forEach((r) => { PROFILE_CACHE.set(r.id, { at: now, row: r, light }); got.add(r.id); });
+    part.forEach((id) => { if (!got.has(id)) PROFILE_CACHE.set(id, { at: now, row: null, light }); });
   }
   if (PROFILE_CACHE.size > 6000) { const old = [...PROFILE_CACHE.entries()].sort((x, y) => x[1].at - y[1].at).slice(0, 3000); old.forEach(([k]) => PROFILE_CACHE.delete(k)); }
   const byId = new Map();
@@ -80,7 +91,7 @@ async function profilesFor(ids) {
 
 // Is this candidate (by id) inside the viewer's area? `flagRows` are the flags being looked at.
 async function areaChecker(user, kind, flagRows) {
-  const st = { byId: await profilesFor(flagRows.flatMap((f) => [f.candidateId, f.matchCandidateId])) };
+  const st = { byId: await profilesFor(flagRows.flatMap((f) => [f.candidateId, f.matchCandidateId]), !!kind.global) };
   const memo = new Map();
   const inArea = (id) => {
     if (kind.global) return true;
@@ -154,7 +165,7 @@ function card(c, { user, kind, inArea, reasons = [] }) {
     skills: c.skills ? String(c.skills).slice(0, 120) : null, hasResume: !!c.resumeName,
     phone: showContact ? c.phone || null : null, email: showContact ? c.email || null : null,
     phoneHint: !showContact ? null : undefined,
-    stage: latest ? latest.stage : null, stageLabel: latest ? stageLabel(latest.stage) : 'No job yet',
+    stage: latest ? latest.stage : null, stageLabel: latest ? stageLabel(latest.stage) : 'No requirement yet',
     owner: own.recruiter || null, ownerTl: own.tl, department: own.department,
     lastActivity: lastActivityOf(c),
     applicationCount: (c.applications || []).length,
@@ -322,16 +333,16 @@ async function samePersonOtherJob(user, flagId) {
   const { flag, profiles } = ctx;
   const conflicts = await sameJobConflicts(flag.matchCandidateId, flag.candidateId);
   if (conflicts) {
-    return res(409, { error: 'Both profiles applied to the SAME job, so this is not "different job". Press Merge so the further-ahead application is kept, or Reject.', code: 'SAME_JOB' });
+    return res(409, { error: 'Both profiles applied to the SAME requirement, so this is not "different requirement". Press Merge so the further-ahead application is kept, or Reject.', code: 'SAME_JOB' });
   }
   return withMergeLock(async () => {
     const out = await MERGE.mergeCandidates({
       masterId: flag.matchCandidateId, donorIds: [flag.candidateId], user, kind: 'SAME_PERSON_OTHER_JOB', flagId: flag.id,
-      reason: 'Same person, different job — the new application was added to the existing profile',
+      reason: 'Same person, different requirement — the new application was added to the existing profile',
     });
-    await finish(flag, 'SAME_PERSON_OTHER_JOB', user, { reason: 'Same person, different job', mergeLogId: out.mergeLogId });
-    await audit(user, flag, 'Duplicate: same person, different job', `Added to ${nameOfProfile(profiles, flag.matchCandidateId)}`, 'Same person, different job', flag.matchCandidateId);
-    if (!ctx.inArea(flag.matchCandidateId)) await notifyOtherSide(user, flag, profiles, 'joined (same person, different job)');
+    await finish(flag, 'SAME_PERSON_OTHER_JOB', user, { reason: 'Same person, different requirement', mergeLogId: out.mergeLogId });
+    await audit(user, flag, 'Duplicate: same person, different requirement', `Added to ${nameOfProfile(profiles, flag.matchCandidateId)}`, 'Same person, different requirement', flag.matchCandidateId);
+    if (!ctx.inArea(flag.matchCandidateId)) await notifyOtherSide(user, flag, profiles, 'joined (same person, different requirement)');
     return res(200, { ok: true, status: 'SAME_PERSON_OTHER_JOB', masterId: flag.matchCandidateId, mergeLogId: out.mergeLogId, undoDays: out.undoDays, moved: out.moved,
       message: `Done. ${nameOfProfile(profiles, flag.candidateId)}'s application is now on the existing profile.` });
   });
@@ -362,7 +373,7 @@ async function rejectDuplicate(user, flagId, body = {}) {
   }
   await finish(flag, 'REJECTED', user, { reason: String(body.reason || 'Duplicate').slice(0, 300) });
   await audit(user, flag, 'Duplicate: rejected as duplicate', `${done.length} application(s) rejected`, body.reason || 'Duplicate');
-  return res(200, { ok: true, status: 'REJECTED', rejected: done.length, message: done.length ? `Rejected as a duplicate (${done.length} job application${done.length > 1 ? 's' : ''}).` : 'Marked as a duplicate and hidden from the lists.' });
+  return res(200, { ok: true, status: 'REJECTED', rejected: done.length, message: done.length ? `Rejected as a duplicate (${done.length} requirement application${done.length > 1 ? 's' : ''}).` : 'Marked as a duplicate and hidden from the lists.' });
 }
 
 // --- ASK FOR A MERGE (recruiter) -------------------------------------------------------------------------------------------
@@ -537,7 +548,6 @@ async function worklist(user, q = {}) {
   const open = await DUP.q("SELECT * FROM CandidateDupFlag WHERE status IN ('OPEN','MERGE_REQUESTED') ORDER BY createdAt DESC LIMIT 20000");
   const wantDone = q.tab === 'done';
   const done = wantDone ? await DUP.q("SELECT * FROM CandidateDupFlag WHERE status NOT IN ('OPEN','MERGE_REQUESTED') ORDER BY COALESCE(resolvedAt, updatedAt) DESC LIMIT 500") : [];
-  DUP.sweepIfStale();
   const flagRows = [...open, ...done].map(DUP.flagOut);
   const { st, inArea } = await areaChecker(user, kind, flagRows);
   const all = flagRows.map((f) => derive(f, st, user, kind, inArea)).filter((d) => d.visible);
@@ -661,7 +671,7 @@ async function autoMergeProposals(user) {
     });
     if (out.length >= 300) break;
   }
-  return res(200, { supported: true, proposals: out, note: 'Same phone, same name, different jobs. Nothing is merged until a TL or Admin approves.' });
+  return res(200, { supported: true, proposals: out, note: 'Same phone, same name, different requirements. Nothing is merged until a TL or Admin approves.' });
 }
 
 async function mergesList(user) {

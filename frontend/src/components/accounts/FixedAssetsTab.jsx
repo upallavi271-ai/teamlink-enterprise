@@ -2,18 +2,20 @@
 // HRMS owns the assets and repairs: there is no Add asset / Add repair here,
 // only "View in HRMS". Accounts posts and reports:
 //   Pending from HRMS  purchases / repairs / sales waiting for the journal → Post (one or many)
-//   Run depreciation   a preview per asset, then book it
 //   Assets             cost, depreciation, book value; click one for its timeline
 //   Asset summary      per category: opening, additions, depreciation, disposals, closing, repairs
 //   Repair cost        per asset, with "Consider replacing" above the threshold
+// Each of the four has its own Import button (FixedAssetImport.jsx). The "Run depreciation" screen was
+// removed from this page on 2026-10-19; the depreciation calculation and its backend stay as they were.
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { Panel, PanelHead, EmptyMini, Modal } from '../proto.jsx';
 import { money, errText, downloadFile } from '../payroll/payrollUi';
-import PeriodPicker, { ALL_TIME, isAllTime, presetRange } from './PeriodPicker.jsx';
+import PeriodPicker, { ALL_TIME, isAllTime } from './PeriodPicker.jsx';
 import Pager, { usePaged } from '../Pager.jsx';
 import { FacetSelect } from '../ui/ListPageHeader.jsx';
+import FixedAssetImport from './FixedAssetImport.jsx';
 import './ledgerBooks.css';
 import './accountsScroll.css';
 
@@ -74,6 +76,7 @@ function PendingView({ canPost }) {
         <FacetSelect label="What" value={kind} onChange={setKind} options={kindOpts} allLabel="Everything" />
         <label className="prb-check"><input type="checkbox" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} /> show posted ones too</label>
         <Link className="btn btn-sm" to={HRMS_LINK}>View in HRMS</Link>
+        <FixedAssetImport section="pending" canImport={canPost} onDone={load} />
         {canPost && postable.length > 0 && (
           <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} disabled={busy} onClick={() => post(chosen.length ? chosen : postable)}>
             {busy ? 'Posting…' : chosen.length ? `Post ${chosen.length} selected to Journal` : `Post all ${postable.length} to Journal`}
@@ -106,7 +109,6 @@ function PendingView({ canPost }) {
                       <td><span className={`lb-badge ${STATE_CLS[r.state] || 'grey'}`}>{r.state}</span>{r.reason && <div className="lb-note">{r.reason}</div>}<div className="lb-note">Synced from HRMS</div></td>
                       <td style={{ whiteSpace: 'nowrap' }}>
                         {canPost && can && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => post([r])}>{r.state === 'Changed in HRMS' ? 'Update entry' : 'Post'}</button>}
-                        {r.journalEntryId && <> <Link className="btn btn-sm" to={`/accounts/journal?je=${r.journalEntryId}`}>Entry</Link></>}
                       </td>
                     </tr>
                   );
@@ -122,73 +124,6 @@ function PendingView({ canPost }) {
           <div className="lb-note">{closedAsk.text}</div>
         </Modal>
       )}
-    </>
-  );
-}
-
-// ---- Run depreciation -----------------------------------------------------------------------
-function DepreciationView({ canPost }) {
-  const [period, setPeriod] = useState(() => ({ ...presetRange('lastMonth'), preset: 'lastMonth' }));
-  const [pv, setPv] = useState(null);
-  const [runs, setRuns] = useState([]);
-  const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
-  const [error, setError] = useState('');
-  function load() {
-    setPv(null); setError('');
-    if (isAllTime(period)) return;
-    api.get(`/accounts/fixed-assets/depreciation/preview?from=${period.from}&to=${period.to}`).then((r) => setPv(r.data)).catch((err) => setError(errText(err, 'Could not work out the depreciation.')));
-    api.get('/accounts/fixed-assets/depreciation/runs').then((r) => setRuns(r.data)).catch(() => setRuns([]));
-  }
-  useEffect(load, [period]); // eslint-disable-line react-hooks/exhaustive-deps
-  const page = usePaged(pv?.rows || []);
-  async function run(confirmClosed = false) {
-    setBusy(true); setMsg(''); setError('');
-    try {
-      const r = await api.post('/accounts/fixed-assets/depreciation/run', { from: period.from, to: period.to, confirmClosed });
-      setMsg(`Saved — depreciation of ${money(r.data.total)} on ${r.data.assets} asset(s) is booked.`);
-      load();
-    } catch (err) {
-      const t = errText(err, 'Could not book it.');
-      if (/closed/.test(t) && window.confirm(`${t}\n\nBook it anyway?`)) { setBusy(false); run(true); return; }
-      setError(t);
-    } finally { setBusy(false); }
-  }
-  return (
-    <>
-      <div className="lb-filters">
-        <PeriodPicker value={period} onChange={setPeriod} presets={['thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter', 'cfy', 'pfy', 'custom']} label="Depreciate for" />
-        {canPost && pv && pv.rows.length > 0 && !pv.overlap && <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} disabled={busy} onClick={() => run()}>{busy ? 'Booking…' : `Book depreciation · ${money(pv.total)}`}</button>}
-      </div>
-      {isAllTime(period) && <EmptyMini>Pick the month, quarter or year to depreciate.</EmptyMini>}
-      {error && <div className="lb-err">{error}</div>}
-      {msg && <div className="lb-ok">{msg}</div>}
-      {pv && pv.overlap && <div className="lb-err">Depreciation for {pv.overlap.from} to {pv.overlap.to} is already booked. Pick a period after it, or reverse that run in the Journal first.</div>}
-      {pv && pv.gap && <div className="lb-err" style={{ background: '#fdf0dc', color: '#a35f00' }}>The last run ended on {pv.gap.after}. The days in between are not depreciated yet.</div>}
-      {pv && pv.notInBooks > 0 && <div className="lb-note" style={{ padding: '0 18px' }}>{pv.notInBooks} asset(s) with a cost are not in the books yet — post their purchase in “Pending from HRMS” first.</div>}
-      {pv && pv.defaultsUsed > 0 && <div className="lb-note" style={{ padding: '4px 18px 0' }}>{pv.defaultsUsed} asset(s) have no method / useful life in HRMS — the default is used: straight line, 3 years for IT items, 10 for furniture, 8 for vehicles, 5 for the rest, salvage 0.</div>}
-      {pv && (pv.rows.length === 0 ? <EmptyMini>Nothing to depreciate for this period.</EmptyMini> : (
-        <>
-          <div className="tbl-wrap acc-scroll">
-            <table className="lb-tbl">
-              <thead><tr><th>Asset ID</th><th>Asset</th><th>Category</th><th>Method</th><th className="lb-num">Cost</th><th className="lb-num">Book value before</th><th className="lb-num">Days</th><th className="lb-num">Depreciation</th><th className="lb-num">Book value after</th></tr></thead>
-              <tbody>
-                {page.slice.map((r) => (
-                  <tr key={r.assetId}>
-                    <td><b>{r.assetCode}</b></td><td>{r.name}<div className="lb-note">{r.holder || ''}</div></td><td className="cell-muted">{r.category}</td>
-                    <td>{r.method} · {r.life} yr{r.method === 'WDV' ? ` · ${r.rate}%` : ''}{(r.defaulted.method || r.defaulted.life) ? <div className="lb-note">default</div> : null}</td>
-                    <td className="lb-num">{money(r.cost)}</td><td className="lb-num">{money(r.bookValueBefore)}</td><td className="lb-num">{r.days}</td>
-                    <td className="lb-num"><b>{money(r.depreciation)}</b></td><td className="lb-num">{money(r.bookValueAfter)}</td>
-                  </tr>
-                ))}
-                <tr className="lb-tot"><td colSpan="7">TOTAL · {pv.rows.length} asset(s)</td><td className="lb-num">{money(pv.total)}</td><td /></tr>
-              </tbody>
-            </table>
-          </div>
-          {pv.rows.length > 25 && <Pager page={page} noun="assets" />}
-        </>
-      ))}
-      {runs.length > 0 && <div className="lb-note" style={{ padding: '10px 18px' }}>Booked runs: {runs.map((r) => `${r.from} to ${r.to} (${money(r.total)})`).join(' · ')}</div>}
     </>
   );
 }
@@ -216,7 +151,6 @@ function Timeline({ id, onClose }) {
                   <b>{e.date || '—'}</b> · {e.narration} · {money(e.amount)}
                   {e.reversal && <span className="lb-badge orange" style={{ marginLeft: 6 }}>Reversal</span>}
                   {e.hrmsOnly && <span className="lb-badge grey" style={{ marginLeft: 6 }}>Not in the journal</span>}
-                  {e.journalEntryId && <> · <Link to={`/accounts/journal?je=${e.journalEntryId}`} onClick={onClose}>Entry</Link></>}
                 </li>
               ))}
             </ul>
@@ -228,14 +162,15 @@ function Timeline({ id, onClose }) {
 }
 
 // ---- Assets (register) -------------------------------------------------------------------------
-function RegisterView() {
+function RegisterView({ canPost }) {
   const [values, setValues] = useState({ category: '', status: '', employee: '' });
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [error, setError] = useState('');
+  const [tick, setTick] = useState(0); // bumped after an import: the table is read again from the saved data (filters and search stay)
   const set = (k, v) => setValues((x) => ({ ...x, [k]: v }));
-  useEffect(() => { api.get(`/accounts/fixed-assets/register?${qsOf(values)}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the assets.'))); }, [values]);
+  useEffect(() => { api.get(`/accounts/fixed-assets/register?${qsOf(values)}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the assets.'))); }, [values, tick]);
   const rows = (data?.rows || []).filter((r) => !q.trim() || `${r.assetCode} ${r.name} ${r.holder || ''}`.toLowerCase().includes(q.trim().toLowerCase()));
   const page = usePaged(rows);
   return (
@@ -245,6 +180,7 @@ function RegisterView() {
         <label className="lb-f"><span>Search</span><input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Asset ID, name, employee" /></label>
         {(values.category || values.status || values.employee || q) && <button type="button" className="btn btn-sm" onClick={() => { setValues({ category: '', status: '', employee: '' }); setQ(''); }}>Clear filters</button>}
         <Link className="btn btn-sm" to={HRMS_LINK}>View in HRMS</Link>
+        <FixedAssetImport section="assets" canImport={canPost} onDone={() => setTick((t) => t + 1)} onOpenAsset={setOpen} />
       </div>
       {error && <div className="lb-err">{error}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : rows.length === 0 ? <EmptyMini>No assets match these filters.</EmptyMini> : (
@@ -274,20 +210,24 @@ function RegisterView() {
 }
 
 // ---- Asset summary ------------------------------------------------------------------------------
-function SummaryView() {
+function SummaryView({ canPost }) {
   const [period, setPeriod] = useState(ALL_TIME);
   const [values, setValues] = useState({ category: '', status: '', employee: '' });
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
+  const [tick, setTick] = useState(0);
   const set = (k, v) => setValues((x) => ({ ...x, [k]: v }));
   const qs = qsOf({ ...periodParams(period), ...values });
-  useEffect(() => { setError(''); api.get(`/accounts/fixed-assets/summary?${qs}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the summary.'))); }, [qs]);
+  useEffect(() => { setError(''); api.get(`/accounts/fixed-assets/summary?${qs}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the summary.'))); }, [qs, tick]);
   return (
     <>
       <div className="lb-filters">
         <PeriodPicker value={period} onChange={setPeriod} />
         <Filters facets={data?.facets} values={values} set={set} />
-        <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => downloadFile(`/accounts/fixed-assets/summary?${qs}&format=xlsx`, 'asset-summary.xlsx').catch((e) => setError(errText(e, 'Export failed')))}>Export Excel</button>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <FixedAssetImport section="summary" canImport={canPost} onDone={() => setTick((t) => t + 1)} />
+          <button type="button" className="btn btn-sm" onClick={() => downloadFile(`/accounts/fixed-assets/summary?${qs}&format=xlsx`, 'asset-summary.xlsx').catch((e) => setError(errText(e, 'Export failed')))}>Export Excel</button>
+        </span>
       </div>
       {error && <div className="lb-err">{error}</div>}
       {!data ? <EmptyMini>Loading…</EmptyMini> : data.rows.length === 0 ? <EmptyMini>No assets match these filters.</EmptyMini> : (
@@ -313,7 +253,7 @@ function SummaryView() {
 }
 
 // ---- Repair cost ---------------------------------------------------------------------------------
-function RepairCostView({ canEdit }) {
+function RepairCostView({ canEdit, canPost }) {
   const [period, setPeriod] = useState(ALL_TIME);
   const [values, setValues] = useState({ category: '', status: '', employee: '', vendor: '' });
   const [threshold, setThreshold] = useState('');
@@ -335,7 +275,10 @@ function RepairCostView({ canEdit }) {
         <PeriodPicker value={period} onChange={setPeriod} />
         <Filters facets={data?.facets} values={values} set={set} extra={['vendor']} />
         <label className="lb-f"><span>Consider replacing at</span><span style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input style={{ minWidth: 70, width: 70 }} inputMode="numeric" value={threshold} disabled={!canEdit} onChange={(e) => setThreshold(e.target.value)} />%{canEdit && <button type="button" className="btn btn-sm" onClick={saveThreshold}>Save</button>}</span></label>
-        <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => downloadFile(`/accounts/fixed-assets/repair-cost?${qs}&format=xlsx`, 'asset-repair-cost.xlsx').catch((e) => setError(errText(e, 'Export failed')))}>Export Excel</button>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <FixedAssetImport section="repairs" canImport={canPost} onDone={load} />
+          <button type="button" className="btn btn-sm" onClick={() => downloadFile(`/accounts/fixed-assets/repair-cost?${qs}&format=xlsx`, 'asset-repair-cost.xlsx').catch((e) => setError(errText(e, 'Export failed')))}>Export Excel</button>
+        </span>
       </div>
       {error && <div className="lb-err">{error}</div>}
       {msg && <div className="lb-ok">{msg}</div>}
@@ -370,7 +313,7 @@ function RepairCostView({ canEdit }) {
 
 export default function FixedAssetsTab({ canPost = false, canEdit = false }) {
   const [view, setView] = useState('pending');
-  const VIEWS = [['pending', 'Pending from HRMS'], ['dep', 'Run depreciation'], ['register', 'Assets'], ['summary', 'Asset summary'], ['repairs', 'Repair cost']];
+  const VIEWS = [['pending', 'Pending from HRMS'], ['register', 'Assets'], ['summary', 'Asset summary'], ['repairs', 'Repair cost']];
   return (
     <Panel style={{ marginTop: 16 }}>
       <PanelHead title="Fixed assets — from HRMS" />
@@ -378,10 +321,9 @@ export default function FixedAssetsTab({ canPost = false, canEdit = false }) {
         {VIEWS.map(([k, l]) => <button key={k} type="button" className={`btn btn-sm ${view === k ? 'on' : ''}`} onClick={() => setView(k)}>{l}</button>)}
       </div>
       {view === 'pending' && <PendingView canPost={canPost} />}
-      {view === 'dep' && <DepreciationView canPost={canPost} />}
-      {view === 'register' && <RegisterView />}
-      {view === 'summary' && <SummaryView />}
-      {view === 'repairs' && <RepairCostView canEdit={canEdit} />}
+      {view === 'register' && <RegisterView canPost={canPost} />}
+      {view === 'summary' && <SummaryView canPost={canPost} />}
+      {view === 'repairs' && <RepairCostView canEdit={canEdit} canPost={canPost} />}
     </Panel>
   );
 }

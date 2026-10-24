@@ -37,7 +37,7 @@ const GROUPS = [
       card('📋', '/admin/master-lists', 'Master lists', 'Rejection reasons, sources, specializations and the other pick lists.', [['administration', 'Company Setup', 'view']]),
       card('⏰', '/admin/step-timing', 'Step timing and alerts', 'How many days each step may take before it is Late — e.g. "alert if no reply in 3 days".', null, isAdmin),
       card('🔔', '/admin/step-timing', 'Notification rules', 'Who is told when work is late, and how long the bell keeps messages.', null, isAdmin),
-      card('🎯', '/admin/fit', 'Fit settings', 'How the Fit % between a person and a job is worked out.', null, isAdmin),
+      card('🎯', '/admin/fit', 'Fit settings', 'How the Fit % between a person and a requirement is worked out.', null, isAdmin),
     ],
   },
   {

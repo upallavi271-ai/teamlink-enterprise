@@ -1,0 +1,13 @@
+/* Add / Edit vendor login drawer: everything scoped under .vl-drawer. */
+.vl-drawer { display: flex; flex-direction: column; max-height: calc(100vh - 40px); }
+.vl-drawer .modal-body { overflow-y: auto; }
+.vl-drawer .modal-head { flex: none; }
+.vl-drawer .modal-foot { flex: none; }
+/* A focus ring on everything you can reach with Tab. */
+.vl-drawer :is(button, input, select, textarea, [role=radio], [role=combobox]):focus-visible { outline: 2px solid var(--blue, #1B58C0); outline-offset: 2px; box-shadow: 0 0 0 4px var(--brand-ring, rgba(31, 95, 191, .25)); }
+.vl-drawer .vp-chip[aria-checked=true] { font-weight: 700; }
+.vl-drawer .vld-mods, .vl-drawer .vld-sec { border: 1px solid var(--line, #dde5e2); border-radius: 10px; margin: 14px 0 0; padding: 8px 12px 12px; min-width: 0; }
+.vl-drawer .vld-mods legend, .vl-drawer .vld-sec legend { font-size: 12px; font-weight: 700; color: var(--ink-soft, #56666E); padding: 0 6px; }
+.vl-drawer .vld-modgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 2px 14px; margin-top: 6px; }
+.vl-drawer .vld-modgrid .vl-switch { margin: 2px 0; }
+@media (max-width: 640px) { .vl-drawer .vld-modgrid { grid-template-columns: 1fr; } }

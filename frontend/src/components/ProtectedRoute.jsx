@@ -1,6 +1,7 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import HomeRoute from '../pages/home/HomeRoute.jsx';
+import ForcePasswordChange from './ForcePasswordChange.jsx';
 
 export default function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -12,5 +13,7 @@ export default function ProtectedRoute({ children }) {
     if (pathname === '/') return <HomeRoute />;
     return <Navigate to="/login" replace />;
   }
+  // Still on a starting (seed / demo) password: nothing else until it is changed.
+  if (user.passwordStatus && user.passwordStatus.mustChange) return <ForcePasswordChange />;
   return children;
 }

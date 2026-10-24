@@ -34,6 +34,8 @@ const { REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVo
 const store = require('../utils/resumeStore');
 const docs = require('../utils/resumeDocs');
 const rm = require('../utils/resumeMatch');
+const FB = require('../utils/fitBreakdown'); // the Fit breakdown (Resume · AI · Location · Salary) + who sees how much
+const SALARY = require('../utils/salaryFit');
 const { parseResumeText, resumeOwnerCheck } = require('../utils/resumeParse');
 const { logAudit } = require('../utils/audit');
 // B8: meaning-based matching (off by default; Admin → Fit settings).
@@ -46,7 +48,9 @@ router.use(requireProduct('ats'));
 // Lazy: routes/candidates.js is a big module already loaded by index.js.
 const cand = () => require('./candidates'); // eslint-disable-line global-require
 
-const EDIT_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'MANAGER', 'TL', 'STL', 'RECRUITER']);
+// Founder, 2026-10-22: the candidate's ORIGINAL resume (phone, e-mail, address in it) is for the Recruiter, the TL / STL and Admin only. Everyone else
+// (Manager, BDE ...) and every client sees the latest EDITED resume, which has the contact details taken out.
+const EDIT_ROLES = new Set(['SUPER_ADMIN', 'ADMIN', 'TL', 'STL', 'RECRUITER']);
 async function rightsFor(user, kind) {
   if (kind !== 'internal') return { canEdit: false, canUpload: false };
   const role = roleForProduct(user, 'ats');
@@ -134,7 +138,9 @@ async function load(req, res) {
     res.status(403).json({ error: 'Resumes are managed by TeamLink.' });
     return null;
   }
-  return { ...loaded, kind, internal: kind === 'internal' };
+  const internal = kind === 'internal';
+  // full = may open the ORIGINAL (and the contact read from it); the rest get the edited resume only
+  return { ...loaded, kind, internal, full: internal && EDIT_ROLES.has(roleForProduct(req.user, 'ats')) };
 }
 
 const latestEdited = (versions) => visible(versions).filter((v) => v.kind === 'EDITED').slice(-1)[0] || null;
@@ -177,6 +183,9 @@ router.get('/requirement/:reqId/matches', requirePerm('ats', 'requirements', 'Ma
   const sims = rm.semanticOn()
     ? await semantic.similarities(requirement, pool, evidence, { user: req.user, settings: await rm.loadFitSettings() })
     : { engine: 'off', why: null, map: new Map() };
+  // The BDE team (and any login without the Candidate contact & salary switch) gets a rounded total, a label and
+  // the Salary WORD only: no parts, no AI score, no reasons, no rupees (utils/fitBreakdown.js).
+  const restricted = FB.isRestricted(req.user);
   let rows = pool.map((c) => ({
     aiScore: aiScores.get(c.id) ?? null,
     doNotUse: rjIx.doNotUse.get(c.id) || null,
@@ -187,22 +196,64 @@ router.get('/requirement/:reqId/matches', requirePerm('ats', 'requirements', 'Ma
     preferredLocation: c.preferredLocation,
     experienceYears: c.experienceYears,
     hasResume: evidence.has(c.id),
-    match: rm.threeNumbers(c, requirement, evidence.get(c.id), undefined, sims.map.get(c.id)),
+    match: rm.threeNumbers(c, requirement, evidence.get(c.id), undefined, sims.map.get(c.id), aiScores.get(c.id)),
   })).filter((r) => r.match.overall >= opts.minMatch);
+  // Counts for the Salary chips: over everyone who passes the minimum Fit, before the Salary filters.
+  const salaryCounts = FB.salaryCounts(rows.map((r) => r.match));
+  rows = rm.salaryFilter(rows, opts);
   const eligibleCount = rows.filter((r) => r.match.eligible).length;
   const total = rows.length;
   if (opts.eligibleOnly) rows = rows.filter((r) => r.match.eligible);
-  rm.sortRows(rows, opts.sort);
+  // A restricted login sorts by the (rounded) total or by name only: other orders would reveal the parts.
+  const sort = restricted && !['overall', 'name'].includes(opts.sort) ? 'overall' : opts.sort;
+  rm.sortRows(rows, sort);
+  const shown = rows.slice(0, opts.limit).map((r) => (restricted
+    ? { ...r, aiScore: undefined, match: FB.shapeMatch(r.match, true) }
+    : { ...r, match: FB.shapeMatch(r.match, false) }));
+  const budget = SALARY.budgetOf(requirement);
   const canAdd = requirementIsLive(requirement.status) && await can(req.user, 'ats', 'candidates', 'Applications', 'create');
   const canSetMinFit = rm.minFitSupported() && await can(req.user, 'ats', 'requirements', 'Requirement Detail', 'edit');
   return res.json({
     threshold: rm.thresholdFor(requirement),
     minFitIsDefault: requirement.minFit == null,
     canSetMinFit,
-    ...opts, total, eligible: eligibleCount, shown: Math.min(rows.length, opts.limit), rows: rows.slice(0, opts.limit), canAdd,
+    ...opts, sort, total, eligible: eligibleCount, shown: shown.length, rows: shown, canAdd,
+    restricted,
+    // The job's budget in words and the counts for the Salary chips. A job with no budget counts everyone as "not known".
+    salary: { hasBudget: budget.state === 'set', budgetText: budget.state === 'set' ? budget.text : null, counts: salaryCounts },
     fitVersion: rm.versionLabel(),
     semantic: { on: sims.engine !== 'off', engine: sims.engine, why: sims.why },
   });
+});
+
+// --- the Fit breakdown for the rows on screen (candidate list / board) --------------
+// POST { applicationIds: [...] } (at most 60: one page) -> { items: { [applicationId]: breakdown } }.
+// The list and the board do NOT compute a Fit for every one of thousands of rows: the screen asks for the page it
+// draws. Same scorer as the Matching list (one job, one person, resume-aware, AI chip), shaped for the viewer
+// (utils/fitBreakdown.js): the BDE team gets a rounded total, a label and the Salary word only. Only
+// applications whose person AND job this login may see are answered; the rest are simply missing.
+router.post('/fit-breakdowns', requirePerm('ats', 'candidates', 'Candidate List', 'view'), async (req, res) => {
+  if (cand().viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'Fit details are internal to TeamLink.' });
+  const ids = [...new Set((Array.isArray(req.body && req.body.applicationIds) ? req.body.applicationIds : []).map(String))].slice(0, 60);
+  if (!ids.length) return res.json({ items: {} });
+  const apps = await prisma.application.findMany({ where: { id: { in: ids } }, select: { id: true, candidateId: true, requirementId: true } });
+  const [reqs, cands] = await Promise.all([
+    prisma.requirement.findMany({ where: { AND: [requirementWhere(req.user), { id: { in: [...new Set(apps.map((a) => a.requirementId))] } }] } }),
+    prisma.candidate.findMany({ where: { AND: [candidateWhere(req.user), { id: { in: [...new Set(apps.map((a) => a.candidateId))] } }] }, select: MATCH_SELECT }),
+  ]);
+  const reqById = new Map(reqs.map((r) => [r.id, r]));
+  const candById = new Map(cands.map((c) => [c.id, c]));
+  const [evidence, aiScores] = await Promise.all([rm.currentResumeEvidence(cands.map((c) => c.id)), rm.latestAiScores(cands.map((c) => c.id))]);
+  const restricted = FB.isRestricted(req.user);
+  const items = {};
+  apps.forEach((a) => {
+    const c = candById.get(a.candidateId);
+    const r = reqById.get(a.requirementId);
+    if (!c || !r) return;
+    const m = rm.threeNumbers(c, r, evidence.get(c.id), undefined, undefined, aiScores.get(c.id));
+    items[a.id] = FB.breakdownOf(m, restricted);
+  });
+  return res.json({ items, restricted });
 });
 
 // --- the job's own minimum Fit % (Eligible = Overall >= this) -----------------
@@ -211,7 +262,7 @@ router.put('/requirement/:reqId/min-fit', requirePerm('ats', 'requirements', 'Re
   if (cand().viewerKind(req.user) !== 'internal') return res.status(403).json({ error: 'Only TeamLink staff can change this.' });
   if (!rm.minFitSupported()) return res.status(503).json({ error: 'This setting is being set up. Please try again later.' });
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.reqId } });
-  if (!requirement) return res.status(404).json({ error: 'Job not found' });
+  if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
   const raw = req.body ? req.body.minFit : undefined;
   let minFit = null;
@@ -239,6 +290,8 @@ router.get('/fit-settings', async (req, res) => {
     ...s,
     defaults: { weights: rm.DEFAULT_POINTS, defaultMinFit: rm.ELIGIBLE_THRESHOLD, specBonus: require('../utils/matching').SPEC_EXACT_BONUS }, // eslint-disable-line global-require
     labels: rm.WEIGHT_LABELS,
+    groups: rm.GROUPS,
+    groupKeys: require('../utils/matching').FIT_GROUPS, // eslint-disable-line global-require
     canEdit: isAdmin(req.user) && rm.fitSettingsSupported(),
     ready: rm.fitSettingsSupported(),
     // B8: scoring versions (v1 = before versioning) + the meaning-based engine.
@@ -291,6 +344,7 @@ router.put('/fit-settings', async (req, res) => {
   } catch (err) {
     if (err.code === 'NOT_READY') return res.status(503).json({ error: 'This setting is being set up. Please try again later.' });
     if (err.code === 'ALL_ZERO') return res.status(400).json({ error: 'At least one weight must be more than 0.' });
+    if (err.code === 'BAD_WEIGHT') return res.status(400).json({ error: `Each number must be from 0 to 100. Please check: ${err.problems.join(', ')}.`, problems: err.problems });
     throw err;
   }
 });
@@ -316,7 +370,7 @@ router.get('/requirement/:reqId/similar', requirePerm('ats', 'requirements', 'Ma
   const settings = await rm.loadFitSettings();
   if (!settings.semantic || !settings.semantic.on) return res.json({ on: false, rows: [], total: 0 });
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.reqId } });
-  if (!requirement) return res.status(404).json({ error: 'Job not found' });
+  if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
@@ -342,7 +396,7 @@ router.get('/requirement/:reqId/similar', requirePerm('ats', 'requirements', 'Ma
     rows: slice.map(({ c, s: sim }) => ({
       id: c.id, name: c.name, location: c.location, experienceYears: c.experienceYears, hasResume: evidence.has(c.id),
       similarPct: sim.pct, shared: sim.shared,
-      match: rm.threeNumbers(c, requirement, evidence.get(c.id), undefined, sim),
+      match: FB.shapeMatch(rm.threeNumbers(c, requirement, evidence.get(c.id), undefined, sim), FB.isRestricted(req.user)),
     })),
   });
 });
@@ -352,11 +406,11 @@ router.get('/:id', candidateView, async (req, res) => {
   const ctx = await load(req, res);
   if (!ctx) return undefined;
   const versions = await versionsOf(req.params.id);
-  if (!ctx.internal) {
-    const e = latestEdited(versions);
-    return res.json({ viewer: 'client', originals: [], edited: e ? [metaFor(e, false)] : [], canEdit: false, canUpload: false });
-  }
   const rights = await rightsFor(req.user, ctx.kind);
+  if (!ctx.full) {
+    const e = latestEdited(versions);
+    return res.json({ viewer: ctx.internal ? 'edited-only' : 'client', originals: [], edited: e ? [metaFor(e, false)] : [], canEdit: false, canUpload: !!rights.canUpload });
+  }
   const withOwner = (v) => ({ ...metaFor(v, true), owner: ownerOf(v, ctx.candidate) });
   const shown = visible(versions);
   return res.json({
@@ -381,9 +435,9 @@ router.get('/:id/version/:rid', candidateView, async (req, res) => {
   if (!v) return res.status(404).json({ error: 'Resume version not found' });
   const row = await prisma.candidateResume.findUnique({ where: { id: v.id }, select: { text: true, sections: true } });
   const name = ctx.candidate.name;
-  if (!ctx.internal) {
+  if (!ctx.full) {
     const e = latestEdited(versions);
-    if (!e || e.id !== v.id) return res.status(403).json({ error: 'Only the edited resume is shared with clients.' });
+    if (!e || e.id !== v.id) return res.status(403).json({ error: 'Only the edited resume is shared with you.' });
     const sections = store.safeParse(row.sections) || {};
     return res.json({ ...metaFor(v, false), text: docs.renderPlainText(sections, { name }) });
   }
@@ -410,10 +464,10 @@ router.get('/:id/file/:rid', candidateView, async (req, res) => {
   const versions = await versionsOf(req.params.id);
   const v = versions.find((x) => x.id === req.params.rid);
   if (!v) return res.status(404).json({ error: 'Resume version not found' });
-  if (!ctx.internal) {
-    // Clients: the latest EDITED version only — never an original.
+  if (!ctx.full) {
+    // Clients and every login that is not the Recruiter / TL / Admin: the latest EDITED version only — never an original.
     const e = latestEdited(versions);
-    if (v.kind !== 'EDITED' || !e || e.id !== v.id) return res.status(403).json({ error: 'Only the edited resume is shared with clients.' });
+    if (v.kind !== 'EDITED' || !e || e.id !== v.id) return res.status(403).json({ error: 'Only the edited resume is shared with you.' });
   }
   const format = String(req.query.format || '').toLowerCase();
   let stored; let mime; let fileName;
@@ -427,7 +481,7 @@ router.get('/:id/file/:rid', candidateView, async (req, res) => {
   const full = store.resolveResumeFile(stored);
   if (!full) return res.status(404).json({ error: 'The stored file is missing.' });
   const download = /^(1|true|yes)$/i.test(String(req.query.download || ''));
-  if (download || !ctx.internal) {
+  if (download || !ctx.full) {
     await logAudit({
       userId: req.user.id,
       actorName: req.user.name,
@@ -542,6 +596,77 @@ async function setHidden(req, res, hide) {
 router.post('/:id/hide/:rid', candidateView, (req, res) => setHidden(req, res, true));
 router.post('/:id/unhide/:rid', candidateView, (req, res) => setHidden(req, res, false));
 
+// --- upload the EDITED resume made outside TeamLink (founder, 2026-10-22) -------
+// A PDF is edited in iLovePDF, a Word file in Word, then the result comes back here as "Edited resume vN" (the file a client sees). It is only taken when
+// the candidate's phone number / e-mail are no longer in it. A Word upload also gets a PDF (made from its text) because every viewer opens the PDF.
+router.post('/:id/upload-edited', candidateView, async (req, res) => {
+  const ctx = await load(req, res);
+  if (!ctx) return undefined;
+  const rights = await rightsFor(req.user, ctx.kind);
+  if (!rights.canEdit) return res.status(403).json({ error: 'You cannot edit resumes for this candidate.' });
+  let parsedBody;
+  try {
+    parsedBody = await store.parseResumeUpload(req);
+  } catch (err) {
+    const code = err && err.code;
+    return res.status(code === 'TOO_LARGE' ? 413 : 400).json({ error: store.RESUME_MESSAGE[code] || 'Upload failed.' });
+  }
+  let kind;
+  try {
+    ({ kind } = store.validateResumeFile(parsedBody.file));
+  } catch (err) {
+    return res.status(400).json({ error: store.RESUME_MESSAGE[err && err.code] || 'Upload failed.' });
+  }
+  if (kind === 'doc') return res.status(400).json({ error: 'Save the Word file as .docx (File > Save As) or as PDF, then upload it again.' });
+  const file = parsedBody.file;
+  const { text, parsed, error: extractError } = await store.extractAndParse(file.data, kind);
+  const cleanText = String(text || '').trim();
+  // The contact check. A file with no readable text (a scanned picture) cannot be checked: it is taken, with a plain warning.
+  const found = require('../utils/resumeContactCheck').findContact(cleanText, { phone: ctx.candidate.phone, email: ctx.candidate.email }); // eslint-disable-line global-require
+  if (found.emails.length || found.phones.length) {
+    return res.status(422).json({
+      error: `This file still shows ${[found.phones.length ? 'a phone number' : null, found.emails.length ? 'an e-mail address' : null].filter(Boolean).join(' and ')}. Remove ${found.phones.length + found.emails.length > 1 ? 'them' : 'it'} in the editor, save, and upload it again. A client sees this file.`,
+      found,
+    });
+  }
+  const sections = docs.cleanSections(docs.sectionsFromText(docs.stripContact(cleanText), parsed || {}));
+  const versionNo = (await prisma.candidateResume.count({ where: { candidateId: req.params.id, kind: 'EDITED' } })) + 1;
+  const label = `Edited resume v${versionNo}`;
+  const name = ctx.candidate.name;
+  let pdfBuf = file.data;
+  let docxName = null;
+  if (kind === 'docx') {
+    if (!cleanText) return res.status(400).json({ error: 'We could not read any text from that Word file. Save it again from Word and upload it.' });
+    pdfBuf = await docs.buildPdf({ name, sections, versionLabel: label });
+    docxName = store.writeStored(file.data, 'docx');
+  }
+  const pdfName = store.writeStored(pdfBuf, 'pdf');
+  const latestOriginal = await prisma.candidateResume.findFirst({ where: { candidateId: req.params.id, kind: 'ORIGINAL', ...(rm.hideSupported() ? { hiddenAt: null } : {}) }, orderBy: { createdAt: 'desc' }, select: { id: true } });
+  const row = await prisma.candidateResume.create({
+    data: {
+      candidateId: req.params.id,
+      kind: 'EDITED',
+      baseResumeId: latestOriginal ? latestOriginal.id : null,
+      file: pdfName,
+      fileName: `${label}.pdf`,
+      mime: 'application/pdf',
+      size: pdfBuf.length,
+      docxFile: docxName,
+      text: cleanText ? docs.renderPlainText(sections, { name }) : null,
+      sections: JSON.stringify(sections),
+      parsed: JSON.stringify({ ...(parsed || {}), emails: [], phones: [], ...(extractError ? { extractError } : {}) }),
+      parser: kind === 'docx' ? 'uploaded-word' : 'uploaded-pdf',
+      createdById: req.user.id,
+      createdByName: req.user.name,
+    },
+  });
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: `Resume edited outside TeamLink and uploaded (${label})`, entity: 'Candidate', entityId: req.params.id, toValue: `${file.filename} · ${kind === 'docx' ? 'Word' : 'PDF'} · no phone / e-mail found${cleanText ? '' : ' (no text to check)'}`,
+  });
+  const versions = await versionsOf(req.params.id);
+  return res.status(201).json({ resume: metaFor(versions.find((x) => x.id === row.id), true), couldNotCheck: !cleanText });
+});
+
 // --- edit -> Edited vN + TeamLink-format PDF / DOCX ----------------------------
 router.post('/:id/edit', candidateView, async (req, res) => {
   const ctx = await load(req, res);
@@ -605,7 +730,7 @@ router.get('/:id/eligible-requirements', candidateView, async (req, res) => {
       id: true, reqCode: true, title: true, internal: true, location: true, status: true,
       skills: true, goodToHaveSkills: true, experience: true, education: true, workMode: true, employmentType: true,
       specialisation: true, // fit_: the must-have when no skills are typed in
-      salary: true, joiningTimeline: true, jobPreference: true,
+      salary: true, salaryType: true, joiningTimeline: true, jobPreference: true,
       clientId: true,
       specialisationId: true, // spec D: exact specialisation match bonus
       ...(rm.minFitSupported() ? { minFit: true } : {}), // the job's own minimum Fit %
@@ -647,13 +772,18 @@ router.get('/:id/eligible-requirements', candidateView, async (req, res) => {
       };
     })(),
   })).filter((r) => r.match.overall >= opts.minMatch);
+  const restricted = FB.isRestricted(req.user);
+  const salaryCounts = FB.salaryCounts(rows.map((r) => r.match));
+  rows = rm.salaryFilter(rows, opts);
   const eligibleCount = rows.filter((r) => r.match.eligible).length;
   const total = rows.length;
   if (opts.eligibleOnly) rows = rows.filter((r) => r.match.eligible);
-  rm.sortRows(rows, opts.sort);
+  const sort = restricted && !['overall', 'name'].includes(opts.sort) ? 'overall' : opts.sort;
+  rm.sortRows(rows, sort);
+  const shown = rows.slice(0, opts.limit).map((r) => ({ ...r, match: FB.shapeMatch(r.match, restricted) }));
   const canAdd = await can(req.user, 'ats', 'candidates', 'Applications', 'create');
   return res.json({
-    threshold: rm.thresholdFor(null), ...opts, total, eligible: eligibleCount, hasResume: !!evidence, shown: Math.min(rows.length, opts.limit), rows: rows.slice(0, opts.limit), canAdd,
+    threshold: rm.thresholdFor(null), ...opts, sort, total, eligible: eligibleCount, hasResume: !!evidence, shown: shown.length, rows: shown, canAdd, restricted, salary: { counts: salaryCounts },
     fitVersion: rm.versionLabel(),
     semantic: { on: sims.engine !== 'off', engine: sims.engine, why: sims.why },
   });

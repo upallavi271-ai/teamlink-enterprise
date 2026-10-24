@@ -1,0 +1,22 @@
+-- Exotel AI Calling (2026-10-22): the calls an AI recruitment assistant places, every provider event, the "offer an AI call" prompts, per-job automation switches, the do-not-call list, bulk campaigns and the candidate's call language.
+-- ADDITIVE ONLY: seven new tables and their indexes; nothing existing is altered. The app also creates them itself with IF NOT EXISTS (src/calling/schema.js), so this file can be applied before or after the first run.
+-- A call row holds a masked phone hint, never the full number, never an API key / token / webhook secret. Undo: rollback.sql.
+CREATE TABLE IF NOT EXISTS "AiCall" ( "id" TEXT NOT NULL PRIMARY KEY, "mode" TEXT NOT NULL DEFAULT 'live', "purpose" TEXT NOT NULL, "status" TEXT NOT NULL DEFAULT 'queued', "applicationId" TEXT, "candidateId" TEXT NOT NULL, "requirementId" TEXT, "campaignId" TEXT, "dedupeKey" TEXT NOT NULL, "scheduleVersion" TEXT, "slot" TEXT, "language" TEXT, "scriptJson" TEXT, "initiatedById" TEXT, "initiatedByName" TEXT, "initiatedVia" TEXT, "toMask" TEXT, "confirmedAt" TEXT, "confirmedById" TEXT, "attempts" INTEGER NOT NULL DEFAULT 0, "maxAttempts" INTEGER NOT NULL DEFAULT 3, "nextAttemptAt" TEXT, "lastAttemptAt" TEXT, "callSid" TEXT, "providerStatus" TEXT, "startedAt" TEXT, "endedAt" TEXT, "durationSec" INTEGER, "outcome" TEXT, "outcomePending" INTEGER NOT NULL DEFAULT 0, "interest" TEXT, "answersJson" TEXT, "summary" TEXT, "transcript" TEXT, "botStateJson" TEXT, "recordingUrl" TEXT, "rescheduleWish" TEXT, "humanFollowUp" INTEGER NOT NULL DEFAULT 0, "nextAction" TEXT, "followUpDate" TEXT, "stageAtCall" TEXT, "failReason" TEXT, "waitReason" TEXT, "written" TEXT, "purgeAt" TEXT, "deletedAt" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL );
+CREATE UNIQUE INDEX IF NOT EXISTS "AiCall_dedupe" ON "AiCall"("dedupeKey") WHERE "status" <> 'cancelled';
+CREATE INDEX IF NOT EXISTS "AiCall_cand" ON "AiCall"("candidateId", "createdAt");
+CREATE INDEX IF NOT EXISTS "AiCall_app" ON "AiCall"("applicationId", "createdAt");
+CREATE INDEX IF NOT EXISTS "AiCall_req" ON "AiCall"("requirementId", "createdAt");
+CREATE INDEX IF NOT EXISTS "AiCall_sid" ON "AiCall"("callSid");
+CREATE INDEX IF NOT EXISTS "AiCall_status" ON "AiCall"("status", "nextAttemptAt");
+CREATE TABLE IF NOT EXISTS "AiCallEvent" ( "id" TEXT NOT NULL PRIMARY KEY, "callId" TEXT, "callSid" TEXT, "eventKey" TEXT NOT NULL, "kind" TEXT NOT NULL DEFAULT 'provider', "status" TEXT, "payload" TEXT, "applied" INTEGER NOT NULL DEFAULT 0, "note" TEXT, "receivedAt" TEXT NOT NULL );
+CREATE UNIQUE INDEX IF NOT EXISTS "AiCallEvent_key" ON "AiCallEvent"("eventKey");
+CREATE INDEX IF NOT EXISTS "AiCallEvent_call" ON "AiCallEvent"("callId", "receivedAt");
+CREATE INDEX IF NOT EXISTS "AiCallEvent_kind" ON "AiCallEvent"("kind", "receivedAt");
+CREATE TABLE IF NOT EXISTS "AiCallOffer" ( "id" TEXT NOT NULL PRIMARY KEY, "applicationId" TEXT NOT NULL, "candidateId" TEXT NOT NULL, "requirementId" TEXT, "kind" TEXT NOT NULL, "scheduleVersion" TEXT, "status" TEXT NOT NULL DEFAULT 'pending', "offeredToId" TEXT, "offeredToName" TEXT, "callId" TEXT, "createdAt" TEXT NOT NULL, "decidedAt" TEXT, "decidedByName" TEXT );
+CREATE UNIQUE INDEX IF NOT EXISTS "AiCallOffer_one" ON "AiCallOffer"("applicationId", "kind", COALESCE("scheduleVersion", ''));
+CREATE INDEX IF NOT EXISTS "AiCallOffer_status" ON "AiCallOffer"("status", "createdAt");
+CREATE TABLE IF NOT EXISTS "AiCallJobSetting" ( "requirementId" TEXT NOT NULL PRIMARY KEY, "enabled" INTEGER NOT NULL DEFAULT 1, "autoShortlist" INTEGER NOT NULL DEFAULT 0, "autoInterview" INTEGER NOT NULL DEFAULT 0, "autoReminders" INTEGER NOT NULL DEFAULT 0, "updatedById" TEXT, "updatedByName" TEXT, "updatedAt" TEXT NOT NULL );
+CREATE TABLE IF NOT EXISTS "AiCallSuppression" ( "id" TEXT NOT NULL PRIMARY KEY, "phone" TEXT NOT NULL, "kind" TEXT NOT NULL, "source" TEXT, "note" TEXT, "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL );
+CREATE UNIQUE INDEX IF NOT EXISTS "AiCallSuppression_one" ON "AiCallSuppression"("phone", "kind");
+CREATE TABLE IF NOT EXISTS "AiCallCampaign" ( "id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "purpose" TEXT NOT NULL, "requirementId" TEXT, "createdById" TEXT, "createdByName" TEXT, "total" INTEGER NOT NULL DEFAULT 0, "createdAt" TEXT NOT NULL );
+CREATE TABLE IF NOT EXISTS "AiCallPref" ( "candidateId" TEXT NOT NULL PRIMARY KEY, "language" TEXT NOT NULL, "source" TEXT, "updatedAt" TEXT NOT NULL );

@@ -9,6 +9,7 @@ import {
   calcTax, pct, GST_TYPES, TDS_BASES, TDS_SECTIONS,
 } from './invTax';
 import './invTax.css';
+import Combo from '../../components/Combo.jsx';
 
 // The form's starting value from an invoice's tax view (or a joining's defaults).
 export function taxFormFrom(t = {}) {
@@ -143,10 +144,10 @@ export default function TaxFields({
       {f.tdsOn && details && (
         <label className="field">
           <span>TDS section</span>
-          <select value={f.tdsSection} onChange={(e) => set('tdsSection', e.target.value)}>
+          <Combo value={f.tdsSection} onChange={(e) => set('tdsSection', e.target.value)}>
             <option value="">Not set (194J is printed)</option>
             {TDS_SECTIONS.map((s) => <option key={s} value={s}>{s === 'Other' ? 'Other' : `${s}`}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       {f.tdsOn && details && (

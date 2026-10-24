@@ -44,8 +44,9 @@ function Group({ label, items, value, onPick, all = 'All' }) {
   );
 }
 
-export default function InboxPanel({ onCount }) {
-  const [f, setF] = useState({ state: STATE_DEFAULT, channel: '', type: '', department: '', assigned: '', q: '', from: '', to: '' });
+// channel / state (optional): start pre-filtered, used by Omni-Channel > Communication (WhatsApp, SMS, Email, Calls, Conversations)
+export default function InboxPanel({ onCount, channel = '', state = '' }) {
+  const [f, setF] = useState({ state: state || STATE_DEFAULT, channel, type: '', department: '', assigned: '', q: '', from: '', to: '' });
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [open, setOpen] = useState(null);
@@ -65,6 +66,7 @@ export default function InboxPanel({ onCount }) {
   useEffect(() => { load(); }, [load]);
   useEffect(() => { const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
 
+  useEffect(() => { setF((x) => ({ ...x, channel, state: state || STATE_DEFAULT })); setPage(1); }, [channel, state]);
   const set = (k) => (v) => { setF((x) => ({ ...x, [k]: v })); setPage(1); };
 
   if (err) return <div className="msg-box red">{err}</div>;
@@ -114,6 +116,7 @@ export default function InboxPanel({ onCount }) {
               <span className="main">
                 <span className="nm"><span>{r.name || 'Unknown'}</span><small>{ago(r.lastAt)}</small></span>
                 <span className="sn">{r.direction === 'OUT' ? 'You: ' : ''}{r.snippet || '(no words)'}</span>
+                {r.waNumbers && r.waNumbers.length > 0 && <span className="sn" title="The WhatsApp number(s) this chat runs on"> · {r.waNumbers.map((n) => n.label).join(', ')}</span>}
                 <span className="tg">
                   <span>{CHANNEL_ICON[r.channel] || ''} {CH_WORD[r.channel] || r.channel}</span>
                   <span>{TYPE_WORD[r.personType]}</span>

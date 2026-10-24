@@ -576,12 +576,17 @@ async function matchClient(name, user) {
     where = (typeof scope.clientPickerWhere === 'function' && await scope.clientPickerWhere(user)) || {};
   } catch { where = {}; }
   const rows = await prisma.client.findMany({ where, select: { id: true, name: true, legalName: true } }).catch(() => []);
+  const oldNames = await require('./clientSearch').aliasMap().catch(() => new Map()); // eslint-disable-line global-require
   const want = normCo(name);
   if (!want) return null;
   const score = (c) => {
     const a = normCo(c.name); const b = normCo(c.legalName);
     if (a === want || (b && b === want)) return 3;
+    // an OLD name of the client (ClientAlias) is as good as the legal name; the answer still carries the official name
+    const olds = (oldNames.get(c.id) || []).map(normCo).filter(Boolean);
+    if (olds.includes(want)) return 3;
     if (a.startsWith(want) || want.startsWith(a) || (b && (b.startsWith(want) || want.startsWith(b)))) return 2;
+    if (olds.some((o) => o.startsWith(want) || want.startsWith(o))) return 2;
     if (want.length >= 5 && (a.includes(want) || want.includes(a))) return 1;
     return 0;
   };

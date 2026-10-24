@@ -9,7 +9,7 @@
 // "Missing" = the current or the expected salary is blank, or written in a way that cannot be read
 // ("As per norms", "NA"), using the same reader as the app (src/utils/salaryFit.js missingOf).
 // A "Fresher" / 0 current salary counts as GIVEN. Nothing is written to the database: only SELECTs run.
-// The recruiter is the one on the person's most recent job (the job's recruiter, else the follow-up owner), else "No job yet".
+// The recruiter is the one on the person's most recent job (the job's recruiter, else the follow-up owner), else "No requirement yet".
 // ---------------------------------------------------------------------------
 /* eslint-disable no-console */
 const fs = require('fs');
@@ -49,7 +49,7 @@ const sorted = (m) => [...m.entries()].sort((a, b) => b[1] - a[1]);
     const miss = SAL.missingOf(c);
     if (!miss) return;
     bump(kinds, miss);
-    const rec = recOf.get(c.id) || 'No job yet';
+    const rec = recOf.get(c.id) || 'No requirement yet';
     const src = c.source || '(no source)';
     bump(byRecruiter, rec); bump(bySource, src);
     rows.push({ id: c.id, name: c.name, phone: c.phone || '', email: c.email || '', source: src, recruiter: rec, missing: miss, currentSalary: c.currentSalary || '', expectedSalary: c.expectedSalary || '' });

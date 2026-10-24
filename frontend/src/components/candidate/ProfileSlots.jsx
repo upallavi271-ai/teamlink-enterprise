@@ -34,6 +34,10 @@ import QuickContact from '../followups/QuickContact.jsx';
 import SpecialisationLine from './SpecialisationLine.jsx';
 import CandidateAutoMessages from '../automsg/CandidateAutoMessages.jsx'; // automatic stage messages for this person
 import { ResumeCard, AiScoresTab, ActivityTab } from '../Candidate360Tabs.jsx';
+import FitBreakdown from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
+import AddApplicationCard from '../applications/AddApplicationCard.jsx'; // Add application: a job picker you can type into + the 'already on this job' notice
+import { can } from '../../permissions';
+import AiCallHistory from '../aicalling/AiCallHistory.jsx'; // Exotel AI Calling: this candidate's AI calls + the Call button
 
 // --- Resume (resume/fit agent) -------------------------------------------------
 export function ResumeSlot({ c }) {
@@ -43,6 +47,12 @@ export function ResumeSlot({ c }) {
       <ResumeCard c={c} hideDocuments />
     </>
   );
+}
+
+// --- Add application (any TeamLink login that may add people to a job) ---------
+export function AddApplicationSlot({ c, user, internal, onAddToJob }) {
+  if (!internal || !onAddToJob || !user || !can(user, 'ats', 'candidates', 'Applications', 'create')) return null;
+  return <AddApplicationCard c={c} onAddToJob={onAddToJob} />;
 }
 
 // --- Fit (resume/fit agent) ----------------------------------------------------
@@ -55,9 +65,9 @@ export function FitSlot({
       <AiScoresTab c={c} app={app} internal={internal} />
       <AiMatchDetail c={c} />
       <div className="c360t-card">
-        <div className="c360t-label">Jobs this person fits</div>
+        <div className="c360t-label">Requirements this person fits</div>
         {c.profileThin
-          ? <div className="small-muted">Not enough details to score. Add skills, experience or a resume to see the jobs this person fits.</div>
+          ? <div className="small-muted">Not enough details to score. Add skills, experience or a resume to see the requirements this person fits.</div>
           : <EligibleRequirementsPanel candidateId={c.id} onAdd={onAddToJob} />}
       </div>
     </>
@@ -73,7 +83,7 @@ function AiMatchDetail({ c }) {
   if (m.thin) {
     return (
       <div className="c360t-card">
-        <div className="c360t-label">{`Fit for: ${m.requirementTitle || 'the current job'}`}</div>
+        <div className="c360t-label">{`Fit for: ${m.requirementTitle || 'the current requirement'}`}</div>
         <div className="c360t-kv"><span>Fit</span><b>Not enough details to score</b></div>
         <div className="small-muted" style={{ marginTop: 6 }}>{m.recommendation}</div>
         <div className="small-muted" style={{ marginTop: 4 }}>The recruiter decides. Fit never moves a person by itself.</div>
@@ -81,11 +91,12 @@ function AiMatchDetail({ c }) {
     );
   }
   const line = (label, part, extra) => (part ? (
-    <div className="c360t-kv"><span>{label}</span><b>{`${part[extra ? 'relevantPercent' : 'percent']}% — ${(extra ? part.relevantReason : part.reason) || '—'}`}</b></div>
+    <div className="c360t-kv"><span>{label}</span><b>{part[extra ? 'relevantPercent' : 'percent'] == null ? `${part.word || 'Not known'}${part.reason && part.reason !== part.word ? ` — ${part.reason}` : ''}` : `${part[extra ? 'relevantPercent' : 'percent']}% — ${(extra ? part.relevantReason : part.reason) || '—'}`}</b></div>
   ) : null);
   return (
     <div className="c360t-card">
-      <div className="c360t-label">{`Fit for: ${m.requirementTitle || 'the current job'} — ${m.overall}%`}</div>
+      <div className="c360t-label">{`Fit for: ${m.requirementTitle || 'the current requirement'} — ${m.approx ? 'about ' : ''}${m.overall}%`}</div>
+      {m.breakdown && <div style={{ margin: '4px 0 8px' }}><FitBreakdown b={m.breakdown} showTotal={false} showFormula /></div>}
       {m.advisory && <div className="small-muted" style={{ marginBottom: 6 }}>{m.advisory}</div>}
       {line('Experience', m.experienceMatch)}
       {line('Relevant experience', m.experienceMatch, true)}
@@ -131,6 +142,7 @@ export function HistoryTimelineSlot({
     <>
       {internal && <CandidateAutoMessages candidateId={c.id} />}
       {internal && <FollowUpTimeline candidateId={c.id} refreshKey={refreshKey} />}
+      {internal && <AiCallHistory candidate={c} refreshKey={refreshKey} />}
       {withActivity && <ActivityTab c={c} internal={internal} limit={60} />}
     </>
   );

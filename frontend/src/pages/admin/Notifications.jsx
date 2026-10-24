@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../../api';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { PAGE_SIZES } from '../../components/Pager.jsx';
@@ -14,6 +15,11 @@ import Pager, { PAGE_SIZES } from '../../components/Pager.jsx';
 // PAGED + FILTERED ON THE SERVER: GET /admin/notifications?page=… (the paged
 // mode of that route; the header bell keeps the plain latest-30 array). Only
 // the signed-in person's own notifications, whatever the filters say.
+
+// The password-changed alert ends with "Open: /admin/users?block=<id>": hidden from the text, shown as a button.
+const OPEN_TAIL = new RegExp(String.raw`\nOpen: (/[^\s]+)\s*$`);
+const noteText = (m) => String(m || '').replace(OPEN_TAIL, '');
+const blockPath = (m) => { const p = (String(m || '').match(OPEN_TAIL) || [])[1]; return p && p.startsWith('/admin/users?block=') ? p : null; };
 
 export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
@@ -82,8 +88,9 @@ export default function Notifications() {
               <tr key={n.id}>
                 <td>{n.recipient || '—'}</td>
                 <td>{n.channel || 'In-App'}</td>
-                <td>{n.title}{n.message ? <div className="small-muted" style={{ fontSize: 11.5 }}>{n.message}</div> : null}</td>
-                <td><span className="status pending">{n.status || 'Delivered'}</span></td>
+                <td>{n.title}{n.message ? <div className="small-muted" style={{ fontSize: 11.5 }}>{noteText(n.message)}</div> : null}
+                  {blockPath(n.message) && <Link className="btn btn-sm" style={{ marginTop: 4 }} to={blockPath(n.message)}>Block this login</Link>}</td>
+                <td><span className={'status ' + (/^(failed|not sent)/i.test(n.status || '') ? 'failed' : /^(sent|delivered|read)/i.test(n.status || '') ? 'active' : 'pending')}>{n.status || 'Delivered'}</span></td>
                 <td>{new Date(n.createdAt).toLocaleString()}</td>
               </tr>
             ))}

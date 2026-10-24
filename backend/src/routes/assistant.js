@@ -71,7 +71,7 @@ async function limitFor(user) {
 // Where "how do I…" questions are pointed.
 const MODULES = [
   'HRMS: HRMS Dashboard; My Employee Profile (your own record, edit requests); Attendance & Time (check-in/out, regularization); Leave & Holidays (apply, approve, balances, holiday list); Payroll & Compensation (payslips); Performance & Development; Employee Services (helpdesk tickets, expense claims, tasks/timesheet, announcements, assets, documents, resignation).',
-  'Recruitment (ATS): ATS Dashboard (your queue); Jobs / Requirements (create, assign, Job Portal); Clients; Candidates & Pipeline (stages, follow-ups, contact log); Recruiter & BDE; Interview Calendar.',
+  'Recruitment (ATS): ATS Dashboard (your queue); Requirements (create, assign, Job Portal); Clients; Candidates & Pipeline (stages, follow-ups, contact log); Recruiter & BDE; Interview Calendar.',
   'Accounts: Accounts Dashboard; Invoices; Bank & Reconciliation; Office / Business expenses.',
   'Reports (ATS / Job Portal / Accounts) and Administration (users, roles, departments, integrations, audit logs) for those who have them.',
 ];
@@ -130,6 +130,17 @@ router.post('/ask', async (req, res) => {
     });
   }
 
+  // AGREEMENTS ARE NOT FOR TLs / STLs / Recruiters / HR (user, 2026-10-12): the assistant does not discuss them with those logins.
+  const apBlind = require('../utils/agreementPrivacy').blindTo(req.user); // eslint-disable-line global-require
+  if (apBlind && /agreement|\be-?sign|unsigned/i.test(message)) {
+    return res.json({ answer: 'I cannot help with that one. Ask your Business Development manager.', options: [], clarify: false });
+  }
+  // A RECRUITER'S REPORTS ARE THEIR OWN (utils/ownOnly.js): a question about other recruiters, the team, rankings or company totals is
+  // answered with that rule, whatever the model or the counters could have said.
+  const ownRule = require('../utils/ownOnly'); // eslint-disable-line global-require
+  if (ownRule.isOwnOnly(req.user) && ownRule.TEAM_QUESTION.test(message)) {
+    return res.json({ answer: ownRule.TEAM_REFUSAL, options: [], clarify: false });
+  }
   // ASK MODE, deterministic first (src/ai/assistant/ask.js): counts, lists,
   // comparisons and recommendations read straight from the app's own data, with
   // the numbers and their source shown - no model or key needed. A request to
@@ -163,7 +174,7 @@ router.post('/ask', async (req, res) => {
   const question = [message, ...history.filter((m) => m.role === 'user').slice(-2).map((m) => m.content)].join(' | ');
   const facts = await buildFacts(req.user, page, { maxChars: ai.provider() === 'claude' ? 9000 : 4500, question: topicOfFirst(message, question) });
   try {
-    const raw = await ai.chat(systemPrompt(facts.text, aiAccess.voicePromptNote(voice)), [...history, { role: 'user', content: message }]);
+    const raw = await ai.chat(systemPrompt(facts.text, [aiAccess.voicePromptNote(voice), apBlind ? 'RULE: this person must never be told anything about client agreements (status, steps, dates, fees, links, signing). If asked, say agreements are not part of their role.' : ''].filter(Boolean).join('\n')), [...history, { role: 'user', content: message }]);
     const { text, options } = aiAccess.splitOptions(raw);
     return res.json({
       answer: text || (options.length ? 'Which of these did you mean?' : 'I could not put an answer together for that.'),

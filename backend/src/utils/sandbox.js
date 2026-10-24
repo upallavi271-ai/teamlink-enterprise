@@ -37,6 +37,30 @@ function aiRefusal() {
 }
 
 // --- Fake mail transport -----------------------------------------------------
+// TEST-ONLY HOOKS (sandbox only; nothing happens unless a test sets these in the sandbox server's environment):
+//   TEST_MAIL_CAPTURE=<file>  every message the fake transport is handed is appended to this file as one JSON line
+//                             (to, from, replyTo, subject, text, html, headers) so a test can read the real email content.
+//                             The message never leaves the machine - it is the same fake transport.
+//   TEST_MAIL_FAIL=<file>     while that file exists, the fake transport REFUSES like a real provider would; the file holds
+//                             {"message":"...","code":"...","responseCode":550} (any part optional). Delete the file to send again.
+function testHooks(msg, to) {
+  const cap = process.env.TEST_MAIL_CAPTURE;
+  const failFile = process.env.TEST_MAIL_FAIL;
+  // eslint-disable-next-line global-require
+  const fs = require('fs');
+  if (failFile && fs.existsSync(failFile)) {
+    let f = {};
+    try { f = JSON.parse(fs.readFileSync(failFile, 'utf8')); } catch { f = {}; }
+    throw Object.assign(new Error(f.message || 'Simulated provider failure'), { code: f.code, responseCode: f.responseCode, response: f.response });
+  }
+  if (cap) {
+    const addr = (v) => (v && typeof v === 'object' ? `${v.name ? `${v.name} ` : ''}<${v.address}>` : String(v || ''));
+    fs.appendFileSync(cap, `${JSON.stringify({
+      at: new Date().toISOString(), to, from: addr(msg.from), replyTo: addr(msg.replyTo), subject: msg.subject || '', text: msg.text || '', html: msg.html || '', headers: msg.headers || {},
+    })}\n`);
+  }
+}
+
 function fakeMailTransport() {
   return {
     sandbox: true,
@@ -44,6 +68,7 @@ function fakeMailTransport() {
     async sendMail(msg = {}) {
       const to = [].concat(msg.to || []).map((a) => (typeof a === 'string' ? a : (a && a.address) || '')).filter(Boolean);
       console.log(`[sandbox] mail NOT sent (SMTP not contacted) to=${to.join(',') || '-'} subject=${JSON.stringify(String(msg.subject || '').slice(0, 80))}`);
+      testHooks(msg, to);
       return {
         accepted: to,
         rejected: [],
@@ -64,6 +89,8 @@ function hostAllowed(host, port) {
   const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
   // Our own API (agent actions, ATS I/O and payroll sync call back into this process).
   if (LOOPBACK.has(h) && String(port) === String(process.env.PORT || '')) return true;
+  // Local MOCK servers of the tests (a fake SMS phone ...): loopback ports listed in TEST_MOCK_PORTS only.
+  if (LOOPBACK.has(h) && String(process.env.TEST_MOCK_PORTS || '').split(',').map((x) => x.trim()).filter(Boolean).includes(String(port))) return true;
   if (allowAi()) {
     if (h === 'api.anthropic.com') return true;
     try {

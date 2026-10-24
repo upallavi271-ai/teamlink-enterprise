@@ -65,11 +65,21 @@ const WEIGHT_LABELS = {
   loc: 'Location',
   mode: 'Work mode',
   emp: 'Employment type',
-  sal: 'Salary',
+  sal: 'Salary (what they want vs the client budget)',
   notice: 'Notice period',
-  jp: 'Job type (permanent / contract)',
+  jp: 'Requirement type (permanent / contract)',
   avail: 'Availability',
+  ai: 'AI interview score',
 };
+// The four parts a person sees (Resume · AI · Location · Salary) + the small ones, for the one table on
+// the Fit settings screen. The keys are the weights of utils/matching.js (FIT_GROUPS).
+const GROUPS = [
+  { key: 'resume', label: 'Resume', icon: '📄', help: 'Skills, experience and education against the requirement.' },
+  { key: 'ai', label: 'AI interview', icon: '🤖', help: 'Counted only for people who have an AI interview score. 0 = shown beside the Fit, not counted.' },
+  { key: 'location', label: 'Location', icon: '📍', help: 'Same city, preferred city, nearby city.' },
+  { key: 'salary', label: 'Salary', icon: '₹', help: 'What the person wants against the client budget. When either is not known it is left out and nobody is marked down.' },
+  { key: 'other', label: 'Other small things', icon: '•', help: 'Work mode, requirement type, notice period, availability.' },
+];
 const DEFAULT_POINTS = Object.fromEntries(Object.entries(WEIGHTS).map(([k, v]) => [k, Math.round(v * 100)]));
 const FIT_KEY = 'fit';
 // B8: the meaning-based part's default weight in points (the 12 weights sum to 100).
@@ -139,8 +149,24 @@ async function loadFitSettings({ fresh = false } = {}) {
   return out;
 }
 
+// What an Admin typed for the weights, checked BEFORE it is cleaned (cleanFitSettings quietly falls back to the
+// usual number for a bad one; a person saving should be told instead): every weight a whole number 0-100.
+function weightProblems(input) {
+  const w = input && input.weights && typeof input.weights === 'object' ? input.weights : null;
+  if (!w) return [];
+  const bad = [];
+  Object.keys(DEFAULT_POINTS).forEach((k) => {
+    if (w[k] === undefined || w[k] === null || w[k] === '') return;
+    const n = Number(w[k]);
+    if (!Number.isFinite(n) || n < 0 || n > 100) bad.push(WEIGHT_LABELS[k] || k);
+  });
+  return bad;
+}
+
 async function saveFitSettings(input, user) {
   if (!fitSettingsSupported()) throw Object.assign(new Error('NOT_READY'), { code: 'NOT_READY' });
+  const problems = weightProblems(input);
+  if (problems.length) throw Object.assign(new Error('BAD_WEIGHT'), { code: 'BAD_WEIGHT', problems });
   const value = cleanFitSettings(input);
   if (Object.values(value.weights).reduce((a, b) => a + b, 0) <= 0) throw Object.assign(new Error('ALL_ZERO'), { code: 'ALL_ZERO' });
   const who = { updatedById: user ? user.id : null, updatedByName: user ? user.name : null };
@@ -229,7 +255,8 @@ async function latestAiScores(candidateIds) {
   const out = new Map();
   if (!want.size) return out;
   const rows = await prisma.application.findMany({
-    where: { aiInterviewScore: { not: null } },
+    // a short list of people: ask only for them (the whole table otherwise)
+    where: { aiInterviewScore: { not: null }, ...(want.size <= 500 ? { candidateId: { in: [...want] } } : {}) },
     select: { candidateId: true, aiInterviewScore: true, updatedAt: true },
     orderBy: { updatedAt: 'desc' },
   });
@@ -250,7 +277,7 @@ function reasonLine(m) {
   const parts = [];
   if (missing.length) parts.push(`Missing: ${missing.join(', ')}`);
   if (m.locationMatched === false) parts.push('Location is far');
-  if (!parts.length && m.mandatoryCount === 0 && m.specMatch !== 'exact') return 'Cannot check skills: the job lists no must-have skills yet';
+  if (!parts.length && m.mandatoryCount === 0 && m.specMatch !== 'exact') return 'Cannot check skills: the requirement lists no must-have skills yet';
   if (!parts.length) {
     const good = [];
     if ((m.matchedSkills || []).length) good.push('has all must-have skills');
@@ -279,9 +306,13 @@ function semanticOpts(sim) {
 }
 const semanticOn = () => !!(settingsCache && settingsCache.value && settingsCache.value.semantic && settingsCache.value.semantic.on);
 
-function threeNumbers(candidate, requirement, evidence, threshold, sim) {
+// ai (optional) = the person's latest AI interview score: shown as the AI chip, and counted only when Admin gave
+// the AI part points in Fit settings. Salary comes from the ONE helper inside computeMatch.
+function threeNumbers(candidate, requirement, evidence, threshold, sim, ai) {
   const so = semanticOpts(sim);
-  const m = computeMatch(candidate, requirement, { ...(evidence ? { resume: evidence } : {}), ...(so ? { semantic: so } : {}) });
+  const m = computeMatch(candidate, requirement, {
+    ...(evidence ? { resume: evidence } : {}), ...(so ? { semantic: so } : {}), ...(ai !== undefined && ai !== null ? { aiScore: ai } : {}),
+  });
   const min = threshold != null ? threshold : thresholdFor(requirement);
   const el = eligibilityOf(m, min);
   return {
@@ -295,6 +326,18 @@ function threeNumbers(candidate, requirement, evidence, threshold, sim) {
     gaps: m.gaps,
     resumePct: m.resumePct,
     locationPct: m.locPct,
+    locPct: m.locPct,
+    // Salary + AI as parts of the Fit (the numbers shapeMatch / fitBreakdown.js turn into chips). Never rupees.
+    salPct: m.salPct,
+    salKnown: m.salKnown,
+    salState: m.salState,
+    salBand: m.salBand,
+    salWord: m.salWord,
+    salBelowRange: m.salBelowRange,
+    salWhy: m.salWhy,
+    aiPct: m.aiPct,
+    aiCounted: m.aiCounted,
+    shares: m.shares,
     resumeSource: m.resumeSource,
     locationReason: m.locReason,
     matchedSkills: m.matchedSkills,
@@ -311,10 +354,22 @@ function threeNumbers(candidate, requirement, evidence, threshold, sim) {
 // ?minMatch / ?sort / ?eligibleOnly shared by both list endpoints.
 function listOptions(query) {
   const minMatch = query.minMatch !== undefined && query.minMatch !== '' ? Math.max(0, Math.min(100, Number(query.minMatch) || 0)) : defaultMinFit();
-  const sort = ['overall', 'resume', 'location', 'ai', 'name'].includes(query.sort) ? query.sort : 'overall';
+  const sort = ['overall', 'resume', 'location', 'salary', 'ai', 'name'].includes(query.sort) ? query.sort : 'overall';
   const eligibleOnly = /^(1|true|yes)$/i.test(String(query.eligibleOnly || ''));
+  // Salary filters (off by default): hideAbove = leave out people who want more than the client's maximum
+  // (Slightly above + Above budget; people whose salary is not known stay: they are not marked down);
+  // salaryWithin = only people inside the budget.
+  const hideAbove = /^(1|true|yes)$/i.test(String(query.hideAbove || ''));
+  const salaryWithin = /^(1|true|yes)$/i.test(String(query.salaryWithin || ''));
   const limit = Math.min(200, Math.max(1, Number(query.limit) || 50));
-  return { minMatch, sort, eligibleOnly, limit };
+  return { minMatch, sort, eligibleOnly, limit, hideAbove, salaryWithin };
+}
+
+// hideAbove / salaryWithin on rows that carry .match (the full match, before it is shaped for a viewer).
+function salaryFilter(rows, opts) {
+  if (opts.salaryWithin) return rows.filter((r) => r.match.salKnown && r.match.salBand === 'within');
+  if (opts.hideAbove) return rows.filter((r) => !(r.match.salKnown && r.match.salBand !== 'within'));
+  return rows;
 }
 
 const SORT_KEY = { overall: 'overall', resume: 'resumePct', location: 'locationPct' };
@@ -322,6 +377,8 @@ function sortRows(rows, sort) {
   // AI score (people without one last) and name live on the row, not in .match.
   if (sort === 'ai') return rows.sort((a, b) => ((b.aiScore ?? -1) - (a.aiScore ?? -1)) || (b.match.overall - a.match.overall));
   if (sort === 'name') return rows.sort((a, b) => String(a.name || a.title || '').localeCompare(String(b.name || b.title || '')));
+  // Salary: the Salary fit % (people whose salary is not known last).
+  if (sort === 'salary') return rows.sort((a, b) => ((b.match.salPct ?? -1) - (a.match.salPct ?? -1)) || (b.match.overall - a.match.overall));
   const k = SORT_KEY[sort] || 'overall';
   return rows.sort((a, b) => (b.match[k] - a.match[k]) || (b.match.overall - a.match.overall) || (Number(b.match.eligible) - Number(a.match.eligible)));
 }
@@ -336,6 +393,9 @@ function scoreSnapshot(match, extra = {}) {
     specBonus: st.specBonus != null ? st.specBonus : SPEC_EXACT_BONUS,
     semantic: st.semantic && st.semantic.on ? { on: true, weight: st.semantic.weight, engine: extra.engine || st.semantic.engine, pct: match.semanticPct ?? null } : { on: false },
     overall: match.overall,
+    // 2026-10-13: Salary is a real factor (known = in the score; not known = left out and the rest re-normalised).
+    formula: 'salary-factor-v2',
+    salary: { known: !!match.salKnown, band: match.salBand || null, state: match.salState || null },
     resumeSource: match.resumeSource || null,
     reasons: (match.reasons || []).slice(0, 12),
     gaps: (match.gaps || []).slice(0, 12),
@@ -353,5 +413,5 @@ module.exports = {
   versionLabel: (n) => versionLabel(n === undefined ? getActiveVersion() : n), versionCode: (n) => versionCode(n === undefined ? getActiveVersion() : n), getActiveVersion,
   currentResumeEvidence, latestAiScores, threeNumbers, thresholdFor, reasonLine, listOptions, sortRows, ELIGIBLE_THRESHOLD,
   loadFitSettings, saveFitSettings, cleanFitSettings, fitSettingsSupported, hideSupported, minFitSupported, hasField,
-  WEIGHT_LABELS, DEFAULT_POINTS, getActiveWeights,
+  WEIGHT_LABELS, DEFAULT_POINTS, getActiveWeights, GROUPS, weightProblems, salaryFilter,
 };

@@ -13,6 +13,8 @@
 
 const zlib = require('zlib');
 const XLSX = require('xlsx');
+const formulaGuard = require('./formulaGuard');
+formulaGuard.installOnSheetJs(); // every .xlsx writer in the app is covered (security fix 2026-10-13)
 
 // --- CSV (RFC 4180) --------------------------------------------------------
 // A field is quoted when it holds a comma, a quote or a newline, and an
@@ -20,7 +22,7 @@ const XLSX = require('xlsx');
 // shift every later column.
 function csvCell(value) {
   if (value === null || value === undefined) return '';
-  const s = String(value);
+  const s = formulaGuard.neutralise(String(value));
   return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
@@ -44,7 +46,7 @@ function cellValue(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : String(value);
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString().slice(0, 10);
-  const s = cleanText(value);
+  const s = formulaGuard.neutralise(cleanText(value));
   if (/^-?(0|[1-9]\d*)(\.\d+)?$/.test(s) && s.length < 10) return Number(s);
   return s.length > 32000 ? s.slice(0, 32000) : s;
 }
@@ -346,4 +348,4 @@ function toPdf(headers, rows, { title = 'Employees', subtitle = '' } = {}) {
   return Buffer.from(pdf, 'latin1');
 }
 
-module.exports = { csvCell, toCsv, toXlsx, toXlsxBook, toXlsxBookSlow, toPdf };
+module.exports = { csvCell, toCsv, toXlsx, toXlsxBook, toXlsxBookSlow, toPdf, zipBuffers };

@@ -146,7 +146,7 @@ async function build(user, q, opts = {}) {
 
   const notes = [];
   const un = inRange.filter((i) => i.rec.key === '—');
-  if (un.length) notes.push(`${un.length} invoice(s) name no recruiter: the job has no recruiter and the candidate has no application at that client. They are in the "${UNATTRIBUTED}" row.`);
+  if (un.length) notes.push(`${un.length} invoice(s) name no recruiter: the requirement has no recruiter and the candidate has no application at that client. They are in the "${UNATTRIBUTED}" row.`);
   if (!invs.length) notes.push('No invoices in your area for these filters.');
   return {
     P, tiles, cells, sections: [byRec, byMonth, byClient], invById, pays, notes, options: { invs }, inRange, live, outstandingOf,

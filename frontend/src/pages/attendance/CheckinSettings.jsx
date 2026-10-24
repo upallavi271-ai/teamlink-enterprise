@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { PanelPad, TwoCol } from '../../components/proto.jsx';
 import './attendance-self.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // HRMS-24 §4 / §5 settings, under Check-in Methods.
@@ -38,10 +39,10 @@ function DayRules({ canEdit }) {
       <h3 style={{ fontSize: 14, marginBottom: 10 }}>Missing check-in / check-out rule</h3>
       <div className="field">
         <label>A past working day with no check-in is marked</label>
-        <select disabled={!canEdit} value={policy.missingCheckInRule || 'Missing Check-In'} onChange={(e) => save({ missingCheckInRule: e.target.value })}>
+        <Combo disabled={!canEdit} value={policy.missingCheckInRule || 'Missing Check-In'} onChange={(e) => save({ missingCheckInRule: e.target.value })}>
           <option>Missing Check-In</option>
           <option>Absent</option>
-        </select>
+        </Combo>
       </div>
       <div className="field">
         <label>Weekly off days</label>
@@ -81,6 +82,10 @@ function GeofenceSettings() {
         officeLongitude: g.officeLongitude === '' ? null : g.officeLongitude,
         geofenceRadiusM: g.geofenceRadiusM,
         faceMatchThreshold: g.faceMatchThreshold,
+        officeName: g.officeName,
+        otherOffices: (g.otherOffices || []).map((o) => ({ name: o.name, latitude: o.latitude, longitude: o.longitude, radiusM: o.radiusM })),
+        minPunchGapSec: g.minPunchGapSec,
+        checkin: g.checkin,
       });
       setG(r.data); setMsg('Saved.');
     } catch (e2) { setErr(e2.response?.data?.error || 'Could not save.'); } finally { setBusy(false); }
@@ -97,7 +102,7 @@ function GeofenceSettings() {
 
   return (
     <PanelPad>
-      <h3 style={{ fontSize: 14, marginBottom: 10 }}>Web / mobile check-in — geofence &amp; face match (Super Admin)</h3>
+      <h3 style={{ fontSize: 14, marginBottom: 10 }}>Web / mobile check-in — distance &amp; face check (Super Admin)</h3>
       <form onSubmit={save}>
         <label className="att-day" style={{ marginBottom: 8 }}>
           <input type="checkbox" checked={!!g.geofenceEnabled} onChange={(e) => setG({ ...g, geofenceEnabled: e.target.checked })} />
@@ -106,11 +111,59 @@ function GeofenceSettings() {
         <div className="grid-2">
           <div className="field"><label>Office latitude</label><input type="number" step="any" value={g.officeLatitude ?? ''} onChange={(e) => setG({ ...g, officeLatitude: e.target.value })} /></div>
           <div className="field"><label>Office longitude</label><input type="number" step="any" value={g.officeLongitude ?? ''} onChange={(e) => setG({ ...g, officeLongitude: e.target.value })} /></div>
-          <div className="field"><label>Radius (metres)</label><input type="number" min="20" value={g.geofenceRadiusM ?? 200} onChange={(e) => setG({ ...g, geofenceRadiusM: e.target.value })} /></div>
+          <div className="field"><label>Allowed distance from the office (metres)</label><input type="number" min="20" value={g.geofenceRadiusM ?? 200} onChange={(e) => setG({ ...g, geofenceRadiusM: e.target.value })} /></div>
           <div className="field">
-            <label>Face-match threshold (0.30 strict – 0.60 lenient)</label>
+            <label>Strict face number (0.30 strictest – 0.60 easiest; used only in Strict)</label>
             <input type="number" step="0.01" min="0.3" max="0.6" value={g.faceMatchThreshold ?? 0.45} onChange={(e) => setG({ ...g, faceMatchThreshold: e.target.value })} />
           </div>
+        </div>
+        <div className="grid-2">
+          <div className="field"><label>Office name (shown to employees)</label><input value={g.officeName ?? ''} onChange={(e) => setG({ ...g, officeName: e.target.value })} /></div>
+          <div className="field"><label>Ignore a repeat punch within (seconds)</label><input type="number" min="0" max="3600" value={g.minPunchGapSec ?? 60} onChange={(e) => setG({ ...g, minPunchGapSec: e.target.value })} /></div>
+        </div>
+        <div className="field">
+          <label>Other offices (inside any of them is fine)</label>
+          {(g.otherOffices || []).map((o, i) => (
+            <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
+              <input style={{ flex: '2 1 120px' }} placeholder="Name" value={o.name ?? ''} onChange={(e) => setG({ ...g, otherOffices: g.otherOffices.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
+              <input style={{ flex: '1 1 90px' }} type="number" step="any" placeholder="Latitude" value={o.latitude ?? ''} onChange={(e) => setG({ ...g, otherOffices: g.otherOffices.map((x, j) => (j === i ? { ...x, latitude: e.target.value } : x)) })} />
+              <input style={{ flex: '1 1 90px' }} type="number" step="any" placeholder="Longitude" value={o.longitude ?? ''} onChange={(e) => setG({ ...g, otherOffices: g.otherOffices.map((x, j) => (j === i ? { ...x, longitude: e.target.value } : x)) })} />
+              <input style={{ flex: '1 1 70px' }} type="number" min="20" placeholder="Radius m" value={o.radiusM ?? 200} onChange={(e) => setG({ ...g, otherOffices: g.otherOffices.map((x, j) => (j === i ? { ...x, radiusM: e.target.value } : x)) })} />
+              <button type="button" className="btn btn-sm" onClick={() => setG({ ...g, otherOffices: g.otherOffices.filter((_, j) => j !== i) })}>Remove</button>
+            </div>
+          ))}
+          <button type="button" className="btn btn-sm" onClick={() => setG({ ...g, otherOffices: [...(g.otherOffices || []), { name: '', latitude: '', longitude: '', radiusM: 200 }] })}>Add another office</button>
+        </div>
+        <div className="field" style={{ marginTop: 6 }}>
+          <label><b>Face check at web check-in</b></label>
+          {[['required', 'Required (recommended)', 'No check-in or check-out unless the live camera face is the same person as the profile photo, with the head-turn / blink check. No photo, no face, a wrong face or a held-up picture is refused and nothing is marked present.'],
+            ['record', 'Record anyway', 'Attendance is always recorded at once. A face that does not match is flagged for HR to look at.'],
+            ['easy', 'Easy', 'A weak match is fine. Only a face that is clearly someone else is refused. Everything else is recorded and flagged.'],
+            ['strict', 'Strict', 'A wrong face is refused; a technical problem (no photo, camera, slow check) is recorded and flagged.']].map(([k, label, help]) => (
+            <label key={k} className="att-day" style={{ display: 'block', marginBottom: 4 }}>
+              <input type="radio" name="faceMode" checked={(g.checkin?.faceMode || 'required') === k} onChange={() => setG({ ...g, checkin: { ...g.checkin, faceMode: k } })} />
+              {' '}<b>{label}</b> <span className="small-muted">{help}</span>
+            </label>
+          ))}
+        </div>
+        <label className="att-day" style={{ marginBottom: 8 }}>
+          <input type="checkbox" checked={!!g.checkin?.livenessCheck} onChange={(e) => setG({ ...g, checkin: { ...g.checkin, livenessCheck: e.target.checked } })} />
+          {' '}<b>Also ask for a blink or a head turn</b> <span className="small-muted">(slower: about 3 seconds instead of 1. Off = quick check: look at the camera, compared with the profile photo.)</span>
+        </label>
+        <label className="att-day" style={{ marginBottom: 8 }}>
+          <input type="checkbox" checked={g.checkin?.accuracyCounts !== false} onChange={(e) => setG({ ...g, checkin: { ...g.checkin, accuracyCounts: e.target.checked } })} />
+          {' '}Count the phone&apos;s GPS accuracy (a person is counted as in the office when the phone&apos;s circle of doubt touches the allowed distance)
+        </label>
+        <div className="grid-2">
+          <div className="field"><label>Most GPS doubt to allow for (metres)</label><input type="number" min="0" max="2000" value={g.checkin?.accuracyCapM ?? 300} onChange={(e) => setG({ ...g, checkin: { ...g.checkin, accuracyCapM: e.target.value } })} /></div>
+          <div className="field"><label>Keep check-in selfies for (days)</label><input type="number" min="1" max="3650" value={g.checkin?.selfieRetentionDays ?? 30} onChange={(e) => setG({ ...g, checkin: { ...g.checkin, selfieRetentionDays: e.target.value } })} /></div>
+        </div>
+        <div className="field">
+          <label>If the phone gives no location at all</label>
+          <Combo value={g.checkin?.noLocation || 'block'} onChange={(e) => setG({ ...g, checkin: { ...g.checkin, noLocation: e.target.value } })}>
+            <option value="block">Ask the person to allow location (not recorded)</option>
+            <option value="record">Record the check-in and show "Location not captured"</option>
+          </Combo>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="button" className="btn btn-sm" onClick={useHere}>Use my current location</button>
@@ -118,8 +171,8 @@ function GeofenceSettings() {
         </div>
       </form>
       <div className="small-muted" style={{ fontSize: 11.5, marginTop: 8 }}>
-        A reading counts as inside when it is within the radius, allowing for up to 100 m of the device&apos;s own stated accuracy.
-        Desktop browsers often locate by Wi-Fi or IP and can be hundreds of metres off, so keep the radius realistic.
+        A phone inside the office can read 20 to 100 m off, even when the person stands 3 m from the office point, so the phone&apos;s own accuracy is allowed for (up to the number above).
+        Keep the allowed distance at 100 m or more. Selfies are used only to check attendance and are seen only by HR and the employee; they are deleted after the days set above.
       </div>
       {msg && <div className="small-muted" style={{ marginTop: 6 }}>{msg}</div>}
       {err && <div className="error-text">{err}</div>}

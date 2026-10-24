@@ -359,6 +359,8 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
   }
 
   const agStatus = normalizeAgreementStatus(client.agreementStatus);
+  // signed agreement files kept on this client (imported copies) - the agreement card must show for them too
+  const signedFileCount = await prisma.clientDocument.count({ where: { clientId: client.id, kind: 'AGREEMENT_SIGNED' } }).catch(() => 0);
   const address = [client.houseNumber, client.street, client.area, client.landmark, client.location, client.state, client.pincode]
     .filter(Boolean).join(', ');
   res.json({
@@ -380,11 +382,15 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
     candidates,
     interviews,
     hires,
+    // 2026-10-13: offers and joining letters (client hiring): the client's own letters, the candidate's answer,
+    // the joining confirmation. Actions only with the OFFERS tick (default OFF).
+    offers: await offersPayload(u, shared, reqById),
     // The agreement VIEW / e-sign screen belongs to the Client 360 → Agreement
     // tab (the agreement workflow's own screen); this is only its summary.
-    agreement: !CT.hasCap(u, 'AGREEMENT') ? null : client.agreementId || agStatus !== 'DRAFT' ? {
+    agreement: !CT.hasCap(u, 'AGREEMENT') ? null : client.agreementId || agStatus !== 'DRAFT' || signedFileCount > 0 ? {
       id: client.agreementId,
-      status: AGREEMENT_WORDS[agStatus] || agStatus,
+      signedFiles: signedFileCount,
+      status: agStatus === 'DRAFT' && signedFileCount > 0 && !client.agreementId ? 'Signed copy on file' : (AGREEMENT_WORDS[agStatus] || agStatus),
       needsYou: ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(agStatus),
       start: client.agreementStart,
       end: client.agreementEnd,
@@ -412,6 +418,7 @@ router.get('/client', requireAuth, wrap(async (req, res) => {
       interview: CT.hasCap(u, 'INTERVIEW'),
       feedback: CT.hasCap(u, 'FEEDBACK') && await can(u, 'ats', 'interviews', 'Client Feedback', 'create'),
       request: await can(u, 'ats', 'requirements', 'Requirement Request', 'create'),
+      offers: offersTick(u),
     },
     portalCaps: CT.capsOf(u),
     // Reviewer / Viewer (spec B1), null for an older login; drives the first-login guide.
@@ -450,6 +457,209 @@ router.post('/client/requirement-requests', requireAuth, wrap(async (req, res) =
   // eslint-disable-next-line global-require
   const out = await require('../utils/requirementRequest').createRequirementRequest({ ...(req.body || {}), clientId: u.clientId }, { user: u, via: 'Client portal' });
   return res.status(out.status).json(out.body);
+}));
+
+// ---------------------------------------------------------------------------
+// OFFERS AND JOINING LETTERS (client hiring, 2026-10-13). The client's own letters; utils/clientTrack.js has the rules.
+//   POST /client/offers/:applicationId/release        multipart: file + joiningDate, designation, location, validUntil, notes, offeredCtc
+//   POST /client/offers/:applicationId/acknowledge    "I have seen that the candidate accepted"
+//   POST /client/joining/:applicationId/release       multipart: file + joiningDate, joiningTime, place, reportingPerson, notes
+//   POST /client/joining/:applicationId/joined        "The candidate joined" (on or after the joining date)
+//   GET  /client/letters/:applicationId/:kind         the client's own letter file (offer | joining)
+// Only with the OFFERS tick. An older login (no ticks at all) does NOT get it: the tick is OFF unless given.
+// ---------------------------------------------------------------------------
+const CTK = require('../utils/clientTrack');
+const offersTick = (u) => isClientLogin(u) && (CT.capsOf(u) || []).includes('OFFERS');
+const OFFER_STEPS = ['SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED'];
+
+async function offersPayload(u, shared, reqById) {
+  const rows = shared.filter((a) => OFFER_STEPS.includes(a.stage));
+  if (!rows.length) return [];
+  const all = await CTK.loadAll();
+  const tick = offersTick(u);
+  const today = CTK.today();
+  return rows.map((a) => {
+    const t = all.get(a.id) || null;
+    const shape = CTK.shapeForClient(a, t);
+    const o = t && t.offer;
+    const j = t && t.joining;
+    const accepted = ['ACCEPTED', 'ACKNOWLEDGED'].includes(o && o.state) || a.stage === 'OFFER_ACCEPTED';
+    const joinDate = (j && j.joiningDate) || a.joiningDate || null;
+    return {
+      applicationId: a.id,
+      candidate: a.candidate.name,
+      requirement: reqById.get(a.requirementId) ? reqById.get(a.requirementId).title : null,
+      status: shape.state.label,
+      statusCode: shape.state.code,
+      tone: shape.state.tone,
+      offer: shape.offer,
+      joining: shape.joining,
+      joiningDate: joinDate,
+      joinedAt: a.joinedAt || null,
+      // What this login may press now (the server checks again).
+      canReleaseOffer: tick && ['SELECTED', 'OFFER'].includes(a.stage) && !accepted,
+      canAcknowledge: tick && !!o && o.state === 'ACCEPTED',
+      canReleaseJoining: tick && a.stage === 'OFFER_ACCEPTED' && !(j && j.state === 'CONFIRMED'),
+      canMarkJoined: tick && a.stage === 'OFFER_ACCEPTED' && !!j && ['SHARED', 'CONFIRMED'].includes(j.state) && (!joinDate || joinDate <= today),
+    };
+  });
+}
+
+async function clientOfferApp(req, res, kind) {
+  const u = req.user;
+  if (!isClientLogin(u)) { res.status(403).json({ error: 'The client portal is for client logins.' }); return null; }
+  if (kind !== 'view' && !offersTick(u)) { res.status(403).json({ error: 'Sending offer and joining letters is not part of your access yet. Ask TeamLink to switch it on.' }); return null; }
+  if (!CT.hasCap(u, 'VIEW')) { res.status(403).json({ error: 'Seeing candidates is not part of your access.' }); return null; }
+  const app = await prisma.application.findFirst({
+    where: { id: req.params.applicationId, requirement: { clientId: u.clientId, internal: false } },
+    include: { candidate: true, requirement: { include: { client: true, recruiter: true, bde: true } } },
+  });
+  if (!app || !OFFER_STEPS.includes(app.stage)) { res.status(404).json({ error: 'Candidate not found' }); return null; }
+  return app;
+}
+const clientSend = (res, err) => {
+  if (err instanceof CTK.Bad) return res.status(err.status).json({ error: err.message });
+  console.error('[portal offers]', err); // eslint-disable-line no-console
+  return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+};
+async function clientUpload(req) {
+  try { return await attachments.parseMultipart(req); } catch (err) {
+    throw new CTK.Bad(err.code === 'TOO_LARGE' ? attachments.MESSAGE.TOO_LARGE : err.code === 'NOT_MULTIPART' ? attachments.MESSAGE.NOT_MULTIPART : 'The upload could not be read. Please try again.');
+  }
+}
+const offerWords = async (req, app, message) => {
+  const fresh = await CTK.loadApp(app.id);
+  const rows = await offersPayload(req.user, [fresh], new Map([[fresh.requirementId, fresh.requirement]]));
+  return { ok: true, message, offer: rows[0] || null };
+};
+
+router.post('/client/offers/:applicationId/release', requireAuth, wrap(async (req, res) => {
+  try {
+    const app = await clientOfferApp(req, res, 'act');
+    if (!app) return undefined;
+    const up = await clientUpload(req);
+    await CTK.release('offer', app, { actor: req.user, fields: up.fields, file: up.file });
+    return res.json(await offerWords(req, app, 'Offer letter released. TeamLink will share it with the candidate.'));
+  } catch (err) { return clientSend(res, err); }
+}));
+router.post('/client/offers/:applicationId/acknowledge', requireAuth, wrap(async (req, res) => {
+  try {
+    const app = await clientOfferApp(req, res, 'act');
+    if (!app) return undefined;
+    await CTK.acknowledge(app, { actor: req.user });
+    return res.json(await offerWords(req, app, 'Thank you. You can now send the joining letter.'));
+  } catch (err) { return clientSend(res, err); }
+}));
+router.post('/client/joining/:applicationId/release', requireAuth, wrap(async (req, res) => {
+  try {
+    const app = await clientOfferApp(req, res, 'act');
+    if (!app) return undefined;
+    const up = await clientUpload(req);
+    await CTK.release('joining', app, { actor: req.user, fields: up.fields, file: up.file });
+    return res.json(await offerWords(req, app, 'Joining letter released. TeamLink will share it with the candidate.'));
+  } catch (err) { return clientSend(res, err); }
+}));
+router.post('/client/joining/:applicationId/joined', requireAuth, wrap(async (req, res) => {
+  try {
+    const app = await clientOfferApp(req, res, 'act');
+    if (!app) return undefined;
+    await CTK.markJoinedByClient(app, req.user);
+    return res.json(await offerWords(req, app, 'Saved. The candidate is marked as joined.'));
+  } catch (err) { return clientSend(res, err); }
+}));
+router.get('/client/letters/:applicationId/:kind', requireAuth, wrap(async (req, res) => {
+  const app = await clientOfferApp(req, res, 'view');
+  if (!app) return undefined;
+  const f = CTK.fileOf(await CTK.getTrack(app.id), req.params.kind === 'joining' ? 'joining' : 'offer');
+  if (!f) return res.status(404).json({ error: 'The letter file was not found.' });
+  res.set('Cache-Control', 'private, no-store');
+  res.set('Content-Type', f.mime || 'application/octet-stream');
+  res.set('Content-Disposition', `inline; filename="${String(f.name || 'letter').replace(/[^\w.\- ()]/g, '_')}"`);
+  return res.sendFile(f.full);
+}));
+
+// ---------------------------------------------------------------------------
+// JOININGS AND DROPS (2026-10-17) - the client's own joined candidates, the drops, and the replacement decision.
+//   GET  /client/join-drop               joined list + dropped list (plain words; no TeamLink people, no pay, no phone / email)
+//   POST /client/join-drop/:id/drop      "Report a drop" for a joined candidate (day, reason, details)
+//   POST /client/join-drop/:id/decision  We need a replacement / No replacement needed / We will decide later (+ comment, expected date)
+//   GET  /client/history                 the client's own non-sensitive history (jobs posted, candidates sent, joinings, drops, replacements)
+// Seeing needs the "See our jobs and candidates" tick; entering needs "Shortlist, hold or reject" or "Send offer and joining letters"
+// (an older login with no ticks may do both). Another company's record is a 404, never a 403. Everything is written by joindrop/core.js,
+// which tells the recruiter, TL, BDE and HR at once (bell + email) and opens the tasks.
+// ---------------------------------------------------------------------------
+const JDcore = require('../joindrop/core');
+const JDaccess = require('../joindrop/access');
+const JDreport = require('../joindrop/report');
+const JDvocab = require('../joindrop/vocab');
+
+function clientJoinDropGate(req, res, { write = false } = {}) {
+  const u = req.user;
+  if (!isClientLogin(u)) { res.status(403).json({ error: 'The client portal is for client logins.' }); return null; }
+  if (!CT.hasCap(u, 'VIEW')) { res.status(403).json({ error: 'Seeing candidates is not part of your access.' }); return null; }
+  const mayEnter = CT.hasCap(u, 'DECIDE') || CT.hasCap(u, 'OFFERS');
+  if (write && !mayEnter) { res.status(403).json({ error: 'Entering a drop or a replacement decision is not part of your access yet. Ask your TeamLink contact to switch it on.' }); return null; }
+  return { u, mayEnter };
+}
+const clientJdFail = (res, e) => {
+  if (e && (e instanceof JDcore.Bad || (e.status && e.message))) return res.status(e.status || 400).json({ error: e.message });
+  console.error('[portal join-drop]', e); // eslint-disable-line no-console
+  return res.status(500).json({ error: 'Something went wrong. Please try again.' });
+};
+
+router.get('/client/join-drop', requireAuth, wrap(async (req, res) => {
+  const g = clientJoinDropGate(req, res); if (!g) return undefined;
+  try {
+    await JDcore.ready();
+    const rt = await JDaccess.rights(g.u);
+    const out = await JDreport.list(g.u, { pageSize: 200 });
+    const joined = out.rows.filter((r) => r.status === 'Joined');
+    const dropped = out.rows.filter((r) => r.status === 'Dropped');
+    return res.json({
+      canEnter: g.mayEnter,
+      reasons: JDvocab.DROP_REASONS, otherReason: JDvocab.OTHER_REASON,
+      decisions: JDvocab.DECISION_KEYS.map((k) => ({ key: k, label: JDvocab.DECISIONS[k].label })),
+      joined, dropped,
+      counts: { joined: joined.length, dropped: dropped.length, waiting: dropped.filter((r) => !r.replacementDecision).length },
+      kind: rt.kind,
+    });
+  } catch (e) { return clientJdFail(res, e); }
+}));
+
+async function clientRecord(req, res, g) {
+  await JDcore.ready();
+  const rec = await JDcore.get(req.params.id);
+  // not theirs = not found (never reveal that another company's record exists)
+  if (!rec || rec.clientId !== g.u.clientId || rec.hiringType === 'TeamLink Internal Hire') { res.status(404).json({ error: 'That candidate was not found.' }); return null; }
+  return rec;
+}
+
+router.post('/client/join-drop/:id/drop', requireAuth, wrap(async (req, res) => {
+  const g = clientJoinDropGate(req, res, { write: true }); if (!g) return undefined;
+  try {
+    const rec = await clientRecord(req, res, g); if (!rec) return undefined;
+    const out = await JDcore.reportDrop(rec.id, req.body || {}, g.u, { from: 'Client login' });
+    const rt = await JDaccess.rights(g.u);
+    return res.json({ ok: true, message: 'Thank you. Your recruiter, BDE, team lead and HR have been told.', toldAt: new Date().toISOString(), record: JDaccess.shape(out.record, rt) });
+  } catch (e) { return clientJdFail(res, e); }
+}));
+
+router.post('/client/join-drop/:id/decision', requireAuth, wrap(async (req, res) => {
+  const g = clientJoinDropGate(req, res, { write: true }); if (!g) return undefined;
+  try {
+    const rec = await clientRecord(req, res, g); if (!rec) return undefined;
+    const out = await JDcore.decide(rec.id, req.body || {}, g.u, { from: 'Client login', onBehalf: false });
+    const rt = await JDaccess.rights(g.u);
+    return res.json({ ok: true, message: 'Saved. Your recruiter, BDE, team lead and HR have been told.', toldAt: new Date().toISOString(), record: JDaccess.shape(out.record, rt) });
+  } catch (e) { return clientJdFail(res, e); }
+}));
+
+router.get('/client/history', requireAuth, wrap(async (req, res) => {
+  const g = clientJoinDropGate(req, res); if (!g) return undefined;
+  try {
+    await JDcore.ready();
+    return res.json(await require('../joindrop/clientHistory').build(g.u, g.u.clientId, { kind: 'client' })); // eslint-disable-line global-require
+  } catch (e) { return clientJdFail(res, e); }
 }));
 
 router.get('/client/resume/:applicationId', requireAuth, wrap(async (req, res) => {
@@ -711,7 +921,9 @@ router.post('/candidate/documents', requireAuth, wrap(async (req, res) => {
   try { parsed = await attachments.parseMultipart(req); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Upload failed.' }); }
   const file = parsed.file;
   if (!file) return res.status(400).json({ error: attachments.MESSAGE.NO_FILE });
-  const docType = CANDIDATE_DOC_TYPES.includes((parsed.fields || {}).docType) ? parsed.fields.docType : 'Other';
+  // Typed own document type (2026-10-15): tidied, case-insensitive match uses the listed spelling, empty -> Other.
+  const typedDoc = require('../utils/openVocab').clean((parsed.fields || {}).docType, 60); // eslint-disable-line global-require
+  const docType = CANDIDATE_DOC_TYPES.find((t) => t.toLowerCase() === typedDoc.toLowerCase()) || typedDoc || 'Other';
   let stored;
   try { stored = attachments.store(file); } catch (e) { return res.status(400).json({ error: attachments.MESSAGE[e.code] || 'Upload a PDF, JPG or PNG file.' }); }
   const doc = await prisma.candidateDocument.create({
@@ -748,6 +960,7 @@ router.post('/candidate/applications/:id/offer', requireAuth, wrap(async (req, r
     // eslint-disable-next-line global-require
     await require('../utils/stageEvents').recordWorkflowMove({ user: req.user, existing: app, toStage: 'OFFER_ACCEPTED', action: 'Offer accepted by the candidate (portal)' });
     await notifyUsers(recruiterAndTl(app), { title: 'Offer accepted', message: `${req.user.name} accepted the offer for ${app.requirement.title}.` });
+    await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Accepted', { via: 'the candidate portal', actorName: req.user.name }); // eslint-disable-line global-require
     return res.json({ ok: true, message: 'Offer accepted. Your recruiter will share the joining steps.' });
   }
   if (decision === 'decline') {
@@ -756,6 +969,7 @@ router.post('/candidate/applications/:id/offer', requireAuth, wrap(async (req, r
     await prisma.application.update({ where: { id: app.id }, data: { offerStatus: 'Offer Declined', offerNotes: `Candidate (portal): ${reason}` } });
     await logAudit({ userId: req.user.id, action: `Offer declined by the candidate (portal) — ${reason}`, entity: 'Application', entityId: app.id, fromValue: 'Offer Released', toValue: 'Offer Declined' });
     await notifyUsers(recruiterAndTl(app), { title: 'Offer declined', message: `${req.user.name} declined the offer for ${app.requirement.title}: ${reason}` });
+    await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Declined', { via: 'the candidate portal', reason, actorName: req.user.name }); // eslint-disable-line global-require
     return res.json({ ok: true, message: 'Your answer is recorded. Your recruiter has been told.' });
   }
   return res.status(400).json({ error: 'Choose Accept or Decline.' });

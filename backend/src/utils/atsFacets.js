@@ -64,6 +64,24 @@ async function requirementFacets(user, q) {
     group('internal', ['type']),
     prisma.requirement.count({ where: await where([]) }),
   ]);
+  // A job in SEVERAL departments counts once under each of them (utils/reqDepartments.js).
+  try {
+    const RD = require('./reqDepartments'); // eslint-disable-line global-require
+    const extraIds = RD.allIds();
+    if (extraIds.length) {
+      const hit = await prisma.requirement.findMany({ where: { AND: [await where(['department']), { id: { in: extraIds } }] }, select: { id: true } });
+      hit.forEach((h) => RD.extrasOf(h.id).forEach((d) => dept.set(d, (dept.get(d) || 0) + 1)));
+    }
+  } catch { /* the primary counts stand */ }
+  // A job with SEVERAL team leads counts once under each of them (utils/reqTeamLeads.js).
+  try {
+    const RT = require('./reqTeamLeads'); // eslint-disable-line global-require
+    const tlJobIds = RT.allIds();
+    if (tlJobIds.length) {
+      const hit = await prisma.requirement.findMany({ where: { AND: [await where(['tlId', 'tlName']), { id: { in: tlJobIds } }] }, select: { id: true } });
+      hit.forEach((h) => RT.extrasOf(h.id).forEach((u) => tl.set(u, (tl.get(u) || 0) + 1)));
+    }
+  } catch { /* the primary counts stand */ }
   // spec D: Qualification / Specialization (master ids), cascading like the
   // rest; a requirement not mapped yet counts under 'none' ("Not mapped yet").
   const [qualF, specF] = await Promise.all([
@@ -89,9 +107,12 @@ async function requirementFacets(user, q) {
   const type = new Map([['client', internal.get(false) || 0], ['internal', internal.get(true) || 0]]);
   // BDE options read "Name · BDE MED" (the position), like the Add Client form.
   const bdeList = await labelBdeOptions(finish(bde, (v) => uname.get(v) || 'Unknown', q.bdeId));
-  const live =['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'].reduce((n, s) => n + (status.get(s) || 0), 0);
-  const statusList = finish(status, (v) => requirementStatusLabel(v) || v, q.status !== 'LIVE' ? q.status : '');
-  if (live) statusList.unshift({ value: 'LIVE', label: 'Open (live)', count: live });
+  // ONLY TWO STATES ARE OFFERED (user, 2026-10-13): Open (every stored status except CLOSED) and Closed.
+  const closedN = status.get('CLOSED') || 0;
+  const openN = [...status.entries()].reduce((n, [k, v]) => n + (k === 'CLOSED' ? 0 : v), 0);
+  const statusList = [];
+  if (openN || q.status === 'OPEN') statusList.push({ value: 'OPEN', label: 'Open', count: openN });
+  if (closedN || q.status === 'CLOSED') statusList.push({ value: 'CLOSED', label: 'Closed', count: closedN });
   return {
     total,
     facets: {
@@ -221,12 +242,20 @@ async function candidateFacets(user, q) {
   return { facets, total };
 }
 
-async function facetsFor(module, user, q) {
+async function facetsRaw(module, user, q) {
   if (module === 'requirements') return requirementFacets(user, q);
   if (module === 'candidates') return candidateFacets(user, q);
   // Reports (section 17): counted over the report's own rows — routes/atsReports.js.
   if (module === 'reports') return require('../routes/atsReports').reportFacets(user, q); // eslint-disable-line global-require
   return null;
+}
+// One company, many locations (2026-10-22): a client option whose name another client also has reads "Name - Location".
+async function facetsFor(module, user, q) {
+  const out = await facetsRaw(module, user, q);
+  try {
+    if (out && out.facets && Array.isArray(out.facets.clientId)) out.facets.clientId = await require('./clientLocations').labelClientOptions(out.facets.clientId); // eslint-disable-line global-require
+  } catch { /* the plain names then show */ }
+  return out;
 }
 
 module.exports = { facetsFor };

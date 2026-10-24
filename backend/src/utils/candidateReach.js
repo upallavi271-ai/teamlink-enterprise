@@ -172,6 +172,7 @@ async function compose(user, body) {
     let code = codeOfReason(r.status, r.reason);
     let reason = r.reason || null;
     let canOpen = false;
+    let addr = r.address;
     // Not connected (or no approved WhatsApp template): the sender can still use their OWN app,
     // as long as this person can be reached at all.
     if (code === 'not_connected') {
@@ -182,16 +183,17 @@ async function compose(user, body) {
       } else if (!m.ok) { code = 'no_phone'; reason = m.reason; }
       if (code === 'not_connected') {
         const key = channel === 'Email' ? String(r.address).toLowerCase() : m.e164;
-        if (seen.has(key)) { code = 'duplicate'; reason = `Same ${channel === 'Email' ? 'address' : 'number'} as ${seen.get(key)}`; } else if (r.missing && r.missing.length) { code = 'skipped'; reason = `Missing: ${r.missing.join(', ')}`; } else { seen.set(key, r.name); canOpen = true; }
+        if (seen.has(key)) { code = 'duplicate'; reason = `Same ${channel === 'Email' ? 'address' : 'number'} as ${seen.get(key)}`; } else if (r.missing && r.missing.length) { code = 'skipped'; reason = `Missing: ${r.missing.join(', ')}`; } else { seen.set(key, r.name); canOpen = true; if (m) addr = `+${m.e164}`; }
       }
     }
     return {
       id: r.entityId, name: r.name, applicationId: r.applicationId || null, code, word: WORD[code], tone: TONE[code], reason, canOpen,
-      address: r.address, subject: r.subject || null, text: r.text || '',
+      address: addr, subject: r.subject || null, text: r.text || '',
     };
   });
+  // People who can be opened in the sender's own app are counted as canOpen, not as "not connected".
   const counts = {};
-  rows.forEach((r) => { counts[r.code] = (counts[r.code] || 0) + 1; });
+  rows.filter((r) => !r.canOpen).forEach((r) => { counts[r.code] = (counts[r.code] || 0) + 1; });
   const outside = plan.outOfScope || 0;
   if (outside) counts.outside = outside;
   return { out: { channel, connected, selected: ids.length, outside, counts, canOpen: rows.filter((r) => r.canOpen).length, people: rows } };

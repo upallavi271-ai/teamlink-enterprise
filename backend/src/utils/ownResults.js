@@ -63,15 +63,22 @@ async function countMetrics(apps, range) {
 
 async function myResults(user, query) {
   const range = parseRange(query);
-  const apps = await prisma.application.findMany({
+  let apps = await prisma.application.findMany({
     where: applicationWhere(user),
     select: { id: true, stage: true, updatedAt: true, createdAt: true, interviewAt: true },
   });
+  // A recruiter's results are THEIR people: the candidates attributed to them (utils/workers.js attribute(), the rule every
+  // report uses), not everyone on a job they share with a colleague (user, 2026-10-12).
+  if (require('./ownOnly').isOwnOnly(user)) { // eslint-disable-line global-require
+    const ctx = await require('../routes/atsReports').packContext(user, { recruiter: `id:${user.id}` }, 'createdAt'); // eslint-disable-line global-require
+    const mine = new Set(ctx.apps.map((x) => x.id));
+    apps = apps.filter((a) => mine.has(a.id));
+  }
   const sourced = apps.filter((a) => inRange(a.createdAt, range)).length;
   const m = await countMetrics(apps, range);
   return {
     range: range.label,
-    scope: 'My jobs',
+    scope: 'My requirements',
     cards: [
       { key: 'sourced', label: 'Candidates added', value: sourced },
       { key: 'submittedToTl', label: 'Submitted to TL', value: m.submittedToTl },

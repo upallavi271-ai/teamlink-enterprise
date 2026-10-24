@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { matchesText, noMatchText } from './searchMatch.js';
 
 // ---------------------------------------------------------------------------
 // "Columns ⚙" (spec §29) and a remembered-setting hook (spec §27).
@@ -32,6 +33,7 @@ export function useStoredState(key, initial, validate) {
 export default function ColumnChooser({ columns, value, onChange, defaults, label = 'Columns ⚙' }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
+  const [find, setFind] = useState('');
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (box.current && !box.current.contains(e.target)) setOpen(false); };
@@ -47,10 +49,12 @@ export default function ColumnChooser({ columns, value, onChange, defaults, labe
   };
   return (
     <div className="colchooser" ref={box}>
-      <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{label}</button>
+      <button type="button" className="btn btn-sm" aria-expanded={open} onClick={() => { setOpen((o) => !o); setFind(''); }}>{label}</button>
       {open && (
         <div className="colchooser-menu" role="menu">
-          {columns.map((c) => (
+          <input className="colchooser-find" type="text" autoFocus autoComplete="off" value={find} placeholder="Type to find" aria-label="Find" onChange={(e) => setFind(e.target.value)} />
+          {!columns.some((c) => matchesText(c.label, find)) && <div className="colchooser-item">{noMatchText(find)}</div>}
+          {columns.filter((c) => matchesText(c.label, find)).map((c) => (
             <label key={c.id} className={`colchooser-item${c.locked ? ' is-locked' : ''}`}>
               <input
                 type="checkbox"

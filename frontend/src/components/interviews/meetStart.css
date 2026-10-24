@@ -1,0 +1,23 @@
+/* Meet link, e-mail status, Start interview (components/interviews/MeetStart.jsx). Scoped under .ims-* */
+.ims-field { display: flex; flex-direction: column; gap: 6px; }
+.ims-field input { width: 100%; }
+.ims-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0; }
+.ims-hint { font-size: 12px; color: var(--muted, #667); margin-top: 4px; }
+.ims-chk { font-size: 12.5px; }
+.ims-chk.is-ok { color: #0a7a3b; }
+.ims-chk.is-warn { color: #b45f06; }
+.ims-chk.is-bad { color: #b3261e; }
+.ims-start { display: inline-flex; flex-direction: column; gap: 2px; align-items: flex-start; margin-right: 6px; vertical-align: top; }
+.ims-why { font-size: 11.5px; color: var(--muted, #667); max-width: 220px; white-space: normal; }
+.ims-mail ul { list-style: none; margin: 0 0 6px; padding: 0; }
+.ims-mail li { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 3px 0; font-size: 13px; }
+.ims-mail .ims-who { min-width: 150px; }
+.ims-mail .ims-role { font-size: 11px; color: var(--muted, #667); }
+.ims-mail li.is-sent .ims-res { color: #0a7a3b; }
+.ims-mail li.is-not_sent .ims-res { color: #b3261e; }
+.ims-mail li.is-off .ims-res { color: #b45f06; }
+.ims-panel { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.ims-sw { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+.ims-panel input[type=url] { flex: 1; min-width: 220px; }
+.ims-panel input[type=number] { width: 70px; }
+@media (max-width: 600px) { .ims-why { max-width: none; } }

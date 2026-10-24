@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import GeneratePassword from '../components/GeneratePassword.jsx';
 import { PasswordBadge, PasswordStatusRows } from '../components/PasswordStatus.jsx';
 import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+
+// The status filter: the five HRMS statuses plus On Probation and Rejoined (founder, 2026-10-15).
+const STATUS_CHOICES = ['Active', 'On Probation', 'Rejoined', ...HR_STATUSES.filter((s) => s !== 'Active')];
+function inStatus(e, st) {
+  if (st === 'On Probation') return e.employmentStatus === 'On Probation';
+  if (st === 'Rejoined') return !!e.rejoined;
+  return hrStatusOf(e.employmentStatus, e.loginStatus) === st;
+}
 // "Apr 2026" — seat dates are YYYY-MM-DD strings.
 const seatMonth = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { month: 'short', year: 'numeric' }) : '');
 import { Link } from 'react-router-dom';
@@ -8,11 +17,15 @@ import EmployeePhoto from '../components/EmployeePhoto.jsx';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the employees shown (templates, preview, confirm)
+import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message many employees at once
+import ContactDialog from '../components/messaging/ContactDialog.jsx'; // WhatsApp to ONE employee (the company WhatsApp numbers)
+import { useAuth } from '../context/AuthContext.jsx';
 import Modal from '../components/Modal.jsx';
 import { atsRoleLabel, registerRoleLabels } from '../atsVocab';
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 import EmployeeBulkImport from '../components/employees/EmployeeBulkImport.jsx';
+import MissingLogins from '../components/employees/MissingLogins.jsx';
 import ManageFieldsModal from '../components/employees/ManageFieldsModal.jsx';
 // Manage Fields: HR's labels and Pause for the built-in fields.
 import { useFieldLayout } from '../utils/employeeFieldLayout';
@@ -30,13 +43,24 @@ import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
 // Seat wording for the Position picker (free / held by / leaving) and the "after someone leaves" worklist.
 import { seatOptionLabel, seatSummary } from '../components/seatLabel.js';
 import AfterExit from '../components/employees/AfterExit.jsx';
+import { ExitProfileRow, ExitChip } from './hrms/ExitCenter.jsx';
+import MarkLeftButton from '../components/employees/MarkLeft.jsx';
+import RejoinButton, { RejoinInfo } from '../components/employees/Rejoin.jsx';
 import '../components/employees/EmpMgmtExtras.css';
 // "12 Oct 2026" for a YYYY-MM-DD last working date.
 const lwdLabel = (iso) => (iso ? new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const ON_NOTICE = ['Notice Period', 'Exit Process'];
 // The list's horizontal scrollbar at the TOP as well as the bottom.
 import ScrollTable from '../components/ScrollTable.jsx';
+import IdCardOrders from './hrms/IdCardOrders.jsx'; // the "ID card orders" tab (vendor modules)
 import { ViewAsButton } from '../components/ViewAs.jsx';
+// WhatsApp quick chat (free wa.me links): row icon, row ticks + 'Send WhatsApp', Resume bar (components/wa/)
+import WaButton from '../components/wa/WaButton.jsx';
+import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // the shared template library + campaigns of HRMS (inside this screen, no sidebar entry)
+import WaResume from '../components/wa/WaResume.jsx';
+import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
+import NoticeDays from '../components/employees/NoticeDays.jsx';
 
 // HRMS -> Employee Management — the prototype's employeeMgmtView() (line 9754)
 // and openAddEmployeeModal() (line 2857).
@@ -59,6 +83,8 @@ const EMPTY_NEW = {
   // The Role dropdown (roles are data — Role Catalog). '' = the designation's own roles.
   roleCode: '',
   position: '',
+  // The ID this person is enrolled under on the attendance device (optional).
+  biometricPin: '',
   dateOfJoining: new Date().toISOString().slice(0, 10), employeeType: 'Full Time', employmentStatus: 'Active',
   password: '',
 };
@@ -109,6 +135,8 @@ export default function Employees() {
   const [rows, setRows] = useState([]);
   const [msgOpen, setMsgOpen] = useState(false);
   const [caps, setCaps] = useState({});
+  const mayMessageEmployees = useMayMessage('employees', true); // the server's answer (contact right + the HR edit right for a list)
+  const mayOneEmployee = useMayMessage('employees');
   const [scopeText, setScopeText] = useState('');
   const [hr, setHr] = useState([]); // the HR record side: profile stage, lock, completion
   const [options, setOptions] = useState(null);
@@ -137,6 +165,7 @@ export default function Employees() {
   const [resetFor, setResetFor] = useState(null);
   const [resetPassword, setResetPassword] = useState('');
   const [showImport, setShowImport] = useState(false);
+  const [showMissing, setShowMissing] = useState(false);
   const [showFields, setShowFields] = useState(false); // HRMS item 15 — Manage Fields
   // Bulk Import (Sample Excel, .xlsx/.csv upload, row-wise checks, valid rows
   // only) lives in components/employees/EmployeeBulkImport.jsx.
@@ -165,6 +194,17 @@ export default function Employees() {
   const [notice, setNotice] = useState('');
   // Employees list | TL-wise summary.
   const [view, setView] = useState('list');
+  const [waSel, setWaSel] = useState(() => new Set()); // employees ticked for WhatsApp
+  const [waBulk, setWaBulk] = useState(null);
+  const [waTick, setWaTick] = useState(0);
+  const waOn = false; // the free wa.me quick chat stays off in HRMS (founder 2026-10-15)
+  // 2026-10-24 (founder): HRMS sends WhatsApp through the SAME company WhatsApp numbers as the ATS, to the mobile number on each employee's
+  // profile (announcements, information). Only the Super Admin (and Admin) and the HR desk see it; the server refuses everybody else.
+  const { user: me } = useAuth() || {};
+  const hrDesk = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || me.hrmsRole === 'HR' || me.atsRole === 'HR' || ['SUPER_ADMIN', 'ADMIN'].includes(me.hrmsRole));
+  const [waMany, setWaMany] = useState(null); // ids ticked for a WhatsApp message through the company numbers
+  const [waOne, setWaOne] = useState(null); // one employee
+  useWaConfig();
   // CHANGE EMPLOYEE ID — HR / Super Admin (caps.editCode).
   const [codeFor, setCodeFor] = useState(null);
   const [codeForm, setCodeForm] = useState({ employeeCode: '', reason: '' });
@@ -257,7 +297,7 @@ export default function Employees() {
     if (filters.designation && e.designation !== filters.designation) return false;
     if (filters.role && (e.role || '') !== filters.role
       && !Object.values(e.productRoles || {}).includes(filters.role)) return false;
-    if (!ignoreStatus && !filters.position && filters.status && hrStatusOf(e.employmentStatus, e.loginStatus) !== filters.status) return false;
+    if (!ignoreStatus && !filters.position && filters.status && !inStatus(e, filters.status)) return false;
     if (filters.login && e.loginStatus !== filters.login) return false;
     return true;
   };
@@ -285,8 +325,8 @@ export default function Employees() {
   // status dropdown beside each choice.
   const statusCounts = useMemo(() => {
     const out = {};
-    HR_STATUSES.forEach((st) => { out[st] = 0; });
-    rows.forEach((e) => { out[hrStatusOf(e.employmentStatus, e.loginStatus)] += 1; });
+    STATUS_CHOICES.forEach((st) => { out[st] = 0; });
+    rows.forEach((e) => { STATUS_CHOICES.forEach((st) => { if (inStatus(e, st)) out[st] += 1; }); });
     return out;
   }, [rows]);
   const rowDepts = useMemo(() => [...new Set(rows.map((e) => e.department).filter(Boolean))].sort(), [rows]);
@@ -312,7 +352,7 @@ export default function Employees() {
   // took over from must be one click away, not invisible.
   const hiddenHolders = useMemo(() => (filters.status && !filters.position ? rows.filter((e) => e.seatCount > 0
     && (!filters.dept || e.department === filters.dept)
-    && hrStatusOf(e.employmentStatus, e.loginStatus) !== filters.status) : []), [rows, filters.status, filters.dept, filters.position]);
+    && !inStatus(e, filters.status)) : []), [rows, filters.status, filters.dept, filters.position]);
 
   // The server builds the file and scopes it: a TL downloads their own
   // department, not the company. The browser only saves what comes back, so
@@ -559,10 +599,14 @@ export default function Employees() {
             </button>
           )}
           {/* MESSAGE — Email / SMS / WhatsApp to the employees the filters show (the server holds it to your scope and to HR's edit right). */}
-          {caps.create && filtered.length > 0 && filtered.length <= 500 && (
+          {mayMessageEmployees && filtered.length > 0 && filtered.length <= 500 && (
             <button className="btn" onClick={() => setMsgOpen(true)} title="Send an Email, SMS or WhatsApp to the employees shown below">Message these {filtered.length}</button>
           )}
-          {msgOpen && <SendManyDialog audience="employees" ids={filtered.map((e) => e.id)} note="Only employees with an email or phone on record can be reached. You see who is left out, and why, before anything is sent." onClose={() => setMsgOpen(false)} />}
+          {hrDesk && mayMessageEmployees && filtered.length > 0 && filtered.length <= 500 && (
+            <button className="btn" onClick={() => setWaMany(filtered.map((e) => e.id))} title="Send a WhatsApp message (announcement, information) to the employees shown below, from the company WhatsApp number">WhatsApp these {filtered.length}</button>
+          )}
+          {mayMessageEmployees && <AppOmniPanel app="HRMS" />}
+          {msgOpen && <SendManyDialog app="HRMS" audience="employees" ids={filtered.map((e) => e.id)} note="Only employees with an email or phone on record can be reached. You see who is left out, and why, before anything is sent." onClose={() => setMsgOpen(false)} />}
           {/* GLOBAL EXPORT — pick the fields; same scope and filters as the list. */}
           {caps.export && (
             <button className="btn btn-primary" onClick={() => setShowGlobalExport(true)} title="Choose the fields and export everyone the current filters show, within your scope">
@@ -580,6 +624,7 @@ export default function Employees() {
             onImported={() => load()}
           />
           {caps.create && <button className="btn" title="Create new employees with logins from the short sample (sign-in links, no passwords)" onClick={() => setShowImport((s) => !s)}>Bulk create + logins</button>}
+          {caps.create && <button className="btn" title="People who work here and have no login: preview, then create (set-password links, no passwords)" onClick={() => setShowMissing((s) => !s)}>Create missing logins</button>}
           {caps.manageFields && <button className="btn" title="See every field of the employee form, rename it, pause it or add your own" onClick={() => setShowFields(true)}>Manage Fields</button>}
           {caps.create && <button className="btn btn-primary" onClick={openAdd} disabled={!options}>Add Employee</button>}
         </div>
@@ -681,6 +726,7 @@ export default function Employees() {
       )}
 
       {showImport && <EmployeeBulkImport onImported={load} />}
+      {showMissing && <MissingLogins onDone={load} />}
       {showFields && <ManageFieldsModal onClose={() => setShowFields(false)} />}
       {/* Import requests: the Super Admin's queue; everyone else sees their own. */}
       <ImportRequests ioKey="employees" onChanged={load} />
@@ -722,12 +768,14 @@ export default function Employees() {
       <div className="tabs" style={{ marginBottom: 12 }}>
         <div className={`tab${view === 'list' ? ' active' : ''}`} onClick={() => setView('list')}>Employees ({filtered.length})</div>
         <div className={`tab${view === 'tl' ? ' active' : ''}`} onClick={() => setView('tl')}>TL-wise</div>
+        {caps.create && <div className={`tab${view === 'idcards' ? ' active' : ''}`} onClick={() => setView('idcards')}>ID card orders</div>}
       </div>
+      {view === 'idcards' && <IdCardOrders />}
 
       {/* FILTERS — search, department, designation, role, employment status and
           login status. They narrow what the server already scoped; they never
           widen it. */}
-      <div className="filter-row">
+      <div className="filter-row" style={view === 'idcards' ? { display: 'none' } : undefined}>
         <input
           type="text" placeholder="Search name, ID or email…"
           value={filters.q} onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
@@ -750,7 +798,7 @@ export default function Employees() {
         </Combo>
         <Combo value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}>
           <option value="">All statuses ({rows.length})</option>
-          {HR_STATUSES.map((st) => <option key={st} value={st}>{`${st} (${statusCounts[st] ?? 0})`}</option>)}
+          {STATUS_CHOICES.map((st) => <option key={st} value={st}>{`${st} (${statusCounts[st] ?? 0})`}</option>)}
         </Combo>
         <Combo value={filters.login} onChange={(e) => setFilters((f) => ({ ...f, login: e.target.value }))}>
           <option value="">Any login state</option>
@@ -788,6 +836,14 @@ export default function Employees() {
       {view === 'list' && (<>
       {/* Horizontal scrollbar at the TOP too (synced), sticky header, box
           capped to the viewport (.tbl-fit) so the bottom bar stays in view. */}
+      {waOn && <WaResume entityType="employee" refreshKey={waTick} />}
+      {hrDesk && mayMessageEmployees && waSel.size > 0 && (
+        <div className="wa-banner" role="region" aria-label="Selected employees">
+          <b>{waSel.size} selected</b>
+          <button type="button" className="btn btn-sm wa-go" onClick={() => setWaMany([...waSel])}>🟢 Send WhatsApp</button>
+          <button type="button" className="btn btn-sm" onClick={() => setWaSel(new Set())}>Cancel</button>
+        </div>
+      )}
       <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
         <table>
           <thead>
@@ -800,11 +856,13 @@ export default function Employees() {
                 administration (roles, scope, password, sign-in link) moved to
                 Administration -> Users, which is the screen that owns logins. */}
             <tr>
+              {hrDesk && mayMessageEmployees && <th style={{ width: 30 }}><input type="checkbox" aria-label="Select everyone on this page" checked={pagedEmployees.slice.length > 0 && pagedEmployees.slice.every((x) => waSel.has(x.id))} onChange={(ev) => setWaSel((prev) => { const n = new Set(prev); pagedEmployees.slice.forEach((x) => { if (ev.target.checked) n.add(x.id); else n.delete(x.id); }); return n; })} /></th>}
               <th style={{ width: 110 }}>{FL.label('employeeCode', 'Emp ID')}</th>
               <th>{FL.label('name', 'Name')}</th>
               <th style={{ width: 70 }}>Docs</th>
               <th>{FL.label('designation', 'Designation')} · {FL.label('team', 'Team')}</th>
               <th style={{ width: 150 }}>{FL.label('employmentStatus', 'Status')}</th>
+              <th style={{ width: 200 }}>Dates</th>
               <th style={{ width: 150 }}>Profile Status</th>
               <th>Position · Handover</th>
               <th style={{ width: 130 }}>Completion</th>
@@ -837,6 +895,7 @@ export default function Employees() {
               const pct = h ? h.profileCompletionPct : null;
               return (
                 <tr key={e.id}>
+                  {hrDesk && mayMessageEmployees && <td><input type="checkbox" aria-label={`Select ${e.name} for WhatsApp`} checked={waSel.has(e.id)} onChange={(ev) => setWaSel((prev) => { const n = new Set(prev); if (ev.target.checked) n.add(e.id); else n.delete(e.id); return n; })} /></td>}
                   <td><b>{e.employeeCode}</b></td>
                   <td className="row-link">
                     <div className="emgx-name">
@@ -862,11 +921,29 @@ export default function Employees() {
                     </span>
                     {ON_NOTICE.includes(e.employmentStatus) && (
                       <div className={`emgx-lwd${e.lastWorkingDate ? '' : ' missing'}`} title={e.lastWorkingDateSource || 'No last working date recorded — set it from View'}>
-                        Last working date: {e.lastWorkingDate ? lwdLabel(e.lastWorkingDate) : 'not set'}
+                        Last working date: {e.lastWorkingDate ? lwdLabel(e.lastWorkingDate) : 'not set'}{e.exitStageLabel ? <> <ExitChip stage={e.exitStage} label={e.exitStageLabel} /></> : null}
                       </div>
                     )}
                     {/* Password / account status (hrms-24 §12). */}
                     {e.passwordStatus && <div style={{ marginTop: 4 }}><PasswordBadge ps={e.passwordStatus} /></div>}
+                  </td>
+                  {/* DATES (founder, 2026-10-23): the joining date for everybody; for a person on notice, when the notice began and the last working
+                      day; for somebody who has left, the day they were relieved - the same way the joining date is shown. */}
+                  <td className="cell-muted">
+                    <div><span className="small-muted">Joined</span> <b>{e.joiningDate || '—'}</b></div>
+                    {['Notice Period', 'Exit Process'].includes(e.employmentStatus) && (
+                      <>
+                        <div><span className="small-muted">Notice from</span> <b>{e.noticeFrom ? lwdLabel(e.noticeFrom) : <span style={{ color: 'var(--red)' }}>not recorded</span>}</b></div>
+                        <div><span className="small-muted">Last day</span> <b>{(e.exitDate || e.lastWorkingDate) ? lwdLabel(e.exitDate || e.lastWorkingDate) : <span style={{ color: 'var(--red)' }}>not set</span>}</b></div>
+                        <NoticeDays notice={e.notice} />
+                      </>
+                    )}
+                    {['Relieved', 'Exited', 'Terminated'].includes(e.employmentStatus) && (
+                      <>
+                        {e.noticeFrom && <div><span className="small-muted">Notice from</span> <b>{lwdLabel(e.noticeFrom)}</b></div>}
+                        <div><span className="small-muted">{e.employmentStatus === 'Relieved' ? 'Relieved on' : `${e.employmentStatus} on`}</span> <b>{e.exitDate ? lwdLabel(e.exitDate) : <span style={{ color: 'var(--red)' }}>not recorded</span>}</b></div>
+                      </>
+                    )}
                   </td>
                   <td>
                     <span className={`status ${STATUS_BADGE[h?.profileStatus] || ''}`}>
@@ -910,6 +987,7 @@ export default function Employees() {
                   <td className="col-actions">
                     <div className="row-actions">
                       <button className="btn btn-sm" onClick={() => openDetail(e.id)}>View</button>
+                      {hrDesk && mayOneEmployee && <button className="btn btn-sm" title={`WhatsApp ${e.name} from the company number`} onClick={() => setWaOne({ id: e.id, name: e.name, email: e.email, phone: e.phone })}>💬 WhatsApp</button>}
                       {/* Super Admin only (renders nothing for anyone else). */}
                       <ViewAsButton userId={e.userId} name={e.name} active={e.loginStatus === 'Active'} />
                       {caps.edit && <Link className="btn btn-sm" to={`/employees/${e.id}?edit=1`} title="Open the full employee form">Edit</Link>}
@@ -991,12 +1069,15 @@ export default function Employees() {
               );
             })}
             {filtered.length === 0 && (
-              <tr><td colSpan="9" className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
+              <tr><td colSpan={hrDesk && mayMessageEmployees ? 11 : 10} className="small-muted" style={{ padding: 16 }}>No employees match.</td></tr>
             )}
           </tbody>
         </table>
       </ScrollTable>
       <Pager page={pagedEmployees} noun="employees" />
+      {waMany && <SendManyDialog app="HRMS" mode="WhatsApp" audience="employees" ids={waMany} note="Sent from the company WhatsApp number to the mobile number on each employee's profile. You see who is left out, and why, before anything is sent." onClose={() => setWaMany(null)} onSent={() => setWaSel(new Set())} />}
+      {waOne && <ContactDialog channel="WhatsApp" audience="employees" personId={waOne.id} name={waOne.name} email={waOne.email} phone={waOne.phone} onClose={() => setWaOne(null)} />}
+      {waBulk && <WaBulkModal entityType="employee" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => { setWaSel(new Set()); setWaTick((n) => n + 1); }} />}
       </>)}
 
       <div className="notice" style={{ marginTop: 14 }}>
@@ -1031,7 +1112,7 @@ export default function Employees() {
                 : <>{rejectFor.name}&apos;s profile goes back to them to correct and submit again. Their status becomes <b>Change Requested</b>, and the note below is what they see.</>}
             </div>
             <div className="field">
-              <label>{rejectFor.kind === 'request' ? 'Why are you declining? *' : 'What needs correcting? *'}</label>
+              <label>{rejectFor.kind === 'request' ? 'Why are you declining?' : 'What needs correcting?'}</label>
               <textarea
                 rows="3"
                 autoFocus
@@ -1059,7 +1140,7 @@ export default function Employees() {
               person, not the ID, so nothing is lost. The change is recorded on their history (old → new).
             </div>
             <div className="field">
-              <label>New Employee ID *</label>
+              <label>New Employee ID</label>
               <input autoFocus value={codeForm.employeeCode} onChange={(ev) => setCodeForm({ ...codeForm, employeeCode: ev.target.value })} />
               {codeClash && <span className="small-muted" style={{ color: 'var(--red)' }}>Already used by {codeClash.name}.</span>}
               {!codeClash && codeDraft && codeDraft !== codeFor.employeeCode && !/^TL\d{3,}$/.test(codeDraft) && (
@@ -1122,8 +1203,9 @@ export default function Employees() {
           </>}
         >
           <form onSubmit={submitReset}>
-            <div className="field"><label>New password *</label>
+            <div className="field"><label>New password</label>
               <input required type="password" minLength="8" autoComplete="new-password" value={resetPassword} onChange={(e) => setResetPassword(e.target.value)} /></div>
+              <GeneratePassword onGenerate={setResetPassword} />
             <div className="cell-muted" style={{ fontSize: 11.5 }}>
               At least 8 characters with a letter and a number. The password is stored hashed and never shown again —
               pass it to the user yourself; they must change it at their next sign-in. To avoid knowing it at all, use
@@ -1297,17 +1379,13 @@ export default function Employees() {
                 {detail.lastWorkingDate
                   ? <><b>{lwdLabel(detail.lastWorkingDate)}</b> <span className="small-muted">· {detail.lastWorkingDateSource}</span></>
                   : <span style={{ color: 'var(--red)' }}>Not recorded</span>}
-                {caps.lastWorkingDate && (
-                  <div className="emgx-lwd-edit">
-                    <input type="date" value={lwdDraft} onChange={(ev) => setLwdDraft(ev.target.value)} aria-label="Last working date" />
-                    <button type="button" className="btn btn-sm btn-primary" disabled={!lwdDraft || lwdDraft === detail.lastWorkingDate} onClick={saveLwd}>
-                      {detail.lastWorkingDate ? 'Change date' : 'Set date'}
-                    </button>
-                  </div>
-                )}
               </span>
             </div>
           )}
+          {/* EXIT STATUS (HRMS spec items 6 + 7): the exit's stage, its record, and Edit exit date (HR / Super Admin; the server decides). */}
+          <ExitProfileRow employee={detail} canEditDate={!!caps.lastWorkingDate} leaving={ON_NOTICE.includes(detail.employmentStatus) || ['Relieved', 'Exited', 'Exit Process'].includes(detail.employmentStatus)} onChanged={() => { load(); openDetail(detail.id); }} />
+          <div className="kv"><span className="k">Leaving the company</span><span><MarkLeftButton employee={detail} onDone={() => { load(); openDetail(detail.id); }} /><RejoinButton employee={detail} onDone={() => { load(); openDetail(detail.id); }} /></span></div>
+          <RejoinInfo employeeId={detail.id} refreshKey={detail.employmentStatus} onChanged={() => { load(); openDetail(detail.id); }} />
           {/* TRANSFER HISTORY — always for a TL / STL / Asst Manager / Manager,
               for anyone else when something is recorded. */}
           <TransferHistory entries={detail.transferHistory} isLead={detail.isLead} />
@@ -1418,14 +1496,28 @@ function AddEmployeeModal({
   }
   // The seats of the chosen department, free ones first so the common case
   // is at the top of the list.
-  const deptPositions = (options.positions || [])
-    .filter((r) => r.department === form.department)
+  const deptSeatsAll = (options.positions || []).filter((r) => r.department === form.department);
+  // TEAM COMES FIRST, THEN THE POSITION (founder, 2026-10-23): a team is whatever the department master names PLUS every team a seat of this
+  // department carries (Education: Team A = EDU-1 to EDU-5, Team B = EDU-6 to EDU-10). Picking a team narrows the Position list to that team's seats.
+  const seatRange = (seats) => {
+    const nums = seats.map((x) => ({ c: x.code, n: Number((/(\d+)$/.exec(x.code) || [])[1]) })).filter((x) => Number.isFinite(x.n)).sort((a, b) => a.n - b.n);
+    if (!nums.length) return '';
+    return nums.length === 1 ? nums[0].c : `${nums[0].c} to ${nums[nums.length - 1].c}`;
+  };
+  // "Team A" on a seat and "Team-A" in the department master are the same team: compare them by their letters and digits only.
+  const tkey = (v) => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const masterTeamsOf = ((options.departmentTree || []).find((d) => d.name === form.department) || {}).teams || [];
+  const teamName = (v) => (masterTeamsOf.find((t) => tkey(t.name) === tkey(v)) || {}).name || v;
+  const deptPositions = deptSeatsAll
+    .filter((r) => !form.team || !deptSeatsAll.some((x) => tkey(x.team) === tkey(form.team)) || tkey(r.team) === tkey(form.team))
     .sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0) || a.code.localeCompare(b.code, undefined, { numeric: true }));
   // TEAMS ARE AN EDUCATION THING. Rather than naming Education in the code,
   // this asks the department master which departments actually have teams —
   // so the field appears for exactly those, and adding or removing a team in
   // Administration is the only thing needed to change that.
-  const deptTeams = ((options.departmentTree || []).find((d) => d.name === form.department) || {}).teams || [];
+  const masterTeams = ((options.departmentTree || []).find((d) => d.name === form.department) || {}).teams || [];
+  const deptTeams = [...new Map([...masterTeams.map((t) => t.name), ...deptSeatsAll.map((r) => teamName(r.team)).filter(Boolean)].map((name) => [tkey(name), name])).values()]
+    .map((name) => ({ id: name, name, range: seatRange(deptSeatsAll.filter((r) => tkey(r.team) === tkey(name) && !/TL$/i.test(r.code))) }));
 
   const chosen = (options.designations || []).find((d) => d.designation === form.designation);
   const access = chosen
@@ -1493,6 +1585,16 @@ function AddEmployeeModal({
           />
         </div>
 
+        <div className="field">
+          <label>{FL.label('biometricPin', 'Biometric ID')} <i style={{ fontWeight: 400 }}>(optional — the ID on the attendance device)</i></label>
+          <input
+            value={form.biometricPin || ''}
+            onChange={(e) => set({ biometricPin: e.target.value })}
+            placeholder="e.g. 517"
+            autoComplete="off"
+          />
+        </div>
+
         {/* DEPARTMENTS — a checklist, with "All departments" on top. A TL can
             be given two, an STL three, anyone all of them. The FIRST one ticked
             is the home department (seat, team, employee record); every ticked
@@ -1507,6 +1609,28 @@ function AddEmployeeModal({
             ...(list[0] !== form.department ? { position: '', team: '' } : {}),
           })}
         />
+
+        {/* TEAM - FIRST, then the Position (founder, 2026-10-23). The teams are the department's own (the department master plus the team every
+            seat carries): Education has Team A (EDU-1 to EDU-5) and Team B (EDU-6 to EDU-10). Choosing a team shows ONLY that team's seats in
+            the Position list below; choosing a seat first fills its team in. It sets the employee record AND the login's team scope, which is
+            what a team lead is then held to. A department with no teams shows no Team field. */}
+        {deptTeams.length > 0 && (
+          <div className="field">
+            <label>{FL.label('team', 'Team')} <i style={{ fontWeight: 400 }}>(pick this first, then the position)</i></label>
+            <Combo
+              creatable
+              value={form.team}
+              onChange={(e) => {
+                const team = e.target.value;
+                const seat = deptSeatsAll.find((r) => r.code === form.position);
+                set({ team, ...(seat && seat.team && tkey(seat.team) !== tkey(team) ? { position: '' } : {}) });
+              }}
+            >
+              <option value="">No team</option>
+              {deptTeams.map((t) => <option key={t.id} value={t.name}>{t.range ? `${t.name} (${t.range})` : t.name}</option>)}
+            </Combo>
+          </div>
+        )}
 
         {/* THE SEAT — MED-1, MED-2, EDU BDE 1.
 
@@ -1525,7 +1649,11 @@ function AddEmployeeModal({
             creatable
             disabled={!form.department}
             value={form.position}
-            onChange={(e) => set({ position: e.target.value })}
+            onChange={(e) => {
+              const code = e.target.value;
+              const seat = deptSeatsAll.find((r) => r.code === code);
+              set({ position: code, ...(seat && seat.team && !form.team ? { team: teamName(seat.team) } : {}) }); // a seat of a team fills the team in
+            }}
           >
             <option value="">
               {form.department ? 'No seat' : 'Choose a department first'}
@@ -1543,21 +1671,7 @@ function AddEmployeeModal({
           )}
         </div>
 
-        {/* TEAM — only for a department that HAS teams, which today means
-            Education (Team-A / Team-B) and nothing else. Showing an empty
-            Team picker on Medical would invite somebody to invent one.
-
-            It sets the employee record AND the login's team scope, which is
-            what a team lead is then held to. */}
-        {deptTeams.length > 0 && (
-          <div className="field">
-            <label>{FL.label('team', 'Team')}</label>
-            <Combo value={form.team} onChange={(e) => set({ team: e.target.value })}>
-              <option value="">No team</option>
-              {deptTeams.map((t) => <option key={t.id} value={t.name}>{t.name}</option>)}
-            </Combo>
-          </div>
-        )}
+        {/* (The Team field now comes BEFORE Position, above.) */}
         {/* NO DESIGNATION FIELD (user, 2026-09-29). The server sets it from
             the Role below (or "Employee"); HR changes it later on Edit. */}
 

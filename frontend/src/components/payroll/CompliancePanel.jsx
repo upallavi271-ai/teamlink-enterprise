@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Panel, PanelHead, EmptyMini } from '../proto.jsx';
 import { monthLabel, errText, downloadFile } from './payrollUi';
+import { PayrollMonthSelect, monthHeading, usePayrollCycle } from './payrollCycleUi.jsx';
 import './payrollRun.css';
 import ListFilterBar, { useListFilters, ListEmpty } from '../ui/ListFilters.jsx';
 import Pager, { usePaged } from '../Pager.jsx';
+import Combo from '../Combo.jsx';
 
 // One month by employee: search, and who carries ESI / TDS.
 const FIELDS = [
@@ -21,6 +23,7 @@ const inr0 = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 
 export default function CompliancePanel() {
+  usePayrollCycle();
   const [mode, setMode] = useState('month');
   const [month, setMonth] = useState(thisMonth());
   const [year, setYear] = useState(String(new Date().getFullYear()));
@@ -43,15 +46,15 @@ export default function CompliancePanel() {
         <button className="btn btn-sm" onClick={() => downloadFile(`/payroll/reports/compliance?${q()}&format=csv`, `${name}.csv`).catch((e) => setError(errText(e, 'Export failed')))}>CSV</button>
       </PanelHead>
       <div className="jl-filters">
-        <select value={mode} onChange={(e) => setMode(e.target.value)}>
+        <Combo value={mode} onChange={(e) => setMode(e.target.value)}>
           <option value="month">One month, by employee</option>
           <option value="year">A year, by month</option>
-        </select>
+        </Combo>
         {mode === 'month'
-          ? <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          ? <PayrollMonthSelect value={month} onChange={setMonth} />
           : <input type="number" min="2000" max="2100" value={year} onChange={(e) => setYear(e.target.value)} style={{ width: 100, minWidth: 0 }} />}
-        <label className="prb-check"><input type="checkbox" checked={includeDraft} onChange={(e) => setIncludeDraft(e.target.checked)} /> include drafts / pending</label>
-        <span className="prb-note">Approved, synced and paid records{includeDraft ? ', plus drafts and pending' : ''}.</span>
+        <label className="prb-check"><input type="checkbox" checked={includeDraft} onChange={(e) => setIncludeDraft(e.target.checked)} /> include not-yet-approved / pending</label>
+        <span className="prb-note">Approved, synced and paid records{includeDraft ? ', plus not-yet-approved and pending' : ''}.</span>
       </div>
       {error && <div className="error-text" style={{ padding: '0 18px' }}>{error}</div>}
       {!data ? <EmptyMini>{error ? '' : 'Loading…'}</EmptyMini> : (
@@ -76,7 +79,7 @@ export default function CompliancePanel() {
                       <td className="jl-num">{inr0(r.esiEmployee)}</td><td className="jl-num">{inr0(r.esiEmployer)}</td><td className="jl-num">{inr0(r.tds)}</td><td className="jl-num">{inr0(r.professionalTax)}</td>
                     </tr>
                   ))}
-                  {data.rows.length === 0 && <tr><td colSpan="12" className="small-muted" style={{ padding: 14 }}>No approved payroll for {monthLabel(month)}.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan="12" className="small-muted" style={{ padding: 14 }}>No approved payroll for {monthHeading(month)}.</td></tr>}
                   {data.rows.length > 0 && lf.rows.length === 0 && <tr><td colSpan="12"><ListEmpty lf={lf} noun="employees" /></td></tr>}
                   {data.rows.length > 0 && (
                     <tr style={{ fontWeight: 700 }}>

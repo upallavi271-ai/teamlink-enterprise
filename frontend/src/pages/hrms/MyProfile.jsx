@@ -263,7 +263,7 @@ export default function MyProfile() {
               <div className="grid-2">
                 <label className="field">
                   <span>Reason for requesting edit access</span>
-                  <Combo required value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)}>
+                  <Combo required allowCustom value={unlockReason} onChange={(e) => setUnlockReason(e.target.value)}>
                     <option value="">Select a reason</option>
                     {config.unlockRequestReasons.map((r) => <option key={r}>{r}</option>)}
                   </Combo>
@@ -392,10 +392,10 @@ export default function MyProfile() {
               <div className="grid-2">
                 <label className="field">
                   <span>What do you want to verify?</span>
-                  <select value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value })}>
+                  <Combo value={vf.kind} onChange={(e) => setVf({ ...vf, kind: e.target.value })}>
                     <option value="MOBILE">Mobile number</option>
                     <option value="AADHAAR">Aadhaar</option>
-                  </select>
+                  </Combo>
                 </label>
                 <label className="field">
                   <span>Mobile number</span>

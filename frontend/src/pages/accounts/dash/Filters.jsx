@@ -45,14 +45,14 @@ export default function Filters({
         <span>{label} · {list.length}</span>
         {searchable
           ? <Combo value={cur} onChange={(e) => set(k, e.target.value)}>{options}</Combo>
-          : <select value={cur} onChange={(e) => set(k, e.target.value)}>{options}</select>}
+          : <Combo value={cur} onChange={(e) => set(k, e.target.value)}>{options}</Combo>}
       </label>
     );
   };
 
   const chips = [
     !isAllTime(value.period) && { k: 'period', l: 'Period', v: periodText(value.period), clear: () => onChange({ ...value, period: ALL_TIME }) },
-    value.client && { k: 'client', l: 'Client', v: value.client, clear: () => set('client', '') },
+    value.client && { k: 'client', l: 'Client', v: labelOf('client', value.client), clear: () => set('client', '') },
     value.dept && { k: 'dept', l: 'Department', v: labelOf('dept', value.dept), clear: () => set('dept', '') },
     value.section && { k: 'section', l: 'Section', v: labelOf('section', value.section), clear: () => set('section', '') },
     value.role && { k: 'role', l: 'Role', v: value.role, clear: () => set('role', '') },

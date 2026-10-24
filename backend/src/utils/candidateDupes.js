@@ -52,7 +52,7 @@ const HOLDING = ['OPEN', 'MERGE_REQUESTED'];
 const BLOCKING_LEVELS = ['CERTAIN', 'LIKELY'];
 const STATUS_TEXT = {
   OPEN: 'Waiting to be checked', MERGE_REQUESTED: 'Merge asked — waiting for the TL', NOT_DUPLICATE: 'Checked: not a duplicate',
-  MERGED: 'Merged', SAME_PERSON_OTHER_JOB: 'Same person, different job', REJECTED: 'Rejected as duplicate', AUTO_CLOSED: 'Closed: details changed',
+  MERGED: 'Merged', SAME_PERSON_OTHER_JOB: 'Same person, different requirement', REJECTED: 'Rejected as duplicate', AUTO_CLOSED: 'Closed: details changed',
 };
 const TEST_USER = /zztest|example\.test/i;
 
@@ -92,6 +92,7 @@ async function saveSettings(patch, user) {
             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updatedById = excluded.updatedById, updatedByName = excluded.updatedByName, updatedAt = excluded.updatedAt`,
   value, user ? user.id : null, user ? user.name : null, Date.now());
   SET = { at: 0, v: null };
+  HOLD_MEMO.clear(); // switching the hold off/on must take effect at once, not after the 3-second memo of the last answer
   return next;
 }
 // Has the one-time backfill (scripts/candidate-dup-backfill.js --apply) been run? Until then a new entry is also
@@ -465,7 +466,7 @@ function gateBody(f, name, matchName) {
   const requested = f.status === 'MERGE_REQUESTED' ? ' A merge was already asked for — the TL has to approve it.' : '';
   return {
     error: `Duplicate: resolve first. ${name || 'This person'} is ${levelWords[f.level] || 'a duplicate'} as ${matchName || 'another profile'} (${why}). `
-      + `Open the profile, press "Check duplicates", and choose Merge, Not a duplicate, Same person – different job, or Reject.${requested}`,
+      + `Open the profile, press "Check duplicates", and choose Merge, Not a duplicate, Same person – different requirement, or Reject.${requested}`,
     code: 'DUPLICATE_OPEN',
     duplicateFlagId: f.id,
     candidateId: f.candidateId,

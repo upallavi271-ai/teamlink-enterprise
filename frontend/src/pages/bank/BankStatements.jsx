@@ -10,6 +10,10 @@
 // the first bank (and the URL is corrected in place). Each request carries an
 // AbortController and a request number, so a slow answer for a bank you have
 // already left can never paint over the bank you are on.
+//
+// ANY ROW opens that line in the "Bank statement line" window (BankLineModal.jsx) without leaving the page:
+// Enter / Space on a focused row does the same. The window shows the row's own figures at once and asks
+// GET /banks/:bankId/transactions/:txnId for what the line is filed as (read only, same permission and bank scope).
 import {
   useCallback, useEffect, useRef, useState,
 } from 'react';
@@ -18,6 +22,11 @@ import api from '../../api';
 import PeriodPicker, { ALL_TIME } from '../../components/accounts/PeriodPicker.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import './bank-s6.css';
+import Combo from '../../components/Combo.jsx';
+import BankLineModal from './BankLineModal.jsx';
+
+// A click on a control inside a row keeps its own action; only the empty part of the row opens the line.
+const OWN_ACTION = 'a, button, input, select, textarea, label, summary, [data-no-row]';
 
 const STATUS = [['all', 'All lines'], ['unreconciled', 'Unreconciled'], ['reconciled', 'Reconciled']];
 const STATUS_TO_API = { all: 'all', reconciled: 'true', unreconciled: 'false' };
@@ -67,6 +76,10 @@ export default function BankStatements() {
   const [err, setErr] = useState('');
   const [retry, setRetry] = useState(0);
   const seq = useRef(0);
+  // The line open in the window: { row, el } and what the server said about it.
+  const [open, setOpen] = useState(null);
+  const [lineData, setLineData] = useState({ id: null, detail: null, failed: false });
+  const lineSeq = useRef(0);
 
   // Change the URL (one history step per change, so Back / Forward work).
   const go = useCallback((patch, { replace = false } = {}) => {
@@ -122,6 +135,30 @@ export default function BankStatements() {
     return () => ctl.abort();
   }, [valid, P.bankId, P.from, P.to, P.status, P.page, retry]);
 
+  // The open line's details. Only the newest answer counts; closing (or opening another line) drops the old one.
+  useEffect(() => {
+    if (!open) return undefined;
+    const id = lineSeq.current + 1;
+    lineSeq.current = id;
+    const ctl = new AbortController();
+    setLineData({ id: open.row.id, detail: null, failed: false });
+    api.get(`/banks/${encodeURIComponent(open.bankId)}/transactions/${encodeURIComponent(open.row.id)}`, { signal: ctl.signal })
+      .then((r) => { if (id === lineSeq.current) setLineData({ id: open.row.id, detail: r.data, failed: false }); })
+      .catch((e) => { if (id === lineSeq.current && !ctl.signal.aborted && e.code !== 'ERR_CANCELED') setLineData({ id: open.row.id, detail: null, failed: true }); });
+    return () => ctl.abort();
+  }, [open]);
+  // Another bank, another page or another filter: the window closes (it belonged to the old list).
+  useEffect(() => { setOpen(null); }, [P.bankId, P.from, P.to, P.status, P.page]);
+  const openLine = (row, el) => setOpen({ row, el, bankId: P.bankId });
+  const onRowClick = (row) => (e) => {
+    if (e.target.closest && e.target.closest(OWN_ACTION) && e.target.closest(OWN_ACTION) !== e.currentTarget) return;
+    openLine(row, e.currentTarget);
+  };
+  const onRowKey = (row) => (e) => {
+    if (e.target !== e.currentTarget) return; // a control inside the row keeps its own keys
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openLine(row, e.currentTarget); }
+  };
+
   const period = P.from && P.to ? { from: P.from, to: P.to, preset: 'custom' } : ALL_TIME;
   // Another bank's lines are never shown under this bank's button, not even dimmed.
   const mine = res && res.forBank === P.bankId ? res : null;
@@ -172,9 +209,9 @@ export default function BankStatements() {
             />
             <label className="bks-field">
               <span className="s6-label">Reconciled</span>
-              <select value={P.status} onChange={(e) => go({ status: e.target.value, page: 1 })}>
+              <Combo value={P.status} onChange={(e) => go({ status: e.target.value, page: 1 })}>
                 {STATUS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
             <span className="bks-count s6-sub" aria-live="polite">
               {mine ? `${mine.total ? `${mine.total} line${mine.total === 1 ? '' : 's'}` : 'No lines'}${shownBank ? ` · ${shownBank.name}` : ''}` : ''}
@@ -204,7 +241,16 @@ export default function BankStatements() {
               </thead>
               <tbody>
                 {rows.map((t) => (
-                  <tr key={t.id}>
+                  <tr
+                    key={t.id}
+                    className="bks-row"
+                    tabIndex={0}
+                    aria-haspopup="dialog"
+                    title="Open this bank line"
+                    data-txn={t.id}
+                    onClick={onRowClick(t)}
+                    onKeyDown={onRowKey(t)}
+                  >
                     <td className="s6-mono">{ddmmyyyy(t.txnDate)}</td>
                     <td className="bks-desc">{t.description}</td>
                     <td className="num s6-mono s6-red">{t.debit ? amt(t.debit) : '—'}</td>
@@ -251,6 +297,17 @@ export default function BankStatements() {
             </nav>
           )}
         </>
+      )}
+      {open && (
+        <BankLineModal
+          row={open.row}
+          bank={banks && banks.find((b) => b.id === open.bankId)}
+          detail={lineData.id === open.row.id ? lineData.detail : null}
+          loading={lineData.id !== open.row.id || (!lineData.detail && !lineData.failed)}
+          failed={lineData.id === open.row.id && lineData.failed}
+          returnFocusTo={open.el}
+          onClose={() => setOpen(null)}
+        />
       )}
     </section>
   );

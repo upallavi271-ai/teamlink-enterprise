@@ -111,16 +111,18 @@ async function notifySigned(client, updated, verifiedVia) {
   const clientBdes = await prisma.requirement.findMany({
     where: { clientId: client.id, bdeId: { not: null } }, select: { bdeId: true }, distinct: ['bdeId'],
   });
+  // 2026-10-05: the job BDEs + the client's own logins here; the owner BDE, Admins and Super Admins get the "make it Active" notice
+  // (utils/agreementActivateReminders.js notifyClientSigned). 2026-10-21: the Accounts side is the Admin's table (Who gets each
+  // reminder; default: the Accountant role) and the BDEs follow its 'also the BDEs' tick.
+  const AR = require('../utils/accountsRecipients'); // eslint-disable-line global-require
+  const team = await AR.reminderRecipients({ kind: 'agreementSigned', allowTest: require('../utils/sandbox').isSandbox() }); // eslint-disable-line global-require
+  if (team.on && !team.users.length) await AR.warnNoRecipients('agreementSigned', 'a signed agreement');
   const audience = await prisma.user.findMany({
     where: {
       status: 'Active',
-      // 2026-10-05: Accounts + the job BDEs + the client's own logins here;
-      // the owner BDE, Admins and Super Admins get the "make it Active"
-      // notice (utils/agreementActivateReminders.js notifyClientSigned).
       OR: [
-        { accountsRole: { in: ['ACCOUNTANT'] } },
-        { role: 'ACCOUNTANT' },
-        { id: { in: clientBdes.map((r) => r.bdeId) } },
+        ...(team.on ? [{ id: { in: team.users.map((u) => u.id) } }] : []),
+        ...(!team.on || team.owner ? [{ id: { in: clientBdes.map((r) => r.bdeId) } }] : []),
         { clientId: client.id },
       ],
     },
@@ -150,7 +152,7 @@ router.get('/list', requireAuth, async (req, res, next) => {
     const accountsOnly = false; // 2026-10-05: Accounts view every agreement
     const rows = await prisma.client.findMany({
       where: {
-        AND: [where, { agreementDocument: { not: null } },
+        AND: [where, { OR: [{ agreementDocument: { not: null } }, { documents: { some: { kind: 'AGREEMENT_SIGNED' } } }] },
           ...(accountsOnly ? [{ agreementStatus: { in: ['SIGNED', 'ACTIVE', 'EXPIRED', 'CONFIRMED'] } }] : [])],
       },
       select: LIST_SELECT,
@@ -192,6 +194,11 @@ async function loadForView(req, res, { edit = false } = {}) {
 // version, "use the saved signature & stamp" — routes/agreementSealExtra.js.
 require('./agreementSealExtra')(router, { loadForView, readUpload, dropFile, keepSignedPdf: (c) => keepSignedPdf(c), KEPT_ACTION: 'Signed agreement PDF kept' });
 
+// The client's own agreement file (PDF / Word / picture): routes/agreementOwnFile.js.
+require('./agreementOwnFile').mountView(router, { requireAuth, loadForView });
+// Every signed agreement file of a client (imported PDFs / pictures): routes/agreementSignedFiles.js - same access rule.
+require('./agreementSignedFiles').mountView(router, { requireAuth, loadForView });
+
 router.get('/:clientId/executed', requireAuth, async (req, res, next) => {
   try {
     const loaded = await loadForView(req, res);
@@ -208,7 +215,7 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     // A kept older signed copy can be downloaded whatever the step is now.
     // Not signed yet: the DRAFT PDF (light grey DRAFT watermark, empty "Initial here"
     // boxes), so a draft is never mistaken for an executed copy (user, 2026-10-10).
-    if (!req.query.copy && !signing.executedSummary(client).pdfAvailable && !client.agreementDocument) return res.status(409).json({ error: 'There is no agreement draft to print yet.' });
+    if (!req.query.copy && !signing.executedSummary(client).pdfAvailable && !client.agreementDocument) return res.status(409).json({ error: 'There is no agreement to print yet.' });
     if (req.query.copy && req.query.copy !== 'signed') {
       const row = await prisma.auditLog.findFirst({ where: { id: String(req.query.copy), entity: 'Client', entityId: client.id, action: { in: [KEPT_ACTION, EMUDHRA_KEPT] } }, select: { toValue: true } });
       const file = row ? attachments.resolveStored(row.toValue) : null;
@@ -231,7 +238,7 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     const us = await consultantParty();
     const trail = await trailOf(client, { sinceSend: true });
     res.set('Content-Type', 'application/pdf');
-    res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}${client.agreementSignedAt ? '' : '-DRAFT'}.pdf"`);
+    res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}${client.agreementSignedAt ? '' : '-NOT-SIGNED'}.pdf"`);
     res.set('Cache-Control', 'private, no-store');
     // eslint-disable-next-line global-require
     await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name }, res);
@@ -337,7 +344,7 @@ router.patch('/:clientId', requireAuth, async (req, res, next) => {
       // Old → new (clients role spec §6): the values before this edit.
       fromValue: Object.keys(data).filter((k) => k !== 'agreementDocument').map((k) => `${k}=${loaded.client[k] == null ? '—' : loaded.client[k]}`).join(', ').slice(0, 500),
       toValue: Object.entries(data).filter(([k]) => k !== 'agreementDocument').map(([k, v]) => `${k}=${v == null ? '—' : v}`).join(', ').slice(0, 500),
-      ...(textDate ? { reason: textDate === 'updated' ? 'The date printed in the draft text was changed too' : 'The text already sent or signed keeps its printed date' } : {}),
+      ...(textDate ? { reason: textDate === 'updated' ? 'The date printed in the agreement text was changed too' : 'The text already sent or signed keeps its printed date' } : {}),
     });
     return res.json({ ...signing.executedSummary(updated), textDate });
   } catch (err) {
@@ -354,7 +361,7 @@ router.post('/:clientId/void', requireAuth, async (req, res, next) => {
     if (reason.length < 5) return res.status(400).json({ error: 'Give the reason for voiding this agreement.' });
     const { client } = loaded;
     const st = signing.statusOf(client);
-    if (st === 'DRAFT') return res.status(409).json({ error: 'This agreement is still a draft — nothing to void.' });
+    if (st === 'DRAFT') return res.status(409).json({ error: 'This agreement is not sent yet — nothing to cancel.' });
     const files = Object.values(KINDS).map(([f]) => client[f]).filter(Boolean);
     const updated = await prisma.client.update({
       where: { id: client.id },

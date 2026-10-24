@@ -111,7 +111,8 @@ function decorate(row, today = todayStr()) {
 // ---------------------------------------------------------------------------
 function bdeOfRequirement(r) {
   if (r.bdeId) return { id: r.bdeId, name: (r.bde && r.bde.name) || null };
-  const co = r.client && !r.internal ? require('./nextAction').clientOwnerUserId(r.client) : null; // eslint-disable-line global-require
+  // _clientBdeId is set by resolveNames() (a database read); the in-memory directory is the fallback.
+  const co = r._clientBdeId || (r.client && !r.internal ? require('./nextAction').clientOwnerUserId(r.client) : null); // eslint-disable-line global-require
   return co ? { id: co, name: r.client.bdeOwner || null } : { id: null, name: null };
 }
 function ownerOf(application, requirement) {
@@ -157,6 +158,14 @@ function chainSnapshot(application, requirement, names = null) {
 // has to be looked up rather than included. Resolved in ONE query for a whole
 // list; `names` is a Map(userId -> name).
 async function resolveNames(requirements) {
+  // The BDE of a client job named only on the CLIENT (Owner / second BDE), looked up once per job.
+  for (const r of (requirements || [])) {
+    if (r && !r.bdeId && !r.internal && (r.clientId || r.client) && !Object.prototype.hasOwnProperty.call(r, '_clientBdeId')) {
+      // eslint-disable-next-line no-await-in-loop, global-require
+      const [first] = await require('./clientBdes').ownerBdeIds(r).catch(() => []);
+      Object.defineProperty(r, '_clientBdeId', { value: first || null, enumerable: false, configurable: true });
+    }
+  }
   const ids = new Set();
   (requirements || []).forEach((r) => { if (r && r.tlId) ids.add(r.tlId); if (r && r.stlId) ids.add(r.stlId); });
   if (!ids.size) return new Map();
@@ -370,6 +379,13 @@ const AUTO_FOLLOWUPS = {
 async function raiseAutoFollowUp({ application, requirement, user, stage }) {
   const rule = AUTO_FOLLOWUPS[stage];
   if (!rule) return null;
+  // CLIENT HIRING (2026-10-13): on a client job the client makes the offer and joining letters. The BDE's chase and the
+  // recruiter's share step are derived (utils/nextAction.js clientTrackStep), so no recruiter follow-up is made for them.
+  if (['SELECTED', 'OFFER_ACCEPTED'].includes(stage) && requirement && !requirement.internal && requirement.hiringType !== 'TeamLink Internal Hire') {
+    if (stage === 'SELECTED') return null;
+    const track = await require('./clientTrack').getTrack(application.id).catch(() => null); // eslint-disable-line global-require
+    if (track && track.offer) return null;
+  }
 
   // Already chasing this? Leave it. Re-entering a stage must not stack up
   // duplicate chases on the same person.

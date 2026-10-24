@@ -263,7 +263,7 @@ export function ImportDialog({ ioKey, caps, onClose, onDone }) {
               {hasSample && <span className="dio-ok">Sample downloaded ✓</span>}
             </div>
             <div className="small-muted dio-cols">
-              Columns: {(caps.columns || []).map((c) => `${c.label}${c.required ? ' ✱' : ''}${c.readOnly ? ' (read-only)' : ''}`).join(' · ')}
+              Columns: {(caps.columns || []).map((c) => `${c.label}${c.required ? ' (needed)' : ''}${c.readOnly ? ' (read-only)' : ''}`).join(' · ')}
             </div>
           </li>
           <li className={!hasSample ? 'locked' : (file ? 'done' : 'now')}>

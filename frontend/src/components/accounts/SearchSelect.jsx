@@ -3,6 +3,7 @@
 // and the Employee salary tab (hundreds of names - a plain <select> would be a long scroll).
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './salaryVoucher.css';
+import { matchesText, noMatchText } from '../searchMatch.js';
 
 export default function SearchSelect({ label, value, onChange, options, placeholder = 'Search…', allLabel = 'Everyone' }) {
   const [open, setOpen] = useState(false);
@@ -16,8 +17,7 @@ export default function SearchSelect({ label, value, onChange, options, placehol
     return () => document.removeEventListener('mousedown', away);
   }, []);
   const shown = useMemo(() => {
-    const s = q.trim().toLowerCase();
-    const list = (options || []).filter((o) => !s || `${o.label} ${o.sub || ''}`.toLowerCase().includes(s));
+    const list = (options || []).filter((o) => matchesText(`${o.label} ${o.sub || ''}`, q));
     return list.slice(0, 200);
   }, [options, q]);
   const pick = (v) => { onChange(v); setOpen(false); setQ(''); };
@@ -45,7 +45,7 @@ export default function SearchSelect({ label, value, onChange, options, placehol
       {open && (
         <div className="ss-list" role="listbox">
           <button type="button" onMouseDown={(e) => { e.preventDefault(); pick(''); }}><span>{allLabel}</span></button>
-          {shown.length === 0 && <div className="ss-empty">{placeholder === 'Search…' ? 'Nobody matches that.' : placeholder}</div>}
+          {shown.length === 0 && <div className="ss-empty">{noMatchText(q, placeholder === 'Search…' ? 'Nobody matches that.' : placeholder)}</div>}
           {shown.map((o, i) => (
             <button type="button" key={o.value} className={i === act ? 'act' : ''} onMouseDown={(e) => { e.preventDefault(); pick(o.value); }}>
               <span>{o.label}{o.sub ? <span className="ss-sub"> · {o.sub}</span> : null}</span>

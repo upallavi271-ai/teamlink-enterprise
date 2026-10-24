@@ -16,10 +16,22 @@ const attachments = require('../utils/attachments');
 const { stateName: gstStateName } = require('../utils/gstin');
 const { raiseJoiningInvoice, isInternalHire } = require('../utils/joining');
 const {
-  REQ_ATTR_SELECT, loadHierarchy, attributeApplication, hierarchyPayload, attributionData,
+  REQ_ATTR_SELECT, loadHierarchy, attributeApplication, hierarchyPayload, attributionData, tlSeatOf,
 } = require('../utils/invoiceHierarchy');
 // P4 — GST & TDS: the one calculation (utils/invoiceTax.js).
 const TAX = require('../utils/invoiceTax');
+// 2026-10-14 — one client = one row: the grouping, the number a new candidate line takes, and the payment split.
+const CI = require('../utils/clientInvoice');
+// 2026-10-21 — "proof attached, nothing received" says so (utils/invoicePaymentState.js): a proof is never money by itself.
+const IPS = require('../utils/invoicePaymentState');
+// Map<invoiceId, [{ date, amount }]> of the bank credits in state Matched (not yet Reconciled) that point at those invoices.
+async function matchedCreditsOf(ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  const lines = await prisma.bankTransaction.findMany({ where: { type: 'Credit', reconStatus: 'Matched', excluded: false, matchedInvoiceId: { in: ids } }, select: { matchedInvoiceId: true, date: true, amount: true } });
+  lines.forEach((t) => { if (!out.has(t.matchedInvoiceId)) out.set(t.matchedInvoiceId, []); out.get(t.matchedInvoiceId).push({ date: t.date, amount: t.amount }); });
+  return out;
+}
 
 const router = express.Router();
 router.use(requireAuth);
@@ -99,6 +111,22 @@ async function nextInvoiceNumber() {
   });
   const seq = last ? Number(String(last.invoiceNumber).slice(prefix.length)) + 1 : 1;
   return prefix + String(seq).padStart(4, '0');
+}
+
+// A NEW invoice for a client that already has invoices dated the same day is the
+// next candidate line of that client invoice (TY26-072 -> TY26-072-3), so it joins
+// the existing list row instead of opening a new one; any other invoice takes the
+// next number in the series as always (utils/clientInvoice.js).
+async function numberForNewInvoice(clientId, invoiceDate) {
+  if (clientId && invoiceDate) {
+    const existing = await prisma.invoice.findMany({
+      where: { clientId, invoiceNumber: { not: null } },
+      select: { id: true, invoiceNumber: true, invoiceDate: true },
+    });
+    const line = CI.nextLineNumber(existing, invoiceDate);
+    if (line) return line;
+  }
+  return nextInvoiceNumber();
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +285,7 @@ router.post('/register/raise', requirePerm('accounts', 'accounts', 'Invoices', '
         paymentTerms: terms,
         status: 'Pending',
         // eslint-disable-next-line no-await-in-loop
-        invoiceNumber: await nextInvoiceNumber(),
+        invoiceNumber: await numberForNewInvoice(g.clientId, today),
         notes: `Raised for ${rows.length} joining(s) in ${g.monthLabel}`,
       },
     });
@@ -417,6 +445,72 @@ function paymentFacts(i, received, txnById) {
   };
 }
 
+// PAYMENT HISTORY (Invoice > Payments): every receipt on the invoice, each with
+// ITS OWN date (the bank line's printed date when it came from one - see
+// dateSource), amount, mode, reference and the bank line behind it. Nothing
+// here is the invoice / import / last-updated date. `recordedAt` is the audit
+// stamp (when the row was keyed in / reconciled) and is kept apart from `date`.
+// Money received that has no receipt row (older imports) is reported as
+// `unitemised` - never given an invented date or split.
+const dayOf = (v) => {
+  if (!v) return null;
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const t = new Date(v).getTime();
+  return Number.isNaN(t) ? null : new Date(t + 330 * 60000).toISOString().slice(0, 10);
+};
+function paymentHistoryOf(i, received, txnById) {
+  const pays = (i.payments || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.createdAt).localeCompare(String(b.createdAt)));
+  const history = pays.map((p) => {
+    const t = p.bankTxnId ? txnById.get(p.bankTxnId) : null;
+    return {
+      id: p.id,
+      date: p.date,
+      amount: ROUND(Number(p.amount || 0)),
+      method: p.method || null,
+      reference: p.reference || null,
+      dateSource: p.dateSource || null,
+      bankTxnId: p.bankTxnId || null,
+      bankLineDate: t ? t.date : null,
+      bankLineReference: t ? (t.reference || null) : null,
+      bankLineState: t ? t.reconStatus : null,
+      // A receipt is "proved" by a statement line, or by a reference the person typed.
+      proof: t ? 'bank statement' : (p.reference ? 'reference typed' : null),
+      recordedBy: p.recordedBy || null,
+      recordedAt: p.createdAt ? new Date(p.createdAt).toISOString() : null,
+      isReversal: Number(p.amount) < 0,
+      // one payment recorded on a client invoice is written as one receipt per candidate row; they share this key
+      group: ((/\[grp:([A-Za-z0-9_-]+)\]/.exec(p.notes || '')) || [])[1] || null,
+    };
+  });
+  const real = history.filter((h) => h.amount > 0 && h.date);
+  const dates = [...new Set(real.map((h) => h.date))].sort();
+  const itemised = ROUND(history.reduce((s, h) => s + h.amount, 0));
+  return {
+    paymentHistory: history,
+    paymentDates: dates,
+    firstPaymentDate: dates[0] || null,
+    lastPaymentDate: dates[dates.length - 1] || null,
+    itemisedTotal: itemised,
+    // received on the invoice but not itemised by any receipt row
+    unitemised: ROUND(Math.max(0, Number(received || 0) - itemised)),
+  };
+}
+
+// Receipt dates an invoice can be found by: each real receipt row's own date;
+// only an invoice with NO receipt rows falls back to its imported "paid on".
+function receiptDatesOf(i) {
+  const rows = (i.payments || []).filter((p) => Number(p.amount) > 0 && p.date).map((p) => dayOf(p.date));
+  if (rows.length) return rows;
+  return Number(i.receivedAmount || 0) > 0.005 && i.paidDate ? [dayOf(i.paidDate)] : [];
+}
+function payDateFilter(query) {
+  const from = /^\d{4}-\d{2}-\d{2}$/.test(String(query?.paymentFrom || '')) ? String(query.paymentFrom) : null;
+  const to = /^\d{4}-\d{2}-\d{2}$/.test(String(query?.paymentTo || '')) ? String(query.paymentTo) : null;
+  if (!from && !to) return () => true;
+  return (i) => receiptDatesOf(i).some((d) => (!from || d >= from) && (!to || d <= to));
+}
+
 async function buildRegister(user, query) {
   const where = invoiceWhere(user);
   const invoices = await prisma.invoice.findMany({
@@ -431,7 +525,10 @@ async function buildRegister(user, query) {
   });
 
   const range = dashRange(query.period);
-  const inPeriod = invoices.filter((i) => range.all || inRange(i.invoiceDate, range));
+  // Payment-date filter (?paymentFrom=&paymentTo=): an invoice is in when ANY of its
+  // receipts falls inside - separate from, and ANDed with, the invoice-date period.
+  const payOk = payDateFilter(query);
+  const inPeriod = invoices.filter((i) => (range.all || inRange(i.invoiceDate, range)) && payOk(i));
   // The org hierarchy the filters cascade over, and each invoice's place in it.
   const hier = await loadHierarchy();
   const factsOf = await placementFacts(invoices, hier);
@@ -447,6 +544,8 @@ async function buildRegister(user, query) {
     ? await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } }, select: { id: true, date: true, reference: true, reconStatus: true, amount: true } })
     : [];
   const txnById = new Map(txnRows.map((t) => [t.id, t]));
+  // bank credits matched to an invoice but not yet posted as a receipt (state Matched): the invoice says so instead of a bare Pending
+  const matchedOf = await matchedCreditsOf(invoices.map((x) => x.id));
 
   const row = (i) => {
     const status = deriveInvoiceStatus(i);
@@ -496,6 +595,7 @@ async function buildRegister(user, query) {
       tl: who.tlName || null,
       tlKey: who.tlKey || null,
       seat: who.seat || null,
+      tlSeat: tlSeatOf(hier, who),
       employeeRole: who.recruiterKey ? 'Recruiter' : (who.tlKey ? 'TL' : null),
       attribution: fx.unattributed || null,
       attributionMatch: fx.match || null,
@@ -506,6 +606,8 @@ async function buildRegister(user, query) {
       notes: i.notes || null,
       bde: i.requirement?.bde?.name || null,
       candidates: i.candidateId ? 1 : 0,
+      // The candidate's own id: "Total candidates" counts each person once, however many invoices name them.
+      candidateId: i.candidateId || null,
       candidateName: i.candidate?.name || null,
       // Read only by the Invoice page's search box ("Search anything") and the
       // Payment-date period filter — no figure is worked out from them.
@@ -568,6 +670,12 @@ async function buildRegister(user, query) {
       taxCheck: tx.check.level === 'ok' ? null : { level: tx.check.level, issues: tx.check.issues.filter((x) => x.level !== 'info').map((x) => x.text) },
       payments: i.payments.map((p) => ({ id: p.id, date: p.date, amount: p.amount, method: p.method, reference: p.reference, recordedBy: p.recordedBy, bankTxnId: p.bankTxnId || null })),
       ...paymentFacts(i, received, txnById),
+      // Is the Pending real, or is there proof with no payment recorded? One answer for the list, details, dashboard and exports.
+      payState: IPS.brief(IPS.judge({ ...i, status }, { pending: wn.hasNotes ? wn.pending : ROUND(receivable - received), matchedLines: matchedOf.get(i.id) || [] })),
+      ...paymentHistoryOf(i, received, txnById),
+      // Total paid / balance as the screen's own figures (no new calculation).
+      paidTotal: received,
+      balanceDue: wn.hasNotes ? wn.pending : ROUND(receivable - received),
     };
   };
 
@@ -605,6 +713,8 @@ async function buildRegister(user, query) {
     tlKey: r.tlKey || null,
     department: r.department || null,
     sectionKey: r.sectionKey || null,
+    seat: r.seat || null,
+    tlSeat: tlSeatOf(hier, r),
   }));
   // The card reads only the count and the first few names.
   noInvoice.notBillable = noInvoice.notBillable.map((r) => ({ applicationId: r.applicationId, name: r.name }));
@@ -645,8 +755,9 @@ async function buildRegister(user, query) {
     noInvoice,
     rows,
     kpis: {
-      candidates: live.reduce((s, r) => s + r.candidates, 0),
-      clients: new Set(live.map((r) => r.client)).size,
+      // Candidates = distinct people with a live invoice; clients = distinct client IDS (two clients may share a name).
+      candidates: new Set(live.map((r) => r.candidateId).filter(Boolean)).size,
+      clients: new Set(live.map((r) => r.clientId).filter(Boolean)).size,
       invoices: live.length,
       billing: sum('billing'),
       gst: sum('gst'),
@@ -689,6 +800,9 @@ async function buildRegister(user, query) {
     sections: [...new Set(allRows.map((r) => r.section).filter(Boolean))].sort(),
     roles: [...new Set([...facts.values()].map((x) => x.role).filter(Boolean))].sort(),
     clients: [...new Set(invoices.map((i) => i.client?.name).filter(Boolean))].sort(),
+    // The Client filter works on the client's ID (names can repeat, be renamed or spelt differently): one entry per client.
+    clientList: [...new Map(invoices.filter((i) => i.clientId && i.client).map((i) => [i.clientId, { id: i.clientId, name: i.client.name || '—' }])).values()]
+      .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) || String(a.id).localeCompare(String(b.id))),
   };
 }
 
@@ -712,7 +826,9 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
     // B2 — money columns above are after issued notes; these say by how much.
     'Credit notes (net)', 'Debit notes (net)', 'Refund due', 'Note numbers',
     // Recon spec 7/8: the actual payment date, the bank line(s) behind it and the reconciliation word; Client ID keeps two clients with the same name apart.
-    'Payment date', 'Bank reference(s)', 'Reconciliation', 'Client ID'];
+    'Payment date', 'Bank reference(s)', 'Reconciliation', 'Client ID',
+    // Every receipt with its own date: "2026-10-05 ₹10,000; 2026-10-08 ₹15,000" (new, last column).
+    'All payment dates'];
   const aoa = [
     ['Invoices'],
     [`Period: ${periodLabel}`],
@@ -729,7 +845,8 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
       r.tdsApplicable ? (r.tdsBase === 'gross' ? 'After GST' : 'Before GST') : '', r.tdsStatus || '',
       r.noteCredit ? r.noteCredit.net : 0, r.noteDebit ? r.noteDebit.net : 0, r.refundDue || 0,
       [...(r.noteCredit ? r.noteCredit.numbers : []), ...(r.noteDebit ? r.noteDebit.numbers : [])].join(', '),
-      r.paymentDate || (Number(r.received) > 0.005 ? 'not recorded' : ''), (r.bankLines || []).map((b) => b.reference || b.date).join(', '), r.reconStatus || '', r.clientId || '']);
+      r.paymentDate || (Number(r.received) > 0.005 ? 'not recorded' : ''), (r.bankLines || []).map((b) => b.reference || b.date).join(', '), r.reconStatus || '', r.clientId || '',
+      (r.paymentHistory || []).filter((h) => h.date).map((h) => `${h.date} ${h.amount < 0 ? '-' : ''}₹${Math.abs(h.amount).toLocaleString('en-IN')}`).join('; ')]);
   });
   if (!list.length) aoa.push(['No invoice matches these filters']);
   const sumOf = (k) => ROUND(list.reduce((a, r) => a + Number(r[k] || 0), 0));
@@ -742,10 +859,24 @@ router.post('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Invoic
       if (ws[ref] && typeof ws[ref].v === 'number') ws[ref].z = '#,##0.00';
     }
   }
-  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14, 12, 7, 12, 12, 12, 7, 11, 18, 13, 13, 12, 22, 14, 26, 14, 26].map((wch) => ({ wch }));
-  ws['!autofilter'] = { ref: `A5:AM${aoa.length}` };
+  ws['!cols'] = [14, 12, 34, 18, 22, 24, 22, 24, 14, 18, 8, 13, 12, 13, 12, 13, 13, 13, 14, 12, 12, 18, 14, 12, 7, 12, 12, 12, 7, 11, 18, 13, 13, 12, 22, 14, 26, 14, 26, 44].map((wch) => ({ wch }));
+  ws['!autofilter'] = { ref: `A5:AN${aoa.length}` };
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices');
+  // ONE ROW PER CLIENT INVOICE (the list's own rows): its candidates' invoices added up, so it ties to the sheet above.
+  {
+    const gAoa = [['Client invoices'], [`Period: ${periodLabel}`], [`Filters: ${String(req.body?.filters || '').slice(0, 400) || 'none'}`], [],
+      ['Invoice no', 'Invoice date', 'Client', 'Candidates', 'Before GST', 'GST', 'Total amount (after GST)', 'TDS', 'Receivable', 'Received', 'Pending', 'Status', 'Candidate invoice numbers']];
+    const grs = CI.groupInvoices(list, reg.rows);
+    const sums = grs.map((g) => ({ g, s: CI.groupSummary(g.members) }));
+    sums.forEach(({ g, s }) => gAoa.push([g.no || g.members[0].invoiceNumber, g.date, g.members[0].client, s.candidates, s.billing, s.gst, s.invoiceValue, s.tds, s.receivable, s.received, s.pending, s.status, g.members.map((m) => m.invoiceNumber).join(', ')]));
+    const tot = (k) => ROUND(sums.reduce((a, x) => a + x.s[k], 0));
+    gAoa.push(['TOTAL', '', `${grs.length} client invoice(s)`, tot('candidates'), tot('billing'), tot('gst'), tot('invoiceValue'), tot('tds'), tot('receivable'), tot('received'), tot('pending')]);
+    const gws = XLSX.utils.aoa_to_sheet(gAoa);
+    for (let i = 5; i < gAoa.length; i += 1) for (const c of [4, 5, 6, 7, 8, 9, 10]) { const ref = XLSX.utils.encode_cell({ r: i, c }); if (gws[ref] && typeof gws[ref].v === 'number') gws[ref].z = '#,##0.00'; }
+    gws['!cols'] = [16, 12, 34, 11, 14, 12, 18, 12, 14, 14, 14, 14, 44].map((wch) => ({ wch }));
+    XLSX.utils.book_append_sheet(wb, gws, 'Client invoices');
+  }
   // One line per client (by the client's own id, never by name), over the SAME invoices as the sheet above,
   // so its totals equal the invoice-level totals exactly (no invoice is counted twice).
   {
@@ -988,7 +1119,7 @@ router.post('/joinings/:applicationId/raise', requirePerm('accounts', 'accounts'
     const moved = Object.keys(want).some((k) => want[k] !== undefined && want[k] !== raised[k]);
     if (moved) Object.assign(data, want);
   }
-  if (!raised.invoiceNumber) data.invoiceNumber = await nextInvoiceNumber();
+  if (!raised.invoiceNumber) data.invoiceNumber = await numberForNewInvoice(raised.clientId, raised.invoiceDate);
   const invoice = Object.keys(data).length
     ? await prisma.invoice.update({ where: { id: raised.id }, data })
     : raised;
@@ -1012,19 +1143,13 @@ router.post('/joinings/:applicationId/raise', requirePerm('accounts', 'accounts'
 // totals, the amount in words and the bank notes — is worked out here so the
 // client copy and the internal copy can never disagree with the register.
 // ---------------------------------------------------------------------------
-router.get('/:id/document', async (req, res) => {
-  const invoice = await prisma.invoice.findUnique({
-    where: { id: req.params.id },
-    include: {
-      client: true,
-      candidate: true,
-      requirement: { include: { recruiter: true } },
-      payments: { orderBy: { date: 'asc' } },
-    },
-  });
-  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
-  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
-  const co = (await prisma.company.findFirst()) || {};
+const DOC_INCLUDE = {
+  client: true,
+  candidate: true,
+  requirement: { include: { recruiter: true } },
+  payments: { orderBy: { date: 'asc' } },
+};
+async function documentPayload(invoice, co) {
   const cli = invoice.client || {};
 
   const billing = ROUND(Number(invoice.amount || 0));
@@ -1066,7 +1191,7 @@ router.get('/:id/document', async (req, res) => {
   const coAddr = [co.address, [co.city, co.state].filter(Boolean).join(', '), co.pin, 'India']
     .filter(Boolean).filter((v, i, a) => a.indexOf(v) === i);
 
-  res.json({
+  return {
     title: gst > 0 ? 'TAX INVOICE' : 'INVOICE',
     company: {
       legalName: co.legalName || co.name || 'Teamlink Consultants',
@@ -1119,6 +1244,12 @@ router.get('/:id/document', async (req, res) => {
     tdsSection: tx.tdsSection || '194J',
     lines: [{
       n: 1,
+      // the candidate-level number stays on the line as a reference (TY26-072-1)
+      ref: invoice.invoiceNumber || null,
+      invoiceId: invoice.id,
+      inter,
+      gstPct,
+      halfPct: ROUND(gstPct / 2),
       candidate: invoice.candidate?.name || null,
       role: fx.role,
       joiningDate: fx.joiningDate,
@@ -1143,7 +1274,176 @@ router.get('/:id/document', async (req, res) => {
       total: wordsINR(invoiceValue),
       netAfterTds: tds > 0 ? wordsINR(receivable) : null,
     },
+  };
+}
+
+// THE CLIENT INVOICE AS ONE DOCUMENT (2026-10-14): ?ids=<candidate invoice ids of
+// one client invoice>. One line per candidate (earliest joining first); every
+// total is the sum of the candidate rows' own documents. Registered BEFORE
+// '/:id/document' so "group" is never read as an invoice id.
+function combineDocuments(docs, number) {
+  const sum = (f) => ROUND(docs.reduce((s, x) => s + Number(f(x) || 0), 0));
+  const first = docs[0];
+  const d = { ...first };
+  d.lines = docs.flatMap((x) => x.lines).map((l, i) => ({ ...l, n: i + 1 }));
+  d.invoiceNumber = number;
+  d.dueDate = docs.map((x) => x.dueDate).filter(Boolean).sort()[0] || first.dueDate;
+  d.billingType = [...new Set(docs.map((x) => x.billingType).filter(Boolean))].join(' · ') || first.billingType;
+  d.candidateCount = d.lines.length;
+  d.totals = {
+    subTotal: sum((x) => x.totals.subTotal),
+    gst: sum((x) => x.totals.gst),
+    cgst: sum((x) => x.totals.cgst),
+    sgst: sum((x) => x.totals.sgst),
+    invoiceValue: sum((x) => x.totals.invoiceValue),
+    tds: sum((x) => x.totals.tds),
+    receivable: sum((x) => x.totals.receivable),
+    paid: sum((x) => x.totals.paid),
+    credited: sum((x) => x.totals.credited),
+    debited: sum((x) => x.totals.debited),
+    balance: sum((x) => x.totals.balance),
+  };
+  d.words = {
+    total: wordsINR(d.totals.invoiceValue),
+    netAfterTds: d.totals.tds > 0 ? wordsINR(d.totals.receivable) : null,
+  };
+  // The header columns follow the first row's tax reading; a line that differs keeps its own % (lines[].gstPct / inter).
+  d.mixedTax = docs.some((x) => x.inter !== first.inter || x.gstPct !== first.gstPct);
+  d.title = d.totals.gst > 0 ? 'TAX INVOICE' : 'INVOICE';
+  return d;
+}
+
+// The invoices of one client invoice, checked: all there, all in the caller's scope, one client, one base number.
+async function loadClientInvoice(user, rawIds, include) {
+  const ids = [...new Set(String(Array.isArray(rawIds) ? rawIds.join(',') : rawIds || '').split(',').map((x) => x.trim()).filter(Boolean))];
+  if (!ids.length || ids.length > 100) return { status: 400, error: 'Pick the candidate invoices of one client invoice.' };
+  const invoices = await prisma.invoice.findMany({ where: { id: { in: ids } }, ...(include ? { include } : {}) });
+  if (invoices.length !== ids.length) return { status: 404, error: 'Invoice not found' };
+  const scope = invoiceWhere(user);
+  if (invoices.some((i) => !matches(i, scope))) return { status: 403, error: (OUT_OF_SCOPE && OUT_OF_SCOPE.error) || 'Not in your area' };
+  if (new Set(invoices.map((i) => i.clientId)).size > 1) return { status: 400, error: 'These invoices belong to different clients.' };
+  if (new Set(invoices.map((i) => CI.baseNumber(i.invoiceNumber || `#${i.id}`))).size > 1) return { status: 400, error: 'These invoices are not one client invoice (different invoice numbers).' };
+  invoices.sort((a, b) => CI.suffixOf(a.invoiceNumber) - CI.suffixOf(b.invoiceNumber));
+  // The number shown: the base number, unless the same client + base was split by date (utils/clientInvoice.js).
+  const sibs = invoices[0].invoiceNumber
+    ? await prisma.invoice.findMany({ where: { clientId: invoices[0].clientId, invoiceNumber: { startsWith: CI.baseNumber(invoices[0].invoiceNumber) } }, select: { id: true, clientId: true, invoiceNumber: true, invoiceDate: true } })
+    : [];
+  const mine = new Set(ids);
+  const g = CI.groupInvoices(sibs.length ? sibs : invoices).find((x) => x.members.some((m) => mine.has(m.id)));
+  return { invoices, number: (g && g.no) || invoices[0].invoiceNumber || invoices[0].id.slice(-6) };
+}
+
+router.get('/group/document', async (req, res) => {
+  const got = await loadClientInvoice(req.user, req.query.ids, DOC_INCLUDE);
+  if (got.error) return res.status(got.status).json({ error: got.error });
+  const co = (await prisma.company.findFirst()) || {};
+  const docs = [];
+  for (const inv of got.invoices) docs.push(await documentPayload(inv, co)); // eslint-disable-line no-await-in-loop
+  // Earliest joining first; no date last; then the candidate number.
+  docs.sort((a, b) => String(a.lines[0].joiningDate || '9999').slice(0, 10).localeCompare(String(b.lines[0].joiningDate || '9999').slice(0, 10))
+    || CI.suffixOf(a.lines[0].ref) - CI.suffixOf(b.lines[0].ref));
+  res.json(combineDocuments(docs, got.number));
+});
+
+// RECORD A PAYMENT ON A CLIENT INVOICE: one payment, split across its candidate
+// rows by utils/clientInvoice.js allocatePayment (in proportion to what each row
+// still owes, whole paise, leftover paise on the last row), all inside one
+// transaction. `key` makes it idempotent: sending the same key again writes nothing
+// and returns what was written the first time. Each row gets an ordinary receipt
+// (same fields as POST /:id/payments), so every invoice's own ledger stays true.
+router.post('/group/payments', requirePerm('accounts', 'accounts', 'Payments', 'create'), async (req, res) => {
+  const body = req.body || {};
+  const key = String(body.key || '');
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(key)) return res.status(400).json({ error: 'A payment key is required (8-64 letters or digits).' });
+  const amount = ROUND(body.amount);
+  const date = String(body.date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
+  if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
+  const got = await loadClientInvoice(req.user, body.invoiceIds);
+  if (got.error) return res.status(got.status).json({ error: got.error });
+  const ids = got.invoices.map((i) => i.id);
+  const tag = `[grp:${key}]`;
+  const shape = (rows) => rows.map((p) => ({ paymentId: p.id, invoiceId: p.invoiceId, amount: p.amount }));
+  try {
+    const out = await prisma.$transaction(async (tx) => {
+      // Idempotent: the same key was already recorded.
+      const done = await tx.invoicePayment.findMany({ where: { invoiceId: { in: ids }, notes: { contains: tag } } });
+      if (done.length) return { duplicate: true, payments: shape(done), total: ROUND(done.reduce((s, p) => s + p.amount, 0)) };
+      const fresh = [];
+      for (const i of ids) fresh.push(await tx.invoice.findUnique({ where: { id: i } })); // eslint-disable-line no-await-in-loop
+      const live = fresh.filter((i) => i.status !== 'Cancelled');
+      if (!live.length) throw Object.assign(new Error('This invoice is cancelled'), { http: 400 });
+      const alloc = CI.allocatePayment(live.map((i) => ({ id: i.id, outstanding: invoiceOutstanding(i) })), amount);
+      if (alloc.error) throw Object.assign(new Error(alloc.error), { http: 400 });
+      const written = [];
+      for (let n = 0; n < alloc.parts.length; n += 1) {
+        const part = alloc.parts[n];
+        const inv = live.find((i) => i.id === part.id);
+        const problem = receiptProblem(inv, part.amount);
+        if (problem) throw Object.assign(new Error(problem), { http: 400 });
+        // eslint-disable-next-line no-await-in-loop
+        const pay = await tx.invoicePayment.create({
+          data: {
+            invoiceId: inv.id,
+            date,
+            dateSource: 'entered',
+            amount: part.amount,
+            method: body.method || 'Bank Transfer',
+            reference: body.reference || null,
+            notes: [body.notes ? String(body.notes).slice(0, 300) : null, `Client invoice ${got.number}: part ${n + 1} of ${alloc.parts.length} of ₹${alloc.total}`, tag].filter(Boolean).join(' · '),
+            recordedBy: req.user.name || req.user.email || null,
+          },
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await tx.invoice.update({ where: { id: inv.id }, data: invoiceAfterReceipt(inv, part.amount, date) });
+        written.push({ paymentId: pay.id, invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, amount: part.amount, from: inv.status });
+      }
+      return { duplicate: false, payments: written, total: alloc.total };
+    }, { timeout: 60000, maxWait: 15000 });
+    if (!out.duplicate) {
+      for (const p of out.payments) {
+        // eslint-disable-next-line no-await-in-loop
+        await logAudit({ userId: req.user.id, action: 'Payment recorded (client invoice)', entity: 'Invoice', entityId: p.invoiceId, fromValue: p.from, toValue: `₹${p.amount} of ₹${out.total} on ${got.number}` });
+      }
+    }
+    return res.status(out.duplicate ? 200 : 201).json({ ...out, number: got.number });
+  } catch (e) {
+    if (e && e.http) return res.status(e.http).json({ error: e.message });
+    throw e;
+  }
+});
+
+// THE DATE OF JOINING FROM THE INVOICE PANEL ("Add" link). It is written to the
+// candidate's ATS application (the field Joining and the invoice register already
+// read) - never only on the invoice. Same gate as the other joining edits: the
+// ATS Joining edit right, or the Accounts Invoices edit right (Accounts already
+// writes it when it raises an invoice for a joining).
+router.patch('/:id/joining-date', async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: { client: true, candidate: true, requirement: true } });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  const allowed = (await can(req.user, 'ats', 'interviews', 'Joining', 'edit')) || (await can(req.user, 'accounts', 'accounts', 'Invoices', 'edit'));
+  if (!allowed) return res.status(403).json({ error: 'You cannot change a joining date.' });
+  const joiningDate = String(req.body?.joiningDate || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(joiningDate) || Number.isNaN(new Date(joiningDate).getTime())) return res.status(400).json({ error: 'Enter the date the candidate joined.' });
+  const yearProblem = require('../utils/joining').dateYearProblem(joiningDate, 'joining date'); // eslint-disable-line global-require
+  if (yearProblem) return res.status(400).json({ error: yearProblem });
+  const fx = (await placementFacts([invoice]))(invoice);
+  if (!fx.app) return res.status(409).json({ error: 'This candidate has no ATS record to take the date. Open the candidate in the ATS and set the joining there.' });
+  const before = fx.app.joiningDate || null;
+  await prisma.application.update({ where: { id: fx.app.id }, data: { joiningDate } });
+  await logAudit({
+    userId: req.user.id, action: 'Joining date set from the invoice', entity: 'Application', entityId: fx.app.id,
+    fromValue: before || 'none', toValue: `${joiningDate} (${invoice.invoiceNumber || invoice.id.slice(-6)} · ${invoice.candidate?.name || '—'})`,
   });
+  res.json({ joiningDate, applicationId: fx.app.id });
+});
+
+router.get('/:id/document', async (req, res) => {
+  const invoice = await prisma.invoice.findUnique({ where: { id: req.params.id }, include: DOC_INCLUDE });
+  if (!invoice) return res.status(404).json({ error: 'Invoice not found' });
+  if (!matches(invoice, invoiceWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  res.json(await documentPayload(invoice, (await prisma.company.findFirst()) || {}));
 });
 
 router.get('/:id', async (req, res) => {
@@ -1183,6 +1483,9 @@ router.get('/:id', async (req, res) => {
   const wn = TAX.withNotes(synced, notes);
   res.json({
     ...rest, tdsCertHasFile: !!tdsCertFile, proofHasFile: !!proofFile, proofLines, ...taxPayload(synced, company),
+    ...paymentHistoryOf(synced, synced.receivedAmount, new Map(txns.map((t) => [t.id, t]))),
+    paidTotal: ROUND(Number(synced.receivedAmount || 0)),
+    payState: IPS.brief(IPS.judge(synced, { pending: wn.hasNotes ? wn.pending : invoiceOutstanding(synced), matchedLines: (await matchedCreditsOf([synced.id])).get(synced.id) || [] })),
     notesReady: CNU.ready(),
     creditNotes: notes.map((n) => CNU.shapeNote(n, invoice)),
     afterNotes: wn.hasNotes ? {
@@ -1422,7 +1725,7 @@ router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), asyn
       dueDate: dueDate || dueDateFor(invoiceDate, terms),
       paymentTerms: terms,
       notes: notes || null,
-      invoiceNumber: await nextInvoiceNumber(),
+      invoiceNumber: await numberForNewInvoice(clientId, invoiceDate),
     },
   });
   await logAudit({ userId: req.user.id, action: 'Invoice created', entity: 'Invoice', entityId: invoice.id, toValue: invoice.invoiceNumber });
@@ -1625,6 +1928,7 @@ router.patch('/:id/sent', requirePerm('accounts', 'accounts', 'Invoices', 'edit'
 });
 
 router.nextInvoiceNumber = nextInvoiceNumber;
+router.numberForNewInvoice = numberForNewInvoice;
 // The Accounts Dashboard (utils/accountsControl.js) reads the SAME register
 // rows as this page, so its Total / Received / Pending can never differ.
 router.buildRegister = buildRegister;

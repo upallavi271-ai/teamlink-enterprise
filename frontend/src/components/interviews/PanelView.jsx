@@ -10,9 +10,10 @@ import { useState } from 'react';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import './panel.css';
+import Combo from '../Combo.jsx';
 
 const RECS = ['Selected', 'Rejected', 'Hold'];
-const RATES = [['technical', 'Skills'], ['communication', 'Talking'], ['experience', 'Experience'], ['roleFit', 'Fit for the job']];
+const RATES = [['technical', 'Skills'], ['communication', 'Talking'], ['experience', 'Experience'], ['roleFit', 'Fit for the requirement']];
 
 function Scorecard({ member, appId, onSaved, onCancel }) {
   const [f, setF] = useState({ technical: '', communication: '', experience: '', roleFit: '', overall: '', recommendation: '' });
@@ -31,14 +32,14 @@ function Scorecard({ member, appId, onSaved, onCancel }) {
       <div className="pnlv-rates">
         {RATES.map(([k, label]) => (
           <label key={k} className="small-muted">{`${label} (1-5)`}
-            <select value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}>
+            <Combo value={f[k]} onChange={(e) => setF({ ...f, [k]: e.target.value })}>
               <option value="">—</option>
               {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
+            </Combo>
           </label>
         ))}
       </div>
-      <textarea rows="2" maxLength={4000} placeholder="How did it go? (a short note) *" value={f.overall} onChange={(e) => setF({ ...f, overall: e.target.value })} />
+      <textarea rows="2" maxLength={4000} placeholder="How did it go? (a short note)" value={f.overall} onChange={(e) => setF({ ...f, overall: e.target.value })} />
       <div className="pnlv-recs" role="radiogroup" aria-label="Their view">
         {RECS.map((r) => (
           <button key={r} type="button" role="radio" aria-checked={f.recommendation === r} className={`btn btn-sm${f.recommendation === r ? ' is-on' : ''}`} onClick={() => setF({ ...f, recommendation: r })}>{r}</button>

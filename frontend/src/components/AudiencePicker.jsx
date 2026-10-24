@@ -25,6 +25,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../api';
 import Combo from './Combo.jsx';
+import { matchesText, noMatchText } from './searchMatch.js';
 import './AudiencePicker.css';
 
 export const EMPTY_AUDIENCE = { mode: 'everyone', departments: [], employeeIds: [] };
@@ -110,6 +111,7 @@ export default function AudiencePicker({
     if (!allowEveryone && v.mode === 'everyone') onChange({ mode: 'departments', departments: [], employeeIds: [] });
   }, [allowEveryone, v.mode]); // eslint-disable-line react-hooks/exhaustive-deps
   const [q, setQ] = useState('');
+  const [dq, setDq] = useState('');
   const [narrow, setNarrow] = useState('');
 
   const employees = useMemo(() => people || opts?.employees || [], [people, opts]);
@@ -143,9 +145,8 @@ export default function AudiencePicker({
     set({ employeeIds: v.employeeIds.includes(id) ? v.employeeIds.filter((x) => x !== id) : [...v.employeeIds, id] });
   }
   const matches = useMemo(() => {
-    const t = q.trim().toLowerCase();
     return employees.filter((e) => (!narrow || e.department === narrow)
-      && (!t || [e.name, e.employeeCode, e.department, e.designation].some((x) => String(x || '').toLowerCase().includes(t))));
+      && matchesText([e.name, e.employeeCode, e.department, e.designation].join(' '), q));
   }, [employees, q, narrow]);
   const shownIds = matches.map((e) => e.id);
   const allShownPicked = shownIds.length > 0 && shownIds.every((id) => v.employeeIds.includes(id));
@@ -160,7 +161,7 @@ export default function AudiencePicker({
 
   return (
     <div className="aud-picker field">
-      <label>{label}{required && <span className="compose-req"> *</span>}</label>
+      <label>{label}</label>
       <Combo value={v.mode} onChange={(e) => setMode(e.target.value)}>
         {allowEveryone && <option value="everyone">{everyoneLabel}</option>}
         <option value="departments">By department</option>
@@ -178,8 +179,10 @@ export default function AudiencePicker({
                 <input type="checkbox" checked={allTicked} onChange={toggleAll} />
                 All departments{departments.length > 1 ? ` (${departments.length})` : ''}
               </label>
+              {departments.length > 1 && <input type="search" className="aud-dfind" autoComplete="off" placeholder="Type to find a department" value={dq} onChange={(e) => setDq(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault(); }} />}
+              {!departments.some((d) => matchesText(d, dq)) && <div className="small-muted">{noMatchText(dq)}</div>}
               <div className="aud-grid">
-                {departments.map((d) => (
+                {departments.filter((d) => matchesText(d, dq)).map((d) => (
                   <label key={d} className="aud-opt">
                     <input type="checkbox" checked={v.departments.includes(d)} onChange={() => toggleDept(d)} />
                     <span>{d}</span>
@@ -221,7 +224,7 @@ export default function AudiencePicker({
             )}
           </div>
           <div className="aud-list" role="listbox" aria-multiselectable="true">
-            {matches.length === 0 ? <div className="small-muted" style={{ padding: 6 }}>Nobody matches.</div> : matches.map((e) => (
+            {matches.length === 0 ? <div className="small-muted" style={{ padding: 6 }}>{noMatchText(q, 'Nobody matches.')}</div> : matches.map((e) => (
               <label key={e.id} className="aud-person">
                 <input type="checkbox" checked={v.employeeIds.includes(e.id)} onChange={() => togglePerson(e.id)} />
                 <span>{e.name} <span className="aud-meta">· {e.employeeCode || '—'} · {e.department || 'No department'}</span></span>

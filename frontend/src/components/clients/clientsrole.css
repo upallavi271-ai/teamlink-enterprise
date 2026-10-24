@@ -33,7 +33,7 @@
 
 /* --- Row actions (§7 / §8.5) ----------------------------------------------- */
 .clrel-table td.clrole-act { white-space: nowrap; min-width: 150px; }
-.clrole-actions { display: flex; align-items: center; gap: 4px; flex-wrap: nowrap; }
+.clrole-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: 250px; }
 .clrole-actions .btn { white-space: nowrap; }
 .clrole-quick {
   display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 6px;
@@ -75,3 +75,8 @@
 .clrole-denied { max-width: 560px; }
 .clrole-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-soft); white-space: nowrap; cursor: pointer; }
 .clrole-check input { width: auto; margin: 0; }
+
+/* New clients (no job yet): how long on file, who owns them (2026-10-12) */
+.clrel-new{font-size:13px;color:var(--ink-soft)}
+.clrel-new.stale{color:var(--amber,#8A5206);font-weight:700}
+.clrel-newbanner{font-size:14px;line-height:1.5}

@@ -24,9 +24,10 @@ const router = express.Router();
 const staff = (u) => !['CLIENT', 'CANDIDATE'].includes(u.role) && !['CLIENT', 'CANDIDATE'].includes(u.atsRole);
 const needSetup = (res) => res.status(503).json({ error: 'Message templates are being set up on this server. The built-in wording is used until then.' });
 
-router.get('/tokens', (req, res) => {
+router.get('/tokens', async (req, res) => {
   if (!staff(req.user)) return res.status(403).json({ error: 'Not available to this login' });
-  return res.json({ tokens: T.TOKENS.map(({ key, label, sample, group, aliases }) => ({ key, label, sample, group, aliases })), languages: T.LANGUAGES, channels: T.CHANNELS, maxBody: T.MAX_BODY });
+  const extra = await T.extraLanguages().catch(() => []);
+  return res.json({ tokens: T.TOKENS.map(({ key, label, sample, group, aliases }) => ({ key, label, sample, group, aliases })), languages: [...T.LANGUAGES, ...extra], channels: T.CHANNELS, maxBody: T.MAX_BODY });
 });
 
 router.get('/usable', async (req, res, next) => {
@@ -55,7 +56,7 @@ router.get('/', async (req, res, next) => {
     const rows = await T.list({ channel: req.query.channel, language: req.query.language, audience: req.query.audience, q: req.query.q });
     return res.json({
       canEdit: T.canEdit(req.user), isAdmin: T.isAdmin(req.user),
-      templates: rows, purposes: await T.purposes(),
+      templates: rows, purposes: await T.purposes(), languages: [...T.LANGUAGES, ...(await T.extraLanguages())],
     });
   } catch (err) { return next(err); }
 });

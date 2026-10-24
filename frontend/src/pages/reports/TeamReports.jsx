@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import './TeamReports.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // TEAM & PERSON REPORTS (ATS Reports -> "Team & person" tab; also the "Team-wise
@@ -209,10 +210,10 @@ export default function TeamReports({ fixedReport = '', embedded = false }) {
           {filterDefs.map(([k, label, all, list2]) => (
             <label key={k} className="tpr-filter">
               <span>{label}</span>
-              <select value={filters[k]} onChange={(e) => setF({ [k]: e.target.value })}>
+              <Combo value={filters[k]} onChange={(e) => setF({ [k]: e.target.value })}>
                 <option value="">{all}</option>
                 {list2.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-              </select>
+              </Combo>
             </label>
           ))}
           {Object.values(filters).some(Boolean) && <button type="button" className="btn btn-sm" onClick={() => setFilters({ department: '', team: '', person: '', people: '' })}>Clear filters</button>}

@@ -40,7 +40,7 @@ async function linkShape(req, app, v, token) {
   const first = String(app.candidate.name || '').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/)[0] || 'there';
   const until = v.expiresAt ? new Date(v.expiresAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : null;
   const text = url ? [
-    `Hi ${first}, here is your offer for ${r.title || 'the job'}${companyOf(r) ? ` at ${companyOf(r)}` : ''}.`,
+    `Hi ${first}, here is your offer for ${r.title || 'the requirement'}${companyOf(r) ? ` at ${companyOf(r)}` : ''}.`,
     'Open it, read it and press Accept (you sign on your phone) or Decline:',
     url,
     until ? `Please answer by ${until}.` : '',
@@ -56,6 +56,8 @@ async function linkShape(req, app, v, token) {
     whatsappTo: wa ? core.maskMobile(app.candidate.phone) : null,
     emailTo: app.candidate.email ? core.maskEmail(app.candidate.email) : null,
     candidateEmailsOn,
+    // Send straight from TeamLink when WhatsApp / SMS is connected (channels/): the screen shows a direct button instead of wa.me
+    direct: await require('../utils/messaging').channelStatus().then((s) => ({ WhatsApp: !!s.WhatsApp.configured, SMS: !!s.SMS.configured, via: { WhatsApp: s.WhatsApp.via || null, SMS: s.SMS.via || null } })).catch(() => ({ WhatsApp: false, SMS: false })), // eslint-disable-line global-require
     emailNote: candidateEmailsOn ? null : 'Candidate emails are switched off, so the app does not email this link. Copy it or send it on WhatsApp.',
   };
 }
@@ -123,6 +125,21 @@ module.exports = function mountOfferStaffRoutes(router, { loadScoped }) {
     }
     const made = await OL.remakeLink(v, req.user);
     return res.json({ ...(await linkShape(req, app, made.version, made.token)), message: 'New link made. The old link no longer works.' });
+  });
+
+  // Send the link on WhatsApp / SMS straight from TeamLink (same consent, STOP, caps, masking and provider rules as every send).
+  router.post('/offers/:id/link/send', requirePerm('ats', 'interviews', 'Offers', 'edit'), require('../channels/rateLimit').limiter(), async (req, res) => {
+    const app = await loadScoped(req, res);
+    if (!app) return undefined;
+    const channel = ['WhatsApp', 'SMS'].includes((req.body || {}).channel) ? req.body.channel : null;
+    if (!channel) return res.status(400).json({ error: 'Choose WhatsApp or SMS.' });
+    const v = await OL.currentVersion(app.id);
+    const token = v ? OL.tokenFor(v) : null;
+    if (!v || v.status !== 'Sent' || !token) return res.status(409).json({ error: 'There is no open offer link to send.' });
+    const shaped = await linkShape(req, app, v, token);
+    const out = await require('../utils/bulkMessaging').sendIndividual(req.user, { audience: 'candidates', id: app.candidateId, applicationId: app.id, channel, body: shaped.message, purpose: 'Offer link' }); // eslint-disable-line global-require
+    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    return res.json({ ...out, message: out.result && out.result.status === 'sent' ? `${channel} ${out.result.queued ? 'queued' : 'sent'}${out.result.via ? ` via ${out.result.via}` : ''}.` : (out.result && out.result.reason) || 'Not sent.' });
   });
 
   router.post('/offers/:id/link/email', requirePerm('ats', 'interviews', 'Offers', 'edit'), async (req, res) => {

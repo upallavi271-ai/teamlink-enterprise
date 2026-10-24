@@ -86,6 +86,9 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
     const uRecMed = await mkUser('recmed', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'Medical', atsScopeDepartments: 'Medical' }, {});
     const uRecMfg = await mkUser('recmfg', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'Manufacturing', atsScopeDepartments: 'Manufacturing' }, {});
     const uRecIdle = await mkUser('recidle', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'Medical', atsScopeDepartments: 'Medical' }, {});
+    // REAL-SHAPED (2026-10-12): HR-department recruiters (Uma S, Kammari Naveena ...) carry the BDE TL's name in the
+    // free-text Employee.tl field and work live client jobs. They must NEVER appear in the BDE team.
+    const uRecHr = await mkUser('rechr', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'HR', atsScopeDepartments: 'HR' }, { department: 'HR', tl: uBdeTl.name });
     const uTlEdu = await mkUser('tledu', { role: 'TL', atsRole: 'TL', atsDepartment: 'Education', atsScopeDepartments: 'Education' }, { designation: 'TL' });
     const mint = async (u) => jwt.sign(tokenPayload(await resolveIdentity(u.id)), process.env.JWT_SECRET, { expiresIn: '1h' });
     const T = {};
@@ -115,6 +118,9 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
       const a = await prisma.application.create({ data: { candidateId: c.id, requirementId: req.id, stage } });
       made.apps.push(a.id); return a;
     };
+    const rHr = await mkReq('hr', cEdu, 'Education', uRecHr, uBdeEdu, null);
+    await mkApp('hr1', rHr, 'SHARED_WITH_CLIENT');
+    await mkApp('hr2', rHr, 'WITH_BDE');
     await mkApp('edu1', rEdu, 'WITH_BDE');
     await mkApp('edu2', rEdu, 'SHARED_WITH_CLIENT');
     await mkApp('edu3', rEdu, 'INTERVIEW_SCHEDULED');
@@ -136,6 +142,11 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
     check('T4 every row of the BDE TL\'s list is a client manager (BDE); no TL / STL row', rows.every((r) => r.role === 'BDE' && r.roleGroup === 'BDE'), rows.map((r) => [r.name, r.role]));
     check('T5 she has no person row (no company-wide numbers on her) and the list says she leads the BDE team',
       !byId.has(uBdeTl.id) && !!tBdeTl.body.bdeTl && tBdeTl.body.bdeTl.clientManagers >= 2, tBdeTl.body && tBdeTl.body.bdeTl);
+    check('T4b the HR-department recruiter whose Employee.tl is the BDE TL is NOT in her list (HRMS BDE department only)', !byId.has(uRecHr.id) && !JSON.stringify(tBdeTl.body).includes(uRecHr.name), rows.map((r) => r.name));
+    const { bdeTeamMembers } = require(path.join(BACK, 'src/utils/bdeTeam'));
+    const helper = await bdeTeamMembers({ includeTest: true });
+    const helperMine = helper.members.filter((m) => m.name.includes(RUN)).map((m) => m.userId);
+    check('T4c the HRMS helper returns the BDE desk fixtures only: not the HR recruiter, not the lead', helperMine.includes(uBdeEdu.id) && helperMine.includes(uBdeMed.id) && !helperMine.includes(uRecHr.id) && !helperMine.includes(uBdeTl.id) && !helperMine.includes(uRecEdu.id), helperMine);
     const edu = byId.get(uBdeEdu.id);
     check('T6 a client manager row: name, clients, open jobs, sent to client, interviews, in process, last activity',
       !!edu && edu.counts.clients >= 1 && edu.counts.openRequirements >= 1 && edu.counts.activeCandidates >= 3 && edu.counts.submitted >= 2 && edu.counts.interviews >= 1 && !!edu.lastActiveAt, edu);
@@ -193,6 +204,13 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
       const esc = (n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const staffIn = (text) => [...new Set(staff.filter((n) => new RegExp(`(^|[^A-Za-z])${esc(n)}([^A-Za-z]|$)`).test(text)))];
       let firstDrills = null;
+      const realHelper = await bdeTeamMembers({ includeTest: false });
+      const realRowsTeam = (await call('GET', '/api/ats/team?shape=v2', tReal)).body.rows.filter((r) => r.status === 'Active').map((r) => r.id).sort();
+      check('T21f real data: the BDE TL\'s Team page lists exactly the HRMS BDE team (active, BDE department / seat, not the lead)',
+        JSON.stringify(realRowsTeam) === JSON.stringify(realHelper.members.map((m) => m.userId).sort()) && realHelper.members.length >= 1,
+        { team: realHelper.members.map((m) => [m.name, m.seatLabel]), page: realRowsTeam.length });
+      console.log('   real BDE team from HRMS:', realHelper.members.map((m) => `${m.name} (${m.seatLabel || 'no seat'})`).join('; '));
+      console.log('   in HRMS BDE department / BDE seat but not shown -> no login:', realHelper.noLogin.map((m) => m.name).join(', ') || '-', '| login but ATS role not BDE:', realHelper.notBdeRole.map((m) => m.name).join(', ') || '-', '| BDE seat outside BDE dept:', realHelper.seatOnly.map((m) => m.name).join(', ') || '-', '| BDE dept, no seat:', realHelper.noSeat.map((m) => m.name).join(', ') || '-');
       for (const q of ['', '?v3=1', '?v3=0', '?range=this_week', '?range=all', '?recruiterId=u:none&tl=x']) {
         const d = await call('GET', `/api/dashboard/ats/home${q}`, tReal);
         const w = d.body && (d.body.widgets || []).find((x) => x.id === 'team');
@@ -219,6 +237,20 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
     }
     const asg = await call('GET', '/api/ats/team?view=assignments', T.bdeTl);
     check('T26 (fixture) the jobs of every client are listed with their client manager', asg.status === 200 && (asg.body.rows || []).length >= 3 && asg.body.rows.every((r) => !('recruiters' in r) && !('tl' in r)) && asg.body.rows.some((r) => r.bde && r.bde.id === uBdeEdu.id));
+
+    // the dashboard "BDE team" box (fixture BDE TL): BDE WORK per client manager, never a recruiter
+    const dFix = await call('GET', '/api/dashboard/ats/home?range=month', T.bdeTl);
+    const wFix = dFix.body && (dFix.body.widgets || []).find((w) => w.id === 'team');
+    const fixRows = wFix ? wFix.groups.flatMap((g) => g.rows) : [];
+    check('T21b "BDE team" box: the client managers of the HRMS BDE department with clients, jobs, waiting / due today / late; no HR recruiter',
+      dFix.status === 200 && !!wFix && wFix.title === 'BDE team' && fixRows.some((r) => r.userId === uBdeEdu.id && r.clients >= 1 && r.jobs >= 1) && fixRows.some((r) => r.userId === uBdeMed.id)
+      && !fixRows.some((r) => r.userId === uRecHr.id || r.userId === uRecEdu.id || r.userId === uBdeTl.id) && fixRows.every((r) => 'pending' in r && 'dueToday' in r && 'overdue' in r && r.showZero === true),
+      fixRows.map((r) => [r.name, r.clients, r.jobs]));
+    check('T21c the "View all N" link says N = the number of client managers listed (the BDE headcount)', !!wFix && wFix.toLabel === `View all ${fixRows.length} →` && fixRows.length === (await bdeTeamMembers({ includeTest: true })).members.length && wFix.to === '/ats/team', wFix && wFix.toLabel);
+    check('T21d the box carries no recruiter anywhere', !!wFix && !JSON.stringify(wFix).includes(uRecHr.name) && !/Recruiters/.test(JSON.stringify(wFix)));
+    const bench = await call('GET', `/api/requirements/assignable-people?recruiters=1`, T.bdeTl);
+    check('T21e the BDE TL\'s assign-recruiter bench lists nobody (she has no recruiters)', !JSON.stringify(bench.body || {}).includes(uRecHr.name) && !JSON.stringify(bench.body || {}).includes(uRecEdu.name), [bench.status, bench.body]);
+    check('T21e2 ... and the bench answered (200)', bench.status === 200, bench.status);
 
     // BDE (desk seat): only their own row and numbers
     const tBdeEdu = await teamOf(T.bdeEdu);
@@ -286,9 +318,10 @@ const sum = (c) => Object.values(c || {}).reduce((n, v) => n + (Number(v) || 0),
     const meMgr = await call('GET', '/api/auth/me', T.mgr);
     const accMgr = (meMgr.body && meMgr.body.access) || {};
     const mf = (m, ft, a) => !!(accMgr[m] && accMgr[m].features && accMgr[m].features[ft] && accMgr[m].features[ft][a]);
-    check('M6 a Manager is still view + approve (+ client notes, by design): no Add client, Edit client, Edit job, Job request, Job posting',
+    // 2026-10-13: creating a job is the BDE team's and above, so the Manager (a role above it) now DOES hold the job request (a draft a lead opens)
+    check('M6 a Manager is still view + approve (+ client notes, by design): no Add client, Edit client, Edit job, Job posting; but may ask for a job (2026-10-13)',
       !mf('clients', 'Add Client', 'create') && !mf('clients', 'Client Detail', 'edit') && !mf('requirements', 'Requirement Detail', 'edit')
-      && !mf('requirements', 'Requirement Request', 'create') && !mf('requirements', 'Job Posting', 'edit') && !mf('clients', 'Client Portal Logins', 'create'));
+      && mf('requirements', 'Requirement Request', 'create') && !mf('requirements', 'Create Requirement', 'create') && !mf('requirements', 'Job Posting', 'edit') && !mf('clients', 'Client Portal Logins', 'create'));
     const meBde = await call('GET', '/api/auth/me', T.bdeEdu);
     const accBde = (meBde.body && meBde.body.access) || {};
     check('M7 a BDE draws Add client, Edit client, Notes, Job request, Job posting', ['clients|Add Client|create', 'clients|Client Detail|edit', 'clients|Client Notes|create', 'requirements|Requirement Request|create', 'requirements|Job Posting|edit']
@@ -379,8 +412,8 @@ const mine = (r) => !/ZZTEST/.test(r.name) || r.name.includes(RUN); // other age
       await prisma.requirement.deleteMany({ where: { id: { in: reqIds } } });
       const apiClients = await prisma.client.findMany({ where: { name: { contains: `ZZTEST BT` }, id: { notIn: made.clients } }, select: { id: true } });
       const clientIds = [...made.clients, ...apiClients.map((c) => c.id)];
-      await prisma.notification.deleteMany({ where: { OR: [{ userId: { in: ids } }, { title: { contains: 'ZZTEST' } }, { message: { contains: 'ZZTEST' } }] } }).catch(() => {});
-      await prisma.auditLog.deleteMany({ where: { OR: [{ userId: { in: ids } }, { entityId: { in: [...allIds, ...reqIds, ...clientIds] } }, { reason: { contains: 'ZZTEST' } }] } });
+      await prisma.notification.deleteMany({ where: { OR: [{ userId: { in: ids } }, { title: { contains: RUN } }, { message: { contains: RUN } }] } }).catch(() => {});
+      await prisma.auditLog.deleteMany({ where: { OR: [{ userId: { in: ids } }, { entityId: { in: [...allIds, ...reqIds, ...clientIds] } }, { reason: { contains: RUN } }] } });
       await prisma.candidate.deleteMany({ where: { id: { in: made.cands } } });
       await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
       await prisma.employee.deleteMany({ where: { id: { in: made.emps } } });
@@ -390,7 +423,7 @@ const mine = (r) => !/ZZTEST/.test(r.name) || r.name.includes(RUN); // other age
         clients: await prisma.client.count({ where: { name: { contains: 'ZZTEST BT' } } }),
         reqs: await prisma.requirement.count({ where: { title: { contains: 'ZZTEST BT' } } }),
         cands: await prisma.candidate.count({ where: { name: { contains: 'ZZTEST BT' } } }),
-        audit: await prisma.auditLog.count({ where: { reason: { contains: 'ZZTEST' } } }),
+        audit: await prisma.auditLog.count({ where: { reason: { contains: RUN } } }),
       };
       console.log('leftovers after cleanup:', JSON.stringify(left));
       check('Z cleanup: nothing ZZTEST BT is left in the sandbox', Object.values(left).every((n) => n === 0), left);

@@ -59,10 +59,10 @@ function KitModal({ kit, onClose, onSaved }) {
       <div className="small-muted" style={{ margin: '6px 0 10px' }}>Only Active people get it (not people on notice, relieved or exited), and only once. Nothing is taken out of stock until you enter the real stock.</div>
       {lines.map((l, i) => (
         <div className="stn-back-row" key={i}>
-          <select value={l.itemId} onChange={(e) => setLine(i, { itemId: e.target.value })} aria-label="Item">
+          <Combo value={l.itemId} onChange={(e) => setLine(i, { itemId: e.target.value })} aria-label="Item">
             <option value="">Pick an item…</option>
             {(kit.items || []).map((it) => <option key={it.id} value={it.id}>{it.name}</option>)}
-          </select>
+          </Combo>
           <input inputMode="numeric" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value.replace(/[^0-9]/g, '') })} aria-label="How many each" style={{ maxWidth: 80 }} />
           <button type="button" className="btn btn-sm" onClick={() => setLines((ls) => ls.filter((_, k) => k !== i))} disabled={lines.length < 2}>Remove</button>
         </div>
@@ -163,10 +163,10 @@ function GiveModal({ items, people, onClose, onSaved }) {
       )}
       <Row>
         <Field label="3. Item" required>
-          <select value={itemId} onChange={(e) => setItemId(e.target.value)}>
+          <Combo value={itemId} onChange={(e) => setItemId(e.target.value)}>
             <option value="">Pick the item</option>
             {items.filter((i) => i.active).map((i) => <option key={i.id} value={i.id}>{`${i.name} (${i.left > 0 ? `${i.left} left` : 'none left'})`}</option>)}
-          </select>
+          </Combo>
         </Field>
         <Field label="How many" required>
           <input inputMode="numeric" value={quantity} onChange={(e) => setQuantity(e.target.value.replace(/[^0-9]/g, ''))} />
@@ -403,9 +403,9 @@ function HistoryModal({ employeeId, canManage, onClose, onChanged }) {
             <div className="stn-back">
               <b>Take back</b>
               <div className="stn-back-row">
-                <select value={back.itemId} onChange={(ev) => setBack({ ...back, itemId: ev.target.value })}>
+                <Combo value={back.itemId} onChange={(ev) => setBack({ ...back, itemId: ev.target.value })}>
                   {holds.map((t) => <option key={t.itemId} value={t.itemId}>{`${t.item} (has ${t.net})`}</option>)}
-                </select>
+                </Combo>
                 <input inputMode="numeric" value={back.quantity} onChange={(ev) => setBack({ ...back, quantity: ev.target.value.replace(/[^0-9]/g, '') })} aria-label="How many" />
                 <input value={back.note} onChange={(ev) => setBack({ ...back, note: ev.target.value })} placeholder="Why? (optional)" />
               </div>
@@ -617,10 +617,10 @@ function StockHistory({ items, reloadKey, canManage, onChanged }) {
     <div className="stn-section">
       <div className="stn-filters">
         <label className="lph-facet"><span className="lph-facet-lbl">Item</span>
-          <select value={itemId} onChange={(e) => setItemId(e.target.value)}>
+          <Combo value={itemId} onChange={(e) => setItemId(e.target.value)}>
             <option value="">All items</option>
             {items.map((i) => <option key={i.id} value={i.id}>{i.name}</option>)}
-          </select>
+          </Combo>
         </label>
       </div>
       {msg && <div className="stn-flash" role="status">{msg}</div>}

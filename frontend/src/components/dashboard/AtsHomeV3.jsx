@@ -239,7 +239,7 @@ function Interviews({ w, onDrill }) {
 function Team({ w, onDrill }) {
   const cell = (r, k, red) => (r[k]
     ? <button type="button" className={`ahv3-n${red ? ' t-red' : ''}`} onClick={() => onDrill(r.drills[k])}>{fmt(r[k])}</button>
-    : <span className="cell-muted">–</span>);
+    : <span className="cell-muted">{r.showZero ? '0' : '–'}</span>);
   const tone = (p) => (p >= 80 ? 'green' : p >= 50 ? 'yellow' : 'red');
   return (
     <Box title={w.title} right={w.to ? <Link className="link-btn" to={w.to}>{w.toLabel}</Link> : null}>
@@ -248,11 +248,12 @@ function Team({ w, onDrill }) {
           <div className="ahv3-gtitle">{g.title}{g.total > g.rows.length ? <span className="small-muted"> · top {g.rows.length} of {fmt(g.total)}</span> : null}</div>
           <div className="tbl-wrap ahv3-scroll">
             <table className="ahv3-tbl">
-              <thead><tr><th>Name</th><th className="num">Waiting</th><th className="num">Due today</th><th className="num">Late</th><th className="ahv3-pcol">On time</th></tr></thead>
+              <thead><tr><th>Name</th>{g.rows.some((r) => r.clients !== undefined) && <><th className="num" title="Clients they own">Clients</th><th className="num" title="Their requirements that are open">Open requirements</th><th className="num" title="Requirement requests they raised that wait for approval">Awaiting approval</th></>}<th className="num">Waiting</th><th className="num">Due today</th><th className="num">Late</th><th className="ahv3-pcol">On time</th></tr></thead>
               <tbody>
                 {g.rows.map((r) => (
                   <tr key={r.key}>
                     <td className="ahv3-ellip">{r.name}</td>
+                    {r.clients !== undefined && <><td className="num">{r.clients}</td><td className="num">{r.jobs}</td><td className="num">{r.approvals}</td></>}
                     <td className="num">{cell(r, 'pending')}</td>
                     <td className="num">{cell(r, 'dueToday')}</td>
                     <td className="num">{cell(r, 'overdue', true)}</td>

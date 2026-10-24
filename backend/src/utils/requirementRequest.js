@@ -21,7 +21,7 @@ const { canonicalDepartment } = require('./bdeDesk');
 const TEST_RE = /zztest|example\.test/i;
 const TEST_MARK = { test: (s) => !process.env.TEST_MODE && TEST_RE.test(s) };
 // The pop-up's notification title prefix (routes/admin.js GET /notifications/popups).
-const POPUP_TITLE = 'New job request from ';
+const POPUP_TITLE = 'New requirement request from ';
 // "When do you need them?" (the portal form's four plain choices) -> the job's
 // joining timeline and priority.
 const JOIN_BY = {
@@ -100,13 +100,13 @@ async function requestRecipients(client, department) {
 
 // body: { title, clientId, department, openings, location, skills, experience,
 //         jobDescription, salary, closingDate, notes }
-// by:   { user, via: 'BDE' | 'Client portal' }
+// by:   { user, via: 'BDE' | 'Manager' | 'Assistant Manager' | 'Admin' | 'Client portal' }  (staff = anything but the portal)
 async function createRequirementRequest(body, { user, via }) {
   const b = body || {};
   const title = clean(b.title, 200);
-  if (!title) return { status: 400, body: { error: 'Enter the job title you need.', field: 'title' } };
+  if (!title) return { status: 400, body: { error: 'Enter the requirement title you need.', field: 'title' } };
   const client = await prisma.client.findUnique({ where: { id: String(b.clientId || '') } });
-  if (!client) return { status: 400, body: { error: 'Pick the client this job is for.', field: 'clientId' } };
+  if (!client) return { status: 400, body: { error: 'Pick the client this requirement is for.', field: 'clientId' } };
   // A paused / archived client takes no new work (utils/clientLifecycle.js,
   // when present).
   try {
@@ -117,6 +117,16 @@ async function createRequirementRequest(body, { user, via }) {
   } catch { /* lifecycle helper not installed */ }
   const openings = Math.max(1, Math.min(500, Number(b.openings) || 1));
   const department = clean(b.department, 80) || client.ownerDepartment || null;
+  // THE TWIN CHECK (2026-10-13, utils/jobDupGuard.js): the same job already on file for this client -> a plain card (409), unless
+  // the sender confirms it is a second job. The client portal gets the same rule in simple words.
+  const dupGuard = await require('./jobDupGuard').guardCreate({ ...b, clientId: client.id, title, openings, department }, { user, door: via === 'Client portal' ? 'Client portal' : 'Request a requirement' }); // eslint-disable-line global-require
+  if (dupGuard.block) {
+    if (via === 'Client portal') {
+      const m = dupGuard.matches[0];
+      return { status: 409, body: { code: 'DUPLICATE_JOB', error: `You already asked for this requirement: ${m.title}, opened ${m.createdAt ? new Date(m.createdAt).toISOString().slice(0, 10) : 'earlier'}. If you need more people, tell your TeamLink manager. Send it again only if it is a different requirement.`, existing: { title: m.title, status: m.status } } };
+    }
+    return { status: dupGuard.block.status, body: dupGuard.block.body };
+  }
   const salary = salaryFrom(b);
   const notes = [clean(b.notes, 2000), salary.note].filter(Boolean).join(' · ') || null;
   const jd = clean(b.jobDescription, 8000);
@@ -156,9 +166,11 @@ async function createRequirementRequest(body, { user, via }) {
   if (autoTl) {
     await logAudit({ userId: user.id, actorName: user.name || null, action: 'Default team lead set', entity: 'Requirement', entityId: created.id, toValue: autoTl.name, reason: `Automatic: ${department} has one team lead` });
   }
+  if (dupGuard.override) await require('./jobDupGuard').afterCreate(created, dupGuard.matches, { user, reason: dupGuard.reason, door: via }); // eslint-disable-line global-require
+  await require('./requestAccept').markRequested(created.id, via).catch(() => null); // eslint-disable-line global-require
   await logAudit({
     userId: user.id, actorName: user.name || null, action: 'Requirement requested', entity: 'Requirement',
-    entityId: created.id, toValue: `DRAFT — requested via ${via}`, reason: notes || undefined,
+    entityId: created.id, toValue: `Requested via ${via}`, reason: notes || undefined,
   });
   // THE POP-UP (user, 2026-10-09): the client's BDE(s) and the BDE TL get a pop-up on
   // their screen (components/JobRequestPopup.jsx, polling GET /admin/notifications/
@@ -169,18 +181,18 @@ async function createRequirementRequest(body, { user, via }) {
   const openLine = `\nOpen: /requirements/${created.id}`;
   await notifyUsers(who.popupIds, {
     title: `${POPUP_TITLE}${client.name}`,
-    message: `${title}, ${openings} opening${openings === 1 ? '' : 's'}. ${client.name} sent this request${via === 'Client portal' ? ' from the client portal' : ` through ${user.name || 'a BDE'}`}. Open it, fill in the rest and post it.${openLine}`,
+    message: `${title}, ${openings} opening${openings === 1 ? '' : 's'}. ${client.name} sent this request${via === 'Client portal' ? ' from the client portal' : ` through ${user.name || 'a team member'}`}. Open it, fill in the rest and post it.${openLine}`,
     exceptUserId: user.id,
   }).catch(() => null);
   await notifyUsers(who.userIds.filter((id) => !popupSet.has(id)), {
-    title: `New job request — ${created.reqCode}`,
-    message: `${client.name} asks for ${title} (${openings} opening${openings === 1 ? '' : 's'}), sent via ${via} by ${user.name || 'a user'}. Find it in Jobs (status Draft), check it, then press Open job.${openLine}`,
+    title: `New requirement request — ${created.reqCode}`,
+    message: `${client.name} asks for ${title} (${openings} opening${openings === 1 ? '' : 's'}), sent via ${via} by ${user.name || 'a user'}. Find it in Requirements, check it, then press Open requirement.${openLine}`,
     exceptUserId: user.id,
   }).catch(() => null);
   // What the sender is told: who it went to and what happens next, in plain words.
   const sentTo = who.owner ? { name: who.owner.name, position: who.owner.position, label: who.owner.label } : null;
-  const message = via === 'BDE'
-    ? `Request ${created.reqCode} saved as a Draft in Jobs. Open it, fill in the rest and press Save & Post.`
+  const message = via !== 'Client portal'
+    ? `Request ${created.reqCode} saved in Requirements. Open it, fill in the rest and press Save & Post.`
     : sentTo
       ? `Sent to ${sentTo.label}. We'll confirm soon.`
       : `Sent to the TeamLink team (${client.ownerDepartment || department || 'your'} desk). We'll confirm soon.`;
@@ -188,7 +200,7 @@ async function createRequirementRequest(body, { user, via }) {
     status: 201,
     body: {
       ok: true, id: created.id, reqCode: created.reqCode, status: 'DRAFT', sentTo, message,
-      next: 'TeamLink checks the request and opens the job. You will see its status in My Requirements.',
+      next: 'TeamLink checks the request and opens the requirement. You will see its status in My Requirements.',
     },
   };
 }

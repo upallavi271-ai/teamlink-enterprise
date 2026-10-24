@@ -33,6 +33,7 @@ const SHEET_CSS = `
 .ps-table tr.ps-tot td{font-weight:700;font-size:14px}
 .ps-table .ps-net-sub{font-weight:400;font-size:11.5px;display:block}
 .ps-table .ps-amt{white-space:nowrap}
+.ps-awl{font-size:12.5px;margin-top:10px;color:#7c2d12;font-family:Arial,Helvetica,sans-serif}
 .ps-foot{text-align:center;color:#1f4fa0;font-size:14px;margin-top:14px;font-family:Georgia,"Times New Roman",serif}
 `;
 
@@ -57,7 +58,8 @@ export function PayslipSheet({ p }) {
     ['Employee Name', e.name, 'UAN Number', e.uanNumber],
     ['ESI Number', e.esiNumber, 'PF Number', e.pfNumber],
     ['Days Worked', p.daysWorked, 'LOP Days', p.lopDays],
-    ['DOJ', e.dateOfJoining, 'Month', p.period],
+    ['DOJ', e.dateOfJoining, 'Salary month', p.periodLabel || p.period],
+    ...(p.periodRange ? [['Pay period', p.periodRange, 'Days in period', p.periodDays]] : []),
     ['Department', e.department, 'Designation', e.designation],
     ['Location', e.location, 'Bank A/C Number', e.bankAccountNumber],
     ['Monthly Gross', `₹${money(p.monthlyGross)}`, 'Bank Name', e.bankName],
@@ -120,6 +122,12 @@ export function PayslipSheet({ p }) {
           </tr>
         </tbody>
       </table>
+      {p.absentNoLeave && (
+        <div className="ps-awl" data-testid="payslip-awl">
+          <b>{p.absentNoLeave.text}</b> — ₹{money(p.absentNoLeave.amount)} (inside the LOP line).
+          {(p.absentNoLeave.dates.length + p.absentNoLeave.halfDates.length) > 0 && <> Dates: {[...p.absentNoLeave.dates, ...p.absentNoLeave.halfDates].join(', ')}.</>}
+        </div>
+      )}
       <div className="ps-foot">This is a computer generated payslip, needs no signature</div>
     </div>
   );
@@ -147,7 +155,7 @@ export default function PayslipView({ payslipId, onClose }) {
     const w = window.open('', '_blank', 'width=900,height=1000');
     if (!w) { setError('Allow pop-ups for this site to print.'); return; }
     const html = node.innerHTML.replace(/src="([^"]+)"/g, (m, src) => `src="${new URL(src, window.location.href).href}"`);
-    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>Payslip — ${slip.employee.name} — ${slip.period}</title>
+    w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${slip.periodTitle || 'Payslip'} — ${slip.employee.name}</title>
 <style>@page{size:A4 portrait;margin:12mm}body{margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style>
 </head><body>${html}<script>window.onload=function(){window.focus();window.print();}</script></body></html>`);
     w.document.close();
@@ -155,7 +163,7 @@ export default function PayslipView({ payslipId, onClose }) {
 
   return (
     <Modal
-      title={slip ? `Payslip — ${slip.employee.name} — ${slip.period}` : 'Payslip'}
+      title={slip ? `${slip.periodTitle || 'Payslip'} — ${slip.employee.name}` : 'Payslip'}
       onClose={onClose}
       wide
       footer={slip && (
@@ -168,6 +176,16 @@ export default function PayslipView({ payslipId, onClose }) {
     >
       {error && <div className="error-text">{error}</div>}
       {!slip && !error && <div className="small-muted">Loading payslip…</div>}
+      {slip && slip.editInfo && (
+        <div className="small-muted" style={{ marginBottom: 8 }} data-testid="payslip-edit-info">
+          <span style={{ background: '#fff4d6', color: '#8a5a00', borderRadius: 8, padding: '1px 8px', fontWeight: 700, fontSize: 11 }}>Edited</span>{' '}
+          Changed by {slip.editInfo.lastBy || 'payroll'}{slip.editInfo.lastReason ? ` (${slip.editInfo.lastReason})` : ''}. Only payroll staff see this note.
+          {(slip.editInfo.superseded || []).map((s, i) => (
+            <div key={i}><span style={{ background: '#fdecec', color: '#8f1d17', borderRadius: 8, padding: '1px 8px', fontWeight: 700, fontSize: 11 }}>Superseded</span>{' '}
+              Older payslip issued {new Date(s.generatedAt).toLocaleDateString('en-GB')}: gross ₹{money(s.gross)}, net ₹{money(s.netPay)}.</div>
+          ))}
+        </div>
+      )}
       {slip && <div id="payslip-sheet" style={{ overflowX: 'auto' }}><div style={{ minWidth: 620 }}><PayslipSheet p={slip} /></div></div>}
     </Modal>
   );

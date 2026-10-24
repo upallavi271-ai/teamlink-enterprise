@@ -19,6 +19,7 @@ import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import ScrollTable from '../../components/ScrollTable.jsx';
 import { downloadFrom } from './MyAttendance.jsx';
+import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../../components/PunchSourceChip.jsx';
 import { fmtDay, clock12, localToday, addDays, HalfLeaveChip, HalfLeaveSub } from './DayReport.jsx';
 import './kpi-report.css';
 
@@ -78,6 +79,8 @@ export default function KpiReport({ onRangeChange } = {}) {
   const [emp, setEmp] = useState('');
   const [pick, setPick] = useState({ kpi: '', part: '', note: '', leave: '' });
   const [how, setHow] = useState('');
+  const [src, setSrc] = useState(''); // Source filter: '' | web | biometric | pulse | hr
+  const [openRow, setOpenRow] = useState(null);
   const [q, setQ] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -89,11 +92,11 @@ export default function KpiReport({ onRangeChange } = {}) {
   useEffect(() => {
     const mine = ++seq.current;
     setError('');
-    const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(how ? { how } : {}) };
+    const params = { from, to, ...(dept ? { department: dept } : {}), ...(emp ? { employeeId: emp } : {}), ...(how ? { how } : {}), ...(src ? { punchSource: src } : {}) };
     api.get('/attendance/kpi-report', { params })
       .then((res) => { if (mine === seq.current) setData(res.data); })
       .catch((e) => { if (mine === seq.current) setError(e.response?.data?.error || 'Could not load the attendance report. Please try again.'); });
-  }, [from, to, dept, emp, how]);
+  }, [from, to, dept, emp, how, src]);
 
   // The page around the report (daily marking, regularizations) follows its period.
   useEffect(() => { if (onRangeChange) onRangeChange(from, to); }, [from, to]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -174,9 +177,10 @@ export default function KpiReport({ onRangeChange } = {}) {
         <FacetSelect label="Department" allLabel="All departments" value={dept} onChange={(v) => { setDept(v); setPick(noPick); }} options={data?.facets?.department || []} loading={!data} />
         <FacetSelect label="Employee" allLabel="Everyone" value={emp} onChange={(v) => { setEmp(v); setPick(noPick); }} options={data?.facets?.employeeId || []} loading={!data} />
         <FacetSelect label="Check-in method" allLabel="Any method" value={how} onChange={(v) => { setHow(v); setPick(noPick); }} options={data?.facets?.how || []} loading={!data} />
-        {(dept || emp || how) && <button type="button" className="btn btn-sm att-kr-clear" onClick={() => { setDept(''); setEmp(''); setHow(''); }}>Clear filters</button>}
+        {(dept || emp || how || src) && <button type="button" className="btn btn-sm att-kr-clear" onClick={() => { setDept(''); setEmp(''); setHow(''); setSrc(''); }}>Clear filters</button>}
       </div>
 
+      <SourceFilter value={src} onChange={(v) => { setSrc(v); setPick(noPick); }} totals={data?.facets?.punchSource} />
       {error && <div className="notice red">{error}</div>}
       {!data && !error && <div className="small-muted">Loading…</div>}
 
@@ -270,10 +274,10 @@ export default function KpiReport({ onRangeChange } = {}) {
             <ScrollTable maxHeight="60vh">
               <table>
                 <thead>
-                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th>Check-in method</th><th>Result</th><th>Why</th></tr>
+                  <tr><th>Name</th><th>Employee ID</th><th>Department</th><th>Date</th><th>In</th><th>Out</th><th>Check-in method</th><th>Punches by source</th><th>Result</th><th>Why</th></tr>
                 </thead>
                 <tbody>
-                  {page.slice.map((x) => (
+                  {page.slice.map((x) => [(
                     <tr key={`${x.employeeId}|${x.date}`}>
                       <td><b>{x.name}</b></td>
                       <td>{x.employeeCode}</td>
@@ -282,12 +286,13 @@ export default function KpiReport({ onRangeChange } = {}) {
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkIn)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{t12(x.checkOut)}</td>
                       <td className="cell-muted">{x.howText || x.how || '—'}</td>
-                      <td><span className={`att-kr-pill tone-${CARDS.find((k) => k.key === x.tile)?.tone || 'grey'}`}>{NAME[x.tile] || x.kpiLabel}{x.session ? ` · ${x.session === 'First half' ? '1st half' : '2nd half'}` : ''}</span>{(x.notes || []).map((nk) => <span key={nk} className="att-kr-pill tone-orange">{NOTE_NAME[nk]}</span>)}{x.halfLeave ? <HalfLeaveChip state={x.halfLeave} half={x.halfLeaveHalf} by={x.halfLeaveBy} /> : null}{x.latePermissionText ? <span className={`att-kr-pill tone-${x.lateExcused ? 'green' : 'orange'}`}>{x.latePermissionText}</span> : null}{x.workedOnOff ? <span className="att-kr-pill tone-blue" title={`Came in on a ${x.workedOnOff}`}>Worked on {x.workedOnOff.startsWith('holiday') ? 'holiday' : 'week off'}</span> : null}</td>
+                      <td><SourceChips counts={x.sourceCounts} />{(x.punchList || []).length > 0 && <div><PunchToggle open={openRow === `${x.employeeId}|${x.date}`} count={x.punchList.length} onClick={() => setOpenRow(openRow === `${x.employeeId}|${x.date}` ? null : `${x.employeeId}|${x.date}`)} /></div>}</td>
+                      <td><span className={`att-kr-pill tone-${CARDS.find((k) => k.key === x.tile)?.tone || 'grey'}`}>{NAME[x.tile] || x.kpiLabel}{x.session ? ` · ${x.session === 'First half' ? '1st half' : '2nd half'}` : ''}</span>{(x.notes || []).map((nk) => <span key={nk} className="att-kr-pill tone-orange">{NOTE_NAME[nk]}</span>)}{x.halfLeave ? <HalfLeaveChip state={x.halfLeave} half={x.halfLeaveHalf} by={x.halfLeaveBy} /> : null}{x.latePermissionText ? <span className={`att-kr-pill tone-${x.lateExcused ? 'green' : 'orange'}`}>{x.latePermissionText}</span> : null}{x.awlText ? <span className="att-kr-pill tone-red" title="No leave applied: payroll counts extra loss of pay">{x.awlText}</span> : null}{x.workedOnOff ? <span className="att-kr-pill tone-blue" title={`Came in on a ${x.workedOnOff}`}>Worked on {x.workedOnOff.startsWith('holiday') ? 'holiday' : 'week off'}</span> : null}</td>
                       <td className="att-kr-why">{x.reason}</td>
                     </tr>
-                  ))}
+                  ), openRow === `${x.employeeId}|${x.date}` && <tr key={`${x.employeeId}|${x.date}|d`}><td colSpan="10"><PunchDetails list={x.punchList} /></td></tr>])}
                   {list.length === 0 && (
-                    <tr><td colSpan="9" className="att-kr-empty">{pick.kpi ? `No ${(pick.note ? NOTE_NAME[pick.note] : NAME[pick.kpi]).toLowerCase()} days in this period.` : 'Nobody is on the rolls in this period.'}</td></tr>
+                    <tr><td colSpan="10" className="att-kr-empty">{pick.kpi ? `No ${(pick.note ? NOTE_NAME[pick.note] : NAME[pick.kpi]).toLowerCase()} days in this period.` : 'Nobody is on the rolls in this period.'}</td></tr>
                   )}
                 </tbody>
               </table>

@@ -17,6 +17,10 @@
 //             -> { return: true, request_id }
 //   Twilio    POST /2010-04-01/Accounts/{SID}/Messages.json   Basic SID:token,
 //             form To / From (or MessagingServiceSid) / Body -> 201 { sid }
+//   SMS Push Platform (web.smsgw.in)  one HTTP request per message to the send address (httpapi.jsp). The provider's API document was NOT
+//             available when this was written, so NOTHING about its request is hard-wired as fact: the field names, the method and the
+//             "what a message id looks like" pattern are settings (defaults below, marked UNVERIFIED) and a send counts as accepted ONLY
+//             when the answer carries a message id; an answer we cannot read is "unknown", never "sent".
 //
 // INDIA / DLT. Indian operators only deliver text that matches a DLT-approved
 // template. Every message kind therefore has its own template id, and the
@@ -37,6 +41,7 @@ const BASES = {
   MSG91: 'https://control.msg91.com',
   FAST2SMS: 'https://www.fast2sms.com',
   TWILIO: 'https://api.twilio.com',
+  SMSGW: 'https://web.smsgw.in',
 };
 
 function providerOf(raw) {
@@ -44,9 +49,35 @@ function providerOf(raw) {
   if (p.startsWith('MSG91')) return 'MSG91';
   if (p.startsWith('FAST2SMS') || p === 'FAST2') return 'FAST2SMS';
   if (p.startsWith('TWILIO')) return 'TWILIO';
+  if (p.startsWith('SMSGW') || p.startsWith('SMSPUSH') || p.startsWith('PUSH')) return 'SMSGW';
   return null;
 }
-const LABEL = { MSG91: 'MSG91', FAST2SMS: 'Fast2SMS', TWILIO: 'Twilio' };
+const LABEL = { MSG91: 'MSG91', FAST2SMS: 'Fast2SMS', TWILIO: 'Twilio', SMSGW: 'SMS Push Platform' };
+
+// SMS PUSH PLATFORM: defaults for the request. UNVERIFIED except `user` (the provider's own error text names "username"): confirm each against the
+// provider's API document and change them in Integrations > SMS Gateway > "request field names" (JSON) without any code change.
+const PUSH_DEFAULT_NAMES = { method: 'POST', user: 'username', pass: 'password', sender: 'sendername', to: 'mobileno', msg: 'message', pe: 'entityid', tpl: 'templateid', toFormat: 'e164', extra: {} };
+const PUSH_DEFAULT_ID = '(?:msgid|messageid|message_id|requestid|request_id|mid|id)\\s*[:=]\\s*"?([A-Za-z0-9._-]{4,})';
+const PUSH_ERROR = /errorcode|errordesc|error|invalid|fail|denied|not\s+(?:allowed|found|approved)|insufficient|blocked/i;
+const PUSH_KEY = 'smsgw.accepted';
+function pushNames(raw) {
+  let given = {};
+  try { given = raw ? JSON.parse(raw) : {}; } catch { given = {}; }
+  const out = { ...PUSH_DEFAULT_NAMES };
+  Object.keys(PUSH_DEFAULT_NAMES).forEach((k) => { if (given[k] !== undefined && given[k] !== null && given[k] !== '') out[k] = given[k]; });
+  out.method = String(out.method).toUpperCase() === 'GET' ? 'GET' : 'POST';
+  if (typeof out.extra !== 'object' || Array.isArray(out.extra)) out.extra = {};
+  return out;
+}
+const pushNamesProblem = (raw) => {
+  if (!raw) return null;
+  try { const j = JSON.parse(raw); return j && typeof j === 'object' && !Array.isArray(j) ? null : 'The request field names must be a JSON object, for example {"to":"mobile"}.'; } catch { return 'The request field names are not valid JSON.'; }
+};
+async function pushLastAccepted() {
+  const prisma = require('../db'); // eslint-disable-line global-require
+  const row = await prisma.appSetting.findUnique({ where: { key: PUSH_KEY } }).catch(() => null);
+  try { return row ? JSON.parse(row.value) : null; } catch { return null; }
+}
 
 // Is SMS switched on, and if not, why not — in words for a screen.
 async function smsConfig() {
@@ -65,15 +96,32 @@ async function smsConfig() {
       bulk: String(v[F.bulkTpl] || '').trim(),
     },
     dlrSecret: String(v[F.dlrSecret] || '').trim(),
+    push: {
+      url: String(v[F.pushUrl] || '').trim() || `${BASES.SMSGW}/smsapi/httpapi.jsp`,
+      user: String(v[F.pushUser] || '').trim(),
+      pass: String(v[F.pushPass] || '').trim(),
+      pe: String(v[F.pushPe] || '').trim(),
+      names: String(v[F.pushNames] || '').trim(),
+      idPattern: String(v[F.pushOk] || '').trim(),
+    },
     base: provider ? core.providerBase(BASES[provider], v) : null,
+    pushDev: !!core.devOverride(v),
     testMode: !!core.devOverride(v),
   };
   const problems = [];
   if (!cfg.row) problems.push('The SMS Gateway has not been configured — Administration → Integrations → SMS Gateway.');
   else {
-    if (!provider) problems.push('Choose the provider: MSG91, Fast2SMS or Twilio.');
-    if (cfg.missingKey) problems.push('An API key is stored but this server cannot decrypt it (INTEGRATION_SECRET_KEY missing or changed).');
-    else if (!out.key) problems.push('No API key / auth token.');
+    if (!provider) problems.push('Choose the provider: MSG91, Fast2SMS, Twilio or SMS Push Platform.');
+    if (cfg.missingKey) problems.push('A secret is stored but this server cannot decrypt it (INTEGRATION_SECRET_KEY missing or changed).');
+    else if (provider === 'SMSGW') {
+      if (!out.push.user) problems.push('SMS Push Platform needs the API username.');
+      if (!out.push.pass) problems.push('SMS Push Platform needs the API password (not the portal login password).');
+      if (!out.sender) problems.push('SMS Push Platform needs the Sender ID.');
+      if (!out.push.pe) problems.push('SMS Push Platform needs the DLT Principal Entity ID (PE ID).');
+      if (!/^https:\/\//i.test(out.push.url) && !core.devOverride(v)) problems.push('The send address must start with https://');
+      const np = pushNamesProblem(out.push.names); if (np) problems.push(np);
+      if (out.push.idPattern) { try { new RegExp(out.push.idPattern, 'i'); } catch { problems.push('The message-id pattern is not a valid pattern.'); } }
+    } else if (!out.key) problems.push('No API key / auth token.');
     if (provider === 'TWILIO' && !out.sid) problems.push('Twilio needs the Account SID.');
     if (provider === 'TWILIO' && !out.sender) problems.push('Twilio needs a From number or Messaging Service SID.');
     if (!cfg.row.enabled) problems.push('The channel is switched off.');
@@ -170,6 +218,46 @@ async function viaTwilio(cfg, { mobile, text }) {
   return failure(res, 'TWILIO');
 }
 
+async function viaSmsPush(cfg, { mobile, kind, text, templateId: ownTemplate, senderId }) {
+  const p = cfg.push;
+  const templateId = ownTemplate || cfg.templates[kind];
+  if (!templateId) {
+    return { ok: false, notConfigured: true, transient: false, provider: 'SMSGW', error: `SMS Push Platform delivers only DLT-approved templates: choose a template that has a DLT Template ID (or add the "${kind}" template id in Integrations > SMS Gateway).` };
+  }
+  const n = pushNames(p.names);
+  const form = new URLSearchParams();
+  form.set(n.user, p.user); form.set(n.pass, p.pass);
+  form.set(n.sender, senderId || cfg.sender);
+  form.set(n.to, n.toFormat === 'national' ? mobile.national : mobile.e164);
+  form.set(n.msg, text);
+  form.set(n.pe, p.pe); form.set(n.tpl, templateId);
+  Object.entries(n.extra).forEach(([k, v]) => form.set(k, String(v)));
+  const url = cfg.pushDev ? `${cfg.base}${new URL(p.url).pathname}` : p.url;
+  // the password goes in the BODY (POST) unless the provider's document says GET; it is never put in anything we keep
+  const res = n.method === 'GET'
+    ? await core.httpJson(`${url}${url.includes('?') ? '&' : '?'}${form.toString()}`, { headers: { accept: '*/*' } })
+    : await core.httpJson(url, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: '*/*' }, body: form.toString() });
+  const scrub = (t) => String(t || '').split(p.pass).join('***').split(p.user).join('***');
+  const said = scrub(res.networkError || (res.json ? JSON.stringify(res.json) : res.text)).replace(/\s+/g, ' ').trim().slice(0, 300);
+  // a timeout may have reached the provider, so only "cannot reach it at all" is retried (a repeat could send the SMS twice)
+  if (res.networkError) return { ok: false, provider: 'SMSGW', transient: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN/i.test(res.networkError), error: core.tidy(`SMS Push Platform did not answer: ${said}`) };
+  if (!res.ok) return { ok: false, provider: 'SMSGW', status: res.status, transient: core.isTransientHttp(res.status), error: core.tidy(`SMS Push Platform HTTP ${res.status}: ${said}`) };
+  const body = res.json ? JSON.stringify(res.json) : String(res.text || '');
+  // an error word wins over a number that may be in the same answer: a refused message must never look sent
+  if (PUSH_ERROR.test(body)) return { ok: false, provider: 'SMSGW', transient: false, providerError: true, error: core.tidy(`SMS Push Platform refused it: ${said}`) };
+  let id = null;
+  try { const m = new RegExp(p.idPattern || PUSH_DEFAULT_ID, 'i').exec(body); id = m && (m[1] || m[0]) ? String(m[1] || m[0]).slice(0, 80) : null; } catch { id = null; }
+  if (!id && res.json) { const j = res.json; id = String(j.msgid || j.messageId || j.message_id || j.requestId || j.request_id || j.id || '') || null; }
+  if (!id) {
+    // We cannot tell from this answer whether the provider took the message. Not retried (it might have), not called sent.
+    return { ok: false, provider: 'SMSGW', transient: false, unknown: true, error: core.tidy(`SMS Push Platform answered, but TeamLink cannot read a message id from it, so it is NOT counted as sent. Answer: ${said || '(empty)'}. Check the request field names / message-id pattern against the provider's API document before sending again.`) };
+  }
+  const prisma = require('../db'); // eslint-disable-line global-require
+  const mark = JSON.stringify({ at: new Date().toISOString(), ref: id });
+  await prisma.appSetting.upsert({ where: { key: PUSH_KEY }, create: { key: PUSH_KEY, value: mark }, update: { value: mark } }).catch(() => {});
+  return { ok: true, provider: 'SMSGW', providerRef: id };
+}
+
 // kind: 'link' | 'otp' | 'bulk'. `text` is the full message (used verbatim by
 // Twilio and the Fast2SMS quick route); `vars` feed the DLT template.
 async function sendSms({ to, kind = 'bulk', text, vars, templateId, senderId }) {
@@ -186,6 +274,7 @@ async function sendSms({ to, kind = 'bulk', text, vars, templateId, senderId }) 
   await core.acquire('SMS');
   if (cfg.provider === 'MSG91') return viaMsg91(cfg, { mobile, kind, vars: vars || [body], templateId });
   if (cfg.provider === 'FAST2SMS') return viaFast2sms(cfg, { mobile, kind, vars: vars || [body], text: body, templateId, senderId });
+  if (cfg.provider === 'SMSGW') return viaSmsPush(cfg, { mobile, kind, text: body, templateId, senderId });
   return viaTwilio(cfg, { mobile, text: body });
 }
 
@@ -194,6 +283,14 @@ async function testConnection() {
   const cfg = await smsConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, result: `Not configured — ${cfg.reason}` };
   let res;
+  if (cfg.provider === 'SMSGW') {
+    // No connection-test or balance call is documented for this provider, and a send is the only call whose shape we know (it costs one SMS).
+    // So "connected" means: the provider really accepted a message from here. Nothing is called now and nothing is pretended.
+    const last = await pushLastAccepted();
+    return last
+      ? { ok: true, verified: true, result: `Connected to SMS Push Platform: it last accepted a message on ${new Date(last.at).toLocaleString('en-IN')} (id ${last.ref}).` }
+      : { ok: false, needsConfirmation: true, result: 'Saved, but not proven yet. The provider has no documented connection test, so press "Send test SMS" (one real SMS to your own number) to prove the login, sender ID and DLT details.' };
+  }
   if (cfg.provider === 'MSG91') {
     res = await core.httpJson(`${cfg.base}/api/balance.json?type=4&authkey=${encodeURIComponent(cfg.key)}`, { headers: { authkey: cfg.key } });
     // The balance endpoint answers a bare number, or JSON with an error.
@@ -216,4 +313,4 @@ async function testConnection() {
     : { ok: false, result: `Failed — ${failure(res, 'TWILIO').error}` };
 }
 
-module.exports = { smsConfig, sendSms, testConnection, providerOf, BASES };
+module.exports = { smsConfig, sendSms, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID };

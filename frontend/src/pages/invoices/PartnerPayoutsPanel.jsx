@@ -11,6 +11,8 @@ import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import { saveBlob } from '../office/officeUtil';
 import { money2, fmtD, todayIso } from './invFormat';
 import './creditNotes.css';
+import Combo from '../../components/Combo.jsx';
+import { payoutStatus } from '../../utils/statusWords.js';
 
 const CHIP = { Draft: 'Draft', Approved: 'Issued', Paid: 'Issued', Cancelled: 'Cancelled' };
 const errText = (e, f) => (e?.response ? e.response.data?.error || f : 'Cannot reach the server. Try again.');
@@ -47,7 +49,7 @@ export default function PartnerPayoutsPanel({ canExport }) {
   };
   const exportXlsx = async () => {
     try {
-      const res = await api.post('/partner-payouts/export.xlsx', { ids: rows.map((r) => r.id), filters: [f.partnerId && 'Partner', f.status && `Status: ${f.status}`, f.client && `Client: ${f.client}`, f.month && `Month: ${f.month}`, q && `Search: ${q}`].filter(Boolean).join(' · ') }, { responseType: 'blob' });
+      const res = await api.post('/partner-payouts/export.xlsx', { ids: rows.map((r) => r.id), filters: [f.partnerId && 'Partner', f.status && `Status: ${payoutStatus(f.status)}`, f.client && `Client: ${f.client}`, f.month && `Month: ${f.month}`, q && `Search: ${q}`].filter(Boolean).join(' · ') }, { responseType: 'blob' });
       saveBlob(res, 'partner-payouts.xlsx');
       setSaid(`Downloaded ${rows.length} payout(s).`);
     } catch { setError('The Excel file could not be made. Please try again.'); }
@@ -58,7 +60,7 @@ export default function PartnerPayoutsPanel({ canExport }) {
   const acc = data.access || {};
   const missing = data.missing || [];
   const cards = [
-    { k: 'drafts', n: t.drafts, l: t.drafts ? 'Drafts waiting for approval' : 'No draft waiting', tone: t.drafts ? 'orange' : 'green' },
+    { k: 'drafts', n: t.drafts, l: t.drafts ? 'Payouts waiting for approval' : 'No payout waiting', tone: t.drafts ? 'orange' : 'green' },
     { k: 'hold', n: t.onHold, l: t.onHold ? 'On hold (guarantee running)' : 'None on hold', tone: 'blue' },
     { k: 'topay', n: money2(t.toPay), l: 'Approved, to be paid', tone: t.toPay > 0.005 ? 'orange' : 'green' },
     { k: 'paid', n: money2(t.paid), l: 'Paid to partners', tone: 'green' },
@@ -80,11 +82,11 @@ export default function PartnerPayoutsPanel({ canExport }) {
       {missing.length > 0 && (
         <section className="cn-wait" aria-label="Joined partner candidates without a payout">
           <h3>{missing.length} partner joining{missing.length === 1 ? '' : 's'} without a payout yet</h3>
-          <div className="small-muted" style={{ marginBottom: 6 }}>A payout is drafted by itself when the client invoice exists. Raise the invoice first (Invoices tab → Joined, not invoiced), then press “Make payout”.</div>
+          <div className="small-muted" style={{ marginBottom: 6 }}>A payout is made by itself when the client invoice exists. Raise the invoice first (Invoices tab → Joined, not invoiced), then press “Make payout”.</div>
           {missing.map((m) => (
             <div key={m.applicationId} className="cn-wait-row">
               <span><b>{m.candidateName}</b> · {m.clientName} · {m.requirementTitle} <span className="small-muted">· {m.partner} · joined {fmtD(m.joinedOn)}{m.hasInvoice ? '' : ' · no client invoice yet'}</span></span>
-              {acc.canCreate && <button type="button" className="btn btn-sm btn-primary" disabled={!m.hasInvoice || busy === m.applicationId} onClick={() => act(m.applicationId, () => api.post(`/partner-payouts/create-for/${m.applicationId}`), 'Drafted.')}>{m.hasInvoice ? 'Make payout' : 'Needs the invoice'}</button>}
+              {acc.canCreate && <button type="button" className="btn btn-sm btn-primary" disabled={!m.hasInvoice || busy === m.applicationId} onClick={() => act(m.applicationId, () => api.post(`/partner-payouts/create-for/${m.applicationId}`), 'Made.')}>{m.hasInvoice ? 'Make payout' : 'Needs the invoice'}</button>}
             </div>
           ))}
         </section>
@@ -105,7 +107,7 @@ export default function PartnerPayoutsPanel({ canExport }) {
       <div className="tbl-wrap">
         <table className="cn-table">
           <thead>
-            <tr><th>Payout</th><th>Partner</th><th>Candidate · job · client</th><th>Joined</th><th>Client invoice</th><th className="n">Fee</th><th className="n">GST</th><th className="n">TDS</th><th className="n">Net</th><th>Status</th><th>Actions</th></tr>
+            <tr><th>Payout</th><th>Partner</th><th>Candidate · requirement · client</th><th>Joined</th><th>Client invoice</th><th className="n">Fee</th><th className="n">GST</th><th className="n">TDS</th><th className="n">Net</th><th>Status</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {!rows.length && <tr><td colSpan={11} className="small-muted">No payout matches. {data.rows.length ? 'Try removing a filter.' : 'A payout appears here when a partner-sent candidate joins and the client invoice is raised.'}</td></tr>}
@@ -120,7 +122,7 @@ export default function PartnerPayoutsPanel({ canExport }) {
                 <td className="n">{r.gst ? money2(r.gst) : '—'}</td>
                 <td className="n">{r.tds ? <>{money2(r.tds)}<div className="small-muted">{r.tdsSection} {r.tdsPercent}%</div></> : '—'}</td>
                 <td className="n"><b>{money2(r.net)}</b></td>
-                <td><span className={`cn-chip ${CHIP[r.status] || 'Draft'}`}>{r.status}</span><div className="small-muted">{r.onHold ? `On hold until ${fmtD(r.holdUntil)}` : r.status === 'Paid' ? `${fmtD(r.paidOn)} · ${r.paidMode} · ${r.paidRef}` : r.status === 'Approved' ? `by ${r.approvedByName}` : r.status === 'Cancelled' ? r.cancelReason : (r.preparedByName ? `prepared by ${r.preparedByName}` : 'drafted by TeamLink')}</div></td>
+                <td><span className={`cn-chip ${CHIP[r.status] || 'Draft'}`}>{payoutStatus(r.status)}</span><div className="small-muted">{r.onHold ? `On hold until ${fmtD(r.holdUntil)}` : r.status === 'Paid' ? `${fmtD(r.paidOn)} · ${r.paidMode} · ${r.paidRef}` : r.status === 'Approved' ? `by ${r.approvedByName}` : r.status === 'Cancelled' ? r.cancelReason : (r.preparedByName ? `prepared by ${r.preparedByName}` : 'made by TeamLink')}</div></td>
                 <td>
                   <div className="cn-acts">
                     {r.status === 'Draft' && acc.canEdit && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: 'edit', row: r })}>Edit</button>}
@@ -143,7 +145,7 @@ export default function PartnerPayoutsPanel({ canExport }) {
 
       {modal?.kind === 'pay' && <PayModal row={modal.row} modes={data.payModes} isAdmin={acc.isAdmin} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
       {modal?.kind === 'cancel' && <ReasonModal title={`Cancel ${modal.row.number}`} label="Why is it cancelled? (the partner sees this)" button="Cancel the payout" url={`/partner-payouts/${modal.row.id}/cancel`} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
-      {modal?.kind === 'clawback' && <ReasonModal title={`Clawback on ${modal.row.number}`} label="Why is the money being recovered? (left inside the guarantee…)" button="Draft the clawback" url={`/partner-payouts/${modal.row.id}/clawback`} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
+      {modal?.kind === 'clawback' && <ReasonModal title={`Clawback on ${modal.row.number}`} label="Why is the money being recovered? (left inside the guarantee…)" button="Prepare the clawback" url={`/partner-payouts/${modal.row.id}/clawback`} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
       {modal?.kind === 'edit' && <EditModal row={modal.row} isAdmin={acc.isAdmin} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
       {modal?.kind === 'invoice' && <InvoiceModal row={modal.row} onClose={() => setModal(null)} onDone={(m) => { setModal(null); setSaid(m); load(); }} />}
       {modal?.kind === 'statement' && <StatementModal partnerId={modal.partnerId} name={modal.name} canExport={canExport} onClose={() => setModal(null)} />}
@@ -165,7 +167,7 @@ function PayModal({ row, modes, isAdmin, onClose, onDone }) {
         <div className="cn-inv">{row.partner} · {row.candidateName} · <b>{money2(row.net)}</b>{row.onHold ? <div style={{ color: 'var(--amber)' }}>On hold until {fmtD(row.holdUntil)} (guarantee).</div> : null}</div>
         <div className="cn-grid">
           <label>Paid on<input type="date" value={v.paidOn} max={todayIso()} onChange={(e) => setV({ ...v, paidOn: e.target.value })} /></label>
-          <label>Mode<select value={v.paidMode} onChange={(e) => setV({ ...v, paidMode: e.target.value })}>{(modes || []).map((m) => <option key={m}>{m}</option>)}</select></label>
+          <label>Mode<Combo value={v.paidMode} onChange={(e) => setV({ ...v, paidMode: e.target.value })}>{(modes || []).map((m) => <option key={m}>{m}</option>)}</Combo></label>
           <label>Reference (UTR / cheque no.)<input value={v.paidRef} onChange={(e) => setV({ ...v, paidRef: e.target.value })} /></label>
           <label className="cn-span">Bank line id (optional — or match it later on the Bank page against the booked expense)<input value={v.bankTxnId} onChange={(e) => setV({ ...v, bankTxnId: e.target.value })} /></label>
         </div>
@@ -206,7 +208,7 @@ function EditModal({ row, isAdmin, onClose, onDone }) {
     try { const r = await api.patch(`/partner-payouts/${row.id}`, { fee: v.fee, notes: v.notes, ...(isAdmin ? { holdUntil: v.holdUntil } : {}) }); onDone(r.data.message); } catch (e) { setError(errText(e, 'Could not save.')); } finally { setBusy(false); }
   }
   return (
-    <Modal title={`Edit draft · ${row.number}`} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Back</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
+    <Modal title={`Edit payout · ${row.number}`} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose}>Back</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
       <div className="cn-form">
         <div className="cn-inv">{row.partner} · {row.candidateName} · CTC {row.ctc ? money2(row.ctc) : '—'} · terms: {row.feeType === 'FIXED' ? 'fixed fee' : `${row.feePercent}% of CTC`}, GST {row.gstPercent}%, TDS {row.tdsSection || 'none'} {row.tdsPercent}%</div>
         <div className="cn-grid">
@@ -261,7 +263,7 @@ function StatementModal({ partnerId, name, canExport, onClose }) {
           <table className="cn-calc" style={{ marginTop: 10 }}>
             <thead><tr><td>Payout</td><td>Candidate · joined</td><td>Status</td><td>Net</td></tr></thead>
             <tbody>
-              {s.rows.map((r) => <tr key={r.id}><td>{r.number}{r.kind === 'CLAWBACK' ? ' (clawback)' : ''}</td><td>{r.candidateName} · {fmtD(r.joinedOn)}</td><td>{r.status}{r.paidOn ? ` · ${fmtD(r.paidOn)} ${r.paidRef}` : r.onHold ? ` · hold ${fmtD(r.holdUntil)}` : ''}</td><td>{money2(r.net)}</td></tr>)}
+              {s.rows.map((r) => <tr key={r.id}><td>{r.number}{r.kind === 'CLAWBACK' ? ' (clawback)' : ''}</td><td>{r.candidateName} · {fmtD(r.joinedOn)}</td><td>{payoutStatus(r.status)}{r.paidOn ? ` · ${fmtD(r.paidOn)} ${r.paidRef}` : r.onHold ? ` · hold ${fmtD(r.holdUntil)}` : ''}</td><td>{money2(r.net)}</td></tr>)}
               <tr className="tot"><td colSpan={3}>To be paid (approved) · paid so far</td><td>{money2(s.totals.toPay)} · {money2(s.totals.paid)}</td></tr>
             </tbody>
           </table>

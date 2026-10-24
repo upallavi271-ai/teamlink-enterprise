@@ -115,7 +115,7 @@ function ClientJobPortal() {
           <h1>Job Portal</h1>
           <div className="page-sub">
             {data?.company ? `${data.company} · ` : ''}
-            Your jobs and the people shared with you.
+            Your requirements and the people shared with you.
           </div>
         </div>
         {/* Export only: the client's own requirements / shared candidates. */}
@@ -131,7 +131,7 @@ function ClientJobPortal() {
       {notice && <div className="notice"><span>{notice}</span></div>}
 
       <div className="stat-row" style={{ marginBottom: 16 }}>
-        <div className="stat-cell"><div className="v">{requirements.length || '—'}</div><div className="l">Your jobs</div></div>
+        <div className="stat-cell"><div className="v">{requirements.length || '—'}</div><div className="l">Your requirements</div></div>
         <div className="stat-cell"><div className="v">{requirements.filter((r) => r.published).length || '—'}</div><div className="l">Published</div></div>
         <div className="stat-cell"><div className="v">{requirements.filter((r) => r.live).length || '—'}</div><div className="l">Open now</div></div>
         <div className="stat-cell"><div className="v">{candidates.length || '—'}</div><div className="l">People shared with you</div></div>
@@ -139,7 +139,7 @@ function ClientJobPortal() {
 
       <div className="tabs" style={{ marginBottom: 12 }}>
         <div className={`tab${view === 'requirements' ? ' active' : ''}`} onClick={() => setView('requirements')}>
-          Jobs
+          Requirements
         </div>
         <div className={`tab${view === 'candidates' ? ' active' : ''}`} onClick={() => setView('candidates')}>
           People shared with me
@@ -151,7 +151,7 @@ function ClientJobPortal() {
           <table>
             <thead>
               <tr>
-                <th>Job ID</th><th>Job</th><th>Department</th><th>Location</th>
+                <th>Requirement ID</th><th>Requirement</th><th>Department</th><th>Location</th>
                 <th>Openings</th><th>Raised</th><th>Published</th><th>People shared</th>
               </tr>
             </thead>
@@ -174,7 +174,7 @@ function ClientJobPortal() {
               ))}
               {!requirements.length && (
                 <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>
-                  {data ? 'No jobs for your company yet.' : 'Loading…'}
+                  {data ? 'No requirements for your company yet.' : 'Loading…'}
                 </td></tr>
               )}
             </tbody>
@@ -273,7 +273,7 @@ function ClientJobPortal() {
           )}
         >
           <label className="field">
-            <span>Why? *</span>
+            <span>Why?</span>
             <Combo creatable value={rejecting.reasonCategory} onChange={(e) => setRejecting({ ...rejecting, reasonCategory: e.target.value })}>
               <option value="">— Select —</option>
               {REJECTION_REASONS_BY_SIDE.Client.map((x) => <option key={x} value={x}>{x}</option>)}

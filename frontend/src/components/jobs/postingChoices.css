@@ -66,3 +66,12 @@
 .rr-posting { display: block; font-size: 11.5px; color: var(--ink-soft, #64748b); }
 .rr-posting-wait { color: #9a3412; font-weight: 600; }
 .rr-postwait { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 6px 0; padding: 8px 10px; border: 1px solid #fed7aa; background: #fff7ed; border-radius: 10px; }
+
+/* ---- HORIZONTAL, NOT CLUMSY (founder, 2026-10-15): the sites are small tick chips in one wrapping row.
+   What happens with each site is the small badge beside its name (the long sentence is its hover text). ---- */
+.pc-sites { display: flex; flex-wrap: wrap; gap: 8px; }
+.pc-site { display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px; border-radius: 999px; grid-template-columns: none; }
+.pc-site .pc-line { display: none; }
+.pc-site .pc-mode { font-size: 11px; padding: 0 8px; }
+.pc-site .pc-name { font-size: 13.5px; }
+@media (max-width: 640px) { .pc-site { padding: 6px 10px; } .pc-site .pc-mode { grid-column: auto; } }

@@ -4,6 +4,7 @@ import api from '../../api';
 import { Modal } from '../proto.jsx';
 import ScheduledMessages, { clock } from './ScheduledMessages.jsx';
 import './autoMsg.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION -> COMPANY SETUP -> MESSAGE TEMPLATES -> AUTOMATIC MESSAGES
@@ -214,10 +215,10 @@ function RuleEditor({ item, data, canManage, onClose, onSaved }) {
             <div className="am-grid2" style={{ marginTop: 10 }}>
               <div className="am-field">
                 <label htmlFor="am-tpl">Which template</label>
-                <select id="am-tpl" disabled={dis} value={d.templatePurpose || ''} onChange={(e) => upd({ templatePurpose: e.target.value || null })}>
+                <Combo id="am-tpl" disabled={dis} value={d.templatePurpose || ''} onChange={(e) => upd({ templatePurpose: e.target.value || null })}>
                   <option value="">None yet: write one in the Templates tab</option>
                   {data.templates.map((t) => <option key={t.purpose} value={t.purpose}>{t.label}</option>)}
-                </select>
+                </Combo>
                 <div className="am-help">{d.templatePurpose ? <Link to="/admin/message-templates">Change the template words</Link> : 'This step has no template yet, so nothing can be sent until you pick or write one.'}</div>
               </div>
               <div className="am-field">
@@ -411,7 +412,7 @@ export default function AutomaticMessagesTab() {
               <span className="am-track" /><span>{it.rule.on ? 'On' : 'Off'}</span>
             </button>
             <div className="am-sum">{summary(it.rule)}</div>
-            <button type="button" className="btn btn-sm" onClick={() => setEdit(it)}>{canManage ? 'Change' : 'Look'}</button>
+            <button type="button" className="btn btn-sm" onClick={() => setEdit(it)}>{canManage ? 'Edit' : 'Look'}</button>
           </div>
         ))}
       </div>
@@ -423,7 +424,7 @@ export default function AutomaticMessagesTab() {
 
       {(data.jobs.length > 0 || data.pausedPeople.length > 0) && (
         <>
-          <div className="section-label" style={{ marginTop: 18 }}>Jobs and people with their own setting</div>
+          <div className="section-label" style={{ marginTop: 18 }}>Requirements and people with their own setting</div>
           <div className="am-card">
             {data.jobs.map((j) => (
               <div key={j.id} className="am-rmeta"><b>{j.title}</b>: {j.mode === 'off' ? 'no automatic messages' : 'the recruiter approves each message first'}{j.by ? ` (set by ${j.by})` : ''}</div>
@@ -431,7 +432,7 @@ export default function AutomaticMessagesTab() {
             {data.pausedPeople.map((p) => (
               <div key={p.id} className="am-rmeta"><b>{p.name}</b>: paused, no automatic messages</div>
             ))}
-            <div className="am-help">A job&apos;s setting is on the job&apos;s page. A person is paused or resumed on their page, or with the buttons above.</div>
+            <div className="am-help">A requirement&apos;s setting is on the requirement&apos;s page. A person is paused or resumed on their page, or with the buttons above.</div>
           </div>
         </>
       )}

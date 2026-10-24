@@ -6,6 +6,8 @@ import partnerApi, {
   setPartnerToken, partnerToken, partnerError, PARTNER_NOTICE_KEY,
 } from '../../partnerApi';
 import './partnerPortal.css';
+import Combo from '../../components/Combo.jsx';
+import { payoutStatus } from '../../utils/statusWords.js';
 
 // /partner/jobs — the partner's ONLY page (B7). Three tabs: Jobs shared with
 // you (open one → the job card + "Send a candidate"), My candidates (every
@@ -159,7 +161,7 @@ export default function PartnerJobs() {
                             <td>{s.job}</td>
                             <td>{day(s.submittedAt)}</td>
                             <td><Tag tone={SUB_TONE[s.status]}>{s.status}</Tag><div className="cell-muted">{s.status === 'Duplicate' ? s.duplicateReason : s.statusText}</div></td>
-                            <td>{s.payout ? <><Tag tone={PAY_TONE[s.payout.status]}>{s.payout.status}</Tag> <span className="cell-muted">{inr(s.payout.net)}</span></> : '—'}</td>
+                            <td>{s.payout ? <><Tag tone={PAY_TONE[s.payout.status]}>{payoutStatus(s.payout.status)}</Tag> <span className="cell-muted">{inr(s.payout.net)}</span></> : '—'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -170,7 +172,7 @@ export default function PartnerJobs() {
                       <div key={s.id} className="pp-row">
                         <div className="pp-row-top"><strong>{s.name}</strong><Tag tone={SUB_TONE[s.status]}>{s.status}</Tag></div>
                         <div className="pp-row-meta">{s.job} · sent {day(s.submittedAt)}</div>
-                        <div className="pp-row-meta">{s.status === 'Duplicate' ? s.duplicateReason : s.statusText}{s.payout ? ` · Payout ${s.payout.status} ${inr(s.payout.net)}` : ''}</div>
+                        <div className="pp-row-meta">{s.status === 'Duplicate' ? s.duplicateReason : s.statusText}{s.payout ? ` · Payout ${payoutStatus(s.payout.status)} ${inr(s.payout.net)}` : ''}</div>
                       </div>
                     ))}
                   </div>
@@ -201,7 +203,7 @@ export default function PartnerJobs() {
                   <div className="pp-rows">
                     {payRows.map((p) => (
                       <div key={p.id} className="pp-row">
-                        <div className="pp-row-top"><strong>{p.number}</strong><Tag tone={PAY_TONE[p.status]}>{p.status}</Tag></div>
+                        <div className="pp-row-top"><strong>{p.number}</strong><Tag tone={PAY_TONE[p.status]}>{payoutStatus(p.status)}</Tag></div>
                         <div className="pp-row-meta">{p.candidateName} · {p.requirementTitle}</div>
                         <div className="pp-row-meta">Fee {inr(p.fee)}{p.gst ? ` + GST ${inr(p.gst)}` : ''}{p.tds ? ` − TDS ${inr(p.tds)}` : ''} = <b>{inr(p.net)}</b></div>
                         <div className="pp-row-meta">{p.statusText}{p.holdUntil && p.status !== 'Paid' ? ` · after ${day(p.holdUntil)}` : ''}{p.paidOn ? ` · paid ${day(p.paidOn)} (${p.paidRef})` : ''}</div>
@@ -241,7 +243,7 @@ function PayoutRow({ p, onDone, onError }) {
       <td className="num">{p.gst ? inr(p.gst) : '—'}</td>
       <td className="num">{p.tds ? `${inr(p.tds)} (${p.tdsSection} ${p.tdsPercent}%)` : '—'}</td>
       <td className="num"><b>{inr(p.net)}</b></td>
-      <td><Tag tone={PAY_TONE[p.status]}>{p.status}</Tag><div className="cell-muted">{p.statusText}{p.holdUntil && p.status !== 'Paid' && p.status !== 'Cancelled' ? ` · after ${day(p.holdUntil)}` : ''}{p.paidOn ? ` · ${day(p.paidOn)} · ${p.paidRef}` : ''}</div></td>
+      <td><Tag tone={PAY_TONE[p.status]}>{payoutStatus(p.status)}</Tag><div className="cell-muted">{p.statusText}{p.holdUntil && p.status !== 'Paid' && p.status !== 'Cancelled' ? ` · after ${day(p.holdUntil)}` : ''}{p.paidOn ? ` · ${day(p.paidOn)} · ${p.paidRef}` : ''}</div></td>
       <td>{p.partnerInvoice ? <span className="cell-muted">{p.partnerInvoice.number || p.partnerInvoice.name}</span> : null}{p.canUploadInvoice && <InvoiceUpload p={p} onDone={onDone} onError={onError} />}</td>
     </tr>
   );
@@ -383,6 +385,8 @@ function SubmitModal({ job, onClose, onSent }) {
     if (!v.name.trim()) { setError('Enter the candidate name.'); return; }
     if (!v.phone.trim()) { setError('Enter the mobile number.'); return; }
     if (!v.email.trim()) { setError('Enter the email.'); return; }
+    if (!String(v.currentCtc).trim()) { setError('Please enter current salary (0 if fresher).'); return; }
+    if (!(Number(String(v.expectedCtc).replace(/[,\s]/g, '')) > 0)) { setError('Please enter expected salary.'); return; }
     if (!file) { setError('Attach the resume (PDF or Word).'); return; }
     if (!v.consent) { setError('Tick the consent box first — the candidate must have agreed.'); return; }
     setBusy(true);
@@ -420,15 +424,15 @@ function SubmitModal({ job, onClose, onSent }) {
             <div><label htmlFor="scL">Current location</label><input id="scL" value={v.location} onChange={set('location')} /></div>
           </div>
           <div className="pp-two">
-            <div><label htmlFor="scC">Current CTC (per year, ₹)</label><input id="scC" inputMode="numeric" value={v.currentCtc} onChange={set('currentCtc')} placeholder="650000" /></div>
+            <div><label htmlFor="scC">Current CTC (per year, ₹, 0 if fresher)</label><input id="scC" inputMode="numeric" value={v.currentCtc} onChange={set('currentCtc')} placeholder="650000" /></div>
             <div><label htmlFor="scX">Expected CTC (per year, ₹)</label><input id="scX" inputMode="numeric" value={v.expectedCtc} onChange={set('expectedCtc')} placeholder="800000" /></div>
           </div>
           <div className="pp-two">
             <div>
               <label htmlFor="scNP">Notice period</label>
-              <select id="scNP" value={v.noticePeriod} onChange={set('noticePeriod')}>
+              <Combo id="scNP" value={v.noticePeriod} onChange={set('noticePeriod')}>
                 {['Immediate', '15 Days', '30 Days', '45 Days', '60 Days', '90 Days'].map((o) => <option key={o}>{o}</option>)}
-              </select>
+              </Combo>
             </div>
             <div><label htmlFor="scS">Key skills</label><input id="scS" value={v.skills} onChange={set('skills')} placeholder="comma separated" /></div>
           </div>

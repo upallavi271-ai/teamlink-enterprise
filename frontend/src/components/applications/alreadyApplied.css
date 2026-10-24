@@ -1,0 +1,16 @@
+/* "Already on this job" panel + inline notice (2026-10-16). */
+.aap { max-width: 640px; }
+.aap-lead { font-size: 15px; line-height: 1.5; margin: 0 0 10px; }
+.aap-box { border: 1px solid var(--line, #d8deea); border-left: 4px solid var(--amber, #d9930d); background: var(--amber-soft, #fff8e6); border-radius: 8px; padding: 10px 12px; margin: 0 0 12px; }
+.aap-box.is-bad { border-left-color: var(--red, #c0392b); background: #fdeeee; }
+.aap-kv { display: grid; grid-template-columns: 110px 1fr; gap: 4px 10px; font-size: 13.5px; }
+.aap-kv span { color: var(--ink-soft, #667); }
+.aap-note { font-size: 13px; color: var(--ink-soft, #556); margin: 6px 0 0; }
+.aap-others { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 6px; }
+.aap-others th { text-align: left; font-weight: 600; color: var(--ink-soft, #667); padding: 4px 6px; border-bottom: 1px solid var(--line, #d8deea); }
+.aap-others td { padding: 6px; border-bottom: 1px solid var(--line-soft, #eef1f7); }
+.aap-others tr.row-link { cursor: pointer; }
+.aap-others tr.row-link:hover { background: var(--hover, #f4f7fd); }
+.aap-h { font-size: 13px; font-weight: 600; margin: 12px 0 2px; }
+.aap-inline { margin: 8px 0; font-size: 13.5px; }
+.aap-inline .btn { margin-left: 8px; }

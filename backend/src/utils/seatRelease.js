@@ -56,6 +56,11 @@ const isNotice = (status) => NOTICE_STATUSES.includes(String(status || '').trim(
 
 // ---- the last working day of somebody on notice ----------------------------
 async function lastWorkingDayOf(employeeId) {
+  // THE ONE EXIT DATE (utils/exitDate.js): the current exit record's last working day, else the older readers below.
+  try {
+    const m = await require('./exitDate').exitDatesFor([employeeId], { approvedOnly: false }); // eslint-disable-line global-require
+    if (m.has(employeeId)) return { date: m.get(employeeId).date, source: 'last working day on the exit record' };
+  } catch { /* fall through */ }
   try {
     const r = await prisma.resignationDetail.findFirst({
       where: { employeeId },
@@ -278,7 +283,30 @@ function install() {
 }
 install();
 
+// WHO SITS IN A SEAT, SORTED (founder, 2026-10-23: "somebody is on notice - the new employee must be addable in their place WHILE they are on notice").
+// Every open tenure of the seat:
+//   active  really sitting in it (a second person cannot be put beside them)
+//   notice  leaving, still working the notice: a replacement MAY be added now (a handover - both work the seat until the last working day;
+//           the leaver's tenure ends by itself on that day, the newcomer's carries on)
+//   left    has gone: the seat is free, their tenure is ended when the newcomer takes it
+async function holdersOf(positionId, { exceptEmployeeId = null } = {}) {
+  const open = await prisma.positionAssignment.findMany({
+    where: { positionId, toDate: null },
+    include: { employee: { select: { id: true, name: true, employeeCode: true, employmentStatus: true } } },
+    orderBy: { fromDate: 'desc' },
+  });
+  const out = { active: [], notice: [], left: [] };
+  open.filter((a) => a.employeeId !== exceptEmployeeId).forEach((a) => {
+    const st = a.employee && a.employee.employmentStatus;
+    if (!a.employee) out.active.push(a);
+    else if (hasLeft(st)) out.left.push(a);
+    else if (isNotice(st)) out.notice.push(a);
+    else out.active.push(a);
+  });
+  return out;
+}
+
 module.exports = {
   actorScope, releaseSeatsOf, sweepDueExits, ensureFresh, startSweep, seatStateOf,
-  lastWorkingDayOf, endDateFor, isNotice, install,
+  lastWorkingDayOf, endDateFor, isNotice, install, holdersOf,
 };

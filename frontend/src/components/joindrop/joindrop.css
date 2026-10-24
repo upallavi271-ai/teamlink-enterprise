@@ -1,0 +1,45 @@
+/* Joining & Drop: names and words stay fully visible (wrap, never cut) at 1366px and on a phone. */
+.jd-card { border: 1px solid var(--line, #e2e8f0); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; background: #fff; }
+.jd-card h4 { margin: 0 0 8px; font-size: 14px; }
+.jd-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.jd-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px 18px; }
+.jd-kv { min-width: 0; }
+.jd-kv .k { font-size: 11.5px; color: #64748b; }
+.jd-kv .v { font-size: 13.5px; overflow-wrap: anywhere; word-break: break-word; white-space: normal; }
+.jd-kv .v.nr { color: #b45309; font-style: italic; }
+.jd-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.jd-banner { border-radius: 8px; padding: 8px 10px; margin: 8px 0; font-size: 13px; background: #fef9c3; border: 1px solid #fde68a; overflow-wrap: anywhere; }
+.jd-banner.red { background: #fee2e2; border-color: #fecaca; }
+.jd-banner.green { background: #dcfce7; border-color: #bbf7d0; }
+.jd-banner.blue { background: #dbeafe; border-color: #bfdbfe; }
+.jd-hist { list-style: none; margin: 0; padding: 0; }
+.jd-hist li { display: grid; grid-template-columns: 150px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
+.jd-hist .when { color: #64748b; font-size: 12px; }
+.jd-hist .by { color: #64748b; font-size: 12px; }
+.jd-ms { list-style: none; margin: 0; padding: 0; }
+.jd-ms li { display: grid; grid-template-columns: 130px 1fr auto; gap: 10px; padding: 7px 0; border-bottom: 1px solid #f1f5f9; font-size: 13px; align-items: start; }
+.jd-ms .day { font-weight: 600; }
+.jd-ms .day.pending { color: #94a3b8; font-weight: 400; }
+.jd-ms .day.nr { color: #b45309; font-weight: 400; font-style: italic; }
+.jd-ms .elapsed { font-size: 11.5px; background: #eff6ff; color: #1d4ed8; border-radius: 10px; padding: 2px 8px; white-space: nowrap; }
+.jd-ms .sub { color: #64748b; font-size: 12px; overflow-wrap: anywhere; }
+.jd-three { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin: 10px 0; }
+.jd-three button { padding: 14px 10px; border-radius: 10px; border: 2px solid #cbd5e1; background: #fff; font-size: 15px; font-weight: 600; cursor: pointer; white-space: normal; }
+.jd-three button.on { border-color: #1d4ed8; background: #eff6ff; color: #1d4ed8; }
+.jd-three button.on.no { border-color: #b91c1c; background: #fee2e2; color: #b91c1c; }
+.jd-three button.on.later { border-color: #b45309; background: #fef3c7; color: #92400e; }
+.jd-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; align-items: flex-end; }
+.jd-filters label { display: flex; flex-direction: column; font-size: 11.5px; color: #64748b; min-width: 150px; }
+.jd-filters label.wide { min-width: 220px; }
+.jd-strip { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.jd-strip .tile { border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 12px; background: #f8fafc; min-width: 110px; }
+.jd-strip .tile b { display: block; font-size: 18px; }
+.jd-strip .tile span { font-size: 11.5px; color: #64748b; }
+.jd-cell-wrap { overflow-wrap: anywhere; white-space: normal; min-width: 90px; }
+.jd-table td, .jd-table th { vertical-align: top; }
+.jd-told { font-size: 12.5px; }
+.jd-told td { padding: 3px 8px 3px 0; vertical-align: top; overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .jd-hist li, .jd-ms li { grid-template-columns: 1fr; gap: 2px; }
+  .jd-ms .elapsed { justify-self: start; }
+}

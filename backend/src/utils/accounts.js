@@ -20,6 +20,25 @@ function invoiceOutstanding(invoice) {
 
 const SETTLED_TOLERANCE = 0.5; // rupees — below this an invoice counts as closed
 
+// THE ONE DAY RULE (Accounts, 2026-10-17). A due date is a plain calendar date in IST ("2026-10-17"),
+// so "today", "late" and the age buckets are worked out from DATE STRINGS in IST — never from a UTC
+// timestamp and never from the server's own time zone (a server in UTC flipped an invoice to Overdue
+// at 05:30 IST instead of at midnight, and "days late" was one short for the first 5.5 hours of a day).
+//   late      = due date BEFORE today (IST)            -> daysOverdue > 0
+//   due today = daysOverdue 0                           -> not late yet
+// The Invoices page does the same in the browser (frontend invoices/invFilters.js todayIst / dayDiff).
+const IST_OFFSET_MS = 330 * 60000;
+function istDay(d = new Date()) {
+  const dt = d instanceof Date ? d : new Date(d);
+  if (Number.isNaN(dt.getTime())) return '';
+  return new Date(dt.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+const ISO_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+function dayNumber(iso) {
+  const [y, m, d] = String(iso).split('-').map(Number);
+  return Date.UTC(y, m - 1, d) / 86400000;
+}
+
 // The status an invoice *should* carry, given its receipts and due date.
 // 'Cancelled' is sticky: a cancelled invoice is never re-derived.
 function deriveInvoiceStatus(invoice, today = new Date()) {
@@ -27,7 +46,7 @@ function deriveInvoiceStatus(invoice, today = new Date()) {
   const outstanding = invoiceOutstanding(invoice);
   if (outstanding <= SETTLED_TOLERANCE) return 'Paid';
   if (Number(invoice.receivedAmount || 0) > 0) return 'Partially Paid';
-  if (invoice.dueDate && String(invoice.dueDate) < toIsoDate(today)) return 'Overdue';
+  if (invoice.dueDate && String(invoice.dueDate).slice(0, 10) < istDay(today)) return 'Overdue';
   return 'Pending';
 }
 
@@ -306,11 +325,14 @@ function wordsINR(amount) {
 
 const AGE_BUCKETS = ['Not due yet', '0–30 days', '31–60 days', '61–90 days', '90+ days'];
 
+// Whole days between the due date and today, both as IST calendar dates: > 0 = late, 0 = due today, < 0 = not due yet.
 function daysOverdue(dueDate, today = new Date()) {
   if (!dueDate) return null;
-  const d = new Date(dueDate);
-  if (Number.isNaN(d.getTime())) return null;
-  return Math.floor((today - d) / 86400000);
+  const due = String(dueDate).slice(0, 10);
+  if (!ISO_DAY_RE.test(due)) return null;
+  const now = istDay(today);
+  if (!now) return null;
+  return dayNumber(now) - dayNumber(due);
 }
 
 // "Invoice age" in the pending screens is days since the invoice was raised —
@@ -326,7 +348,8 @@ function invoiceAge(invoiceDate, today = new Date()) {
 function ageBucket(invoice, today = new Date()) {
   if (invoiceOutstanding(invoice) <= SETTLED_TOLERANCE) return 'Settled';
   const n = daysOverdue(invoice.dueDate, today);
-  if (n == null || n < 0) return 'Not due yet';
+  // Due today is NOT late yet: the buckets from 0-30 on hold exactly the invoices the Overdue card counts (n > 0).
+  if (n == null || n <= 0) return 'Not due yet';
   if (n <= 30) return '0–30 days';
   if (n <= 60) return '31–60 days';
   if (n <= 90) return '61–90 days';
@@ -457,6 +480,7 @@ module.exports = {
   AGE_BUCKETS,
   ageBucket,
   daysOverdue,
+  istDay,
   invoiceAge,
   normName,
   clientFromNarration,

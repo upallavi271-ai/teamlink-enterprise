@@ -9,6 +9,11 @@ export const VIEW_AS_KEY = 'tl_viewas_token';
 export function viewAsToken() {
   try { return sessionStorage.getItem(VIEW_AS_KEY) || null; } catch { return null; }
 }
+// "Act as" (edit) uses the same slot; this says which kind of token is in it.
+export const ACT_MODE_KEY = 'tl_viewas_mode';
+export function actAsMode() {
+  try { return viewAsToken() && sessionStorage.getItem(ACT_MODE_KEY) === 'act'; } catch { return false; }
+}
 
 api.interceptors.request.use((config) => {
   const token = viewAsToken() || localStorage.getItem('tl_token');
@@ -35,13 +40,23 @@ api.interceptors.response.use(undefined, async (error) => {
   return api(config);
 });
 
+// PASSWORD CHANGED ELSEWHERE (reset link / Admin reset): the server ends older
+// sign-ins. This browser's token is dead, so go back to the sign-in page.
+api.interceptors.response.use(undefined, (error) => {
+  if (error.response?.status === 401 && error.response?.data?.code === 'PASSWORD_CHANGED' && !viewAsToken()) {
+    try { localStorage.removeItem('tl_token'); } catch { /* nothing stored */ }
+    if (!['/login', '/forgot-password', '/new-password'].includes(window.location.pathname)) window.location.assign('/login');
+  }
+  throw error;
+});
+
 // View as: a write the server refused as read-only is announced to the banner
 // (a toast) as well as returned to the screen; an ended / expired View-as
 // session drops this tab's token and goes back to the Super Admin.
 api.interceptors.response.use(undefined, (error) => {
   const status = error.response?.status;
   const data = error.response?.data || {};
-  if (status === 403 && data.viewAsReadOnly) {
+  if (status === 403 && (data.viewAsReadOnly || data.actAsBlocked)) {
     window.dispatchEvent(new CustomEvent('tl:viewas-blocked', { detail: data.error }));
   } else if (status === 401 && viewAsToken()) {
     try {
@@ -51,6 +66,20 @@ api.interceptors.response.use(undefined, (error) => {
     window.location.assign('/admin/view-as');
   }
   throw error;
+});
+
+// ACT AS: a send that really reaches a person (409 ACT_CONFIRM_SEND) asks first, in plain
+// words, then repeats the same call with X-Act-Confirm. "No" leaves the original error.
+api.interceptors.response.use(undefined, async (error) => {
+  const config = error.config;
+  const data = error.response?.data;
+  if (!config || error.response?.status !== 409 || !data || data.code !== 'ACT_CONFIRM_SEND' || config.actConfirmed) throw error;
+  const yes = await new Promise((resolve) => {
+    window.dispatchEvent(new CustomEvent('tl:actas-confirm', { detail: { text: data.error, resolve } }));
+    setTimeout(() => resolve(false), 120000);
+  });
+  if (!yes) { error.response.data = { ...data, error: 'Not sent.', cancelled: true }; throw error; }
+  return api({ ...config, actConfirmed: true, headers: { ...(config.headers || {}), 'X-Act-Confirm': 'send' } });
 });
 
 // B8 OVERRIDE: adding a person who does not meet a job's rules (POST
@@ -72,6 +101,20 @@ api.interceptors.response.use(undefined, async (error) => {
   let body = config.data;
   try { body = typeof body === 'string' ? JSON.parse(body) : (body || {}); } catch { body = {}; }
   return api({ ...config, b8OverrideAsked: true, data: { ...body, overrideReason: reason } });
+});
+
+// ALREADY ON THIS JOB: POST /applications answers 409 ALREADY_APPLIED { application, others } when the person is already on
+// the job. EVERY "Add application" button gets the same clear panel (where it is, the step, who added it, [Open this
+// application]) - no screen keeps its own tiny red line for it. A bulk add passes { noAlreadyPanel: true } and reports per row.
+api.interceptors.response.use(undefined, (error) => {
+  const data = error.response?.data;
+  if (error.response?.status === 409 && data && data.code === 'ALREADY_APPLIED' && data.application) {
+    error.alreadyApplied = true;
+    if (!error.config?.noAlreadyPanel) {
+      import('./components/applications/AlreadyApplied.jsx').then((m) => m.openAlreadyApplied(data)).catch(() => null);
+    }
+  }
+  throw error;
 });
 
 // DUPLICATE HOLD: a move out of the first step is refused (409 DUPLICATE_OPEN) while the person looks like someone already

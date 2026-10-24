@@ -71,6 +71,18 @@ const norm = (s) => MAP[String(s || '').toLowerCase().replace(/[^a-z]/g, '')] ||
 async function applyStatus(info) {
   const status = norm(info.status);
   if (!info.providerRef || !status) return { matched: 0, reason: 'unknown status or no message id' };
+  // WHATSAPP NUMBERS (utils/waNumbers.js): a report that names a number must be for a message that left from THAT number
+  if (info.numberId) {
+    const mapped = await require('./waNumbers').numberOfMessage(info.providerRef).catch(() => null); // eslint-disable-line global-require
+    if (mapped && mapped !== info.numberId) return { matched: 0, mismatch: true, reason: 'This delivery report came for another number than the one the message used.' };
+  }
+  // Omni-Channel monitor: the report is kept (and a replay counted); applying a status twice was always harmless, so it still runs
+  let R = null; let sev = null;
+  try { R = require('../outreach/omni/replyRouter'); sev = await R.beginStatus(info); } catch { R = null; } // eslint-disable-line global-require
+  const done = async (out) => { if (R && sev && !sev.duplicate) await R.endStatus(sev, out && out.matched); return out; };
+  return done(await applyStatusInner(info, status));
+}
+async function applyStatusInner(info, status) {
   const at = info.at ? new Date(info.at) : new Date();
   let matched = 0;
 
@@ -81,17 +93,28 @@ async function applyStatus(info) {
     if (status !== 'FAILED' && (RANK[current] || 0) >= RANK[status]) continue; // eslint-disable-line no-continue
     const label = status === 'DELIVERED' ? 'Delivered' : status === 'READ' ? 'Read' : status === 'FAILED' ? 'Not delivered' : 'Sent';
     const stamp = at.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    // the way it travelled ("via WhatsApp via QR-linked number (prototype)") stays on the line after every tick
+    const viaLabel = Object.values(require('../channels/settings').LABELS).find((l) => String(row.statusDetail || '').includes(l)); // eslint-disable-line global-require
     // eslint-disable-next-line no-await-in-loop
     await prisma.candidateMessage.update({
       where: { id: row.id },
       data: {
         status,
-        statusDetail: `${label} ${stamp}${status === 'FAILED' && info.error ? `: ${String(info.error).slice(0, 300)}` : ''} (${info.channel || row.channel} report)`.slice(0, 500),
+        statusDetail: `${label} ${stamp}${viaLabel ? ` via ${viaLabel}` : ''}${status === 'FAILED' && info.error ? `: ${String(info.error).slice(0, 300)}` : ''} (${info.channel || row.channel} report)`.slice(0, 500),
         ...(status === 'FAILED' ? { lastError: String(info.error || 'The provider reported the message as not delivered').slice(0, 500) } : {}),
       },
     }).catch(() => {});
     matched += 1;
   }
+
+  // 1b. the adapter layer's record of this message (provider, status ticks history - channels/store.js)
+  try {
+    const rec = await require('../channels/store').applyStatus(String(info.providerRef), status.toLowerCase(), { at, error: info.error || null }); // eslint-disable-line global-require
+    if (rec && !matched) matched = 1;
+  } catch { /* the record is optional */ }
+
+  // 1b. the job broadcast campaign's recipient row (broadcast/replies.js)
+  matched += await require('../broadcast/replies').statusReport({ providerRef: String(info.providerRef), status, error: info.error }).catch(() => 0); // eslint-disable-line global-require
 
   // 2. the bulk-send job's recipient row (the result screen + CSV)
   try {
@@ -108,38 +131,80 @@ async function findCandidateByPhone(e164) {
   return rows.find((c) => digitsOf(c.phone).slice(-10) === tail) || null;
 }
 
-// info: { channel:'WhatsApp'|'SMS', from, text, id, at, name }
+// info: { channel:'WhatsApp'|'SMS', from, text, id, at, name, provider }
+// Omni-Channel reply router (outreach/omni/replyRouter.js): the event is written to OmniProviderEvent FIRST (a replay is ignored), the sender is matched with
+// confidence (one clear match) or the reply waits in "Needs review" and is written on NO record. A failure is kept for a retry. The router never throws.
 async function applyInbound(info) {
   const channel = info.channel || 'WhatsApp';
   const e164 = digitsOf(info.from);
   if (!e164) return { stored: false };
   const at = info.at ? new Date(info.at) : new Date();
-  if (channel === 'WhatsApp') await putSetting(`${WINDOW_PREFIX}${e164}`, at.toISOString());
+  const providerId = info.provider || (channel === 'WhatsApp' ? 'whatsapp.cloud' : null);
+  let R = null;
+  try { R = require('../outreach/omni/replyRouter'); } catch { R = null; } // eslint-disable-line global-require
+  const ev = R ? await R.begin({ provider: providerId || `${String(channel).toLowerCase()}.inbound`, id: info.id, channel, from: e164, text: info.text, at, name: info.name }) : null;
+  if (ev && ev.duplicate) return { stored: true, duplicate: true, stop: STOP_WORDS.test(String(info.text || '')) };
+  if (ev && ev.id && info.numberId) { try { await require('../outreach/store').run('UPDATE "OmniProviderEvent" SET payload = ? WHERE id = ?', JSON.stringify({ numberId: info.numberId }), ev.id); } catch { /* the tag is a courtesy */ } } // eslint-disable-line global-require
+  try {
+    return await processInbound(info, { channel, e164, at, providerId, R, ev });
+  } catch (err) {
+    if (R && ev) await R.fail(ev, err);
+    throw err;
+  }
+}
+async function processInbound(info, { channel, e164, at, providerId, R, ev }) {
+  // WHATSAPP NUMBERS: the chat belongs to the number the person wrote to (a thread per number + contact; the 24-hour window is per number).
+  // The Main number (still reading the old form) keeps the old window key as well, so nothing about it changes.
+  let waNum = null;
+  if (channel === 'WhatsApp' && info.numberId) {
+    try {
+      const WN = require('./waNumbers'); // eslint-disable-line global-require
+      waNum = await WN.getRow(info.numberId);
+      await WN.noteMessage({ numberId: info.numberId, to: e164, providerRef: info.id || null, dir: 'IN', at });
+    } catch { waNum = null; }
+  }
+  if (channel === 'WhatsApp' && (!waNum || waNum.credSource === 'legacy')) await putSetting(`${WINDOW_PREFIX}${e164}`, at.toISOString());
+  // job broadcast (broadcast/replies.js): a reply to a campaign message is read, classified and counted; never throws
+  await require('../broadcast/replies').handle(info).catch(() => null); // eslint-disable-line global-require
   const stop = STOP_WORDS.test(String(info.text || ''));
   if (stop) await putSetting(`${OPTOUT_PREFIX}${channel}.${e164}`, { at: at.toISOString(), text: String(info.text).slice(0, 40) });
-  const cand = await findCandidateByPhone(e164);
+  // who is it? (no router = the old rule: the first matching candidate, else a client contact or employee)
+  const verdict = R ? await R.decide({ phone: e164, channel, at }) : null;
+  if (verdict && verdict.status !== 'confident') { await R.park(ev, verdict, { channel }); return { stored: false, review: true, reason: verdict.status, stop, candidateId: null }; }
+  const who = verdict ? verdict.person : null;
+  const cand = who ? (who.type === 'CANDIDATE' ? who : null) : await findCandidateByPhone(e164);
   const convo = require('./conversations'); // eslint-disable-line global-require
   const providerRef = info.id ? String(info.id).slice(0, 200) : null;
   if (cand) {
     // the provider re-sends a webhook when it did not hear back: one message is stored once
     const again = providerRef ? await prisma.candidateMessage.count({ where: { candidateId: cand.id, providerRef, status: 'RECEIVED' } }).catch(() => 0) : 0;
-    if (again) return { stored: true, duplicate: true, stop, candidateId: cand.id };
+    if (again) { if (R && ev) await R.finish(ev, who || { type: 'CANDIDATE', id: cand.id, name: cand.name }, { channel, text: info.text, at }); return { stored: true, duplicate: true, stop, candidateId: cand.id }; }
+    const portalApp = who && Array.isArray(who.portal) && who.portal.length === 1 ? who.portal[0].id : null;
     await prisma.candidateMessage.create({
       data: {
-        candidateId: cand.id, channel, template: 'INBOUND', templateLabel: stop ? 'Asked us to stop' : 'Reply received', trigger: 'Reply',
+        candidateId: cand.id, applicationId: portalApp, channel, template: 'INBOUND', templateLabel: stop ? 'Asked us to stop' : 'Reply received', trigger: 'Reply',
         recipient: `+${e164}`, body: String(info.text || '').slice(0, 4000), status: 'RECEIVED',
         statusDetail: stop ? `${channel}: they asked us to stop messaging them. Nothing more will be sent on ${channel}.` : `Reply on ${channel}${info.id ? ` (${info.id})` : ''}`,
         providerRef, sentAt: at,
       },
     }).catch(() => {});
     // The Inbox: the person's conversation gets the reply (unread, reopened, owner told).
-    await convo.recordIn({ personType: 'CANDIDATE', personId: cand.id, personName: cand.name, channel, body: info.text, providerRef, at, stop }).catch(() => {});
+    await convo.recordIn({ personType: 'CANDIDATE', personId: cand.id, personName: cand.name, channel, body: info.text, providerRef, at, stop, numberId: info.numberId || null }).catch(() => {});
+    if (info.numberId) await require('./waNumbers').tagThread(info.numberId, e164, { type: 'CANDIDATE', id: cand.id, name: cand.name }); // eslint-disable-line global-require
+    await require('../channels/store').recordInbound({ channel, provider: providerId, from: `+${e164}`, id: providerRef, personType: 'candidates', personId: cand.id, personName: cand.name, numberId: info.numberId || null }).catch(() => {}); // eslint-disable-line global-require
+    if (info.media) await require('./waChats').inboundMedia(info.media, { personType: 'CANDIDATE', personId: cand.id, numberId: info.numberId || null, providerRef }); // eslint-disable-line global-require
+    if (R && ev) await R.finish(ev, who || { type: 'CANDIDATE', id: cand.id, name: cand.name }, { channel, text: info.text, at });
     return { stored: true, stop, candidateId: cand.id };
   }
-  // Not a candidate: a client's contact or an employee writing back from the number we have on file.
-  const other = await convo.findByPhone(e164).catch(() => null);
+  // Not a candidate: a client's contact, an employee or a vendor writing back from the number we have on file.
+  const other = who || await convo.findByPhone(e164).catch(() => null);
+  if (other && other.type === 'VENDOR') { if (R && ev) await R.finish(ev, other, { channel, text: info.text, at }); return { stored: true, stop, candidateId: null, personType: 'VENDOR', personId: other.id }; }
   if (other && other.type !== 'CANDIDATE') {
-    await convo.recordIn({ personType: other.type, personId: other.id, personName: other.name, channel, body: info.text, providerRef, at, address: `+${e164}`, stop }).catch(() => {});
+    await convo.recordIn({ personType: other.type, personId: other.id, personName: other.name, channel, body: info.text, providerRef, at, address: `+${e164}`, stop, numberId: info.numberId || null }).catch(() => {});
+    if (info.numberId) await require('./waNumbers').tagThread(info.numberId, e164, { type: other.type, id: other.id, name: other.name }); // eslint-disable-line global-require
+    await require('../channels/store').recordInbound({ channel, provider: providerId, from: `+${e164}`, id: providerRef, personType: other.type === 'CLIENT' ? 'clients' : 'employees', personId: other.id, personName: other.name, numberId: info.numberId || null }).catch(() => {}); // eslint-disable-line global-require
+    if (info.media) await require('./waChats').inboundMedia(info.media, { personType: other.type, personId: other.id, numberId: info.numberId || null, providerRef }); // eslint-disable-line global-require
+    if (R && ev) await R.finish(ev, other, { channel, text: info.text, at });
     return { stored: true, stop, candidateId: null, personType: other.type, personId: other.id };
   }
   return { stored: false, stop, candidateId: null };

@@ -11,6 +11,8 @@ const CNU = require('../utils/creditNotes');
 const XLSX = require('xlsx');
 const attachments = require('../utils/attachments');
 const { roleForProduct, SET, can } = require('../utils/permissions');
+// The one truth table for "is this bill really paid?" (utils/expensePaymentState.js).
+const PAYSTATE = require('../utils/expensePaymentState');
 const {
   checkGstin, isPan, isTan, isIfsc, isUpi, clean: cleanId, stateName: gstStateName,
 } = require('../utils/gstin');
@@ -916,9 +918,13 @@ async function registerData(query) {
   if (txnIds.length) {
     const txns = await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } } });
     const byId = new Map(txns.map((x) => [x.id, x]));
+    const pay = await PAYSTATE.describeMany(prisma, rows.filter((r) => r.bankTxnId));
     rows.forEach((r) => {
       const x = r.bankTxnId ? byId.get(r.bankTxnId) : null;
-      r.bankLine = x ? {
+      const p = pay.get(r.id);
+      r.payment = PAYSTATE.brief(p);
+      // A line that cannot be trusted (gone, money in, no bank account) is no proof: no bank line on the row.
+      r.bankLine = x && p && p.proof.valid ? {
         id: x.id, date: x.date, description: x.description, reference: x.reference, amount: x.amount, type: x.type,
       } : null;
     });
@@ -1032,8 +1038,8 @@ router.get('/register/export.xlsx', requirePerm('accounts', 'accounts', 'Office 
     'Before GST', 'GST', 'TDS', 'After GST', 'Total', 'Paid', 'Balance', 'Missing', 'Proof',
     'Income (month)', 'Profit / Loss (month)', 'GST payable (month)'];
   const proofText = (r) => {
-    const base = r.bankLine ? `Bank statement · ${r.bankLine.reference || r.bankLine.date}`
-      : (r.proofName ? `Bill · ${r.proofName}` : 'No bill');
+    const base = r.bankLine ? ((r.payment && r.payment.proof && r.payment.proof.text) || `Bank statement · ${r.bankLine.reference || r.bankLine.date}${r.payment && r.payment.state !== 'confirmed' ? ` (${r.payment.label})` : ''}`)
+      : (r.proofName ? `Bill · ${r.proofName}` : (r.bankTxnId ? 'Proof link is broken' : 'No bill'));
     return r.taxInvoiceNeeded ? `${base} · vendor tax invoice still needed` : base;
   };
   const mm = (m) => (m ? [m.income, m.pl, m.gstPayable] : ['', '', '']);
@@ -1318,7 +1324,7 @@ async function txnDatesFor(rows) {
   return new Map(t.map((x) => [x.id, x.date]));
 }
 
-function ledgerRow(r, names, txnDates) {
+function ledgerRow(r, names, txnDates, payment) {
   const pay = paymentDateFacts(r, txnDates);
   return {
     id: r.id,
@@ -1357,7 +1363,11 @@ function ledgerRow(r, names, txnDates) {
       isImage: !!(r.proofFile && /^image\//.test(r.proofMime || '')),
       isPdf: !!(r.proofFile && /pdf/i.test(r.proofMime || '')),
     } : null,
-    bankLine: !!r.bankTxnId,
+    // A link alone is not a payment: `payment` says whether the line is matched, part-paid, reversed or broken
+    // (utils/expensePaymentState.js). bankLine is true only when the link can really be opened.
+    bankLine: !!(payment && payment.proof.valid),
+    proofLink: !!r.bankTxnId,
+    payment: PAYSTATE.brief(payment),
     addedBy: r.createdById ? (names.get(r.createdById) || 'a removed login') : null,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt || null,
@@ -1375,9 +1385,10 @@ router.get('/ledger', async (req, res) => {
   const slice = d.rows.slice((page - 1) * pageSize, page * pageSize);
   const names = await peopleOf(slice.map((r) => r.createdById));
   const txnDates = await txnDatesFor(slice);
+  const payStates = await PAYSTATE.describeMany(prisma, slice);
   const approver = await isApprover(req.user);
   res.json({
-    rows: slice.map((r) => ledgerRow(r, names, txnDates)),
+    rows: slice.map((r) => ledgerRow(r, names, txnDates, payStates.get(r.id))),
     page,
     pageSize,
     pages,
@@ -1737,8 +1748,7 @@ router.put('/business-profile', async (req, res) => {
   }
   if (b.accountType !== undefined) {
     const t = txt(b.accountType);
-    if (t && !['Current', 'Savings'].includes(t)) return bad('Account type is Current or Savings');
-    data.accountType = t;
+    data.accountType = require('../utils/openVocab').clean(t, 40); // a typed own account type is kept (2026-10-15)
   }
   ['bankName', 'branch', 'accountName'].forEach((k) => { if (b[k] !== undefined) data[k] = txt(b[k]); });
 
@@ -2099,7 +2109,8 @@ function writeFields(body, data) {
   if (body.paymentMode !== undefined) data.paymentMode = EXP_MODES.includes(body.paymentMode) ? body.paymentMode : 'Bank Transfer';
   if (body.paidStatus !== undefined) data.paidStatus = PENDING_STORE(body.paidStatus);
   if (body.recurring !== undefined) data.recurring = !!body.recurring;
-  if (body.bankTxnId !== undefined) data.bankTxnId = body.bankTxnId || null;
+  // bankTxnId is NOT settable from a form: a proof link is made only by the bank screens (match a bill to a line,
+  // file a line as a bill), which also record it on the line. A typed id could point at any line, even a receipt.
   if (body.hsnSac !== undefined) data.hsnSac = String(body.hsnSac || '').replace(/\s+/g, '') || null;
   if (body.reverseCharge !== undefined) {
     data.reverseCharge = body.reverseCharge === '' || body.reverseCharge == null ? null
@@ -2558,8 +2569,11 @@ async function expenseDetail(id, user) {
   const d = decorate(e, await vendorMapOf());
   const approver = await isApprover(user);
   const st = d.approvalStatus;
+  // Is it really paid, and is the proof link good? One answer for every screen (utils/expensePaymentState.js).
+  const payment = await PAYSTATE.describeOne(prisma, e);
   return {
     ...d,
+    payment,
     amount: d.net,
     status: st,
     statusText: APPROVAL_LABEL[st],
@@ -2697,6 +2711,11 @@ router.get('/:id/bank-line', async (req, res) => {
   const e = await prisma.officeExpense.findUnique({ where: { id: req.params.id } });
   if (!e) return res.status(404).json({ error: 'Expense not found' });
   if (!e.bankTxnId) return res.status(404).json({ error: 'This expense is not matched to a bank statement line' });
+  // Only a link that checks out opens a line (gone / money in / no bank account = "Proof link is broken").
+  const payment = await PAYSTATE.describeOne(prisma, e);
+  if (!payment.proof.valid) {
+    return res.status(409).json({ error: `Proof link is broken: ${payment.proof.brokenReason || 'that line cannot be used.'}`, payment: PAYSTATE.brief(payment) });
+  }
   const txn = await prisma.bankTransaction.findUnique({ where: { id: e.bankTxnId } });
   if (!txn) return res.status(404).json({ error: 'The bank line this expense was matched to is no longer on file' });
   const accounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' } });
@@ -2736,6 +2755,8 @@ router.get('/:id/bank-line', async (req, res) => {
       bank: acc.bank, name: acc.name, accNo: acc.accNo ? `··${String(acc.accNo).slice(-4)}` : null, branch: acc.branch,
     } : null,
     difference: ROUND(Number(txn.amount || 0) - d.net),
+    payment: PAYSTATE.brief(payment),
+    bankId: payment.proof.bankId,
   });
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Administration → Step timing → "Interview reminders" (user, 2026-10-10): who is reminded of an
@@ -36,7 +37,7 @@ export default function InterviewReminderSettings() {
   async function save() {
     setBusy(true); setMsg(''); setErr('');
     try {
-      const r = await api.put('/ats/interview-reminder-plan', { candidate: form.candidate, parties: form.parties, digestAt: form.digestAt, noShow: form.noShow, feedback: form.feedback, quiet: form.quiet });
+      const r = await api.put('/ats/interview-reminder-plan', { candidate: form.candidate, parties: form.parties, digestAt: form.digestAt, noShow: form.noShow, feedback: form.feedback, quiet: form.quiet, armed: form.armed });
       setForm(JSON.parse(JSON.stringify(r.data.plan)));
       setMsg(r.data.message || 'Saved.');
     } catch (e) { setErr(e.response?.data?.error || 'Could not save. Try again.'); } finally { setBusy(false); }
@@ -49,7 +50,8 @@ export default function InterviewReminderSettings() {
     <div className="panel">
       <div className="panel-head">
         <h3>Interview reminders</h3>
-        {staffOn ? <StatusChip tone="green">On</StatusChip> : <StatusChip tone="amber">Team reminders off</StatusChip>}
+        {form.armed ? <StatusChip tone="green">Automatic sending On</StatusChip> : <StatusChip tone="amber">Automatic sending Off</StatusChip>}
+        {!staffOn && <StatusChip tone="amber">Team bell off</StatusChip>}
         {edit && <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button>}
       </div>
       <div style={{ padding: '8px 18px 14px', display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -59,6 +61,15 @@ export default function InterviewReminderSettings() {
           ({data.candidateEmailsOn ? 'it is On' : 'it is Off now, so nothing goes to candidates'}).
         </div>
         {!edit && <div className="notice">Only a Super Admin, Admin or HR can change these. You can read them.</div>}
+        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+          {check(form.armed, (v) => setForm({ ...form, armed: v }), 'Automatic sending')}
+          <span>
+            <b>Send the reminders by themselves</b>
+            <span className="small-muted" style={{ display: 'block' }}>
+              {form.armed ? 'On: mail, WhatsApp and SMS reminders go out as set below.' : 'Off: nothing is sent outside TeamLink by itself. The team still gets the app bell. Press Save after turning it on.'}
+            </span>
+          </span>
+        </label>
 
         <div>
           <b>The candidate</b>
@@ -70,10 +81,10 @@ export default function InterviewReminderSettings() {
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
             <span>Reach them by:</span>
             {WAYS.map(([w, label]) => <label key={w}>{check(form.candidate.channels.includes(w), () => toggleWay(w), label)} {label}</label>)}
-            <select value={form.candidate.strategy} disabled={!edit} onChange={(e) => setC('strategy', e.target.value)} aria-label="One way or all ways">
+            <Combo value={form.candidate.strategy} disabled={!edit} onChange={(e) => setC('strategy', e.target.value)} aria-label="One way or all ways">
               <option value="first">The first one that works</option>
               <option value="all">Every one that works</option>
-            </select>
+            </Combo>
           </div>
           <div className="small-muted" style={{ marginTop: 4 }}>
             If nobody tells the candidate within{' '}

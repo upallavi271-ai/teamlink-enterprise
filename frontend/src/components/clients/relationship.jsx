@@ -60,11 +60,12 @@ export function RelationshipStrip({ s, onTab, tabs = null }) {
   // zero is not drawn at all (never a bare zero). Pending decisions, invoices,
   // guarantee and last activity live in their own tabs.
   const cards = [
-    card('req', 'Open jobs', s.activeRequirements, s.totalRequirements ? `of ${s.totalRequirements} jobs` : null, 'requirements'),
+    card('req', 'Open requirements', s.activeRequirements, s.totalRequirements ? `of ${s.totalRequirements} requirements` : null, 'requirements'),
     has('candidatesSubmitted') && s.candidatesSubmitted ? card('sub', 'People sent', s.candidatesSubmitted, null, 'candidates') : null,
     has('clientInterviews') && s.clientInterviews ? card('int', 'Interviews', s.clientInterviews, null, 'interviews') : null,
     has('selectedCount') && s.selectedCount ? card('sel', 'Selected', s.selectedCount, null, 'selected') : null,
     s.joinedCount ? card('join', 'Joined', s.joinedCount, null, 'selected') : null,
+    has('replacementCount') && s.replacementCount ? card('repl', 'Replacements', s.replacementCount, 'left · who replaced', 'replacements') : null,
   ].filter((x, k) => x && (k > 0 || s.activeRequirements));
   if (!cards.length) return null;
   return (

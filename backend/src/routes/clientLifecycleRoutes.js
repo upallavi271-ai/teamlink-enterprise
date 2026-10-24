@@ -327,7 +327,7 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
   router.get('/:id/delete-check', async (req, res) => {
     const client = req.client;
     const rights = rightsFor(req.user, client, await baseRights(req.user));
-    if (!rights.delete) return res.status(403).json({ error: 'Only a Super Admin can permanently delete a client.' });
+    if (!rights.delete) return res.status(403).json({ error: 'Only a Super Admin or the BDE team (for their own clients) can permanently delete a client.' });
     const blockers = await deleteBlockers(client);
     const dup = await findClientDuplicates(
       { name: client.name, gst: client.gst, pan: client.pan },
@@ -351,7 +351,7 @@ module.exports = function mountClientLifecycle(router, { shapeFor, executionFile
     const client = req.client;
     const rights = rightsFor(req.user, client, await baseRights(req.user));
     if (!rights.delete) {
-      return res.status(403).json({ error: 'Only a Super Admin can permanently delete a client. Archive it instead — data and accounting records stay intact.' });
+      return res.status(403).json({ error: 'Only a Super Admin or the BDE team (for their own clients) can delete a client for good. Archive it instead — data and accounting records stay intact.' });
     }
     const body = req.body || {};
     const typed = String(body.confirmName ?? '').trim();

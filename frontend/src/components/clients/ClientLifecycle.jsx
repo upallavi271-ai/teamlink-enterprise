@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import './clientLifecycle.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // CLIENT PAUSE / ARCHIVE / DELETE (user's spec 2026-10-03 §A).
@@ -37,8 +38,8 @@ export function ClientPausedBadge({ client, lifecycle, title }) {
     <span
       className={`cllc-badge ${lc === 'Paused' ? 'paused' : 'archived'}`}
       title={title || (lc === 'Paused'
-        ? 'Client paused. No new people or jobs.'
-        : 'Client archived. No new people or jobs. Records are kept.')}
+        ? 'Client paused. No new people or requirements.'
+        : 'Client archived. No new people or requirements. Records are kept.')}
     >
       {lc === 'Paused' ? 'Client paused' : 'Client archived'}
     </span>
@@ -53,8 +54,8 @@ export function ClientPausedBanner({ clientName, lifecycle, children }) {
         <b>{lifecycle === 'Paused' ? 'Client paused' : 'Client archived'}</b>
         {`: ${clientName || 'this client'}. `}
         {lifecycle === 'Paused'
-          ? 'No new people or jobs. Work in progress stays.'
-          : 'No new people or jobs. Every record is kept.'}
+          ? 'No new people or requirements. Work in progress stays.'
+          : 'No new people or requirements. Every record is kept.'}
         {children}
       </span>
     </div>
@@ -71,11 +72,25 @@ export function LifecycleChip({ lifecycle }) {
 export const LIFECYCLE_ITEMS = [
   ['pause', 'Pause client'],
   ['requestPause', 'Ask to pause'],
-  ['reactivate', 'Reactivate'],
+  ['reactivate', 'Resume client'],
+  ['deactivate', 'Deactivate'],
+  ['requestDeactivate', 'Ask to deactivate'],
   ['archive', 'Archive'],
   ['unarchive', 'Restore'],
   ['delete', 'Delete permanently'],
+  ['requestDelete', 'Ask to delete'],
 ];
+// BDE business workspace (2026-10-10): asks that a Manager / Admin decides. They sit on the client page's
+// business card as plain buttons (ClientBusiness.jsx), not in the header.
+export const BUSINESS_ITEMS = [
+  ['submitApproval', 'Send for approval'],
+  ['changeOwner', 'Change owner'],
+  ['mergeNow', 'Merge with another client'],
+];
+export const businessItemsFor = (c) => {
+  const a = (c && c.lifecycleActions) || {};
+  return BUSINESS_ITEMS.filter(([k]) => a[k]);
+};
 export const lifecycleItemsFor = (c) => {
   const a = (c && c.lifecycleActions) || {};
   return LIFECYCLE_ITEMS.filter(([k]) => a[k]);
@@ -88,7 +103,7 @@ const COPY = {
     tone: 'btn-primary',
     explain: [
       'Nothing is deleted.',
-      'No new jobs or people sent until you reactivate.',
+      'No new requirements or people sent until you resume.',
     ],
     reasonLabel: 'Why pause this client?',
   },
@@ -98,16 +113,16 @@ const COPY = {
     tone: 'btn-primary',
     explain: [
       'An Admin or the department Manager decides.',
-      'Once approved: no new jobs or people sent.',
+      'Once approved: no new requirements or people sent.',
     ],
     reasonLabel: 'Why pause this client?',
   },
   reactivate: {
-    title: 'Reactivate client',
-    button: 'Reactivate',
+    title: 'Resume client',
+    button: 'Resume',
     tone: 'btn-primary',
-    explain: ['New jobs and people sent are allowed again.'],
-    reasonLabel: 'Why reactivate this client?',
+    explain: ['New requirements and people sent are allowed again.'],
+    reasonLabel: 'Why resume this client?',
   },
   archive: {
     title: 'Archive client',
@@ -126,6 +141,51 @@ const COPY = {
     explain: ['The client comes back to the list.'],
     reasonLabel: 'Why restore this client?',
   },
+  deactivate: {
+    title: 'Deactivate client',
+    button: 'Deactivate',
+    tone: 'btn-danger',
+    explain: ['Nothing is deleted. Every record is kept.', 'Resume the client any time.'],
+    reasonLabel: 'Why deactivate this client?',
+  },
+  requestDeactivate: {
+    title: 'Ask to deactivate',
+    button: 'Send request',
+    tone: 'btn-primary',
+    explain: ['The Manager of the department or an Admin decides.', 'You see the answer under Requests.'],
+    reasonLabel: 'Why deactivate this client?',
+  },
+  requestDelete: {
+    title: 'Ask to delete',
+    button: 'Send request',
+    tone: 'btn-danger',
+    explain: [
+      'An Admin decides.',
+      'If approved, the client leaves the lists. Every requirement, note and file is kept.',
+    ],
+    reasonLabel: 'Why delete this client?',
+  },
+  changeOwner: {
+    title: 'Change owner',
+    button: 'Change owner',
+    tone: 'btn-primary',
+    explain: ['Give this client to another BDE.', 'It changes at once. The reason is saved in the history.'],
+    reasonLabel: 'Why change the owner?',
+  },
+  mergeNow: {
+    title: 'Merge with another client',
+    button: 'Merge',
+    tone: 'btn-danger',
+    explain: ['Use this when both are the same company.', 'This client stays. The other one is joined into it, with its requirements and history.'],
+    reasonLabel: 'How do you know it is the same company?',
+  },
+  submitApproval: {
+    title: 'Send client for approval',
+    button: 'Send for approval',
+    tone: 'btn-primary',
+    explain: ['The Manager of the department or an Admin checks the client.', 'You see the answer under Requests.'],
+    reasonLabel: 'Anything the approver should know? (optional)',
+  },
   delete: {
     title: 'Delete client permanently',
     button: 'Delete permanently',
@@ -139,6 +199,8 @@ const COPY = {
 };
 const PATHS = {
   pause: 'pause', requestPause: 'pause-request', reactivate: 'reactivate', archive: 'archive', unarchive: 'unarchive',
+  deactivate: 'deactivate', requestDeactivate: 'request-deactivate', requestDelete: 'request-delete',
+  changeOwner: 'change-owner', mergeNow: 'merge', submitApproval: 'submit-approval',
 };
 
 // `onSwitch(mode)` (optional): the Archive dialog then offers "Delete it
@@ -151,6 +213,25 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
   const [busy, setBusy] = useState(false);
   const [check, setCheck] = useState(null);
   const [agreeOk, setAgreeOk] = useState(false);
+  const [newOwner, setNewOwner] = useState('');
+  const [owners, setOwners] = useState(null);
+  const [otherId, setOtherId] = useState('');
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState([]);
+
+  useEffect(() => {
+    if (mode !== 'changeOwner') return;
+    api.get('/clients/owner-options', { params: { department: client.ownerDepartment || undefined } })
+      .then((r) => setOwners((r.data || []).filter((o) => o.name !== client.bdeOwner)))
+      .catch(() => setOwners([]));
+  }, [mode, client.ownerDepartment, client.bdeOwner]);
+  useEffect(() => {
+    if (mode !== 'mergeNow' || q.trim().length < 2) { setFound([]); return undefined; }
+    const t = setTimeout(() => {
+      api.get('/clients/picker', { params: { q: q.trim(), limit: 8 } }).then((r) => setFound((r.data?.rows || []).filter((x) => x.id !== client.id))).catch(() => setFound([]));
+    }, 250);
+    return () => clearTimeout(t);
+  }, [mode, q, client.id]);
 
   useEffect(() => {
     if (mode !== 'delete') return;
@@ -162,11 +243,13 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
   if (!copy) return null;
   const blocked = mode === 'delete' && (!check || check.error || !check.canDelete);
   const nameOk = mode !== 'delete' || typed.trim() === String(client.name).trim();
-  const reasonOk = reason.trim().length >= 3;
+  const reasonOk = mode === 'submitApproval' || reason.trim().length >= 3;
+  const pickOk = (mode !== 'changeOwner' || !!newOwner) && (mode !== 'mergeNow' || !!otherId);
   const needsAgree = mode === 'delete' && !!check?.needsAgreementConfirm;
 
   async function submit() {
     if (!reasonOk) { setError('Write a reason (at least 3 letters).'); return; }
+    if (!pickOk) { setError(mode === 'changeOwner' ? 'Pick the BDE who should get this client.' : 'Pick the other client.'); return; }
     if (!nameOk) { setError('Type the client\'s exact name to confirm.'); return; }
     if (needsAgree && !agreeOk) { setError('Tick "Delete the signed agreement too" to confirm.'); return; }
     setBusy(true);
@@ -174,7 +257,13 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
     try {
       const res = mode === 'delete'
         ? await api.delete(`/clients/${client.id}`, { data: { confirmName: typed.trim(), reason: reason.trim(), confirmSignedAgreement: needsAgree ? agreeOk : undefined } })
-        : await api.post(`/clients/${client.id}/${PATHS[mode]}`, { reason: reason.trim() });
+        : mode === 'mergeNow'
+          ? await api.post('/client-merge/merge', { primaryId: client.id, donorIds: [otherId], reason: reason.trim() })
+          : await api.post(`/clients/${client.id}/${PATHS[mode]}`, {
+          reason: reason.trim(),
+          ...(mode === 'changeOwner' ? { newOwner } : {}),
+          ...(mode === 'submitApproval' ? { note: reason.trim() } : {}),
+        });
       onDone?.(res.data?.message || 'Done.', res.data, mode);
     } catch (err) {
       setError(err.response?.data?.error || 'That did not work. Please try again.');
@@ -195,7 +284,7 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
           <button
             type="button"
             className={`btn ${copy.tone}`}
-            disabled={busy || blocked || !reasonOk || !nameOk || (needsAgree && !agreeOk)}
+            disabled={busy || blocked || !reasonOk || !pickOk || !nameOk || (needsAgree && !agreeOk)}
             onClick={submit}
           >
             {busy ? 'Working…' : copy.button}
@@ -241,10 +330,32 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
           </div>
         )}
 
+        {!blocked && mode === 'changeOwner' && (
+          <label className="field">
+            <span>Give this client to</span>
+            <Combo value={newOwner} onChange={(e) => setNewOwner(e.target.value)}>
+              <option value="">{owners ? 'Pick a BDE' : 'Loading…'}</option>
+              {(owners || []).map((o) => <option key={o.id} value={o.name}>{o.label || o.name}</option>)}
+            </Combo>
+          </label>
+        )}
+        {!blocked && mode === 'mergeNow' && (
+          <div className="field">
+            <span>The other client (same company)</span>
+            <input type="text" value={q} onChange={(e) => { setQ(e.target.value); setOtherId(''); }} placeholder="Type part of the name" autoComplete="off" />
+            {found.length > 0 && (
+              <div className="cllc-pick">
+                {found.map((x) => (
+                  <button type="button" key={x.id} className={`btn btn-sm${otherId === x.id ? ' btn-primary' : ''}`} onClick={() => { setOtherId(x.id); setQ(x.name); setFound([]); }}>{x.name}</button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {!blocked && (
           <>
             <label className="field">
-              <span>{copy.reasonLabel} <b className="cllc-req">*</b></span>
+              <span>{copy.reasonLabel}</span>
               <textarea rows="3" autoFocus value={reason} maxLength={1000} onChange={(e) => setReason(e.target.value)} placeholder="Why? (needed)" />
             </label>
             {!reasonOk && <div className="small-muted" style={{ marginTop: -6 }}>Write a reason (at least 3 letters).</div>}
@@ -277,13 +388,17 @@ export function ClientLifecycleDialog({ client, mode, onClose, onDone, onSwitch 
 }
 
 // ---------------------------------------------------------------------------
-// PAUSE REQUESTS — a small panel on the Clients page. Admins and the
-// department Manager approve / reject; a BDE sees the requests they sent.
+// REQUESTS - one small panel on the Clients page (BDE business workspace, 2026-10-10).
+//   A BDE sees what they asked (pause, delete, deactivate, change of owner, merge, client approval, close a job)
+//   and the answer; a Manager / Admin sees what waits for them and Approves or Rejects (a reason for a reject).
+// (Kept under its old name PauseRequestsPanel too.)
 // ---------------------------------------------------------------------------
-export function PauseRequestsPanel({ enabled, reloadKey, onChanged }) {
+const KIND_WORD = {
+  pause: 'Pause', delete: 'Delete', deactivate: 'Deactivate', owner: 'Change owner', merge: 'Same as another client', approval: 'Approval', closejob: 'Close requirement',
+};
+export function RequestsPanel({ enabled, reloadKey, onChanged, defaultOpen = false }) {
   const [data, setData] = useState(null);
-  // Closed by default: one chip "Pause requests (N)" in the daily row.
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [rejecting, setRejecting] = useState(null);
   const [rejectReason, setRejectReason] = useState('');
   const [busy, setBusy] = useState('');
@@ -291,24 +406,28 @@ export function PauseRequestsPanel({ enabled, reloadKey, onChanged }) {
 
   function load() {
     if (!enabled) return;
-    api.get('/clients/pause-requests').then((r) => setData(r.data)).catch(() => setData(null));
+    api.get('/clients/requests').then((r) => setData(r.data)).catch(() => setData(null));
   }
   useEffect(load, [enabled, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
 
   if (!enabled || !data) return null;
-  const pending = data.requests.filter((r) => r.status === 'Pending');
-  const mineDone = data.requests.filter((r) => r.mine && r.status !== 'Pending').slice(0, 5);
-  if (!pending.length && !mineDone.length) return null;
+  const all = data.requests || [];
+  const pending = all.filter((r) => r.status === 'Pending');
+  const done = all.filter((r) => r.mine && r.status !== 'Pending').slice(0, 8);
+  const toDecide = pending.filter((r) => r.canDecide).length;
+  if (!pending.length && !done.length) return null;
 
   async function decide(r, action) {
     setBusy(r.id);
     setError('');
+    const base = r.kind === 'pause' ? '/clients/pause-requests' : '/clients/requests';
     try {
-      const res = await api.post(`/clients/pause-requests/${r.id}/${action}`, action === 'reject' ? { reason: rejectReason.trim() } : {});
+      const res = await api.post(`${base}/${r.id}/${action}`, action === 'reject' ? { reason: rejectReason.trim() } : {});
       setRejecting(null);
       setRejectReason('');
       load();
-      onChanged?.(res.data?.message || (action === 'approve' ? `${r.clientName} is paused.` : 'Request rejected.'));
+      onChanged?.(res.data?.message || (action === 'approve' ? 'Approved.' : 'Rejected.'));
     } catch (err) {
       setError(err.response?.data?.error || 'Could not save. Please try again.');
     } finally {
@@ -317,34 +436,45 @@ export function PauseRequestsPanel({ enabled, reloadKey, onChanged }) {
   }
 
   const when = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
+  const askLine = (r) => {
+    if (r.kind === 'owner') return `New owner: ${r.ask?.to || '—'}`;
+    if (r.kind === 'merge') return `Same company as: ${r.ask?.to || '—'}`;
+    if (r.kind === 'closejob') return `${r.ask?.to || 'Close'}`;
+    return null;
+  };
+  const chipCount = toDecide || pending.filter((r) => r.mine).length;
   if (!open) {
     return (
       <button type="button" className="btn btn-sm clrole-daychip" onClick={() => setOpen(true)} aria-expanded={false}>
-        {`Pause requests${pending.length ? ` (${pending.length})` : ''}`}
+        {`Requests${chipCount ? ` (${chipCount})` : ''}`}
       </button>
     );
   }
   return (
-    <div className="cllc-panel">
+    <div className="cllc-panel" id="client-requests">
       <button type="button" className="cllc-panel-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         <span>
-          <b>Pause requests</b>
-          {pending.length ? <span className="cllc-count">{pending.length}</span> : null}
+          <b>{toDecide ? 'Requests to decide' : 'My requests'}</b>
+          {chipCount ? <span className="cllc-count">{chipCount}</span> : null}
         </span>
         <span aria-hidden="true">{open ? '▾' : '▸'}</span>
       </button>
       {open && (
         <div className="cllc-panel-body">
           {error && <div className="error-text">{error}</div>}
-          {[...pending, ...mineDone].map((r) => (
+          {[...pending, ...done].map((r) => (
             <div key={r.id} className="cllc-req-row">
               <div className="cllc-req-main">
-                <Link to={`/clients/${r.clientId}`}><b>{r.clientName}</b></Link>
+                <b>{KIND_WORD[r.kind] || r.kindLabel}</b>
+                {' · '}
+                {r.clientId ? <Link to={`/clients/${r.clientId}`}><b>{r.clientName}</b></Link> : <b>{r.clientName}</b>}
+                {r.jobTitle ? <span className="small-muted">{` · ${r.jobTitle}`}</span> : null}
                 {r.ownerDepartment ? <span className="small-muted">{` · ${r.ownerDepartment}`}</span> : null}
+                {askLine(r) ? <div className="small-muted">{askLine(r)}</div> : null}
                 <div className="cllc-req-reason">{`“${r.reason || '—'}”`}</div>
                 <div className="small-muted">
-                  {`Requested by ${r.requestedBy || '—'} · ${when(r.requestedAt)}`}
-                  {r.status !== 'Pending' ? ` · ${r.status} by ${r.decidedBy || '—'}${r.decisionNote && r.status === 'Rejected' ? ` — ${r.decisionNote}` : ''}` : ''}
+                  {`Asked by ${r.requestedBy || '—'} · ${when(r.requestedAt)}`}
+                  {r.status !== 'Pending' ? ` · ${r.status} by ${r.decidedBy || '—'}` : ''}
                 </div>
               </div>
               <div className="cllc-req-act">
@@ -352,7 +482,7 @@ export function PauseRequestsPanel({ enabled, reloadKey, onChanged }) {
                 {r.status === 'Pending' && !r.canDecide && <span className="cllc-chip pending">Waiting for approval</span>}
                 {r.canDecide && rejecting !== r.id && (
                   <>
-                    <button type="button" className="btn btn-sm btn-primary" disabled={busy === r.id} onClick={() => decide(r, 'approve')}>Approve &amp; pause</button>
+                    <button type="button" className="btn btn-sm btn-primary" disabled={busy === r.id} onClick={() => decide(r, 'approve')}>Approve</button>
                     <button type="button" className="btn btn-sm" disabled={busy === r.id} onClick={() => { setRejecting(r.id); setRejectReason(''); }}>Reject</button>
                   </>
                 )}
@@ -371,3 +501,4 @@ export function PauseRequestsPanel({ enabled, reloadKey, onChanged }) {
     </div>
   );
 }
+export const PauseRequestsPanel = RequestsPanel;

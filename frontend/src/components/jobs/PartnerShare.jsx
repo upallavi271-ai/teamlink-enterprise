@@ -45,8 +45,8 @@ function ShareModal({ requirementId, data, onClose, onSaved }) {
   const eligible = data.partners.filter((p) => p.eligible);
   const others = data.partners.filter((p) => !p.eligible);
   return (
-    <Modal title="Share this job with partners" onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></>}>
-      <div className="small-muted" style={{ marginBottom: 8 }}>A ticked partner sees this job in their portal and can send candidates. Untick to take it away (their earlier candidates keep their status).</div>
+    <Modal title="Share this requirement with partners" onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></>}>
+      <div className="small-muted" style={{ marginBottom: 8 }}>A ticked partner sees this requirement in their portal and can send candidates. Untick to take it away (their earlier candidates keep their status).</div>
       {!data.partners.length && <div className="notice amber"><span>No partners yet. Add them in Administration → Company Setup → Partners.</span></div>}
       {eligible.map((p) => (
         <div key={p.id} style={{ display: 'flex', gap: 10, alignItems: 'center', padding: '8px 4px', borderTop: '1px solid var(--line-soft)', flexWrap: 'wrap' }}>
@@ -63,7 +63,7 @@ function ShareModal({ requirementId, data, onClose, onSaved }) {
       ))}
       {others.length > 0 && (
         <div className="small-muted" style={{ marginTop: 10, fontSize: 12 }}>
-          Cannot take this job (paused, or not covering {data.jobDepartment || 'this department'}): {others.map((p) => p.name).join(', ')}.
+          Cannot take this requirement (paused, or not covering {data.jobDepartment || 'this department'}): {others.map((p) => p.name).join(', ')}.
         </div>
       )}
       {said && <div className="notice green" style={{ marginTop: 8 }}><span>{said}</span></div>}

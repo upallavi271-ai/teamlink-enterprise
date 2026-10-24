@@ -508,6 +508,12 @@ async function importRows({ prepared, errors, skipped, createLogins, req, profil
     try {
       // eslint-disable-next-line no-await-in-loop
       const mapping = createLogins ? await mappingFor(r.designation) : null;
+      if (createLogins && r.email) {
+        // SECURITY (2026-10-13): the role a file row asks for goes through the role guard.
+        // eslint-disable-next-line no-await-in-loop
+        const why = await require('./roleGuard').checkRoleChange({ actor: req.user, current: null, next: { role: r.role || loginRoleFor(mapping), ...productRolesForDesignation(mapping) } });
+        if (why) throw new Error(why);
+      }
       // eslint-disable-next-line no-await-in-loop
       const out = await prisma.$transaction(async (tx) => {
         let userId = null;

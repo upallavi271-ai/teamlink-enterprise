@@ -17,6 +17,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import './incentives.css';
+import Combo from '../../components/Combo.jsx';
 
 const inr = (n) => (n === null || n === undefined || n === '' ? '—' : `₹${Math.round(Number(n)).toLocaleString('en-IN')}`);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -54,40 +55,40 @@ function RuleModal({ rule, options, onClose, onSaved }) {
       foot={<><button className="btn btn-primary" type="submit" form="inc-rule" disabled={busy}>{busy ? 'Saving…' : 'Save rule'}</button><button className="btn" type="button" onClick={onClose}>Cancel</button></>}>
       <form id="inc-rule" onSubmit={save} className="inc-form">
         {error && <div className="error-text">{error}</div>}
-        <label className="field"><span>Name of the rule *</span><input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Education recruiter - 4 joinings" /></label>
+        <label className="field"><span>Name of the rule</span><input value={f.name} onChange={(e) => set('name', e.target.value)} placeholder="Education recruiter - 4 joinings" /></label>
         <div className="grid-2">
           <label className="field"><span>Department</span>
-            <select value={f.department} onChange={(e) => set('department', e.target.value)}>
+            <Combo value={f.department} onChange={(e) => set('department', e.target.value)}>
               <option value="">Every department</option>
               {options.departments.map((d) => <option key={d.value} value={d.value}>{d.label} ({d.count})</option>)}
-            </select>
+            </Combo>
           </label>
           <label className="field"><span>Role (designation)</span>
-            <select value={f.role} onChange={(e) => set('role', e.target.value)}>
+            <Combo value={f.role} onChange={(e) => set('role', e.target.value)}>
               <option value="">Everyone in the department</option>
               {options.roles.map((d) => <option key={d.value} value={d.value}>{d.label} ({d.count})</option>)}
-            </select>
+            </Combo>
           </label>
-          <label className="field"><span>What is measured *</span>
-            <select value={f.metric} onChange={(e) => set('metric', e.target.value)}>
+          <label className="field"><span>What is measured</span>
+            <Combo value={f.metric} onChange={(e) => set('metric', e.target.value)}>
               {options.metrics.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+            </Combo>
           </label>
           <label className="field"><span>Must achieve at least</span>
             <input type="number" min="0" value={f.minAchieved} onChange={(e) => set('minAchieved', e.target.value)} placeholder="0" />
             <span className="small-muted">Below this in the month, nothing is paid ({unit}).</span>
           </label>
-          <label className="field"><span>How the amount is worked out *</span>
-            <select value={f.basis} onChange={(e) => set('basis', e.target.value)}>
+          <label className="field"><span>How the amount is worked out</span>
+            <Combo value={f.basis} onChange={(e) => set('basis', e.target.value)}>
               {options.bases.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
-            </select>
+            </Combo>
           </label>
-          <label className="field"><span>Amount (₹){f.basis === 'COMPLETION' ? '' : ' *'}</span>
+          <label className="field"><span>Amount (₹)</span>
             <input type="number" min="1" value={f.amount} onChange={(e) => set('amount', e.target.value)} placeholder={f.basis === 'COMPLETION' ? 'Leave empty: decided each time' : ''} />
             {f.basis === 'COMPLETION' && <span className="small-muted">Empty = nothing is paid by itself; when the target is completed it waits for you to give the amount.</span>}
           </label>
           {(f.basis === 'COMPLETION' || f.basis === 'PER_UNIT_OVER_TARGET') && (
-            <label className="field"><span>{f.basis === 'COMPLETION' ? 'Target to complete each month *' : 'Target'}</span><input type="number" min="0" value={f.target} onChange={(e) => set('target', e.target.value)} placeholder="4" /></label>
+            <label className="field"><span>{f.basis === 'COMPLETION' ? 'Target to complete each month' : 'Target'}</span><input type="number" min="0" value={f.target} onChange={(e) => set('target', e.target.value)} placeholder="4" /></label>
           )}
           {f.basis === 'PER_UNIT_OVER_TARGET' && (
             <span className="small-muted">Blank target = the person&apos;s own target (or the minimum above).</span>
@@ -132,22 +133,22 @@ function AddModal({ rules, month, onClose, onSaved }) {
       foot={<><button className="btn btn-primary" type="submit" form="inc-add" disabled={busy}>{busy ? 'Saving…' : 'Add'}</button><button className="btn" type="button" onClick={onClose}>Cancel</button></>}>
       <form id="inc-add" onSubmit={save} className="inc-form">
         {error && <div className="error-text">{error}</div>}
-        <label className="field"><span>Person *</span>
-          <select value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)}>
+        <label className="field"><span>Person</span>
+          <Combo value={f.employeeId} onChange={(e) => set('employeeId', e.target.value)}>
             <option value="">Pick a person</option>
             {people.map((p) => <option key={p.id} value={p.id}>{p.name} · {p.employeeCode} · {p.department || '—'}</option>)}
-          </select>
+          </Combo>
         </label>
-        <label className="field"><span>Month the work was done in *</span><input type="month" value={f.month} onChange={(e) => set('month', e.target.value)} /></label>
+        <label className="field"><span>Month the work was done in</span><input type="month" value={f.month} onChange={(e) => set('month', e.target.value)} /></label>
         <label className="field"><span>Under which rule</span>
-          <select value={f.ruleId} onChange={(e) => set('ruleId', e.target.value)}>
+          <Combo value={f.ruleId} onChange={(e) => set('ruleId', e.target.value)}>
             <option value="">No rule - I will type the amount</option>
             {rules.filter((r) => r.active).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          </Combo>
         </label>
         {f.ruleId
-          ? <label className="field"><span>How much was achieved *</span><input type="number" min="0" value={f.achieved} onChange={(e) => set('achieved', e.target.value)} /><span className="small-muted">The amount is worked out from the rule.</span></label>
-          : <label className="field"><span>Amount (₹) *</span><input type="number" min="1" value={f.amount} onChange={(e) => set('amount', e.target.value)} /></label>}
+          ? <label className="field"><span>How much was achieved</span><input type="number" min="0" value={f.achieved} onChange={(e) => set('achieved', e.target.value)} /><span className="small-muted">The amount is worked out from the rule.</span></label>
+          : <label className="field"><span>Amount (₹)</span><input type="number" min="1" value={f.amount} onChange={(e) => set('amount', e.target.value)} /></label>}
         <label className="field"><span>Note</span><input value={f.note} onChange={(e) => set('note', e.target.value)} placeholder="Why" /></label>
         <p className="small-muted">It waits for approval like the others.</p>
       </form>
@@ -378,10 +379,10 @@ export default function Incentives() {
       <div className="inc-bar">
         <FacetSelect label="Department" allLabel="All departments" value={dept} onChange={(v) => { setDept(v); setHistFor(''); }} options={peopleFacets.department || []} />
         <label className="lph-facet"><span className="lph-facet-lbl">Person</span>
-          <select value={histFor} onChange={(e) => setHistFor(e.target.value)}>
+          <Combo value={histFor} onChange={(e) => setHistFor(e.target.value)}>
             <option value="">Pick a person…</option>
             {shownPeople.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.employeeCode})</option>)}
-          </select>
+          </Combo>
         </label>
       </div>
       {histFor ? <HistoryTable data={hist} /> : <div className="small-muted">Pick a person, or tap a name above.</div>}
@@ -393,7 +394,7 @@ export default function Incentives() {
           foot={<><button className="btn btn-primary" disabled={busy === 'dec'} onClick={sendDecision}>{decide.decision === 'approve' ? 'Approve' : 'Reject'}</button><button className="btn" onClick={() => setDecide(null)}>Cancel</button></>}>
           <p><b>{decide.award.amount > 0 ? inr(decide.award.amount) : 'Amount not decided'}</b> for {decide.award.label} — {decide.award.rule} ({decide.award.achieved}{decide.award.target != null ? ` of ${decide.award.target}` : ''}).</p>
           {decide.decision === 'approve' && !(decide.award.amount > 0) && (
-            <label className="field"><span>Incentive amount (₹) *</span><input type="number" min="1" value={decide.amount ?? ''} onChange={(e) => setDecide((d) => ({ ...d, amount: e.target.value }))} /><span className="small-muted">The rule has no amount yet, so you give it now.</span></label>
+            <label className="field"><span>Incentive amount (₹)</span><input type="number" min="1" value={decide.amount ?? ''} onChange={(e) => setDecide((d) => ({ ...d, amount: e.target.value }))} /><span className="small-muted">The rule has no amount yet, so you give it now.</span></label>
           )}
           {decide.decision === 'approve' && (
             <label className="field"><span>Pay it with the salary of</span>

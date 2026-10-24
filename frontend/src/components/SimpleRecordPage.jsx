@@ -302,9 +302,9 @@ export default function SimpleRecordPage({
         )}
         <label className="lf-sort">
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
             {SORTS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
-          </select>
+          </Combo>
         </label>
       </PeopleFilterBar>
 

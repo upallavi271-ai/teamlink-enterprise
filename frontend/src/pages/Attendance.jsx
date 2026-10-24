@@ -15,10 +15,13 @@ import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
 // The Monthly Summary also carries the old "Reports (Monthly)" figures; the
 // Team Attendance tab is gone — the Biometric list is the day-by-day view.
 import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
+import { SourceChips, SourceFilter, PunchToggle, PunchDetails } from '../components/PunchSourceChip.jsx';
 import { HalfLeaveChip, DayKpis, PersonDayTiles, RangeBar, RangeKpis, DateTotalsTable, ScrollTable, matchesKpi, fmtDay, clock12, localToday, BUCKET_LABEL } from './attendance/DayReport.jsx';
 import { DayStatus } from './attendance/MyAttendance.jsx';
 import NotifySettings from './attendance/NotifySettings.jsx';
 import CheckinSettings from './attendance/CheckinSettings.jsx';
+import FaceReview from './attendance/FaceReview.jsx'; // web check-ins today + face check review
+import './attendance/checkin-flow.css';
 import AlertSettings from './attendance/AlertSettings.jsx';
 import KpiReport from './attendance/KpiReport.jsx';
 import LateComing from './attendance/LatePermission.jsx'; // Late coming: tell why I was late + approvals (same chain as leave)
@@ -333,6 +336,8 @@ function BiometricTab({ preset = null, goSummary = null }) {
   const [range, setRange] = useState(() => (preset ? { from: preset.from, to: preset.to } : { from: today(), to: today() }));
   const [kpi, setKpi] = useState(() => (preset && preset.kpi) || '');
   const [everyone, setEveryone] = useState(false);
+  const [src, setSrc] = useState(''); // Source filter: '' | web | biometric | pulse | hr
+  const [openRow, setOpenRow] = useState(null);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -351,7 +356,7 @@ function BiometricTab({ preset = null, goSummary = null }) {
   const single = range.from === range.to;
   // A KPI card lists people who may have no check-in (Absent, On Leave…), so
   // it asks for everyone too.
-  const params = { ...(single ? { date: range.from } : range), ...lf.params, ...(everyone || kpi ? { all: '1' } : {}) };
+  const params = { ...(single ? { date: range.from } : range), ...lf.params, ...(everyone || kpi ? { all: '1' } : {}), ...(src ? { punchSource: src } : {}) };
   const key = JSON.stringify(params);
   useEffect(() => {
     let alive = true;
@@ -395,6 +400,7 @@ function BiometricTab({ preset = null, goSummary = null }) {
           </label>
           {kpi && <button type="button" className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {kpiName(kpi)}</button>}
         </ListFilterBar>
+        <SourceFilter value={src} onChange={setSrc} totals={data?.sourceTotals} />
         {error && <div className="notice red">{error}</div>}
         <NoDataNotice data={data} to={range.to} />
         {data && !isRange && <DayKpis kpis={data.totals} date={data.date} headcount={data.headcount} active={kpi} onPick={setKpi} lateAfter={data.lateAfter} />}
@@ -420,10 +426,10 @@ function BiometricTab({ preset = null, goSummary = null }) {
       <ScrollTable>
         <table>
           <thead>
-            <tr>{REPORT_COLS.map(([k, label]) => <th key={k} style={{ whiteSpace: 'nowrap' }}>{label}</th>)}</tr>
+            <tr>{[...REPORT_COLS, ['punchSources', 'Punches by source']].map(([k, label]) => <th key={k} style={{ whiteSpace: 'nowrap' }}>{label}</th>)}</tr>
           </thead>
           <tbody>
-            {page.slice.map((r) => (
+            {page.slice.map((r) => [(
               <tr key={`${r.employeeId}-${r.date}`} title={`${r.dateLabel}: ${r.bucket === 'noRecord' ? 'No device data' : r.status}${r.note ? ` — ${r.note}` : ''}${r.source && r.source !== '—' ? ` · ${r.source}` : ''}`}>
                 <td><b>{r.employeeNo}</b></td>
                 <td>{r.employeeRef}</td>
@@ -439,14 +445,18 @@ function BiometricTab({ preset = null, goSummary = null }) {
                 <td style={{ whiteSpace: 'nowrap' }}>{r.totalTimeWorked || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.totalBreak || ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{r.totalHours || ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <SourceChips counts={r.sourceCounts} />
+                  {(r.rawPunches || []).length > 0 && <div><PunchToggle open={openRow === `${r.employeeId}-${r.date}`} count={r.rawPunches.length} onClick={() => setOpenRow(openRow === `${r.employeeId}-${r.date}` ? null : `${r.employeeId}-${r.date}`)} /></div>}
+                </td>
               </tr>
-            ))}
+            ), openRow === `${r.employeeId}-${r.date}` && <tr key={`${r.employeeId}-${r.date}-d`}><td colSpan="15"><PunchDetails list={r.rawPunches} /></td></tr>])}
             {data && rows.length === 0 && (
-              <tr><td colSpan="14">
+              <tr><td colSpan="15">
                 <ListEmpty lf={{ activeCount: lf.activeCount || kpi ? 1 : 0, clear: clearAll }} noun="rows" title="No check-ins in this period." />
               </td></tr>
             )}
-            {!data && !error && <tr><td colSpan="14" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="15" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>
@@ -485,9 +495,32 @@ const punchFields = (seen, roles) => [
   { key: 'method', label: 'Check-in method', allLabel: 'Any method', primary: true, options: seen.methods || [] },
 ];
 
+// Check-in / check-out tries refused for being outside the office area, with how far away they were.
+function RefusedAttempts({ from, to }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    api.get('/attendance/refused-attempts', { params: { from, to } }).then((r) => { if (alive) setRows(r.data.rows || []); }).catch(() => { if (alive) setRows([]); });
+    return () => { alive = false; };
+  }, [from, to]);
+  if (!rows || !rows.length) return null;
+  return (
+    <div className="ci-refused">
+      <div className="notice amber">
+        <b>{rows.length} check-in {rows.length === 1 ? 'try was' : 'tries were'} refused for being outside the office area</b>
+        <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+          {rows.slice(0, 30).map((r) => <li key={r.id}>{r.name} ({r.employeeCode}) — {r.date}: {r.text}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 function PunchLogTab() {
   const [range, setRange] = useState({ from: today(), to: today() });
   const [absentees, setAbsentees] = useState(false);
+  const [src, setSrc] = useState(''); // Source filter: '' | web | biometric | pulse | hr
+  const [openRow, setOpenRow] = useState(null);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -496,7 +529,7 @@ function PunchLogTab() {
   const lf = useListFilters([], punchFields(seen, roles), { server: true });
   const punchStatus = lf.params.punchStatus || '';
 
-  const query = { ...range, ...lf.params, ...(absentees ? { absentees: '1' } : {}) };
+  const query = { ...range, ...lf.params, ...(absentees ? { absentees: '1' } : {}), ...(src ? { punchSource: src } : {}) };
   useEffect(() => {
     let alive = true;
     setError('');
@@ -533,23 +566,27 @@ function PunchLogTab() {
             Show people without punches
           </label>
         </ListFilterBar>
+        <SourceFilter value={src} onChange={setSrc} totals={data?.sourceTotals} />
         <NoDataNotice data={data} to={range.to} />
         <div className="small-muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-          Time Interval = every punch of the day, earliest first — the biometric device and the imported old-HRMS log merged, each time once.
+          Time Interval = every punch of the day, earliest first — web check-ins, the biometric device and the imported old-HRMS log. Tap "All punches" on a row to see each punch with its source.
         </div>
       </div>
       {error && <div className="notice red" style={{ margin: '0 18px 10px' }}>{error}</div>}
+      <RefusedAttempts from={range.from} to={range.to} />
+      <FaceReview />
       <ScrollTable>
         <table>
           <thead>
-            <tr><th>Employee</th><th>Department</th><th>Designation</th><th>Attendance Date</th><th>Time Interval</th></tr>
+            <tr><th>Employee</th><th>Department</th><th>Designation</th><th>Attendance Date</th><th>Time Interval</th><th>Punches by source</th></tr>
           </thead>
           <tbody>
             {page.slice.map((r, i) => {
               // The employee's cells on their first row (and at the top of a page).
               const first = i === 0 || page.slice[i - 1].employeeId !== r.employeeId;
-              return (
-                <tr key={`${r.employeeId}-${r.date}`} className={first && i > 0 ? 'att-emp-first' : undefined}
+              const rk = `${r.employeeId}-${r.date}`;
+              return [
+                <tr key={rk} className={first && i > 0 ? 'att-emp-first' : undefined}
                   title={r.dayStatus ? `${r.dateLabel}: ${r.dayStatus}` : undefined}>
                   <td style={{ whiteSpace: 'nowrap' }}>{first ? <b>{r.employeeLabel}</b> : ''}</td>
                   <td className="cell-muted">{first ? (r.department || '') : ''}</td>
@@ -558,15 +595,20 @@ function PunchLogTab() {
                   <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12.5 }}>
                     {r.timeInterval || <span className="cell-muted">{r.dayStatus || 'No punch'}</span>}
                   </td>
-                </tr>
-              );
+                  <td>
+                    <SourceChips counts={r.sourceCounts} />
+                    {(r.rawPunches || []).length > 0 && <div><PunchToggle open={openRow === rk} count={r.rawPunches.length} onClick={() => setOpenRow(openRow === rk ? null : rk)} /></div>}
+                  </td>
+                </tr>,
+                openRow === rk && <tr key={`${rk}-d`}><td colSpan="6"><PunchDetails list={r.rawPunches} /></td></tr>,
+              ];
             })}
             {data && rows.length === 0 && (
               lf.activeCount > 0
-                ? <tr><td colSpan="5"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
-                : <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>No punches in this period.</td></tr>
+                ? <tr><td colSpan="6"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
+                : <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No punches in this period.</td></tr>
             )}
-            {!data && !error && <tr><td colSpan="5" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>
@@ -907,7 +949,7 @@ function RegularizationTab({ isHR, canDecide }) {
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Request Regularization</h3>
         <form onSubmit={submit}>
           <div className="grid-2">
-            <div className="field"><label>Date *</label><input type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
+            <div className="field"><label>Date</label><input type="date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
             <div className="field"><label>Requested Check-in</label><input value={form.requestedCheckIn} onChange={(e) => setForm({ ...form, requestedCheckIn: e.target.value })} placeholder="09:15" /></div>
             <div className="field"><label>Requested Check-out</label><input value={form.requestedCheckOut} onChange={(e) => setForm({ ...form, requestedCheckOut: e.target.value })} placeholder="18:15" /></div>
             <div className="field"><label>Reason</label><input value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>

@@ -1,0 +1,14 @@
+/* FIELD BY FIELD COPY (Win+V): one press copies every field of the site's form, in order. App colour tokens only. */
+.fbf { border: 1px solid var(--line); border-left: 4px solid var(--blue); border-radius: 10px; padding: 12px 14px; background: var(--paper-raised, #fff); display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.fbf-head { font-size: 14.5px; color: var(--ink); }
+.fbf-steps { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--ink); }
+.fbf-tip { font-size: 12.5px; background: var(--blue-tint); color: var(--ink); border-radius: 8px; padding: 7px 10px; }
+.fbf kbd { display: inline-block; min-width: 18px; text-align: center; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--line-soft); font: 600 12px/1.5 inherit; color: var(--ink); }
+.fbf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.fbf-ok { font-size: 13px; font-weight: 700; color: var(--teal); }
+.fbf-bad { font-size: 13px; background: var(--red-tint); color: var(--red); border-radius: 8px; padding: 7px 10px; }
+.fbf-list { margin: 0; padding: 0; list-style: none; counter-reset: fbf; display: flex; flex-direction: column; gap: 3px; }
+.fbf-list li { counter-increment: fbf; display: flex; gap: 10px; align-items: baseline; font-size: 12.5px; padding: 3px 0; border-top: 1px dashed var(--line-soft); }
+.fbf-list li::before { content: counter(fbf); flex: none; width: 20px; height: 20px; border-radius: 50%; background: var(--blue-tint); color: var(--blue); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; }
+.fbf-list b { flex: none; min-width: 120px; color: var(--ink); }
+.fbf-list span { color: var(--ink-soft); overflow-wrap: anywhere; }

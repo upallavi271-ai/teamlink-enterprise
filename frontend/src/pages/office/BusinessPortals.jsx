@@ -9,6 +9,7 @@ import { dueDates, fmtD } from './officeUtil';
 import {
   checkGstin, isPan, isTan, isIfsc, isUpi,
 } from '../../utils/gstin';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Business Details
@@ -73,7 +74,7 @@ function ProfileModal({ profile, onClose, onSaved }) {
         </label>
         <label className="field"><span>Branch name</span><input value={f.branch} onChange={up('branch')} /></label>
         <label className="field"><span>Account type</span>
-          <select value={f.accountType} onChange={up('accountType')}><option>Current</option><option>Savings</option></select>
+          <Combo value={f.accountType} allowCustom onChange={up('accountType')}><option>Current</option><option>Savings</option></Combo>
         </label>
         <label className="field oe-span2"><span>UPI / VPA</span>
           <input value={f.upi} onChange={up('upi')} placeholder="name@bank" />
@@ -156,9 +157,9 @@ function PortalEditModal({ portal, onClose, onSaved }) {
       <form id="ofp-portal-form" onSubmit={save}>
         {portal.pages.length > 1 && (
           <label className="field"><span>Open which page</span>
-            <select value={pageKey} onChange={(e) => setPageKey(e.target.value)}>
+            <Combo value={pageKey} onChange={(e) => setPageKey(e.target.value)}>
               {portal.pages.map((pg) => <option key={pg.key} value={pg.key}>{pg.label}</option>)}
-            </select>
+            </Combo>
           </label>
         )}
         <label className="field"><span>Address it opens</span>

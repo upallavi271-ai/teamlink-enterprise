@@ -29,6 +29,7 @@ const prisma = require('../db');
 const { resolvePositionScope } = require('./positionScope');
 const { scopeAliasFor } = require('./roleRegistry');
 const internalHr = require('./internalHr');
+const hrDeskRule = require('./hrDesk');
 const { bdeDesks, canonicalDepartment } = require('./bdeDesk');
 const { isSystemAccount } = require('./systemAccounts');
 
@@ -160,8 +161,18 @@ async function resolveIdentity(userId, preloaded = null) {
   const user = preloaded || await prisma.user.findUnique({ where: { id: userId } });
   if (!user) return null;
 
-  const employee = await prisma.employee.findUnique({ where: { userId: user.id } }).catch(() => null);
-  const mapping = await mappingFor(employee ? employee.designation : null);
+  let employee = await prisma.employee.findUnique({ where: { userId: user.id } }).catch(() => null);
+  // SEPARATE LOGINS ON ONE EMAIL (2026-10-21, utils/loginAccounts.js): an EXTRA login of a person has no Employee.userId (that stays on
+  // the primary login) but is linked to the same Employee record, so it shows the right name, department and employment status - and
+  // is switched off with the person when they leave. It gets NOTHING from that record: no designation-derived products or roles and
+  // no Internal-HR overlay. Its access is exactly what the Admin ticked on that login.
+  const meta = await require('./loginAccounts').metaOf(user.id); // eslint-disable-line global-require
+  let extraLogin = false;
+  if (!employee && meta.linkedEmployeeId) {
+    employee = await prisma.employee.findUnique({ where: { id: meta.linkedEmployeeId } }).catch(() => null);
+    extraLogin = !!employee;
+  }
+  const mapping = extraLogin ? null : await mappingFor(employee ? employee.designation : null);
 
   // Product access: the stored booleans win. The designation mapping only
   // fills in a login that predates them and has none set.
@@ -205,23 +216,35 @@ async function resolveIdentity(userId, preloaded = null) {
       || user.role
       || NO_ROLE;
   };
-  // INTERNAL HR (user, 2026-10-10): whoever sits in the Internal HR department acts as
-  // the HR desk in HRMS (every employee, the HR desk's actions), plus the Super Admin
-  // overlay in permissions.js minus what utils/internalHr.js blocks. A department
-  // rule, HRMS only: ATS / Accounts roles on the same login are untouched.
-  const internalHrInfo = await internalHr.resolveFor(employee, user, products).catch(() => null);
-  const hrmsRole = (internalHrInfo && internalHr.liftedHrmsRole(internalHrInfo, productRole('hrms', user.hrmsRole))) || productRole('hrms', user.hrmsRole);
+  // INTERNAL HR (user, 2026-10-13): the floor-HR department gets attendance + leave powers on top
+  // of the role it already holds (utils/internalHr.js). Nothing is lifted or changed here.
+  const internalHrInfo = extraLogin ? null : await internalHr.resolveFor(employee, user, products).catch(() => null);
+  // HR SUPER ACCESS (founder, 2026-10-14; utils/hrSuper.js): Super-Admin-equivalent, applied as the LAST step below.
+  const hrSuperInfo = await require('./hrSuper').resolveFor(user, employee).catch(() => null); // eslint-disable-line global-require
+  const hrmsRole = productRole('hrms', user.hrmsRole);
   const accountsRole = productRole('accounts', user.accountsRole);
   // The ATS role keeps its extra step: an external CLIENT / CANDIDATE login
   // carries no employee record and no designation, so its account kind is its
   // ATS role.
-  const atsRole = (!products.ats || user.atsRole === NO_ROLE)
+  const atsRoleHeld = (!products.ats || user.atsRole === NO_ROLE)
     ? NO_ROLE
     : (user.atsRole
       || (mapping ? named(mapping.atsRole) : null)
       || (['CLIENT', 'CANDIDATE'].includes(user.role) ? user.role : null)
       || user.role
       || NO_ROLE);
+  // THE HR DESK (user, 2026-10-13): HR works TeamLink's own openings only, never clients.
+  // A person who is the HR desk (utils/hrDesk.js) is HR in ATS whatever else was stored
+  // (an Internal HR TL included); their HRMS role is untouched.
+  const hrDesk = products.ats && !!named(atsRoleHeld) && hrDeskRule.isHrDesk({
+    role: user.role,
+    atsRole: atsRoleHeld,
+    hrmsRole: productRole('hrms', user.hrmsRole),
+    department: employee ? employee.department : null,
+    designation: employee ? employee.designation : null,
+    employmentStatus: employee ? employee.employmentStatus : null,
+  });
+  const atsRole = hrDesk ? 'HR' : atsRoleHeld;
 
   // Scope. Stored overrides win; otherwise the employee's own department/team.
   const departments = csv(user.atsScopeDepartments).length
@@ -397,6 +420,8 @@ async function resolveIdentity(userId, preloaded = null) {
 
   const identity = {
     id: user.id,
+    // Whether this is an extra (separate) login of a person.
+    extraLogin,
     email: user.email,
     name: user.name,
     // The ACCOUNT-LEVEL / system role: Super Admin, Admin, and the external
@@ -410,6 +435,8 @@ async function resolveIdentity(userId, preloaded = null) {
     accountsRole,
     // Internal HR department login (utils/internalHr.js): null for everybody else.
     internalHr: internalHrInfo,
+    // The HR desk (utils/hrDesk.js): internal hiring only in ATS, no clients.
+    hrDesk,
 
     employeeId: employee ? employee.id : null,
     employeeCode: employee ? employee.employeeCode : null,
@@ -457,6 +484,8 @@ async function resolveIdentity(userId, preloaded = null) {
   // employee-only prompt (profile completion, My Attendance, My Profile).
   identity.systemAccount = isSystemAccount(identity);
   if (identity.systemAccount) identity.landingPath = '/';
+  // Keeps the STORED roles in identity.hrSuper.real; everything below this line (and every guard) sees a Super Admin.
+  if (hrSuperInfo) require('./hrSuper').escalate(identity, hrSuperInfo); // eslint-disable-line global-require
   // Which workspaces this login can switch between — never a role picker.
   //
   // THE SWITCHER IS A SURFACE AN EXTERNAL LOGIN CAN SEE, so the labels it
@@ -480,17 +509,19 @@ async function resolveIdentity(userId, preloaded = null) {
 // database on every request anyway (see middleware/auth.js) so that revoking
 // access takes effect immediately rather than in eight hours.
 function tokenPayload(identity) {
+  // an HR-super login carries its STORED roles in the token; the escalation is re-applied from the database on every request
+  const real = identity.hrSuper ? identity.hrSuper.real : null;
   return {
     id: identity.id,
     email: identity.email,
     name: identity.name,
-    role: identity.role,
+    role: real ? real.role : identity.role,
     employeeId: identity.employeeId,
     clientId: identity.clientId,
     candidateId: identity.candidateId,
-    hrmsRole: identity.hrmsRole,
-    atsRole: identity.atsRole,
-    accountsRole: identity.accountsRole,
+    hrmsRole: real ? real.hrmsRole : identity.hrmsRole,
+    atsRole: real ? real.atsRole : identity.atsRole,
+    accountsRole: real ? real.accountsRole : identity.accountsRole,
     products: identity.products,
     workspace: identity.workspace,
   };

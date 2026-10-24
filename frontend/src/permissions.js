@@ -132,7 +132,12 @@ export const canEditPolicy = (user, feature) => can(user, 'hrms', 'hrms', featur
 
 // ATS pipeline actions. Was CAN_ACT / PIPELINE_ROLES / RAISE_ROLES.
 export const canActOnPipeline = (user) => can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
+// "Add job" form: Super Admin / Admin, and HR for TeamLink's own openings (backend utils/jobCreateRule.js).
 export const canRaiseRequirement = (user) => can(user, 'ats', 'requirements', 'Create Requirement', 'create');
+// "Request job": BDE, BDE TL, Manager, Assistant Manager (a draft a lead opens). Creating a job at all = either of the two;
+// a TL / STL / Recruiter has neither and asks the client manager instead (2026-10-13).
+export const canRequestJob = (user) => !canRaiseRequirement(user) && can(user, 'ats', 'requirements', 'Requirement Request', 'create');
+export const canStartJob = (user) => canRaiseRequirement(user) || can(user, 'ats', 'requirements', 'Requirement Request', 'create');
 export const canEditRequirement = (user) => can(user, 'ats', 'requirements', 'Requirement Detail', 'edit');
 export const canManageAgreement = (user) => can(user, 'ats', 'clients', 'Agreement Lifecycle', 'edit');
 export const canSignAgreement = (user) => can(user, 'ats', 'clients', 'Agreement Lifecycle', 'approve')

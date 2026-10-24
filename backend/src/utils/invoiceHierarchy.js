@@ -211,6 +211,18 @@ function attributeApplication(app, h, fallback) {
   };
 }
 
+// The TL SEAT an invoice's TL held in that section / department (EDU TL,
+// EDU-TL…), from the stored seat tenures — null when the TL holds no seat
+// there. The Role filter's TL option matches on it.
+function tlSeatOf(h, who) {
+  const p = who && who.tlKey ? h.people.get(who.tlKey) : null;
+  if (!p) return null;
+  const tls = p.entries.filter((e) => e.role === 'TL');
+  const hit = tls.find((e) => who.sectionKey && e.sectionKey === who.sectionKey)
+    || tls.find((e) => who.department && e.department === who.department);
+  return hit ? hit.seat : null;
+}
+
 // The payload the screen gets: departments -> sections, and every person
 // with their seat history. `attributed` = [{ recruiterKey, recruiterName,
 // tlKey, tlName, seat, department, invoice }] from the invoices (invoice:true)
@@ -269,5 +281,5 @@ function hierarchyPayload(h, attributed) {
 }
 
 module.exports = {
-  APP_ATTR_SELECT, REQ_ATTR_SELECT, deptLabel, loadHierarchy, attributeApplication, hierarchyPayload, attributionData,
+  APP_ATTR_SELECT, REQ_ATTR_SELECT, deptLabel, loadHierarchy, attributeApplication, hierarchyPayload, attributionData, tlSeatOf,
 };

@@ -139,8 +139,8 @@ function drawWatermark(doc) {
   doc.save();
   doc.rotate(-45, { origin: [w / 2, h / 2] });
   doc.fillColor('#8c96a8').opacity(0.2).font('Helvetica-Bold').fontSize(128);
-  const tw = doc.widthOfString('DRAFT');
-  doc.text('DRAFT', (w - tw) / 2, h / 2 - 62, { lineBreak: false });
+  const tw = doc.widthOfString('NOT SIGNED');
+  doc.text('NOT SIGNED', (w - tw) / 2, h / 2 - 62, { lineBreak: false });
   doc.restore();
   doc.x = x; doc.y = y;
 }
@@ -179,7 +179,7 @@ function drawPageChrome(doc, ctx) {
     doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY)
       .text(`Agreement No. ${ctx.agreementId}`, L + 130, 26, { width: width - 130, align: 'right', lineBreak: false });
     doc.font('Helvetica').fontSize(7.5).fillColor(ctx.draft ? '#9a6700' : MUTED)
-      .text(ctx.draft ? 'DRAFT - not signed' : fitText(doc, ctx.clientName, width - 130), L + 130, 38, { width: width - 130, align: 'right', lineBreak: false });
+      .text(ctx.draft ? 'NOT SIGNED' : fitText(doc, ctx.clientName, width - 130), L + 130, 38, { width: width - 130, align: 'right', lineBreak: false });
     doc.moveTo(L, HEADER_RULE_Y).lineTo(R, HEADER_RULE_Y).lineWidth(0.6).strokeColor('#c9d0dc').stroke();
 
     // ---- footer ----
@@ -217,7 +217,7 @@ function drawPageChrome(doc, ctx) {
       { t: `Agreement No. ${ctx.agreementId} · Page ${i - range.start + 1} of ${total}`, f: 'Helvetica-Bold', s: 7.6, c: NAVY },
       { t: `${ctx.clientName} · Private & Confidential`, f: 'Helvetica', s: 6.8, c: MUTED },
     ];
-    if (ctx.draft) lines.push({ t: 'DRAFT - not an executed copy', f: 'Helvetica-Bold', s: 6.8, c: '#9a6700' });
+    if (ctx.draft) lines.push({ t: 'NOT SIGNED - not an executed copy', f: 'Helvetica-Bold', s: 6.8, c: '#9a6700' });
     else lines.push({ t: `Text fingerprint (SHA-256): ${ctx.hash.slice(0, 16)}…`, f: 'Helvetica', s: 6.4, c: MUTED });
     if (ctx.stampNo) lines.push({ t: `Stamp paper / e-stamp no. ${ctx.stampNo}`, f: 'Helvetica', s: 6.4, c: MUTED });
     let ty = fy + 12;

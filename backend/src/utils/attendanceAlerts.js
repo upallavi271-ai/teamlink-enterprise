@@ -264,10 +264,12 @@ async function run({ now = new Date(), dryRun = false, testMode = false, mailer 
       const ns = notifySettings || (notifySettings = await hrmsNotify.getSettings());
       const evKey = hrmsNotify.ATTENDANCE_EVENT[ev.type];
       const sw = ns.events[evKey] || { inApp: true, email: true };
-      const merged = { ...ns, events: { ...ns.events, [evKey]: { inApp: settings.inApp && sw.inApp, email: settings.email && sw.email } } };
+      const merged = { ...ns, events: { ...ns.events, [evKey]: { ...sw, inApp: settings.inApp && sw.inApp, email: settings.email && sw.email } } };
       const r = await hrmsNotify.notify(evKey, { userId: e.user && e.user.id, name: e.name, email }, { title, message: employeeText(ev) }, { now, mailer, settings: merged });
       if (r.inApp) out.inApp += 1;
-      if (r.email) out.emailsWaiting = (out.emailsWaiting || 0) + 1;
+      if (r.email === 'Sent') out.emails += 1;
+      else if (r.email === hrmsNotify.WAITING) out.emailsWaiting = (out.emailsWaiting || 0) + 1;
+      else if (r.email) out.emailsNotSent += 1;
     }
 
     // The digest: one per recipient per day, at or after the digest time.
@@ -329,6 +331,7 @@ function intervalMs() {
 let timer = null;
 function startSweep() {
   if (timer || intervalMs() <= 0) return;
+  require('./attendanceTasks').startSweep(); // inert until Admin switches 'Attendance issue tasks' on
   let lastChargeSweep = 0;
   const real = () => run().then((o) => {
     if (o && (o.inApp || o.emails || o.digests)) console.log(`[attendance-alerts] ${o.today}: ${o.inApp} in-app, ${o.emails} email(s) sent, ${o.emailsNotSent} not sent, ${o.digests} digest(s)`);
@@ -365,6 +368,7 @@ function registerRoutes(router, { requirePerm }) {
     res.json({ ...s, preview });
   });
   hrmsNotify.registerRoutes(router, { requirePerm });
+  require('./attendanceTasks').registerRoutes(router, { requirePerm }); // 2026-10-13: tasks for attendance issues (OFF by default)
   router.put('/alerts', configure, async (req, res) => {
     const r = await saveSettings(req.body || {}, req.user.id);
     if (r.error) return res.status(400).json({ error: r.error });

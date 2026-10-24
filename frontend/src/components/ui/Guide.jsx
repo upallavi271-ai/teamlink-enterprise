@@ -7,7 +7,7 @@ import './guide.css';
 //
 //   <Help text="Candidates still moving through steps" />   a small ? tip
 //   <HowItWorks uid={user.id} page="candidates" steps={…} active={id} onPick={…} />
-//        Job → Candidate → Sent to client → Interview → Offer → Joined,
+//        Requirement → Candidate → Sent to client → Interview → Offer → Joined,
 //        each step with its count; a click filters the list. "Hide" is
 //        remembered per user (localStorage, try/catch — works without it).
 //   <FirstTips uid={user.id} page="candidates" tips={['…', '…', '…']} />
@@ -33,7 +33,6 @@ const PLAIN_RULES = [
   [/\bClient Submitted\b/g, 'Sent to client'], [/\bSubmissions\b/g, 'Sent to client'], [/\bsubmissions\b/g, 'people sent to the client'],
   [/\bCandidate Pipeline\b/g, 'Candidates in progress'], [/\b([Ii])n pipeline\b/g, '$1n progress'], [/\bPipeline\b/g, 'Progress'], [/\bpipeline\b/g, 'progress'],
   [/\bStages\b/g, 'Steps'], [/\bStage\b/g, 'Step'], [/\bstages\b/g, 'steps'], [/\bstage\b/g, 'step'],
-  [/\bRequirements\b/g, 'Jobs'], [/\bRequirement\b/g, 'Job'], [/\brequirements\b/g, 'jobs'], [/\brequirement\b/g, 'job'],
   [/\bDays past SLA\b/g, 'Days late'], [/\bSLA & Aging\b/g, 'Late & waiting'], [/\bSLA\b/g, 'time allowed'],
   [/\bOverdue\b/g, 'Late'], [/\boverdue\b/g, 'late'],
   [/\bin scope\b/g, 'in your area'], [/\bScope\b/g, 'Your area'],
@@ -67,7 +66,7 @@ export function Help({ text, focusable = true, className = '' }) {
 // The hiring flow, in plain words. `keys` are the pipeline's stage keys
 // (backend routes/candidates.js stageKeyOf) each step adds up.
 export const PIPELINE_STEPS = [
-  { id: 'job', icon: '💼', label: 'Job', hint: 'A client (or our company) wants people for a job' },
+  { id: 'job', icon: '💼', label: 'Requirement', hint: 'A client (or our company) wants people for a requirement' },
   { id: 'candidate', icon: '🙋', label: 'Candidate', hint: 'A person applied and we are checking them (recruiter, then team lead)', keys: ['recruiter_review', 'tl_review', 'bde_review'] },
   { id: 'sent', icon: '📤', label: 'Sent to client', hint: 'We sent the person to the client, and the client is looking', keys: ['client_submitted', 'client_shortlisted'] },
   { id: 'interview', icon: '🗓️', label: 'Interview', hint: 'The client interviews the person, then gives feedback', keys: ['interview_scheduled', 'interview_completed', 'feedback_pending'] },

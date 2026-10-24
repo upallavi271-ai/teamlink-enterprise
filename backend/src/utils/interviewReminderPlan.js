@@ -44,6 +44,10 @@ const DEFAULTS = {
   noShow: { on: true, afterMinutes: 30 },
   feedback: { on: true, afterHours: 2 },
   quiet: true,
+  // OFF until an Admin / HR presses "Turn on automatic sending". While off, the reminder job sends NOTHING outside the app
+  // (no mail, WhatsApp or SMS to anybody) and nothing to candidates; only the in-app bell goes. Prepared 2026-10-12 so that
+  // loading this code on a live server can never message a real person by itself.
+  armed: false,
 };
 
 const validHm = (v) => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(v || ''));
@@ -75,6 +79,7 @@ function clean(raw) {
     noShow: { on: bool(ns.on, true), afterMinutes: intIn(ns.afterMinutes, 10, 180, 30) },
     feedback: { on: bool(fb.on, true), afterHours: intIn(fb.afterHours, 1, 48, 2) },
     quiet: bool(v.quiet, true),
+    armed: v.armed === true,
   };
 }
 
@@ -95,6 +100,7 @@ async function save(patch, user) {
     noShow: { ...cur.noShow, ...(p.noShow || {}) },
     feedback: { ...cur.feedback, ...(p.feedback || {}) },
     quiet: p.quiet === undefined ? cur.quiet : p.quiet,
+    armed: p.armed === undefined ? cur.armed : p.armed === true,
   };
   if (p.digestAt !== undefined && !validHm(p.digestAt)) return { error: 'Write the time like 08:30.', status: 400 };
   if (p.candidate && p.candidate.channels !== undefined && (!Array.isArray(p.candidate.channels) || !p.candidate.channels.length)) return { error: 'Pick at least one way to reach the candidate.', status: 400 };

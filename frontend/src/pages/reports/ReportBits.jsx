@@ -7,7 +7,7 @@ import './ReportBits.css';
 //   Delta          ▲ 12% / ▼ 5% beside a number when two periods are compared
 //   OfBar          "12 of 20" with a bar — a result against its target
 //   CompareToggle  Off · This month vs last · This quarter vs last
-//   ExportButtons  Excel · PDF · CSV as separate buttons (no dropdown)
+//   ExportButtons  Download Excel · Download PDF as two separate buttons (no dropdown)
 //   useReportCatalog  which report cards this login may open (server decides)
 // ---------------------------------------------------------------------------
 
@@ -91,13 +91,10 @@ export function ExportButtons({ busy, onPick, small = true }) {
   return (
     <span className="rpb-export">
       <button type="button" className={cls} disabled={!!busy} onClick={() => onPick('xlsx')} title="Download this report as an Excel file">
-        {busy === 'xlsx' ? 'Preparing…' : '⬇ Excel'}
+        {busy === 'xlsx' ? 'Preparing…' : '⬇ Download Excel'}
       </button>
       <button type="button" className={cls} disabled={!!busy} onClick={() => onPick('pdf')} title="Download this report as a PDF">
-        {busy === 'pdf' ? 'Preparing…' : '⬇ PDF'}
-      </button>
-      <button type="button" className={cls} disabled={!!busy} onClick={() => onPick('csv')} title="Download this report as a CSV file">
-        {busy === 'csv' ? 'Preparing…' : '⬇ CSV'}
+        {busy === 'pdf' ? 'Preparing…' : '⬇ Download PDF'}
       </button>
     </span>
   );

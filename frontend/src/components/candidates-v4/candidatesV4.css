@@ -221,3 +221,6 @@ main:has(> .cv4){max-width:none}
 .cv4 .cv4-eq b{color:var(--ink)}
 .cv4 .cv4-eq-note{color:#a15c00}
 @media (max-width:640px){.cv4 .cv4-outcomes{flex-direction:column;align-items:stretch;gap:4px}}
+
+/* ---- Names fit (2026-10-17): job title + client in the candidate filters panel wrap instead of "..." ---- */
+.cv4 .cv4-reqtitle span,.cv4 .cv4-reqtitle small{white-space:normal;overflow-wrap:anywhere;line-height:1.25}

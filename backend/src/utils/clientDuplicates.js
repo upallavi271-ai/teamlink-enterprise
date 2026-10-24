@@ -24,6 +24,7 @@ const prisma = require('../db');
 const {
   fullKey, baseKey, coreKey, osa, thr, dig,
 } = require('./clientDedupe');
+const { samePlace, SAME_NAME_CODES } = require('./clientLocations');
 
 const RANK = { exact: 3, strong: 2, possible: 1 };
 // The codes a create / identity edit is refused on unless overridden.
@@ -194,6 +195,11 @@ async function findClientDuplicates(input = {}, { excludeId = null, db = prisma,
       displayCode: displayCode(c),
       legalName: c.legalName,
       location: [c.location, c.state].filter(Boolean).join(', ') || null,
+      // 2026-10-22 one company, many locations: the place alone, and whether this match is a same-name client / at the same place.
+      place: c.location || null,
+      state: c.state || null,
+      sameName: reasons.some((r) => SAME_NAME_CODES.has(r.code)),
+      sameLocation: samePlace(input.location, input.state, c.location, c.state),
       industry: c.industry,
       gst: c.gst,
       pan: c.pan,

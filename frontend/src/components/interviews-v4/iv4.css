@@ -214,3 +214,6 @@
 .iv4-list-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 
 .iv4-filters .lph-facet select{padding-left:8px;padding-right:22px;font-size:12.5px}
+
+/* ---- Names fit (2026-10-17): candidate / client names in the interview list wrap instead of "..." ---- */
+.iv4-trunc{max-width:220px;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}

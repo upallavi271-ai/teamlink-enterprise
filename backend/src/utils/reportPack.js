@@ -77,7 +77,7 @@ const REPORTS = [
   ...METRIC_REPORTS.map((k) => ({ id: k, label: METRIC_LABEL[k], family: 'activity', metric: k, help: `${METRIC_LABEL[k]} for each team or person.` })),
   { id: 'pipeline', label: 'Progress', family: 'apps', help: 'Where each team or person\'s candidates are now.' },
   { id: 'source', label: 'Where candidates come from', family: 'apps', help: 'Candidates by source, for each team or person.' },
-  { id: 'clients', label: 'Client-wise', family: 'apps', clientWise: true, help: 'Jobs, sent, interviews and joined, client by client.' },
+  { id: 'clients', label: 'Client-wise', family: 'apps', clientWise: true, help: 'Requirements, sent, interviews and joined, client by client.' },
   { id: 'cash', label: 'Cash', family: 'money', help: 'Billed, collected and still to come.' },
 ];
 const REPORT_BY_ID = Object.fromEntries(REPORTS.map((r) => [r.id, r]));
@@ -117,8 +117,9 @@ async function accessOf(user) {
   }
   if (view === 'recruiter' || view === 'hr') {
     if (!(atsView || myView)) return deny;
+    // A recruiter sees their own numbers only: no client-wise table (user, 2026-10-12); HR keeps it for the internal hiring.
     return {
-      ok: true, view, bde: false, selfOnly: true, teamOnly: false, reports: STAFF_IDS.filter((id) => id !== 'cash'), cash: 'none', canExport: true, who: view,
+      ok: true, view, bde: false, selfOnly: true, teamOnly: false, reports: STAFF_IDS.filter((id) => id !== 'cash' && !(view === 'recruiter' && id === 'clients')), cash: 'none', canExport: true, who: view,
     };
   }
   if (view === 'accounts') {
@@ -245,6 +246,7 @@ function makeInfo(td, world) {
     if (tk === TEAM_BDE) return 'BDE desk (client managers)';
     if (tk === TEAM_HR) return 'Internal hiring (HR)';
     if (tk === TEAM_NONE) return 'No team found';
+    if (tk.startsWith('n:')) { const p = world && world.people.get(tk); const nm = (p && p.label) || tk.slice(2); return `${nm}'s team`; }
     const u = td.userById.get(tk.slice(2));
     return u ? `${u.name}'s team` : 'A team';
   };
@@ -522,9 +524,9 @@ async function appsTable(run, rep, { view, f, P }) {
     total[7] = pct(total[6], total[2]);
     const jobs = new Set(); facts.forEach(({ x }) => jobs.add(x.req.id)); total[1] = jobs.size;
     return {
-      columns: [{ key: 'client', label: 'Client', type: 'text' }, numCol('jobs', 'Jobs worked on'), numCol('applications', 'Candidates'), numCol('sent', 'Sent to client'), numCol('interviews', 'Interviews'), numCol('selected', 'Selected'), numCol('joined', 'Joined'), { key: 'conv', label: 'Joined %', type: 'pct' }],
+      columns: [{ key: 'client', label: 'Client', type: 'text' }, numCol('jobs', 'Requirements worked on'), numCol('applications', 'Candidates'), numCol('sent', 'Sent to client'), numCol('interviews', 'Interviews'), numCol('selected', 'Selected'), numCol('joined', 'Joined'), { key: 'conv', label: 'Joined %', type: 'pct' }],
       rows: out, total, facets, groupLabel: '', effectiveGroup: 'total', rowsAre: 'units',
-      notes: ['Candidates added to the client\'s jobs in this period. Sent, Interviews and Selected count everyone who got that far (also those who went further).'],
+      notes: ['Candidates added to the client\'s requirements in this period. Sent, Interviews and Selected count everyone who got that far (also those who went further).'],
     };
   }
 
@@ -561,8 +563,8 @@ async function appsTable(run, rep, { view, f, P }) {
   return {
     columns, rows: out, total, facets, groupLabel: '', effectiveGroup: 'total', rowsAre: 'units',
     notes: [isSource
-      ? 'Candidates added to jobs in this period, by where they came from. Joined % is Joined / Candidates.'
-      : 'Candidates added to jobs in this period, by the step each one is at NOW (the same steps as Candidates & Progress). Joined % is Joined / Candidates.'],
+      ? 'Candidates added to requirements in this period, by where they came from. Joined % is Joined / Candidates.'
+      : 'Candidates added to requirements in this period, by the step each one is at NOW (the same steps as Candidates & Progress). Joined % is Joined / Candidates.'],
   };
 }
 
@@ -703,7 +705,7 @@ async function buildTable(run, query) {
   return {
     report, reportLabel, family: rep.family, view, viewWord,
     viewLabel: clientWise ? 'Client-wise (one line per client)' : view === 'team' ? 'Team-wise (one line per team lead\'s team)' : 'Individual (one line per person)',
-    title: clientWise ? `Client-wise report - ${rep.id === 'cash' ? 'Cash' : 'Jobs and joinings'}` : `${view === 'team' ? 'Team' : 'Individual'} report - ${reportLabel}`,
+    title: clientWise ? `Client-wise report - ${rep.id === 'cash' ? 'Cash' : 'Requirements and joinings'}` : `${view === 'team' ? 'Team' : 'Individual'} report - ${reportLabel}`,
     sheetName: reportLabel,
     period: { key: P.key, label: P.label, from: P.from, to: P.to },
     group: base.effectiveGroup, groupLabel: base.groupLabel,

@@ -22,6 +22,7 @@ import ListPageHeader, { StatusTabs } from '../../components/ui/ListPageHeader.j
 import StatusChip from '../../components/ui/StatusChip.jsx';
 import { Modal } from '../../components/proto.jsx';
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
+import { ReleaseLetterModal, ShareModal, openLetter } from '../../components/clientTrack/ClientTrack.jsx';
 import '../../components/interviews/Interviews.css';
 import './offersB3.css';
 import {
@@ -34,13 +35,16 @@ function stepOf(r) {
   if (r.offerStatus === PREPARED) return { id: 'approval', text: 'Waiting for approval', tone: 'amber' };
   if (r.offerStatus === 'Offer Released') return { id: 'candidate', text: 'Waiting for candidate', tone: 'blue' };
   if (r.offerStatus === 'Offer Accepted' || ['OFFER_ACCEPTED', 'JOINED', 'HIRED'].includes(r.stage)) return { id: 'accepted', text: 'Accepted', tone: 'green' };
+  // CLIENT job (2026-10-13): the client makes the offer letter; TeamLink shares it.
+  if (r.clientTrack && r.offerStatus !== 'Offer Declined') return r.clientTrack.offer && r.clientTrack.offer.state === 'RELEASED' ? { id: 'share', text: 'Ready to share', tone: 'blue' } : { id: 'client', text: "Waiting for the client's offer letter", tone: 'amber' };
+  if (r.clientTrack) return r.clientTrack.offer && r.clientTrack.offer.state === 'RELEASED' ? { id: 'share', text: 'Ready to share', tone: 'blue' } : { id: 'client', text: 'Declined — waiting for a new letter', tone: 'red' };
   if (r.offerStatus === 'Offer Declined') return { id: 'prepare', text: 'Declined — offer again?', tone: 'red' };
   // B3: not answered in time.
   if (r.offerStatus === 'Offer Expired') return { id: 'prepare', text: 'Expired — offer again?', tone: 'red' };
   return { id: 'prepare', text: 'To prepare', tone: 'amber' };
 }
 const VIEWS = [
-  ['prepare', 'To prepare'], ['approval', 'Waiting for approval'], ['candidate', 'Waiting for candidate'], ['accepted', 'Accepted'], ['all', 'All'],
+  ['client', "Waiting for the client's letter"], ['share', 'Ready to share'], ['prepare', 'To prepare'], ['approval', 'Waiting for approval'], ['candidate', 'Waiting for candidate'], ['accepted', 'Accepted'], ['all', 'All'],
 ];
 const first = (n) => String(n || '').replace(/^ZZTEST\S*\s*/i, '').split(/\s+/)[0] || 'The candidate';
 
@@ -51,7 +55,7 @@ export default function Offers() {
   const canEdit = can(user, 'ats', 'interviews', 'Offers', 'edit');
   const canApprove = can(user, 'ats', 'interviews', 'Offers', 'approve');
   const isAdmin = ['SUPER_ADMIN', 'ADMIN'].includes(user && user.role);
-  const [view, setView] = useState(() => (canApprove && !canEdit ? 'approval' : 'prepare'));
+  const [view, setView] = useState(() => (canApprove && !canEdit ? 'approval' : 'share'));
   // The server searches, counts and pages the list (utils/intJoinList.js): the tab
   // counts below are for the WHOLE list under the filters, not for this page.
   const ws = useIntJoinPaged('/ats/offers', { view });
@@ -94,7 +98,7 @@ export default function Offers() {
     <div>
       <ListPageHeader
         title="Offers"
-        question="People the client selected: make the offer, then note their yes or no."
+        question="People the client selected: the client sends the offer letter, you share it, then note their yes or no."
         data={(
           <>
             <AtsDataTools
@@ -124,7 +128,7 @@ export default function Offers() {
       <div className="tbl-wrap" style={data.loading && rows.length ? { opacity: 0.55, transition: "opacity .15s" } : undefined} aria-busy={data.loading ? "true" : undefined}>
         <table>
           <thead>
-            <tr><th>Candidate</th><th>Job</th><th>Yearly CTC</th><th>Joining date</th><th>Step</th><th>Actions</th></tr>
+            <tr><th>Candidate</th><th>Requirement</th><th>Yearly CTC</th><th>Joining date</th><th>Step</th><th>Actions</th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
@@ -141,6 +145,9 @@ export default function Offers() {
                   <td className="small-muted">{r.joiningDate ? fmtDate(r.joiningDate) : '—'}</td>
                   <td>
                     <StatusChip status={step.text} tone={step.tone} />
+                    {r.clientTrack?.offer?.releasedAt && ['share', 'candidate'].includes(step.id) && (
+                      <div className="small-muted" style={{ fontSize: 11.5, marginTop: 2 }}>{`Client released it ${fmtDate(r.clientTrack.offer.releasedAt)}${r.clientTrack.offer.onBehalf ? ' (recorded by the BDE)' : ''}`}</div>
+                    )}
                     {r.offerVersion && (
                       <div className="small-muted" style={{ fontSize: 11.5, marginTop: 2 }}>
                         {`Letter v${r.offerVersion.version}`}
@@ -152,6 +159,20 @@ export default function Offers() {
                   </td>
                   <td>
                     <div className="ivx-actions">
+                      {step.id === 'client' && (r.clientTrack?.mayRelease && canEdit
+                        ? <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'clientRelease', row: r })}>Record the client&apos;s offer</button>
+                        : <span className="small-muted">The client manager (BDE) chases the client.</span>)}
+                      {step.id === 'client' && r.clientTrack?.mayRelease && canEdit && <span className="small-muted" style={{ fontSize: 11.5 }}>Use this only if the client sent the letter by mail.</span>}
+                      {step.id === 'share' && canEdit && (
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'share', row: r })}>Share offer with candidate</button>
+                      )}
+                      {step.id === 'share' && !canEdit && <span className="small-muted">The recruiter shares it.</span>}
+                      {r.clientTrack?.offer?.file?.canOpen && ['share', 'candidate', 'accepted'].includes(step.id) && (
+                        <button type="button" className="btn btn-sm btn-ghost" onClick={() => openLetter(`/ats/offers/${r.id}/client-letter/offer`)}>Open the client&apos;s letter</button>
+                      )}
+                      {step.id === 'accepted' && r.clientTrack?.offer?.state === 'ACCEPTED' && r.clientTrack?.mayAckForClient && canEdit && (
+                        <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'clientAck', row: r })}>Client confirmed</button>
+                      )}
                       {step.id === 'prepare' && canEdit && (
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'prepare', row: r })}>{['Offer Declined', 'Offer Expired'].includes(r.offerStatus) ? 'Offer again' : 'Prepare offer'}</button>
                       )}
@@ -163,7 +184,7 @@ export default function Offers() {
                         <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'prepare', row: r })}>Change</button>
                       )}
                       {step.id === 'candidate' && (
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'link', row: r })}>Send offer link</button>
+                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: r.clientTrack ? 'share' : 'link', row: r })}>{r.clientTrack ? 'Share again' : 'Send offer link'}</button>
                       )}
                       {step.id === 'candidate' && canEdit && (
                         <>
@@ -188,7 +209,7 @@ export default function Offers() {
                   filters={list.active ? { q: 'x' } : EMPTY_INTJOIN_FILTERS}
                   onClear={list.clear}
                   noun="offers"
-                  title={{ prepare: 'Nobody is waiting for an offer.', approval: 'No offers waiting for approval.', candidate: 'No offers waiting for an answer.', accepted: 'No accepted offers yet.' }[view] || 'No offers yet.'}
+                  title={{ client: "Nobody is waiting for a client's letter.", share: 'No client letters are waiting to be shared.', prepare: 'Nobody is waiting for an offer.', approval: 'No offers waiting for approval.', candidate: 'No offers waiting for an answer.', accepted: 'No accepted offers yet.' }[view] || 'No offers yet.'}
                 />
               </td></tr>
             )}
@@ -219,6 +240,8 @@ export default function Offers() {
         </div>
       )}
 
+      {isAdmin && <ReminderSwitch />}
+
       {dialog?.kind === 'prepare' && (
         <PrepareForm
           change={!!dialog.change}
@@ -239,7 +262,7 @@ export default function Offers() {
       {dialog?.kind === 'sendback' && (
         <ReasonModal
           title={`Send back — ${dialog.row.candidate.name}`}
-          label="What should change? *"
+          label="What should change?"
           placeholder="e.g. CTC is above the budget — check with the client"
           button="Send back"
           onClose={close}
@@ -249,11 +272,40 @@ export default function Offers() {
       {dialog?.kind === 'decline' && (
         <ReasonModal
           title={`Offer declined — ${dialog.row.candidate.name}`}
-          label="Why did they say no? *"
+          label="Why did they say no?"
           placeholder="e.g. Got a better offer elsewhere"
           button="Save"
           onClose={close}
           onSubmit={(reason) => run(() => api.post(`/ats/offers/${dialog.row.id}/decline`, { reason }), 'Saved. The candidate is not rejected — you can offer again.')}
+        />
+      )}
+      {dialog?.kind === 'clientRelease' && (
+        <ReleaseLetterModal
+          kind="offer"
+          onBehalf
+          endpoint={`/ats/offers/${dialog.row.id}/client-release`}
+          candidateName={dialog.row.candidate.name}
+          showCtc={!!canEdit}
+          onClose={close}
+          onDone={(r) => { close(); act(async () => {}, r.message); }}
+        />
+      )}
+      {dialog?.kind === 'share' && (
+        <ShareModal
+          kind="offer"
+          endpoint={`/ats/offers/${dialog.row.id}/share`}
+          candidateName={first(dialog.row.candidate.name)}
+          onClose={() => { close(); load(); }}
+        />
+      )}
+      {dialog?.kind === 'clientAck' && (
+        <ReasonModal
+          title={`Client confirmed — ${dialog.row.candidate.name}`}
+          label="How did the client confirm?"
+          placeholder="e.g. Client replied on mail"
+          button="Save"
+          onClose={close}
+          onSubmit={(note) => run(() => api.post(`/ats/offers/${dialog.row.id}/client-ack`, { note }), "Saved. The client's confirmation is recorded.")}
         />
       )}
       {dialog?.kind === 'template' && <TemplateModal onClose={close} onSaved={(msg) => { close(); act(async () => {}, msg); }} />}
@@ -274,6 +326,20 @@ export default function Offers() {
           onChanged={load}
         />
       )}
+    </div>
+  );
+}
+
+// Admin: the client-hiring reminders (offer not answered, joining T-3 / T-1 / joining day). OFF until switched on.
+function ReminderSwitch() {
+  const [s, setS] = useState(null);
+  useEffect(() => { api.get('/ats/client-track/reminders').then((r) => setS(r.data)).catch(() => {}); }, []);
+  if (!s) return null;
+  const toggle = () => api.put('/ats/client-track/reminders', { armed: !s.armed }).then((r) => setS(r.data)).catch(() => {});
+  return (
+    <div className="ivx-admin">
+      <span>{s.armed ? 'Offer and joining reminders: On.' : 'Offer and joining reminders: Off — nobody is reminded automatically.'}</span>
+      <button type="button" className="btn btn-sm" onClick={toggle}>{s.armed ? 'Turn off' : 'Turn on'}</button>
     </div>
   );
 }
@@ -305,7 +371,7 @@ function PrepareForm({ row, onClose, onSubmit, change = false }) {
       <div className="ivx-fb">
         <div className="ivx-hint" style={{ marginTop: 0, marginBottom: 12 }}>{`${row.requirement.title} · ${internal ? 'TeamLink (internal)' : row.requirement.client?.name || ''}`}</div>
         <div className="ivx-sec">
-          <b>Yearly CTC (₹) *</b>
+          <b>Yearly CTC (₹)</b>
           <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => { setCtc(e.target.value); setAsk(null); }} style={{ width: '100%' }} />
           {Number(ctc) > 0 && <div className="ivx-hint">{money(ctc)} a year</div>}
           {ask && <CtcAsk ask={ask} />}
@@ -497,7 +563,10 @@ function OfferLinkModal({ row, fresh, canEdit, onClose }) {
                 <input className="ofl-url" readOnly value={info.url} onFocus={(e) => e.target.select()} aria-label="Offer link" />
                 <div className="ofl-btns">
                   <button type="button" className="btn btn-primary" onClick={copy}>Copy link</button>
-                  <a className="btn" href={info.whatsappUrl} target="_blank" rel="noreferrer">Send on WhatsApp</a>
+                  {info.direct && info.direct.WhatsApp
+                    ? <button type="button" className="btn" disabled={busy === 'wa'} title={info.direct.via.WhatsApp || ''} onClick={() => call('wa', () => api.post(`/ats/offers/${row.id}/link/send`, { channel: 'WhatsApp' }))}>{busy === 'wa' ? 'Sending…' : 'Send on WhatsApp'}</button>
+                    : <a className="btn" href={info.whatsappUrl} target="_blank" rel="noreferrer">Send on WhatsApp</a>}
+                  {info.direct && info.direct.SMS && <button type="button" className="btn" disabled={busy === 'sms'} title={info.direct.via.SMS || ''} onClick={() => call('sms', () => api.post(`/ats/offers/${row.id}/link/send`, { channel: 'SMS' }))}>{busy === 'sms' ? 'Sending…' : 'Send as SMS'}</button>}
                   {canEdit && (
                     <button type="button" className="btn" disabled={!info.candidateEmailsOn || busy === 'email' || !info.emailTo} title={info.candidateEmailsOn ? '' : 'Candidate emails are switched off'} onClick={() => call('email', () => api.post(`/ats/offers/${row.id}/link/email`))}>
                       {busy === 'email' ? 'Sending…' : 'Email it'}
@@ -534,7 +603,7 @@ function ExpiryModal({ days, onClose, onSave }) {
     <Modal title="How long an offer stays open" onClose={onClose} footer={<button type="button" className="btn btn-primary" disabled={!ok || busy} onClick={async () => { setBusy(true); try { await onSave(Number(n)); } finally { setBusy(false); } }}>Save</button>}>
       <div className="ivx-fb">
         <div className="ivx-sec">
-          <b>Days *</b>
+          <b>Days</b>
           <input type="number" min="1" max="60" inputMode="numeric" value={n} onChange={(e) => setN(e.target.value)} style={{ width: 120 }} />
           <div className="ivx-hint">After this many days an offer nobody answered becomes Expired: it can no longer be accepted, and the recruiter and team lead get a notice. Offers already sent keep their date.</div>
         </div>

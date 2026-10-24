@@ -7,6 +7,7 @@ const { parseMultipart } = require('../utils/attachments');
 const { ROUND, normName, dueDateFor, deriveInvoiceStatus } = require('../utils/accounts');
 const bankRoutes = require('./bank');
 const BIC = require('../utils/bankImportCore');
+const SD = require('../utils/bankStatementDedupe');
 const invoiceRoutes = require('./invoices');
 
 // ---------------------------------------------------------------------------
@@ -438,6 +439,14 @@ async function clientIndex() {
   for (const c of clients) {
     [c.name, c.legalName].filter(Boolean).forEach((n) => { if (!byKey.has(clientKey(n))) byKey.set(clientKey(n), c); });
   }
+  // The client's OLD names (ClientAlias: merged-away spellings, the name before it was renamed to the official one): a sheet that still
+  // says "VCare" lands on "Prabs VCare Health Clinic" instead of creating a second client. Official names always win a clash.
+  const oldNames = await require('../utils/clientSearch').aliasMap(); // eslint-disable-line global-require
+  const byId = new Map(clients.map((c) => [c.id, c]));
+  oldNames.forEach((list, clientId) => {
+    const c = byId.get(clientId);
+    if (c) list.forEach((a) => { const k = clientKey(a); if (k && !byKey.has(k)) byKey.set(k, c); });
+  });
   return byKey;
 }
 
@@ -550,25 +559,45 @@ router.post('/preview', async (req, res) => {
     });
     const accounts = await prisma.bankAccount.findMany({ where: { active: true }, select: { id: true, name: true, bank: true, accNo: true }, orderBy: { createdAt: 'asc' } });
     summary.bankAccounts = accounts;
-    // The same checks the import will make, without writing: unreadable rows,
-    // lines already on file, and whether the statement's balances tie.
-    const v = BIC.validateRows(p.rows);
-    const allAccounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true } });
-    const accId = p.fields.bankAccountId || (allAccounts[0] && allAccounts[0].id);
-    const onAcc = (await prisma.bankTransaction.findMany()).filter((t) => (t.bankAccountId || (allAccounts[0] && allAccounts[0].id)) === accId);
-    const plan = BIC.planDuplicates(v.ok, onAcc);
-    const failedAll = [...(p.failed || []), ...v.failed];
+    // Duplicate check (utils/bankStatementDedupe.js): EVERY row is compared with every line already on the account
+    // and with the other rows of this file. The rows and their statuses are kept on the server as a "Preview" batch
+    // (no bank line is written) so the import acts on exactly what was shown.
+    let prep;
+    if (permitted) {
+      prep = await bankRoutes.prepareStatement(req, {
+        rows: p.rows, bankAccountId: p.fields.bankAccountId || null, file: p.file.filename, failedRows: p.failed || [], stated: p.stated || {}, sourceHash: BIC.sha256(p.file.data), sheet: p.sheet,
+      });
+      summary.stmt = { batchId: prep.batchId, accountId: prep.account.id, counts: prep.counts };
+    } else {
+      // a login that may not import still sees what the file contains (counts only, nothing stored)
+      const accounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+      const accId = p.fields.bankAccountId || (accounts[0] && accounts[0].id);
+      const v0 = BIC.validateRows(p.rows);
+      const ordered = [...v0.ok].sort((a, b) => (a.line || 0) - (b.line || 0));
+      const cls = SD.classifyRows(ordered, accId ? await SD.loadExisting(accId, accounts[0].id) : []);
+      const n = (st) => cls.filter((c) => c.status === st).length;
+      prep = {
+        failed: [...(p.failed || []), ...v0.failed], balanceCheck: BIC.checkBalances(v0.ok, p.stated || {}), fileAlreadyImported: null,
+        counts: {
+          total: ordered.length + (p.failed || []).length + v0.failed.length, alreadyImported: n(SD.STATUS.AI), notImported: n(SD.STATUS.NI), duplicateInUpload: n(SD.STATUS.DUP), needsReview: n(SD.STATUS.NR), newlyImported: 0, failed: (p.failed || []).length + v0.failed.length,
+        },
+      };
+    }
+    const failedAll = prep.failed;
+    const c = prep.counts;
     Object.assign(summary, {
-      failed: failedAll.length, duplicates: plan.duplicates.length, newLines: plan.fresh.length,
-      needsReview: plan.fresh.filter((r) => r.reviewReason).length,
+      failed: failedAll.length, duplicates: c.alreadyImported + c.duplicateInUpload, newLines: c.notImported, needsReview: c.needsReview,
+      alreadyImported: c.alreadyImported, duplicateInUpload: c.duplicateInUpload, total: c.total,
     });
     summary.failedRows = failedAll.slice(0, 100);
-    summary.balanceCheck = BIC.checkBalances(v.ok, p.stated || {});
-    const prior = await prisma.bankImport.findFirst({ where: { sourceHash: BIC.sha256(p.file.data), bankAccountId: accId }, orderBy: { createdAt: 'desc' } });
-    summary.fileAlreadyImported = prior ? { batch: prior.id, on: prior.date } : null;
+    summary.balanceCheck = prep.balanceCheck;
+    summary.fileAlreadyImported = prep.fileAlreadyImported;
+    const prior = prep.fileAlreadyImported;
     if (failedAll.length) problems.push(`${failedAll.length} row(s) cannot be imported - they are listed below with the reason.`);
-    if (plan.duplicates.length) problems.push(`${plan.duplicates.length} line(s) are already on file and will be skipped.`);
-    if (prior) problems.push(`This exact file was imported on ${prior.date}.`);
+    if (c.alreadyImported) problems.push(`${c.alreadyImported} transaction(s) are already imported and will be skipped.`);
+    if (c.duplicateInUpload) problems.push(`${c.duplicateInUpload} row(s) repeat another row of this same file and will be skipped (you can choose to import one anyway if it is a real second transaction).`);
+    if (c.needsReview) problems.push(`${c.needsReview} row(s) need your review - they look like a transaction already on file but not exactly. Choose Import or Leave out for each.`);
+    if (prior) problems.push(`This exact file was imported on ${prior.on}.`);
     if (summary.balanceCheck.checked && summary.balanceCheck.ok === false) problems.push('The statement balances do not tie (see the balance check).');
   } else if (p.kind === 'expenses') {
     Object.assign(summary, {
@@ -625,6 +654,84 @@ router.post('/preview', async (req, res) => {
   });
 });
 
+// --- bank statement batches (duplicate check + selective import) -------------------------------
+//
+// preview stores the uploaded rows with their statuses on the server (a "Preview" batch). Everything below acts on
+// that stored batch, never on rows sent back by the browser, and needs the same permission as importing a statement.
+//   GET  /bank-batch/:id             the counts for the Statements Matching strip + batch facts
+//   GET  /bank-batch/:id/rows        the list (filter = a status, page, limit)
+//   POST /bank-batch/:id/check       look again (the account was changed, or lines were added meanwhile)
+//   POST /bank-batch/:id/plan        a person's choice per row: import this one anyway / leave it out
+//   POST /bank-batch/:id/import      Import New Transactions (only "Not Imported" + the rows a person chose)
+//   POST /bank-batch/:id/retry       Retry failed (only the rows that failed)
+//   GET  /bank-batches               the upload history
+async function needBank(req, res, next) {
+  try {
+    if (!(await allowed(req.user, 'bank'))) return res.status(403).json({ error: 'Your login cannot import bank statements.' });
+    return next();
+  } catch (e) { return res.status(500).json({ error: 'Could not check your permission.' }); }
+}
+const batchGuard = (fn) => async (req, res) => {
+  try { return await fn(req, res); } catch (e) {
+    console.error('[bank-batch]', e); // eslint-disable-line no-console
+    return res.status(500).json({ error: 'That did not work and nothing was lost. Please try again.', detail: String(e && e.message).slice(0, 300) });
+  }
+};
+const batchFacts = (b) => ({
+  id: b.id, file: b.file, bankAccountId: b.bankAccountId, status: b.status, uploadedBy: b.uploadedByName, uploadedAt: b.createdAt, lastRunAt: b.lastRunAt, importId: b.importId, runs: b.runs,
+});
+
+router.get('/bank-batches', needBank, batchGuard(async (req, res) => {
+  res.json({ batches: (await SD.recentBatches(req.query.bankAccountId || null, 30)).map((b) => ({ ...batchFacts(b), counts: b.counts })) });
+}));
+
+router.get('/bank-batch/:id', needBank, batchGuard(async (req, res) => {
+  const b = await SD.getBatch(req.params.id);
+  if (!b) return res.status(404).json({ error: 'That upload is no longer available. Choose the file again.' });
+  res.json({ batch: batchFacts(b), counts: await SD.countsOf(b.id) });
+}));
+
+router.get('/bank-batch/:id/rows', needBank, batchGuard(async (req, res) => {
+  const b = await SD.getBatch(req.params.id);
+  if (!b) return res.status(404).json({ error: 'That upload is no longer available. Choose the file again.' });
+  res.json(await SD.listRows(b.id, { filter: String(req.query.filter || ''), page: req.query.page, limit: req.query.limit }));
+}));
+
+router.post('/bank-batch/:id/check', needBank, batchGuard(async (req, res) => {
+  const accounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true } });
+  const firstId = accounts[0] && accounts[0].id;
+  const b = await SD.getBatch(req.params.id);
+  if (!b) return res.status(404).json({ error: 'That upload is no longer available. Choose the file again.' });
+  const accountId = req.body?.bankAccountId || b.bankAccountId || firstId;
+  if (!accounts.some((a) => a.id === accountId)) return res.status(400).json({ error: 'Choose a bank account from the list.' });
+  const out = await SD.recheck(b.id, { accountId, firstId });
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  return res.json({ counts: out.counts });
+}));
+
+router.post('/bank-batch/:id/plan', needBank, batchGuard(async (req, res) => {
+  const b = await SD.getBatch(req.params.id);
+  if (!b) return res.status(404).json({ error: 'That upload is no longer available. Choose the file again.' });
+  const list = Array.isArray(req.body?.decisions) ? req.body.decisions.slice(0, 5000) : [];
+  const out = await SD.setDecisions(b.id, list);
+  return res.json({ set: out.set, refused: out.refused, counts: out.counts });
+}));
+
+const runBatchRoute = (mode) => batchGuard(async (req, res) => {
+  const out = await bankRoutes.importBatch(req, {
+    batchId: req.params.id, mode, bankAccountId: req.body?.bankAccountId || null, autoPost: req.body?.autoPost !== false && req.body?.autoPost !== 'false',
+  });
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  return res.status(201).json({
+    kind: 'bank', imported: out.imported, duplicates: out.duplicates, failed: out.failed, failedRows: out.failedRows, summary: out.summary, stmt: out.stmt, uploadBatchId: out.uploadBatchId, mode,
+    balanceCheck: out.balanceCheck, fileAlreadyImported: out.fileAlreadyImported, duplicateRows: out.duplicateRows, autoPosted: out.autoPosted, openingSetTo: out.openingSetTo, batch: out.batch,
+    suggested: out.suggested, autoReconcileOn: out.autoReconcileOn, loansLinked: out.loansLinked, billsFiled: out.billsFiled, chargesFiled: out.chargesFiled, autoMatched: out.autoMatched, needsReview: out.needsReview,
+    existedWhileSaving: out.existedWhileSaving,
+  });
+});
+router.post('/bank-batch/:id/import', needBank, runBatchRoute('new'));
+router.post('/bank-batch/:id/retry', needBank, runBatchRoute('retry'));
+
 // --- commit ---------------------------------------------------------------------------
 
 router.post('/commit', async (req, res) => {
@@ -639,22 +746,33 @@ router.post('/commit', async (req, res) => {
   const fileName = String(p.file.filename || 'upload').slice(0, 200);
 
   if (p.kind === 'bank') {
-    const out = await bankRoutes.importStatement(req, {
-      rows: p.rows,
-      bankAccountId: p.fields.bankAccountId || null,
-      dedup: p.fields.dedup !== 'false',
-      file: fileName,
-      autoPost: p.fields.autoPost !== 'false',
-      failedRows: p.failed || [],
-      stated: p.stated || {},
-      sourceHash: BIC.sha256(p.file.data),
-    });
+    // One step: classify (against every line on the account), then save ONLY the "Not Imported" rows.
+    // A row that is a repeat or "Needs Review" is saved only when its row number is listed in "decisions" with 'import'.
+    let decisions = null;
+    try { decisions = p.fields.decisions ? JSON.parse(p.fields.decisions) : null; } catch { decisions = null; }
+    let out;
+    try {
+      out = await bankRoutes.importStatement(req, {
+        rows: p.rows,
+        bankAccountId: p.fields.bankAccountId || null,
+        file: fileName,
+        autoPost: p.fields.autoPost !== 'false',
+        failedRows: p.failed || [],
+        stated: p.stated || {},
+        sourceHash: BIC.sha256(p.file.data),
+        decisions: Array.isArray(decisions) ? decisions : null,
+      });
+    } catch (err) {
+      return res.status(500).json({ error: 'The import did not finish. Lines already saved are never duplicated - run it again.', detail: err.message });
+    }
+    // Auto-Reconcile: keep the uploaded statement itself for audit (never blocks the import).
+    try { if (out.batch && bankRoutes.autoApi) await bankRoutes.autoApi.saveOriginal(out.batch, fileName, p.file.data); } catch (e) { console.error('[bank] original statement not kept:', e.message); } // eslint-disable-line no-console
     return res.status(201).json({
-      kind: 'bank', imported: out.imported, duplicates: out.duplicates, failed: out.failed, failedRows: out.failedRows, summary: out.summary,
+      kind: 'bank', imported: out.imported, duplicates: out.duplicates, failed: out.failed, failedRows: out.failedRows, summary: out.summary, stmt: out.stmt, uploadBatchId: out.uploadBatchId,
       balanceCheck: out.balanceCheck, fileAlreadyImported: out.fileAlreadyImported, duplicateRows: out.duplicateRows,
       skippedLines: p.skipped.length, autoPosted: out.autoPosted, openingSetTo: out.openingSetTo, batch: out.batch,
       // Accounts S5 — the auto-match + proof summary.
-      loansLinked: out.loansLinked, billsFiled: out.billsFiled, chargesFiled: out.chargesFiled, autoMatched: out.autoMatched, needsReview: out.needsReview,
+      suggested: out.suggested, autoReconcileOn: out.autoReconcileOn, loansLinked: out.loansLinked, billsFiled: out.billsFiled, chargesFiled: out.chargesFiled, autoMatched: out.autoMatched, needsReview: out.needsReview,
     });
   }
 
@@ -744,7 +862,7 @@ router.post('/commit', async (req, res) => {
     const amount = r.grossOnly && gstPct ? ROUND(r.amount / (1 + gstPct / 100)) : r.amount;
     const invoiceDate = r.invoiceDate || today;
     const terms = client.paymentTerms || 'Net 30';
-    const number = r.invoiceNumber || await invoiceRoutes.nextInvoiceNumber();
+    const number = r.invoiceNumber || await invoiceRoutes.numberForNewInvoice(client.id, invoiceDate);
     taken.add(number);
     const gst = r.gst != null ? r.gst : ROUND(amount * gstPct / 100);
     // No TDS column: the client's standing rate — unless the sheet shows the

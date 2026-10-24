@@ -148,9 +148,9 @@ export default function AssetReport() {
               <Combo value={f.category} title="Category" onChange={set('category')}><option value="">All categories</option>{list(opts?.categories)}</Combo>
               <Combo value={f.status} title="Status" onChange={set('status')}><option value="">All statuses</option>{list(opts?.statuses || ['Available', 'Assigned', 'In Repair', 'Retired'])}</Combo>
               <span className="lf-dates" title="Date range">
-                <select value={f.dateField} onChange={set('dateField')} aria-label="Date range applies to" title="Date range applies to">
+                <Combo value={f.dateField} onChange={set('dateField')} aria-label="Date range applies to" title="Date range applies to">
                   {Object.entries(DATE_FIELDS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
+                </Combo>
                 <input type="date" value={f.from} max={f.to || undefined} onChange={set('from')} aria-label="From" />
                 <span aria-hidden="true">→</span>
                 <input type="date" value={f.to} min={f.from || undefined} onChange={set('to')} aria-label="To" />
@@ -161,9 +161,9 @@ export default function AssetReport() {
             <>
               <label className="lf-sort">
                 Sort
-                <select value={sort} onChange={(e) => setSort(e.target.value)}>
+                <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
                   {SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-                </select>
+                </Combo>
               </label>
               {/* hrms-24 §3 — the shared Export menu; the same scoped, filtered
                   server export as before, now also as PDF. */}

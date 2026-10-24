@@ -1,0 +1,63 @@
+/* Upload repair bill (vendor portal) + Accounts' review of uploaded bills. Plain classes; the vendor portal's own look is reused. */
+.bu-steps { align-items: stretch; }
+.bu-steps li { white-space: normal; max-width: 100%; line-height: 1.25; }
+.bu-steps li.bad { background: var(--st-red, #c0392b); color: #fff; }
+.bu-drop { border: 2px dashed var(--line, #c9d6d1); border-radius: 12px; padding: 14px; background: var(--paper-raised, #fff); }
+.bu-thumbs { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+.bu-thumb { position: relative; width: 112px; border: 1px solid var(--line, #dde5e2); border-radius: 10px; padding: 6px; background: #fff; text-align: center; font-size: 11.5px; }
+.bu-thumb img { width: 100%; height: 84px; object-fit: cover; border-radius: 6px; display: block; }
+.bu-thumb .bu-pdf { height: 84px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 20px; color: var(--ink-soft, #56666E); background: var(--line-soft, #e9efec); border-radius: 6px; }
+.bu-thumb .bu-name { margin-top: 4px; overflow-wrap: anywhere; line-height: 1.2; }
+.bu-thumb button { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line, #dde5e2); background: #fff; cursor: pointer; line-height: 1; }
+.bu-field { display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; }
+.bu-field > span.bu-lab { font-weight: 600; color: var(--ink-soft, #56666E); }
+.bu-field input, .bu-field textarea { width: 100%; }
+.bu-field.bu-unclear input, .bu-field.bu-unclear textarea, .bu-field.bu-flag input, .bu-field.bu-flag textarea { border-color: #d98a00; background: #fff8e8; box-shadow: 0 0 0 2px rgba(217, 138, 0, .18); }
+.bu-chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; background: #fdebc5; color: #7a4b00; margin-left: 6px; }
+.bu-chip.ok { background: var(--st-green-tint, #e5f0ea); color: var(--st-green-ink, #0F6B4F); }
+.bu-chip.grey { background: var(--line-soft, #e9efec); color: var(--ink-soft, #56666E); }
+.bu-notice { border-left: 4px solid #d98a00; background: #fff8e8; padding: 8px 12px; border-radius: 6px; margin: 6px 0; font-size: 13px; }
+.bu-notice.red { border-color: #c0392b; background: #fdecea; }
+.bu-lines { width: 100%; border-collapse: collapse; font-size: 13px; }
+.bu-lines th { text-align: left; font-size: 12px; color: var(--ink-soft, #56666E); padding: 4px 6px; }
+.bu-lines td { padding: 3px 4px; vertical-align: top; }
+.bu-lines input { width: 100%; min-width: 60px; }
+.bu-lines td.bu-desc input { min-width: 140px; }
+.bu-lines tr.bu-unclear input { border-color: #d98a00; background: #fff8e8; }
+.bu-live { font-size: 12.5px; margin-top: 6px; }
+.bu-live .ok { color: var(--st-green-ink, #0F6B4F); }
+.bu-live .warn { color: #a85a00; font-weight: 600; }
+.bu-row-new { font-weight: 700; }
+.bu-new { background: #d6402b; color: #fff; border-radius: 999px; padding: 0 7px; font-size: 11px; margin-left: 6px; font-weight: 700; }
+.bu-tabs { display: flex; gap: 6px; margin: 0 0 12px; flex-wrap: wrap; }
+.bu-tabs button { border: 1px solid var(--line, #dde5e2); background: var(--paper-raised, #fff); padding: 7px 14px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 13px; }
+.bu-tabs button.on { background: var(--blue, #1B58C0); color: #fff; border-color: var(--blue, #1B58C0); }
+.bu-name-wrap { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  .bu-thumb { width: 96px; }
+  .bu-lines th:nth-child(n+2), .bu-lines td:nth-child(n+2) { min-width: 70px; }
+}
+
+/* Accounts' review: bill picture on one side, the form on the other */
+.bur-split { display: grid; grid-template-columns: minmax(0, 46fr) minmax(0, 54fr); gap: 14px; align-items: start; }
+.bur-split > * { min-width: 0; }
+.bur-viewer { position: sticky; top: 0; border: 1px solid var(--line, #dde5e2); border-radius: 10px; background: #f5f7f6; }
+.bur-viewer-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 8px; border-bottom: 1px solid var(--line, #dde5e2); background: #fff; border-radius: 10px 10px 0 0; }
+.bur-viewer-body { height: 70vh; overflow: auto; text-align: center; }
+.bur-viewer-body img { display: block; margin: 0 auto; height: auto; max-width: none; }
+.bur-viewer-body iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.bur-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; align-items: center; }
+.bur-ack { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 4px 0; }
+.bur-ack input { margin-top: 3px; }
+.bur-conf { font-size: 10.5px; color: var(--ink-soft, #56666E); margin-left: 6px; font-weight: 400; }
+.bur-edited { font-size: 10.5px; color: #1B58C0; margin-left: 6px; font-weight: 600; }
+@media (max-width: 900px) {
+  .bur-split { grid-template-columns: minmax(0, 1fr); }
+  .bur-viewer { position: static; }
+  .bur-viewer-body { height: 50vh; }
+}
+
+/* tables: every cell stays on one line and the table scrolls sideways on a phone; long names get a readable width */
+.bu-table th, .bu-table td { white-space: nowrap; }
+.bu-table td.bu-name-wrap, .bu-table th.bu-name-wrap { white-space: normal; min-width: 200px; overflow-wrap: anywhere; }
+.bu-lines td.bu-desc { min-width: 160px; }

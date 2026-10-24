@@ -34,6 +34,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import './PeriodPicker.css';
+import Combo from '../Combo.jsx';
+import { matchesText, noMatchText } from '../searchMatch.js';
 
 const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -228,6 +230,7 @@ export default function PeriodPicker({
 
   const v = value || ALL_TIME;
   const [open, setOpen] = useState(false);
+  const [find, setFind] = useState('');
   // The draft being built in the popover — nothing reaches the page until Apply.
   //   key   the left item on      part  Q1..Q4 / H1 / H2      fy  the FY pill on
   //   from / to   the dates the grid shows (narrowed by tapping days)
@@ -269,7 +272,7 @@ export default function PeriodPicker({
     setTyped({ from: fmtDay(df) || '', to: fmtDay(dt) || '' });
     tapNext.current = 'from';
     jump(df || today);
-    setOpen(true);
+    setOpen(true); setFind("");
   };
   const close = useCallback(() => setOpen(false), []);
 
@@ -416,6 +419,7 @@ export default function PeriodPicker({
   );
 
   const shown = periodText(v);
+  const findList = list.filter((key) => matchesText(itemLabel(key), find));
   const popover = open && createPortal(
     <div
       ref={pop}
@@ -425,7 +429,13 @@ export default function PeriodPicker({
       style={pos ? { left: pos.left, top: pos.top } : { left: -9999, top: 0 }}
     >
       <div className="tlpp-left" role="listbox" aria-label="Period">
-        {list.map((key) => {
+        <input
+          className="tlpp-find" type="text" autoComplete="off" value={find} placeholder="Type to find" aria-label="Find a period"
+          onChange={(e) => setFind(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (findList[0]) { pick(findList[0]); setFind(''); } } }}
+        />
+        {!findList.length && <div className="tlpp-help">{noMatchText(find)}</div>}
+        {findList.map((key) => {
           const on = k === key;
           return (
             <button type="button" key={key} role="option" aria-selected={on} className={`tlpp-item${on ? ' on' : ''}`} onClick={() => pick(key)}>
@@ -455,12 +465,12 @@ export default function PeriodPicker({
         )}
         <div className="tlpp-nav">
           <button type="button" className="tlpp-arrow" onClick={() => step(-1)} disabled={!canPrev} aria-label="Previous month">‹</button>
-          <select value={m0} onChange={(e) => setYm([y, Number(e.target.value)])} aria-label="Month">
+          <Combo value={m0} onChange={(e) => setYm([y, Number(e.target.value)])} aria-label="Month">
             {MONTH_FULL.map((mn, i) => <option key={mn} value={i}>{mn}</option>)}
-          </select>
-          <select value={y} onChange={(e) => setYm([Number(e.target.value), m0])} aria-label="Year">
+          </Combo>
+          <Combo value={y} onChange={(e) => setYm([Number(e.target.value), m0])} aria-label="Year">
             {years.map((yy) => <option key={yy} value={yy}>{yy}</option>)}
-          </select>
+          </Combo>
           {twoMonths && <span className="tlpp-nav2">{MONTH_FULL[second.getMonth()]} {second.getFullYear()}</span>}
           <button type="button" className="tlpp-arrow" onClick={() => step(1)} disabled={!canNext} aria-label="Next month">›</button>
         </div>
@@ -470,10 +480,10 @@ export default function PeriodPicker({
         </div>
         {applyOpts.length > 0 && (
           <label className="tlpp-apply-to">
-            <span>Apply to</span>
-            <select value={draft.applyTo ?? applyOpts[0].value} onChange={(e) => setDraft((dd) => ({ ...dd, applyTo: e.target.value }))}>
+            <span>Date applies to</span>
+            <Combo value={draft.applyTo ?? applyOpts[0].value} onChange={(e) => setDraft((dd) => ({ ...dd, applyTo: e.target.value }))}>
               {applyOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
+            </Combo>
           </label>
         )}
         <div className="tlpp-ft">

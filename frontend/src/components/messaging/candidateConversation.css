@@ -1,0 +1,38 @@
+/* Candidate profile > Conversation: the WhatsApp chat of this candidate (scoped under .cwc / .wc-embedded so nothing else is restyled). */
+.cwc-switch { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+.cwc-box { display: flex; height: min(78vh, 760px); min-height: 460px; }
+.cwc-box .wc-pane { flex: 1; min-height: 0; height: 100%; padding: 8px; }
+.cwc-box .wc-pane .wc-back { display: none; }
+
+/* the slim line on top: number, window, owner, phone, their answer */
+.wc-embedhead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 0 2px 8px; font-size: 12.5px; color: #556; border-bottom: 1px solid var(--line-soft, #e8edf5); margin-bottom: 8px; }
+.wc-embedhead .wc-chip { margin-left: 0; }
+.wc-embed-tags { margin-left: auto; display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+
+/* the messages get the room; the reply box stays small */
+.wc-embedded .wc-scroll { flex: 1 1 auto; min-height: 220px; max-height: none; }
+.wc-embedded .wc-composer { flex: 0 0 auto; padding-top: 8px; display: grid; gap: 6px; }
+.wc-embedded .wc-composer .msg-box { margin: 0; padding: 6px 10px; font-size: 12.5px; }
+.wc-embedded .wc-composer .cm-sub { display: none; }
+.wc-embedded .wc-composer .cm-line { margin: 0; padding: 6px 10px; font-size: 12.5px; }
+.wc-embedded .wc-send-row textarea { min-height: 44px; }
+.wc-embedded .wc-toolbar { gap: 6px; }
+.wc-embedded .wc-newpill { bottom: 130px; }
+
+/* ---- bigger chat (founder, 2026-10-22): the reply area is ONE slim strip, so the messages get nearly the whole window ---- */
+.wc-embedded .wc-composer { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding-top: 8px; margin-top: 6px; }
+.wc-embedded .wc-composer > .msg-box { flex: 1 0 100%; margin: 0; padding: 5px 10px; font-size: 12.5px; }
+.wc-embedded .wc-composer > .cm-line { flex: 0 1 340px; display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; background: transparent; border: 0; }
+.wc-embedded .wa-sender-pick > label { margin: 0 !important; white-space: nowrap; }
+.wc-embedded .wa-sender-pick > :not(label):not(.cm-sub) { flex: 1; min-width: 0; }
+.wc-embedded .wc-tplbox { flex: 1 1 380px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; min-width: 0; }
+.wc-embedded .wc-tplbox > label { display: none; }
+.wc-embedded .wc-tplbox > :not(.wc-send-row):not(.msg-preview):not(.small-muted) { flex: 1 1 220px; min-width: 0; }
+.wc-embedded .wc-tplbox > .msg-preview, .wc-embedded .wc-tplbox > .small-muted { flex: 1 0 100%; order: 5; margin: 0; }
+.wc-embedded .wc-tplbox .wc-send-row { flex: 1 0 100%; align-items: stretch; }
+.wc-embedded .wc-tplbox .wc-send-row textarea { min-height: 44px; background: #f4f5f7; }
+.wc-embedded .wc-tplbox .wc-send-row .btn { white-space: nowrap; }
+.wc-embedded .wc-composer > .wc-toolbar, .wc-embedded .wc-composer > .wc-send-row { flex: 1 0 100%; }
+.cwc-box { min-height: 560px; }
+.wc-embedded .wc-scroll { min-height: 320px; }
+

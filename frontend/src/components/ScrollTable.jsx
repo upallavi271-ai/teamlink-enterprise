@@ -10,10 +10,13 @@
 //   maxHeight      CSS max-height of the table box (default 70vh). Pass null
 //                  to leave it to a class in bodyClassName (e.g. .tbl-fit).
 //   bodyClassName  extra classes on the scrolling box.
+//   reserve        keep the top bar's 16px even when the table fits (hidden, not
+//                  removed), so a list that changes between "fits" and "scrolls
+//                  sideways" (filters, columns, paging) never shifts the page.
 import { useEffect, useRef, useState } from 'react';
 import './ScrollTable.css';
 
-export default function ScrollTable({ children, maxHeight = '70vh', className = '', bodyClassName = '' }) {
+export default function ScrollTable({ children, maxHeight = '70vh', className = '', bodyClassName = '', reserve = false }) {
   const top = useRef(null);
   const body = useRef(null);
   const syncing = useRef(false);
@@ -55,7 +58,7 @@ export default function ScrollTable({ children, maxHeight = '70vh', className = 
   };
   return (
     <div className={`att-wide ${className}`}>
-      <div className="att-wide-top" ref={top} onScroll={() => follow(top, body)} style={{ display: wide ? 'block' : 'none' }} aria-hidden="true">
+      <div className="att-wide-top" ref={top} onScroll={() => follow(top, body)} style={reserve ? { display: 'block', visibility: wide ? 'visible' : 'hidden' } : { display: wide ? 'block' : 'none' }} aria-hidden="true">
         <div style={{ width, height: 1 }} />
       </div>
       <div

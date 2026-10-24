@@ -149,7 +149,7 @@ export default function TeamLinkSeal({ mode = 'settings', clientId = null, onDon
         <div className="tls-box">
           <b>1. TeamLink signature</b>
           <div className="tls-now">Now: <AuthImg path={signPath} alt="TeamLink signature" bust={`${bust}-${has?.hasSign}`} /></div>
-          {!external && <label className="field"><span>Signed by (name) *</span><input value={signer} placeholder="e.g. Vasu Chitturi" onChange={(e) => setSigner(e.target.value)} /></label>}
+          {!external && <label className="field"><span>Signed by (name)</span><input value={signer} placeholder="e.g. Vasu Chitturi" onChange={(e) => setSigner(e.target.value)} /></label>}
           {external && signer.trim().length < 2 && <div className="small-muted">Write the signer's name above first.</div>}
           {mode === 'settings' && !external && <label className="field"><span>Designation</span><input value={title} placeholder="e.g. Director" onChange={(e) => setTitle(e.target.value)} /></label>}
           <SignatureCapture name={signer} onChange={setSig} />

@@ -9,6 +9,7 @@ const entities = require('../lib/entities');
 const { problemOf } = require('../lib/http');
 const { niceDate } = require('../lib/dates');
 const permissions = require('../../utils/permissions');
+const SALARY = require('../../utils/salaryFit'); // current + expected salary are required on every new candidate (2026-10-10)
 const S = require('./_shared');
 const F = require('./_fields');
 
@@ -28,15 +29,15 @@ async function readBack(ctx, path, fallback) {
 defineTool({
   name: 'assign_recruiter',
   module: 'ats',
-  label: 'Assign a recruiter to a job',
-  description: 'Make one recruiter the recruiter on one job (requirement).',
+  label: 'Assign a recruiter to a requirement',
+  description: 'Make one recruiter the recruiter on one requirement.',
   parameters: {
     recruiter: { type: 'person', required: true, description: 'The recruiter.' },
-    job: { type: 'requirement', required: true, description: 'The job (title, code or client).' },
+    job: { type: 'requirement', required: true, description: 'The requirement (title, code or client).' },
   },
   permission: { product: 'ats', module: 'requirements', feature: 'Requirement Detail', action: 'assign' },
   confirm: 'default',
-  examples: ['Assign Priya to the Java Developer job', 'Give the Java Developer opening to Anil'],
+  examples: ['Assign Priya to the Java Developer requirement', 'Give the Java Developer opening to Anil'],
   async validate(ctx, input) {
     const spans = T.nameSpans(input);
     let recruiter = null;
@@ -55,7 +56,7 @@ defineTool({
       }
     }
     // The job
-    const job = await S.pickRequirement(ctx, input, { text: reqSpans.join(' '), question: 'Which job is it for? Give its title, code or client.' });
+    const job = await S.pickRequirement(ctx, input, { text: reqSpans.join(' '), question: 'Which requirement is it for? Give its title, code or client.' });
     if (job.ret) return job.ret;
     const req = job.one;
     // The recruiter picker: the assign screen's own list, least busy first.
@@ -78,15 +79,15 @@ defineTool({
       params: { requirementId: req.id, recruiterId: person.id, recruiterName: person.name, previousRecruiterId: req.recruiterId || null },
       summary: `Assign ${person.name} as the recruiter on ${req.title}${req.client ? ` (${req.client})` : ''}.`,
       display: T.card('Assign Recruiter', [
-        ['Job', req.title], ['Code', req.reqCode], ['Client', req.client], ['Recruiter', person.name], ['Their workload', `${person.load || 0} (open jobs ${person.openJobs || 0}, people in process ${person.inProcess || 0})`],
+        ['Requirement', req.title], ['Code', req.reqCode], ['Client', req.client], ['Recruiter', person.name], ['Their workload', `${person.load || 0} (open requirements ${person.openJobs || 0}, people in process ${person.inProcess || 0})`],
         ['Replaces', req.recruiterId ? 'the current recruiter' : null],
       ]),
     });
   },
   async rules(ctx, p) {
     const req = await entities.requirementById(ctx.user, p.requirementId);
-    if (!req) return { ok: false, message: 'I cannot find that job in your list any more. Nothing was changed.' };
-    if ((req.recruiterId || null) !== (p.previousRecruiterId || null)) return { ok: false, message: 'Someone changed the recruiter on this job since I asked you. Nothing was changed - ask again.' };
+    if (!req) return { ok: false, message: 'I cannot find that requirement in your list any more. Nothing was changed.' };
+    if ((req.recruiterId || null) !== (p.previousRecruiterId || null)) return { ok: false, message: 'Someone changed the recruiter on this requirement since I asked you. Nothing was changed - ask again.' };
     return { ok: true };
   },
   async execute(ctx, p) {
@@ -97,7 +98,7 @@ defineTool({
   async verify(ctx, p) {
     const req = await entities.requirementById(ctx.user, p.requirementId);
     const ok = !!req && req.recruiterId === p.recruiterId;
-    return { ok, message: ok ? `${req.title} now shows ${p.recruiterName} as the recruiter.` : 'The recruiter on the job is different from what was asked.', evidence: req ? { recruiterId: req.recruiterId } : null };
+    return { ok, message: ok ? `${req.title} now shows ${p.recruiterName} as the recruiter.` : 'The recruiter on the requirement is different from what was asked.', evidence: req ? { recruiterId: req.recruiterId } : null };
   },
   audit: (p) => `Assigned recruiter ${p.recruiterId} to requirement ${p.requirementId}`,
 });
@@ -130,7 +131,7 @@ defineTool({
   name: 'create_client',
   module: 'ats',
   label: 'Add a new client',
-  description: 'Add a client company as a draft (company name, and optionally city, contact and industry).',
+  description: 'Add a client company, saved for later (company name, and optionally city, contact and industry).',
   parameters: {
     name: { type: 'text', required: true, description: 'The company name.' },
     location: { type: 'text', required: false, description: 'City.' },
@@ -156,10 +157,10 @@ defineTool({
     if (exact) return T.refuse(`A client called "${exact.name}" is already there. Open that one instead of adding a new one.`);
     return T.done({
       params: { name, ...fields },
-      summary: `Add the client "${name}" as a draft${fields.location ? ` in ${fields.location}` : ''}.`,
+      summary: `Add the client "${name}" (saved for later)${fields.location ? ` in ${fields.location}` : ''}.`,
       display: T.card('Add Client', [
         ['Company', name], ['City', fields.location], ['Contact person', fields.contactName], ['Contact phone', fields.contactPhone], ['Contact email', fields.contactEmail], ['Industry', fields.industry],
-      ], 'It is saved as a draft - the agreement and the rest of the details are filled in on the Clients screen.'),
+      ], 'It is saved for later - the agreement and the rest of the details are filled in on the Clients screen.'),
     });
   },
   async execute(ctx, p) {
@@ -171,7 +172,7 @@ defineTool({
       }
       return { ok: false, message: problemOf(r, 'The app did not allow that.') };
     }
-    return { ok: true, message: `Client "${p.name}" added as a draft.`, data: { id: r.data.id, name: r.data.name }, open: r.data.id ? `/clients/${r.data.id}` : null };
+    return { ok: true, message: `Client "${p.name}" added (saved for later).`, data: { id: r.data.id, name: r.data.name }, open: r.data.id ? `/clients/${r.data.id}` : null };
   },
   async verify(ctx, p, result) {
     const id = result.data && result.data.id;
@@ -180,7 +181,7 @@ defineTool({
     const ok = !!back.data && same(back.data.name, p.name);
     return { ok, message: ok ? `"${p.name}" is on the client list.` : 'I could not find the new client when I looked.', evidence: { id, via: back.via } };
   },
-  audit: (p) => `Created client "${p.name}" (draft)`,
+  audit: (p) => `Created client "${p.name}" (saved for later)`,
 });
 
 const CLIENT_UPDATE_FIELDS = [
@@ -288,17 +289,24 @@ function openingsFrom(input) {
 defineTool({
   name: 'create_requirement',
   module: 'ats',
-  label: 'Add a new job',
-  description: 'Add a job (requirement) for a client as a draft: title, client, openings, city.',
+  label: 'Add a new requirement',
+  description: 'Add a requirement for a client, not live yet: title, client, openings, city.',
   parameters: {
-    title: { type: 'text', required: true, description: 'The job title.' },
+    title: { type: 'text', required: true, description: 'The requirement title.' },
     client: { type: 'client', required: true, description: 'The client it is for.' },
     openings: { type: 'number', required: false, description: 'How many people are needed.' },
     location: { type: 'text', required: false, description: 'City.' },
   },
-  permission: { product: 'ats', module: 'requirements', feature: 'Create Requirement', action: 'create' },
+  // 2026-10-13: creating a job is the BDE team's and above (utils/jobCreateRule.js). Admin adds it as a draft; a BDE / BDE TL /
+  // Manager / Asst Manager send it as a request (a draft a lead opens); HR adds TeamLink's own jobs; nobody else.
+  permission: (user, params) => {
+    const JC = require('../../utils/jobCreateRule'); // eslint-disable-line global-require
+    const kind = JC.kindOf(user);
+    const out = JC.canCreateJob(user, { internal: params ? !!params.internal : kind === 'hr' });
+    return out.allowed ? { ok: true } : { ok: false, message: `${JC.REFUSAL} Nothing was changed.` };
+  },
   confirm: 'default',
-  examples: ['Create a requirement for Java Developer at Acme', 'Raise a job QA Engineer for Orbit Tech 3 openings'],
+  examples: ['Create a requirement for Java Developer at Acme', 'Raise a requirement QA Engineer for Orbit Tech 3 openings'],
   async validate(ctx, input) {
     const spansAll = input.slots.spans || [];
     const internalOnly = ctx.user.atsRole === 'HR';
@@ -323,16 +331,16 @@ defineTool({
         if (res.rows.length && res.full) {
           const dec = entities.decide(res);
           if (dec.one) { client = dec.one; clientSpan = sp; break; }
-          return T.which(`I found ${res.rows.length} clients that fit "${sp.text}". Which one is the job for?`, res.rows, 'client');
+          return T.which(`I found ${res.rows.length} clients that fit "${sp.text}". Which one is the requirement for?`, res.rows, 'client');
         }
       }
     }
     const titleSpans = spans.filter((s) => s !== clientSpan && !['in', 'at'].includes(s.prev));
     const typedTitle = input.slots.answers && input.slots.answers.title;
     const title = S.CLEAN(typedTitle || kwTitle || titleSpans.map((s) => s.text).join(' '));
-    if (!title) return T.clarify('What is the job title?', { need: 'title' });
+    if (!title) return T.clarify('What is the requirement title?', { need: 'title' });
     if (!client && !internalOnly) {
-      return T.clarify(`Which client is the "${title}" job for? Give the client name.`, { need: 'client' });
+      return T.clarify(`Which client is the "${title}" requirement for? Give the client name.`, { need: 'client' });
     }
     const openings = openingsFrom(input) || 1;
     if (openings < 1 || openings > 999) return T.refuse('Openings must be a whole number from 1 to 999.');
@@ -342,9 +350,9 @@ defineTool({
     };
     return T.done({
       params,
-      summary: `Add the job "${title}" for ${params.clientName} (${openings} opening${openings > 1 ? 's' : ''}) as a draft.`,
-      display: T.card('Add Job', [['Job', title], ['Client', params.clientName], ['Openings', openings], ['City', loc]],
-        'It is saved as a Draft - nothing is posted anywhere. Finish the description on the Jobs screen when you are ready to publish.'),
+      summary: `Add the requirement "${title}" for ${params.clientName} (${openings} opening${openings > 1 ? 's' : ''}), not live yet.`,
+      display: T.card('Add Requirement', [['Requirement', title], ['Client', params.clientName], ['Openings', openings], ['City', loc]],
+        'It is saved but not live - nothing is posted anywhere. Finish the description on the Requirements screen when you are ready to publish.'),
     });
   },
   async execute(ctx, p, meta) {
@@ -354,16 +362,16 @@ defineTool({
     };
     const r = await ctx.api.post('/requirements', body, { idempotencyKey: ctx.idempotencyKey });
     if (!r.ok) return { ok: false, message: problemOf(r, 'The app did not allow that.') };
-    return { ok: true, message: `Job "${p.title}" added as a draft${r.data.reqCode ? ` (${r.data.reqCode})` : ''}.`, data: { id: r.data.id, reqCode: r.data.reqCode, status: r.data.status }, open: r.data.id ? `/requirements/${r.data.id}` : null };
+    return { ok: true, message: `Requirement "${p.title}" added (not live yet)${r.data.reqCode ? ` (${r.data.reqCode})` : ''}.`, data: { id: r.data.id, reqCode: r.data.reqCode, status: r.data.status }, open: r.data.id ? `/requirements/${r.data.id}` : null };
   },
   async verify(ctx, p, result) {
     const id = result.data && result.data.id;
-    if (!id) return { ok: false, message: 'The app did not give the new job an id.' };
+    if (!id) return { ok: false, message: 'The app did not give the new requirement an id.' };
     const back = await readBack(ctx, `/requirements/${encodeURIComponent(id)}`, null);
     const ok = !!back.data && same(back.data.title, p.title);
-    return { ok, message: ok ? `"${p.title}" is on the jobs list.` : 'I could not find the new job when I looked.', evidence: { id, via: back.via } };
+    return { ok, message: ok ? `"${p.title}" is on the requirements list.` : 'I could not find the new requirement when I looked.', evidence: { id, via: back.via } };
   },
-  audit: (p) => `Created requirement "${p.title}" for ${p.clientName} (draft)`,
+  audit: (p) => `Created requirement "${p.title}" for ${p.clientName} (not live yet)`,
 });
 
 const REQ_FIELDS = [
@@ -376,15 +384,15 @@ const REQ_FIELDS = [
 defineTool({
   name: 'update_requirement',
   module: 'ats',
-  label: 'Change a job\'s details',
-  description: 'Change a job\'s openings, city, priority, experience or closing date.',
+  label: 'Change a requirement\'s details',
+  description: 'Change a requirement\'s openings, city, priority, experience or closing date.',
   parameters: {
-    job: { type: 'requirement', required: true, description: 'The job.' },
+    job: { type: 'requirement', required: true, description: 'The requirement.' },
     changes: { type: 'fields', required: true, description: 'What to change.' },
   },
   permission: { product: 'ats', module: 'requirements', feature: 'Requirement Detail', action: 'edit' },
   confirm: 'default',
-  examples: ['Update the Java Developer requirement openings to 5', 'Change location of the Sales Manager job to Pune'],
+  examples: ['Update the Java Developer requirement openings to 5', 'Change location of the Sales Manager requirement to Pune'],
   async validate(ctx, input) {
     const text = input.text;
     // what to change
@@ -401,13 +409,13 @@ defineTool({
     if (closing && /\b(closing|close|last date|deadline|target)\b/i.test(text)) asked.closingDate = closing;
     // which job: remove the words that belong to the new values
     const spans = T.nameSpans(input).filter((s) => !same(s, asked.location || ''));
-    const job = await S.pickRequirement(ctx, input, { text: spans.join(' '), question: 'Which job do you want to change? Give its title, code or client.' });
+    const job = await S.pickRequirement(ctx, input, { text: spans.join(' '), question: 'Which requirement do you want to change? Give its title, code or client.' });
     if (job.ret) return job.ret;
     const req = job.one;
     if (!Object.keys(asked).length) return T.clarify(`What should I change on ${req.title}? (openings, city, priority, experience or closing date)`, { need: 'changes' });
     if (asked.closingDate && asked.closingDate < ctx.today) return T.refuse('The closing date is in the past. Pick today or a later day.');
     const changes = {};
-    const rows = [['Job', req.title], ['Client', req.client]];
+    const rows = [['Requirement', req.title], ['Client', req.client]];
     const label = { openings: 'Openings', location: 'City', priority: 'Priority', experience: 'Experience', closingDate: 'Closing date' };
     const now = { openings: req.openings, location: req.location, priority: req.priority, closingDate: req.closingDate };
     Object.entries(asked).forEach(([k, v]) => {
@@ -420,12 +428,12 @@ defineTool({
     return T.done({
       params: { requirementId: req.id, title: req.title, changes },
       summary: `Change ${req.title}: ${Object.entries(changes).map(([k, v]) => `${label[k]} to ${v}`).join(', ')}.`,
-      display: T.card('Change Job', rows),
+      display: T.card('Change Requirement', rows),
     });
   },
   async rules(ctx, p) {
     const req = await entities.requirementById(ctx.user, p.requirementId);
-    return req ? { ok: true } : { ok: false, message: 'I cannot find that job in your list any more. Nothing was changed.' };
+    return req ? { ok: true } : { ok: false, message: 'I cannot find that requirement in your list any more. Nothing was changed.' };
   },
   async execute(ctx, p) {
     const r = await ctx.api.put(`/requirements/${encodeURIComponent(p.requirementId)}`, { ...p.changes, editReason: 'Changed by the AI Agent at the user\'s request' });
@@ -434,9 +442,9 @@ defineTool({
   },
   async verify(ctx, p) {
     const back = await readBack(ctx, `/requirements/${encodeURIComponent(p.requirementId)}`, null);
-    if (!back.data) return { ok: false, message: 'I could not read the job back.' };
+    if (!back.data) return { ok: false, message: 'I could not read the requirement back.' };
     const bad = Object.entries(p.changes).filter(([k, v]) => String(back.data[k] == null ? '' : back.data[k]).slice(0, 10).toLowerCase() !== String(v).slice(0, 10).toLowerCase()).map(([k]) => k);
-    return { ok: !bad.length, message: bad.length ? `These did not save: ${bad.join(', ')}.` : 'The new details are on the job.', evidence: { checked: Object.keys(p.changes) } };
+    return { ok: !bad.length, message: bad.length ? `These did not save: ${bad.join(', ')}.` : 'The new details are on the requirement.', evidence: { checked: Object.keys(p.changes) } };
   },
   audit: (p) => `Updated requirement ${p.requirementId}: ${Object.keys(p.changes).join(', ')}`,
 });
@@ -444,36 +452,36 @@ defineTool({
 defineTool({
   name: 'delete_requirement',
   module: 'ats',
-  label: 'Delete a job',
-  description: 'Delete a job (requirement). Only possible while nobody is attached to it.',
-  parameters: { job: { type: 'requirement', required: true, description: 'The job.' } },
+  label: 'Delete a requirement',
+  description: 'Delete a requirement. Only possible while nobody is attached to it.',
+  parameters: { job: { type: 'requirement', required: true, description: 'The requirement.' } },
   permission: { product: 'ats', module: 'requirements', feature: 'Requirement Detail', action: 'delete' },
   confirm: 'always',
-  impact: 'Deleting a job cannot be undone.',
-  examples: ['Delete the Java Developer requirement', 'Remove job REQ-0012'],
+  impact: 'Deleting a requirement cannot be undone.',
+  examples: ['Delete the Java Developer requirement', 'Remove requirement REQ-0012'],
   async validate(ctx, input) {
-    const job = await S.pickRequirement(ctx, input, { question: 'Which job do you want to delete? Give its title, code or client.' });
+    const job = await S.pickRequirement(ctx, input, { question: 'Which requirement do you want to delete? Give its title, code or client.' });
     if (job.ret) return job.ret;
     const req = job.one;
     return T.done({
       params: { requirementId: req.id, title: req.title, reqCode: req.reqCode },
-      summary: `Delete the job ${req.title}${req.client ? ` (${req.client})` : ''}.`,
-      display: T.card('Delete Job', [['Job', req.title], ['Code', req.reqCode], ['Client', req.client], ['Status', req.status]], 'This cannot be undone.'),
+      summary: `Delete the requirement ${req.title}${req.client ? ` (${req.client})` : ''}.`,
+      display: T.card('Delete Requirement', [['Requirement', req.title], ['Code', req.reqCode], ['Client', req.client], ['Status', req.status]], 'This cannot be undone.'),
     });
   },
   async rules(ctx, p) {
     const req = await entities.requirementById(ctx.user, p.requirementId);
-    return req ? { ok: true } : { ok: false, message: 'That job is already gone, or is not in your list. Nothing was changed.' };
+    return req ? { ok: true } : { ok: false, message: 'That requirement is already gone, or is not in your list. Nothing was changed.' };
   },
   async execute(ctx, p) {
     const r = await ctx.api.delete(`/requirements/${encodeURIComponent(p.requirementId)}`);
     if (!r.ok) return { ok: false, message: problemOf(r, 'The app did not allow that.') };
-    return { ok: true, message: `Job "${p.title}" deleted.`, data: r.data };
+    return { ok: true, message: `Requirement "${p.title}" deleted.`, data: r.data };
   },
   async verify(ctx, p) {
     const r = await ctx.read.get(`/requirements/${encodeURIComponent(p.requirementId)}`);
     const gone = r.status === 404 || r.status === 403 || (r.ok && r.data && r.data.deleted);
-    return { ok: gone, message: gone ? 'The job is no longer on the list.' : 'The job is still there.', evidence: { status: r.status } };
+    return { ok: gone, message: gone ? 'The requirement is no longer on the list.' : 'The requirement is still there.', evidence: { status: r.status } };
   },
   audit: (p) => `Deleted requirement ${p.reqCode || p.requirementId} "${p.title}"`,
 });
@@ -485,12 +493,14 @@ defineTool({
   name: 'create_candidate',
   module: 'ats',
   label: 'Add a new candidate',
-  description: 'Add a candidate: name, mobile, email and at least one skill.',
+  description: 'Add a candidate: name, mobile, email, at least one skill, and current + expected salary.',
   parameters: {
     name: { type: 'text', required: true, description: 'Full name.' },
     phone: { type: 'phone', required: true, description: 'Mobile number.' },
     email: { type: 'email', required: true, description: 'Email.' },
     skills: { type: 'text', required: true, description: 'At least one skill.' },
+    currentSalary: { type: 'text', required: true, description: 'Current salary, like 4.5 LPA or 45000 per month (0 if a fresher).' },
+    expectedSalary: { type: 'text', required: true, description: 'Expected salary, like 6 LPA or 50000 per month.' },
     location: { type: 'text', required: false, description: 'City.' },
     currentCompany: { type: 'text', required: false, description: 'Current company.' },
   },
@@ -511,12 +521,23 @@ defineTool({
     if (!EMAIL_RE.test(email)) return T.refuse(`"${email}" does not look like an email address.`);
     skills = S.CLEAN(skills).replace(/\band\b/gi, ',').replace(/\s*,\s*/g, ', ').replace(/^,\s*|,\s*$/g, '');
     if (!skills) return T.clarify(`Tell me at least one skill of ${name} (for example "Java, SQL").`, { need: 'skills' });
+    // SALARY (the app asks for both on every new candidate): read it from the sentence, else ask - never guess a number.
+    const salaryOf = (words, answer) => {
+      const m = String(input.text || '').match(new RegExp(`\\b(?:${words})\\b\\s*(?:is|=|:|-)?\\s*([^,;]+?)(?=\\s+(?:expected|expecting|current|email|phone|mobile|skills?|location|city|company)\\b|[,;]|$)`, 'i'));
+      return S.CLEAN((m && m[1]) || answer || '');
+    };
+    const currentSalary = salaryOf('current\\s+(?:salary|ctc)', answers.currentSalary);
+    if (!currentSalary) return T.clarify(`What is ${name}'s current salary (for example 4.5 LPA or 45000 per month; 0 if a fresher)?`, { need: 'currentSalary' });
+    const expectedSalary = salaryOf('expected\\s+(?:salary|ctc)', answers.expectedSalary);
+    if (!expectedSalary) return T.clarify(`What salary does ${name} expect (for example 6 LPA or 50000 per month)?`, { need: 'expectedSalary' });
+    const sal = SALARY.validateSalaries({ currentSalary, expectedSalary });
+    if (!sal.ok) return T.clarify(sal.errors.currentSalary || sal.errors.expectedSalary, { need: sal.errors.currentSalary ? 'currentSalary' : 'expectedSalary' });
     const location = F.grab(input.text, ['location', 'city']) || (spans.find((s) => s.prev === 'in' && s !== nameSpan) || {}).text || '';
     const company = F.grab(input.text, ['current company', 'company', 'works at']);
     return T.done({
-      params: { name, phone, email, skills, ...(location ? { location } : {}), ...(company ? { currentCompany: company } : {}) },
+      params: { name, phone, email, skills, currentSalary, expectedSalary, ...(location ? { location } : {}), ...(company ? { currentCompany: company } : {}) },
       summary: `Add the candidate ${name} (${phone}, ${email}).`,
-      display: T.card('Add Candidate', [['Name', name], ['Mobile', phone], ['Email', email], ['Skills', skills], ['City', location], ['Company', company]]),
+      display: T.card('Add Candidate', [['Name', name], ['Mobile', phone], ['Email', email], ['Skills', skills], ['Current salary', sal.values.currentSalary], ['Expected salary', sal.values.expectedSalary], ['City', location], ['Company', company]]),
     });
   },
   async execute(ctx, p) {

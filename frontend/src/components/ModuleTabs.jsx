@@ -14,15 +14,13 @@ const BARS = [
   {
     label: 'Reports & Team',
     tabs: REPORTS_TEAM_TABS,
-    on: ['/reports/ats', '/reports/my-results', '/reports/job-portal', '/ats/team', '/ats/followups', '/ats/settings'],
+    on: ['/reports/ats', '/reports/my-results', '/reports/job-portal', '/ats/team', '/ats/followups', '/ats/settings', '/ats/ai-calling'],
     // Follow-ups is a view of the Team tab; Job Portal Reports a tab of ATS Reports.
     alias: { '/ats/followups': '/ats/team', '/reports/job-portal': '/reports/ats' },
   },
 ];
 
-// Plain words on the tab (user, 2026-10-05: "Job, not Requirement"); the
-// nav.js labels and routes stay as they are.
-const PLAIN_TAB = { Requirements: 'Jobs' };
+// The tab says "Requirements" (user, 2026-10-17: Job -> Requirement again).
 
 export default function ModuleTabs({ pathname }) {
   const { user } = useAuth() || {};
@@ -48,7 +46,7 @@ export default function ModuleTabs({ pathname }) {
           aria-selected={here === t.to}
           className={() => `tab${here === t.to ? ' active' : ''}`}
         >
-          {PLAIN_TAB[t.label] || t.label}
+          {t.label}
         </NavLink>
       ))}
     </div>

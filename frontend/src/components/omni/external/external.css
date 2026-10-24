@@ -1,0 +1,27 @@
+/* External-service shells (Social, Facebook, Instagram, Catalogs, Shopify, Ads, Google). Scoped under .gsx; the prototype's classes are in ../gs.css. */
+.gsx .ext-metrics{grid-template-columns:repeat(3,1fr);margin-top:16px}
+.gsx .ext-metrics.first{margin-top:0}
+@media (max-width:760px){.gsx .ext-metrics{grid-template-columns:1fr}}
+.gsx .ext-toggle{cursor:pointer;border:0;flex:0 0 37px;display:block}
+.gsx .ext-toggle[disabled]{cursor:not-allowed;opacity:.55}
+.gsx .ext-toggle:focus-visible{outline:2px solid #90c7a5;outline-offset:2px}
+.gsx .ext-note{font-size:10.5px;color:var(--muted);line-height:1.6;margin:8px 0 0}
+.gsx .ext-info{display:grid;gap:4px;margin:10px 0 0;font-size:11px;color:var(--ink)}
+.gsx .ext-info b{font-weight:800}
+.gsx .ext-steps{font-size:11px;line-height:1.75;padding-left:18px;margin:0 0 14px}
+.gsx .ext-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.gsx .ext-opt{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700;margin:11px 0;cursor:pointer}
+.gsx .ext-err{color:#c25058;font-size:10px;margin-top:4px}
+.gsx .ext-cell-wrap{overflow-wrap:anywhere}
+.gsx .ext-split{display:grid;grid-template-columns:1.5fr 1fr;gap:16px;align-items:start}
+@media (max-width:900px){.gsx .ext-split{grid-template-columns:1fr}}
+.gsx .ext-triple{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:16px}
+@media (max-width:560px){.gsx .ext-triple{grid-template-columns:1fr}}
+.gsx .ext-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:8px}
+@media (max-width:560px){.gsx .ext-tiles{grid-template-columns:repeat(2,1fr)}}
+.gsx .ext-tile-off{opacity:.5;cursor:not-allowed}
+.gsx .ext-posttext{margin-top:8px;font-size:11px}
+.gsx .ext-posttext textarea{width:100%;min-height:130px;border:1px solid var(--line);border-radius:10px;padding:10px;font-size:11px;background:#fff;resize:vertical}
+.gsx .ext-insights{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media (max-width:760px){.gsx .ext-insights{grid-template-columns:1fr}}
+.gsx .ext-post-text{font-size:9.5px;color:#4d5951;margin-top:2px;white-space:pre-wrap;overflow-wrap:anywhere}

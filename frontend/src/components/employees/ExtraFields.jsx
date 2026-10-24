@@ -1,6 +1,7 @@
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useState } from 'react';
 import api from '../../api';
 import './ExtraFields.css';
+import Combo from '../Combo.jsx';
 
 // The fields an administrator added in Employee Management -> Manage Fields
 // (HRMS spec item 15), on one employee's record.
@@ -149,17 +150,17 @@ const ExtraFields = forwardRef(function ExtraFields({ employeeId, editable = fal
       <div className="xf-grid">
         {groupsOf(fields).flatMap((g) => g.items).map((f, idx, ordered) => {
           const v = vals[f.key];
-          const label = <span>{f.label}{f.required && <b className="xf-req"> ✱</b>}</span>;
+          const label = <span>{f.label}</span>;
           let input;
           if (f.type === 'TEXT') input = <input value={v || ''} maxLength={f.maxLength || 500} onChange={(e) => set(f.key, e.target.value)} />;
           else if (f.type === 'NUMBER') input = <input type="number" value={v ?? ''} min={f.minValue ?? undefined} max={f.maxValue ?? undefined} onChange={(e) => set(f.key, e.target.value)} />;
           else if (f.type === 'DATE') input = <input type="date" value={v || ''} onChange={(e) => set(f.key, e.target.value)} />;
           else if (f.type === 'DROPDOWN') {
             input = (
-              <select value={v || ''} onChange={(e) => set(f.key, e.target.value)}>
+              <Combo value={v || ''} onChange={(e) => set(f.key, e.target.value)}>
                 <option value="">Choose…</option>
                 {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
+              </Combo>
             );
           } else if (f.type === 'MULTISELECT') {
             const list = Array.isArray(v) ? v : [];

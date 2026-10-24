@@ -27,6 +27,7 @@ const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth
 const { invoiceWhere } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
 const clientProfile = require('../utils/clientProfile');
+const clientSearch = require('../utils/clientSearch');
 const { findClientDuplicates, describeMatches, displayCode } = require('../utils/clientDuplicates');
 const { nextClientNumber } = require('../utils/autoNumber');
 const VP = require('../utils/vendorPortal');
@@ -72,7 +73,10 @@ const brief = (c) => ({
 router.get('/', requirePerm('accounts', 'accounts', 'Invoices', 'view'), async (req, res) => {
   const q = clean((req.query || {}).q, 80).toLowerCase();
   const rows = await prisma.client.findMany({ where: listWhere(req.user), orderBy: { name: 'asc' } });
-  const out = rows.map(brief).filter((c) => !q || [c.name, c.company, c.clientCode, c.gstin, c.email].some((x) => String(x || '').toLowerCase().includes(q)));
+  // The old names (ClientAlias) also find the client; the row keeps its official name (aliases = matching only).
+  const aliasOf = await clientSearch.aliasMap();
+  const out = rows.map((c) => ({ ...brief(c), aliases: (aliasOf.get(c.id) || []).filter((a) => a.toLowerCase() !== String(c.name || '').toLowerCase()) }))
+    .filter((c) => !q || [c.name, c.company, c.clientCode, c.gstin, c.email].some((x) => String(x || '').toLowerCase().includes(q)) || c.aliases.some((a) => clientSearch.textMatches(a, q)));
   res.json({ rows: out, total: rows.length, canAdd: true });
 });
 
@@ -143,10 +147,10 @@ router.post('/', requirePerm('accounts', 'accounts', 'Invoices', 'create'), asyn
   });
   await logAudit({
     userId: req.user.id, actorName: req.user.name || req.user.email, action: 'Client created from Invoices', entity: 'Client', entityId: client.id,
-    toValue: `${client.name} (${clientCode}) - Draft${dup.total ? ` - despite: ${describeMatches(dup.matches)}` : ''}`.slice(0, 900),
+    toValue: `${client.name} (${clientCode}) - incomplete${dup.total ? ` - despite: ${describeMatches(dup.matches)}` : ''}`.slice(0, 900),
   });
   await VP.auditReq(req, { changedById: req.user.id, actorName: req.user.name || req.user.email, role: 'Accounts', action: 'Client created from Invoices', newValue: `${client.name} (${clientCode})` });
-  return res.status(201).json({ client: brief(client), message: `Client ${client.name} added (${clientCode}). It is a draft until a BDE or Admin completes it in Clients.` });
+  return res.status(201).json({ client: brief(client), message: `Client ${client.name} added (${clientCode}). It stays incomplete until a BDE or Admin completes it in Clients.` });
 });
 
 router.patch('/:id', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {

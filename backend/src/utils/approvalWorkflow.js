@@ -818,7 +818,7 @@ async function view(workflowId, recordId, user, { canAct = false } = {}) {
     // The Super Admin's direct approve / reject is offered whenever the
     // request is still open and it is not already their own turn (their own
     // turn is an ordinary `canAct`). act() makes the same test.
-    canDirect: !!(current && isSuperAdmin(user) && current.approverUserId !== (user && user.id)),
+    canDirect: !!(current && hasDirectPower(user, workflowId, steps) && current.approverUserId !== (user && user.id)),
     ...trackOf(steps),
     steps: steps.map((s) => viewStep(s, now)),
   };
@@ -937,9 +937,22 @@ function isSuperAdmin(user) {
   return user.role === 'SUPER_ADMIN' || named(user.hrmsRole) === 'SUPER_ADMIN';
 }
 
+// Who may decide a request out of turn: the Super Admin (any chain), and an Internal HR login
+// on the attendance / leave chains (utils/internalHr.js), never on their own request.
+function hasDirectPower(user, workflowId, steps) {
+  if (isSuperAdmin(user)) {
+    // an HR-super delegate (utils/hrSuper.js) decides at any step but never their own request
+    if (user.hrSuper) { const own = (steps || []).find((s) => s.status === ST.APPLIED); return !(own && own.approverUserId && own.approverUserId === user.id); }
+    return true;
+  }
+  if (!require('./internalHr').mayDecideDirect(user, workflowId)) return false; // eslint-disable-line global-require
+  const applied = (steps || []).find((s) => s.status === ST.APPLIED);
+  return !(applied && applied.approverUserId && applied.approverUserId === user.id);
+}
+
 async function decideDirect(workflowId, recordId, steps, current, user, { decision, note }) {
   const now = new Date();
-  const actor = user.name || user.email || 'Super Admin';
+  const actor = user.name || user.email || (isSuperAdmin(user) ? 'Super Admin' : 'Internal HR');
   const saStep = steps.find((s) => s.level === 'SUPER_ADMIN') || null;
   const bypassed = steps.filter((s) => [ST.PENDING, ST.WAITING].includes(s.status) && (!saStep || s.id !== saStep.id));
   if (bypassed.length) {
@@ -976,7 +989,7 @@ async function decideDirect(workflowId, recordId, steps, current, user, { decisi
     await logAudit({
       userId: user.id,
       actorName: actor,
-      action: `${DIRECT_LABEL}: ${(WORKFLOWS[workflowId] || {}).label || workflowId} ${decision === 'Approved' ? 'approved' : 'rejected'}`,
+      action: `${isSuperAdmin(user) ? DIRECT_LABEL : 'Direct Internal HR Approval'}:${(WORKFLOWS[workflowId] || {}).label || workflowId} ${decision === 'Approved' ? 'approved' : 'rejected'}`,
       entity: 'ApprovalStep',
       entityId: recordId,
       fromValue: current.level,
@@ -1029,7 +1042,7 @@ async function act(workflowId, recordId, user, { decision, note }) {
   // step it is on, without waiting for the levels below. It is recorded as a
   // "Direct Super Admin Approval" — see decideDirect() — never disguised as a
   // normal turn.
-  if (!isOwner && isSuperAdmin(user)) {
+  if (!isOwner && hasDirectPower(user, workflowId, steps)) {
     return decideDirect(workflowId, recordId, steps, current, user, { decision, note });
   }
   if (!isOwner) {
@@ -1173,6 +1186,30 @@ const WORKFLOWS = {
     overrideAction: 'configure',
     defaults: CHAIN_DEFAULTS,
   },
+  // 2026-10-24 (founder): "whatever TLs or HR upload in LMS or Documents takes approvals hierarchy-wise, up to the Super Admin".
+  // A course already climbs the ladder above; these two cover the other two uploads.
+  //   document        a policy / compliance / company document uploaded in Employee Services -> Documents
+  //   courseMaterial  a video / file / link added to a course that is already live
+  document: {
+    id: 'document',
+    label: 'Document Publication',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Employee Services',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
+  courseMaterial: {
+    id: 'courseMaterial',
+    label: 'LMS Material Upload',
+    product: 'hrms',
+    module: 'hrms',
+    feature: 'Performance & Development',
+    actAction: 'approve',
+    overrideAction: 'configure',
+    defaults: CHAIN_DEFAULTS,
+  },
 };
 
 module.exports = {
@@ -1205,6 +1242,7 @@ module.exports = {
   canSee,
   permissionFor,
   isSuperAdmin,
+  hasDirectPower,
   trackOf,
   DIRECT_LABEL,
   DIRECT_SKIP_NOTE,

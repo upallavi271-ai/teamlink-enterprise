@@ -19,8 +19,10 @@ const { requireAuth } = require('../middleware/auth');
 const { resolveIdentity, tokenPayload } = require('../utils/identity');
 const { scopeLabel } = require('../utils/scope');
 const { logAudit } = require('../utils/audit');
-const { isSystemAccount } = require('../utils/systemAccounts');
+const { isStrictSystemAccount: isSystemAccount } = require('../utils/systemAccounts'); // the ROLE test: a Super Admin is never viewed as, whatever counts as an employee
 const va = require('../utils/viewAs');
+const actAs = require('../utils/actAs');
+const { ipOf } = require('../utils/clientIp');
 
 const router = express.Router();
 
@@ -137,6 +139,114 @@ router.post('/exit', async (req, res) => {
     reason: va.sessionReason(sid),
   }));
   res.json({ ok: true, wasViewingAs: true, blocked });
+});
+
+// ---- ACT AS (the edit twin, utils/actAs.js) -----------------------------------
+// Opens an Act-as session for `target`, answers with the token. `viewer` = the
+// real Super Admin user row. Audit writes go through va.withWrites so the same
+// helper works from inside a View-as session (switch-to-act).
+async function openActSession(req, res, viewer, target, extra = '') {
+  const identity = await resolveIdentity(target.id, target);
+  const refusal = actAs.refusalFor(identity, target);
+  if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+  if (!identity.products.hrms && !identity.products.ats && !identity.products.accounts) {
+    return res.status(400).json({ error: 'This login has no product access yet — there is nothing to act on.' });
+  }
+  const sid = va.newSid();
+  const { token, exp } = actAs.signActToken(identity, tokenPayload, viewer, sid);
+  va.markLive(sid);
+  const group = groupOf(identity);
+  await va.withWrites(() => logAudit({
+    userId: viewer.id, actorName: viewer.name, action: 'Act as started', entity: 'User', entityId: target.id,
+    field: 'onBehalfOf', fieldLabel: target.name, fromValue: ipOf(req),
+    toValue: `${target.name} · ${GROUP_LABEL[group]}${identity.department ? ` · ${identity.department}` : ''} (real changes, ${actAs.ACT_AS_MINUTES} min)${extra}`,
+    reason: va.sessionReason(sid),
+  }));
+  return res.json({
+    token,
+    mode: 'act',
+    expiresAt: new Date(exp * 1000).toISOString(),
+    target: { id: target.id, name: target.name, role: GROUP_LABEL[group], landingPath: identity.landingPath },
+  });
+}
+
+// Is the real person behind this request an active Super Admin? (row, or null)
+async function realSuperAdmin(userId) {
+  const u = await prisma.user.findUnique({ where: { id: String(userId || '') } }).catch(() => null);
+  return u && u.role === 'SUPER_ADMIN' && (u.status || 'Active') === 'Active' ? u : null;
+}
+
+// The "Acted as" list on Administration -> Users (Super Admin only).
+router.get('/act-history', superAdminOnly, async (req, res) => {
+  res.json({ sessions: await actAs.history({ days: Math.min(365, Math.max(1, Number(req.query.days) || 90)) }) });
+});
+
+// From a View-as session (called WITH the View-as token): the same person, now editable.
+router.post('/switch-to-act', async (req, res) => {
+  if (!req.viewAs) return res.status(400).json({ error: 'Start View as first, then switch to Act as.' });
+  const viewer = await realSuperAdmin(req.viewAs.byUserId);
+  if (!viewer) return res.status(403).json({ error: 'Only a Super Admin can use Act as.' });
+  const target = await prisma.user.findUnique({ where: { id: req.user.id } });
+  const refusal = actAs.refusalFor(await resolveIdentity(target.id, target), target);
+  if (refusal) return res.status(refusal.status).json({ error: refusal.error });
+  va.markEnded(req.viewAs.sid);
+  await va.withWrites(() => logAudit({
+    userId: viewer.id, actorName: viewer.name, action: 'View as ended', entity: 'User', entityId: target.id,
+    toValue: `${target.name} — switched to Act as`, reason: va.sessionReason(req.viewAs.sid),
+  }));
+  return openActSession(req, res, viewer, target, ' — switched from View as');
+});
+
+// End Act as (called WITH the Act-as token).
+async function endActSession(req, note) {
+  const { sid, byUserId, byName } = req.actingAs;
+  va.markEnded(sid);
+  const changes = await prisma.auditLog.count({
+    where: { action: 'Acted as: change', reason: { startsWith: va.sessionReason(sid) } },
+  });
+  await logAudit({
+    userId: byUserId, actorName: byName, action: 'Act as ended', entity: 'User', entityId: req.user.id,
+    field: 'onBehalfOf', fieldLabel: req.user.name, fromValue: ipOf(req),
+    toValue: `${req.user.name} — ${changes} change${changes === 1 ? '' : 's'}${note || ''}`, reason: va.sessionReason(sid),
+  });
+  return changes;
+}
+router.post('/act-exit', async (req, res) => {
+  if (!req.actingAs) return res.json({ ok: true, wasActing: false });
+  const changes = await endActSession(req);
+  return res.json({ ok: true, wasActing: true, changes });
+});
+// "Back to read-only view": end Act as, hand back a View-as token for the same person.
+router.post('/back-to-read-only', async (req, res) => {
+  if (!req.actingAs) return res.status(400).json({ error: 'You are not acting as anyone.' });
+  const viewer = await realSuperAdmin(req.actingAs.byUserId);
+  if (!viewer) return res.status(403).json({ error: 'Only a Super Admin can use View as.' });
+  const target = await prisma.user.findUnique({ where: { id: req.user.id } });
+  const identity = await resolveIdentity(target.id, target);
+  await endActSession(req, ' — went back to read-only View as');
+  const sid = va.newSid();
+  const viewAs = { byUserId: viewer.id, byName: viewer.name, readOnly: true, sid };
+  const token = jwt.sign({ ...tokenPayload(identity), viewAs }, process.env.JWT_SECRET, { expiresIn: `${va.VIEW_AS_MINUTES}m` });
+  const { exp } = jwt.decode(token);
+  va.markLive(sid);
+  const group = groupOf(identity);
+  await va.withWrites(() => logAudit({
+    userId: viewer.id, actorName: viewer.name, action: 'View as started', entity: 'User', entityId: target.id,
+    toValue: `${target.name} · ${GROUP_LABEL[group]}${identity.department ? ` · ${identity.department}` : ''} (read-only, ${va.VIEW_AS_MINUTES} min)`,
+    reason: va.sessionReason(sid),
+  }));
+  return res.json({
+    token, mode: 'view', expiresAt: new Date(exp * 1000).toISOString(),
+    target: { id: target.id, name: target.name, role: GROUP_LABEL[group], landingPath: identity.landingPath },
+  });
+});
+
+// Start Act as straight from the picker (Super Admin only; no View as needed first).
+router.post('/:userId/act', superAdminOnly, async (req, res) => {
+  const target = await prisma.user.findUnique({ where: { id: String(req.params.userId) } });
+  if (target && target.id === req.user.id) return res.status(400).json({ error: 'You are already signed in as yourself.' });
+  if (!target) return res.status(404).json({ error: 'That login does not exist.' });
+  return openActSession(req, res, req.user, target);
 });
 
 // ---- start ---------------------------------------------------------------

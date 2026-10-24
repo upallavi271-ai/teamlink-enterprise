@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import { saveBlob } from '../office/officeUtil';
+import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 import { money } from '../invoices/invFormat';
 import '../invoices/creditNotes.css';
 
@@ -51,7 +52,7 @@ export default function PlacementMargin({ canExport }) {
   const needle = q.trim().toLowerCase();
   const rows = useMemo(() => all.filter((r) => (!f.department || r.department === f.department) && (!f.client || r.client === f.client)
     && (!f.recruiter || (r.recruiter || 'No recruiter') === f.recruiter) && (!f.month || r.month === f.month)
-    && (!needle || [r.invoiceNumber, r.client, r.candidate, r.recruiter, r.role].filter(Boolean).join(' ').toLowerCase().includes(needle))), [all, f, needle]);
+    && (!needle || [r.invoiceNumber, r.client, clientAliasText(r.client), r.candidate, r.recruiter, r.role].filter(Boolean).join(' ').toLowerCase().includes(needle))), [all, f, needle]);
   const tot = sumUp(rows);
 
   const keyOf = (r) => (group === 'client' ? r.client : group === 'recruiter' ? (r.recruiter || 'No recruiter') : (r.monthLabel || r.month || '—'));

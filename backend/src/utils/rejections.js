@@ -299,9 +299,9 @@ function reasonMayNotApply(rec, requirement, candidate) {
   if (/salary/.test(r)) {
     const here = bandTop(requirement && requirement.salary);
     const there = bandTop(rec.requirementSalary);
-    if (here != null && there != null && here > there) return `This job pays more (up to ₹${here}L vs ₹${there}L).`;
+    if (here != null && there != null && here > there) return `This requirement pays more (up to ₹${here}L vs ₹${there}L).`;
     const expected = bandTop(candidate && candidate.expectedSalary);
-    if (here != null && there == null && expected != null && here >= expected) return `This job's band (up to ₹${here}L) covers the expected ₹${expected}L.`;
+    if (here != null && there == null && expected != null && here >= expected) return `This requirement's band (up to ₹${here}L) covers the expected ₹${expected}L.`;
   }
   return null;
 }
@@ -327,7 +327,7 @@ async function checkCandidateFor(candidateId, requirement) {
 // The note a re-considered application starts with.
 function reconsiderNote(rec) {
   if (!rec) return 'Re-considered';
-  return `Re-considered, earlier rejected by ${rec.side === 'Client' || !rec.side ? (rec.clientName || 'the client') : (rec.byLabel || rec.sideLabel)}${rec.side === 'Internal' ? ` for ${rec.clientName || 'another job'}` : ''} (${rec.reason || 'reason not recorded'})`;
+  return `Re-considered, earlier rejected by ${rec.side === 'Client' || !rec.side ? (rec.clientName || 'the client') : (rec.byLabel || rec.sideLabel)}${rec.side === 'Internal' ? ` for ${rec.clientName || 'another requirement'}` : ''} (${rec.reason || 'reason not recorded'})`;
 }
 
 // --- The same-client rule (user decision #5) -------------------------------

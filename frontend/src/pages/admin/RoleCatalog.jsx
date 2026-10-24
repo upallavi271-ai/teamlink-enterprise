@@ -255,11 +255,17 @@ export default function RoleCatalog() {
             {PRODUCT_LABEL[mod.product || '*']} · {mod.featureNames.length} feature(s) · {atsRoleLabel(editing.role)}
             <br />
             {PRODUCT_NOTE[mod.product || '*']}
-            {mod.locked && (
+            {mod.locked && !mod.lockNote && (
               <>
                 <br />
                 {atsRoleLabel(editing.role)} is view-only: greyed actions are ignored by the server whatever is ticked
                 (view and export stay, plus approve on the approval chain and LMS assign).
+              </>
+            )}
+            {mod.lockNote && (
+              <>
+                <br />
+                {mod.lockNote}
               </>
             )}
             {mod.featureInfo && Object.values(mod.featureInfo).some((i) => !i.api) && (
@@ -270,6 +276,31 @@ export default function RoleCatalog() {
               </>
             )}
           </div>
+          {/* PLAIN TICK LINES (BDE business workspace, 2026-10-10): the same boxes as the grid below, said in everyday words. */}
+          {(mod.groups || []).length > 0 && (
+            <div className="rc-groups">
+              {mod.groups.map((g) => (
+                <fieldset key={g.group} className="rc-group">
+                  <legend>{g.group}</legend>
+                  <div className="rc-group-lines">
+                    {g.lines.map((ln) => (
+                      <label key={ln.label} className="rc-group-line">
+                        <input
+                          type="checkbox" style={{ width: 'auto' }}
+                          checked={!!(draft[ln.feature] && draft[ln.feature][ln.action])}
+                          onChange={() => toggleAction(ln.feature, ln.action)}
+                          disabled={((mod.locked && mod.locked[ln.feature]) || []).includes(ln.action)}
+                          title={((mod.locked && mod.locked[ln.feature]) || []).includes(ln.action) ? 'Fixed by the company rule: this box stays off for this role' : undefined}
+                        />
+                        {ln.label}
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              ))}
+              <div className="cell-muted" style={{ fontSize: 11.5 }}>These are the same boxes as the table below. Lines that say "asks for approval" send a request to a Manager or Admin.</div>
+            </div>
+          )}
           <div className="tbl-wrap">
             <table>
               <thead>
@@ -298,7 +329,7 @@ export default function RoleCatalog() {
                           <input
                             type="checkbox" style={{ width: 'auto' }} checked={!!rec[a]} onChange={() => toggleAction(f, a)}
                             disabled={locked.includes(a)}
-                            title={locked.includes(a) ? 'View-only role — the server ignores this action' : undefined}
+                            title={locked.includes(a) ? (mod.lockNote ? 'Fixed by the company rule: this box stays off for this role' : 'View-only role — the server ignores this action') : undefined}
                           />
                         </td>
                       ))}

@@ -114,6 +114,15 @@ async function ruleFor(user, audience) {
   return deny('Only HR, team leads and managers contact employees.');
 }
 
+// WhatsApp to EMPLOYEES (HRMS, founder 2026-10-24): the Super Admin / Admin and the HR desk only. A team lead or manager keeps Call / Mail to
+// their people but does not send WhatsApp announcements from the company numbers.
+const WA_EMPLOYEE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'HR'];
+function mayWhatsAppEmployees(user) {
+  if (!user || isExternal(user)) return false;
+  return [user.role, user.hrmsRole, user.atsRole].some((r) => WA_EMPLOYEE_ROLES.includes(r));
+}
+const WA_EMPLOYEE_DENIED = 'WhatsApp to employees is for the Super Admin and HR.';
+
 // Sending to MANY at once. The old edit rights stay (a list is a bigger act than one message), and a masked
 // role never bulk-sends (the list would show the people).
 async function bulkAllowed(user, audience) {
@@ -153,5 +162,6 @@ function requireContact(audience = 'candidates') {
 }
 
 module.exports = {
+  mayWhatsAppEmployees, WA_EMPLOYEE_DENIED,
   FEATURE, AUDIENCES, BILLING_PURPOSES, switchOn, ruleFor, bulkAllowed, maskAddress, maskedHint, scrubFor, requireContact, SWITCH_OFF,
 };

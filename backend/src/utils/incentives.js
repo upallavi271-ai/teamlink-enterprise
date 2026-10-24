@@ -347,7 +347,7 @@ async function decide(id, decision, { payMonth, note, amount }, actor) {
     let pm = payMonth && isMonth(payMonth) ? payMonth : await payMonthFor(a.employeeId, a.month);
     if (payMonth && isMonth(payMonth)) {
       const locked = await SV.lastLockedMonth(a.employeeId);
-      if (locked && locked.month >= pm) throw Object.assign(new Error(`${RJ.monthLabel(pm)} payroll for ${emp.name} is already past Draft - pick a later month.`), { status: 409 });
+      if (locked && locked.month >= pm) throw Object.assign(new Error(`${RJ.monthLabel(pm)} payroll for ${emp.name} is already submitted - pick a later month.`), { status: 409 });
       if (pm <= a.month) throw Object.assign(new Error('Pay it in a month after the work was done.'), { status: 400 });
     }
     data = { amount: amt, status: 'Approved', payMonth: pm, payrollEntryId: null, decidedById: actor.id, decidedByName: actor.name, decidedAt: new Date(), note: note ? String(note).slice(0, 500) : a.note };

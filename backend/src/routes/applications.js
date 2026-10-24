@@ -137,14 +137,37 @@ router.get('/', async (req, res) => {
 // Adding someone to a pipeline is a recruiting action — the prototype gates it
 // on the "candidates: create" permission, so a CLIENT or EMPLOYEE cannot do it.
 
-router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), async (req, res) => {
-  const { candidateId, requirementId } = req.body;
-  if (!candidateId || !requirementId) return res.status(400).json({ error: 'candidateId and requirementId are required' });
+// PAIR CHECK (before submit): is this person already on this job? Answers
+// { exists, application, others, blocked } for the "Add application" dialogs so
+// nobody has to click and fail. Same visibility rules as the 409 body.
+router.get('/pair-check', async (req, res, next) => {
+  try {
+    const candidateId = String(req.query.candidateId || '');
+    const requirementId = String(req.query.requirementId || '');
+    const D = require('../utils/applicationDup'); // eslint-disable-line global-require
+    if (!candidateId) return res.status(400).json({ error: 'candidateId is required' });
+    const candidate = await prisma.candidate.findUnique({ where: { id: candidateId }, select: { id: true, name: true, profileStatus: true } });
+    if (!candidate) return res.status(404).json({ error: 'Candidate not found' });
+    if (!requirementId) return res.json({ exists: false, application: null, others: await D.otherApplications(req.user, candidate.id, null), blocked: null });
+    const requirement = await prisma.requirement.findUnique({ where: { id: requirementId } });
+    if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
+    const reqInScope = await prisma.requirement.count({ where: { AND: [{ id: requirementId }, require('../utils/scope').requirementWhere(req.user)] } }); // eslint-disable-line global-require
+    if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
+    const body = await D.alreadyAppliedBody(req.user, candidate, requirement, null);
+    if (body) return res.json({ exists: true, application: body.application, others: body.others, message: body.error, blocked: null });
+    // Not on it yet: say now whether the job / person would refuse (closed, paused, Do not use).
+    let blocked = null;
+    const no = await jobRefusalFor(requirement);
+    if (no) blocked = { code: no.body.code || null, error: no.body.error };
+    else if (candidate.profileStatus === require('../utils/rejections').DNU_STATUS) blocked = { code: 'DO_NOT_USE', error: `${candidate.name} is marked "Do not use" and cannot be added to any requirement.` }; // eslint-disable-line global-require
+    return res.json({ exists: false, application: null, others: await D.otherApplications(req.user, candidate.id, requirement.id), blocked });
+  } catch (err) { return next(err); }
+});
 
-  const existing = await prisma.application.findUnique({
-    where: { candidateId_requirementId: { candidateId, requirementId } },
-  });
-  if (existing) return res.status(409).json({ error: 'This candidate is already in the pipeline for this requirement.' });
+router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), async (req, res, next) => {
+  try {
+  const { candidateId, requirementId } = req.body || {};
+  if (!candidateId || !requirementId) return res.status(400).json({ error: 'Pick the person and the requirement first.' });
 
   // The match score is frozen onto the application at the moment the candidate
   // enters the pipeline — the prototype's addCandidateToRequirement().
@@ -156,6 +179,9 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
   // Only onto a requirement this login may work (the same rule as the list).
   const reqInScope = await prisma.requirement.count({ where: { AND: [{ id: requirementId }, require('../utils/scope').requirementWhere(req.user)] } });
   if (!reqInScope) return res.status(403).json(OUT_OF_SCOPE);
+  // ALREADY THERE -> say WHERE (after the scope check, so a login never learns of jobs it cannot see).
+  const dupBody = await require('../utils/applicationDup').alreadyAppliedBody(req.user, candidate, requirement, null); // eslint-disable-line global-require
+  if (dupBody) return res.status(409).json(dupBody);
   // A job that is not live, paused or closed takes no new candidates, and
   // neither does a job of a paused / archived client (jobRefusalFor below).
   const jobNo = await jobRefusalFor(requirement);
@@ -186,7 +212,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
     const reason = String(req.body.overrideReason || '').trim().slice(0, 300);
     if (reason.length < 5) {
       return res.status(409).json({
-        error: `${candidate.name} does not meet this job's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
+        error: `${candidate.name} does not meet this requirement's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
         code: 'NEEDS_OVERRIDE',
         why: fit.overrideWhy,
         fit: fit.match.overall,
@@ -197,10 +223,36 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
     }
     override = { reason, why: fit.overrideWhy };
   }
-  const application = await addApplication(req.user, {
-    candidate, requirement, comment: req.body.comment, fit, override,
-  });
-  res.status(201).json(application);
+  let application;
+  try {
+    application = await addApplication(req.user, {
+      candidate, requirement, comment: req.body.comment, fit, override,
+    });
+  } catch (err) {
+    // Two clicks at the same moment: the database's one-per-pair rule stopped the second. Answer it like any duplicate.
+    if (err && err.alreadyApplied) {
+      const body = await require('../utils/applicationDup').alreadyAppliedBody(req.user, candidate, requirement, null); // eslint-disable-line global-require
+      if (body) return res.status(409).json(body);
+    }
+    throw err;
+  }
+  // JOINING & DROP: this job has a dropped candidate waiting for a replacement -> offer to link the new person (a bell + the list in the answer).
+  let replacementOffer = [];
+  try {
+    const S = require('../joindrop/schema'); // eslint-disable-line global-require
+    if (await S.ensure()) {
+      replacementOffer = (await S.rows('SELECT "id","candidateName","droppedOn" FROM "JoiningRecord" WHERE "requirementId" = ? AND "status" = ? AND "replacementDecision" = ? AND COALESCE("replacementStatus", \'\') NOT IN (?, ?)', requirement.id, 'Dropped', 'NEEDED', 'Closed', 'New candidate added'));
+      if (replacementOffer.length) {
+        await require('../utils/notify').pushNotification({ // eslint-disable-line global-require
+          userId: req.user.id,
+          title: `Is ${candidate.name} the replacement for ${replacementOffer[0].candidateName}?`,
+          message: `${requirement.title} has a candidate who dropped and the client wants a replacement. If ${candidate.name} is the replacement, link them on the Joining and drop screen.\nOpen: /ats/joining?view=joindrop&record=${replacementOffer[0].id}`,
+        });
+      }
+    }
+  } catch { /* the offer is a bonus: the candidate is already added */ }
+  return res.status(201).json(replacementOffer.length ? { ...application, replacementOffer } : application);
+  } catch (err) { return next(err); }
 });
 
 // ---------------------------------------------------------------------------
@@ -220,14 +272,14 @@ router.post('/', requirePerm('ats', 'candidates', 'Applications', 'create'), asy
 //   Candidate form) keeps the form's own source for a client job.
 // ---------------------------------------------------------------------------
 async function jobRefusalFor(requirement) {
-  if (!requirement) return { status: 404, body: { error: 'Job not found' } };
+  if (!requirement) return { status: 404, body: { error: 'Requirement not found' } };
   if (!requirement.internal && ['DRAFT', 'AGREEMENT_CHECK'].includes(requirement.status)) {
     return {
       status: 409,
       body: {
         error: requirement.status === 'DRAFT'
-          ? 'This job is not live yet (it is still a draft), so no candidates can be added. Make the job live first.'
-          : "This job is not live yet — it is waiting for the client's agreement (Agreement Check). Candidates can be added once the job is live.",
+          ? 'This requirement is not live yet (it is not live yet), so no candidates can be added. Make the requirement live first.'
+          : "This requirement is not live yet — it is waiting for the client's agreement (Agreement Check). Candidates can be added once the requirement is live.",
         code: 'JOB_NOT_LIVE',
       },
     };
@@ -237,8 +289,8 @@ async function jobRefusalFor(requirement) {
       status: 409,
       body: {
         error: requirement.status === 'ON_HOLD'
-          ? 'This job is paused, so no new candidates can be added. Resume the job first.'
-          : 'This job is closed, so no new candidates can be added. Reopen the job first.',
+          ? 'This requirement is paused, so no new candidates can be added. Resume the requirement first.'
+          : 'This requirement is closed, so no new candidates can be added. Reopen the requirement first.',
         code: requirement.status === 'ON_HOLD' ? 'JOB_PAUSED' : 'JOB_CLOSED',
       },
     };
@@ -295,6 +347,8 @@ async function addApplication(user, {
   const hrSourced = hiringTypeOf(null, requirement) === 'TeamLink Internal Hire';
   // eslint-disable-next-line no-nested-ternary
   const source = hrSourced ? HR_SOURCING_SOURCE : (from ? (candidate.source || null) : 'ATS Match');
+  // ONE application per person + job, even on a double click or two people clicking together:
+  // the database's unique pair is the last guard; the loser gets err.alreadyApplied (no stage event, no audit row).
   const application = await prisma.application.create({
     data: {
       candidateId: candidate.id,
@@ -318,6 +372,9 @@ async function addApplication(user, {
       // the requirement it is raised against — and stored, not re-guessed.
       hiringType: hiringTypeOf(null, requirement),
     },
+  }).catch((err) => {
+    if (err && err.code === 'P2002') { const e = new Error('ALREADY_APPLIED'); e.alreadyApplied = true; throw e; }
+    throw err;
   });
   // The first link in the pipeline chain the Candidate Detail screen renders.
   // eslint-disable-next-line no-nested-ternary
@@ -420,7 +477,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     // only) or "do_not_use" (fake resume / abuse / absconded), which waits
     // for the TL's approval. A client login never raises the second kind.
     if (body.rejectKind && !['not_suitable', 'do_not_use'].includes(body.rejectKind)) {
-      return { status: 400, body: { error: 'Reject kind must be "Not suitable for this job" or "Do not use".' } };
+      return { status: 400, body: { error: 'Reject kind must be "Not suitable for this requirement" or "Do not use".' } };
     }
     if (body.rejectKind === 'do_not_use' && clientLogin) {
       return { status: 403, body: { error: 'Only TeamLink can mark a candidate "Do not use".' } };
@@ -476,7 +533,13 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     const okPerm = await require('../utils/permissions').can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit');
     refusal = okPerm ? null : { status: 403, body: { error: "This action isn't included in your role's permissions" } };
   } else {
-    refusal = await canMoveToStage(user, stage);
+    // INTERNAL HIRING: the Dept Head / TL's approval out of TL Review is the interview booking (no BDE on TeamLink's own jobs).
+    let ctx = {};
+    if (stage === 'INTERVIEW_SCHEDULED') {
+      const pre = await prisma.application.findUnique({ where: { id: applicationId }, select: { stage: true, hiringType: true, requirement: { select: { internal: true, hiringType: true } } } });
+      if (pre && pre.stage === 'TL_REVIEW' && hiringTypeOf(pre, pre.requirement) === 'TeamLink Internal Hire') ctx = { internalFromTlReview: true };
+    }
+    refusal = await canMoveToStage(user, stage, ctx);
   }
   if (refusal) return refusal;
 
@@ -587,7 +650,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     && !['HOLD', 'REJECTED'].includes(stage) && !stageGlobal(user)) {
     return {
       status: 409,
-      body: { error: `${existing.requirement.title || 'This job'} is not live yet (${existing.requirement.status === 'DRAFT' ? 'still a draft' : "waiting for the client's agreement"}). People on it move on once the job is live.`, code: 'JOB_NOT_LIVE' },
+      body: { error: `${existing.requirement.title || 'This requirement'} is not live yet (${existing.requirement.status === 'DRAFT' ? 'waiting to be opened' : "waiting for the client's agreement"}). People on it move on once the requirement is live.`, code: 'JOB_NOT_LIVE' },
     };
   }
 
@@ -646,7 +709,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     // eslint-disable-next-line global-require
     const rj = require('../utils/rejections');
     if (existing.candidate && existing.candidate.profileStatus === rj.DNU_STATUS) {
-      return { status: 409, body: { error: `${existing.candidate.name} is marked "Do not use" (approved by the TL). They cannot be moved forward on any job.`, code: 'DO_NOT_USE' } };
+      return { status: 409, body: { error: `${existing.candidate.name} is marked "Do not use" (approved by the TL). They cannot be moved forward on any requirement.`, code: 'DO_NOT_USE' } };
     }
     const toClient = ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)
       && !['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(existing.stage)
@@ -925,6 +988,10 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
       ? [body.reasonCategory, body.reasonDetail].filter(Boolean).join(' — ')
       : undefined,
   });
+
+  // EXOTEL AI CALLING (2026-10-22): a move to a Shortlisted step OFFERS an AI notification call (only a question: nothing is called
+  // until a person confirms). Never fatal, never changes the move. calling/hooks.js
+  if (!opts.silent) { try { await require('../calling/hooks').onStageMoved({ application, existing, stage, user }); } catch { /* the move already happened */ } } // eslint-disable-line global-require
 
   // Tell whoever owns this requirement that the pipeline moved — the
   // prototype's pushNotification() on every stage transition. Stages the

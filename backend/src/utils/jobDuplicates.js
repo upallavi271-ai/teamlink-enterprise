@@ -38,7 +38,7 @@ function duplicateRefusal(existing, { editing = false } = {}) {
   const where = existing.location ? ` in ${existing.location}` : '';
   return {
     code: 'DUPLICATE_JOB',
-    error: `A job called "${existing.title}"${where} is already open for this client (${existing.reqCode || existing.id}). ${editing ? 'Save anyway' : 'Create anyway'} only if this really is a second job — say why.`,
+    error: `A requirement called "${existing.title}"${where} is already open for this client (${existing.reqCode || existing.id}). ${editing ? 'Save anyway' : 'Create anyway'} only if this really is a second requirement — say why.`,
     existing: {
       id: existing.id, reqCode: existing.reqCode, title: existing.title, location: existing.location, status: existing.status, openings: existing.openings,
     },

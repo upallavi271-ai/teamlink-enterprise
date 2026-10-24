@@ -83,6 +83,9 @@ const router = express.Router();
 });
 
 router.use(requireAuth);
+// SECURITY (2026-10-13): every JSON answer of this router goes through the ONE field-visibility layer
+// (utils/employeeRedact.js): bank / PAN / Aadhaar / UAN / PF / ESI / DOB / address / emergency / CTC by role.
+router.use(require('../utils/employeeRedact').redactMiddleware);
 // Who is acting, for the audit rows written when somebody's status ends their seat.
 router.use(seatRelease.actorScope);
 
@@ -515,8 +518,8 @@ router.put('/me', async (req, res) => {
 
 // Employee requests edit access back on a locked profile, capped at UNLOCK_REQUEST_LIMIT.
 router.post('/me/unlock-request', async (req, res) => {
-  const { reason } = req.body;
-  if (!reason || !UNLOCK_REQUEST_REASONS.includes(reason)) return res.status(400).json({ error: 'A valid reason is required' });
+  const reason = require('../utils/openVocab').clean(req.body.reason, 120); // a typed own reason is kept (2026-10-15)
+  if (!reason) return res.status(400).json({ error: 'A reason is required' });
   const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
   if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
   if (!employee.isLocked) return res.status(400).json({ error: 'Your profile is already editable' });
@@ -698,7 +701,7 @@ function cleanExportFilters(raw) {
 }
 
 // Employees.jsx `filtered`, on the server. Kept identical on purpose.
-function matchesListFilters(e, f, seatList) {
+function matchesListFilters(e, f, seatList, rejoinedSet) {
   const loginStatus = e.user ? (e.user.status || 'Active') : 'No login';
   const employmentStatus = e.employmentStatus || 'Active';
   if (f.position && !(seatList || []).some((t) => t.code === f.position)) return false;
@@ -707,7 +710,11 @@ function matchesListFilters(e, f, seatList) {
   if (f.dept && e.department !== f.dept) return false;
   if (f.designation && e.designation !== f.designation) return false;
   if (f.role && ((e.user && e.user.role) || '') !== f.role) return false;
-  if (!f.position && f.status && hrStatusOfExport(employmentStatus, loginStatus) !== f.status) return false;
+  if (!f.position && f.status) {
+    if (f.status === 'On Probation') { if (employmentStatus !== 'On Probation') return false; }
+    else if (f.status === 'Rejoined') { if (!(e.rejoined || (rejoinedSet && rejoinedSet.has(e.id)))) return false; }
+    else if (hrStatusOfExport(employmentStatus, loginStatus) !== f.status) return false;
+  }
   if (f.login && loginStatus !== f.login) return false;
   const doj = e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : '';
   if (f.joinedFrom && (!doj || doj < f.joinedFrom)) return false;
@@ -800,7 +807,11 @@ router.post('/export/global', requirePerm(null, 'hrms', 'Employee Management', '
     }),
     seatTimelines(),
   ]);
-  const matched = employees.filter((e) => matchesListFilters(e, filters, seats.get(e.id)));
+  let rejoinedSet = null;
+  if (filters.status === 'Rejoined') {
+    try { rejoinedSet = new Set((await prisma.employeeRecord.findMany({ where: { type: 'REJOINING', status: 'Done' }, select: { employeeId: true } })).map((r) => r.employeeId)); } catch { rejoinedSet = new Set(); }
+  }
+  const matched = employees.filter((e) => matchesListFilters(e, filters, seats.get(e.id), rejoinedSet));
 
   // Documents of EXACTLY the matched employees. docsOf() (what is on file)
   // feeds the per-employee columns; copiesOf() — the Documents sheet rows and
@@ -969,7 +980,7 @@ router.post('/export/global', requirePerm(null, 'hrms', 'Employee Management', '
 // goes out as its last four digits only, and nothing internal (OTP hashes,
 // pending-change drafts) is included.
 router.get('/:id/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 'export'), async (req, res) => {
-  const e = await prisma.employee.findUnique({
+  let e = await prisma.employee.findUnique({
     where: { id: req.params.id },
     include: {
       reportingManager: { select: { name: true } },
@@ -979,6 +990,10 @@ router.get('/:id/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 
   });
   if (!e) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, e))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  { // SECURITY (2026-10-13): the per-record sheet carries only the fields this role may see (same rule as the screen).
+    const R = require('../utils/employeeRedact'); // eslint-disable-line global-require
+    e = R.redactRow(e, R.levelFor(req.user), { own: R.isOwn(e, req.user) });
+  }
   const XLSX = require('xlsx');
   const c = withComputed(e);
   const d = (v) => (v ? new Date(v).toISOString().slice(0, 10) : '');
@@ -997,7 +1012,7 @@ router.get('/:id/export.xlsx', requirePerm(null, 'hrms', 'Employee Management', 
       ['Emergency Relation', e.emergencyContactRelation],
     ]],
     ['Personal', [
-      ['Date of Birth', d(e.dateOfBirth)], ['Gender', e.gender], ['Blood Group', e.bloodGroup],
+      ['Date of Birth', e.dateOfBirthDayMonth || d(e.dateOfBirth)], ['Gender', e.gender], ['Blood Group', e.bloodGroup],
     ]],
     ['Address', [
       ['Address Type', e.addressType], ['Line 1', e.addressLine1 || e.address], ['Line 2', e.addressLine2],
@@ -1117,6 +1132,25 @@ function seatSummary(list) {
   return list.find((t) => t.current) || list[list.length - 1];
 }
 
+// Map(employeeId -> { noticeFrom, exitDate }) from each person's latest resignation record that was not withdrawn or rejected.
+async function exitDatesForList(ids) {
+  const out = new Map();
+  if (!ids.length) return out;
+  const recs = await prisma.employeeRecord.findMany({
+    where: { type: 'RESIGNATION', employeeId: { in: ids }, status: { notIn: ['Withdrawn', 'Rejected'] } },
+    select: { id: true, employeeId: true, date: true, updatedAt: true }, orderBy: { updatedAt: 'desc' },
+  });
+  const det = recs.length ? await prisma.resignationDetail.findMany({ where: { recordId: { in: recs.map((r) => r.id) } }, select: { recordId: true, resignationDate: true, requestedLastWorkingDate: true, approvedLastWorkingDate: true } }) : [];
+  const detOf = new Map(det.map((d) => [d.recordId, d]));
+  const day = (v) => (v && /^\d{4}-\d{2}-\d{2}/.test(String(v)) ? String(v).slice(0, 10) : null);
+  recs.forEach((r) => {
+    if (out.has(r.employeeId)) return; // the newest wins
+    const d = detOf.get(r.id) || {};
+    out.set(r.employeeId, { noticeFrom: day(d.resignationDate), exitDate: day(r.date) || day(d.approvedLastWorkingDate) || day(d.requestedLastWorkingDate) });
+  });
+  return out;
+}
+
 router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const where = departmentWhere(req);
   if (req.query.employmentStatus) where.employmentStatus = req.query.employmentStatus;
@@ -1130,6 +1164,17 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
   // whole list, never one per row.
   const extras = await employeeListExtras(employees.map((e) => e.id));
   const canEdit = await can(req.user, 'hrms', 'hrms', 'Employee Management', 'edit');
+  // THE EXIT DATES NEXT TO THE JOINING DATE (founder, 2026-10-23): for everybody on notice or who has left, the day the notice began and the
+  // last working day - read from their resignation record, the one place those dates live (utils/exitDate.js), in ONE read for the whole list.
+  const exitInfo = await exitDatesForList(employees.filter((e) => ['Notice Period', 'Exit Process', 'Relieved', 'Exited', 'Terminated'].includes(e.employmentStatus)).map((e) => e.id));
+  // THE NOTICE, DAY BY DAY (founder, 2026-10-23): day / total / days left for everybody on notice (utils/noticeAutoExit.js)
+  const noticeOf = await require('../utils/noticeAutoExit').progressFor(employees.filter((e) => ['Notice Period', 'Exit Process'].includes(e.employmentStatus)).map((e) => e.id)).catch(() => new Map()); // eslint-disable-line global-require
+  // Rejoined = has a live REJOINING record (utils/rejoin.js). One read for the whole list.
+  let rejoinedIds = new Set();
+  try {
+    const rj = await prisma.employeeRecord.findMany({ where: { type: 'REJOINING', status: 'Done' }, select: { employeeId: true } });
+    rejoinedIds = new Set(rj.map((r) => r.employeeId));
+  } catch { /* old database: nobody is marked rejoined */ }
   res.json({
     scope: scopeLabel(req),
     // What this caller may actually do, so the screen offers exactly that and
@@ -1159,10 +1204,14 @@ router.get('/management', requirePerm(null, 'hrms', 'Employee Management', 'view
     rows: employees.map((e) => ({
       ...shapeEmployeeMgmtRow(e),
       ...(extras.get(e.id) || { photoDocId: null, docCount: 0, lastWorkingDate: null, lastWorkingDateSource: null }),
+      notice: noticeOf.get(e.id) || null,
+      noticeFrom: (exitInfo.get(e.id) || {}).noticeFrom || null,
+      exitDate: (exitInfo.get(e.id) || {}).exitDate || null,
       seat: seatSummary(seats.get(e.id)),
       // Every seat they ever held — the Positions filter lists past holders too.
       seats: seats.get(e.id) || [],
       seatCount: (seats.get(e.id) || []).length,
+      rejoined: rejoinedIds.has(e.id),
       emailVerified: !!(e.email && provedEmails.has(normalEmail(e.email))),
     })),
   });
@@ -1335,6 +1384,51 @@ router.get('/after-exit', async (req, res) => {
 // same form. A recruiter / BDE / staff member is offered the ACTIVE team leads (and the department's
 // manager) of THEIR department; a team lead is offered the manager level; leavers never.
 //   GET /employees/management/manager-options?department=Education&designation=Recruiter[&employeeId=..][&cross=1]
+// 'Create missing logins' PANEL (Employee Management): people who still work here and have no login.
+// GET lists them with the reason; POST { dryRun: true|false, ids?: [] } previews (default) or creates (link-only).
+async function missingLoginRows(req) {
+  const rows = await prisma.employee.findMany({
+    where: { AND: [{ userId: null }, { employmentStatus: { notIn: ['Exited', 'Relieved', 'Terminated'] } }, employeeWhereOf(req.user)] },
+    orderBy: { name: 'asc' },
+  });
+  const out = [];
+  for (const e of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    const taken = e.email ? await prisma.user.findFirst({ where: { email: e.email }, select: { id: true, role: true } }) : null;
+    const plan = loginPlan(e, taken);
+    // eslint-disable-next-line no-await-in-loop
+    const mapping = await mappingFor(e.designation);
+    out.push({
+      id: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, designation: e.designation, employmentStatus: e.employmentStatus,
+      emailDomain: e.email ? String(e.email).split('@')[1] || null : null, canCreate: plan.ok,
+      action: plan.ok ? plan.action : null, role: plan.ok ? (plan.role || loginRoleFor(mapping)) : null,
+      reason: plan.ok ? (plan.action === 'link' ? plan.reason : 'Will get a login and a set-password link by e-mail') : plan.reason,
+    });
+  }
+  return out;
+}
+router.get('/management/missing-logins', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
+  const rows = await missingLoginRows(req);
+  res.json({ count: rows.length, ready: rows.filter((r) => r.canCreate).length, rows });
+});
+router.post('/management/create-missing-logins', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const dryRun = !(req.body && req.body.dryRun === false);
+  const only = Array.isArray(req.body && req.body.ids) ? new Set(req.body.ids) : null;
+  const rows = (await missingLoginRows(req)).filter((r) => !only || only.has(r.id));
+  if (dryRun) return res.json({ dryRun: true, wouldCreate: rows.filter((r) => r.canCreate).length, rows });
+  const results = [];
+  for (const r of rows) {
+    if (!r.canCreate) { results.push({ id: r.id, name: r.name, done: false, reason: r.reason }); continue; } // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    const emp = await prisma.employee.findUnique({ where: { id: r.id }, include: { user: true } });
+    // eslint-disable-next-line no-await-in-loop
+    const out = await createLoginFor(req, emp);
+    results.push(out.error ? { id: r.id, name: r.name, done: false, reason: out.error } : { id: r.id, name: r.name, done: true, status: out.credentials ? out.credentials.status : 'login made' });
+  }
+  await logAudit({ userId: req.user.id, action: 'Missing logins created', entity: 'Employee', toValue: `${results.filter((x) => x.done).length} of ${results.length}` });
+  res.json({ dryRun: false, created: results.filter((x) => x.done).length, results });
+});
+
 router.get('/management/manager-options', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const reportingLine = require('../utils/reportingLine');
   const q = req.query || {};
@@ -1470,7 +1564,12 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     }
   }
   const liveHolders = seatHolders.filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)));
-  const heldBy = new Map(liveHolders.map((a) => [a.positionId, a.employee ? a.employee.name : null]));
+  // The holder shown is the one really sitting in the seat; a leaver on notice is shown only while nobody else is (a replacement may be added then).
+  const isLeaving = (a) => !!(a.employee && seatRelease.isNotice(a.employee.employmentStatus));
+  const heldBy = new Map();
+  liveHolders.filter(isLeaving).forEach((a) => heldBy.set(a.positionId, a.employee ? a.employee.name : null));
+  liveHolders.filter((a) => !isLeaving(a)).forEach((a) => heldBy.set(a.positionId, a.employee ? a.employee.name : null));
+  const activeSeat = new Set(liveHolders.filter((a) => !isLeaving(a)).map((a) => a.positionId));
 
   res.json({
     nextEmployeeCode,
@@ -1484,8 +1583,8 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
       holder: heldBy.has(r.id) ? (heldBy.get(r.id) || 'somebody') : null,
       vacant: !heldBy.has(r.id),
       // Notice period: the seat is theirs until the last working day, then it is free.
-      onNotice: noticeEnds.has(r.id),
-      freesOn: noticeEnds.has(r.id) ? noticeEnds.get(r.id) : null,
+      onNotice: noticeEnds.has(r.id) && !activeSeat.has(r.id),
+      freesOn: noticeEnds.has(r.id) && !activeSeat.has(r.id) ? noticeEnds.get(r.id) : null,
     })),
     scope: scopeLabel(req),
     empTypes: EMP_TYPES,
@@ -1553,7 +1652,7 @@ router.get('/management/next-code', requirePerm(null, 'hrms', 'Employee Manageme
 router.post('/management/email-otp/send', requirePerm(null, 'hrms', 'Employee Management', 'create'), async (req, res) => {
   const email = normalEmail(req.body.email);
   if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'That email does not look right.' });
-  const taken = await prisma.user.findUnique({ where: { email } });
+  const taken = await prisma.user.findFirst({ where: { email } });
   if (taken) return res.status(409).json({ error: 'That email already has a login.' });
 
   const cfg = await mailer.emailConfig();
@@ -1723,6 +1822,8 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   // Administration first.
   const seatCode = String(b.position || '').trim();
   let seat = null;
+  let departedHolderId = null; // the seat's holder has LEFT: the seat is free, their tenure is ended when the new employee takes it
+  let replacingOnNotice = null; // the seat's holder is on notice: the new employee is the replacement and joins now (a handover)
   if (seatCode) {
     // Codes are unique and case matters to people, so a case-different
     // spelling must REUSE the seat rather than mint a second one beside it.
@@ -1739,23 +1840,34 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
     } else if (!seat.active) {
       return res.status(409).json({ error: `Position ${seat.code} is retired. Reactivate it on Administration → Positions before assigning it.` });
     } else {
-      // ONE PERSON PER SEAT AT A TIME. An open-ended assignment means
-      // somebody is sitting in it right now.
-      const held = await prisma.positionAssignment.findFirst({
-        where: { positionId: seat.id, toDate: null },
-        include: { employee: { select: { name: true, employeeCode: true } } },
-      });
-      if (held) {
+      // ONE ACTIVE PERSON PER SEAT. Somebody who has LEFT (founder, 2026-10-22) does not hold the seat: it is free for the new employee.
+      // Somebody who is ON NOTICE (founder, 2026-10-23) does not block a REPLACEMENT either: the new employee is added now and both work the
+      // seat until the leaver's last working day (a handover); the leaver's tenure then ends by itself, the newcomer's carries on.
+      const holds = await seatRelease.holdersOf(seat.id);
+      if (holds.active.length) {
+        const held = holds.active[0];
         return res.status(409).json({
           error: `${seat.code} is currently held by ${held.employee ? held.employee.name : 'somebody'}`
             + `${held.employee && held.employee.employeeCode ? ` (${held.employee.employeeCode})` : ''}`
             + '. Vacate it on Administration → Positions first, or pick another seat.',
         });
       }
+      if (holds.left.length) departedHolderId = holds.left[0].employeeId;
+      if (holds.notice.length) replacingOnNotice = holds.notice[0];
     }
   }
 
-  if (await prisma.user.findUnique({ where: { email } })) {
+  // BIOMETRIC ID (founder, 2026-10-23): the ID this person is enrolled under on the attendance device (Employee.biometricPin, the device "PIN").
+  // Optional at Add Employee; one device ID belongs to ONE employee, so a second use is refused in plain words.
+  let biometricPin = null;
+  if (b.biometricPin !== undefined && String(b.biometricPin).trim()) {
+    biometricPin = String(b.biometricPin).trim();
+    if (!/^[A-Za-z0-9-]{1,30}$/.test(biometricPin)) return res.status(400).json({ error: 'The Biometric ID can have letters, numbers and dashes only (up to 30 characters).' });
+    const pinHolder = await prisma.employee.findFirst({ where: { biometricPin }, select: { name: true, employeeCode: true } });
+    if (pinHolder) return res.status(409).json({ error: `Biometric ID ${biometricPin} already belongs to ${pinHolder.name} (${pinHolder.employeeCode}).` });
+  }
+
+  if (await prisma.user.findFirst({ where: { email } })) {
     return res.status(409).json({ error: 'That email already has a login.' });
   }
   const dup = await prisma.employee.findFirst({
@@ -1807,6 +1919,14 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   const mapping = await mappingFor(designation);
   const role = b.role && ALL_ROLES.includes(b.role) ? b.role : loginRoleFor(mapping);
   const team = b.team ? String(b.team).trim() : null;
+  // SECURITY (2026-10-13): the roles this new login would carry go through the same guard as an edit.
+  {
+    const guard = require('../utils/roleGuard'); // eslint-disable-line global-require
+    const refusal = await guard.checkRoleChange({
+      actor: req.user, current: null, next: { role, ...productRolesForDesignation(mapping), ...loginPatchForRole(chosenRole) },
+    });
+    if (refusal) return res.status(403).json({ error: refusal });
+  }
 
   const user = await prisma.user.create({
     data: {
@@ -1838,6 +1958,7 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   const employeeData = {
     name,
     email,
+    ...(biometricPin ? { biometricPin } : {}),
     phone: phone || null,
     department,
     designation,
@@ -1888,9 +2009,19 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
       seat = await prisma.position.create({ data: { code: seatCode, department, team: team || null } });
       await logAudit({ userId: req.user.id, action: `Position ${seatCode} created`, entity: 'Position', entityId: seat.id });
     }
+    if (departedHolderId) await seatRelease.releaseSeatsOf(departedHolderId, { userId: req.user.id, actorName: req.user.name }); // the leaver's tenure ends (their last working day), seat history kept
     await prisma.positionAssignment.create({
-      data: { positionId: seat.id, employeeId: employee.id, fromDate: positionToday() },
+      data: {
+        positionId: seat.id, employeeId: employee.id, fromDate: positionToday(),
+        ...(replacingOnNotice ? { note: `Replacement for ${replacingOnNotice.employee.name}, who is on notice` } : {}),
+      },
     });
+    if (replacingOnNotice) {
+      await logAudit({
+        userId: req.user.id, actorName: req.user.name, action: `${name} added on ${seat.code} while ${replacingOnNotice.employee.name} is on notice`,
+        entity: 'Position', entityId: seat.id, fromValue: replacingOnNotice.employee.name, toValue: name,
+      });
+    }
     await logAudit({
       userId: req.user.id,
       action: `${name} assigned to position ${seat.code}`,
@@ -1941,34 +2072,40 @@ router.post('/management', requirePerm(null, 'hrms', 'Employee Management', 'cre
   });
 });
 
-// Create Login — attaches a login to an employee who has none. Never a second
-// identity for someone who already has one.
-router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
-  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
-  if (!employee) return res.status(404).json({ error: 'Employee not found' });
-  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
-  if (employee.userId) return res.status(409).json({ error: 'That employee already has a login' });
-  if (!employee.email) return res.status(400).json({ error: 'That employee has no email address — add one before creating a login.' });
-  const taken = await prisma.user.findUnique({ where: { email: employee.email } });
+// LOGIN GAPS (founder, 2026-10-14). ONE plan + ONE creator, used by the profile's 'Create login' button,
+// the 'Create missing logins' panel and the route below. Link-only: the person sets their own password from the
+// mailed single-use link; no password is typed or shown (2026-10-13 rule). Only people who still work here.
+const LEFT = ['Exited', 'Relieved', 'Terminated'];
+function loginPlan(employee, takenUser) {
+  if (employee.userId) return { ok: false, status: 409, reason: 'Already has a login' };
+  if (LEFT.includes(employee.employmentStatus)) return { ok: false, status: 409, reason: 'Has left the company: no login is made for people who left' };
+  if (!employee.email) return { ok: false, status: 400, reason: 'No email address: add an email first' };
+  if (takenUser) return { ok: true, action: 'link', role: takenUser.role, reason: 'A login with this email already exists; it will be linked' };
+  return { ok: true, action: 'create' };
+}
+async function createLoginFor(req, employee) {
+  const taken = employee.email ? await prisma.user.findFirst({ where: { email: employee.email } }) : null;
+  const plan = loginPlan(employee, taken);
+  if (!plan.ok) return { status: plan.status, error: plan.status === 400 ? 'That employee has no email address. Add one before creating a login.' : (plan.reason === 'Already has a login' ? 'That employee already has a login' : plan.reason) };
   if (taken) {
     // The login exists but was never linked: link it rather than duplicate it.
     await prisma.employee.update({ where: { id: employee.id }, data: { userId: taken.id } });
     await logAudit({ userId: req.user.id, action: 'Login linked to employee', entity: 'User', entityId: taken.id, toValue: employee.employeeCode });
   } else {
-    const { password } = req.body || {};
-    // Role and reach are derived from the designation, exactly as Add Employee
-    // derives them — the same mapping, so the two paths cannot disagree.
+    // Role and reach are derived from the designation, exactly as Add Employee derives them.
     const mapping = await mappingFor(employee.designation);
-    const role = req.body && req.body.role && ALL_ROLES.includes(req.body.role)
-      ? req.body.role : loginRoleFor(mapping);
+    const role = loginRoleFor(mapping);
+    {
+      const refusal = await require('../utils/roleGuard').checkRoleChange({ // eslint-disable-line global-require
+        actor: req.user, current: null, next: { role, ...productRolesForDesignation(mapping) },
+      });
+      if (refusal) return { status: 403, error: refusal };
+    }
     const user = await prisma.user.create({
       data: {
         name: employee.name,
         email: employee.email,
-        passwordHash: password && String(password).length >= 6
-          ? await bcrypt.hash(String(password), 10)
-          : await unguessablePasswordHash(),
-        ...(password && String(password).length >= 6 ? passwordEventData('initial') : {}),
+        passwordHash: await unguessablePasswordHash(),
         role,
         username: employee.email,
         atsDepartment: employee.department,
@@ -1987,13 +2124,23 @@ router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee 
     await prisma.employee.update({ where: { id: employee.id }, data: { userId: user.id } });
     await logAudit({ userId: req.user.id, action: 'User auto-created and linked to employee', entity: 'User', entityId: user.id, toValue: employee.employeeCode });
   }
-  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  const fresh = await prisma.employee.findUnique({ where: { id: employee.id }, include: EMP_MGMT_INCLUDE });
   // A login without sign-in details is a login nobody can use.
   const credentials = fresh.userId
     ? await sendCredentials({ employee: fresh, userId: fresh.userId, actingUser: req.user, req })
     : null;
   if (credentials) await logAudit({ userId: req.user.id, action: `Sign-in details: ${credentials.status}`, entity: 'Employee', entityId: fresh.id });
-  res.json({ ...shapeEmployeeMgmtRow(fresh), credentials });
+  return { fresh, credentials };
+}
+
+// Create Login — attaches a login to an employee who has none. Never a second identity for someone who already has one.
+router.post('/management/:id/create-login', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  const out = await createLoginFor(req, employee);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  res.json({ ...shapeEmployeeMgmtRow(out.fresh), credentials: out.credentials });
 });
 
 // Activate / Deactivate the employee's login.
@@ -2003,6 +2150,7 @@ router.post('/management/:id/toggle-login', requirePerm(null, 'hrms', 'Employee 
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
   if (employee.user.id === req.user.id) return res.status(409).json({ error: 'You cannot disable your own login' });
+  { const why = require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target: employee.user }); if (why) return res.status(403).json({ error: 'Only a Super Admin can switch off a Super Admin or an Admin login.' }); } // eslint-disable-line global-require
   const prev = employee.user.status || 'Active';
   const next = prev === 'Active' ? 'Inactive' : 'Active';
   await prisma.user.update({ where: { id: employee.user.id }, data: { status: next } });
@@ -2096,6 +2244,7 @@ router.post('/management/:id/reset-password', requirePerm(null, 'hrms', 'Employe
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
+  { const why = require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target: employee.user }); if (why) return res.status(403).json({ error: why }); } // eslint-disable-line global-require
   const weak = strengthError(password, { email: employee.user.email, name: employee.user.name });
   if (weak) return res.status(400).json({ error: weak });
   // Live at once. The owner must change it at their next sign-in, any lock is
@@ -2110,6 +2259,10 @@ router.post('/management/:id/reset-password', requirePerm(null, 'hrms', 'Employe
   });
   // The new password is never echoed back or logged.
   await logAudit({ userId: req.user.id, action: 'Password reset', entity: 'User', entityId: employee.user.id, toValue: 'Reset — change required at next sign-in' });
+  // Older sessions end; Super Admin / Admin are told THAT it changed (never what it is).
+  await require('../utils/passwordReset').afterPasswordChange({ // eslint-disable-line global-require
+    user: await prisma.user.findUnique({ where: { id: employee.user.id } }), method: 'hr_reset', byUserId: req.user.id, byName: req.user.name,
+  });
   const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
   res.json({ ok: true, row: shapeEmployeeMgmtRow(fresh), passwordStatus: passwordStatusOf(fresh.user) });
 });
@@ -2151,6 +2304,18 @@ router.put('/management/:id/roles', requirePerm(null, 'hrms', 'Employee Manageme
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(400).json({ error: 'Create a login for this employee first.' });
   if (role && !ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
+  // SECURITY (2026-10-13): one guard for EVERY role write on this endpoint (legacy {role}, roleCode, atsDepartment).
+  {
+    const guard = require('../utils/roleGuard'); // eslint-disable-line global-require
+    let wantedFields = { role, atsDepartment };
+    if (req.body && req.body.roleCode) {
+      const chosenForGuard = await roleByCode(String(req.body.roleCode));
+      if (chosenForGuard && !chosenForGuard.external) wantedFields = { ...wantedFields, ...loginPatchForRole(chosenForGuard) };
+    }
+    const refusal = await guard.checkRoleChange({ actor: req.user, current: employee.user, next: wantedFields });
+    if (refusal) return res.status(403).json({ error: refusal });
+    res.locals.roleNote = { current: employee.user, next: wantedFields };
+  }
 
   // THE FULL EDIT FORM's Role dropdown (roles as data — system AND custom,
   // exactly the Add Employee rules): an ACTIVE internal role from Role
@@ -2198,6 +2363,7 @@ router.put('/management/:id/roles', requirePerm(null, 'hrms', 'Employee Manageme
   if (role && role !== before) {
     await logAudit({ userId: req.user.id, action: 'Product roles assigned', entity: 'User', entityId: employee.user.id, fromValue: before, toValue: role });
   }
+  if (res.locals.roleNote) await require('../utils/roleGuard').noteRoleChange({ actor: req.user, ...res.locals.roleNote, source: 'Employee screen' }); // eslint-disable-line global-require
   const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
   res.json(shapeEmployeeMgmtRow(fresh));
 });
@@ -2215,6 +2381,7 @@ router.put('/management/:id/scope', requirePerm(null, 'hrms', 'Employee Manageme
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (!employee.user) return res.status(400).json({ error: 'Create a login for this employee first — scope belongs to the login.' });
+  if (employee.user.id === req.user.id && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'You cannot change your own access scope. Ask a Super Admin.' }); // HR holds assign since 2026-10-24
 
   const clean = (v) => {
     if (v === undefined) return undefined;
@@ -2280,49 +2447,27 @@ router.get('/management/:id/photo', requirePerm(null, 'hrms', 'Employee Manageme
 // TeamLink and no record exists, HR records one here, already serving notice,
 // so the resignation module and this screen show the same date.
 router.put('/management/:id/last-working-date', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  // HRMS spec item 7: ONE way to change the last working day (utils/exitDate.js setExitDate): HR desk only (HR, Admin, Super Admin),
+  // with a REASON, validated, audited (previous / new / reason / who), and every reader kept in step in the same request.
+  const exitDate = require('../utils/exitDate');
+  const exitFlow = require('../utils/exitFlow');
   const employee = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!exitDate.isHrDesk(req.user)) return res.status(403).json({ error: 'Only HR or the Super Admin can change the last working day.' });
   const date = String((req.body && req.body.lastWorkingDate) || '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(date))) {
     return res.status(400).json({ error: 'Last working date must be a date (YYYY-MM-DD).' });
   }
-  const open = await prisma.employeeRecord.findFirst({
-    where: { type: 'RESIGNATION', employeeId: employee.id, status: { in: OPEN_RESIGNATION } },
-    orderBy: { updatedAt: 'desc' },
-  });
-  if (!open && !['Notice Period', 'Exit Process'].includes(employee.employmentStatus)) {
-    return res.status(400).json({ error: `${employee.name} is not on notice (status ${employee.employmentStatus}). Set the status to Notice Period first, or file the resignation in Employee Services.` });
+  const live = (await exitDate.liveRecords([employee.id])).get(employee.id);
+  if (!live && !['Notice Period', 'Exit Process', 'Relieved', 'Exited', 'Terminated'].includes(employee.employmentStatus)) {
+    return res.status(400).json({ error: employee.name + ' is not leaving (status ' + employee.employmentStatus + '). Start the exit first, from Employee Services > Resignation.' });
   }
-  let record;
-  if (open) {
-    record = await prisma.employeeRecord.update({ where: { id: open.id }, data: { date } });
-    const form = await prisma.resignationDetail.findUnique({ where: { recordId: open.id } });
-    if (form) {
-      await prisma.resignationDetail.update({
-        where: { id: form.id },
-        data: open.status === 'Pending' ? { requestedLastWorkingDate: date } : { approvedLastWorkingDate: date },
-      });
-    }
-  } else {
-    record = await prisma.employeeRecord.create({
-      data: {
-        type: 'RESIGNATION',
-        employeeId: employee.id,
-        title: 'Resignation recorded by HR',
-        detail: 'Recorded from Employee Management — no resignation was filed in TeamLink. Last working date set by HR.',
-        status: 'Notice Period',
-        date,
-        raisedBy: req.user.name || null,
-      },
-    });
-  }
-  await logAudit({
-    userId: req.user.id, actorName: req.user.name, action: 'Last working date set',
-    entity: 'Employee', entityId: employee.id, field: 'lastWorkingDate', fieldLabel: 'Last working date',
-    fromValue: open ? (open.date || '') : '', toValue: date,
+  const out = await exitDate.setExitDate({
+    employeeId: employee.id, date, reason: req.body && req.body.reason, note: req.body && req.body.note, user: req.user, source: 'UI',
+    ensureRecord: async () => exitFlow.ensureExitRecord(employee, req.user),
   });
-  return res.json({ ok: true, lastWorkingDate: date, resignationId: record.id, created: !open });
+  return res.json({ ok: true, lastWorkingDate: date, previous: out.from, recordId: out.recordId, warnings: out.warnings, created: !live });
 });
 
 router.get('/management/:id', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
@@ -2417,9 +2562,12 @@ router.get('/:id', async (req, res) => {
   ]);
   // A seat whose holder has LEFT is free (its tenure was ended when they left). One whose holder
   // is on notice is still theirs; the picker says the day it frees.
-  const heldBy = new Map(occupied
-    .filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)))
-    .map((a) => [a.positionId, a]));
+  const liveOcc = occupied.filter((a) => !(a.employee && seatHolderLeft(a.employee.employmentStatus)));
+  const leavingOcc = (a) => !!(a.employee && seatRelease.isNotice(a.employee.employmentStatus));
+  // the holder shown is the one really sitting in the seat; a leaver on notice only while nobody else is
+  const heldBy = new Map();
+  liveOcc.filter(leavingOcc).forEach((a) => heldBy.set(a.positionId, a));
+  liveOcc.filter((a) => !leavingOcc(a)).forEach((a) => heldBy.set(a.positionId, a));
   const freesOn = new Map();
   for (const a of occupied) {
     if (a.employeeId !== employee.id && a.employee && seatRelease.isNotice(a.employee.employmentStatus)) {
@@ -2433,8 +2581,11 @@ router.get('/:id', async (req, res) => {
     where: { employeeId: employee.id, toDate: { not: null } }, orderBy: [{ toDate: 'desc' }, { createdAt: 'desc' }], include: { position: { select: { code: true } } },
   });
 
+  const noticeMap = ['Notice Period', 'Exit Process'].includes(employee.employmentStatus)
+    ? await require('../utils/noticeAutoExit').progressFor([employee.id]).catch(() => new Map()) : new Map(); // eslint-disable-line global-require
   res.json({
     ...withComputed(employee),
+    notice: noticeMap.get(employee.id) || null,
     position: heldNow ? heldNow.position.code : '',
     positionSince: heldNow ? heldNow.fromDate : null,
     // Free seats first; a taken one is listed and LABELLED rather than
@@ -2447,8 +2598,8 @@ router.get('/:id', async (req, res) => {
         holder: a && a.employeeId !== employee.id ? (a.employee ? a.employee.name : 'somebody') : null,
         mine: !!(a && a.employeeId === employee.id),
         vacant: !a,
-        onNotice: !!(a && freesOn.has(r.id)),
-        freesOn: a && freesOn.has(r.id) ? freesOn.get(r.id) : null,
+        onNotice: !!(a && leavingOcc(a) && freesOn.has(r.id)),
+        freesOn: a && leavingOcc(a) && freesOn.has(r.id) ? freesOn.get(r.id) : null,
         previousSeat: !!(!heldNow && lastEnded && lastEnded.position && lastEnded.position.code === r.code),
       };
     }).sort((a, b) => (a.holder ? 1 : 0) - (b.holder ? 1 : 0)
@@ -2525,6 +2676,16 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
       const st = fieldDefs.stateOf(f);
       return res.status(400).json({ error: `"${st ? st.label : f}" is required.` });
     }
+  }
+  // BIOMETRIC ID (founder, 2026-10-23): the attendance-device ID of this person. Empty clears it; one device ID belongs to ONE employee.
+  if (req.body.biometricPin !== undefined) {
+    const pin = String(req.body.biometricPin || '').trim();
+    if (pin && !/^[A-Za-z0-9-]{1,30}$/.test(pin)) return res.status(400).json({ error: 'The Biometric ID can have letters, numbers and dashes only (up to 30 characters).' });
+    if (pin) {
+      const other = await prisma.employee.findFirst({ where: { biometricPin: pin, NOT: { id: existingForScope.id } }, select: { name: true, employeeCode: true } });
+      if (other) return res.status(409).json({ error: `Biometric ID ${pin} already belongs to ${other.name} (${other.employeeCode}).` });
+    }
+    if ((pin || null) !== (existingForScope.biometricPin || null)) data.biometricPin = pin || null;
   }
   if (data.dateOfBirth !== undefined) data.dateOfBirth = toDate(data.dateOfBirth);
   if (data.dateOfJoining !== undefined) data.dateOfJoining = toDate(data.dateOfJoining);
@@ -2655,20 +2816,16 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
         } else if (!seat.active) {
           return res.status(409).json({ error: `Position ${seat.code} is retired. Reactivate it on Administration → Positions first.` });
         } else {
-          const held = await prisma.positionAssignment.findFirst({
-            where: { positionId: seat.id, toDate: null },
-            include: { employee: { select: { id: true, name: true, employmentStatus: true } } },
-          });
-          if (held && held.employeeId !== existingForScope.id) {
-            if (held.employee && seatHolderLeft(held.employee.employmentStatus)) departedHolder = held;
-            else {
-              return res.status(409).json({
-                error: held.employee && seatRelease.isNotice(held.employee.employmentStatus)
-                  ? `${seat.code} is held by ${held.employee.name}, who is on notice${(await seatRelease.lastWorkingDayOf(held.employee.id)) ? ` until ${(await seatRelease.lastWorkingDayOf(held.employee.id)).date}` : ' (no last working day set yet)'}. The seat is free the day after their last working day.`
-                  : `${seat.code} is held by ${held.employee ? held.employee.name : 'somebody else'} (${held.employee ? held.employee.employmentStatus : 'active'}). Vacate it first.`,
-              });
-            }
+          // ONE ACTIVE PERSON PER SEAT. Somebody who has LEFT does not hold it; somebody ON NOTICE does not block a replacement (founder, 2026-10-23):
+          // both work the seat until the leaver's last working day, then the leaver's tenure ends by itself.
+          const holds = await seatRelease.holdersOf(seat.id, { exceptEmployeeId: existingForScope.id });
+          if (holds.active.length) {
+            const held = holds.active[0];
+            return res.status(409).json({
+              error: `${seat.code} is held by ${held.employee ? held.employee.name : 'somebody else'} (${held.employee ? held.employee.employmentStatus : 'active'}). Vacate it first.`,
+            });
           }
+          if (holds.left.length) departedHolder = holds.left[0];
         }
       }
       seatPlan = { wanted, current, currentCode, seat, departedHolder, seatDept };
@@ -2676,6 +2833,15 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
   }
 
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data });
+  // EXIT STARTED FROM THE EDIT FORM (HRMS spec item 6): choosing Exit Process / Notice Period starts the exit's record and
+  // approval chain (one resignation record), so the Super Admin is told and the exit is approved like every other one.
+  if (data.employmentStatus && ['Exit Process', 'Notice Period'].includes(data.employmentStatus) && existingForScope.employmentStatus !== data.employmentStatus) {
+    try {
+      const exitFlow = require('../utils/exitFlow');
+      const started = await exitFlow.startExit({ employee, by: req.user, source: 'Started from the Edit form (status set to ' + data.employmentStatus + ')', reason: 'Other', reasonOther: 'Status set to ' + data.employmentStatus + ' by HR' });
+      if (started.created) await exitFlow.notifyTurn({ recordId: started.record.id, employee, detail: started.detail, lwd: require('../utils/exitDate').dateOf(started.record, started.detail) });
+    } catch (err) { console.error('[employees] could not start the exit record:', err && err.message); } // eslint-disable-line no-console
+  }
   // Became Active (again): the default stationery kit, once (utils/stationeryKit.js).
   if (data.employmentStatus === 'Active' || data.employmentStatus === 'On Probation') require('../utils/stationeryKit').onActive(employee.id);
 
@@ -2790,7 +2956,7 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
   // leave an ATS login that was still a RECRUITER, because the designation ->
   // role derivation only ever ran when the login was created.
   const designationChanged = data.designation !== undefined && data.designation !== existingForScope.designation;
-  const synced = await syncLoginToEmployee(employee, existingForScope, { designationChanged });
+  const synced = await syncLoginToEmployee(employee, existingForScope, { designationChanged, actor: req.user });
   if (synced) {
     await logAudit({
       userId: req.user.id, actorName: req.user.name, action: 'Login re-derived from the HR record',
@@ -2822,7 +2988,7 @@ router.put('/:id', requirePerm(null, 'hrms', 'Employee Management', 'edit'), asy
 
 // Permanently removes an employee record and everything hanging off it
 // (attendance, leave, payslips, reviews, etc.) — Super Admin/Admin only.
-router.delete('/:id', requirePerm(null, 'hrms', 'Employee Management', 'delete'), async (req, res) => {
+router.delete('/:id', require('../utils/internalHr').blockRoute('employee.delete'), requirePerm(null, 'hrms', 'Employee Management', 'delete'), async (req, res) => {
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
   // The document ROWS go with the transaction; their stored BYTES are removed
@@ -2861,6 +3027,9 @@ router.put('/:id/link-user', requirePerm(null, 'hrms', 'Employee Management', 'a
   if (userId) {
     const alreadyLinked = await prisma.employee.findFirst({ where: { userId, id: { not: req.params.id } } });
     if (alreadyLinked) return res.status(409).json({ error: 'That user account is already linked to another employee' });
+    // HR holds assign since 2026-10-24: an Admin / Super Admin login is linked or unlinked by an Admin / Super Admin only
+    const target = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (target && ['SUPER_ADMIN', 'ADMIN'].includes(target.role) && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Only a Super Admin or an Admin can link an Admin login.' });
   }
   const employee = await prisma.employee.update({ where: { id: req.params.id }, data: { userId: userId || null } });
   await logAudit({ userId: req.user.id, action: 'Employee linked to user account', entity: 'Employee', entityId: employee.id });
@@ -3244,6 +3413,12 @@ router.post('/:id/documents', async (req, res) => {
   if (docType === PHOTO_DOC_TYPE && !['image/jpeg', 'image/png', 'image/webp'].includes(String((parsed.file && parsed.file.contentType) || ''))) {
     return res.status(400).json({ error: 'A photo must be a JPEG, PNG or WebP image.' });
   }
+  // Founder, 2026-10-22: the profile photo is what the live camera is matched against at check-in. An employee may put their FIRST photo; changing it
+  // afterwards is HR's (otherwise anybody could put another person's picture there and then match it).
+  if (docType === PHOTO_DOC_TYPE && ctx.access && ctx.access.self && !ctx.access.hr
+    && await prisma.employeeDocument.count({ where: { employeeId: employee.id, docType: PHOTO_DOC_TYPE } })) {
+    return res.status(403).json({ error: 'Your profile photo is used to check your attendance. Ask HR to change it.' });
+  }
   // Validated BEFORE anything is written, so a refused form leaves no file.
   let stored;
   try {
@@ -3379,16 +3554,21 @@ router.post('/:id/offboarding', requirePerm(null, 'hrms', 'Employee Management',
   if (!employee) return res.status(404).json({ error: 'Employee not found' });
   if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
   if (employee.offboardingStatus) return res.status(400).json({ error: 'Offboarding already in progress for this employee' });
+  // EXIT APPROVAL (HRMS spec item 6): "Initiate exit" no longer puts the person on notice by itself. It starts the exit
+  // (one resignation record + its approval chain, the Super Admin / TL / HR are told); the person goes on notice when the
+  // final approver approves. The checklist is opened now so HR can prepare it.
+  const exitFlow = require('../utils/exitFlow');
+  const started = await exitFlow.startExit({ employee, by: req.user, source: 'Started by HR (Initiate exit)', reason: 'Other', reasonOther: 'Exit started by HR', note: 'Started from Employee Management: Offboarding.' });
+  await exitFlow.notifyTurn({ recordId: started.record.id, employee, detail: started.detail, lwd: require('../utils/exitDate').dateOf(started.record, started.detail) });
   const updated = await prisma.employee.update({
     where: { id: req.params.id },
     data: {
-      offboardingStatus: 'Serving Notice',
-      offboardingTasks: JSON.stringify(DEFAULT_OFFBOARDING_TASKS.map((task) => ({ task, completed: false }))),
-      employmentStatus: 'Notice Period',
+      offboardingStatus: started.record.status === 'Pending Approval' ? 'Waiting for exit approval' : 'Serving Notice',
+      offboardingTasks: employee.offboardingTasks ? undefined : JSON.stringify(DEFAULT_OFFBOARDING_TASKS.map((task) => ({ task, completed: false }))),
     },
   });
-  await logAudit({ userId: req.user.id, action: 'Offboarding initiated', entity: 'Employee', entityId: employee.id, fromValue: employee.employmentStatus, toValue: 'Notice Period' });
-  res.json(withComputed(updated));
+  await logAudit({ userId: req.user.id, action: 'Offboarding initiated', entity: 'Employee', entityId: employee.id, fromValue: employee.employmentStatus, toValue: started.record.status === 'Pending Approval' ? 'Waiting for exit approval' : 'Notice Period' });
+  res.json({ ...withComputed(updated), exitRecordId: started.record.id });
 });
 
 router.patch('/:id/offboarding/:index', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
@@ -3400,14 +3580,27 @@ router.patch('/:id/offboarding/:index', requirePerm(null, 'hrms', 'Employee Mana
   if (!tasks[idx]) return res.status(400).json({ error: 'Invalid task index' });
   tasks[idx].completed = !tasks[idx].completed;
   const allDone = tasks.every((t) => t.completed);
-  const data = { offboardingTasks: JSON.stringify(tasks), offboardingStatus: allDone ? 'Cleared' : 'Serving Notice' };
-  if (allDone) data.employmentStatus = 'Relieved';
+  const data = { offboardingTasks: JSON.stringify(tasks), offboardingStatus: allDone ? 'Cleared' : (employee.offboardingStatus === 'Waiting for exit approval' ? 'Waiting for exit approval' : 'Serving Notice') };
+  // Ticking the last item no longer relieves the person on its own (HRMS spec item 6): they are relieved only when the exit
+  // has its final approval AND the last working day is reached (utils/exitFlow.js canFinalizeExit). Until then the checklist is
+  // simply done, and HR finishes the exit from the Exit record.
+  let finish = { ok: false, message: null };
+  const exitFlow = require('../utils/exitFlow');
+  if (allDone) {
+    finish = await exitFlow.canFinalizeExit(employee.id);
+    if (finish.ok && !['Relieved', 'Exited', 'Terminated'].includes(employee.employmentStatus)) data.employmentStatus = 'Relieved';
+  }
   const updated = await prisma.employee.update({ where: { id: req.params.id }, data });
   if (allDone) {
-    await prisma.fnfRequest.create({ data: { employeeId: employee.id, lastWorkingDate: new Date().toISOString().slice(0, 10) } });
-    await logAudit({ userId: req.user.id, action: 'Offboarding cleared', entity: 'Employee', entityId: employee.id, toValue: 'Relieved' });
+    const live = (await require('../utils/exitDate').liveRecords([employee.id])).get(employee.id);
+    if (finish.ok) {
+      if (live) await prisma.employeeRecord.update({ where: { id: live.record.id }, data: { status: 'Relieved' } });
+      const openFnf = await prisma.fnfRequest.findFirst({ where: { employeeId: employee.id, status: 'Pending' } });
+      if (!openFnf) await prisma.fnfRequest.create({ data: { employeeId: employee.id, lastWorkingDate: (live && require('../utils/exitDate').dateOf(live.record, live.detail)) || new Date().toISOString().slice(0, 10) } });
+    }
+    await logAudit({ userId: req.user.id, action: 'Offboarding cleared', entity: 'Employee', entityId: employee.id, toValue: finish.ok ? 'Relieved' : 'Checklist done (not relieved yet)', reason: finish.ok ? undefined : finish.message });
   }
-  res.json(withComputed(updated));
+  res.json({ ...withComputed(updated), exitNote: allDone && !finish.ok ? finish.message : null });
 });
 
 // --- Bulk import: Sample Excel -> Upload -> Check -> Import VALID rows -------

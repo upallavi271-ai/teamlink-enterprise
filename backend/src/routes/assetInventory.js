@@ -166,7 +166,7 @@ const NOT_TEST = [
 // seat's department; an ASSIGNED one under its holder's department.
 // The screen reads the result as `department` / `seatDepartment` on each
 // asset (present()), so this table is the only copy.
-const SEAT_DEPARTMENTS = { BDE: 'BDE', MED: 'Medical', MFG: 'Manufacturing', EDU: 'Education', HR: 'HR', 'R&D': 'R&D' };
+const SEAT_DEPARTMENTS = { BDE: 'BDE', MED: 'Medical', MFG: 'Manufacturing', EDU: 'Education', HR: 'HR', 'R&D': 'R&D', IHR: 'Internal HR', INTERNAL: 'Internal HR' };
 function deptOfSeat(code) {
   const first = str(code).toUpperCase().split(/[\s-]+/)[0];
   return SEAT_DEPARTMENTS[first] || null;
@@ -706,7 +706,7 @@ router.post('/:id/repair/send', repairEdit, async (req, res, next) => {
     // The repair log row (S2.2), linked to this history entry.
     await createRepairRow({
       assetId: asset.id, dateReported: new Date().toISOString().slice(0, 10), issue, vendor, status: 'In Repair',
-      repairType: REPAIR_TYPES.includes(str(form.fields.repairType)) ? str(form.fields.repairType) : 'Repair',
+      repairType: repairTypeOf(form.fields.repairType) || 'Repair',
       underWarranty: /^(1|true|yes|y)$/i.test(str(form.fields.underWarranty)),
       reportedById: req.user.id, reportedByName: req.user.name || null, legacyEntryId: sentId, slip: slip ? JSON.stringify(slip) : null,
     });
@@ -817,6 +817,11 @@ router.get('/:id/repair/:entryId/slip', async (req, res, next) => {
 // A repair that has a journal entry cannot be deleted — cancel it instead
 // (Cancelled reverses the entry).
 const REPAIR_TYPES = ['Repair', 'Service', 'AMC', 'Replacement of part'];
+// A typed own repair type is kept (tidied; a case-insensitive match uses the listed spelling) - 2026-10-15.
+function repairTypeOf(raw) {
+  const t = require('../utils/openVocab').clean(raw, 40); // eslint-disable-line global-require
+  return REPAIR_TYPES.find((x) => x.toLowerCase() === t.toLowerCase()) || t;
+}
 const REPAIR_STATUSES = ['Reported', 'In Repair', 'Completed', 'Cancelled'];
 const yes = (v) => v === true || /^(1|true|yes|y)$/i.test(str(v));
 async function createRepairRow(data) {
@@ -842,7 +847,7 @@ function repairBackFields(f) {
   if (has('paidBankAccountId')) data.paidBankAccountId = str(f.paidBankAccountId) || null;
   if (has('underWarranty')) data.underWarranty = yes(f.underWarranty);
   if (has('capitalise')) data.capitalise = yes(f.capitalise);
-  if (has('repairType')) { const t = str(f.repairType); if (t && !REPAIR_TYPES.includes(t)) return { error: `Repair type is one of: ${REPAIR_TYPES.join(', ')}.` }; if (t) data.repairType = t; }
+  if (has('repairType')) { const t = repairTypeOf(f.repairType); if (t) data.repairType = t; }
   if (has('repairDate')) { const d = str(f.repairDate); if (d && !YMD.test(d)) return { error: 'Pick a proper repair date.' }; data.repairDate = d || null; }
   if (has('dateReported')) { const d = str(f.dateReported); if (d && !YMD.test(d)) return { error: 'Pick a proper reported date.' }; data.dateReported = d || null; }
   if (has('vendor')) data.vendor = str(f.vendor).slice(0, 120) || null;

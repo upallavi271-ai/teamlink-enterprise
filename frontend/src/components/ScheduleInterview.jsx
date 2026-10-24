@@ -4,8 +4,10 @@ import { Modal } from './proto.jsx';
 import './interviews/Interviews.css';
 // B4 (2026-10-06): a PANEL of interviewers, and "Create meeting link".
 import PanelPicker from './interviews/PanelPicker.jsx';
+// 2026-10-14: Google Meet link field (Create a Meet link / paste / standing link); the booking e-mail goes with a calendar invite.
+import { MeetLinkField, linkCheck } from './interviews/MeetStart.jsx';
 // 2026-10-10: the "Booked - now tell them" window: Call / WhatsApp / SMS / Mail to the candidate, and the team.
-import InterviewTell from './interviews/InterviewTell.jsx';
+import { InterviewTellWithPrep as InterviewTell } from './interviews/InterviewPrep.jsx'; // the booking window + the preparation-questions line
 
 // ---------------------------------------------------------------------------
 // BOOK AN INTERVIEW — "like booking a cab" (change list §11, 2026-10-03).
@@ -37,7 +39,7 @@ function Who({ row, onChange }) {
       <span className="ivx-av" aria-hidden="true">{initials(row.candidate.name)}</span>
       <span className="ivx-who-t">
         <b>{row.candidate.name}</b>
-        <div>{row.job ? `Job: ${row.job}` : ''}{row.client ? ` · ${row.client}` : ''}</div>
+        <div>{row.job ? `Requirement: ${row.job}` : ''}{row.client ? ` · ${row.client}` : ''}</div>
       </span>
       {onChange && <button type="button" className="btn btn-sm btn-ghost" onClick={onChange}>Change</button>}
     </div>
@@ -73,7 +75,7 @@ export default function ScheduleInterview({
     return () => clearTimeout(t);
   }, [q, chosen]);
 
-  const ready = chosen && form.date && form.time && panel.length > 0;
+  const ready = chosen && form.date && form.time && panel.length > 0 && !(form.mode === 'Online' && linkCheck(form.meetingLink).state === 'bad');
 
   async function submit() {
     setError(''); setBusy(true);
@@ -121,7 +123,7 @@ export default function ScheduleInterview({
     >
       <div className="ivx-book">
         <div className="ivx-sec">
-          <b>Who *</b>
+          <b>Who</b>
           {chosen ? (
             <Who row={chosen} onChange={preset ? null : () => pick(null)} />
           ) : (
@@ -129,7 +131,7 @@ export default function ScheduleInterview({
               <input
                 type="search"
                 autoFocus
-                placeholder="Search name, phone or job…"
+                placeholder="Search name, phone or requirement…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
                 style={{ width: '100%' }}
@@ -138,7 +140,7 @@ export default function ScheduleInterview({
                 {list === null && <div className="ivx-hint">Loading…</div>}
                 {listErr && <div className="error-text">{listErr}</div>}
                 {list && list.length === 0 && !listErr && (
-                  <div className="ivx-hint">{q ? 'Nobody found. Try another name or job.' : 'Nobody is shortlisted right now. Search to find a person.'}</div>
+                  <div className="ivx-hint">{q ? 'Nobody found. Try another name or requirement.' : 'Nobody is shortlisted right now. Search to find a person.'}</div>
                 )}
                 {(list || []).map((r) => (
                   <button key={r.id} type="button" onClick={() => pick(r)}>
@@ -156,7 +158,7 @@ export default function ScheduleInterview({
         </div>
 
         <div className="ivx-sec">
-          <b>Round *</b>
+          <b>Round</b>
           <div className="ivv3-rounds" role="radiogroup" aria-label="Interview round">
             {[...new Set([1, 2, 3, 4, round])].sort((a, b) => a - b).map((n) => (
               <button key={n} type="button" role="radio" aria-checked={round === n} className={round === n ? 'is-on' : ''} onClick={() => setRound(n)}>{n}</button>
@@ -166,7 +168,7 @@ export default function ScheduleInterview({
         </div>
 
         <div className="ivx-sec">
-          <b>When *</b>
+          <b>When</b>
           <div className="ivx-two">
             <input type="date" aria-label="Date" min={todayIst()} value={form.date} onChange={(e) => set({ date: e.target.value })} />
             <input type="time" aria-label="Time" value={form.time} onChange={(e) => set({ time: e.target.value })} />
@@ -174,15 +176,15 @@ export default function ScheduleInterview({
         </div>
 
         <div className="ivx-sec">
-          <b>How *</b>
+          <b>How</b>
           <div className="ivx-modes" role="radiogroup" aria-label="Online or in person">
-            {[['Online', '💻 Online'], ['In Person', '🏢 Offline — in person']].map(([v, label]) => (
+            {[['Online', '💻 Online (Google Meet)'], ['In Person', '🏢 Offline — in person']].map(([v, label]) => (
               <button key={v} type="button" role="radio" aria-checked={form.mode === v} className={`ivx-mode${form.mode === v ? ' is-on' : ''}`} onClick={() => set({ mode: v })}>{label}</button>
             ))}
           </div>
           <div style={{ marginTop: 8 }}>
             {form.mode === 'Online' ? (
-              <input type="url" aria-label="Meeting link" placeholder="Meeting link, e.g. https://meet.google.com/abc-defg-hij" value={form.meetingLink} onChange={(e) => set({ meetingLink: e.target.value })} />
+              <MeetLinkField value={form.meetingLink} onChange={(v) => set({ meetingLink: v })} />
             ) : (
               <input aria-label="Address" placeholder="Address, e.g. Apollo Hospital, 2nd floor HR" value={form.location} onChange={(e) => set({ location: e.target.value })} />
             )}
@@ -190,14 +192,14 @@ export default function ScheduleInterview({
         </div>
 
         <div className="ivx-sec">
-          <b>Interviewers (panel) *</b>
+          <b>Interviewers (panel)</b>
           <PanelPicker value={panel} onChange={setPanel} />
           <div className="ivx-hint">One or more people. Each gives their own feedback; the final decision is still one.</div>
         </div>
 
         {/* The button is greyed until these are filled — say why. */}
         {!ready && !busy && <div className="ivx-hint">Pick a person, date, time and at least one interviewer first.</div>}
-        <div className="ivx-hint">After saving you tell the candidate by Call, WhatsApp, SMS or Mail, and the recruiter, TL and client manager (BDE) by one button. The panel and the team also get an app notice, a list of today's interviews at 8:30 am and a bell 1 hour before. For an online interview you can paste a link, or press "Create meeting link" after booking.</div>
+        <div className="ivx-hint">After saving you tell the candidate by Call, WhatsApp, SMS or Mail, and the recruiter, TL and client manager (BDE) by one button. The panel and the team also get an app notice, a list of today's interviews at 8:30 am and a bell 1 hour before. An e-mail with a calendar invite goes to the candidate and the interviewers when you book. For an online interview, press "Create a Meet link" and paste it, or add it later.</div>
         {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
       </div>
     </Modal>

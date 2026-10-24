@@ -30,7 +30,9 @@ const KINDS = {
   owner: { action: 'Client owner change requested', entity: 'Client', label: 'Change client owner', decider: 'lead' },
   merge: { action: 'Client merge requested', entity: 'Client', label: 'Merge duplicate client', decider: 'admin' },
   approval: { action: 'Client approval requested', entity: 'Client', label: 'Client approval', decider: 'lead' },
-  closejob: { action: 'Job close requested', entity: 'Requirement', label: 'Close job', decider: 'lead' },
+  closejob: { action: 'Requirement close requested', entity: 'Requirement', label: 'Close requirement', decider: 'lead' },
+  // The older pause request (routes/clientLifecycleRoutes.js decides it): listed here so My requests shows every kind.
+  pause: { action: 'Client pause requested', entity: 'Client', label: 'Pause client', decider: 'lead', legacy: true },
 };
 const ACTIONS = Object.values(KINDS).map((k) => k.action);
 const kindOfAction = (action) => Object.keys(KINDS).find((k) => KINDS[k].action === action) || null;
@@ -93,12 +95,12 @@ async function createRequest({ user, kind, client, requirement = null, reason, a
     },
   });
   const ids = await deciderIds(client, k.decider);
-  const subject = requirement ? `${requirement.title || 'a job'} (${client ? client.name : 'internal'})` : client.name;
+  const subject = requirement ? `${requirement.title || 'a requirement'} (${client ? client.name : 'internal'})` : client.name;
   await notifyUsers(ids, {
     title: `${k.label} request — ${subject}`,
     message: `${user.name || 'A BDE'} asks: ${k.label.toLowerCase()} — ${subject}. Reason: ${reason}. Open Clients → My requests to approve or reject.`,
     exceptUserId: user.id,
-  });
+  }).catch(() => null);
   return { status: 201, body: { ok: true, requestId: row.id, notified: ids.length, message: 'Sent for approval. You will see the answer under My requests.' } };
 }
 
@@ -158,6 +160,7 @@ async function decide({ user, id, approve, note }) {
   const kind = row ? kindOfAction(row.action) : null;
   if (!row || !kind) return { status: 404, body: { error: 'Request not found.' } };
   const k = KINDS[kind];
+  if (k.legacy) return { status: 400, body: { error: 'Use the pause request buttons.', legacy: true } };
   if ((row.approvalStatus || 'Pending') !== 'Pending') {
     return { status: 409, body: { error: `This request was already ${String(row.approvalStatus).toLowerCase()}.` } };
   }
@@ -166,7 +169,7 @@ async function decide({ user, id, approve, note }) {
   let clientId = row.entityId;
   if (k.entity === 'Requirement') {
     requirement = await prisma.requirement.findUnique({ where: { id: row.entityId } });
-    if (!requirement) return { status: 404, body: { error: 'The job of this request no longer exists.' } };
+    if (!requirement) return { status: 404, body: { error: 'The requirement of this request no longer exists.' } };
     clientId = requirement.clientId;
   }
   const client = clientId ? await prisma.client.findFirst({ where: { AND: [{ id: clientId }, clientWhere(user)] } }) : null;
@@ -198,7 +201,7 @@ async function decide({ user, id, approve, note }) {
     title: `${k.label} ${approve ? 'approved' : 'rejected'} — ${subject}`,
     message: `${user.name || 'An approver'} ${approve ? 'approved' : 'rejected'} your request (${k.label.toLowerCase()}: ${subject})${n ? `: ${n}` : '.'}`,
     exceptUserId: user.id,
-  });
+  }).catch(() => null);
   return { status: 200, body: { ok: true, message } };
 }
 
@@ -230,7 +233,7 @@ async function applyApproved({ user, kind, row, client, requirement, note }) {
     const people = names.length ? await prisma.user.findMany({ where: { status: 'Active', atsRole: 'BDE' }, select: { id: true, name: true } }) : [];
     await notifyUsers(people.filter((p) => names.includes(String(p.name || '').toLowerCase())).map((p) => p.id), {
       title: `Client owner changed — ${client.name}`, message: `${client.name} now belongs to ${newOwner}${prev ? ` (was ${prev})` : ''}.`, exceptUserId: user.id,
-    });
+    }).catch(() => null);
     return { message: `${client.name} now belongs to ${newOwner}.` };
   }
   if (kind === 'merge') {
@@ -244,7 +247,7 @@ async function applyApproved({ user, kind, row, client, requirement, note }) {
     return { message: `${client.name} is approved.` };
   }
   if (kind === 'closejob') {
-    if (!hooks.closeJob) return { error: 'Closing jobs is not ready. Please try again.', status: 503 };
+    if (!hooks.closeJob) return { error: 'Closing requirements is not ready. Please try again.', status: 503 };
     const outcome = row.toValue && /cancel/i.test(row.toValue) ? 'Cancelled' : 'Filled';
     const res = await hooks.closeJob({ user, requirement, outcome, reason: stamp });
     if (res && res.error) return res;

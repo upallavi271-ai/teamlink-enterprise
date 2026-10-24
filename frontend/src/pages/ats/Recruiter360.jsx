@@ -75,7 +75,7 @@ function Rows({ sec, empty }) {
           return (
             <div key={r.id} className="r360-row">
               {r.link ? <Link to={`/clients/${r.id}`} className="r360-strong">{r.name}</Link> : <b>{r.name}</b>}
-              <span className="small-muted">{`${fmt(r.openRequirements)} open of ${fmt(r.requirements)} jobs`}</span>
+              <span className="small-muted">{`${fmt(r.openRequirements)} open of ${fmt(r.requirements)} requirements`}</span>
             </div>
           );
         }
@@ -86,7 +86,7 @@ function Rows({ sec, empty }) {
                 <b>{r.name}</b>
                 <div className="small-muted r360-ellipsis">{[r.roleLabel, r.department, r.seatLabel, r.status === 'Left' ? 'Left' : null].filter(Boolean).join(' · ')}</div>
               </div>
-              <span className="small-muted">{r.role === 'BDE' ? `${fmt(r.counts.clients)} clients · ${fmt(r.counts.openRequirements)} open jobs` : `${fmt(r.counts.activeCandidates)} active · ${fmt(r.counts.needsAction)} to act`}</span>
+              <span className="small-muted">{r.role === 'BDE' ? `${fmt(r.counts.clients)} clients · ${fmt(r.counts.openRequirements)} open requirements` : `${fmt(r.counts.activeCandidates)} active · ${fmt(r.counts.needsAction)} to act`}</span>
             </div>
           );
         }
@@ -124,7 +124,7 @@ function Rows({ sec, empty }) {
 }
 
 const EMPTY_TEXT = {
-  requirements: 'No open jobs in your area.',
+  requirements: 'No open requirements in your area.',
   candidates: 'No people in process.',
   interviews: 'No interviews right now.',
   pending: 'Nothing is waiting on this person.',
@@ -193,7 +193,7 @@ export default function Recruiter360({ personId, onClose }) {
               {role === 'TL' && d.team && (
                 <div className="small-muted" style={{ marginBottom: 8 }}>
                   {d.team.departments
-                    ? `${fmt(d.team.size)} people · BDE desk and the recruiters on client jobs · ${d.team.departments.join(', ')}`
+                    ? `${fmt(d.team.size)} people · BDE desk and the recruiters on client requirements · ${d.team.departments.join(', ')}`
                     : `${fmt(d.team.size)} recruiter(s) · ${fmt(d.team.active)} active${d.team.sections.length ? ` · ${d.team.sections.join(', ')}` : ''}`}
                 </div>
               )}

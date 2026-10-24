@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import InboxPanel from '../../components/messaging/InboxPanel.jsx';
 import useUnreadReplies from '../../components/messaging/useUnreadReplies.js';
+import WaChats from '../../components/messaging/WaChats.jsx';
+import useWaChatUnread from '../../components/messaging/useWaChatUnread.js';
 import '../../components/messaging/conversation.css';
 import api from '../../api';
 import { PanelPad, EmptyMini, Modal } from '../../components/proto.jsx';
@@ -134,9 +136,11 @@ export default function FollowUps({ embedded = false }) {
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   // Follow-ups | Inbox: the Inbox is the same screen, next to the lists (omnichannel: replies to every Call / Mail / WhatsApp / SMS).
   const [sp, setSp] = useSearchParams();
-  const sub = sp.get('sub') === 'inbox' ? 'inbox' : 'list';
-  const setSub = (v) => { const n = new URLSearchParams(sp); if (v === 'inbox') n.set('sub', 'inbox'); else n.delete('sub'); setSp(n, { replace: true }); };
+  // Follow-ups | Inbox | WhatsApp chats (the recruiter's chat screen: replies, the answer and the follow-up on ONE screen)
+  const sub = ['inbox', 'chats'].includes(sp.get('sub')) ? sp.get('sub') : 'list';
+  const setSub = (v) => { const n = new URLSearchParams(sp); if (v === 'inbox' || v === 'chats') n.set('sub', v); else n.delete('sub'); if (v !== 'chats') n.delete('chat'); setSp(n, { replace: true }); };
   const [unreadN, refreshUnread, setUnreadN] = useUnreadReplies(true);
+  const [waN, , setWaN] = useWaChatUnread(true);
   // Contacting is its own right (Role Catalog > Contact): a role without it still sees the list, with the reason in plain words.
   const contact = useContactRule('candidates');
   const [chat, setChat] = useState(null);
@@ -144,6 +148,7 @@ export default function FollowUps({ embedded = false }) {
     <div className="cv-subtabs" role="tablist" aria-label="Follow-ups">
       <button type="button" role="tab" aria-selected={sub === 'list'} className={`btn btn-sm${sub === 'list' ? ' btn-primary' : ''}`} onClick={() => setSub('list')}>Follow-ups</button>
       <button type="button" role="tab" aria-selected={sub === 'inbox'} className={`btn btn-sm${sub === 'inbox' ? ' btn-primary' : ''}`} onClick={() => setSub('inbox')}>Inbox{unreadN > 0 && <span className="cv-count-badge">{unreadN}</span>}</button>
+      <button type="button" role="tab" aria-selected={sub === 'chats'} className={`btn btn-sm${sub === 'chats' ? ' btn-primary' : ''}`} onClick={() => setSub('chats')}>WhatsApp chats{waN > 0 && <span className="cv-count-badge">{waN}</span>}</button>
     </div>
   );
   const [data, setData] = useState(null);
@@ -167,7 +172,7 @@ export default function FollowUps({ embedded = false }) {
   useEffect(load, [load]);
 
   const mineLf = useListFilters((data && data.mine && data.mine.rows) || [], [
-    { key: 'q', type: 'search', placeholder: 'Search name, job or purpose…', get: (f) => `${f.candidateName || ''} ${f.requirementTitle || ''} ${f.requirementCode || ''} ${f.purpose || f.nextAction || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search name, requirement or purpose…', get: (f) => `${f.candidateName || ''} ${f.requirementTitle || ''} ${f.requirementCode || ''} ${f.purpose || f.nextAction || ''}` },
     { key: 'status', label: 'Status', primary: true, get: (f) => f.status, options: ['Overdue', 'Due Today', 'Upcoming', 'Completed'] },
     { key: 'method', label: 'Method', primary: true, get: (f) => f.contactMode },
     { key: 'stage', label: 'Step', get: (f) => f.stageLabel },
@@ -187,6 +192,14 @@ export default function FollowUps({ embedded = false }) {
   });
   const teamPage = usePaged(teamLf.rows);
 
+  if (sub === 'chats') {
+    return (
+      <div>
+        {subTabs}
+        <WaChats onUnread={setWaN} />
+      </div>
+    );
+  }
   if (sub === 'inbox') {
     return (
       <div>

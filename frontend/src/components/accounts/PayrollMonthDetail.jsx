@@ -19,6 +19,7 @@ import { FacetSelect } from '../ui/ListPageHeader.jsx';
 import './ledgerBooks.css';
 import './accountsScroll.css';
 import './payrollMonthDetail.css';
+import './stickyTable.css';
 
 const num = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const part = (n) => (Number(n) ? num(n) : '—'); // an empty optional part
@@ -67,7 +68,7 @@ export default function PayrollMonthDetail({ month, onBack, onChanged = () => {}
   const rows = data?.rows || [];
   return (
     <Panel style={{ marginTop: 16 }}>
-      <PanelHead title={`Payroll — ${monthLabel(month)}`}>
+      <PanelHead title={data?.cycle ? `Payroll — ${data.cycle.heading}` : `Payroll — ${monthLabel(month)}`}>
         <span className="pmd-actions">
           <button type="button" className="btn btn-sm" onClick={onBack}>← Back to Payroll months</button>
           <button type="button" className="btn btn-sm" disabled={!rows.length} onClick={() => exportAs('xlsx')}>Export Excel</button>
@@ -80,7 +81,7 @@ export default function PayrollMonthDetail({ month, onBack, onChanged = () => {}
       {data && (
         <>
           <div className="pmd-sel">
-            Showing <b>{monthLabel(month)}</b> · {data.records} employee{data.records === 1 ? '' : 's'}
+            Showing <b>{monthLabel(month)}</b>{data.cycle ? <> (pay period {data.cycle.rangeText}, {data.cycle.days} days)</> : null} · {data.records} employee{data.records === 1 ? '' : 's'}
             {data.importedCount ? <> · {data.importedCount} from the pay register sheet</> : null}
             {filtered && <> · <b>{data.shown}</b> match your filters</>}
           </div>
@@ -107,10 +108,10 @@ export default function PayrollMonthDetail({ month, onBack, onChanged = () => {}
             </EmptyMini>
           ) : (
             <div className="tbl-wrap acc-scroll pmd-wrap">
-              <table className="lb-tbl pmd-tbl">
+              <table className="lb-tbl pmd-tbl tl-sticky-table">
                 <thead>
                   <tr>
-                    <th>Employee ID</th><th>Name</th><th>Department</th><th>Designation</th>
+                    <th className="tl-stick-id">Employee ID</th><th className="tl-stick-name">Name</th><th>Department</th><th>Designation</th>
                     <th className="lb-num">Working days</th><th className="lb-num">Paid days</th>
                     <th className="lb-num">Basic</th><th className="lb-num">HRA</th><th className="lb-num">Conveyance</th><th className="lb-num">Arrears</th>
                     <th className="lb-num">Other allowances</th><th className="lb-num">Incentives</th><th className="lb-num">Gross</th>
@@ -122,8 +123,8 @@ export default function PayrollMonthDetail({ month, onBack, onChanged = () => {}
                 <tbody>
                   {rows.map((r) => (
                     <tr key={r.id}>
-                      <td><b>{r.employeeCode || '—'}</b></td>
-                      <td>{r.name}</td>
+                      <td className="tl-stick-id"><b>{r.employeeCode || '—'}</b></td>
+                      <td className="tl-stick-name">{r.name}</td>
                       <td className="cell-muted">{r.department || '—'}</td>
                       <td className="cell-muted">{r.designation || '—'}</td>
                       <td className="lb-num">{num(r.workingDays)}</td>
@@ -143,8 +144,10 @@ export default function PayrollMonthDetail({ month, onBack, onChanged = () => {}
                       </td>
                     </tr>
                   ))}
-                  <tr className="lb-tot">
-                    <td colSpan="4">TOTAL · {t.employees} employee{t.employees === 1 ? '' : 's'}</td>
+                  <tr className="lb-tot tl-stick-total">
+                    <td className="tl-stick-id">TOTAL ·</td>
+                    <td className="tl-stick-name">{t.employees} employee{t.employees === 1 ? '' : 's'}</td>
+                    <td colSpan="2" />
                     <td /><td />
                     <td className="lb-num">{part(t.basic)}</td><td className="lb-num">{part(t.hra)}</td><td className="lb-num">{part(t.conveyance)}</td><td className="lb-num">{part(t.arrears)}</td>
                     <td className="lb-num">{part(t.otherAllowances)}</td><td className="lb-num">{part(t.incentive)}</td><td className="lb-num">{num(t.gross)}</td>

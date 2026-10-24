@@ -120,7 +120,8 @@ async function redeemSetPasswordToken(token, password) {
       status: user.status === 'Inactive' ? 'Active' : user.status,
     },
   });
-  return { ok: true, email: user.email, name: user.name };
+  // userId: the ACCOUNT whose password was just set (several logins may share one email, so the email cannot say which).
+  return { ok: true, email: user.email, name: user.name, userId: user.id };
 }
 
 // Read-only check, for the screen that renders the form.
@@ -132,7 +133,19 @@ async function inspectSetPasswordToken(token) {
   if (!user.setPasswordExpiresAt || user.setPasswordExpiresAt < new Date()) {
     return { ok: false, reason: 'This link has expired. Ask HR to send a new one.' };
   }
-  return { ok: true, name: user.name, email: user.email, expiresAt: user.setPasswordExpiresAt };
+  // Which login this link is for (role + department), shown to the person holding the link: a person with several logins on one email
+  // must see which one they are setting a password for.
+  let role = null;
+  let others = 0;
+  try {
+    const LA = require('./loginAccounts'); // eslint-disable-line global-require
+    const mine = await LA.accountsByEmail(user.email);
+    others = Math.max(0, mine.length - 1);
+    const sums = await LA.summariesFor(mine);
+    const me = sums.find((s) => s.id === user.id);
+    role = me ? me.mailLabel : null;
+  } catch { /* the page simply shows less */ }
+  return { ok: true, name: user.name, email: user.email, expiresAt: user.setPasswordExpiresAt, role, hasOtherLogins: others > 0 };
 }
 
 // WELCOME TO HRMS — sent when HR set a password on the Add Employee form.

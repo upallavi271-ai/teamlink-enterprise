@@ -38,6 +38,7 @@ const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 // (paths are relative to /api). Anything not listed here is refused.
 const READ_ONLY_POSTS = [
   { re: /^\/admin\/view-as\/exit\/?$/, why: 'End View as' },
+  { re: /^\/admin\/view-as\/switch-to-act\/?$/, why: 'Switch this View as to Act as (route re-checks Super Admin; audit via withWrites)' },
   { re: /^\/audience\/preview\/?$/, why: 'Send-to picker: audience count + sample names (resolveAudience only)' },
   { re: /^\/clients\/check-duplicate\/?$/, why: 'Client form duplicate check (findClientDuplicates only)' },
   { re: /^\/employees\/management\/tl-wise\/?$/, why: 'Employee Management TL-wise view (tlWiseFor only)' },
@@ -78,7 +79,7 @@ async function isEnded(sid) {
   if (endedSids.has(sid)) return true;
   if (liveSids.has(sid)) return false;
   const row = await prisma.auditLog.findFirst({
-    where: { action: 'View as ended', reason: sessionReason(sid) }, select: { id: true },
+    where: { action: { in: ['View as ended', 'Act as ended'] }, reason: sessionReason(sid) }, select: { id: true },
   }).catch(() => null);
   if (row) { endedSids.add(sid); return true; }
   liveSids.add(sid);
@@ -140,6 +141,8 @@ function viewAsGuard(req, res, next) {
   if (!header.startsWith('Bearer ')) return next();
   let claims;
   try { claims = jwt.verify(header.slice(7), process.env.JWT_SECRET); } catch { return next(); }
+  // ACT AS (utils/actAs.js): the edit twin — its own guard, same mount.
+  if (claims && claims.actAs && !claims.viewAs) return require('./actAs').guard(req, res, next, claims); // eslint-disable-line global-require
   if (!claims || !claims.viewAs) return next();
   const ctx = { viewAs: claims.viewAs, skipped: 0 };
   if (!READ_METHODS.has(req.method)) {

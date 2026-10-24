@@ -63,4 +63,23 @@ prisma.$use(async (params, next) => {
   return result;
 });
 
+// jobdup_: every way a job is created or changed keeps the duplicate-jobs worklist fresh (utils/jobDupHook.js).
+// Only marks a cache stale; never throws, writes nothing.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (params.model === 'Requirement' || params.model === 'RequirementPosting') {
+    try { require('./utils/jobDupHook').after(params); } catch { /* the worklist refreshes on its own */ } // eslint-disable-line global-require
+  }
+  return result;
+});
+
+// vendorlink_: a bill booked in Accounts is linked to its vendor by the vendor's id the moment it is saved (utils/vendorExpenseLink.js).
+// Only fills vendorId when the vendor text matches exactly one vendor master record; never throws.
+prisma.$use(async (params, next) => {
+  if (params.model === 'OfficeExpense' && (params.action === 'create' || params.action === 'update')) {
+    try { await require('./utils/vendorExpenseLink').before(prisma, params); } catch (err) { console.error('[vendorlink] hook:', err.message); } // eslint-disable-line global-require
+  }
+  return next(params);
+});
+
 module.exports = prisma;

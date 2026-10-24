@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import FilterChips from '../../components/FilterChips.jsx';
 import './Search.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // GLOBAL SEARCH (spec §24) — one simple box. Searches candidate name, phone
@@ -88,7 +89,7 @@ export default function Search() {
       <div className="page-head">
         <div>
           <h1>Search TeamLink</h1>
-          <div className="page-sub">Candidate name, phone or Candidate ID · requirement ID or job title · client name, GSTIN or client code · employee name or Employee ID — only what your role may see</div>
+          <div className="page-sub">Candidate name, phone or Candidate ID · requirement ID or requirement title · client name, GSTIN or client code · employee name or Employee ID — only what your role may see</div>
         </div>
       </div>
       <form className="filter-row" onSubmit={search}>
@@ -101,10 +102,10 @@ export default function Search() {
           autoFocus
         />
         {results && (
-          <select value={type} onChange={(e) => setType(e.target.value)} title="Type" aria-label="Type" style={{ width: 'auto' }}>
+          <Combo value={type} onChange={(e) => setType(e.target.value)} title="Type" aria-label="Type" style={{ width: 'auto' }}>
             <option value="">All types</option>
             {groups.map(([id, label]) => <option key={id} value={id}>{`${label} (${fmt(r.counts[id])})`}</option>)}
-          </select>
+          </Combo>
         )}
         <button className="btn btn-sm btn-primary" type="submit" disabled={!q.trim() || busy}>{busy ? 'Searching…' : 'Search'}</button>
         <button className="btn btn-sm" type="button" disabled={!q && !results} onClick={clear}>Clear</button>
@@ -187,7 +188,7 @@ export default function Search() {
         </>
       )}
       {!results && !busy && !error && (
-        <div className="small-muted srch-hint">Type a name, phone number, email, candidate ID, requirement code (e.g. MED-2658), job title, client name, GSTIN or client code and press Enter.</div>
+        <div className="small-muted srch-hint">Type a name, phone number, email, candidate ID, requirement code (e.g. MED-2658), requirement title, client name, GSTIN or client code and press Enter.</div>
       )}
     </div>
   );

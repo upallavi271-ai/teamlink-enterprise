@@ -3,6 +3,8 @@ import api from '../api';
 import Combo from './Combo.jsx';
 import Modal from './Modal.jsx';
 import ContactPanel from './ContactPanel.jsx';
+import WaButton from './wa/WaButton.jsx'; // free WhatsApp quick chat
+import { WaOptInToggle } from './wa/WaOptIn.jsx';
 import CandidateBulkActions from './CandidateBulkActions.jsx';
 import StatusChip from './ui/StatusChip.jsx';
 import {
@@ -17,6 +19,7 @@ import {
   RejectFields, rejectReady, rejectPayload, EMPTY_REJECT, sendWithSameClientCheck,
 } from './rejections/rejectionUi.jsx';
 import StepPopup from './candidate/StepPopups.jsx';
+import AskToBook, { askable, InterviewRequested } from './interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
 import { ctcAsk, CtcAsk, CtcAskButtons } from './CtcConfirm.jsx';
 import './CandidateDrawer.css';
 
@@ -120,7 +123,8 @@ export function nextActionsFor(user, stage, app = null) {
     if (RECRUITER_STEP.includes(stage) || ['RECRUITER_REVIEW', 'RECRUITER_APPROVED'].includes(stage)) {
       if (is('hr', 'recruiter') && canMoveToStage(user, 'TL_REVIEW')) out.push({ id: 'send_to_dept', label: 'Send to dept head / team lead', kind: 'move', to: 'TL_REVIEW' });
     } else if (stage === 'TL_REVIEW') {
-      if (is('tl') && maySchedule(user)) out.push({ id: 'approve_interview', label: 'Approve and book interview', kind: 'schedule' });
+      // TeamLink's own jobs have no BDE: the Dept head / TL's approval IS the interview booking (the server checks it).
+      if (is('tl') && can(user, 'ats', 'candidates', 'Pipeline Stages', 'edit')) out.push({ id: 'approve_interview', label: 'Approve and book interview', kind: 'schedule' });
       if (is('tl') && mayReturn(user)) out.push({ id: 'return', label: 'Send back to HR', kind: 'return' });
     } else if (stage === 'JOINED') {
       if (is('hr') && can(user, 'ats', 'interviews', 'Internal Hiring', 'approve')) out.push({ id: 'hrms', label: 'Add as employee', kind: 'hrms' });
@@ -144,12 +148,14 @@ export function nextActionsFor(user, stage, app = null) {
     if (is('bde', 'tl') && canMoveToStage(user, 'CLIENT_SHORTLISTED')) out.push({ id: 'client_yes', label: 'Client said yes', kind: 'move', to: 'CLIENT_SHORTLISTED' });
     if (is('bde', 'tl') && canMoveToStage(user, 'REJECTED')) out.push({ id: 'client_no', label: 'Client said no', kind: 'popup', popup: 'reject_client' });
   } else if (stage === 'CLIENT_SHORTLISTED') {
-    if (is('bde') && maySchedule(user)) out.push({ id: 'schedule', label: 'Book interview', kind: 'schedule' });
+    // Only the BDE (and the BDE TL, whose role is TL) books: maySchedule is the server's answer for this login.
+    if (is('bde', 'tl') && maySchedule(user)) out.push({ id: 'schedule', label: 'Book interview', kind: 'schedule' });
   } else if (stage === 'SELECTED') {
     // e2e gap 2: the offer is made here (TL approves, then it is sent) —
     // "Move step" no longer jumps to Offer.
-    if (is('recruiter', 'tl', 'bde') && can(user, 'ats', 'interviews', 'Offers', 'edit') && !(app && app.offerStatus === OFFER_PREPARED)) {
-      out.push({ id: 'prepare_offer', label: 'Prepare offer', kind: 'prepare_offer' });
+    // CLIENT job (2026-10-13): the client makes the offer letter; the BDE records it if it came by mail, the recruiter shares it.
+    if (is('recruiter', 'tl', 'bde') && can(user, 'ats', 'interviews', 'Offers', 'view')) {
+      out.push({ id: 'offers', label: 'Offer letter (Offers screen)', kind: 'link', href: '/ats/offers' });
     }
   } else if (stage === 'OFFER') {
     if (is('recruiter', 'tl', 'bde') && can(user, 'ats', 'interviews', 'Offers', 'view')) out.push({ id: 'offers', label: 'Offer answer (Offers screen)', kind: 'link', href: '/ats/offers' });
@@ -513,7 +519,7 @@ export function ReturnDialog({
     >
       <form id="c360ReturnForm" onSubmit={submit}>
         <label className="field">
-          <span>Why is this candidate going back? *</span>
+          <span>Why is this candidate going back?</span>
           <textarea autoFocus rows="3" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. CTC details missing, re-check notice period" />
         </label>
         <div className="small-muted">The recruiter gets your reason and a message.</div>
@@ -571,7 +577,9 @@ export function CandidateActions({
   const step = PIPELINE_STEPS[stepIndexOf(stage)];
   const mayInterview = !!stage && !!step && INTERVIEW_WINDOW.includes(step.id) && stage !== 'INTERVIEW_SCHEDULED'
     && !isInternalApp(app) && maySchedule(user) && !next.some((f) => f.kind === 'schedule');
-  const any = next.length || mayHold || mayReject || otherStages.length || editMaster || mayInterview;
+  // A Recruiter / TL cannot book: they ask the client manager (BDE) with one plain button (components/interviews/AskToBook.jsx).
+  const mayAsk = !!app && !isInternalApp(app) && askable(user, app.stage, app.interviewStatus);
+  const any = next.length || mayHold || mayReject || otherStages.length || editMaster || mayInterview || mayAsk || !!(app && app.interviewRequest);
   if (!any) return null;
 
   async function move(toStage, extra = {}) {
@@ -587,7 +595,7 @@ export function CandidateActions({
       setMoveOpen(false);
       if (onFlash) {
         onFlash(toStage === 'REJECTED'
-          ? (extra.rejectKind === 'do_not_use' ? 'Rejected. "Do not use" sent to the team lead to approve.' : 'Rejected for this job. Saved.')
+          ? (extra.rejectKind === 'do_not_use' ? 'Rejected. "Do not use" sent to the team lead to approve.' : 'Rejected for this requirement. Saved.')
           : `Moved to ${stageLabelFor(toStage, { internal: isInternalApp(app) })}.`);
       }
       if (onChanged) await onChanged();
@@ -673,13 +681,17 @@ export function CandidateActions({
         {app && mayInterview && (
           <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setSchedule(true)}>📅 Schedule interview</button>
         )}
+        {app && mayAsk && <AskToBook applicationId={app.id} requested={app.interviewRequest || null} onDone={() => { if (onChanged) onChanged(); }} />}
+        {app && !mayAsk && app.interviewRequest && <InterviewRequested request={app.interviewRequest} />}
         {/* cand7_: separate plain buttons, not a ⋯ menu (user rule: no dropdown actions). */}
         {secondary.map(([id, label, fn]) => (
           <button key={id} type="button" className={`btn btn-sm${id === 'reject' ? ' btn-danger' : ''}`} disabled={busy} onClick={fn}>
             {label}
           </button>
         ))}
+        <WaButton entityType="candidate" id={c.id} name={c.name} hasNumber={'phone' in c ? !!c.phone : undefined} applicationId={app ? app.id : undefined} label="WhatsApp" />
       </div>
+      <WaOptInToggle entityType="candidate" id={c.id} />
 
       {moveOpen && app && otherStages.length > 0 && (
         <div className="cdw-moveto" style={{ marginTop: 6 }}>
@@ -711,7 +723,7 @@ export function CandidateActions({
               disabled={busy || !rejectReady(decision)}
               onClick={() => { const { stage: s, ...rest } = rejectPayload(decision); move(s, rest); }}
             >
-              {decision.rejectKind === 'do_not_use' ? 'Reject and ask team lead' : 'Reject for this job'}
+              {decision.rejectKind === 'do_not_use' ? 'Reject and ask team lead' : 'Reject for this requirement'}
             </button>
           </div>
           <div className="small-muted" style={{ marginTop: 4 }}>Nothing is deleted. The person stays in People.</div>
@@ -737,7 +749,7 @@ export function CandidateActions({
           />
           {/* cand7_ (§10): Hold comes back as a task on this day. */}
           <label className="field" style={{ marginTop: 6 }}>
-            <span>Review again on *</span>
+            <span>Review again on</span>
             <input
               type="date"
               min={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)}
@@ -786,6 +798,7 @@ export function CandidateActions({
             facts: {
               skills: c.skills, experienceYears: c.experienceYears, noticePeriod: c.noticePeriod, currentSalary: c.currentSalary, expectedSalary: c.expectedSalary,
             },
+            salaryFit: app.salaryFit || null,
           }}
           user={user}
           onClose={() => setStepPop(null)}
@@ -862,7 +875,7 @@ function PrepareOfferDialog({
       )}
     >
       <label className="field">
-        <span>Yearly CTC (₹) *</span>
+        <span>Yearly CTC (₹)</span>
         <input type="number" min="1" inputMode="numeric" placeholder="e.g. 450000" value={ctc} onChange={(e) => { setCtc(e.target.value); setAsk(null); }} />
       </label>
       {ask && <CtcAsk ask={ask} />}
@@ -884,13 +897,13 @@ function PrepareOfferDialog({
 export function CurrentApplication({
   app, ownership, clientName, linkTo,
 }) {
-  if (!app) return <div className="small-muted">Not on any job yet. Add them to a job to start.</div>;
+  if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
   const fu = app.followUp;
   return (
     <>
       {/* One aligned label / value list; then who is on this. */}
       <div className="c360-facts">
-        <div className="cdw-kv"><span>Job</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
+        <div className="cdw-kv"><span>Requirement</span>{linkTo ? linkTo(app) : <b>{app.requirement?.title || '—'}</b>}</div>
         <div className="cdw-kv"><span>Client</span><b>{clientName || '—'}</b></div>
         <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
         <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>

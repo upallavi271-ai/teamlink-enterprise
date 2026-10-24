@@ -228,9 +228,9 @@ router.get('/logins', manageOnly, async (req, res) => {
 });
 async function emailProblem(email, exceptId) {
   if (!P.EMAIL_RE.test(email) || email.length > 160) return 'Enter a proper email address.';
-  const [pu, staff] = await Promise.all([prisma.partnerUser.findUnique({ where: { email } }), prisma.user.findFirst({ where: { email } })]);
+  // The same email may also be a staff login (founder, 2026-10-21): partner logins are a separate system. Only another PARTNER login is refused.
+  const pu = await prisma.partnerUser.findUnique({ where: { email } });
   if (pu && pu.id !== exceptId) return 'Another partner login already uses this email.';
-  if (staff) return 'This email is a staff login. A partner needs its own email.';
   return null;
 }
 router.post('/logins', manageOnly, async (req, res) => {
@@ -242,15 +242,21 @@ router.post('/logins', manageOnly, async (req, res) => {
   const email = P.normEmail(b.email);
   const ep = await emailProblem(email);
   if (ep) return res.status(400).json({ error: ep, field: 'email' });
-  const auto = !!b.autoPassword || !b.password;
-  const password = auto ? generatePassword() : String(b.password || '');
-  if (!auto) { const weak = PC.partnerPasswordProblem(password, { email, name }); if (weak) return res.status(400).json({ error: weak, field: 'password' }); }
-  const pu = await prisma.partnerUser.create({
-    data: { partnerId: partner.id, name, email, passwordHash: await bcrypt.hash(password, 10), status: 'Active', mustChangePassword: true, tempPasswordExpiresAt: tempExpiry(), createdById: req.user.id },
+  // SECURITY (2026-10-13): no password is typed, made or shown. The partner gets a one-time link and chooses their own
+  // (utils/partnerInvite.js); a password sent in the body is ignored.
+  const INV = require('../utils/partnerInvite'); // eslint-disable-line global-require
+  let pu = await prisma.partnerUser.create({
+    data: { partnerId: partner.id, name, email, passwordHash: await INV.unguessableHash(), status: 'Active', mustChangePassword: true, tempPasswordExpiresAt: tempExpiry(), createdById: req.user.id },
     include: { partner: { select: { name: true } } },
   });
-  await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Partner login created', entity: 'PartnerUser', entityId: pu.id, fromValue: '— (new)', toValue: `${partner.name} · ${name} · ${email}` });
-  return res.status(201).json({ login: loginView(pu), ...(auto ? { tempPassword: password } : {}), message: 'Partner login created. They must set a new password the first time they sign in at /partner-login.' });
+  const link = await INV.createLink(pu.id, 'invite');
+  pu = await prisma.partnerUser.findUnique({ where: { id: pu.id }, include: { partner: { select: { name: true } } } });
+  await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Partner login created', entity: 'PartnerUser', entityId: pu.id, fromValue: '— (new)', toValue: `${partner.name} · ${name} · ${email} · set-password link made (works once, ${INV.hours('invite')} hours)` });
+  await require('../utils/outsideLoginAlert').alertLoginLink({ kind: 'Partner', who: name, orgName: partner.name, purpose: 'invite', by: req.user }); // eslint-disable-line global-require
+  return res.status(201).json({
+    login: loginView(pu), inviteLink: link.link, inviteExpiresAt: link.expiresAt,
+    message: `Partner login created. Copy the link and send it to ${name}: it works once and expires in ${INV.hours('invite')} hours. They choose their own password.`,
+  });
 });
 router.patch('/logins/:id', manageOnly, async (req, res) => {
   const b = req.body || {};
@@ -280,14 +286,14 @@ router.post('/logins/:id/activate', manageOnly, (req, res) => setLoginStatus(req
 router.post('/logins/:id/reset-password', manageOnly, async (req, res) => {
   const pu = await prisma.partnerUser.findUnique({ where: { id: String(req.params.id) } });
   if (!pu || pu.deletedAt) return res.status(404).json({ error: 'Partner login not found.' });
-  const password = generatePassword();
-  await prisma.partnerUser.update({
-    where: { id: pu.id },
-    data: { passwordHash: await bcrypt.hash(password, 10), passwordHistory: PC.pushHistory(pu.passwordHistory, pu.passwordHash), mustChangePassword: true, tempPasswordExpiresAt: tempExpiry(), failedLoginAttempts: 0, lockedUntil: null },
-  });
+  // SECURITY (2026-10-13): a one-time link, never a password (the old password stops working at once).
+  const INV = require('../utils/partnerInvite'); // eslint-disable-line global-require
+  await prisma.partnerUser.update({ where: { id: pu.id }, data: { passwordHistory: PC.pushHistory(pu.passwordHistory, pu.passwordHash) } });
+  const link = await INV.createLink(pu.id, 'reset');
   await PA.revokeSessions(pu.id, 'password reset');
-  await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Partner password reset', entity: 'PartnerUser', entityId: pu.id, toValue: 'Reset (change required at next sign-in)' });
-  return res.json({ tempPassword: password, message: 'Password reset. They must set a new one when they sign in.' });
+  await logAudit({ userId: req.user.id, actorName: actorOf(req), action: 'Partner password reset', entity: 'PartnerUser', entityId: pu.id, toValue: `Reset link made (works once, ${INV.hours('reset')} hours); the old password no longer works` });
+  await require('../utils/outsideLoginAlert').alertLoginLink({ kind: 'Partner', who: pu.name, orgName: '', purpose: 'reset', by: req.user }); // eslint-disable-line global-require
+  return res.json({ inviteLink: link.link, inviteExpiresAt: link.expiresAt, message: `Reset link ready. Copy it and send it to ${pu.name}: it works once and expires in ${INV.hours('reset')} hours. The old password no longer works.` });
 });
 
 // ---- settings (the "Partner emails" switch) ------------------------------------------
@@ -303,7 +309,7 @@ router.put('/settings', manageOnly, async (req, res) => {
 // ---- share a job with partners --------------------------------------------------------
 async function jobInScope(req, res) {
   const r = await prisma.requirement.findFirst({ where: { AND: [{ id: String(req.params.requirementId || '') }, requirementWhere(req.user)] }, include: { client: { select: { name: true } } } });
-  if (!r) { res.status(403).json({ error: 'This job is not in your area.' }); return null; }
+  if (!r) { res.status(403).json({ error: 'This requirement is not in your area.' }); return null; }
   return r;
 }
 router.get('/shares/job/:requirementId', async (req, res) => {
@@ -331,7 +337,7 @@ router.get('/shares/job/:requirementId', async (req, res) => {
   });
 });
 router.put('/shares/job/:requirementId', async (req, res) => {
-  if (!maySharer(req.user)) return res.status(403).json({ error: 'Only Admin or a TL can share a job with partners.' });
+  if (!maySharer(req.user)) return res.status(403).json({ error: 'Only Admin or a TL can share a requirement with partners.' });
   const r = await jobInScope(req, res);
   if (!r) return undefined;
   const want = Array.isArray(req.body && req.body.shares) ? req.body.shares : [];
@@ -339,7 +345,7 @@ router.put('/shares/job/:requirementId', async (req, res) => {
   const partners = ids.length ? await prisma.partner.findMany({ where: { id: { in: ids } } }) : [];
   if (partners.length !== ids.length) return res.status(400).json({ error: 'One of the partners no longer exists. Open the list again.' });
   const bad = partners.filter((p) => p.status !== 'Active' || !P.partnerMayDepartment(p, r.department));
-  if (bad.length) return res.status(400).json({ error: `These partners cannot take this job (paused, or not covering ${r.department || 'this department'}): ${bad.map((p) => p.name).join(', ')}.` });
+  if (bad.length) return res.status(400).json({ error: `These partners cannot take this requirement (paused, or not covering ${r.department || 'this department'}): ${bad.map((p) => p.name).join(', ')}.` });
   const current = await prisma.partnerJobShare.findMany({ where: { requirementId: r.id } });
   const cm = new Map(current.map((s) => [s.partnerId, s]));
   const added = []; const removed = []; const now = new Date();
@@ -369,7 +375,7 @@ router.put('/shares/job/:requirementId', async (req, res) => {
   const nm = new Map(pn.map((p) => [p.id, p.name]));
   if (added.length || removed.length) {
     await logAudit({
-      userId: req.user.id, actorName: actorOf(req), action: 'Job shared with partners', entity: 'Requirement', entityId: r.id,
+      userId: req.user.id, actorName: actorOf(req), action: 'Requirement shared with partners', entity: 'Requirement', entityId: r.id,
       fromValue: removed.length ? `removed: ${removed.map((id) => nm.get(id) || nameOf(id)).join(', ')}` : null,
       toValue: `${r.reqCode || ''} ${r.title} · now shared with ${ids.length} partner(s)${added.length ? ` · added: ${added.map((id) => nm.get(id) || nameOf(id)).join(', ')}` : ''}`,
     });

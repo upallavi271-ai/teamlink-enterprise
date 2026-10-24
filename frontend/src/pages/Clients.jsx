@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import ScopeLine from '../components/ScopeLine.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { agreementBlind } from '../utils/agreementPrivacy.js';
 import { can } from '../permissions';
 import AtsDataTools from '../components/AtsDataTools.jsx';
 import {
@@ -23,9 +24,11 @@ import ClientEditModal from '../components/clients/ClientEditModal.jsx';
 import AddClientWizard from '../components/clients/AddClientWizard.jsx';
 import ClientRowActions, { NoteModal } from '../components/clients/ClientRowActions.jsx';
 import { useClientsMeta, HEALTH_HINT } from '../components/clients/clientsMeta.js';
-import { LifecycleChip, PauseRequestsPanel } from '../components/clients/ClientLifecycle.jsx';
+import { LifecycleChip, RequestsPanel } from '../components/clients/ClientLifecycle.jsx';
+import { FollowUpsPanel } from '../components/clients/ClientBusiness.jsx';
 // Spec 6 — the agreement step badge (Draft → Sent → Viewed → Signed → Active → Expired).
 import { agreementStepLabel, agreementStepOf } from '../components/clients/AgreementStep.jsx';
+import { StageChip } from '../components/agreements/AgreementFlow.jsx';
 // Clients & Requirements v4 (2026-10-08) — the reference layout on the ATS kit:
 // KPI icon tiles, by department, needs attention, agreement steps, top
 // clients, the dense list. Every number is counted from the loaded GET /clients.
@@ -36,17 +39,21 @@ import {
 import { CrqHead, MiniPager, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
 import { agreementIsSigned } from '../atsVocab';
 import '../components/clients/ccr.css';
+import { rowClickProps } from '../utils/rowClick.js';
 import PageFilterBar, { usePageFilters, rangeDates } from '../components/ui/PageFilterBar.jsx';
 import { Help } from '../components/ui/Guide.jsx';
+import useClientLabel from '../components/clients/useClientLabel.js'; // "Name - Location" for same-name clients (2026-10-22)
+import { matchesText } from '../components/searchMatch.js';
+import { shortPlace } from '../utils/clientLocation.js';
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the ticked clients' contact people
 import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
 
 // One-line ? tips on the headings a new person may not know (2026-10-05).
 const COL_TIPS = {
-  activeReqs: 'Jobs we are still finding people for',
+  activeReqs: 'Requirements we are still finding people for',
   submitted: 'People we sent to this client',
   pending: 'People sent and waiting for the client to answer',
-  agreement: 'Our contract with the client: Draft → Sent → Signed → Active',
+  agreement: 'Our contract with the client: Made → Sent → Signed → Active',
   health: 'Green = busy and fine, yellow = quiet for a while, red = nothing for a long time',
   bde: 'Client manager (BDE) = our person who looks after this client',
   guarantee: 'Days we must replace a person who leaves early',
@@ -70,7 +77,7 @@ const COL_TIPS = {
 // Every column the list can draw; /clients/meta decides which a role gets.
 const COL_LABELS = {
   code: 'Client ID', industry: 'Industry', location: 'Location', legal: 'Legal name', tax: 'GSTIN / PAN',
-  contact: 'Contact', bde: 'Client manager (BDE)', activeReqs: 'Open jobs', candidates: 'Candidates',
+  contact: 'Contact', bde: 'Client manager (BDE)', activeReqs: 'Open requirements', candidates: 'Candidates',
   submitted: 'People sent', interviews: 'Interviews', selected: 'Selected', joined: 'Joined',
   pending: 'Waiting for client', agreement: 'Agreement', status: 'Status', health: 'Health', department: 'Department',
   fee: 'Fee %', terms: 'Payment terms', guarantee: 'Guarantee', invoiced: 'Invoiced', received: 'Received',
@@ -93,9 +100,22 @@ function statusOf(c) {
   const lc = c.lifecycle || (['Paused', 'Suspended'].includes(s) ? 'Paused' : s === 'Archived' ? 'Archived' : s === 'Inactive' ? 'Inactive' : 'Active');
   if (lc !== 'Active') return lc;
   if (s === 'Prospect') return 'Prospect';
-  if (!(c.totalRequirements > 0) && c.agreementStatus !== 'ACTIVE') return 'Prospect';
+  // jobsEver = every job of the client whoever holds it; a TL / BDE only open their own, so counting those
+  // made the same client "new" for one login and "active" for another (2026-10-12).
+  if (!((c.jobsEver ?? c.totalRequirements) > 0) && c.agreementStatus !== 'ACTIVE') return 'Prospect';
   return 'Active';
 }
+
+// On screen a Prospect is called "New" (a client we have, with no job and no signed agreement yet).
+const statusWord = (st) => (st === 'Prospect' ? 'New' : st);
+const NEW_HELP = 'We have the client but no requirement and no signed agreement yet. BDE: send the agreement or ask for the first requirement.';
+const STALE_DAYS = 14;
+// How long the client has been on file (since it came on board, else since it was added).
+function onFileDays(c) {
+  const t = new Date(c.activeDate || c.createdAt || '').getTime();
+  return Number.isFinite(t) ? Math.max(0, Math.floor((Date.now() - t) / 86400000)) : null;
+}
+const daysWords = (d) => (d === 0 ? 'today' : d === 1 ? '1 day' : `${d} days`);
 
 // §1 — views per role; the first is the role's default.
 const VIEWS = {
@@ -109,7 +129,7 @@ const VIEWS = {
 
 const SORTS = {
   name: ['Name (A–Z)', (a, b) => a.name.localeCompare(b.name)],
-  activeReqs: ['Open jobs', (a, b) => (b.activeRequirements || 0) - (a.activeRequirements || 0)],
+  activeReqs: ['Open requirements', (a, b) => (b.activeRequirements || 0) - (a.activeRequirements || 0)],
   submitted: ['People sent', (a, b) => (b.candidatesSubmitted || 0) - (a.candidatesSubmitted || 0)],
   joined: ['Joined', (a, b) => (b.joinedCount || 0) - (a.joinedCount || 0)],
   lastActivity: ['Last update', (a, b) => String(b.lastActivityAt || '').localeCompare(String(a.lastActivityAt || ''))],
@@ -118,6 +138,7 @@ const SORTS = {
   // ATS layout v3 — the table's own columns sort too (click the heading).
   department: ['Department', (a, b) => String(a.ownerDepartment || '~').localeCompare(String(b.ownerDepartment || '~'))],
   bde: ['Client manager (BDE)', (a, b) => String(a.bdeOwner || a.bdeName || '~').localeCompare(String(b.bdeOwner || b.bdeName || '~'))],
+  onFile: ['Longest on file first', (a, b) => (onFileDays(b) ?? -1) - (onFileDays(a) ?? -1)],
   agreement: ['Agreement (signed first)', (a, b) => Number(agreementIsSigned(b.agreementStatus)) - Number(agreementIsSigned(a.agreementStatus))],
 };
 // Column → sort key, for the clickable table headings.
@@ -130,7 +151,7 @@ const SIGNED_LABEL = { yes: 'Signed', no: 'Unsigned' };
 const NO_DEPT = '__none__';
 const EMPTY_FILTERS = {
   search: '', industry: '', status: '', owner: '', expiring: '', unassigned: '', department: '', location: '',
-  agreement: '', hasOpen: '', outstanding: '', overdue: '', signed: '',
+  agreement: '', hasOpen: '', outstanding: '', overdue: '', signed: '', waiting: '',
 };
 const ymd = (d) => d.toISOString().slice(0, 10);
 
@@ -155,8 +176,14 @@ const hitField = (f, c, v) => {
 const inView = (c, v) => !(v === 'active' && statusOf(c) === 'Inactive')
   && !(v === 'outstanding' && !(c.invoiceSummary?.outstanding > 0.5));
 
+// "New" = added in the last 7 days (a date typed wrongly in the future does not count).
+const isNewClient = (c) => { const t = new Date(c && c.createdAt).getTime(); return Number.isFinite(t) && t >= Date.now() - 7 * 86400000 && t <= Date.now() + 86400000; };
+
 export default function Clients() {
   const { user } = useAuth();
+  const clientLabel = useClientLabel();
+  const blind = agreementBlind(user); // TL / STL / Recruiter / HR: not one word about agreements (2026-10-12)
+  const newHelp = blind ? 'We have the client but no requirement yet. Ask the client manager (BDE) for the first requirement.' : NEW_HELP;
   const navigate = useNavigate();
   const allowed = can(user, 'ats', 'clients', 'Client List', 'view');
   const { meta, error: metaError } = useClientsMeta(user, allowed);
@@ -166,6 +193,12 @@ export default function Clients() {
   const [loadError, setLoadError] = useState('');
   const [flash, setFlash] = useState('');
   const [adding, setAdding] = useState(false);
+  // Links from the BDE workspace: /clients?add=1 opens Add client, ?panel=requests / followups opens that panel.
+  const [urlParams, setUrlParams] = useSearchParams();
+  const urlPanel = urlParams.get('panel') || '';
+  useEffect(() => {
+    if (urlParams.get('add') === '1') { setAdding(true); setUrlParams({}, { replace: true }); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [editing, setEditing] = useState(null);
   const [noteFor, setNoteFor] = useState(null);
   // Tick clients -> "Message these N" (only for logins the server lets message clients).
@@ -198,6 +231,7 @@ export default function Clients() {
   const [sortBy, setSortByState] = useState('');
   const [sortRev, setSortRev] = useState(false);
   const setSortBy = (k) => { setSortByState(k); setSortRev(false); };
+  const [onlyNew, setOnlyNew] = useState(false);
   const currentSort = sortBy || (role === 'accounts' ? 'outstanding' : 'name');
   // A table heading: the first click sorts by it, the next reverses it.
   const sortByCol = (k) => { if (!k) return; if (k === currentSort) setSortRev((r) => !r); else setSortBy(k); };
@@ -231,13 +265,16 @@ export default function Clients() {
       { key: 'owner', get: (c) => c.bdeOwner || c.bdeName, label: (v) => (v ? (clients.find((c) => (c.bdeOwner || c.bdeName) === v)?.bdeLabel || v) : v) },
       { key: 'unassigned', get: (c) => (String(c.bdeOwner || '').trim() ? null : '1') },
       { key: 'department', get: (c) => c.ownerDepartment || NO_DEPT, label: (v) => (v === NO_DEPT ? 'No department' : v) },
-      { key: 'clientId', get: (c) => c.id, label: (v, c) => c.name },
+      { key: 'clientId', get: (c) => c.id, label: (v, c) => clientLabel(c) },
       { key: 'signed', get: (c) => (agreementIsSigned(c.agreementStatus) ? 'yes' : 'no'), label: (v) => SIGNED_LABEL[v] || v },
-      { key: 'location', get: (c) => c.location },
+      // the client's own place AND the places of its requirements (c.locations, from GET /clients): a company with requirements in many places lists them all
+      { key: 'location', get: (c) => (c.locations && c.locations.length ? c.locations : c.location) },
+      // Agreement steps (2026-10-13): the clients whose agreement waits for THIS login (BDE: sent back; Purna Sir; BDE TL).
+      { key: 'waiting', get: (c) => (c.agreementWaiting ? '1' : null), label: () => 'Waiting for me' },
       { key: 'agreement', get: (c) => agreementStepOf(c.agreementStatus), label: (v) => agreementStepLabel(v) },
       { key: 'expiring', get: (c) => expiryOf(c, expiringIds, today, in30), label: (v) => EXPIRY_LABEL[v] || v },
       { key: 'hasOpen', get: (c) => (c.openRequirements > 0 ? 'yes' : 'no'), label: (v) => HAS_OPEN_LABEL[v] || v },
-      { key: 'status', get: (c) => statusOf(c) },
+      { key: 'status', get: (c) => statusOf(c), label: (v) => (v === 'Prospect' ? 'New (no requirement yet)' : v) },
       { key: 'outstanding', get: (c) => (c.invoiceSummary?.outstanding > 0.5 ? '1' : null), label: () => 'Has unpaid invoices' },
       { key: 'overdue', get: (c) => OVERDUE_STEPS.filter((d) => (c.invoiceSummary?.overdueDays || 0) >= Number(d)), label: (v) => `Late ${v}+ days` },
     ];
@@ -255,7 +292,9 @@ export default function Clients() {
       return !!d && (!pfDates.from || d >= pfDates.from) && (!pfDates.to || d <= pfDates.to);
     };
     return clients.filter((c) => inRange(c)
-      && (!q || `${c.name || ''} ${c.legalName || ''} ${c.clientCode || ''} ${c.displayCode || ''} ${c.contactName || ''} ${c.gst || ''}`.toLowerCase().includes(q)));
+      // c.aliases = the client's OLD names (matching only: the row below still shows c.name, the official name)
+      // every typed word must appear: "palnadu narasaraopet" finds Palnadu Hospital at Narasaraopet (name + location)
+      && (!q || matchesText(`${c.name || ''} ${c.location || ''} ${(c.locations || []).join(' ')} ${c.legalName || ''} ${c.clientCode || ''} ${c.displayCode || ''} ${c.contactName || ''} ${c.gst || ''} ${(c.aliases || []).join(' ')}`, q)));
   }, [clients, filters.search, pfDates.from, pfDates.to]);
   // The view (§1) — the scope itself is already the server's.
   // Picking a Status (Inactive, say) reaches past the view: the All Active
@@ -274,9 +313,14 @@ export default function Clients() {
 
   const filtered = useMemo(() => {
     const sortFn = (SORTS[currentSort] || SORTS.name)[1];
-    const out = listRows.filter(matchAll).sort(sortFn);
-    return sortRev ? out.reverse() : out;
-  }, [listRows, ef, fields, currentSort, sortRev]); // eslint-disable-line react-hooks/exhaustive-deps
+    let out = listRows.filter(matchAll).sort(sortFn);
+    if (sortRev) out = out.reverse();
+    // NEW CLIENTS (added in the last 7 days) come first, newest first, whatever the sort; the New button shows only them.
+    const fresh = out.filter(isNewClient).sort((x, y) => new Date(y.createdAt) - new Date(x.createdAt));
+    if (onlyNew) return fresh;
+    return fresh.length ? [...fresh, ...out.filter((c) => !isNewClient(c))] : out;
+  }, [listRows, ef, fields, currentSort, sortRev, onlyNew]); // eslint-disable-line react-hooks/exhaustive-deps
+  const newCount = useMemo(() => listRows.filter(isNewClient).length, [listRows]);
   const paged = usePaged(filtered);
 
   // The bar's options — the same counted facets (names only).
@@ -290,7 +334,7 @@ export default function Clients() {
   if (!allowed) {
     return (
       <div className="notice clrole-denied">
-        Clients is not part of your role. You see client names on your jobs.
+        Clients is not part of your role. You see client names on your requirements.
       </div>
     );
   }
@@ -298,13 +342,14 @@ export default function Clients() {
   const chips = [
     { key: 'search', label: 'Search', value: filters.search, onRemove: () => setFilter({ search: '' }) },
     { key: 'industry', label: 'Industry', value: filters.industry, onRemove: () => setFilter({ industry: '' }) },
-    { key: 'status', label: 'Status', value: filters.status, onRemove: () => setFilter({ status: '' }) },
+    { key: 'status', label: 'Status', value: filters.status === 'Prospect' ? 'New (no requirement yet)' : filters.status, onRemove: () => setFilter({ status: '' }) },
     { key: 'unassigned', label: 'Client manager', value: filters.unassigned ? 'Nobody yet' : '', onRemove: () => setFilter({ unassigned: '' }) },
     { key: 'expiring', label: 'Agreement ends', value: filters.expiring ? (EXPIRY_LABEL[filters.expiring] || filters.expiring) : '', onRemove: () => setFilter({ expiring: '' }) },
     { key: 'signed', label: 'Agreement', value: SIGNED_LABEL[filters.signed] || '', onRemove: () => setFilter({ signed: '' }) },
+    { key: 'waiting', label: 'Agreements', value: filters.waiting ? 'Waiting for me' : '', onRemove: () => setFilter({ waiting: '' }) },
     { key: 'location', label: 'Location', value: filters.location, onRemove: () => setFilter({ location: '' }) },
     { key: 'agreement', label: 'Agreement', value: filters.agreement ? agreementStepLabel(filters.agreement) : '', onRemove: () => setFilter({ agreement: '' }) },
-    { key: 'hasOpen', label: 'Has open jobs', value: HAS_OPEN_LABEL[filters.hasOpen] || '', onRemove: () => setFilter({ hasOpen: '' }) },
+    { key: 'hasOpen', label: 'Has open requirements', value: HAS_OPEN_LABEL[filters.hasOpen] || '', onRemove: () => setFilter({ hasOpen: '' }) },
     { key: 'outstanding', label: 'Has unpaid invoices', value: filters.outstanding ? 'Yes' : '', onRemove: () => setFilter({ outstanding: '' }) },
     { key: 'overdue', label: 'Late', value: filters.overdue ? `${filters.overdue}+ days` : '', onRemove: () => setFilter({ overdue: '' }) },
   ];
@@ -337,13 +382,13 @@ export default function Clients() {
             {/* "Name · Position", e.g. Vasavi V · BDE MED (user, 2026-10-09). */}
             {c.bdeOwner
               ? <span title={c.bdeLabel || c.bdeOwner}>{c.bdeLabel || c.bdeOwner}</span>
-              : (c.bdeName ? <span title="From its jobs. No client manager is set on the client.">{c.bdeLabel || c.bdeName}</span> : null)}
+              : (c.bdeName ? <span title="From its requirements. No client manager is set on the client.">{c.bdeLabel || c.bdeName}</span> : null)}
             {!String(c.bdeOwner || '').trim() && (role === 'admin' || role === 'mgmt' || role === 'bde')
               ? <span className="clrel-sub"><span className="clrel-pill warn">Nobody yet</span></span> : null}
             {!c.bdeOwner && !c.bdeName && !(role === 'admin' || role === 'mgmt' || role === 'bde') ? '—' : null}
           </td>
         );
-      case 'activeReqs': return <td key={key} className="clrel-num"><RelNum value={c.activeRequirements} to={to('requirements')} title={`${c.totalRequirements || 0} jobs in total`} /></td>;
+      case 'activeReqs': return <td key={key} className="clrel-num"><RelNum value={c.activeRequirements} to={to('requirements')} title={`${c.totalRequirements || 0} requirements in total`} /></td>;
       case 'candidates': return <td key={key} className="clrel-num"><RelNum value={c.candidatesTotal} to={to('candidates')} /></td>;
       case 'submitted': return <td key={key} className="clrel-num"><RelNum value={c.candidatesSubmitted} to={to('candidates')} /></td>;
       case 'interviews': return <td key={key} className="clrel-num"><RelNum value={c.clientInterviews} to={to('interviews')} /></td>;
@@ -356,6 +401,7 @@ export default function Clients() {
         return (
           <td key={key}>
             <StatusChip status={signed ? 'Signed' : 'Unsigned'} tone={signed ? 'green' : 'amber'} title={`Step: ${agreementStepLabel(c.agreementStatus)}`} />
+            {c.agreementStageLabel && <> <StageChip label={c.agreementStageLabel} colour={c.agreementStageColour} /></>}
             <span className="clrel-sub">
               {`Step: ${agreementStepLabel(c.agreementStatus)}`}
               {c.agreementEnd ? ` · ends ${c.agreementEnd}${expiringIds.has(c.id) ? ' (soon)' : ''}` : ''}
@@ -363,7 +409,7 @@ export default function Clients() {
           </td>
         );
       }
-      case 'status': return <td key={key}><StatusChip status={statusOf(c)} tone={statusOf(c) === 'Active' ? 'green' : statusOf(c) === 'Prospect' ? 'blue' : 'amber'} title={c.workStatus || c.status || ''} /></td>;
+      case 'status': return <td key={key}><StatusChip status={statusWord(statusOf(c))} tone={statusOf(c) === 'Active' ? 'green' : statusOf(c) === 'Prospect' ? 'blue' : 'amber'} title={statusOf(c) === 'Prospect' ? NEW_HELP : (c.workStatus || c.status || '')} /></td>;
       case 'health':
         return (
           <td key={key}>
@@ -430,6 +476,7 @@ export default function Clients() {
   const seeAgreement = allowedCols.includes('agreement');
   const activeN = filtered.filter((c) => statusOf(c) === 'Active').length;
   const prospectN = filtered.filter((c) => statusOf(c) === 'Prospect').length;
+  const waitingN = clients.filter((c) => c.agreementWaiting).length;
   const unsignedN = filtered.filter((c) => !agreementIsSigned(c.agreementStatus)).length;
   const noOpenN = filtered.filter((c) => !(c.openRequirements > 0)).length;
   const openJobsN = role === 'accounts' ? null : filtered.reduce((n, c) => n + (Number(c.activeRequirements) || 0), 0);
@@ -450,7 +497,7 @@ export default function Clients() {
   const unassignedN = (facets.unassigned || [])[0]?.count;
   const attention = [
     seeAgreement && {
-      key: 'unsigned', count: unsignedN, tone: 'red', label: 'Unsigned agreement', sub: 'Jobs wait for the client to sign', active: filters.signed === 'no',
+      key: 'unsigned', count: unsignedN, tone: 'red', label: 'Unsigned agreement', sub: 'Requirements wait for the client to sign', active: filters.signed === 'no',
       onClick: () => setFilter({ signed: filters.signed === 'no' ? '' : 'no' }),
     },
     meta?.expiring?.count > 0 && {
@@ -462,7 +509,7 @@ export default function Clients() {
       onClick: () => setFilter({ unassigned: filters.unassigned ? '' : '1' }),
     },
     {
-      key: 'noopen', count: noOpenN, tone: 'red', label: 'No open job', sub: 'Nothing to hire for right now', active: filters.hasOpen === 'no',
+      key: 'noopen', count: noOpenN, tone: 'red', label: 'No open requirement', sub: 'Nothing to hire for right now', active: filters.hasOpen === 'no',
       onClick: () => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' }),
     },
   ].filter(Boolean);
@@ -476,18 +523,21 @@ export default function Clients() {
           export sends the ids of the rows shown when narrowed; the server keeps
           only those of its own scoped GET /clients. */}
       <CrqHead
-        sub="Every company we find people for, and how their jobs are going."
+        sub="Every company we find people for, and how their requirements are going."
           scope={loaded ? <ScopeLine user={user} count={listedCount} noun="client" inline label={meta?.areaLabel} /> : 'Loading…'}
         tools={(
           <>
             {a.merge ? <span className="crq4-extra"><ClientDuplicatesButton /></span> : null}
-            {meta && (a.import || a.export) ? (
+            {meta ? (
               <AtsDataTools
                 module="clients"
-                kinds={a.import ? ['clients'] : []}
+                kinds={['clients']}
                 onImported={load}
                 body={() => ({ ids: narrowed ? filtered.map((c) => c.id) : null })}
               />
+            ) : null}
+            {newCount > 0 || onlyNew ? (
+              <button type="button" className={`btn${onlyNew ? ' btn-primary' : ''}`} title="Clients added in the last 7 days, newest first. Click again to see everyone." onClick={() => setOnlyNew((v) => !v)}>{`🆕 New (${newCount})`}</button>
             ) : null}
             {a.add ? (
               <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add client</button>
@@ -516,10 +566,11 @@ export default function Clients() {
           <KpiRow className="crq4-kpis">
             <KpiTile icon="building" tone="blue" label="Total Clients" value={filtered.length} sub="In the list below" onClick={toTable} title="Go to the list" />
             <KpiTile icon="check" tone="green" label="Active" value={activeN} sub="Working with them" active={filters.status === 'Active'} onClick={has('status') ? () => setFilter({ status: filters.status === 'Active' ? '' : 'Active' }) : undefined} />
-            <KpiTile icon="star" tone="violet" label="Prospects" value={prospectN} sub="Not started yet" active={filters.status === 'Prospect'} onClick={has('status') ? () => setFilter({ status: filters.status === 'Prospect' ? '' : 'Prospect' }) : undefined} />
-            {seeAgreement && <KpiTile icon="file" tone="amber" label="Unsigned Agreement" value={unsignedN} sub="Jobs wait for it" active={filters.signed === 'no'} onClick={() => setFilter({ signed: filters.signed === 'no' ? '' : 'no' })} />}
-            <KpiTile icon="pause" tone="slate" label="No Open Job" value={noOpenN} sub="Nothing to hire" active={filters.hasOpen === 'no'} onClick={() => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' })} />
-            {openJobsN !== null && <KpiTile icon="briefcase" tone="teal" label="Open Jobs" value={openJobsN} sub="Across these clients" />}
+            <KpiTile icon="star" tone="violet" label={<>New clients, no requirement yet <Help text={newHelp} focusable={false} /></>} value={prospectN} sub={blind ? 'Waiting for the first requirement' : 'Send the agreement or ask for the first requirement'} title={newHelp} active={filters.status === 'Prospect'} onClick={has('status') ? () => { const on = filters.status === 'Prospect'; setFilter({ status: on ? '' : 'Prospect' }); setSortBy(on ? 'name' : 'onFile'); } : undefined} />
+            {(waitingN > 0 || filters.waiting) && <KpiTile icon="file" tone="blue" label="Agreements waiting for you" value={waitingN} sub="Your turn: press one to see them" active={!!filters.waiting} onClick={() => setFilter({ waiting: filters.waiting ? '' : '1' })} />}
+            {seeAgreement && <KpiTile icon="file" tone="amber" label="Unsigned Agreement" value={unsignedN} sub="Requirements wait for it" active={filters.signed === 'no'} onClick={() => setFilter({ signed: filters.signed === 'no' ? '' : 'no' })} />}
+            <KpiTile icon="pause" tone="slate" label="No Open Requirement" value={noOpenN} sub="Nothing to hire" active={filters.hasOpen === 'no'} onClick={() => setFilter({ hasOpen: filters.hasOpen === 'no' ? '' : 'no' })} />
+            {openJobsN !== null && <KpiTile icon="briefcase" tone="teal" label="Open Requirements" value={openJobsN} sub="Across these clients" />}
           </KpiRow>
 
           <div className={`crq4-row4${seeAgreement ? '' : ' crq4-three'}`}>
@@ -530,12 +581,12 @@ export default function Clients() {
               <AttentionRows items={attention} />
             </Panel>
             {seeAgreement ? (
-              <Panel title="Agreement Steps" sub={has('agreement') ? 'Draft → Sent → Signed → Active · click one' : 'Draft → Sent → Signed → Active'}>
+              <Panel title="Agreement Steps" sub={has('agreement') ? 'Made → Sent → Signed → Active · click one' : 'Made → Sent → Signed → Active'}>
                 <ShareBars rows={agrRows} max={5} />
               </Panel>
             ) : null}
-            <Panel title="Top Clients by Open Jobs" action={role === 'accounts' ? undefined : { label: 'Sort list', onClick: () => { setSortBy('activeReqs'); toTable(); } }}>
-              <RankList rows={topClients} max={5} empty={role === 'accounts' ? 'Not part of your role' : 'No open jobs'} />
+            <Panel title="Top Clients by Open Requirements" action={role === 'accounts' ? undefined : { label: 'Sort list', onClick: () => { setSortBy('activeReqs'); toTable(); } }}>
+              <RankList rows={topClients} max={5} empty={role === 'accounts' ? 'Not part of your role' : 'No open requirements'} />
             </Panel>
           </div>
         </>
@@ -544,6 +595,12 @@ export default function Clients() {
       {metaError && <div className="notice red">{metaError}</div>}
       {loadError && <div className="notice red">{loadError}</div>}
       {flash && <div className="notice">{flash}</div>}
+      {filters.status === 'Prospect' && (
+        <div className="notice clrel-newbanner" role="note">
+          <b>New clients, no requirement yet.</b> {blind ? 'We have these clients but no requirement yet.' : 'We have these clients but no requirement and no signed agreement yet. Client manager (BDE): send the agreement or ask for the first requirement.'}
+          {' '}The ones on file longest are first. <b>Orange</b> means more than {STALE_DAYS} days.
+        </div>
+      )}
 
       <Panel className="crq4-list" title="Clients List" extra={<MiniPager page={paged} />}>
         <div className="crq4-list-tools">
@@ -552,7 +609,7 @@ export default function Clients() {
               (Admin, BDE; §8.3 / spec 6), and "Pause requests (N)" — Admins / the
               department Manager approve or reject; a BDE sees the ones they sent
               (spec 2026-10-03 §A). The panel opens under the chips. */}
-          {(meta?.expiring?.count > 0 || meta?.actions?.pauseRequests) && (
+          {(meta?.expiring?.count > 0 || meta?.actions?.pauseRequests || meta?.actions?.requestsPanel) && (
             <div className="clrole-daily">
               {meta?.expiring?.count > 0 && (
                 <button
@@ -565,7 +622,8 @@ export default function Clients() {
                   {`Ending soon (${meta.expiring.count})`}
                 </button>
               )}
-              <PauseRequestsPanel enabled={!!meta?.actions?.pauseRequests} reloadKey={clients} onChanged={(msg) => { setFlash(msg); load(); }} />
+              <RequestsPanel enabled={!!(meta?.actions?.pauseRequests || meta?.actions?.requestsPanel)} defaultOpen={urlPanel === 'requests'} reloadKey={clients} onChanged={(msg) => { setFlash(msg); load(); }} />
+              <FollowUpsPanel enabled={!!meta?.actions?.businessActivities && role === 'bde'} defaultOpen={urlPanel === 'followups'} reloadKey={clients} />
             </div>
           )}
 
@@ -579,7 +637,7 @@ export default function Clients() {
                 {has('industry') && <FacetSelect label="Industry" value={filters.industry} onChange={(v) => setFilter({ industry: v })} options={facets.industry} allLabel="All industries" />}
                 {has('agreement') && <FacetSelect label="Agreement" value={filters.agreement} onChange={(v) => setFilter({ agreement: v })} options={facets.agreement} allLabel="Any agreement step" />}
                 {has('expiring') && <FacetSelect label="Agreement ends" value={filters.expiring} onChange={(v) => setFilter({ expiring: v })} options={facets.expiring} allLabel="Any end date" />}
-                {has('hasOpen') && <FacetSelect label="Has open jobs" value={filters.hasOpen} onChange={(v) => setFilter({ hasOpen: v })} options={facets.hasOpen} />}
+                {has('hasOpen') && <FacetSelect label="Has open requirements" value={filters.hasOpen} onChange={(v) => setFilter({ hasOpen: v })} options={facets.hasOpen} />}
                 {has('outstanding') && <FacetSelect label="Unpaid invoices" value={filters.outstanding} onChange={(v) => setFilter({ outstanding: v })} options={facets.outstanding} />}
                 {has('overdue') && <FacetSelect label="Late" value={filters.overdue} onChange={(v) => setFilter({ overdue: v })} options={facets.overdue} />}
                 {has('unassigned') && (filters.unassigned || (facets.unassigned || []).length > 0) && (
@@ -593,7 +651,8 @@ export default function Clients() {
             sort={currentSort}
             sortOptions={Object.entries(SORTS)
               .filter(([k]) => (!['outstanding', 'overdue'].includes(k) || meta?.invoiceMode === 'amounts')
-                && (k !== 'submitted' || allowedCols.includes('submitted')))
+                && (k !== 'submitted' || allowedCols.includes('submitted'))
+                && (k !== 'agreement' || !blind))
               .map(([k, [label]]) => [k, label])}
             onSort={setSortBy}
             right={allowedCols.length > 0 ? (
@@ -617,7 +676,7 @@ export default function Clients() {
         </div>
       )}
       <div id="ccr-client-table" className="ccr-section" />
-      <ScrollTable maxHeight={null} bodyClassName="tbl-fit">
+      <ScrollTable maxHeight={null} bodyClassName="tbl-fit" reserve>
         <table className="clrel-table">
           <thead>
             <tr>
@@ -651,7 +710,7 @@ export default function Clients() {
           </thead>
           <tbody>
             {paged.slice.map((c) => (
-              <tr key={c.id} className="row-link" onClick={() => navigate(`/clients/${c.id}`)}>
+              <tr key={c.id} {...rowClickProps(() => navigate(`/clients/${c.id}`), { href: `/clients/${c.id}` })}>
                 {mayMessage && (
                   <td onClick={(e) => e.stopPropagation()}>
                     <input
@@ -663,12 +722,21 @@ export default function Clients() {
                 )}
                 <td className="clrel-sticky">
                   <b>{c.name}</b>
+                  {isNewClient(c) ? <span className="clrel-sub" style={{ color: 'var(--green, #1fa855)', fontWeight: 700 }} title={`Added ${new Date(c.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })}`}>New</span> : null}
+                  {c.placeLabel && c.location ? <span className="clrel-sub clrel-place" title="Another client has this name too: the Location tells them apart">{shortPlace(c.location, 60)}</span> : null}
                   {statusOf(c) === 'Paused' || statusOf(c) === 'Archived' ? <> <LifecycleChip lifecycle={statusOf(c)} /></> : null}
                   {!visibleCols.includes('code') && <span className="clrel-sub clrel-code">{c.displayCode}</span>}
+                  {statusOf(c) === 'Prospect' && (
+                    <span className={`clrel-sub clrel-new${(onFileDays(c) ?? 0) > STALE_DAYS ? ' stale' : ''}`} title={NEW_HELP}>
+                      {onFileDays(c) !== null ? `On file ${daysWords(onFileDays(c))}` : 'New'}
+                      {' · '}
+                      {c.bdeOwner || c.bdeName ? `Client manager: ${c.bdeLabel || c.bdeOwner || c.bdeName}` : 'No client manager yet'}
+                    </span>
+                  )}
                   {/* §8.2 — mini stats: Open jobs · People sent · Selected · Joined.
                       A zero is not drawn (never a bare zero). */}
                   {showMini && (c.activeRequirements > 0 || c.candidatesSubmitted > 0 || c.selectedCount > 0 || c.joinedCount > 0) && (
-                    <span className="clrole-mini" title="Open jobs · People sent · Selected · Joined (in your area)">
+                    <span className="clrole-mini" title="Open requirements · People sent · Selected · Joined (in your area)">
                       {c.activeRequirements > 0 && <span><b>{c.activeRequirements}</b> open</span>}
                       {c.candidatesSubmitted > 0 && <span><b>{c.candidatesSubmitted}</b> sent</span>}
                       {c.selectedCount > 0 && <span><b>{c.selectedCount}</b> selected</span>}
@@ -678,6 +746,9 @@ export default function Clients() {
                 </td>
                 {visibleCols.map((k) => cell(k, c))}
                 <td className="clrole-act" onClick={(e) => e.stopPropagation()}>
+                  {statusOf(c) === 'Prospect' && a.note && (
+                    <button type="button" className="btn btn-sm btn-primary" title="Write what you did or what happens next. It is saved on the client with your name and the time." onClick={() => setNoteFor(c)}>Follow up</button>
+                  )}
                   <ClientRowActions
                     c={c}
                     meta={meta}
@@ -697,7 +768,7 @@ export default function Clients() {
                 <td colSpan={visibleCols.length + 2 + (mayMessage ? 1 : 0)}>
                   {clients.length
                     ? <EmptyState compact title="No clients match these filters." hint="Remove a filter, or press Show all." action={<button type="button" className="btn btn-sm" onClick={() => { clearFilters(); setView(views[views.length > 1 ? 1 : 0][0]); }}>Show all</button>} />
-                    : <EmptyState compact title="No clients yet." hint={role === 'tl' ? 'Clients show here when your team works on their jobs.' : role === 'accounts' ? 'Clients show here once they have a joining or an invoice.' : a.add ? 'Press + Add client to add your first client.' : 'Clients you look after show here.'} />}
+                    : <EmptyState compact title="No clients yet." hint={role === 'tl' ? 'Clients show here when your team works on their requirements.' : role === 'accounts' ? 'Clients show here once they have a joining or an invoice.' : a.add ? 'Press + Add client to add your first client.' : 'Clients you look after show here.'} />}
                 </td>
               </tr>
             )}

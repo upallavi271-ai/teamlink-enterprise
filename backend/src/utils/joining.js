@@ -152,6 +152,8 @@ async function raiseJoiningInvoice({
     entityId: invoice.id, toValue: 'Pending',
     ...(feePercent !== agreed ? { reason: `Commission ${feePercent}% set at joining (agreement ${agreed}%)` } : {}),
   });
+  // Client hiring (2026-10-13): Accounts is told ONCE that a joined candidate's invoice draft is waiting.
+  await require('./clientTrack').onInvoiceDraft({ application, existing, invoice, userId }); // eslint-disable-line global-require
   return invoice;
 }
 
@@ -223,7 +225,7 @@ async function createHrmsEmployee({ application, candidate, requirement, userId 
 //                        "Create HRMS Employee" click, which stays as a retry)
 // ---------------------------------------------------------------------------
 async function onApplicationJoined({
-  application, existing, userId, feePercent = null,
+  application, existing, userId, feePercent = null, joinInfo = null, actor = null, via = null,
 }) {
   const internal = isInternalHire(application, existing.requirement);
   await prisma.application.update({
@@ -239,6 +241,17 @@ async function onApplicationJoined({
   // identity). Never blocks the joining.
   // eslint-disable-next-line global-require
   try { await require('./portalLogins').retireCandidateLogin({ candidateId: application.candidateId || existing.candidateId, userId }); } catch { /* ignore */ }
+  // JOINING & DROP (2026-10-17): the ONE joining record for this application (when, where, who), its history, and the people told
+  // (client, recruiter, TL, BDE, HR, the candidate - joindrop/notify.js). Never blocks the joining; recruiter joinings are not touched.
+  try {
+    let who = actor;
+    if (!who && userId) who = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, name: true, role: true, atsRole: true } });
+    // eslint-disable-next-line global-require
+    await require('../joindrop/core').recordJoined({ applicationId: application.id, actor: who || null, info: joinInfo || {}, via });
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[joining] could not write the joining record:', err.message);
+  }
   // Change list §12 "Joined" (2026-10-03): an internal hire's HRMS employee
   // record is now created HERE, automatically, the moment they join — no
   // second button to forget. createHrmsEmployee() is idempotent (it returns

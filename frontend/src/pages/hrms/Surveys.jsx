@@ -168,9 +168,9 @@ export default function Surveys({ view, onOpen, onBack }) {
     >
       <label className="lf-sort">
         Sort
-        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+        <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
           {SURVEY_SORTS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-        </select>
+        </Combo>
       </label>
     </PeopleFilterBar>
   );

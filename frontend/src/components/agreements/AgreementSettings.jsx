@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import TeamLinkSeal from './TeamLinkSeal.jsx';
+import AgreementHrApprovers from './AgreementHrApprovers.jsx';
 import '../clients/agreementStep.css';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +145,7 @@ export default function AgreementSettingsDialog({ onClose }) {
             <input type="checkbox" style={{ width: 'auto' }} disabled={!edit} checked={form.renewalEmail} onChange={(e) => set({ renewalEmail: e.target.checked })} />
             Also send the alert by email (off by default — the bell alert always goes)
           </label>
+          <AgreementHrApprovers />
           {!edit && <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>Only a Super Admin or Admin changes these.</div>}
           {s.updatedByName && <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>{`Last changed by ${s.updatedByName}`}</div>}
           {error && <div className="error-text" role="alert">{error}</div>}

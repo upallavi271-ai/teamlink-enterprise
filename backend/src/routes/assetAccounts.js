@@ -14,6 +14,7 @@
 //   GET  /summary?from&to&category&status&employee   Asset Summary per category
 //   GET  /repair-cost?from&to&category&employee&vendor&status&threshold&format=
 //   GET  /settings · PUT /settings {replaceThreshold}
+//   /import/sample · /import/preview · /import/confirm   the Import buttons (routes/assetAccountsImport.js)
 // Access: accounts / Journal & Ledger — view to read, create to post.
 // ---------------------------------------------------------------------------
 const express = require('express');
@@ -115,6 +116,10 @@ router.post('/depreciation/run', ...guard('create'), async (req, res) => {
   } catch (err) { return failWith(res, err); }
 });
 router.get('/depreciation/runs', ...guard('view'), async (req, res) => res.json(await A.depRuns()));
+
+// ---- Import (Pending from HRMS / Assets / Asset summary / Repair cost) ------------------------
+// Preview writes nothing; confirm needs an Idempotency-Key. See routes/assetAccountsImport.js.
+router.use('/import', require('./assetAccountsImport'));
 
 // ---- The register (per asset, from HRMS + the books) ---------------------------------------
 const FIELDS = {

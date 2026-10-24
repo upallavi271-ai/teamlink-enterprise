@@ -82,7 +82,7 @@ function HolidayForm({ initial, existing, onClose, onSaved }) {
       )}
       <div className="grid-2">
         <div className="field"><label>Type</label>
-          <Combo value={f.optional ? 'Optional' : f.type} disabled={f.optional} onChange={(e) => set('type', e.target.value)}>
+          <Combo allowCustom value={f.optional ? 'Optional' : f.type} disabled={f.optional} onChange={(e) => set('type', e.target.value)}>
             {TYPES.map((t) => <option key={t}>{t}</option>)}
           </Combo></div>
         <div className="field"><label>Optional holiday</label>
@@ -195,7 +195,7 @@ export default function HolidaysTab({ canManage, canEdit, canExport }) {
                   <td className="cell-muted">{h.type || '—'}</td>
                   <td>
                     <span style={{ display: 'flex', gap: 6 }}>
-                      {canEdit && <button className="btn btn-sm" onClick={() => { setNotice(''); setForm({ ...EMPTY, id: h.id, name: h.name, date: h.date, type: TYPES.includes(h.type) ? h.type : 'Festival', optional: h.type === 'Optional' }); }}>Edit</button>}
+                      {canEdit && <button className="btn btn-sm" onClick={() => { setNotice(''); setForm({ ...EMPTY, id: h.id, name: h.name, date: h.date, type: h.type && h.type !== 'Optional' ? h.type : 'Festival', optional: h.type === 'Optional' }); }}>Edit</button>}
                       {canEdit && <button className="btn btn-sm btn-ghost" onClick={() => remove(h)}>Delete</button>}
                     </span>
                   </td>

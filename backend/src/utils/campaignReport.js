@@ -182,7 +182,7 @@ module.exports = function campaignReport({
       t.value('cpj', 'Cost per joining', tot.cpj, 'Money spent ÷ people who joined', 'money');
     }
     const notes = [];
-    if (!tot.applied.n) notes.push('No application has a campaign, campus drive or referral yet. Add ?utm_campaign=<name> to the job links you share, or refer people from My profile → Refer a candidate.');
+    if (!tot.applied.n) notes.push('No application has a campaign, campus drive or referral yet. Add ?utm_campaign=<name> to the requirement links you share, or refer people from My profile → Refer a candidate.');
     const best = [...byCamp.rows.values()].filter((r) => r.cells.joined.n && r.cells.cpj != null).sort((a, b) => a.cells.cpj - b.cells.cpj)[0];
     if (best) notes.push(`Cheapest per joining: ${best.cells.name} — ₹${best.cells.cpj.toLocaleString('en-IN')} per person who joined.`);
     return { tiles: t.tiles, sections: [byCamp, byReferrer], notes, plain: true };

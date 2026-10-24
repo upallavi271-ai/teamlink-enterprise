@@ -157,14 +157,14 @@ const QUESTIONS = {
 // What the page shows, in one plain line under the title (user, 2026-10-05:
 // a brand-new person must get the page in 20–30 seconds).
 const ABOUT = {
-  superadmin: 'All jobs and candidates in the company: what is late, who works on what.',
-  admin: 'All jobs and candidates in the company: what is late, who works on what.',
-  manager: 'Your departments: jobs, candidates, team leads and what is late.',
-  asstmanager: 'Your teams: jobs, candidates, team leads and what is late.',
-  stl: 'Your section: jobs, candidates, team leads and what is late.',
-  tl: 'Your team: who needs your check, your recruiters and your open jobs.',
-  recruiter: 'Your work for today, your interviews and your jobs.',
-  bde: 'Your clients: feedback to chase, agreements and open jobs.',
+  superadmin: 'All requirements and candidates in the company: what is late, who works on what.',
+  admin: 'All requirements and candidates in the company: what is late, who works on what.',
+  manager: 'Your departments: requirements, candidates, team leads and what is late.',
+  asstmanager: 'Your teams: requirements, candidates, team leads and what is late.',
+  stl: 'Your section: requirements, candidates, team leads and what is late.',
+  tl: 'Your team: who needs your check, your recruiters and your open requirements.',
+  recruiter: 'Your work for today, your interviews and your requirements.',
+  bde: 'Your clients: feedback to chase, agreements and open requirements.',
   hr: 'Internal hiring: people to check, offers and joinings.',
 };
 const COMPANY = ['superadmin', 'admin'];
@@ -204,7 +204,7 @@ const APP_SELECT = {
 const REQ_SELECT = {
   id: true, title: true, reqCode: true, department: true, recruiterId: true, recruiterIds: true, tlId: true, bdeId: true,
   internal: true, hiringType: true, clientId: true, status: true, positionCode: true, tl: true, priority: true,
-  openings: true, createdAt: true, recruiter: { select: { name: true } },
+  openings: true, createdAt: true, updatedAt: true, location: true, recruiter: { select: { name: true } },
 };
 const WORLDS = new Map(); // scope key -> { key, stamp, at, w, building }
 const WORLD_MAX = 24;
@@ -320,6 +320,8 @@ async function loadWorld(appWhere, reqWhere, today) {
 }
 
 async function worldFor(user, { fresh = false } = {}) {
+  // ?fresh=1 (a bulk action, the reminders, the tests): the next-action snapshot must be current too, not only the rows.
+  if (fresh) await NA.ensureNextActionContext({ fresh: true });
   const appWhere = applicationWhere(user);
   const reqWhere = requirementWhere(user);
   const today = NA.todayIst();
@@ -703,7 +705,7 @@ function cleanupSets(c, b, k) {
   const days = NA.staleAfterDays();
   addSet(b, 'stale', { kind: 'app', title: `Not moving (${days}+ days)`, ids: ids(stale), extra: extraOf(stale) });
   const oldUnassigned = k.jobsNoRecruiter.filter(isBacklogJob);
-  addSet(b, 'old-unassigned', { kind: 'req', title: 'Old jobs with no recruiter (imported or open 30+ days)', ids: oldUnassigned.map((r) => r.id) });
+  addSet(b, 'old-unassigned', { kind: 'req', title: 'Old requirements with no recruiter (imported or open 30+ days)', ids: oldUnassigned.map((r) => r.id) });
   // Joined people whose joining date is missing / not a date: in the Joined TOTAL,
   // but in no month (the lists open from the department table's note and from here).
   const jf = joinedFigures(b, k.sel);
@@ -786,7 +788,7 @@ async function healthRows() {
   const rows = [
     ...intFailed.map((i) => ({ id: `int-${i.id}`, what: `Integration: ${i.id}`, detail: i.error || i.state || `${fmtN(i.recordsFailed)} records failed`, to: '/admin/integrations' })),
     ...(syncFailed ? [{ id: 'sync', what: 'Sync failures (last 30 days)', detail: plural(syncFailed, 'failed sync', 'failed syncs'), to: '/admin/integrations' }] : []),
-    ...portalFailed.map((r) => ({ id: `job-${r.id}`, what: `Job did not post: ${r.title || r.reqCode || 'job'}`, detail: 'Job portal posting failed', to: `/requirements/${r.id}` })),
+    ...portalFailed.map((r) => ({ id: `job-${r.id}`, what: `Requirement did not post: ${r.title || r.reqCode || 'job'}`, detail: 'Job portal posting failed', to: `/requirements/${r.id}` })),
   ];
   // One problem per failing thing, not one per failed record.
   return { problems: intFailed.length + (syncFailed ? 1 : 0) + portalFailed.length, rows };
@@ -809,8 +811,8 @@ const NOW_WORD = 'as of today';
 function deptColumns(c) {
   const all = c.period.key === 'all';
   return [
-    { key: 'openJobs', label: 'Open jobs', basis: NOW_WORD, kind: 'now', hint: 'Jobs open now that still need people.' },
-    { key: 'active', label: 'In process', basis: NOW_WORD, kind: 'now', hint: 'People on a job now (not rejected, on hold or joined).' },
+    { key: 'openJobs', label: 'Open requirements', basis: NOW_WORD, kind: 'now', hint: 'Requirements open now that still need people.' },
+    { key: 'active', label: 'In process', basis: NOW_WORD, kind: 'now', hint: 'People on a requirement now (not rejected, on hold or joined).' },
     { key: 'interviews', label: 'Interviews', basis: c.word, kind: 'period', hint: `Client interviews ${c.word}.` },
     { key: 'selected', label: 'Selected', basis: NOW_WORD, kind: 'now', hint: 'Selected or given an offer, not joined yet.' },
     ...(all ? [] : [{ key: 'joined', label: 'Joined', basis: c.word, kind: 'period', hint: `People whose joining date is ${c.word}.` }]),
@@ -847,7 +849,7 @@ function departmentsTable(c, b, k) {
     if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
   const TITLE = {
-    openJobs: 'Open jobs', active: 'People in process', interviews: `Interviews ${c.word}`, late: 'Late', selected: 'Selected, not joined',
+    openJobs: 'Open requirements', active: 'People in process', interviews: `Interviews ${c.word}`, late: 'Late', selected: 'Selected, not joined',
     joined: `Joined ${c.word}`, joinedTotal: 'Joined in total',
   };
   const setFor = (id, name, m, idList) => {
@@ -1054,8 +1056,8 @@ async function buildHome(user, req) {
   b.testViewer = testViewer;
   b.clientDesk = c.clientDesk;
   b.scopeChip = SCOPE_CHIP[c.layout] || 'Me';
-  if (c.layout === 'bde' && isBdeTl(user)) { b.title = 'BDE Team'; b.scopeChip = 'All clients'; b.about = 'All the BDE clients: who has work waiting, feedback to chase and open jobs.'; }
-  if (c.layout === 'manager') { b.scopeChip = 'All departments'; b.title = 'Company overview'; b.about = 'Every department: jobs, candidates, team leads and what is late. You view and approve; the work is done by the teams.'; }
+  if (c.layout === 'bde' && isBdeTl(user)) { b.title = 'BDE Team'; b.scopeChip = 'All clients'; b.about = 'All the BDE clients: who has work waiting, feedback to chase and open requirements.'; }
+  if (c.layout === 'manager') { b.scopeChip = 'All departments'; b.title = 'Company overview'; b.about = 'Every department: requirements, candidates, team leads and what is late. You view and approve; the work is done by the teams.'; }
   b.department = c.dept ? (c.dept === '__none__' ? 'No department' : c.dept) : null;
   b.period = { from: c.period.from, to: c.period.to, key: c.period.key, word: c.word, prevWord: c.prevWord, noPrev: !!c.noPrev };
   b.periods = PERIODS.map((k) => ({ id: k, label: { today: 'Today', this_week: 'This week', this_month: 'This month' }[k] }));
@@ -1082,7 +1084,7 @@ async function buildHome(user, req) {
   const selected = rows.filter(({ a }) => SELECTED_NOT_JOINED.includes(a.stage));
   const everTracked = sel.some((x) => x.a.interviewAt);
   addSet(b, 'interviews', { kind: 'app', title: `Interviews ${c.word}`, ids: ids(interviews) });
-  addSet(b, 'open-jobs', { kind: 'req', title: 'Open jobs', ids: openJobs.map((r) => r.id) });
+  addSet(b, 'open-jobs', { kind: 'req', title: 'Open requirements', ids: openJobs.map((r) => r.id) });
   addSet(b, 'people', { kind: 'app', title: 'Applications in process', ids: ids(people), extra: extraOf(people.filter((x) => x.na)) });
   addSet(b, 'selected', { kind: 'app', title: 'Selected — not joined yet', ids: ids(selected), extra: extraOf(selected) });
   addSet(b, 'joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joined), extra: joinExtraOf(joined) });
@@ -1095,7 +1097,7 @@ async function buildHome(user, req) {
   const added = (p) => sel.filter((x) => !x.pre && inPeriod(msOf(x.a.createdAt), p) && real(x.a.createdAt)).length;
   const selectedIn = (p) => sel.filter((x) => x.evs.some((e) => SELECTED_ON.includes(e.to) && !(e.from && SELECTED_ON.includes(e.from)) && inPeriod(e.at, p) && real(e.at))).length;
   const T = {
-    openJobs: (label = 'Open jobs') => tile('open-jobs', label, openJobs.length, 'now', { drill: 'open-jobs', sub: newJobs(c.period) ? `${fmtN(newJobs(c.period))} new ${c.word}` : null, zero: 'No open jobs' }) /* stock tile: NO delta (a count of new jobs is not comparable to the stock) */,
+    openJobs: (label = 'Open requirements') => tile('open-jobs', label, openJobs.length, 'now', { drill: 'open-jobs', sub: newJobs(c.period) ? `${fmtN(newJobs(c.period))} new ${c.word}` : null, zero: 'No open requirements' }) /* stock tile: NO delta (a count of new jobs is not comparable to the stock) */,
     people: (label = 'In process') => tile('people', label, people.length, 'now', { drill: 'people', sub: added(c.period) ? `${fmtN(added(c.period))} added ${c.word}` : null, zero: 'Nobody in process' }),
     interviews: (label = `Interviews ${c.word}`) => tile('interviews', label, interviews.length, 'range', { drill: 'interviews', delta: delta(c, interviews.length, interviewsIn(c.prev).length), zero: everTracked ? 'No interviews scheduled' : 'Not tracked yet' }),
     selected: (label = 'Selected, not joined') => tile('selected', label, selected.length, 'now', { drill: 'selected', sub: selectedIn(c.period) ? `${fmtN(selectedIn(c.period))} selected ${c.word}` : null, zero: 'Nobody waiting to join' }),
@@ -1109,7 +1111,7 @@ async function buildHome(user, req) {
   // Shared problem sets.
   const jobsNoRecruiter = openJobs.filter((r) => !recruiterOf(r));
   const newUnassigned = jobsNoRecruiter.filter((r) => !isBacklogJob(r));
-  addSet(b, 'new-unassigned', { kind: 'req', title: 'New jobs without a recruiter (last 30 days)', ids: newUnassigned.map((r) => r.id) });
+  addSet(b, 'new-unassigned', { kind: 'req', title: 'New requirements without a recruiter (last 30 days)', ids: newUnassigned.map((r) => r.id) });
   const clientDecision = live.filter((x) => CLIENT_DECISION.includes(x.a.stage) && !x.internal);
   addSet(b, 'client-feedback', { kind: 'app', title: 'Client has not replied', ids: ids(clientDecision), extra: extraOf(clientDecision) });
   const overdueRows = live.filter((x) => x.na.dueStatus === 'overdue');
@@ -1211,8 +1213,8 @@ function deptsWidget(c, b, k) {
   return d.rows.length > 1 ? d : null;
 }
 const TILE_HELP = {
-  'open-jobs': 'Jobs open now that still need people.',
-  people: 'Applications still moving: not rejected, on hold or joined. The same as "Active" on Candidates & Pipeline (a person on two jobs counts twice).',
+  'open-jobs': 'Requirements open now that still need people.',
+  people: 'Applications still moving: not rejected, on hold or joined. The same as "Active" on Candidates & Pipeline (a person on two requirements counts twice).',
   interviews: 'Client interviews in the dates you picked.',
   selected: 'People selected or given an offer who have not joined yet.',
   joined: 'People whose joining date is in the dates you picked. The department table also shows everyone marked Joined, whatever the date.',
@@ -1223,9 +1225,9 @@ const TILE_HELP = {
   'client-feedback': 'People sent to the client with no reply yet (the client has not answered).',
   feedback: 'Interview done, no feedback: the interview has happened and nobody has recorded the feedback yet. Old imported rows with no recent activity are not counted here; Candidates & Pipeline shows every one.',
   'feedback-7': 'Interviews done more than 7 days ago with no feedback recorded: the late part of "Interview done, no feedback".',
-  positions: 'Open jobs inside TeamLink.',
+  positions: 'Open requirements inside TeamLink.',
   'to-review': 'People waiting for your check.',
-  'iv-internal': 'Interviews for TeamLink jobs today.',
+  'iv-internal': 'Interviews for TeamLink requirements today.',
   offers: 'Offers made, waiting for a yes.',
   joining: 'Said yes, waiting for the joining day.',
 };
@@ -1237,7 +1239,7 @@ function sectionsOf(c, b, k, dep, { today = true } = {}) {
     today ? todayWidget(c, b, k) : null,
     dep,
     { id: 'tls', type: 'tls', size: 'full', title: c.layout === 'tl' ? 'My team' : (b.department ? `Team leads in ${b.department}` : 'Team leads'), word: c.word },
-    { id: 'openjobs', type: 'openjobs', size: 'full', title: b.department ? `Open jobs in ${b.department}` : 'Open jobs', total: k.openJobs.length, drill: 'open-jobs', steps: STEP5 },
+    { id: 'openjobs', type: 'openjobs', size: 'full', title: b.department ? `Open requirements in ${b.department}` : 'Open requirements', total: k.openJobs.length, drill: 'open-jobs', steps: STEP5 },
   ].filter(Boolean);
 }
 // The greeting's numbers ("12 late, 30 client feedback pending"), each opening its list.
@@ -1281,7 +1283,7 @@ async function attentionWidget(c, b, k, { unsigned: withUnsigned = true } = {}) 
     unsigned = clients.filter((x) => !V.agreementIsSigned(x.agreementStatus) && (x.status || 'Active') === 'Active' && !isTest(x.name));
     const jobsPer = new Map();
     openJobs.forEach((r) => { if (r.clientId) jobsPer.set(r.clientId, (jobsPer.get(r.clientId) || 0) + 1); });
-    addSet(b, 'unsigned', { kind: 'client', title: 'Clients with open jobs and no signed agreement', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), owner: x.bdeOwner, openJobs: jobsPer.get(x.id) || 0 })).sort((x, y) => y.openJobs - x.openJobs) });
+    addSet(b, 'unsigned', { kind: 'client', title: 'Clients with open requirements and no signed agreement', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), owner: x.bdeOwner, openJobs: jobsPer.get(x.id) || 0 })).sort((x, y) => y.openJobs - x.openJobs) });
     // 2026-10-05 (user): the client signed — TeamLink still has to sign & stamp
     // and make it Active.
     const waitingActive = (await prisma.client.findMany({ where: and(clientWhere(c.user), { agreementStatus: 'SIGNED' }), select: { id: true, name: true, agreementStatus: true, bdeOwner: true, status: true, agreementSignedAt: true } }))
@@ -1294,7 +1296,7 @@ async function attentionWidget(c, b, k, { unsigned: withUnsigned = true } = {}) 
     line('feedback-7', 'Feedback late (7+ days)', fb7.length, { button: 'Chase', drill: 'feedback-7', tone: 'blue' }),
     line('joining-stuck', 'Waiting to join — past the date', joinStuck.length, { button: 'Confirm', drill: 'joining-stuck', tone: 'blue' }),
     line('client-feedback', 'Client has not replied', clientDecision.length, { button: 'Chase', drill: 'client-feedback', tone: 'blue' }),
-    line('new-unassigned', 'New jobs without a recruiter', newUnassigned.length, { sub: 'opened in the last 30 days', button: 'Assign', drill: 'new-unassigned', tone: 'blue' }),
+    line('new-unassigned', 'New requirements without a recruiter', newUnassigned.length, { sub: 'opened in the last 30 days', button: 'Assign', drill: 'new-unassigned', tone: 'blue' }),
     withUnsigned ? line('unsigned', 'Clients with unsigned agreement', unsigned.length, { button: 'Review', drill: 'unsigned', tone: 'blue' }) : null,
     withUnsigned ? line('signed-waiting', 'Signed agreements waiting to be made Active', b.signedWaiting || 0, { button: 'Make active', drill: 'signed-waiting', tone: 'red' }) : null,
   ].filter(Boolean));
@@ -1455,7 +1457,7 @@ function departmentsV3(c, b, k) {
     if (JOINED.includes(x.a.stage)) row(dep).joinedTotal.push(x.a.id);
     if (joinedSince(x, c.period.from, c.period.to, c.period.key === 'all')) row(dep).joined.push(x.a.id);
   });
-  const TITLE = { openJobs: 'Open jobs', submitted: `Sent to client ${c.word}`, interviews: `Interviews ${c.word}`, selected: 'Selected, not joined', joined: `Joined ${c.word}`, joinedTotal: 'Joined in total', late: 'Late' };
+  const TITLE = { openJobs: 'Open requirements', submitted: `Sent to client ${c.word}`, interviews: `Interviews ${c.word}`, selected: 'Selected, not joined', joined: `Joined ${c.word}`, joinedTotal: 'Joined in total', late: 'Late' };
   const kept = [...t.values()]
     .filter((r) => !isTest(r.department))
     .filter((r) => r.department || METRICS.some((m) => r[m].length))
@@ -1544,7 +1546,7 @@ function activityText(e, x) {
   const who = e.actorName;
   const cand = x.cand;
   const client = x.internal ? 'TeamLink Internal' : (x.a.requirement && x.a.requirement.client ? x.a.requirement.client.name : 'the client');
-  const job = x.a.requirement ? x.a.requirement.title : 'the job';
+  const job = x.a.requirement ? x.a.requirement.title : 'the requirement';
   switch (e.to) {
     case 'SHARED_WITH_CLIENT': case 'CLIENT_REVIEW': return { text: `${who} sent ${cand} to ${client}`, tone: 'blue' };
     case 'CLIENT_SHORTLISTED': return { text: `${client} shortlisted ${cand} (${who})`, tone: 'blue' };
@@ -1593,7 +1595,7 @@ async function v3Home(c, b, k) {
   const unsigned = clients.filter((x) => !V.agreementIsSigned(x.agreementStatus) && (x.status || 'Active') === 'Active' && !isTest(x.name));
   const jobsPer = new Map();
   openJobs.forEach((r) => { if (r.clientId) jobsPer.set(r.clientId, (jobsPer.get(r.clientId) || 0) + 1); });
-  addSet(b, 'unsigned', { kind: 'client', title: 'Clients with open jobs and no signed agreement', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), owner: x.bdeOwner, openJobs: jobsPer.get(x.id) || 0 })).sort((x, y) => y.openJobs - x.openJobs) });
+  addSet(b, 'unsigned', { kind: 'client', title: 'Clients with open requirements and no signed agreement', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), owner: x.bdeOwner, openJobs: jobsPer.get(x.id) || 0 })).sort((x, y) => y.openJobs - x.openJobs) });
 
   // The 6 cards. "Late" ▲▼: how many went late in this period vs the one
   // before (among the rows that are late now — a lower arrow is better).
@@ -1614,7 +1616,7 @@ async function v3Home(c, b, k) {
     cards: [
       { id: 'overdue', label: 'Late', hint: 'Past the due date of their step', value: overdueRows.length, tone: 'red', drill: 'overdue', button: 'Open', zero: 'Nothing is late' },
       { id: 'feedback-7', label: 'Feedback late', hint: 'Interview done 7+ days ago, no feedback yet', value: fb7.length, tone: 'red', drill: 'feedback-7', button: 'Chase', zero: 'No late feedback' },
-      { id: 'unsigned', label: 'Unsigned agreement', hint: 'Clients with open jobs and no signed agreement', value: unsigned.length, tone: 'yellow', drill: 'unsigned', button: 'Review', zero: 'All agreements signed' },
+      { id: 'unsigned', label: 'Unsigned agreement', hint: 'Clients with open requirements and no signed agreement', value: unsigned.length, tone: 'yellow', drill: 'unsigned', button: 'Review', zero: 'All agreements signed' },
       { id: 'client-feedback', label: 'Client has not replied', hint: 'Sent to the client, no reply yet', value: clientDecision.length, tone: 'yellow', drill: 'client-feedback', button: 'Chase', zero: 'Every client has replied' },
     ],
   };
@@ -1726,7 +1728,7 @@ async function recruiterHome(c, b, k) {
   k.people.forEach((x) => perJob.set(x.a.requirementId, (perJob.get(x.a.requirementId) || []).concat(x)));
   const jobs = [...openJobs].sort((x, y) => ((PRI[x.priority] ?? 2) - (PRI[y.priority] ?? 2)) || ((perJob.get(y.id) || []).length - (perJob.get(x.id) || []).length));
   const jobsW = {
-    id: 'jobs', type: 'jobs', size: 'half', title: 'My jobs by priority', total: jobs.length, drill: 'open-jobs', zero: 'No open jobs',
+    id: 'jobs', type: 'jobs', size: 'half', title: 'My requirements by priority', total: jobs.length, drill: 'open-jobs', zero: 'No open requirements',
     rows: jobs.slice(0, 5).map((r) => ({
       id: r.id, title: r.title, client: r.internal ? 'TeamLink Internal' : (r.client ? r.client.name : null), priority: r.priority || 'Medium',
       inProcess: (perJob.get(r.id) || []).length, drill: addSet(b, `job-${r.id}`, { kind: 'app', title: `${r.title} — people in process`, ids: ids(perJob.get(r.id) || []) }),
@@ -1749,36 +1751,67 @@ async function recruiterHome(c, b, k) {
   addSet(b, 'my-joins', { kind: 'app', title: 'My joinings this month', ids: myJoinIds });
   const target = { id: 'target', type: 'target', size: 'half', title: 'My joinings this month', value: myJoinIds.length, target: tg.joinings, drill: 'my-joins', zero: 'No joinings yet this month', noTarget: 'No target set yet' };
   b.top = [];
-  b.widgets = [tasks, iv, fb, jobsW, target];
+  // MY MISSED ITEMS (user, 2026-10-12): what I missed - follow-ups, tasks and to-dos, late steps, feedback not recorded, calls not made - with an Open button each.
+  // The box asks for its own rows (GET /pending-work/my-missed, utils/missedItems.js), so the reminders have a place to land.
+  const missedBox = { id: 'missed', type: 'missed', size: 'full', title: 'My missed items' };
+  b.widgets = [missedBox, tasks, iv, fb, jobsW, target];
   b.extras.push({ id: 'daily-report', label: 'My daily report', button: true, to: '/reports/my-results' });
 }
 
 // ---- BDE — "are my clients happy?" -------------------------------------------------------
-// THE BDE TEAM (user, 2026-10-10): what the BDE TL sees of her team: the client managers of the
-// BDE desk, by seat ("BDE EDU 1", "BDE MED"), with the client work waiting on each. No recruiters.
+// THE BDE TEAM (user, 2026-10-12): the BDE TL's "BDE team" box. The people are the BDE team from HRMS
+// (utils/bdeTeam.js: active employees of the BDE department / BDE seats, never a recruiter, never anyone
+// who only reports to her by name). What it shows is BDE WORK, not recruiter workload:
+//   Clients          the clients they own (Owner BDE / second BDE / assigned)
+//   Open jobs        the jobs they raised that are live; Awaiting approval = their job requests still draft
+//   Waiting / Due today / Late   the follow-ups and client steps waiting on THAT client manager
+// A client manager with nothing shows 0, never somebody else's work.
 async function bdeTeamWidget(c, b, k) {
-  // eslint-disable-next-line global-require
-  const TW = require('./teamWorkload');
-  const tw = await TW.teamWorld(c.user);
-  const load = new Map(perPersonLoad(k.live, (x) => x.who.bde, b, 'teamb').filter((r) => r.userId).map((r) => [r.userId, r]));
-  const rows = tw.people
-    .filter((p) => p.roleGroup === 'BDE' && p.status === 'Active' && !isTest(p.name))
-    .map((p) => {
-      const l = load.get(p.id);
-      const pending = l ? l.pending : 0;
-      const overdue = l ? l.overdue : 0;
-      return {
-        key: `u:${p.id}`, userId: p.id, name: p.seat ? `${p.name} · ${String(p.seatLabel || p.seat).split(' · ')[0]}` : p.name,
-        pending, overdue, dueToday: l ? l.dueToday : 0, drills: l ? l.drills : {},
-        onTime: pending ? Math.round(((pending - overdue) / pending) * 100) : 100,
-      };
-    })
-    .sort((x, y) => y.overdue - x.overdue || y.pending - x.pending || String(x.name).localeCompare(String(y.name)));
+  const team = await require('./bdeTeam').bdeTeamMembers({ includeTest: isTest(c.user && c.user.name) }); // eslint-disable-line global-require
+  const members = team.members.filter((m) => m.userId);
+  const idList = members.map((m) => m.userId);
+  const byApp = new Map(k.live.map((x) => [x.a.id, x]));
+  const [fus, reqs, clients] = idList.length ? await Promise.all([
+    prisma.applicationFollowUp.findMany({ where: { completedAt: null, OR: [{ ownerUserId: { in: idList } }, { bdeUserId: { in: idList } }] }, select: { applicationId: true, ownerUserId: true, bdeUserId: true, dueDate: true } }),
+    prisma.requirement.findMany({ where: { bdeId: { in: idList }, internal: false }, select: { bdeId: true, status: true } }),
+    prisma.client.findMany({ where: { OR: [{ bdeOwner: { not: null } }, { secondaryBde: { not: null } }] }, select: { id: true, bdeOwner: true, secondaryBde: true } }),
+  ]) : [[], [], []];
+  const scoped = await prisma.user.findMany({ where: { id: { in: idList } }, select: { id: true, atsScopeClients: true } });
+  const lcn = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const today = c.today;
+  const rows = members.map((m) => {
+    const mine = new Map(); // application id -> 'late' | 'today' | 'wait'
+    const mark = (id, st) => { const rank = { late: 3, today: 2, wait: 1 }; if (!mine.has(id) || rank[st] > rank[mine.get(id)]) mine.set(id, st); };
+    k.live.forEach((x) => {
+      if (x.na && x.na.dueStatus === 'stale') return;
+      const owner = (x.na && x.na.ownerUserId === m.userId) || (x.who.bde && x.who.bde.userId === m.userId);
+      if (owner) mark(x.a.id, x.na && x.na.dueStatus === 'overdue' ? 'late' : x.na && x.na.dueStatus === 'due_today' ? 'today' : 'wait');
+    });
+    fus.filter((fu) => (fu.ownerUserId === m.userId || fu.bdeUserId === m.userId) && byApp.has(fu.applicationId)).forEach((fu) => {
+      const d = String(fu.dueDate || '').slice(0, 10);
+      mark(fu.applicationId, d && d < today ? 'late' : d === today ? 'today' : 'wait');
+    });
+    const pick = (st) => [...mine.entries()].filter(([, v]) => (st ? v === st : true)).map(([id]) => byApp.get(id)).filter(Boolean);
+    const all = pick(); const late = pick('late'); const due = pick('today');
+    const drill = (key, word, list) => (list.length ? addSet(b, `teamb-${m.userId}-${key}`, { kind: 'app', title: `${m.name} — ${word}`, ids: ids(list), extra: extraOf(list) }) : null);
+    const nm = lcn(m.name);
+    const scopedIds = new Set(String(((scoped.find((u) => u.id === m.userId) || {}).atsScopeClients) || '').split(',').map((v) => v.trim()).filter(Boolean));
+    const owned = clients.filter((cl) => lcn(cl.bdeOwner) === nm || lcn(cl.secondaryBde) === nm || scopedIds.has(cl.id)).length;
+    const myReqs = reqs.filter((r) => r.bdeId === m.userId);
+    const pending = all.length;
+    return {
+      key: `u:${m.userId}`, userId: m.userId, name: m.seatLabel ? `${m.name} · ${m.seatLabel}` : m.name,
+      clients: owned, jobs: myReqs.filter((r) => V.REQUIREMENT_LIVE_STATUSES.includes(r.status)).length, approvals: myReqs.filter((r) => r.status === 'DRAFT').length,
+      pending, dueToday: due.length, overdue: late.length, showZero: true,
+      drills: { pending: drill('pending', 'waiting', all), dueToday: drill('dueToday', 'due today', due), overdue: drill('overdue', 'late', late) },
+      onTime: pending ? Math.round(((pending - late.length) / pending) * 100) : 100,
+    };
+  }).sort((x, y) => y.overdue - x.overdue || y.pending - x.pending || String(x.name).localeCompare(String(y.name)));
   return {
     id: 'team', type: 'team', size: 'full', title: 'BDE team',
-    groups: rows.length ? [{ id: 'bde', title: 'Client managers (BDE desk)', total: rows.length, rows }] : [],
-    to: '/ats/team', toLabel: 'Open the BDE team →',
-    zero: 'No client managers on the BDE desk yet.',
+    groups: rows.length ? [{ id: 'bde', title: 'Client managers (BDE team)', total: rows.length, rows }] : [],
+    to: '/ats/team', toLabel: `View all ${rows.length} →`,
+    zero: 'No client managers in the BDE department yet.',
   };
 }
 
@@ -1805,7 +1838,7 @@ async function bdeHome(c, b, k) {
   const unsigned = myClients.filter((x) => liveJobClientIds.has(x.id) && !V.agreementIsSigned(x.agreementStatus));
   const jobsPer = new Map();
   openJobs.forEach((r) => { if (r.clientId) jobsPer.set(r.clientId, (jobsPer.get(r.clientId) || []).concat(r.id)); });
-  addSet(b, 'agreement-pending', { kind: 'client', title: 'Unsigned agreements (clients with open jobs)', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), openJobs: (jobsPer.get(x.id) || []).length })) });
+  addSet(b, 'agreement-pending', { kind: 'client', title: 'Unsigned agreements (clients with open requirements)', rows: unsigned.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus), openJobs: (jobsPer.get(x.id) || []).length })) });
   const fbW = listWidget(b, 'client-fb', 'Client has not replied', clientDecision.sort((x, y) => String(x.na.dueAt || '').localeCompare(String(y.na.dueAt || ''))), { zero: 'Every client has replied', setId: 'client-feedback-list' });
   const unsignedW = {
     id: 'unsigned', type: 'clients', size: 'half', title: 'Unsigned agreements', total: unsigned.length, drill: 'agreement-pending', zero: 'All agreements are signed',
@@ -1813,8 +1846,8 @@ async function bdeHome(c, b, k) {
   };
   const perClient = myClients.map((x) => ({ id: x.id, name: x.name, jobs: jobsPer.get(x.id) || [] })).filter((x) => x.jobs.length).sort((x, y) => y.jobs.length - x.jobs.length);
   const perW = {
-    id: 'per-client', type: 'clients', size: 'half', title: 'Open jobs per client', total: perClient.length, zero: 'No open jobs',
-    rows: perClient.slice(0, 5).map((x) => ({ id: x.id, name: x.name, count: x.jobs.length, drill: addSet(b, `cl-${x.id}-jobs`, { kind: 'req', title: `${x.name} — open jobs`, ids: x.jobs }) })),
+    id: 'per-client', type: 'clients', size: 'half', title: 'Open requirements per client', total: perClient.length, zero: 'No open requirements',
+    rows: perClient.slice(0, 5).map((x) => ({ id: x.id, name: x.name, count: x.jobs.length, drill: addSet(b, `cl-${x.id}-jobs`, { kind: 'req', title: `${x.name} — open requirements`, ids: x.jobs }) })),
   };
   const leads = myClients.filter((x) => inPeriod(msOf(x.createdAt), c.period));
   addSet(b, 'new-clients', { kind: 'client', title: `New clients ${c.word}`, rows: leads.map((x) => ({ id: x.id, name: x.name, agreement: V.agreementStatusLabel(x.agreementStatus) })) });
@@ -1836,15 +1869,15 @@ async function bdeHome(c, b, k) {
   const meetW = listWidget(b, 'my-meetings', 'My meetings', meetings, { zero: 'No client interviews in the next 7 days', setId: 'my-meetings-list', setTitle: 'My meetings: client interviews, next 7 days' });
   // BD PERFORMANCE: the BDE's own business this period: clients won, jobs raised, joinings.
   const jobsRaised = k.reqs.filter((r) => !r.internal && inPeriod(msOf(r.createdAt), c.period));
-  addSet(b, 'jobs-raised', { kind: 'req', title: `Jobs raised ${c.word}`, ids: jobsRaised.map((r) => r.id) });
+  addSet(b, 'jobs-raised', { kind: 'req', title: `Requirements raised ${c.word}`, ids: jobsRaised.map((r) => r.id) });
   const joinedNow = k.sel.filter((x) => !x.internal && joinedSince(x, c.period.from, c.period.to, c.period.key === 'all'));
   addSet(b, 'bd-joined', { kind: 'app', title: `Joined ${c.word}`, ids: ids(joinedNow) });
   const perfLines = [
     line('new-clients', `New clients ${c.word}`, leads.length, { drill: 'new-clients', tone: 'blue', button: 'Open' }),
-    line('jobs-raised', `Jobs raised ${c.word}`, jobsRaised.length, { drill: 'jobs-raised', tone: 'blue', button: 'Open' }),
+    line('jobs-raised', `Requirements raised ${c.word}`, jobsRaised.length, { drill: 'jobs-raised', tone: 'blue', button: 'Open' }),
     line('bd-joined', `People joined ${c.word}`, joinedNow.length, { drill: 'bd-joined', tone: 'green', button: 'Open' }),
   ].filter((l) => l.count > 0);
-  const perfW = { id: 'bd-performance', type: 'lines', size: 'half', title: `BD performance ${c.word}`, lines: perfLines, more: 0, empty: `Nothing yet ${c.word}. A new client or a new job shows up here.` };
+  const perfW = { id: 'bd-performance', type: 'lines', size: 'half', title: `BD performance ${c.word}`, lines: perfLines, more: 0, empty: `Nothing yet ${c.word}. A new client or a new requirement shows up here.` };
   // CLIENT WORK (user, 2026-10-10): everything waiting on the clients in one box, each line opening its list
   // (the same numbers as the BDE digest — utils/clientWork.js).
   let cwW = null;
@@ -1855,15 +1888,15 @@ async function bdeHome(c, b, k) {
     const L = cw.lists;
     addSet(b, 'cw-noreply', { kind: 'app', title: `Client has not replied for ${cw.feedbackDays}+ days`, ids: L.noReply.map((i) => i.applicationId), extra: new Map(L.noReply.map((i) => [i.applicationId, { note: `Waiting ${i.waitedDays} days`, tone: 'amber' }])) });
     addSet(b, 'cw-feedback', { kind: 'app', title: 'Interview done, no client feedback', ids: L.feedback.map((i) => i.applicationId) });
-    addSet(b, 'cw-shortlisted', { kind: 'app', title: 'Client shortlisted, interview not fixed', ids: L.shortlisted.map((i) => i.applicationId) });
-    addSet(b, 'cw-agreements', { kind: 'client', title: 'Agreements not signed (clients with open jobs)', rows: L.agreement.map((i) => ({ id: i.clientId, name: i.client, agreement: i.notSent ? 'Not sent yet' : i.agreement })) });
-    addSet(b, 'cw-requests', { kind: 'req', title: 'Job requests waiting to be opened', ids: L.requests.map((i) => i.requirementId) });
+    addSet(b, 'cw-shortlisted', { kind: 'app', title: 'Interviews to book: client shortlisted, no interview fixed yet', ids: L.shortlisted.map((i) => i.applicationId), extra: new Map(L.shortlisted.filter((i) => i.requestedBy).map((i) => [i.applicationId, { note: `Interview requested by ${i.requestedBy}`, tone: 'blue' }])) });
+    addSet(b, 'cw-agreements', { kind: 'client', title: 'Agreements not signed (clients with open requirements)', rows: L.agreement.map((i) => ({ id: i.clientId, name: i.client, agreement: i.notSent ? 'Not sent yet' : i.agreement })) });
+    addSet(b, 'cw-requests', { kind: 'req', title: 'Requirement requests waiting to be opened', ids: L.requests.map((i) => i.requirementId) });
     const cwLines = [
       line('cw-noreply', `Client has not replied for ${cw.feedbackDays}+ days`, cw.counts.noReply, { drill: 'cw-noreply', tone: 'amber', button: 'Chase' }),
       line('cw-feedback', 'Interview done, no client feedback', cw.counts.feedback, { drill: 'cw-feedback', tone: 'amber', button: 'Ask' }),
-      line('cw-shortlisted', 'Client shortlisted, interview not fixed', cw.counts.shortlisted, { drill: 'cw-shortlisted', tone: 'blue', button: 'Fix' }),
+      line('cw-shortlisted', 'Interviews to book (client shortlisted)', cw.counts.shortlisted, { drill: 'cw-shortlisted', tone: 'blue', button: 'Book', sub: L.shortlisted.some((i) => i.requestedBy) ? `${L.shortlisted.filter((i) => i.requestedBy).length} asked for by a recruiter` : undefined }),
       line('cw-agreements', 'Agreements not signed', cw.counts.agreement, { drill: 'cw-agreements', tone: 'red', button: 'Open', sub: cw.counts.agreementNotSent ? `${cw.counts.agreementNotSent} not sent yet` : undefined }),
-      line('cw-requests', 'Job requests waiting to be opened', cw.counts.requests, { drill: 'cw-requests', tone: 'blue', button: 'Open' }),
+      line('cw-requests', 'Requirement requests waiting to be opened', cw.counts.requests, { drill: 'cw-requests', tone: 'blue', button: 'Open' }),
       line('cw-logins', 'Client logins waiting for approval', cw.counts.logins, { to: L.logins[0] ? `/clients/${L.logins[0].clientId}` : '/clients', tone: 'blue', button: 'Open' }),
       line('cw-invoices', 'Invoices past due (for your information)', cw.counts.invoices, { to: L.invoices[0] ? `/clients/${L.invoices[0].clientId}?tab=performance` : '/clients', tone: 'grey', button: 'See' }),
     ].filter((l) => l.count > 0);
@@ -1879,8 +1912,8 @@ async function bdeHome(c, b, k) {
       wsW = {
         id: 'workspace', type: 'workspace', size: 'full', title: 'My Business Workspace', ws,
         tiles: [
-          { id: 'clients', label: 'My clients', count: ws.counts.clients, sub: ws.counts.clients ? 'Clients assigned to you' : 'Add your first client', to: '/clients?view=mine' },
-          { id: 'jobs', label: 'My jobs', count: ws.counts.requirements, sub: ws.counts.requirementsPaused ? `${ws.counts.requirementsPaused} paused` : (ws.counts.requirements ? 'Open and waiting' : 'No jobs yet'), to: '/requirements' },
+          { id: 'clients', label: 'My clients', count: ws.counts.clients, sub: `Desk clients: ${ws.counts.deskClients}`, to: '/clients?view=mine' },
+          { id: 'jobs', label: 'My requirements', count: ws.counts.requirements, sub: ws.counts.requirementsPaused ? `${ws.counts.requirementsPaused} paused` : (ws.counts.requirements ? 'Open and waiting' : 'No requirements yet'), to: '/requirements' },
           { id: 'followups', label: 'Follow-ups due', count: ws.counts.followUpsDue, tone: ws.counts.followUpsDue ? 'amber' : 'green', sub: ws.counts.followUpsDue ? `${ws.counts.followUpsClient} client · ${ws.counts.followUpsPeople} candidate` : 'Nothing due today', to: '/clients?panel=followups' },
           { id: 'pending', label: 'Pending approvals', count: ws.counts.pending, tone: ws.counts.pending ? 'amber' : 'green', sub: ws.counts.pending ? 'Waiting for a Manager or Admin' : 'Nothing waiting', to: '/clients?panel=requests' },
         ],
@@ -1962,7 +1995,8 @@ async function healthDot(user) {
 // from the same board (b.kx = this request's filters + rows), so a number
 // and its list are always the same rows.
 // ===========================================================================
-const STEP5 = ['Added', 'Sent to client', 'Interview', 'Selected', 'Joined'];
+// 'On this job' = every person put on the job; each later step counts the people who reached it OR went further.
+const STEP5 = ['On this requirement', 'Sent to client', 'Interview', 'Selected', 'Joined'];
 // How far a person on a job got (0 Added … 4 Joined): now OR in their history;
 // an interview date counts as proof of the interview (old imported trackers).
 function stepLevel(x) {
@@ -1986,7 +2020,7 @@ function todayWidget(c, b, k) {
   const bulk = NA.snapshot().bulkDays || new Set();
   const sel = k.sel.filter((x) => !x.pre);
   const list = [
-    ['added', 'Added today', 'People added to a job today (not bulk imports).', sel.filter((x) => inDay(msOf(x.a.createdAt), c.today) && !bulk.has(NA.istDay(x.a.createdAt))), 'blue'],
+    ['added', 'Added today', 'People added to a requirement today (not bulk imports).', sel.filter((x) => inDay(msOf(x.a.createdAt), c.today) && !bulk.has(NA.istDay(x.a.createdAt))), 'blue'],
     ['sent', 'Sent to client today', 'People moved to "Sent to client" today.', sel.filter((x) => k.submittedIn(x, day)), 'blue'],
     ['interviews', 'Interviews today', 'Interviews booked for today.', sel.filter((x) => x.a.interviewAt && liveInterview(x.a) && inDay(msOf(x.a.interviewAt), c.today)), 'blue'],
     ['offers', 'Selected / offer today', 'People selected or given an offer today.', sel.filter((x) => enteredIn(x, SELECTED_NOT_JOINED, day)), 'orange'],
@@ -2004,9 +2038,22 @@ function todayWidget(c, b, k) {
 
 // THE OPEN JOBS rows (one per open job = the "Open jobs" card = Jobs › Open
 // with the same filters), with the people on each job by step.
+// MY TEAM board (user, 2026-10-12, "looking too clumsy"): every row also says what
+// the viewer must DO about the job (bucket: needs / progress / waiting / done),
+// who the client manager is, how many people wait for the client, the coming
+// interviews and how late the oldest late person is. The old fields are unchanged.
+const BUCKETS = ['needs', 'progress', 'waiting', 'idle', 'done'];
+const DONE_DAYS = 14;
+// What the viewer must do about a job. An old job nobody works on (the imported backlog) is not
+// "needs you" unless the viewer leads it: it sits in "Not started yet" so it cannot bury the real work.
+function bucketOf(r, ownsIt) {
+  if (r.late > 0 || r.ivSoon > 0 || (r.noRecruiter && (!r.backlog || ownsIt))) return 'needs';
+  if (r.noRecruiter) return 'idle';
+  return r.waitingAll ? 'waiting' : 'progress';
+}
 function jobsIndex(b) {
   if (b._jobs) return b._jobs;
-  const { k } = b.kx;
+  const { c, k } = b.kx;
   const by = new Map();
   k.sel.forEach((x) => {
     if (x.pre) return;
@@ -2015,23 +2062,51 @@ function jobsIndex(b) {
     by.get(id).push(x);
   });
   b._jobApps = by;
-  b._jobs = k.openJobs.map((r) => {
+  const today = c.today;
+  const tomorrow = addDays(today, 1);
+  const weekEnd = addDays(today, 6);
+  const dayNo = (day) => Math.floor(new Date(`${day}T00:00:00Z`).getTime() / DAY);
+  const shape = (r) => {
     const apps = by.get(r.id) || [];
     const internal = !!r.internal || r.hiringType === INTERNAL_HIRE;
     const recIds = [...new Set([r.recruiterId, ...String(r.recruiterIds || '').split(',')].map((v) => String(v || '').trim()).filter(Boolean))];
-    return {
+    const named = recIds.map((id) => ({ id, name: userName(id) || (r.recruiterId === id && r.recruiter ? r.recruiter.name : null) })).filter((p) => p.name && !isTest(p.name));
+    const liveApps = apps.filter((x) => x.live && x.na);
+    const lateApps = liveApps.filter((x) => x.na.dueStatus === 'overdue');
+    const ivDays = liveApps.filter((x) => x.a.interviewAt && liveInterview(x.a)).map((x) => NA.istDay(x.a.interviewAt)).filter(Boolean);
+    const row = {
       id: r.id, reqCode: r.reqCode || null, title: r.title || '—', department: r.department || null, priority: r.priority || null,
       client: internal ? 'TeamLink Internal' : (r.client ? r.client.name : null),
       clientId: b.clientDesk && !internal ? r.clientId || null : null,
+      location: r.location || null,
       tlId: r.tlId || null, tl: userName(r.tlId) || (typeof r.tl === 'string' ? r.tl : null) || null,
-      recruiters: recIds.map((id) => userName(id) || (r.recruiterId === id && r.recruiter ? r.recruiter.name : null)).filter((n) => n && !isTest(n)),
+      extraTlIds: require('./reqTeamLeads').extrasOf(r.id), // other team leads on the job (2026-10-14) // eslint-disable-line global-require
+      bde: internal ? null : (userName(r.bdeId) || (r.client && r.client.bdeOwner) || null),
+      recruiters: named.map((p) => p.name),
+      recruiterIds: named.map((p) => p.id),
       createdAt: r.createdAt, ageDays: r.createdAt ? Math.max(0, Math.floor((Date.now() - msOf(r.createdAt)) / DAY)) : null,
       openings: r.openings ?? null,
       steps: stepCounts(apps),
       inProcess: apps.filter((x) => !NOT_ACTIVE.includes(x.a.stage)).length,
       late: apps.filter((x) => x.live && x.na && x.na.dueStatus === 'overdue').length,
+      // --- the My Team board ---
+      waiting: liveApps.filter((x) => x.na.waitingOn === 'Client').length,
+      ivSoon: ivDays.filter((d) => d >= today && d <= tomorrow).length,
+      ivWeek: ivDays.filter((d) => d >= today && d <= weekEnd).length,
+      lateDays: lateApps.reduce((m, x) => Math.max(m, x.na.dueAt ? dayNo(today) - dayNo(x.na.dueAt) : 0), 0),
+      noRecruiter: !named.length,
     };
-  });
+    row.waitingAll = liveApps.length > 0 && row.waiting === liveApps.length;
+    row.backlog = isBacklogJob(r);
+    row.bucket = bucketOf(row, false);
+    return row;
+  };
+  b._jobs = k.openJobs.map(shape);
+  // Done recently: jobs CLOSED in the last two weeks (not part of the open-jobs total).
+  const since = Date.now() - DONE_DAYS * DAY;
+  b._jobsDone = k.reqs.filter((r) => r.status === 'CLOSED' && msOf(r.updatedAt) >= since).map((r) => ({
+    ...shape(r), bucket: 'done', closedAt: r.updatedAt || null,
+  }));
   return b._jobs;
 }
 const JOB_SORTS = {
@@ -2040,31 +2115,129 @@ const JOB_SORTS = {
   newest: (x, y) => msOf(y.createdAt) - msOf(x.createdAt),
   oldest: (x, y) => msOf(x.createdAt) - msOf(y.createdAt),
   title: (x, y) => String(x.title).localeCompare(String(y.title)),
+  // MY TEAM: the job that most needs the viewer first (late, then no recruiter, then interviews coming).
+  attention: (x, y) => (y.late > 0) - (x.late > 0) || y.lateDays - x.lateDays || y.late - x.late
+    || (y.noRecruiter - x.noRecruiter) || y.ivSoon - x.ivSoon || y.inProcess - x.inProcess,
+};
+// The four cascading filters of the board (Department · Client · Team lead · Recruiter).
+const NONE = '__none__';
+const JOB_FACETS = {
+  department: { keys: (r) => [r.department || NONE], label: (v) => (v === NONE ? 'No department' : v), q: 'd_dept' },
+  client: { keys: (r) => [r.client || NONE], label: (v) => (v === NONE ? 'No client' : v), q: 'd_client' },
+  tl: { keys: (r) => [r.tlId || NONE], label: (v, r) => (v === NONE ? 'No team lead yet' : (r.tl || 'Team lead')), q: 'd_tl' },
+  rec: { keys: (r) => (r.recruiterIds.length ? r.recruiterIds : [NONE]), label: (v, r) => (v === NONE ? 'No recruiter yet' : (r.recruiters[r.recruiterIds.indexOf(v)] || 'Recruiter')), q: 'd_rec' },
 };
 async function jobsList(user, b, q) {
   const s = (v) => (typeof v === 'string' ? v.trim().slice(0, 200) : '');
   const all = jobsIndex(b);
   let rows = all;
   const tlId = s(q.d_tlid);
-  let title = 'Open jobs';
+  let title = 'Open requirements';
   if (tlId) {
     const t = await tlsList(user, b);
     const set = b._tlJobs.get(tlId);
-    rows = rows.filter((r) => (set ? set.has(r.id) : r.tlId === tlId));
+    rows = rows.filter((r) => (set ? set.has(r.id) : (r.tlId === tlId || (r.extraTlIds || []).includes(tlId))));
     const who = t.rows.find((r) => r.id === tlId);
-    title = `Open jobs — ${who ? who.name : 'team lead'}`;
+    title = `Open requirements — ${who ? who.name : 'team lead'}`;
   }
   const scoped = rows.length;
   const term = s(q.d_q).toLowerCase();
-  if (term) rows = rows.filter((r) => [r.title, r.reqCode, r.client, r.tl, ...r.recruiters].some((v) => v && String(v).toLowerCase().includes(term)));
+  // THE BDE TEAM (client managers and their lead) sees BDE work per client, never the recruiter / team lead.
+  const noPeople = b.layout === 'bde';
+  const strip = (r) => (noPeople ? { ...r, tl: null, tlId: null, recruiters: [], recruiterIds: [] } : r);
+  // The client's OLD names (ClientAlias) are searched too (the row still shows the official name).
+  const oldNames = term ? await require('./clientSearch').aliasNameMap().catch(() => new Map()) : new Map(); // eslint-disable-line global-require
+  const matchTerm = (r) => [r.title, r.reqCode, r.client, ...(oldNames.get(String(r.client || '').trim().toLowerCase()) || []), ...(noPeople ? [r.bde] : [r.tl, r.bde, ...r.recruiters])].some((v) => v && String(v).toLowerCase().includes(term));
   const sort = JOB_SORTS[s(q.d_sort)] ? s(q.d_sort) : 'late';
-  rows = [...rows].sort((x, y) => JOB_SORTS[sort](x, y) || String(x.title).localeCompare(String(y.title)));
   const size = Math.max(5, Math.min(100, Number(q.d_size) || 5));
   const page = Math.max(1, Math.min(10000, Number(q.d_page) || 1));
-  return {
-    id: '__jobs', kind: 'jobs', title, total: scoped, filtered: rows.length, page, pageSize: size, sort, search: term,
-    steps: STEP5, rows: rows.slice((page - 1) * size, page * size), _all: rows,
+  const board = s(q.d_view) === 'board';
+  const out = { id: '__jobs', kind: 'jobs', title, total: scoped, sort, search: term, page, pageSize: size, steps: STEP5 };
+  if (!board && !s(q.d_bucket) && !s(q.d_flag) && !Object.values(JOB_FACETS).some((f) => s(q[f.q]))) {
+    // The classic flat list (unchanged).
+    if (term) rows = rows.filter(matchTerm);
+    rows = [...rows].sort((x, y) => JOB_SORTS[sort](x, y) || String(x.title).localeCompare(String(y.title)));
+    return { ...out, peopleHidden: noPeople, filtered: rows.length, rows: rows.slice((page - 1) * size, page * size).map(strip), _all: rows };
+  }
+
+  // ---- the board: filters, tiles, sections ----------------------------------------------------
+  const { c } = b.kx;
+  const facetKeys = Object.keys(JOB_FACETS).filter((key) => !(noPeople && (key === 'tl' || key === 'rec')));
+  const done = (b._jobsDone || []).filter((r) => !tlId || r.tlId === tlId);
+  const pool = [...rows, ...done];
+  // "Jobs I handle": the viewer's own team lead jobs (a TL), else everything in their area.
+  let mineIds = null;
+  let mineLabel = 'Open requirements';
+  try {
+    const TW = require('./teamWorkload'); // eslint-disable-line global-require
+    const tw = await TW.teamWorld(user);
+    const me = (tw.people || []).find((p) => p.id === user.id && p.role === 'TL');
+    if (me) { mineIds = new Set(TW.personSets(tw, me).requirements.ids); mineLabel = 'Requirements I handle'; }
+  } catch { /* the board still works without it */ }
+  const ownsIt = (r) => (mineIds ? mineIds.has(r.id) : (r.tlId === user.id || (r.extraTlIds || []).includes(user.id)));
+  pool.forEach((r) => { if (r.bucket !== 'done') r.bucket = bucketOf(r, ownsIt(r)); });
+  const fv = {};
+  Object.entries(JOB_FACETS).forEach(([key, f]) => { fv[key] = facetKeys.includes(key) ? s(q[f.q]) : ''; });
+  const hit = (r, skip) => Object.entries(JOB_FACETS).every(([key, f]) => key === skip || !fv[key] || f.keys(r).includes(fv[key]));
+  const facets = {};
+  Object.entries(JOB_FACETS).filter(([key]) => facetKeys.includes(key)).forEach(([key, f]) => {
+    const n = new Map();
+    const sample = new Map();
+    pool.filter((r) => r.bucket !== 'done' && hit(r, key) && (!term || matchTerm(r))).forEach((r) => f.keys(r).forEach((v) => { n.set(v, (n.get(v) || 0) + 1); if (!sample.has(v)) sample.set(v, r); }));
+    facets[key] = [...n.entries()].map(([value, count]) => ({ value, count, label: f.label(value, sample.get(value)) }))
+      .sort((x, y) => (x.value === NONE) - (y.value === NONE) || y.count - x.count || String(x.label).localeCompare(String(y.label)));
+  });
+  const base = pool.filter((r) => hit(r) && (!term || matchTerm(r)));
+  const openBase = base.filter((r) => r.bucket !== 'done');
+  const mine = (r) => (mineIds ? mineIds.has(r.id) : true);
+  const flagOf = {
+    mine: (r) => mine(r),
+    late: (r) => r.late > 0,
+    norec: (r) => r.noRecruiter,
+    iv: (r) => r.ivWeek > 0,
   };
+  const summary = {
+    mineLabel, mineOnly: !!mineIds,
+    mine: openBase.filter(flagOf.mine).length,
+    open: openBase.length,
+    late: openBase.filter(flagOf.late).length,
+    lateRows: openBase.reduce((n, r) => n + r.late, 0),
+    noRecruiter: openBase.filter(flagOf.norec).length,
+    interviewsWeekJobs: openBase.filter(flagOf.iv).length,
+    interviewsWeek: openBase.reduce((n, r) => n + r.ivWeek, 0),
+    buckets: Object.fromEntries(BUCKETS.map((k2) => [k2, base.filter((r) => r.bucket === k2).length])),
+  };
+  const flag = s(q.d_flag);
+  const bucket = BUCKETS.includes(s(q.d_bucket)) ? s(q.d_bucket) : '';
+  let shown = base;
+  if (flag && flagOf[flag]) shown = shown.filter(flagOf[flag]);
+  const order = (list) => [...list].sort((x, y) => JOB_SORTS[sort](x, y) || String(x.title).localeCompare(String(y.title)));
+  const mark = (r) => ({ ...strip(r), mine: mine(r) });
+  const assign = noPeople ? { allowed: false, global: false, asTl: false, meId: user.id } : await assignRights(user);
+  if (board && !bucket) {
+    const per = Math.max(3, Math.min(25, Number(q.d_per) || 6));
+    const sections = Object.fromEntries(BUCKETS.map((k2) => {
+      const list = order(shown.filter((r) => r.bucket === k2));
+      return [k2, { total: list.length, rows: list.slice(0, per).map(mark) }];
+    }));
+    return {
+      ...out, board: true, peopleHidden: noPeople, filtered: shown.length, sections, summary, facets, flag, today: c.today, assign, _all: order(shown),
+    };
+  }
+  const list = order(bucket ? shown.filter((r) => r.bucket === bucket) : shown);
+  return {
+    ...out, board, bucket, peopleHidden: noPeople, filtered: list.length, rows: list.slice((page - 1) * size, page * size).map(mark), summary, facets, flag, assign, _all: list,
+  };
+}
+// Who may give a job to a recruiter from this board: the same permission POST /requirements/:id/assign checks.
+async function assignRights(user) {
+  try {
+    const { can } = require('../middleware/auth'); // eslint-disable-line global-require
+    const allowed = !!(await can(user, 'ats', 'requirements', 'Requirement Detail', 'assign'));
+    const s = scopeOf(user);
+    const asTl = String(user.atsRole || user.role || '') === 'TL' || !!(user.scopeRoles && user.scopeRoles.ats === 'TL');
+    return { allowed, global: !!s.global, asTl, meId: user.id };
+  } catch { return { allowed: false, global: false, asTl: false, meId: user.id }; }
 }
 
 // THE TEAM LEADS: the same team and the same sets as Reports & Team › Team
@@ -2085,7 +2258,7 @@ async function tlsList(user, b) {
   const counts = (prefix, name, test, reqIds) => {
     const mine = work.filter(test);
     const sets = {
-      openJobs: { kind: 'req', ids: reqIds.filter((id) => open.has(id)), title: 'Open jobs' },
+      openJobs: { kind: 'req', ids: reqIds.filter((id) => open.has(id)), title: 'Open requirements' },
       inProcess: { kind: 'app', ids: ids(mine.filter((x) => !NOT_ACTIVE.includes(x.a.stage))), title: 'People in process' },
       interviews: { kind: 'app', ids: ids(mine.filter((x) => x.a.interviewAt && liveInterview(x.a) && inPeriod(msOf(x.a.interviewAt), c.period))), title: `Interviews ${c.word}` },
       selected: { kind: 'app', ids: ids(mine.filter((x) => SELECTED_NOT_JOINED.includes(x.a.stage))), title: 'Selected, not joined' },
@@ -2191,16 +2364,37 @@ function jobDetail(b, reqId) {
   }));
   ev.sort((p, q) => q.e.at - p.e.at);
   const activity = ev.slice(0, 5).map(({ x, e }) => ({ id: `${x.a.id}:${e.at}`, candidateId: x.a.candidateId, applicationId: x.a.id, at: new Date(e.at).toISOString(), by: e.actorName, ...activityText(e, x) }));
+  // WHAT IS STUCK (My Team board): the late people on this job, worst first, each with the step,
+  // how long past the allowed time, and who has to move it.
+  const todayNo = Math.floor(new Date(`${b.kx.c.today}T00:00:00Z`).getTime() / DAY);
+  const stuckAll = apps.filter((x) => x.live && x.na && x.na.dueStatus === 'overdue').map((x) => {
+    const daysLate = x.na.dueAt ? Math.max(1, todayNo - Math.floor(new Date(`${x.na.dueAt}T00:00:00Z`).getTime() / DAY)) : null;
+    const rule = AS.stageRule(x.a.stage) || {};
+    return {
+      id: x.a.id, candidateId: x.a.candidateId, name: x.cand, step: stepWord(x.a.stage), daysLate, allowedDays: Number.isFinite(rule.days) ? rule.days : null,
+      waitingOnClient: x.na.waitingOn === 'Client', action: x.na.action || null, owner: x.na.ownerName || x.na.ownerRole || null,
+    };
+  }).sort((p, q) => (q.daysLate || 0) - (p.daysLate || 0));
+  const stuck = stuckAll.slice(0, 8);
+  const stuckMore = Math.max(0, stuckAll.length - stuck.length);
   const row = (b._jobs || []).find((j) => j.id === reqId);
   const tlName = userName(r.tlId) || (typeof r.tl === 'string' ? r.tl : null);
-  return {
-    id: `__job:${reqId}`, kind: 'job', title: r.title || 'Job',
+  const out = {
+    id: `__job:${reqId}`, kind: 'job', title: r.title || 'Requirement',
     job: row || { id: r.id, reqCode: r.reqCode || null, title: r.title, client: internal ? 'TeamLink Internal' : (r.client ? r.client.name : null), steps: stepCounts(apps) },
-    status: V.requirementStatusLabel(r.status) || r.status,
+    status: V.requirementStatusUser(r.status) || r.status,
     handlers: { tl: tlName, tlWorked: [...new Set(apps.map((x) => x.who.tl && x.who.tl.label).filter((n) => n && !isTest(n) && n !== tlName))].slice(0, 3), bde: bdeName, recruiters, othersMore },
-    steps: STEP5, pipeline, interviews, activity, total: apps.length,
+    steps: STEP5, pipeline, interviews, activity, stuck, stuckMore, total: apps.length,
     _all: [],
   };
+  // THE BDE TEAM sees the job by client, never the recruiter / team lead / who moved what.
+  if (b.layout === 'bde') {
+    out.handlers = { tl: null, tlWorked: [], bde: out.handlers.bde, recruiters: [], othersMore: 0 };
+    out.pipeline = out.pipeline.map((st) => ({ ...st, people: st.people.map((p) => ({ ...p, recruiter: null })) }));
+    out.stuck = out.stuck.map((x) => ({ ...x, owner: null }));
+    out.activity = out.activity.map((x) => ({ ...x, by: 'Team' }));
+  }
+  return out;
 }
 
 // ===========================================================================
@@ -2259,7 +2453,7 @@ function reqRowOf(w, r, clientDesk) {
   const users = NA.snapshot().activeUsers || new Map();
   const rid = recruiterOf(r);
   return {
-    id: r.id, title: r.title, reqCode: r.reqCode, status: V.requirementStatusLabel(r.status) || r.status,
+    id: r.id, title: r.title, reqCode: r.reqCode, status: V.requirementStatusUser(r.status) || r.status,
     openings: r.openings, department: r.department || null,
     client: internal ? 'TeamLink Internal' : (r.client ? r.client.name : null),
     clientKey: internal ? '__internal__' : (r.clientId || null),
@@ -2276,7 +2470,7 @@ function facetDefs(kind) {
   if (kind === 'app') {
     return [
       ['d_client', 'Client', (r) => r.clientKey, (r) => r.client || '—'],
-      ['d_job', 'Job', (r) => r.requirementId, (r) => r.requirement],
+      ['d_job', 'Requirement', (r) => r.requirementId, (r) => r.requirement],
       ['d_rec', 'Recruiter', (r) => r.recKey || '__none__', (r) => r.recruiter || 'Nobody named'],
       ['d_tl', 'Team lead', (r) => r.tlKey || '__none__', (r) => r.tl || 'Nobody named'],
       ['d_bde', 'Client manager (BDE)', (r) => r.bdeKey || '__none__', (r) => r.bde || 'Nobody named'],
@@ -2383,20 +2577,20 @@ async function homeList(user, b, setId, q = {}) {
 // The same list as a file (Excel / CSV), exactly the filtered rows.
 const DAYF = (v) => { if (!v) return ''; const d = new Date(v); return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10); };
 const EXPORT_COLUMNS = {
-  app: [['Candidate', (r) => r.candidate], ['Job', (r) => r.requirement], ['Job code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
+  app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],
     ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Updated', (r) => DAYF(r.updatedAt)]],
-  req: [['Job', (r) => r.title], ['Job code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
-  client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open jobs', (r) => r.openJobs ?? '']],
+  req: [['Requirement', (r) => r.title], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
+  client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open requirements', (r) => r.openJobs ?? '']],
   inv: [['Invoice', (r) => r.invoiceNumber || ''], ['Client', (r) => r.client], ['Invoice date', (r) => DAYF(r.invoiceDate)], ['Due', (r) => DAYF(r.dueDate)], ['Status', (r) => r.status], ['Amount (before GST)', (r) => r.amount], ['Unpaid', (r) => r.outstanding]],
   pay: [['Date', (r) => DAYF(r.date)], ['Invoice', (r) => r.invoiceNumber || ''], ['Client', (r) => r.client || ''], ['Method', (r) => r.method || ''], ['Reference', (r) => r.reference || ''], ['Amount', (r) => r.amount]],
   emp: [['Employee', (r) => r.name], ['Department', (r) => r.department || ''], ['Designation', (r) => r.designation || ''], ['Today', (r) => r.status || '']],
   user: [['User', (r) => r.name], ['Role', (r) => r.role], ['Last sign-in', (r) => DAYF(r.at)]],
-  event: [['Candidate', (r) => r.candidate], ['Job', (r) => r.requirement], ['From step', (r) => r.from], ['To step', (r) => r.to], ['By', (r) => r.by || ''], ['When', (r) => DAYF(r.at)]],
+  event: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['From step', (r) => r.from], ['To step', (r) => r.to], ['By', (r) => r.by || ''], ['When', (r) => DAYF(r.at)]],
   integ: [['What', (r) => r.what], ['Detail', (r) => r.detail]],
-  jobs: [['Job ID', (r) => r.reqCode || ''], ['Job', (r) => r.title], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Team lead', (r) => r.tl || ''], ['Recruiters', (r) => (r.recruiters || []).join(', ')], ['Opened', (r) => DAYF(r.createdAt)], ['Days open', (r) => r.ageDays ?? ''],
-    ...['Added', 'Sent to client', 'Interview', 'Selected', 'Joined'].map((l, i) => [l, (r) => r.steps[i]]), ['In process', (r) => r.inProcess], ['Late', (r) => r.late]],
-  tls: [['Team lead', (r) => r.name], ['Department', (r) => r.department || ''], ['Recruiters', (r) => r.teamSize], ['Open jobs', (r) => r.openJobs], ['In process', (r) => r.inProcess], ['Interviews (in the dates picked)', (r) => r.interviews], ['Selected (as of today)', (r) => r.selected], ['Joined (in the dates picked)', (r) => r.joined], ['Joined (in total)', (r) => r.joinedTotal], ['Late (as of today)', (r) => r.late]],
+  jobs: [['Job ID', (r) => r.reqCode || ''], ['Requirement', (r) => r.title], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Team lead', (r) => r.tl || ''], ['Recruiters', (r) => (r.recruiters || []).join(', ')], ['Opened', (r) => DAYF(r.createdAt)], ['Days open', (r) => r.ageDays ?? ''],
+    ...['On this requirement', 'Sent to client', 'Interview', 'Selected', 'Joined'].map((l, i) => [l, (r) => r.steps[i]]), ['In process', (r) => r.inProcess], ['Late', (r) => r.late]],
+  tls: [['Team lead', (r) => r.name], ['Department', (r) => r.department || ''], ['Recruiters', (r) => r.teamSize], ['Open requirements', (r) => r.openJobs], ['In process', (r) => r.inProcess], ['Interviews (in the dates picked)', (r) => r.interviews], ['Selected (as of today)', (r) => r.selected], ['Joined (in the dates picked)', (r) => r.joined], ['Joined (in total)', (r) => r.joinedTotal], ['Late (as of today)', (r) => r.late]],
 };
 // How a joined person's day was found (see joinFacts): said in words in the file.
 const JOIN_HOW = { entered: 'Joining date entered', stamp: 'Day recorded when marked Joined', moved: 'Day taken from when moved to Joined (no joining date entered)', none: 'No joining date' };

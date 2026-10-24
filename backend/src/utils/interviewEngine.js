@@ -96,7 +96,7 @@ async function sendToCandidate(app, purposeKey, cp) {
   const sys = await systemIdentityFor(app);
   const sent = [];
   const reasons = [];
-  if (!sys) return { sent, reasons: ['No sender could be found for this job.'] };
+  if (!sys) return { sent, reasons: ['No sender could be found for this requirement.'] };
   for (const ch of cp.channels) {
     // eslint-disable-next-line no-await-in-loop
     const out = await lazy.omni().send(sys, {
@@ -174,7 +174,11 @@ async function run(ctx) {
   const plan = await PLAN.load();
   const t = now.getTime();
   const idFilter = onlyIds ? { id: { in: onlyIds } } : {};
-  const emailsOn = candOn; // the one company switch for interview emails
+  // INERT UNTIL ARMED: without the plan's "automatic sending" switch (or an Admin pressing "Run now") nothing leaves the app:
+  // no candidate message, no safety net, no mail / WhatsApp / SMS to the team. The in-app bell still goes.
+  const armed = plan.armed === true || force === true;
+  const emailsOn = candOn && armed; // the one company switch for interview emails, and the arming switch
+  const outside = armed ? plan : { ...plan, parties: Object.fromEntries(Object.entries(plan.parties).map(([k, v]) => [k, { ...v, email: false, whatsapp: false, sms: false }])) };
   const skipP = (s) => IN.skipPerson(s);
   Object.assign(summary, { candidateDay: 0, candidateHour: 0, candidateNow: 0, staffHour: 0, digests: 0, noShow: 0, netBooked: 0, plan: undefined });
 
@@ -196,7 +200,7 @@ async function run(ctx) {
     const booked = t - (bookedAt.get(a.id) || t - 365 * DAY);
     const online = !String(a.interviewMode || '').toLowerCase().includes('person') && !/tele|phone/i.test(String(a.interviewMode || ''));
     // --- the candidate
-    if (candOn || force) {
+    if ((candOn && armed) || force) {
       const kinds = candidateDue({ leftMs: left, bookedAgoMs: booked, online, hasLink: !!a.interviewMeetingLink, plan });
       for (const k of kinds) {
         if (k === 'day' && quietNow && !force) continue; // eslint-disable-line no-continue
@@ -235,7 +239,7 @@ async function run(ctx) {
       await tellStaff(a, parties, {
         title: `⏰ Interview in 1 hour: ${a.candidate ? a.candidate.name : 'Candidate'}`, text: lines.join(' · '),
         mailText: ['Hello,', '', ...lines, '', 'Open TeamLink → Interviews for the details.', '', '— TeamLink'].join('\n'),
-        key: `interview|hour|${a.id}|${slot}`, flag: 'hourBefore', plan, emailsOn, sys,
+        key: `interview|hour|${a.id}|${slot}`, flag: 'hourBefore', plan: outside, emailsOn, sys,
       });
     }
   }
@@ -273,7 +277,7 @@ async function run(ctx) {
         const when = new Date(a.interviewAt).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit', hour12: true });
         const panel = a.interviewer ? ` · With ${a.interviewer}` : '';
         // BDE and everyone else: the name, never the candidate's phone or email
-        return `${when} · ${a.candidate ? a.candidate.name : 'Candidate'} · Round ${a.interviewRound || 1} · ${r.title || 'Job'} (${r.internal ? 'TeamLink' : (r.client && r.client.name) || ''}) · ${IN.whereLine(a)}${panel}`;
+        return `${when} · ${a.candidate ? a.candidate.name : 'Candidate'} · Round ${a.interviewRound || 1} · ${r.title || 'Requirement'} (${r.internal ? 'TeamLink' : (r.client && r.client.name) || ''}) · ${IN.whereLine(a)}${panel}`;
       };
       const title = `📅 Today's interviews: ${apps.length}`;
       const text = apps.map(row).join('\n');
@@ -282,7 +286,7 @@ async function run(ctx) {
       if (party.userId) {
         // eslint-disable-next-line no-await-in-loop
         await prisma.notification.create({ data: { userId: party.userId, title, message: text, channel: 'In-App', recipient: key, status: 'Sent' } });
-        const fl = (f) => flagOf(plan, party.roles, f);
+        const fl = (f) => flagOf(outside, party.roles, f);
         // eslint-disable-next-line no-await-in-loop
         if (party.email && fl('email') && emailsOn) await IN.mailTo(party.email, title.replace(/^[^\w]+\s*/, ''), ['Hello,', '', 'Your interviews today:', '', ...apps.map((a) => `• ${row(a)}`), '', 'Open TeamLink → Interviews for the details.', '', '— TeamLink'].join('\n'));
         // eslint-disable-next-line no-await-in-loop
@@ -318,13 +322,13 @@ async function run(ctx) {
       const text = `${name}'s interview (${IN.when(a.interviewAt)}) is still marked "${a.interviewStatus === 'RESCHEDULED' ? 'Rescheduled' : 'Scheduled'}". Open Interview Calendar: press Started / Completed, or "Did not attend" (with the reason).`;
       // eslint-disable-next-line no-await-in-loop
       await tellStaff(a, to.map((p) => ({ ...p, roles: ['Recruiter'] })), {
-        title: `❓ Did ${name} attend?`, text, key: `interview|noshow|${a.id}|${slot}`, flag: 'bell', plan: { ...plan, parties: { ...plan.parties, recruiter: { ...plan.parties.recruiter, bell: true } } }, emailsOn, sys: null,
+        title: `❓ Did ${name} attend?`, text, key: `interview|noshow|${a.id}|${slot}`, flag: 'bell', plan: { ...outside, parties: { ...outside.parties, recruiter: { ...outside.parties.recruiter, bell: true } } }, emailsOn, sys: null,
       });
     }
   }
 
   // --- the booked / moved / cancelled message nobody sent -------------------------------------------------------------------
-  if ((candOn || force) && plan.candidate.safetyNetMinutes > 0) {
+  if (((candOn && armed) || force) && plan.candidate.safetyNetMinutes > 0) {
     const cutoff = new Date(t - plan.candidate.safetyNetMinutes * MIN);
     const recent = await prisma.interviewEvent.findMany({
       where: { ...(onlyIds ? { applicationId: { in: onlyIds } } : {}), status: { in: ['SCHEDULED', 'RESCHEDULED', 'CANCELLED'] }, createdAt: { lte: cutoff, gte: new Date(Math.max(t - DAY, NET_FROM.getTime())) } },

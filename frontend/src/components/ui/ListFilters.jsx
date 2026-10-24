@@ -250,9 +250,9 @@ export default function ListFilterBar({ lf, storageKey, extra, noun, className =
   const sortCtl = lf.sorts && lf.sorts.length > 1 ? (
     <label className="lf-sort">
       Sort
-      <select value={lf.sort} onChange={(e) => lf.setSort(e.target.value)}>
+      <Combo value={lf.sort} onChange={(e) => lf.setSort(e.target.value)}>
         {lf.sorts.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-      </select>
+      </Combo>
     </label>
   ) : null;
   return (

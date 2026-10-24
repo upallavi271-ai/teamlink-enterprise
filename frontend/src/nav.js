@@ -34,7 +34,7 @@ import { can, canModule, productRole } from './permissions';
 
 export const SECTION_LABEL = {
   dashboard: 'Dashboard', hrms: 'HRMS', ats: 'ATS',
-  accounts: 'Accounts', admin: 'Administration', reports: 'Reports',
+  accounts: 'Accounts', admin: 'Administration', reports: 'Reports', omni: 'Omni-Channel',
 };
 
 // ---------------------------------------------------------------------------
@@ -172,10 +172,10 @@ export const HRMS_ITEMS = [
 // are tabs, filters or views INSIDE these five (see the history in
 // UNLISTED_ATS_VIEWS). Clients is visible to SA / Admin / Manager / BDE / TL /
 // Accounts only (Client List view); a recruiter's module shows Requirements
-// alone and is called "My Jobs".
+// alone and is called "My Requirements".
 export const CLIENTS_REQ_TABS = [
   leaf('🏢', '/clients', 'Clients', [['clients', 'Client List', 'view']]),
-  leaf('💼', '/requirements', 'Jobs', [['requirements', 'Requirement List', 'view']]),
+  leaf('💼', '/requirements', 'Requirements', [['requirements', 'Requirement List', 'view']]),
   // Agreements list: a tab here, not a second tab strip (ClientsTabs retired 2026-10-03).
   leaf('📝', '/agreements', 'Agreements', [['clients', 'Agreement Lifecycle', 'view']]),
 ];
@@ -184,6 +184,8 @@ export const REPORTS_TEAM_TABS = [
   leaf('📊', '/reports/ats', 'Reports', [['reports', 'ATS Reports', 'view']], 'ats'),
   leaf('📊', '/reports/my-results', 'My Results', [['reports', 'My Results', 'view']], 'ats', [['reports', 'ATS Reports', 'view']]),
   leaf('👥', '/ats/team', 'Team', [['recruiterbde', 'Team View', 'view']]),
+  // EXOTEL AI CALLING (2026-10-22): the AI assistant's calls - a tab here, not a sidebar entry. The server decides who may place calls.
+  leaf('🤖', '/ats/ai-calling', 'AI Calling', [['candidates', 'Applications', 'view']]),
   // NO Settings tab (user, 2026-10-03: 'settings already Administration lo
   // vunnai, extra em cheyyaku'). Settings stay in Administration only.
 ];
@@ -224,7 +226,7 @@ export const ATS_ITEMS = [
 // the detail pages.
 export const MODULE_PATHS = {
   'clients-req': /^\/(clients|requirements|agreements)(\/|$)/,
-  'reports-team': /^\/(reports\/(ats|my-results|job-portal)|ats\/(team|settings|followups))(\/|$)/,
+  'reports-team': /^\/(reports\/(ats|my-results|job-portal)|ats\/(team|settings|followups|ai-calling))(\/|$)/,
 };
 export function moduleOfPath(pathname) {
   return Object.keys(MODULE_PATHS).find((k) => MODULE_PATHS[k].test(pathname)) || null;
@@ -287,7 +289,7 @@ export const ADMIN_ITEMS = [
   leaf('👥', '/employees', 'Employee Management', [['administration', 'Users', 'view']]),
   leaf('👤', '/admin/users', 'Users', [['administration', 'Users', 'view']]),
   // Super Admin only, and not while already viewing as (components/ViewAs.jsx).
-  { ...leaf('👁', '/admin/view-as', 'View as', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.viewAs },
+  { ...leaf('👁', '/admin/view-as', 'View as', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.hrSuper && !u.viewAs },
   leaf('🔐', '/admin/roles', 'Role Catalog', [['administration', 'Role Catalog', 'view']]),
   leaf('🔌', '/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('🏗️', '/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
@@ -311,8 +313,8 @@ export const SETUP_TABS = [
   // B7 agency / freelancer partners: the master, their logins, the Partner emails switch — Super Admin / Admin, or an Accounts desk login (the server allows only Accounts approvers).
   { ...leaf('🤝', '/admin/partners', 'Partners', null), when: (u) => !!u && !u.viewAs && (['SUPER_ADMIN', 'ADMIN'].includes(u.role) || ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'].includes(u.accountsRole)) },
   // Message templates (2026-10-09): the words of every Email / SMS / WhatsApp message, the channels' honest status, sent messages, limits. Admin, HR, TL edit; managers look (server-enforced).
-  { ...leaf('✉️', '/admin/message-templates', 'Message templates', null), when: (u) => !!u && !u.viewAs && [u.role, u.hrmsRole, u.atsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r)) },
-  { ...leaf('💾', '/admin/system', 'Backups & safety', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.viewAs },
+  { ...leaf('✉️', '/admin/message-templates', 'Message templates', null), when: (u) => !!u && !u.viewAs && ([u.role, u.hrmsRole, u.atsRole].some((r) => ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL', 'MANAGER', 'ASSISTANT_MANAGER', 'STL'].includes(r)) || u.accountsRole === 'ACCOUNTANT') },
+  { ...leaf('💾', '/admin/system', 'Backups & safety', null), when: (u) => !!u && u.role === 'SUPER_ADMIN' && !u.hrSuper && !u.viewAs },
 ];
 export const SETUP_PATHS = SETUP_TABS.map((t) => t.to);
 
@@ -385,24 +387,27 @@ export function atsRoleOf(user) {
 
 // Review #3 §15 / §28 — "My Work everywhere", on the five v3 entries. SAME
 // routes, SAME permissions; only the words change (keyed by entry id):
-//   Recruiter  My Work · My Jobs · My Candidates · My Interviews · My Results
-//   BDE        My Work · My Clients & Jobs · Candidates & Pipeline ·
+//   Recruiter  My Work · My Requirements · My Candidates · My Interviews · My Results
+//   BDE        My Work · Clients & Requirements · Candidates & Pipeline ·
 //              Interview Calendar · My Results
 //   TL         My Team (dashboard) · … · Reports & Team
 // Manager / Asst Manager / STL / Super Admin keep the module names.
 const ROLE_LABELS = {
   RECRUITER: {
-    dashboard: 'My Work', 'clients-req': 'My Jobs', candidates: 'My Candidates',
+    dashboard: 'My Work', 'clients-req': 'My Requirements', candidates: 'My Candidates',
     calendar: 'My Interviews', 'reports-team': 'My Results',
   },
-  BDE: { dashboard: 'My Work', 'clients-req': 'My Clients & Jobs', 'reports-team': 'My Results' },
+  BDE: { dashboard: 'My Work', 'clients-req': 'Clients & Requirements', 'reports-team': 'My Results' },
   TL: { dashboard: 'My Team' },
+  // THE HR DESK (user, 2026-10-13): TeamLink's own openings only, never clients. Same slot, same routes.
+  HR: { 'clients-req': 'Internal Hiring', 'reports-team': 'Reports' },
 };
 const ROLE_ICONS = { 'reports-team': { RECRUITER: '🗂️', BDE: '🗂️' } };
 // The tabs inside a module, in a recruiter's / BDE's own words.
 const ROLE_TAB_LABELS = {
-  RECRUITER: { '/requirements': 'My Jobs', '/ats/team': 'My Workload' },
-  BDE: { '/clients': 'My Clients', '/requirements': 'Jobs', '/ats/team': 'My Workload' },
+  RECRUITER: { '/requirements': 'My Requirements', '/ats/team': 'My Workload' },
+  BDE: { '/clients': 'My Clients', '/requirements': 'Requirements', '/ats/team': 'My Workload' },
+  HR: { '/requirements': 'Internal requirements' },
 };
 export function moduleTabsFor(user, tabs) {
   const labels = ROLE_TAB_LABELS[atsRoleOf(user)] || {};
@@ -444,6 +449,15 @@ export function groupsForUser(user) {
   };
   // Labels come from sectionLabel(), so an external login can never be shown
   // an internal product name in the sidebar.
+  // A CLIENT or a CANDIDATE (founder, 2026-10-23: "the client should see only what is theirs") gets their OWN portal and nothing else: the Billing,
+  // HRMS and Administration entries of the staff menu answered "Forbidden. This login can open only its own portal". Their invoices, agreement,
+  // requirements and candidates are tabs INSIDE My Portal; the only other entries are their own Notifications and Profile.
+  if (isExternalUser(user)) {
+    add('ats', sectionLabel('ats', user), atsItemsFor(user));
+    const ownOnly = ADMIN_ITEMS.filter((i) => ALWAYS_OPEN_PATHS.some((p) => i.to === p || String(i.to || '').startsWith(`${p}/`)));
+    add('admin', sectionLabel('admin', user), ownOnly);
+    return groups;
+  }
   add('hrms', sectionLabel('hrms', user), HRMS_ITEMS);
   add('ats', sectionLabel('ats', user), atsItemsFor(user));
   add('accounts', sectionLabel('accounts', user), ACCOUNTS_ITEMS);
@@ -466,6 +480,7 @@ export function flattenGroups(groups) {
 // Which sidebar section a URL belongs to, so the group opens and the topbar
 // title / breadcrumb name the right section.
 const SECTION_OF_PATH = [
+  [/^\/omni(-channel(-native)?)?(\/|$)/, 'omni'], // Omni-Channel (Green Start at /omni-channel, the native pages at /omni-channel-native); /omni is the old address
   // /employees is the employee list. It is an HRMS screen for the leads who
   // reach it from HRMS -> Employees, and the same screen for an admin who
   // reaches it from Administration -> Employee Management; putting it in the

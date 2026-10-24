@@ -228,13 +228,25 @@ async function pollOnce({ transport, messages } = {}) {
       if (!p.from || (cfg.address && p.from === cfg.address.toLowerCase()) || p.auto) { out.ignored += 1; continue; } // eslint-disable-line no-continue
       // eslint-disable-next-line no-await-in-loop
       if (await alreadyHave(p.messageId)) { out.ignored += 1; continue; } // eslint-disable-line no-continue
+      // Omni-Channel reply router: the mail is written to the durable event list first (a replay is ignored); a sender that is nobody we know, or that
+      // belongs to several records, waits in "Needs review" and is written on NO record
+      let R = null; let ev = null;
+      try { R = require('../outreach/omni/replyRouter'); ev = await R.begin({ provider: 'email.imap', id: p.messageId, channel: 'Email', from: p.from, text: p.text, at: p.date, name: p.fromName }); } catch { R = null; } // eslint-disable-line global-require
+      if (ev && ev.duplicate) { out.ignored += 1; continue; } // eslint-disable-line no-continue
       // eslint-disable-next-line no-await-in-loop
       const who = await matchReply(p);
-      if (!who) { out.ignored += 1; continue; } // eslint-disable-line no-continue
+      if (R && ev && ev.id && who && who.by === 'sender') {
+        const v = await R.decide({ email: p.from, channel: 'Email', at: p.date }); // eslint-disable-line no-await-in-loop
+        if (v.status === 'ambiguous') { await R.park(ev, v, { channel: 'Email' }); out.ignored += 1; continue; } // eslint-disable-line no-await-in-loop, no-continue
+      }
+      if (!who) { if (R && ev && ev.id) await R.park(ev, { status: 'none', possible: [] }, { channel: 'Email' }); out.ignored += 1; continue; } // eslint-disable-line no-continue, no-await-in-loop
       out.matched += 1;
-      // eslint-disable-next-line no-await-in-loop
-      const stored = await store(p, who, cfg.address);
+      let stored = null;
+      try {
+        stored = await store(p, who, cfg.address); // eslint-disable-line no-await-in-loop
+      } catch (e2) { if (R && ev) await R.fail(ev, e2); throw e2; } // eslint-disable-line no-await-in-loop
       if (stored) out.stored += 1;
+      if (R && ev && ev.id) await R.finish(ev, { type: who.type, id: who.id, name: who.name }, { channel: 'Email', text: p.text, at: p.date }); // eslint-disable-line no-await-in-loop
     } catch (err) { out.errors.push(String(err && err.message).slice(0, 200)); }
   }
   if (maxUid != null) await putSetting(CKPT, { address: cfg.address, uid: maxUid });

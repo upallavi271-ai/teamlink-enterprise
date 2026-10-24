@@ -5,6 +5,8 @@ import ChannelStrip from './ChannelStrip.jsx';
 import { useUsable, purposesFor, templateFor, smsInfo, CHANNEL_ICON } from './msgKit.js';
 import './messaging.css';
 import './conversation.css';
+import Combo from '../Combo.jsx';
+import { useWaSender } from './WaSender.jsx';
 
 // ---------------------------------------------------------------------------
 // ONE PERSON, ONE CONVERSATION — Call, Mail, WhatsApp and SMS in time order, with a reply box.
@@ -30,6 +32,7 @@ function Bubble({ m }) {
         <span className={`cv-badge ${m.channel}`}>{CHANNEL_ICON[m.channel] || ''} {WORD[m.channel] || m.channel}</span>
         <b>{m.direction === 'in' ? 'They wrote' : (m.who || 'TeamLink')}</b>
         <span>{when(m.at)}</span>
+        {m.waNumber && <span title={m.waNumber.displayNumber || ''}>· {m.waNumber.label}</span>}
         {m.template && m.direction === 'out' && <span>· {m.template}</span>}
         {m.auto && <span>· automatic ({m.trigger})</span>}
       </div>
@@ -84,6 +87,8 @@ export default function ConversationView({
   const allowedKeys = data && data.purposes;
   const msgCh = ch === 'Call' ? 'Best' : ch;
   const previewCh = msgCh === 'Best' ? 'SMS' : msgCh;
+  // WhatsApp: the company number the reply leaves from (only the numbers the Admin gave this login; an existing chat keeps its own number)
+  const wa = useWaSender(ch === 'WhatsApp', pv && pv.waNumber);
   const purposes = useMemo(() => {
     const list = purposesFor(usable, msgCh === 'Best' ? ['Email', 'WhatsApp', 'SMS'] : [msgCh]);
     return allowedKeys ? list.filter((p) => allowedKeys.includes(p.key)) : list;
@@ -104,7 +109,7 @@ export default function ConversationView({
     const t = setTimeout(() => {
       const own = purpose === '' || touched;
       api.post('/messaging/preview', {
-        audience, ids: [personId], channels: [previewCh], kind: 'individual', purposeKey: purpose || undefined, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined,
+        audience, ids: [personId], channels: [previewCh], kind: 'individual', purposeKey: purpose || undefined, applicationId, requirementId, purpose: purpose === '' ? 'Message' : undefined, waNumberId: previewCh === 'WhatsApp' ? wa.numberId : undefined,
         perChannel: { [previewCh]: { templateId: tpl ? tpl.id : undefined, ...(own ? { subject: subject || 'Message', body: text } : {}) } },
       }).then((r) => {
         setPv(r.data);
@@ -113,14 +118,14 @@ export default function ConversationView({
       }).catch((e) => setPv({ error: e.response?.data?.error || 'Could not prepare the words.' }));
     }, 250);
     return () => clearTimeout(t);
-  }, [audience, personId, previewCh, purpose, tpl && tpl.id, touched, touched ? text : '', usable, data && data.mode, ch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [audience, personId, previewCh, purpose, tpl && tpl.id, touched, touched ? text : '', usable, data && data.mode, ch, wa.numberId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function send() {
     setBusy(true); setRes(null); setCopied(false);
     try {
       const own = purpose === '' || touched;
       const body = {
-        audience, id: personId, channel: ch, applicationId, requirementId, purposeKey: purpose || undefined, purpose: purpose === '' ? 'Message' : undefined,
+        audience, id: personId, channel: ch, applicationId, requirementId, purposeKey: purpose || undefined, purpose: purpose === '' ? 'Message' : undefined, waNumberId: ch === 'WhatsApp' ? wa.numberId : undefined,
       };
       if (ch === 'Best') { if (own) { body.body = text; body.subject = subject || 'Message'; body.purposeKey = undefined; body.purpose = 'Message'; } } else {
         body.perChannel = { [ch]: { templateId: tpl ? tpl.id : undefined, ...(own ? { subject: subject || 'Message', body: text } : {}) } };
@@ -228,12 +233,13 @@ export default function ConversationView({
               </button>
             ))}
           </div>
+          {ch === 'WhatsApp' && wa.node}
           <div className="field">
             <label htmlFor="cv-tpl">Template</label>
-            <select id="cv-tpl" value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPurpose(e.target.value === '__own' ? '' : e.target.value); setTouched(false); setRes(null); }}>
+            <Combo id="cv-tpl" value={purpose === null ? '' : (purpose === '' ? '__own' : purpose)} onChange={(e) => { setPurpose(e.target.value === '__own' ? '' : e.target.value); setTouched(false); setRes(null); }}>
               {purposes.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
               {!allowedKeys && <option value="__own">Write my own message</option>}
-            </select>
+            </Combo>
           </div>
           {msgCh !== 'WhatsApp' && (msgCh === 'Email' || msgCh === 'Best') && (
             <div className="field"><label htmlFor="cv-sub">Subject</label>
@@ -288,7 +294,7 @@ export default function ConversationView({
             </div>
           )}
           <div className="cv-actions" style={{ justifyContent: 'flex-end' }}>
-            <button type="button" className="btn btn-primary" disabled={busy || !text.trim() || (pv && pv.first && (pv.first.missing || []).length > 0 && !touched)} onClick={send}>
+            <button type="button" className="btn btn-primary" disabled={busy || !text.trim() || (pv && pv.first && (pv.first.missing || []).length > 0 && !touched) || (ch === 'WhatsApp' && !wa.canSend)} onClick={send}>
               {busy ? 'Sending…' : (ch === 'Best' ? 'Send on the best channel' : `Send ${WORD[ch]}`)}
             </button>
           </div>

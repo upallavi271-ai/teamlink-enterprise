@@ -13,6 +13,18 @@
   font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;
 }
 .tl-viewas-exit:hover{background:#fbf0de}
+.tl-viewas-actions{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;justify-content:center}
+.tl-viewas-switch{
+  background:transparent;color:#fff;border:1.5px solid #fff;border-radius:6px;padding:3px 11px;
+  font-weight:600;font-size:12.5px;cursor:pointer;white-space:nowrap;
+}
+.tl-viewas-switch:hover{background:rgba(255,255,255,.16)}
+.tl-viewas-switch:focus-visible{outline:2px solid #fff;outline-offset:2px}
+/* ACT AS: real changes - clearly different from the amber read-only banner. */
+.tl-viewas-banner.is-act{background:#B3261E;box-shadow:0 2px 8px rgba(120,10,10,.4)}
+.tl-viewas-banner.is-act .tl-viewas-exit{color:#B3261E}
+.tl-viewas-banner.is-act .tl-viewas-exit:hover{background:#fde9e7}
+.tl-viewas-banner.is-act .tl-viewas-text{font-size:13.5px}
 .tl-viewas-exit:focus-visible{outline:2px solid #fff;outline-offset:2px}
 
 /* Room for the fixed banner: its measured height, set by the component. */
@@ -51,3 +63,34 @@ html.tl-viewas-on .topbar{top:var(--tl-viewas-h,38px)}
 .tl-viewas-page .tl-va-person .seat{display:inline-block;font-size:11.5px;background:var(--navy-tint,#e3eae8);border-radius:4px;padding:1px 6px;margin:3px 4px 0 0}
 .tl-viewas-page .tl-va-person .btn{flex-shrink:0}
 @media (max-width:600px){ .tl-viewas-page .tl-va-list{grid-template-columns:1fr} }
+
+/* Act as: the confirm dialogs and the picker button */
+.tl-actas-back{position:fixed;inset:0;z-index:1100;background:rgba(15,25,30,.55);display:flex;align-items:center;justify-content:center;padding:16px}
+.tl-actas-dialog{background:#fff;color:#1A2830;border-radius:12px;max-width:460px;width:100%;padding:20px 22px;box-shadow:0 14px 40px rgba(0,0,0,.35);border-top:5px solid #B3261E}
+.tl-actas-dialog h2{margin:0 0 10px;font-size:18px}
+.tl-actas-dialog p{margin:0 0 10px;font-size:14px;line-height:1.45}
+.tl-actas-err{background:#fde9e7;color:#8c1d16;border-radius:6px;padding:8px 10px;font-size:13px;margin-bottom:10px}
+.tl-actas-btns{display:flex;gap:10px;justify-content:flex-end;flex-wrap:wrap;margin-top:14px}
+.tl-actas-btns button{border-radius:8px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;border:1.5px solid #B3261E}
+.tl-actas-no{background:#fff;color:#B3261E}
+.tl-actas-yes{background:#B3261E;color:#fff}
+.tl-actas-btns button:disabled{opacity:.6;cursor:default}
+.tl-actas-open{border-color:#B3261E!important;color:#B3261E!important;background:#fff!important}
+.tl-actas-open:hover{background:#fde9e7!important}
+.tl-va-person .tl-va-btns{display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+@media (max-width:600px){ .tl-actas-btns{justify-content:stretch} .tl-actas-btns button{flex:1 1 100%} }
+
+/* The "Acted as" history (components/ActAsHistory.jsx) */
+.tl-actas-hist{margin-top:18px}
+.tl-actas-hist h3{margin:0 0 4px;font-size:15px}
+.tl-actas-hist .tl-ah-sub{font-size:12.5px;opacity:.75;margin-bottom:8px}
+.tl-actas-hist table{width:100%;border-collapse:collapse;font-size:13px}
+.tl-actas-hist th,.tl-actas-hist td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line,#e3e7ea);vertical-align:top}
+.tl-actas-hist .tl-ah-live{color:#B3261E;font-weight:600}
+@media (max-width:700px){
+  .tl-actas-hist table,.tl-actas-hist tbody,.tl-actas-hist tr,.tl-actas-hist td{display:block;width:100%}
+  .tl-actas-hist thead{display:none}
+  .tl-actas-hist tr{border:1px solid var(--line,#e3e7ea);border-radius:8px;margin-bottom:8px;padding:6px 8px}
+  .tl-actas-hist td{border:0;padding:2px 0}
+  .tl-actas-hist td::before{content:attr(data-l) ': ';font-weight:600;opacity:.7}
+}

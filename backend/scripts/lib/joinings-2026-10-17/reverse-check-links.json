@@ -1,0 +1,336 @@
+[
+ {
+  "targetId": "cmucmveo200t7b6d2kyb6fxy5",
+  "targetName": "KG Reddy college of Engineering & Technology",
+  "confidence": "HIGH",
+  "evidence": "Same exact official name as the client that holds the agreement (both were renamed to the name printed in the agreement). Same place: Moinabad. The second row of the same college.",
+  "fromId": "cmucmvgb600wib6d2cjpzlkyr",
+  "fromName": "KG Reddy college of Engineering & Technology"
+ },
+ {
+  "targetId": "cmucmvfae00ugb6d26x13fazh",
+  "targetName": "St. Martin's Engineering College",
+  "confidence": "HIGH",
+  "evidence": "Same exact official name as the client that holds the agreement (renamed to the printed name). Same college at Kompally. Second row of the same college.",
+  "fromId": "cmucmvixn010eb6d2mlndz7fr",
+  "fromName": "St. Martin's Engineering College"
+ },
+ {
+  "targetId": "cmucmvfgb00utb6d21wk7s2es",
+  "targetName": "Swarna Bharathi Institute of Science and Technology",
+  "confidence": "HIGH",
+  "evidence": "Same exact official name as the client that holds the agreement (SBIT). Same city: Khammam. Second row of the same college.",
+  "fromId": "cmucmvix8010db6d2wvnhqe2b",
+  "fromName": "Swarna Bharathi Institute of Science and Technology"
+ },
+ {
+  "targetId": "cmucmvg2w00w0b6d2os35z92j",
+  "targetName": "P.V.K.K Institute of Technology college",
+  "confidence": "HIGH",
+  "evidence": "Same college: same Alamuru address text and the same contact person (Anurag) as the client that holds the agreement; form sheet row 64 names it with this address.",
+  "fromId": "cmucmvew900tpb6d2o5zhr26w",
+  "fromName": "P.V.K.K Institute of Technology college in Andhra Pradesh"
+ },
+ {
+  "targetId": "cmudmt77v0141elixx25d31gt",
+  "targetName": "Anukura Hospital",
+  "confidence": "HIGH",
+  "evidence": "Ankura hospital, Tirupati: this client's contact e-mail is hrtirupathi@ankurahospital.com. Form sheet row 72 \"Ankura hospital, Thirupathi\", agreement date 1/2/25 = date printed on the PDF (2 Jan 2025).",
+  "fromId": "cmudmt6fg00zpelix3ix0850a",
+  "fromName": "Ankura Tirupati Hospitals Private Limited"
+ },
+ {
+  "targetId": "cmuclr0ej00byk161l8yy9q2t",
+  "targetName": "Arupadai college,Pondicherry",
+  "confidence": "HIGH",
+  "evidence": "Same college in Pondicherry (Aarupadai Veedu). Form sheet row 35 \"Arupadai college, Pondicherry\" (7/9/24) is this client (its signed date is already 2024-07-09 from that row); the only Aarupadai agreement in the zip is the PDF of 28 Jun 2024.",
+  "fromId": "cmudmt755013melixneeh37wd",
+  "fromName": "Aarupadai veedu medical College and hospital"
+ },
+ {
+  "targetId": "cmucmvf8500ucb6d2g5c6ksm4",
+  "targetName": "Malla Reddy University",
+  "confidence": "HIGH",
+  "evidence": "Form sheet row 100 \"Mallareddy University\" (Maisammaguda, Dulapally), agreement date 4/1/25 = the date printed on the PDF (1 April 2025). The client created from that PDF (\"Mallareddy group of institutions\") is a duplicate of this one. Old names of this client include \"Mallareddy Univeristy\".",
+  "fromId": "jnmvcae6r20077a47fddaf",
+  "fromName": "Mallareddy group of institutions"
+ },
+ {
+  "targetId": "cmucmvgan00whb6d2k8r6i002",
+  "targetName": "NTR High School",
+  "confidence": "HIGH",
+  "evidence": "The agreement is signed by NTR Memorial Trust. This school is run by the trust: its old name is \"NTR Memorial Trust NTR High School(CBSC)\" and the contact is Muralidhar, the trust's contact.",
+  "fromId": "jnmvcae6r2007y73f5d98b",
+  "fromName": "NTR Memorial Trust"
+ },
+ {
+  "targetId": "cmucmvga800wgb6d2uqkvkpra",
+  "targetName": "NTR Junior & Degree College",
+  "confidence": "HIGH",
+  "evidence": "The agreement is signed by NTR Memorial Trust. This college is run by the trust: its old name is \"NTR Memorial Trust NTR Jr & Degree College\" and the contact is Muralidhar, the trust's contact.",
+  "fromId": "jnmvcae6r2007y73f5d98b",
+  "fromName": "NTR Memorial Trust"
+ },
+ {
+  "targetId": "cmucmvfe000uob6d2dh9kozva",
+  "targetName": "T.R.R College of Technology",
+  "confidence": "HIGH",
+  "evidence": "Same college at Meerpet: PDF address \"4-202, Pragathi Colony, Balapur, Meerpet\"; form sheet row 144 \"TRR college of Technology, Pragathi colony, meerpet\" (12/11/25); same contact Bikshapathi (Director).",
+  "fromId": "cmucmvje2011eb6d24vc4646u",
+  "fromName": "T.R.R College OF TECHNOLOGY BTECH/DIPLOMA / TRR GROUP OF INSTITUTIONS"
+ },
+ {
+  "targetId": "cmucmvg7n00wab6d233p1u4ra",
+  "targetName": "T R R College Of Technology N in Meerpet",
+  "confidence": "HIGH",
+  "evidence": "Same college at Meerpet (a second duplicate row): same contact Bikshapathi, same Meerpet address as the PDF.",
+  "fromId": "cmucmvje2011eb6d24vc4646u",
+  "fromName": "T.R.R College OF TECHNOLOGY BTECH/DIPLOMA / TRR GROUP OF INSTITUTIONS"
+ },
+ {
+  "targetId": "cmucmvg6q00w8b6d22rad5n2b",
+  "targetName": "Pullareddy Pharmacy",
+  "confidence": "HIGH",
+  "evidence": "Same college: this client's address (Air Force Academy, Survey No. 167&168, Dommadugu) is printed on the PDF; contact Subhas is the HOD named in the WhatsApp confirmation; form sheet row 80 \"Pullareddy Pharmacy\" (2/4/25) has the files.",
+  "fromId": "cmucmvirh0100b6d29sslbiys",
+  "fromName": "Pulla Reddy Institute of Pharmacy"
+ },
+ {
+  "targetId": "cmucmvf0900txb6d2kzhjtnh5",
+  "targetName": "Rk Engineering College",
+  "confidence": "HIGH",
+  "evidence": "Same college: RK College of Engineering, Kethanakonda (Vijayawada). Same principal, Ramakrishna. Form sheet row 99 (3/27/25).",
+  "fromId": "cmucmvg9r00wfb6d2hy5xpkso",
+  "fromName": "RK College Of Engineering"
+ },
+ {
+  "targetId": "cmudmt68900yoeliximcqatp7",
+  "targetName": "Sree keshava Hospital Rajamandry",
+  "confidence": "HIGH",
+  "evidence": "Same hospital, Rajahmundry: the client holding the agreement already carries the old name \"Sree Keshava Hospital,Rajamundry\"; the PDF address is Rajamahendravaram.",
+  "fromId": "cmuclr0e400bxk161sxfh1g0v",
+  "fromName": "Sri Keshav Emergency and multispeciality hospital"
+ },
+ {
+  "targetId": "cmucmvjcq011bb6d2tihgrv9p",
+  "targetName": "Sree Chaithnya-Ibbrahimtanam",
+  "confidence": "HIGH",
+  "evidence": "Sri Chaitanya Technical Campus, Ibrahimpatnam: the PDF (18 May 2022; form sheet row 11 \"Sri Chaitanya Technical Campu, Ibrahimpatnam\") names exactly this campus. Only that PDF is shared, not the Khammam agreements.",
+  "fromId": "cmucmvef200spb6d2qsw8kcxf",
+  "fromName": "Sri Chaitanya Group of Colleges",
+  "shas": [
+   "19901d8b6123"
+  ]
+ },
+ {
+  "targetId": "cmucmvgcy00wmb6d2xkuan4b2",
+  "targetName": "JBREC",
+  "confidence": "HIGH",
+  "evidence": "JBREC is the short name of Joginpally B.R. Engineering College (its e-mail is ao@jbrec.edu.in and its old name includes \"(JBREC)\"). Same contact Srinivas.",
+  "fromId": "cmucmvg8i00wcb6d2jdiz2sim",
+  "fromName": "Joginpally B.R. Engineering College"
+ },
+ {
+  "targetId": "cmudmt67000yielixqjks70oo",
+  "targetName": "SSITS",
+  "confidence": "HIGH",
+  "evidence": "SSITS = Sri Sai Institute of Technology and Science: the client that holds the agreement uses the e-mail ssitsao@gmail.com.",
+  "fromId": "cmucmvft400vib6d2hct50us7",
+  "fromName": "Sri Sai Institute Of Technology And Science"
+ },
+ {
+  "targetId": "cmudmt6eg00zkelixcpfqkful",
+  "targetName": "Aradhaya Hospital",
+  "confidence": "MED",
+  "evidence": "Spelling variant \"Aradhaya\" of Aradhya Multi Specialty Hospital (Hyderabad). Both Medical. No second proof.",
+  "fromId": "cmudmt77k013zelixkmzveq4b",
+  "fromName": "Aradhya Multi Specialty Hospital"
+ },
+ {
+  "targetId": "cmudmt63500xvelixrjxrnjjr",
+  "targetName": "PVKK Institute",
+  "confidence": "MED",
+  "evidence": "Short name of P.V.K.K Institute of Technology (the only PVKK college in the data).",
+  "fromId": "cmucmvew900tpb6d2o5zhr26w",
+  "fromName": "P.V.K.K Institute of Technology college in Andhra Pradesh"
+ },
+ {
+  "targetId": "cmucmvjrq0126b6d21tqid80g",
+  "targetName": "Pragathi College",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Pragati Engineering College (the only Pragati college in the data; same old names Pragati / Pragtahi).",
+  "fromId": "cmucmvfp700vab6d2thjnfd6i",
+  "fromName": "Pragati Engineering College"
+ },
+ {
+  "targetId": "cmudmt62z00xuelix6ee9gse4",
+  "targetName": "G.Pulliah College",
+  "confidence": "MED",
+  "evidence": "Spelling variant of G.Pullaiah College of Engineering and Technology; \"G.Pulliah\" is already an old name of that client.",
+  "fromId": "cmucmvex300trb6d2p6itcad6",
+  "fromName": "G.Pullaiah College Of Engineering and Technology"
+ },
+ {
+  "targetId": "cmucmvkth014gb6d2eqohe7z8",
+  "targetName": "C R Reddy",
+  "confidence": "MED",
+  "evidence": "Short name of Sir C.R. Reddy College of Engineering, Eluru; \"Sir C R Reddy\" is an old name of that client.",
+  "fromId": "cmucmvf1t00u0b6d2r8tl2fez",
+  "fromName": "Sir C.R. Reddy College of Engineering, Eluru"
+ },
+ {
+  "targetId": "cmudmt61r00xnelix8zqsfq1o",
+  "targetName": "Holymary Pharmacy",
+  "confidence": "MED",
+  "evidence": "Holy Mary Institute of Technology & Science runs a pharmacy college; same name, no second proof.",
+  "fromId": "cmucmvfgw00uub6d2u163ri6u",
+  "fromName": "Holy Mary Institute of Technology & Science"
+ },
+ {
+  "targetId": "cmucmvk2h012ub6d2g3nxm82u",
+  "targetName": "Jagadhmabha",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Jagadambha College of Engineering & Technology.",
+  "fromId": "cmucmvf1e00tzb6d252gnf8ix",
+  "fromName": "Jagadambha College of Engineering & Technology"
+ },
+ {
+  "targetId": "cmucmviom00zub6d2o60w6vu5",
+  "targetName": "Sri Anna,macharya",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Sri Annamacharya Institute of Technology and Sciences. The group has two campuses (Rajampet, Hayathnagar): the campus is not known.",
+  "fromId": "cmucmvejd00syb6d25fnpzrv3",
+  "fromName": "Sri Annamacharya Institute of Technology and Sciences"
+ },
+ {
+  "targetId": "cmucmvkgi013qb6d2zidau486",
+  "targetName": "SRi Annamachrya",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Sri Annamacharya Institute of Technology and Sciences. Campus not known.",
+  "fromId": "cmucmvejd00syb6d25fnpzrv3",
+  "fromName": "Sri Annamacharya Institute of Technology and Sciences"
+ },
+ {
+  "targetId": "cmucmvleu014nb6d25orfdx7o",
+  "targetName": "Snjivani",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Sanjivani (Sanjivani Group of Institutes / University).",
+  "fromId": "cmucmvf3600u2b6d209ueqqpa",
+  "fromName": "Sanjivani Group of Institutes, Maharashtra & Sanjivani University"
+ },
+ {
+  "targetId": "cmucmvi8d00ywb6d22b47pp6v",
+  "targetName": "HITHAM",
+  "confidence": "MED",
+  "evidence": "Spelling variant of HITAM (Hyderabad Institute of Technology and Management).",
+  "fromId": "cmucmvevs00tob6d24wduvcg3",
+  "fromName": "Hyderabad Institute of Technology and Management (HITAM)"
+ },
+ {
+  "targetId": "cmuclr0gc00c2k161qjmifzcc",
+  "targetName": "Gitam Ram",
+  "confidence": "MED",
+  "evidence": "Spelling variant of GitaRam Hospital (West Bengal). Both Medical.",
+  "fromId": "cmudmt762013relixs021u90y",
+  "fromName": "GitaRam Hospital Private Limited"
+ },
+ {
+  "targetId": "cmucmvib200z2b6d24wid4zwd",
+  "targetName": "GVR&S",
+  "confidence": "MED",
+  "evidence": "Short name of GVR & S College of Engineering & Technology (Guntur).",
+  "fromId": "cmucmvefm00sqb6d2pephhj4j",
+  "fromName": "GVR & S College of Engineering & Technology"
+ },
+ {
+  "targetId": "cmucmvg5u00w6b6d2qdkem4fm",
+  "targetName": "Malla Reddy Women's College",
+  "confidence": "MED",
+  "evidence": "Same name as Malla Reddy Engineering College for Women and the same contact first name (Prabhakar); the address on file is wrong (Kandlakoya).",
+  "fromId": "cmucmveek00sob6d2dn4em7j1",
+  "fromName": "Malla Reddy Engineering College for Women"
+ },
+ {
+  "targetId": "cmucmvisc0102b6d25oikrk9a",
+  "targetName": "NARSARAOPETA",
+  "confidence": "MED",
+  "evidence": "Short name of Narasaraopeta Engineering College.",
+  "fromId": "cmucmvemy00t5b6d2zhqeu68v",
+  "fromName": "Narasaraopeta Engineering College"
+ },
+ {
+  "targetId": "cmucmvjki011sb6d2rmaml5zw",
+  "targetName": "Sharada College",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Sharad Institute of Technology (Ichalkaranji); the file name says \"Shardha\". It could also be Sharad International School.",
+  "fromId": "cmucmvexh00tsb6d271pxkjal",
+  "fromName": "Sharad Institute of Technology College of Engineering, Ichalkaranji"
+ },
+ {
+  "targetId": "cmucmvi4i00yob6d2jcv4qd1o",
+  "targetName": "Spoorthy",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Sai Spurthi Institute of Technology (old name \"Sai Spoorthi\").",
+  "fromId": "cmucmvf6c00u8b6d2gcf2g6la",
+  "fromName": "Sai Spurthi Institute Of Technology"
+ },
+ {
+  "targetId": "cmudmt66100ycelixyaacf1ew",
+  "targetName": "SSIT",
+  "confidence": "MED",
+  "evidence": "Short name of Sri Sai Institute of Technology and Science (SSIT / SSITS).",
+  "fromId": "cmucmvft400vib6d2hct50us7",
+  "fromName": "Sri Sai Institute Of Technology And Science"
+ },
+ {
+  "targetId": "cmucmvjou0120b6d25z620xqa",
+  "targetName": "R K College",
+  "confidence": "MED",
+  "evidence": "Short name of RK College of Engineering.",
+  "fromId": "cmucmvg9r00wfb6d2hy5xpkso",
+  "fromName": "RK College Of Engineering"
+ },
+ {
+  "targetId": "cmucmvhxs00yab6d2lvvfhm7l",
+  "targetName": "J.B.R",
+  "confidence": "MED",
+  "evidence": "Short name of Joginpally B.R. Engineering College (the trust also runs a pharmacy college).",
+  "fromId": "cmucmvg8i00wcb6d2jdiz2sim",
+  "fromName": "Joginpally B.R. Engineering College"
+ },
+ {
+  "targetId": "cmucmvijd00zkb6d2fy7h43sx",
+  "targetName": "SRI CHAITHANYA-IBBA",
+  "confidence": "MED",
+  "evidence": "Short name of Sri Chaitanya Technical Campus, Ibrahimpatnam (IBBA = Ibrahimpatnam).",
+  "fromId": "cmucmvef200spb6d2qsw8kcxf",
+  "fromName": "Sri Chaitanya Group of Colleges",
+  "shas": [
+   "19901d8b6123"
+  ]
+ },
+ {
+  "targetId": "cmucmvijv00zlb6d2raniiqms",
+  "targetName": "PNR",
+  "confidence": "MED",
+  "evidence": "PNR = Prathap Narender Reddy College of Pharmacy (its e-mail is pnrcollege2010@gmail.com). Education.",
+  "fromId": "cmucmvfxz00vsb6d2zayq2zrr",
+  "fromName": "Prathap Narender Reddy College of Pharmacy"
+ },
+ {
+  "targetId": "cmudmt5w300wwelixrd2t5smh",
+  "targetName": "Aurochemicals Pvt Ltd",
+  "confidence": "MED",
+  "evidence": "Spelling variant of Aurochem Pharmaceuticals (India) Pvt Ltd; this row is in Education with no jobs and one invoice.",
+  "fromId": "cmuclr25l00fck161ylohamhp",
+  "fromName": "AUROCHEM PHARMACEUTICALS INDIA PVT LTD."
+ },
+ {
+  "targetId": "jnmvcae6r200698b514e1d",
+  "targetName": "GDMM College of Engineering and Technology",
+  "confidence": "MED",
+  "evidence": "The form sheet (row 4, \"GDMM\", agreement date 2/25/22) lists this PDF as the signed agreement. The PDF itself is a letter to the Principal with the terms of recruitment, so it was held back.",
+  "markOnly": true,
+  "date": "2022-02-25"
+ }
+]

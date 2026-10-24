@@ -47,7 +47,7 @@ const noViewAs = (req, res) => (req.viewAs ? (res.status(403).json({ error: 'You
 // Which team leads (and the BDE TL) this caller may read / send for.
 async function visibleTls(user) {
   const view = atsViewRole(user);
-  const all = await PW.recipients();
+  const all = await PW.recipients({ viewer: await PW.viewerFor(user) });
   const bde = (await CW.bdePeople()).filter((p) => p.isTl).map((p) => ({ id: p.user.id, name: p.user.name, department: 'BDE', recruiters: 0, bde: true }));
   const everyone = [...all, ...bde];
   if (['admin', 'mgmt'].includes(view)) return everyone;
@@ -66,7 +66,7 @@ router.get('/settings', guarded(async (req, res) => {
   const settings = await PW.getSettings({ fresh: true });
   const MS = require('../utils/messaging'); // eslint-disable-line global-require
   const channels = await MS.channelStatus().catch(() => ({}));
-  const tls = mayManage(req.user, req) ? [...await PW.recipients(), ...(await CW.bdePeople()).filter((p) => p.isTl).map((p) => ({ id: p.user.id, name: p.user.name, department: 'BDE', bde: true }))] : [];
+  const tls = mayManage(req.user, req) ? [...await PW.recipients({ viewer: await PW.viewerFor(req.user) }), ...(await CW.bdePeople()).filter((p) => p.isTl).map((p) => ({ id: p.user.id, name: p.user.name, department: 'BDE', bde: true }))] : [];
   return res.json({
     settings,
     defaults: PW.DEFAULTS,
@@ -86,7 +86,7 @@ router.put('/settings', guarded(async (req, res) => {
   if (!mayManage(req.user, req)) return res.status(403).json({ error: 'Only a Super Admin, Admin or HR can change these settings.' });
   const out = await PW.saveSettings(req.body || {}, req.user);
   if (out.error) return res.status(400).json({ error: out.error });
-  const brief = (s) => JSON.stringify({ enabled: s.enabled, bell: s.bell, email: s.email, digestTime: s.digestTime, copyStl: s.copyStl, copyManager: s.copyManager, escalation: s.escalation, bde: s.bde, nudge: s.nudge, chain: s.chain, eod: s.eod });
+  const brief = (s) => JSON.stringify({ enabled: s.enabled, bell: s.bell, email: s.email, digestTime: s.digestTime, copyStl: s.copyStl, copyManager: s.copyManager, escalation: s.escalation, bde: s.bde, nudge: s.nudge, chain: s.chain, self: s.self, eod: s.eod });
   if (brief(out.before) !== brief(out.settings)) {
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Changed pending-work reminders', entity: 'Settings', entityId: PW.SETTINGS_KEY, fromValue: brief(out.before).slice(0, 900), toValue: brief(out.settings).slice(0, 900) }).catch(() => null);
   }
@@ -117,7 +117,7 @@ router.get('/digest/preview', guarded(async (req, res) => {
     const p = await CW.bdePending(await resolveIdentity(tlId));
     return res.json({ bde: true, totals: { total: p.total }, counts: p.counts, note: 'The BDE TL gets one combined copy of every BDE digest.' });
   }
-  const out = await PW.previewFor(tlId);
+  const out = await PW.previewFor(tlId, { viewer: await PW.viewerFor(req.user) });
   if (out.error) return res.status(400).json({ error: out.error });
   return res.json({ ...out, teamLeads: tls });
 }));
@@ -161,7 +161,15 @@ router.get('/chain', guarded(async (req, res) => {
 router.post('/chain/run', guarded(async (req, res) => {
   if (!mayManage(req.user, req)) return res.status(403).json({ error: 'Only a Super Admin, Admin or HR can run this.' });
   const b = req.body || {};
-  return res.json(await require('../utils/chainAlerts').run({ dryRun: !!b.dryRun, force: !!b.force })); // eslint-disable-line global-require
+  return res.json(await require('../utils/chainAlerts').run({ dryRun: !!b.dryRun, force: !!b.force, fresh: !!b.fresh })); // eslint-disable-line global-require
+}));
+
+// "MY MISSED ITEMS" (user, 2026-10-12): what the signed-in person missed - follow-ups, calls not made, tasks and to-dos, late steps, interview
+// feedback not recorded, candidates waiting for their check - with an Open link each. Their OWN rows only, for any ATS login; the same items
+// (utils/missedItems.js) the morning reminder to them and to their team lead is made from.
+router.get('/my-missed', guarded(async (req, res) => {
+  const out = await require('../utils/missedItems').forPerson(req.user, { fresh: req.query.fresh === '1' }); // eslint-disable-line global-require
+  return res.json(out);
 }));
 
 // ---- end of day --------------------------------------------------------------
@@ -169,6 +177,7 @@ router.get('/eod', guarded(async (req, res) => {
   const view = atsViewRole(req.user);
   if (!LEAD_VIEWS.includes(view)) return res.status(403).json({ error: 'The end-of-day report is for team leads, managers and admins.' });
   const tls = await visibleTls(req.user);
+  if (!tls.length && req.query.tl) return res.status(403).json({ error: 'That team is not in your area.' });
   if (!tls.length) return res.json({ teamLeads: [], tl: null, days: [], report: null, canSend: false });
   const tlId = String(req.query.tl || (view === 'tl' ? req.user.id : tls[0].id));
   if (!tls.some((t) => t.id === tlId)) return res.status(403).json({ error: 'That team is not in your area.' });
@@ -182,7 +191,7 @@ router.get('/eod', guarded(async (req, res) => {
     const snap = await EOD.readSnapshot(tlId, day);
     if (snap) report = snap;
     else if (req.query.build === '1' || day === today) {
-      report = await EOD.loadOrBuild({ tlId, day, fresh: true });
+      report = await EOD.loadOrBuild({ tlId, day, fresh: true, viewer: await PW.viewerFor(req.user) });
       if (report.error) { note = report.error; report = null; } else if (day !== today) note = 'This day was not reported at the time. It is rebuilt from the records; the pending numbers are not known for a past day.';
     } else note = 'No report was made for this day. Press "Build this day" to make one from the records.';
   }
@@ -201,7 +210,7 @@ router.get('/eod/xlsx', guarded(async (req, res) => {
   const tlId = String(req.query.tl || (view === 'tl' ? req.user.id : (tls[0] && tls[0].id) || ''));
   if (!tls.some((t) => t.id === tlId)) return res.status(403).json({ error: 'That team is not in your area.' });
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.day || '')) ? req.query.day : PW.dayOfIst(new Date());
-  const report = (await EOD.readSnapshot(tlId, day)) || await EOD.loadOrBuild({ tlId, day, fresh: day === PW.dayOfIst(new Date()) });
+  const report = (await EOD.readSnapshot(tlId, day)) || await EOD.loadOrBuild({ tlId, day, fresh: day === PW.dayOfIst(new Date()), viewer: await PW.viewerFor(req.user) });
   if (report.error) return res.status(400).json({ error: report.error });
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'End-of-day report downloaded', entity: 'Report', entityId: tlId, toValue: day }).catch(() => null);
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -218,7 +227,7 @@ router.post('/eod/send', guarded(async (req, res) => {
   const tlId = String(b.tl || (view === 'tl' ? req.user.id : ''));
   if (!tlId || !tls.some((t) => t.id === tlId)) return res.status(403).json({ error: 'That team is not in your area.' });
   const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || '')) ? b.day : null;
-  const out = await EOD.sendNow({ tlId, day, toSelfOnly: !!b.toMe && tlId !== req.user.id, requester: { id: req.user.id, name: req.user.name, email: req.user.email } });
+  const out = await EOD.sendNow({ viewer: await PW.viewerFor(req.user), testMode: !!(await PW.viewerFor(req.user)), tlId, day, toSelfOnly: !!b.toMe && tlId !== req.user.id, requester: { id: req.user.id, name: req.user.name, email: req.user.email } });
   if (out.status === 200) await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'End-of-day report sent now', entity: 'Report', entityId: tlId, toValue: `${out.body.day} to ${out.body.sentTo}` }).catch(() => null);
   return res.status(out.status).json(out.body);
 }));

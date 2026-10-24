@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can: canPerm } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
+const passwordReset = require('../utils/passwordReset');
 const { strengthError, passwordEventData, passwordStatusOf } = require('../utils/passwordPolicy');
 const {
   ROLE_FEATURE_ACTIONS, ROLE_ACCESS_MODULES, CATALOG_ROLES, ROLE_SCOPE_DESC,
@@ -10,7 +11,7 @@ const {
   moduleById, sanitizeFeatures, featureInfoOf,
 } = require('../utils/roleAccess');
 const {
-  mergeAccess, invalidateRoleAccess, accessFor, viewOnlyLocksFor,
+  mergeAccess, invalidateRoleAccess, accessFor, viewOnlyLocksFor, hardLocksFor, clampHard,
 } = require('../utils/permissions');
 const {
   MATRIX_ROWS, MATRIX_ACTIONS, SCOPE_LEVELS, SCOPE_LEVEL_LABEL, SCOPE_ALIAS, BEHAVES_LIKE_ATS,
@@ -107,6 +108,14 @@ async function productRoleError(body, existing = null) {
   return null;
 }
 
+// The product-role fields a payload would write (same keys accessPatch reads), for the role guard.
+function productRoleFields(body) {
+  const d = accessPatch(body || {});
+  const out = {};
+  ['hrmsRole', 'atsRole', 'accountsRole'].forEach((k) => { if (d[k] !== undefined) out[k] = d[k]; });
+  return out;
+}
+
 function accessPatch(body) {
   const data = {};
   const p = body.products || {};
@@ -130,14 +139,34 @@ function accessPatch(body) {
   return data;
 }
 
+const LA = require('../utils/loginAccounts');
+// Extra-login employee links and "how many logins on this email" for a set of users - two small queries, not one per row.
+async function loginContext(users) {
+  const out = { linked: new Map(), emailCounts: new Map() };
+  try {
+    await LA.ensure();
+    const links = await LA.employeeIdsOfUsers(users.map((u) => u.id));
+    const empIds = [...new Set([...links.values()])];
+    const emps = empIds.length ? await prisma.employee.findMany({ where: { id: { in: empIds } } }) : [];
+    const byId = new Map(emps.map((e) => [e.id, e]));
+    links.forEach((eid, uid) => { if (byId.has(eid)) out.linked.set(uid, byId.get(eid)); });
+    const counts = await LA.q('SELECT lower(trim("email")) AS e, COUNT(*) AS n FROM "User" GROUP BY lower(trim("email"))');
+    counts.forEach((r) => out.emailCounts.set(r.e, r.n));
+  } catch { /* the screen shows the logins without these extras */ }
+  return out;
+}
+
 // The wide row the Users table renders: login + linked employee + reach.
-async function shapeUser(user) {
+async function shapeUser(user, ctx = null) {
+  // SEPARATE LOGINS ON ONE EMAIL (2026-10-21): the Employee record an EXTRA login is linked to (utils/loginAccounts.js).
+  const c = ctx || await loginContext([user]);
   const [assignedAsRecruiter, assignedAsBde] = await Promise.all([
     prisma.requirement.findMany({ where: { recruiterId: user.id }, include: { client: true } }),
     prisma.requirement.findMany({ where: { bdeId: user.id }, include: { client: true } }),
   ]);
   const requirements = [...assignedAsRecruiter, ...assignedAsBde];
-  const emp = user.employee;
+  const linkedEmp = c.linked.get(user.id) || null;
+  const emp = user.employee || linkedEmp;
   const clientNames = [...new Set(requirements.map((r) => r.client?.name).filter(Boolean))];
   if (user.client?.name) clientNames.push(user.client.name);
 
@@ -157,6 +186,10 @@ async function shapeUser(user) {
 
   return {
     id: user.id,
+    // How many logins use this email (1 = the normal case), and whether this is the person's main login or an extra one.
+    loginsOnEmail: c.emailCounts.get(String(user.email || '').trim().toLowerCase()) || 1,
+    isExtraLogin: !!linkedEmp,
+    roleLabel: LA.roleLabelOf(user),
     name: user.name,
     email: user.email,
     username: user.username || user.email,
@@ -204,12 +237,20 @@ async function shapeUser(user) {
   };
 }
 
+// "N accounts still use a starting password" - Super Admin only, names only, never the password.
+router.get('/users/starting-password', async (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only a Super Admin can see this.' });
+  const list = await require('../utils/seedPasswords').accountsOnStartingPassword(); // eslint-disable-line global-require
+  res.json({ count: list.length, accounts: list.map((a) => ({ id: a.id, name: a.name, role: a.role })) });
+});
+
 router.get('/users', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
   const users = await prisma.user.findMany({
     include: { employee: true, client: true },
     orderBy: { name: 'asc' },
   });
-  res.json(await Promise.all(users.map(shapeUser)));
+  const ctx = await loginContext(users);
+  res.json(await Promise.all(users.map((u) => shapeUser(u, ctx))));
 });
 
 // Employees with no login yet — the "Create login" picker on the Users screen.
@@ -222,61 +263,135 @@ router.get('/users/employees-without-login', requirePerm(null, 'administration',
   res.json(employees);
 });
 
+// CREATE LOGIN.
+//
+// THE NORMAL CASE is unchanged: one login per person, the Admin types a first password, the owner must change it.
+//
+// SEPARATE LOGINS ON ONE EMAIL (founder, 2026-10-21). When the Admin ticks "Create another separate login on this email"
+// (additionalLogin) the new login:
+//   * may use an email that already has a login (the Users screen shows those logins first: role, department, employee, status);
+//   * is its OWN account (own password, own roles / modules) - exactly what is ticked on this form, nothing inherited
+//     from the person's other logins and nothing derived from the email;
+//   * has NO password typed by anybody: it is emailed a single-use link bound to THIS login, and the person chooses the password;
+//   * is linked to the SAME Employee record as the person's main login (no second employee is created). Employee.userId stays on the
+//     main login; the extra one is recorded in EmployeeLogin.
+// While the database still holds the old one-login-per-email rule the Admin gets a plain message (never a 500), see multiLoginOn.
 router.post('/users', requirePerm(null, 'administration', 'Users', 'create'), async (req, res) => {
-  const { name, email, password, role, atsDepartment, clientId, employeeId, branch, team, username, status } = req.body;
-  if (!name || !email || !password || !role) return res.status(400).json({ error: 'name, email, password and role are required' });
+  const {
+    name, email, password, role, atsDepartment, clientId, employeeId, branch, team, username, status, additionalLogin, sendActivation,
+  } = req.body;
+  const isTrue = (v) => v === true || v === 'true' || v === 1 || v === '1';
+  const extra = isTrue(additionalLogin);
+  const activate = extra || isTrue(sendActivation);
+  if (!name || !email || !role || (!password && !activate)) return res.status(400).json({ error: 'name, email, password and role are required' });
+  if (extra && password) return res.status(400).json({ error: 'A separate login chooses its own password. Leave the password empty: we email a link to set it.' });
   if (!ALL_ROLES.includes(role)) return res.status(400).json({ error: 'Unknown role' });
   if (status && !USER_STATUSES.includes(status)) return res.status(400).json({ error: 'Unknown status' });
   if (role === 'CLIENT' && !clientId) return res.status(400).json({ error: 'A Client login must be tied to one client' });
+  if (extra && ['CLIENT', 'CANDIDATE'].includes(role)) return res.status(400).json({ error: 'Client and candidate logins are made from their own screens.' });
   { const bad = await productRoleError(req.body); if (bad) return res.status(400).json({ error: bad }); }
+  // SECURITY (2026-10-13): only a Super Admin makes a Super Admin / Admin; nobody hands out more than the guard allows.
+  { const why = await require('../utils/roleGuard').checkRoleChange({ actor: req.user, current: null, next: { role, atsDepartment, ...productRoleFields(req.body) } }); if (why) return res.status(403).json({ error: why }); } // eslint-disable-line global-require
 
-  // ONE PERSON, ONE LOGIN — checked BEFORE anything is written. Case-
-  // insensitive, because "Kiran@x" and "kiran@x" are the same mailbox and
-  // SQLite's = is case-sensitive.
+  // An extra login gets EXACTLY the products ticked here: every product not ticked is off with the explicit role NONE, so nothing is
+  // filled in from the employee's designation and nothing is granted because an email already has a login.
+  const access = accessPatch(req.body);
+  if (extra) {
+    let anyProduct = false;
+    for (const [p, label] of [['hrms', 'HRMS'], ['ats', 'ATS'], ['accounts', 'Accounts']]) {
+      const on = access[`${p}Access`] === true;
+      if (on && !(access[`${p}Role`] && access[`${p}Role`] !== 'NONE')) return res.status(400).json({ error: `Choose a role for ${label}, or set ${label} to No Access.` });
+      if (!on) { access[`${p}Access`] = false; access[`${p}Role`] = 'NONE'; }
+      anyProduct = anyProduct || on;
+    }
+    if (!anyProduct && !['SUPER_ADMIN', 'ADMIN'].includes(role)) return res.status(400).json({ error: 'Choose what this login can open: at least one of HRMS, ATS or Accounts.' });
+  }
+
+  // THE EMAIL. Case-insensitive, because "Kiran@x" and "kiran@x" are the same mailbox and SQLite's = is case-sensitive.
   const norm = String(email).trim().toLowerCase();
-  const [sameLogin] = await prisma.$queryRaw`SELECT id FROM User WHERE lower(trim(email)) = ${norm} LIMIT 1`;
-  if (sameLogin) return res.status(409).json({ error: 'That email already has a login' });
+  const sameEmail = await LA.accountsByEmail(norm);
+  if (sameEmail.length && !extra) {
+    const n = sameEmail.length;
+    return res.status(409).json({
+      error: `That email already has ${n === 1 ? 'a login' : `${n} logins`}. To add another, separate login on the same email, tick "Create another separate login on this email".`,
+      code: 'EMAIL_HAS_LOGINS',
+      existing: await LA.summariesFor(sameEmail),
+    });
+  }
+  if (sameEmail.length && extra && !(await LA.state({ fresh: true })).multiLoginOn) {
+    return res.status(409).json({
+      error: 'This email is still locked to one login: run the one-time upgrade. A Super Admin can switch it on from the banner at the top of this page.',
+      code: 'MULTI_LOGIN_OFF',
+    });
+  }
+
   let linkEmployee = null;
+  let linkAs = null; // 'primary' | 'extra'
   if (employeeId) {
     linkEmployee = await prisma.employee.findUnique({ where: { id: employeeId } });
     if (!linkEmployee) return res.status(404).json({ error: 'Employee not found' });
-    if (linkEmployee.userId) return res.status(409).json({ error: 'That employee already has a login' });
+    if (linkEmployee.userId) {
+      if (!extra) return res.status(409).json({ error: 'That employee already has a login' });
+      linkAs = 'extra';
+    } else {
+      linkAs = 'primary';
+    }
   }
-  // An EMPLOYEE record with this email is the same person. A second login for
-  // them (e.g. a separate "recruiter" account) is exactly what the one-user
-  // model forbids: give the ATS role to their existing login on this screen,
-  // or pick the employee here so this login is linked to them.
+  // An EMPLOYEE record with this email is the same person. A second main login for them is exactly what the one-user model forbids:
+  // give the ATS role to their existing login on this screen, or pick the employee here so this login is linked to them.
   if (!['CLIENT', 'CANDIDATE'].includes(role)) {
     const [emp] = await prisma.$queryRaw`SELECT id, userId, name, employeeCode FROM Employee WHERE lower(trim(email)) = ${norm} LIMIT 1`;
     if (emp && emp.id !== employeeId) {
+      if (extra) {
+        return res.status(409).json({
+          error: `That email belongs to employee ${emp.name} (${emp.employeeCode}). Select that employee so the separate login is linked to them (no second employee is created).`,
+          code: 'PICK_EMPLOYEE',
+        });
+      }
       return res.status(409).json({
         error: emp.userId
-          ? `${emp.name} (${emp.employeeCode}) already has a login. Add the ATS / Accounts role to that login instead of creating a second one.`
+          ? `${emp.name} (${emp.employeeCode}) already has a login. Add the ATS / Accounts role to that login instead of creating a second one, or tick "Create another separate login on this email".`
           : `That email belongs to employee ${emp.name} (${emp.employeeCode}). Select that employee so the login is linked to them.`,
+        code: emp.userId ? 'EMPLOYEE_HAS_LOGIN' : 'PICK_EMPLOYEE',
       });
     }
   }
 
-  const passwordHash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({
-    data: {
-      // The administrator typed this first password, so its owner must
-      // change it (hrms-24 §12).
-      ...passwordEventData('initial'),
-      name, email, passwordHash, role, atsDepartment, clientId,
-      branch, team, username: username || email, status: status || 'Active',
-      ...accessPatch(req.body),
-    },
-  });
-
-  // Access is granted TO an existing employee — never a second identity.
-  // (Validated above, before the login was created.)
-  if (linkEmployee) {
-    await prisma.employee.update({ where: { id: linkEmployee.id }, data: { userId: user.id } });
+  const passwordHash = activate
+    ? await require('../utils/employeeInvite').unguessablePasswordHash() // eslint-disable-line global-require
+    : await bcrypt.hash(password, 10);
+  let user;
+  try {
+    user = await prisma.user.create({
+      data: {
+        // The administrator typed this first password, so its owner must change it (hrms-24 §12). An activation login has none yet.
+        ...(activate ? {} : passwordEventData('initial')),
+        name, email, passwordHash, role, atsDepartment, clientId,
+        branch, team, username: username || email, status: status || 'Active',
+        ...access,
+      },
+    });
+  } catch (err) {
+    // The database still forces one login per email (the one-time upgrade has not been run).
+    if (err && err.code === 'P2002') {
+      return res.status(409).json({ error: 'This email is still locked to one login: run the one-time upgrade. A Super Admin can switch it on from the banner at the top of this page.', code: 'MULTI_LOGIN_OFF' });
+    }
+    throw err;
   }
 
-  await logAudit({ userId: req.user.id, action: 'User created', entity: 'User', entityId: user.id, toValue: `${role} · ${user.status}` });
-  res.status(201).json(await shapeUser(await prisma.user.findUnique({ where: { id: user.id }, include: { employee: true, client: true } })));
+  // Access is granted TO an existing employee - never a second identity. (Validated above, before the login was created.)
+  if (linkEmployee && linkAs === 'primary') {
+    await prisma.employee.update({ where: { id: linkEmployee.id }, data: { userId: user.id } });
+  } else if (linkEmployee && linkAs === 'extra') {
+    await LA.linkEmployee(user.id, linkEmployee.id, req.user.id);
+  }
+
+  await logAudit({ userId: req.user.id, action: extra ? 'Separate login created on a shared email' : 'User created', entity: 'User', entityId: user.id, toValue: `${role} · ${user.status}` });
+  await require('../utils/roleGuard').noteRoleChange({ actor: req.user, current: { id: user.id, name: user.name }, next: { role, ...productRoleFields({ ...req.body, ...access }) }, source: extra ? 'new separate login' : 'new login' }); // eslint-disable-line global-require
+  let activation = null;
+  if (activate) activation = await require('../utils/loginActivation').sendActivation({ user, byUser: req.user }); // eslint-disable-line global-require
+  const shaped = await shapeUser(await prisma.user.findUnique({ where: { id: user.id }, include: { employee: true, client: true } }));
+  res.status(201).json({ ...shaped, activation });
 });
 
 router.put('/users/:id', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
@@ -286,12 +401,21 @@ router.put('/users/:id', requirePerm(null, 'administration', 'Users', 'edit'), a
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
   { const bad = await productRoleError(req.body, existing); if (bad) return res.status(400).json({ error: bad }); }
+  // SECURITY (2026-10-13): role escalation guard (Admin cannot make / edit a Super Admin or an Admin, nobody edits their own role).
+  const roleGuard = require('../utils/roleGuard'); // eslint-disable-line global-require
+  const wantedRoles = { role, atsDepartment, ...productRoleFields(req.body) };
+  { const why = await roleGuard.checkRoleChange({ actor: req.user, current: existing, next: wantedRoles }); if (why) return res.status(403).json({ error: why }); }
+  if ((status || username || name) && existing.id !== req.user.id) {
+    const why = roleGuard.checkPasswordTarget({ actor: req.user, target: existing });
+    if (why && status && status !== existing.status) return res.status(403).json({ error: 'Only a Super Admin can switch off a Super Admin or an Admin login.' });
+  }
 
   const user = await prisma.user.update({
     where: { id: req.params.id },
     data: { name, role, atsDepartment, branch, team, status, username, ...accessPatch(req.body) },
     include: { employee: true, client: true },
   });
+  await roleGuard.noteRoleChange({ actor: req.user, current: existing, next: wantedRoles, source: 'Users screen' });
   if (role && role !== existing.role) {
     await logAudit({ userId: req.user.id, action: `Role changed for ${user.name}`, entity: 'User', entityId: user.id, fromValue: existing.role, toValue: role });
   }
@@ -309,6 +433,7 @@ router.post('/users/:id/toggle-status', requirePerm(null, 'administration', 'Use
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
   if (existing.id === req.user.id) return res.status(409).json({ error: 'You cannot disable your own login' });
+  if (require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target: existing })) return res.status(403).json({ error: 'Only a Super Admin can switch off a Super Admin or an Admin login.' }); // eslint-disable-line global-require
   const next = (existing.status || 'Active') === 'Active' ? 'Inactive' : 'Active';
   const user = await prisma.user.update({ where: { id: req.params.id }, data: { status: next }, include: { employee: true, client: true } });
   await logAudit({ userId: req.user.id, action: `Login ${next === 'Active' ? 'enabled' : 'disabled'} for ${user.name}`, entity: 'User', entityId: user.id, fromValue: existing.status, toValue: next });
@@ -319,6 +444,7 @@ router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Us
   const { password } = req.body;
   const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'User not found' });
+  { const why = require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target: existing }); if (why) return res.status(403).json({ error: why }); } // eslint-disable-line global-require
   const weak = strengthError(password, { email: existing.email, name: existing.name });
   if (weak) return res.status(400).json({ error: weak });
   // The new hash is live at once; the owner must change it at their next
@@ -334,7 +460,40 @@ router.post('/users/:id/reset-password', requirePerm(null, 'administration', 'Us
   });
   // The new password is never echoed back or logged.
   await logAudit({ userId: req.user.id, action: `Password reset for ${existing.name}`, entity: 'User', entityId: existing.id, toValue: 'Reset — change required at next sign-in' });
-  res.json({ ok: true, passwordStatus: passwordStatusOf(await prisma.user.findUnique({ where: { id: existing.id } })) });
+  // Older sessions end; Super Admin / Admin are told THAT it changed (never what it is).
+  const afterReset = await prisma.user.findUnique({ where: { id: existing.id } });
+  await passwordReset.afterPasswordChange({ user: afterReset, method: 'admin_reset', byUserId: req.user.id, byName: req.user.name });
+  res.json({ ok: true, passwordStatus: passwordStatusOf(afterReset) });
+});
+
+// GET RESET LINK - the safer way to get someone back in. The Admin never types or
+// learns a password: the link is shown ON SCREEN once, to hand over; the person
+// opens it and chooses their own. Works once, for ADMIN_LINK_TTL_MIN minutes.
+router.post('/users/:id/reset-link', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Only a Super Admin or an Admin can make a reset link.' });
+  const target = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === req.user.id) return res.status(400).json({ error: 'For your own password, use Change password in My Profile.' });
+  { const why = require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target }); if (why) return res.status(403).json({ error: why.replace('reset the password of', 'make a reset link for') }); } // eslint-disable-line global-require
+  if ((target.status || 'Active') !== 'Active') return res.status(409).json({ error: 'This login is switched off. Enable it first.' });
+  const out = await passwordReset.adminLink(req, target);
+  res.json({ ok: true, name: target.name, link: out.link, expiresAt: out.expiresAt, minutes: out.minutes });
+});
+
+// WHO IS TOLD when someone changes their password (Company Setup).
+router.get('/password-alert-setting', async (req, res) => {
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'Only a Super Admin or an Admin can see this.' });
+  const setting = await passwordReset.readSetting();
+  const people = await prisma.user.findMany({
+    where: { status: 'Active', role: { in: setting.roles } }, select: { id: true, name: true, role: true }, orderBy: { name: 'asc' },
+  });
+  res.json({ ...setting, canEdit: req.user.role === 'SUPER_ADMIN', people });
+});
+
+router.put('/password-alert-setting', async (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only a Super Admin can change who is told.' });
+  const out = await passwordReset.writeSetting(req.user, req.body || {});
+  res.json(out);
 });
 
 // ---- Add Employee and the email one-time code that gates it ----
@@ -372,6 +531,9 @@ router.put('/designation-roles/:designation', requirePerm(null, 'administration'
   const {
     atsRole, hrmsRole, accountsRole, hrms, ats, accounts, landing,
   } = req.body;
+  if (req.user.role !== 'SUPER_ADMIN' && [atsRole, hrmsRole, accountsRole].some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r))) {
+    return res.status(403).json({ error: 'Only a Super Admin can map a designation to the Admin or Super Admin role.' });
+  }
   if (atsRole && !ATS_ROLES.includes(atsRole)) return res.status(400).json({ error: 'Unknown ATS role' });
   if (hrmsRole && hrmsRole !== NO_ROLE && !ALL_ROLES.includes(hrmsRole)) return res.status(400).json({ error: 'Unknown HRMS role' });
   if (accountsRole && accountsRole !== NO_ROLE && !ALL_ROLES.includes(accountsRole)) return res.status(400).json({ error: 'Unknown Accounts role' });
@@ -660,6 +822,8 @@ router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Ro
   const { role } = req.params;
   if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const rows = await prisma.roleAccess.findMany({ where: { role } });
+  // A custom role is held to the same fixed-off boxes as the system role it behaves like (2026-10-13).
+  const lockRole = CATALOG_ROLES.includes(role) ? role : (await require('../utils/roleRegistry').scopeAliasFor(role, 'ats').catch(() => role)); // eslint-disable-line global-require
   res.json({
     role,
     scope: ROLE_SCOPE_DESC[role] || '—',
@@ -676,8 +840,18 @@ router.get('/role-catalog/:role/access', requirePerm(null, 'administration', 'Ro
       // endpoint checks it by name (utils/roleAccess.js SPLIT_MODULES).
       featureInfo: featureInfoOf(m.id),
       // Manager / Assistant Manager: actions the server ignores (§3/§4).
-      locked: viewOnlyLocksFor(role, m.id),
-      ...mergeAccess(role, m.id, ...rowsFor(rows, role, m.id)),
+      locked: (() => {
+        // view-only roles (Manager / Asst Manager) + the hard locks: posting a job is never a Recruiter's, booking an interview is the BDE's alone
+        const a = viewOnlyLocksFor(role, m.id); const b = hardLocksFor(lockRole, m.id);
+        if (!b) return a;
+        const out = { ...(a || {}) };
+        Object.entries(b).forEach(([f, acts]) => { out[f] = [...new Set([...(out[f] || []), ...acts])]; });
+        return out;
+      })(),
+      lockNote: hardLocksFor(lockRole, m.id)
+        ? (m.id === 'requirements' ? [lockRole === 'RECRUITER' ? 'Posting a requirement (Save & Post, job sites, Job Portal publish and sync, creating, editing and opening a requirement) is not a Recruiter\'s requirement. These boxes stay off whatever is ticked.' : '', require('../utils/jobCreateRule').lockNoteFor(lockRole)].filter(Boolean).join(' ') : 'Only the client manager (BDE) books interviews: book, move, cancel. These boxes stay off for this role whatever is ticked. Feedback and viewing are not affected.')
+        : null,
+      ...clampHard(lockRole, m.id, mergeAccess(role, m.id, ...rowsFor(rows, role, m.id))),
     })),
   });
 });
@@ -702,6 +876,7 @@ async function upsertRoleAccess(role, moduleId, patch) {
 // Turn a whole module on or off for a role.
 router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
+  if (['SUPER_ADMIN', 'ADMIN'].includes(role) && req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only a Super Admin can change what the Super Admin and Admin roles can do.' });
   if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
   if (!mod) return res.status(404).json({ error: 'Unknown module' });
@@ -719,6 +894,7 @@ router.put('/role-catalog/:role/modules/:moduleId', requirePerm(null, 'administr
 // Save one module's feature x action grid for a role.
 router.put('/role-catalog/:role/modules/:moduleId/features', requirePerm(null, 'administration', 'Role Catalog', 'configure'), async (req, res) => {
   const { role, moduleId } = req.params;
+  if (['SUPER_ADMIN', 'ADMIN'].includes(role) && req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only a Super Admin can change what the Super Admin and Admin roles can do.' });
   if (!(await isKnownRole(role))) return res.status(404).json({ error: 'Unknown role' });
   const mod = moduleById(moduleId);
   if (!mod) return res.status(404).json({ error: 'Unknown module' });
@@ -916,9 +1092,19 @@ const shapeNotification = (n) => ({
   status: n.status || (n.read ? 'Read' : 'Delivered'),
 });
 
+// An email line's status is read against the master switch (utils/hrmsNotify.js displayStatus): never "waiting" when emails are OFF.
+const withMailStatus = async (rows) => {
+  if (!rows.some((n) => n.channel === 'Email')) return rows;
+  const hn = require('../utils/hrmsNotify'); // eslint-disable-line global-require
+  const s = await hn.getSettings();
+  return rows.map((n) => ({ ...n, status: hn.displayStatus(n, s) || n.status }));
+};
+
 router.get('/notifications', async (req, res) => {
+  // A TL / STL / Recruiter / HR login never gets a line about an agreement (utils/agreementPrivacy.js).
+  const noAgreement = require('../utils/agreementPrivacy').notificationFilter(req.user); // eslint-disable-line global-require
   if (req.query.page !== undefined) {
-    const own = { userId: req.user.id };
+    const own = noAgreement ? { AND: [{ userId: req.user.id }, noAgreement] } : { userId: req.user.id };
     const and = [own];
     const q = String(req.query.q || '').trim();
     if (q) and.push({ OR: [{ title: { contains: q } }, { message: { contains: q } }, { recipient: { contains: q } }] });
@@ -938,10 +1124,10 @@ router.get('/notifications', async (req, res) => {
       prisma.notification.count({ where: { ...own, read: false } }),
     ]);
     const channels = [...new Set(chans.map((c) => c.channel || 'In-App'))].sort();
-    return res.json({ rows: rows.map(shapeNotification), total, page, pageSize, channels, unread });
+    return res.json({ rows: await withMailStatus(rows.map(shapeNotification)), total, page, pageSize, channels, unread });
   }
   const notifications = await prisma.notification.findMany({
-    where: { userId: req.user.id },
+    where: noAgreement ? { AND: [{ userId: req.user.id }, noAgreement] } : { userId: req.user.id },
     // Name only — never the password hash (hrms-24 §12).
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'desc' },
@@ -950,12 +1136,12 @@ router.get('/notifications', async (req, res) => {
   // Recipient / Channel / Status are the prototype's Notifications columns.
   // Rows written before those columns existed fall back to the owning user,
   // the in-app channel, and the delivered/pending state we actually know.
-  res.json(notifications.map((n) => ({
+  res.json(await withMailStatus(notifications.map((n) => ({
     ...n,
     recipient: n.recipient || n.user?.name || 'Everyone',
     channel: n.channel || 'In-App',
     status: n.status || (n.read ? 'Read' : 'Delivered'),
-  })));
+  }))));
 });
 
 // THE JOB-REQUEST POP-UP (user, 2026-10-09). The few notifications that must be
@@ -981,6 +1167,8 @@ router.get('/notifications/popups', async (req, res) => {
     select: { id: true, reqCode: true, title: true, openings: true, status: true, client: { select: { name: true } } },
   });
   const byId = new Map(reqs.map((r) => [r.id, r]));
+  const RA = require('../utils/requestAccept'); // eslint-disable-line global-require
+  const stateById = new Map(await Promise.all(reqs.map(async (r) => [r.id, await RA.stateOf(r.id)])));
   const seen = new Set();
   const out = [];
   rows.forEach((n) => {
@@ -989,6 +1177,7 @@ router.get('/notifications/popups', async (req, res) => {
     if (!r || seen.has(r.id)) return;
     seen.add(r.id);
     out.push({
+      requestState: stateById.get(r.id) || null,
       id: n.id, requirementId: r.id, reqCode: r.reqCode, client: (r.client && r.client.name) || n.title.slice(POPUP_TITLE.length),
       jobTitle: r.title, openings: r.openings || 1, status: r.status, createdAt: n.createdAt, path: `/requirements/${r.id}`,
     });
@@ -1026,6 +1215,81 @@ router.post('/notifications/read-all', async (req, res) => {
 //                  approvalStatus, from / to (ISO dates), sort (new | old).
 //                  `facets` carries the option lists for the filter bar.
 const AUDIT_USER = { select: { id: true, name: true, email: true, role: true } };
+// A CSV the browser built itself (frontend utils/csv.js downloadCsv) is reported here, so no export escapes the Super Admin alert.
+router.post('/hr-sensitive/client-export', async (req, res) => {
+  if (!req.user.hrSuper) return res.status(204).end();
+  const A = require('../utils/hrSensitiveAlert'); // eslint-disable-line global-require
+  const b = req.body || {};
+  const module = A.moduleOf(String(b.page || '/').split('?')[0]);
+  await A.record({
+    kind: 'export', module, what: `${module} ${String(b.name || 'file').replace(/.(csv|xlsx)$/i, '').replace(/[-_]+/g, ' ').slice(0, 60)}`.trim(), count: Number.isFinite(Number(b.rows)) ? Number(b.rows) : null,
+    actorId: req.user.id, actorName: req.user.name || req.user.email, actorEmail: req.user.email, label: req.user.hrSuper.label || 'Internal HR',
+    filters: 'none (built in the browser)', ip: require('../utils/clientIp').ipOf(req), // eslint-disable-line global-require
+  });
+  res.status(204).end();
+});
+
+// ---- HR SUPER ACCESS (founder, 2026-10-14; utils/hrSuper.js) ----------------------------------------------
+// The list of logins that work as "Internal HR" (Super-Admin-equivalent minus the kept guards), the guards
+// themselves, and the two switches. Only a REAL Super Admin or Admin changes it (also in utils/hrSuper.js GUARDS).
+router.get('/hr-super-access', requirePerm(null, 'administration', 'Users', 'view'), async (req, res) => {
+  const hrSuper = require('../utils/hrSuper'); // eslint-disable-line global-require
+  const cfg = await hrSuper.settings();
+  const ids = cfg.users.map((u) => u.id);
+  const rows = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, include: { employee: { select: { employeeCode: true, department: true, designation: true, employmentStatus: true } } } }) : [];
+  const roleHolders = await prisma.user.findMany({
+    where: { OR: hrSuper.ROLE_FIELDS.map((f) => ({ [f]: hrSuper.ROLE_CODE })), id: { notIn: ids } },
+    include: { employee: { select: { employeeCode: true, department: true, designation: true, employmentStatus: true } } },
+  });
+  const shape = (u, via) => ({ id: u.id, name: u.name, email: u.email, via, employeeCode: u.employee ? u.employee.employeeCode : null, department: u.employee ? u.employee.department : null, designation: u.employee ? u.employee.designation : null, employmentStatus: u.employee ? u.employee.employmentStatus : null, status: u.status });
+  const mailCfg = await mailer.emailConfig().catch(() => ({ configured: false }));
+  res.json({
+    enabled: cfg.enabled, emailSuperAdmins: cfg.emailSuperAdmins, notifyAdmins: cfg.notifyAdmins,
+    users: [...rows.map((u) => shape(u, 'list')), ...roleHolders.map((u) => shape(u, 'role'))],
+    guards: hrSuper.guardList(), roleCode: hrSuper.ROLE_CODE, roleName: hrSuper.ROLE_NAME,
+    canEdit: hrSuper.isRealTop(req.user),
+    mail: { configured: !!mailCfg.configured, note: mailCfg.configured ? 'E-mail is set up: Super Admins also get an e-mail.' : 'E-mail is not set up yet: Super Admins get the bell notification only.' },
+  });
+});
+router.put('/hr-super-access', requirePerm(null, 'administration', 'Users', 'edit'), async (req, res) => {
+  const hrSuper = require('../utils/hrSuper'); // eslint-disable-line global-require
+  if (!hrSuper.isRealTop(req.user)) return res.status(403).json({ error: 'Only a Super Admin or an Admin can give or take away Internal HR access.' });
+  const cfg = await hrSuper.settings();
+  const b = req.body || {};
+  const next = { ...cfg, users: [...cfg.users] };
+  if (b.enabled !== undefined) next.enabled = !!b.enabled;
+  if (b.emailSuperAdmins !== undefined) next.emailSuperAdmins = !!b.emailSuperAdmins;
+  if (b.notifyAdmins !== undefined) next.notifyAdmins = !!b.notifyAdmins;
+  const added = [];
+  for (const id of [].concat(b.add || [])) {
+    // eslint-disable-next-line no-await-in-loop
+    const u = await prisma.user.findUnique({ where: { id: String(id) }, include: { employee: { select: { employeeCode: true } } } });
+    if (!u) return res.status(404).json({ error: 'That login was not found.' });
+    if (['SUPER_ADMIN', 'ADMIN', 'CLIENT', 'CANDIDATE'].includes(u.role)) return res.status(400).json({ error: `${u.name} is already a Super Admin / Admin, or an outside login: nothing to give.` });
+    if (u.id === req.user.id) return res.status(403).json({ error: 'You cannot change your own access.' });
+    if (!next.users.some((x) => x.id === u.id)) {
+      next.users.push({ id: u.id, name: u.name, employeeCode: u.employee ? u.employee.employeeCode : null, addedAt: new Date().toISOString(), addedBy: req.user.name });
+      added.push(u);
+    }
+  }
+  const removed = [];
+  for (const id of [].concat(b.remove || [])) {
+    const i = next.users.findIndex((x) => x.id === String(id));
+    if (i >= 0) { removed.push(next.users[i]); next.users.splice(i, 1); }
+  }
+  const saved = await hrSuper.saveSettings(next, req.user);
+  await hrSuper.ensureRole(req.user).catch(() => null);
+  for (const u of added) await logAudit({ userId: req.user.id, actorName: req.user.name, action: `Internal HR access given to ${u.name}`, entity: 'User', entityId: u.id, toValue: 'HR super access' });
+  for (const u of removed) await logAudit({ userId: req.user.id, actorName: req.user.name, action: `Internal HR access taken from ${u.name || u.id}`, entity: 'User', entityId: u.id, fromValue: 'HR super access' });
+  if (added.length) {
+    const sas = await prisma.user.findMany({ where: { role: 'SUPER_ADMIN', status: 'Active' }, select: { id: true } });
+    await require('../utils/notify').notifyUsers(sas.map((x) => x.id), { // eslint-disable-line global-require
+      title: 'Internal HR access was given', message: `${req.user.name || 'Someone'} gave ${added.map((u) => u.name).join(', ')} Internal HR access (everything a Super Admin can do except the guarded items).`, exceptUserId: req.user.id,
+    });
+  }
+  res.json({ ok: true, enabled: saved.enabled, emailSuperAdmins: saved.emailSuperAdmins, notifyAdmins: saved.notifyAdmins, users: saved.users });
+});
+
 router.get('/audit', requirePerm(null, 'administration', 'Audit Logs', 'view'), async (req, res) => {
   if (req.query.page !== undefined) {
     const and = [];
@@ -1453,7 +1717,7 @@ router.post('/integrations/job-portal/log/:id/retry', requirePerm(null, 'adminis
   } else {
     const r = await bridge.fullSync({ actor: req.user.name });
     ok = r.ok && !r.failed && !r.errors.length;
-    why = r.ok ? `${r.jobs} job(s) live, ${r.failed} failed, ${r.errors.length} problem(s)` : r.error;
+    why = r.ok ? `${r.jobs} requirement(s) live, ${r.failed} failed, ${r.errors.length} problem(s)` : r.error;
   }
   if (!ok) return res.status(502).json({ error: `Retry did not work: ${String(why || '').replace(/\s+/g, ' ').trim().slice(0, 300)}` });
   const updated = await prisma.syncLog.update({
@@ -1691,6 +1955,7 @@ router.put('/integrations/biometric/map', requirePerm(null, 'administration', 'I
 router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'whatsapp-qr') return res.status(400).json({ error: 'Set up the QR-link prototype on Integrations > WhatsApp & SMS (it needs the "I understand" tick).' });
   if (channel.id === 'biometric') return saveBiometric(req, res, channel);
   let written;
   try {
@@ -1731,6 +1996,35 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
       result: live ? 'Credentials saved (encrypted at rest)' : 'OK (Demo)',
     });
   await logAudit({ userId: req.user.id, action: 'Integration configured', entity: 'Integration', entityId: channel.id, toValue: 'Connected' });
+  if (channel.id === 'whatsapp') {
+    // THE TOKEN WAS JUST SAVED: ask Meta what it thinks of it, and re-check every number that reads it. "Connected" is only true if Meta says so.
+    let waCheck = null; let shown = row;
+    try {
+      const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+      const wa = require('../utils/whatsappCloud'); // eslint-disable-line global-require
+      const r = await WN.afterLegacyTokenChange(req.user);
+      const parts = [];
+      let rejected = false; let why = '';
+      if (r.noList) {
+        const t = await wa.testConnection();
+        rejected = !t.ok && /\b(401|190)\b|token/i.test(String(t.result || ''));
+        why = t.result || '';
+        parts.push(t.ok ? `Meta accepted it. ${t.result}` : `Meta did not accept it. ${t.result}`);
+      } else {
+        const okL = r.checked.filter((c) => c.code === 'connected' || c.code === 'verification_required' || c.code === 'test_mode').map((c) => c.label);
+        const badL = r.checked.filter((c) => c.code === 'disconnected');
+        rejected = badL.some((c) => c.authFailed);
+        why = (badL.find((c) => c.authFailed) || {}).text || '';
+        if (okL.length) parts.push(`Meta accepted it for: ${okL.join(', ')}.`);
+        if (badL.length) parts.push(`Meta did not accept it for: ${badL.map((c) => c.label).join(', ')}.`);
+        const own = r.ownToken.filter((o) => !o.sameToken);
+        if (own.length) parts.push(`Not changed (they keep their own token): ${own.map((o) => `${o.label}${o.legacyWorks ? ' (the new token works for it: edit the number and choose "The shared token")' : ''}`).join(', ')}.`);
+      }
+      shown = await prisma.integration.update({ where: { id: 'whatsapp' }, data: rejected ? { state: 'Token rejected by Meta', error: String(why).slice(0, 300) } : { state: 'Connected', error: null } });
+      waCheck = { rejected, summary: `WhatsApp saved. ${parts.join(' ')}`.trim() };
+    } catch (e) { waCheck = { rejected: false, summary: 'WhatsApp saved. Could not ask Meta just now: press Test connection.' }; }
+    return res.json({ ...shapeIntegration(channel, shown), waCheck });
+  }
   res.json(shapeIntegration(channel, row));
 });
 
@@ -1856,6 +2150,7 @@ router.post('/integrations/:id/test-message', requirePerm(null, 'administration'
 router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const channel = integrationById(req.params.id);
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
+  if (channel.id === 'whatsapp-qr') return res.status(400).json({ error: 'Switch the QR-link prototype on at Integrations > WhatsApp & SMS (it needs the "I understand" tick).' });
   if (channel.id === 'biometric') return setBiometricStatus(req, res, channel, 'Active');
   const row = await integrationRow(channel.id);
   let values = {};
@@ -2001,6 +2296,13 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result });
   }
 
+  if (channel.id === 'sms-android') {
+    const probe = await require('../channels/androidSms').test(); // eslint-disable-line global-require
+    const nextRow = await prisma.integration.update({ where: { id: channel.id }, data: { lastTest: new Date(), lastTestResult: probe.result.slice(0, 480), error: probe.ok ? null : probe.result.slice(0, 480) } });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: probe.result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
+  }
   // SMS / WhatsApp are real now (utils/smsGateway.js, utils/whatsappCloud.js):
   // the test is an authenticated read at the provider that sends nothing.
   if (channel.id === 'sms' || channel.id === 'whatsapp') {
@@ -2079,7 +2381,7 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
 
   let synced = 0;
   let failed = 0;
-  let entities = ['Job Status'];
+  let entities = ['Requirement Status'];
   if (channel.id === 'jobportal') {
     const stats = await jobPortalStats();
     synced = stats.candidates + stats.applications;
@@ -2103,7 +2405,7 @@ router.post('/integrations/:id/sync', requirePerm(null, 'administration', 'Integ
     where: { id: channel.id },
     data: {
       lastSync: new Date(), recordsSynced: synced, recordsFailed: failed,
-      error: failed ? `${failed} record(s) could not be synced${JOB_BOARD_CHANNELS.includes(channel.id) ? ' — see the Posted on card of each job' : ' (simulated)'}.` : null,
+      error: failed ? `${failed} record(s) could not be synced${JOB_BOARD_CHANNELS.includes(channel.id) ? ' — see the Posted on card of each requirement' : ' (simulated)'}.` : null,
     },
   });
   await recordEvent(channel.id, {

@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { money2, fmtD } from './invFormat';
+import { bankLineMessage } from '../bank/bankLineMessage';
 import './proof.css';
 
 export default function BankLineView({ invoiceId, txnId, canBank = false }) {
@@ -36,6 +37,15 @@ export default function BankLineView({ invoiceId, txnId, canBank = false }) {
         <div className="pf-wide small-muted">The same bank line also paid {d.otherInvoices.count} other invoice(s) ({money2(d.otherInvoices.amount)}).</div>
       )}
       {d.import && <div className="pf-wide small-muted">From statement file {d.import.file}, imported {fmtD(d.import.importedOn)}.</div>}
+      {/* The same sentence the Bank statements window uses (bank/bankLineMessage.js): this line is the proof of the receipt. */}
+      {(() => {
+        const msg = bankLineMessage({
+          direction: d.type === 'Credit' ? 'in' : 'out',
+          kind: d.type === 'Credit' ? 'invoice_receipt' : 'other',
+          unallocated: d.type === 'Credit' ? d.unallocated : 0,
+        });
+        return <div className={`pf-wide pf-note ${msg.tone}`}><b>{msg.title}</b> {msg.text}</div>;
+      })()}
       {canBank && <div className="pf-wide"><Link className="link-btn" to="/bank">Open in Bank &amp; Reconciliation →</Link></div>}
     </div>
   );

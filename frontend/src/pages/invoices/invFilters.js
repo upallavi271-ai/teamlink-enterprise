@@ -8,7 +8,7 @@
 // filter is applied in the browser, instantly, with AND logic. Nothing here
 // works out a figure — it only decides which invoice rows are in.
 // ---------------------------------------------------------------------------
-import { ALL, matchesHierarchy } from './invHierarchy';
+import { ALL, matchesHierarchy, roleMatch } from './invHierarchy';
 
 export const NONE = '__none'; // the Recruiter filter's "Unassigned"
 
@@ -67,8 +67,15 @@ export const GST_TYPE_OPTS = [
   { value: 'IGST', label: 'IGST' },
   { value: 'NONE', label: 'No GST' },
 ];
-const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-const plusDays = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return isoDay(d); };
+// THE ONE DAY RULE (same as the server, backend utils/accounts.js): a due date is a plain IST calendar date;
+// "today", "late" and "in N days" are date STRINGS in IST, never a UTC timestamp or this computer's own zone.
+const IST_MS = 330 * 60000;
+export const todayIst = (now = Date.now()) => new Date(now + IST_MS).toISOString().slice(0, 10);
+const dayNo = (iso) => { const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number); return Date.UTC(y, m - 1, d) / 86400000; };
+// whole days from `a` to `b` (both YYYY-MM-DD)
+export const dayDiff = (a, b) => dayNo(b) - dayNo(a);
+export const plusDaysIso = (iso, n) => new Date((dayNo(iso) + n) * 86400000).toISOString().slice(0, 10);
+const plusDays = (n) => plusDaysIso(todayIst(), n);
 export function dueMatch(r, want) {
   if (!want || want === ALL) return true;
   const due = r.dueDate ? String(r.dueDate).slice(0, 10) : '';
@@ -89,6 +96,20 @@ export const BLANK_FILTERS = {
   clients: [], dept: ALL, section: ALL, role: ALL, recs: [], rec: ALL, gstin: ALL, status: ALL, q: '',
   gstType: ALL, gstRate: ALL, tds: ALL, tdsRate: ALL, tdsStatus: ALL, due: ALL,
 };
+
+// The Client filter holds client IDS. An old saved view / link may hold a client NAME instead: turn each into
+// the id(s) of the client(s) with that name (every one of them when the name is shared); an unknown value is dropped.
+// `clientList` = the register's [{ id, name }].
+export function resolveClients(list, clientList) {
+  const cl = clientList || [];
+  const out = [];
+  (Array.isArray(list) ? list : []).forEach((v) => {
+    if (cl.some((c) => c.id === v)) { out.push(v); return; }
+    const key = String(v || '').trim().toLowerCase();
+    cl.filter((c) => String(c.name || '').trim().toLowerCase() === key).forEach((c) => out.push(c.id));
+  });
+  return [...new Set(out)];
+}
 
 // A saved view / old link may still hold the older shapes (client: 'Name',
 // period: 'M:2026-09'); bring them to today's.
@@ -144,8 +165,12 @@ export function periodMatch(r, p) {
     case 'joining': return inside(r.joiningDate, p);
     case 'due': return inside(r.dueDate, p);
     case 'payment':
-      // A receipt row's date, or the date an older import says it was paid.
-      return (r.payments || []).some((x) => inside(x.date, p)) || inside(r.paidDate, p);
+      // ANY receipt's own date inside the range. Only an invoice with no receipt
+      // rows at all falls back to the date an older import says it was paid.
+      {
+        const real = (r.payments || []).filter((x) => Number(x.amount) > 0 && x.date);
+        return real.length ? real.some((x) => inside(x.date, p)) : (Number(r.received) > 0.005 && inside(r.paidDate, p));
+      }
     default: return inside(r.invoiceDate, p);
   }
 }
@@ -167,11 +192,12 @@ export const recLabelOf = (r) => (r.recruiterKey ? [r.seat, r.recruiter].filter(
 // option counts: each list is counted over what the OTHER filters leave).
 export function passes(r, F, period, stance, skip) {
   if (skip !== 'period' && !periodMatch(r, period)) return false;
-  if (skip !== 'clients' && F.clients.length && !F.clients.includes(r.client)) return false;
+  // CLIENT = the client's ID (names can repeat, be renamed or spelt two ways), never the name text.
+  if (skip !== 'clients' && F.clients.length && !F.clients.includes(r.clientId)) return false;
   if (skip !== 'dept' && F.dept !== ALL && r.department !== F.dept) return false;
   if (skip !== 'section' && F.section !== ALL && r.sectionKey !== F.section) return false;
   if (skip !== 'rec' && F.rec !== ALL && !matchesHierarchy(r, { dept: ALL, section: ALL, rec: F.rec })) return false;
-  if (skip !== 'role' && F.role !== ALL && r.role !== F.role) return false;
+  if (skip !== 'role' && F.role !== ALL && !roleMatch(r, F.role)) return false;
   // An invoice matches if ANY of its candidates has a picked recruiter (every
   // invoice in this register bills one candidate).
   if (skip !== 'recs' && F.recs.length && !F.recs.includes(recKeyOf(r))) return false;
@@ -200,10 +226,10 @@ export function facetCounts(rows, F, period, stance) {
   };
   const bump = (m, k) => { if (k !== null && k !== undefined && k !== '') m.set(k, (m.get(k) || 0) + 1); };
   rows.forEach((r) => {
-    if (passes(r, F, period, stance, 'clients')) bump(out.clients, r.client);
+    if (passes(r, F, period, stance, 'clients')) bump(out.clients, r.clientId);
     if (passes(r, F, period, stance, 'dept')) bump(out.dept, r.department);
     if (passes(r, F, period, stance, 'section')) bump(out.section, r.sectionKey);
-    if (passes(r, F, period, stance, 'role')) bump(out.role, r.role);
+    if (passes(r, F, period, stance, 'role')) { bump(out.role, r.seat); if (r.tlSeat && r.tlSeat !== r.seat) bump(out.role, r.tlSeat); }
     if (passes(r, F, period, stance, 'recs')) { bump(out.recs, recKeyOf(r)); if (!out.recLabel.has(recKeyOf(r))) out.recLabel.set(recKeyOf(r), recLabelOf(r)); }
     if (passes(r, F, period, stance, 'rec')) {
       bump(out.rec, r.recruiterKey);

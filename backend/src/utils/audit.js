@@ -24,12 +24,19 @@ async function logAudit({
   field, fieldLabel, reason, approvalStatus, approvedByName, approvedAt, actorName,
 }) {
   try {
+    // SUPER ADMIN "ACT AS" (utils/actAs.js): the row keeps the target as its
+    // userId (the app reads it back that way, e.g. pause requests) but names the
+    // real person; the per-request 'Acted as: change' row carries the actor id.
+    const act = require('./actAs').context(); // eslint-disable-line global-require
+    if (act && !String(action || '').startsWith('Act as')) actorName = `${actorName || act.targetName} · done by ${act.byName} (Acting as)`;
     await prisma.auditLog.create({
       data: {
         userId, action, entity, entityId, fromValue, toValue,
         field, fieldLabel, reason, approvalStatus, approvedByName, approvedAt, actorName,
       },
     });
+    // HR WATCH (utils/hrWatch.js): a change by a watched person tells their team lead. Not awaited, never throws.
+    require('./hrWatch').onAudit({ userId, action, entity, entityId, toValue }); // eslint-disable-line global-require
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[audit] could not record "%s" on %s/%s: %s', action, entity, entityId, err && err.message);
@@ -56,6 +63,7 @@ async function logFieldChanges({ userId, actorName, entity, entityId, action, ch
         reason,
       })),
     });
+    require('./hrWatch').onAudit({ userId, action, entity, entityId, toValue: `${changes.length} field${changes.length === 1 ? '' : 's'}` }); // eslint-disable-line global-require
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[audit] could not record field changes on %s/%s: %s', entity, entityId, err && err.message);

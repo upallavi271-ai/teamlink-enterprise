@@ -110,7 +110,7 @@ export function useClientNameOfJobs(clientId) {
 // The dropdown. `blank` is the empty choice ("None — add to database only");
 // `disabledIds` greys out jobs that cannot be chosen (already applied).
 export function JobPickerCombo({
-  value, onChange, blank = 'Choose a job…', disabledIds = [], enabled = true, labelOf = jobLabel, ...rest
+  value, onChange, blank = 'Choose a requirement…', disabledIds = [], enabled = true, labelOf = jobLabel, ...rest
 }) {
   const { rows, total, loading, search } = useJobSearch(enabled);
   const chosen = useJobRows(value ? [value] : []);
@@ -120,13 +120,13 @@ export function JobPickerCombo({
     return [...extra, ...rows];
   }, [rows, value, chosen]);
   return (
-    <Combo value={value} onChange={onChange} onSearch={search} emptyText={loading ? 'Loading...' : 'No job found'} {...rest}>
+    <Combo value={value} onChange={onChange} onSearch={search} emptyText={loading ? 'Loading...' : 'No requirement found'} {...rest}>
       <option value="">{blank}</option>
       {options.map((r) => (
         <option key={r.id} value={r.id} disabled={disabledIds.includes(r.id)}>{labelOf(r)}</option>
       ))}
       {total > rows.length && (
-        <option value="__more" disabled>{`Showing ${rows.length} of ${total.toLocaleString('en-IN')} jobs — type a job, code or client to find others`}</option>
+        <option value="__more" disabled>{`Showing ${rows.length} of ${total.toLocaleString('en-IN')} requirements — type a requirement, code or client to find others`}</option>
       )}
     </Combo>
   );

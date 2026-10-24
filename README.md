@@ -75,8 +75,10 @@ button is never the control — a cross-scope request returns `403`.
 
 ## Demo logins
 
-The demo password for **every** login below is `password123`. It is documented
-here and printed by `npm run seed`; it is never shown anywhere in the UI.
+Every demo login below shares ONE random password that `npm run seed` prints once at the end
+(it is not stored in plain text and never shown in the UI). Each login must choose its own
+password at first sign-in. Only test runs (`TEST_MODE=1` or the sandbox) keep the fixed demo
+password the test fixtures rely on.
 
 | Email | Department / Designation | Products | ATS role & scope |
 |---|---|---|---|
@@ -294,3 +296,19 @@ rest of the panel keeps working.
   `20260921170000_integr_message_delivery`).
 - Never commit a credential. `.env` and `backend/prisma/dev.db` are gitignored,
   and nothing in the codebase logs a secret.
+
+## Auto-sync
+
+`watch-sync.ps1` keeps this folder and GitHub in step. Start it in a PowerShell window:
+
+```
+powershell -ExecutionPolicy Bypass -File .\watch-sync.ps1
+```
+
+- When you save a file it waits until edits go quiet (8 s), then commits (`Auto-sync: a.js, b.js, +N more`), pulls with rebase and pushes to the branch you are on.
+- Every 2 minutes it pulls from GitHub, so changes made elsewhere arrive here.
+- It never pushes secrets: if a staged file looks like one (`.env`, `.env.local`, `*.pem`, `*.key`, `*.p12`, `*.pfx`; the `*.env.example` templates are fine) it commits nothing and prints the names in red.
+- On a conflict it aborts the rebase and tells you; your commit stays safe locally. If you are offline the push is retried on the next change.
+- A single sync of more than 500 files is held back (look at `git status`, then start once with `-AllowBig`).
+- Only one copy runs at a time. **Closing the window stops it.**
+- Options: `-QuietSeconds 8`, `-PullSeconds 120`, `-MaxFiles 500`, `-AllowBig`.

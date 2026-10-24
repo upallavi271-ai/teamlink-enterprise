@@ -81,7 +81,7 @@ export default function InterviewFeedback() {
         <table>
           <thead>
             <tr>
-              <th>Candidate</th><th>Job</th><th>Interview</th><th>Our feedback</th><th>Client said</th><th>Step</th><th>Actions</th>
+              <th>Candidate</th><th>Requirement</th><th>Interview</th><th>Our feedback</th><th>Client said</th><th>Step</th><th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -220,7 +220,7 @@ function DecisionForm({ row, onClose, onSubmit }) {
           reasonCategory: rej.reasonCategory,
           reasonDetail: rej.reasonDetail,
           ...(rej.rejectedBy === 'Client' && String(rej.clientSaid || '').trim() ? { comment: rej.clientSaid.trim() } : {}),
-        }, `${first} is rejected for this job.`);
+        }, `${first} is rejected for this requirement.`);
       } else {
         await onSubmit({ decision, reasonDetail: note.trim() || undefined, comment: note.trim() || undefined }, decision === 'Selected' ? `${first} is selected. Next: prepare the offer.` : `${first} is on hold.`);
       }
@@ -238,7 +238,7 @@ function DecisionForm({ row, onClose, onSubmit }) {
           {(row.panel || []).length > 1 && <div>{`Panel: ${row.panel.map((p) => `${p.name} — ${p.feedback ? p.feedback.recommendation : 'no feedback yet'}`).join(' · ')}`}</div>}
         </div>
         <div className="ivx-sec">
-          <b>Decision *</b>
+          <b>Decision</b>
           <div className="ivx-outs" style={{ gridTemplateColumns: 'repeat(3,1fr)' }} role="radiogroup" aria-label="Decision">
             {[['Selected', 'green'], ['Hold', 'orange'], ['Rejected', 'red']].map(([v, tone]) => (
               <button key={v} type="button" role="radio" aria-checked={decision === v} className={`ivx-out ${tone}${decision === v ? ' is-on' : ''}`} onClick={() => setDecision(v)}>{v}</button>
@@ -248,7 +248,7 @@ function DecisionForm({ row, onClose, onSubmit }) {
         {decision === 'Rejected' && <RejectFields value={rej} onChange={setRej} />}
         {decision === 'Hold' && (
           <div className="ivx-sec">
-            <b>Why on hold? *</b>
+            <b>Why on hold?</b>
             <textarea rows="2" maxLength={1000} placeholder="e.g. Client will decide after the second round" value={note} onChange={(e) => setNote(e.target.value)} />
           </div>
         )}

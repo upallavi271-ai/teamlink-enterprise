@@ -100,7 +100,7 @@ const PERSON = { id: true, employeeCode: true, name: true, department: true, des
 
 // THE SEAT (teamlink-seat-codes): the first word decides the department.
 // Same table as routes/assetInventory.js deptOfSeat (not exported there).
-const SEAT_DEPARTMENTS = { BDE: 'BDE', MED: 'Medical', MFG: 'Manufacturing', EDU: 'Education', HR: 'HR', 'R&D': 'R&D' };
+const SEAT_DEPARTMENTS = { BDE: 'BDE', MED: 'Medical', MFG: 'Manufacturing', EDU: 'Education', HR: 'HR', 'R&D': 'R&D', IHR: 'Internal HR', INTERNAL: 'Internal HR' };
 const isSeat = (code) => !!SEAT_DEPARTMENTS[str(code).toUpperCase().split(/[\s-]+/)[0]];
 
 // Each person's seat code(s): the seat they sit in now (PositionAssignment

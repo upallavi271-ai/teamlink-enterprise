@@ -155,3 +155,7 @@
 @keyframes ak-skel-shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
 @media (prefers-reduced-motion:reduce){.ak-skel{animation:none}}
 .ak-stage-sub{font-size:10.5px;line-height:1.25;color:var(--ink-soft);white-space:normal}
+
+/* ---- Names fit (2026-10-17): people / bar labels wrap instead of "..." ---- */
+.ak-person span:last-child{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;line-height:1.25}
+.ak-bar-label{white-space:normal;overflow-wrap:anywhere;line-height:1.25}

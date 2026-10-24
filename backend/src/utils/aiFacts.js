@@ -354,6 +354,9 @@ async function buildFacts(user, page, { maxChars = DEFAULT_MAX_FACTS_CHARS, ques
     const off = ['hrms', 'ats', 'accounts'].filter((p) => !aiData[p]).map((p) => p.toUpperCase());
     if (off.length) head.push(`The AI Assistant may NOT answer about ${off.join(', ')} for this user (their role does not allow it): if asked, say so plainly and name the screen or their Super Admin.`);
   }
+  if (require('./ownOnly').isOwnOnly(user)) { // eslint-disable-line global-require
+    head.push('RULE: this user is a Recruiter. Their reports show ONLY their own numbers. Never state, estimate or compare numbers of other recruiters, a team, a team lead, a client, a source across the company, revenue or company totals; if asked, say plainly: "Your reports show only your own numbers."');
+  }
   let text = head.join('\n');
   let dropped = false;
   built.filter(Boolean).forEach((section) => {

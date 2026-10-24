@@ -66,8 +66,8 @@ function kindOf(app, asked) {
 async function eventTime(app, kind) {
   const ev = await prisma.interviewEvent.findFirst({ where: { applicationId: app.id, status: EVENT_STATUS[kind] }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }).catch(() => null);
   const at = ev ? ev.createdAt : app.updatedAt;
-  // the stage move that books the first interview is written a moment before the event row
-  return new Date(new Date(at).getTime() - 2 * 60000);
+  // the stage move that books the first interview is written a moment before the event row; a move / cancel starts exactly there
+  return new Date(new Date(at).getTime() - (kind === 'scheduled' ? 2 * 60000 : 0));
 }
 
 // What already reached the candidate about THIS booking / move / cancel, per channel.

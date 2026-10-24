@@ -575,11 +575,13 @@ router.get('/payroll-months', ...guard('view'), async (req, res) => {
   // eslint-disable-next-line global-require
   const P = require('../utils/payrollPosting');
   const runs = await prisma.employeePayrollRun.groupBy({ by: ['month'], orderBy: { month: 'desc' }, take: 36 });
+  const pcSettings = await require('../utils/payrollCycle').getSettings(); // payroll cycle: the dates behind each month name
   const out = [];
   for (const r of runs) {
     // eslint-disable-next-line no-await-in-loop
     const st = await P.monthState(r.month);
-    out.push({ ...st, journalEntry: st.journalEntry ? { ...st.journalEntry, lines: undefined } : null });
+    const cyc = require('../utils/payrollCycle').cycleOf(r.month, pcSettings.cycle);
+    out.push({ ...st, rangeText: cyc.rangeText, heading: cyc.heading, periodFrom: cyc.from, periodTo: cyc.to, periodDays: cyc.days, journalEntry: st.journalEntry ? { ...st.journalEntry, lines: undefined } : null });
   }
   res.json({ months: out, canPost: await can(req.user, 'accounts', 'accounts', FEATURE, 'create') });
 });
@@ -604,7 +606,7 @@ router.get('/payroll-months/:month/details', requireAuth, payrollDesk, async (re
     if (!format || format === 'pdf') return res.status(400).json({ error: 'Export as Excel (xlsx) or CSV.' });
     if (!d.rows.length) return res.status(404).json({ error: 'There are no employees to export for this month and filter.' });
     return sendKitTable(req, res, {
-      format, name: `payroll-${month}`, title: `Payroll ${d.period}`, headers: EXPORT_HEADERS, rows: exportRows(d), sheet: `Payroll ${month}`,
+      format, name: `payroll-${month}`, title: `Payroll ${d.cycle ? d.cycle.heading : d.period}`, headers: EXPORT_HEADERS, rows: exportRows(d), sheet: `Payroll ${month}`,
       entity: 'EmployeePayrollRun', what: `Payroll ${d.period}`, scope: d.filtered ? 'filtered employees' : 'all employees of the month', screen: 'Accounts',
     });
   }

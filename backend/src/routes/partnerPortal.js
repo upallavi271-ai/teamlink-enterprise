@@ -117,6 +117,48 @@ router.post('/logout', anyPartner, async (req, res) => {
   res.json({ ok: true, message: 'Signed out.' });
 });
 
+// ---- set-password link (public: no sign-in yet) -----------------------------------
+// utils/partnerInvite.js: the link is single use and expiring; the partner chooses their own password.
+const BAD_LINK = 'This link is not valid or has expired. Ask TeamLink for a new one.';
+const inviteLimit = rateLimit({ bucket: 'partner-invite', max: Number(process.env.PARTNER_INVITE_IP_MAX || 20), windowMs: 15 * 60000 });
+router.get('/invite/:token', inviteLimit, async (req, res) => {
+  const got = await require('../utils/partnerInvite').findUsable(req.params.token); // eslint-disable-line global-require
+  if (!got) return res.status(404).json({ error: BAD_LINK });
+  const pu = got.partnerUser;
+  return res.json({ valid: true, purpose: got.purpose, name: pu.name, email: pu.email, partnerName: pu.partner.name, expiresAt: got.expiresAt });
+});
+router.post('/invite/accept', ipLimit, inviteLimit, async (req, res) => {
+  const b = req.body || {};
+  const got = await require('../utils/partnerInvite').findUsable(b.token); // eslint-disable-line global-require
+  if (!got) return res.status(400).json({ error: BAD_LINK, linkProblem: true });
+  const pu = got.partnerUser;
+  const newPassword = String(b.newPassword || '');
+  if (!newPassword) return res.status(400).json({ field: 'newPassword', error: 'Choose a password.' });
+  if (b.confirmPassword !== undefined && b.confirmPassword !== newPassword) return res.status(400).json({ field: 'confirmPassword', error: 'The two passwords do not match.' });
+  const weak = PC.partnerPasswordProblem(newPassword, { email: pu.email, name: pu.name });
+  if (weak) return res.status(400).json({ field: 'newPassword', error: weak });
+  for (const h of PC.parseHistory(pu.passwordHistory)) {
+    // eslint-disable-next-line no-await-in-loop
+    if (h && await bcrypt.compare(newPassword, h)) return res.status(400).json({ field: 'newPassword', error: 'You used that password before. Choose a new one.' });
+  }
+  // The password hash changes here, which is what burns this link (and every older one).
+  const meta = PC.requestMeta(req);
+  const done = await prisma.partnerUser.updateMany({
+    where: { id: pu.id, passwordHash: pu.passwordHash },
+    data: {
+      passwordHash: await bcrypt.hash(newPassword, 10), passwordHistory: PC.pushHistory(pu.passwordHistory, pu.passwordHash),
+      mustChangePassword: false, tempPasswordExpiresAt: null, passwordChangedAt: new Date(), failedLoginAttempts: 0, lockedUntil: null,
+      lastLoginAt: new Date(), lastLoginIp: meta.ip,
+    },
+  });
+  if (done.count !== 1) return res.status(400).json({ error: BAD_LINK, linkProblem: true });
+  await PA.revokeSessions(pu.id, got.purpose === 'reset' ? 'password reset by link' : 'invite accepted');
+  const fresh = await prisma.partnerUser.findUnique({ where: { id: pu.id }, include: { partner: true } });
+  const { token } = await PA.createSession(fresh, req);
+  await logAudit({ action: got.purpose === 'reset' ? 'Partner password reset by link' : 'Partner accepted invite', entity: 'PartnerUser', entityId: pu.id, actorName: `Partner: ${pu.name}`, toValue: 'Password chosen by the partner' });
+  return res.json({ token, idleMinutes: PA.IDLE_MINUTES, partner: meOf(fresh), message: 'Your password is set. Welcome.' });
+});
+
 router.post('/change-password', anyPartner, async (req, res) => {
   const { currentPassword, newPassword, confirmPassword } = req.body || {};
   const pu = await prisma.partnerUser.findUnique({ where: { id: req.partner.userId } });

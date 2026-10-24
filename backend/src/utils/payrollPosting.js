@@ -42,6 +42,7 @@ const {
   serviceToken, ensureChart, accountIndex, paise, ensureAccount, monthEnd, employeeWiseReady, LedgerError,
 } = require('./ledger');
 const { monthLabel } = require('./attendanceMath');
+const PC = require('./payrollCycle'); // payroll cycle: voucher date = last day of the pay period
 const { logAudit } = require('./audit');
 const { PayrollError, refreshMonthRun, FINAL_STATUSES } = require('./payrollEngine');
 
@@ -202,7 +203,7 @@ async function monthState(month) {
     lastLog: lastLog ? { kind: lastLog.kind, status: lastLog.status, attempts: lastLog.attempts, lastError: lastLog.lastError, updatedAt: lastLog.updatedAt } : null,
     canPost: finalized && !current && entries.every((e) => e.status === 'APPROVED'),
     blockReason: !entries.length ? `No payroll records for ${monthLabel(month)} yet.`
-      : !finalized ? `${notFinal} record(s) are still Draft / Pending approval — the month posts when every record is approved.`
+      : !finalized ? `${notFinal} record(s) are still Calculated / Pending approval — the month posts when every record is approved.`
         : null,
   };
 }
@@ -229,8 +230,8 @@ function buildMonthPayload({ month, run, entries, accounts, version }) {
   }
   return {
     month: monthNum, year,
-    date: monthEnd(month),
-    narration: `Payroll for ${monthLabel(month)}`,
+    date: PC.cycleSync(month).custom ? PC.voucherDateSync(month) : monthEnd(month),
+    narration: `Payroll for ${monthLabel(month)}${PC.rangeTail(month)}`,
     voucher_type: 'Journal',
     source: 'HRMS_PAYROLL',
     reference_type: 'PAYROLL_MONTH',
@@ -297,6 +298,7 @@ async function failOn(kind, run, month, key, err, actor) {
 // ---- Post the month ------------------------------------------------------------
 // opts.auto: called by the approval that finalized the month.
 async function postMonth(month, actor, { auto = false, plug = false, includeEmployer = true, skipClosedCheck = false } = {}) {
+  await PC.getSettings();
   const st = await monthState(month);
   if (!st.runId) throw new PayrollError(404, `There is no payroll run for ${monthLabel(month)}.`);
   if (st.posted) return { ok: true, already: true, state: st };
@@ -435,7 +437,8 @@ async function bankLedger(bankAccountId) {
 async function bankMatches(month, bankAccountId) {
   const st = await monthState(month);
   const net = Math.round(st.net * 100);
-  const where = { type: 'Debit', matched: false, reconStatus: 'Unmatched', date: { gte: `${month}-01` } };
+  await PC.getSettings();
+  const where = { type: 'Debit', matched: false, reconStatus: 'Unmatched', date: { gte: PC.cycleSync(month).from } };
   if (bankAccountId) where.bankAccountId = bankAccountId;
   const cands = await prisma.bankTransaction.findMany({ where, orderBy: { date: 'asc' }, take: 500 });
   const exact = cands.filter((t) => Math.round(Number(t.amount) * 100) === net);

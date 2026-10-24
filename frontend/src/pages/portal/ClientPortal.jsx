@@ -12,6 +12,10 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import RequestJobModal from '../../components/jobs/RequestJobModal.jsx';
 import OwnResults from '../../components/OwnResults.jsx';
+import ClientOffers from './ClientOffers.jsx';
+import ClientJoinDrop from './ClientJoinDrop.jsx'; // Joinings and drops: who joined, who dropped, the replacement answer
+import Combo from '../../components/Combo.jsx';
+import { ViewAgreementButton } from '../../components/agreements/SignedAgreementFiles.jsx'; // the one shared "View agreement" button
 
 // ---------------------------------------------------------------------------
 // THE CLIENT PORTAL (user notes #4, point 3) — what a client login sees.
@@ -43,16 +47,17 @@ const DECISIONS = {
 // signs in, until they press Got it (remembered in this browser only).
 const GUIDE = {
   BILLING: ['Here are your invoices from TeamLink.', 'Each line shows the amount, the due date and whether it is paid.', 'Questions about a bill? Reply to the invoice email.'],
-  VIEWER: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates: the people we sent you, with their resume.', 'Interviews: dates and times. You can view everything; your colleague with a Reviewer login gives the decisions.'],
-  DEFAULT: ['Your jobs: the openings TeamLink is filling for you.', 'Candidates for review: open a person, read the resume, then press Shortlist, Hold or Reject.', 'Interviews: confirm the time, and after the interview tell us how it went.'],
+  VIEWER: ['Your requirements: the openings TeamLink is filling for you.', 'Candidates: the people we sent you, with their resume.', 'Interviews: dates and times. You can view everything; your colleague with a Reviewer login gives the decisions.'],
+  DEFAULT: ['Your requirements: the openings TeamLink is filling for you.', 'Candidates for review: open a person, read the resume, then press Shortlist, Hold or Reject.', 'Interviews: confirm the time, and after the interview tell us how it went.'],
 };
 // A custom set of ticks: one short line per thing the login can do.
 const GUIDE_BY_CAP = {
-  VIEW: 'Your jobs and Candidates: the openings TeamLink is filling and the people we sent you, with their resume.',
+  VIEW: 'Your requirements and Candidates: the openings TeamLink is filling and the people we sent you, with their resume.',
   DECIDE: 'Candidates: open a person, read the resume, then press Shortlist, Hold or Reject.',
   INTERVIEW: 'Candidates: press Request interview to tell us you want to meet someone.',
   FEEDBACK: 'After an interview, press Give feedback and tell us how it went.',
-  REQUEST: 'Press Ask for a new job at the top to tell us about a new opening.',
+  OFFERS: 'Selected & Joined: upload your offer letter and your joining letter, and confirm when the candidate joins.',
+  REQUEST: 'Press Ask for a new requirement at the top to tell us about a new opening.',
   AGREEMENT: 'Agreement: open it here, and sign it when it is waiting for you.',
   INVOICES: 'Invoices: your bills from TeamLink, with due dates and whether they are paid.',
 };
@@ -79,7 +84,8 @@ export default function ClientPortal() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [tab, setTab] = useState('overview');
+  const [tab, setTab] = useState(() => { try { return new URLSearchParams(window.location.search).get('tab') === 'joindrop' ? 'joindrop' : 'overview'; } catch { return 'overview'; } });
+  const [jdWaiting, setJdWaiting] = useState(0); // dropped candidates still waiting for this client's replacement answer
   const [deciding, setDeciding] = useState(null);
   const [busy, setBusy] = useState(false);
   const [q, setQ] = useState('');
@@ -95,6 +101,8 @@ export default function ClientPortal() {
   useEffect(load, [load]);
   // A login that cannot decide has nothing "waiting for its decision": start on the full list.
   useEffect(() => { if (data && !data.limited && !data.permissions?.decide) setShow('all'); }, [data]);
+  const loadJd = useCallback(() => { api.get('/portal/client/join-drop').then((r) => setJdWaiting(r.data.counts?.waiting || 0)).catch(() => setJdWaiting(0)); }, []);
+  useEffect(() => { if (data && !data.limited) loadJd(); }, [data, loadJd]);
 
   const candidates = data?.candidates || [];
   const shownCandidates = useMemo(() => candidates.filter((c) => {
@@ -148,7 +156,7 @@ export default function ClientPortal() {
             <h1 className="tlp-hello">{data.company.name}</h1>
             <div className="tlp-sub">{data.billingOnly ? 'Your invoices from TeamLink' : 'Your TeamLink client portal'}</div>
           </div>
-          {mayAsk && <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new job</button>}
+          {mayAsk && <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new requirement</button>}
         </div>
         {requesting && (
           <RequestJobModal
@@ -163,7 +171,7 @@ export default function ClientPortal() {
           <div className="tlp-card" style={{ maxWidth: 560, marginBottom: 12 }}>
             <h3>Service agreement</h3>
             <KV rows={[['Status', <Chip key="s" label={data.agreement.status} />], ['Valid from', data.agreement.start], ['Valid to', data.agreement.end]]} />
-            <div className="tlp-actions"><Link className="btn btn-sm btn-primary" to={data.agreement.viewPath}>{data.agreement.needsYou ? 'Review & sign →' : 'Open agreement →'}</Link></div>
+            <div className="tlp-actions"><ViewAgreementButton clientId={user.clientId} esign /> <Link className="btn btn-sm btn-primary" to={data.agreement.viewPath}>{data.agreement.needsYou ? 'Review & sign →' : 'Open agreement →'}</Link></div>
           </div>
         )}
         {data.invoices && (data.invoices.length ? (
@@ -187,8 +195,8 @@ export default function ClientPortal() {
         {!data.invoices && !data.agreement && (
           <EmptyState
             icon="📝"
-            title={mayAsk ? 'You can ask for a new job here' : 'Nothing to show on this page'}
-            hint={mayAsk ? 'Press "Ask for a new job" and tell us about the opening. To also see your jobs and candidates, ask your TeamLink contact to add that for you.' : 'Your login is set up for other things. Ask your TeamLink contact if you need more.'}
+            title={mayAsk ? 'You can ask for a new requirement here' : 'Nothing to show on this page'}
+            hint={mayAsk ? 'Press "Ask for a new requirement" and tell us about the opening. To also see your requirements and candidates, ask your TeamLink contact to add that for you.' : 'Your login is set up for other things. Ask your TeamLink contact if you need more.'}
           />
         )}
       </div>
@@ -213,7 +221,7 @@ export default function ClientPortal() {
           {data.yourContact && <div className="tlp-sub">{`Your TeamLink contact: ${data.yourContact.label}`}</div>}
         </div>
         {mayRequest && (
-          <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new job</button>
+          <button type="button" className="btn btn-primary" onClick={() => setRequesting(true)}>Ask for a new requirement</button>
         )}
       </div>
       {requesting && (
@@ -233,15 +241,22 @@ export default function ClientPortal() {
         </div>
       )}
       {/* 2026-10-05: one obvious way to the agreement (view + download the PDF). */}
-      {agreement && !agreement.needsYou && (
-        <div style={{ margin: '0 0 10px' }}>
-          <Link className="btn btn-sm" to={agreement.viewPath}>📄 View my agreement</Link>
+      {capOn('AGREEMENT') && (
+        <div style={{ margin: '0 0 10px', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <ViewAgreementButton clientId={user.clientId} esign={!!agreement} />
+          {agreement && !agreement.needsYou && <Link className="btn btn-sm" to={agreement.viewPath}>📄 Open my agreement page</Link>}
         </div>
       )}
       {error && <div className="notice red"><span>{error}</span></div>}
       {notice && <div className="notice"><span>{notice}</span></div>}
       <FirstLoginGuide user={user} type={data.portalType} caps={data.portalCaps} />
 
+      {jdWaiting > 0 && tab !== 'joindrop' && (
+        <div className="tlp-banner amber">
+          <span><b>{jdWaiting} candidate{jdWaiting === 1 ? '' : 's'} dropped</b> and we are waiting for your answer: do you want a replacement?</span>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => setTab('joindrop')}>Answer now →</button>
+        </div>
+      )}
       <div className="tlp-stats">
         <Stat value={totals.openRequirements} label="Open requirements" onClick={() => setTab('requirements')} />
         <Stat value={totals.openings} label="Openings still to fill" onClick={() => setTab('requirements')} />
@@ -260,6 +275,7 @@ export default function ClientPortal() {
           { id: 'candidates', label: 'Candidates for Review', count: candidates.length },
           { id: 'interviews', label: 'Interviews', count: interviews.length },
           { id: 'hires', label: 'Selected & Joined', count: hires.length },
+          { id: 'joindrop', label: 'Joinings and drops', count: jdWaiting || undefined },
           agreement || capOn('AGREEMENT') ? { id: 'agreement', label: 'Agreement' } : null,
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
           mayReports ? { id: 'reports', label: 'Reports' } : null,
@@ -321,6 +337,7 @@ export default function ClientPortal() {
           {capOn('AGREEMENT') && (
           <div className="tlp-card">
             <h3>Agreement</h3>
+            <div className="tlp-actions" style={{ marginBottom: 8 }}><ViewAgreementButton clientId={user.clientId} esign={!!agreement} /></div>
             {agreement ? (
               <>
                 <KV rows={[['Agreement', agreement.id], ['Status', <Chip key="s" label={agreement.status} />], ['Valid from', agreement.start], ['Valid to', agreement.end], ['Signed on', agreement.signedAt ? fmtDate(agreement.signedAt) : null]]} />
@@ -338,7 +355,7 @@ export default function ClientPortal() {
             <table>
               <thead>
                 <tr>
-                  <th>Req ID</th><th>Job</th><th>Location</th><th>Openings</th><th>Status</th>
+                  <th>Req ID</th><th>Requirement</th><th>Location</th><th>Openings</th><th>Status</th>
                   <th>Profiles shared</th><th>Waiting for you</th><th>Interviews</th><th>Selected</th><th>Joined</th>
                 </tr>
               </thead>
@@ -370,15 +387,15 @@ export default function ClientPortal() {
         <>
           <div className="tlp-filters">
             <input placeholder="Search name, skill, role or location…" value={q} onChange={(e) => setQ(e.target.value)} />
-            <select value={reqFilter} onChange={(e) => setReqFilter(e.target.value)}>
+            <Combo value={reqFilter} onChange={(e) => setReqFilter(e.target.value)}>
               <option value="">All requirements</option>
               {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}</option>)}
-            </select>
+            </Combo>
             {canDecide && (
-              <select value={show} onChange={(e) => setShow(e.target.value)}>
+              <Combo value={show} onChange={(e) => setShow(e.target.value)}>
                 <option value="waiting">Waiting for your decision</option>
                 <option value="all">All shared with you</option>
-              </select>
+              </Combo>
             )}
             {(q || reqFilter || (canDecide && show !== 'waiting')) && (
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setQ(''); setReqFilter(''); setShow(canDecide ? 'waiting' : 'all'); }}>Clear all</button>
@@ -471,6 +488,10 @@ export default function ClientPortal() {
         ) : <EmptyState icon="📅" title="No interviews yet" hint="Shortlist a candidate or request an interview — the slot will show here once it is fixed." />
       )}
 
+      {tab === 'joindrop' && <ClientJoinDrop onChanged={loadJd} />}
+      {tab === 'hires' && (data.offers || []).length > 0 && (
+        <ClientOffers offers={data.offers} onChanged={(msg) => { setNotice(msg || 'Saved.'); setError(''); load(); }} />
+      )}
       {tab === 'hires' && (
         hires.length ? (
           <div className="tbl-wrap">
@@ -538,14 +559,14 @@ export default function ClientPortal() {
           )}
         >
           <div className="tlp-muted" style={{ marginBottom: 10 }}>Your words go to the TeamLink team only. They are kept apart from our own interview notes.</div>
-          <div className="field"><span>Your answer *</span></div>
+          <div className="field"><span>Your answer</span></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
             {[['Selected', 'Selected'], ['Hold', 'Keep on hold'], ['Rejected', 'Not selected']].map(([v, label]) => (
               <button key={v} type="button" className={`btn btn-sm${feedbackFor.recommendation === v ? ' btn-primary' : ''}`} aria-pressed={feedbackFor.recommendation === v} onClick={() => setFeedbackFor({ ...feedbackFor, recommendation: v })}>{label}</button>
             ))}
           </div>
           <label className="field">
-            <span>What did you think? *</span>
+            <span>What did you think?</span>
             <textarea rows="3" value={feedbackFor.comment} onChange={(e) => setFeedbackFor({ ...feedbackFor, comment: e.target.value })} />
           </label>
         </Modal>
@@ -570,11 +591,11 @@ export default function ClientPortal() {
           <div className="tlp-muted" style={{ marginBottom: 10 }}>{DECISIONS[deciding.decision].hint}</div>
           {deciding.decision === 'REJECT' && (
             <label className="field">
-              <span>Reason *</span>
-              <select value={deciding.reasonCategory} onChange={(e) => setDeciding({ ...deciding, reasonCategory: e.target.value })}>
+              <span>Reason</span>
+              <Combo creatable value={deciding.reasonCategory} onChange={(e) => setDeciding({ ...deciding, reasonCategory: e.target.value })}>
                 <option value="">— Select —</option>
                 {(REJECTION_REASONS_BY_SIDE.Client || []).map((x) => <option key={x} value={x}>{x}</option>)}
-              </select>
+              </Combo>
             </label>
           )}
           <label className="field">

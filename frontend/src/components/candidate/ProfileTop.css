@@ -20,3 +20,7 @@
 /* Where from (the clean source of the person) */
 .cpt-src b{font-weight:700}
 .cpt-src.is-unknown b{font-weight:500;color:var(--ink-soft,#5b6478)}
+/* Came from <source> on <date>, added by <name> */
+.cpt-came{margin-top:6px;font-size:13px;font-weight:600;color:var(--ink,#1c2434)}
+.cpt-came.is-unknown{font-weight:500;color:var(--ink-soft,#5b6478)}
+.cpt-came.is-imported{color:#8a5a00}

@@ -138,7 +138,9 @@ router.get('/', VIEW, async (req, res, next) => {
     res.json(positions.map((p) => {
       const list = byPosition.get(p.id) || [];
       // An open tenure of somebody who has left is not a holder (belt and braces: it is ended on exit).
-      const current = list.find((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus))) || null;
+      const openLive = list.filter((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus)));
+      // the holder shown is the one really sitting in the seat; a leaver on notice only while nobody else is (founder, 2026-10-23)
+      const current = openLive.find((a) => !(a.employee && seatRelease.isNotice(a.employee.employmentStatus))) || openLive[0] || null;
       const onNotice = !!(current && current.employee && seatRelease.isNotice(current.employee.employmentStatus));
       return {
         ...p,
@@ -361,7 +363,9 @@ router.get('/structure', VIEW, async (req, res, next) => {
     });
     const node = (p) => {
       const list = byPosition.get(p.id) || [];
-      const current = list.find((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus))) || null;
+      const openLive = list.filter((a) => !a.toDate && !(a.employee && hasLeft(a.employee.employmentStatus)));
+      // the holder shown is the one really sitting in the seat; a leaver on notice only while nobody else is (founder, 2026-10-23)
+      const current = openLive.find((a) => !(a.employee && seatRelease.isNotice(a.employee.employmentStatus))) || openLive[0] || null;
       const onNotice = !!(current && current.employee && seatRelease.isNotice(current.employee.employmentStatus));
       return {
         id: p.id,
@@ -512,21 +516,14 @@ router.post('/:id/assign', MANAGE, async (req, res, next) => {
     // outgoing person's follow-ups, stage moves and requirements keep the
     // seat code and their name exactly as they were recorded, and what is
     // recorded from the handover date on carries the new holder.
-    const current = await prisma.positionAssignment.findFirst({
-      where: { positionId: position.id, toDate: null },
-      include: { employee: { select: { name: true, employmentStatus: true } } },
-    });
-    // Somebody on notice keeps the seat until their last working day.
-    if (current && current.employeeId !== employeeId && current.employee && seatRelease.isNotice(current.employee.employmentStatus)) {
-      const l = await seatRelease.lastWorkingDayOf(current.employeeId);
-      return res.status(409).json({
-        error: `${current.employee.name} is on notice${l ? ` until ${l.date}` : ' and has no last working day yet'}. ${position.code} is free the day after their last working day${l ? '' : ' - set that date on their record first'}.`,
-        onNotice: true, freesOn: l ? l.date : null,
-      });
-    }
-    if (current && current.employeeId === employeeId) {
+    // WHO IS IN THE SEAT NOW (founder, 2026-10-23): the ACTIVE holder is handed over from as before. Somebody ON NOTICE does not block a
+    // replacement any more: the newcomer is added now and both work the seat until the leaver's last working day (their tenure then ends by itself).
+    const holds = await seatRelease.holdersOf(position.id);
+    if ([...holds.active, ...holds.notice, ...holds.left].some((x) => x.employeeId === employeeId)) {
       return res.status(409).json({ error: `${employee.name} already holds ${position.code}.` });
     }
+    const current = holds.active[0] || holds.left[0] || null;
+    const onNoticeHolder = holds.notice[0] || null;
     if (current && fromDate < current.fromDate) {
       return res.status(400).json({
         error: `${current.employee ? current.employee.name : 'The current holder'} took ${position.code} on ${current.fromDate}; the handover cannot be dated before that.`,
@@ -564,7 +561,7 @@ router.post('/:id/assign', MANAGE, async (req, res, next) => {
     });
 
     const row = await prisma.positionAssignment.create({
-      data: { positionId: position.id, employeeId, fromDate, note: req.body.note || null },
+      data: { positionId: position.id, employeeId, fromDate, note: req.body.note || (onNoticeHolder ? `Replacement for ${onNoticeHolder.employee.name}, who is on notice` : null) },
     });
     await logAudit({
       userId: req.user.id,
@@ -583,10 +580,8 @@ router.post('/:id/vacate', MANAGE, async (req, res, next) => {
   try {
     const position = await prisma.position.findUnique({ where: { id: req.params.id } });
     if (!position) return res.status(404).json({ error: 'Position not found' });
-    const current = await prisma.positionAssignment.findFirst({
-      where: { positionId: position.id, toDate: null },
-      include: { employee: { select: { name: true } } },
-    });
+    const holdsNow = await seatRelease.holdersOf(position.id);
+    const current = holdsNow.active[0] || holdsNow.notice[0] || holdsNow.left[0] || null;
     if (!current) return res.status(409).json({ error: `${position.code} is already vacant.` });
     const toDate = String(req.body.toDate || today()).slice(0, 10);
     if (toDate < current.fromDate) {

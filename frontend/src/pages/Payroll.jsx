@@ -19,6 +19,10 @@ import CompliancePanel from '../components/payroll/CompliancePanel.jsx';
 import { ReconciliationPanel } from './accounts/JournalLedger.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+// Payroll cycle (2026-10-12): a payroll month is shown with its NAME and its DATES.
+import PayrollCycleCard from '../components/payroll/PayrollCycleCard.jsx';
+import PayrollPrecheck from '../components/payroll/PayrollPrecheck.jsx';
+import { PayrollMonthSelect, useSuggestedMonth, monthHeading, usePayrollCycle } from '../components/payroll/payrollCycleUi.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -200,7 +204,7 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
       body.tds = tds === '' ? null : Number(tds);
       body.otherDeductions = Number(other) || 0;
       const res = await api.put(`/payroll/structure/${row.employeeId}`, body);
-      if (res.data.staleDrafts?.length) window.alert(`Saved. Recalculate the draft payroll for ${res.data.staleDrafts.join(', ')} before submitting it — it was calculated from the previous figures.`);
+      if (res.data.staleDrafts?.length) window.alert(`Saved. Recalculate the payroll for ${res.data.staleDrafts.join(', ')} before submitting it — it was calculated from the previous figures.`);
       onSaved();
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Could not save the structure.');
@@ -282,11 +286,11 @@ function StructureEditor({ row, defaultBonus, onClose, onSaved }) {
         </div>
         <div className="field">
           <label>ESI</label>
-          <select value={esi} onChange={(e) => setEsi(e.target.value)}>
+          <Combo value={esi} onChange={(e) => setEsi(e.target.value)}>
             <option value="auto">Automatic (gross ≤ ceiling)</option>
             <option value="yes">Always deduct</option>
             <option value="no">Never deduct</option>
-          </select>
+          </Combo>
         </div>
         <div className="field">
           <label>TDS (₹ / month)</label>
@@ -436,7 +440,7 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
   const [fnfStatus, setFnfStatus] = useState('');
   const [policy, setPolicy] = useState(null);
   const [showStructures, setShowStructures] = useState(true);
-  const [runMonth, setRunMonth] = useState(thisMonth());
+  const [runMonth, setRunMonth] = useSuggestedMonth();
   const [message, setMessage] = useState('');
 
   function load() {
@@ -457,8 +461,8 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
     try {
       const res = await api.post('/payroll/run', { month: runMonth });
       const skipped = res.data.skipped?.length ? ` ${res.data.skipped.length} skipped (no salary structure).` : '';
-      const locked = res.data.locked?.length ? ` ${res.data.locked.length} already beyond draft.` : '';
-      setMessage(`Drafts calculated for ${res.data.period} — ${res.data.count} employee(s), net ${inr(res.data.totals?.net)}.${skipped}${locked} Submit them for approval on Process Payroll.`);
+      const locked = res.data.locked?.length ? ` ${res.data.locked.length} already submitted.` : '';
+      setMessage(`Payroll calculated for ${res.data.period} — ${res.data.count} employee(s), net ${inr(res.data.totals?.net)}.${skipped}${locked} Submit them for approval on Process Payroll.`);
       goTab('process');
     } catch (err) {
       setMessage(err.response?.data?.error || 'Could not process the run');
@@ -516,7 +520,7 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
           <PanelHead title="② Quick Actions" />
           <div style={{ padding: '12px 18px 16px' }}>
             <div className="filter-row" style={{ marginBottom: 10 }}>
-              <input type="month" style={{ flex: 1 }} value={runMonth} onChange={(e) => setRunMonth(e.target.value)} />
+              <PayrollMonthSelect style={{ flex: 1 }} value={runMonth} onChange={setRunMonth} />
               <button className="btn btn-sm" onClick={() => goTab('process')}>Preview</button>
               <button className="btn btn-primary btn-sm" onClick={runPayroll}>Run Payroll</button>
             </div>
@@ -552,22 +556,25 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
         </Panel>
       </TwoCol>
 
+      {/* Payroll cycle (16th to 15th, named after the month it ends in) + absent without leave. */}
+      <PayrollCycleCard isAdmin={isAdmin} />
+
       {/* Full & Final settlements — kept from main; the prototype only counts them. */}
       <Panel>
         <PanelHead title="Full & Final Settlements">
           {fnf.length > 0 && (
-            <select value={fnfStatus} onChange={(e) => setFnfStatus(e.target.value)} style={{ width: 'auto' }} aria-label="Status" title="Status">
+            <Combo value={fnfStatus} onChange={(e) => setFnfStatus(e.target.value)} style={{ width: 'auto' }} aria-label="Status" title="Status">
               <option value="">All statuses</option>
               <option value="Pending">Pending</option>
               <option value="Processed">Processed</option>
-            </select>
+            </Combo>
           )}
         </PanelHead>
         {fnf.length === 0 ? <EmptyMini>No F&F requests yet.</EmptyMini> : fnf.filter((f) => !fnfStatus || (fnfStatus === 'Pending' ? f.status === 'Pending' : f.status !== 'Pending')).length === 0 ? (
           <EmptyMini>No F&F requests match this status. <button type="button" className="btn btn-sm" onClick={() => setFnfStatus('')}>Clear filters</button></EmptyMini>
         ) : fnf.filter((f) => !fnfStatus || (fnfStatus === 'Pending' ? f.status === 'Pending' : f.status !== 'Pending')).map((f) => (
           <AssignRow key={f.id}>
-            <span>{f.employee?.name} <span className="cell-muted" style={{ fontSize: 11.5 }}>— last working day {f.lastWorkingDate}</span></span>
+            <span>{f.employee?.name} <span className="cell-muted" style={{ fontSize: 11.5 }}>— last working day {f.lastWorkingDate}{f.payrollHeading ? ` · paid in the ${f.payrollHeading} (${f.daysWorkedInCycle} of ${f.cycleDays} days worked)` : ''}</span></span>
             <span>
               {f.status === 'Pending'
                 ? <button className="btn btn-sm" onClick={async () => { const a = prompt('Settlement amount (₹)'); if (a === null) return; await api.patch(`/payroll/fnf/${f.id}/process`, { settlementAmount: Number(a) || 0 }); load(); }}>Process</button>
@@ -592,6 +599,7 @@ function DashboardTab({ canRun, isAdmin, goTab }) {
 // ---- Tab 2: Reports ---------------------------------------------------------
 
 function ReportsTab({ canRun, canViewLedger }) {
+  usePayrollCycle();
   const [data, setData] = useState(null);
 
   useEffect(() => { if (canRun) api.get('/payroll/reports').then((res) => setData(res.data)); }, [canRun]);
@@ -628,7 +636,7 @@ function ReportsTab({ canRun, canViewLedger }) {
               <tbody>
                 {data.byPeriod.map((r) => (
                   <tr key={r.id}>
-                    <td><b>{r.period}</b></td>
+                    <td><b>{monthHeading(r.month)}</b></td>
                     <td className="cell-muted">{r.employees}</td>
                     <td className="cell-muted">{inr(r.gross)}</td>
                     <td className="cell-muted">{inr(r.deductions)}</td>
@@ -753,7 +761,7 @@ const RUN_FIELDS = [
 ];
 
 function ProcessTab({ canRun, canSeeRuns }) {
-  const [month, setMonth] = useState(thisMonth());
+  const [month, setMonth] = useSuggestedMonth();
   const [department, setDepartment] = useState('');
   const [departments, setDepartments] = useState([]);
   const [preview, setPreview] = useState(null);
@@ -784,8 +792,8 @@ function ProcessTab({ canRun, canSeeRuns }) {
     setError('');
     try {
       const res = await api.post('/payroll/run', { month, department: department || undefined });
-      const locked = res.data.locked?.length ? ` ${res.data.locked.length} record(s) already beyond draft were left as they are.` : '';
-      setMessage(`Drafts for ${res.data.period}: ${res.data.created} new, ${res.data.updated} recalculated — net ${inr(res.data.totals?.net)}.${locked} Submit them for approval below.`);
+      const locked = res.data.locked?.length ? ` ${res.data.locked.length} record(s) already submitted were left as they are.` : '';
+      setMessage(`Payroll for ${res.data.period}: ${res.data.created} new, ${res.data.updated} recalculated — net ${inr(res.data.totals?.net)}.${locked} Submit them for approval below.`);
       setPreview(null);
       loadRuns();
       setBoardKey((k) => k + 1);
@@ -814,7 +822,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
     return (
       <div>
         <div className="filter-row" style={{ marginTop: 14 }}>
-          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          <PayrollMonthSelect value={month} onChange={setMonth} />
         </div>
         <PayrollRunBoard month={month} reloadKey={boardKey} />
       </div>
@@ -827,7 +835,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
         <h3 style={{ fontSize: 14, marginBottom: 10 }}>Run payroll</h3>
         <form onSubmit={calculate}>
           <div className="grid-2">
-            <div className="field"><label>Month *</label><input type="month" required value={month} onChange={(e) => setMonth(e.target.value)} /></div>
+            <div className="field"><label>Payroll month</label><PayrollMonthSelect value={month} onChange={setMonth} /></div>
             <div className="field">
               <label>Department (optional)</label>
               <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
@@ -840,10 +848,12 @@ function ProcessTab({ canRun, canSeeRuns }) {
         </form>
         {error && <div className="error-text">{error}</div>}
         {message && <div className="small-muted" style={{ marginTop: 8 }}>{message}</div>}
+        {/* What to settle BEFORE locking: leaves still waiting, days absent with no leave, LOP summary. */}
+        <PayrollPrecheck month={month} />
 
         {preview && (
           <div style={{ marginTop: 16 }}>
-            <SectionLabel>Preview — {preview.period} · {preview.workingDays} working day(s)</SectionLabel>
+            <SectionLabel>Preview — {preview.cycle ? preview.cycle.heading : preview.period} · {preview.cycle ? preview.cycle.days : preview.workingDays} day(s) in the pay period</SectionLabel>
             {preview.alreadyProcessed && <div className="error-text">Payroll for {preview.period} was already processed as a month run (before per-employee records); it cannot be run again.</div>}
             <StatRow cells={[
               { value: preview.totals.employees, label: 'Employees' },
@@ -884,10 +894,10 @@ function ProcessTab({ canRun, canSeeRuns }) {
               </div>
             )}
             {preview.locked?.length > 0 && (
-              <div className="small-muted" style={{ marginTop: 8 }}>{preview.locked.length} record(s) are already beyond draft and will not be recalculated.</div>
+              <div className="small-muted" style={{ marginTop: 8 }}>{preview.locked.length} record(s) are already submitted and will not be recalculated.</div>
             )}
             {!preview.alreadyProcessed && preview.rows.length > 0 && (
-              <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={confirm}>{preview.hasEntries ? 'Confirm & recalculate drafts' : 'Confirm & create drafts'}</button>
+              <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={confirm}>{preview.hasEntries ? 'Confirm & recalculate payroll' : 'Confirm & calculate payroll'}</button>
             )}
           </div>
         )}
@@ -906,7 +916,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
               <tbody>
                 {runsPage.slice.map((r) => (
                   <tr key={r.id}>
-                    <td>{r.period}</td>
+                    <td>{monthHeading(r.month)}</td>
                     <td className="cell-muted">{r.employees}</td>
                     <td className="cell-muted">{inr(r.totalGross)}</td>
                     <td className="cell-muted">{inr(r.totalNet)}</td>
@@ -940,6 +950,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
 // ---- Tab 5: Payslips --------------------------------------------------------
 
 function PayslipsTab({ seesOthers }) {
+  usePayrollCycle(); // so "Sep 2026 payroll · 16 Aug – 15 Sep" shows as soon as the dates are known
   const [payslips, setPayslips] = useState([]);
   const [viewing, setViewing] = useState(null);
   const [error, setError] = useState('');
@@ -952,7 +963,7 @@ function PayslipsTab({ seesOthers }) {
   const lf = useListFilters(payslips, [
     { key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (p) => `${p.employee?.employeeCode || ''} ${p.employee?.name || ''}`, show: seesOthers },
     { key: 'department', label: 'Department', get: (p) => p.employee?.department, primary: true, show: seesOthers },
-    { key: 'month', label: 'Month', options: months.map((m) => ({ value: m, label: monthLabel(m) })), get: (p) => p.month, primary: true },
+    { key: 'month', label: 'Month', options: months.map((m) => ({ value: m, label: monthHeading(m) })), get: (p) => p.month, primary: true },
     { key: 'payMode', label: 'Pay type', allLabel: 'All pay types', get: (p) => p.payMode || 'Package' },
   ], {
     sorts: [
@@ -991,7 +1002,7 @@ function PayslipsTab({ seesOthers }) {
             <tbody>
               {page.slice.map((p) => (
                 <tr key={p.id}>
-                  <td>{monthLabel(p.month)}</td>
+                  <td>{monthHeading(p.month)}</td>
                   <td><b>{p.employee?.employeeCode || '—'}</b></td>
                   <td>{p.employee?.name}</td>
                   <td className="cell-muted">{p.payMode || 'Package'}</td>

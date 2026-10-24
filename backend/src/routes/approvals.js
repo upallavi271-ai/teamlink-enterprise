@@ -57,6 +57,15 @@ const SUBJECTS = {
     const r = await prisma.course.findUnique({ where: { id } });
     return r && { record: r, employee: null, status: r.approvalStatus, title: `Course · ${r.title}` };
   },
+  // 2026-10-24: a TL / HR upload waits on the chain too. Like a course, neither has a subject employee.
+  document: async (id) => {
+    const r = await prisma.policyDocument.findUnique({ where: { id } });
+    return r && { record: r, employee: null, status: r.approvalStatus, title: `Document · ${r.title}` };
+  },
+  courseMaterial: async (id) => {
+    const r = await prisma.courseMaterial.findUnique({ where: { id }, include: { course: { select: { title: true } } } });
+    return r && { record: r, employee: null, status: r.approvalStatus, title: `Course material · ${r.title}${r.course ? ` (${r.course.title})` : ''}` };
+  },
 };
 
 router.get('/:workflow/:recordId', async (req, res, next) => {

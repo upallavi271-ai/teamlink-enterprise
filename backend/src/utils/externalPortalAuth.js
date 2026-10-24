@@ -81,6 +81,10 @@ const ALLOW = {
     // "View my agreement": read + download the PDF/files (AgreementPanel.jsx). Read-only.
     [['GET'], new RegExp(`^/api/agreement/(?!list$|settings$|token$|emudhra$)${id}(/(pdf|versions|executed))?$`)],
     [['GET'], new RegExp(`^/api/agreement/(?!list$|settings$|token$|emudhra$)${id}/file/${id}$`)],
+    // The signed agreement files kept on the client (routes/agreementSignedFiles.js): the list and each file. Read-only; the route itself checks it is THEIR company.
+    [['GET'], new RegExp(`^/api/agreement/(?!list$|settings$|token$|emudhra$)${id}/signed-files(/${id})?$`)],
+    // The client's own uploaded agreement file (routes/agreementOwnFile.js), read-only, for the same "View agreement" window.
+    [['GET'], new RegExp(`^/api/agreement/(?!list$|settings$|token$|emudhra$)${id}/own-file(/info)?$`)],
   ],
   CANDIDATE: [
     ...COMMON,
@@ -144,4 +148,47 @@ function denyIdentity(req, res, identity) {
   return res.status(403).json(DENY);
 }
 
-module.exports = { EXTERNAL, ALLOW, kindOf, isAllowed, externalSessionGuard, identityAllowed, denyIdentity, apiPathOf };
+// ---------------------------------------------------------------------------
+// OUTBOUND SCRUB (security fix 2026-10-13): the safety net behind the route-level
+// minimal answers. Every JSON answer to a CLIENT / CANDIDATE login (staff secret)
+// or a VENDOR / PARTNER login (own secrets) is walked once and the keys that only
+// staff may ever see are removed, whichever route built the answer. A route that
+// forgets to shape its row can therefore never hand over the internal panel note,
+// the interview / AI score or the staff contact details.
+// ---------------------------------------------------------------------------
+const STAFF_ONLY_KEYS = new Set([
+  'panel', 'panelNote', 'panelNotes', 'panelFeedback', 'internalFeedback', 'internalNote', 'internalNotes', 'staffNote', 'staffNotes',
+  'interviewScore', 'aiScore', 'aiInterviewScore', 'aiResult', 'aiSummary', 'screeningScore', 'resumeScore',
+  'recruiterEmail', 'recruiterPhone', 'tlEmail', 'tlPhone', 'bdeEmail', 'bdePhone',
+  'passwordHash', 'setPasswordTokenHash', 'tempPassword', 'jwtSecret', 'apiKey', 'secret',
+]);
+function scrubOutbound(value, depth = 0) {
+  if (value == null || typeof value !== 'object' || depth > 14) return value;
+  if (value instanceof Date) return value;
+  if (Array.isArray(value)) return value.map((v) => scrubOutbound(v, depth + 1));
+  const out = {};
+  Object.keys(value).forEach((k) => { if (!STAFF_ONLY_KEYS.has(k)) out[k] = scrubOutbound(value[k], depth + 1); });
+  return out;
+}
+// kind: any external token (client / candidate by claims; vendor / partner by their own token check).
+function externalKindOfRequest(req) {
+  const token = bearerOf(req);
+  if (!token) return null;
+  try {
+    const k = kindOf(jwt.decode(token));
+    if (k) return k;
+  } catch { /* not a staff-secret token */ }
+  try {
+    if (require('./vendorAuth').verifyVendorToken(token) || require('./vendorAuth').looksLikeVendorToken(token)) return 'VENDOR'; // eslint-disable-line global-require
+    if (require('./partnerAuth').verifyPartnerToken(token) || require('./partnerAuth').looksLikePartnerToken(token)) return 'PARTNER'; // eslint-disable-line global-require
+  } catch { /* ignore */ }
+  return null;
+}
+function outboundScrub(req, res, next) {
+  if (!externalKindOfRequest(req)) return next();
+  const json = res.json.bind(res);
+  res.json = (body) => json(scrubOutbound(body));
+  return next();
+}
+
+module.exports = { EXTERNAL, ALLOW, kindOf, isAllowed, externalSessionGuard, identityAllowed, denyIdentity, apiPathOf, outboundScrub, scrubOutbound, STAFF_ONLY_KEYS };

@@ -18,6 +18,9 @@ const prisma = require('../../db');
 const scope = require('../../utils/scope');
 const { withoutSystemAccounts } = require('../../utils/systemAccounts');
 const { stageLabel } = require('../../utils/atsVocab');
+const clientSearch = require('../../utils/clientSearch');
+// Client ids whose OLD name (ClientAlias) contains any typed word: the assistant also finds "VCare" for "Prabs VCare Health Clinic".
+async function aliasIdsOf(ws) { return [...new Set((await Promise.all(ws.map((w) => clientSearch.aliasClientIds(w)))).flat())]; }
 
 const SKIP_WORDS = new Set(['the', 'and', 'for', 'job', 'jobs', 'client', 'candidate', 'requirement', 'opening', 'employee', 'invoice', 'pvt', 'ltd', 'limited', 'private', 'inc', 'llp']);
 
@@ -104,7 +107,7 @@ async function findApplications(user, text, { extra = '' } = {}) {
     interviewAt: a.interviewAt,
     interviewStatus: a.interviewStatus,
     open: OPEN_STAGE(a.stage),
-  })).map((a) => ({ ...a, label: `${a.candidate} - ${a.requirement || 'no job'}${a.client ? ` (${a.client})` : ''}, now at ${a.stageLabel}` }))
+  })).map((a) => ({ ...a, label: `${a.candidate} - ${a.requirement || 'no requirement'}${a.client ? ` (${a.client})` : ''}, now at ${a.stageLabel}` }))
     .map((a) => candidateCut(user, a));
   return { rows: shaped, full: r.full };
 }
@@ -135,7 +138,7 @@ async function applicationById(user, id) {
     interviewStatus: a.interviewStatus,
     open: OPEN_STAGE(a.stage),
   };
-  return candidateCut(user, { ...r, label: `${r.candidate} - ${r.requirement || 'no job'}${r.client ? ` (${r.client})` : ''}, now at ${r.stageLabel}` });
+  return candidateCut(user, { ...r, label: `${r.candidate} - ${r.requirement || 'no requirement'}${r.client ? ` (${r.client})` : ''}, now at ${r.stageLabel}` });
 }
 
 async function findCandidates(user, text) {
@@ -177,15 +180,18 @@ async function findClients(user, text, { purpose = 'edit' } = {}) {
   const ws = words(text);
   if (!ws.length) return { rows: [], full: false };
   const base = purpose === 'pick' ? scope.clientPickerWhere(user) : scope.clientWhere(user);
+  const oldIds = await aliasIdsOf(ws);
   const found = await prisma.client.findMany({
-    where: { AND: [base, { OR: ws.flatMap((w) => [{ name: { contains: w } }, { clientCode: { contains: w } }]) }] },
+    where: { AND: [base, { OR: [...ws.flatMap((w) => [{ name: { contains: w } }, { clientCode: { contains: w } }]), ...(oldIds.length ? [{ id: { in: oldIds } }] : [])] }] },
     select: {
       id: true, name: true, clientCode: true, ownerDepartment: true, status: true, location: true, industry: true, contactName: true, contactPhone: true, contactEmail: true, clientType: true,
     },
     take: 60,
   });
-  const r = rankRows(found, (c) => `${c.name} ${c.clientCode || ''}`, ws, text);
-  const top = r.rows.filter((c) => ws.filter((w) => `${c.name} ${c.clientCode || ''}`.toLowerCase().includes(w)).length === r.bestHits).slice(0, 10);
+  const oldOf = await clientSearch.aliasMap();
+  const hayOf = (c) => `${c.name} ${c.clientCode || ''} ${(oldOf.get(c.id) || []).join(' ')}`; // old names match; the label below shows the official name only
+  const r = rankRows(found, hayOf, ws, text);
+  const top = r.rows.filter((c) => ws.filter((w) => hayOf(c).toLowerCase().includes(w)).length === r.bestHits).slice(0, 10);
   return {
     rows: top.map((c) => ({ ...c, label: `${c.name}${c.location ? `, ${c.location}` : ''}${c.ownerDepartment ? ` (${c.ownerDepartment})` : ''}` })),
     full: r.full,
@@ -209,21 +215,25 @@ async function findRequirements(user, text, { code = null } = {}) {
   const ws = words(text);
   const where = [scope.requirementWhere(user)];
   if (code) where.push({ reqCode: { equals: String(code) } });
-  else if (ws.length) where.push({ OR: ws.flatMap((w) => [{ title: { contains: w } }, { reqCode: { contains: w } }, { client: { name: { contains: w } } }]) });
-  else return { rows: [], full: false };
+  else if (ws.length) {
+    const oldIds = await aliasIdsOf(ws);
+    where.push({ OR: [...ws.flatMap((w) => [{ title: { contains: w } }, { reqCode: { contains: w } }, { client: { name: { contains: w } } }]), ...(oldIds.length ? [{ clientId: { in: oldIds } }] : [])] });
+  } else return { rows: [], full: false };
   const found = await prisma.requirement.findMany({
     where: { AND: where },
     select: {
-      id: true, title: true, reqCode: true, status: true, department: true, location: true, openings: true, recruiterId: true, internal: true, priority: true,
+      id: true, title: true, reqCode: true, status: true, department: true, location: true, openings: true, recruiterId: true, internal: true, priority: true, clientId: true,
       client: { select: { name: true } },
     },
     orderBy: { createdAt: 'desc' },
     take: 80,
   });
+  const oldOf = await clientSearch.aliasMap();
+  const hayOf = (q) => `${q.title} ${q.reqCode || ''} ${q.client ? q.client.name : ''} ${(oldOf.get(q.clientId) || []).join(' ')}`; // old client names match; labels show the official name
   const live = ['OPEN', 'RECRUITER_ASSIGNED', 'ASSIGNED', 'ACTIVE', 'APPROVED'];
-  const r = code ? { rows: found, full: found.length > 0, bestHits: 1 } : rankRows(found, (q) => `${q.title} ${q.reqCode || ''} ${q.client ? q.client.name : ''}`, ws, text);
+  const r = code ? { rows: found, full: found.length > 0, bestHits: 1 } : rankRows(found, hayOf, ws, text);
   let rows = r.rows;
-  if (!code) rows = rows.filter((q) => ws.filter((w) => `${q.title} ${q.reqCode || ''} ${q.client ? q.client.name : ''}`.toLowerCase().includes(w)).length === r.bestHits);
+  if (!code) rows = rows.filter((q) => ws.filter((w) => hayOf(q).toLowerCase().includes(w)).length === r.bestHits);
   rows.sort((a, b) => Number(live.includes(b.status)) - Number(live.includes(a.status)));
   return {
     rows: rows.slice(0, 10).map((q) => ({
@@ -311,7 +321,10 @@ async function findInvoices(user, { number = null, text = '' } = {}) {
   const where = [scope.invoiceWhere(user)];
   const ws = words(text);
   if (number) where.push({ invoiceNumber: { contains: String(number) } });
-  else if (ws.length) where.push({ client: { OR: ws.map((w) => ({ name: { contains: w } })) } });
+  else if (ws.length) {
+    const oldIds = await aliasIdsOf(ws);
+    where.push({ client: { OR: [...ws.map((w) => ({ name: { contains: w } })), ...(oldIds.length ? [{ id: { in: oldIds } }] : [])] } });
+  }
   else return { rows: [], full: false };
   const found = await prisma.invoice.findMany({
     where: { AND: where },

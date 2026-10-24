@@ -306,10 +306,15 @@ router.post('/interviews/:id/client-feedback', requirePerm('ats', 'interviews', 
     const rq = app.requirement || {};
     await notifyUsers(await withClientBdes([rq.recruiterId, ...String(rq.recruiterIds || '').split(',').map((x) => x.trim()), rq.tlId, rq.bdeId], rq), {
       title: `Client feedback: ${app.candidate ? app.candidate.name : 'Candidate'} — ${recommendation}`,
-      message: `${rq.title || 'Job'}${rq.client ? ` — ${rq.client.name}` : ''}. Open Interviews to see it and decide.`,
+      message: `${rq.title || 'Requirement'}${rq.client ? ` — ${rq.client.name}` : ''}. Open Interviews to see it and decide.`,
       exceptUserId: req.user.id,
     });
   } catch (err) { console.error('[client-feedback] could not notify:', err.message); } // eslint-disable-line no-console
+  // SECURITY (2026-10-13): a client / outside login gets a minimal acknowledgement, never the staff row
+  // (internal panel note, interview score, candidate e-mail, salary, recruiter / TL names).
+  if (s.role === 'CLIENT' || req.user.role === 'CLIENT' || req.user.atsRole === 'CLIENT') {
+    return res.json({ ok: true, id: app.id, status: recommendation });
+  }
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
   res.json(shapeRow(fresh, bdeViewOf(req.user)));
 });
@@ -467,6 +472,7 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
       r.offerVersion = v ? { version: v.version, status: v.status, expiresAt: v.expiresAt, viewedAt: v.viewedAt, signedAt: v.signedAt, hasPdf: !!v.pdfFile } : null;
     });
   }
+  await require('../utils/clientTrack').attachTo(req.user, rows); // eslint-disable-line global-require
   const offerSettings = await OL.loadSettings();
   // eslint-disable-next-line global-require
   const candidateEmailsOn = await require('../utils/interviewNotices').candidateEmailsOn();
@@ -477,6 +483,8 @@ router.get('/offers', requirePerm('ats', 'interviews', 'Offers', 'view'), async 
 // B3 (2026-10-06): offer versions, expiry and the candidate's signing link —
 // the routes live in routes/offerStaffRoutes.js (mounted here, same scope).
 require('./offerStaffRoutes')(router, { loadScoped });
+// 2026-10-13: a CLIENT job's offer / joining letters come from the client (utils/clientTrack.js).
+require('./clientTrackRoutes')(router, { loadScoped });
 
 // ---------------------------------------------------------------------------
 // OFFER LETTER — template → approval → sent → the candidate accepts / declines
@@ -586,6 +594,10 @@ router.post('/offers/:id/prepare', requirePerm('ats', 'interviews', 'Offers', 'e
   if (app.stage !== 'SELECTED' && app.offerStatus !== 'Offer Declined' && !reissue) {
     return res.status(409).json({ error: `An offer comes after Selected — this candidate is at ${stageLabel(app.stage)}.` });
   }
+  // CLIENT JOB: the CLIENT makes the offer letter (utils/clientTrack.js) - TeamLink does not prepare or send one.
+  if (require('../utils/clientTrack').isClientJob(app) && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) { // eslint-disable-line global-require
+    return res.status(409).json({ error: "For a client requirement the client makes the offer letter. Ask the client's BDE to record it (Offers > Record the client's offer); then you share it with the candidate.", code: 'CLIENT_OFFER' });
+  }
   const wrongBranch = stageAllowedForHiringType('OFFER', app, app.requirement);
   if (wrongBranch) return res.status(409).json({ error: wrongBranch });
   // CTC sanity (utils/ctcCheck.js): blocks a nonsense figure, asks "is this right?" for an odd one.
@@ -661,6 +673,10 @@ async function approveAndSend(req, res) {
   }
   // §35 — the same hiring-type rule the pipeline enforces. This route used to
   // skip it, so a client placement could be walked through Offer here.
+  // CLIENT JOB: the CLIENT makes the offer letter (utils/clientTrack.js) - TeamLink does not prepare or send one.
+  if (require('../utils/clientTrack').isClientJob(app) && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) { // eslint-disable-line global-require
+    return res.status(409).json({ error: "For a client requirement the client makes the offer letter. Ask the client's BDE to record it (Offers > Record the client's offer); then you share it with the candidate.", code: 'CLIENT_OFFER' });
+  }
   const wrongBranch = stageAllowedForHiringType('OFFER', app, app.requirement);
   if (wrongBranch) return res.status(409).json({ error: wrongBranch });
   const ctc = Number(req.body.offeredCtc != null && req.body.offeredCtc !== '' ? req.body.offeredCtc : app.offeredCtc);
@@ -769,6 +785,7 @@ router.post('/offers/:id/accept', requirePerm('ats', 'interviews', 'Offers', 'ed
     fromValue: 'Offer Released', toValue: 'Offer Accepted',
   });
   await OLa.markCurrent(app.id, 'Accepted', { via: `recorded by ${req.user.name}` });
+  await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Accepted', { via: `recorded by ${req.user.name}`, actor: req.user }); // eslint-disable-line global-require
   await recordWorkflowMove({ user: req.user, existing: app, toStage: 'OFFER_ACCEPTED', action: 'Offer accepted' });
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
   res.json(shapeRow(fresh));
@@ -791,6 +808,7 @@ router.post('/offers/:id/decline', requirePerm('ats', 'interviews', 'Offers', 'e
   });
   // eslint-disable-next-line global-require
   await require('../utils/offerLink').markCurrent(app.id, 'Declined', { via: `recorded by ${req.user.name}`, reason });
+  await require('../utils/clientTrack').onCandidateAnswer(app.id, 'Declined', { via: `recorded by ${req.user.name}`, reason, actor: req.user }); // eslint-disable-line global-require
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
   res.json(shapeRow(fresh));
 });
@@ -818,6 +836,14 @@ router.post('/offers/:id/documents', requirePerm('ats', 'interviews', 'Offers', 
 // and, for a client placement only, straight on into Accounts:
 //   Candidate Joined -> Billing Pending -> Invoice -> Receivable
 // ---------------------------------------------------------------------------
+async function mayInvoiceAmounts(user) {
+  // eslint-disable-next-line global-require
+  const P = require('../utils/permissions');
+  if (['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return true;
+  if (['MANAGER', 'ASSISTANT_MANAGER'].includes(P.roleForProduct(user, 'ats'))) return true;
+  if (await P.can(user, 'accounts', 'accounts', 'Invoices', 'view').catch(() => false)) return true;
+  return !!(await P.can(user, 'ats', 'clients', 'Client Invoice Amount', 'view').catch(() => false));
+}
 router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), async (req, res) => {
   // §35 — two ways in. A CLIENT PLACEMENT comes straight from Selected (Client
   // Joining: the client confirms the date, then Accounts invoices). A TeamLink
@@ -894,6 +920,12 @@ router.get('/joining', requirePerm('ats', 'interviews', 'Joining', 'view'), asyn
         : null,
     };
   });
+  // 2026-10-13: the client-hiring steps on each row, and the invoice AMOUNTS only for the people who may see them
+  // (Admin, Accounts, Manager, a BDE with the 'Client Invoice Amount' tick); everyone else sees the status.
+  await require('../utils/clientTrack').attachTo(req.user, withInvoice); // eslint-disable-line global-require
+  if (!(await mayInvoiceAmounts(req.user))) {
+    withInvoice.forEach((r) => { if (r.invoice) r.invoice = { id: r.invoice.id, invoiceNumber: r.invoice.invoiceNumber, status: r.invoice.status }; });
+  }
   if (paging) return res.json({ rows: withInvoice, ...paging });
   res.json({ rows: withInvoice, filterOptions: filterOptionsFor(rows) });
 });
@@ -973,6 +1005,20 @@ router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', '
     if (ctcProblem) return res.status(ctcProblem.status).json(ctcProblem.body);
     finalCtc = Number(req.body.offeredCtc);
   }
+  // JOINING & DROP: the day and the place the candidate joined (the popup prefills both; the job's place is the default).
+  const joinInfo = {};
+  ['joinedOn', 'location', 'designation', 'employmentType', 'reportingPerson', 'reportingContact'].forEach((k) => {
+    if (req.body && req.body[k] !== undefined && String(req.body[k]).trim() !== '') joinInfo[k] = String(req.body[k]).trim();
+  });
+  if (req.body && req.body.location !== undefined && !String(req.body.location).trim()) return res.status(400).json({ error: 'Enter the place (city or branch) where the candidate joined.' });
+  if (joinInfo.joinedOn) {
+    const jv = require('../utils/joining'); // eslint-disable-line global-require
+    const vv = require('../joindrop/vocab'); // eslint-disable-line global-require
+    if (!vv.isDay(joinInfo.joinedOn)) return res.status(400).json({ error: 'Enter the day the candidate joined.' });
+    const yr = jv.dateYearProblem(joinInfo.joinedOn, 'joining day');
+    if (yr) return res.status(400).json({ error: yr });
+    if (joinInfo.joinedOn > vv.todayIst()) return res.status(400).json({ error: 'The joining day cannot be a day that has not come yet.' });
+  }
   const application = await prisma.application.update({
     where: { id: app.id },
     data: { stage: 'JOINED', joinedAt: new Date(), ...(finalCtc ? { offeredCtc: finalCtc } : {}) },
@@ -980,7 +1026,7 @@ router.post('/joining/:id/joined', requirePerm('ats', 'interviews', 'Joining', '
   // ONE joining path, shared with the pipeline's own stage move: it forks on
   // hiring type and raises an invoice for a client placement only.
   const invoice = await onApplicationJoined({
-    application, existing: app, userId: req.user.id, ...(feeOverride != null ? { feePercent: feeOverride } : {}),
+    application, existing: app, userId: req.user.id, actor: req.user, joinInfo, via: 'Joining screen', ...(feeOverride != null ? { feePercent: feeOverride } : {}),
   });
   await logAudit({
     userId: req.user.id,
@@ -1115,31 +1161,20 @@ router.post('/joining/:id/left', requirePerm('ats', 'interviews', 'Joining', 'ed
   if (Number.isNaN(new Date(leftOn).getTime())) return res.status(400).json({ error: 'The date the candidate left is not a date' });
   const reason = String(req.body.reason || '').trim();
   if (!reason) return res.status(400).json({ error: 'Say why the candidate left' });
-  const gDays = guaranteeDaysOf(app.requirement.client && app.requirement.client.guaranteePeriod);
-  const end = guaranteeEndOf(app, gDays);
-  const inside = !!end && new Date(leftOn) <= end;
-  const status = inside ? JOINING_REPLACEMENT_DUE : JOINING_LEFT_AFTER_GUARANTEE;
-  await prisma.application.update({ where: { id: app.id }, data: { joiningStatus: status } });
-  const what = inside
-    ? `Left within the guarantee (${app.requirement.client.guaranteePeriod}, to ${end.toISOString().slice(0, 10)}) — replacement due`
-    : `Left after the guarantee${end ? ` (ended ${end.toISOString().slice(0, 10)})` : ''} — no replacement owed`;
-  await guaranteeEvent(req.user, app, what, `Left on ${leftOn}: ${reason}`);
-  await logAudit({
-    userId: req.user.id, action: 'Placement left', entity: 'Application', entityId: app.id,
-    fromValue: app.joiningStatus || 'Joined', toValue: status, reason,
-  });
-  // B7: left inside the guarantee → the partner payout is cancelled (or a
-  // clawback drafted when already paid); the partner is told either way.
-  try { const PT = require('../utils/partners'); await PT.onLeft({ applicationId: app.id, inside, leftOn, reason, user: req.user }); await PT.syncSubmission(app.id, { userId: req.user.id, note: `Left on ${leftOn}: ${reason}` }); } catch { /* optional */ } // eslint-disable-line global-require
-  if (inside) {
-    await notifyUsers(await withClientBdes([app.requirement.recruiterId, app.requirement.bdeId, app.requirement.tlId], app.requirement), {
-      title: `Replacement due: ${app.candidate.name}`,
-      message: `${app.requirement.title} — ${app.requirement.client.name}. Left ${leftOn}, inside the ${app.requirement.client.guaranteePeriod} guarantee.`,
-      exceptUserId: req.user.id,
-    });
+  // JOINING & DROP (2026-10-17): the same rules as the new Report-a-drop dialog (history, the people told, the replacement task inside the period),
+  // and the older fields (Replacement due, the Pipeline history row, the partner payout) are written by it too.
+  const JD = require('../joindrop/core'); // eslint-disable-line global-require
+  let outcome;
+  try {
+    const rec = await JD.ensureForApplication(app.id);
+    outcome = await JD.reportDrop(rec.id, { droppedOn: leftOn, reason }, req.user, { from: 'Recruiter' });
+  } catch (e) {
+    if (e && e.status) return res.status(e.status).json({ error: e.message });
+    throw e;
   }
   const fresh = await prisma.application.findUnique({ where: { id: app.id }, include: FULL_INCLUDE });
-  res.json({ ...shapeRow(fresh), guaranteeEnds: end ? end.toISOString().slice(0, 10) : null, replacementDue: inside });
+  const inside = outcome.record.dropWithinGuarantee === 1;
+  res.json({ ...shapeRow(fresh), guaranteeEnds: outcome.record.guaranteeEndsOn || null, replacementDue: inside });
 });
 
 router.post('/joining/:id/replaced', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
@@ -1262,12 +1297,17 @@ router.get('/interviews/bookable', requirePerm('ats', 'interviews', 'Schedule In
     stage: { notIn: ['REJECTED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED', 'HOLD'] },
     OR: [{ interviewStatus: null }, { interviewStatus: { notIn: ['SCHEDULED', 'CONFIRMED', 'STARTED', 'RESCHEDULED'] } }],
   };
-  const digits = q.replace(/\D/g, '');
-  const match = q
+  // SECURITY (2026-10-13): a login that may not see candidate contact details cannot FIND a candidate by phone or e-mail either
+  // (that would let it confirm a number it was never given).
+  const maskedFinder = await require('../utils/contactAccess').ruleFor(req.user, 'candidates').then((r) => r.mode === 'masked' || !r.allowed).catch(() => true); // eslint-disable-line global-require
+  const digits = maskedFinder ? '' : q.replace(/\D/g, '');
+  const match = req.query.id
+    ? { id: String(req.query.id) }
+    : q
     ? {
       OR: [
         { candidate: { name: { contains: q } } },
-        { candidate: { email: { contains: q } } },
+        ...(maskedFinder ? [] : [{ candidate: { email: { contains: q } } }]),
         ...(digits.length >= 4 ? [{ candidate: { phone: { contains: digits } } }] : []),
         { requirement: { title: { contains: q } } },
       ],
@@ -1306,8 +1346,25 @@ function suggestedRoundOf(a) {
   if (!a.interviewStatus) return 1;
   return (a.interviewRound || 1) + (a.interviewStatus === 'FEEDBACK_SUBMITTED' ? 1 : 0);
 }
-router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule Interview', 'create'), async (req, res) => {
-  // (the route's own requirePerm asks Schedule Interview / create: P5, 2026-10-09)
+// ONLY THE BDE BOOKS (user, 2026-10-12): the BDE, the BDE TL, HR (internal jobs) and Admin pass the engine's Schedule Interview / create.
+// The ONE other way in: TeamLink's own (internal) job at "Dept head / TL" - the TL's approval there IS the interview booking,
+// because TeamLink's own jobs have no BDE (otherwise the internal chain would stall).
+async function mayBookHere(req, res, next) {
+  try {
+    const { can, stageRoleOf, BOOKED_BY_BDE } = require('../utils/permissions'); // eslint-disable-line global-require
+    if (await can(req.user, 'ats', 'interviews', 'Schedule Interview', 'create')) return next();
+    if (['TL', 'STL'].includes(stageRoleOf(req.user))) {
+      const a = await prisma.application.findFirst({
+        where: { id: req.params.id, ...applicationWhere(req.user) },
+        select: { stage: true, hiringType: true, requirement: { select: { internal: true, hiringType: true } } },
+      });
+      if (a && a.stage === 'TL_REVIEW' && hiringTypeOf(a, a.requirement) === INTERNAL_HIRE) return next();
+    }
+    return res.status(403).json({ error: BOOKED_BY_BDE, code: 'BDE_BOOKS' });
+  } catch (err) { return next(err); }
+}
+router.post('/interviews/:id/book', mayBookHere, async (req, res) => {
+  // (Schedule Interview / create, or the internal Dept head / TL approval: see mayBookHere above)
   const app = await loadScoped(req, res);
   if (!app) return;
   const b = req.body || {};
@@ -1324,7 +1381,9 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
   const ivYearNo = dateYearProblem(interviewAt, 'interview date');
   if (ivYearNo) return res.status(400).json({ error: ivYearNo });
   if (interviewAt.getTime() < Date.now() - 5 * 60000) return res.status(400).json({ error: 'That time has already passed — pick a later time.' });
-  const meetingLink = String(b.meetingLink || '').trim().slice(0, 500);
+  let meetingLink = String(b.meetingLink || '').trim().slice(0, 500);
+  const IMEET = require('../utils/interviewMeet'); // eslint-disable-line global-require
+  let linkWarning = null;
   const location = String(b.location || '').trim().slice(0, 300);
   // B4: a PANEL — several interviewers (staff logins and / or outside people).
   // The old single "interviewer" text still works on its own.
@@ -1334,8 +1393,11 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
   if (parsedPanel.error) return res.status(400).json({ error: parsedPanel.error });
   const panelEntries = parsedPanel.entries && parsedPanel.entries.length ? parsedPanel.entries : null;
   const interviewer = (String(b.interviewer || '').trim() || (panelEntries ? PANEL.namesOf(panelEntries) : '')).slice(0, 120);
-  if (mode === 'Online' && meetingLink && !/^https?:\/\/\S+$/i.test(meetingLink)) {
-    return res.status(400).json({ error: 'The meeting link should start with https:// (e.g. https://meet.google.com/abc-defg-hij).' });
+  if (mode === 'Online' && meetingLink) {
+    const chk = IMEET.checkLink(meetingLink);
+    if (!chk.ok) return res.status(400).json({ error: chk.error });
+    meetingLink = chk.url;
+    linkWarning = chk.warning || null;
   }
   if (!interviewer) return res.status(400).json({ error: 'Add who will take the interview (one or more people).' });
   // ROUND (layout v3, the user brought it back): the popup sends the round;
@@ -1359,13 +1421,21 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
     // booked message by itself after a few minutes (utils/interviewEngine.js, "safety net").
     const out = await applyStageMove(req.user, app.id, {
       stage: 'INTERVIEW_SCHEDULED', interviewAt: interviewAt.toISOString(), interviewer, interviewMode: mode, interviewMeetingLink: meetingLink || undefined,
-    }, { skipNotice: true, silent: b.viaPopup === true });
+    }, { skipNotice: true, silent: true }); // silent: the interview e-mail below (utils/interviewMeet.js) is the candidate's booking message
     if (out.status !== 200) return res.status(out.status).json(out.body);
     movedStage = true;
   } else if (LIVE_SLOT.includes(app.interviewStatus)) {
     return res.status(409).json({ error: `${app.candidate.name} already has an interview booked. Use Reschedule on that row to change the time.` });
   }
   const nextRound = !movedStage && app.interviewStatus === 'FEEDBACK_SUBMITTED';
+  // Optional Admin switch: make a real Meet link through Integrations > Calendar Sync when none was pasted (never without an account).
+  let autoLinkNote = null;
+  if (mode === 'Online' && !meetingLink && (await IMEET.loadSettings()).calendarAutoLink) {
+    try {
+      const made = await require('../utils/meetingLinks').createMeeting({ title: `Interview: ${app.candidate.name}`, description: `Round ${round}. Booked in TeamLink.`, start: interviewAt }); // eslint-disable-line global-require
+      if (made.ok) meetingLink = made.url; else autoLinkNote = made.needsAccount ? 'Google Calendar auto-link is on but not connected (Administration > Integrations > Calendar Sync), so no link was made.' : made.error;
+    } catch { autoLinkNote = 'The Meet link could not be made automatically.'; }
+  }
   await prisma.application.update({
     where: { id: app.id },
     data: {
@@ -1398,11 +1468,22 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
   // EMAIL stays behind the Admin switch (announceInterview + candidateComms);
   // while it is off nothing is emailed. WhatsApp is never sent from here: the
   // reply carries ready wa.me links the user opens on their own device.
-  const told = await IN.announceInterview(app.id, 'scheduled', { actor: req.user, candidateEmail: b.viaPopup === true ? false : !movedStage });
-  const whatsapp = await IN.whatsappLinks(app.id, req.user).catch(() => []);
+  // The e-mail with the calendar invite (utils/interviewMeet.js) is the candidate's booking e-mail now; the older queued
+  // candidate message is not written twice. It never blocks the booking.
+  const invites = await IMEET.sendInvites(app.id, 'scheduled', { actor: req.user });
+  const told = await IN.announceInterview(app.id, 'scheduled', { actor: req.user, candidateEmail: false });
+  let whatsapp = await IN.whatsappLinks(app.id, req.user).catch(() => []);
+  // A role that may not see the candidate's number (the BDE team, or Candidate Contact & Salary OFF) never receives it
+  // here: the wa.me link and the number are cut from the candidate's entry (contact goes through TeamLink instead).
+  try {
+    const rule = await require('../utils/contactAccess').ruleFor(req.user, 'candidates'); // eslint-disable-line global-require
+    if (rule.mode === 'masked' || !rule.allowed) whatsapp = whatsapp.map((l) => (l.to === 'candidate' ? { ...l, phone: null, url: null, masked: true } : l));
+  } catch { /* the cut is applied on failure below */ whatsapp = whatsapp.map((l) => (l.to === 'candidate' ? { ...l, phone: null, url: null, masked: true } : l)); }
   const parts = [`Booked: Round ${round}, ${IN.when(interviewAt)}.`];
   if (told.people.length) parts.push(`App notice sent to ${told.people.join(', ')}.`);
-  parts.push(told.emailsOff ? 'Emails are off (Admin switch), so no email went out.' : 'Emails sent.');
+  parts.push(invites.message);
+  if (linkWarning) parts.push(linkWarning);
+  if (autoLinkNote) parts.push(autoLinkNote);
   if (mode === 'Online' && !meetingLink) parts.push('No meeting link yet: press "Create meeting link", or add it later (Reschedule → same time).');
   res.json({
     ok: true,
@@ -1412,6 +1493,9 @@ router.post('/interviews/:id/book', requirePerm('ats', 'interviews', 'Schedule I
     kind: 'scheduled',
     told,
     emailsOff: !!told.emailsOff,
+    invites: { sent: invites.sent, failed: invites.failed, notConfigured: invites.notConfigured, rows: invites.rows, message: invites.message },
+    meetingLink: meetingLink || null,
+    linkWarning,
     whatsapp,
     message: parts.join(' '),
   });
@@ -1434,7 +1518,12 @@ router.post('/interviews/:id/whatsapp-log', requirePerm('ats', 'interviews', 'Sc
   // eslint-disable-next-line global-require
   const IN = require('../utils/interviewNotices');
   const link = (await IN.whatsappLinks(app.id, req.user)).find((l) => l.to === to);
-  if (!link) return res.status(400).json({ error: 'This job has no client manager (BDE).' });
+  if (!link) return res.status(400).json({ error: 'This requirement has no client manager (BDE).' });
+  // SECURITY (2026-10-13): a login that may not see the candidate's number never opened the candidate's WhatsApp
+  // and must not cause the number to be written into the message log either.
+  if (to === 'candidate' && (await require('../utils/contactAccess').ruleFor(req.user, 'candidates').then((r) => r.mode === 'masked' || !r.allowed).catch(() => true))) { // eslint-disable-line global-require
+    return res.status(403).json({ error: 'You do not contact candidates directly. TeamLink sends the message for you.' });
+  }
   const who = to === 'candidate' ? `the candidate (${link.name})` : `the client manager (BDE) ${link.name}`;
   const note = `Interview message (round ${app.interviewRound || 1}) opened in WhatsApp for ${who} — sent from the user's own WhatsApp.`;
   if (to === 'candidate') {

@@ -38,6 +38,11 @@ const hasLeft = (status) => LEFT_STATUSES.includes(String(status || '').trim().t
 // The day a departed holder's tenure should end: their approved (else
 // requested) last working date from the resignation record, else today.
 async function lastWorkingDayOf(employeeId) {
+  // THE ONE EXIT DATE (utils/exitDate.js).
+  try {
+    const m = await require('./exitDate').exitDatesFor([employeeId], { approvedOnly: false }); // eslint-disable-line global-require
+    if (m.has(employeeId)) return m.get(employeeId).date;
+  } catch (e) { /* fall through */ }
   try {
     const r = await prisma.resignationDetail.findFirst({
       where: { employeeId },

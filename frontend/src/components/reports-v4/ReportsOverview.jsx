@@ -7,6 +7,7 @@ import { DATE_RANGES, rangeDates } from '../ui/PageFilterBar.jsx';
 import { plainWords } from '../ui/Guide.jsx';
 import { TrendLines, FunnelShape } from './charts.jsx';
 import './reportsV4.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // REPORTS & ANALYTICS — the overview on top of Reports -> ATS Reports
@@ -86,9 +87,9 @@ const KPIS = [
 // report's views switch).
 const QUICK = [
   { tab: 'recruitment', card: 'people', icon: 'file', label: 'Applications report', sub: 'Every application, step by step' },
-  { tab: 'clients', card: 'clientsjobs', icon: 'building', label: 'Client-wise report', sub: 'Jobs and joinings per client' },
+  { tab: 'clients', card: 'clientsjobs', icon: 'building', label: 'Client-wise report', sub: 'Requirements and joinings per client' },
   { tab: 'recruiters', card: 'team', icon: 'user', label: 'Recruiter performance', sub: 'Sent, interviews, joined' },
-  { tab: 'departments', card: 'depts', icon: 'chart', label: 'Department report', sub: 'Open jobs to joined, per department' },
+  { tab: 'departments', card: 'depts', icon: 'chart', label: 'Department report', sub: 'Open requirements to joined, per department' },
   { tab: 'daily', card: 'daily', icon: 'calendar', label: 'Daily & monthly summary', sub: 'What each recruiter did, day or month' },
   { tab: 'rejections', card: 'rejections', icon: 'x', label: 'Rejection analysis', sub: 'Who rejects people, and why' },
 ];
@@ -257,10 +258,10 @@ export default function ReportsOverview({
             <span aria-hidden="true">→</span>
             <input type="date" aria-label="To date" value={dates.to || ''} min={dates.from || undefined} onChange={(e) => setDates({ to: e.target.value })} />
           </span>
-          <select className="rv4-select" aria-label="Period" value={pf.range || ''}
+          <Combo className="rv4-select" aria-label="Period" value={pf.range || ''}
             onChange={(e) => setPf({ ...pf, range: e.target.value, ...(e.target.value === 'custom' ? {} : { from: '', to: '' }) })}>
             {DATE_RANGES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Combo>
           {canExport && allowed && <ExportMenu busy={busy} onExport={doExport} />}
         </div>
       </div>
@@ -420,7 +421,7 @@ export default function ReportsOverview({
               ) : <div className="ak-empty">No applications in this period.</div>)}
             </Panel>
 
-            <Panel title="Location-wise performance" sub="Applications by job location" action={{ label: 'View all', onClick: () => onOpen('recruitment', { card: 'people' }, 'location') }}>
+            <Panel title="Location-wise performance" sub="Applications by requirement location" action={{ label: 'View all', onClick: () => onOpen('recruitment', { card: 'people' }, 'location') }}>
               {loc.loading && !loc.data ? loadingTxt : errTxt(loc) || (locTop.length ? (
                 <ul className="rv4-locs">
                   {[...locTop.map((r) => ({ key: r.key, label: r.key === NOT_SET ? 'Location not set' : String(r.c[0]), value: num(locSec.get(r, 'applications')), row: r })),

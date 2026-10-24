@@ -25,6 +25,8 @@ module.exports = function makeRecon(H) {
     prisma, logAudit, actor, ROUND, toIsoDate, deriveInvoiceStatus, invoiceOutstanding, ensureAccounts, onAccount, lineOpen, txnState,
     linkPayment, applyPlan, fmtMoney, loadTxn,
   } = H;
+  // Auto-Reconcile layer (routes/bankAuto.js), attached after this module is built.
+  const autoApi = () => (H.autoRef && H.autoRef.api) || null;
 
   const systemReq = { user: { id: null, name: 'Auto-match' } };
   const who = (req) => (req && req.user ? (req.user.name || req.user.email || 'Accounts') : 'Auto-match');
@@ -328,9 +330,24 @@ module.exports = function makeRecon(H) {
     let chargesFiled = 0;
     let billsFiled = 0;
     let reportAfter = null;
-    if (autoPost) {
+    // SUGGEST-ONLY unless an Admin switched "Auto-reconcile reliable matches" ON in Auto-Reconcile > Rules.
+    const A = autoApi();
+    const autoSettings = A ? await A.getSettings() : { autoReconcile: true };
+    let suggested = 0;
+    const A_ready = !!(A && await A.ready());
+    if (A_ready && !(autoPost && autoSettings.autoReconcile)) {
+      const mineOnly = await prisma.bankTransaction.findMany({ where: { id: { in: ids } } });
+      const r = await A.afterLines(mineOnly, req, { source: 'import', forceSuggestOnly: true });
+      suggested = (r.counts.wouldAutoMatch || 0) + (r.counts.suggested || 0);
+    }
+    if (autoPost && autoSettings.autoReconcile) {
       const mine = await prisma.bankTransaction.findMany({ where: { id: { in: ids } } });
-      const rep = await runMatcher(mine, req);
+      let rep;
+      if (A_ready) {
+        const r = await A.afterLines(mine, req, { source: 'import' });
+        rep = { checked: r.counts.checked || 0, matched: r.counts.autoMatched || 0, needsReview: r.counts.needsReview || 0, none: r.counts.unmatched || 0 };
+        suggested = (r.counts.wouldAutoMatch || 0) + (r.counts.suggested || 0);
+      } else rep = await runMatcher(mine, req);
       matched = rep.matched;
       loansLinked = (await H.autoLinkLoans(req)).linked;
       const debits = await H.autoFileDebits(account.id, firstId, req);
@@ -346,7 +363,7 @@ module.exports = function makeRecon(H) {
     const autoMatched = fresh.filter((t) => !lineOpen(t, linkedSet) && !t.excluded && txnState(t) !== 'Ignored').length;
     const open = fresh.filter((t) => lineOpen(t, linkedSet));
     return {
-      autoPosted: matched, loansLinked, billsFiled, chargesFiled, autoMatched, needsReview: open.filter((t) => t.reviewReason).length, unmatched: open.length, matcher: reportAfter && { checked: reportAfter.checked, matched: reportAfter.matched, needsReview: reportAfter.needsReview, none: reportAfter.none },
+      autoPosted: matched, suggested, autoReconcileOn: !!autoSettings.autoReconcile, loansLinked, billsFiled, chargesFiled, autoMatched, needsReview: open.filter((t) => t.reviewReason).length, unmatched: open.length, matcher: reportAfter && { checked: reportAfter.checked, matched: reportAfter.matched, needsReview: reportAfter.needsReview, none: reportAfter.none },
     };
   }
 
@@ -359,7 +376,16 @@ module.exports = function makeRecon(H) {
       where = bankAccountId === firstId ? { OR: [{ bankAccountId }, { bankAccountId: null }] } : { bankAccountId };
     }
     const lines = await openLines(where);
-    const rep = await runMatcher(lines, req || systemReq);
+    const A = autoApi();
+    if (A && await A.ready()) {
+      // the same safety rules as the import: suggest-only unless the Admin switch is ON
+      const r = await A.afterLines(lines, req || systemReq, { source: 'rescan' });
+      return {
+        checked: r.counts.checked || 0, matched: r.counts.autoMatched || 0, needsReview: (r.counts.needsReview || 0) + (r.counts.suggested || 0) + (r.counts.wouldAutoMatch || 0), none: r.counts.unmatched || 0, failed: r.counts.failedApply || 0, details: [],
+      };
+    }
+    const switchOn = A ? (await A.getSettings()).autoReconcile : true;
+    const rep = await runMatcher(lines, req || systemReq, { apply: switchOn });
     return rep;
   }
 
@@ -410,7 +436,7 @@ module.exports = function makeRecon(H) {
       let category = String(b.category || '').trim();
       let vendor = String(b.vendor || '').trim() || null;
       if (kind === 'client') {
-        const c = await prisma.client.findFirst({ where: { OR: [{ id: String(b.clientId || '__') }, { name: category }] }, select: { id: true, name: true } });
+        const c = await prisma.client.findFirst({ where: { OR: [{ id: String(b.clientId || '__') }, { name: category }, { id: { in: await require('../utils/clientSearch').aliasClientIdsExact(category) } }] }, select: { id: true, name: true } }); // eslint-disable-line global-require
         if (!c) return res.status(400).json({ error: 'Choose a client that is on file.' });
         category = c.name;
         vendor = null;
@@ -467,7 +493,7 @@ module.exports = function makeRecon(H) {
         if (unP <= 0) continue;
         const narr = RM.norm(`${t.description || ''} ${t.reference || ''}`);
         const named = RM.clientNamed(narr, ctx);
-        const clientId = named && !named.ambiguous ? named.clientId : (t.clientName ? (ctx.clients.find((c) => c.name === t.clientName) || {}).id : null) || null;
+        const clientId = named && !named.ambiguous ? named.clientId : (t.clientName ? (ctx.clients.find((c) => c.name === t.clientName) || (ctx.clientAliases || []).map((a) => (a.alias === t.clientName ? ctx.clients.find((c) => c.id === a.clientId) : null)).find(Boolean) || {}).id : null) || null;
         const client = clientId ? ctx.clients.find((c) => c.id === clientId) : null;
         const open = clientId ? ctx.invoices.filter((i) => i.clientId === clientId && RM.isOpen(i)) : [];
         const dec = RM.decide(t, ctx);
@@ -511,7 +537,9 @@ module.exports = function makeRecon(H) {
       if (req.query.clientId) where.clientId = String(req.query.clientId);
       const invs = await prisma.invoice.findMany({ where, include: { client: { select: { id: true, name: true } }, candidate: { select: { name: true } } } });
       const q = RM.norm(req.query.q || '');
-      const list = invs.filter((i) => RM.isOpen(i) && (!q || RM.norm(`${i.invoiceNumber} ${i.client && i.client.name} ${i.candidate && i.candidate.name}`).includes(q)));
+      const oldNames = q ? await require('../utils/clientSearch').aliasMap() : new Map(); // eslint-disable-line global-require
+      // (the client's OLD names find the invoice too; the row shows the official name)
+      const list = invs.filter((i) => RM.isOpen(i) && (!q || RM.norm(`${i.invoiceNumber} ${i.client && i.client.name} ${i.client ? (oldNames.get(i.client.id) || []).join(' ') : ''} ${i.candidate && i.candidate.name}`).includes(q)));
       const counts = new Map();
       list.forEach((i) => { const k = i.client ? i.client.name : '-'; counts.set(k, (counts.get(k) || 0) + 1); });
       res.json({
@@ -667,6 +695,6 @@ module.exports = function makeRecon(H) {
   }
 
   return {
-    install, autoMatchNewLines, reconsiderOpenLines, runMatcher, loadContext, allocateCredit, lineDetail, getTolerance,
+    install, autoMatchNewLines, reconsiderOpenLines, runMatcher, loadContext, allocateCredit, lineDetail, getTolerance, deallocateIn,
   };
 };

@@ -1,0 +1,16 @@
+/* Client hiring (offer / joining letters) - scoped under ctk- */
+.ctk-form { display: flex; flex-direction: column; gap: 12px; }
+.ctk-f { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
+.ctk-f input[type="text"], .ctk-f input[type="date"], .ctk-f input[type="time"], .ctk-f input[type="number"], .ctk-f textarea { width: 100%; box-sizing: border-box; }
+.ctk-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.ctk-hint { font-size: 12.5px; color: var(--muted, #667); }
+.ctk-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.ctk-result { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--line, #dde3ee); border-radius: 8px; padding: 10px; }
+.ctk-result textarea { width: 100%; box-sizing: border-box; font-size: 13px; }
+.ctk-card { border: 1px solid var(--line, #dde3ee); border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; background: #fff; }
+.ctk-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; }
+.ctk-meta { font-size: 13px; color: var(--muted, #667); margin-top: 4px; }
+.ctk-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.ctk-notice { background: #e8f6ee; border: 1px solid #bfe3cc; border-radius: 8px; padding: 8px 10px; margin-top: 8px; font-size: 13.5px; }
+.ctk-notice.red { background: #fdecec; border-color: #f3c3c3; }
+@media (max-width: 640px) { .ctk-two { grid-template-columns: 1fr; } }

@@ -160,7 +160,7 @@ async function recipientsFor(user, audience, ids, { applicationId, requirementId
       where: { AND: [{ id: { in: ids } }, scope.clientWhere(user)] },
       select: {
         id: true, name: true, contactName: true, contactEmail: true, contactPhone: true, contactWhatsApp: true,
-        billingContactName: true, billingContactEmail: true, billingContactPhone: true, commPrimary: true,
+        billingContactName: true, billingContactEmail: true, billingContactPhone: true, commPrimary: true, bdeOwner: true,
         agreementStatus: true, agreementDocument: true, agreementSentAt: true, esignToken: true, agreementEsignTxnId: true,
         ...(profile.hasColumn('agreementLinkMeta') ? { agreementLinkMeta: true } : {}),
       },
@@ -172,8 +172,15 @@ async function recipientsFor(user, audience, ids, { applicationId, requirementId
     // stays a {{detail}} that the sender sees and fills by hand — a link is never made by sending a message.
     let mayLink = false;
     try { mayLink = await require('./permissions').can(user, 'ats', 'clients', 'Agreement Lifecycle', 'create'); } catch { mayLink = false; } // eslint-disable-line global-require
+    // The client's own BDE and the BDE TL also share the link (agreementLinkRoutes: lifecycle.bdeMayLink).
+    const bdeMay = new Set();
+    if (!mayLink) {
+      for (const c of rows) {
+        try { if (await require('./agreementLifecycle').bdeMayLink(user, c)) bdeMay.add(c.id); } catch { /* not allowed */ } // eslint-disable-line global-require, no-await-in-loop
+      }
+    }
     const linkOf = (c) => {
-      if (!mayLink) return null;
+      if (!mayLink && !bdeMay.has(c.id)) return null;
       try {
         const signing = require('./agreementSigning'); // eslint-disable-line global-require
         const token = signing.tokenFor(c);

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DupBanner } from '../components/duplicates/DupChip.jsx'; // dup_
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import NextStepBlock from '../components/NextStepBlock.jsx';
@@ -23,6 +23,7 @@ import EligibleClients from '../components/candidate/EligibleClients.jsx';
 import ResumePanel from '../components/resume/ResumePanel.jsx';
 import { EligibleRequirementsPanel } from '../components/resume/MatchSplit.jsx';
 import PortalInviteButton from '../components/portal/PortalInviteButton.jsx';
+import { InterviewPrepSection } from '../components/interviews/InterviewPrep.jsx'; // suggested interview questions from the JD
 import { ClientPausedBanner, lifecycleOf as clientLifecycleOf } from '../components/clients/ClientLifecycle.jsx';
 // Candidate 360 (spec 2026-09-29 §9): the same header + tabs as the big window.
 import {
@@ -31,11 +32,12 @@ import {
 } from '../components/Candidate360Tabs.jsx';
 // cand7_ (Candidates §7): the profile top and the other agents' mount points.
 import ProfileTop from '../components/candidate/ProfileTop.jsx';
-import ConversationView from '../components/messaging/ConversationView.jsx'; // omnichannel Conversation tab
+import CandidateConversation from '../components/messaging/CandidateConversation.jsx'; // Conversation tab: this candidate's WhatsApp chat + the all-channels view (ConversationView, CommunicationTimeline)
 import ProfileLeft, { ResumeTabCard } from '../components/candidate/ProfileLeft.jsx';
 import { RecordDocuments } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5
+import JoiningDropPanel from '../components/joindrop/JoiningDropPanel.jsx'; // Joining & Drop: the joining card, the drop, the history and the journey
 import {
-  FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot,
+  FitSlot, AlsoGoodFitSlot, RejectionHistorySlot, HistoryTimelineSlot, AddApplicationSlot,
 } from '../components/candidate/ProfileSlots.jsx';
 
 // The candidate record, in nine tabs:
@@ -107,6 +109,7 @@ export default function CandidateDetail() {
   const [candidate, setCandidate] = useState(null);
   // Set when the API refuses this record for scope reasons.
   const [denied, setDenied] = useState('');
+  const [limited, setLimited] = useState(null);
   const [tab, setTabRaw] = useState('applications');
   const setTab = (k) => setTabRaw(tabKeyOf(k));
   const navigate = useNavigate();
@@ -117,7 +120,9 @@ export default function CandidateDetail() {
   const [docDraft, setDocDraft] = useState({ docType: 'Resume', name: '', note: '' });
   // user notes #5 — which application the 360 shows: the latest, until a row
   // of the Applications list is clicked.
-  const [selectedAppId, setSelectedAppId] = useState(null);
+  // ?application=<id>: opened from an 'Already on this job' link, so it starts on THAT application.
+  const [searchParams] = useSearchParams();
+  const [selectedAppId, setSelectedAppId] = useState(searchParams.get('application') || null);
   useEffect(() => { setSelectedAppId(null); }, [id]);
   // --- follow-ups. One thread per APPLICATION. -----------------------------
   const [followUpDraft, setFollowUpDraft] = useState(null);
@@ -134,11 +139,20 @@ export default function CandidateDetail() {
     api.get(`/candidates/${id}`)
       // dup_: a profile that was merged away still opens the one it was merged into (old links keep working)
       .then((res) => { if (res.data && res.data.mergedFrom && res.data.id !== id) navigate(`/candidates/${res.data.id}`, { replace: true }); setCandidate(res.data); })
-      .catch((err) => setDenied([403, 404].includes(err.response?.status)
-        ? (err.response?.data?.error || 'You cannot open this person.')
-        : 'Could not load this person. Please try again.'));
+      .catch((err) => {
+        const msg = [403, 404].includes(err.response?.status)
+          ? (err.response?.data?.error || 'You cannot open this person.')
+          : 'Could not load this person. Please try again.';
+        // The client manager (BDE) team: a person who is only in a "Good fit" list has no pipeline step yet, so the full page refuses;
+        // show the limited view (no phone, email, salary or documents) instead of a dead click.
+        if (err.response?.status === 403) {
+          api.get(`/candidates/${id}/limited`).then((r) => setLimited(r.data)).catch(() => setDenied(msg));
+        } else setDenied(msg);
+      });
   }
   useEffect(load, [id]);
+  const wantedApp = searchParams.get('application');
+  useEffect(() => { if (wantedApp) { setSelectedAppId(wantedApp); setTabRaw('applications'); } }, [wantedApp, id]);
   useEffect(() => {
     if (tab !== 'history') return;
     api.get(`/candidates/${id}/followup-log`)
@@ -152,7 +166,8 @@ export default function CandidateDetail() {
       await api.post('/applications', { candidateId: id, requirementId });
       load();
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add this person to the job. Please try again.');
+      if (err.alreadyApplied) { load(); return; } // the 'Already on this job' box says where
+      setError(err.response?.data?.error || 'Could not add this person to the requirement. Please try again.');
     }
   }
 
@@ -176,7 +191,7 @@ export default function CandidateDetail() {
       return;
     }
     if (!data.canRecord) {
-      setError('Only the people on this job can add its follow-up.');
+      setError('Only the people on this requirement can add its follow-up.');
       return;
     }
     const current = data.current;
@@ -250,6 +265,28 @@ export default function CandidateDetail() {
   }
 
   if (denied) return <div className="notice">{denied}</div>;
+  if (limited && !candidate) {
+    const L = limited;
+    const line = (k, v) => (v ? <div key={k}><span className="small-muted">{k}: </span>{v}</div> : null);
+    return (
+      <div className="card section" style={{ maxWidth: 720 }}>
+        <h2 style={{ marginTop: 0 }}>{L.name}</h2>
+        <div className="small-muted" style={{ marginBottom: 8 }}>{L.hidden}</div>
+        {line('Place', L.location)}
+        {line('Experience', L.experienceYears != null ? `${L.experienceYears} years` : null)}
+        {line('Now', L.currentDesignation)}
+        {line('Skills', L.skills)}
+        {line('Also knows', [L.technicalSkills, L.goodToHaveSkills].filter(Boolean).join(', '))}
+        {line('Education', [L.education, L.specialization].filter(Boolean).join(' · '))}
+        {line('Notice period', L.noticePeriod)}
+        <h3 style={{ fontSize: 14, marginTop: 14 }}>Where this person is now</h3>
+        {L.steps.length === 0
+          ? <div className="small-muted">Not added to any of your requirements yet. Use Add in the Good fit list.</div>
+          : L.steps.map((s, i) => <div key={i}>{s.job}{s.client ? ` · ${s.client}` : ''} — <b>{s.step}</b></div>)}
+        <div style={{ marginTop: 12 }}><button type="button" className="btn btn-sm" onClick={() => navigate(-1)}>Back</button></div>
+      </div>
+    );
+  }
   if (!candidate) return <div className="small-muted">Loading…</div>;
 
   const c = candidate;
@@ -345,7 +382,7 @@ export default function CandidateDetail() {
           .filter((a) => { const k = a.requirement.client.id || a.requirement.client.name; if (seen.has(k)) return false; seen.add(k); return true; })
           .map((a) => (
             <ClientPausedBanner key={a.id} clientName={a.requirement.client.name} lifecycle={clientLifecycleOf(a.requirement.client)}>
-              {` (job: ${a.requirement.title || 'a job'})`}
+              {` (requirement: ${a.requirement.title || 'a requirement'})`}
             </ClientPausedBanner>
           ));
       })()}
@@ -386,10 +423,12 @@ export default function CandidateDetail() {
       )}
       {/* ATS layout v3: left = personal info, resume, skills, CTC, notice;
           right = Applications · Notes · Documents · Timeline (same as the big window). */}
-      <div className="pfl-frame">
+      {/* Founder, 2026-10-22: the tabs sit on top, always in the same place. Overview shows the whole profile (personal info, work facts, skills, consent, the applications);
+          every other tab (Resume, Notes, Documents, Timeline, Conversation) shows ONLY its own content, full width. */}
+      <C360Tabs tab={tab} setTab={setTab} c={c} className="pfl-tabs-top" />
+      <div className={`pfl-frame${tab !== 'applications' ? ' pfl-conv' : ''}`}>
       <ProfileLeft c={c} user={user} internal={internal} slot={slot} onChanged={load} onDeleted={() => navigate('/candidates')} />
       <div className="pfl-right">
-      <C360Tabs tab={tab} setTab={setTab} c={c} />
 
       {tab === 'applications' && (
       <div className="c360-page">
@@ -452,7 +491,7 @@ export default function CandidateDetail() {
         <>
           {/* v3: the current application (with Recruiter · TL · BDE) is the card at the top of this tab. */}
           {!primary && (
-            <div className="empty"><h3>Not on any job yet</h3><div>Add this person to a job to start.</div></div>
+            <div className="empty"><h3>Not on any requirement yet</h3><div>Add this person to a requirement to start.</div></div>
           )}
 
           {(applications.length > 0 || c.otherTeamApplications > 0) && (
@@ -469,7 +508,7 @@ export default function CandidateDetail() {
                     <tr>
                       {/* 8 columns (simplicity checklist #12). Department / team lead /
                           client manager of the picked job are in the card above. */}
-                      <th>Job</th><th>Client</th><th>Applied on</th><th>Step</th><th>At this step since</th>
+                      <th>Requirement</th><th>Client</th><th>Applied on</th><th>Step</th><th>At this step since</th>
                       <th>Next step</th><th>Owner</th><th>Status</th>
                     </tr>
                   </thead>
@@ -479,7 +518,7 @@ export default function CandidateDetail() {
                         key={a.id}
                         className={`${applications.length > 1 ? 'rq-click' : ''}${primary && a.id === primary.id ? ' is-selected' : ''}`}
                         onClick={applications.length > 1 ? () => openApplication(a.id) : undefined}
-                        title={applications.length > 1 ? 'See this job above' : undefined}
+                        title={applications.length > 1 ? 'See this requirement above' : undefined}
                       >
                         <td className="c360-stack-title">
                           <Link to={`/requirements/${a.requirementId}`} onClick={(e) => e.stopPropagation()}>
@@ -539,9 +578,9 @@ export default function CandidateDetail() {
             Due Date · Next Follow-up · Status
           Status is Upcoming / Due Today / Overdue / Completed, derived on the
           server from the due date so it is never stale. --- */}
-      {tab === 'conversation' && internal && <ConversationView audience="candidates" personId={c.id} name={c.name} applicationId={primary ? primary.id : undefined} requirementId={primary ? primary.requirementId : undefined} onChanged={load} />}
+      {tab === 'conversation' && internal && <CandidateConversation candidateId={c.id} name={c.name} applicationId={primary ? primary.id : undefined} requirementId={primary ? primary.requirementId : undefined} onChanged={load} />}
       {tab === 'history' && <HistoryTimelineSlot {...slot} refreshKey={refreshKey} withActivity={false} />}
-      {tab === 'history' && internal && <div className="section-label">{followUpCount ? `Follow-ups (${followUpCount}) — one per job` : 'Follow-ups — one per job'}</div>}
+      {tab === 'history' && internal && <div className="section-label">{followUpCount ? `Follow-ups (${followUpCount}) — one per requirement` : 'Follow-ups — one per requirement'}</div>}
       {tab === 'history' && internal && (
         <>
           <div className="tbl-wrap">
@@ -549,7 +588,7 @@ export default function CandidateDetail() {
               <thead>
                 <tr>
                   {/* 7 columns (checklist #12); team lead / client manager are on the Overview. */}
-                  <th>Job</th><th>Owner</th><th>Last contacted</th><th>Next step</th>
+                  <th>Requirement</th><th>Owner</th><th>Last contacted</th><th>Next step</th>
                   <th>Due</th><th>Next follow-up</th><th>Status</th>
                   {canRecordFollowUp && <th />}
                 </tr>
@@ -597,7 +636,7 @@ export default function CandidateDetail() {
                 {applications.length === 0 && (
                   <tr>
                     <td colSpan={canRecordFollowUp ? 8 : 7} className="small-muted" style={{ padding: 16 }}>
-                      Not on any job yet, so there is nothing to follow up.
+                      Not on any requirement yet, so there is nothing to follow up.
                     </td>
                   </tr>
                 )}
@@ -605,7 +644,7 @@ export default function CandidateDetail() {
             </table>
           </div>
           <div className="small-muted" style={{ marginTop: 8 }}>
-            Each job has its own follow-up. A late one goes to the team lead.
+            Each requirement has its own follow-up. A late one goes to the team lead.
           </div>
 
           {followUpThread && (
@@ -629,7 +668,7 @@ export default function CandidateDetail() {
                       </tr>
                     ))}
                     {followUpThread.history.length === 0 && (
-                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No follow-up on this job yet.</td></tr>
+                      <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No follow-up on this requirement yet.</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -656,7 +695,7 @@ export default function CandidateDetail() {
                 <thead>
                   <tr>
                     <th>When</th><th>Channel</th><th>What</th><th>Why</th>
-                    <th>Outcome</th><th>What was said</th><th>By</th><th>Job</th>
+                    <th>Outcome</th><th>What was said</th><th>By</th><th>Requirement</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -729,7 +768,7 @@ export default function CandidateDetail() {
               </Combo>
             </label>
             <label className="field">
-              <span>Due date *</span>
+              <span>Due date</span>
               <input
                 type="date"
                 value={followUpDraft.dueDate}
@@ -746,7 +785,7 @@ export default function CandidateDetail() {
             </label>
           </div>
           <label className="field">
-            <span>Next step *</span>
+            <span>Next step</span>
             <input
               value={followUpDraft.nextAction}
               placeholder="What is owed next?"
@@ -772,6 +811,7 @@ export default function CandidateDetail() {
       {/* --- AI Match. Internal only, and framed as what it is. --- */}
       {/* v3: Fit folds into Applications. */}
       {tab === 'applications' && internal && <div className="section-label">Fit</div>}
+      {tab === 'applications' && <AddApplicationSlot {...slot} />}
       {tab === 'applications' && <FitSlot {...slot} />}
       {tab === 'applications' && <AlsoGoodFitSlot {...slot} />}
       {/* cand7_: the AI match detail moved to the Fit tab (components/candidate/ProfileSlots.jsx FitSlot). */}
@@ -781,7 +821,7 @@ export default function CandidateDetail() {
       {tab === 'applications' && viewer.kind !== 'candidate' && applications.length > 0 && <div className="section-label">Interview feedback</div>}
       {tab === 'applications' && viewer.kind !== 'candidate' && (
         applications.length === 0
-          ? <div className="empty"><h3>Not on any job yet</h3></div>
+          ? <div className="empty"><h3>Not on any requirement yet</h3></div>
           : [...applications].sort((x, y) => String(y.createdAt).localeCompare(String(x.createdAt))).map((a) => (
             <div className="card section" key={a.id}>
               <h3 style={{ fontSize: 13, marginBottom: 8 }}>
@@ -797,6 +837,7 @@ export default function CandidateDetail() {
       {tab === 'applications' && <SubmissionsTab c={c} />}
       {tab === 'applications' && <OffersTab c={c} />}
       {tab === 'applications' && <JoiningTab c={c} />}
+      {tab === 'applications' && internal && primary && <JoiningDropPanel app={primary} onChanged={load} />}
       {tab === 'history' && <div className="section-label">Activity history</div>}
       {tab === 'history' && (
         <>
@@ -813,7 +854,7 @@ export default function CandidateDetail() {
                 <tr>
                   <th>When</th><th>Who</th><th>Step</th><th>Action</th>
                   {internal && <th>Comment</th>}
-                  <th>Job</th>
+                  <th>Requirement</th>
                 </tr>
               </thead>
               <tbody>
@@ -837,7 +878,7 @@ export default function CandidateDetail() {
                     </td>
                     <td>
                       {h.action}
-                      {h.derived && <div className="small-muted">From the job record (older entry)</div>}
+                      {h.derived && <div className="small-muted">From the requirement record (older entry)</div>}
                       {/* The full Rejected / Hold record. Reason category and
                           the detailed reason are internal reasoning and the
                           server withholds them from external logins, so this
@@ -904,6 +945,7 @@ export default function CandidateDetail() {
                   <span>{aiHeadline(a, aiCompletedAt(history, a))}</span>
                 </div>
               )}
+              {internal && viewer.kind !== 'candidate' && viewer.kind !== 'client' && <InterviewPrepSection applicationId={a.id} />}
             </div>
           ))
       )}

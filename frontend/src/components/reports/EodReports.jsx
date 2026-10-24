@@ -139,7 +139,7 @@ const bdeRows = (t) => ([
   ['Client contacts', t.clientContacts], ['Client notes', t.clientNotes], ['Agreements sent', t.agreementsSent],
   ['Sent to clients', t.sentToClient], ['Interviews fixed', t.interviewsSet], ['Client feedback saved', t.clientFeedbackSaved],
   ['Follow-ups done', t.followUpsDone], ['Steps moved', t.stepsMoved],
-].map(([a, b]) => [a, b, null, null]));
+].filter(([a, b]) => !(a === 'Agreements sent' && b === undefined)).map(([a, b]) => [a, b, null, null]));
 
 function TeamReport({ r, bde }) {
   const t = r.team.totals || {};
@@ -195,7 +195,7 @@ function TeamReport({ r, bde }) {
 
       {jobs.length > 0 && (
         <div className="pwk-jobs">
-          <div className="pwk-jobs-title">Jobs where no profile was sent today</div>
+          <div className="pwk-jobs-title">Requirements where no profile was sent today</div>
           {jobs.map((j, i) => (
             // eslint-disable-next-line react/no-array-index-key
             <div key={i} className="small-muted">{`${j.job}${j.client ? ` (${j.client})` : ''}`}</div>

@@ -56,6 +56,8 @@ async function send(user, input = {}) {
   const base = {
     audience, ids: [String(input.id)], kind: 'individual', applicationId: input.applicationId, requirementId: input.requirementId,
     purposeKey: input.purposeKey, purpose: input.purpose, language: input.language, perChannel: input.perChannel, subject: input.subject, body: input.body, urgent: !!input.urgent,
+    waNumberId: input.waNumberId || undefined, // the WhatsApp number the sender chose (utils/waNumbers.js)
+    attachments: input.attachments, sessionText: input.sessionText === true, // the WhatsApp chat screen: a resume as a file, plain words inside the 24-hour window
   };
   const attempts = [];
   let firstText = null;
@@ -68,6 +70,7 @@ async function send(user, input = {}) {
     if (plan.error) {
       if (plan.status === 403 && !attempts.length && !wantsBest) return { error: plan.error, status: 403 };
       if (plan.status === 400 && !wantsBest) return { error: plan.error, status: 400 };
+      if (plan.status === 409 && plan.code && !wantsBest) return { error: plan.error, status: 409, code: plan.code }; // no WhatsApp number for this sender
       attempts.push({ channel: ch, status: 'blocked', reason: plan.error });
       continue; // eslint-disable-line no-continue
     }

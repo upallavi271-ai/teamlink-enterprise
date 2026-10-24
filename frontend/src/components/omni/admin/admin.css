@@ -1,0 +1,29 @@
+/* Administration pages (Team & Roles, Billing, Super Admin, Settings). Scoped under .gsx like gs.css. */
+.gsx .adm-row{display:flex;align-items:center;gap:14px;border:1px solid var(--line);border-radius:11px;padding:11px 14px;margin-bottom:9px;background:var(--surface)}
+.gsx .adm-row-main{flex:1;min-width:0}
+.gsx .adm-row-main b{display:block;font-size:12px;color:var(--ink)}
+.gsx .adm-row-main small{display:block;font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.55}
+.gsx .adm-note{font-size:11px;color:var(--muted);line-height:1.6;margin:6px 0}
+.gsx .adm-warn{font-size:11px;line-height:1.6;background:#fff6df;border:1px solid #f0e0b4;color:#8a6410;border-radius:10px;padding:9px 12px;margin:8px 0}
+.gsx .adm-two{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}
+.gsx .adm-form{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+.gsx .adm-form .field input,.gsx .adm-form .field select{height:36px;border:1px solid var(--line);border-radius:10px;padding:0 11px;font-size:11px;background:#fff}
+.gsx .adm-matrix th,.gsx .adm-matrix td{text-align:center;white-space:normal}
+.gsx .adm-matrix th:first-child,.gsx .adm-matrix td:first-child{text-align:left;min-width:220px}
+.gsx .adm-yes{color:var(--green-2);font-weight:900}
+.gsx .adm-no{color:#b9c2bc}
+.gsx .adm-people{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:11px;padding:6px 10px;margin:10px 0}
+.gsx .adm-people .adm-row{border:0;border-bottom:1px solid var(--line);border-radius:0;margin:0;padding:8px 2px}
+.gsx .adm-people .adm-row:last-child{border-bottom:0}
+.gsx .adm-bar{display:inline-block;width:70px;height:6px;border-radius:4px;background:var(--surface-2);overflow:hidden;vertical-align:middle;margin-right:6px}
+.gsx .adm-bar span{display:block;height:100%;background:var(--accent)}
+.gsx .adm-secret{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:8px 10px;word-break:break-all}
+.gsx .adm-health-dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:6px}
+.gsx .adm-health-dot.green{background:#22c55e}.gsx .adm-health-dot.yellow{background:#f0b34a}.gsx .adm-health-dot.red{background:#e0535c}
+.gsx .adm-tabs-wrap{overflow-x:auto}
+.gsx .adm-tabs-wrap .set-tabs{min-width:max-content}
+.gsx .adm-kv{display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:11.5px}
+.gsx .adm-kv dt{color:var(--muted);font-weight:700}.gsx .adm-kv dd{margin:0;color:var(--ink);overflow-wrap:anywhere}
+.gsx .adm-org-cards .org-card .org-name{overflow-wrap:anywhere}
+.gsx .row-acts.adm-wide{flex-wrap:wrap}
+.gsx .row-acts.adm-wide .tiny-btn{width:auto;min-width:0;padding:0 10px;height:28px;white-space:nowrap;display:inline-block}

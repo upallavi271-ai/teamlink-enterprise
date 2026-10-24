@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Panel, PanelHead } from '../../components/proto.jsx';
+import IssueTasksCard from './IssueTasksCard.jsx';
 
 // ---------------------------------------------------------------------------
 // Attendance → Check-in Methods → "Late & missing-punch alerts" (HR settings).
@@ -50,6 +51,7 @@ export default function AlertSettings() {
   );
 
   return (
+    <>
     <Panel style={{ marginTop: 16 }}>
       <PanelHead title="Late & missing-punch alerts">
         <button type="button" className="btn btn-sm btn-primary" onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
@@ -92,5 +94,7 @@ export default function AlertSettings() {
         </div>
       </div>
     </Panel>
+    <IssueTasksCard />
+    </>
   );
 }

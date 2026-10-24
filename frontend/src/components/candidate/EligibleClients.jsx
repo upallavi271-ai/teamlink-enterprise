@@ -16,7 +16,7 @@ const tone = (n) => (n >= 70 ? 'green' : n >= 60 ? 'blue' : 'amber');
 function foldJobs(reqs) {
   const map = new Map();
   (reqs || []).forEach((r) => {
-    const k = r.title || 'Job';
+    const k = r.title || 'Requirement';
     const cur = map.get(k) || { title: k, count: 0, best: 0, id: r.id };
     cur.count += 1;
     if (r.match > cur.best) { cur.best = r.match; cur.id = r.id; }
@@ -39,7 +39,7 @@ function ClientRow({ ec }) {
         </span>
         <span className="c360-ec-facts">
           <StatusChip tone={tone(best)}>{`best fit ${best}%`}</StatusChip>
-          <span className="small-muted">{n === 1 ? '1 job' : `${n} jobs`}</span>
+          <span className="small-muted">{n === 1 ? '1 requirement' : `${n} requirements`}</span>
         </span>
         <span className="c360-ec-more">{open ? 'Hide' : 'Details'}</span>
       </button>
@@ -48,7 +48,7 @@ function ClientRow({ ec }) {
           {jobs.map((j) => (
             <li key={j.title}>
               {j.id ? <Link to={`/requirements/${j.id}`}>{j.title}</Link> : j.title}
-              <span className="small-muted">{` — ${j.count > 1 ? `${j.count} jobs, ` : ''}fit ${j.best}%`}</span>
+              <span className="small-muted">{` — ${j.count > 1 ? `${j.count} requirements, ` : ''}fit ${j.best}%`}</span>
             </li>
           ))}
         </ul>
@@ -78,7 +78,7 @@ export default function EligibleClients({ c }) {
               <div>
                 <b>{r.clientName || '—'}</b>
                 {' · '}
-                <Link to={`/requirements/${r.requirementId}`}>{r.requirementTitle || 'Job'}</Link>
+                <Link to={`/requirements/${r.requirementId}`}>{r.requirementTitle || 'Requirement'}</Link>
               </div>
               <div className="small-muted">
                 {[r.at ? protoDate(r.at) : null, r.side, r.reason, r.by ? `recorded by ${r.by}` : null].filter(Boolean).join(' · ')}
@@ -89,9 +89,9 @@ export default function EligibleClients({ c }) {
       )}
       <div className="c360-elig-part">
         <div className="c360-sub c360-sub-flat">
-          {clients.length ? `Could fit ${total} client${total === 1 ? '' : 's'} (open jobs, fit 60% or more)` : 'Could fit'}
+          {clients.length ? `Could fit ${total} client${total === 1 ? '' : 's'} (open requirements, fit 60% or more)` : 'Could fit'}
         </div>
-        {clients.length === 0 && <div className="small-muted">No open job at another client fits yet.</div>}
+        {clients.length === 0 && <div className="small-muted">No open requirement at another client fits yet.</div>}
         {shown.map((ec) => <ClientRow key={ec.clientId || 'internal'} ec={ec} />)}
         {clients.length > TOP && (
           <button type="button" className="link-btn c360-showall" onClick={() => setAll((x) => !x)}>

@@ -32,6 +32,10 @@ const columns = [
   { key: 'autoPresent', label: 'Attendance Days Present', type: 'number', readOnly: true, example: '' },
   { key: 'autoLop', label: 'Attendance LOP Days', type: 'number', readOnly: true, example: '' },
   { key: 'payrollStatus', label: 'Payroll Status', readOnly: true, example: '' },
+  // Payroll cycle + absent-without-leave (2026-10-12): read-only, from the attendance, never imported.
+  { key: 'payPeriod', label: 'Pay Period', readOnly: true, example: '16 Aug – 15 Sep' },
+  { key: 'awlDays', label: 'Absent-without-leave Days', type: 'number', readOnly: true, example: '' },
+  { key: 'awlLop', label: 'LOP Days From It', type: 'number', readOnly: true, example: '' },
 ];
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
@@ -65,7 +69,7 @@ module.exports = {
   instructions: [
     'One row = one employee\'s payroll attendance for one month. A row that changes the figures becomes HR\'s override (exactly like Override on Process Payroll → Attendance input) and needs a Reason.',
     'A row whose figures equal what is already in force is skipped, so the export (every payable employee for the month) can be edited and uploaded back as it is.',
-    'Refused once that month\'s payroll for the employee is submitted, approved, synced or paid. Nothing is calculated — recalculate the drafts on Process Payroll afterwards.',
+    'Refused once that month\'s payroll for the employee is submitted, approved, synced or paid. Nothing is calculated — recalculate the payroll on Process Payroll afterwards.',
   ],
 
   async exportRows(ctx, { employeeIds, filters }) {
@@ -78,8 +82,11 @@ module.exports = {
     const { map } = await E.attendanceInputs(full, month, policy);
     const runs = await prisma.employeePayrollRun.findMany({ where: { month, employeeId: { in: full.map((e) => e.id) } }, select: { employeeId: true, status: true } });
     const statusOf = new Map(runs.map((r) => [r.employeeId, r.status]));
+    const cyc = await require('../utils/payrollCycle').cycleFor(month);
+    const auto = (await E.attendanceDefaults(full, month, policy)).map; // the rule works on the attendance, not on HR's override
     return full.map((e) => {
       const a = map.get(e.id) || {};
+      const awl = (auto.get(e.id) || {}).awl;
       const ov = a.override;
       return {
         employeeCode: e.employeeCode || '',
@@ -94,6 +101,9 @@ module.exports = {
         autoPresent: ov ? ov.autoDaysPresent ?? '' : a.daysPresent ?? '',
         autoLop: ov ? ov.autoDaysLop ?? '' : a.daysLop ?? '',
         payrollStatus: statusOf.has(e.id) ? E.STATUS_LABEL[statusOf.get(e.id)] || statusOf.get(e.id) : '',
+        payPeriod: cyc.rangeText,
+        awlDays: awl ? awl.days + awl.halfDays : '',
+        awlLop: awl ? awl.lop : '',
       };
     });
   },
@@ -154,7 +164,7 @@ module.exports = {
       const same = Number(inForce.workingDays) === Number(wd) && Number(inForce.daysPresent) === Number(present) && Number(inForce.daysLop) === Number(lop);
       if (!errors.length && same) return { line: r.line, label, errors: [], action: 'nochange', changes: [] };
       if (cur.status && cur.status !== 'DRAFT') {
-        errors.push({ field: 'Month', message: `${e.name}'s ${monthLabel(month.value)} payroll is ${E.STATUS_LABEL[cur.status] || cur.status} — attendance can only be changed while it is a draft.` });
+        errors.push({ field: 'Month', message: `${e.name}'s ${monthLabel(month.value)} payroll is ${E.STATUS_LABEL[cur.status] || cur.status} — attendance can only be changed before it is submitted.` });
       }
       const reason = io.str(r.reason).slice(0, 500);
       if (!reason) errors.push({ field: 'Reason', message: 'A reason is required for an attendance override.' });

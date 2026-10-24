@@ -23,9 +23,10 @@ import Combo from '../Combo.jsx';
 import { Help } from '../ui/Guide.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { deptOptions, CLIENT_INDUSTRIES } from '../../atsVocab';
-import PlaceFields from './PlaceFields.jsx';
+import PlaceFields, { LocationField } from './PlaceFields.jsx';
 import { loadClientsMeta } from './clientsMeta.js';
 import './clientForm.css';
+import '../agreements/agreementFlow.css';
 
 export const COMPANY_TYPES = ['Corporate', 'MNC', 'Startup', 'SME', 'Consultancy', 'Other'];
 export const SOURCES = ['BDE', 'Referral', 'Website', 'Existing Client', 'Other'];
@@ -101,7 +102,12 @@ const COMMERCIAL_KEYS = ['agreementFeePercent', 'feeType', 'feeAmount', 'gstAppl
   'paymentTerms', 'paymentDue', 'invoiceTrigger', 'guaranteePeriod', 'replacementTerms', 'specialTerms', 'agreementTemplate', 'agreementStart', 'agreementEnd'];
 
 // The body POST / PUT /clients receives.
-export function bodyFromForm(f, { canCommercial = true } = {}) {
+// hrEditable = false: sections 6, 7 and 9 (Purna Sir's) are never sent - the server would refuse them anyway.
+const HR_SECTION_IDS = ['tax', 'payment', 'docs', 'notes'];
+export const HR_BODY_KEYS = ['legalName', 'billingAddress', 'billingSameAsAddress', 'gst', 'pan', 'tan', 'billingEmail', 'invoiceEmail', 'billingContactName', 'billingContactPhone', 'billingContactEmail',
+  'paymentMethod', 'paymentBankName', 'paymentUpi', 'paymentReferenceNote', 'bankAccountHolder', 'bankAccountNo', 'bankIfsc',
+  'internalNotes', 'specialInstructions', 'recruitmentInstructions', 'internalRemarks'];
+export function bodyFromForm(f, { canCommercial = true, hrEditable = true } = {}) {
   const b = {};
   ['name', 'clientCode', 'companyType', 'industry', 'website', 'companyEmail', 'landline', 'street', 'area', 'location', 'state', 'country', 'pincode',
     'contactName', 'contactDesignation', 'contactEmail', 'contactPhone', 'contactAltPhone', 'commPrimary',
@@ -131,6 +137,7 @@ export function bodyFromForm(f, { canCommercial = true } = {}) {
   b.guaranteePeriod = blank(f.guaranteeDays) ? '' : (g === 0 ? 'No replacement' : `${g} Days`);
   if (String(f.bankAccountNo || '').trim()) b.bankAccountNo = String(f.bankAccountNo).replace(/\s/g, '');
   if (!canCommercial) COMMERCIAL_KEYS.forEach((k) => { delete b[k]; });
+  if (!hrEditable) HR_BODY_KEYS.forEach((k) => { delete b[k]; });
   return b;
 }
 
@@ -144,7 +151,7 @@ export const SECTIONS = [
     fields: ['ownerDepartment', 'bdeOwner', 'secondaryBde', 'accountManager', 'clientSource'] },
   { id: 'commercial', title: '4. Commercial', hint: 'What the client pays us, and when', required: ['fee', 'paymentDays', 'guaranteeDays'],
     fields: ['feeType', 'fee', 'gstApplicable', 'tdsApplicable', 'paymentDays', 'invoiceMode', 'guaranteeDays', 'replacementTerms'] },
-  { id: 'agreement', title: '5. Agreement details', hint: 'The agreement we make from these details (see it on the right). Steps: Draft → Sent → Signed → Active', required: [],
+  { id: 'agreement', title: '5. Agreement details', hint: 'The agreement we make from these details (see it on the right). Steps: Made → Sent → Signed → Active', required: [],
     fields: ['agreementTemplate', 'agreementStart', 'agreementEnd', 'specialTerms'] },
   { id: 'tax', title: '6. Tax & billing', hint: 'What goes on our invoices to this client', required: [],
     fields: ['legalName', 'billingAddress', 'gst', 'pan', 'tan', 'billingEmail', 'invoiceEmail', 'billingContactName', 'billingContactPhone', 'billingContactEmail'] },
@@ -221,7 +228,7 @@ function Field({ id, label, req, tip, error, children, wide, hint }) {
   const tag = fill ? fill.tag(id) : null;
   return (
     <label className={`field cf-field${wide ? ' cf-wide' : ''}${error ? ' cf-bad' : ''}${mark}`} id={`cf-${id}`}>
-      <span>{label}{req && <b className="cf-req" aria-label="required"> *</b>}{tag}{tip && <Help text={tip} />}</span>
+      <span>{label}{tag}{tip && <Help text={tip} />}</span>
       {children}
       {hint && !error && <small className="cf-hint">{hint}</small>}
       {error && <small className="cf-err" role="alert">{error}</small>}
@@ -240,7 +247,7 @@ function Seg({ value, options, onChange, disabled }) {
 
 // Documents: a queue (Add client — uploaded once the client exists) or the
 // live list (Edit client).
-export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
+export function ClientDocuments({ clientId, queue, onQueue, canEdit = true, base = '/clients' }) {
   const [rows, setRows] = useState([]);
   const [available, setAvailable] = useState(true);
   const [msg, setMsg] = useState('');
@@ -249,7 +256,7 @@ export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
   const [busy, setBusy] = useState(false);
   const load = () => {
     if (!clientId) return;
-    api.get(`/clients/${clientId}/documents`).then((r) => { setRows(r.data.rows || []); setAvailable(r.data.available !== false); }).catch((e) => setErr(e.response?.data?.error || 'Could not load the documents.'));
+    api.get(`${base}/${clientId}/documents`).then((r) => { setRows(r.data.rows || []); setAvailable(r.data.available !== false); }).catch((e) => setErr(e.response?.data?.error || 'Could not load the documents.'));
   };
   useEffect(load, [clientId]);
   const list = clientId ? rows : (queue || []).map((q, i) => ({ ...q, id: `q${i}`, status: q.pending ? 'Pending' : statusOf(q.expiryDate), kindLabel: (DOC_KINDS.find(([k]) => k === q.kind) || [])[1], fileName: q.file?.name }));
@@ -274,7 +281,7 @@ export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
       const fd = new FormData();
       fd.append('kind', draft.kind); fd.append('name', draft.name); fd.append('expiryDate', draft.expiryDate); fd.append('pending', draft.pending ? 'true' : 'false');
       fd.append('file', draft.file, draft.file.name);
-      await api.post(`/clients/${clientId}/documents`, fd);
+      await api.post(`${base}/${clientId}/documents`, fd);
       setDraft({ kind: 'OTHER', name: '', expiryDate: '', pending: false, file: null });
       setMsg('Uploaded.');
       load();
@@ -285,10 +292,11 @@ export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
   async function remove(r) {
     if (!clientId) { onQueue((queue || []).filter((_, i) => `q${i}` !== r.id)); return; }
     if (!window.confirm(`Remove "${r.name}"?`)) return;
-    try { await api.delete(`/clients/${clientId}/documents/${r.id}`); setMsg('Removed.'); load(); } catch (e) { setErr(e.response?.data?.error || 'Could not remove it.'); }
+    try { await api.delete(`${base}/${clientId}/documents/${r.id}`); setMsg('Removed.'); load(); } catch (e) { setErr(e.response?.data?.error || 'Could not remove it.'); }
   }
   async function open(r) {
-    const res = await api.get(`/clients/${clientId}/documents/${r.id}/file`, { responseType: 'blob' });
+    if (r.isLink) { window.open(r.linkUrl, '_blank', 'noopener,noreferrer'); return; } // a Google Drive link (2026-10-12)
+    const res = await api.get(`${base}/${clientId}/documents/${r.id}/file`, { responseType: 'blob' });
     const url = URL.createObjectURL(res.data);
     window.open(url, '_blank', 'noopener');
     setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -307,8 +315,8 @@ export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
               </div>
               <span className={`cf-docstatus s-${String(r.status).toLowerCase().replace(/\s+/g, '-')}`}>{r.status}</span>
               <div className="cf-docbtns">
-                {clientId && <button type="button" className="btn btn-sm" onClick={() => open(r)}>Open</button>}
-                {canEdit && <button type="button" className="btn btn-sm btn-ghost" onClick={() => remove(r)}>Remove</button>}
+                {clientId && <button type="button" className="btn btn-sm" onClick={() => open(r)}>{r.isLink ? 'Open in Drive' : 'Open'}</button>}
+                {canEdit && !r.isLink && <button type="button" className="btn btn-sm btn-ghost" onClick={() => remove(r)}>Remove</button>}
               </div>
             </li>
           ))}
@@ -318,9 +326,9 @@ export function ClientDocuments({ clientId, queue, onQueue, canEdit = true }) {
         <div className="cf-docadd">
           <div className="cf-grid">
             <Field id="docKind" label="Document type">
-              <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
+              <Combo value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value })}>
                 {DOC_KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-              </select>
+              </Combo>
             </Field>
             <Field id="docName" label="Document name"><input value={draft.name} placeholder="e.g. GST certificate 2026" onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
             <Field id="docExpiry" label="Expiry date" tip="When this document stops being valid. We show 'Expiring soon' 30 days before.">
@@ -353,7 +361,11 @@ function statusOf(expiry) {
 export default function ClientForm({
   user: userProp, form, set, errors = {}, open, setOpen, canCommercial, canEditCode, ownerLocked, defaults,
   mode = 'add', client = null, docQueue, setDocQueue, onBlurIdentity,
+  usedPlaces = [], // the places already added for this company name (one company, many locations, 2026-10-22)
   fill = null, // docfill_: useFillFromFile('client') from Add client, or null
+  // Agreement workflow (2026-10-13): 'edit' (Admin / the HR step), 'view' (BDE TL cross-check: read only), 'hidden' (BDE desk).
+  hrAccess = 'edit', hrLabel = 'HR', docsBase = '/clients',
+  onlySections = null, // the HR step shows only sections 6-9 (components/../pages/AgreementFlowPage.jsx)
 }) {
   const auth = useAuth();
   const user = userProp || (auth && auth.user) || null;
@@ -437,18 +449,20 @@ export default function ClientForm({
     basic: (
       <div className="cf-grid">
         <Field id="name" label="Company name" req error={errors.name}>{inp('name', { placeholder: 'e.g. Acme Technologies Pvt Ltd', onBlur: onBlurIdentity, autoFocus: mode === 'add' })}</Field>
+        {/* One company, many locations (2026-10-22): the Location sits right next to the name; it tells two branches of one company apart. */}
+        <LocationField Field={Field} form={form} set={set} errors={errors} usedPlaces={usedPlaces} />
         {/* Automatic: a new client always gets its number when saved; nobody types one. */}
         <Field id="clientCode" label="Client ID" tip="Made for you when you save (CLI0001…). You will see it right after saving." hint={mode === 'add' ? 'Made for you when you save' : (canEditCode ? 'Empty = keeps the number we made' : 'Made for you')}>
           {inp('clientCode', { placeholder: mode === 'add' ? 'Made when you save' : (client?.clientCode || client?.displayCode || 'CLI0001'), disabled: mode === 'add' || !canEditCode })}
         </Field>
         <Field id="companyType" label="Company type">
-          <select value={form.companyType} onChange={(e) => set({ companyType: e.target.value })}>
+          <Combo allowCustom value={form.companyType} onChange={(e) => set({ companyType: e.target.value })}>
             <option value="">— Pick —</option>
-            {COMPANY_TYPES.map((x) => <option key={x}>{x}</option>)}
-          </select>
+            {COMPANY_TYPES.filter((x) => x !== 'Other').map((x) => <option key={x}>{x}</option>)}
+          </Combo>
         </Field>
         <Field id="industry" label="Industry" req error={errors.industry}>
-          <Combo creatable value={form.industry} onChange={(e) => set({ industry: e.target.value })}>
+          <Combo allowCustom value={form.industry} onChange={(e) => set({ industry: e.target.value })}>
             <option value="">— Pick —</option>
             {CLIENT_INDUSTRIES.map((x) => <option key={x}>{x}</option>)}
           </Combo>
@@ -481,7 +495,7 @@ export default function ClientForm({
     ),
     owner: (
       <div className="cf-grid">
-        <Field id="ownerDepartment" label="Department" req error={errors.ownerDepartment} tip="The team that works on this client's jobs.">
+        <Field id="ownerDepartment" label="Department" req error={errors.ownerDepartment} tip="The team that works on this client's requirements.">
           {mine.dept ? (
             <>
               <input value={mine.dept} disabled />
@@ -548,14 +562,14 @@ export default function ClientForm({
           </Field>
           <Field id="paymentDays" label="Payment terms" req error={errors.paymentDays} tip="How many days after our invoice the client must pay.">
             <div className="cf-inline">
-              <select value={['6', '7', '15', '30'].includes(String(form.paymentDays)) ? String(form.paymentDays) : 'custom'} disabled={lock}
+              <Combo value={['6', '7', '15', '30'].includes(String(form.paymentDays)) ? String(form.paymentDays) : 'custom'} disabled={lock}
                 onChange={(e) => set({ paymentDays: e.target.value === 'custom' ? '' : e.target.value })}>
                 <option value="6">6 days (standard)</option>
                 <option value="7">7 days</option>
                 <option value="15">15 days</option>
                 <option value="30">30 days</option>
                 <option value="custom">Other…</option>
-              </select>
+              </Combo>
               {!['6', '7', '15', '30'].includes(String(form.paymentDays)) && inp('paymentDays', { type: 'number', min: '0', placeholder: 'days', disabled: lock, style: { width: 90 } })}
             </div>
           </Field>
@@ -579,9 +593,9 @@ export default function ClientForm({
         {lockNote}
         <div className="cf-grid">
           <Field id="agreementTemplate" label="Agreement template" req>
-            <select value={form.agreementTemplate} disabled={lock} onChange={(e) => set({ agreementTemplate: e.target.value })}>
+            <Combo value={form.agreementTemplate} disabled={lock} onChange={(e) => set({ agreementTemplate: e.target.value })}>
               {templates.map((t) => <option key={t.name} value={t.name}>{`${t.name}${t.note ? ` — ${t.note}` : ''}`}</option>)}
-            </select>
+            </Combo>
           </Field>
           <div className="cf-linked cf-wide">
             <b>From section 4 (same values):</b>
@@ -625,10 +639,10 @@ export default function ClientForm({
       <>
         <div className="cf-grid">
           <Field id="paymentMethod" label="How they pay us">
-            <select value={form.paymentMethod} onChange={(e) => set({ paymentMethod: e.target.value })}>
+            <Combo value={form.paymentMethod} onChange={(e) => set({ paymentMethod: e.target.value })}>
               <option value="">— Pick —</option>
               {PAY_METHODS.map((x) => <option key={x}>{x}</option>)}
-            </select>
+            </Combo>
           </Field>
           <Field id="paymentBankName" label="Their bank name">{inp('paymentBankName', { placeholder: 'e.g. HDFC Bank' })}</Field>
           <Field id="paymentUpi" label="Their UPI ID">{inp('paymentUpi', { placeholder: 'e.g. acme@hdfcbank' })}</Field>
@@ -655,7 +669,7 @@ export default function ClientForm({
       </>
     ),
     docs: (
-      <ClientDocuments clientId={mode === 'edit' && client ? client.id : null} queue={docQueue} onQueue={setDocQueue} />
+      <ClientDocuments clientId={mode === 'edit' && client ? client.id : null} queue={docQueue} onQueue={setDocQueue} canEdit={hrAccess === 'edit'} base={docsBase} />
     ),
     notes: (
       <>
@@ -674,6 +688,14 @@ export default function ClientForm({
     <FillCtx.Provider value={fill && fill.state ? fill : null}>
     <div className="cf">
       {SECTIONS.map((s) => {
+        if (onlySections && !onlySections.includes(s.id)) return null;
+        if (HR_SECTION_IDS.includes(s.id) && hrAccess === 'hidden') {
+          return s.id === 'tax' ? (
+            <section key="hr-note" id="cf-sec-hrnote" className="cf-sec cf-hrnote">
+              <div className="cf-hrcard"><b>{hrLabel} fills the rest.</b> Tax &amp; billing, Payment details, Documents and Notes are filled by {hrLabel} after you send it.</div>
+            </section>
+          ) : null;
+        }
         const st = sectionStats(form, s);
         const bad = Object.keys(errors).some((k) => SECTION_OF[k] === s.id);
         const docCount = s.id === 'docs' ? (docQueue || []).length : 0;
@@ -692,7 +714,12 @@ export default function ClientForm({
                 {bad && <span className="cf-bang" aria-label="has a problem"> !</span>}
               </span>
             </button>
-            {open[s.id] && <div className="cf-sec-body">{body[s.id]}</div>}
+            {open[s.id] && (
+              <div className="cf-sec-body">
+                {HR_SECTION_IDS.includes(s.id) && hrAccess === 'view' && <div className="cf-lock">Read only. {hrLabel} fills this; you check it before you send it to the client.</div>}
+                {HR_SECTION_IDS.includes(s.id) && hrAccess === 'view' ? <fieldset disabled className="cf-fs">{body[s.id]}</fieldset> : body[s.id]}
+              </div>
+            )}
           </section>
         );
       })}

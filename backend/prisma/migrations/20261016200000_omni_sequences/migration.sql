@@ -1,0 +1,10 @@
+-- Omni-Channel structure plan (2026-10-17): automations (sequences) + recharge history. Raw-SQL tables, no Prisma model; the app also creates them itself with IF NOT EXISTS.
+-- NOTE: the campaign label column OutreachCampaign.kind (campaign / promotion types) is added by the app itself on first use (SQLite has no ADD COLUMN IF NOT EXISTS,
+-- so it is deliberately NOT in this file; a missing column simply means "no label").
+CREATE TABLE IF NOT EXISTS "OmniSequence" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "kind" TEXT NOT NULL DEFAULT 'workflow', "startOn" TEXT NOT NULL DEFAULT 'manual', "steps" TEXT NOT NULL DEFAULT '[]', "stopOnReply" INTEGER NOT NULL DEFAULT 1, "quiet" INTEGER NOT NULL DEFAULT 1, "status" TEXT NOT NULL DEFAULT 'off', "department" TEXT, "scanAt" DATETIME, "deletedAt" DATETIME, "createdById" TEXT, "createdByName" TEXT, "createdAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS "OmniSequenceRun" ("id" TEXT NOT NULL PRIMARY KEY, "sequenceId" TEXT NOT NULL, "contactId" TEXT NOT NULL, "stepIndex" INTEGER NOT NULL DEFAULT 0, "nextAt" DATETIME NOT NULL DEFAULT 0, "status" TEXT NOT NULL DEFAULT 'running', "stopReason" TEXT, "ownerUserId" TEXT, "startedAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS "OmniSequenceRun_once" ON "OmniSequenceRun"("sequenceId", "contactId");
+CREATE INDEX IF NOT EXISTS "OmniSequenceRun_due" ON "OmniSequenceRun"("status", "nextAt");
+CREATE TABLE IF NOT EXISTS "OmniSequenceLog" ("id" TEXT NOT NULL PRIMARY KEY, "runId" TEXT, "sequenceId" TEXT NOT NULL, "contactId" TEXT, "stepIndex" INTEGER NOT NULL DEFAULT 0, "at" DATETIME NOT NULL DEFAULT 0, "channel" TEXT, "outcome" TEXT NOT NULL, "note" TEXT, "ownerUserId" TEXT, "doneAt" DATETIME);
+CREATE INDEX IF NOT EXISTS "OmniSequenceLog_seq" ON "OmniSequenceLog"("sequenceId", "at");
+CREATE TABLE IF NOT EXISTS "OmniRecharge" ("id" TEXT NOT NULL PRIMARY KEY, "at" DATETIME NOT NULL, "channel" TEXT NOT NULL, "amount" INTEGER NOT NULL, "costRupees" REAL NOT NULL DEFAULT 0, "note" TEXT, "byId" TEXT, "byName" TEXT);

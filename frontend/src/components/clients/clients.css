@@ -43,6 +43,33 @@
 .cldup-ok { font-size: 12px; color: #1f6b3a; margin-top: 6px; }
 .cldup-checking { font-size: 11.5px; color: var(--ink-soft); margin-bottom: 8px; }
 
+/* --- "This client already exists - add another one?" (2026-10-22, one company many locations). Friendly: blue, or amber when it is the same place too. Never red. --- */
+.csn { border: 1px solid #b7d0e6; background: #eef5fb; border-radius: 10px; padding: 12px 14px; margin-bottom: 14px; color: var(--ink); }
+.csn-likely { border-color: #ecc989; background: #fff8ea; }
+.csn-soft { padding: 7px 12px; font-size: 12px; background: #f4f7f5; border-color: var(--line); }
+.csn-head { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14.5px; }
+.csn-ico { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #2b6a9e; color: #fff; font-size: 12px; font-weight: 700; font-style: italic; flex: none; }
+.csn-likely .csn-ico { background: #a86a00; }
+.csn-text { margin: 6px 0 8px; font-size: 13.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.csn-list { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+.csn-card { background: var(--paper-raised, #fff); border: 1px solid var(--line); border-radius: 8px; padding: 9px 11px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.csn-card-top { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.csn-name { font-size: 13.5px; overflow-wrap: anywhere; }
+.csn-loc { font-size: 13px; font-weight: 600; color: #1d5a8a; overflow-wrap: anywhere; }
+.csn-facts { font-size: 12px; color: var(--ink-soft); }
+.csn-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.csn-chip { font-size: 11px; padding: 1px 8px; border-radius: 10px; background: #e3edf6; color: #2b4f6e; }
+.csn-open { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; }
+.csn-reason { display: block; font-size: 12.5px; margin: 0 0 10px; }
+.csn-reason input { width: 100%; margin-top: 4px; }
+.csn-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.csn-actions .btn { min-height: 40px; padding: 0 16px; font-size: 14px; }
+.csn-tip { margin-top: 8px; font-size: 12px; color: var(--ink-soft); }
+.csn-ack { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.csn-ok { font-size: 13px; color: #1f6b3a; font-weight: 600; }
+.csn-line { font-size: 12.5px; color: #2b4f6e; background: #eef5fb; border: 1px solid #b7d0e6; border-radius: 8px; padding: 7px 10px; margin-top: 8px; }
+@media (max-width: 520px) { .csn-actions .btn { width: 100%; } .csn-list { grid-template-columns: 1fr; } }
+
 /* --- Client detail: relationship strip (spec §9) --------------------------- */
 .clhead-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 8px; margin: 4px 0 14px; }
 .clhead-card { background: var(--paper-raised); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: default; text-align: left; font: inherit; color: inherit; }
@@ -57,3 +84,5 @@ button.clhead-card:hover { border-color: var(--blue, #2f6fdb); }
 .clrel-table td.clrel-wrap { white-space: normal; min-width: 120px; max-width: 210px; }
 .clrel-table th.clrel-num, .clrel-table th.clrel-wrap { white-space: normal; }
 .clrel-table td.clrel-wrap .clrel-sub { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+.clrel-place { color: #1d5a8a; font-weight: 600; }

@@ -15,3 +15,16 @@
 @media (max-width:760px){ .vl-acts{white-space:normal} .vl-acts .btn{margin:2px 0 !important} }
 .vl-red{color:var(--red)}
 .vl-settings .card h3{display:flex;align-items:center;gap:8px;font-size:14.5px;margin:0}
+
+/* Login email status + actions (2026-10-19). Names and emails stay fully visible: they wrap, never cut off. */
+.vla-status{display:flex;flex-direction:column;gap:8px;min-width:210px;max-width:320px}
+.vla-inv .vp-tag{margin-bottom:2px}
+.vla-red{color:var(--red)}
+.vla-email{min-width:200px;max-width:300px}
+.vla-mail{overflow-wrap:anywhere;word-break:break-word}
+.vla-acts{display:flex;flex-wrap:wrap;gap:4px;min-width:150px;max-width:260px}
+.vla-acts>.btn{margin:0 !important}
+.vla-line{display:grid;grid-template-columns:minmax(200px,1.1fr) minmax(220px,1.2fr);gap:8px 18px;align-items:start;padding:10px 0;border-top:1px solid var(--line-soft)}
+.vla-line:first-child{border-top:0}
+.vla-line .vla-acts{grid-column:1 / -1;max-width:none}
+@media (max-width:760px){.vla-line{grid-template-columns:1fr}}

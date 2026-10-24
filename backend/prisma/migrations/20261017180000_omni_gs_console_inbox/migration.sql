@@ -1,0 +1,11 @@
+-- Omni-Channel v3 (2026-10-17): the Communication Console's own small send queue (a run = one direct send to a list of people; one row per person)
+-- and the temporary CSV upload that sits between "Upload CSV" and "Send". Raw-SQL tables, no Prisma model; the app also creates them itself with
+-- IF NOT EXISTS (outreach/consoleSend.js). No column is added to any existing table by this migration (reply tagging uses OutreachContact.lastReplyAt and
+-- OutreachMessage.repliedAt, which the app adds itself, see outreach/v3schema.js).
+CREATE TABLE IF NOT EXISTS "OmniSendRun" ("id" TEXT NOT NULL PRIMARY KEY, "createdById" TEXT, "createdByName" TEXT, "department" TEXT, "channel" TEXT NOT NULL, "accountId" TEXT, "accountLabel" TEXT, "name" TEXT NOT NULL, "templateKey" TEXT, "templateLabel" TEXT, "subject" TEXT, "body" TEXT, "source" TEXT NOT NULL DEFAULT 'crm', "sourceLabel" TEXT, "contactType" TEXT NOT NULL DEFAULT 'candidate_lead', "mode" TEXT NOT NULL DEFAULT 'test', "status" TEXT NOT NULL DEFAULT 'running', "scheduledAt" DATETIME, "startedAt" DATETIME, "finishedAt" DATETIME, "nextAt" DATETIME, "note" TEXT, "total" INTEGER NOT NULL DEFAULT 0, "sent" INTEGER NOT NULL DEFAULT 0, "rehearsed" INTEGER NOT NULL DEFAULT 0, "failed" INTEGER NOT NULL DEFAULT 0, "skipped" INTEGER NOT NULL DEFAULT 0, "cancelled" INTEGER NOT NULL DEFAULT 0, "createdAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS "OmniSendRun_status" ON "OmniSendRun"("status", "scheduledAt");
+CREATE INDEX IF NOT EXISTS "OmniSendRun_user" ON "OmniSendRun"("createdById", "createdAt");
+CREATE TABLE IF NOT EXISTS "OmniSendRunItem" ("id" TEXT NOT NULL PRIMARY KEY, "runId" TEXT NOT NULL, "seq" INTEGER NOT NULL DEFAULT 0, "contactId" TEXT, "name" TEXT, "status" TEXT NOT NULL DEFAULT 'queued', "error" TEXT, "subject" TEXT, "message" TEXT, "extra" TEXT, "updatedAt" DATETIME NOT NULL DEFAULT 0, "sentAt" DATETIME);
+CREATE INDEX IF NOT EXISTS "OmniSendRunItem_run" ON "OmniSendRunItem"("runId", "status", "seq");
+CREATE TABLE IF NOT EXISTS "OmniSendUpload" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "fileName" TEXT, "csv" TEXT NOT NULL, "rows" INTEGER NOT NULL DEFAULT 0, "createdAt" DATETIME NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS "OmniSendUpload_user" ON "OmniSendUpload"("userId", "createdAt");

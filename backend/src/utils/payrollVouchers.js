@@ -22,6 +22,7 @@
 const prisma = require('../db');
 const L = require('./ledger');
 const { monthLabel } = require('./attendanceMath');
+const PC = require('./payrollCycle');
 const { logAudit } = require('./audit');
 const { PayrollError } = require('./payrollEngine');
 
@@ -174,13 +175,14 @@ async function postRunVoucher({ month, run, entries, accounts, actor, key, plug 
   const built = buildVoucher({ entries, accounts, includeEmployer, plug });
   if (built.problems.length) throw new PayrollError(422, problemText(built.problems, month), { problems: built.problems });
   if (!built.totals.debitPaise) throw new PayrollError(422, `The payroll for ${monthLabel(month)} has no amount to post.`);
-  const date = L.monthEnd(month);
+  const cyc = await PC.cycleFor(month);
+  const date = cyc.custom ? cyc.to : L.monthEnd(month); // last day of the pay period (15th on the payroll cycle)
   if (!skipClosedCheck) await assertOpenPeriod(date);
   const [year, monthNum] = month.split('-').map(Number);
   const rows = built.rows.map((r) => ({ ...r, payrollRunId: run.id, month }));
   const payload = {
     month: monthNum, year, date,
-    narration: `Payroll ${monthLabel(month)}`,
+    narration: `Payroll ${monthLabel(month)}${cyc.custom ? ` (${cyc.rangeText})` : ''}`,
     voucher_type: VOUCHER.PAYROLL,
     source: 'HRMS_PAYROLL', reference_type: 'PAYROLL_MONTH', reference_id: run.id, payroll_run_id: run.id,
     idempotency_key: key, employees: built.rows.length,
@@ -544,6 +546,7 @@ const matchRow = (r, f, skip = '') => (
 );
 
 async function facets(f = {}) {
+  await PC.getSettings();
   const rows = await liveAccrualRows();
   const count = (list, keyOf) => { const m = new Map(); list.forEach((r) => { const k = keyOf(r); m.set(k, (m.get(k) || 0) + 1); }); return m; };
   const employees = new Map();
@@ -557,7 +560,7 @@ async function facets(f = {}) {
   return {
     employees: [...employees.values()].sort((a, b) => String(a.label).localeCompare(String(b.label))),
     departments: [...deptC.entries()].map(([value, c]) => ({ value, label: value, count: c })).sort((a, b) => a.label.localeCompare(b.label)),
-    months: [...monthC.entries()].map(([value, c]) => ({ value, label: monthLabel(value), count: c })).sort((a, b) => (a.value < b.value ? 1 : -1)),
+    months: [...monthC.entries()].map(([value, c]) => ({ value, label: monthLabel(value), rangeText: PC.cycleSync(value).rangeText, heading: PC.cycleSync(value).heading, count: c })).sort((a, b) => (a.value < b.value ? 1 : -1)),
     statuses: ['PAID', 'UNPAID', 'PARTIAL'].map((value) => ({ value, label: STATUS_LABEL[value], count: statC.get(value) || 0 })),
   };
 }
@@ -628,6 +631,7 @@ async function summariesFor(entries, scope = null) {
 
 // ---- 7. THE EMPLOYEE'S MONTHS: sub-ledger and salary statement ---------------------------------------
 async function employeeMonths(employeeId, { from = null, to = null } = {}) {
+  await PC.getSettings();
   const monthWhere = {};
   if (from) monthWhere.gte = from;
   if (to) monthWhere.lte = to;
@@ -644,7 +648,7 @@ async function employeeMonths(employeeId, { from = null, to = null } = {}) {
   const pays = paysAll.filter((p) => !rev.has(p.journalEntryId));
   const months = new Map();
   const slot = (m) => {
-    if (!months.has(m)) months.set(m, { month: m, label: monthLabel(m), gross: 0, pf: 0, esi: 0, tds: 0, other: 0, net: 0, adjustments: 0, paid: 0, vouchers: [], paymentVouchers: [], paidOn: null, mode: null, reference: null, payslipId: null });
+    if (!months.has(m)) months.set(m, { month: m, label: monthLabel(m), rangeText: PC.cycleSync(m).rangeText, gross: 0, pf: 0, esi: 0, tds: 0, other: 0, net: 0, adjustments: 0, paid: 0, vouchers: [], paymentVouchers: [], paidOn: null, mode: null, reference: null, payslipId: null });
     return months.get(m);
   };
   rows.forEach((r) => {

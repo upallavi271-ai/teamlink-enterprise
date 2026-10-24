@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './AiVoice.css';
+import Combo from './Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // VOICE INPUT for the AI Assistant / Agent — the browser's own Web Speech API
@@ -216,9 +217,9 @@ export function VoiceBar({
       <div className="ai-voice-row">
         <label className="ai-voice-lang" title="Language you will speak in">
           <span className="sr-only">Voice language</span>
-          <select value={lang} onChange={(e) => onLang(e.target.value)} aria-label="Voice language" data-testid="ai-voice-lang">
+          <Combo value={lang} onChange={(e) => onLang(e.target.value)} aria-label="Voice language" data-testid="ai-voice-lang">
             {VOICE_LANGS.map((l) => <option key={l.code} value={l.code}>{l.short} · {l.label}</option>)}
-          </select>
+          </Combo>
         </label>
         {canSpeak && (
           <button

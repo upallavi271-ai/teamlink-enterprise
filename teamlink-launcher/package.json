@@ -1,0 +1,9 @@
+{
+  "name": "teamlink-launcher",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Opens a job board in YOUR Chrome and types your saved TeamLink requirement into the form you are looking at, when you press the button. You sign in and you press Post.",
+  "scripts": { "start": "node launcher.mjs", "test": "node test/launcher.test.mjs" },
+  "dependencies": { "playwright-core": "^1.49.1" }
+}

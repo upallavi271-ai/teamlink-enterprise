@@ -10,9 +10,11 @@ import Combo from '../../components/Combo.jsx';
 import { todayIso } from './invFormat';
 import TaxFields, { taxFormFrom, taxPayload, taxFormErrors } from './TaxFields.jsx';
 import AddClientModal from './AddClientModal.jsx';
+import useClientLabel from '../../components/clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
 import './addClient.css';
 
 export default function NewInvoiceModal({ onClose, onSaved }) {
+  const clientLabel = useClientLabel();
   const [clients, setClients] = useState(null);
   const [loadErr, setLoadErr] = useState('');
   const [clientId, setClientId] = useState('');
@@ -76,7 +78,7 @@ export default function NewInvoiceModal({ onClose, onSaved }) {
               <span>{`Client · ${clients.length} in your list`}</span>
               <Combo value={clientId} onChange={(e) => setClientId(e.target.value)}>
                 <option value="">Choose a client…</option>
-                {clients.map((c) => <option key={c.id} value={c.id}>{`${c.name}${c.clientCode ? ` · ${c.clientCode}` : ''}${c.isDraft ? ' · draft' : ''}`}</option>)}
+                {clients.map((c) => <option key={c.id} value={c.id}>{`${clientLabel(c)}${c.clientCode ? ` · ${c.clientCode}` : ''}${c.isDraft ? ' · incomplete' : ''}`}</option>)}
               </Combo>
               {errs.client && <div className="inv-err">{errs.client}</div>}
             </label>

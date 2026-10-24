@@ -860,13 +860,26 @@ export default function AiAssistant() {
     <>
       {!open && (
         <button
-          className="ai-fab ai-fab-pill"
+          className="ai-fab ai-fab-pill ai-fab-art"
           onClick={() => setOpen(true)}
           aria-expanded={false}
           aria-label="AI Assistant"
           title={fabTitle}
         >
-          <span className="ai-fab-mark ai-fab-emoji" aria-hidden="true">🤖</span>
+          {/* 2026-10-17 (founder): a white round button with the blue chat-bot icon (a chat bubble with a
+              headset robot face), drawn as an SVG so it stays sharp at every size. */}
+          <svg className="ai-fab-svg" viewBox="0 0 44 44" width="30" height="30" aria-hidden="true" focusable="false">
+            <g fill="none" stroke="#0f4c81" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22.5 15.6c-3.1.5-5.6 3-5.6 7v4.4c0 1.7 1.3 3 3 3h5.2c1.7 0 3-1.3 3-3v-4.4c0-4-2.5-6.5-5.6-7z" />
+              <path d="M13.8 20.6v4.4c0 1.6.9 2.5 2.2 3" />
+              <path d="M31.2 20.6v4.4c0 1.6-.9 2.5-2.2 3" />
+              <path d="M19.7 25.4q2.8 1.7 5.6 0" />
+              <path d="M18.4 29.4l-.7 3.2 3.5-1.9" />
+            </g>
+            <rect x="20.3" y="11.6" width="4.4" height="3.6" rx="0.8" fill="#0f4c81" />
+            <rect x="19.3" y="21.2" width="1.7" height="1.7" fill="#0f4c81" />
+            <rect x="24" y="21.2" width="1.7" height="1.7" fill="#0f4c81" />
+          </svg>
           {/* User, 2026-10-03: just the bot emoji, no text. The name stays
               in aria-label + the hover title; no count (the 🔔 has it). */}
         </button>

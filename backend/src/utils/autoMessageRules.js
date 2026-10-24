@@ -373,10 +373,10 @@ async function jobOverride(requirementId) {
 }
 async function setJobOverride(user, requirementId, mode, note) {
   const req = await prisma.requirement.findUnique({ where: { id: requirementId }, select: { id: true, title: true } });
-  if (!req) return { error: 'No such job.', status: 404 };
+  if (!req) return { error: 'No such requirement.', status: 404 };
   const key = `${JOB_PREFIX}${requirementId}`;
   const before = await jobOverride(requirementId);
-  if (!['inherit', 'off', 'approval'].includes(mode)) return { error: 'Choose: follow the rules, switch off for this job, or ask the recruiter first.', status: 400 };
+  if (!['inherit', 'off', 'approval'].includes(mode)) return { error: 'Choose: follow the rules, switch off for this requirement, or ask the recruiter first.', status: 400 };
   if (mode === 'inherit') await prisma.appSetting.delete({ where: { key } }).catch(() => {});
   else {
     const value = JSON.stringify({ mode, note: String(note || '').slice(0, 200) });
@@ -384,7 +384,7 @@ async function setJobOverride(user, requirementId, mode, note) {
   }
   const label = { inherit: 'Follow the rules', off: 'No automatic messages', approval: 'Recruiter approves first' };
   await logAudit({
-    userId: user.id, actorName: user.name, action: 'Automatic messages: job setting changed', entity: 'Requirement', entityId: requirementId,
+    userId: user.id, actorName: user.name, action: 'Automatic messages: requirement setting changed', entity: 'Requirement', entityId: requirementId,
     fromValue: label[before ? before.mode : 'inherit'], toValue: `${label[mode]} (${req.title})`,
   });
   return { mode };

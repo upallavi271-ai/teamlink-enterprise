@@ -87,6 +87,15 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     bad = fitCases.filter(([, got, want]) => !eq(got, want));
     check(`U9 fit % table (${fitCases.length} cases: below / in / above / slightly / no budget / no salary / zero current)`, bad.length === 0, bad);
 
+    // the browser copy must be the same code (live preview = what the server will do)
+    {
+      const fs = require('fs');
+      const strip = (t) => t.replace(/^\/\/ COPY of[\s\S]*?\n\/\/ KEEP IN SYNC[^\n]*\n/, '').replace(/module\.exports = \{[\s\S]*$/, '').replace(/export \{[\s\S]*$/, '').replace(/\r\n/g, '\n').trim();
+      const be = strip(fs.readFileSync(path.join(BACK, 'src/utils/salaryFit.js'), 'utf8'));
+      const fe = strip(fs.readFileSync(path.join(BACK, '..', 'frontend/src/utils/salaryFit.js'), 'utf8'));
+      check('U10 the browser copy (frontend/src/utils/salaryFit.js) is identical to the server helper', be === fe, `backend ${be.length} chars, frontend ${fe.length} chars`);
+    }
+
     // =============================== fixtures ===================================
     const base = { passwordHash: 'x', hrmsRole: 'NONE', accountsRole: 'NONE', hrmsAccess: false, accountsAccess: false, atsAccess: true, status: 'Active' };
     const mkUser = async (tag, extra, empExtra) => {
@@ -171,9 +180,9 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     check('C12 employee referral of a NEW person without salary is refused', r.status === 400 && r.body && r.body.code === 'SALARY_REQUIRED', [r.status, r.body]);
     // careers apply (public): salary checked before the resume
     const job = await prisma.requirement.update({ where: { id: rBud.id }, data: { portalPublished: true, status: 'OPEN' } });
-    r = await call('POST', `/api/public/careers/jobs/${job.id}/apply`, null, undefined, fd({ name: 'Zz Careers', email: `zz-sf-car-${RUN}@example.test`, phone: '9876543210', consent: 'yes' }));
+    r = await call('POST', `/api/public/careers/jobs/${job.id}/apply`, null, undefined, fd({ name: 'Zz Careers', email: `zz-sf-car-${RUN}@example.test`, phone: `9${String(Math.floor(Math.random() * 9e8) + 1e8)}`, consent: 'yes' }));
     check('C13 career-page application without salary -> 400 SALARY_REQUIRED', r.status === 400 && r.body && r.body.code === 'SALARY_REQUIRED', [r.status, r.body]);
-    r = await call('POST', `/api/public/careers/jobs/${job.id}/apply`, null, undefined, fd({ name: 'Zz Careers', email: `zz-sf-car-${RUN}@example.test`, phone: '9876543210', consent: 'yes', currentSalary: '0', expectedSalary: '3 LPA' }));
+    r = await call('POST', `/api/public/careers/jobs/${job.id}/apply`, null, undefined, fd({ name: 'Zz Careers', email: `zz-sf-car-${RUN}@example.test`, phone: `9${String(Math.floor(Math.random() * 9e8) + 1e8)}`, consent: 'yes', currentSalary: '0', expectedSalary: '3 LPA' }));
     check('C14 with both salaries it passes the salary check (then asks for the resume)', r.status === 400 && r.body && /resume/i.test(r.body.error || ''), [r.status, r.body]);
     // import rows
     {
@@ -299,8 +308,8 @@ const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     }
     // export
     {
-      const ex = await call('GET', '/api/ats-io/export/candidates?format=csv&view=all', T.rec);
-      const exb = await call('GET', '/api/ats-io/export/candidates?format=csv&view=all', T.bde);
+      const ex = await call('GET', `/api/ats-io/export/candidates?format=csv&paged=1&sub=all&all=1&requirementId=${rBud.id}`, T.rec);
+      const exb = await call('GET', `/api/ats-io/export/candidates?format=csv&paged=1&sub=all&all=1&requirementId=${rBud.id}`, T.bde);
       const head = (t) => String(t || '').split(/\r?\n/)[0];
       check('V7 export: Budget fit columns for the recruiter; the BDE export has the fit but no salary columns', ex.status === 200 && /Budget fit/.test(head(ex.text)) && /Current salary/.test(head(ex.text)) && (exb.status !== 200 || (/Budget fit/.test(head(exb.text)) && !/salary/i.test(head(exb.text)))), [ex.status, head(ex.text).slice(0, 300), exb.status, head(exb.text).slice(0, 300)]);
     }

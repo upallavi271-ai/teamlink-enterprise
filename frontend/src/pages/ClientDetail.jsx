@@ -19,12 +19,18 @@ import StatusChip from '../components/ui/StatusChip.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import AgreementPanel from '../components/agreements/AgreementPanel.jsx';
+import AgreementFlow, { StageChip } from '../components/agreements/AgreementFlow.jsx';
 import AgreementLinkCard from '../components/agreements/AgreementLinkCard.jsx';
+import AgreementDriveCard from '../components/agreements/AgreementDriveCard.jsx';
+import OwnAgreementFile from '../components/agreements/OwnAgreementFile.jsx';
+import SignedAgreementFiles, { ViewAgreementButton } from '../components/agreements/SignedAgreementFiles.jsx'; // every signed agreement file kept on the client
+import { agreementBlind } from '../utils/agreementPrivacy.js';
 import AgreementDocView, { signersFrom } from '../components/agreements/AgreementDocView.jsx';
 import TeamLinkSeal, { AuthImg } from '../components/agreements/TeamLinkSeal.jsx';
 import TeamLinkSignerNotice from '../components/agreements/TeamLinkSignerNotice.jsx';
 // Spec B1: Client 360 -> Portal access (who at the client can sign in).
 import ClientPortalAccess from '../components/clients/ClientPortalAccess.jsx';
+import ClientHistoryView from '../components/joindrop/ClientHistoryView.jsx'; // History tab: the client date by date
 // Spec 6 — the agreement step badge (+ "Step N of 6").
 import {
   AgreementStepChip, AGREEMENT_STEPS, agreementStepLabel, agreementStepOf,
@@ -32,6 +38,7 @@ import {
 import {
   ClientLifecycleDialog, ClientPausedBanner, LifecycleChip, lifecycleItemsFor,
 } from '../components/clients/ClientLifecycle.jsx';
+import ClientBusiness from '../components/clients/ClientBusiness.jsx';
 // ATS layout v3 — the Performance tab, the job status chain, Signed / Unsigned.
 import ClientPerformance from '../components/clients/ClientPerformance.jsx';
 import ClientWork from '../components/clients/ClientWork.jsx'; // 4th tab: what is waiting on this client + all activity (2026-10-10)
@@ -39,8 +46,10 @@ import { JobStatusChip } from '../components/jobs/reqStatus.jsx';
 import { agreementIsSigned } from '../atsVocab';
 import ClientSlaCard from '../components/clients/ClientSlaCard.jsx'; // B9.2: per-client SLA
 import ConversationView from '../components/messaging/ConversationView.jsx'; // the client's Conversation: Call / Mail / WhatsApp / SMS in one place
-import ContactDialog from '../components/messaging/ContactDialog.jsx'; // Message the client contact: Call / Mail / WhatsApp / SMS with templates
+import WaButton from '../components/wa/WaButton.jsx'; // free WhatsApp quick chat (wa.me link)
+import ContactDialog from '../components/messaging/ContactDialog.jsx';// Message the client contact: Call / Mail / WhatsApp / SMS with templates
 import useMayMessage from '../components/messaging/useMayMessage.js'; // the server says who may message clients
+import { rowClickProps } from '../utils/rowClick.js';
 import '../components/clients/ccr.css';
 
 // ---------------------------------------------------------------------------
@@ -100,6 +109,8 @@ const TABS = [
   ['performance', 'Performance', ['candidates', 'interviews', 'selected', 'replacements', 'invoices', 'payments']],
   // Shown only when GET /clients/:id/work answers (the internal client desk); see tabShown.
   ['work', 'Client work', []],
+  // 2026-10-17: what happened with this client, date by date (the server cuts it for each login: agreement steps, logins and invoices only for those who may see them).
+  ['history', 'History', []],
 ];
 // Every older link (?tab=overview / contacts / agreement / candidates /
 // invoices / joining / payments …) lands on the tab that now carries it, and
@@ -158,6 +169,10 @@ function Empty({ cols, children }) {
   return <tr><td colSpan={cols} className="small-muted" style={{ padding: 16 }}>{children}</td></tr>;
 }
 
+// 12 Oct 2026 - the joining date everywhere (user, 2026-10-17). A joined person shows the day they joined; someone not joined yet shows the planned day.
+const dmyDay = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]} ${m[1]}` : null; };
+const joinCellText = (a) => (['JOINED', 'HIRED'].includes(a.stage) ? (dmyDay(a.joinedDay || a.joiningDate) || 'Not recorded') : (dmyDay(a.joiningDate) ? `${dmyDay(a.joiningDate)} (planned)` : 'Not recorded'));
+
 export default function ClientDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -196,6 +211,7 @@ export default function ClientDetail() {
   const [termsDlg, setTermsDlg] = useState({ open: false });
   // "Sign & stamp for TeamLink" dialog (2026-10-05).
   const [tlSealOpen, setTlSealOpen] = useState(false);
+  const [flow, setFlow] = useState(null); // the agreement steps (Made > HR > BDE TL > client), null = this login has no part in them
   // The error of whichever agreement dialog is open (shown inside it).
   const [dlgError, setDlgError] = useState('');
   const [editing, setEditing] = useState(false);
@@ -252,7 +268,7 @@ export default function ClientDetail() {
   const az = (k) => (a, b) => String(a[k] || '').localeCompare(String(b[k] || ''));
   const reqLabel = (a) => a.requirementCode || a.requirementTitle;
   const reqLf = useListFilters(data.requirements, [
-    { key: 'q', type: 'search', placeholder: 'Search job ID, job or location…', get: (r) => `${r.reqCode || ''} ${r.title || ''} ${r.location || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search requirement ID, requirement or location…', get: (r) => `${r.reqCode || ''} ${r.title || ''} ${r.location || ''}` },
     { key: 'status', label: 'Status', primary: true, get: (r) => requirementStatusLabel(r.status) },
     { key: 'department', label: 'Department', primary: true, get: (r) => r.department },
     { key: 'location', label: 'Location', get: (r) => r.location },
@@ -264,15 +280,15 @@ export default function ClientDetail() {
   ], {
     sorts: [
       { key: 'default', label: 'Default order', cmp: null },
-      { key: 'title', label: 'Job A–Z', cmp: az('title') },
+      { key: 'title', label: 'Requirement A–Z', cmp: az('title') },
       { key: 'target', label: 'Target date — soonest', cmp: (a, b) => String(a.targetDate || a.closingDate || '9999').localeCompare(String(b.targetDate || b.closingDate || '9999')) },
     ],
   });
   const reqPage = usePaged(reqLf.rows);
   const candLf = useListFilters(data.candidates, [
-    { key: 'q', type: 'search', placeholder: 'Search name, job or role…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''} ${a.candidateDesignation || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search name, requirement or role…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''} ${a.candidateDesignation || ''}` },
     { key: 'stage', label: 'Step', primary: true, get: (a) => stageLabel(a.stage) },
-    { key: 'requirement', label: 'Job', primary: true, get: reqLabel },
+    { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
     { key: 'location', label: 'Location', get: (a) => a.candidateLocation },
   ], {
     sorts: [
@@ -283,9 +299,9 @@ export default function ClientDetail() {
   });
   const candPage = usePaged(candLf.rows);
   const ivLf = useListFilters(data.interviews, [
-    { key: 'q', type: 'search', placeholder: 'Search interview ID, name or job…', get: (a) => `${a.interviewCode || ''} ${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search interview ID, name or requirement…', get: (a) => `${a.interviewCode || ''} ${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
     { key: 'status', label: 'Status', primary: true, get: (a) => (a.interviewStatus ? interviewStatusLabel(a.interviewStatus) : '') },
-    { key: 'requirement', label: 'Job', primary: true, get: reqLabel },
+    { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
     { key: 'type', label: 'Type', get: (a) => a.interviewType },
     { key: 'when', type: 'daterange', label: 'Interview date', get: (a) => a.interviewAt },
   ], {
@@ -297,18 +313,29 @@ export default function ClientDetail() {
   });
   const ivPage = usePaged(ivLf.rows);
   const selLf = useListFilters(data.selections, [
-    { key: 'q', type: 'search', placeholder: 'Search name or job…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search name or requirement…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
     { key: 'stage', label: 'Step', primary: true, get: (a) => stageLabel(a.stage) },
-    { key: 'requirement', label: 'Job', primary: true, get: reqLabel },
+    { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
     { key: 'joining', type: 'daterange', label: 'Joining date', get: (a) => a.joiningDate },
   ]);
   const selPage = usePaged(selLf.rows);
+  // how many people were selected (selected / offer / joined) against each requirement, from the client's whole list
+  const selectedPerReq = new Map();
+  (data.selections || []).forEach((a) => { if (a.requirementId) selectedPerReq.set(a.requirementId, (selectedPerReq.get(a.requirementId) || 0) + 1); });
   const repLf = useListFilters(data.replacements, [
-    { key: 'q', type: 'search', placeholder: 'Search name or job…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
+    { key: 'q', type: 'search', placeholder: 'Search name or requirement…', get: (a) => `${a.candidateName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
     { key: 'case', label: 'Case', primary: true, get: (a) => a.caseStatus },
-    { key: 'requirement', label: 'Job', primary: true, get: reqLabel },
+    { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
   ]);
   const repPage = usePaged(repLf.rows);
+  // Replacements: who left, when, whose place, and who came in his / her place
+  const leftCases = data.replacementCases || [];
+  const leftLf = useListFilters(leftCases, [
+    { key: 'q', type: 'search', placeholder: 'Search name or requirement…', get: (a) => `${a.candidateName || ''} ${a.replacementName || ''} ${a.requirementCode || ''} ${a.requirementTitle || ''}` },
+    { key: 'case', label: 'Case', primary: true, get: (a) => a.caseStatus },
+    { key: 'requirement', label: 'Requirement', primary: true, get: reqLabel },
+  ]);
+  const leftPage = usePaged(leftLf.rows);
   const payLf = useListFilters(data.payments, [
     { key: 'q', type: 'search', placeholder: 'Search invoice number or reference…', get: (p) => `${p.invoiceNumber || ''} ${p.reference || ''}` },
     { key: 'method', label: 'Method', primary: true, get: (p) => p.method, show: data.invoiceMode === 'amounts' },
@@ -363,11 +390,11 @@ export default function ClientDetail() {
       if (res.data.autoActivated) setNote('Signed by both sides. The agreement is now Active.');
       if (res.data.jobsOpened) {
         // e2e gap 7: the parked jobs went live by themselves; their TLs were told.
-        setNote(`Active. ${res.data.jobsOpened} waiting job${res.data.jobsOpened === 1 ? ' is' : 's are'} live now — the team lead was told.${res.data.requirementsWaiting ? ` ${res.data.requirementsWaiting} draft job${res.data.requirementsWaiting === 1 ? '' : 's'} still need Activate.` : ''}`);
+        setNote(`Active. ${res.data.jobsOpened} waiting requirement${res.data.jobsOpened === 1 ? ' is' : 's are'} live now — the team lead was told.${res.data.requirementsWaiting ? ` ${res.data.requirementsWaiting} requirement${res.data.requirementsWaiting === 1 ? '' : 's'} still waiting to be opened.` : ''}`);
       } else if (res.data.requirementsWaiting) {
-        setNote(`Active. ${res.data.requirementsWaiting} waiting jobs can go live. Open each and press Activate.`);
-      } else if (path === 'activate') setNote('Active. Jobs for this client can go live now.');
-      else if (path === 'generate') setNote('Saved. A new draft is ready.');
+        setNote(`Active. ${res.data.requirementsWaiting} waiting requirements can go live. Open each and press Activate.`);
+      } else if (path === 'activate') setNote('Active. Requirements for this client can go live now.');
+      else if (path === 'generate') setNote('Saved. A new agreement is ready.');
       else if (path === 'expire') setNote('Saved. The agreement is marked as ended.');
       load();
       return true;
@@ -406,7 +433,7 @@ export default function ClientDetail() {
   if (!allowed) {
     return (
       <div className="notice clrole-denied">
-        Clients is not part of your role. You see client names on your jobs.
+        Clients is not part of your role. You see client names on your requirements.
       </div>
     );
   }
@@ -444,6 +471,7 @@ export default function ClientDetail() {
   const tabShown = (k) => {
     const def = TABS.find(([key]) => key === k);
     if (k === 'work') return !!work && !data.redacted;
+    if (k === 'history') return !data.redacted;
     return !!def && (tabOk(k) || (def[2] || []).some(tabOk));
   };
   const activeTab = tabShown(tab) ? tab : (TABS.find(([k]) => tabShown(k)) || ['details'])[0];
@@ -481,9 +509,10 @@ export default function ClientDetail() {
       <div className="page-head" style={{ marginTop: 10 }}>
         <div>
           <h1 style={{ fontSize: 20 }}>{c.name}</h1>
+          {/* One company, many locations (2026-10-22): the Location sits right under the name. */}
+          {(c.location || c.state) && <div className="page-sub" style={{ fontWeight: 600 }}>{`Location: ${[c.location, c.state].filter(Boolean).join(', ')}`}</div>}
           <div className="page-sub">
-            {[c.displayCode, c.agreementId ? `Agreement ${c.agreementId}` : null, c.legalName && c.legalName !== c.name ? `Legal: ${c.legalName}` : null, c.industry, c.businessType,
-              [c.location, c.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'}
+            {[c.displayCode, c.agreementId ? `Agreement ${c.agreementId}` : null, c.legalName && c.legalName !== c.name ? `Legal: ${c.legalName}` : null, c.industry, c.businessType].filter(Boolean).join(' · ') || '—'}
           </div>
           {/* Who looks after this client: Name · Position (user, 2026-10-09). */}
           {!data.redacted && (
@@ -492,6 +521,7 @@ export default function ClientDetail() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <LifecycleChip lifecycle={c.lifecycle} />
+          {!data.redacted && <WaButton entityType="client" id={c.id} name={c.name} hasNumber={c.contactPhone === undefined ? undefined : !!(c.contactPhone || c.contactWhatsApp)} label="WhatsApp" />}
           {p.edit && !data.redacted && (
             <button type="button" className="btn btn-sm" onClick={() => setEditing(true)}>Edit</button>
           )}
@@ -501,7 +531,7 @@ export default function ClientDetail() {
               type="button"
               className={`btn btn-sm${k === 'delete' ? ' btn-danger' : ''}`}
               onClick={() => setLcDialog(k)}
-              title={k === 'pause' ? 'No new jobs or people sent. Nothing is deleted.' : k === 'requestPause' ? 'An Admin or the department Manager decides.' : k === 'archive' ? 'Hide from the list. Every record is kept.' : k === 'delete' ? 'Only for a client added by mistake.' : undefined}
+              title={k === 'pause' ? 'No new requirements or people sent. Nothing is deleted.' : k === 'requestPause' ? 'An Admin or the department Manager decides.' : k === 'archive' ? 'Hide from the list. Every record is kept.' : k === 'delete' ? 'Only for a client added by mistake.' : undefined}
             >
               {label}
             </button>
@@ -511,7 +541,8 @@ export default function ClientDetail() {
           )}
           {/* A login without the Agreement section here (a TL) still VIEWS the
               agreement — the server decides who may (routes/agreementSeal.js). */}
-          {!tabOk('agreement') && !mine && <Link className="btn btn-sm" to={`/agreements/${c.id}`}>📄 View agreement</Link>}
+          {/* ONE shared "View agreement" (components/agreements/SignedAgreementFiles.jsx): always there for the logins allowed to see agreements. */}
+          {!mine && <ViewAgreementButton clientId={c.id} esign={!!c.agreementDocument} onChanged={load} />}
         </div>
       </div>
 
@@ -521,7 +552,7 @@ export default function ClientDetail() {
       {!note && params.get('saved') && (
         <div className="notice" role="status">
           {params.get('saved') === 'draft'
-            ? `Saved as a draft.${c.missingRequired?.length ? ` Next: fill ${c.missingRequired.join(', ')} with Edit, then make the agreement.` : ' Next: press Edit and then make the agreement.'}`
+            ? `Saved for later.${c.missingRequired?.length ? ` Next: fill ${c.missingRequired.join(', ')} with Edit, then make the agreement.` : ' Next: press Edit and then make the agreement.'}`
             : (canManage
               ? 'Saved. The agreement is ready. Next: press 🔗 Create agreement link below and send it to the client.'
               : 'Saved. The agreement is ready. Next: ask an Admin to send the agreement link to the client.')}
@@ -534,18 +565,21 @@ export default function ClientDetail() {
         <ClientLifecycleDialog key={lcDialog} client={c} mode={lcDialog} onClose={() => setLcDialog('')} onDone={lifecycleDone} onSwitch={setLcDialog} />
       )}
       {data.redacted && (
-        <div className="notice">You see your own company&apos;s jobs and people.</div>
+        <div className="notice">You see your own company&apos;s requirements and people.</div>
       )}
 
       {/* §9 relationship numbers — internal logins only (the server sends
           no summary to a client login). Client manager, department and next
           step are on the Overview tab. */}
       {data.summary && <RelationshipStrip s={data.summary} onTab={setTab} tabs={allowedTabs} />}
+      {/* BDE business workspace (2026-10-10): onboarding steps, follow-ups / meetings / client feedback, and the asks
+          a Manager / Admin decides. Drawn for the client desk only; the server decides every button. */}
+      {!data.redacted && <ClientBusiness client={c} enabled={!!meta?.actions?.businessActivities} onChanged={load} />}
 
       <div className="tabs" style={{ marginBottom: 16 }}>
         {TABS.filter(([key]) => tabShown(key)).map(([key, label]) => (
           <div key={key} className={`tab${activeTab === key ? ' active' : ''}`} onClick={() => setTab(key)}>
-            {label}
+            {agreementBlind(user) && label === 'Details & Agreement' ? 'Details' : label}
             {key === 'work'
               ? (work && work.pending && work.pending.total > 0 ? ` (${work.pending.total} waiting)` : '')
               : (counts[key] != null && counts[key] > 0 ? ` (${counts[key]})` : '')}
@@ -554,6 +588,7 @@ export default function ClientDetail() {
       </div>
 
       {activeTab === 'work' && work && <ClientWork key={c.id} clientId={c.id} initial={work} onGoTab={setTab} />}
+      {activeTab === 'history' && <div className="card section"><ClientHistoryView key={c.id} endpoint={`/join-drop/client-history/${c.id}`} /></div>}
 
       {/* ---------------------------------------------------------------- */}
       {activeTab === 'details' && (
@@ -617,10 +652,10 @@ export default function ClientDetail() {
               {locations.length ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
                   {locations.map((l) => (
-                    <span key={l.name} className="clrel-pill" title={l.client ? 'The client\'s own location' : 'Where its jobs are'}>
+                    <span key={l.name} className="clrel-pill" title={l.client ? 'The client\'s own location' : 'Where its requirements are'}>
                       {l.name}
                       {l.client ? ' · head office' : ''}
-                      {l.reqs ? ` · ${l.reqs} ${l.reqs === 1 ? 'job' : 'jobs'}` : ''}
+                      {l.reqs ? ` · ${l.reqs} ${l.reqs === 1 ? 'requirement' : 'requirements'}` : ''}
                     </span>
                   ))}
                 </div>
@@ -661,6 +696,7 @@ export default function ClientDetail() {
               <button type="button" className="btn btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} onClick={() => setTab('agreement')}>
                 See agreement
               </button>
+              <ViewAgreementButton clientId={c.id} esign={!!c.agreementDocument} onChanged={load} style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} />
             </div>
             )}
             {!data.redacted && (
@@ -670,7 +706,7 @@ export default function ClientDetail() {
                 {c.secondaryBde ? <Row k="Second BDE">{c.secondaryBdeLabel || c.secondaryBde}</Row> : null}
                 <Row k="Account manager">{c.accountManager}</Row>
                 {bdes.length > 0 && (
-                  <Row k="On its jobs">{bdes.map(([n, k]) => `${n} (${k})`).join(', ')}</Row>
+                  <Row k="On its requirements">{bdes.map(([n, k]) => `${n} (${k})`).join(', ')}</Row>
                 )}
                 {data.summary?.nextAction && <Row k="Next step">{data.summary.nextAction}</Row>}
               </div>
@@ -679,10 +715,10 @@ export default function ClientDetail() {
               <div className="card section">
                 <h3 style={{ fontSize: 13, marginBottom: 10 }}>Team leads</h3>
                 {tls.length
-                  ? tls.map(([n, k]) => <Row key={n} k={n}>{`${k} ${k === 1 ? 'job' : 'jobs'}`}</Row>)
-                  : <div className="small-muted">No team lead on its jobs yet.</div>}
+                  ? tls.map(([n, k]) => <Row key={n} k={n}>{`${k} ${k === 1 ? 'requirement' : 'requirements'}`}</Row>)
+                  : <div className="small-muted">No team lead on its requirements yet.</div>}
                 <button type="button" className="btn btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 6 }} onClick={() => setTab('requirements')}>
-                  See jobs
+                  See requirements
                 </button>
               </div>
             )}
@@ -764,24 +800,24 @@ export default function ClientDetail() {
         <>
         {!agreementIsActive(c.agreementStatus) && counts.requirements > 0 && (
           <div className="notice amber">
-            {`New jobs go live only after the agreement is Active. Now: ${status}.`}
+            {`New requirements go live only after the agreement is Active. Now: ${status}.`}
           </div>
         )}
-        <ListFilterBar lf={reqLf} storageKey="cl360-req" noun="jobs" />
+        <ListFilterBar lf={reqLf} storageKey="cl360-req" noun="requirements" />
         {/* 8 columns (simplicity checklist #12). Department, Priority and
             Recruiter are filters here and on the job's own page. */}
         <div className="tbl-wrap">
           <table>
             <thead>
               <tr>
-                <th>Job ID</th><th>Job</th><th>Location</th><th>Openings</th>
+                <th>Requirement ID</th><th>Requirement</th><th>Location</th><th>Openings</th>
                 {!data.redacted && <><th>Filled</th><th>Recruiters</th></>}
                 <th>Due date</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
               {reqPage.slice.map((r) => (
-                <tr key={r.id} className="row-link">
+                <tr key={r.id} {...rowClickProps(() => navigate(`/requirements/${r.id}`), { href: `/requirements/${r.id}` })}>
                   <td><Link to={`/requirements/${r.id}`}>{r.reqCode || r.id.slice(0, 8)}</Link></td>
                   <td>{r.title}</td>
                   <td className="cell-muted">{r.location || '—'}</td>
@@ -799,12 +835,12 @@ export default function ClientDetail() {
                   <td>{r.displayStatus ? <JobStatusChip status={r.displayStatus} /> : <span className={`status ${requirementBadgeClass(r.status)}`}>{requirementStatusLabel(r.status)}</span>}</td>
                 </tr>
               ))}
-              {!data.requirements.length && <Empty cols={8}>{canNewJob ? 'No jobs yet. Press + New Requirement to add one.' : 'No jobs yet.'}</Empty>}
-              {data.requirements.length > 0 && !reqLf.rows.length && <tr><td colSpan={8} style={{ padding: 0 }}><ListEmpty lf={reqLf} noun="jobs" /></td></tr>}
+              {!data.requirements.length && <Empty cols={8}>{canNewJob ? 'No requirements yet. Press + New Requirement to add one.' : 'No requirements yet.'}</Empty>}
+              {data.requirements.length > 0 && !reqLf.rows.length && <tr><td colSpan={8} style={{ padding: 0 }}><ListEmpty lf={reqLf} noun="requirements" /></td></tr>}
             </tbody>
           </table>
         </div>
-        <Pager page={reqPage} noun="jobs" />
+        <Pager page={reqPage} noun="requirements" />
         </>
       )}
 
@@ -832,7 +868,7 @@ export default function ClientDetail() {
             <table>
               <thead>
                 <tr>
-                  <th>Name</th><th>Job</th><th>Location</th><th>Experience</th>
+                  <th>Name</th><th>Requirement</th><th>Location</th><th>Experience</th>
                   <th>Current role</th>
                   {!data.redacted && <><th>Fit %</th><th>AI interview %</th></>}
                   <th>Step</th><th />
@@ -874,7 +910,7 @@ export default function ClientDetail() {
         <div className="tbl-wrap">
           <table>
             <thead>
-              <tr><th>Interview</th><th>Name</th><th>Job</th><th>When</th><th>Round</th><th>Type / Mode</th><th>Interviewer</th><th>Status</th><th>Result</th></tr>
+              <tr><th>Interview</th><th>Name</th><th>Requirement</th><th>When</th><th>Round</th><th>Type / Mode</th><th>Interviewer</th><th>Status</th><th>Result</th></tr>
             </thead>
             <tbody>
               {ivPage.slice.map((a) => (
@@ -907,16 +943,21 @@ export default function ClientDetail() {
         <div className="tbl-wrap">
           <table>
             <thead>
-              <tr><th>Name</th><th>Job</th><th>Step</th>{!data.redacted && <th>Offered CTC</th>}<th>Joining date</th></tr>
+              <tr><th>Name</th><th>Requirement</th><th>Step</th>{!data.redacted && <th>Offered CTC</th>}<th>Joining date</th></tr>
             </thead>
             <tbody>
               {selPage.slice.map((a) => (
                 <tr key={a.id}>
                   <td>{a.candidateName}</td>
-                  <td className="cell-muted">{a.requirementCode || a.requirementTitle}</td>
+                  <td className="cell-muted">
+                    {a.requirementId
+                      ? <Link to={`/requirements/${a.requirementId}?tab=candidates&pipe=selected`} title="Open this requirement: who was selected">{a.requirementCode || a.requirementTitle}</Link>
+                      : (a.requirementCode || a.requirementTitle)}
+                    {a.requirementId && selectedPerReq.get(a.requirementId) ? <span style={{ marginLeft: 6 }}>({selectedPerReq.get(a.requirementId)} selected)</span> : null}
+                  </td>
                   <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
                   {!data.redacted && <td className="cell-muted">{a.offeredCtc != null ? `₹${a.offeredCtc}` : '—'}</td>}
-                  <td className="cell-muted">{a.joiningDate || '—'}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{joinCellText(a)}</td>
                 </tr>
               ))}
               {!data.selections.length && <Empty cols={5}>Nobody selected yet.</Empty>}
@@ -933,15 +974,46 @@ export default function ClientDetail() {
           replacement cases on the joining (Replacement Due / Replaced /
           Left after Guarantee). The guarantee end date comes only to a
           login that may see the guarantee period. */}
+      {activeTab === 'performance' && perfList === 'people' && tabOk('replacements') && leftCases.length > 0 && (
+        <>
+        <div id="ccr-sec-replacements" className="section-label ccr-section">{`Replacements (${leftCases.length})`}</div>
+        <div className="cell-muted" style={{ marginBottom: 6 }}>People who left a job, the date they left, and who came in their place.</div>
+        <ListFilterBar lf={leftLf} storageKey="cl360-left" noun="cases" />
+        <div className="tbl-wrap">
+          <table>
+            <thead>
+              <tr><th>Left (whose place)</th><th>Requirement</th><th>Joined on</th><th>Left on</th><th>Why</th><th>Case</th><th>Replaced by</th><th>Replacement joined on</th></tr>
+            </thead>
+            <tbody>
+              {leftPage.slice.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.candidateId ? <Link to={`/candidates/${r.candidateId}`}>{r.candidateName || '—'}</Link> : (r.candidateName || '—')}</td>
+                  <td className="cell-muted">{r.requirementId ? <Link to={`/requirements/${r.requirementId}`}>{r.requirementCode || r.requirementTitle}</Link> : '—'}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{dmyDay(r.joinedOn) || 'Not recorded'}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{dmyDay(r.leftOn) || 'Not recorded'}</td>
+                  <td className="cell-muted">{r.reason || '—'}</td>
+                  <td><StatusChip status={r.caseStatus} tone={r.caseStatus === 'Replacement due' ? 'red' : r.caseStatus === 'Replaced' ? 'green' : 'amber'} /></td>
+                  <td>{r.replacementName ? (r.replacementId ? <Link to={`/candidates/${r.replacementId}`}>{r.replacementName}</Link> : r.replacementName) : <span className="cell-muted">Not yet</span>}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{r.replacementName ? (dmyDay(r.replacementJoinedOn) || (r.replacementStage ? 'Not joined yet' : '—')) : '—'}</td>
+                </tr>
+              ))}
+              {leftCases.length > 0 && !leftLf.rows.length && <tr><td colSpan={8} style={{ padding: 0 }}><ListEmpty lf={leftLf} noun="cases" /></td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <Pager page={leftPage} noun="cases" />
+        </>
+      )}
+
       {activeTab === 'performance' && perfList === 'people' && tabOk('replacements') && data.replacements.length > 0 && (
         <>
-        <div id="ccr-sec-replacements" className="section-label ccr-section">{`Guarantee cases (${data.replacements.length})`}</div>
+        <div id="ccr-sec-guarantee" className="section-label ccr-section">{`Guarantee cases (${data.replacements.length})`}</div>
         <ListFilterBar lf={repLf} storageKey="cl360-rep" noun="cases" />
         <div className="tbl-wrap">
           <table>
             <thead>
               <tr>
-                <th>Name</th><th>Job</th><th>Joined on</th><th>Case</th>
+                <th>Name</th><th>Requirement</th><th>Joined on</th><th>Case</th>
                 {data.replacements.some((r) => r.guaranteeEnds !== undefined) && <th>Guarantee ends</th>}
                 <th />
               </tr>
@@ -951,7 +1023,7 @@ export default function ClientDetail() {
                 <tr key={r.id}>
                   <td>{r.candidateName || '—'}</td>
                   <td className="cell-muted">{r.requirementId ? <Link to={`/requirements/${r.requirementId}`}>{r.requirementCode || r.requirementTitle}</Link> : '—'}</td>
-                  <td className="cell-muted">{r.joiningDate || '—'}</td>
+                  <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{dmyDay(r.joiningDate) || 'Not recorded'}</td>
                   <td><StatusChip status={r.caseStatus} tone={r.caseStatus === 'Replacement Due' ? 'red' : r.caseStatus === 'Replaced' ? 'green' : 'amber'} /></td>
                   {data.replacements.some((x) => x.guaranteeEnds !== undefined) && <td className="cell-muted">{r.guaranteeEnds || '—'}</td>}
                   <td><Link className="btn btn-sm" to={`/candidates/${r.candidateId}`}>View</Link></td>
@@ -1075,13 +1147,13 @@ export default function ClientDetail() {
         const stepNo = AGREEMENT_STEPS.findIndex(([k]) => k === step) + 1;
         const when = (v) => (v ? protoDate(v) : '');
         const lead = {
-          DRAFT: c.agreementDocument ? 'The draft is ready. Next: make the agreement link and share it with the client.' : 'No draft yet. Make the draft from the standard template.',
+          DRAFT: c.agreementDocument ? 'The agreement is ready. Next: make the agreement link and share it with the client.' : 'No agreement made yet. Make it from the standard template.',
           SENT: `Sent${c.agreementSentAt ? ` on ${when(c.agreementSentAt)}` : ''}. Waiting for the client to open it.`,
           VIEWED: `The client opened it${c.agreementViewedAt ? ` on ${when(c.agreementViewedAt)}` : ''}. Waiting for their signature.`,
           SIGNED: `Signed${c.agreementSignedBy ? ` by ${c.agreementSignedBy}` : ''}${c.agreementSignedAt ? ` on ${when(c.agreementSignedAt)}` : ''}${!c.agreementCompanySignFile || !c.agreementCompanyStampFile ? '. Next: TeamLink adds its signature & stamp (press Sign & stamp for TeamLink).' : '. Next: make it active.'}`,
-          ACTIVE: `Active${c.agreementActivatedAt ? ` since ${when(c.agreementActivatedAt)}` : ''}. Jobs for this client can go live.`,
-          EXPIRED: 'This agreement has ended. Make a new draft to renew it.',
-          REJECTED: `The client said no${c.agreementRejectedReason ? ` (“${c.agreementRejectedReason}”)` : ''}. Change the terms and make a new draft.`,
+          ACTIVE: `Active${c.agreementActivatedAt ? ` since ${when(c.agreementActivatedAt)}` : ''}. Requirements for this client can go live.`,
+          EXPIRED: 'This agreement has ended. Make a new agreement to renew it.',
+          REJECTED: `The client said no${c.agreementRejectedReason ? ` (“${c.agreementRejectedReason}”)` : ''}. Change the terms and make a new agreement.`,
         }[step] || '';
         const busy = (k) => agrBusy === k;
         const run = async (k, path, body) => { setAgrBusy(k); await agreementAction(path, body); setAgrBusy(''); };
@@ -1090,13 +1162,13 @@ export default function ClientDetail() {
           // link card below (2026-10-05).
           DRAFT: c.agreementDocument
             ? null
-            : ['generate', 'Make the draft', () => run('generate', 'generate')],
+            : ['generate', 'Make the agreement', () => run('generate', 'generate')],
           // Active needs BOTH sides' signature + stamp (2026-10-05).
           SIGNED: (!c.agreementCompanySignFile || !c.agreementCompanyStampFile)
             ? ['tlseal', 'Sign & stamp for TeamLink', () => setTlSealOpen(true)]
             : ['activate', 'Make it active', () => run('activate', 'activate')],
-          EXPIRED: ['generate', 'Make a new draft', () => run('generate', 'generate')],
-          REJECTED: ['generate', 'Make a new draft', () => run('generate', 'generate')],
+          EXPIRED: ['generate', 'Make a new agreement', () => run('generate', 'generate')],
+          REJECTED: ['generate', 'Make a new agreement', () => run('generate', 'generate')],
         }[step] || null);
         const canChangeTerms = canManage && ['DRAFT', 'EXPIRED', 'REJECTED'].includes(step);
         const fee = c.agreementFeePercent != null ? `${c.agreementFeePercent}%` : '—';
@@ -1106,7 +1178,9 @@ export default function ClientDetail() {
             <div className="section-label ccr-sign">
               Agreement
               <StatusChip status={signed ? 'Signed' : 'Unsigned'} tone={signed ? 'green' : 'amber'} />
+              {flow && <StageChip label={flow.stageLabel} colour={flow.colour} />}
             </div>
+            <AgreementFlow clientId={id} onChanged={load} onLoaded={setFlow} refreshKey={`${c.agreementStatus}|${c.agreementSentAt || ''}|${c.updatedAt || ''}`} />
             <div className="card section agr6-card">
               {/* One step chip + "Step N of 6" (was a six-chip strip). */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
@@ -1115,7 +1189,7 @@ export default function ClientDetail() {
               </div>
               {/* The steps in one plain line (2026-10-05). */}
               <div className="small-muted" style={{ fontSize: 12, marginBottom: 4 }}>
-                Steps: Draft (made) → Sent (link shared) → Signed (client signs) → Active (jobs can go live).
+                Steps: Made → Sent (link shared) → Signed (client signs) → Active (requirements can go live).
               </div>
               <div className="agr6-lead">{lead}</div>
               {/* Who still has to sign + stamp (2026-10-05). */}
@@ -1130,14 +1204,12 @@ export default function ClientDetail() {
                   </span>
                 </div>
               )}
-              {c.agreementDocument && (
-                <div style={{ margin: '6px 0' }}>
-                  <Link className="btn btn-sm" to={`/agreements/${id}`}>📄 View agreement</Link>
-                </div>
-              )}
+              <div style={{ margin: '6px 0' }}>
+                <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
+              </div>
               {canManage && c.agreementDocument && !['ACTIVE', 'EXPIRED', 'REJECTED'].includes(step) && <TeamLinkSignerNotice refreshKey={tlSealOpen} />}
               {!agreementIsActive(c.agreementStatus) && counts.requirements > 0 && (
-                <div className="agr6-sub">{`${counts.requirements} ${counts.requirements === 1 ? 'job waits' : 'jobs wait'} for this agreement to be Active.`}</div>
+                <div className="agr6-sub">{`${counts.requirements} ${counts.requirements === 1 ? 'requirement waits' : 'requirements wait'} for this agreement to be Active.`}</div>
               )}
               {canManage ? (
                 <div className="agr6-actions">
@@ -1158,11 +1230,11 @@ export default function ClientDetail() {
                       className="btn btn-sm btn-ghost"
                       disabled={!!agrBusy}
                       onClick={async () => {
-                        if (!window.confirm('Edit the terms of a signed agreement? The signed copy stays in history, and a new draft is made that must be signed again by both sides.')) return;
+                        if (!window.confirm('Edit the terms of a signed agreement? The signed copy stays in history, and a new agreement is made that must be signed again by both sides.')) return;
                         setAgrBusy('newver'); setError('');
                         try {
                           await api.post(`/agreement/${id}/new-version`, { reason: 'Terms edited by Admin' });
-                          setNote('Done. The signed copy is kept in history. A new draft is ready — press Change terms, then send it again.');
+                          setNote('Done. The signed copy is kept in history. A new agreement is ready — press Change terms, then send it again.');
                           load();
                         } catch (err) { setError(err.response?.data?.error || 'That did not work. Please try again.'); }
                         setAgrBusy('');
@@ -1196,9 +1268,19 @@ export default function ClientDetail() {
                       type="button"
                       className="btn btn-sm btn-ghost"
                       disabled={!!agrBusy}
-                      onClick={() => { if (window.confirm(`Mark the agreement with ${c.name} as ended? New jobs will wait until a new one is Active.`)) run('expire', 'expire'); }}
+                      onClick={() => { if (window.confirm(`Close the agreement with ${c.name}? New requirements will wait until it is opened again or a new one is Active. You can open it again later.`)) run('expire', 'expire'); }}
                     >
-                      Mark as ended
+                      Close agreement
+                    </button>
+                  )}
+                  {step === 'EXPIRED' && (c.agreementSignedAt || c.agreementActivatedAt) && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      disabled={!!agrBusy}
+                      onClick={() => { if (window.confirm(`Open the agreement with ${c.name} again? Requirements for this client can go live again.`)) run('reopen', 'reopen'); }}
+                    >
+                      Open agreement again
                     </button>
                   )}
                 </div>
@@ -1215,7 +1297,7 @@ export default function ClientDetail() {
                 </Modal>
               )}
               {/* 2026-10-05 — the agreement link: make, copy, WhatsApp, email, stop. */}
-              {(canManage || p.sendLink) && c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED'].includes(step) && (
+              {(canManage || p.sendLink) && c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED'].includes(step) && !(flow && ['DRAFT', 'WITH_HR', 'WITH_TL'].includes(flow.stage)) && (
                 <AgreementLinkCard clientId={id} onChanged={load} />
               )}
             </div>
@@ -1229,8 +1311,15 @@ export default function ClientDetail() {
                 <div className="agr6-term"><div className="k">Starts</div><div className="v">{c.agreementStart || (c.agreementActivatedAt ? protoDate(c.agreementActivatedAt) : 'Not set')}</div></div>
                 <div className="agr6-term"><div className="k">Ends</div><div className="v">{c.agreementEnd || (c.agreementStart ? 'Renews every 12 months' : 'Not set')}</div></div>
               </div>
-              <div className="small-muted" style={{ fontSize: 12 }}>{`${c.agreementId ? `Agreement No. ${c.agreementId}` : 'Agreement No. is made when the draft is made'} ·${c.agreementTemplate || 'Standard template'}${c.agreementSource ? ` · ${c.agreementSource === 'Uploaded' ? "the client's own agreement" : 'made from the template'}` : ''}`}</div>
+              <div className="small-muted" style={{ fontSize: 12 }}>{`${c.agreementId ? `Agreement No. ${c.agreementId}` : 'Agreement No. is made when the agreement is made'} ·${c.agreementTemplate || 'Standard template'}${c.agreementSource ? ` · ${c.agreementSource === 'Uploaded' ? "the client's own agreement" : 'made from the template'}` : ''}`}</div>
+              <OwnAgreementFile clientId={id} show={c.agreementSource === 'Uploaded'} refreshKey={`${c.agreementSignedCopyName || ''}|${c.agreementStatus}`} />
             </div>
+
+            {/* Every signed agreement file kept on this client (imported PDFs / pictures): the list, View and Download. Nothing shows when there are none. */}
+            <SignedAgreementFiles clientId={id} skip={agreementBlind(user)} />
+
+            {/* The Google Drive link of the signed agreement (2026-10-12): the owner BDE, BDE TL, Admin; Manager / Accounts read it. */}
+            <AgreementDriveCard clientId={id} clientName={c.name} />
 
             <details className="card section agr6-more">
               <summary>Show the agreement document</summary>
@@ -1255,7 +1344,7 @@ export default function ClientDetail() {
             )}
             <details className="card section agr6-more">
               <summary>Show history</summary>
-              <Row k="Draft">{protoDate(c.createdAt)}</Row>
+              <Row k="Made">{protoDate(c.createdAt)}</Row>
               <Row k="Sent">{c.agreementSentAt ? protoDate(c.agreementSentAt) : null}</Row>
               <Row k="Viewed">{c.agreementViewedAt ? protoDate(c.agreementViewedAt) : null}</Row>
               <Row k="Signed">
@@ -1305,9 +1394,9 @@ export default function ClientDetail() {
                 )}
               >
                 <div className="small-muted" style={{ marginBottom: 10 }}>For a copy signed on paper or by email.</div>
-                <label className="field"><span>Signed by (client side) *</span><input value={signedDlg.name} onChange={(e) => setSignedDlg({ ...signedDlg, name: e.target.value })} autoFocus /></label>
+                <label className="field"><span>Signed by (client side)</span><input value={signedDlg.name} onChange={(e) => setSignedDlg({ ...signedDlg, name: e.target.value })} autoFocus /></label>
                 <label className="field"><span>Their designation</span><input value={signedDlg.title} onChange={(e) => setSignedDlg({ ...signedDlg, title: e.target.value })} placeholder="HR Manager" /></label>
-                <label className="field"><span>Signed copy file name *</span><input value={signedDlg.file} onChange={(e) => setSignedDlg({ ...signedDlg, file: e.target.value })} placeholder="client-signed-agreement.pdf" /></label>
+                <label className="field"><span>Signed copy file name</span><input value={signedDlg.file} onChange={(e) => setSignedDlg({ ...signedDlg, file: e.target.value })} placeholder="client-signed-agreement.pdf" /></label>
                 {dlgError && <div className="error-text">{dlgError}</div>}
               </Modal>
             )}
@@ -1337,14 +1426,14 @@ export default function ClientDetail() {
                             paymentDue: `${d} days after invoice`,
                           });
                           const done = await agreementAction('generate', undefined, setDlgError);
-                          if (done) { setTermsDlg({ open: false }); setNote('Saved. Terms changed. A new draft is ready.'); }
+                          if (done) { setTermsDlg({ open: false }); setNote('Saved. Terms changed. A new agreement is ready.'); }
                         } catch (err) {
                           setDlgError(err.response?.data?.error || 'Could not change the terms. Try again.');
                         }
                         setAgrBusy('');
                       }}
                     >
-                      Save and make a new draft
+                      Save and make a new agreement
                     </button>
                   </>
                 )}
@@ -1354,7 +1443,7 @@ export default function ClientDetail() {
                   <label className="field"><span>Guarantee (days)</span><input type="number" step="1" min="0" value={termsDlg.guarantee} onChange={(e) => setTermsDlg({ ...termsDlg, guarantee: e.target.value })} /></label>
                   <label className="field"><span>Payment within (days)</span><input type="number" step="1" min="0" value={termsDlg.payment} onChange={(e) => setTermsDlg({ ...termsDlg, payment: e.target.value })} /></label>
                 </div>
-                <div className="small-muted" style={{ fontSize: 12, marginTop: 6 }}>A new draft is made with these terms.</div>
+                <div className="small-muted" style={{ fontSize: 12, marginTop: 6 }}>A new agreement is made with these terms.</div>
                 {dlgError && <div className="error-text">{dlgError}</div>}
               </Modal>
             )}
@@ -1369,8 +1458,8 @@ export default function ClientDetail() {
       {activeTab === 'details' && tabOk('activity') && (() => {
         const KINDS = [
           ['all', 'All'],
-          ['client', 'Client & agreement'],
-          ['requirement', 'Jobs'],
+          ['client', agreementBlind(user) ? 'Client' : 'Client & agreement'],
+          ['requirement', 'Requirements'],
           ['candidate', 'People'],
           ['note', 'Notes'],
         ].filter(([k]) => k !== 'candidate' || tabOk('candidates'));
@@ -1477,9 +1566,17 @@ export default function ClientDetail() {
               <button
                 className="btn btn-primary"
                 onClick={async () => {
-                  if (await agreementAction('upload', { document: upload.document, fileName: upload.fileName }, setDlgError)) {
+                  const f = upload.file;
+                  if (f) {
+                    const okType = /\.(pdf|docx?|png|jpe?g|webp)$/i.test(f.name);
+                    if (!okType) { setDlgError('Only PDF, Word or image files (PNG, JPG, WebP) are accepted.'); return; }
+                    if (f.size > 10 * 1024 * 1024) { setDlgError('That file is too big. The limit is 10 MB.'); return; }
+                  }
+                  let fd = null;
+                  if (f) { fd = new FormData(); fd.append('file', f, f.name); }
+                  if (await agreementAction(f ? 'upload-file' : 'upload', f ? fd : { document: upload.document, fileName: upload.fileName }, setDlgError)) {
                     setUpload({ open: false, fileName: '', document: '' });
-                    setNote('Saved. The client\'s own agreement is now the draft.');
+                    setNote('Saved. The client\'s own agreement is now the agreement to send.');
                   }
                 }}
               >
@@ -1488,8 +1585,12 @@ export default function ClientDetail() {
             </>
           )}
         >
+          <label className="field">
+            <span>Agreement file (PDF, Word or picture, up to 10 MB)</span>
+            <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.webp,application/pdf" onChange={(e) => { setDlgError(''); setUpload({ ...upload, file: e.target.files[0] || null }); }} />
+          </label>
           <div className="small-muted" style={{ marginBottom: 10 }}>
-            Paste the agreement text here.
+            {upload.file ? 'The file will be used. The text below is ignored.' : 'Or paste the agreement text here.'}
           </div>
           <label className="field">
             <span>File name</span>
@@ -1525,7 +1626,7 @@ export default function ClientDetail() {
           )}
         >
           <label className="field">
-            <span>Reason *</span>
+            <span>Reason</span>
             <textarea rows="4" value={reject.reason} onChange={(e) => setReject({ ...reject, reason: e.target.value })} />
           </label>
           {dlgError && <div className="error-text">{dlgError}</div>}

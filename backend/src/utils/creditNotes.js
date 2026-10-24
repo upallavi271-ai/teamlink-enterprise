@@ -87,7 +87,7 @@ function shapeNote(n, inv) {
     kindLabel: KIND_LABEL[n.kind] || 'Note',
     reasonLabel: TAX.reasonLabel(n.kind, n.reason),
     gstTypeLabel: TAX.GST_TYPE_LABEL[n.gstType] || n.gstType,
-    displayNumber: n.number || 'Draft',
+    displayNumber: n.number || 'Not issued',
     invoiceNumber: inv ? (inv.invoiceNumber || inv.id.slice(-6)) : null,
     client: inv && inv.client ? inv.client.name : null,
     refundOpen: n.status === 'Issued' && Number(n.refundDue || 0) > 0.005 && !n.refundPaidOn ? R(n.refundDue) : 0,

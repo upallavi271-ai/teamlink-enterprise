@@ -214,3 +214,5 @@ th.jobsws-sort .arrow { font-size: 10px; margin-left: 3px; opacity: .8; }
   .reqdrw-overlay:has(.reqdrw-big) { padding: 0; }
   .reqdrw.reqdrw-big { width: 100vw; height: 100vh; border-radius: 0; }
 }
+
+.jobsws-cols-menu input.jobsws-cols-find { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 10px; margin-bottom: 4px; border: 1px solid var(--line, #d6dbe6); border-radius: 8px; }

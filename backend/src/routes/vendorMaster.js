@@ -52,6 +52,12 @@ const actorOf = (req) => req.user.name || req.user.email || 'Admin';
 const actor = (req) => ({ id: req.user.id, name: actorOf(req) });
 const audit = (req, row) => VP.auditReq(req, { changedById: req.user.id, actorName: actorOf(req), role: 'Admin', ...row });
 const DOC_TYPES = ['Agreement', 'Purchase order', 'Payment advice', 'TDS certificate', 'Statement', 'Other'];
+// A typed document type is kept (tidied, 40 letters at most); a listed one is matched without regard to capitals. Nothing is refused.
+const docTypeOf = (raw) => {
+  const v = require('../utils/openVocab').clean(raw, 40);
+  if (!v) return 'Other';
+  return DOC_TYPES.find((t) => t.toLowerCase() === v.toLowerCase()) || v;
+};
 
 const rowOf = (v, extra = {}) => ({
   id: v.id,
@@ -65,6 +71,7 @@ const rowOf = (v, extra = {}) => ({
   gstin: v.gstin || null,
   pan: v.pan || null,
   category: v.category || null,
+  categoryKey: require('../config/vendorModules').resolveCategory(v.category),
   paymentTerms: v.paymentTerms || null,
   notes: v.notes || null,
   isActive: v.isActive !== false,
@@ -249,7 +256,7 @@ router.post('/:id/documents', async (req, res) => {
   let st;
   try { st = VF.storeFile(form.file); } catch (err) { return res.status(400).json({ error: VF.fileError(err) }); }
   const title = VP.cleanText((form.fields || {}).title, 120) || st.billName;
-  const docType = DOC_TYPES.includes(str((form.fields || {}).docType)) ? str(form.fields.docType) : 'Other';
+  const docType = docTypeOf((form.fields || {}).docType);
   const note = VP.cleanText((form.fields || {}).note, 300) || null;
   let doc;
   try {

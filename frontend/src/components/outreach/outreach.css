@@ -1,0 +1,44 @@
+/* Omni-Channel outreach. Everything is scoped under .oc- (shares the look of broadcast.css: .bc-tile, .bc-ok, .bc-warn, .bc-err ...) */
+.oc-page{max-width:1180px;margin:0 auto}
+.oc-head h2{margin:0 0 4px;font-size:20px}
+.oc-tabs{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}
+.oc-tab{border:1px solid var(--line,#d6dde8);background:#fff;border-radius:10px;padding:8px 14px;font-size:14px;cursor:pointer}
+.oc-tab.on{background:var(--blue,#1d5fd1);border-color:var(--blue,#1d5fd1);color:#fff;font-weight:600}
+.oc-tab .oc-soon{font-size:10.5px;margin-left:6px;background:#eef2f8;color:#5b6b85;border-radius:999px;padding:1px 6px}
+.oc-tab.on .oc-soon{background:rgba(255,255,255,.25);color:#fff}
+.oc-sub{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.oc-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.oc-bar input[type=search],.oc-bar input[type=text]{min-width:200px;flex:1 1 200px}
+.oc-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin:8px 0}
+.oc-filters label{font-size:12px;color:var(--ink-soft,#5b6b85);display:block}
+.oc-table{width:100%;border-collapse:collapse;font-size:13px}
+.oc-table th,.oc-table td{padding:7px 8px;border-bottom:1px solid var(--line,#e3e8f0);text-align:left;vertical-align:top}
+.oc-table tr.oc-row{cursor:pointer}
+.oc-table tr.oc-row:hover{background:#f4f8ff}
+.oc-scroll{overflow:auto;max-width:100%}
+.oc-pill{display:inline-block;border-radius:999px;padding:1px 8px;font-size:11.5px;margin:0 3px 3px 0;background:#eef2f8;color:#34425c}
+.oc-pill.in{background:#dff3e6;color:#17603a}
+.oc-pill.out{background:#fdecec;color:#9b1c1c}
+.oc-pill.kind{background:#e6f0ff;color:#1d4fa8}
+.oc-note{font-size:12px;color:var(--ink-soft,#5b6b85)}
+.oc-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+.oc-card{border:1px solid var(--line,#d6dde8);border-radius:12px;background:#fff;padding:12px}
+.oc-card h4{margin:0 0 4px}
+.oc-big{font-size:26px;font-weight:700}
+.oc-row2{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.oc-choice{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.oc-choice button{border:1px solid var(--line,#d6dde8);background:#fff;border-radius:10px;padding:7px 12px;cursor:pointer;font-size:13px}
+.oc-choice button.on{border-color:var(--blue,#1d5fd1);background:#eaf1fd;font-weight:600}
+.oc-tick{border:2px solid #e0a800;background:#fff9e6;border-radius:10px;padding:10px 12px;margin:10px 0}
+.oc-tick label{display:flex;gap:8px;align-items:flex-start;font-weight:600}
+.oc-split{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.oc-prev{border:1px solid var(--line,#d6dde8);border-radius:10px;background:#f7f9fc;padding:10px;white-space:pre-wrap;font-size:13px}
+.oc-vars button{border:1px dashed #9db4dc;background:#f5f8ff;border-radius:8px;padding:3px 8px;margin:0 4px 4px 0;cursor:pointer;font-size:12px}
+.oc-empty{border:1px dashed var(--line,#c4cee0);border-radius:12px;padding:24px;text-align:center;color:var(--ink-soft,#5b6b85)}
+.oc-text{width:100%;min-height:150px;font-family:inherit;font-size:13px;border:1px solid var(--line,#d6dde8);border-radius:8px;padding:8px;box-sizing:border-box;resize:vertical}
+@media (max-width:700px){
+  .oc-split{grid-template-columns:1fr}
+  .oc-hide-m{display:none}
+  .oc-tab{padding:7px 10px;font-size:13px}
+  .oc-bar .btn{flex:1 1 140px}
+}

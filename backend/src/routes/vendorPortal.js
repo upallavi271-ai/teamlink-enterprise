@@ -29,6 +29,13 @@ const VC = require('../utils/vendorConfig');
 const INVITE = require('../utils/vendorInvite');
 const INVOICES = require('../utils/vendorInvoices');
 const SIGNED = require('../utils/vendorSigned');
+const VM = require('../utils/vendorModules');
+const MAIL = require('../utils/vendorMail');
+const MODCFG = require('../config/vendorModules');
+const DBX = require('../utils/vmDb');
+const AVP = require('../utils/assetVendorPortal');
+const KIND = require('../utils/vendorKind');
+const SIGN = require('../utils/vendorSignin');
 
 const router = express.Router();
 const { str, ROUND } = VP;
@@ -60,24 +67,51 @@ router.use((req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }
 // same append-only table, assetId null, with IP + user agent.
 const event = (req, row) => VP.auditReq(req, { role: 'Vendor', ...row });
 
+// THE FOUR MODULES (2026-10-19, config/vendorModules.js PORTAL_NAV): a vendor session reaches Dashboard, Invoices, Payments and Purchase Orders
+// (the /records API), plus the account utilities (me, logout, change password) and its own signed file downloads. Every other path of
+// this API - assets, bills, documents, profile, ID cards, SIM, office, expenses, payments of the old module - answers 403 "not available",
+// whatever the login's old module ticks say. The sign-in, activation, forgot-password and email-confirmation routes stay public.
+// VENDOR_PORTAL_ALL_MODULES=1 lifts this wall (a test / roll-back switch, never needed in normal use).
+// ASSETS VENDOR PORTAL (2026-10-19): the wall is TYPE-AWARE. An ASSET vendor (utils/assetVendorPortal.js kindOf) reaches the /asset-portal/*
+// API and the account utilities, and NOT the finance API (/records, /module-bills); every other vendor reaches exactly what it reached before
+// and NOT /asset-portal/*. A request without a (valid) vendor token cannot be classified, so the public paths pass as before and the routes'
+// own sign-in check answers 401.
+const NOT_AVAILABLE = { error: 'This page is not available in the Vendor Portal.', notAvailable: true };
+router.use(async (req, res, next) => {
+  try {
+    if (['1', 'true', 'yes', 'on'].includes(String(process.env.VENDOR_PORTAL_ALL_MODULES || '').toLowerCase())) return next();
+    const owner = MODCFG.kindOwningPath(req.path);
+    if (!owner && !MODCFG.portalPathAllowed(req.path)) return res.status(403).json(NOT_AVAILABLE);
+    if (!owner) return next(); // account utilities, public sign-in paths, downloads: every kind
+    const kind = await KIND.kindOfToken(VA.bearerOf(req));
+    if (!kind) return next();
+    return MODCFG.portalPathAllowedFor(kind, req.path) ? next() : res.status(403).json(NOT_AVAILABLE);
+  } catch (err) { return next(err); }
+});
+
 router.get('/status', (req, res) => res.json({ enabled: true, idleMinutes: VC.CFG.idleMinutes, maxHours: VC.CFG.maxHours }));
 
 // ---- sign in ----------------------------------------------------------------
 // Limits: per network (30 / 15 min) AND per network+account (10 / 15 min).
 // Lock: VENDOR_MAX_FAILED_LOGINS (5) wrong passwords lock for VENDOR_LOCK_MINUTES
 // (30), then it unlocks by itself; Admin can unlock earlier. The counter
-// resets on success. EVERY refusal reads "Invalid credentials." — unknown
-// email, wrong password, locked, switched off, vendor switched off, expired
-// temporary password — so nothing about the account leaks before sign-in.
+// resets on success. An unknown login ID and a wrong password read the same
+// ("Invalid credentials."), so nothing about the account leaks to a stranger.
+// A reason is named ONLY to somebody who proves they hold a real credential
+// (the right password: switched off / expired; an OLD temporary password:
+// "replaced by a newer email") - utils/vendorSignin.js. A lock reads the same
+// for a real and an unknown login ID, whatever password was typed.
+// 2026-10-19: the login ID and password are read tolerantly (VC.loginIdOf /
+// VC.passwordCandidates): case, spaces, line breaks, zero-width characters.
 const ipLimit = rateLimit({ bucket: 'vendor-login-ip', max: Number(process.env.VENDOR_LOGIN_IP_MAX || 30), windowMs: 15 * 60000 });
 const perEmail = new Map();
 function emailLimit(req, res, next) {
-  const key = `${ipOf(req)}|${VP.normEmail(req.body && req.body.email)}`;
+  const key = `${ipOf(req)}|${VC.loginIdOf(req.body && req.body.email)}`;
   const now = Date.now();
   const list = (perEmail.get(key) || []).filter((t) => now - t < 15 * 60000);
   if (list.length >= Number(process.env.VENDOR_LOGIN_EMAIL_MAX || 10)) {
     res.set('Retry-After', '900');
-    return res.status(429).json({ error: 'Too many sign-in tries. Please wait 15 minutes and try again.' });
+    return res.status(429).json({ error: 'Too many sign-in tries from this device. Please wait 15 minutes and try again.', code: 'TOO_MANY' });
   }
   list.push(now);
   perEmail.set(key, list);
@@ -88,18 +122,43 @@ const DUMMY_HASH = bcrypt.hashSync(`x${Math.random()}`, 10);
 const isLocked = (vu) => !!(vu.lockedUntil && new Date(vu.lockedUntil) > new Date());
 
 router.post('/login', ipLimit, emailLimit, async (req, res) => {
-  const email = VP.normEmail(req.body && req.body.email);
-  const password = String((req.body && req.body.password) || '');
-  if (!email || !password) return res.status(400).json({ error: 'Enter your email and password.' });
+  // The login ID is read tolerantly (spaces, capitals, a pasted "<...>" or hidden characters never matter). The password is tried EXACTLY as
+  // typed first, then tidied of the invisible extras a copy-paste brings (see VC.passwordCandidates); a chosen password is saved as typed.
+  const email = VC.loginIdOf(req.body && req.body.email);
+  const rawPassword = String((req.body && req.body.password) || '');
+  if (!email || !rawPassword.trim()) return res.status(400).json({ error: 'Enter your login ID (email) and password.' });
   const vu = await prisma.vendorUser.findUnique({ where: { email }, include: { vendor: true } });
-  const refuse = async (why) => {
+  const deny = async (why, status, body) => {
     if (vu) await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Login failed', status: why });
-    return res.status(401).json({ error: INVALID });
+    return res.status(status).json(body);
   };
-  if (!vu) { await bcrypt.compare(password, DUMMY_HASH); return res.status(401).json({ error: INVALID }); }
-  if (isLocked(vu)) return refuse('locked');
-  const ok = await bcrypt.compare(password, vu.passwordHash);
+  // 1. Locked? Said the same way for a real login and for an unknown ID, whatever password was typed (so a lock tells a guesser nothing).
+  const lockedFor = vu ? (isLocked(vu) ? SIGN.minutesLeft(vu.lockedUntil) : 0) : SIGN.ghostMinutes(email);
+  if (lockedFor) return deny('locked', 401, SIGN.lockedBody(lockedFor));
+  // 2. The password. The same number of password checks happen whether or not the login exists (nothing to learn from the time).
+  const tries = VC.passwordCandidates(rawPassword, { temp: !vu || !!vu.mustChangePassword });
+  let ok = false;
+  let checks = 0;
+  if (vu) {
+    for (const p of tries) {
+      checks += 1;
+      // eslint-disable-next-line no-await-in-loop
+      if (await bcrypt.compare(p, vu.passwordHash)) { ok = true; break; }
+    }
+  }
   if (!ok) {
+    while (checks < 3) { checks += 1; await bcrypt.compare(rawPassword, DUMMY_HASH); } // eslint-disable-line no-await-in-loop
+    // A password that really was issued by an email, but is not the current one: say so (only a holder of it can see this). Not a wrong try.
+    const known = await SIGN.recognise({ loginId: email, vu, rawPassword });
+    if (known) return deny(known.why, 401, known.body);
+    if (!vu) {
+      const nowLocked = SIGN.ghostFail(email);
+      return res.status(401).json(nowLocked ? SIGN.lockedBody(nowLocked) : SIGN.invalidBody());
+    }
+    // A STAFF login on the same email (allowed since 2026-10-21): the one login page asks the staff sign-in first and then this one, and a wrong
+    // try cannot be told from a staff person's typo, so it is NOT counted toward the vendor lock (this route's rate limits still apply).
+    const staffOnEmail = await require('../utils/loginAccounts').accountsByEmail(email).then((l) => l.length > 0).catch(() => false); // eslint-disable-line global-require
+    if (staffOnEmail) return deny('wrong password', 401, SIGN.invalidBody());
     const failed = (vu.failedLoginAttempts || 0) + 1;
     const lock = failed >= VC.CFG.maxFailed;
     await prisma.vendorUser.update({
@@ -109,20 +168,35 @@ router.post('/login', ipLimit, emailLimit, async (req, res) => {
     if (lock) {
       await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Login locked', status: `${VC.CFG.maxFailed} wrong passwords · ${VC.CFG.lockMinutes} min` });
       await logAudit({ action: `Vendor login locked after ${VC.CFG.maxFailed} wrong passwords`, entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: `Locked ${VC.CFG.lockMinutes} min` });
-      return refuse('locked now');
+      return deny('locked now', 401, SIGN.lockedBody(VC.CFG.lockMinutes));
     }
-    return refuse('wrong password');
+    return deny('wrong password', 401, SIGN.invalidBody());
   }
-  if (vu.status !== 'Active' || vu.deletedAt) return refuse('switched off');
-  if (!vu.vendor || vu.vendor.isActive === false) return refuse('vendor switched off');
-  if (vu.mustChangePassword && vu.tempPasswordExpiresAt && new Date(vu.tempPasswordExpiresAt) < new Date()) return refuse('temporary password expired');
+  // 3. The ID and the password are RIGHT. From here on the real reason is told (it gives nothing away to anybody else).
+  if (vu.deletedAt) return deny('deleted', 401, SIGN.invalidBody());
+  if (vu.status !== 'Active') return deny('switched off', 401, SIGN.reasonBody.switchedOff());
+  if (!vu.vendor || vu.vendor.isActive === false) return deny('vendor switched off', 401, SIGN.reasonBody.vendorOff());
+  if (vu.mustChangePassword && vu.tempPasswordExpiresAt && new Date(vu.tempPasswordExpiresAt) < new Date()) return deny('temporary password expired', 401, SIGN.reasonBody.tempExpired());
   const meta = VC.requestMeta(req);
   await prisma.vendorUser.update({ where: { id: vu.id }, data: { lastLoginAt: new Date(), lastLoginIp: meta.ip, failedLoginAttempts: 0, lockedUntil: null } });
   const { token } = await VA.createSession(vu, req);
   await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Login success', status: vu.mustChangePassword ? 'must change password' : 'ok' });
   await logAudit({ action: 'Vendor signed in', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: vu.vendor.name });
-  return res.json({ token, idleMinutes: VC.CFG.idleMinutes, vendor: meOf({ ...vu, vendorName: vu.vendor.name }) });
+  const landing = await landingOf({ userId: vu.id, vendorId: vu.vendorId });
+  return res.json({ token, idleMinutes: VC.CFG.idleMinutes, landing, vendor: meOf({ ...vu, vendorName: vu.vendor.name }) });
 });
+
+// Where this login lands after sign-in: Assets when at least one asset is
+// assigned to it (VendorAssetAccess + the vendor's own, not archived), else
+// Invoices. Always server-computed, never taken from the request.
+async function landingOf(who) {
+  // Every vendor lands on the Dashboard of ITS portal after sign-in: the finance Dashboard, or the Assets portal's Dashboard for an asset
+  // vendor. Server-computed, never taken from the request.
+  if (!who || !who.userId) return MODCFG.PORTAL_HOME;
+  const vu = await prisma.vendorUser.findUnique({ where: { id: who.userId }, include: { vendor: true } });
+  const kind = vu ? await KIND.kindOfRow(vu) : 'finance';
+  return { assets: MODCFG.ASSET_PORTAL_HOME, idcards: MODCFG.IDCARD_PORTAL_HOME, telecom: MODCFG.TELECOM_PORTAL_HOME }[kind] || MODCFG.PORTAL_HOME;
+}
 
 function meOf(vu) {
   return {
@@ -135,7 +209,75 @@ function meOf(vu) {
 const anyVendor = VA.requireVendor({ allowPasswordChange: true });
 const vendorOnly = VA.requireVendor();
 
-router.get('/me', anyVendor, (req, res) => res.json({ ...meOf({ ...req.vendor.row, vendorName: req.vendor.vendorName }), idleMinutes: VC.CFG.idleMinutes }));
+// /me is what the portal builds itself from: the modules this login has (registry order), each with its dashboard
+// summary, and the nav. Read fresh on every load, so an admin's change shows on the vendor's next page load.
+router.get('/me', anyVendor, async (req, res) => res.json({
+  ...meOf({ ...req.vendor.row, vendorName: req.vendor.vendorName }), idleMinutes: VC.CFG.idleMinutes, landing: await landingOf(req.vendor), preview: req.vendor.preview || null,
+  ...(req.vendor.preview ? { mustChangePassword: false } : {}),
+  ...(req.vendor.mustChangePassword && !req.vendor.preview ? {} : await VM.portalFor(req)),
+}));
+
+// THE CENTRAL MODULE CHECK for the older routes: a module the login does not have is not served (403).
+router.use('/assets', VM.guardPrefix(vendorOnly, 'assets'));
+router.use('/bills', VM.guardPrefix(vendorOnly, 'assets'));
+router.use('/dashboard', VM.guardPrefix(vendorOnly, 'assets'));
+router.use('/invoices', VM.guardPrefix(vendorOnly, 'invoices'));
+
+// ---- DASHBOARD: live counts from the vendor's OWN authorised assets ----------
+// Same access rule as the list (own vendor AND ticked: specific assets or whole
+// categories). Status mapping (Asset.status has no "Returned"):
+//   Total assigned   = every authorised asset that is not archived
+//   Active           = status Available or Assigned
+//   Under repair     = status "In Repair", or an open repair entry (Reported / In Repair)
+//   Repair completed = assets with at least one repair entry "Completed"
+//   Returned/retired = authorised assets the company archived (Retired, Sold, Written off)
+//   Other            = anything else (status outside the above)
+router.get('/dashboard', vendorOnly, async (req, res) => {
+  const access = await prisma.vendorAssetAccess.findMany({ where: { vendorUserId: req.vendor.userId } });
+  const ids = access.map((a) => a.assetId).filter(Boolean);
+  const cats = access.map((a) => a.category).filter(Boolean);
+  const or = [];
+  if (ids.length) or.push({ id: { in: ids } });
+  if (cats.length) or.push({ category: { in: cats } });
+  if (!or.length) return res.json({ total: 0, active: 0, underRepair: 0, repairCompleted: 0, returned: 0, other: 0, hasAssets: false });
+  const mine = { AND: [{ vendorId: req.vendor.vendorId }, { OR: or }] };
+  const live = { AND: [mine, { NOT: { status: { in: VA.ARCHIVED } } }] };
+  const [total, active, underRepairStatus, returned, openRepair, completed] = await Promise.all([
+    prisma.asset.count({ where: live }),
+    prisma.asset.count({ where: { AND: [mine, { status: { in: ['Available', 'Assigned'] } }] } }),
+    prisma.asset.count({ where: { AND: [mine, { status: 'In Repair' }] } }),
+    prisma.asset.count({ where: { AND: [mine, { status: { in: VA.ARCHIVED } }] } }),
+    prisma.asset.count({ where: { AND: [live, { status: { not: 'In Repair' } }, { repairs: { some: { status: { in: ['Reported', 'In Repair'] } } } }] } }),
+    prisma.asset.count({ where: { AND: [live, { repairs: { some: { status: 'Completed' } } }] } }),
+  ]);
+  res.json({
+    total, active, underRepair: underRepairStatus + openRepair, repairCompleted: completed, returned,
+    other: Math.max(0, total - active - underRepairStatus), hasAssets: total + returned > 0,
+  });
+});
+
+// ---- ADMIN PREVIEW handoff: redeem a single-use, short-lived token -----------
+// Minted by a staff member who may manage vendor logins (routes/vendorLogins.js
+// POST /:id/open-portal), stored only as a hash, valid about a minute, usable
+// once. The session it opens is VIEW-ONLY and marked "Admin preview". Every
+// refusal reads the same.
+router.post('/preview/redeem', ipLimit, async (req, res) => {
+  const BAD = { error: 'This link is not valid or has expired. Open the portal again from Vendor logins.' };
+  const token = String((req.body && req.body.token) || '');
+  if (token.length < 20) return res.status(404).json(BAD);
+  const row = await prisma.vendorLoginToken.findUnique({ where: { tokenHash: INVITE.hashOf(token) }, include: { vendorUser: { include: { vendor: true } } } });
+  const vu = row && row.vendorUser;
+  if (!row || row.purpose !== 'preview' || row.usedAt || row.revokedAt || new Date(row.expiresAt) < new Date()) return res.status(404).json(BAD);
+  if (!vu || vu.status !== 'Active' || vu.deletedAt || !vu.vendor || vu.vendor.isActive === false) return res.status(404).json(BAD);
+  const used = await prisma.vendorLoginToken.updateMany({ where: { id: row.id, usedAt: null }, data: { usedAt: new Date(), usedIp: VC.requestMeta(req).ip } });
+  if (used.count !== 1) return res.status(404).json(BAD);
+  const by = row.createdByName || 'Admin';
+  const { token: vt } = await VA.createSession(vu, req, { previewBy: by });
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: `${by} (Admin preview)`, action: 'Admin preview opened', status: 'single-use handoff used' });
+  await logAudit({ userId: row.createdById || undefined, action: 'Vendor portal opened as Admin preview', entity: 'VendorUser', entityId: vu.id, actorName: by, toValue: `${vu.vendor.name} · ${vu.email}` });
+  const landing = await landingOf({ userId: vu.id, vendorId: vu.vendorId });
+  return res.json({ token: vt, landing, preview: by, vendor: meOf({ ...vu, vendorName: vu.vendor.name, mustChangePassword: false }) });
+});
 
 router.post('/logout', anyVendor, async (req, res) => {
   await prisma.vendorSession.update({ where: { id: req.vendor.sessionId }, data: { revokedAt: new Date(), revokedReason: 'logout' } });
@@ -152,7 +294,12 @@ router.post('/change-password', anyVendor, async (req, res) => {
   const vu = await prisma.vendorUser.findUnique({ where: { id: req.vendor.userId } });
   if (!currentPassword || !newPassword) return res.status(400).json({ error: 'Enter your current password and a new one.' });
   if (confirmPassword !== undefined && confirmPassword !== newPassword) return res.status(400).json({ field: 'confirmPassword', error: 'The two new passwords do not match.' });
-  if (!(await bcrypt.compare(String(currentPassword), vu.passwordHash))) {
+  let currentOk = false;
+  for (const p of VC.passwordCandidates(String(currentPassword), { temp: !!vu.mustChangePassword })) {
+    // eslint-disable-next-line no-await-in-loop
+    if (await bcrypt.compare(p, vu.passwordHash)) { currentOk = true; break; }
+  }
+  if (!currentOk) {
     const failed = (vu.failedLoginAttempts || 0) + 1;
     const lock = failed >= VC.CFG.maxFailed;
     await prisma.vendorUser.update({
@@ -178,7 +325,9 @@ router.post('/change-password', anyVendor, async (req, res) => {
     },
   });
   await VA.revokeSessions(vu.id, 'password changed', req.vendor.sessionId);
-  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Password changed' });
+  // The login is activated now: the unused invitation link (and any older reset link) must not be able to set a password afterwards.
+  await prisma.vendorLoginToken.updateMany({ where: { vendorUserId: vu.id, usedAt: null, revokedAt: null, purpose: { in: ['invite', 'reset'] } }, data: { revokedAt: new Date() } });
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: vu.mustChangePassword ? 'Account activated (temporary password replaced)' : 'Password changed' });
   await logAudit({ action: 'Vendor password changed', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: 'Changed' });
   res.json({ ok: true, message: 'Password changed.' });
 });
@@ -193,7 +342,7 @@ router.get('/invite/:token', acceptLimit, async (req, res) => {
   const row = await INVITE.findUsable(req.params.token);
   if (!row) return res.status(404).json({ error: BAD_LINK });
   const vu = row.vendorUser;
-  return res.json({ valid: true, purpose: row.purpose, name: vu.name, email: vu.email, vendorName: vu.vendor.name, expiresAt: row.expiresAt });
+  return res.json({ valid: true, purpose: row.purpose, name: vu.name, email: vu.email, loginId: vu.email, vendorName: vu.vendor.name, expiresAt: row.expiresAt });
 });
 
 router.post('/invite/accept', ipLimit, acceptLimit, async (req, res) => {
@@ -228,6 +377,102 @@ router.post('/invite/accept', ipLimit, acceptLimit, async (req, res) => {
   await logAudit({ action: row.purpose === 'reset' ? 'Vendor password reset by link' : 'Vendor accepted invite', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: vu.vendor.name });
   const fresh = await prisma.vendorUser.findUnique({ where: { id: vu.id } });
   return res.json({ token, idleMinutes: VC.CFG.idleMinutes, vendor: meOf({ ...fresh, vendorName: vu.vendor.name }), message: 'Your password is set. Welcome.' });
+});
+
+// ---- FORGOT PASSWORD (public, 2026-10-19) -------------------------------------------------------------
+// "Forgot your password?" on the Vendor Portal sign-in. NO ACCOUNT ENUMERATION: the answer is the same, and just as quick, whether the
+// email belongs to a login or not - the work happens after the answer has gone. Only an ACTIVATED, switched-on login gets a link
+// (single use, 1 hour, replaces older links). Limits: per network (10 / 15 min, 429), and per login (3 emails an hour; the rest are
+// quietly skipped). A vendor who never activated is not sent a reset: they need the invitation (Admin resends it).
+const FORGOT_SAME = {
+  ok: true,
+  message: 'If this email belongs to an active Vendor Portal login, we have emailed a link to choose a new password. Check your inbox and spam folder; the link works once for 1 hour. If you never set up your login, ask TeamLink to send your invitation again.',
+};
+const forgotLimit = rateLimit({ bucket: 'vendor-forgot', max: Number(process.env.VENDOR_FORGOT_IP_MAX || 10), windowMs: 15 * 60000 });
+
+async function processForgot(req, email) {
+  await MAIL.ensure();
+  const vu = await prisma.vendorUser.findUnique({ where: { email }, include: { vendor: true } });
+  if (!vu || vu.deletedAt || vu.status !== 'Active' || !vu.vendor || vu.vendor.isActive === false) return;
+  if (!MAIL.isActivated(vu)) return;
+  if (await MAIL.forgotCountLastHour(vu.id) >= MAIL.FORGOT_MAX_PER_HOUR()) {
+    await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Password reset request limited', status: 'too many requests this hour: no email sent' });
+    return;
+  }
+  const claim = await MAIL.claimAttempt({ vu, kind: 'reset', toEmail: vu.email, actor: null, via: 'vendor' }, null);
+  if (claim.duplicate) return;
+  const hours = MAIL.FORGOT_HOURS();
+  const link = await INVITE.createLink(vu.id, 'reset', null, prisma, { hours });
+  await MAIL.patchRow(claim.row.id, { tokenId: link.id, linkExpiresAt: link.expiresAt.toISOString() });
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Password reset requested', status: 'forgot password' });
+  await logAudit({ action: 'Vendor asked for a password reset', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, toValue: vu.vendor.name });
+  const out = await MAIL.deliver(claim.row, { vu, vendor: vu.vendor, link: link.link, expiresAt: link.expiresAt, hours });
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: out.ok ? 'Password reset email accepted by the mail server' : 'Password reset email failed', status: out.ok ? (out.testMode ? 'test mode: not really sent' : 'accepted') : String(out.reason || out.status).slice(0, 240) });
+}
+
+router.post('/forgot-password', forgotLimit, (req, res) => {
+  const email = VP.normEmail(req.body && req.body.email);
+  res.json(FORGOT_SAME);
+  if (!VP.EMAIL_RE.test(email) || email.length > 160) return;
+  setImmediate(() => { processForgot(req, email).catch((e) => console.error('[vendor-portal] forgot-password:', e && e.message)); });
+});
+
+// ---- CONFIRM A NEW EMAIL ADDRESS (public, 2026-10-19) -----------------------------------------------------------
+// Admin changed the email of an ACTIVE vendor: the NEW address got a link. Only when the vendor opens it does the login ID change;
+// until then the old email keeps working. Single use, 24 hours, only the sha256 is stored, every refusal reads the same.
+const BAD_VERIFY = 'This link is not valid or has expired. Ask your contact at the company to send a new one.';
+const verifyLimit = rateLimit({ bucket: 'vendor-verify', max: Number(process.env.VENDOR_VERIFY_IP_MAX || 20), windowMs: 15 * 60000 });
+async function findChange(token) {
+  const t = String(token || '');
+  if (t.length < 20 || t.length > 200) return null;
+  await MAIL.ensure();
+  const h = MAIL.sha(t);
+  const row = await DBX.one('SELECT * FROM "VendorEmailChange" WHERE "tokenHash" = ?', [h]);
+  if (!row || !INVITE.safeEqual(h, row.tokenHash) || row.status !== 'pending' || new Date(row.expiresAt).getTime() <= Date.now()) return null;
+  const vu = await prisma.vendorUser.findUnique({ where: { id: row.vendorUserId }, include: { vendor: true } });
+  if (!vu || vu.status !== 'Active' || vu.deletedAt || !vu.vendor || vu.vendor.isActive === false || vu.email !== row.oldEmail) return null;
+  return { row, vu };
+}
+router.get('/email/verify/:token', verifyLimit, async (req, res) => {
+  const f = await findChange(req.params.token);
+  if (!f) return res.status(404).json({ error: BAD_VERIFY });
+  return res.json({ valid: true, name: f.vu.name, vendorName: f.vu.vendor.name, currentEmail: MAIL.maskEmail(f.row.oldEmail), newEmail: f.row.newEmail, expiresAt: f.row.expiresAt });
+});
+router.post('/email/verify/confirm', ipLimit, verifyLimit, async (req, res) => {
+  const f = await findChange(req.body && req.body.token);
+  if (!f) return res.status(400).json({ error: BAD_VERIFY, linkProblem: true });
+  const { row, vu } = f;
+  // (A staff login on the same email is fine: only another VENDOR login blocks it.)
+  const other = await prisma.vendorUser.findUnique({ where: { email: row.newEmail } });
+  if (other && other.id !== vu.id) {
+    await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Email confirmation failed', field: 'email', newValue: row.newEmail, status: 'the address is now used by another login' });
+    await DBX.run('UPDATE "VendorEmailChange" SET "status" = \'cancelled\', "closedAt" = ? WHERE "id" = ?', [new Date().toISOString(), row.id]);
+    return res.status(409).json({ error: 'This email is now used by another login, so it cannot be used. Ask your contact at the company for help.' });
+  }
+  const meta = VC.requestMeta(req);
+  // Burn the link first: only ONE request can win.
+  const won = await DBX.run('UPDATE "VendorEmailChange" SET "status" = \'confirmed\', "confirmedAt" = ?, "confirmedIp" = ?, "closedAt" = ? WHERE "id" = ? AND "status" = \'pending\' AND "expiresAt" > ?',
+    [new Date().toISOString(), meta.ip, new Date().toISOString(), row.id, new Date().toISOString()]);
+  if (Number(won) !== 1) return res.status(400).json({ error: BAD_VERIFY, linkProblem: true });
+  try {
+    await prisma.vendorUser.update({ where: { id: vu.id }, data: { email: row.newEmail } });
+  } catch (err) {
+    if (err && err.code === 'P2002') return res.status(409).json({ error: 'This email is now used by another login, so it cannot be used. Ask your contact at the company for help.' });
+    throw err;
+  }
+  await VA.revokeSessions(vu.id, 'email changed');
+  await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: 'Email change confirmed by the vendor', field: 'email', oldValue: row.oldEmail, newValue: row.newEmail });
+  await logAudit({ action: 'Vendor confirmed a new email', entity: 'VendorUser', entityId: vu.id, actorName: `Vendor: ${vu.name}`, fromValue: row.oldEmail, toValue: row.newEmail });
+  // The PREVIOUS address is told (a security notice, no link): if the change was not expected, someone can react. Recorded like every email.
+  setImmediate(async () => {
+    try {
+      const claim = await MAIL.claimAttempt({ vu: { ...vu, email: row.oldEmail }, kind: 'notice', toEmail: row.oldEmail, actor: null, via: 'system' }, null);
+      if (claim.duplicate) return;
+      const out = await MAIL.deliver(claim.row, { vu: { ...vu, email: row.oldEmail }, vendor: vu.vendor, link: null, expiresAt: new Date(), hours: 0, newEmail: row.newEmail });
+      await event(req, { vendorId: vu.vendorId, vendorUserId: vu.id, actorName: vu.name, action: out.ok ? 'Email change notice accepted by the mail server' : 'Email change notice failed', newValue: row.oldEmail, status: out.ok ? (out.testMode ? 'test mode: not really sent' : 'accepted') : String(out.reason || '').slice(0, 240) });
+    } catch (e) { console.error('[vendor-portal] email change notice:', e && e.message); }
+  });
+  return res.json({ ok: true, email: row.newEmail, message: `Done. Your login ID is now ${row.newEmail}. Sign in with it and your usual password.` });
 });
 
 // ---- profile (read only: Admin keeps the vendor record) ----------------------
@@ -277,6 +522,28 @@ async function resolveOwnedFile(vendor, kind, id, idx) {
     const sup = VP.parseDocs(b.supportingDocs)[Number(idx)];
     return sup ? { file: sup.file, mime: sup.mime, name: sup.name, assetId: b.assetId, billId: b.id } : null;
   }
+  if (kind === 'module-bill') {
+    // a bill / invoice the vendor sent from the portal (VendorModuleBill) - looked up only inside this vendor's own rows
+    const b = await DBX.one('SELECT "documentFile","documentMime","documentName","id" FROM "VendorModuleBill" WHERE "id" = ? AND "vendorId" = ?', [String(id || ''), vendor.vendorId]);
+    return b && b.documentFile ? { file: b.documentFile, mime: b.documentMime, name: b.documentName } : null;
+  }
+  if (kind === 'repair-invoice') {
+    // the invoice file of a repair in this vendor's own set (Assets Vendor Portal)
+    return AVP.ownedRepairInvoice(vendor, id);
+  }
+  if (kind === 'bill-upload') {
+    // a file of a repair bill this (Assets) vendor uploaded: id = "<uploadId>:<fileId>" - utils/billUploads.js, the vendor's own uploads only
+    return require('../utils/billUploads').ownedFile(vendor, id); // eslint-disable-line global-require
+  }
+  if (kind === 'po-challan') {
+    // the delivery challan of an order placed with this vendor
+    const o = await DBX.one('SELECT "challanFile","challanMime","challanName" FROM "IdCardOrder" WHERE "id" = ? AND "vendorId" = ?', [String(id || ''), vendor.vendorId]);
+    return o && o.challanFile ? { file: o.challanFile, mime: o.challanMime, name: o.challanName } : null;
+  }
+  if (kind === 'airtel-bill') {
+    // the bill copy of an Airtel bill in this (Airtel Bills) vendor's own set - utils/airtelBillsPortal.js
+    return require('../utils/airtelBillsPortal').ownedBillFile(vendor, id); // eslint-disable-line global-require
+  }
   if (kind === 'asset-doc') {
     const d = await prisma.assetDocument.findUnique({ where: { id: String(id || '') } });
     if (!d) return null;
@@ -291,6 +558,12 @@ async function resolveOwnedFile(vendor, kind, id, idx) {
 router.post('/download-link', vendorOnly, async (req, res) => {
   const b = req.body || {};
   const kind = str(b.kind);
+  // An asset vendor's files are the repair invoices and the order documents; the finance portal's bill files are not its business.
+  const myKind = await KIND.kindOfRow({ ...req.vendor.row, vendorId: req.vendor.vendorId });
+  const KINDS_OF = { assets: ['repair-invoice', 'bill-upload', 'po-challan', 'shared'], idcards: ['po-challan'], telecom: ['airtel-bill'] };
+  if (KINDS_OF[myKind] ? !KINDS_OF[myKind].includes(kind) : (kind === 'repair-invoice' || kind === 'airtel-bill' || kind === 'bill-upload')) {
+    return res.status(403).json({ error: 'Forbidden. This file is not yours.' });
+  }
   const f = await resolveOwnedFile(req.vendor, kind, b.id, b.index);
   if (!f) return res.status(403).json({ error: 'Forbidden. This file is not yours.' });
   const { token, expiresAt } = SIGNED.sign({ k: kind, id: String(b.id), i: kind === 'supporting' ? Number(b.index) : undefined, vid: req.vendor.vendorId, vuid: req.vendor.userId, sid: req.vendor.sessionId });
@@ -670,12 +943,12 @@ async function createBill(req, res, a, parent) {
   });
 }
 
-// Accounts reviewers (utils/vendorConfig.js billReviewers: Super Admin +
+// Accounts reviewers (utils/vendorConfig.js billReviewers: the Admin's table of who gets each reminder; default:
 // Accountant role, resolved now): an in-app notice each, plus an email when
 // the "Vendor emails" switch is on. Never throws.
 async function notifyReviewers(bill, vendor, parent) {
   try {
-    const list = await VC.billReviewers();
+    const list = await VC.billReviewers('vendorBill');
     const title = `Vendor bill ${bill.billCode} waiting for your check`;
     const message = `${vendor.vendorName} sent bill ${bill.billNumber} for ${bill.assetCode || 'an asset'} (₹${bill.total})${parent ? ' — a corrected bill' : ''}. Open Office & Accounts → Bills from vendors.`;
     await require('../utils/notify').notifyUsers(list.map((u) => u.id), { title, message });
@@ -812,6 +1085,15 @@ router.get('/bills/:billId/supporting/:idx', vendorOnly, async (req, res) => {
   await VP.auditReq(req, { assetId: m.bill.assetId, vendorId: req.vendor.vendorId, vendorUserId: req.vendor.userId, actorName: req.vendor.name, role: 'Vendor', action: 'Bill document downloaded', billId: m.bill.id, documentName: d.name });
   return sendStored(res, d.file, d.mime, d.name);
 });
+
+// The module screens (ID card orders, SIM, monthly bills, invoices, office, expenses, payments).
+router.use(require('./assetBillUploads')); // upload a repair bill (AI reading): before assetVendorPortal, whose last line refuses every other /asset-portal path
+router.use(require('./assetVendorPortal'));
+router.use(require('./idCardVendorPortal'));
+router.use(require('./airtelBillsPortal'));
+router.use(require('./vendorPortalRecords'));
+router.use(require('./vendorModulePortal'));
+router.use(require('./vendorIo')); // Export + Import for every kind of vendor (2026-10-19)
 
 // Anything else under /api/vendor-portal is not part of the portal.
 router.use((req, res) => res.status(403).json({ error: 'Forbidden.' }));

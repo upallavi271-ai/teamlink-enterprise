@@ -12,6 +12,7 @@ import HandLoans from './bank/HandLoans.jsx';
 import BankStatements from './bank/BankStatements.jsx';
 import Unallocated from './bank/Unallocated.jsx';
 import TxnDetail from './bank/TxnDetail.jsx';
+import AutoRecon from './bank/AutoRecon.jsx';
 import './bank/unallocated.css';
 import ScrollSync from '../components/accounts/ScrollSync.jsx';
 import { fmtD as fmtLong, todayIso as todayLocal } from './invoices/invFormat';
@@ -224,6 +225,9 @@ export default function Bank() {
       {loansOpen && (
         <HandLoans canManage={canManage} onClose={() => setLoansOpen(false)} onChanged={load} />
       )}
+      {view === 'auto' && (
+        <AutoRecon accounts={accounts} canManage={canManage} onBack={() => setView('overview')} onChanged={load} />
+      )}
       {view === 'recon' && (
         <Recon
           {...shared}
@@ -331,6 +335,7 @@ function Overview({
             {loans && <span className="s6-sub">· Took {money(loans.taken)} · Cleared {money(loans.repaid)} · paid out {money(loans.paidOutNoEntry)}</span>}
           </button>
           <button type="button" className="s6-btn" onClick={() => setView('recon')}>Reconciliation</button>
+          <button type="button" className="s6-btn s6-primary" onClick={() => setView('auto')}>⚡ Auto-Reconcile</button>
           {canManage && <button type="button" className="s6-btn s6-gold" onClick={() => setDialog({ kind: 'import' })}>⬆ Import statement</button>}
           {canManage && <button type="button" className="s6-btn s6-primary" onClick={() => setDialog({ kind: 'account', account: null })}>Add bank or credit card</button>}
         </div>
@@ -350,9 +355,9 @@ function Overview({
           {months.length > 0 && (
             <label className="bks-field">
               <span className="s6-label">Month</span>
-              <select value={pickMonth?.key || ''} onChange={(e) => setChargeMonth(e.target.value)}>
+              <Combo value={pickMonth?.key || ''} onChange={(e) => setChargeMonth(e.target.value)}>
                 {months.map((m) => <option key={m.key} value={m.key}>{monthLabel(m.key)} · {money(m.amount)}</option>)}
-              </select>
+              </Combo>
             </label>
           )}
         </div>
@@ -1639,7 +1644,7 @@ function AccountDialog({ account, accounts, onClose, call }) {
       )}
     >
       <div className="grid-2">
-        <div className="field"><label>Bank *</label><input value={f.bank} onChange={set('bank')} placeholder="HDFC Bank" /></div>
+        <div className="field"><label>Bank</label><input value={f.bank} onChange={set('bank')} placeholder="HDFC Bank" /></div>
         <div className="field"><label>Account name</label><input value={f.name} onChange={set('name')} placeholder="Teamlink Consultants (OPC) Pvt Ltd" /></div>
         <div className="field"><label>Account number</label><input value={f.accNo} onChange={set('accNo')} /></div>
         <div className="field"><label>IFSC</label><input value={f.ifsc} onChange={set('ifsc')} /></div>
@@ -1682,7 +1687,7 @@ function EntryDialog({ accountId, onClose, call }) {
       )}
     >
       <div className="grid-2">
-        <div className="field"><label>Date *</label><input type="date" value={f.date} onChange={set('date')} /></div>
+        <div className="field"><label>Date</label><input type="date" value={f.date} onChange={set('date')} /></div>
         <div className="field"><label>Money in (credit)</label><input value={f.credit} onChange={set('credit')} inputMode="decimal" placeholder="0.00" /></div>
         <div className="field"><label>Money out (debit)</label><input value={f.debit} onChange={set('debit')} inputMode="decimal" placeholder="0.00" /></div>
         <div className="field"><label>Reference / UTR</label><input value={f.reference} onChange={set('reference')} /></div>

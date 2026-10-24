@@ -1,0 +1,23 @@
+/* Omni-Channel layout pass (2026-10-14): the mode switch, the View-as banner, Distribution tiles, the roles table. Scoped under .oc- */
+.oc-modes{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 4px}
+.oc-mode{border:2px solid var(--blue,#1d5fd1);background:#fff;color:var(--blue,#1d5fd1);border-radius:12px;padding:9px 18px;font-size:15px;font-weight:700;cursor:pointer}
+.oc-mode.on{background:var(--blue,#1d5fd1);color:#fff}
+.oc-mode:focus-visible,.oc-tab:focus-visible{outline:3px solid #8fb4f5;outline-offset:2px}
+.oc-viewas{background:#fff1d6;border:1px solid #f0b34a;color:#7a4a00;border-radius:10px;padding:9px 12px;font-size:13px;margin:8px 0}
+.oc-dist-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:10px 0}
+.oc-dist-tile{border:1px solid var(--line,#d6dde8);border-radius:12px;background:#fff;padding:10px 12px;display:grid;gap:2px}
+.oc-dist-tile b{font-size:24px}
+.oc-dist-tile span{font-size:12px;color:var(--ink-soft,#5b6b85)}
+.oc-dist-tile.g b{color:#17603a}
+.oc-dist-tile.o b{color:#9a6200}
+.oc-dist-tile.r b{color:#9b1c1c}
+.oc-roles th,.oc-roles td{text-align:center;font-size:12px}
+.oc-roles th:first-child,.oc-roles td:first-child{text-align:left;min-width:220px}
+.oc-roles td.oc-yes{color:#17603a;font-weight:700}
+.oc-roles td.oc-no{color:#9aa6bb}
+@media (max-width:700px){
+  .oc-modes{gap:6px}
+  .oc-mode{flex:1 1 140px;padding:9px 10px;font-size:14px}
+  .oc-tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px}
+  .oc-tabs .oc-tab{flex:0 0 auto;white-space:nowrap}
+}

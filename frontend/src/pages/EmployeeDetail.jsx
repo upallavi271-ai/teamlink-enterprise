@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import RepliesPanel from '../components/omni/RepliesPanel.jsx'; // Omni-Channel: replies matched to this record (same replies as Inbox & Replies)
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -6,10 +7,13 @@ import { isAdmin as hasAdminAccess, isHR as hasHrmsAdmin, canEditEmployees } fro
 import { STATUS_BADGE, statusLabel } from '../components/ProfileStatusBanner.jsx';
 import Combo from '../components/Combo.jsx';
 import EmployeeProfileForm from '../components/EmployeeProfileForm.jsx';
+import MarkLeftButton from '../components/employees/MarkLeft.jsx';
+import RejoinButton, { RejoinInfo } from '../components/employees/Rejoin.jsx';
 import EmployeeDocuments from '../components/EmployeeDocuments.jsx';
 import { seatOptionLabel } from '../components/seatLabel.js'; // free / held / leaving wording for the Position picker
 import ExtraFields from '../components/employees/ExtraFields.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
+import NoticeDays from '../components/employees/NoticeDays.jsx';
 // Manage Fields: HR's labels, order and Pause for the built-in fields.
 import { useFieldLayout } from '../utils/employeeFieldLayout';
 
@@ -130,8 +134,8 @@ export default function EmployeeDetail() {
     const extraWhy = extraRef.current ? extraRef.current.validate() : '';
     if (extraWhy) { setError(extraWhy); return; }
     // A field HR made required in Manage Fields cannot be left empty.
-    const missing = EDIT_FIELDS.find((k) => FL.enforced(k) && Object.prototype.hasOwnProperty.call(form, k) && !String(form[k] ?? '').trim());
-    if (missing) { setError(`"${FL.label(missing, missing)}" is required.`); return; }
+    const missingAll = EDIT_FIELDS.filter((k) => FL.enforced(k) && Object.prototype.hasOwnProperty.call(form, k) && !String(form[k] ?? '').trim());
+    if (missingAll.length) { setError(`Please add: ${missingAll.map((k) => FL.label(k, k)).join(', ')}.`); return; }
     setSaving(true);
     try {
       const { roleCode, employeeCode, ...body } = form;
@@ -222,6 +226,35 @@ export default function EmployeeDetail() {
     } finally { setBusy(''); }
   }
 
+  // CREATE LOGIN (founder, 2026-10-14): for an employee who still works here and has no login. Link-only: the person sets
+  // their own password from the single-use link; nobody types or sees a password.
+  async function createLogin() {
+    setError(''); setNotice(''); setCredentials(null); setBusy('createlogin');
+    try {
+      const res = await api.post(`/employees/management/${id}/create-login`, {});
+      setCredentials(res.data.credentials);
+      setNotice('Login created. The person sets their own password from the link.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The login could not be created.');
+    } finally { setBusy(''); }
+  }
+
+  // START EXIT (the HR desk): for someone marked Notice Period / Active who has no exit yet.
+  const [exitForm, setExitForm] = useState({ open: false, reason: '', lastWorkingDate: '' });
+  async function startExit(e) {
+    e.preventDefault();
+    setError(''); setNotice(''); setBusy('startexit');
+    try {
+      await api.post(`/resignations/exit/employee/${id}/initiate`, { reason: exitForm.reason, lastWorkingDate: exitForm.lastWorkingDate || undefined });
+      setExitForm({ open: false, reason: '', lastWorkingDate: '' });
+      setNotice('The exit has started. It now goes through the approval steps in Employee Services > Exit.');
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'The exit could not be started.');
+    } finally { setBusy(''); }
+  }
+
   async function toggleLock() {
     await api.patch(`/employees/${id}/toggle-lock`);
     load();
@@ -269,6 +302,7 @@ export default function EmployeeDetail() {
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span className={`status ${employee.employmentStatus === 'Active' ? 'priority-low' : ['Exited', 'Relieved'].includes(employee.employmentStatus) ? 'priority-high' : ''}`}>{employee.employmentStatus}</span>
           <span className={`status ${STATUS_BADGE[employee.profileStatus] || ''}`}>{statusLabel(employee.profileStatus)}</span>
+          {employee.notice && <NoticeDays notice={employee.notice} block />}
           {/* hrms-24 §3 — this person's summary (profile, attendance, leave,
               learning, assets, payslips for the current year). The server
               checks Employee Management export + scope, or that it is you. */}
@@ -293,6 +327,11 @@ export default function EmployeeDetail() {
           {isAdmin && employee.user && (
             <button className="btn btn-sm" disabled={busy === 'credentials'} onClick={sendCredentials}>
               {busy === 'credentials' ? 'Sending…' : 'Send sign-in details'}
+            </button>
+          )}
+          {isHR && !employee.user && !employee.userId && !['Exited', 'Relieved', 'Terminated'].includes(employee.employmentStatus) && (
+            <button className="btn btn-sm btn-primary" disabled={busy === 'createlogin'} onClick={createLogin}>
+              {busy === 'createlogin' ? 'Creating…' : 'Create login'}
             </button>
           )}
           {isAdmin && <button className="btn btn-sm" onClick={deleteEmployee}>Delete</button>}
@@ -657,6 +696,31 @@ export default function EmployeeDetail() {
         ))}
       </div>
 
+      {isHR && ['Exited', 'Relieved', 'Terminated'].includes(employee.employmentStatus) && (
+        <div className="card section">
+          <h3>Rejoin</h3>
+          <div className="small-muted" style={{ marginBottom: 8 }}>Came back to the company? Bring {employee.name} back with the same ID. The old history stays.</div>
+          <RejoinButton employee={employee} className="btn btn-primary" onDone={() => { setNotice('Done. The person has rejoined.'); load(); }} />
+        </div>
+      )}
+      {isHR && <div style={{ margin: '8px 0' }}><RejoinInfo employeeId={employee.id} refreshKey={employee.employmentStatus} onChanged={() => load()} /></div>}
+
+      {isHR && ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(user?.role === 'TL' ? user?.hrmsRole : (user?.hrmsRole || user?.role)) && !['Exited', 'Relieved', 'Terminated'].includes(employee.employmentStatus) && (
+        <div className="card section">
+          <h3>Exit</h3>
+          {!exitForm.open ? <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><MarkLeftButton employee={employee} className="btn btn-sm btn-primary" onDone={() => { setNotice('Done. The status has been changed.'); load(); }} /><button className="btn btn-sm" onClick={() => setExitForm((f) => ({ ...f, open: true }))}>Start exit</button></div> : (
+            <form onSubmit={startExit} style={{ display: 'grid', gap: 8, maxWidth: 420 }}>
+              <label>Why is the exit starting?<input value={exitForm.reason} onChange={(e) => setExitForm({ ...exitForm, reason: e.target.value })} placeholder="A few words" /></label>
+              <label>Last working day (optional)<input type="date" value={exitForm.lastWorkingDate} onChange={(e) => setExitForm({ ...exitForm, lastWorkingDate: e.target.value })} /></label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-sm btn-primary" disabled={busy === 'startexit' || exitForm.reason.trim().length < 3}>{busy === 'startexit' ? 'Starting…' : 'Start exit'}</button>
+                <button type="button" className="btn btn-sm" onClick={() => setExitForm({ open: false, reason: '', lastWorkingDate: '' })}>Cancel</button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
+
       {isHR && !employee.offboardingStatus && !['Exited', 'Relieved'].includes(employee.employmentStatus) && (
         <div className="card section">
           <h3>Offboarding</h3>
@@ -720,6 +784,7 @@ export default function EmployeeDetail() {
           ))}
         </div>
       )}
+      <RepliesPanel audience="employees" id={employee.id} />
     </div>
   );
 }

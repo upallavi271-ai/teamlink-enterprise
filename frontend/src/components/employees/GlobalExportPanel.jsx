@@ -3,6 +3,7 @@ import api from '../../api';
 import { HR_STATUSES } from '../../hrStatus.js';
 import Modal from '../Modal.jsx';
 import './EmployeeIO.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // EMPLOYEE MANAGEMENT → GLOBAL EXPORT, with the Export Fields panel.
@@ -150,10 +151,10 @@ export default function GlobalExportPanel({ filters, shownCount, onClose, onDone
 
             <div className="empio-row">
               <span className="small-muted">Employee status</span>
-              <select value={status} onChange={(e) => setStatus(e.target.value)}>
+              <Combo value={status} onChange={(e) => setStatus(e.target.value)}>
                 <option value="">All statuses</option>
                 {HR_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
-              </select>
+              </Combo>
             </div>
 
             <div className="empio-row">

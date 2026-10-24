@@ -309,7 +309,11 @@ async function ingestOne(payload) {
   // A stable key only for somebody with neither email nor phone — the same
   // rule the data import applies to Candidate.externalRef.
   const ref = !email && !phone && c.id ? `jobportal:${c.id}` : null;
-  const board = BOARD_NAMES[String(app.source || '').toLowerCase()] || null;
+  // Job distribution (2026-10-14): the tracked link of a platform (?src=apna&utm_source=apna) is read back as the platform's name,
+  // from the portal's own source or from the attribution the embed host remembered (src / utm_source).
+  const Attr = require('./../jobDist/attribution'); // eslint-disable-line global-require
+  const attrIn = p.attribution && typeof p.attribution === 'object' ? p.attribution : {};
+  const board = BOARD_NAMES[String(app.source || '').toLowerCase()] || Attr.labelFor(app.source) || Attr.labelFor(attrIn.src) || Attr.labelFor(attrIn.utm_source) || null;
 
   let candidate = await findCandidate({ email, phone, ref });
   let createdCandidate = false;
@@ -526,7 +530,7 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
   // identical "not reachable" row on every restart. A manual Sync / Retry is
   // always logged.
   const logStatus = out.ok && !out.failed && !out.errors.length ? 'Success' : 'Failed';
-  const counts = `${out.jobs} job(s) live, ${out.closed} closed, ${out.pruned} removed (requirement deleted), ${out.failed} failed; `
+  const counts = `${out.jobs} requirement(s) live, ${out.closed} closed, ${out.pruned} removed (requirement deleted), ${out.failed} failed; `
     + `${out.pulled} portal application(s) checked, ${out.created} new in the ATS, ${out.stageUpdates} status update(s) sent back.`;
   const reason = out.ok
     ? `Job Portal sync (${actor}): ${counts}${out.errors.length ? ` ${out.errors.length} problem(s): ${out.errors.slice(0, 3).join('; ')}` : ''}`

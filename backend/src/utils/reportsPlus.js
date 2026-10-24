@@ -209,7 +209,7 @@ module.exports = function reportsPlus(H) {
       const v = c.joined.vals ? [...c.joined.vals.values()] : [];
       Object.assign(c, { median: median(v), avg: average(v), fastest: v.length ? Math.min(...v) : null, slowest: v.length ? Math.max(...v) : null });
     };
-    const sub = 'Days from job added to person joined. "Usual days" is the middle value.';
+    const sub = 'Days from requirement added to person joined. "Usual days" is the middle value.';
     const byDept = section('ttfDept', 'By department', cols({ key: 'department', label: 'Department' }), { sub });
     const byClient = section('ttfClient', 'By client', cols({ key: 'client', label: 'Client', ref: 'client' }), { sub, paged: true });
     // ATS layout v3 §5 — time to hire month by month (the line chart), the
@@ -788,9 +788,7 @@ module.exports = function reportsPlus(H) {
 // older report builders still say Requirement / Stage / Pipeline / Overdue.
 const WORDS = [
   [/\bIn pipeline\b/g, 'People in process'], [/\bin pipeline\b/g, 'in process'],
-  [/\bReq ID\b/g, 'Job ID'],
-  [/\bRequirements\b/g, 'Jobs'], [/\brequirements\b/g, 'jobs'],
-  [/\bRequirement\b/g, 'Job'], [/\brequirement\b/g, 'job'],
+  [/\bReq ID\b/g, 'Requirement ID'],
   [/\bStages\b/g, 'Steps'], [/\bstages\b/g, 'steps'], [/\bStage\b/g, 'Step'], [/\bstage\b/g, 'step'],
   [/\bPipeline\b/g, 'Progress'], [/\bpipeline\b/g, 'progress'],
   [/\bOverdue\b/g, 'Late'], [/\boverdue\b/g, 'late'],

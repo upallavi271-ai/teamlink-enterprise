@@ -1,0 +1,31 @@
+/* Omni-Channel > Campaigns: the few things the prototype stylesheet (gs.css) does not already have. Everything is scoped under .gsx. */
+.gsx .cmp-names { font-weight: 800; overflow-wrap: anywhere; }
+.gsx .cmp-sub { display: block; font-size: 9px; color: var(--muted); font-weight: 600; margin-top: 2px; overflow-wrap: anywhere; }
+.gsx .cmp-test { display: inline-block; margin-left: 5px; padding: 1px 6px; border-radius: 99px; background: #fff6df; color: #8a6410; font-size: 8px; font-weight: 800; }
+.gsx .cmp-chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+.gsx .cmp-check { font-size: 10px; line-height: 1.5; padding: 6px 0; border-bottom: 1px solid var(--line); display: flex; gap: 8px; }
+.gsx .cmp-check:last-child { border-bottom: 0; }
+.gsx .cmp-check b { min-width: 50px; font-size: 9px; text-transform: uppercase; letter-spacing: .06em; }
+.gsx .cmp-check.ok b { color: #187c48; }
+.gsx .cmp-check.warn b { color: #9b6d12; }
+.gsx .cmp-check.block b { color: #b3261e; }
+.gsx .cmp-check small { display: block; color: var(--muted); }
+.gsx .cmp-pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.gsx .cmp-job { width: 100%; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 10px; padding: 7px 10px; font-size: 10.5px; cursor: pointer; overflow-wrap: anywhere; }
+.gsx .cmp-job:hover, .gsx .cmp-job.on { border-color: #bde0ca; background: var(--green-3); }
+.gsx .cmp-msg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10.5px; line-height: 1.55; }
+.gsx .cmp-wiz-body { min-height: 300px; }
+.gsx .cmp-err { color: #b3261e; font-size: 10.5px; margin-top: 8px; }
+.gsx .cmp-table-small td, .gsx .cmp-table-small th { white-space: normal; }
+.gsx .cmp-tpl-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; margin-bottom: 10px; }
+.gsx .cmp-tooltip { position: absolute; z-index: 5; background: #14281f; color: #fff; font-size: 9px; padding: 6px 9px; border-radius: 8px; max-width: 260px; pointer-events: none; }
+.gsx .cmp-big { font-family: 'Space Grotesk', sans-serif; font-size: 24px; font-weight: 800; }
+@media (max-width: 820px) { .gsx .cmp-wiz-body .form-grid { grid-template-columns: 1fr; } .gsx .cmp-tpl-row { grid-template-columns: 1fr; } }
+/* the prototype stylesheet stretches every input to full width; a tick box in the group picker must stay a small box */
+.gsx .modal .mpk-opt input[type="checkbox"], .gsx .modal input[type="checkbox"], .gsx .modal input[type="radio"] { width: auto !important; height: auto !important; min-width: 0 !important; padding: 0 !important; flex: none; }
+.gsx .modal .mpk-opt { display: flex; gap: 8px; align-items: flex-start; }
+/* wide tables scroll sideways on a phone; names stay whole */
+.gsx .cmp-table-small { min-width: 640px; }
+.gsx .cmp-logs-table { min-width: 900px; }
+.gsx .cmp-logs-table td:last-child, .gsx .cmp-logs-table th:last-child { min-width: 150px; }
+.gsx .cmp-phone { white-space: nowrap; }

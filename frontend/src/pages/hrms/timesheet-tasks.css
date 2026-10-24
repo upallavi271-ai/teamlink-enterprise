@@ -1,0 +1,99 @@
+/* Timesheet - tasks given by a lead (TimesheetTasks.jsx). Everything is scoped under .tt-
+   Four colours only: green done / blue going on / orange waiting / red problem. */
+.tt-views{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 14px}
+.tt-view{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--paper-raised);color:var(--ink);border-radius:10px;padding:9px 16px;cursor:pointer;display:inline-flex;gap:8px;align-items:center;min-height:40px}
+.tt-view b{font-weight:700;background:var(--paper);border-radius:10px;padding:0 8px;font-size:12.5px}
+.tt-view.on{border-color:var(--navy);background:var(--navy);color:#fff}
+.tt-view.on b{background:rgba(255,255,255,.2);color:#fff}
+.tt-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:0 0 12px}
+.tt-bar .tt-grow{flex:1 1 auto}
+.tt-lead{font-size:13.5px;color:var(--ink-soft);margin:0 0 12px}
+.tt-notice-ok{background:var(--teal-tint);color:var(--teal);border-radius:8px;padding:8px 12px;margin:0 0 10px;font-size:13.5px}
+
+/* chips with counts */
+.tt-chips{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 10px}
+.tt-chip{font:inherit;font-size:13px;display:inline-flex;gap:6px;align-items:center;border:1px solid var(--line);border-radius:16px;padding:5px 12px;cursor:pointer;background:var(--paper-raised);color:var(--ink);min-height:32px}
+.tt-chip b{font-weight:700}
+.tt-chip.on{border-color:var(--navy);box-shadow:inset 0 0 0 1px var(--navy);background:var(--navy-tint)}
+.tt-chip.red{border-left:4px solid var(--red)}
+.tt-chip.green{border-left:4px solid var(--teal)}
+.tt-chip.blue{border-left:4px solid var(--blue)}
+.tt-chip.orange{border-left:4px solid var(--amber)}
+.tt-chip.grey{border-left:4px solid #9aa3ae}
+
+/* a task card */
+.tt-list{display:grid;gap:10px}
+.tt-card{border:1px solid var(--line);border-left:5px solid var(--blue);border-radius:10px;background:var(--paper-raised);padding:12px 14px}
+.tt-card.red{border-left-color:var(--red)}
+.tt-card.green{border-left-color:var(--teal)}
+.tt-card.orange{border-left-color:var(--amber)}
+.tt-card.grey{border-left-color:#9aa3ae;opacity:.85}
+.tt-card-top{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:flex-start;justify-content:space-between}
+.tt-name{font-weight:700;font-size:15.5px;line-height:1.3;word-break:break-word}
+.tt-due{font-size:13px;font-weight:600;white-space:nowrap}
+.tt-due.red{color:var(--red)}
+.tt-due.orange{color:var(--amber)}
+.tt-meta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--ink-soft);margin:4px 0 0}
+.tt-notes{font-size:13.5px;margin:6px 0 0;white-space:pre-wrap;word-break:break-word;color:var(--ink)}
+.tt-pri{display:inline-block;font-size:11.5px;font-weight:700;border-radius:10px;padding:1px 9px}
+.tt-pri.High{background:var(--red-tint);color:var(--red)}
+.tt-pri.Medium{background:var(--amber-tint);color:var(--amber)}
+.tt-pri.Low{background:var(--blue-tint);color:var(--blue)}
+.tt-state{display:inline-block;font-size:12px;font-weight:700;border-radius:10px;padding:1px 9px}
+.tt-state.blue{background:var(--blue-tint);color:var(--blue)}
+.tt-state.green{background:var(--teal-tint);color:var(--teal)}
+.tt-state.orange{background:var(--amber-tint);color:var(--amber)}
+.tt-state.red{background:var(--red-tint);color:var(--red)}
+.tt-state.grey{background:#eceff2;color:#56666E}
+.tt-hours{margin:8px 0 0;font-size:13px}
+.tt-bar-track{height:6px;border-radius:4px;background:var(--line);margin:4px 0 0;max-width:260px;overflow:hidden}
+.tt-bar-fill{height:100%;background:var(--blue)}
+.tt-bar-fill.over{background:var(--red)}
+.tt-actions{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}
+.tt-actions .btn{min-height:36px}
+
+/* per-person summary */
+.tt-sum{width:100%;border-collapse:collapse;margin:0 0 14px}
+.tt-sum th,.tt-sum td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--line-soft);font-size:13.5px}
+.tt-sum th{font-size:12px;color:var(--ink-soft);font-weight:600}
+.tt-sum td.num,.tt-sum th.num{text-align:right;white-space:nowrap}
+.tt-sum td.red{color:var(--red);font-weight:700}
+.tt-sum tr.on{background:var(--navy-tint)}
+
+/* the New task form */
+.tt-pri-btns{display:flex;gap:8px;flex-wrap:wrap}
+.tt-pri-btn{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--line);background:var(--paper-raised);border-radius:10px;padding:8px 18px;cursor:pointer;min-height:40px;color:var(--ink)}
+.tt-pri-btn.on.High{background:var(--red);border-color:var(--red);color:#fff}
+.tt-pri-btn.on.Medium{background:var(--amber);border-color:var(--amber);color:#fff}
+.tt-pri-btn.on.Low{background:var(--blue);border-color:var(--blue);color:#fff}
+.tt-people{border:1px solid var(--line);border-radius:10px;max-height:260px;overflow:auto;background:var(--paper-raised)}
+.tt-person{display:flex;gap:10px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line-soft);cursor:pointer;min-height:44px}
+.tt-person:last-child{border-bottom:0}
+.tt-person input{width:20px;height:20px;flex:none}
+.tt-person.on{background:var(--navy-tint)}
+.tt-person .tt-pn{font-weight:600;font-size:14px}
+.tt-person .tt-ps{font-size:12.5px;color:var(--ink-soft)}
+.tt-picked{font-size:13.5px;font-weight:600;margin:8px 0 0}
+.tt-two{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}
+.tt-hrs-quick{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 0}
+.tt-entry{display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line-soft);padding:8px 0;font-size:13.5px}
+.tt-entry:last-child{border-bottom:0}
+
+@media (max-width:640px){
+  .tt-two{grid-template-columns:1fr}
+  .tt-view{flex:1 1 auto;justify-content:center;padding:9px 10px;font-size:13.5px}
+  .tt-card{padding:12px}
+  .tt-actions .btn{flex:1 1 40%}
+  .tt-bar .btn{flex:1 1 auto}
+  /* the summary table becomes a stack of small cards */
+  .tt-sum thead{display:none}
+  .tt-sum,.tt-sum tbody,.tt-sum tr,.tt-sum td{display:block;width:100%}
+  .tt-sum tr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin:0 0 8px;background:var(--paper-raised)}
+  .tt-sum td{border:0;padding:2px 0;text-align:left!important}
+  .tt-sum td[data-l]::before{content:attr(data-l) ': ';color:var(--ink-soft);font-size:12px}
+  .tt-sum td.who{font-weight:700;font-size:14.5px}
+}
+.tt-person>span{display:block;min-width:0}
+.tt-pn,.tt-ps{display:block}
+.tt-date{display:flex;flex-direction:column;gap:2px}
+@media (max-width:640px){.tt-date{flex:1 1 44%}.tt-date input{width:100%}}

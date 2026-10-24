@@ -47,7 +47,7 @@ module.exports = function fitReports({
       list = list.filter((x) => { const at = ctx.overrides.get(x.id).overrideAt; return at >= within.gte && at < within.lt; });
     }
     const t = tileSet();
-    const all = t.add('overrides', 'Added by override', 'app', 'People added although they did not meet the job\'s rules');
+    const all = t.add('overrides', 'Added by override', 'app', 'People added although they did not meet the requirement\'s rules');
     const going = t.add('going', 'Still in process', 'app');
     const selected = t.add('selected', 'Selected (incl. joined)', 'app');
     const joined = t.add('joined', 'Joined', 'app');
@@ -55,7 +55,7 @@ module.exports = function fitReports({
 
     const every = section('overrideList', 'Every override', [
       { key: 'candidate', label: 'Candidate', ref: 'cand' },
-      { key: 'job', label: 'Job', ref: 'req' },
+      { key: 'job', label: 'Requirement', ref: 'req' },
       { key: 'client', label: 'Client', ref: 'client' },
       { key: 'reason', label: 'Reason given' },
       { key: 'failed', label: 'Did not meet' },
@@ -125,7 +125,7 @@ module.exports = function fitReports({
     else if (!list.length) notes.push('No one was added by override in this scope and date range.');
     else {
       const jp = pct(joined.n, all.n);
-      notes.push(`${all.n} ${all.n === 1 ? 'person was' : 'people were'} added although they did not meet the job's rules; ${joined.n} joined (${jp}%).`);
+      notes.push(`${all.n} ${all.n === 1 ? 'person was' : 'people were'} added although they did not meet the requirement's rules; ${joined.n} joined (${jp}%).`);
     }
     return {
       tiles: t.tiles, sections: [byRule, byPerson, every], notes, plain: true,

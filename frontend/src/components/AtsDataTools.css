@@ -64,3 +64,6 @@
 .atsio-dlg .atsio-check{display:flex;align-items:center;gap:6px;font-size:13px;margin:0}
 .atsio-dlg .atsio-check input{width:16px;height:16px;margin:0;flex:none}
 @media(max-width:640px){.atsio{justify-content:flex-start;margin-left:0}}
+/* a button this role may not use: still there, greyed, and it says why when pressed (founder, 2026-10-23: never hidden) */
+.atsio .atsio-off{opacity:.55;cursor:not-allowed}
+.atsio .atsio-off:hover{opacity:.7}

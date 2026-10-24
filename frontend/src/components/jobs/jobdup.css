@@ -1,0 +1,68 @@
+/* Duplicate jobs — everything scoped under .jdup-* (the creation card, the Jobs tab strip, the worklist). */
+.jdup-card{flex:1 1 100%;margin:0 0 8px;text-align:left;border:1px solid var(--amber,#9a6400);background:var(--amber-tint,#fdf3e0);border-radius:10px;padding:12px 14px;color:var(--ink,#1c2330)}
+.jdup-title{display:block;margin-bottom:6px;font-size:14.5px}
+.jdup-job{background:#fff;border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:8px 10px;margin:6px 0;display:grid;gap:6px}
+.jdup-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.jdup-add{display:inline-flex;gap:6px;align-items:center;flex-wrap:wrap}
+.jdup-add input{width:64px}
+.jdup-reason{flex:1 1 240px;min-width:0}
+
+/* the tab strip on Jobs */
+.jdup-tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.jdup-tabs button{font:inherit;font-weight:700;font-size:13.5px;border:1px solid var(--line,#e3e8f0);background:#fff;color:var(--ink,#1c2330);border-radius:999px;padding:7px 16px;cursor:pointer;display:inline-flex;gap:8px;align-items:center}
+.jdup-tabs button.is-on{background:var(--navy,#0b3a6e);border-color:var(--navy,#0b3a6e);color:#fff}
+.jdup-tabs button:focus-visible{outline:2px solid var(--navy,#0b3a6e);outline-offset:2px}
+.jdup-tabs.is-sub button{font-size:12.5px;padding:5px 14px;font-weight:600}
+.jdup-badge{background:var(--red,#b3261e);color:#fff;border-radius:999px;font-size:11.5px;line-height:1;padding:3px 7px;min-width:18px;text-align:center}
+
+/* the worklist */
+.jdup-wrap{display:grid;gap:12px}
+.jdup-filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.jdup-filters select,.jdup-filters input{max-width:100%}
+.jdup-filters input{flex:1 1 200px;min-width:0}
+.jdup-client{margin:10px 0 2px;font-size:14px;font-weight:800;color:var(--navy,#0b3a6e)}
+.jdup-set{background:var(--paper-raised,#fff);border:1px solid var(--line,#e3e8f0);border-left:4px solid var(--red,#b3261e);border-radius:10px;padding:12px 14px;margin-bottom:10px}
+.jdup-set.is-likely{border-left-color:var(--amber,#9a6400)}
+.jdup-set.is-maybe{border-left-color:var(--navy,#0b3a6e)}
+.jdup-why{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.jdup-why span{font-size:12px;background:var(--navy-tint,#eef3fb);color:var(--navy,#0b3a6e);border-radius:999px;padding:3px 10px}
+.jdup-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px}
+.jdup-col{border:1px solid var(--line,#e3e8f0);border-radius:8px;padding:10px 12px;background:var(--paper,#f5f7fa);min-width:0}
+.jdup-col.is-keep{border-color:var(--teal,#127a5a);background:#fff;box-shadow:0 0 0 1px var(--teal,#127a5a) inset}
+.jdup-col label.jdup-keeplabel{display:flex;gap:8px;align-items:flex-start;cursor:pointer;font-weight:700;margin-bottom:6px;font-size:13px}
+.jdup-col label.jdup-keeplabel input{width:auto;height:auto;margin-top:3px}
+.jdup-keeptag{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--teal,#127a5a);font-weight:800}
+.jdup-name{font-size:14.5px;font-weight:700;word-break:break-word;margin-bottom:4px}
+.jdup-name a{color:inherit}
+.jdup-rows{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:12.5px;margin:0}
+.jdup-rows dt{color:var(--ink-soft,#5b6478)}
+.jdup-rows dd{margin:0;word-break:break-word}
+.jdup-steps{margin-top:6px;padding-top:6px;border-top:1px dashed var(--line,#e3e8f0);font-size:12px;display:grid;gap:2px}
+.jdup-steps div{display:flex;justify-content:space-between;gap:8px}
+.jdup-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.jdup-actions .btn{white-space:normal;text-align:center}
+.jdup-opt{font-size:12.5px;display:inline-flex;gap:6px;align-items:center;color:var(--ink-soft,#5b6478)}
+.jdup-opt input{width:auto;height:auto}
+.jdup-ask{margin-top:10px;display:grid;gap:6px}
+.jdup-ask input{width:100%;box-sizing:border-box}
+.jdup-note{font-size:12.5px;color:var(--ink-soft,#5b6478);margin-top:8px}
+.jdup-warn{margin-top:8px;font-size:12.5px;color:var(--red,#b3261e);font-weight:600}
+.jdup-ok{border:1px solid var(--teal,#127a5a);background:var(--teal-tint,#e3f5ef);color:var(--teal,#127a5a);border-radius:8px;padding:8px 12px;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.jdup-empty{border:1px dashed var(--line,#e3e8f0);border-radius:10px;padding:16px;text-align:center;color:var(--ink-soft,#5b6478)}
+.jdup-empty b{display:block;color:var(--teal,#127a5a);font-size:14px;margin-bottom:4px}
+.jdup-sub{border:1px solid var(--line,#e3e8f0);border-radius:10px;padding:12px 14px;background:#fff}
+.jdup-sub h3{margin:0 0 4px;font-size:14.5px}
+.jdup-prop{display:flex;gap:10px;justify-content:space-between;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line,#e3e8f0);padding:8px 0;font-size:13px}
+.jdup-prop label{display:flex;gap:8px;align-items:center}
+.jdup-prop input[type=checkbox]{width:auto;height:auto}
+.jdup-pager{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:6px}
+
+/* the small note on a job (TL / Recruiter / Manager) */
+.jdup-jobnote{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border:1px solid var(--amber,#9a6400);background:var(--amber-tint,#fdf3e0);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
+.jdup-jobnote b{color:var(--amber,#9a6400)}
+
+@media (max-width:520px){
+  .jdup-set{padding:10px}
+  .jdup-cols{grid-template-columns:1fr}
+  .jdup-actions .btn{flex:1 1 100%}
+}

@@ -4,7 +4,21 @@
 // The prototype scores 14 signals and combines 12 weighted components. An
 // earlier version of this file used an invented 60% skills / 20% keywords /
 // 20% experience formula; that has been replaced, because the prototype is the
-// specification. The weights below are the prototype's W object verbatim.
+// specification. The weights below are the prototype's W object, except
+// Salary (2026-10-13, user: "Salary ni match cheskoni profiles matching undali.
+// Same as Resume, AI, location match"): Salary is now a REAL factor, read by the
+// one helper utils/salaryFit.js (matchFactor), with a bigger default share
+// (9 -> 16 points = 15%), and an optional AI-interview factor (default 0 points).
+//
+// THE FORMULA (computed on read, nothing stored):
+//   Fit = sum(weight x value) / sum(weight)      over the factors that are KNOWN
+// A factor whose value is not known (no expected salary, an unreadable one, a job
+// with no budget; an AI score nobody has) is LEFT OUT and the rest are
+// re-normalised: not knowing is neutral, never zero. The four parts a person
+// sees (utils/fitBreakdown.js): Resume (skills, good-to-have, experience,
+// relevant experience, education), AI (interview score), Location, Salary; the
+// small signals (work mode, employment type, notice, job type, availability)
+// are the "Other" share.
 
 const MATCH_THRESHOLD = 70; // prototype MATCH_THRESHOLD (line 6383)
 // Requirement and candidate detail screens list *suggestions* down to 50%.
@@ -17,6 +31,7 @@ const ELIGIBLE_THRESHOLD = Number(process.env.MATCH_ELIGIBLE_THRESHOLD) || 50;
 // preferred city, nearby within ~100 km, remote, or no location set).
 const LOCATION_MATCH_PCT = 70;
 const { citiesOf } = require('./locationMatch');
+const SALARY = require('./salaryFit'); // the ONE salary helper (reading, budget, Salary fit %)
 
 // Prototype weights, verbatim (line 1592). They sum to 1.00.
 // Spec D (2026-10-03): an EXACT master-specialisation match (Requirement.
@@ -34,10 +49,19 @@ const WEIGHTS = {
   loc: 0.1,
   mode: 0.05,
   emp: 0.04,
-  sal: 0.09,
+  sal: 0.16, // was 0.09 (the prototype); 16 of 107 points = 15% of the Fit while salary is known
   notice: 0.06,
   jp: 0.02,
   avail: 0.02,
+  ai: 0, // the AI interview score: 0 = shown beside the Fit, not counted (see the header). Counted only when it is > 0 AND the person has one.
+};
+// The four parts a person sees in the breakdown, and which weights belong to each.
+const FIT_GROUPS = {
+  resume: ['mand', 'good', 'exp', 'relev', 'edu'],
+  ai: ['ai'],
+  location: ['loc'],
+  salary: ['sal'],
+  other: ['mode', 'emp', 'notice', 'jp', 'avail'],
 };
 
 // fit_: the weights computeMatch() uses. Admin can change them (Fit settings,
@@ -52,6 +76,7 @@ function setActiveWeights(w) {
   return activeWeights;
 }
 const getActiveWeights = () => ({ ...activeWeights });
+setActiveWeights(WEIGHTS); // the defaults add up to 1.07: scale them like any saved set
 // fit_: the specialisation bonus is an Admin setting too (default SPEC_EXACT_BONUS).
 let activeSpecBonus = SPEC_EXACT_BONUS;
 function setActiveSpecBonus(n) {
@@ -228,7 +253,7 @@ function computeMatch(candidate, requirement, opts = {}) {
 
   /* 3. Total experience */
   let expPct = 0.6;
-  let expReason = requirement.experience ? `Required ${requirement.experience}; candidate experience not on file` : "The job does not ask for a number of years";
+  let expReason = requirement.experience ? `Required ${requirement.experience}; candidate experience not on file` : "The requirement does not ask for a number of years";
   const resumeYears = resume && Number(rParsed.totalExperienceYears) > 0 ? Number(rParsed.totalExperienceYears) : null;
   const totalExp = resumeYears != null ? resumeYears : (Number(candidate.experienceYears) || 0);
   const range = parseExperienceRange(requirement.experience);
@@ -398,30 +423,30 @@ function computeMatch(candidate, requirement, opts = {}) {
     }
   }
 
-  /* 10/11. Current + expected salary against the band */
-  let salPct = 0.6;
-  let salReason = 'Salary expectation not on file';
-  const band = reqSalaryRange(requirement);
-  const expSal = parseSalary(candidate.expectedSalary);
-  const curSal = parseSalary(candidate.currentSalary);
-  if (band && expSal != null) {
-    if (expSal >= band.lo && expSal <= band.hi) {
-      salPct = 1;
-      salReason = `Expected ₹${expSal}L sits inside the ${requirement.salary} band`;
-      reasons.push(salReason);
-    } else if (expSal < band.lo) {
-      salPct = 0.9;
-      salReason = `Expected ₹${expSal}L is below the band (${requirement.salary})`;
+  /* 10/11. Salary: what the person expects vs the client's budget (utils/salaryFit.js matchFactor: the ONE helper).
+     Not known (no salary / unreadable / no budget) = null = left out of the score and the weights re-normalised.
+     The wording never carries rupees, so a reason line can be shown to any login that may see a score. */
+  const salF = SALARY.matchFactor(candidate, requirement);
+  const salPct = salF.known ? salF.pct / 100 : null;
+  let salReason;
+  if (salF.known) {
+    if (salF.band === 'within') {
+      salReason = salF.belowRange ? "Wants less than the client's minimum: within budget" : "Wants pay inside the client's budget";
+      reasons.push(salF.belowRange ? 'Salary is inside the client budget (below the minimum)' : 'Salary is inside the client budget');
+    } else if (salF.band === 'slightly') {
+      salReason = "Wants a little more than the client's maximum";
+      gaps.push('Salary is slightly above the client budget');
     } else {
-      salPct = Math.max(0.2, band.hi / expSal);
-      salReason = `Expected ₹${expSal}L exceeds the ${requirement.salary} band`;
-      gaps.push(salReason);
+      salReason = "Wants more than the client's maximum";
+      gaps.push('Salary is above the client budget');
     }
-  } else if (band && curSal != null) {
-    salPct = curSal <= band.hi ? 0.8 : 0.4;
-    salReason = `Current ₹${curSal}L vs band ${requirement.salary}`;
-    if (curSal > band.hi) gaps.push(salReason);
+  } else {
+    salReason = `Salary: not known. ${salF.why}`;
   }
+
+  /* 16. AI interview score (optional factor; only when its weight is above 0 and the person has a score) */
+  const aiRaw = opts && opts.aiScore;
+  const aiPct = aiRaw !== null && aiRaw !== undefined && aiRaw !== '' && Number.isFinite(Number(aiRaw)) ? Math.max(0, Math.min(100, Number(aiRaw))) / 100 : null;
 
   /* 12. Notice period vs joining timeline */
   let notPct = 0.7;
@@ -465,30 +490,35 @@ function computeMatch(candidate, requirement, opts = {}) {
   }
 
   const W = activeWeights; // fit_: the Admin weights (setActiveWeights), else WEIGHTS
-  let overall = Math.round(
-    (mandPct * W.mand +
-      goodPct * W.good +
-      expPct * W.exp +
-      relevPct * W.relev +
-      eduPct * W.edu +
-      locPct * W.loc +
-      modePct * W.mode +
-      empPct * W.emp +
-      salPct * W.sal +
-      notPct * W.notice +
-      jpPct * W.jp +
-      availPct * W.avail) *
-      100
-  );
-  // B8 semantic part: a small extra weight (s = its points / the 12 weights'
+  // Every factor as [value 0..1 or null if not known, weight]; the known ones are re-normalised to 100%.
+  const parts = {
+    mand: [mandPct, W.mand], good: [goodPct, W.good], exp: [expPct, W.exp], relev: [relevPct, W.relev], edu: [eduPct, W.edu],
+    loc: [locPct, W.loc], mode: [modePct, W.mode], emp: [empPct, W.emp], sal: [salPct, W.sal], notice: [notPct, W.notice],
+    jp: [jpPct, W.jp], avail: [availPct, W.avail], ai: [aiPct, W.ai],
+  };
+  let num = 0;
+  let den = 0;
+  Object.keys(parts).forEach((k) => {
+    const [v, w] = parts[k];
+    if (v === null || !(w > 0)) return;
+    num += v * w;
+    den += w;
+  });
+  const base = den > 0 ? num / den : 0;
+  let overall = Math.round(base * 100);
+  // What each part counted for in THIS score (%), after the not-known ones were left out.
+  const shares = {};
+  Object.keys(FIT_GROUPS).forEach((g) => {
+    const sum = FIT_GROUPS[g].reduce((a, k) => (parts[k][0] === null || !(parts[k][1] > 0) ? a : a + parts[k][1]), 0);
+    shares[g] = den > 0 ? Math.round((sum / den) * 100) : 0;
+  });
+  // B8 semantic part: a small extra weight (s = its points / the weights'
   // points), averaged in. Only when opts.semantic carries a similarity —
   // otherwise `overall` above is untouched, to the digit.
   let semanticPct = null;
   if (sem && Number.isFinite(Number(sem.pct)) && Number(sem.share) > 0) {
     semanticPct = Math.max(0, Math.min(100, Math.round(Number(sem.pct))));
     const s = Number(sem.share);
-    const base = mandPct * W.mand + goodPct * W.good + expPct * W.exp + relevPct * W.relev + eduPct * W.edu + locPct * W.loc
-      + modePct * W.mode + empPct * W.emp + salPct * W.sal + notPct * W.notice + jpPct * W.jp + availPct * W.avail;
     overall = Math.round(((base + (semanticPct / 100) * s) / (1 + s)) * 100);
     if (semanticPct >= 60) reasons.push(`Profile talks about the same work (${semanticPct}% similar${sem.shared && sem.shared.length ? `: ${sem.shared.join(', ')}` : ''})`);
     else if (semanticPct < 25) gaps.push(`Profile talks about different work (${semanticPct}% similar)`);
@@ -557,8 +587,21 @@ function computeMatch(candidate, requirement, opts = {}) {
     modeReason,
     empPct: Math.round(empPct * 100),
     empReason,
-    salPct: Math.round(salPct * 100),
+    // Salary (utils/salaryFit.js matchFactor): % is null while it is not known. Never rupees.
+    salPct: salF.known ? Math.round(salPct * 100) : null,
     salReason,
+    salKnown: salF.known,
+    salState: salF.state,
+    salBand: salF.band,
+    salWord: salF.word,
+    salBelowRange: salF.belowRange,
+    salWhy: salF.why,
+    // The AI interview score (null = the person has none) and whether it counted in this Fit.
+    aiPct: aiPct === null ? null : Math.round(aiPct * 100),
+    aiCounted: aiPct !== null && W.ai > 0,
+    // The four parts the breakdown shows (utils/fitBreakdown.js) and what each counted for.
+    factors: { resume: resumePct, ai: aiPct === null ? null : Math.round(aiPct * 100), location: locationPctRounded, salary: salF.known ? Math.round(salPct * 100) : null },
+    shares,
     notPct: Math.round(notPct * 100),
     notReason,
     jpPct: Math.round(jpPct * 100),
@@ -577,11 +620,11 @@ function eligibilityOf(match, threshold = ELIGIBLE_THRESHOLD) {
   // fit_ (2026-10-03): a job that lists NO must-have skill cannot vouch for
   // anyone — otherwise every person "fits" every such job on location alone.
   // An exact master-specialisation match stands in for the skills.
-  if (match.mandatoryCount === 0 && match.specMatch !== 'exact') why.push('The job lists no must-have skills yet');
+  if (match.mandatoryCount === 0 && match.specMatch !== 'exact') why.push('The requirement lists no must-have skills yet');
   if (!match.locationMatched) why.push('Location does not match');
   // B8: a notice period longer than the job allows.
   if (match.noticeDaysNum != null && match.noticeMaxDays != null && match.noticeDaysNum > match.noticeMaxDays) {
-    why.push(`Notice ${match.noticeText} is longer than the job allows (${match.noticeMaxText})`);
+    why.push(`Notice ${match.noticeText} is longer than the requirement allows (${match.noticeMaxText})`);
   }
   return { eligible: why.length === 0, why };
 }
@@ -604,7 +647,7 @@ function rankCandidates(candidates, requirement, { excludeIds = new Set(), thres
 }
 
 module.exports = {
-  MATCH_THRESHOLD, SUGGESTION_THRESHOLD, ELIGIBLE_THRESHOLD, LOCATION_MATCH_PCT, WEIGHTS, SPEC_EXACT_BONUS, computeMatch, rankCandidates, eligibilityOf,
+  MATCH_THRESHOLD, SUGGESTION_THRESHOLD, ELIGIBLE_THRESHOLD, LOCATION_MATCH_PCT, WEIGHTS, FIT_GROUPS, SPEC_EXACT_BONUS, computeMatch, rankCandidates, eligibilityOf,
   setActiveWeights, getActiveWeights, setActiveSpecBonus,
   // B8 versioning
   setActiveVersion, getActiveVersion, versionLabel, versionCode, getActiveSpecBonus: () => activeSpecBonus,

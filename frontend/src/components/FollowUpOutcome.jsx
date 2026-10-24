@@ -102,7 +102,7 @@ export default function FollowUpOutcome({
         <>
           <div className="grid-2">
             <div className="field">
-              <label>Next follow-up date *</label>
+              <label>Next follow-up date</label>
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div className="field">

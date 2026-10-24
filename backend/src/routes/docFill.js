@@ -68,7 +68,7 @@ async function mayUse(req, res, target) {
 async function recordOf(req, res, target, id) {
   if (target === 'job') {
     const r = await prisma.requirement.findFirst({ where: { AND: [{ id }, requirementWhere(req.user)] }, select: { id: true, title: true, reqCode: true } });
-    if (!r) res.status(404).json({ error: 'That job is not in your area.' });
+    if (!r) res.status(404).json({ error: 'That requirement is not in your area.' });
     return r;
   }
   if (target === 'client') {

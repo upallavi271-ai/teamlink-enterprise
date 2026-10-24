@@ -22,13 +22,13 @@ const days = (v) => `${Number(v).toLocaleString('en-IN')} d`;
 export const REPORT_CHARTS = {
   // 1. Client-wise requirements & joinings.
   clients: [{
-    kind: 'grouped', section: 'clients', title: 'Jobs and joinings, by client', top: 10, sortBy: 'requirements',
-    series: [['requirements', 'Jobs'], ['joined', 'Joined']],
+    kind: 'grouped', section: 'clients', title: 'Requirements and joinings, by client', top: 10, sortBy: 'requirements',
+    series: [['requirements', 'Requirements'], ['joined', 'Joined']],
   }],
   // 2. Department-wise performance.
   departments: [{
     kind: 'grouped', section: 'departments', title: 'Department performance', skip: ['—'],
-    series: [['openReqs', 'Open jobs'], ['shared', 'Sent to client'], ['interviews', 'Interviews'], ['joined', 'Joined']],
+    series: [['openReqs', 'Open requirements'], ['shared', 'Sent to client'], ['interviews', 'Interviews'], ['joined', 'Joined']],
   }],
   funnel: [{ kind: 'funnel', section: 'funnel', col: 'count', title: 'From applied to joined' }],
   // 3. Recruiter & BDE performance (the tables stay below the bars).
@@ -40,7 +40,7 @@ export const REPORT_CHARTS = {
     {
       kind: 'grouped', section: 'bdes', title: 'Client managers (BDE) — sent, interviews, joined', top: 10, sortBy: 'joined', skip: ['—'],
       series: [['shared', 'Sent to client'], ['interviews', 'Interviews'], ['joined', 'Joined']],
-      empty: 'No job has a client manager (BDE) yet. Set the BDE on the client or the job.',
+      empty: 'No requirement has a client manager (BDE) yet. Set the BDE on the client or the requirement.',
     },
   ],
   // 4. Rejection analysis — whose decision (donut) and why (bars).

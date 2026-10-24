@@ -225,7 +225,7 @@ const all = (o) => [o.master.text, ...Object.values(o.boards).map((b) => b.text)
     // fill-ins saved into the job need edit rights and keep the audit trail
     const fillSave = await call('POST', `/api/requirements/${rThin.id}/job-text/save`, T.admin, { overrides: { location: 'Uppal, Hyderabad', experience: '1-3' } });
     const thinRow = await prisma.requirement.findUnique({ where: { id: rThin.id } });
-    check('A35 "Save these into the job" writes the typed gaps into the job', fillSave.status === 200 && thinRow.location === 'Uppal, Hyderabad' && thinRow.experience === '1-3', fillSave.body);
+    check('A35 "Save these into the requirement" writes the typed gaps into the job', fillSave.status === 200 && thinRow.location === 'Uppal, Hyderabad' && thinRow.experience === '1-3', fillSave.body);
     // AI polish: none configured here -> a plain message, never a fake result
     const ai = await call('POST', `/api/requirements/${rFull.id}/job-text/ai`, T.admin, { overrides: {}, current: {} });
     check('A40 Polish with AI: no AI here -> 409 with a plain sentence, nothing fabricated', ai.status === 409 && typeof ai.body.error === 'string' && ai.body.error.length > 10 && !ai.body.texts, ai.body);

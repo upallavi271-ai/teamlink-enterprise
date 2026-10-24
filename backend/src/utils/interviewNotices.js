@@ -161,7 +161,7 @@ function lines(app, event, extra = {}, forCandidate = false) {
   const client = r.internal ? 'TeamLink' : (r.client && r.client.name) || '—';
   const out = [
     `Candidate: ${app.candidate ? app.candidate.name : '—'}`,
-    forCandidate ? `Job: ${r.title || '—'}${r.internal ? ' (TeamLink)' : ''}` : `Job: ${r.title || '—'} (${client})`,
+    forCandidate ? `Requirement: ${r.title || '—'}${r.internal ? ' (TeamLink)' : ''}` : `Requirement: ${r.title || '—'} (${client})`,
     `Round: ${app.interviewRound || 1}`,
     `When: ${when(app.interviewAt)}`,
     `Where: ${whereLine(app)}`,
@@ -262,11 +262,14 @@ async function queueCandidateEmail(app, { template, label, subject, body, actor 
 // opts: { actor, fromSlot, reason, candidateEmail (default true), key }
 async function announceInterview(applicationId, event, opts = {}) {
   const out = { inApp: 0, emails: 0, candidateEmail: false, people: [] };
+  // EXOTEL AI CALLING (2026-10-22): booking / change -> offer an AI notification call, older waiting calls are dropped; cancel -> waiting calls cancelled.
+  // Only a question: nothing is called until a person confirms (or an Admin ticked automatic for this requirement). Never fatal. calling/hooks.js
+  try { await require('../calling/hooks').onInterviewAnnounced(applicationId, event, opts); } catch { /* the booking already happened */ } // eslint-disable-line global-require
   try {
     const app = await prisma.application.findUnique({ where: { id: applicationId }, include: APP_INCLUDE });
     if (!app || !TITLES[event]) return out;
     const cName = app.candidate ? app.candidate.name : 'Candidate';
-    const job = (app.requirement && app.requirement.title) || 'the job';
+    const job = (app.requirement && app.requirement.title) || 'the requirement';
     const p = await peopleOf(app);
     const detail = lines(app, event, opts);
     const candDetail = lines(app, event, opts, true);
@@ -362,6 +365,8 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
   // B3: offers past their time become Expired (recruiter + TL told).
   // eslint-disable-next-line global-require
   if (!dryRun && !onlyIds) summary.offersExpired = await require('./offerLink').expireDue({ now }).catch(() => 0);
+  // Client hiring (2026-10-13): offer not answered in N days / joining T-3, T-1, joining day. OFF until an Admin arms it.
+  if (!onlyIds) summary.clientHiring = await require('./clientTrack').runReminders({ now, force: false, dryRun }).catch((err) => ({ error: err.message })); // eslint-disable-line global-require
 
   // 1 + 2 — the candidate's reminders (about 1 day, 1 hour, 15 minutes before an online interview),
   // the team's 1-hour reminder, the 08:30 "Today's interviews" list, "Did the candidate attend?" and the
@@ -409,7 +414,7 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
     const parties = (await TELL.partiesOf(a)).filter((p) => p.roles.some((x) => ['Recruiter', 'Team lead', 'Interviewer'].includes(x)));
     const daysLate = Math.max(0, Math.floor((t - a.interviewAt.getTime()) / DAY));
     const title = `🔴 Feedback missing: ${a.candidate ? a.candidate.name : 'Candidate'}`;
-    const message = `${r.title || 'Job'} — interview was ${when(a.interviewAt)}${daysLate ? ` (${daysLate} day${daysLate === 1 ? '' : 's'} ago)` : ''}. Please fill the short feedback form on Interviews → Waiting for feedback.`;
+    const message = `${r.title || 'Requirement'} — interview was ${when(a.interviewAt)}${daysLate ? ` (${daysLate} day${daysLate === 1 ? '' : 's'} ago)` : ''}. Please fill the short feedback form on Interviews → Waiting for feedback.`;
     for (const p of parties) {
       const roles = p.roles.filter((x) => ['Recruiter', 'Team lead', 'Interviewer'].includes(x));
       const flags = roles.map((x) => plan.parties[ENGINE.ROLE_KEY[x]]);
@@ -418,7 +423,7 @@ async function runInterviewReminders({ now = new Date(), force = false, dryRun =
         await prisma.notification.create({ data: { userId: p.userId, title, message, channel: 'In-App', recipient: key, status: 'Sent' } });
       }
       // eslint-disable-next-line no-await-in-loop
-      if (p.email && flags.some((f) => f.email) && (candOn || force)) await mailTo(p.email, title.replace(/^[^w]+s*/, ''), `Hello ${p.name},
+      if (p.email && flags.some((f) => f.email) && ((candOn && plan.armed) || force)) await mailTo(p.email, title.replace(/^[^w]+s*/, ''), `Hello ${p.name},
 
 ${message}
 
@@ -512,11 +517,11 @@ async function whatsappLinks(applicationId, actor = null) {
   ];
   const out = [];
   // the candidate never sees the client's name
-  const candText = [`Hi ${first}, your interview for ${r.title || 'the job'}${r.internal ? ' at TeamLink' : ' at our client'} is booked.`, ...slot, 'Please reply OK to confirm.', sign].join('\n');
+  const candText = [`Hi ${first}, your interview for ${r.title || 'the requirement'}${r.internal ? ' at TeamLink' : ' at our client'} is booked.`, ...slot, 'Please reply OK to confirm.', sign].join('\n');
   const cPhone = waPhone(app.candidate && app.candidate.phone);
   out.push({ to: 'candidate', label: 'Candidate', name: app.candidate ? app.candidate.name : '', phone: cPhone, text: candText, url: waUrl(cPhone, candText) });
   if (r.bde) {
-    const bText = [`Interview booked: ${app.candidate ? app.candidate.name : 'Candidate'} for ${r.title || 'the job'}${client ? ` (${client})` : ''}.`, ...slot, sign].join('\n');
+    const bText = [`Interview booked: ${app.candidate ? app.candidate.name : 'Candidate'} for ${r.title || 'the requirement'}${client ? ` (${client})` : ''}.`, ...slot, sign].join('\n');
     const bPhone = waPhone(r.bde.employee && r.bde.employee.phone);
     out.push({ to: 'bde', label: 'Client manager (BDE)', name: r.bde.name, phone: bPhone, text: bText, url: waUrl(bPhone, bText) });
   }
@@ -532,7 +537,9 @@ function startSweep() {
   TIMER = setInterval(async () => {
     if (RUNNING) return;
     RUNNING = true;
-    try { await runInterviewReminders(); } catch (err) { console.error('[interviewReminders]', err.message); } finally { RUNNING = false; } // eslint-disable-line no-console
+    try { await runInterviewReminders(); } catch (err) { console.error('[interviewReminders]', err.message); } // eslint-disable-line no-console
+    // EXOTEL AI CALLING (2026-10-22): its reminder calls, waiting calls, retries and retention ride THIS sweep (no second scheduler). Does nothing while AI calling is Off.
+    try { await require('../calling/reminders').tick(); } catch (err) { console.error('[ai-calling]', err.message); } finally { RUNNING = false; } // eslint-disable-line global-require, no-console
   }, ms);
   if (TIMER.unref) TIMER.unref();
 }

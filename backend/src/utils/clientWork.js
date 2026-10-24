@@ -40,10 +40,10 @@ const DAY_MS = 86400000;
 // The BDE's pending types, in plain words.
 const BDE_TYPES = [
   { id: 'noReply', label: 'Client has not replied' },
-  { id: 'shortlisted', label: 'Client shortlisted, interview not fixed' },
+  { id: 'shortlisted', label: 'Interviews to book (client shortlisted)' },
   { id: 'feedback', label: 'Interview done, no client feedback' },
   { id: 'agreement', label: 'Agreement not signed' },
-  { id: 'requests', label: 'Job requests waiting' },
+  { id: 'requests', label: 'Requirement requests waiting' },
   { id: 'invoices', label: 'Invoices past due (info)' },
   { id: 'logins', label: 'Client logins waiting' },
 ];
@@ -91,6 +91,12 @@ async function bdePending(user, { settings = null, fresh = false, load: given = 
   const noReplyAll = rows.filter((x) => ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(x.a.stage));
   const noReply = noReplyAll.map((x) => appItem(x, today)).filter((i) => (i.waitedDays || 0) >= feedbackDays).sort((a, b) => (b.waitedDays || 0) - (a.waitedDays || 0));
   const shortlisted = rows.filter((x) => x.a.stage === 'CLIENT_SHORTLISTED').map((x) => appItem(x, today));
+  // "Interview requested by <recruiter>" beside the ones a Recruiter / TL has already asked the BDE to book.
+  try {
+    const asked = await require('./interviewRequest').requestsFor(shortlisted.map((i) => i.applicationId)); // eslint-disable-line global-require
+    shortlisted.forEach((i) => { const r = asked.get(i.applicationId); if (r) { i.requestedBy = r.by; i.requestedAt = r.at; } });
+    shortlisted.sort((a, b) => (b.requestedBy ? 1 : 0) - (a.requestedBy ? 1 : 0));
+  } catch { /* a courtesy */ }
   const feedback = rows.filter((x) => NA.isClientFeedbackPending(x.a)).map((x) => appItem(x, today));
 
   // Agreements: the dashboard's rule (clients with open jobs, not signed).
@@ -139,9 +145,9 @@ const topLines = (p, n = 5) => {
   const out = [];
   L.noReply.slice(0, n).forEach((i) => out.push(`Client has not replied: ${i.candidate} — ${i.job} (${i.client}), ${i.waitedDays} days`));
   L.feedback.slice(0, n).forEach((i) => out.push(`No client feedback yet: ${i.candidate} — ${i.job} (${i.client})`));
-  L.shortlisted.slice(0, n).forEach((i) => out.push(`Client shortlisted, fix the interview: ${i.candidate} — ${i.job} (${i.client})`));
+  L.shortlisted.slice(0, n).forEach((i) => out.push(`Interview to book (client shortlisted): ${i.candidate} — ${i.job} (${i.client})${i.requestedBy ? `, requested by ${i.requestedBy}` : ''}`));
   L.agreement.slice(0, n).forEach((i) => out.push(`Agreement ${i.notSent ? 'not sent yet' : `not signed (${i.agreement})`}: ${i.client}`));
-  L.requests.slice(0, n).forEach((i) => out.push(`Job request waiting: ${i.job} (${i.client})`));
+  L.requests.slice(0, n).forEach((i) => out.push(`Requirement request waiting: ${i.job} (${i.client})`));
   L.logins.slice(0, n).forEach((i) => out.push(`Client login waiting for approval: ${i.client}${i.who ? ` (${i.who})` : ''}`));
   L.invoices.slice(0, n).forEach((i) => out.push(`Invoice ${i.invoiceNumber || ''} of ${i.client} is ${i.daysLate} days past due (for your information)`));
   return out.slice(0, n * 3);
@@ -151,7 +157,7 @@ const countsLine = (c, days) => [
   c.feedback ? `No client feedback ${c.feedback}` : null,
   c.shortlisted ? `Shortlisted, interview not fixed ${c.shortlisted}` : null,
   c.agreement ? `Agreements not signed ${c.agreement}${c.agreementNotSent ? ` (${c.agreementNotSent} not sent)` : ''}` : null,
-  c.requests ? `Job requests waiting ${c.requests}` : null,
+  c.requests ? `Requirement requests waiting ${c.requests}` : null,
   c.logins ? `Logins waiting ${c.logins}` : null,
   c.invoices ? `Invoices past due ${c.invoices}` : null,
 ].filter(Boolean).join(' · ');
@@ -167,8 +173,8 @@ function bdeDigestContent({ to, pending, day, copyOf = null }) {
     { label: 'Client not replied', value: c.noReply, tone: c.noReply ? 'orange' : 'green' },
     { label: 'No feedback', value: c.feedback, tone: c.feedback ? 'orange' : 'green' },
     { label: 'Agreements', value: c.agreement, tone: c.agreement ? 'red' : 'green' },
-    { label: 'Job requests', value: c.requests, tone: c.requests ? 'blue' : 'green' },
-  ])}${M.table(['What', 'Who and which job'], topLines(pending, 6).map((l) => { const [a, ...b] = l.split(': '); return [a, b.join(': ')]; }))}${M.button(PW.absolute('/ats/dashboard'), 'Open my clients')}`);
+    { label: 'Requirement requests', value: c.requests, tone: c.requests ? 'blue' : 'green' },
+  ])}${M.table(['What', 'Who and which requirement'], topLines(pending, 6).map((l) => { const [a, ...b] = l.split(': '); return [a, b.join(': ')]; }))}${M.button(PW.absolute('/ats/dashboard'), 'Open my clients')}`);
   return { title, subject: `TeamLink — ${title}`, text, html, bell: `${pending.total} client item${pending.total === 1 ? '' : 's'}: ${countsLine(c, pending.feedbackDays)}.`, total: pending.total };
 }
 
@@ -263,9 +269,9 @@ async function teamView(user, q = {}) {
     const items = pending ? [
       ...pending.lists.noReply.map((i) => ({ ...i, type: 'noReply', typeLabel: 'Client has not replied', text: `${i.candidate} — ${i.job} (${i.client}), ${i.waitedDays} days` })),
       ...pending.lists.feedback.map((i) => ({ ...i, type: 'feedback', typeLabel: 'Interview done, no client feedback', text: `${i.candidate} — ${i.job} (${i.client})` })),
-      ...pending.lists.shortlisted.map((i) => ({ ...i, type: 'shortlisted', typeLabel: 'Client shortlisted, interview not fixed', text: `${i.candidate} — ${i.job} (${i.client})` })),
+      ...pending.lists.shortlisted.map((i) => ({ ...i, type: 'shortlisted', typeLabel: 'Interviews to book (client shortlisted)', text: `${i.candidate} — ${i.job} (${i.client})${i.requestedBy ? ` · requested by ${i.requestedBy}` : ''}` })),
       ...pending.lists.agreement.map((i) => ({ ...i, type: 'agreement', typeLabel: 'Agreement not signed', text: `${i.client}: ${i.notSent ? 'not sent yet' : i.agreement}` })),
-      ...pending.lists.requests.map((i) => ({ ...i, type: 'requests', typeLabel: 'Job requests waiting', text: `${i.job} (${i.client})` })),
+      ...pending.lists.requests.map((i) => ({ ...i, type: 'requests', typeLabel: 'Requirement requests waiting', text: `${i.job} (${i.client})` })),
       ...pending.lists.logins.map((i) => ({ ...i, type: 'logins', typeLabel: 'Client logins waiting', text: `${i.client}${i.who ? ` (${i.who})` : ''}` })),
       ...pending.lists.invoices.map((i) => ({ ...i, type: 'invoices', typeLabel: 'Invoices past due (info)', text: `${i.invoiceNumber || 'Invoice'} of ${i.client}, ${i.daysLate} days` })),
     ] : [];
@@ -312,7 +318,7 @@ async function teamView(user, q = {}) {
       types: BDE_TYPES,
       totals: PW.totalsOf(shown),
       rows: shown,
-      note: 'Waiting / Due today / Late are the same numbers as the BDE team on the dashboard. The list under each BDE is the client work waiting on them (names of people and jobs only; no contact details, salary or internal notes).',
+      note: 'Waiting / Due today / Late are the same numbers as the BDE team on the dashboard. The list under each BDE is the client work waiting on them (names of people and requirements only; no contact details, salary or internal notes).',
     },
   };
 }
@@ -344,7 +350,7 @@ async function clientTimeline(user, client, { limit = 150, kind = 'all' } = {}) 
     select: { id: true, candidateId: true, requirementId: true, stage: true, candidate: { select: { name: true } } },
   }) : [];
   const appIds = apps.map((a) => a.id);
-  const appInfo = new Map(apps.map((a) => [a.id, { name: a.candidate ? a.candidate.name : '—', job: reqLabel.get(a.requirementId) || 'Job' }]));
+  const appInfo = new Map(apps.map((a) => [a.id, { name: a.candidate ? a.candidate.name : '—', job: reqLabel.get(a.requirementId) || 'Requirement' }]));
   const events = [];
   const add = (e) => events.push(e);
   const chunk = (list, n = 400) => { const out = []; for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n)); return out; };
@@ -372,7 +378,7 @@ async function clientTimeline(user, client, { limit = 150, kind = 'all' } = {}) 
       orderBy: { createdAt: 'desc' }, take: 200,
     }))).then((r) => r.flat()),
     prisma.invoice.findMany({ where: { clientId: client.id }, select: { id: true, invoiceNumber: true, invoiceDate: true, dueDate: true, status: true, paidDate: true, createdAt: true } }).catch(() => []),
-    prisma.clientDocument.findMany({ where: { clientId: client.id }, select: { id: true, name: true, kind: true, uploadedByName: true, createdAt: true } }).catch(() => []),
+    prisma.clientDocument.findMany({ where: { clientId: client.id, kind: { not: 'AGREEMENT_SIGNED' } }, select: { id: true, name: true, kind: true, uploadedByName: true, createdAt: true } }).catch(() => []),
     prisma.portalRequest.findMany({ where: { clientId: client.id }, orderBy: { createdAt: 'desc' }, take: 50 }).catch(() => []),
     prisma.user.findMany({ where: { clientId: client.id }, select: { id: true, name: true, createdAt: true, status: true, lastLoginAt: true } }).catch(() => []),
     prisma.clientMerge.findMany({ where: { OR: [{ primaryId: client.id }, { donorIds: { contains: client.id } }] }, orderBy: { createdAt: 'desc' }, take: 20 }).catch(() => []),
@@ -389,7 +395,7 @@ async function clientTimeline(user, client, { limit = 150, kind = 'all' } = {}) 
   audits.forEach((a) => add({
     id: `a-${a.id}`, at: a.createdAt, kind: kindOfAudit(a),
     title: a.action === 'Client note' ? 'Note' : a.action,
-    detail: a.action === 'Client note' ? a.reason : [a.entity === 'Requirement' ? (reqLabel.get(a.entityId) || 'Job') : null, a.fieldLabel || a.field, a.fromValue && a.toValue ? `${String(a.fromValue).slice(0, 60)} → ${String(a.toValue).slice(0, 60)}` : (a.toValue ? String(a.toValue).slice(0, 120) : null), a.reason ? String(a.reason).slice(0, 160) : null].filter(Boolean).join(' · ') || null,
+    detail: a.action === 'Client note' ? a.reason : [a.entity === 'Requirement' ? (reqLabel.get(a.entityId) || 'Requirement') : null, a.fieldLabel || a.field, a.fromValue && a.toValue ? `${String(a.fromValue).slice(0, 60)} → ${String(a.toValue).slice(0, 60)}` : (a.toValue ? String(a.toValue).slice(0, 120) : null), a.reason ? String(a.reason).slice(0, 160) : null].filter(Boolean).join(' · ') || null,
     by: a.actorName || (a.user ? a.user.name : 'System'),
   }));
   stage.forEach((e) => {
@@ -428,7 +434,7 @@ async function clientTimeline(user, client, { limit = 150, kind = 'all' } = {}) 
   requests.forEach((r) => add({ id: `r-${r.id}`, at: r.createdAt, kind: 'access', title: `${r.kind === 'CLIENT_LOGIN' ? 'Client login asked for' : r.kind === 'CLIENT_DISABLE' ? 'Client login stop asked for' : 'Request'}${r.name ? `: ${r.name}` : ''} — ${r.status}`, detail: r.decisionNote || r.reason || null, by: r.requestedByName || null }));
   logins.forEach((u) => add({ id: `l-${u.id}`, at: u.createdAt, kind: 'access', title: `Client login created: ${u.name}`, detail: u.status === 'Active' ? null : u.status, by: null }));
   merges.forEach((m) => add({ id: `m-${m.id}`, at: m.createdAt, kind: 'access', title: m.primaryId === client.id ? 'Duplicate client(s) merged into this one' : 'This client was merged into another', detail: m.primaryId === client.id ? null : m.primaryName, by: m.mergedByName || null }));
-  reqs.forEach((r) => add({ id: `j-${r.id}`, at: r.createdAt, kind: 'jobs', title: `Job raised: ${r.reqCode ? `${r.reqCode} · ` : ''}${r.title}`, detail: r.status === 'DRAFT' ? 'Waiting to be opened' : null, by: null }));
+  reqs.forEach((r) => add({ id: `j-${r.id}`, at: r.createdAt, kind: 'jobs', title: `Requirement raised: ${r.reqCode ? `${r.reqCode} · ` : ''}${r.title}`, detail: r.status === 'DRAFT' ? 'Waiting to be opened' : null, by: null }));
   add({ id: `c-${client.id}`, at: client.createdAt, kind: 'notes', title: 'Client added', detail: null, by: null });
 
   const wanted = FILTERS.includes(kind) ? kind : 'all';
@@ -449,5 +455,5 @@ async function bdePendingForViewer(user, settings) {
 }
 
 module.exports = {
-  BDE_TYPES, bdePending, forClient, bdeDigestContent, runBdeDigest, teamView, clientTimeline, bdePeople, FILTERS,
+  topLines, BDE_TYPES, bdePending, forClient, bdeDigestContent, runBdeDigest, teamView, clientTimeline, bdePeople, FILTERS,
 };

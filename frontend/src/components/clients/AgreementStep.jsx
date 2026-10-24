@@ -12,7 +12,7 @@ import './agreementStep.css';
 // it open and has not signed yet.
 // ---------------------------------------------------------------------------
 export const AGREEMENT_STEPS = [
-  ['DRAFT', 'Draft'],
+  ['DRAFT', 'Made'],
   ['SENT', 'Sent'],
   ['VIEWED', 'Viewed'],
   ['SIGNED', 'Signed'],
@@ -43,7 +43,7 @@ export const AGREEMENT_STEP_HINT = {
   SENT: 'With the client',
   VIEWED: 'The client opened it',
   SIGNED: 'Signed — make it active',
-  ACTIVE: 'Jobs can go live',
+  ACTIVE: 'Requirements can go live',
   EXPIRED: 'Ended — renew it',
   REJECTED: 'The client said no',
 };

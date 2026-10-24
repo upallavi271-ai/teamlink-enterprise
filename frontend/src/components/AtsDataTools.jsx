@@ -14,12 +14,17 @@
 // [⬆ Import]          the 3-step import (Download template is step 1 inside it);
 //                      BDE: "Import (needs approval)" — an Admin / Manager approves
 // [⬆ Upload resumes]  Candidates
+// [⬇ Template]        the sample sheet for this screen's import (headers + example rows, no real data): for EVERYBODY
 // [⬇ Export]          two plain questions — which rows, which file — then Download
 // [History]           undo an import within 24 h, approvals, big exports
 //
 // Nothing is decided here. /api/ats-io/access says what this login gets, and
 // every request is checked again on the server (role scope, sensitive
 // columns, background exports over 10,000 rows).
+//
+// THE BUTTONS ARE NEVER HIDDEN (founder, 2026-10-23: "import & export buttons in every module, for each and every person, with the
+// template download"). A role that may not use one sees it greyed, and pressing it says in plain words why and whom to ask. The rules
+// themselves (own data only, no client data for a recruiter, the agreement register, approval of a BDE's import) are unchanged.
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react';
 import api from '../api';
@@ -102,6 +107,7 @@ export default function AtsDataTools({
 
   if (!access) return null;
   const modes = access.importModes || {};
+  const roleWords = String((access.viewer && access.viewer.role) || 'login').toLowerCase().replace(/_/g, ' ');
   const mayExport = !!(access.exports || {})[module];
   const allKinds = module === 'candidates' && !kinds.includes('resumes') ? [...kinds, 'resumes'] : kinds;
   const importKinds = allKinds.filter((k) => k !== 'resumes' && (modes[k] || (access.imports || {})[k]));
@@ -110,7 +116,25 @@ export default function AtsDataTools({
   const mayResumes = allKinds.includes('resumes') && modes.resumes === 'direct';
   const labels = Object.fromEntries(Object.entries(access.kinds || {}).map(([k, v]) => [k, v.label]));
   const approver = !!(access.viewer && access.viewer.approver);
-  if (!mayExport && !importKinds.length && !mayResumes) return null;
+  const templateKinds = allKinds.filter((k) => k !== 'resumes');
+  const kindWords = allKinds.filter((k) => k !== 'resumes').map((k) => (labels[k] || k).toLowerCase()).join(' / ');
+  const whyNoImport = !allKinds.length
+    ? 'There is nothing to import on this screen: its numbers are made by TeamLink.'
+    : `A ${roleWords} cannot import ${kindWords || 'here'}. Ask an Admin or Manager to import for you: press Template, fill the sheet and hand it over.`;
+  const whyNoExport = `A ${roleWords} cannot export this screen (it holds data that is not for this role). Ask an Admin if you need it.`;
+  const off = (why) => { setMsg({ ok: false, text: why }); };
+  async function downloadTemplate(kind) {
+    setBusy(true); setMsg(null);
+    try {
+      const res = await api.get(`/ats-io/import/${kind}/template`, { responseType: 'blob' });
+      const name = saveBlob(res, `teamlink-${kind}-import-template.xlsx`);
+      setDialog(null);
+      setMsg({ ok: true, text: `Downloaded ${name}. Fill it and press Import.` });
+    } catch (err) {
+      const info = await jsonOfBlob(err?.response?.data);
+      setMsg({ ok: false, text: info.error || 'The template could not be downloaded.' });
+    } finally { setBusy(false); }
+  }
 
   async function runExport() {
     setBusy(true); setMsg(null);
@@ -147,9 +171,28 @@ export default function AtsDataTools({
           <span aria-hidden="true">⬆</span> Import
         </button>
       )}
+      {!directKinds.length && !requestKinds.length && !mayResumes && (
+        <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoImport)} title={whyNoImport}>
+          <span aria-hidden="true">⬆</span> Import
+        </button>
+      )}
       {mayExport && (
         <button type="button" className="btn btn-sm" disabled={busy} onClick={() => { setMsg(null); setDialog('export'); }} title="Download this list as Excel, CSV or PDF">
           <span aria-hidden="true">⬇</span> {busy ? 'Exporting…' : 'Export'}
+        </button>
+      )}
+      {!mayExport && (
+        <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off(whyNoExport)} title={whyNoExport}>
+          <span aria-hidden="true">⬇</span> Export
+        </button>
+      )}
+      {templateKinds.length > 0 ? (
+        <button type="button" className="btn btn-sm" disabled={busy} onClick={() => (templateKinds.length === 1 ? downloadTemplate(templateKinds[0]) : setDialog('template'))} title="Download the sample Excel sheet for this screen's import: column names and example rows">
+          <span aria-hidden="true">⬇</span> Template
+        </button>
+      ) : (
+        <button type="button" className="btn btn-sm atsio-off" aria-disabled="true" onClick={() => off('There is no template here: nothing is imported on this screen.')} title="Nothing is imported on this screen, so there is no template.">
+          <span aria-hidden="true">⬇</span> Template
         </button>
       )}
       {!(historyInExport && mayExport) && (
@@ -232,6 +275,21 @@ export default function AtsDataTools({
                 <b>Upload resume — resume files</b>
                 <span>PDF or Word resumes — we read the details for you.</span>
               </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {dialog === 'template' && (
+        <Modal title="Download a template" onClose={() => setDialog(null)} footer={<button className="btn" onClick={() => setDialog(null)}>Close</button>}>
+          <div className="atsio-exp">
+            <div className="atsio-q">Which sheet?</div>
+            <div className="atsio-choices">
+              {templateKinds.map((k) => (
+                <button key={k} type="button" className="atsio-choice" disabled={busy} onClick={() => downloadTemplate(k)}>
+                  <b>{labels[k] || k}</b>
+                  <span>{(access.kinds && access.kinds[k] && access.kinds[k].note) || 'Sample Excel sheet with the column names and example rows.'}</span>
+                </button>
+              ))}
             </div>
           </div>
         </Modal>

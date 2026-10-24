@@ -16,6 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import './agreementLink.css';
 import TeamLinkSignerNotice from './TeamLinkSignerNotice.jsx';
+import Combo from '../Combo.jsx';
 
 const DAY_CHOICES = [7, 14, 30];
 function day(d) {
@@ -78,7 +79,7 @@ export default function AgreementLinkCard({ clientId, onChanged }) {
   const email = () => run('email', () => api.post(`/agreement/${clientId}/link/email`, {}), (r) => (r.data.sandbox
     ? `Test mode: email to ${info.emailTo} made, but not really sent.`
     : `Sent. The link was emailed to ${info.emailTo}.`));
-  const stop = () => run('stop', () => api.post(`/agreement/${clientId}/link/revoke`, {}), 'Stopped. The old link no longer works. The agreement is back to Draft.').then(() => setConfirmStop(false));
+  const stop = () => run('stop', () => api.post(`/agreement/${clientId}/link/revoke`, {}), 'Stopped. The old link no longer works. The agreement is back to Made, not sent.').then(() => setConfirmStop(false));
 
   return (
     <div className="agrlink" aria-label="Agreement link">
@@ -97,9 +98,9 @@ export default function AgreementLinkCard({ clientId, onChanged }) {
           <div className="agrlink-row">
             <label className="agrlink-days">
               <span>Works for</span>
-              <select value={chosen} onChange={(e) => setDays(Number(e.target.value))}>
+              <Combo value={chosen} onChange={(e) => setDays(Number(e.target.value))}>
                 {choices.map((d) => <option key={d} value={d}>{`${d} days`}</option>)}
-              </select>
+              </Combo>
             </label>
             <button type="button" className="btn btn-primary agrlink-main" disabled={!!busy || !info.canMake} onClick={make}>
               {busy === 'make' ? 'Making…' : '🔗 Create agreement link'}

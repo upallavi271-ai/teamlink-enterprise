@@ -10,8 +10,8 @@ import './autoMsg.css';
 // ---------------------------------------------------------------------------
 const CHOICES = [
   ['inherit', 'Follow the company rules', 'Messages go as set in Message templates > Automatic messages.'],
-  ['approval', 'The recruiter says OK first', 'Every message for this job waits on the person\'s page until the recruiter presses Approve & send.'],
-  ['off', 'No automatic messages for this job', 'People who move on this job get nothing by themselves.'],
+  ['approval', 'The recruiter says OK first', 'Every message for this requirement waits on the person\'s page until the recruiter presses Approve & send.'],
+  ['off', 'No automatic messages for this requirement', 'People who move on this requirement get nothing by themselves.'],
 ];
 
 export default function JobAutoMessages({ requirementId }) {

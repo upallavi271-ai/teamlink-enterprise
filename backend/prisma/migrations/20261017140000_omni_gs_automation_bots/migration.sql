@@ -1,0 +1,7 @@
+-- Omni-Channel v3: Bot Builder + WhatsApp Bot Data (outreach/bots.js). Additive only. The same statements run on first use (self-provisioning).
+-- Automations need no new table: they are the existing sequences (20261016200000_omni_sequences).
+CREATE TABLE IF NOT EXISTS "OmniBotFlow" ("id" TEXT NOT NULL PRIMARY KEY, "name" TEXT NOT NULL, "channel" TEXT NOT NULL DEFAULT 'whatsapp', "status" TEXT NOT NULL DEFAULT 'off', "keywords" TEXT NOT NULL DEFAULT '[]', "matchMode" TEXT NOT NULL DEFAULT 'any', "cond" TEXT NOT NULL DEFAULT '{}', "act" TEXT NOT NULL DEFAULT '{}', "otherwise" TEXT NOT NULL DEFAULT 'nothing', "department" TEXT, "createdById" TEXT, "createdByName" TEXT, "deletedAt" DATETIME, "createdAt" DATETIME NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS "OmniBotLog" ("id" TEXT NOT NULL PRIMARY KEY, "flowId" TEXT, "flowName" TEXT, "personType" TEXT NOT NULL, "personId" TEXT NOT NULL, "personName" TEXT, "department" TEXT, "matched" TEXT, "outcome" TEXT NOT NULL, "reason" TEXT, "at" DATETIME NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS "OmniBotLog_flow" ON "OmniBotLog"("flowId", "at");
+CREATE INDEX IF NOT EXISTS "OmniBotLog_person" ON "OmniBotLog"("personType", "personId", "at");
+CREATE TABLE IF NOT EXISTS "OmniBotConv" ("personType" TEXT NOT NULL, "personId" TEXT NOT NULL, "lastLiveAt" DATETIME, "lastDryAt" DATETIME, "mutedUntil" DATETIME, "turns" INTEGER NOT NULL DEFAULT 0, "updatedAt" DATETIME NOT NULL DEFAULT 0, PRIMARY KEY ("personType", "personId"));

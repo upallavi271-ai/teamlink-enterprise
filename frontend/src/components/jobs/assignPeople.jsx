@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
+import MultiPick from '../MultiPick.jsx';
+import RecruiterChecklist from './RecruiterChecklist.jsx';
+import TlChecklist from './TlChecklist.jsx'; // several team leads as checkboxes (2026-10-14)
 
 // ---------------------------------------------------------------------------
 // WHO A JOB CAN BE GIVEN TO (user, 2026-10-05).
@@ -19,7 +22,7 @@ const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 const deptOf = (t) => t.atsDepartment || t.department || '';
 
 export function tlLabel(t, note = '') {
-  return `${t.name} — ${t.openJobs ? plural(t.openJobs, 'open job', 'open jobs') : 'no open jobs'}${note}`;
+  return `${t.name} — ${t.openJobs ? plural(t.openJobs, 'open requirement', 'open requirements') : 'no open requirements'}${note}`;
 }
 
 // The job's own department's team leads (the recommended ones), and — when the
@@ -34,7 +37,7 @@ export const leastBusyTl = (tls, dept) => recommendedTls(tls, dept)[0] || null;
 export function recruiterLabel(p) {
   // "Ravi — 4 jobs, 13 in process, 2 late · Least busy" (late only when there is some).
   const bits = [
-    p.openJobs ? plural(p.openJobs, 'job', 'jobs') : 'no jobs',
+    p.openJobs ? plural(p.openJobs, 'requirement', 'requirements') : 'no requirements',
     `${p.inProcess || 'none'} in process`,
     ...(p.late ? [`${p.late} late`] : []),
   ];
@@ -95,6 +98,27 @@ export function RecruiterOptions({ groups, keep = [] }) {
   );
 }
 
+// SEVERAL RECRUITERS ON ONE JOB (user, 2026-10-13): chips + a list that shows each recruiter's work, least busy first.
+// value: { recruiterId, recruiterIds } - the first chip is the main recruiter (recruiterId), the rest are recruiterIds.
+// bench: GET /requirements/assignable-people?recruiters=1 ({ groups }), null while loading. keep: people already on the job.
+export function recruiterMultiOptions(bench, keep = []) {
+  const groups = (bench && bench.groups) || [];
+  const shown = new Set(groups.flatMap((g) => g.people.map((p) => p.id)));
+  const extra = keep.filter((k) => k && k.id && !shown.has(k.id)).map((k) => ({ value: k.id, label: k.name || 'Current recruiter', sub: 'Already on this requirement' }));
+  const opt = (p, group) => ({
+    value: p.id,
+    label: p.name,
+    group,
+    sub: [p.openJobs ? plural(p.openJobs, 'requirement', 'requirements') : 'no requirements', `${p.inProcess || 'no one'} in process`, ...(p.late ? [`${p.late} late`] : [])].join(' · '),
+    tag: p.leastBusy ? 'Least busy' : '',
+  });
+  return [...extra, ...groups.flatMap((g) => g.people.map((p) => opt(p, groups.length > 1 ? g.label : '')))];
+}
+export function RecruiterMulti({ bench, keep = [], value, onChange, disabled = false }) {
+  // 2026-10-14: checkboxes grouped by team (no dropdown) - components/jobs/RecruiterChecklist.jsx
+  return <RecruiterChecklist bench={bench} keep={keep} value={value} onChange={onChange} disabled={disabled} />;
+}
+
 // Every department's TLs. null while loading; [] if the server said no.
 export function useAllTls(enabled = true) {
   const [tls, setTls] = useState(null);
@@ -139,47 +163,23 @@ export function TeamPickers({ job, value, onChange, fallback = [] }) {
     job.recruiterId ? { id: job.recruiterId, name: job.recruiter?.name } : null,
     ...((job.coRecruiters || []).map((c) => ({ id: c.id, name: c.name }))),
   ].filter(Boolean);
-  const list = benchPeople(bench);
-  const coList = [...keep.filter((k) => !list.some((p) => p.id === k.id)), ...list];
-  const top = list.find((p) => p.leastBusy);
+  const tlList = value.tlIds || (value.tlId ? [value.tlId] : []);
   return (
     <>
-      <label className="field">
-        <span>Team lead — any department</span>
-        <Combo value={value.tlId} onChange={(e) => onChange({ ...value, tlId: e.target.value })}>
-          <option value="">— Not assigned —</option>
-          {TlOptions({ tls: tls, first: job.department, keep: value.tlId ? { id: value.tlId, name: job.tlId === value.tlId ? (job.tlName || job.tl) : '' } : null })}
-        </Combo>
-      </label>
-      <label className="field">
-        <span>Recruiter — least busy first</span>
-        <Combo value={value.recruiterId} onChange={(e) => onChange({ ...value, recruiterId: e.target.value })} disabled={bench === null}>
-          <option value="">{bench === null ? 'Loading…' : '— Not assigned —'}</option>
-          {bench && RecruiterOptions({ groups: bench.groups, keep: keep })}
-        </Combo>
-        {top && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 4 }}>{`Least busy: ${top.name}`}</div>}
-      </label>
       <div className="field">
-        <span>Co-recruiters</span>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 4 }}>
-          {coList.filter((t) => t.id !== value.recruiterId).map((t) => (
-            <label key={t.id} style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, fontSize: 12.5 }}>
-              <input
-                type="checkbox"
-                style={{ width: 'auto' }}
-                checked={value.recruiterIds.includes(t.id)}
-                onChange={() => onChange({
-                  ...value,
-                  recruiterIds: value.recruiterIds.includes(t.id)
-                    ? value.recruiterIds.filter((x) => x !== t.id)
-                    : [...value.recruiterIds, t.id],
-                })}
-              />
-              {t.name}
-            </label>
-          ))}
-          {bench && !coList.length && <span className="cell-muted" style={{ fontSize: 12 }}>No recruiters in this team yet.</span>}
-        </div>
+        <span>Team leads</span>
+        <TlChecklist
+          tls={tls}
+          loading={allTls === null && !tls.length}
+          value={tlList}
+          department={job.department}
+          keep={tlList.map((id) => ({ id, name: id === job.tlId ? (job.tlName || job.tl) : ((job.extraTlNames || [])[(job.extraTlIds || []).indexOf(id)] || '') }))}
+          onChange={(list) => onChange({ ...value, tlIds: list, tlId: list[0] || '' })}
+        />
+      </div>
+      <div className="field">
+        <span>Recruiters</span>
+        <RecruiterMulti bench={bench} keep={keep} value={{ recruiterId: value.recruiterId, recruiterIds: value.recruiterIds || [] }} onChange={(r) => onChange({ ...value, ...r })} />
       </div>
     </>
   );

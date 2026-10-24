@@ -83,7 +83,7 @@ async function offDayReason(day) {
 // SETTINGS — Administration → Company Setup → Step timing (Super Admin / Admin / HR)
 // ---------------------------------------------------------------------------
 const DEFAULTS = {
-  enabled: false, // DEVELOPMENT: flipped to true when the tests pass (see the report)
+  enabled: false, // OFF until main / Super Admin / HR switches it on (Step timing → Reminders to team leads): nothing is sent by a timer on its own
   bell: true,
   email: true,
   digestTime: '10:30',
@@ -98,7 +98,13 @@ const DEFAULTS = {
   nudge: { whatsapp: false, sms: false, email: false },
   // PENDING APPROVALS + OVERDUE FOLLOW-UPS -> EVERYONE ABOVE (utils/chainAlerts.js): level 0 the owner, then each level up
   // (TL, STL, Manager, Admin) after its own hours (0 = at once), repeated every working day until cleared.
-  chain: { enabled: true, approvals: true, followUps: true, repeatDaily: true, maxLevel: 4, levelHours: [0, 0, 0, 0, 0] },
+  // tasks: overdue Tasks and personal to-dos of a recruiter (the Timesheet); steps: a recruiter's late next steps, interview feedback not
+  // recorded, "check by recruiter" and (after the end-of-day time) calls due today that were not made. utils/missedItems.js.
+  chain: { enabled: true, approvals: true, followUps: true, tasks: true, steps: true, repeatDaily: true, maxLevel: 4, levelHours: [0, 0, 0, 0, 0] },
+  // "Also remind the person themselves" (user, 2026-10-12): what a recruiter missed goes to the recruiter as well as the team lead. ON once the
+  // master switch is on. The bell always (when on here); e-mail / WhatsApp / SMS only when that channel is connected AND switched on here.
+  // Nothing is sent before `time` (the morning after).
+  self: { enabled: true, bell: true, email: true, whatsapp: false, sms: false, time: '09:30' },
   // The end-of-day report (utils/eodReport.js).
   eod: { enabled: true, time: '18:45', copyStl: true, copyManager: false, quiet: 'short', excel: true, offTls: [] },
 };
@@ -114,6 +120,7 @@ function normalise(raw) {
   const nudge = v.nudge || {};
   const eod = v.eod || {};
   const chain = v.chain || {};
+  const self = v.self || {};
   const afterDays = int(esc.afterDays, 0, 60) ?? d.escalation.afterDays;
   return {
     enabled: bool(v.enabled, d.enabled),
@@ -137,9 +144,19 @@ function normalise(raw) {
       enabled: bool(chain.enabled, d.chain.enabled),
       approvals: bool(chain.approvals, d.chain.approvals),
       followUps: bool(chain.followUps, d.chain.followUps),
+      tasks: bool(chain.tasks, d.chain.tasks),
+      steps: bool(chain.steps, d.chain.steps),
       repeatDaily: bool(chain.repeatDaily, d.chain.repeatDaily),
       maxLevel: int(chain.maxLevel, 1, 4) ?? d.chain.maxLevel,
       levelHours: d.chain.levelHours.map((fb, i) => (Array.isArray(chain.levelHours) ? int(chain.levelHours[i], 0, 720) : null) ?? fb),
+    },
+    self: {
+      enabled: bool(self.enabled, d.self.enabled),
+      bell: bool(self.bell, d.self.bell),
+      email: bool(self.email, d.self.email),
+      whatsapp: bool(self.whatsapp, d.self.whatsapp),
+      sms: bool(self.sms, d.self.sms),
+      time: HHMM.test(String(self.time || '')) ? self.time : d.self.time,
     },
     eod: {
       enabled: bool(eod.enabled, d.eod.enabled),
@@ -158,7 +175,12 @@ function normalise(raw) {
 let CACHE = { at: 0, settings: normalise(null) };
 async function getSettings({ fresh = false } = {}) {
   if (!fresh && Date.now() - CACHE.at < 5000) return CACHE.settings;
-  const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } }).catch(() => null);
+  // A busy database must never read as "no settings" (= switched off, the defaults): keep what was last known.
+  let row;
+  try { row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } }); } catch (err) {
+    if (CACHE.at) return CACHE.settings;
+    throw err;
+  }
   let v = null;
   try { v = row && row.value ? JSON.parse(row.value) : null; } catch { v = null; }
   CACHE = { at: Date.now(), settings: normalise(v) };
@@ -192,11 +214,16 @@ async function saveSettings(patch, user) {
   }
   if (p.chain && typeof p.chain === 'object') {
     const c = p.chain;
-    ['enabled', 'approvals', 'followUps', 'repeatDaily'].forEach((k) => { if (c[k] !== undefined) next.chain[k] = c[k] === true || c[k] === 'true'; });
+    ['enabled', 'approvals', 'followUps', 'tasks', 'steps', 'repeatDaily'].forEach((k) => { if (c[k] !== undefined) next.chain[k] = c[k] === true || c[k] === 'true'; });
     if (c.maxLevel !== undefined) { const n = int(c.maxLevel, 1, 4); if (n === null) err.push('Tell up to level: a number from 1 (the team lead) to 4 (the Admin).'); else next.chain.maxLevel = n; }
     if (Array.isArray(c.levelHours)) {
       c.levelHours.slice(0, 5).forEach((v, i) => { const n = int(v, 0, 720); if (n === null) err.push('Hours before telling a level: a number from 0 to 720.'); else next.chain.levelHours[i] = n; });
     }
+  }
+  if (p.self && typeof p.self === 'object') {
+    const e = p.self;
+    ['enabled', 'bell', 'email', 'whatsapp', 'sms'].forEach((k) => { if (e[k] !== undefined) next.self[k] = e[k] === true || e[k] === 'true'; });
+    if (e.time !== undefined) next.self.time = time('Remind the person at', e.time) || next.self.time;
   }
   if (p.eod && typeof p.eod === 'object') {
     const e = p.eod;
@@ -324,6 +351,14 @@ const absolute = (p) => (baseUrl() ? `${baseUrl()}${p}` : p);
 // THE DIRECTORY — recruiters, their TL (the order in the header), STL, Managers.
 // `viewer` is a Super Admin login (the company-wide reading); the real sweeps pick one.
 // ---------------------------------------------------------------------------
+// A test login (ZZTEST) calling the routes is read with a test Super Admin, so the fixtures are in the picture; everyone
+// else with a real Super Admin (test people never take part in a real run).
+async function viewerFor(user) {
+  if (!user || !isTest(`${user.name || ''} ${user.email || ''}`)) return null;
+  const { resolveIdentity } = require('./identity'); // eslint-disable-line global-require
+  const sa = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN', status: 'Active', name: { contains: 'ZZTEST' } }, select: { id: true } });
+  return sa ? resolveIdentity(sa.id) : null;
+}
 async function pickViewer(viewer) {
   const { resolveIdentity } = require('./identity'); // eslint-disable-line global-require
   if (viewer) return viewer;
@@ -368,7 +403,7 @@ async function directory(viewer) {
     const m = jobTl.get(p.id);
     if (m) {
       const best = [...m.entries()].filter(([id]) => tlById.has(id)).sort((a, b) => b[1] - a[1])[0];
-      if (best) return { p, tlId: best[0], how: 'job team lead' };
+      if (best) return { p, tlId: best[0], how: 'requirement team lead' };
     }
     const dflt = DTL.defaultFor(p.department);
     if (dflt && tlById.has(dflt.id)) return { p, tlId: dflt.id, how: 'department default TL' };
@@ -381,7 +416,7 @@ async function directory(viewer) {
 // COLLECT — per recruiter: the numbers (= the dashboard's Team snapshot) and the items.
 // ---------------------------------------------------------------------------
 function emptyCounts() {
-  return { waiting: 0, late: 0, dueToday: 0, notMoving: 0, followUpsLate: 0, followUpsToday: 0, jobsNoSubmission: 0 };
+  return { waiting: 0, late: 0, dueToday: 0, notMoving: 0, followUpsLate: 0, followUpsToday: 0, jobsNoSubmission: 0, tasksLate: 0 };
 }
 
 // Follow-ups per owner (the Follow-ups tab's definition: open, owned, past due / due today).
@@ -398,6 +433,18 @@ async function followUpCounts(userIds, today) {
     const c = out.get(f.ownerUserId);
     if (due < today) c.late += 1; else if (due === today) c.today += 1;
   });
+  return out;
+}
+
+// Tasks and personal to-dos past their end date, per assignee (the Timesheet's own rule: not finished, end date passed).
+async function taskCounts(userIds, today) {
+  const out = new Map(userIds.map((id) => [id, 0]));
+  if (!userIds.length) return out;
+  const rows = await prisma.task.findMany({
+    where: { assigneeId: { in: userIds }, status: { in: ['Not Started', 'In Progress', 'On Hold'] }, endDate: { not: null, lt: today } },
+    select: { assigneeId: true },
+  }).catch(() => []);
+  rows.forEach((t) => out.set(t.assigneeId, (out.get(t.assigneeId) || 0) + 1));
   return out;
 }
 
@@ -434,6 +481,7 @@ function blockOf(person, group, load, extras, today, { notMoving = 0 } = {}) {
   const fu = extras.fu.get(person.id) || { late: 0, today: 0 };
   counts.followUpsLate = fu.late;
   counts.followUpsToday = fu.today;
+  counts.tasksLate = extras.tasks ? (extras.tasks.get(person.id) || 0) : 0;
   const jobs = extras.jobs.get(person.id) || [];
   counts.jobsNoSubmission = jobs.length;
   const byType = TYPES.map((t) => {
@@ -457,17 +505,17 @@ function blockOf(person, group, load, extras, today, { notMoving = 0 } = {}) {
 // Everything the digest / the Pending-work tab need, per resolved TL.
 //   returns { today, teams: Map(tlId -> { tl, blocks[] }), unrouted: [{ block, department }] , all: block[] }
 // `people` (tests): only these recruiter logins are looked at, nobody else is read or told.
-async function collectTeams({ viewer, only = null, people = null } = {}) {
+async function collectTeams({ viewer, only = null, people = null, fresh = false } = {}) {
   const AH = require('./atsHome'); // eslint-disable-line global-require
   const { resolveIdentity } = require('./identity'); // eslint-disable-line global-require
   const dir = await directory(viewer);
-  const adminLoad = await AH.pendingLoad(viewer);
+  const adminLoad = await AH.pendingLoad(viewer, { fresh });
   const today = adminLoad.today;
   const adminBy = new Map(adminLoad.people.filter((e) => e.userId).map((e) => [e.userId, e]));
   const adminNotMoving = (id) => adminLoad.notMoving.get(`u:${id}`) || 0;
   if (people) dir.resolved = dir.resolved.filter((r) => people.includes(r.p.id));
   const ids = dir.resolved.map((r) => r.p.id);
-  const extras = { fu: await followUpCounts(ids, today), jobs: jobsWithoutProfile(adminLoad.world, today) };
+  const extras = { fu: await followUpCounts(ids, today), tasks: await taskCounts(ids, today), jobs: jobsWithoutProfile(adminLoad.world, today) };
   const teams = new Map();
   const unrouted = [];
   const all = [];
@@ -485,7 +533,7 @@ async function collectTeams({ viewer, only = null, people = null } = {}) {
     const tlViewer = await resolveIdentity(tlId).catch(() => null);
     // The TL's own screen: the same world, so his Team snapshot and this digest agree.
     // eslint-disable-next-line no-await-in-loop
-    const load = tlViewer ? await AH.pendingLoad(tlViewer).catch(() => null) : null;
+    const load = tlViewer ? await AH.pendingLoad(tlViewer, { fresh }).catch(() => null) : null;
     const by = load ? new Map(load.people.filter((e) => e.userId).map((e) => [e.userId, e])) : new Map();
     const blocks = list.map((r) => {
       const inScreen = by.has(r.p.id);
@@ -500,7 +548,7 @@ async function collectTeams({ viewer, only = null, people = null } = {}) {
   return { today, teams, unrouted: unroutedBlocks, all, dir };
 }
 
-const nothingPending = (blocks) => !blocks.some((b) => b.counts.waiting || b.counts.followUpsLate || b.counts.jobsNoSubmission);
+const nothingPending = (blocks) => !blocks.some((b) => b.counts.waiting || b.counts.followUpsLate || b.counts.jobsNoSubmission || b.counts.tasksLate);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 
 // ---------------------------------------------------------------------------
@@ -523,13 +571,14 @@ function countsLine(c) {
   if (c.dueToday) parts.push(`Due today ${c.dueToday}`);
   parts.push(`Waiting ${c.waiting}`);
   if (c.followUpsLate) parts.push(`Follow-ups late ${c.followUpsLate}`);
-  if (c.jobsNoSubmission) parts.push(`Jobs with no profile sent ${c.jobsNoSubmission}`);
+  if (c.tasksLate) parts.push(`Tasks late ${c.tasksLate}`);
+  if (c.jobsNoSubmission) parts.push(`Requirements with no profile sent ${c.jobsNoSubmission}`);
   return parts.join(' · ');
 }
 
 function digestContent({ tl, blocks, day, unroutedNote = null, copyOf = null }) {
   const t = totalsOf(blocks);
-  const shown = blocks.filter((b) => b.counts.waiting || b.counts.followUpsLate || b.counts.jobsNoSubmission);
+  const shown = blocks.filter((b) => b.counts.waiting || b.counts.followUpsLate || b.counts.jobsNoSubmission || b.counts.tasksLate);
   const title = `Pending work in your team — ${niceDay(day)}`;
   const head = copyOf ? `Copy of ${copyOf}'s digest.` : `Hi ${tl.name},`;
   const intro = t.late
@@ -541,7 +590,7 @@ function digestContent({ tl, blocks, day, unroutedNote = null, copyOf = null }) 
     if (b.byType.length) lines.push(`  By step: ${b.byType.map((x) => `${x.label} ${x.n}`).join(' · ')}`);
     b.items.slice(0, 5).forEach((i) => lines.push(`  • ${itemLine(i)}`));
     if (b.items.length > 5) lines.push(`  … and ${b.items.length - 5} more`);
-    b.jobs.slice(0, 3).forEach((j) => lines.push(`  • Job with no profile sent yet: ${j.job} (${j.client}), open ${plural(j.daysOpen, 'day', 'days')}`));
+    b.jobs.slice(0, 3).forEach((j) => lines.push(`  • Requirement with no profile sent yet: ${j.job} (${j.client}), open ${plural(j.daysOpen, 'day', 'days')}`));
     lines.push(`  Open: ${absolute(b.link)}`, '');
   });
   if (unroutedNote) lines.push(unroutedNote, '');
@@ -555,7 +604,7 @@ function digestContent({ tl, blocks, day, unroutedNote = null, copyOf = null }) 
     b.counts.waiting,
     b.counts.followUpsLate || '0',
   ]);
-  const detail = shown.map((b) => `${M.h2(b.name)}${b.byType.length ? M.p(`By step: ${b.byType.map((x) => `${x.label} ${x.n}`).join(' · ')}`) : ''}${M.table(['Candidate and job', 'Where it is', 'When'], b.items.slice(0, 5).map((i) => [
+  const detail = shown.map((b) => `${M.h2(b.name)}${b.byType.length ? M.p(`By step: ${b.byType.map((x) => `${x.label} ${x.n}`).join(' · ')}`) : ''}${M.table(['Candidate and requirement', 'Where it is', 'When'], b.items.slice(0, 5).map((i) => [
     { html: `<b>${M.esc(i.candidate)}</b><div style="color:#6b7280;font-size:11px">${M.esc(i.job)}${i.client && i.client !== '—' ? ` · ${M.esc(i.client)}` : ''}</div>` },
     i.step,
     { html: M.pill(dueWords(i), i.status === 'late' ? 'red' : i.status === 'due_today' ? 'orange' : 'grey') },
@@ -722,7 +771,7 @@ async function runEscalation({ now = new Date(), viewer = null, dryRun = false, 
       list.sort((a, b) => b.daysLate - a.daysLate);
       const lines = list.slice(0, 8).map((i) => `• ${i.who}: ${i.candidate} — ${i.job}: ${i.step}, ${plural(i.daysLate, 'day', 'days')} late`);
       const text = [`${kindWord}`, '', ...lines, ...(list.length > 8 ? [`… and ${list.length - 8} more`] : []), '', `Open: ${absolute('/ats/team?view=whohas')}`].join('\n');
-      const html = M.page(title, `${M.p(kindWord)}${M.table(['Recruiter', 'Candidate and job', 'Late'], list.slice(0, 15).map((i) => [i.who, { html: `<b>${M.esc(i.candidate)}</b><div style="color:#6b7280;font-size:11px">${M.esc(i.job)} · ${M.esc(i.step)}</div>` }, { html: M.pill(plural(i.daysLate, 'day', 'days'), 'red') }]))}${M.button(absolute('/ats/team?view=whohas'), 'Open pending work')}`);
+      const html = M.page(title, `${M.p(kindWord)}${M.table(['Recruiter', 'Candidate and requirement', 'Late'], list.slice(0, 15).map((i) => [i.who, { html: `<b>${M.esc(i.candidate)}</b><div style="color:#6b7280;font-size:11px">${M.esc(i.job)} · ${M.esc(i.step)}</div>` }, { html: M.pill(plural(i.daysLate, 'day', 'days'), 'red') }]))}${M.button(absolute('/ats/team?view=whohas'), 'Open pending work')}`);
       return deliver({ settings, user, title, bell: `${kindWord} ${lines.slice(0, 3).join(' ')}`, text, html, openPath: '/ats/team?view=whohas', key: `pwr|esc|${day}`, mailer, dryRun, testMode, out });
     };
     const marks = [];
@@ -780,7 +829,8 @@ async function remind(user, { recruiterId, applicationId = null, note = null }, 
   const world = await TW.teamWorld(user);
   const person = world.peopleById.get(String(recruiterId || ''));
   if (!person || !['RECRUITER', 'BDE'].includes(person.roleGroup)) return { status: 403, body: { error: 'This person is not in your team.' } };
-  const load = await AH.pendingLoad(user, { by: person.roleGroup === 'BDE' ? 'bde' : 'recruiter' });
+  if (person.roleGroup === 'BDE') return remindBde(user, person, { applicationId, note }, { now, mailer, settings });
+  const load = await AH.pendingLoad(user, { by: 'recruiter' });
   const today = load.today;
   const group = load.people.find((e) => e.userId === person.id);
   let items = group ? group.pending.map((x) => itemOf(x, today)) : [];
@@ -841,6 +891,26 @@ async function remind(user, { recruiterId, applicationId = null, note = null }, 
   return { status: 200, body: { ok: true, name: person.name, items: items.length, late, channels: result, message: `Reminder sent to ${person.name}.` } };
 }
 
+// A BDE's reminder is about the CLIENT WORK waiting on them (utils/clientWork.js), once per BDE per day.
+async function remindBde(user, person, { note }, { now = new Date(), settings }) {
+  const CW = require('./clientWork'); // eslint-disable-line global-require
+  const { resolveIdentity } = require('./identity'); // eslint-disable-line global-require
+  const id = await resolveIdentity(person.id);
+  const p = await CW.bdePending(id, { settings });
+  if (!p.total) return { status: 409, body: { error: `${person.name} has no client work waiting.` } };
+  const day = dayOfIst(now);
+  const k = `${person.id}|all`;
+  if (!(await claim(day, 'nudge', k, { by: user.id, byName: user.name }))) {
+    const was = await peek(day, 'nudge', k);
+    return { status: 429, body: { error: `${person.name} was already reminded today${was && was.at ? ` at ${hhmmOfIst(new Date(was.at))}` : ''}${was && was.byName ? ` by ${was.byName}` : ''}. One reminder a day is enough.`, alreadyAt: was && was.at } };
+  }
+  const lines = CW.topLines(p, 2).map((l) => `• ${l}`);
+  const text = [`${user.name} asks you to look at the client work waiting for you:`, ...lines, ...(note ? ['', `Note: ${String(note).slice(0, 300)}`] : []), '', 'Open: /ats/dashboard'].join('\n');
+  await prisma.notification.create({ data: { userId: person.id, title: `Reminder: ${plural(p.total, 'client item is', 'client items are')} waiting for you`, message: text, channel: 'In-App', recipient: `pwr|nudge|${day}|${k}`, status: 'Delivered' } });
+  await logAudit({ userId: user.id, actorName: user.name, action: 'Reminder sent to recruiter', entity: 'User', entityId: person.id, toValue: `${person.name}: ${plural(p.total, 'client item', 'client items')}`, reason: note ? String(note).slice(0, 300) : undefined }).catch(() => null);
+  return { status: 200, body: { ok: true, name: person.name, items: p.total, late: 0, channels: { bell: true, email: 'off', whatsapp: 'off', sms: 'off' }, message: `Reminder sent to ${person.name}.` } };
+}
+
 // ---------------------------------------------------------------------------
 // THE PENDING-WORK TAB (Team → Pending work): the viewer's own screen, filters with counts.
 // ---------------------------------------------------------------------------
@@ -857,7 +927,7 @@ async function teamView(user, q = {}) {
   const testViewer = isTest(`${user.name || ''} ${user.email || ''}`);
   const people = world.people.filter((p) => p.roleGroup === 'RECRUITER' && p.status === 'Active' && (testViewer || !isTest(p.name)));
   const ids = people.map((p) => p.id);
-  const extras = { fu: await followUpCounts(ids, today), jobs: jobsWithoutProfile(load.world, today) };
+  const extras = { fu: await followUpCounts(ids, today), tasks: await taskCounts(ids, today), jobs: jobsWithoutProfile(load.world, today) };
   const by = new Map(load.people.filter((e) => e.userId).map((e) => [e.userId, e]));
   const day = dayOfIst(new Date());
   const sent = await readSent(day);
@@ -955,7 +1025,7 @@ async function tick({ now = new Date(), viewer = null, mailer = null, testMode =
   const day = dayOfIst(now);
   // Pending approvals and overdue follow-ups tell the chain above at every tick (not at a set time).
   if (settings.chain.enabled) {
-    try { res.chain = await require('./chainAlerts').run({ now, viewer, mailer, testMode }); } catch (e) { res.chain = { error: e.message }; } // eslint-disable-line global-require
+    try { res.chain = await require('./chainAlerts').run({ now, viewer, mailer, testMode, quiet: true }); } catch (e) { res.chain = { error: e.message }; } // eslint-disable-line global-require
   }
   if (hhmm >= settings.digestTime) {
     const dig = await peek(day, 'digest', '__run');
@@ -1003,7 +1073,7 @@ module.exports = {
   dayOfIst, hhmmOfIst, niceDay, offDayReason, daysBetween,
   claim, peek, readSent, locked, pruneSent, SENT_PREFIX,
   itemOf, byUrgency, isOwnStep, blockOf, totalsOf, emptyCounts, countsLine, dueWords, plural, typeOfStage,
-  pickViewer, directory, collectTeams, followUpCounts, jobsWithoutProfile, stlsAndManagers, usersById,
+  viewerFor, pickViewer, directory, collectTeams, followUpCounts, taskCounts, jobsWithoutProfile, stlsAndManagers, usersById,
   digestContent, deliver, absolute,
   runDigest, runEscalation, remind, teamView, previewFor, recipients, tick, startSweep,
 };

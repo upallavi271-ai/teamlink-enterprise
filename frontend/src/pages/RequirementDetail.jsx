@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import JobAutoMessages from '../components/automsg/JobAutoMessages.jsx'; // automatic stage messages: this job's setting
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { rowClickProps } from '../utils/rowClick.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api';
 import Modal from '../components/Modal.jsx';
@@ -9,7 +10,8 @@ import Pager, { usePaged } from '../components/Pager.jsx';
 // WORKFLOW ACTIONS ARE NOT VIEW/EDIT. The stages this login OWNS come from
 // the permission engine (/auth/me workflow.allowedStages) — seeing the
 // pipeline never implied being allowed to move a candidate through it.
-import { can, canMoveToStage, workflowStages } from '../permissions';
+import AskChangeJobModal from '../components/jobs/AskChangeJobModal.jsx';
+import { can, canMoveToStage, canStartJob, workflowStages } from '../permissions';
 import RequirementForm from '../components/RequirementForm.jsx';
 import { SpecLabel } from '../components/SpecPicker.jsx'; // spec D
 import { useJobPortalUrl, jobPortalJobUrl } from './JobPortalRedirect.jsx';
@@ -18,6 +20,10 @@ import { LocationCandidatesPanel } from '../components/jobs/RequirementReach.jsx
 import { JobLifecycleBar } from '../components/jobs/JobLifecycle.jsx';
 import JobPostingSites from '../components/jobs/JobPostingSites.jsx';
 import PostingStatusPanel from '../components/jobs/PostingStatusPanel.jsx'; // Save & Post: what happened on each site, right after saving
+import DistributeTab from '../components/jobdist/DistributeTab.jsx'; // job distribution: the "Distribute" tab (Posting Kit, tracked links, Posted tracker)
+import JobPostingCard from '../components/jobpublish/JobPostingCard.jsx'; // job publishing engine: status per site + Post this job
+import PostingsTab from '../components/jobs/reqsplit/PostingsTab.jsx'; // the Postings tab: portal buttons + Post Status + copy-ready details (2026-10-16)
+import PostStepDialog from '../components/jobs/reqsplit/PostStepDialog.jsx'; // Post this job: sites, company logins, dry run, results (2026-10-13)
 import PartnerShare from '../components/jobs/PartnerShare.jsx'; // B7: share the job with agencies / freelancers
 import {
   PriorityChip, candidatesLink, ageText, slaInfo, lastActivityText, fmtWhen, fmtShort, nf,
@@ -34,7 +40,8 @@ import '../components/jobs/reqSummary.css';
 // ATS layout v3 — header facts, the status chain, department-wise assign, a
 // clickable mini funnel and "View Pipeline" (the Candidates & Pipeline board).
 import { FunnelChart } from '../components/charts';
-import { JobStatusChip } from '../components/jobs/reqStatus.jsx';
+import { JobStatusChip, jobNoteOf } from '../components/jobs/reqStatus.jsx';
+import EditTemplateButton from '../components/jobs/EditTemplateButton.jsx';
 import RequirementBulk from '../components/jobs/RequirementBulk.jsx';
 import '../components/clients/ccr.css';
 // resume_: matching candidates with the 3-number match — shown as the first
@@ -45,11 +52,14 @@ import RequirementMatchTabs from '../components/rejections/RequirementMatchTabs.
 import SourceDocuments from '../components/ui/SourceDocuments.jsx';
 import MultiFacetSelect from '../components/ui/MultiFacetSelect.jsx'; // the Source filter (tick boxes with counts)
 import { recordedAs } from '../utils/candidateSource.js';
+import { SalaryFitChips } from '../components/SalaryFit.jsx'; // Salary fit column + filter on this job's people
+import { JobDupNote } from '../components/jobs/JobDuplicates.jsx'; // "Possible duplicate" note + ask button (2026-10-13)
 import SendManyDialog from '../components/messaging/SendMessage.jsx'; // message the people on this job (templates, preview, confirm)
 import { RequirementMatchesPanel } from '../components/resume/MatchSplit.jsx'; // fit_: top matches on the Overview
 // B8: Similar people (Match by meaning), Fit version, Added by override badge.
 import SimilarCandidatesPanel from '../components/match/SimilarCandidates.jsx';
 import { OverrideBadge, FitWithVersion } from '../components/match/OverridePrompt.jsx';
+import AddCandidateCard from '../components/applications/AddCandidateCard.jsx';
 import {
   ALL_STAGE_CODES, stageLabel, stageBadgeClass,
   requirementStatusLabel, requirementBadgeClass, requirementIsLive,
@@ -168,9 +178,9 @@ export const JOB_PORTAL = 'TeamLink Job Portal';
 //   → Candidates Available → On Hold / Closed
 const FLOW = ['DRAFT', 'AGREEMENT_CHECK', 'OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 const PARKED = ['ON_HOLD', 'CLOSED'];
-const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'activity'];
+const TABS = ['overview', 'candidates', 'recruiter', 'client', 'interviews', 'agreement', 'distribute', 'activity'];
 const TAB_LABELS = {
-  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', activity: 'Activity',
+  overview: 'Overview', candidates: 'Candidates', recruiter: 'Team', client: 'Client', interviews: 'Interviews', agreement: 'Agreement', distribute: 'Postings', activity: 'Activity',
 };
 // Pipeline filter on the Candidates tab — same buckets as the count tiles.
 const PIPE_FILTERS = [
@@ -219,14 +229,19 @@ export default function RequirementDetail() {
   const [people, setPeople] = useState(null);
   const [linkQuery, setLinkQuery] = useState('');
   const [linkHits, setLinkHits] = useState([]);
+  const linkBusy = useRef(false);
   const [error, setError] = useState('');
   const [dialog, setDialog] = useState(null); // 'jd' | 'posting' | 'assign' | 'edit'
+  const [askChangeOpen, setAskChangeOpen] = useState(false); // a TL / STL / Recruiter asks the client manager to edit or close (2026-10-13)
   const [postPanel, setPostPanel] = useState(false); // the Save & Post panel (summary + the by-hand tasks)
+  const [postStepOpen, setPostStepOpen] = useState(false); // Post this job: the Post step in a window
   const [assign, setAssign] = useState(null);
   const [notice, setNotice] = useState('');
   const [clients, setClients] = useState(null);
   const [decision, setDecision] = useState(null);
-  const [pipeFilter, setPipeFilter] = useState('all');
+  const [pipeFilter, setPipeFilter] = useState(() => (PIPE_FILTERS.some(([k]) => k === searchParams.get('pipe')) ? searchParams.get('pipe') : 'all'));
+  const [fitFilter, setFitFilter] = useState(''); // Salary fit: within / slightly / above / missing
+  const [fitSort, setFitSort] = useState(''); // '' | 'desc' | 'asc'
   const [srcFilter, setSrcFilter] = useState(''); // Source filter: a comma list of clean sources
   const [msgOpen, setMsgOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false); // the one "Share" button's choices
@@ -238,7 +253,7 @@ export default function RequirementDetail() {
   function load() {
     return api.get(`/requirements/${id}`)
       .then((res) => setRequirement(res.data))
-      .catch((err) => setDenied(err.response?.data?.error || "You can't open this job. Ask your team lead."));
+      .catch((err) => setDenied(err.response?.data?.error || "You can't open this requirement. Ask your team lead."));
   }
   const loadActivity = () => api.get(`/requirements/${id}/activity`).then((res) => setActivity(res.data)).catch(() => setActivity([]));
   useEffect(() => {
@@ -312,19 +327,28 @@ export default function RequirementDetail() {
     setStage(application.id, stage);
   }
 
-  async function linkCandidate(candidateId) {
-    if (!candidateId) return;
+  async function linkCandidate(candidateId, personName) {
+    if (!candidateId || linkBusy.current) return; // one click = one application (a double click is ignored)
+    linkBusy.current = true;
     setError('');
     try {
       await api.post('/applications', { candidateId, requirementId: id });
-      const who = linkHits.find((c) => c.id === candidateId)?.name;
-      setNotice(who ? `Added ${who}.` : 'Added to this job.');
+      const who = personName || linkHits.find((c) => c.id === candidateId)?.name;
+      setNotice(who ? `Added ${who}.` : 'Added to this requirement.');
       setLinkQuery('');
       setLinkHits([]);
       setMatching((m) => (m ? { ...m, rows: m.rows.filter((c) => c.id !== candidateId) } : m));
       refreshAfterChange();
+      return true;
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add this person. Please try again.');
+      if (err.alreadyApplied) {
+        // The 'Already on this job' box says where; refresh so the list shows the person.
+        setLinkHits((hits) => hits.map((c) => (c.id === candidateId && err.response?.data?.application ? { ...c, onJob: { applicationId: err.response.data.application.id, step: err.response.data.application.step, link: err.response.data.application.link } } : c)));
+        refreshAfterChange();
+      } else setError(err.response?.data?.error || 'Could not add this person. Please try again.');
+      return false;
+    } finally {
+      linkBusy.current = false;
     }
   }
 
@@ -353,6 +377,7 @@ export default function RequirementDetail() {
     ensurePeople();
     setAssign({
       tlId: r.tlId || '',
+      tlIds: Array.isArray(r.tlIds) && r.tlIds.length ? r.tlIds : [r.tlId, ...(r.extraTlIds || [])].filter(Boolean),
       stlId: r.stlId || '',
       recruiterId: r.recruiterId || '',
       bdeId: r.bdeId || '',
@@ -382,7 +407,22 @@ export default function RequirementDetail() {
   const srcWanted = new Set(String(srcFilter || '').split(',').map((x) => x.trim()).filter(Boolean));
   const srcOk = (a) => !srcWanted.size || srcWanted.has(a.sourceKey);
   const atStep = (a) => !pipeFn || pipeFn(a.stage);
-  const pipeRows = applications.filter((a) => atStep(a) && srcOk(a));
+  const fitKeys = (a) => (a.salaryFit && a.salaryFit.keys) || [];
+  const fitBase = applications.filter((a) => atStep(a) && srcOk(a));
+  const fitOptions = [['within', 'Within budget'], ['slightly', 'Slightly above'], ['above', 'Above budget'], ['missing', 'Salary missing']]
+    .map(([k, l]) => [k, l, fitBase.filter((a) => fitKeys(a).includes(k)).length]).filter(([, , n]) => n > 0);
+  let pipeRows = fitBase.filter((a) => !fitFilter || fitKeys(a).includes(fitFilter));
+  if (fitSort) {
+    const pct = (a) => (a.salaryFit && a.salaryFit.pct != null ? a.salaryFit.pct : null);
+    pipeRows = [...pipeRows].sort((x, y) => {
+      const px = pct(x); const py = pct(y);
+      if (px === null && py === null) return 0;
+      if (px === null) return 1;
+      if (py === null) return -1;
+      return fitSort === 'asc' ? px - py : py - px;
+    });
+  }
+  const hasFit = applications.some((a) => a.salaryFit);
   const srcOptions = (() => {
     const m = new Map();
     applications.filter(atStep).forEach((a) => { if (a.sourceKey) m.set(a.sourceKey, (m.get(a.sourceKey) || 0) + 1); });
@@ -395,7 +435,7 @@ export default function RequirementDetail() {
   const ipaged = usePaged(interviewRows, 25);
 
   if (denied) return <div className="notice">{denied}</div>;
-  if (!requirement) return <div className="small-muted">Loading job…</div>;
+  if (!requirement) return <div className="small-muted">Loading requirement…</div>;
 
   const r = requirement;
   const p = r.permissions || {};
@@ -403,20 +443,32 @@ export default function RequirementDetail() {
   const clientName = r.internal ? 'TeamLink (internal)' : r.client?.name || '—';
   // A client's job request nobody has opened yet: a Draft client job this login may edit AND open.
   const isNewRequest = r.status === 'DRAFT' && !r.internal && !!p.edit && !!p.approve;
+  // Accept first (2026-10-23): a client's request nobody has taken shows ACCEPT; once taken, CREATE REQUIREMENT opens. A draft with no accept row counts as accepted.
+  const needsAccept = isNewRequest && r.requestState === 'requested';
+  async function acceptRequest() {
+    setNotice('');
+    try {
+      await api.post(`/requirements/${r.id}/accept-request`);
+      setNotice('Accepted. Now press Create requirement and fill in the rest.');
+      load();
+    } catch (e) { setNotice(e.response?.data?.error || 'Could not accept this request. Please try again.'); }
+  }
   // §7 Fee / Agreement terms — BDE, Accounts, Admin, Management only.
-  const showAgreementTab = r.internal || !r.sections || !!r.sections.commercial;
+  // TL / STL / Recruiter / HR get NO agreement info at all (user, 2026-10-12): the server sends them `gate` instead of `agreement`.
+  const hideAgr = !!r.gate;
+  const showAgreementTab = !hideAgr && (r.internal || !r.sections || !!r.sections.commercial);
   const pct = (v) => (v !== null && v !== undefined && v !== '' ? `${v}%` : null);
   async function deleteRequirement() {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete ${r.reqCode || r.title} for good? Jobs with people can only be closed.`)) return;
+    if (!window.confirm(`Delete ${r.reqCode || r.title} for good? It cannot be brought back. A requirement with people or invoices on it cannot be deleted - close it instead.`)) return;
     try {
       await api.delete(`/requirements/${r.id}`);
       navigate('/requirements');
     } catch (e) {
-      setNotice(e.response?.data?.error || 'Could not delete this job. Please try again.');
+      setNotice(e.response?.data?.error || 'Could not delete this requirement. Please try again.');
     }
   }
-  const agreementActive = r.agreementActive;
+  const agreementActive = hideAgr ? true : r.agreementActive; // (for them nothing waits on an agreement; the gate banner below says "on hold")
   const sources = list(r.postingSources);
   const sla = slaInfo(r.sla);
   // WHERE IT IS REALLY POSTED. Ticking a source only records the intention.
@@ -452,7 +504,7 @@ export default function RequirementDetail() {
     if (s === 'TeamLink Website') {
       return r.portalPublished
         ? { label: 'In website feed', cls: 'active', note: 'Listed in the job feed tmlink.in reads — it shows on the website once the "Current openings" section is added there.' }
-        : { label: 'Not in feed', cls: 'pending', note: 'Publish on the Job Portal first — the website feed lists published jobs only.' };
+        : { label: 'Not in feed', cls: 'pending', note: 'Publish on the Job Portal first — the website feed lists published requirements only.' };
     }
     // Naukri, Indeed, Shine: no account connection — what a person did.
     const last = logFor(s)[0];
@@ -462,7 +514,7 @@ export default function RequirementDetail() {
         label: bad ? 'Posted — check link' : 'Posted',
         cls: bad ? 'pending' : 'active',
         note: `manually by ${last.by || 'someone'} on ${day(last.at)}.`
-          + (bad ? ` The saved link is a ${s} recruiter page, not the job's listing — Mark as posted again with the job's public link.`
+          + (bad ? ` The saved link is a ${s} recruiter page, not the requirement's listing — Mark as posted again with the requirement's public link.`
             : !last.detail ? ' No listing link saved.' : '')
           + (appliedVia(s) ? '' : ` No applications from ${s} yet — they are counted here as they arrive.`),
         link: last.detail,
@@ -512,7 +564,7 @@ export default function RequirementDetail() {
   ].join('\n');
   function markPosted(s) {
     // eslint-disable-next-line no-alert
-    const link = prompt(`Paste the job's link on ${s} (optional):`, '');
+    const link = prompt(`Paste the requirement's link on ${s} (optional):`, '');
     if (link === null) return;
     logPosting(s, 'Posted manually', link.trim());
   }
@@ -549,33 +601,26 @@ export default function RequirementDetail() {
         {p.approve && !p.closeOnly && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {!requirementIsLive(r.status) && !PARKED.includes(r.status) && (
-              <button className="btn btn-sm btn-primary" onClick={() => runAction('activate')}>Open job</button>
-            )}
-            {r.status === 'OPEN' && (
-              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'RECRUITER_ASSIGNED' })}>{`Mark: ${requirementStatusLabel('RECRUITER_ASSIGNED')}`}</button>
-            )}
-            {['OPEN', 'RECRUITER_ASSIGNED'].includes(r.status) && (
-              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'SOURCING' })}>{`Mark: ${requirementStatusLabel('SOURCING')}`}</button>
-            )}
-            {r.status === 'SOURCING' && (
-              <button className="btn btn-sm btn-ghost" onClick={() => runAction('status', { status: 'CANDIDATES_AVAILABLE' })}>{`Mark: ${requirementStatusLabel('CANDIDATES_AVAILABLE')}`}</button>
+              <button className="btn btn-sm btn-primary" onClick={() => runAction('activate')}>Make it live</button>
             )}
           </div>
         )}
+        {jobNoteOf(r) && <div className="small-muted" style={{ marginTop: 8 }}>{jobNoteOf(r)}</div>}
         {p.readOnlyReason && <div className="small-muted" style={{ marginTop: 8 }}>{p.readOnlyReason}</div>}
       </div>
 
       <div className="two-col">
         <div>
           <div className="card section">
-            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Job details</h3>
+            <h3 style={{ fontSize: 13, marginBottom: 10 }}>Requirement details</h3>
             <div className="grid-2">
               <div>
-                <Row k="Job ID">{r.reqCode || r.id}</Row>
-                <Row k="Job">{r.title}</Row>
+                <Row k="Requirement ID">{r.reqCode || r.id}</Row>
+                <Row k="Requirement">{r.title}</Row>
                 <Row k="Client">{clientName}</Row>
-                <Row k="Department">{r.department}</Row>
+                <Row k="Departments">{(Array.isArray(r.departments) && r.departments.length ? r.departments : [r.department]).filter(Boolean).join(', ')}</Row>
                 <Row k="Location">{r.location}</Row>
+                <Row k="Preferred locations">{r.preferredLocation && r.preferredLocation !== 'Any' ? r.preferredLocation : 'Any location'}</Row>
                 <Row k="Work Mode">{r.workMode}</Row>
                 <Row k="Experience">{[r.experience, r.relevantExperience && `relevant ${r.relevantExperience}`].filter(Boolean).join(' · ')}</Row>
                 <Row k="Qualification">{[r.education, r.qualifications].filter(Boolean).join(' · ')}</Row>
@@ -608,9 +653,10 @@ export default function RequirementDetail() {
             <h3 style={{ fontSize: 13, marginBottom: 8 }}>Team</h3>
             <Row k="Department">{[r.department, r.section].filter(Boolean).join(' · ')}</Row>
             <Row k="Team lead">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
+            {(r.extraTlNames || []).length > 0 && <Row k="Also assigned">{r.extraTlNames.join(', ')}</Row>}
             <Row k="Recruiter">{[r.recruiter?.name || r.workedBy, seatText(r.seats?.recruiter) || r.workedByPosition].filter(Boolean).join(' · ')}</Row>
             {(r.coRecruiters || []).map((c) => (
-              <Row key={c.id} k="Co-recruiter">{[c.name, seatText(c.seat)].filter(Boolean).join(' · ')}</Row>
+              <Row key={c.id} k="Recruiter">{[c.name, seatText(c.seat)].filter(Boolean).join(' · ')}</Row>
             ))}
             {!r.internal && <Row k="Client manager (BDE)">{r.bde?.name}</Row>}
             <button type="button" className="btn btn-sm" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }} onClick={() => setTab('recruiter')}>
@@ -622,7 +668,7 @@ export default function RequirementDetail() {
           {/* docfill_: the source document (only when there is one). */}
           <SourceDocuments target="job" id={r.id} version={r.updatedAt} />
           {/* Review #3 §4 — Agreement and Job Portal lines of the 360. */}
-          {!r.internal && (
+          {!r.internal && !hideAgr && (
             <div className="card section">
               <h3 style={{ fontSize: 13, marginBottom: 8 }}>Agreement</h3>
               {showAgreementTab && <Row k="Status"><StatusChip status={(r.agreement && r.agreement.label) || agreementStatusLabel(r.client?.agreementStatus)} tone={agreementActive ? 'green' : 'amber'} /></Row>}
@@ -670,6 +716,9 @@ export default function RequirementDetail() {
         />
       )}
 
+      <JobPostingCard jobId={r.id} title={r.title} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load} onPost={() => setPostStepOpen(true)} />
+      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} onClose={() => setPostStepOpen(false)} onChanged={load} />}
+
       <div className="card section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div style={{ flex: '1 1 420px' }}>
           <b style={{ fontSize: 13 }}>Where it is posted</b>
@@ -705,12 +754,22 @@ export default function RequirementDetail() {
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
             <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
               Show
-              <select value={pipeFilter} onChange={(e) => setPipeFilter(e.target.value)}>
+              <Combo value={pipeFilter} onChange={(e) => setPipeFilter(e.target.value)}>
                 {PIPE_FILTERS.map(([k, l, fn]) => (
                   <option key={k} value={k}>{`${l} (${nf(applications.filter((a) => srcOk(a) && (!fn || fn(a.stage))).length)})`}</option>
                 ))}
-              </select>
+              </Combo>
             </label>
+            {hasFit && (fitOptions.length > 0 || fitFilter) && (
+              <label className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
+                Salary fit
+                <Combo value={fitFilter} onChange={(e) => setFitFilter(e.target.value)}>
+                  <option value="">Any</option>
+                  {fitOptions.map(([k, l, n]) => <option key={k} value={k}>{`${l} (${nf(n)})`}</option>)}
+                  {fitFilter && !fitOptions.some(([k]) => k === fitFilter) && <option value={fitFilter}>{fitFilter}</option>}
+                </Combo>
+              </label>
+            )}
             {srcOptions.length > 0 && (
               <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={srcFilter} onChange={setSrcFilter} options={srcOptions} title="Where the person came from" />
             )}
@@ -721,7 +780,7 @@ export default function RequirementDetail() {
                 audience="candidates"
                 ids={[...new Set(pipeRows.map((a) => a.candidateId || (a.candidate && a.candidate.id)).filter(Boolean))]}
                 requirementId={r.id}
-                note={`The message is filled in for the job "${r.title}". People who asked not to be contacted are left out.`}
+                note={`The message is filled in for the requirement "${r.title}". People who asked not to be contacted are left out.`}
                 onClose={() => setMsgOpen(false)}
               />
             )}
@@ -730,10 +789,10 @@ export default function RequirementDetail() {
         <div className="tbl-wrap">
           <table>
             {/* Source + Applied (Save & Post spec §20): where each person came from — the site of the apply link (?src=) or how they were added. */}
-            <thead><tr><th>Candidate</th><th>Step</th><th>Fit %</th><th>Source</th><th>Applied</th><th>Updated</th><th>Move to step</th></tr></thead>
+            <thead><tr><th>Candidate</th><th>Step</th><th>Fit %</th>{hasFit && <th><button type="button" className="link-btn" title="Sort by Salary fit" onClick={() => setFitSort(fitSort === 'desc' ? 'asc' : fitSort === 'asc' ? '' : 'desc')}>{`Salary fit${fitSort === 'desc' ? ' ↓' : fitSort === 'asc' ? ' ↑' : ''}`}</button></th>}<th>Source</th><th>Applied</th><th>Updated</th><th>Move to step</th></tr></thead>
             <tbody>
               {paged.slice.map((a) => (
-                <tr key={a.id}>
+                <tr key={a.id} {...rowClickProps(() => navigate(`/candidates/${a.candidateId || a.candidate?.id}`), { href: `/candidates/${a.candidateId || a.candidate?.id}` })}>
                   <td>
                     <Link to={`/candidates/${a.candidateId || a.candidate?.id}`}>{a.candidate?.name || a.candidateName}</Link>
                     {(a.candidate?.location || a.candidate?.experienceYears != null) && (
@@ -745,6 +804,7 @@ export default function RequirementDetail() {
                   </td>
                   <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
                   <td>{a.matchScore != null ? <FitWithVersion score={a.matchScore} version={a.matchVersion} /> : a.resumeScore != null ? `${a.resumeScore}%` : '—'}</td>
+                  {hasFit && <td>{a.salaryFit ? <SalaryFitChips fit={a.salaryFit} compact /> : '—'}</td>}
                   <td className="cell-muted" title={recordedAs(a)}>{a.sourceKey || a.firstSource || a.source || '—'}</td>
                   <td className="cell-muted">{a.createdAt ? protoDate(a.createdAt) : '—'}</td>
                   <td className="cell-muted">{a.updatedAt ? protoDate(a.updatedAt) : '—'}</td>
@@ -761,7 +821,7 @@ export default function RequirementDetail() {
                 </tr>
               ))}
               {pipeRows.length === 0 && (
-                <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>{applications.length ? (srcWanted.size ? 'No one at this step from these sources.' : 'No one at this step.') : 'No one added yet. Add a candidate below.'}</td></tr>
+                <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>{applications.length ? (srcWanted.size ? 'No one at this step from these sources.' : 'No one at this step.') : 'No one added yet. Add a candidate below.'}</td></tr>
               )}
             </tbody>
           </table>
@@ -769,32 +829,7 @@ export default function RequirementDetail() {
         <Pager page={paged} noun="candidates" />
       </div>
 
-      {p.pipelineEdit && (
-        <div className="card section">
-          <h3 style={{ fontSize: 14, marginBottom: 10 }}>Add a candidate</h3>
-          <input
-            type="text"
-            placeholder="Search your candidates by name, phone or email…"
-            value={linkQuery}
-            onChange={(e) => setLinkQuery(e.target.value)}
-            style={{ maxWidth: 420 }}
-          />
-          {linkQuery.trim().length >= 2 && (
-            <div className="reqbulk-results" style={{ maxWidth: 560 }}>
-              {linkHits.map((c) => (
-                <div key={c.id} className="reqbulk-row">
-                  <span>
-                    <b>{c.name}</b>
-                    <span className="small-muted">{[c.location, c.experienceYears != null ? `${c.experienceYears} yrs` : null].filter(Boolean).map((x) => ` · ${x}`).join('')}</span>
-                  </span>
-                  <button type="button" className="btn btn-sm btn-primary" onClick={() => linkCandidate(c.id)}>Add to job</button>
-                </div>
-              ))}
-              {linkHits.length === 0 && <div className="reqbulk-row small-muted">No one found. Try another name or phone.</div>}
-            </div>
-          )}
-        </div>
-      )}
+      {p.pipelineEdit && <AddCandidateCard requirementId={id} onAdd={linkCandidate} />}
 
       {p.matching && <LocationCandidatesPanel requirementId={r.id} onAdded={refreshAfterChange} />}
 
@@ -818,6 +853,7 @@ export default function RequirementDetail() {
         <div className="card section">
           <h3 style={{ fontSize: 13, marginBottom: 8 }}>Team</h3>
           <Row k="Team lead">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
+          {(r.extraTlNames || []).length > 0 && <Row k="Also assigned">{r.extraTlNames.join(', ')}</Row>}
           <Row k="Recruiter">{[r.recruiter?.name, seatText(r.seats?.recruiter)].filter(Boolean).join(' · ')}</Row>
           <Row k="Co-recruiters">
             {(r.coRecruiters || []).length ? (r.coRecruiters || []).map((c) => [c.name, seatText(c.seat)].filter(Boolean).join(' · ')).join(', ') : null}
@@ -837,7 +873,7 @@ export default function RequirementDetail() {
       </div>
       <div>
         <div className="card section">
-          <h3 style={{ fontSize: 13, marginBottom: 8 }}>Who worked on this job</h3>
+          <h3 style={{ fontSize: 13, marginBottom: 8 }}>Who worked on this requirement</h3>
           {workers === null && <div className="small-muted">Loading…</div>}
           {workers && workers.length === 0 && <div className="small-muted">No one has worked on it yet.</div>}
           {workers && workers.length > 0 && (
@@ -866,7 +902,7 @@ export default function RequirementDetail() {
     <div className="card section" style={{ maxWidth: 760 }}>
       <h3 style={{ fontSize: 13, marginBottom: 10 }}>Client</h3>
       {r.internal ? (
-        <div className="small-muted">Internal hiring. No client on this job.</div>
+        <div className="small-muted">Internal hiring. No client on this requirement.</div>
       ) : r.sections && r.sections.clientContact ? (
         <>
           <Row k="Client">{r.clientLink ? <Link to={`/clients/${r.clientId}`}>{r.client?.name}</Link> : r.client?.name}</Row>
@@ -892,9 +928,11 @@ export default function RequirementDetail() {
           <Row k="Contact">{[r.client?.contactPhone, r.client?.contactEmail].filter(Boolean).join(' · ')}</Row>
           <Row k="Account owner / BDE">{[r.client?.accountManager, r.bde?.name].filter(Boolean).join(' · ')}</Row>
           <Row k="Payment terms">{r.client?.paymentTerms}</Row>
-          <Row k="Agreement">
-            <span className={`status ${agreementBadgeClass(r.client?.agreementStatus)}`}>{agreementStatusLabel(r.client?.agreementStatus)}</span>
-          </Row>
+          {!hideAgr && (
+            <Row k="Agreement">
+              <span className={`status ${agreementBadgeClass(r.client?.agreementStatus)}`}>{agreementStatusLabel(r.client?.agreementStatus)}</span>
+            </Row>
+          )}
           <Link className="btn btn-sm" style={{ marginTop: 10 }} to={`/clients/${r.clientId}`}>Open client</Link>
         </>
       ) : (
@@ -920,7 +958,7 @@ export default function RequirementDetail() {
             <thead><tr><th>Candidate</th><th>Step</th><th>Interview</th><th>When</th><th>Status</th><th>Mode / Interviewer</th><th>Client result</th></tr></thead>
             <tbody>
               {ipaged.slice.map((a) => (
-                <tr key={a.id}>
+                <tr key={a.id} {...rowClickProps(() => navigate(`/candidates/${a.candidateId}`), { href: `/candidates/${a.candidateId}` })}>
                   <td><Link to={`/candidates/${a.candidateId}`}>{a.candidate?.name}</Link></td>
                   <td><span className={`status ${stageBadgeClass(a.stage)}`}>{stageLabel(a.stage)}</span></td>
                   <td className="cell-muted">{[a.interviewCode, a.interviewType, a.interviewRound ? `Round ${a.interviewRound}` : null].filter(Boolean).join(' · ') || '—'}</td>
@@ -946,7 +984,7 @@ export default function RequirementDetail() {
               <thead><tr><th>Candidate</th><th>AI interview status</th><th>AI score</th></tr></thead>
               <tbody>
                 {aiRows.map((a) => (
-                  <tr key={a.id}>
+                  <tr key={a.id} {...rowClickProps(() => navigate(`/candidates/${a.candidateId}`), { href: `/candidates/${a.candidateId}` })}>
                     <td><Link to={`/candidates/${a.candidateId}`}>{a.candidate?.name}</Link></td>
                     <td className="cell-muted">{a.aiInterviewStatus || '—'}</td>
                     <td className="jobsws-num">{`${a.aiInterviewScore}%`}</td>
@@ -1012,7 +1050,7 @@ export default function RequirementDetail() {
   const activityTab = (
     <div className="card section">
       <h3 style={{ fontSize: 14, marginBottom: 4 }}>Activity</h3>
-      <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>Who did what and when on this job.</div>
+      <div className="small-muted" style={{ fontSize: 12, marginBottom: 8 }}>Who did what and when on this requirement.</div>
       {activity === null && <div className="small-muted">Loading…</div>}
       {activity && activity.length === 0 && <div className="small-muted">No activity recorded yet.</div>}
       {activity && activity.length > 0 && (
@@ -1054,13 +1092,15 @@ export default function RequirementDetail() {
   const tabs = TABS.filter((t) => (t !== 'client' || r.internal || !r.sections || !!r.sections.clientContact)
     && (t !== 'agreement' || showAgreementTab));
   const bodies = {
-    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, activity: activityTab,
+    overview, candidates: candidatesTab, recruiter: recruiterTab, client: clientTab, interviews: interviewsTab, agreement: agreementTab, distribute: <PostingsTab job={r} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load}><DistributeTab job={r} onChanged={load} /></PostingsTab>, activity: activityTab,
   };
   const tabCount = { candidates: applications.length, interviews: interviewRows.length };
 
   return (
     <div>
-      <Link className="small-muted" to="/requirements">← Jobs</Link>
+      <Link className="small-muted" to="/requirements">← Requirements</Link>
+
+      {!r.internal && <JobDupNote jobId={r.id} onOpenList={() => navigate('/requirements?tab=duplicates')} />}
 
       <div className="page-head" style={{ marginTop: 10, marginBottom: 6 }}>
         <div>
@@ -1081,30 +1121,37 @@ export default function RequirementDetail() {
               p.edit is resolved on the server with the record-level check. */}
           <JobStatusChip job={r} />
           {/* A CLIENT'S NEW JOB REQUEST (2026-10-09): the BDE / BDE TL fills in the rest and posts it - one main button. */}
-          {isNewRequest && (
+          {needsAccept && <button className="btn btn-sm btn-primary" onClick={acceptRequest}>Accept request</button>}
+          {isNewRequest && !needsAccept && (
             <button className="btn btn-sm btn-primary" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
-              Complete &amp; post
+              Create requirement
             </button>
           )}
-          {p.edit && (
+          {p.edit && !needsAccept && (
             <button className="btn btn-sm" onClick={() => { setNotice(''); ensureClients(); ensurePeople(); setDialog('edit'); }}>
-              Edit job
+              Edit requirement
             </button>
           )}
-          {/* B9.4: Copy job → a new Draft with the same details (dates, sites and the team cleared), opened at once. */}
-          {can(user, 'ats', 'requirements', 'Create Requirement', 'create') && (
+          {(p.edit || p.share) && <EditTemplateButton requirementId={r.id} />}
+          {p.askChange && !p.edit && (
+            <button className="btn btn-sm" title="Requirements are changed or closed by the client manager (BDE) team. Tell them what you need." onClick={() => setAskChangeOpen(true)}>
+              Ask the client manager to edit or close this requirement
+            </button>
+          )}
+          {/* B9.4: Copy job → a new job with the same details (dates, sites and the team cleared), opened at once. */}
+          {canStartJob(user) && (
             <button
               className="btn btn-sm"
-              title="Makes a new Draft with the same job details. Dates, posting sites and the team start empty."
+              title="Makes a new requirement with the same requirement details. Dates, posting sites and the team start empty."
               onClick={async () => {
                 setError('');
                 try {
                   const res = await api.post(`/requirements/${id}/copy`, {});
                   navigate(`/requirements/${res.data.id}`);
-                } catch (err) { setError(err.response?.data?.error || 'Could not copy this job.'); }
+                } catch (err) { setError(err.response?.data?.error || 'Could not copy this requirement.'); }
               }}
             >
-              Copy job
+              Copy requirement
             </button>
           )}
           {/* Department-wise: only this job's department's people are offered. */}
@@ -1117,10 +1164,10 @@ export default function RequirementDetail() {
       {isNewRequest && (
         <div className="notice blue" role="status" style={{ marginBottom: 10 }}>
           <span>
-            <b>{`New job request from ${clientName}.`}</b>
-            {' The client gave the main details. Press '}
-            <b>Complete &amp; post</b>
-            {', fill in the rest (description, skills, where to post) and press Save & Post.'}
+            <b>{`New requirement request from ${clientName}.`}</b>
+            {needsAccept
+              ? <>{' The client gave the main details. Press '}<b>Accept request</b>{' to take it. Then Create requirement opens.'}</>
+              : <>{r.requestAcceptedBy ? ` Accepted by ${r.requestAcceptedBy}.` : ''}{' Press '}<b>Create requirement</b>{', fill in the rest (description, skills, departments, team leads), then press Save & Post.'}</>}
           </span>
         </div>
       )}
@@ -1138,10 +1185,10 @@ export default function RequirementDetail() {
           ['Location', r.location || '—'],
           ['Urgency', <PriorityChip key="pr" value={r.priority} />],
           ['Due date', <span key="dl" style={dl.overdue ? { color: 'var(--red)', fontWeight: 600 } : undefined}>{dl.text}</span>],
-          ['Team', [r.tlName || r.tl ? `TL ${r.tlName || r.tl}` : 'No TL yet', recruiters.length ? recruiters.join(', ') : 'No recruiter yet'].join(' · ')],
+          ['Team', [r.tlName || r.tl ? `TL ${[r.tlName || r.tl, ...(r.extraTlNames || [])].join(', ')}` : 'No TL yet', recruiters.length ? recruiters.join(', ') : 'No recruiter yet'].join(' · ')],
         ];
         return (
-          <div className="ccr-jobhead" role="group" aria-label="Job summary">
+          <div className="ccr-jobhead" role="group" aria-label="Requirement summary">
             {items.map(([k, v]) => (
               <div key={k}><span className="k">{k}</span><span className="v">{v}</span></div>
             ))}
@@ -1158,9 +1205,9 @@ export default function RequirementDetail() {
         return (
           <div className="ccr-funnel-row">
             <div className="ccr-chart">
-              <h3>{pl.candidates ? `People on this job (${nf(pl.candidates)})` : 'People on this job'}</h3>
+              <h3>{pl.candidates ? `People on this requirement (${nf(pl.candidates)})` : 'People on this requirement'}</h3>
               <div className="ccr-sub">Each step shows how many people are there now. Click a step to see them.</div>
-              <FunnelChart steps={steps} title="People on this job by step" empty="No one added yet" />
+              <FunnelChart steps={steps} title="People on this requirement by step" empty="No one added yet" />
             </div>
             <div className="ccr-chart ccr-side">
               <h3>Progress</h3>
@@ -1175,10 +1222,13 @@ export default function RequirementDetail() {
 
       {notice && <div className="notice">{notice}</div>}
       {!r.internal && <ClientPausedBanner clientName={clientName} lifecycle={r.client?.lifecycle} />}
+      {hideAgr && r.gate.onHold && !r.internal && (
+        <div className="notice amber" role="status"><span>{r.gate.message || 'This requirement is on hold. Ask your Business Development manager.'}</span></div>
+      )}
       {!agreementActive && !r.internal && tab !== 'agreement' && (
         <div className="notice amber" style={{ alignItems: 'center' }}>
           <span>
-            {'Waiting for agreement. This job opens once '}
+            {'Waiting for agreement. This requirement opens once '}
             <b>{clientName}</b>
             {' signs.'}
           </span>
@@ -1212,7 +1262,7 @@ export default function RequirementDetail() {
           )}
         >
           <div className="small-muted" style={{ marginBottom: 10 }}>
-            This changes who can see the job.
+            This changes who can see the requirement.
           </div>
           {people === null && <div className="small-muted" style={{ marginBottom: 8 }}>Loading people…</div>}
           {/* 2026-10-05: any department's team lead; recruiters = that team lead's team, least busy first. */}
@@ -1312,7 +1362,7 @@ export default function RequirementDetail() {
           </div>
           {decision.stage === 'REJECTED' && (
             <div className="field">
-              <span>Rejected by *</span>
+              <span>Rejected by</span>
               <div className="contact-methods">
                 {REJECTED_BY_OPTIONS.map((o) => (
                   <button
@@ -1334,7 +1384,7 @@ export default function RequirementDetail() {
             </div>
           )}
           <label className="field">
-            <span>Reason Category *</span>
+            <span>Reason Category</span>
             <Combo
               creatable
               disabled={decision.stage === 'REJECTED' && !decision.rejectedBy}
@@ -1371,6 +1421,7 @@ export default function RequirementDetail() {
           `canAssign` comes from the server's per-record permission set, so
           section F is read-only for a login that may edit but not re-assign
           (the server refuses that change too). */}
+      {askChangeOpen && <AskChangeJobModal jobId={id} title={r.title} onClose={() => setAskChangeOpen(false)} />}
       {dialog === 'edit' && (
         <RequirementForm
           mode="edit"
@@ -1379,6 +1430,7 @@ export default function RequirementDetail() {
           team={peopleList}
           canAssign={!!p.assign}
           canOpen={!!p.approve}
+          canFullEdit={!!p.fullEdit}
           onClose={() => setDialog(null)}
           onSaved={(saved, meta) => {
             setDialog(null);

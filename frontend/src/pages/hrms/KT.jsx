@@ -335,10 +335,10 @@ function AllIdeas({ ideas: all }) {
           </Combo>
           <label className="lf-sort">
             Sort
-            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="new">Newest first</option>
               <option value="score">Total score (high to low)</option>
-            </select>
+            </Combo>
           </label>
         </PeopleFilterBar>
       </div>

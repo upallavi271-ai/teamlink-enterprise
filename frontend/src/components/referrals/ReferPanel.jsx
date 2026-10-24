@@ -13,7 +13,9 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
+import { validateSalaries } from '../../utils/salaryFit'; // current + expected salary are required
 import '../candidate/CandidateRecord.css';
+import Combo from '../Combo.jsx';
 
 const errText = (err, fallback) => err?.response?.data?.error || fallback;
 const day = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
@@ -38,7 +40,7 @@ function Copy({ text, label = 'Copy link' }) {
 }
 
 function ReferForm({ jobs, onDone }) {
-  const [f, setF] = useState({ name: '', phone: '', email: '', requirementId: '', note: '' });
+  const [f, setF] = useState({ name: '', phone: '', email: '', requirementId: '', note: '', currentSalary: '', expectedSalary: '' });
   const [agreed, setAgreed] = useState(false);
   const [file, setFile] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -46,6 +48,9 @@ function ReferForm({ jobs, onDone }) {
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   async function send(e) {
     e.preventDefault();
+    // Current + expected salary of the person are required (same words as the server).
+    const sal = validateSalaries({ currentSalary: f.currentSalary, expectedSalary: f.expectedSalary });
+    if (!sal.ok) { setMsg({ bad: true, text: sal.message }); return; }
     setBusy(true); setMsg(null);
     const fd = new FormData();
     Object.entries(f).forEach(([k, v]) => { if (v) fd.append(k, v); });
@@ -61,12 +66,14 @@ function ReferForm({ jobs, onDone }) {
       <label className="field"><span>Their full name</span><input value={f.name} onChange={set('name')} required /></label>
       <label className="field"><span>Mobile</span><input value={f.phone} onChange={set('phone')} inputMode="tel" required /></label>
       <label className="field"><span>Email (optional)</span><input value={f.email} onChange={set('email')} type="email" /></label>
+      <label className="field"><span>Their current salary (0 if fresher)</span><input value={f.currentSalary} onChange={set('currentSalary')} placeholder="e.g. 3 LPA or 25000 per month" required /></label>
+      <label className="field"><span>Their expected salary</span><input value={f.expectedSalary} onChange={set('expectedSalary')} placeholder="e.g. 4 LPA or 30000 per month" required /></label>
       <label className="field">
-        <span>Job (optional)</span>
-        <select value={f.requirementId} onChange={set('requirementId')}>
-          <option value="">Any job — let the team decide</option>
+        <span>Requirement (optional)</span>
+        <Combo value={f.requirementId} onChange={set('requirementId')}>
+          <option value="">Any requirement — let the team decide</option>
           {jobs.map((j) => <option key={j.id} value={j.id}>{[j.title, j.location].filter(Boolean).join(' · ')}</option>)}
-        </select>
+        </Combo>
       </label>
       <label className="field"><span>Resume (optional — PDF or Word)</span><input type="file" accept=".pdf,.doc,.docx" onChange={(e) => setFile(e.target.files[0] || null)} /></label>
       <label className="field"><span>Why are they a good fit? (optional)</span><input value={f.note} onChange={set('note')} /></label>
@@ -100,7 +107,7 @@ export default function ReferPanel({ title = 'Refer a friend' }) {
         <h3 style={{ fontSize: 14, margin: 0 }}>{title}</h3>
         {!open && <button type="button" className="btn btn-primary btn-sm" onClick={() => { setOpen(true); setMsg(''); }}>Refer a candidate</button>}
       </div>
-      <div className="small-muted">Know someone who fits one of our jobs? Send their details, or share your own link.</div>
+      <div className="small-muted">Know someone who fits one of our requirements? Send their details, or share your own link.</div>
       {msg && <div className="crx-flash" role="status">{msg}</div>}
       {open && <ReferForm jobs={data.jobs || []} onDone={(text) => { setOpen(false); if (text) { setMsg(text); load(); } }} />}
 
@@ -118,7 +125,7 @@ export default function ReferPanel({ title = 'Refer a friend' }) {
         <div key={r.id} className="crx-item">
           <div className="crx-main">
             <b>{r.candidateName}</b>
-            <span className="small-muted">{[r.job ? r.job.title : 'No job picked yet', day(r.createdAt), r.via === 'LINK' ? 'through your link' : null].filter(Boolean).join(' · ')}</span>
+            <span className="small-muted">{[r.job ? r.job.title : 'No requirement picked yet', day(r.createdAt), r.via === 'LINK' ? 'through your link' : null].filter(Boolean).join(' · ')}</span>
           </div>
           <StatusChip tone={r.status.tone}>{r.status.label}</StatusChip>
           {r.bonus && (

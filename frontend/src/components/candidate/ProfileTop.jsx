@@ -4,8 +4,10 @@ import { initials } from '../../atsVocab';
 import { productRole } from '../../permissions';
 import Modal from '../Modal.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
+import { SalaryFitChips, AddSalaryDialog } from '../SalaryFit.jsx'; // Salary fit chips + the gentle "Add salary"
+import FitBreakdown, { useFitBreakdown } from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
 import { ContactButtons } from './ProfileSlots.jsx';
-import { recordedAs, IMPORTED_SOURCE } from '../../utils/candidateSource.js';
+import { recordedAs, IMPORTED_SOURCE, longDay, CAME_KIND_TEXT } from '../../utils/candidateSource.js';
 import './ProfileTop.css';
 
 // ---------------------------------------------------------------------------
@@ -22,11 +24,60 @@ const ARCHIVE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL'];
 export const mayArchive = (user) => !!user && (ARCHIVE_ROLES.includes(user.role) || ARCHIVE_ROLES.includes(productRole(user, 'ats')));
 export const isSuperAdmin = (user) => !!user && (user.role === 'SUPER_ADMIN' || productRole(user, 'ats') === 'SUPER_ADMIN');
 
+// "Came from Naukri on 12 Oct 2026, added by Asha" — says what the date means when it is not the real arrival day.
+function CameLine({ c }) {
+  const known = c.sourceKey && c.sourceKey !== IMPORTED_SOURCE;
+  const day = c.cameOnDay ? longDay(c.cameOnDay) : null;
+  const kind = c.cameOnKind;
+  let text = known ? `Came from ${c.sourceKey}` : 'Source not recorded';
+  if (day) {
+    if (kind === 'imported') text += ` · loaded into TeamLink on ${day}`;
+    else if (kind === 'sheet') text += ` · ${day} (date from the old sheet)`;
+    else if (kind === 'applied') text += ` · applied on ${day}`;
+    else text += ` · on ${day}`;
+  }
+  if (c.addedByName) text += `, added by ${c.addedByName}`;
+  const title = [recordedAs(c), day ? `${day}: ${CAME_KIND_TEXT[kind] || ''}` : null].filter(Boolean).join(' · ');
+  return (
+    <div className={`cpt-came${known ? '' : ' is-unknown'}${kind === 'imported' ? ' is-imported' : ''}`} title={title || undefined}>
+      <span aria-hidden="true">🧲</span>
+      {' '}
+      {text}
+    </div>
+  );
+}
+
+const JOINED_STAGES = ['JOINED', 'HIRED'];
+// "Joined on 12 Oct 2026" beside the Joined step (one rule on the server: utils/joinDayShared.js). When the shown application is not the
+// joined one, the joined application is named: "Joined on 12 Oct 2026 (Requirement X, Client Y)". Never blank, never today's date.
+function JoinedOn({ c, app }) {
+  if (!app) return null;
+  if (JOINED_STAGES.includes(app.stage)) {
+    return <span className="small-muted cpt-joinedon">{app.joiningDay ? ` · Joined on ${longDay(app.joiningDay)}` : ' · Joined (date not recorded)'}</span>;
+  }
+  const others = (c.applications || []).filter((a) => a.id !== app.id && JOINED_STAGES.includes(a.stage));
+  if (!others.length) return null;
+  const best = [...others].sort((x, y) => String(y.joiningDay || '').localeCompare(String(x.joiningDay || '')))[0];
+  const r = best.requirement || {};
+  const where = [r.title || best.requirementTitle, r.internal ? 'TeamLink (internal)' : ((r.client && r.client.name) || best.clientName)].filter(Boolean).join(', ');
+  return (
+    <div className="small-muted cpt-joinedon" style={{ marginTop: 4 }}>
+      {best.joiningDay ? `Joined on ${longDay(best.joiningDay)}` : 'Joined (date not recorded)'}
+      {where ? ` (${where})` : ''}
+    </div>
+  );
+}
+
 export default function ProfileTop({
   c, app, internal, onChanged, extra = null,
 }) {
+  const [addSalary, setAddSalary] = useState(false);
+  const fitB = useFitBreakdown(app ? app.id : null); // the Fit for THIS job: total + Resume · AI · Location · Salary
   if (!c) return null;
   const stage = app ? (app.stageLabel || app.stageGroupLabel) : null;
+  // Salary fit for THIS job (server-shaped for the viewer). Old record without salary: "Add salary" (not for the BDE team).
+  const fit = app && app.salaryFit ? app.salaryFit : null;
+  const mayAdd = !!c.salaryMissing && (!fit || fit.prompt === 'Add salary');
   return (
     <div className="cpt">
       <span className="cpt-ini" aria-hidden="true">{initials(c.name)}</span>
@@ -42,21 +93,31 @@ export default function ProfileTop({
           {c.email && <span className="cpt-email">{c.email}</span>}
           {c.location && <span>{c.location}</span>}
           {c.experienceYears != null && <span>{`${c.experienceYears} yrs exp`}</span>}
-          {/* Where from: the clean word; hover shows the word that was recorded. TeamLink logins only (the server sends sourceKey to nobody else). */}
-          {c.sourceKey && (
-            <span className={`cpt-src${c.sourceKey === IMPORTED_SOURCE ? ' is-unknown' : ''}`} title={recordedAs(c)}>
-              <span className="small-muted">Where from:</span>
-              {' '}
-              <b>{c.sourceKey}</b>
-            </span>
-          )}
+          {/* Came from <source> on <date>, added by <name> (TeamLink logins only: the server sends these to nobody else). */}
         </div>
+        {c.sourceKey && <CameLine c={c} />}
         <div className="cpt-step">
           <span className="small-muted">Current step:</span>
           {' '}
-          {stage ? <StatusChip status={app.stageGroupLabel || stage}>{stage}</StatusChip> : <span className="small-muted">Not in any job yet</span>}
+          {stage ? <StatusChip status={app.stageGroupLabel || stage}>{stage}</StatusChip> : <span className="small-muted">Not in any requirement yet</span>}
           {app && app.requirement && <span className="small-muted">{` · ${app.requirement.title || ''}`}</span>}
+          {app && JOINED_STAGES.includes(app.stage) && <JoinedOn c={c} app={app} />}
         </div>
+        {app && !JOINED_STAGES.includes(app.stage) && <JoinedOn c={c} app={app} />}
+        {fitB && (
+          <div className="cpt-step" style={{ marginTop: 6 }}>
+            <FitBreakdown b={fitB} showFormula />
+          </div>
+        )}
+        {(fit || mayAdd) && (
+          <div className="cpt-step" style={{ marginTop: 6 }}>
+            <span className="small-muted">Salary fit:</span>
+            {' '}
+            {fit ? <SalaryFitChips fit={fit} onAdd={mayAdd ? () => setAddSalary(true) : undefined} showBudget /> : null}
+            {!fit && mayAdd && <button type="button" className="sfit-chip sfit-grey sfit-btn" onClick={() => setAddSalary(true)}>+ Add salary</button>}
+          </div>
+        )}
+        {addSalary && <AddSalaryDialog candidateId={c.id} name={c.name} current={c.currentSalary || ''} expected={c.expectedSalary || ''} onClose={() => setAddSalary(false)} onSaved={onChanged} />}
       </div>
       <div className="cpt-btns">
         <ContactButtons c={c} app={app} internal={internal} onChanged={onChanged} />
@@ -124,7 +185,7 @@ export function ProfileTools({
             Archived people are hidden from every list. Nothing is deleted. You can bring them back from People → Archived.
           </div>
           <label className="field">
-            <span>Why? *</span>
+            <span>Why?</span>
             <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Not looking for a job any more" />
           </label>
         </Modal>
@@ -152,7 +213,7 @@ export function ProfileTools({
             Only for a duplicate or a wrong entry. This cannot be undone. For anyone else, use Archive.
           </div>
           <div className="field">
-            <span>Why? *</span>
+            <span>Why?</span>
             <div className="contact-methods">
               {['Duplicate', 'Wrong entry'].map((r) => (
                 <button key={r} type="button" className={`contact-method${reason === r ? ' is-on' : ''}`} onClick={() => setReason(r)}>{r}</button>

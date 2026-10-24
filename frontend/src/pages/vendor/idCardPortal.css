@@ -1,0 +1,29 @@
+/* ID Card Vendor Portal (2026-10-19): request tables, photos, bell, print. Scoped .idc-*. (The sidebar is vendorSidebar.css.) */
+/* request tables */
+.idc-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #fff7e0; border: 1px solid #f0d58a; border-radius: 12px; padding: 8px 12px; margin-bottom: 10px; }
+.idc-bar b { font-size: 13.5px; }
+.idc-table th { position: sticky; top: 0; background: var(--paper-raised); z-index: 1; white-space: nowrap; }
+.idc-table .tbl-wrap, .idc-wrap { max-height: 68vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; }
+.idc-table td { vertical-align: middle; }
+.idc-ph { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; background: var(--line-soft, #e9efec); display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: var(--ink-soft); overflow: hidden; }
+.idc-ph img { width: 100%; height: 100%; object-fit: cover; }
+.idc-ph.big { width: 96px; height: 120px; border-radius: 10px; font-size: 26px; }
+.idc-skel { height: 14px; border-radius: 6px; background: linear-gradient(90deg, var(--line-soft, #e9efec) 25%, #f6f9f8 50%, var(--line-soft, #e9efec) 75%); background-size: 200% 100%; animation: idcShimmer 1.2s infinite; }
+@keyframes idcShimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .idc-skel { animation: none; } }
+.idc-tile-skel { height: 66px; }
+.idc-bell { position: relative; border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-weight: 600; }
+.idc-bell .idc-pop { position: absolute; right: 12px; top: 52px; width: min(380px, 94vw); max-height: 70vh; overflow: auto; background: var(--paper-raised); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow-md); z-index: 70; padding: 8px; }
+.idc-pop li { list-style: none; padding: 8px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.idc-pop li.unread { background: var(--brand-tint, #E7EDF7); border-radius: 8px; }
+.idc-pop ul { margin: 0; padding: 0; }
+.idc-print { display: none; }
+.idc-sheet-row { display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #999; padding: 8px 0; page-break-inside: avoid; }
+@media print {
+  body.idc-printing .vp-top, body.idc-printing .idc-side, body.idc-printing .idc-screen, body.idc-printing .idc-backdrop, body.idc-printing .overlay, body.idc-printing .vp-tabs { display: none !important; }
+  body.idc-printing .idc-print { display: block !important; }
+  body.idc-printing .vp-main { padding: 0 !important; }
+}
+.idc-tbl-actions { white-space: nowrap; }
+.idc-pill { display: inline-flex; padding: 2px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; background: var(--line-soft); color: var(--ink-soft); margin-right: 4px; white-space: nowrap; }
+.idc-count { background: var(--amber, #b45f06); color: #fff; border-radius: 999px; font-size: 11.5px; padding: 1px 8px; }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api';
 import { Modal, EmptyMini, SectionLabel } from './proto.jsx';
 import './ApprovalChain.css';
+import Combo from './Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE APPROVAL CHAIN — one component for every request on the shared engine
@@ -98,9 +99,9 @@ function DecideBox({ direct, busy, onDecide, error, reasons }) {
       {reasons && reasons.length > 0 && (
         <label className="apc-hint" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           Approval reason (required for this request)
-          <select value={reason} onChange={(e) => setReason(e.target.value)}>
+          <Combo value={reason} onChange={(e) => setReason(e.target.value)}>
             {reasons.map((r) => <option key={r} value={r}>{r}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       <textarea rows={2} value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Remarks (required to reject)" />
@@ -204,6 +205,8 @@ const DECIDERS = {
   resignation: (id, decision, remarks) => api.patch(`/resignations/${id}/status`, { status: decision === 'Approved' ? 'Accepted' : 'Rejected', reason: remarks || undefined }),
   reward: (id, decision, remarks) => api.patch(`/performance/${id}/decision`, { status: decision, reason: remarks || undefined }),
   course: (id, decision, remarks) => api.patch(`/lms/courses/${id}/decision`, { status: decision, reason: remarks || undefined }),
+  document: (id, decision, remarks) => api.patch(`/documents/${id}/decision`, { status: decision, reason: remarks || undefined }),
+  courseMaterial: (id, decision, remarks) => api.patch(`/lms/materials/${id}/decision`, { status: decision, reason: remarks || undefined }),
 };
 
 export function ApprovalChainModal({ type, recordId, title, onClose, onChanged, children }) {

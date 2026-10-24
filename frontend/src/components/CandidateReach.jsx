@@ -130,13 +130,15 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
   }, [candidateId]);
 
   async function add(r) {
+    if (busy) return; // one application per click
     setBusy(r.id); setError('');
     try {
       await api.post('/applications', { candidateId, requirementId: r.id });
       setDone((d) => [...d, r.id]);
       if (onApplied) onApplied();
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not add to this requirement.');
+      if (e.alreadyApplied) { setDone((d) => [...d, r.id]); if (onApplied) onApplied(); } // the box says where
+      else setError(e.response?.data?.error || 'Could not add to this requirement.');
     } finally {
       setBusy('');
     }
@@ -154,7 +156,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
   const place = data.cities.length ? data.cities.join(' / ') : null;
   const sorted = [...data.rows].sort((x, y) => (y.match || 0) - (x.match || 0));
   const rows = showAll ? sorted : sorted.slice(0, 5);
-  const title = 'Jobs that fit this person';
+  const title = 'Requirements that fit this person';
 
   return (
     <div className={compact ? 'cdw-card rq-reach' : 'card section rq-reach'} id="location-requirements">
@@ -168,7 +170,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
       )}
       {place && (
         <div className="small-muted" style={{ marginBottom: 6 }}>
-          {`Open jobs in ${place}: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}
+          {`Open requirements in ${place}: ${data.total}. ${data.strong} fit 60% or more, ${data.notApplied ?? data.total} not added yet.`}
         </div>
       )}
       {error && <div className="error-text">{error}</div>}
@@ -186,7 +188,7 @@ export function LocationRequirementsPanel({ candidateId, compact = false, onAppl
                 <StatusChip tone={r.match >= 60 ? 'green' : r.match >= 50 ? 'amber' : 'grey'}>{`${r.match}% fit`}</StatusChip>
                 {applied && <span className="c360-job-added">Added ✓</span>}
                 {!applied && data.canAdd && (
-                  <button type="button" className="btn btn-sm" disabled={busy === r.id} title="Add this person to this job" onClick={() => add(r)}>
+                  <button type="button" className="btn btn-sm" disabled={busy === r.id} title="Add this person to this requirement" onClick={() => add(r)}>
                     {busy === r.id ? 'Adding…' : 'Add'}
                   </button>
                 )}

@@ -43,20 +43,20 @@ async function pickApplication(ctx, input, { question = 'Which candidate?', need
 }
 
 // Which job (requirement)? words from the spans, a code like REQ-0012, or a picked choice.
-async function pickRequirement(ctx, input, { text, question = 'Which job?' } = {}) {
+async function pickRequirement(ctx, input, { text, question = 'Which requirement?' } = {}) {
   const chosen = input.choices && input.choices.requirement;
   if (chosen) {
     const r = await entities.requirementById(ctx.user, chosen);
-    return r ? { one: r } : { ret: T.refuse('I cannot find that job in your list any more.') };
+    return r ? { one: r } : { ret: T.refuse('I cannot find that requirement in your list any more.') };
   }
   const code = (input.slots.codes || []).find((c) => /^REQ/i.test(c)) || null;
   const words = CLEAN(text !== undefined ? text : T.nameSpans(input).join(' '));
   if (!code && !words) return { ret: T.clarify(question, { need: 'requirement' }) };
   const res = await entities.findRequirements(ctx.user, words, { code });
-  if (!res.rows.length) return { ret: T.refuse(`I cannot find a job matching "${code || words}" in your list.`) };
+  if (!res.rows.length) return { ret: T.refuse(`I cannot find a requirement matching "${code || words}" in your list.`) };
   const dec = entities.decide(res);
   if (dec.one) return { one: dec.one };
-  return { ret: T.which(`I found ${res.rows.length} jobs that fit. Which one?`, res.rows, 'requirement') };
+  return { ret: T.which(`I found ${res.rows.length} requirements that fit. Which one?`, res.rows, 'requirement') };
 }
 
 async function pickClient(ctx, input, { text, purpose = 'edit', question = 'Which client?' } = {}) {

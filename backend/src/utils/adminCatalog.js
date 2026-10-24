@@ -22,7 +22,7 @@ const WA_FIELDS = {
   verifyToken: 'Webhook verify token (any text you choose)',
 };
 const SMS_FIELDS = {
-  provider: 'Provider (MSG91 / Fast2SMS / Twilio)',
+  provider: 'Provider (MSG91 / Fast2SMS / Twilio)', // the label is the stored key: do not rename; type SMSGW or SMS Push Platform to use web.smsgw.in
   sender: 'Sender ID (6 chars) / Twilio From number',
   key: 'API key / Auth token',
   sid: 'Twilio Account SID',
@@ -31,7 +31,31 @@ const SMS_FIELDS = {
   bulkTpl: 'DLT template ID — bulk / general',
   // Delivery reports: the provider calls /api/webhooks/sms/<provider>?key=<this text>.
   dlrSecret: 'Delivery-report webhook secret (any text you choose)',
+  // SMS Push Platform (web.smsgw.in) only. The password is a secret by its label; the rest are plain settings.
+  pushUrl: 'SMS Push Platform: send address (URL)',
+  pushUser: 'SMS Push Platform: API username',
+  pushPass: 'SMS Push Platform: API password',
+  pushPe: 'SMS Push Platform: DLT Principal Entity ID (PE ID)',
+  pushNames: 'SMS Push Platform: request field names (advanced, JSON)',
+  pushOk: 'SMS Push Platform: how a message id looks in the answer (advanced, pattern)',
 };
+
+// SMS through an Android phone with an SMS-gateway app on it (channels/androidSms.js). Labels are the keys the adapter reads.
+const ANDROID_FIELDS = {
+  mode: 'Where is the phone? (Local / Cloud / Custom)',
+  base: 'Phone address (Base URL)',
+  login: 'Login method (Basic or Bearer)',
+  user: 'Username',
+  pass: 'Password or token',
+  sendPath: 'Send endpoint',
+  healthPath: 'Health endpoint',
+  style: 'Gateway app (SMS Gateway for Android / Generic JSON)',
+  sim: 'SIM number (1-3, blank = phone default)',
+  bodyTpl: 'Generic JSON body (use {{to}} and {{text}})',
+  refPath: 'Generic: name of the message id in the reply',
+  hook: 'Webhook signing key or shared word',
+};
+const QR_FIELDS = { label: 'Name for this number (shown to staff)' };
 
 const INTEGRATION_CATALOG = [
   { id: 'whatsapp', name: 'WhatsApp Business', group: 'Messaging', glyph: '\u{1F4AC}',
@@ -43,14 +67,29 @@ const INTEGRATION_CATALOG = [
       [WA_FIELDS.bulkTpl, 'body {{1}} = the message'],
       [WA_FIELDS.appSecret, 'Meta app → Settings → Basic → App secret'],
       [WA_FIELDS.verifyToken, 'type any text; paste the same in Meta → Webhooks']] },
+  { id: 'whatsapp-qr', name: 'WhatsApp QR-link (prototype)', group: 'Messaging', glyph: '📲',
+    desc: 'PROTOTYPE, unofficial: link a spare WhatsApp number by scanning a QR code. Zero cost, but WhatsApp can ban the number. Set up on Integrations > WhatsApp & SMS.',
+    fields: [[QR_FIELDS.label, 'e.g. Spare number']] },
+  { id: 'sms-android', name: 'SMS via Android phone', group: 'Messaging', glyph: '📟',
+    desc: 'Your own SIM sends the SMS: an open-source SMS-gateway app on an Android phone (SMS Gateway for Android, local Wi-Fi or its cloud). Set up on Integrations > WhatsApp & SMS.',
+    fields: [[ANDROID_FIELDS.mode, 'Local'], [ANDROID_FIELDS.base, 'http://192.168.1.20:8080'], [ANDROID_FIELDS.login, 'Basic'],
+      [ANDROID_FIELDS.user, ''], [ANDROID_FIELDS.pass, ''], [ANDROID_FIELDS.sendPath, '/message'], [ANDROID_FIELDS.healthPath, '/health'],
+      [ANDROID_FIELDS.style, 'SMS Gateway for Android'], [ANDROID_FIELDS.sim, ''], [ANDROID_FIELDS.bodyTpl, '{"to":"{{to}}","text":"{{text}}"}'],
+      [ANDROID_FIELDS.refPath, 'id'], [ANDROID_FIELDS.hook, 'type any word; the same goes in the phone app']] },
   { id: 'sms', name: 'SMS Gateway', group: 'Messaging', glyph: '\u{1F4F1}',
-    desc: 'Transactional SMS (MSG91, Fast2SMS or Twilio) for signing OTPs, agreement links, interview alerts and bulk messages.',
+    desc: 'Transactional SMS (MSG91, Fast2SMS, Twilio or SMS Push Platform / web.smsgw.in) for signing OTPs, agreement links, interview alerts and bulk messages. Send, templates, history and dashboard: Integrations > SMS Push Platform.',
     fields: [[SMS_FIELDS.provider, 'MSG91'], [SMS_FIELDS.sender, 'TMLINK'], [SMS_FIELDS.key, ''],
       [SMS_FIELDS.sid, 'Twilio only (AC…)'],
       [SMS_FIELDS.linkTpl, 'vars: name, agreement no., link'],
       [SMS_FIELDS.otpTpl, 'vars: code, minutes'],
       [SMS_FIELDS.bulkTpl, 'one var: the message'],
-      [SMS_FIELDS.dlrSecret, 'type any text; use the same in the delivery-report URL of your SMS provider']] },
+      [SMS_FIELDS.dlrSecret, 'type any text; use the same in the delivery-report URL of your SMS provider'],
+      [SMS_FIELDS.pushUrl, 'https://web.smsgw.in/smsapi/httpapi.jsp'],
+      [SMS_FIELDS.pushUser, 'SMS Push Platform only'],
+      [SMS_FIELDS.pushPass, 'the API password, not the portal login password'],
+      [SMS_FIELDS.pushPe, '19 digits, from your DLT registration'],
+      [SMS_FIELDS.pushNames, 'blank = the standard names; set only if the provider document says otherwise'],
+      [SMS_FIELDS.pushOk, 'blank = the standard; set only if the provider document says otherwise']] },
   // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
   // fields were added with the sending worker: "Encryption" chooses SSL vs
   // STARTTLS (587/STARTTLS is the common case, 465/SSL the other), and the
@@ -84,25 +123,25 @@ const INTEGRATION_CATALOG = [
     fields: [['Provider (Google / Outlook)', 'Google or Outlook'], ['Client ID', ''], ['Client secret', ''], ['Default calendar', 'primary'],
       ['Refresh token (Google)', 'Google only'], ['Tenant ID (Microsoft)', 'Microsoft only'], ['Organizer email (Microsoft)', 'Microsoft only, e.g. interviews@yourcompany.com']] },
   { id: 'jobportal', name: 'TeamLink Job Portal', group: 'Job Boards', glyph: '\u{1F517}',
-    desc: 'The candidate-facing TeamLink Job Portal — syncs candidates, applications, requirements and job status.',
+    desc: 'The candidate-facing TeamLink Job Portal — syncs candidates, applications, requirements and requirement status.',
     fields: [['Portal URL / origin', 'file:// or https://'], ['Bridge key', 'tl_job_portal_state_v1'], ['Sync frequency', 'On demand']] },
   { id: 'naukri', name: 'Naukri', group: 'Job Boards', glyph: '\u{1F50D}',
     // SAVE & POST (2026-10-05) — REAL connectors (utils/jobConnectors.js,
     // utils/jobBoards/*.js). The fields are exactly what each board's approved
     // route needs; each list lives with the connector that reads it.
-    desc: 'Save & Post sends jobs to Naukri through Naukri\'s ATS integration "Amplify" (Zwayam). Naukri has no public API: buy the job-posting plan with Amplify from your Naukri account manager or amplify@zwayam.com; they give the API key, secret key and job endpoint.',
+    desc: 'Save & Post sends requirements to Naukri through Naukri\'s ATS integration "Amplify" (Zwayam). Naukri has no public API: buy the job-posting plan with Amplify from your Naukri account manager or amplify@zwayam.com; they give the API key, secret key and job endpoint.',
     fields: require('./jobBoards/partner').naukri.FIELDS }, // eslint-disable-line global-require
   { id: 'linkedin', name: 'LinkedIn Recruiter', group: 'Job Boards', glyph: '\u{1F517}',
-    desc: 'Save & Post sends jobs through LinkedIn\'s Job Posting API (approved partners only; LinkedIn is not taking new API partners right now). Ask LinkedIn Talent Solutions for partner access, then enter the company page id, app Client ID / secret, poster email and API version.',
+    desc: 'Save & Post sends requirements through LinkedIn\'s Job Posting API (approved partners only; LinkedIn is not taking new API partners right now). Ask LinkedIn Talent Solutions for partner access, then enter the company page id, app Client ID / secret, poster email and API version.',
     fields: require('./jobBoards/linkedin').FIELDS }, // eslint-disable-line global-require
   { id: 'indeed', name: 'Indeed', group: 'Job Boards', glyph: '\u{1F4CC}',
-    desc: 'Save & Post sends jobs through Indeed\'s Job Sync API. Needs an Indeed partner account: sign the Developer Agreement and apply at partners.indeed.com; the Client ID / secret are in the Indeed Partner Console.',
+    desc: 'Save & Post sends requirements through Indeed\'s Job Sync API. Needs an Indeed partner account: sign the Developer Agreement and apply at partners.indeed.com; the Client ID / secret are in the Indeed Partner Console.',
     fields: require('./jobBoards/indeed').FIELDS }, // eslint-disable-line global-require
   { id: 'shine', name: 'Shine', group: 'Job Boards', glyph: '✨',
-    desc: 'Save & Post sends jobs to Shine once Shine gives you an ATS job-posting API account (no public API: ask your Shine employer sales / account manager). Enter the API key and job endpoint they give.',
+    desc: 'Save & Post sends requirements to Shine once Shine gives you an ATS job-posting API account (no public API: ask your Shine employer sales / account manager). Enter the API key and job endpoint they give.',
     fields: require('./jobBoards/partner').shine.FIELDS }, // eslint-disable-line global-require
   { id: 'google-jobs', name: 'Google for Jobs', group: 'Job Boards', glyph: '\u{1F50E}',
-    desc: 'Jobs are in our Google Jobs (JobPosting) data at once. With a Google Cloud service account (Indexing API on, added as Owner in Search Console) TeamLink tells Google about each job and confirms when Google shows it.',
+    desc: 'Requirements are in our Google Jobs (JobPosting) data at once. With a Google Cloud service account (Indexing API on, added as Owner in Search Console) TeamLink tells Google about each requirement and confirms when Google shows it.',
     fields: require('./jobBoards/google').FIELDS }, // eslint-disable-line global-require
   { id: 'website', name: 'TeamLink Website', group: 'Job Boards', glyph: '\u{1F310}',
     desc: 'Publish openings to the careers page on tmlink.in.',
@@ -170,16 +209,17 @@ const INTEGRATION_CATALOG = [
     desc: 'Stops bots on the public careers apply form. Free Cloudflare account: Turnstile → Add site → paste the Site key and Secret key here. Not configured = honeypot + rate limit only, applies never blocked.',
     fields: [['Site key', '0x4AAAAAAA…'], ['Secret key', '']] },
   { id: 'ai-claude', name: 'AI Assistant (Anthropic Claude)', group: 'AI', glyph: '\u{1F916}',
-    desc: 'Claude for the AI Assistant and Agent (when AI_PROVIDER=claude) and the weekly-idea screener — always inside the asking user’s permissions and scope.',
+    desc: 'Claude for the AI Assistant and Agent (when AI_PROVIDER=claude), the weekly-idea screener and reading vendors’ uploaded repair bills (handwritten or printed) — always inside the asking user’s permissions and scope. The same key reads the bills: leave "Bill reading model" empty for the default.',
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
-      ['Max answer tokens', '1500'], ['Questions per user per hour', '30']] },
+      ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
+      ['Bill reading model', 'claude-opus-5-5'], ['Bill reads per vendor per day', '30']] },
 ];
 
 const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 
@@ -187,7 +227,7 @@ const INTEGRATION_STATES = ['Not Connected', 'Connected', 'Expired', 'Reconnect 
 
 // Which entities a channel reports on a Sync Now run.
 const SYNC_ENTITIES = {
-  jobportal: ['Candidates', 'Applications', 'Requirements', 'Job Status'],
+  jobportal: ['Candidates', 'Applications', 'Requirements', 'Requirement Status'],
 };
 
 // The approval & escalation chain the Organization Structure screen seeds with.
@@ -224,7 +264,17 @@ const EMP_GENDERS = ['—', 'Female', 'Male', 'Other', 'Prefer not to say'];
 // than the create form's, exactly as in the prototype.
 const EMP_MGMT_STATUS_FILTER = ['Active', 'Notice Period', 'Relieved', 'Inactive'];
 
+// EXOTEL AI CALLING (2026-10-22): a HIDDEN channel. It is not in the catalogue list above (the generic Connections list must not
+// show a second Exotel card); it has its own Administration > Integrations > "AI Calling" tab (routes/aiCalling.js, calling/*).
+// It exists here only so utils/integrationStore.js can store its secrets encrypted, like every other channel.
+const AI_CALLING_CHANNEL = {
+  id: 'exotel-ai', name: 'Exotel AI Calling', group: 'Calling', glyph: '\u{1F916}', hidden: true,
+  desc: 'AI recruitment assistant calls through Exotel (screening, shortlist notices, interview notices and reminders).',
+  fields: require('../calling/exotelConfig').FIELD_LIST, // eslint-disable-line global-require
+};
+
 function integrationById(id) {
+  if (id === AI_CALLING_CHANNEL.id) return AI_CALLING_CHANNEL;
   return INTEGRATION_CATALOG.find((c) => c.id === id) || null;
 }
 
@@ -245,4 +295,6 @@ module.exports = {
   integrationById,
   WA_FIELDS,
   SMS_FIELDS,
+  ANDROID_FIELDS,
+  QR_FIELDS,
 };

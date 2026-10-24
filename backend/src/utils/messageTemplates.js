@@ -26,8 +26,25 @@ const { logAudit } = require('./audit');
 // 'Call' is a call SCRIPT (talking points shown while phoning); it is never sent.
 const CHANNELS = ['Email', 'SMS', 'WhatsApp', 'Call'];
 const LANGUAGES = ['English', 'Telugu', 'Hindi'];
+// The three above are the LISTED languages. An Admin / HR / TL can also TYPE another one (Tamil, Kannada ...): it is
+// tidied, matched without regard to capital letters, and stored on the template as plain text.
+const LANG_MAX = 30;
+function cleanLanguage(raw) {
+  const v = String(raw == null ? '' : raw).replace(/<[^>]*>/g, ' ').replace(/[<>]/g, ' ').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, LANG_MAX).trim();
+  if (!v) return '';
+  const hit = LANGUAGES.find((l) => l.toLowerCase() === v.toLowerCase());
+  return hit || v;
+}
+// -> the language to use, or 'English' when nothing was given. A typed one is never refused.
+const languageOrEnglish = (raw) => cleanLanguage(raw) || 'English';
+// Languages already used by saved templates that are not one of the listed three (for the pickers and filter chips).
+async function extraLanguages() {
+  if (!supported()) return [];
+  const rows = await prisma.messageTemplate.findMany({ distinct: ['language'], select: { language: true } }).catch(() => []);
+  return rows.map((r) => r.language).filter((l) => l && !LANGUAGES.includes(l)).sort((a, b) => a.localeCompare(b));
+}
 const WA_STATUSES = ['None', 'Pending', 'Approved', 'Rejected'];
-const AUDIENCES = ['candidate', 'client', 'employee'];
+const AUDIENCES = ['candidate', 'client', 'employee', 'vendor'];
 const MAX_BODY = { Email: 4000, SMS: 1000, WhatsApp: 1024, Call: 2000 };
 
 // --- tokens -----------------------------------------------------------------
@@ -37,7 +54,7 @@ const TOKENS = [
   { key: 'firstName', label: 'First name', sample: 'Anita', group: 'Person', aliases: [] },
   { key: 'role', label: 'Job title', sample: 'Staff Nurse', group: 'Job', aliases: ['jobTitle', 'job'] },
   { key: 'client', label: 'Client name', sample: 'City Care Hospital', group: 'Job', aliases: ['clientName'] },
-  { key: 'jobLink', label: 'Job link', sample: 'https://tmlink.in/careers/staff-nurse', group: 'Job', aliases: [] },
+  { key: 'jobLink', label: 'Job link', sample: 'https://tmlink.in/careers/staff-nurse', group: 'Job', aliases: ['applyLink'] },
   { key: 'interviewAt', label: 'Interview date and time', sample: 'Mon, 12 Oct, 11:00 am', group: 'Interview', aliases: [] },
   { key: 'interviewDate', label: 'Interview date', sample: 'Mon, 12 Oct', group: 'Interview', aliases: [] },
   { key: 'interviewTime', label: 'Interview time', sample: '11:00 am', group: 'Interview', aliases: [] },
@@ -59,6 +76,34 @@ const TOKENS = [
   { key: 'recruiterEmail', label: 'Your email', sample: 'ravi@tmlink.in', group: 'You', aliases: [] },
   { key: 'company', label: 'Our company', sample: 'TeamLink Consultants', group: 'You', aliases: [] },
   { key: 'today', label: 'Today\'s date', sample: '9 Oct 2026', group: 'You', aliases: [] },
+  // Joining and drop (joindrop/notify.js)
+  { key: 'candidate', label: 'Candidate\'s name (the person it is about)', sample: 'Anita Rao', group: 'Joining and drop', aliases: [] },
+  { key: 'joinedOn', label: 'Day they joined', sample: '12 Oct 2026', group: 'Joining and drop', aliases: [] },
+  { key: 'joinLocation', label: 'Place they joined', sample: 'Hyderabad', group: 'Joining and drop', aliases: [] },
+  { key: 'droppedOn', label: 'Day they dropped', sample: '20 Oct 2026', group: 'Joining and drop', aliases: [] },
+  { key: 'lastDay', label: 'Last working day', sample: '19 Oct 2026', group: 'Joining and drop', aliases: [] },
+  { key: 'dropReason', label: 'Reason for the drop', sample: 'Resigned', group: 'Joining and drop', aliases: [] },
+  { key: 'dropDetails', label: 'More about the reason (a line, or nothing)', sample: 'Details: family reasons', group: 'Joining and drop', aliases: [] },
+  { key: 'withinGuarantee', label: 'Inside the replacement period?', sample: 'Inside the replacement period (day 8 of 30)', group: 'Joining and drop', aliases: [] },
+  { key: 'reportedBy', label: 'Who reported the drop', sample: 'Ravi Kumar (Recruiter)', group: 'Joining and drop', aliases: [] },
+  { key: 'decision', label: 'The client\'s replacement decision', sample: 'We need a replacement', group: 'Joining and drop', aliases: [] },
+  { key: 'decisionNote', label: 'The client\'s comment', sample: 'Same skills please', group: 'Joining and drop', aliases: [] },
+  { key: 'expectedOn', label: 'Replacement expected by', sample: '5 Nov 2026', group: 'Joining and drop', aliases: [] },
+  { key: 'openLink', label: 'Link to open the record (a line, or nothing)', sample: 'Open it in TeamLink: https://tmlink.in/ats/joining', group: 'Joining and drop', aliases: [] },
+  // Vendor Portal emails (utils/vendorMail.js): welcome + set password, password reset, new email address
+  { key: 'vendorCompany', label: 'Vendor company', sample: 'Sri Lakshmi Services', group: 'Vendor', aliases: [] },
+  { key: 'loginId', label: 'Login ID (their email)', sample: 'accounts@srilakshmi.example', group: 'Vendor', aliases: [] },
+  { key: 'portalUrl', label: 'Vendor Portal address', sample: 'https://tmlink.in/vendor-login', group: 'Vendor', aliases: [] },
+  { key: 'tempPassword', label: 'Temporary password (only in the welcome email)', sample: 'Kd7#mQ4xTz9b', group: 'Vendor', aliases: [] },
+  { key: 'attemptNo', label: 'Invitation number (1, 2, 3 ...)', sample: '2', group: 'Vendor', aliases: [] },
+  { key: 'sentAt', label: 'When this email was sent', sample: '22 Oct 2026, 4:30 pm IST', group: 'Vendor', aliases: [] },
+  { key: 'setupLink', label: 'Secure link (works once)', sample: 'https://tmlink.in/vendor-login?invite=...', group: 'Vendor', aliases: [] },
+  { key: 'expiresOn', label: 'Link stops working on', sample: '22 Oct 2026, 4:30 pm', group: 'Vendor', aliases: [] },
+  { key: 'expiryText', label: 'How long the link lasts', sample: '3 days', group: 'Vendor', aliases: [] },
+  { key: 'supportLine', label: 'Who to contact for help', sample: 'Email accounts@tmlink.in or call +91 98765 43210', group: 'Vendor', aliases: [] },
+  { key: 'supportEmail', label: 'Support email', sample: 'accounts@tmlink.in', group: 'Vendor', aliases: [] },
+  { key: 'supportPhone', label: 'Support phone', sample: '+91 98765 43210', group: 'Vendor', aliases: [] },
+  { key: 'newEmail', label: 'New email address', sample: 'new.accounts@srilakshmi.example', group: 'Vendor', aliases: [] },
 ];
 const CANON = {};
 TOKENS.forEach((t) => { CANON[t.key] = t.key; t.aliases.forEach((a) => { CANON[a] = t.key; }); });
@@ -127,6 +172,7 @@ const rolesOf = (u) => [u && u.role, u && u.hrmsRole, u && u.atsRole].filter(Boo
 const EDIT_ROLES = ['SUPER_ADMIN', 'ADMIN', 'HR', 'TL'];
 const VIEW_ROLES = [...EDIT_ROLES, 'MANAGER', 'ASSISTANT_MANAGER', 'STL'];
 const ADMIN_ROLES = ['SUPER_ADMIN', 'ADMIN'];
+const VENDOR_ADMIN_ONLY = 'Only an Admin can change the emails that go to vendors.';
 const external = (u) => rolesOf(u).some((r) => ['CLIENT', 'CANDIDATE'].includes(r));
 const canEdit = (u) => !!u && !u.viewAs && !external(u) && rolesOf(u).some((r) => EDIT_ROLES.includes(r));
 const canView = (u) => !!u && !external(u) && rolesOf(u).some((r) => VIEW_ROLES.includes(r));
@@ -195,6 +241,19 @@ async function ensureDefaults() {
       });
       n += 1;
     }
+    // The vendor emails (utils/vendorMessageDefaults.js): a built-in nobody has edited yet (still version 1) follows the current starter wording,
+    // so a wording fix (for example the temporary password line) reaches the saved copy. An edited template (version 2 and up) is never touched.
+    for (const d of defaults.filter((x) => x.audience === 'vendor')) {
+      // eslint-disable-next-line no-await-in-loop
+      const row = await prisma.messageTemplate.findFirst({ where: { builtIn: true, purpose: d.purpose, channel: d.channel, language: d.language } });
+      if (row && row.version === 1 && (row.body !== d.body || row.subject !== d.subject)) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.messageTemplate.update({ where: { id: row.id }, data: { body: d.body, subject: d.subject } });
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.messageTemplateVersion.updateMany({ where: { templateId: row.id, version: 1 }, data: { body: d.body, subject: d.subject } });
+        n += 1;
+      }
+    }
     return { seeded: n, supported: true };
   })().catch((err) => { seeded = null; console.error('[message-templates] seed:', err.message); return { seeded: 0, error: err.message }; });
   return seeded;
@@ -234,7 +293,7 @@ async function list({ channel, purpose, language, audience, activeOnly, q } = {}
   const where = {};
   if (CHANNELS.includes(channel)) where.channel = channel;
   if (purpose) where.purpose = purpose;
-  if (LANGUAGES.includes(language)) where.language = language;
+  if (language && cleanLanguage(language)) where.language = cleanLanguage(language);
   if (AUDIENCES.includes(audience)) where.audience = audience;
   if (activeOnly) where.active = true;
   const rows = await prisma.messageTemplate.findMany({ where, orderBy: [{ purposeLabel: 'asc' }, { channel: 'asc' }, { language: 'asc' }, { createdAt: 'asc' }] });
@@ -269,8 +328,13 @@ async function purposes({ audience } = {}) {
 }
 
 // --- validate + write --------------------------------------------------------
-function problemsIn(input, channel) {
+// An email that cannot work without one detail: a vendor email with no secure link would leave the vendor stuck.
+const REQUIRED_TOKENS = { VENDOR_WELCOME: ['setupLink', 'tempPassword'], VENDOR_PASSWORD_RESET: ['setupLink'], VENDOR_EMAIL_VERIFY: ['setupLink'] };
+function problemsIn(input, channel, purpose) {
   const errs = [];
+  (REQUIRED_TOKENS[purpose] || []).forEach((k) => {
+    if (!tokensIn(`${input.body || ''}`).includes(k)) errs.push(`This email must keep the {{${k}}} detail. Without it the vendor cannot open the secure link.`);
+  });
   const body = String(input.body == null ? '' : input.body).trim();
   if (!body) errs.push('Write the message.');
   if (body.length > MAX_BODY[channel]) errs.push(`The message is too long for ${channel} (${body.length} of ${MAX_BODY[channel]} letters).`);
@@ -284,19 +348,29 @@ const slug = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, '_').re
 async function create(user, input) {
   const channel = CHANNELS.includes(input.channel) ? input.channel : null;
   if (!channel) return { error: 'Choose Email, SMS or WhatsApp.', status: 400 };
-  const language = LANGUAGES.includes(input.language) ? input.language : 'English';
+  let language = languageOrEnglish(input.language);
+  if (!LANGUAGES.includes(language)) {
+    // A typed language: reuse the spelling an earlier template already has ("tamil" -> "Tamil"), else keep what was typed.
+    const known = await extraLanguages();
+    language = known.find((l) => l.toLowerCase() === language.toLowerCase()) || language;
+  }
   const audience = AUDIENCES.includes(input.audience) ? input.audience : 'candidate';
   let purpose = String(input.purpose || '').trim();
   let label = String(input.purposeLabel || '').trim();
   if (!purpose || purpose === 'CUSTOM') {
     if (!label) return { error: 'Give this message a purpose name (for example "Salary discussion").', status: 400 };
     purpose = `CUSTOM_${slug(label)}`;
+    if (purpose === 'CUSTOM_') return { error: 'Give this message a purpose name (for example "Salary discussion").', status: 400 };
+    // The same name typed again (any capitals) joins the purpose that already has it and keeps its spelling.
+    const same = await prisma.messageTemplate.findFirst({ where: { purpose } });
+    if (same) label = same.purposeLabel;
   } else if (!label) {
     const existing = await prisma.messageTemplate.findFirst({ where: { purpose } });
     label = existing ? existing.purposeLabel : purpose;
   }
-  const errs = problemsIn(input, channel);
+  const errs = problemsIn(input, channel, purpose);
   if (errs.length) return { error: errs.join(' '), status: 400 };
+  if (audience === 'vendor' && !isAdmin(user)) return { error: VENDOR_ADMIN_ONLY, status: 403 };
   const name = String(input.name || label).trim().slice(0, 120);
   const admin = isAdmin(user);
   const sameSlot = await prisma.messageTemplate.count({ where: { purpose, channel, language, active: true } });
@@ -332,6 +406,7 @@ const ADMIN_ONLY = ['waTemplateName', 'waLanguageCode', 'waStatus', 'dltTemplate
 async function update(user, id, input) {
   const row = await prisma.messageTemplate.findUnique({ where: { id } });
   if (!row) return { error: 'No such template.', status: 404 };
+  if (row.audience === 'vendor' && !isAdmin(user)) return { error: VENDOR_ADMIN_ONLY, status: 403 };
   const cur = shape(row);
   const next = { ...cur };
   const changed = [];
@@ -349,7 +424,7 @@ async function update(user, id, input) {
     if (k === 'waStatus' && !WA_STATUSES.includes(v)) return { error: 'WhatsApp status must be Pending, Approved or Rejected.', status: 400 };
     if (JSON.stringify(v) !== JSON.stringify(cur[k])) { next[k] = v; changed.push(k); }
   }
-  const errs = problemsIn(next, row.channel);
+  const errs = problemsIn(next, row.channel, row.purpose);
   if (errs.length) return { error: errs.join(' '), status: 400 };
   let makeDefault = false;
   if (input.isDefault === true && !cur.isDefault) { makeDefault = true; changed.push('isDefault'); }
@@ -397,6 +472,7 @@ async function restore(user, id, version) {
 async function remove(user, id) {
   const row = await prisma.messageTemplate.findUnique({ where: { id } });
   if (!row) return { error: 'No such template.', status: 404 };
+  if (row.audience === 'vendor' && !isAdmin(user)) return { error: VENDOR_ADMIN_ONLY, status: 403 };
   if (row.builtIn) return { error: 'The built-in wording cannot be deleted. Switch it off instead.', status: 409 };
   await prisma.messageTemplate.delete({ where: { id } });
   await logAudit({ userId: user.id, actorName: user.name, action: 'Message template deleted', entity: 'MessageTemplate', entityId: id, fromValue: `${row.purposeLabel} · ${row.channel} · ${row.language}` });
@@ -404,7 +480,7 @@ async function remove(user, id) {
 }
 
 module.exports = {
-  CHANNELS, LANGUAGES, WA_STATUSES, AUDIENCES, TOKENS, SAMPLE, MAX_BODY,
+  CHANNELS, LANGUAGES, cleanLanguage, languageOrEnglish, extraLanguages, WA_STATUSES, AUDIENCES, TOKENS, SAMPLE, MAX_BODY,
   canonOf, tokensIn, unknownTokens, render, smsInfo, waVarList,
   canEdit, canView, isAdmin, supported, ensureDefaults, resolve, list, get, purposes, create, update, restore, remove, problemsIn,
 };

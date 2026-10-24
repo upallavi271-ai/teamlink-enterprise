@@ -28,7 +28,13 @@ function strengthError(password, { email, name } = {}) {
   if (local && local.length >= 4 && lower.includes(local)) return 'Do not use your email address in the password.';
   const first = String(name || '').trim().split(/\s+/)[0].toLowerCase();
   if (first && first.length >= 4 && lower.includes(first)) return 'Do not use your name in the password.';
-  if (['password', 'password1', 'password123', '12345678', 'qwerty123', 'teamlink1', 'welcome1', 'admin123'].includes(lower)) {
+  if ([
+    'password', 'password1', 'password123', '12345678', 'qwerty123', 'teamlink1', 'welcome1', 'admin123',
+    // added with the forgot-password flow (2026-10-12): the usual first guesses
+    'password12', 'password1234', 'password@123', 'passw0rd123', 'welcome123', 'welcome@123', 'teamlink123', 'teamlink@123',
+    'teamlink12', 'admin@123', 'admin1234', 'abc12345', 'abcd1234', 'qwerty12345', 'qwerty1234', 'letmein123', 'changeme1',
+    'changeme123', 'iloveyou1', 'india1234', 'india@123', 'hyderabad1', 'hyderabad123', '123456789a', 'a1234567', 'test1234',
+  ].includes(lower)) {
     return 'That password is too common.';
   }
   return null;

@@ -18,6 +18,7 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { can } from '../../permissions';
 import './late-permission.css';
+import Combo from '../../components/Combo.jsx';
 
 const pad = (n) => String(n).padStart(2, '0');
 const ymd = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -31,6 +32,9 @@ const SAY = { Pending: 'Waiting for approval', Approved: 'Approved', Rejected: '
 // ---------------------------------------------------------------------------
 // The popup: "Tell why I was late" (kind Explain) or "I will be late" (kind Advance).
 // ---------------------------------------------------------------------------
+// People who no longer work here are never offered in a picker (the server refuses them too).
+const LEFT_STATUS = ['Exited', 'Relieved', 'Terminated', 'Inactive', 'Exit Process', 'Suspended'];
+
 export function TellWhyDialog({ date: dateIn, kind = 'Explain', employeeId = '', employeeName = '', onClose, onDone }) {
   const [date, setDate] = useState(dateIn || todayStr());
   const [settings, setSettings] = useState({ pastDays: 7, reasons: [] });
@@ -140,6 +144,8 @@ export default function LateComing({ isHR = false, canDecide = false }) {
   const [myLate, setMyLate] = useState(null); // my late days that nobody has been told about
   const [dialog, setDialog] = useState(null); // { date, kind, employeeId, employeeName }
   const [people, setPeople] = useState([]);
+  const [peopleDepts, setPeopleDepts] = useState([]); // departments of the people you can pick, with counts (working people only)
+  const [pickDept, setPickDept] = useState('');
   const [forPerson, setForPerson] = useState({ employeeId: '', date: todayStr() });
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
@@ -163,7 +169,13 @@ export default function LateComing({ isHR = false, canDecide = false }) {
     api.get('/late-permissions/settings').then((r) => { setSettings(r.data); loadMine(r.data.pastDays); }).catch(() => loadMine(7));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  useEffect(() => { if (isHR && canDecide) api.get('/employees').then((r) => setPeople(r.data || [])).catch(() => setPeople([])); }, [isHR, canDecide]);
+  // Only people who still work here (server side: Exited / Relieved / Terminated / Inactive / Exit Process and switched-off logins never appear), narrowed by department.
+  useEffect(() => {
+    if (!(isHR && canDecide)) return;
+    api.get('/late-permissions/people', { params: pickDept ? { department: pickDept } : {} })
+      .then((r) => { setPeople(r.data.people || []); setPeopleDepts(r.data.departments || []); })
+      .catch(() => { setPeople([]); setPeopleDepts([]); });
+  }, [isHR, canDecide, pickDept]);
 
   const afterSend = () => { load(); loadMine(); };
 
@@ -206,7 +218,7 @@ export default function LateComing({ isHR = false, canDecide = false }) {
   const rows = list || [];
   const f = filters;
   const deptOpts = useMemo(() => facetOptions(rows, f, 'department', (r) => r.employee?.department || ''), [rows, f]);
-  const empOpts = useMemo(() => facetOptions(rows, f, 'employeeId', (r) => r.employeeId, (r) => `${r.employee?.name || ''} (${r.employee?.employeeCode || ''})`), [rows, f]);
+  const empOpts = useMemo(() => facetOptions(rows.filter((r) => !LEFT_STATUS.includes(r.employee?.employmentStatus)), f, 'employeeId', (r) => r.employeeId, (r) => `${r.employee?.name || ''} (${r.employee?.employeeCode || ''})`), [rows, f]);
   const statusOpts = useMemo(() => facetOptions(rows, f, 'status', (r) => r.status), [rows, f]);
   const shown = rows.filter((r) => Object.keys(f).every((k) => !f[k] || matchOne(r, k, f[k])));
   const page = usePaged(shown, 25);
@@ -244,10 +256,16 @@ export default function LateComing({ isHR = false, canDecide = false }) {
           <div className="lp-onbehalf">
             <b>Add for somebody</b> <span className="small-muted">(HR, or a TL for their own team) — it says it was asked by you</span>
             <div className="lp-onbehalf-row">
-              <select value={forPerson.employeeId} onChange={(e) => setForPerson({ ...forPerson, employeeId: e.target.value })} aria-label="Person">
-                <option value="">Pick the person</option>
+              {peopleDepts.length > 1 && (
+                <Combo value={pickDept} onChange={(e) => { setPickDept(e.target.value); setForPerson({ ...forPerson, employeeId: '' }); }} aria-label="Department of the person">
+                  <option value="">All departments</option>
+                  {peopleDepts.map((d) => <option key={d.name} value={d.name}>{d.name} ({d.count})</option>)}
+                </Combo>
+              )}
+              <Combo value={forPerson.employeeId} onChange={(e) => setForPerson({ ...forPerson, employeeId: e.target.value })} aria-label="Person">
+                <option value="">{people.length ? 'Pick the person' : 'No active employees match'}</option>
                 {people.filter((p) => p.userId !== user?.id).map((p) => <option key={p.id} value={p.id}>{p.name} ({p.employeeCode})</option>)}
-              </select>
+              </Combo>
               <input type="date" value={forPerson.date} max={todayStr()} onChange={(e) => setForPerson({ ...forPerson, date: e.target.value })} aria-label="Day" />
               <button type="button" className="btn btn-sm" disabled={!forPerson.employeeId} onClick={() => setDialog({ date: forPerson.date, kind: 'Explain', employeeId: forPerson.employeeId, employeeName: (people.find((p) => p.id === forPerson.employeeId) || {}).name })}>Add</button>
             </div>
@@ -279,20 +297,20 @@ export default function LateComing({ isHR = false, canDecide = false }) {
         <div className="lp-filters">
           {seesOthers && (
             <>
-              <select value={f.department} onChange={(e) => setF('department', e.target.value)} aria-label="Department">
+              <Combo value={f.department} onChange={(e) => setF('department', e.target.value)} aria-label="Department">
                 <option value="">All departments</option>
                 {deptOpts.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-              </select>
-              <select value={f.employeeId} onChange={(e) => setF('employeeId', e.target.value)} aria-label="Person">
+              </Combo>
+              <Combo value={f.employeeId} onChange={(e) => setF('employeeId', e.target.value)} aria-label="Person">
                 <option value="">All people</option>
                 {empOpts.map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
-              </select>
+              </Combo>
             </>
           )}
-          <select value={f.status} onChange={(e) => setF('status', e.target.value)} aria-label="Status">
+          <Combo value={f.status} onChange={(e) => setF('status', e.target.value)} aria-label="Status">
             <option value="">Any status</option>
             {statusOpts.map((o) => <option key={o.value} value={o.value}>{SAY[o.value] || o.value} ({o.count})</option>)}
-          </select>
+          </Combo>
           <label className="small-muted">From <input type="date" value={f.from} onChange={(e) => setF('from', e.target.value)} /></label>
           <label className="small-muted">To <input type="date" value={f.to} onChange={(e) => setF('to', e.target.value)} /></label>
           {anyFilter && <button type="button" className="btn btn-sm" onClick={() => setFilters({ department: '', employeeId: '', status: '', from: '', to: '' })}>Clear</button>}

@@ -162,13 +162,12 @@ export default function AddVendorModal({
       <div className="modal oe-vm" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dlgRef} onKeyDown={onKeyDown}>
         <div className="modal-head">
           <h3 id={titleId} style={{ fontSize: 15 }}>Add Vendor</h3>
-          <div className="cell-muted" style={{ fontSize: 11.5, marginLeft: 'auto', marginRight: 10 }}>Fields marked * are required</div>
-          <button type="button" className="close-x" onClick={close} aria-label="Close" disabled={busy}>×</button>
+                    <button type="button" className="close-x" onClick={close} aria-label="Close" disabled={busy}>×</button>
         </div>
         <div className="modal-body">
           <form ref={formRef} id={`${titleId}-form`} className="oe-vm-grid" onSubmit={save} noValidate>
             <div {...fieldProps('name')}>
-              <label htmlFor={`${titleId}-name`}><span>Vendor name *</span></label>
+              <label htmlFor={`${titleId}-name`}><span>Vendor name</span></label>
               <input {...inputProps('name')} maxLength={120} autoComplete="organization" placeholder="e.g. Sri Sai Stationers" />
               <Err k="name" />
             </div>

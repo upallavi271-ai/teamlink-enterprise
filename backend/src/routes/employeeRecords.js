@@ -260,8 +260,18 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
     const reach = await reachable(req, req.params.id);
     if (reach.error === 404) return res.status(404).json({ error: 'Record not found' });
     if (reach.error) return res.status(403).json(OUT_OF_SCOPE);
+    // ASSET COMPLAINTS (2026-10-19, utils/assetComplaints.js): a "Report a problem" ticket can be Approved / Rejected / set back to Open and nobody
+    // decides their own; an approved REPAIR complaint becomes a repair job for the assets vendor. A plain asset REQUEST is untouched.
+    if (type === 'ASSET') {
+      const stop = await require('../utils/assetComplaints').gate(reach.record, req.user, status); // eslint-disable-line global-require
+      if (stop) return res.status(stop.status).json({ error: stop.error });
+    }
     const record = await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { status } });
     await logAudit({ userId: req.user.id, action: `${type} status changed`, entity: 'EmployeeRecord', entityId: record.id, toValue: status });
+    if (type === 'ASSET') {
+      // The status is saved; a failure here is logged and the lazy catch-up (assetComplaints.reconcile) finishes the repair on the vendor's next read.
+      try { await require('../utils/assetComplaints').onStatusChange(record, req.user); } catch (err) { console.error('[asset-complaints] follow-up:', err && err.message); } // eslint-disable-line global-require, no-console
+    }
     res.json(record);
   });
 

@@ -24,3 +24,5 @@
 .savedviews-form { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
 .savedviews-form input { flex: 1; min-width: 0; height: 28px; }
 .savedviews-msg { font-size: 11.5px; color: var(--ink-soft); margin-top: 6px; }
+
+.savedviews-menu input.savedviews-find { width: 100%; box-sizing: border-box; font: inherit; font-size: 13px; padding: 6px 10px; margin: 0 0 4px; border: 1px solid var(--line, #d6dbe6); border-radius: 8px; }

@@ -272,6 +272,30 @@ async function monthApplications(month, { fresh = false } = {}) {
     }
     apps.push(row);
   });
+  // JOINING & DROP (2026-10-17): READ ONLY. A candidate who dropped after joining is shown as a note on the row, and one that dropped AFTER the
+  // recruiter's incentive was decided is flagged for HR. Nothing here changes `counted`, the joining day or any past decision: the count above is the
+  // only source of truth for incentives.
+  try {
+    const S = require('../joindrop/schema'); // eslint-disable-line global-require
+    if (apps.length && (await S.ensure())) {
+      const ids = apps.map((a) => a.id);
+      const byApp = new Map();
+      for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        // eslint-disable-next-line no-await-in-loop
+        const got = await S.rows(`SELECT "applicationId","status","droppedOn","dropReason","dropWithinGuarantee","dropAfterIncentive" FROM "JoiningRecord" WHERE "applicationId" IN (${chunk.map(() => '?').join(',')})`, ...chunk);
+        got.forEach((g) => byApp.set(g.applicationId, g));
+      }
+      apps.forEach((r) => {
+        const d = byApp.get(r.id);
+        if (!d || d.status !== 'Dropped') return;
+        r.drop = { droppedOn: d.droppedOn, reason: d.dropReason, withinGuarantee: d.dropWithinGuarantee === 1, afterIncentive: d.dropAfterIncentive === 1 };
+        const note = `Dropped after joining${d.droppedOn ? ` on ${d.droppedOn}` : ''}${d.dropReason ? ` (${d.dropReason})` : ''}. Still counted here: a drop does not change a past count or incentive.${d.dropAfterIncentive === 1 ? ' An incentive was already decided for this month: HR to review.' : ''}`;
+        r.note = r.note ? `${r.note} ${note}` : note;
+        r.tone = 'orange';
+      });
+    }
+  } catch { /* the note is a bonus: the count never depends on it */ }
   const value = { month, apps, undated, dir };
   CACHE.set(month, { at: Date.now(), value });
   return value;
@@ -398,7 +422,7 @@ async function monthBoard(month, { fresh = false } = {}) {
     rule: {
       counted: 'Counted: the candidate\'s step is Joined and the joining date is in this month — whether they are still inside the client\'s guarantee period or past it.',
       notCounted: 'Not counted: people who had a joining date this month but did not join, declined, left after joining, or are still waiting to join.',
-      credit: 'Each joining is credited to the recruiter the ATS reports credit it to (the follow-up owner, else the job\'s recruiter).',
+      credit: 'Each joining is credited to the recruiter the ATS reports credit it to (the follow-up owner, else the requirement\'s recruiter).',
     },
     rows,
     skipped,

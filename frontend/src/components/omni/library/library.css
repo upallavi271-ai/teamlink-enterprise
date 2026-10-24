@@ -1,0 +1,28 @@
+/* Shared template library, campaigns from apps, review, connections (all under .gsx, or inside a window of an app screen) */
+.gsx .lib-filters{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.gsx .lib-filters > *{flex:0 1 220px;min-width:150px;max-width:240px;width:auto}
+.gsx .lib-sub{font-size:10px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+.gsx .lib-chips{display:flex;gap:4px;flex-wrap:wrap}
+.gsx .lib-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);background:#fff;border-radius:999px;padding:2px 8px;font-size:10px;font-weight:700;color:#5c6b62}
+.gsx .lib-chip.on{background:var(--green-3);border-color:#cdebd7;color:var(--green-2)}
+.gsx .lib-actions{display:flex;gap:6px;align-items:center;flex-wrap:nowrap;white-space:nowrap}
+.gsx .lib-box{border:1px solid var(--line);background:#fafcfb;border-radius:10px;padding:10px 12px;margin:8px 0;font-size:11px}
+.gsx .lib-body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.55}
+.gsx .lib-row{margin:8px 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px}
+.gsx .lib-sec{margin-top:14px;font-size:11px}
+.gsx .lib-sec > b{display:inline-block;margin-bottom:4px}
+.gsx .lib-checks{display:flex;gap:14px;flex-wrap:wrap;margin:6px 0}
+.gsx .lib-checks label{display:flex;gap:5px;align-items:center}
+.gsx .lib-inline{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.gsx .lib-inline .input{min-width:220px;flex:1}
+.gsx .lib-ul{margin:4px 0 0;padding-left:18px;line-height:1.7}
+.gsx .lib-versions td,.gsx .lib-versions th{font-size:10.5px;vertical-align:top}
+.gsx .lib-ver-body{white-space:pre-wrap;overflow-wrap:anywhere;max-width:380px}
+.gsx .lib-switches{display:flex;flex-direction:column;gap:6px;margin:8px 0 12px;font-size:11px}
+.gsx .lib-switches label{display:flex;gap:10px;align-items:center}
+.gsx .lib-embedded .page-head{display:none}
+.gsx .conn-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin:12px 0}
+.gsx .conn-card{padding:14px}
+.gsx .conn-card h3{margin:0 0 6px;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.gsx .conn-card p{margin:6px 0;font-size:11px;line-height:1.55}
+.gsx .rev-reply{background:#f6faf7;border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:11.5px;white-space:pre-wrap;overflow-wrap:anywhere;margin:6px 0}

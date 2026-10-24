@@ -228,11 +228,12 @@ let SNAP = {
   fuActivity: new Map(), // appId -> latest follow-up contact / created date (ms)
   appDates: new Map(), // live appId -> { createdAt, updatedAt, interviewAt, joiningDate }
   bulkDays: new Set(), // IST days of bulk imports
+  tracks: new Map(), // appId -> client-hiring record (offer / joining letter steps)
 };
 let inflight = null;
 
 async function stampNow() {
-  const [ev, fu, notes, msgs, fb, aud, users, apps] = await Promise.all([
+  const [ev, fu, notes, msgs, fb, aud, users, apps, ct] = await Promise.all([
     prisma.applicationStageEvent.aggregate({ _count: { _all: true }, _max: { createdAt: true } }),
     prisma.applicationFollowUp.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
     prisma.candidateNote.aggregate({ _count: { _all: true }, _max: { createdAt: true } }),
@@ -243,12 +244,14 @@ async function stampNow() {
     // The applications' own dates (interview / joining date, created) feed
     // the default due date.
     prisma.application.aggregate({ _count: { _all: true }, _max: { updatedAt: true } }),
+    // Client hiring (utils/clientTrack.js): the offer / joining letter steps change who owes what.
+    prisma.appSetting.aggregate({ where: { key: { startsWith: 'client-track:' } }, _count: { _all: true }, _max: { updatedAt: true } }),
   ]);
   const t = (d) => (d ? new Date(d).getTime() : 0);
   const people = users.map((u) => `${u.status}:${u._count._all}`).sort().join(',');
   return [ev._count._all, t(ev._max.createdAt), fu._count._all, t(fu._max.updatedAt), notes._count._all, t(notes._max.createdAt),
     msgs._count._all, t(msgs._max.createdAt), fb._count._all, t(fb._max.updatedAt), aud._count._all, t(aud._max.createdAt), people,
-    apps._count._all, t(apps._max.updatedAt)].join('|');
+    apps._count._all, t(apps._max.updatedAt), ct._count._all, t(ct._max.updatedAt)].join('|');
 }
 
 const CONTACT_AUDIT = /^(Called|Call |WhatsApp|Email|SMS|Follow-up|Note|Bulk )/i;
@@ -367,7 +370,9 @@ async function build(stamp, t0 = Date.now()) {
     const ms = new Date(a.createdAt).getTime();
     if (a.entity === 'Application') bump(lastAction, a.entityId, ms); else bump(candAction, a.entityId, ms);
   });
+  const tracks = await require('./clientTrack').loadAll().catch(() => new Map()); // eslint-disable-line global-require
   SNAP = {
+    tracks,
     builtAt: t0, loaded: true, stamp, checkedAt: Date.now(),
     entries, lastAction, candAction, openFu, clientFeedback: new Set(fbs.map((f) => f.applicationId)),
     activeUsers, nameToId, anyEntries, fuActivity, appDates, bulkDays,
@@ -507,6 +512,13 @@ function clientOwnerUserId(client) {
   const owner = client && client.bdeOwner;
   return owner ? SNAP.nameToId.get(normName(owner)) || null : null;
 }
+// The BDE of a client-hiring step: the job's BDE or the client's Owner BDE - never the recruiter as a stand-in.
+function bdeOnly(r, snap) {
+  if (!r) return { id: null, name: null, source: null };
+  if (r.bdeId) return { id: r.bdeId, name: (r.bde && r.bde.name) || snap.activeUsers.get(r.bdeId) || null, source: 'assigned' };
+  const co = clientOwnerId(r, snap);
+  return co ? { id: co, name: r.client.bdeOwner, source: 'client owner' } : { id: null, name: null, source: null };
+}
 function namedOwner(role, r, snap) {
   if (!r) return { id: null, name: null, source: null };
   const rec = { id: r.recruiterId || String(r.recruiterIds || '').split(',').filter(Boolean)[0] || null, name: (r.recruiter && r.recruiter.name) || null };
@@ -523,16 +535,53 @@ function namedOwner(role, r, snap) {
   return { id: null, name: null, source: null };
 }
 
+// CLIENT HIRING (user, 2026-10-13): on a CLIENT job the client makes the offer and joining letters, so the
+// recruiter is never asked to "Prepare / Send Offer". What is owed, per step (utils/clientTrack.js):
+//   Selected, no letter yet ........ BDE: chase the client (a WAITING state for everyone else)
+//   Selected, client released it ... Recruiter: share the offer with the candidate (due the same day)
+//   Offer shared ................... Recruiter: follow up on the answer
+//   Accepted ....................... BDE: confirm the acceptance with the client / chase the joining letter
+//   Joining letter released ........ Recruiter: share it (due the same day); shared: follow up the confirmation
+// null = not a client-hiring step: the ordinary chain applies (internal hiring, older records).
+function clientTrackStep(app, stage, snap) {
+  if (!['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(stage)) return null;
+  const t = snap.tracks && snap.tracks.get(app.id);
+  const o = t && t.offer;
+  const j = t && t.joining;
+  const dayOf = (iso) => (iso ? istDay(new Date(iso).getTime()) : null);
+  const chaseOffer = { action: 'Chase the client for the offer letter', ownerRole: 'BDE', waitingOn: 'Client' };
+  if (stage === 'SELECTED') {
+    if (o && o.state === 'RELEASED') return { action: 'Share the offer with the candidate', ownerRole: 'Recruiter', dueAt: dayOf(o.releasedAt), dueSource: 'client-release' };
+    return chaseOffer;
+  }
+  if (stage === 'OFFER') {
+    if (o && o.state === 'RELEASED') return { action: 'Share the offer with the candidate', ownerRole: 'Recruiter', dueAt: dayOf(o.releasedAt), dueSource: 'client-release' };
+    if (o && o.state === 'DECLINED') return chaseOffer;
+    if (o && o.state === 'SHARED') return { action: 'Follow up on the offer answer', ownerRole: 'Recruiter' };
+    return null;
+  }
+  if (j && j.state === 'RELEASED') return { action: 'Share the joining letter with the candidate', ownerRole: 'Recruiter', dueAt: dayOf(j.releasedAt), dueSource: 'client-release' };
+  if (j && j.state === 'SHARED') return { action: 'Follow up: candidate to confirm joining', ownerRole: 'Recruiter' };
+  if (j && j.state === 'CONFIRMED') return null;
+  if (o && o.state === 'ACCEPTED') return { action: 'Confirm acceptance and send the joining letter', ownerRole: 'BDE', waitingOn: 'Client' };
+  if (o && o.state === 'ACKNOWLEDGED') return { action: 'Chase the client for the joining letter', ownerRole: 'BDE', waitingOn: 'Client' };
+  return null;
+}
+
 function nextActionFor(app, ctx = {}) {
   const snap = ctx.snapshot || SNAP;
   const today = ctx.today || todayIst();
   const stage = app && app.stage;
   const internal = isInternal(app);
-  const [action, ownerRole, waitingOn] = (internal ? INTERNAL_CHAIN[stage] || CLIENT_CHAIN[stage] : CLIENT_CHAIN[stage]) || ['—', '—'];
+  let [action, ownerRole, waitingOn] = (internal ? INTERNAL_CHAIN[stage] || CLIENT_CHAIN[stage] : CLIENT_CHAIN[stage]) || ['—', '—'];
   const live = !!stage && !CLOSED_STAGES.includes(stage);
+  // Client hiring: the client's letters decide who owes what (never a recruiter 'Prepare / Send Offer' on a client job).
+  const ov = !internal && app && app.id ? clientTrackStep(app, stage, snap) : null;
+  if (ov) { action = ov.action; ownerRole = ov.ownerRole; waitingOn = ov.waitingOn || null; } else if (!internal && stage === 'SELECTED') { action = 'Chase the client for the offer letter'; ownerRole = 'BDE'; waitingOn = 'Client'; }
   const r = app && app.requirement;
   const fu = ctx.followUp !== undefined ? ctx.followUp : (app && app.id ? snap.openFu.get(app.id) || null : null);
-  const openFu = fu && !fu.completedAt ? fu : null;
+  // A follow-up the SYSTEM made for the old 'prepare the offer' flow does not override a client-hiring step.
+  const openFu = fu && !fu.completedAt && !(ov && fu.autoCreated) ? fu : null;
   const enteredMs = stageEnteredAt(app, snap);
   const est = live ? entryEstimate(app, snap) : { ms: enteredMs, estimated: false, source: null };
   let dueAt = null;
@@ -564,6 +613,7 @@ function nextActionFor(app, ctx = {}) {
       } else if (Number.isFinite(rule) && est.ms) { dueAt = addDays(from(est.ms), rule); dueSource = 'stage-sla'; }
     }
   }
+  if (live && ov && ov.dueAt && !(openFu && openFu.dueDate)) { dueAt = ov.dueAt; dueSource = ov.dueSource || 'stage-sla'; }
   let dueStatus = 'closed';
   let staleDays = null;
   if (live) {
@@ -590,7 +640,7 @@ function nextActionFor(app, ctx = {}) {
     if (openFu && openFu.ownerUserId) {
       ownerUserId = openFu.ownerUserId; ownerName = openFu.ownerName || snap.activeUsers.get(openFu.ownerUserId) || null; ownerSource = 'follow-up';
     } else {
-      const named = namedOwner(ownerRole, r, snap);
+      const named = ov && ownerRole === 'BDE' ? bdeOnly(r, snap) : namedOwner(ownerRole, r, snap);
       if (named.id) { ownerUserId = named.id; ownerName = named.name || snap.activeUsers.get(named.id) || null; ownerSource = named.source; } else {
         const attributed = ctx.attributed || (ctx.workedBy ? { recruiter: ctx.workedBy } : null);
         const who = attributed && attributed[ROLE_KEY[ownerRole]];

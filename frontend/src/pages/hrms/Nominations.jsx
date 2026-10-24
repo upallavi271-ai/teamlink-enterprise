@@ -142,7 +142,7 @@ function NominateModal({ meta, onClose, onSaved }) {
       <div className="nom-compose">
         <form id="nom-form" className="nom-form" onSubmit={submit}>
           {error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
-          <label className="field"><span>Employee *</span>
+          <label className="field"><span>Employee</span>
             <Combo value={f.nomineeId} onChange={set('nomineeId')}>
               <option value="">Select employee</option>
               {meta.nominees.map((e) => <option key={e.id} value={e.id}>{e.name} · {e.employeeCode}{e.department ? ` · ${e.department}` : ''}</option>)}
@@ -156,7 +156,7 @@ function NominateModal({ meta, onClose, onSaved }) {
             <div><span>Designation</span><b>{nominee?.designation || '—'}</b></div>
           </div>
           <div className="nom-two">
-            <label className="field"><span>Recognition Type *</span>
+            <label className="field"><span>Recognition Type</span>
               <Combo value={f.recognitionType} onChange={set('recognitionType')}>
                 <option value="">Select type</option>
                 {meta.types.map((t) => <option key={t}>{t}</option>)}
@@ -165,9 +165,9 @@ function NominateModal({ meta, onClose, onSaved }) {
             <label className="field"><span>Date</span><input type="date" value={f.nominationDate} onChange={set('nominationDate')} /></label>
           </div>
           {f.recognitionType === 'Other' && (
-            <label className="field"><span>Recognition for *</span><input value={f.otherType} onChange={set('otherType')} maxLength={80} /></label>
+            <label className="field"><span>Recognition for</span><input value={f.otherType} onChange={set('otherType')} maxLength={80} /></label>
           )}
-          <label className="field"><span>Reason *</span><textarea rows="3" value={f.reason} onChange={set('reason')} /></label>
+          <label className="field"><span>Reason</span><textarea rows="3" value={f.reason} onChange={set('reason')} /></label>
           <label className="field"><span>Performance / achievement details</span><textarea rows="3" value={f.achievements} onChange={set('achievements')} /></label>
           <label className="field"><span>Supporting comments</span><textarea rows="2" value={f.comments} onChange={set('comments')} /></label>
           <div className="nom-two">

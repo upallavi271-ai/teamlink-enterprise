@@ -190,7 +190,7 @@ function isReservedTestAddress(to) {
 // html / attachments (optional): a report mail with tables and an Excel file (utils/eodReport.js);
 // `text` stays the plain-text fallback every mail carries.
 async function sendMail({
-  to, subject, text, html, attachments, senderEmail, senderName, useEmployeeFrom = true, fromName,
+  to, subject, text, html, attachments, senderEmail, senderName, useEmployeeFrom = true, fromName, headers,
 }) {
   const cfg = await emailConfig();
   if (!cfg.configured) return { ok: false, notConfigured: true, error: cfg.reason, transient: false };
@@ -201,9 +201,19 @@ async function sendMail({
   // *.test, *.example, *.invalid, *.localhost, example.com/.net/.org). Test
   // data (ZZTEST candidates, seed rows) uses them, and a stage move kicks the
   // worker within a second — without this those rows reached the real relay.
-  if (isReservedTestAddress(to)) {
+  // (A sandbox test that CAPTURES mail - TEST_MAIL_CAPTURE, utils/sandbox.js - may use them: the fake transport never opens a socket.)
+  const sandboxCapture = require('./sandbox').isSandbox() && !!process.env.TEST_MAIL_CAPTURE; // eslint-disable-line global-require
+  if (isReservedTestAddress(to) && !sandboxCapture) {
     return { ok: false, error: `Reserved test domain (${String(to).trim()}) — never transmitted.`, transient: false };
   }
+  // ONE PERSON, SEVERAL LOGINS ON ONE EMAIL (utils/shareDedupe.js): the same message to such an address is sent once, not once per login.
+  const SD = require('./shareDedupe'); // eslint-disable-line global-require
+  let dupKey = null;
+  try {
+    const d = await SD.checkEmail({ to, subject, text, html });
+    if (d.skip) return { ok: true, deduped: true, providerRef: null, response: 'Not sent again: the same message already went to this address a moment ago (several logins share it).' };
+    dupKey = d.key;
+  } catch { /* the check never blocks a message */ }
   const addr = addressesFor(cfg, { senderEmail, senderName }, { useEmployeeFrom, fromName });
   try {
     const info = await buildTransport(cfg).sendMail({
@@ -215,16 +225,19 @@ async function sendMail({
       text: text || '',
       ...(html ? { html } : {}),
       ...(attachments && attachments.length ? { attachments } : {}),
+      ...(headers && Object.keys(headers).length ? { headers } : {}), // Omni-Channel: List-Unsubscribe etc.
       envelope: { from: addr.envelopeFrom, to: String(to).trim() },
     });
     // A message the provider did not accept for THIS recipient is not sent,
     // whatever else the response says.
     const accepted = (info.accepted || []).map((a) => (typeof a === 'string' ? a : a.address));
     if (!accepted.length) {
+      SD.release(dupKey);
       return { ok: false, error: `The provider did not accept ${to}. ${(info.response || '').trim()}`.trim(), transient: false };
     }
     return { ok: true, providerRef: info.messageId || (info.response || '').trim() || null, response: (info.response || '').trim() };
   } catch (err) {
+    SD.release(dupKey);
     return { ok: false, error: providerError(err), transient: isTransient(err) };
   }
 }

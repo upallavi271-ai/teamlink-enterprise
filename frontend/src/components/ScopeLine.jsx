@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 import { Help } from './ui/Guide.jsx';
 
-const AREA_TIP = 'Your area = the jobs and people you are allowed to see. It comes from your role and your team.';
+const AREA_TIP = 'Your area = the requirements and people you are allowed to see. It comes from your role and your team.';
 
 export default function ScopeLine({ user, count, noun, inline = false, label: labelOverride = null }) {
   // A screen may word its own area (Clients: "Education clients", "All clients").

@@ -40,7 +40,7 @@ const {
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
 const {
-  REQUIREMENT_LIVE_STATUSES, requirementIsLive, stageLabel, requirementStatusLabel,
+  REQUIREMENT_LIVE_STATUSES, requirementIsLive, stageLabel, requirementStatusLabel, requirementStatusUser, requirementStateWords,
   PORTAL_APPLICATION_SOURCES,
 } = require('../utils/atsVocab');
 
@@ -72,6 +72,8 @@ const WORKSPACE = ['ats', 'requirements', 'Job Portal Workspace'];
 const APPLICATIONS = ['ats', 'requirements', 'Job Portal Applications'];
 const CLIENT_VIEW = ['ats', 'requirements', 'Client Job Portal'];
 const perm = (tuple, action) => requirePerm(tuple[0], tuple[1], tuple[2], action);
+// PUBLISH / PUSH / SYNC are posting: a refusal says who does it (utils/postingGuard.js).
+const post = (tuple, action) => require('../utils/postingGuard').requirePosting(tuple[0], tuple[1], tuple[2], action); // eslint-disable-line global-require
 
 // Async handlers must never reject into the void — an unhandled rejection has
 // taken this process down before. Every route below is wrapped.
@@ -115,7 +117,7 @@ function jobRow(r) {
     location: r.location,
     openings: r.openings,
     status: r.status,
-    statusLabel: requirementStatusLabel(r.status),
+    statusLabel: requirementStatusUser(r.status),
     live: requirementIsLive(r.status),
     published: !!r.portalPublished,
     publishedAt: r.portalPublishedAt,
@@ -179,7 +181,7 @@ router.get('/workspace', perm(WORKSPACE, 'view'), wrap(async (req, res) => {
 
 // Publish / unpublish. `edit` on Job Portal Workspace, plus the assignment
 // chain for anyone whose scope is not global.
-router.post('/jobs/:id/publish', perm(WORKSPACE, 'edit'), wrap(async (req, res) => {
+router.post('/jobs/:id/publish', post(WORKSPACE, 'edit'), wrap(async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
@@ -190,7 +192,7 @@ router.post('/jobs/:id/publish', perm(WORKSPACE, 'edit'), wrap(async (req, res) 
   const publish = req.body.published !== false;
   if (publish && !requirementIsLive(requirement.status)) {
     return res.status(400).json({
-      error: `A requirement in "${requirementStatusLabel(requirement.status)}" cannot be published to the job portal — only a live requirement can.`,
+      error: `A requirement in "${requirementStateWords(requirement.status)}" cannot be published to the job portal — only a live requirement can.`,
     });
   }
 
@@ -242,7 +244,7 @@ router.post('/jobs/:id/publish', perm(WORKSPACE, 'edit'), wrap(async (req, res) 
 // its own localStorage, so nothing is pushed to it and nothing is pulled back.
 // A real integration would replace the update below with a call out to the
 // portal's API and set Synced / Failed from its response.
-router.post('/sync', perm(WORKSPACE, 'configure'), wrap(async (req, res) => {
+router.post('/sync', post(WORKSPACE, 'configure'), wrap(async (req, res) => {
   const where = portalRequirementWhere(req.user, { publishedOnly: true });
   const published = await prisma.requirement.findMany({
     where,
@@ -313,7 +315,7 @@ router.post('/sync', perm(WORKSPACE, 'configure'), wrap(async (req, res) => {
     newApplications: portal.created,
     stageUpdates: portal.stageUpdates || 0,
     problems: portal.errors || [],
-    note: `Synced with the TeamLink Job Portal: ${portal.jobs} job(s) live there, ${portal.closed} closed, ${portal.created} new application(s) brought in, ${portal.stageUpdates || 0} status update(s) sent back.`
+    note: `Synced with the TeamLink Job Portal: ${portal.jobs} requirement(s) live there, ${portal.closed} closed, ${portal.created} new application(s) brought in, ${portal.stageUpdates || 0} status update(s) sent back.`
       + ((portal.errors || []).length ? ` ${portal.errors.length} problem(s) — see Last sync / errors.` : ''),
   });
 }));
@@ -390,7 +392,7 @@ router.get('/sync-status', perm(WORKSPACE, 'view'), wrap(async (req, res) => {
 
 // Retry ONE requirement's posting now (the "Retry" beside a failed job).
 // Same guard as Publish: `edit` on the workspace plus the assignment chain.
-router.post('/jobs/:id/push', perm(WORKSPACE, 'edit'), wrap(async (req, res) => {
+router.post('/jobs/:id/push', post(WORKSPACE, 'edit'), wrap(async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
@@ -398,7 +400,7 @@ router.post('/jobs/:id/push', perm(WORKSPACE, 'edit'), wrap(async (req, res) => 
     return res.status(403).json({ error: 'You can see this requirement, but you are not on its assignment chain' });
   }
   if (!requirementIsLive(requirement.status)) {
-    return res.status(400).json({ error: `"${requirement.title}" is ${requirementStatusLabel(requirement.status)} — only a live requirement is posted.` });
+    return res.status(400).json({ error: `"${requirement.title}" is ${requirementStateWords(requirement.status)} — only a live requirement is posted.` });
   }
   const out = await autoPost(requirement.id, { actorId: req.user.id, actorName: req.user.name, trigger: 'retry' });
   const fresh = await prisma.requirement.findUnique({ where: { id: requirement.id } });
@@ -897,7 +899,7 @@ router.post('/client/applications/:id/decision', perm(CLIENT_VIEW, 'edit'), wrap
   // side, so the one rejection that is unambiguously the client's own came out
   // as nobody's, with no explanation — the least useful record possible for
   // the recruiter who has to find this candidate another role.
-  const reasonCategory = String((req.body && req.body.reasonCategory) || '').trim() || null;
+  const reasonCategory = require('../utils/openVocab').clean((req.body && req.body.reasonCategory) || '', 120) || null; // typed own reason allowed (2026-10-15)
   const reasonDetail = String((req.body && req.body.reasonDetail) || '').trim() || null;
   if (decision.stage === 'REJECTED' && !reasonCategory && !reasonDetail) {
     return res.status(400).json({ error: 'Tell us why you are rejecting this candidate.' });
@@ -984,14 +986,14 @@ router.post('/client/applications/:id/decision', perm(CLIENT_VIEW, 'edit'), wrap
       console.error('[portal decision] follow-up bookkeeping failed:', err.message);
     }
   }
-  // The recruiter, BDE and lead named on the requirement are told. Scheduling
-  // stays theirs; the client asked, they act.
+  // The recruiter, BDE and lead named on the requirement are told. Only the BDE books an interview (user, 2026-10-12),
+  // so the client's own BDE (named on the CLIENT, not always on the job) is told too: the client asked, the BDE books.
   await notifyUsers(
-    [application.requirement.recruiterId, application.requirement.bdeId,
-      application.requirement.tlId, application.requirement.stlId],
+    await require('../utils/clientBdes').withClientBdes([application.requirement.recruiterId, application.requirement.bdeId, // eslint-disable-line global-require
+      application.requirement.tlId, application.requirement.stlId].filter(Boolean), application.requirement),
     {
       title: `${decision.action}: ${application.candidate.name}`,
-      message: `${application.requirement.title} — ${application.candidate.name}. ${decision.action}.`,
+      message: `${application.requirement.title} — ${application.candidate.name}. ${decision.action}.${decision === CLIENT_DECISIONS.REQUEST_INTERVIEW ? ' The client manager (BDE) books it.' : ''}`,
       exceptUserId: req.user.id,
     },
   );

@@ -8,6 +8,11 @@ router.use(requireAuth);
 
 
 const TICKET_CATEGORIES = ['IT Support', 'HR Query', 'Facilities', 'Payroll Query', 'Other'];
+// A typed own category: tidied, a case-insensitive match uses the listed spelling, empty -> Other.
+function ticketCategoryOf(raw) {
+  const t = require('../utils/openVocab').clean(raw, 60); // eslint-disable-line global-require
+  return TICKET_CATEGORIES.find((x) => x.toLowerCase() === t.toLowerCase()) || t || 'Other';
+}
 const TICKET_PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
 const TICKET_STATUSES = ['Open', 'In Progress', 'Resolved', 'Closed'];
 const CLOSED_STATUSES = ['Resolved', 'Closed'];
@@ -112,13 +117,13 @@ router.post('/', async (req, res) => {
     employeeId = own.id;
   }
   if (!employeeId || !title) return res.status(400).json({ error: 'employeeId and a subject are required' });
-  if (category && !TICKET_CATEGORIES.includes(category)) return res.status(400).json({ error: `category must be one of: ${TICKET_CATEGORIES.join(', ')}` });
+  // A typed own category is kept (2026-10-15); it is routed to the HR Team like 'Other'.
   if (priority && !TICKET_PRIORITIES.includes(priority)) return res.status(400).json({ error: `priority must be one of: ${TICKET_PRIORITIES.join(', ')}` });
 
   const ticket = await prisma.employeeRecord.create({
     data: {
       type: 'HELPDESK', employeeId, title, detail,
-      category: category || 'Other', priority: priority || 'Medium',
+      category: ticketCategoryOf(category), priority: priority || 'Medium',
       status: 'Open', assignedTo: assignedTo || null, notes: '[]',
     },
   });
@@ -227,7 +232,7 @@ router.get('/analytics', requirePerm(null, 'hrms', 'Employee Services', 'export'
       avgResolutionDays: resolutionDays.length ? Math.round((resolutionDays.reduce((s, d) => s + d, 0) / resolutionDays.length) * 10) / 10 : null,
       avgCsat: rated.length ? Math.round((rated.reduce((s, t) => s + t.csat, 0) / rated.length) * 10) / 10 : null,
     },
-    byCategory: TICKET_CATEGORIES.map((category) => ({ category, tickets: tickets.filter((t) => t.category === category).length })),
+    byCategory: [...TICKET_CATEGORIES, ...new Set(tickets.map((t) => t.category).filter((c) => c && !TICKET_CATEGORIES.includes(c)))].map((category) => ({ category, tickets: tickets.filter((t) => t.category === category).length })),
     byPriority: TICKET_PRIORITIES.map((priority) => ({ priority, tickets: tickets.filter((t) => t.priority === priority).length })),
     byStatus: TICKET_STATUSES.map((status) => ({ status, tickets: tickets.filter((t) => t.status === status).length })),
     byAgent: Object.values(byWorkload).sort((a, b) => b.open - a.open || b.total - a.total),

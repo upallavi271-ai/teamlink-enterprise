@@ -1,0 +1,27 @@
+/* THE AIRTEL BILLS PORTAL (2026-10-19): only what the Assets portal's classes do not already give. Same colours (the vendor portal's tokens). */
+.abp-soft { background: transparent; border: 1px solid var(--green); color: var(--green); }
+.abp-alerts { display: grid; gap: 6px; margin-bottom: 12px; }
+.abp-alert { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--paper-raised); font-size: 13.5px; overflow-wrap: anywhere; }
+.abp-alert strong { white-space: nowrap; }
+.abp-overdue { background: var(--red-tint); border-color: var(--red); }
+.abp-overdue strong { color: var(--red); }
+.abp-due_soon { background: var(--amber-tint); border-color: var(--amber); }
+.abp-due_soon strong { color: var(--amber); }
+.abp-paid { background: var(--green-tint); border-color: var(--green); }
+.abp-paid strong { color: var(--green); }
+.abp-wrap { overflow-wrap: anywhere; word-break: break-word; }
+.abp-wrap-cell { min-width: 120px; max-width: 260px; white-space: normal; overflow-wrap: anywhere; }
+.abp-nowrap { white-space: nowrap; }
+.abp-inv { min-width: 170px; white-space: nowrap; }
+.abp-nobill td { color: var(--ink-soft); font-style: italic; }
+.abp-form { display: grid; gap: 10px; }
+.abp-form label { display: grid; gap: 4px; font-size: 13px; }
+.abp-form .abp-row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.abp-form input, .abp-form select, .abp-form textarea { width: 100%; }
+.abp-note { font-size: 12.5px; color: var(--ink-soft); margin: 4px 0 10px; overflow-wrap: anywhere; }
+.abp-sim-note { margin: 0 0 10px; }
+.abp-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+@media (max-width: 760px) {
+  .abp-alert strong { white-space: normal; }
+  .abp-wrap-cell { max-width: 200px; }
+}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import { validateSalaries } from '../../utils/salaryFit'; // current + expected salary are required
 import CareersChrome, { daysAgo } from './CareersChrome.jsx';
 
 // /careers/:id — one job, and the Apply form (with the resume).
@@ -46,7 +47,7 @@ function TurnstileBox({ siteKey }) {
 function ApplyForm({ job, src }) {
   const [form, setForm] = useState({
     name: '', phone: '', email: '', location: '', experienceYears: '',
-    currentCompany: '', noticePeriod: '', expectedSalary: '', skills: '', website: '',
+    currentCompany: '', noticePeriod: '', currentSalary: '', expectedSalary: '', skills: '', website: '',
   });
   const [file, setFile] = useState(null);
   const [consent, setConsent] = useState(false);
@@ -66,6 +67,9 @@ function ApplyForm({ job, src }) {
 
   async function submit(e) {
     e.preventDefault();
+    // Current + expected salary are required (same words as the server).
+    const sal = validateSalaries({ currentSalary: form.currentSalary, expectedSalary: form.expectedSalary });
+    if (!sal.ok) { setState({ step: 'form', error: sal.message }); return; }
     if (!file) { setState({ step: 'form', error: 'Please attach your resume (PDF or Word file).' }); return; }
     if (!consent) { setState({ step: 'form', error: 'Please tick the box to agree that TeamLink may use your resume for this job.' }); return; }
     setState({ step: 'sending', error: '' });
@@ -119,6 +123,17 @@ function ApplyForm({ job, src }) {
       <label htmlFor="apEmail">Email</label>
       <input id="apEmail" required type="email" autoComplete="email" maxLength={120} placeholder="you@gmail.com" value={form.email} onChange={set('email')} />
 
+      <div className="jp-form-row">
+        <div>
+          <label htmlFor="apCur">Current salary (0 if fresher)</label>
+          <input id="apCur" required maxLength={40} inputMode="text" placeholder="e.g. 3 LPA or 25000 per month" value={form.currentSalary} onChange={set('currentSalary')} />
+        </div>
+        <div>
+          <label htmlFor="apSal">Expected salary</label>
+          <input id="apSal" required maxLength={40} inputMode="text" placeholder="e.g. 4 LPA or 30000 per month" value={form.expectedSalary} onChange={set('expectedSalary')} />
+        </div>
+      </div>
+
       <label htmlFor="apResume">Resume (PDF or Word, up to {MAX_MB} MB)</label>
       <input id="apResume" ref={fileRef} required type="file" accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={pickFile} />
       {file && <div className="jp-file">📄 {file.name}</div>}
@@ -144,10 +159,6 @@ function ApplyForm({ job, src }) {
             <div>
               <label htmlFor="apNotice">Notice period</label>
               <input id="apNotice" maxLength={40} placeholder="e.g. 30 days" value={form.noticePeriod} onChange={set('noticePeriod')} />
-            </div>
-            <div>
-              <label htmlFor="apSal">Expected salary</label>
-              <input id="apSal" maxLength={40} placeholder="e.g. 4 LPA" value={form.expectedSalary} onChange={set('expectedSalary')} />
             </div>
           </div>
           <label htmlFor="apSkills">Your skills</label>

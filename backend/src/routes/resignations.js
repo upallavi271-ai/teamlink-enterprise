@@ -8,6 +8,8 @@ const workflow = require('../utils/approvalWorkflow');
 const { systemRequesterError } = require('../utils/systemAccounts');
 const { CONSULTANT } = require('../utils/agreement');
 const resignationInfo = require('../utils/resignationInfo');
+const exitFlow = require('../utils/exitFlow');
+const exitDate = require('../utils/exitDate');
 
 // Marking a resignation Relieved ends the person's seat (utils/seatRelease.js); this names who did it.
 const seatRelease = require('../utils/seatRelease');
@@ -15,6 +17,8 @@ const seatRelease = require('../utils/seatRelease');
 const router = express.Router();
 router.use(requireAuth);
 router.use(seatRelease.actorScope);
+// EXIT CENTER (exit approvals list, exit record, date change, finalize...): routes/exitCenter.js
+router.use('/exit', require('./exitCenter'));
 
 
 // ---------------------------------------------------------------------------
@@ -238,59 +242,10 @@ async function detailsFor(ids) {
   return Object.fromEntries(rows.map((r) => [r.recordId, r]));
 }
 
-// FINAL APPROVAL — the same effect whether the last level approved in turn,
-// a Super Admin approved directly, or nobody sat above the requester.
-async function applyApproval(record, user, { lastWorkingDate } = {}) {
-  const detail = await prisma.resignationDetail.findUnique({ where: { recordId: record.id } });
-  const days = (detail && detail.noticePeriodDays != null) ? detail.noticePeriodDays : (await hrConfig()).noticePeriodDays;
-  const lwd = (lastWorkingDate && ISO_DATE.test(lastWorkingDate) && lastWorkingDate)
-    || (detail && detail.requestedLastWorkingDate)
-    || record.date
-    || noticeEnd((detail && detail.resignationDate) || new Date().toISOString().slice(0, 10), days);
-  const updated = await prisma.employeeRecord.update({ where: { id: record.id }, data: { status: 'Notice Period', date: lwd } });
-  if (detail) await prisma.resignationDetail.update({ where: { id: detail.id }, data: { approvedLastWorkingDate: lwd } });
-  // INTO THE EXISTING OFFBOARDING: the employee's tracker opens with the
-  // standard checklist unless one is already running.
-  const employee = await prisma.employee.findUnique({ where: { id: record.employeeId } });
-  await prisma.employee.update({
-    where: { id: record.employeeId },
-    data: {
-      employmentStatus: 'Notice Period',
-      offboardingStatus: 'Serving Notice',
-      offboardingTasks: employee && employee.offboardingTasks
-        ? undefined
-        : JSON.stringify(EXIT_CHECKLIST.map((task) => ({ task, completed: false }))),
-    },
-  });
-  await logAudit({
-    userId: user.id,
-    action: 'Resignation approved — employee on notice',
-    entity: 'EmployeeRecord',
-    entityId: record.id,
-    fromValue: employee ? employee.employmentStatus : null,
-    toValue: `Notice Period (last working day ${lwd})`,
-  });
-  return updated;
-}
-
-async function applyRejection(record, user, reason) {
-  const updated = await prisma.employeeRecord.update({ where: { id: record.id }, data: { status: 'Rejected' } });
-  // A resignation recorded before the chain shipped put the employee on
-  // notice at submission; a rejection of one of those puts them back.
-  if (SERVING.includes(record.status)) {
-    await prisma.employee.update({ where: { id: record.employeeId }, data: { employmentStatus: 'Active', offboardingStatus: null } });
-  }
-  await logAudit({ userId: user.id, action: 'Resignation rejected', entity: 'EmployeeRecord', entityId: record.id, fromValue: record.status, toValue: 'Rejected', reason: reason || undefined });
-  return updated;
-}
-
-// Close any chain step still open, so it drops out of every approver's queue.
-async function closeChain(recordId, note) {
-  await prisma.approvalStep.updateMany({
-    where: { workflow: WF_RES, recordId, status: { in: [workflow.STEP_STATUS.PENDING, workflow.STEP_STATUS.WAITING] } },
-    data: { status: workflow.STEP_STATUS.SKIPPED, note },
-  });
-}
+// FINAL APPROVAL / REJECTION / closing the chain live in utils/exitFlow.js now (one place for every
+// caller: this router, the Edit form, offboarding). Same effect as before; a rejection now also puts
+// somebody whose status was moved to Exit Process / Notice Period back to Active.
+const { applyApproval, applyRejection, closeChain } = exitFlow;
 
 // Who may file a resignation FOR this employee: themselves, or an in-scope
 // login that decides / creates Employee Services records.
@@ -513,6 +468,9 @@ router.post('/', async (req, res, next) => {
     const started = await chain.raise(WF_RES, { recordId: record.id, employee });
     let saved = record;
     if (!started.pending) saved = await applyApproval(record, req.user);
+    // EXIT INITIATED: the Super Admin(s) are told at once (bell + e-mail), and the employee's TL and HR (item 6).
+    await exitFlow.notifyInitiated({ record: saved, detail, employee, by: req.user });
+    await exitFlow.notifyTurn({ recordId: record.id, employee, detail, lwd: requestedLastWorkingDate });
     return res.status(201).json({ ...present(saved, cfg.noticePeriodDays, detail), workflow: started.summary, submittingTo });
   } catch (err) {
     return next(err);
@@ -552,7 +510,7 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // ---- DECISIONS -------------------------------------------------------------
-router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res, next) => {
+async function statusHandler(req, res, next) {
   try {
     const { status } = req.body;
     if (!DECISIONS.includes(status)) return res.status(400).json({ error: `status must be one of: ${DECISIONS.join(', ')}` });
@@ -581,17 +539,22 @@ router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'appr
         if (existing.status !== PENDING) return res.status(409).json({ error: 'This resignation is no longer awaiting approval.' });
         if (!approve && !note) return res.status(400).json({ error: 'A rejection reason is required.' });
       } else {
+        // "Who finally approves an exit" (setting): when it is HR / Admin, the rungs above HR are not needed.
+        if (approve) step.result = await exitFlow.applyFinalLevelRule(existing.id, step.result, req.user);
         await logAudit({
           userId: req.user.id,
+          actorName: req.user.name || req.user.email,
           action: `Resignation ${approve ? 'approved' : 'rejected'} at ${step.result.level}${step.result.direct ? ` (${workflow.DIRECT_LABEL})` : ''}`,
           entity: 'EmployeeRecord',
           entityId: existing.id,
           fromValue: step.result.fromLevel || step.result.level,
           toValue: step.result.nextLevel || step.result.outcome,
+          reason: note || undefined,
         });
         // STILL CLIMBING — it stays Pending Approval.
         if (!step.result.complete) {
           const detail = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
+          await exitFlow.notifyTurn({ recordId: existing.id, employee, detail, lwd: exitDate.dateOf(existing, detail) });
           return res.json({ ...present(existing, cfg.noticePeriodDays, detail), workflow: step.view });
         }
       }
@@ -599,35 +562,49 @@ router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'appr
         ? await applyApproval(existing, req.user, { lastWorkingDate: clean(req.body.lastWorkingDate, 10) })
         : await applyRejection(existing, req.user, note);
       const detail = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
+      await exitFlow.notifyDecided({ record: saved, employee, detail, approved: approve, by: req.user, note });
       const view = await workflow.view(WF_RES, existing.id, req.user, { canAct: false }).catch(() => null);
       return res.json({ ...present(saved, cfg.noticePeriodDays, detail), workflow: view });
     }
 
     // ---- RELIEVED / WITHDRAWN: single step, as always -------------------------
     if (!employeeInScope(req.user, employee)) return res.status(403).json(OUT_OF_SCOPE);
+    if (status === 'Relieved' && await exitFlow.deskDirect(req.user)) {
+      const day = new Date().toISOString().slice(0, 10);
+      const lwd = exitDate.dateOf(existing, null);
+      await exitFlow.relieveNow({ employee, user: req.user, reason: 'Completed by HR', lastWorkingDate: lwd && lwd <= day ? lwd : day, status: 'Relieved' });
+      const record = await prisma.employeeRecord.findUnique({ where: { id: existing.id } });
+      const detail = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
+      return res.json(present(record, cfg.noticePeriodDays, detail));
+    }
     if (status === 'Relieved' && !SERVING.includes(existing.status)) {
       return res.status(409).json({ error: 'Only an approved resignation (on notice) can be relieved. This one is still awaiting approval.' });
+    }
+    if (status === 'Relieved' && !exitDate.isHrDesk(req.user)) return res.status(403).json({ error: 'Only HR or the Super Admin can finish an exit.' });
+    if (status === 'Relieved') {
+      // FINALISING NEEDS THE FINAL APPROVAL AND THE LAST WORKING DAY (utils/exitFlow.js canFinalizeExit).
+      const verdict = await exitFlow.canFinalizeExit(existing.employeeId);
+      if (!verdict.ok) return res.status(409).json({ error: verdict.message, code: verdict.code }); // a process step, not a permission problem
+      const record = await exitFlow.finalize({ record: existing, employee, user: req.user, status: 'Relieved' });
+      const detail = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
+      return res.json(present(record, cfg.noticePeriodDays, detail));
     }
     if (status === 'Withdrawn') await closeChain(existing.id, `Not reached — the resignation was withdrawn (${req.user.name || req.user.email})`);
     const record = await prisma.employeeRecord.update({ where: { id: existing.id }, data: { status } });
     await prisma.employee.update({
       where: { id: existing.employeeId },
-      data: status === 'Relieved'
-        ? { employmentStatus: 'Relieved', offboardingStatus: 'Cleared' }
-        : (SERVING.includes(existing.status) ? { employmentStatus: 'Active', offboardingStatus: null } : {}),
+      data: SERVING.includes(existing.status) ? { employmentStatus: 'Active', offboardingStatus: null } : {},
     });
-    // Relieving raises the Full & Final settlement request the Payroll screen acts on.
-    if (status === 'Relieved') {
-      const openFnf = await prisma.fnfRequest.findFirst({ where: { employeeId: existing.employeeId, status: 'Pending' } });
-      if (!openFnf) await prisma.fnfRequest.create({ data: { employeeId: existing.employeeId, lastWorkingDate: existing.date || new Date().toISOString().slice(0, 10) } });
-    }
-    await logAudit({ userId: req.user.id, action: `Resignation ${status}`, entity: 'EmployeeRecord', entityId: record.id, fromValue: existing.status, toValue: status });
+    await logAudit({ userId: req.user.id, actorName: req.user.name || req.user.email, action: `Resignation ${status}`, entity: 'EmployeeRecord', entityId: record.id, fromValue: existing.status, toValue: status });
     const detail = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
     return res.json(present(record, cfg.noticePeriodDays, detail));
   } catch (err) {
     return next(err);
   }
-});
+}
+router.patch('/:id/status', requirePerm(null, 'hrms', 'Employee Services', 'approve'), statusHandler);
+router.formConfig = formConfig; // the configured exit reasons (Relieve now offers the same list)
+router.statusHandler = statusHandler; // utils: routes/exitCenter.js approve / reject call the same code
 
 // The employee takes their OWN resignation back while it is awaiting
 // approval or during notice. No approval needed.
@@ -653,28 +630,26 @@ router.patch('/:id/withdraw', async (req, res, next) => {
 });
 
 // Agreeing a different last working day (early release or an extension).
+// HRMS spec item 7: through the ONE date function (utils/exitDate.js) - HR desk only, a reason is required, the previous
+// date / new date / reason / who are recorded, and every reader follows. (The Exit record's "Edit exit date" button uses
+// PUT /exit/:id/date, which is the same thing with warnings first.)
 router.patch('/:id', requirePerm(null, 'hrms', 'Employee Services', 'approve'), async (req, res, next) => {
   try {
     const { date, detail } = req.body;
     const existing = await prisma.employeeRecord.findUnique({ where: { id: req.params.id }, include: { employee: true } });
     if (!existing || existing.type !== 'RESIGNATION') return res.status(404).json({ error: 'Resignation not found' });
     if (!employeeInScope(req.user, existing.employee)) return res.status(403).json(OUT_OF_SCOPE);
-    if (date !== undefined && date !== null && date !== '' && !ISO_DATE.test(String(date))) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
-    const record = await prisma.employeeRecord.update({
-      where: { id: req.params.id },
-      data: { date: date !== undefined ? date : undefined, detail: detail !== undefined ? detail : undefined },
-    });
-    const form = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
-    if (form && date) {
-      await prisma.resignationDetail.update({
-        where: { id: form.id },
-        data: SERVING.includes(existing.status) ? { approvedLastWorkingDate: date } : { requestedLastWorkingDate: date },
-      });
+    if (date !== undefined && date !== null && date !== '') {
+      if (!exitDate.isHrDesk(req.user)) return res.status(403).json({ error: 'Only HR or the Super Admin can change the last working day.' });
+      if (!ISO_DATE.test(String(date))) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+      const out = await exitDate.setExitDate({ employeeId: existing.employeeId, date: String(date), reason: req.body.reason, note: req.body.note, user: req.user, source: 'UI' });
+      res.locals.exitDateWarnings = out.warnings;
     }
-    await logAudit({ userId: req.user.id, action: 'Last working day updated', entity: 'EmployeeRecord', entityId: record.id, fromValue: existing.date, toValue: record.date });
+    if (detail !== undefined) await prisma.employeeRecord.update({ where: { id: req.params.id }, data: { detail } });
+    const record = await prisma.employeeRecord.findUnique({ where: { id: req.params.id } });
     const cfg = await hrConfig();
     const fresh = await prisma.resignationDetail.findUnique({ where: { recordId: existing.id } });
-    return res.json(present(record, cfg.noticePeriodDays, fresh));
+    return res.json({ ...present(record, cfg.noticePeriodDays, fresh), warnings: res.locals.exitDateWarnings || [] });
   } catch (err) {
     return next(err);
   }

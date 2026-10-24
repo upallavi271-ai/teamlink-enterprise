@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { TeamLinkMark } from '../../components/Logo.jsx';
 import partnerApi, {
   setPartnerToken, partnerToken, partnerError, PARTNER_NOTICE_KEY,
@@ -13,7 +13,10 @@ const PW_HINT = 'At least 10 characters with a capital letter, a small letter, a
 // token. First sign-in asks for a new password before anything else.
 export default function PartnerLogin() {
   const navigate = useNavigate();
-  const [step, setStep] = useState('signin'); // signin | password
+  const [params] = useSearchParams();
+  const inviteToken = params.get('invite') || '';
+  const [invite, setInvite] = useState(null); // { name, email, partnerName, purpose } once the link checks out
+  const [step, setStep] = useState(inviteToken ? 'invite' : 'signin'); // signin | password | invite | badlink
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [show, setShow] = useState(false);
@@ -28,12 +31,31 @@ export default function PartnerLogin() {
       const n = sessionStorage.getItem(PARTNER_NOTICE_KEY);
       if (n) { setNotice(n); sessionStorage.removeItem(PARTNER_NOTICE_KEY); }
     } catch { /* ignore */ }
+    if (inviteToken) {
+      partnerApi.get(`/invite/${encodeURIComponent(inviteToken)}`).then((r) => { setInvite(r.data); setStep('invite'); })
+        .catch(() => setStep('badlink'));
+      return;
+    }
     if (!partnerToken()) return;
     partnerApi.get('/me').then((r) => {
       if (r.data.mustChangePassword) setStep('password');
       else navigate('/partner/jobs', { replace: true });
     }).catch(() => setPartnerToken(null));
-  }, [navigate]);
+  }, [navigate, inviteToken]);
+
+  async function acceptInvite(e) {
+    e.preventDefault();
+    setError('');
+    if (newPw !== newPw2) { setError('The two passwords do not match.'); return; }
+    setBusy(true);
+    try {
+      const r = await partnerApi.post('/invite/accept', { token: inviteToken, newPassword: newPw, confirmPassword: newPw2 });
+      setPartnerToken(r.data.token);
+      navigate('/partner/jobs', { replace: true });
+    } catch (err) {
+      if (err.response?.data?.linkProblem) setStep('badlink'); else setError(partnerError(err, 'Could not set the password.'));
+    } finally { setBusy(false); }
+  }
 
   async function signIn(e) {
     e.preventDefault();
@@ -66,6 +88,41 @@ export default function PartnerLogin() {
     try { await partnerApi.post('/logout'); } catch { /* already out */ }
     setPartnerToken(null);
     setStep('signin'); setPassword(''); setNewPw(''); setNewPw2('');
+  }
+
+  if (step === 'badlink') {
+    return (
+      <div className="login-shell pp-login">
+        <div className="login-card">
+          <div className="logo-lockup"><TeamLinkMark width={140} /><div className="pp-login-title">This link has expired</div></div>
+          <div className="small-muted" style={{ marginBottom: 14 }}>The link was already used, has expired or was replaced by a newer one. Ask TeamLink to send you a new link.</div>
+          <Link className="btn btn-primary pp-wide" to="/partner-login">Go to sign in</Link>
+        </div>
+      </div>
+    );
+  }
+  if (step === 'invite') {
+    return (
+      <div className="login-shell pp-login">
+        <form className="login-card" onSubmit={acceptInvite}>
+          <div className="logo-lockup"><TeamLinkMark width={140} /><div className="pp-login-title">{invite?.purpose === 'reset' ? 'Choose a new password' : 'Welcome - choose your password'}</div></div>
+          {!invite ? <div className="small-muted">Checking your link...</div> : (
+            <>
+              <div className="small-muted" style={{ marginBottom: 14 }}>{invite.partnerName} - {invite.email}<br />Choose a password. Only you will know it.</div>
+              <label htmlFor="ppInvNew">New password</label>
+              <input id="ppInvNew" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} autoComplete="new-password" required />
+              <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{PW_HINT}</div>
+              <div style={{ marginTop: 12 }}>
+                <label htmlFor="ppInvNew2">New password again</label>
+                <input id="ppInvNew2" type="password" value={newPw2} onChange={(e) => setNewPw2(e.target.value)} autoComplete="new-password" required />
+              </div>
+              {error && <div className="error-text" style={{ marginTop: 10 }}>{error}</div>}
+              <button className="btn btn-primary pp-wide" type="submit" disabled={busy}>{busy ? 'Saving...' : 'Save and sign in'}</button>
+            </>
+          )}
+        </form>
+      </div>
+    );
   }
 
   return (

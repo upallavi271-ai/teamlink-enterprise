@@ -26,11 +26,35 @@
 //   stickyHead      keep <thead> on screen while scrolling (default true)
 //   stickyFoot      keep <tfoot> on screen while scrolling (default true)
 //   label           tooltip on the bars (default 'Scroll the table sideways')
+//   fit             (2026-10-14) THE STABLE MODE, used by Invoices and the Office
+//                   expense table. The box is the ONE scroller of the table: as
+//                   tall as the room under the app's sticky bars, with a native
+//                   position: sticky header and TOTAL row, so the browser
+//                   scrolls them on its compositor - no script runs while the
+//                   page scrolls and nothing can lag, flicker or overlap. The
+//                   old JS lift (translateY on every scroll event) is not used.
+//   bodyRef         optional ref that receives the scrolling box element
 // ---------------------------------------------------------------------------
 import {
   useCallback, useEffect, useLayoutEffect, useRef, useState,
 } from 'react';
 import './ScrollSync.css';
+
+// Where the sticky bars end: the app top bar plus any sticky bar under it
+// (e.g. the Office filter bar), from their CSS top + height - not from where
+// they are right now, so the number does not change while the page scrolls.
+function stickyBottom() {
+  let bottom = 0;
+  const els = [document.querySelector('.topbar'), ...document.querySelectorAll('[data-sticky-head]')];
+  els.forEach((el) => {
+    if (!el) return;
+    const cs = window.getComputedStyle(el);
+    if (cs.position !== 'sticky' && cs.position !== 'fixed') return;
+    const h = el.offsetHeight;
+    if (h > 0) bottom = Math.max(bottom, (parseFloat(cs.top) || 0) + h);
+  });
+  return Math.round(bottom);
+}
 
 function autoTop() {
   let bottom = 0;
@@ -47,13 +71,13 @@ function autoTop() {
 
 export default function ScrollSync({
   children, className = '', deps = [], top, stickyHead = true, stickyFoot = true, label = 'Scroll the table sideways',
+  fit = false, bodyRef,
 }) {
   const wrap = useRef(null);
   const body = useRef(null);
   const topBar = useRef(null);
   const botBar = useRef(null);
   const [w, setW] = useState({ sw: 0, cw: 0, bw: 0 });
-  const [onScreen, setOnScreen] = useState(true);
   const [stickTop, setStickTop] = useState(typeof top === 'number' ? top : 0);
   const frame = useRef(0);
 
@@ -75,12 +99,10 @@ export default function ScrollSync({
     frame.current = 0;
     const b = body.current;
     if (!b) return;
-    const t = typeof top === 'number' ? top : autoTop();
+    const t = typeof top === 'number' ? top : (fit ? stickyBottom() : autoTop());
     setStickTop((cur) => (cur === t ? cur : t));
-    // On screen = any part of the box inside the window (the bars hide otherwise).
-    const wr = wrap.current ? wrap.current.getBoundingClientRect() : null;
-    const vis = !!wr && wr.bottom > 0 && wr.top < window.innerHeight && wr.height > 0;
-    setOnScreen((cur) => (cur === vis ? cur : vis));
+    // fit: the header / TOTAL rows are native sticky - nothing to move.
+    if (fit) return;
     const table = b.querySelector('table');
     if (!table) return;
     const thead = table.tHead;
@@ -112,7 +134,7 @@ export default function ScrollSync({
       [...tfoot.rows].forEach((row) => [...row.cells].forEach((c) => { if (c.style.transform !== v) c.style.transform = v; }));
       tfoot.classList.toggle('tlss-lifted', dy < 0);
     }
-  }, [top, overflow, stickyHead, stickyFoot]);
+  }, [top, overflow, stickyHead, stickyFoot, fit]);
   // Once per frame; a timer backs the frame up (a frame never comes while the
   // window is hidden, and the rows must still be right when it shows again).
   const schedule = useCallback(() => {
@@ -143,19 +165,24 @@ export default function ScrollSync({
     const mo = new MutationObserver(() => { measure(); schedule(); });
     mo.observe(b, { childList: true, subtree: true });
     window.addEventListener('resize', schedule);
-    window.addEventListener('scroll', schedule, true);
+    // The lifted rows follow the page, so the old mode needs the scroll events;
+    // fit mode does not listen to scrolling at all.
+    if (!fit) window.addEventListener('scroll', schedule, true);
     return () => {
       ro?.disconnect(); mo.disconnect();
       window.removeEventListener('resize', schedule);
-      window.removeEventListener('scroll', schedule, true);
+      if (!fit) window.removeEventListener('scroll', schedule, true);
       if (frame.current) frame.current.cancel();
       frame.current = 0;
     };
-  }, [measure, schedule]);
+  }, [measure, schedule, fit]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { measure(); schedule(); }, deps);
 
-  const showBars = overflow && onScreen;
+  // The bars follow the table's width only - never the scroll position - so
+  // they cannot appear / disappear (and push the table) while the page scrolls.
+  const showBars = overflow;
+  useEffect(() => { if (bodyRef) bodyRef.current = body.current; });
   // A bar that comes back into view starts where the table is.
   useEffect(() => {
     if (!showBars || !body.current) return;
@@ -164,7 +191,7 @@ export default function ScrollSync({
   }, [showBars, w.sw]);
   const inner = <div className="tlss-inner" style={{ width: Math.max(0, w.sw - w.cw + w.bw) }} />;
   return (
-    <div ref={wrap} className={`tlss${showBars ? ' tlss-on' : ''}`} style={{ '--tlss-top': `${stickTop}px` }}>
+    <div ref={wrap} className={`tlss${showBars ? ' tlss-on' : ''}${fit ? ' tlss-fit' : ''}`} style={{ '--tlss-top': `${stickTop}px`, '--tlss-room': `${stickTop + 70}px` }}>
       <div ref={topBar} className="tlss-bar tlss-top" onScroll={from('top')} title={label} aria-hidden="true" hidden={!showBars}>
         {inner}
       </div>

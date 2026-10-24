@@ -89,6 +89,15 @@ export default function JobRequestPopup() {
     setBusy(false);
     navigate(cur.path);
   }
+  async function accept() {
+    if (busy) return;
+    setBusy(true);
+    try { await api.post(`/requirements/${cur.requirementId}/accept-request`); } catch { /* the request page shows why */ }
+    try { await api.patch(`/admin/notifications/${cur.id}/read`); } catch { /* still open it */ }
+    setItems((list) => list.filter((i) => i.id !== cur.id));
+    setBusy(false);
+    navigate(cur.path);
+  }
   function snooze() {
     const map = { ...readSnooze() };
     Object.keys(map).forEach((k) => { if (map[k] <= Date.now()) delete map[k]; });
@@ -104,20 +113,21 @@ export default function JobRequestPopup() {
       <div className="modal jrp-box">
         <div className="jrp-head">
           <span className="jrp-ico" aria-hidden="true">📨</span>
-          <h3 id="jrp-title">New job request</h3>
+          <h3 id="jrp-title">New requirement request</h3>
           {more > 0 && <span className="jrp-more">{`+${more} more waiting`}</span>}
         </div>
         <div className="jrp-body" id="jrp-text">
           <p className="jrp-line">
             <b>{cur.client}</b>
-            {' sent a new job request:'}
+            {' sent a new requirement request:'}
           </p>
           <p className="jrp-job">{`${cur.jobTitle}, ${plural(cur.openings)}`}</p>
           {cur.reqCode && <p className="jrp-sub">{`Request ${cur.reqCode}`}</p>}
           {handled && <p className="jrp-done">Someone has already opened this request. Open it to see where it stands.</p>}
         </div>
         <div className="jrp-foot">
-          <button type="button" className="btn btn-primary jrp-open" onClick={open} disabled={busy} autoFocus>Open the request</button>
+          {cur.requestState === 'requested' && <button type="button" className="btn btn-primary jrp-open" onClick={accept} disabled={busy} autoFocus>Accept request</button>}
+          <button type="button" className={`btn ${cur.requestState === 'requested' ? '' : 'btn-primary '}jrp-open`} onClick={open} disabled={busy} autoFocus={cur.requestState !== 'requested'}>Open the request</button>
           <button type="button" className="btn jrp-later" onClick={snooze} disabled={busy}>Later</button>
         </div>
       </div>

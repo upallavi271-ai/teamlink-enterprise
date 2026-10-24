@@ -12,3 +12,10 @@
   vertical-align: middle;
   white-space: nowrap;
 }
+
+/* BDE business workspace (2026-10-10): plain tick-line groups above the feature grid */
+.rc-groups { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.rc-group { border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px 10px; margin: 0; }
+.rc-group legend { font-size: 12.5px; font-weight: 600; padding: 0 6px; }
+.rc-group-lines { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px 14px; }
+.rc-group-line { display: flex; gap: 8px; align-items: center; font-size: 13px; cursor: pointer; }

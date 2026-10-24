@@ -18,3 +18,33 @@
 .tlss-body tfoot td,.tlss-body tfoot th{position:relative;z-index:3;will-change:transform}
 .tlss-body thead.tlss-lifted th{box-shadow:0 3px 6px rgba(22,32,43,.12)}
 .tlss-body tfoot.tlss-lifted td,.tlss-body tfoot.tlss-lifted th{box-shadow:0 -3px 6px rgba(22,32,43,.12)}
+
+/* ---- fit mode (2026-10-14): the box is the table's ONE scroller, native sticky header / TOTAL ----
+   Why: the lifted-row mode moved the header with translateY from a scroll
+   handler - always a frame late (it jumped, flickered and slid under the
+   Office filter bar). A sticky <th> inside a box that scrolls both ways is
+   handled by the browser's compositor: no script, no lag, no overlap.
+   --tlss-room (set by ScrollSync) = the sticky bars above + the two sideways bars,
+   so the whole box always fits between them and the bottom of the window. */
+.tlss.tlss-fit > .tlss-body {
+  overflow: auto;
+  scrollbar-width: auto;
+  scrollbar-gutter: auto;
+  max-height: max(240px, calc(100vh - var(--tlss-room, 124px)));
+  max-height: max(240px, calc(100dvh - var(--tlss-room, 124px)));
+  min-height: 160px;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: auto;
+}
+/* only the up-down bar is drawn; the sideways one is the synced bar above / below */
+.tlss.tlss-fit > .tlss-body::-webkit-scrollbar { display: block; width: 12px; height: 0; }
+.tlss.tlss-fit > .tlss-body::-webkit-scrollbar-track { background: #e4eaf4; }
+.tlss.tlss-fit > .tlss-body::-webkit-scrollbar-thumb { background: #8ea0bd; border-radius: 6px; border: 2px solid #e4eaf4; }
+.tlss.tlss-fit > .tlss-body::-webkit-scrollbar-corner { background: transparent; }
+.tlss.tlss-fit .tlss-body thead th { position: sticky; top: 0; will-change: auto; }
+.tlss.tlss-fit .tlss-body tfoot td, .tlss.tlss-fit .tlss-body tfoot th { position: sticky; bottom: 0; will-change: auto; }
+/* sticky cells draw their own lines: collapsed borders would scroll away */
+.tlss.tlss-fit .tlss-body table { border-collapse: separate; border-spacing: 0; }
+@media (max-width: 720px) {
+  .tlss.tlss-fit > .tlss-body { max-height: max(240px, calc(100dvh - var(--tlss-room, 124px) - 8px)); }
+}

@@ -1,0 +1,131 @@
+{
+  "_comment": ["NAUKRI page settings. EVERY selector and URL is here, none in code.", "STATUS: UNVERIFIED. These were written from the public look of Naukri's recruiter pages and have NOT been checked against the real post-job form.", "To verify and tune: run a DRY RUN with the company's own account (docs/job-publishing/PLAYWRIGHT.md). The run fills the form, saves a screenshot and stops before Submit.", "A selector can be one string or a list of alternatives: the first one that is visible wins. Playwright selectors are allowed (text=, :has-text(), role=...).", "To change without touching code: copy this file to a folder and set TL_PORTAL_SELECTORS_DIR (or TL_PORTAL_SELECTORS_NAUKRI=<file>); bump \"version\"; set \"verified\": true once a DRY RUN matched.", "{id} in a URL is replaced by the portal's job id.", "STRUCTURED FALLBACKS (2026-10-14): every step lists several ways to find its element, main one first: CSS strings AND { \"role\": .., \"name\": .. } / { \"label\": .. } / { \"text\": .. } / { \"placeholder\": .. } entries (role and label survive a redesign better than CSS). The run tries them in order, records which one worked, and shows \"selector drift\" in Diagnostics when the main one failed. Nothing outside this list is ever tried.", "The role / label / text entries are GUESSES from the public look of the site, exactly like the CSS ones: all of this stays \"verified\": false until docs/job-publishing/CALIBRATION.md has been followed on the real site by a person."],
+  "portal": "naukri",
+  "version": "2026-10-14.1",
+  "verified": false,
+  "allowedHosts": ["naukri.com"],
+  "logoutAfterRun": false,
+  "urls": {
+    "login": "https://www.naukri.com/recruit/login",
+    "dashboard": "https://www.naukri.com/recruit/dashboard",
+    "postJob": "https://www.naukri.com/recruit/post-job",
+    "edit": "https://www.naukri.com/recruit/post-job?jobId={id}",
+    "listing": "https://www.naukri.com/job-listings-{id}",
+    "myJobs": "https://www.naukri.com/recruit/my-jobs"
+  },
+  "login": {
+    "username": ["input#usernameField", "input[name='email']", "input[type='email']", "input[placeholder*='Email' i]", { "label": "Email" }, { "label": "Username" }, { "role": "textbox", "name": "Email" }],
+    "password": ["input#passwordField", "input[name='password']", "input[type='password']", { "label": "Password" }, { "placeholder": "Password" }],
+    "submit": ["button[type='submit']", "button:has-text('Login')", "button:has-text('Sign in')", { "role": "button", "name": "Login" }, { "role": "button", "name": "Sign in" }, { "role": "button", "name": "Log in" }],
+    "loggedInProbe": ["a:has-text('Logout')", "[data-testid='logout']", "text=My Jobs", "a[href*='post-job']", { "role": "link", "name": "Logout" }, { "role": "button", "name": "Logout" }],
+    "errorProbe": [".error-message", ".err", "[role='alert']", ".invalid-feedback"],
+    "errorText": ["invalid", "incorrect", "wrong", "not registered", "doesn't match"],
+    "logout": ["a:has-text('Logout')", "[data-testid='logout']"]
+  },
+  "blockers": {
+    "urlPatterns": { "CAPTCHA": ["captcha"], "OTP": ["otp"] },
+    "selectors": { "CAPTCHA": [], "OTP": [] },
+    "textPatterns": {}
+  },
+  "postJob": {
+    "fields": {
+      "title": {
+        "selector": ["input[name='jobTitle']", "input#jobTitle", "input[placeholder*='Job title' i]", "label:has-text('Job Title') + input", { "label": "Job title" }, { "label": "Designation" }, { "role": "textbox", "name": "Job title" }],
+        "type": "text"
+      },
+      "company": {
+        "selector": ["input[name='companyName']", "input[placeholder*='Company' i]", { "label": "Company" }, { "label": "Company name" }, { "role": "textbox", "name": "Company" }],
+        "type": "text"
+      },
+      "skills": {
+        "selector": ["input[placeholder*='Key skills' i]", "input[name='keySkills']", "#keySkills input", { "label": "Key skills" }, { "label": "Skills" }, { "role": "textbox", "name": "Key skills" }],
+        "type": "tags",
+        "max": 15
+      },
+      "experienceMin": {
+        "selector": ["input[name='minExp']", "select[name='minExp']", "input[placeholder*='Min' i][name*='exp' i]", { "label": "Minimum experience" }, { "label": "Min experience" }, { "role": "textbox", "name": "Minimum experience" }],
+        "type": "text"
+      },
+      "experienceMax": {
+        "selector": ["input[name='maxExp']", "select[name='maxExp']", "input[placeholder*='Max' i][name*='exp' i]", { "label": "Maximum experience" }, { "label": "Max experience" }, { "role": "textbox", "name": "Maximum experience" }],
+        "type": "text"
+      },
+      "location": {
+        "selector": ["input[name='location']", "input[placeholder*='Location' i]", { "label": "Location" }, { "label": "Job location" }, { "role": "combobox", "name": "Location" }],
+        "type": "autocomplete",
+        "optionSelector": ["li[role='option']:has-text('{value}')", ".suggestion:has-text('{value}')"]
+      },
+      "employmentType": {
+        "selector": ["select[name='employmentType']", { "label": "Employment type" }, { "label": "Job type" }, { "role": "combobox", "name": "Employment type" }],
+        "type": "select"
+      },
+      "salaryMin": {
+        "selector": ["input[name='minSalary']", "input[placeholder*='Min' i][name*='sal' i]", { "label": "Minimum salary" }, { "label": "Min salary" }, { "role": "textbox", "name": "Minimum salary" }],
+        "type": "text"
+      },
+      "salaryMax": {
+        "selector": ["input[name='maxSalary']", "input[placeholder*='Max' i][name*='sal' i]", { "label": "Maximum salary" }, { "label": "Max salary" }, { "role": "textbox", "name": "Maximum salary" }],
+        "type": "text"
+      },
+      "openings": {
+        "selector": ["input[name='vacancies']", "input[name='openings']", { "label": "Vacancies" }, { "label": "Number of openings" }, { "role": "textbox", "name": "Vacancies" }],
+        "type": "text"
+      },
+      "industry": {
+        "selector": ["select[name='industry']", { "label": "Industry" }, { "label": "Industry type" }, { "role": "combobox", "name": "Industry" }],
+        "type": "select"
+      },
+      "functionalArea": {
+        "selector": ["select[name='functionalArea']", "select[name='role']", { "label": "Functional area" }, { "label": "Role category" }, { "role": "combobox", "name": "Functional area" }],
+        "type": "select"
+      },
+      "education": {
+        "selector": ["input[name='education']", { "label": "Education" }, { "label": "Qualification" }, { "role": "textbox", "name": "Education" }],
+        "type": "text"
+      },
+      "description": {
+        "selector": ["textarea[name='jobDescription']", "textarea#jobDescription", "div[contenteditable='true']", { "label": "Job description" }, { "label": "Description" }, { "role": "textbox", "name": "Job description" }],
+        "type": "text"
+      },
+      "contactEmail": {
+        "selector": ["input[name='contactEmail']", { "label": "Contact email" }, { "label": "Recruiter email" }, { "role": "textbox", "name": "Contact email" }],
+        "type": "text"
+      }
+    },
+    "order": ["title", "company", "skills", "experienceMin", "experienceMax", "location", "employmentType", "salaryMin", "salaryMax", "openings", "industry", "functionalArea", "education", "description", "contactEmail"],
+    "preview": ["button:has-text('Preview')", { "role": "button", "name": "Preview" }],
+    "submit": ["button:has-text('Post Job')", "button:has-text('Submit')", "button[type='submit']:has-text('Post')", { "role": "button", "name": "Post Job" }, { "role": "button", "name": "Publish" }, { "role": "button", "name": "Submit" }],
+    "submitEdit": ["button:has-text('Update')", "button:has-text('Save')", { "role": "button", "name": "Update" }, { "role": "button", "name": "Save" }],
+    "confirm": {
+      "dialog": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }]
+    },
+    "errorProbe": [".field-error", ".error-text", ".validation-error", "[role='alert']"],
+    "success": {
+      "urlPattern": "job-posted|posting-success|success",
+      "text": ["posted successfully", "job has been posted", "sent for approval", "under review"],
+      "selector": [".posting-success", "[data-testid='job-posted']"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "job\\s*id\\s*[:#-]?\\s*([A-Za-z0-9-]{6,})",
+      "idFromUrl": "(?:jobId=|job-listings-|jobs?/)([A-Za-z0-9-]{6,})",
+      "urlSelector": ["a:has-text('View job')", "a[href*='job-listings']"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1", ".jd-header-title", "[data-testid='job-title']"],
+    "notFoundText": ["page not found", "job not found", "no longer available", "has expired"]
+  },
+  "unpublish": {
+    "listUrl": "https://www.naukri.com/recruit/my-jobs",
+    "rowSelector": ["tr:has-text('{id}')", "[data-job-id='{id}']", "li:has-text('{id}')", "[role='row']:has-text('{id}')"],
+    "closeButton": ["button:has-text('Close job')", "button:has-text('Deactivate')", "a:has-text('Close')", { "role": "button", "name": "Close job" }, { "role": "button", "name": "Deactivate" }, { "role": "link", "name": "Close" }],
+    "confirm": ["button:has-text('Confirm')", "button:has-text('Yes')", { "role": "button", "name": "Confirm" }, { "role": "button", "name": "Yes" }],
+    "doneText": ["job closed", "closed successfully", "deactivated successfully", "job has been closed"]
+  },
+  "timeouts": { "nav": 20000, "action": 8000, "overall": 180000 },
+  "pacing": { "minMs": 1000, "maxMs": 3000 },
+  "otp": {
+    "input": ["input[autocomplete=\"one-time-code\"]", "input[name*='otp' i]", "input[id*='otp' i]", { "label": "OTP" }, { "placeholder": "OTP" }, { "label": "Verification code" }, "input[inputmode='numeric']"],
+    "submit": [{ "role": "button", "name": "Verify" }, { "role": "button", "name": "Submit" }, { "role": "button", "name": "Continue" }, "button[type='submit']"]
+  }
+}

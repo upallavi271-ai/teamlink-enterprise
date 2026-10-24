@@ -16,6 +16,7 @@
 
 const prisma = require('../db');
 const { isLate, daySplit, directionFromState } = require('./attendanceMath');
+const punchGuard = require('./punchGuard');
 
 // The device heartbeats every `Delay` seconds (we hand it 30 in the options
 // below). Three minutes of silence is a missed heartbeat several times over.
@@ -150,13 +151,18 @@ async function hrConfig() {
 async function applyLog(log, employeeId, device, cfg) {
   const [date, clock] = log.punchAt.split(' ');
   const time = (clock || '').slice(0, 5);
-  const punch = await prisma.attendancePunch.create({
-    data: {
+  const data = {
       employeeId, date, time, direction: directionFromState(log.statusCode), method: 'Biometric',
       location: device ? `${splitVendor(device.vendor).model} · ${device.serialNumber}` : null,
       source: 'Biometric device', verificationStatus: 'Device',
       deviceState: log.statusCode, deviceVerify: log.verifyCode, clockTime: (clock || '').slice(0, 8) || null,
-    },
+  };
+  // Same person, day, direction within a minute (a double press, two devices, a face check-in a moment ago) = ONE punch;
+  // the device's own reading is the strongest, so it replaces a weaker record's method.
+  const punch = await punchGuard.withLock(employeeId, async () => {
+    const dup = await punchGuard.nearDuplicate(prisma, data);
+    if (dup) return (await punchGuard.mergeStronger(prisma, dup, data)).punch;
+    return prisma.attendancePunch.create({ data });
   });
   await markDay(employeeId, date, cfg);
   await prisma.biometricPunchLog.update({ where: { id: log.id }, data: { employeeId, attendancePunchId: punch.id } });
@@ -184,7 +190,8 @@ async function ingestAttlog(device, body) {
     // eslint-disable-next-line no-await-in-loop
     const log = await prisma.biometricPunchLog.create({
       data: { ...key, statusCode: f[2] != null ? String(f[2]).trim() : null, verifyCode: f[3] != null ? String(f[3]).trim() : null, raw: line.slice(0, 500) },
-    });
+    }).catch((e) => { if (e && e.code === 'P2002') return null; throw e; }); // the same push twice at once
+    if (!log) { duplicate += 1; continue; }
     stored += 1;
     if (!latest || at > latest) latest = at;
     if (!pinCache.has(pin)) {

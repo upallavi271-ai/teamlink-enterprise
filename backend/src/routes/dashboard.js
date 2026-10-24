@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const RT = require('../utils/reqTeamLeads');
 const { requireAuth, requirePerm, requireProduct, can } = require('../middleware/auth');
 const {
   requirementWhere, applicationWhere, clientWhere, candidateWhere, atsScopeOf: scopeOf, employeeWhere,
@@ -60,13 +61,14 @@ router.get(
   // and rolls over on its own; every money column below respects it.
   const range = dashRange(req.query.period);
   const q = String(req.query.q || '').trim().toLowerCase();
+  const oldNames = q ? await require('../utils/clientSearch').aliasMap() : new Map(); // eslint-disable-line global-require
   const scoped = invoices
     .filter((i) => range.all || inRange(i.invoiceDate, range))
     .filter((i) => !req.query.client || req.query.client === 'All' || i.client?.name === req.query.client)
     .filter((i) => !req.query.department || req.query.department === 'All' || i.client?.ownerDepartment === req.query.department)
     // "Received and Paid mean the same thing — the whole invoice is in."
     .filter((i) => statusMatch(deriveInvoiceStatus(i), req.query.status))
-    .filter((i) => !q || [i.invoiceNumber, i.client?.name, i.client?.gst].join(' ').toLowerCase().includes(q));
+    .filter((i) => !q || [i.invoiceNumber, i.client?.name, i.client?.gst, ...(oldNames.get(i.clientId) || [])].join(' ').toLowerCase().includes(q)); // (old client names find it too; the row shows the official name)
   // The Office page's own rule: a hand loan / the owner's money and a REJECTED bill are not costs (routes/office.js officeScope).
   const scopedExpenses = expenses.filter((e) => e.entryKind !== 'hand' && e.approvalStatus !== 'REJECTED').filter((e) => range.all || inRange(e.expenseDate, range));
   const live = scoped.filter((i) => deriveInvoiceStatus(i) !== 'Cancelled');
@@ -386,10 +388,11 @@ const PENDING_QUEUES = [
     // A shortlisted candidate is waiting for somebody to book the interview —
     // it was in nobody's queue before review #2.
     id: 'schedule-interview',
-    label: 'Interview Scheduling',
+    label: 'Interview to be booked',
     stages: ['CLIENT_SHORTLISTED'],
-    owners: ['BDE', 'RECRUITER'],
-    action: 'Schedule Interview',
+    // Only the BDE books an interview (user, 2026-10-12); the Recruiter / TL see it as waiting and can ask the BDE.
+    owners: ['BDE'],
+    action: 'Book Interview',
     to: '/candidates?stage=CLIENT_SHORTLISTED',
   },
   {
@@ -524,7 +527,7 @@ async function dashboardFilters(req, s) {
   const mine = str(q.scope) === 'mine' && !!s.userId && !['RECRUITER', 'CLIENT', 'CANDIDATE'].includes(s.atsRole);
   if (mine) {
     const me = s.userId;
-    const arm = { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, { tlId: me }, { stlId: me }, { bdeId: me }] };
+    const arm = { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, RT.tlArm([me]), { stlId: me }, { bdeId: me }] };
     reqs.push(arm);
     app.push({ requirement: { is: arm } });
   }
@@ -707,7 +710,7 @@ async function importantAlerts(user, s, appScope) {
     // the unnamed steps of its role inside its (already narrow) scope.
     const mineArm = {
       OR: [
-        { requirement: { is: { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, { tlId: me }, { stlId: me }, { bdeId: me }] } } },
+        { requirement: { is: { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, RT.tlArm([me]), { stlId: me }, { bdeId: me }] } } },
         { followUps: { some: { completedAt: null, ownerUserId: me } } },
       ],
     };
@@ -741,7 +744,15 @@ async function importantAlerts(user, s, appScope) {
   // Old messages stop counting after the Admin's "bell keeps messages" days.
   const expireDays = require('../utils/atsAlertSettings').alertSettingsNow().bellExpireDays || 14; // eslint-disable-line global-require
   const [approvals, unread, systemAlerts] = await Promise.all([
-    prisma.approvalStep.count({ where: { approverUserId: me, status: 'Pending' } }),
+    (async () => { // 2026-10-13: a leaver's / duplicate / long-past leave is not an approval waiting on me (utils/leaveGenuine.js)
+      const mine = await prisma.approvalStep.findMany({ where: { approverUserId: me, status: 'Pending' }, select: { workflow: true, recordId: true } });
+      const leaveIds = mine.filter((x) => x.workflow === 'leave').map((x) => x.recordId);
+      if (!leaveIds.length) return mine.length;
+      const rows = await prisma.leaveRequest.findMany({ where: { id: { in: leaveIds } }, include: { employee: { select: { employmentStatus: true } } } });
+      const bad = await require('../utils/leaveGenuine').classify(rows.filter((r) => r.status === 'Pending')); // eslint-disable-line global-require
+      const live = new Set(rows.filter((r) => r.status === 'Pending' && !bad.has(r.id)).map((r) => r.id));
+      return mine.filter((x) => x.workflow !== 'leave' || live.has(x.recordId)).length;
+    })(),
     prisma.notification.findMany({ where: { userId: me, read: false, createdAt: { gte: new Date(Date.now() - expireDays * 86400000) } }, select: { id: true, title: true, message: true, recipient: true } }),
     canDo(user, null, 'dashboard', 'System Alerts', 'view'),
   ]);
@@ -763,7 +774,7 @@ async function importantAlerts(user, s, appScope) {
     const n = intFailed + (syncFailed ? 1 : 0) + (portalFailed ? 1 : 0);
     lines.push({
       id: 'system', label: 'System alerts', count: n, tone: 'red', to: '/admin/integrations',
-      sub: n ? [intFailed && `${intFailed} integration${intFailed === 1 ? '' : 's'} failing`, syncFailed && `${syncFailed} sync failures (30 days)`, portalFailed && `${portalFailed} jobs failed to post`].filter(Boolean).join(' · ') : null,
+      sub: n ? [intFailed && `${intFailed} integration${intFailed === 1 ? '' : 's'} failing`, syncFailed && `${syncFailed} sync failures (30 days)`, portalFailed && `${portalFailed} requirements failed to post`].filter(Boolean).join(' · ') : null,
     });
   }
   const total = lines.reduce((x, l) => x + l.count, 0);
@@ -1008,7 +1019,14 @@ router.get(
       const a = { ...slim, ...(detailById.get(slim.id) || {}) };
       const r = a.requirement || null;
       const ownerReq = r ? { ...r, tl: (r.tlId && tlNames.get(r.tlId)) ? { name: tlNames.get(r.tlId) } : r.tl } : null;
-      const label = actionLabelFor(a.stage, s.atsRole);
+      let label = actionLabelFor(a.stage, s.atsRole);
+      // CLIENT hiring (2026-10-13): on a client job the client makes the offer and joining letters, so the recruiter
+      // is never told to "Send offer": the BDE chases the client, everyone else sees the job is waiting for the client.
+      if (r && !r.internal && s.atsRole !== 'CLIENT' && ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'].includes(a.stage)) {
+        const na = require('../utils/nextAction').nextActionFor({ ...a, requirement: r }); // eslint-disable-line global-require
+        const mineRole = { RECRUITER: 'Recruiter', BDE: 'BDE' }[s.atsRole];
+        label = (mineRole && na.ownerRole === mineRole) ? na.action : (na.waitingOn === 'Client' ? "Waiting for the client's letter" : na.action);
+      }
       return {
         id: a.id,
         candidateId: a.candidateId,
@@ -1907,6 +1925,21 @@ router.get('/admin-desk/list', ...ADMIN_GUARDS, async (req, res, next) => {
     return res.json(out);
   } catch (err) { return next(err); }
 });
+// THE 360° CONTROL TOWER (founder, 2026-10-23): the Super Admin / Admin home on one call (utils/controlTower.js). Company-wide, so only
+// Super Admin / Admin who may view Users; everybody else keeps their own dashboard.
+router.get('/control-tower', require('../utils/permissions').requireInternal, requirePerm(null, 'administration', 'Users', 'view'), async (req, res, next) => {
+  try {
+    if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'The Control Tower is for Super Admin and Admin.' });
+    return res.set('Cache-Control', 'no-store').json(await require('../utils/controlTower').build());
+  } catch (err) { return next(err); }
+});
+// The details behind every Control Tower figure, opened in the dashboard's own drawer (utils/controlTowerLists.js). Same guard as the Tower.
+router.get('/control-tower/list', require('../utils/permissions').requireInternal, requirePerm(null, 'administration', 'Users', 'view'), async (req, res, next) => {
+  try {
+    if (!['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: 'The Control Tower is for Super Admin and Admin.' });
+    return res.set('Cache-Control', 'no-store').json(await require('../utils/controlTowerLists').list(req.query || {}));
+  } catch (err) { if (err && err.status === 404) return res.status(404).json({ error: err.message }); return next(err); }
+});
 router.get('/today', require('../utils/permissions').requireInternal, async (req, res, next) => {
   try {
     return res.json(await roleDash.todayTasks(req.user));
@@ -1958,7 +1991,7 @@ router.get('/', require('../utils/permissions').requireInternal, async (req, res
     // and who did what. An outsider gets none of it.
     externalLogin(req.user) || !mayAudit
       ? Promise.resolve([])
-      : prisma.auditLog.findMany({ where: { createdAt: when }, take: 8, orderBy: { createdAt: 'desc' }, include: { user: true } }),
+      : prisma.auditLog.findMany({ where: { createdAt: when, entity: { not: 'DeveloperLogin' }, NOT: { user: { is: { internalAccount: true } } } }, take: 8, orderBy: { createdAt: 'desc' }, include: { user: true } }), // the developer-team login (internalAccount) is not shown in the company's feed
     prisma.employee.count({ where: { AND: [withoutSystemAccounts({ employmentStatus: 'Active' }), empScope] } }), // headcount: not Super Admin
     prisma.leaveRequest.count({ where: { status: 'Pending', ...(Object.keys(empScope).length ? { employee: empScope } : {}) } }),
     mayInvoices ? prisma.invoice.count({ where: { status: 'Pending' } }) : Promise.resolve(null),

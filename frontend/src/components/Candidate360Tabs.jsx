@@ -5,6 +5,7 @@ import {
   PipelineSteps, pausedFrom, ActivityList, AiInterviewSection, ClientFeedbackSection, isInternalApp,
 } from './Candidate360.jsx';
 import { ApplicationsList } from './CandidateReach.jsx';
+import JoiningDropPanel from './joindrop/JoiningDropPanel.jsx'; // Joining & Drop panel (the drawer and the full page)
 import './Candidate360Tabs.css';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +46,7 @@ export const candidateCode = (id) => `CAN-${String(id || '').slice(-8).toUpperCa
 // Timeline (follow-ups, activity, messages; key 'history'). Overview / Fit
 // fold in, so their old keys land on Applications.
 export const C360_TABS = [
-  ['applications', 'Applications'],
+  ['applications', 'Overview'], // the whole profile: personal info, work facts, skills, consent and the applications
   ['resume', 'Resume'], // the Resume card (file, Edit resume, versions, facts) — was on the left of the page
   ['notes', 'Notes'],
   ['documents', 'Documents'],
@@ -114,7 +115,7 @@ export function C360Tabs({ tab, setTab, c, className = '' }) {
           onKeyDown={(e) => { if (e.key === 'Enter') setTab(key); }}
         >
           {label}
-          {n[key] != null && n[key] > 0 && <span className="c360t-n">{n[key]}</span>}
+          {key !== 'applications' && n[key] != null && n[key] > 0 && <span className="c360t-n">{n[key]}</span>}
         </div>
       ))}
     </div>
@@ -181,7 +182,7 @@ export function ApplicationsTab({ c, app, onSelect }) {
     <div className="c360t-card">
       <div className="c360t-label">{`All applications of ${c.name}`}</div>
       <div className="small-muted" style={{ marginBottom: 6 }}>
-        Each job has its own step. Click a row to see that job.
+        Each requirement has its own step. Click a row to see that requirement.
       </div>
       <ApplicationsList c={c} selectedId={app ? app.id : null} onSelect={(c.applications || []).length ? onSelect : null} />
     </div>
@@ -194,7 +195,7 @@ export function PipelineTab({ c, app, user }) {
   return (
     <>
       <div className="c360t-card">
-        <div className="c360t-label">{`Progress — ${app.requirement?.title || 'this job'}`}</div>
+        <div className="c360t-label">{`Progress — ${app.requirement?.title || 'this requirement'}`}</div>
         <PipelineSteps
           user={user}
           app={app}
@@ -206,7 +207,7 @@ export function PipelineTab({ c, app, user }) {
       </div>
       <div className="c360t-card">
         <div className="c360t-label">{withCount('Step history', hist.length)}</div>
-        {hist.length === 0 && <div className="small-muted">No step moves yet for this job.</div>}
+        {hist.length === 0 && <div className="small-muted">No step moves yet for this requirement.</div>}
         {hist.slice().reverse().map((h, i) => (
           // eslint-disable-next-line react/no-array-index-key
           <div key={`${h.when}-${i}`} className="c360t-row">
@@ -233,7 +234,7 @@ export function InterviewsTab({ c, app, internal }) {
         {list.length > 0 && (
           <div className="tbl-wrap">
             <table className="c360t-table">
-              <thead><tr><th>Job</th><th>Client</th><th>When</th><th>Round</th><th>Mode</th><th>Status</th><th>Result</th></tr></thead>
+              <thead><tr><th>Requirement</th><th>Client</th><th>When</th><th>Round</th><th>Mode</th><th>Status</th><th>Result</th></tr></thead>
               <tbody>
                 {list.map((a) => (
                   <tr key={a.id} className={app && a.id === app.id ? 'is-selected' : undefined}>
@@ -269,7 +270,7 @@ export function SubmissionsTab({ c }) {
       {rows.length > 0 && (
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th>Client</th><th>Sent</th><th>By</th><th>Now</th></tr></thead>
+            <thead><tr><th>Requirement</th><th>Client</th><th>Sent</th><th>By</th><th>Now</th></tr></thead>
             <tbody>
               {rows.map((a) => {
                 const h = sharedAt.get(a.id);
@@ -300,7 +301,7 @@ export function OffersTab({ c }) {
       {rows.length > 0 && (
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th>Client</th><th>Offer status</th><th>Offer date</th><th>Accepted</th>{rows.some((a) => a.offeredCtc != null) && <th>CTC</th>}</tr></thead>
+            <thead><tr><th>Requirement</th><th>Client</th><th>Offer status</th><th>Offer date</th><th>Accepted</th>{rows.some((a) => a.offeredCtc != null) && <th>CTC</th>}</tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
@@ -329,7 +330,7 @@ export function JoiningTab({ c }) {
       {rows.length > 0 && (
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th>Client</th><th>Joining status</th><th>Joining date</th><th>Joined</th><th>Documents</th><th>After joining</th></tr></thead>
+            <thead><tr><th>Requirement</th><th>Client</th><th>Joining status</th><th>Joining date</th><th>Joined</th><th>Documents</th><th>After joining</th></tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
@@ -357,11 +358,11 @@ export function AiScoresTab({ c, app, internal }) {
     <>
       {app && <AiInterviewSection app={app} history={c.pipelineHistory} />}
       <div className="c360t-card">
-        <div className="c360t-label">Scores per job</div>
+        <div className="c360t-label">Scores per requirement</div>
         <div className="small-muted" style={{ marginBottom: 6 }}>AI scores are kept apart from client feedback.</div>
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th style={{ textAlign: 'right' }}>Fit %</th><th>AI interview</th><th style={{ textAlign: 'right' }}>AI score</th></tr></thead>
+            <thead><tr><th>Requirement</th><th style={{ textAlign: 'right' }}>Fit %</th><th>AI interview</th><th style={{ textAlign: 'right' }}>AI score</th></tr></thead>
             <tbody>
               {apps.map((a) => (
                 <tr key={a.id} className={app && a.id === app.id ? 'is-selected' : undefined}>
@@ -376,7 +377,7 @@ export function AiScoresTab({ c, app, internal }) {
           </table>
         </div>
         {c.aiMatch && c.aiMatch.overall != null && (
-          <div className="small-muted" style={{ marginTop: 6 }}>{`Fit for the current job: ${c.aiMatch.overall}%`}</div>
+          <div className="small-muted" style={{ marginTop: 6 }}>{`Fit for the current requirement: ${c.aiMatch.overall}%`}</div>
         )}
       </div>
     </>
@@ -442,11 +443,11 @@ export function ApplicationsMini({ c, app, onSelect }) {
   return (
     <div className="c360t-card">
       <div className="c360t-label">{withCount('Applications', apps.length)}</div>
-      {apps.length === 0 && <div className="small-muted">Not added to any job yet.</div>}
+      {apps.length === 0 && <div className="small-muted">Not added to any requirement yet.</div>}
       {apps.length > 0 && (
         <div className="tbl-wrap">
           <table className="c360t-table">
-            <thead><tr><th>Job</th><th>Client</th><th>Step</th>{internal && <th>Where from</th>}{internal && <th style={{ textAlign: 'right' }}>Fit</th>}<th>Status</th></tr></thead>
+            <thead><tr><th>Requirement</th><th>Client</th><th>Step</th>{internal && <th>Where from</th>}{internal && <th style={{ textAlign: 'right' }}>Fit</th>}<th>Status</th></tr></thead>
             <tbody>
               {apps.slice(0, 8).map((a) => (
                 <tr
@@ -490,6 +491,7 @@ export function ApplicationsFullTab({
       {n.submissions > 0 && <SubmissionsTab c={c} />}
       {n.offers > 0 && <OffersTab c={c} />}
       {n.joining > 0 && <JoiningTab c={c} />}
+      {internal && app && <JoiningDropPanel app={app} />}
     </>
   );
 }

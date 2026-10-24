@@ -39,6 +39,7 @@ const prisma = require('../db');
 const { serviceToken } = require('./ledger');
 const { transition, refreshMonthRun, PayrollError } = require('./payrollEngine');
 const { lastDayOf } = require('./salaryVersions');
+const PC = require('./payrollCycle');
 const { monthLabel } = require('./attendanceMath');
 const { logAudit } = require('./audit');
 
@@ -71,10 +72,10 @@ function buildAccrualPayload(entry, employee) {
     payroll_run_id: entry.id,
     idempotency_key: accrualKey(entry.id),
     reference_type: 'PAYROLL_RUN',
-    date: lastDayOf(entry.month),
+    date: PC.voucherDateSync(entry.month) || lastDayOf(entry.month), // last day of the pay period (15th on the cycle)
     employee_code: employee ? employee.employeeCode : null,
     employee_name: employee ? employee.name : null,
-    narration: `Salary ${monthLabel(entry.month)} — ${employee ? employee.name : entry.employeeId}`,
+    narration: `Salary ${monthLabel(entry.month)}${PC.rangeTail(entry.month)} — ${employee ? employee.name : entry.employeeId}`,
   };
 }
 
@@ -151,6 +152,7 @@ async function ensureLog(kind, entry, payload) {
 
 // Called on approval: build the payload and queue it.
 async function queueAccrual(entryId) {
+  await PC.getSettings();
   const entry = await prisma.employeePayrollRun.findUnique({ where: { id: entryId }, include: { employee: true } });
   return ensureLog('ACCRUAL', entry, buildAccrualPayload(entry, entry.employee));
 }
@@ -181,6 +183,7 @@ async function syncEntry(entryId, actor) {
   if (entry.status !== 'APPROVED') {
     throw new PayrollError(409, `Only an Approved record can be synced to Accounts — this one is ${entry.status}.`, { status: entry.status });
   }
+  await PC.getSettings();
   let log = await ensureLog('ACCRUAL', entry, buildAccrualPayload(entry, entry.employee));
   if (log.status !== 'SUCCESS') {
     const r = await attempt(log);
@@ -208,8 +211,9 @@ async function syncEntry(entryId, actor) {
 // an unmatched Debit of exactly the net pay, dated in or after the payroll
 // month, whose narration names the employee or ends with their account number.
 async function findBankMatch(entry, employee) {
+  await PC.getSettings();
   const cands = await prisma.bankTransaction.findMany({
-    where: { type: 'Debit', matched: false, reconStatus: 'Unmatched', date: { gte: `${entry.month}-01` } },
+    where: { type: 'Debit', matched: false, reconStatus: 'Unmatched', date: { gte: PC.cycleSync(entry.month).from } },
   });
   const net = Math.round(entry.netPay * 100);
   const name = String(employee.name || '').toLowerCase().split(/\s+/).filter((w) => w.length > 2);

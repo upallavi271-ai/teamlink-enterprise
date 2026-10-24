@@ -97,7 +97,7 @@ function TextBox({ f, value, generated, saved, stale, edited, onChange, onReset,
         {changed && <button type="button" className="btn btn-sm btn-ghost" onClick={() => onReset(f.k)}>Back to the text TeamLink wrote</button>}
       </div>
       {stale && !edited && (
-        <div className="jtp-stale">The job changed after this text was saved, so the text TeamLink would write now is different. <button type="button" className="btn btn-sm" onClick={() => onReset(f.k)}>Use the new text</button></div>
+        <div className="jtp-stale">The requirement changed after this text was saved, so the text TeamLink would write now is different. <button type="button" className="btn btn-sm" onClick={() => onReset(f.k)}>Use the new text</button></div>
       )}
     </div>
   );
@@ -218,7 +218,7 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
     setNote('The AI wording is in the boxes. Read it, then press Save my changes.');
   }
 
-  if (!data) return <div className="small-muted">{error || 'Writing the job posts from the job…'}</div>;
+  if (!data) return <div className="small-muted">{error || 'Writing the job posts from the requirement…'}</div>;
   // A box stays on screen while the poster types in it, even after the text no longer counts that fact as missing.
   (data.missing || []).forEach((m) => { metaRef.current[m.key] = m; });
   const stillMissing = new Set((data.missing || []).map((m) => m.key));
@@ -244,7 +244,7 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
       return (
         <div className="jtp-check">
           <b>Check these 5 things before you post</b>
-          <div className="small-muted">Built from this job&rsquo;s real gaps. {fixCount ? `${fixCount} need${fixCount === 1 ? 's' : ''} fixing.` : 'Nothing is missing. Still read each one.'}</div>
+          <div className="small-muted">Built from this requirement&rsquo;s real gaps. {fixCount ? `${fixCount} need${fixCount === 1 ? 's' : ''} fixing.` : 'Nothing is missing. Still read each one.'}</div>
           <ol className="jtp-check-list">
             {checklist.map((c) => (
               <li key={c.key} className={`jtp-check-item ${STATUS[c.status][1]}`}>
@@ -281,9 +281,9 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
         <div className="jtp-fill" role="group" aria-label="Fill these first">
           <div className="jtp-fill-h">
             <b>Fill these first</b>
-            <a className="btn btn-sm" href={`/requirements/${requirementId}?action=edit`} title="Open the job form to change any field">Edit the job</a>
+            <a className="btn btn-sm" href={`/requirements/${requirementId}?action=edit`} title="Open the requirement form to change any field">Edit the requirement</a>
           </div>
-          <div className="small-muted">The posts keep <code>[ ]</code> where the job has nothing. Type here and the text updates. We never make up a salary, skill or benefit.</div>
+          <div className="small-muted">The posts keep <code>[ ]</code> where the requirement has nothing. Type here and the text updates. We never make up a salary, skill or benefit.</div>
           {sugg.length > 0 && (
             <div className="jtp-sugg">
               <div className="jtp-sugg-h">
@@ -315,8 +315,8 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
       )}
       {typedAny && (
         <div className="jtp-row">
-          {data.canFill && <button type="button" className="btn btn-sm" disabled={busy === 'fills'} onClick={saveFills}>{busy === 'fills' ? 'Saving…' : 'Save these into the job'}</button>}
-          <span className="small-muted">{data.canFill ? 'Otherwise they are only used for these texts.' : 'These are only used for these texts (you cannot change the job itself).'}{Object.keys(guess).length ? ' Items marked "check this" came from the description.' : ''}</span>
+          {data.canFill && <button type="button" className="btn btn-sm" disabled={busy === 'fills'} onClick={saveFills}>{busy === 'fills' ? 'Saving…' : 'Save these into the requirement'}</button>}
+          <span className="small-muted">{data.canFill ? 'Otherwise they are only used for these texts.' : 'These are only used for these texts (you cannot change the requirement itself).'}{Object.keys(guess).length ? ' Items marked "check this" came from the description.' : ''}</span>
         </div>
       )}
 
@@ -350,7 +350,7 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
       {ai && (
         <div className="jtp-ai" role="status">
           <b>{ai.label}</b>
-          <div className="small-muted">Written by an AI from the same facts. Anything that is not in the job (a number, a tag, a line naming the client) was removed. Nothing is used until you press the button.</div>
+          <div className="small-muted">Written by an AI from the same facts. Anything that is not in the requirement (a number, a tag, a line naming the client) was removed. Nothing is used until you press the button.</div>
           {ai.dropped && ai.dropped.length > 0 && (
             <details><summary>{ai.dropped.length} thing{ai.dropped.length === 1 ? '' : 's'} removed from the AI text</summary>
               <ul>{ai.dropped.map((d, i) => <li key={i}><b>{d.where}:</b> &ldquo;{d.line}&rdquo; — {d.why}</li>)}</ul></details>
@@ -388,7 +388,7 @@ export default function JobTextPanel({ requirementId, tabs = ALL_TABS, onNote, o
       {data.ai && data.ai.available && !ai && (
         <div className="jtp-row">
           <button type="button" className="btn btn-sm" disabled={busy === 'ai'} onClick={polish}>{busy === 'ai' ? 'Writing…' : 'Polish with AI'}</button>
-          <span className="small-muted">Optional. It only rewrites the wording from this job&rsquo;s facts, and you see what changed first.</span>
+          <span className="small-muted">Optional. It only rewrites the wording from this requirement&rsquo;s facts, and you see what changed first.</span>
         </div>
       )}
       {data.ai && !data.ai.available && (
@@ -404,7 +404,7 @@ function FillItem({ m, value, guessed, onChange }) {
   const long = LONG.includes(m.key);
   return (
     <label className="jtp-fill-item">
-      <span>{m.label}{m.optional ? '' : ' *'}{guessed && <em className="jtp-guess">check this</em>}</span>
+      <span>{m.label}{guessed && <em className="jtp-guess">check this</em>}</span>
       {long
         ? <textarea rows={m.key === 'responsibilities' ? 4 : 2} value={value} placeholder={m.hint} onChange={(e) => onChange(m.key, e.target.value)} />
         : <input type="text" value={value} placeholder={m.hint} onChange={(e) => onChange(m.key, e.target.value)} />}

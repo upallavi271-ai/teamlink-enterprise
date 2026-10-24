@@ -83,7 +83,7 @@ async function addItem(user, client, body) {
   if (client.bdeOwner && def.needsDate) {
     const owner = await prisma.user.findFirst({ where: { name: client.bdeOwner, status: 'Active' }, select: { id: true } });
     if (owner && owner.id !== user.id) {
-      await notifyUsers([owner.id], { title: `${def.label} set — ${client.name}`, message: `${user.name || 'Someone'} set a ${def.label.toLowerCase()} for ${client.name} on ${item.dueDate}: ${title}.`, exceptUserId: user.id });
+      await notifyUsers([owner.id], { title: `${def.label} set — ${client.name}`, message: `${user.name || 'Someone'} set a ${def.label.toLowerCase()} for ${client.name} on ${item.dueDate}: ${title}.`, exceptUserId: user.id }).catch(() => null);
     }
   }
   return { status: 201, body: { ok: true, item: publicItem(item, istToday()), message: def.needsDate ? `${def.label} saved for ${item.dueDate}. You will get a reminder that day.` : 'Saved in the client history.' } };
@@ -127,7 +127,7 @@ async function clientBusiness(user, client, rights) {
     { key: 'agreement-sent', label: 'Agreement sent', done: agr !== 'DRAFT' },
     { key: 'agreement-signed', label: 'Agreement signed', done: V.agreementIsSigned(client.agreementStatus) },
     { key: 'agreement-active', label: 'Agreement active', done: V.agreementIsActive(client.agreementStatus) },
-    { key: 'first-job', label: 'First job raised', done: reqCount > 0 },
+    { key: 'first-job', label: 'First requirement raised', done: reqCount > 0 },
   ];
   const firstTodo = steps.findIndex((s) => !s.done);
   steps.forEach((s, i) => { s.state = s.done ? 'done' : (s.rejected ? 'rejected' : (i === firstTodo ? 'current' : 'todo')); });
@@ -155,7 +155,8 @@ async function workspaceFor(user) {
   const today = istToday();
   const tl = isBdeTl(user);
   const testViewer = TEST_RE.test(`${user.name || ''} ${user.email || ''}`) || !!process.env.TEST_MODE;
-  const own = new Set(s.bdeOwnClientIds || []);
+  // "My clients" = the ones ASSIGNED to the BDE (assigned on Users / Owner BDE). The desk's clients that have no BDE yet are in the Clients list, not in My business.
+  const own = new Set(s.clientIds || []);
   const where = (s.global || tl || atsViewRole(user) !== 'bde') ? clientWhere(user) : { AND: [clientWhere(user), { id: { in: [...own] } }] };
   const clients = (await prisma.client.findMany({
     where, select: { id: true, name: true, status: true, ownerDepartment: true, agreementStatus: true, clientType: true, createdAt: true }, orderBy: { name: 'asc' },
@@ -173,7 +174,6 @@ async function workspaceFor(user) {
   // candidate chases that are the BDE's own (the same follow-ups the dashboard lists)
   const chase = await prisma.applicationFollowUp.count({ where: { ownerUserId: user.id, completedAt: null, dueDate: { lte: today } } }).catch(() => 0);
   const mine = await CR.listFor(user, { onlyMine: true, take: 300 });
-  const pause = await prisma.auditLog.count({ where: { action: 'Client pause requested', userId: user.id, approvalStatus: 'Pending' } }).catch(() => 0);
   const imports = await prisma.auditLog.count({ where: { entity: 'AtsImportRequest', userId: user.id, approvalStatus: 'Pending' } }).catch(() => 0);
   const pendingReq = mine.filter((r) => r.status === 'Pending');
   // once-a-day reminders (bell) for the follow-ups / meetings that are due or late
@@ -189,17 +189,20 @@ async function workspaceFor(user) {
     await prisma.appSetting.update({ where: { key: x._key }, data: { value: JSON.stringify(next) } }).catch(() => null);
   }
   const base = await CL.baseRights(user);
+  // "Desk clients": every client of the BDE's desk (the whole desk shares them) - shown beside My clients.
+  const deskClients = await prisma.client.count({ where: { AND: [clientWhere(user), ...(testViewer ? [] : [{ NOT: { name: { contains: 'zztest' } } }])] } }).catch(() => clients.length);
   return {
     today,
     scope: tl ? 'all' : 'mine',
     counts: {
       clients: clients.length,
+      deskClients,
       requirements: live.length,
       requirementsPaused: live.filter((r) => r.status === 'ON_HOLD').length,
       followUpsDue: due.length + chase,
       followUpsClient: due.length,
       followUpsPeople: chase,
-      pending: pendingReq.length + pause + imports,
+      pending: pendingReq.length + imports,
     },
     clients: clients.map((c) => ({ id: c.id, name: c.name, lifecycle: CL.lifecycleOf(c.status), department: c.ownerDepartment || null })),
     requirements: reqs.map((r) => ({ id: r.id, title: r.title, code: r.reqCode || null, status: r.status, clientId: r.clientId, clientName: r.client ? r.client.name : null })),
@@ -215,4 +218,46 @@ async function workspaceFor(user) {
   };
 }
 
-module.exports = { addItem, markDone, clientBusiness, workspaceFor, itemsOfClients, istToday, publicItem, KINDS };
+// ---- the three BDE reports (Reports -> My business: clients, requirements, follow-ups) ---------------------
+const REPORT_DEF = {
+  clients: { feature: 'My Clients Report', title: 'My clients' },
+  requirements: { feature: 'My Requirements Report', title: 'My requirements' },
+  followups: { feature: 'My Follow-ups Report', title: 'My follow-ups' },
+};
+async function reportFor(user, kind) {
+  const def = REPORT_DEF[kind];
+  if (!def) return { status: 404, body: { error: 'Unknown report.' } };
+  const { can } = require('../middleware/auth'); // eslint-disable-line global-require
+  if (!(await can(user, null, 'reports', def.feature, 'view'))) return { status: 403, body: { error: 'This report is not ticked for your role.' } };
+  const ws = await workspaceFor(user);
+  const today = istToday();
+  const exportable = await can(user, null, 'reports', 'Export Assigned Data', 'export');
+  const ids = ws.clients.map((c) => c.id);
+  let columns; let rows;
+  if (kind === 'clients') {
+    const full = ids.length ? await prisma.client.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, ownerDepartment: true, status: true, agreementStatus: true, createdAt: true, bdeOwner: true } }) : [];
+    const jobs = ids.length ? await prisma.requirement.findMany({ where: { clientId: { in: ids }, internal: false, status: { not: 'CLOSED' } }, select: { clientId: true, status: true } }) : [];
+    const open = {}; const paused = {};
+    jobs.forEach((j) => { if (j.status === 'ON_HOLD') paused[j.clientId] = (paused[j.clientId] || 0) + 1; else if (j.status !== 'DRAFT') open[j.clientId] = (open[j.clientId] || 0) + 1; });
+    const fu = await itemsOfClients(ids, { kinds: ['followup', 'meeting'] });
+    const fuOpen = {}; fu.filter((x) => x.status === 'Open').forEach((x) => { fuOpen[x.clientId] = (fuOpen[x.clientId] || 0) + 1; });
+    columns = [['name', 'Client'], ['department', 'Department'], ['status', 'Status'], ['agreement', 'Agreement'], ['openJobs', 'Open requirements'], ['pausedJobs', 'Paused requirements'], ['followUps', 'Follow-ups waiting'], ['added', 'Added on']];
+    rows = full.map((c) => ({ id: c.id, name: c.name, department: c.ownerDepartment || '', status: CL.lifecycleOf(c.status), agreement: V.agreementStatusLabel(c.agreementStatus), openJobs: open[c.id] || 0, pausedJobs: paused[c.id] || 0, followUps: fuOpen[c.id] || 0, added: String(c.createdAt.toISOString()).slice(0, 10) }));
+  } else if (kind === 'requirements') {
+    columns = [['code', 'Code'], ['title', 'Requirement'], ['client', 'Client'], ['status', 'Status'], ['openings', 'Openings'], ['added', 'Raised on']];
+    const reqs = ws.requirements.map((r) => r.id);
+    const full = reqs.length ? await prisma.requirement.findMany({ where: { id: { in: reqs } }, select: { id: true, reqCode: true, title: true, status: true, openings: true, createdAt: true, client: { select: { name: true } } } }) : [];
+    rows = full.map((r) => ({ id: r.id, code: r.reqCode || '', title: r.title, client: r.client ? r.client.name : '', status: V.requirementStatusUser ? V.requirementStatusUser(r.status) : r.status, openings: r.openings == null ? '' : r.openings, added: String(r.createdAt.toISOString()).slice(0, 10) }));
+  } else {
+    columns = [['client', 'Client'], ['kind', 'What'], ['title', 'About'], ['due', 'Date'], ['state', 'State'], ['by', 'Set by']];
+    const all = await itemsOfClients(ids, { kinds: ['followup', 'meeting'] });
+    const nameOf = new Map(ws.clients.map((c) => [c.id, c.name]));
+    rows = all.sort((a, b) => String(a.dueDate).localeCompare(String(b.dueDate))).map((x) => ({
+      id: x.id, client: nameOf.get(x.clientId) || '', kind: (KINDS[x.kind] || {}).label || x.kind, title: x.title || '', due: x.dueDate || '',
+      state: x.status === 'Open' ? (x.dueDate < today ? 'Late' : (x.dueDate === today ? 'Today' : 'Coming')) : 'Done', by: x.createdByName || '',
+    }));
+  }
+  return { status: 200, body: { kind, title: def.title, columns: columns.map(([key, label]) => ({ key, label })), rows, total: rows.length, canExport: exportable } };
+}
+
+module.exports = { reportFor, addItem, markDone, clientBusiness, workspaceFor, itemsOfClients, istToday, publicItem, KINDS };

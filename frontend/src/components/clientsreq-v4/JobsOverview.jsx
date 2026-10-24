@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useAgreementBlind } from '../../utils/agreementPrivacy.js';
 import api from '../../api';
 import {
   KpiRow, KpiTile, Panel, Icon, Avatar, fmtNum,
@@ -78,11 +79,6 @@ export function JobsKpis({
       sub: 'Past the due date', onClick: () => onFilter({ deadline: filters.deadline === 'overdue' ? '' : 'overdue' }),
       active: filters.deadline === 'overdue',
     },
-    {
-      key: 'hold', icon: 'pause', tone: 'slate', label: 'On Hold', value: num(c.hold),
-      sub: 'Paused for now', onClick: () => onFilter({ status: filters.status === 'ON_HOLD' ? '' : 'ON_HOLD' }),
-      active: filters.status === 'ON_HOLD',
-    },
   ].filter(Boolean);
   return (
     <KpiRow className="crq4-kpis">
@@ -104,9 +100,9 @@ export function JobsKpis({
   );
 }
 
-// Draft → Agreement Approved → Assigned → Open → On Hold → Filled → Closed
+// Only Open and Closed are shown (2026-10-13); the older keys stay so an old link still draws.
 const STAGE_LOOK = {
-  draft: { icon: 'file', tone: 'slate', short: 'Draft' },
+  draft: { icon: 'file', tone: 'slate', short: 'Not live yet' },
   approved: { icon: 'handshake', tone: 'blue', short: 'Agreement' },
   assigned: { icon: 'user', tone: 'violet', short: 'Assigned' },
   open: { icon: 'briefcase', tone: 'green', short: 'Open' },
@@ -115,11 +111,13 @@ const STAGE_LOOK = {
   closed: { icon: 'x', tone: 'navy', short: 'Closed' },
 };
 export function StageFlow({ chain = [], active, onPick }) {
+  const blind = useAgreementBlind(); // TL / Recruiter / HR never read the word "Agreement" (2026-10-12)
   if (!chain.length) return <div className="ak-empty">No data available</div>;
   return (
     <ol className="crq4-flow">
       {chain.map((s) => {
-        const look = STAGE_LOOK[s.key] || { icon: 'list', tone: 'slate', short: s.label };
+        const look0 = STAGE_LOOK[s.key] || { icon: 'list', tone: 'slate', short: s.label };
+        const look = blind && s.key === 'approved' ? { ...look0, short: 'Approved' } : look0;
         const on = active === s.key;
         return (
           <li key={s.key} className={`crq4-flow-step crq4-c-${look.tone}${on ? ' is-on' : ''}`}>

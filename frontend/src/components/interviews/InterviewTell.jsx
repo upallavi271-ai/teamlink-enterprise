@@ -55,7 +55,7 @@ function sub(ch, st, cand) {
 }
 
 export default function InterviewTell({
-  applicationId, kind = 'scheduled', saved = '', note = '', canMakeLink = false, extra = null, onClose,
+  applicationId, kind = 'scheduled', saved = '', note = '', canMakeLink = false, extra = null, beforeDone = null, onClose,
 }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -92,12 +92,15 @@ export default function InterviewTell({
     try { await navigator.clipboard.writeText(t); setCopied(true); } catch { setCopied(false); }
     try { await api.post(`/ats/interviews/${applicationId}/tell/copied`, { kind, channel: 'WhatsApp' }); load(); } catch { /* the copy still worked */ }
   }
-  async function finish() {
+  // beforeDone(viaDoneButton): an optional step run before the window closes (the preparation questions, components/interviews/InterviewPrep.jsx).
+  // It returns true to keep the window open (it shows its own reason). Closing with the cross never runs it.
+  async function finish(viaDoneButton = false) {
+    if (beforeDone) { try { if (await beforeDone(viaDoneButton === true)) return; } catch { /* closing must never fail */ } }
     try { await api.post(`/ats/interviews/${applicationId}/tell/done`, { kind }); } catch { /* closing must never fail */ }
     onClose();
   }
 
-  const footer = <button type="button" className="btn" onClick={finish}>Done</button>;
+  const footer = <button type="button" className="btn" onClick={() => finish(true)}>Done</button>;
   if (err && !data) {
     return <Modal title={TITLE[kind]} onClose={onClose} footer={<button type="button" className="btn" onClick={onClose}>Close</button>}><div className="msg-box red">{err}</div></Modal>;
   }
@@ -117,7 +120,7 @@ export default function InterviewTell({
 
   return (
     <>
-      <Modal title={TITLE[kind]} onClose={finish} footer={footer}>
+      <Modal title={TITLE[kind]} onClose={() => finish(false)} footer={footer}>
         <div className="ivt">
           {saved && <div className="ivt-ok" role="status">{saved}</div>}
           {note && <div className="ivt-note">{note}</div>}
@@ -203,7 +206,7 @@ export default function InterviewTell({
                 </div>
               );
             })}
-            {data.parties.length === 0 && <div className="small-muted">Nobody else is named on this job yet.</div>}
+            {data.parties.length === 0 && <div className="small-muted">Nobody else is named on this requirement yet.</div>}
           </div>
           {teamErr && <div className="msg-box red">{teamErr}</div>}
           {data.canNotify && data.parties.filter((p) => !p.you).length > 1 && (

@@ -4,6 +4,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { saveBlob } from '../office/officeUtil';
 import './Partners.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION → COMPANY SETUP → PARTNERS (B7, 2026-10-06).
@@ -67,7 +68,7 @@ export default function Partners() {
       <div className="page-head">
         <div>
           <h1>Partners</h1>
-          <div className="page-sub">Agencies and freelancers who send you candidates. Set their fee, TDS and guarantee here, give them a login, then share jobs with them from the job page.</div>
+          <div className="page-sub">Agencies and freelancers who send you candidates. Set their fee, TDS and guarantee here, give them a login, then share requirements with them from the requirement page.</div>
         </div>
         {tab === 'partners' && opts?.canManage && <button type="button" className="btn btn-primary" onClick={() => setEdit({ row: null })}>+ Add partner</button>}
         {tab === 'logins' && opts?.canManage && <button type="button" className="btn btn-primary" onClick={() => setLoginEdit({ row: null })}>+ Add partner login</button>}
@@ -84,9 +85,9 @@ export default function Partners() {
       {secret && (
         <div className="notice amber pa-secret">
           <span>
-            Password for <strong>{secret.email}</strong>: <code>{secret.password}</code>{' '}
-            <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(secret.password)}>Copy</button>{' '}
-            Shown only now. Give it to the partner. They sign in at <code>/partner-login</code> and must change it the first time (it works for 7 days).{' '}
+            Sign-in link for <strong>{secret.email}</strong>: <code style={{ wordBreak: 'break-all' }}>{secret.link}</code>{' '}
+            <button type="button" className="btn btn-sm" onClick={() => navigator.clipboard?.writeText(secret.link)}>Copy link</button>{' '}
+            Send it to the partner. It works once{secret.expiresAt ? ` and expires on ${new Date(secret.expiresAt).toLocaleString()}` : ''}. They choose their own password; nobody else ever sees it.{' '}
             <button type="button" className="link-btn" onClick={() => setSecret(null)}>Hide</button>
           </span>
         </div>
@@ -96,7 +97,7 @@ export default function Partners() {
         !data ? <div className="empty-mini">Loading…</div> : !rows.length ? (
           <div className="empty-mini" style={{ padding: 30, textAlign: 'center' }}>
             <h3>No partners yet</h3>
-            <p className="small-muted">Press “+ Add partner”: name, type, fee terms, TDS, guarantee days. Then add a login and share a job with them.</p>
+            <p className="small-muted">Press “+ Add partner”: name, type, fee terms, TDS, guarantee days. Then add a login and share a requirement with them.</p>
           </div>
         ) : (
           <>
@@ -131,7 +132,7 @@ export default function Partners() {
                           </>
                         ) : <span className="cell-muted">None</span>}
                       </td>
-                      <td><span className={`pa-tag pa-${TONE[r.status] || 'grey'}`}>{r.status}</span><div className="cell-muted">{r.logins} login{r.logins === 1 ? '' : 's'} · {r.shares} job{r.shares === 1 ? '' : 's'}</div></td>
+                      <td><span className={`pa-tag pa-${TONE[r.status] || 'grey'}`}>{r.status}</span><div className="cell-muted">{r.logins} login{r.logins === 1 ? '' : 's'} · {r.shares} requirement{r.shares === 1 ? '' : 's'}</div></td>
                       <td className="num">{r.submitted}</td>
                       <td className="num">{r.joined}</td>
                       <td className="num">{inr(r.payout)}</td>
@@ -168,7 +169,7 @@ export default function Partners() {
                     <td>{when(r.lastLoginAt)}{r.lastLoginIp && <div className="cell-muted">{r.lastLoginIp}</div>}</td>
                     <td className="pa-acts">
                       <button type="button" className="btn btn-sm" onClick={() => setLoginEdit({ row: r })}>Edit</button>
-                      <button type="button" className="btn btn-sm" onClick={async () => { if (!window.confirm(`Reset the password for ${r.email}? They are signed out and get a new temporary password.`)) return; try { const res = await api.post(`/partners/logins/${r.id}/reset-password`); setSecret({ email: r.email, password: res.data.tempPassword }); setSaved(res.data.message); load(); } catch (e) { setError(errText(e, 'Could not reset.')); } }}>Reset password</button>
+                      <button type="button" className="btn btn-sm" onClick={async () => { if (!window.confirm(`Reset the password for ${r.email}? They are signed out and get a one-time link to choose a new password.`)) return; try { const res = await api.post(`/partners/logins/${r.id}/reset-password`); setSecret({ email: r.email, link: res.data.inviteLink, expiresAt: res.data.inviteExpiresAt }); setSaved(res.data.message); load(); } catch (e) { setError(errText(e, 'Could not reset.')); } }}>Reset password</button>
                       {r.status === 'Active'
                         ? <button type="button" className="btn btn-sm btn-danger" onClick={() => act(`/partners/logins/${r.id}/deactivate`)}>Deactivate</button>
                         : <button type="button" className="btn btn-sm" onClick={() => act(`/partners/logins/${r.id}/activate`)}>Activate</button>}
@@ -188,7 +189,7 @@ export default function Partners() {
         <PartnerModal row={edit.row} opts={opts} onClose={() => setEdit(null)} onSaved={(res) => { setEdit(null); setSaved(res.message || 'Saved.'); load(); }} />
       )}
       {loginEdit && (
-        <LoginModal row={loginEdit.row} partners={rows} onClose={() => setLoginEdit(null)} onSaved={(res) => { setLoginEdit(null); setSaved(res.message || 'Saved.'); if (res.tempPassword) setSecret({ email: res.login?.email, password: res.tempPassword }); load(); }} />
+        <LoginModal row={loginEdit.row} partners={rows} onClose={() => setLoginEdit(null)} onSaved={(res) => { setLoginEdit(null); setSaved(res.message || 'Saved.'); if (res.inviteLink) setSecret({ email: res.login?.email, link: res.inviteLink, expiresAt: res.inviteExpiresAt }); load(); }} />
       )}
     </div>
   );
@@ -278,9 +279,9 @@ function PartnerModal({ row, opts, onClose, onSaved }) {
             : <div><label htmlFor="paFf">Fixed fee (₹)</label><input id="paFf" type="number" min="0" value={v.feeFixed} onChange={(e) => set('feeFixed', e.target.value)} /></div>}
           <div>
             <label htmlFor="paTs">TDS section</label>
-            <select id="paTs" value={v.tdsSection || 'None'} onChange={(e) => { const s = e.target.value; set('tdsSection', s); if (s === 'None') set('tdsPercent', 0); }}>
+            <Combo id="paTs" value={v.tdsSection || 'None'} onChange={(e) => { const s = e.target.value; set('tdsSection', s); if (s === 'None') set('tdsPercent', 0); }}>
               {(opts.tdsSections || ['194J', '194C', '194H', 'None']).map((s) => <option key={s} value={s}>{s === 'None' ? 'No TDS' : s}</option>)}
-            </select>
+            </Combo>
           </div>
           <div><label htmlFor="paTp">TDS %</label><input id="paTp" type="number" step="0.5" min="0" max="30" value={v.tdsPercent} disabled={v.tdsSection === 'None'} onChange={(e) => set('tdsPercent', e.target.value)} /></div>
         </div>
@@ -303,7 +304,7 @@ function PartnerModal({ row, opts, onClose, onSaved }) {
         <input id="paSp" value={v.specialisations} onChange={(e) => set('specialisations', e.target.value)} placeholder="Dermatology, Java, Sales" />
         <label className="pa-switch">
           <input type="checkbox" checked={v.showClientName} onChange={(e) => set('showClientName', e.target.checked)} />
-          <span><strong>Show the client&apos;s name on shared jobs</strong><br /><span className="cell-muted">Off = the partner sees the job card without the client. Can also be set per job when sharing.</span></span>
+          <span><strong>Show the client&apos;s name on shared requirements</strong><br /><span className="cell-muted">Off = the partner sees the requirement card without the client. Can also be set per requirement when sharing.</span></span>
         </label>
 
         <div style={{ margin: '14px 0 4px', fontSize: 12.5, fontWeight: 600 }}>Agreement</div>
@@ -322,7 +323,7 @@ function PartnerModal({ row, opts, onClose, onSaved }) {
 
 function LoginModal({ row, partners, onClose, onSaved }) {
   const isNew = !row;
-  const [v, setV] = useState({ partnerId: row?.partnerId || '', name: row?.name || '', email: row?.email || '', status: row?.status || 'Active', autoPassword: true, password: '' });
+  const [v, setV] = useState({ partnerId: row?.partnerId || '', name: row?.name || '', email: row?.email || '', status: row?.status || 'Active' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function save() {
@@ -330,10 +331,9 @@ function LoginModal({ row, partners, onClose, onSaved }) {
     if (!v.partnerId) { setError('Pick the partner.'); return; }
     if (!v.name.trim()) { setError('Enter the contact name.'); return; }
     if (!v.email.trim()) { setError('Enter the email.'); return; }
-    if (isNew && !v.autoPassword && v.password.length < 10) { setError(`Type a password. ${PW_HINT} Or let the app make one.`); return; }
     setBusy(true);
     try {
-      const body = isNew ? { partnerId: v.partnerId, name: v.name, email: v.email, autoPassword: v.autoPassword, password: v.autoPassword ? undefined : v.password } : { name: v.name, email: v.email, status: v.status };
+      const body = isNew ? { partnerId: v.partnerId, name: v.name, email: v.email } : { name: v.name, email: v.email, status: v.status };
       const res = isNew ? await api.post('/partners/logins', body) : await api.patch(`/partners/logins/${row.id}`, body);
       onSaved(res.data);
     } catch (e) { setError(errText(e, 'Could not save.')); } finally { setBusy(false); }
@@ -342,10 +342,10 @@ function LoginModal({ row, partners, onClose, onSaved }) {
     <Modal title={isNew ? 'Add partner login' : `Edit · ${row.email}`} onClose={onClose} footer={<><button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="btn btn-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : (isNew ? 'Create login' : 'Save')}</button></>}>
       <div className="pa-form">
         <label htmlFor="plP">Partner</label>
-        <select id="plP" value={v.partnerId} disabled={!isNew} onChange={(e) => setV({ ...v, partnerId: e.target.value })}>
+        <Combo id="plP" value={v.partnerId} disabled={!isNew} onChange={(e) => setV({ ...v, partnerId: e.target.value })}>
           <option value="">Pick the partner…</option>
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.type})</option>)}
-        </select>
+        </Combo>
         <div className="pa-two">
           <div><label htmlFor="plN">Contact name</label><input id="plN" value={v.name} onChange={(e) => setV({ ...v, name: e.target.value })} /></div>
           <div><label htmlFor="plE">Email / username</label><input id="plE" type="email" value={v.email} onChange={(e) => setV({ ...v, email: e.target.value })} /></div>
@@ -358,13 +358,7 @@ function LoginModal({ row, partners, onClose, onSaved }) {
         )}
         {isNew && (
           <>
-            <div style={{ margin: '10px 0 4px', fontSize: 12.5, fontWeight: 600 }}>Temporary password</div>
-            <div className="pa-choice">
-              <button type="button" className={`pa-chip${v.autoPassword ? ' on' : ''}`} onClick={() => setV({ ...v, autoPassword: true })}>Make one for me</button>
-              <button type="button" className={`pa-chip${!v.autoPassword ? ' on' : ''}`} onClick={() => setV({ ...v, autoPassword: false })}>I will type it</button>
-            </div>
-            {!v.autoPassword && <input type="password" autoComplete="new-password" value={v.password} placeholder={PW_HINT} onChange={(e) => setV({ ...v, password: e.target.value })} style={{ marginTop: 6 }} />}
-            <div className="cell-muted" style={{ fontSize: 12, marginTop: 4 }}>Shown to you once. Works for 7 days. The partner must change it the first time they sign in at /partner-login.</div>
+            <div className="cell-muted" style={{ fontSize: 12.5, marginTop: 10 }}>You get a one-time sign-in link to send to the partner. They open it and choose their own password. Nobody types or sees a password.</div>
           </>
         )}
         {error && <div className="error-text" style={{ marginTop: 8 }}>{error}</div>}
@@ -387,7 +381,7 @@ function Settings({ isAdmin, onSaved, onError }) {
       <div className="card" style={{ marginBottom: 12 }}>
         <h3>Partner emails</h3>
         <div className="small-muted" style={{ margin: '6px 0 10px' }}>
-          One switch for every email the Partner Portal sends: "your candidate moved to interview / joined", "payout approved / paid", "a job was shared with you".
+          One switch for every email the Partner Portal sends: "your candidate moved to interview / joined", "payout approved / paid", "a requirement was shared with you".
           Off (default): nothing is emailed; partners still see every notice inside their portal.
         </div>
         <div className="pa-choice">
@@ -401,9 +395,9 @@ function Settings({ isAdmin, onSaved, onError }) {
         <h3>How partners work</h3>
         <dl className="pa-dl">
           <dt>Sign-in</dt><dd>/partner-login. 5 wrong passwords lock the login for 30 minutes; signed out after 30 minutes idle; password reset only here.</dd>
-          <dt>They see</dt><dd>Only the jobs you shared with them, their own candidates with the step they are at, and their own payouts. Nothing else.</dd>
+          <dt>They see</dt><dd>Only the requirements you shared with them, their own candidates with the step they are at, and their own payouts. Nothing else.</dd>
           <dt>Duplicates</dt><dd>A person already with TeamLink (or sent earlier by another partner) is refused with the date. The first partner to send a person owns them for the ownership days.</dd>
-          <dt>Payout</dt><dd>Drafted when the candidate joins and the client invoice exists; on hold until the guarantee ends; approved by a second person in Invoices → Partner payouts; booked as an office cost “Partner payout”.</dd>
+          <dt>Payout</dt><dd>Prepared when the candidate joins and the client invoice exists; on hold until the guarantee ends; approved by a second person in Invoices → Partner payouts; booked as an office cost “Partner payout”.</dd>
         </dl>
       </div>
     </div>
@@ -420,10 +414,10 @@ function AuditList({ partners, initial, onClear }) {
   return (
     <div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10, flexWrap: 'wrap' }}>
-        <select value={pid} onChange={(e) => { setPid(e.target.value); if (!e.target.value) onClear?.(); }}>
+        <Combo value={pid} onChange={(e) => { setPid(e.target.value); if (!e.target.value) onClear?.(); }}>
           <option value="">All partners</option>
           {partners.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        </Combo>
         <span className="small-muted">Every partner action, ownership decision, payout, approval and payment — newest first.</span>
       </div>
       {!rows ? <div className="empty-mini">Loading…</div> : !rows.length ? <div className="empty-mini">Nothing recorded yet.</div> : (

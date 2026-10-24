@@ -1,0 +1,11 @@
+[Unit]
+Description=TeamLink two-way code sync + auto-deploy (GitHub <-> VPS)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/opt/teamlink-sync/teamlink-sync.sh
+Nice=10
+# a deploy builds the frontend: give it time, never forever
+TimeoutStartSec=45min

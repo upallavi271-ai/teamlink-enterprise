@@ -100,7 +100,7 @@ export default function DataCleanup() {
       }
       setAssign(items);
     } catch (e) {
-      setError(e.response?.data?.error || 'Could not load the jobs. Try again.');
+      setError(e.response?.data?.error || 'Could not load the requirements. Try again.');
     } finally { setLoadingJobs(false); }
   }
   useEffect(() => {
@@ -144,16 +144,16 @@ export default function DataCleanup() {
           </div>
           <div className="panel">
             <div className="panel-head">
-              <h3>Old jobs with no recruiter</h3>
+              <h3>Old requirements with no recruiter</h3>
               {cu.oldUnassigned > 0 && cu.canClose && <button type="button" className="btn btn-primary btn-sm" disabled={loadingJobs} onClick={openAssign}>{loadingJobs ? 'Loading…' : 'Assign recruiter…'}</button>}
             </div>
             <div style={{ padding: '10px 18px 14px' }}>
               {cu.oldUnassigned ? (
                 <>
                   <button type="button" className="link-btn" style={{ fontSize: 22, fontWeight: 700 }} onClick={() => setDrill('old-unassigned')}>{fmt(cu.oldUnassigned)}</button>
-                  <span className="small-muted"> jobs open 30+ days, nobody assigned.</span>
+                  <span className="small-muted"> requirements open 30+ days, nobody assigned.</span>
                 </>
-              ) : <span>Every old job has a recruiter. 🎉</span>}
+              ) : <span>Every old requirement has a recruiter. 🎉</span>}
             </div>
           </div>
           <div className="panel">

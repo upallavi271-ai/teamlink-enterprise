@@ -59,3 +59,5 @@
 .deliver-via .dv-note{font-size:11.5px;color:var(--ink-soft)}
 .deliver-via .dv-note.off{color:#7a5416}
 .deliver-via .dv-foot{font-size:11.5px;color:var(--ink-soft);margin-top:5px}
+
+.aud-dfind{width:100%;box-sizing:border-box;margin:6px 0;font:inherit;font-size:13px;padding:6px 10px;border:1px solid var(--line, #d6dbe6);border-radius:8px}

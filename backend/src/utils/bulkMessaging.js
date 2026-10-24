@@ -85,6 +85,9 @@ function listJobs() {
 }
 function markerOf(id) { const f = fileOf(id); return f ? f.replace(/\.json$/, '.cancel') : null; }
 function cancelRequested(id) { const m = markerOf(id); return !!(m && fs.existsSync(m)); }
+// PAUSE (Omni-Channel app campaigns): a marker file too; the worker stops after the row it is on, the job waits as 'paused' until it is resumed
+function pauseMarkerOf(id) { const f = fileOf(id); return f ? f.replace(/.json$/, '.pause') : null; }
+function pauseRequested(id) { const m = pauseMarkerOf(id); return !!(m && fs.existsSync(m)); }
 // DELIVERY REPORTS (utils/messageDelivery.js): what WhatsApp / the SMS provider
 // said later about a message they accepted. A sidecar file, never a rewrite of
 // the job file (the worker may be writing it at that very moment).
@@ -157,6 +160,7 @@ function summary(job, { withRecipients = false, masked = false } = {}) {
     templates: job.templates || {},
     status: job.status, finishedAt: job.finishedAt || null, outOfScope: job.outOfScope || 0,
     entities: job.entities || 0, counts: counts(job),
+    ...(job.waNumberId ? { waNumber: { id: job.waNumberId, label: job.waNumberLabel || null } } : {}), ...(job.pauseReason ? { pauseReason: job.pauseReason } : {}),
   };
   if (withRecipients) {
     const dl = readDelivery(job.id);
@@ -229,7 +233,7 @@ async function channelSpec(channel, input, language, statusMap, cfgs) {
   if (tpl && channel === 'Email' && subjectAsked != null && subjectAsked.trim() !== String(tpl.subject).trim()) spec.edited = true;
 
   if (channel === 'SMS') {
-    const dlt = tpl && tpl.source === 'saved' && tpl.dltTemplateId;
+    const dlt = tpl && tpl.source === 'saved' && tpl.dltTemplateId && (statusMap.SMS || {}).providerId !== 'sms.android'; // an Android phone sends plain text, no DLT template
     if (dlt) {
       spec.mode = 'sms-dlt';
       spec.dlt = { templateId: tpl.dltTemplateId, senderId: tpl.senderId || null };
@@ -239,13 +243,23 @@ async function channelSpec(channel, input, language, statusMap, cfgs) {
   }
   if (channel === 'WhatsApp') {
     const wa = cfgs.WhatsApp;
-    if (tpl && tpl.source === 'saved' && tpl.waStatus === 'Approved' && tpl.waTemplateName) {
+    const waSt = statusMap.WhatsApp || {};
+    const qrReady = (waSt.ready || []).includes('whatsapp.qr');
+    if (waSt.providerId === 'whatsapp.qr') {
+      // The QR-linked number has no template rule: the words are sent as written (the person can edit them).
+      spec.mode = 'text';
+    } else if (tpl && tpl.source === 'saved' && tpl.waStatus === 'Approved' && tpl.waTemplateName) {
       spec.mode = 'wa-template';
       spec.wa = { name: tpl.waTemplateName, language: tpl.waLanguageCode || undefined };
+      if (wa && wa.numberId) { const bad = await require('./whatsappCloud').templateAccountProblem(wa, tpl.waTemplateName); if (bad) spec.block = bad; } // eslint-disable-line global-require
       spec.vars = T.waVarList(tpl);
       if (spec.edited) spec.error = 'WhatsApp only sends the wording Meta approved, so it cannot be edited here. Change the template instead.';
     } else if (wa && wa.templates && wa.templates.bulk) {
       spec.mode = 'wa-bulk';
+    } else if (qrReady) {
+      // No approved template, but the QR-linked number is connected and "try the next provider" is on: plain text goes there.
+      spec.mode = 'text'; spec.providerOnly = 'whatsapp.qr';
+      spec.note = 'No approved WhatsApp template, so this goes through the QR-linked number (prototype) as plain text.';
     } else {
       const why = tpl && tpl.source === 'saved' && tpl.waTemplateName
         ? `The WhatsApp template "${tpl.waTemplateName}" is ${tpl.waStatus === 'Rejected' ? 'rejected by Meta' : 'not approved yet'}. WhatsApp only lets us start a chat with an approved template. An Admin sets the status to Approved in Message templates after Meta approves it.`
@@ -263,28 +277,42 @@ async function buildPlan(user, input) {
   const audience = AUDIENCES.includes(b.audience) ? b.audience : 'candidates';
   const ids = [...new Set((Array.isArray(b.ids) ? b.ids : []).map(String).filter(Boolean))];
   const channels = messaging.CHANNELS.filter((c) => (Array.isArray(b.channels) ? b.channels : []).includes(c));
-  const language = T.LANGUAGES.includes(b.language) ? b.language : 'English';
-  const err = (status, error) => ({ error, status });
+  const language = T.languageOrEnglish(b.language);
+  const err = (status, error, extra) => ({ error, status, ...(extra || {}) });
 
   const rule = await access.ruleFor(user, audience);
   const isOne = b.kind === 'individual';
-  if (isOne ? !rule.allowed : !(await mayBulkSend(user, audience))) {
+  // an Omni-Channel campaign from the Accounts screen (kind 'campaign'): a billing-limited login (Accounts) may reach the BILLING contacts of the clients it picked, with the
+  // payment wording only (the purposes rule below still applies). Every other role keeps the ordinary bulk rule.
+  const billingCampaign = b.kind === 'campaign' && audience === 'clients' && rule.allowed && !!rule.purposes && rule.mode !== 'masked';
+  if (isOne ? !rule.allowed : !(billingCampaign || await mayBulkSend(user, audience))) {
     return err(403, (!rule.allowed && rule.reason) || (rule.mode === 'masked' ? 'A list of people cannot be messaged from your role. Contact one person at a time.' : `Sending messages to ${audience} in bulk is not available to this login.`));
   }
   if (rule.purposes && !(b.purposeKey && rule.purposes.includes(b.purposeKey))) {
     return err(403, 'Accounts can send only the payment reminder templates, to the billing contact of a client.');
   }
+  if (audience === 'employees' && channels.includes('WhatsApp') && !access.mayWhatsAppEmployees(user)) return err(403, access.WA_EMPLOYEE_DENIED);
   if (!ids.length) return err(400, 'Choose at least one person.');
   if (ids.length > LIMIT) return err(400, `At most ${LIMIT} people per send. Narrow the list and send in batches.`);
   if (!channels.length) return err(400, 'Choose Email, SMS and/or WhatsApp.');
 
+  const entities = await ctx.recipientsFor(user, audience, ids, { applicationId: b.applicationId, requirementId: b.requirementId, contactKind: rule.kind });
+  if (b.kind === 'individual' && !entities.length) return err(403, `You cannot message this ${ONE_WORD[audience]}: they are outside your access, or no longer on the list.`);
   const status = await messaging.channelStatus();
   const cfgs = {};
-  if (channels.includes('WhatsApp')) cfgs.WhatsApp = await require('./whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+  // WHICH WHATSAPP NUMBER (utils/waNumbers.js): the sender's own authorised number (or the one they chose, or - for automatic messages - the system number).
+  // No numbers added yet = the old single connection, exactly as before.
+  const autoSend = b.auto === true || b.urgent === true;
+  let waRoute = { legacy: true };
+  if (channels.includes('WhatsApp')) {
+    waRoute = await require('./waNumbers').planNumber(user, { requestedNumberId: b.waNumberId || null, department: b.department || null, automatic: autoSend, to: isOne && entities[0] ? entities[0].whatsapp : undefined }).catch(() => ({ legacy: true })); // eslint-disable-line global-require
+    if (!waRoute.legacy && !waRoute.ok && channels.length === 1) return err(waRoute.status || 409, waRoute.error, { code: waRoute.code });
+    cfgs.WhatsApp = waRoute.ok ? waRoute.cfg : await require('./whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+  }
   // WhatsApp 24-hour window + STOP replies (utils/messageDelivery.js): a person who wrote to
   // us in the last 24 hours can be answered with plain text; a person who replied STOP is never messaged.
   const delivery = require('./messageDelivery'); // eslint-disable-line global-require
-  const windows = channels.includes('WhatsApp') ? await delivery.openWindows() : new Set();
+  const windows = channels.includes('WhatsApp') ? (waRoute.ok ? await require('./waNumbers').openWindowsFor(waRoute.number) : await delivery.openWindows()) : new Set(); // eslint-disable-line global-require
   const optedOut = new Set();
   if (channels.includes('WhatsApp') || channels.includes('SMS')) {
     const rows = await prisma.appSetting.findMany({ where: { key: { startsWith: delivery.OPTOUT_PREFIX } }, select: { key: true } }).catch(() => []);
@@ -303,11 +331,16 @@ async function buildPlan(user, input) {
   const purposeLabel = String(b.purpose || '').trim().slice(0, 120)
     || (channels.map((c) => specs[c].template && specs[c].template.purposeLabel).find(Boolean)) || 'Message';
 
-  const entities = await ctx.recipientsFor(user, audience, ids, { applicationId: b.applicationId, requirementId: b.requirementId, contactKind: rule.kind });
-  if (b.kind === 'individual' && !entities.length) return err(403, `You cannot message this ${ONE_WORD[audience]}: they are outside your access, or no longer on the list.`);
+  let media = [];
+  if (b.kind === 'individual' && audience === 'candidates' && channels.includes('WhatsApp') && entities.length === 1 && Array.isArray(b.attachments) && b.attachments.length) {
+    const got = await require('../channels/attachments').resolve(user, entities[0].id, b.attachments); // eslint-disable-line global-require
+    if (got.error) return err(400, got.error);
+    media = got.media;
+  }
   const sender = await ctx.senderTokens(user);
   // eslint-disable-next-line global-require
   const switchOn = audience === 'candidates' ? await require('./interviewNotices').candidateEmailsOn() : true;
+  const commSettings = await require('../channels/settings').load(); // eslint-disable-line global-require
   const sandbox = require('./sandbox').isSandbox(); // eslint-disable-line global-require
   const lim = await limits.load();
   const jobs = listJobs();
@@ -320,6 +353,10 @@ async function buildPlan(user, input) {
   const seen = {};
   const recipients = [];
   let n = 0;
+  let companyDomains = [];
+  if (channels.includes('Email')) {
+    try { companyDomains = [String((await require('./mailer').emailConfig()).fromAddress || '').split('@')[1]].map((d) => String(d || '').toLowerCase()); } catch { companyDomains = []; } // eslint-disable-line global-require
+  }
   entities.forEach((e) => {
     channels.forEach((channel) => {
       n += 1;
@@ -352,13 +389,18 @@ async function buildPlan(user, input) {
       const block = (why) => { r.status = 'blocked'; r.reason = why; recipients.push(r); };
       if (e.doNotContact) { block('Asked not to be contacted (consent withdrawn)'); return; }
       if (!switchOn) { block(SWITCH_OFF_REASON); return; }
+      if (audience === 'candidates' && channel !== 'Email' && commSettings.switches[channel] === false) { block(`${channel} messages to candidates are switched off for the company (Administration > Integrations > WhatsApp & SMS).`); return; }
       if (quiet) { block(quiet); return; }
       if (!sandbox && (TEST_RECORD.test(String(e.name)) || TEST_RECORD.test(String(raw || '')))) { block('Test record: never messaged'); return; }
+      if (channel === 'WhatsApp' && !waRoute.legacy && !waRoute.ok) { block(waRoute.error); return; } // no number for this sender / the chosen one is down: nothing is sent from any other
       if (!status[channel].configured) { r.notSetUp = true; block(`${channel} is not set up yet. ${status[channel].reason}`); return; }
       let viaWindow = false;
       if (spec.block) {
         if (channel === 'WhatsApp' && windows.has(delivery.digitsOf(raw))) viaWindow = true;
         else { block(spec.block); return; }
+      } else if (channel === 'WhatsApp' && b.sessionText === true && windows.has(delivery.digitsOf(raw))) {
+        viaWindow = true; // the WhatsApp chat screen: plain words inside the 24-hour window go as plain words (not wrapped in the bulk template)
+        r.session = true;
       }
       if (channel !== 'Email' && optedOut.has(`${channel}.${delivery.digitsOf(raw)}`)) { block(`They replied STOP on ${channel}, so nothing more is sent to them there.`); return; }
       let key = null;
@@ -368,6 +410,7 @@ async function buildPlan(user, input) {
         // eslint-disable-next-line global-require
         if (require('./mailer').isReservedTestAddress(r.address)) { skip('Reserved test domain: never transmitted'); return; }
         key = r.address.toLowerCase();
+        r.warning = addressWarning(r.address, companyDomains);
       } else {
         const m = core.normalizeMobile(r.address);
         if (!m.ok) { skip(m.reason); return; }
@@ -382,7 +425,12 @@ async function buildPlan(user, input) {
       if (spec.mode === 'sms-dlt') { r.vars = vars; r.dlt = spec.dlt; }
       if (spec.mode === 'wa-template') { r.vars = vars; r.wa = spec.wa; }
       if (spec.mode === 'wa-bulk') r.vars = [body.text];
+      if (channel === 'WhatsApp' && media.length) r.media = media;
+      if (channel === 'WhatsApp' && waRoute.ok) r.numberId = waRoute.number.id;
+      if (spec.providerOnly) { r.providerOnly = spec.providerOnly; r.note = spec.note; }
+      if (channel !== 'Email') r.via = (status[channel] && status[channel].via) || null;
       if (viaWindow) { r.mode = 'wa-text'; r.note = 'Plain text is allowed: they wrote to us on WhatsApp in the last 24 hours.'; }
+      if (r.session && r.mode !== 'wa-text') delete r.session;
       recipients.push(r);
     });
   });
@@ -395,6 +443,7 @@ async function buildPlan(user, input) {
   return {
     plan: {
       audience, channels, purpose: purposeLabel, language, kind: b.kind === 'individual' ? 'individual' : 'bulk', recipients, templates: tplInfo,
+      waNumber: waRoute.ok ? { id: waRoute.number.id, label: waRoute.number.label, displayNumber: waRoute.number.displayNumber, picked: waRoute.picked } : null, auto: autoSend,
       entities: entities.length, outOfScope: ids.length - entities.length, sender, switchOn, masked: rule.mode === 'masked', contactKind: rule.kind, omniNote: b.omniNote ? clipNote(b.omniNote) : null,
       limits: Object.fromEntries(channels.map((c) => [c, { perDay: lim[c].perDay, usedToday: lim[c].perDay - room[c] - recipients.filter((r) => r.channel === c && r.status === 'queued').length }])),
     },
@@ -402,6 +451,25 @@ async function buildPlan(user, input) {
 }
 
 const clipNote = (t) => String(t).slice(0, 400);
+
+// A gentle hint, never an automatic change: an address whose domain is ONE letter away from the company's own
+// domain (or a well-known mail provider) is probably a typo ("tmlink.in" when we write from "teamlink.in").
+const KNOWN_DOMAINS = ['gmail.com', 'yahoo.com', 'yahoo.co.in', 'outlook.com', 'hotmail.com', 'rediffmail.com', 'icloud.com'];
+function oneEdit(a, b) {
+  if (a === b || Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  if (a.length === b.length) return a.slice(i + 1) === b.slice(i + 1) || (a[i] === b[i + 1] && a[i + 1] === b[i] && a.slice(i + 2) === b.slice(i + 2)); // one letter wrong, or two swapped
+  return (a.length > b.length ? a.slice(i + 1) === b.slice(i) : b.slice(i + 1) === a.slice(i));
+}
+function addressWarning(address, companyDomains = []) {
+  const dom = String(address || '').trim().toLowerCase().split('@')[1];
+  if (!dom) return null;
+  const known = [...new Set([...companyDomains.filter(Boolean), ...KNOWN_DOMAINS])];
+  if (known.includes(dom)) return null;
+  const near = known.find((k) => oneEdit(dom, k));
+  return near ? `This address ends in ${dom}: did you mean ${near}? Check it before you send.` : null;
+}
 
 function planView(plan) {
   const hide = plan.masked ? (r) => ({ ...r, address: access.maskAddress(r.channel, r.address) }) : (r) => r;
@@ -419,7 +487,7 @@ function planView(plan) {
   });
   return {
     audience: plan.audience, channels: plan.channels, purpose: plan.purpose, language: plan.language, templates: plan.templates,
-    people: plan.entities, outOfScope: plan.outOfScope, switchOn: plan.switchOn, masked: !!plan.masked,
+    people: plan.entities, outOfScope: plan.outOfScope, switchOn: plan.switchOn, masked: !!plan.masked, waNumber: plan.waNumber || null,
     toSend: by('queued').length, skipped: by('skipped').length, blocked: by('blocked').length,
     sendByChannel: Object.fromEntries(plan.channels.map((c) => [c, by('queued').filter((r) => r.channel === c).length])),
     peopleToSend: new Set(by('queued').map((r) => r.entityId)).size,
@@ -427,7 +495,7 @@ function planView(plan) {
     // The first person's message even when it cannot go (what to copy / open in their own app).
     first: plan.recipients[0] ? {
       status: plan.recipients[0].status, reason: plan.recipients[0].reason || null, address: hide(plan.recipients[0]).address, subject: plan.recipients[0].subject,
-      text: plan.recipients[0].text, mode: plan.recipients[0].mode, locked: !!plan.recipients[0].locked, missing: plan.recipients[0].missing || [], notSetUp: !!plan.recipients[0].notSetUp,
+      text: plan.recipients[0].text, mode: plan.recipients[0].mode, via: plan.recipients[0].via || null, note: plan.recipients[0].note || null, locked: !!plan.recipients[0].locked, missing: plan.recipients[0].missing || [], notSetUp: !!plan.recipients[0].notSetUp, warning: plan.recipients[0].warning || null,
     } : null,
     notSent: Object.values(reasons).map((x) => ({ status: x.status, channel: x.channel, reason: x.reason, count: x.names.length, names: x.names.slice(0, 8) })),
     limits: plan.limits,
@@ -442,7 +510,7 @@ async function renderScript(user, input) {
   if (!rule.allowed) return { error: rule.reason || 'Not available to this login.', status: 403 };
   const [e] = await ctx.recipientsFor(user, audience, [String(b.id || '')], { applicationId: b.applicationId, requirementId: b.requirementId, contactKind: rule.kind });
   if (!e) return { error: `This ${ONE_WORD[audience]} is outside your access.`, status: 403 };
-  const language = T.LANGUAGES.includes(b.language) ? b.language : 'English';
+  const language = T.languageOrEnglish(b.language);
   const tpl = b.purposeKey ? await T.resolve({ purpose: b.purposeKey, channel: 'Call', language }) : null;
   const sender = await ctx.senderTokens(user);
   const body = tpl ? T.render(tpl.body, { ...e.tokens, ...sender }, { blank: '(not on record)' }).text : '';
@@ -476,11 +544,13 @@ async function createJob(user, input) {
     createdAt: new Date().toISOString(),
     createdBy: { id: user.id, name: user.name },
     kind: plan.kind, audience: plan.audience, channels: plan.channels, purpose: plan.purpose, language: plan.language, templates: plan.templates,
+    waNumberId: plan.waNumber ? plan.waNumber.id : null, waNumberLabel: plan.waNumber ? plan.waNumber.label : null, auto: !!plan.auto,
     sender: { senderEmail: sender.senderEmail || null, senderName: sender.senderName || null, senderUserId: sender.senderUserId || null, senderEmployeeId: sender.senderEmployeeId || null },
     entities: plan.entities,
     outOfScope: plan.outOfScope,
     omniNote: plan.omniNote || null,
     contactKind: plan.contactKind || 'primary',
+    masked: !!plan.masked,
     status: queued.length ? 'queued' : 'done',
     recipients: plan.recipients,
   };
@@ -513,8 +583,16 @@ async function sendOne(job, r) {
     senderEmail: job.sender && job.sender.senderEmail,
     senderName: job.sender && job.sender.senderName,
   };
+  if (r.channel === 'WhatsApp') { if (r.numberId || job.waNumberId) opts.numberId = r.numberId || job.waNumberId; if (job.auto) opts.automatic = true; if (r.session) opts.kind = 'session'; } // the number chosen when the send was made; a plain-words chat reply is no "bulk" template
   if (r.mode === 'sms-dlt' && r.dlt) { opts.templateId = r.dlt.templateId; opts.senderId = r.dlt.senderId || undefined; }
   if (r.mode === 'wa-template' && r.wa) opts.template = r.wa;
+  if (r.providerOnly) opts.providerOnly = r.providerOnly;
+  if (r.media && r.media.length) opts.media = r.media;
+  // who / what this message is for: the adapter layer writes the Communication log record from this (channels/store.js)
+  opts.meta = {
+    audience: job.audience, personId: r.entityId, personName: r.name, senderUserId: job.sender && job.sender.senderUserId, senderName: job.sender && job.sender.senderName,
+    jobId: job.id, purpose: job.purpose, template: job.templates && job.templates[r.channel] ? job.templates[r.channel].name : job.purpose, attempt: r.attempts || 1, masked: !!job.masked,
+  };
   return messaging.send(r.channel, opts);
 }
 
@@ -533,7 +611,7 @@ async function logHistory(job) {
       subject: r.channel === 'Email' ? r.subject : null,
       body: String(r.text || '').slice(0, 4000),
       status: r.status === 'sent' ? 'SENT' : (r.status === 'blocked' ? 'NOT_SENT_BLOCKED' : 'FAILED'),
-      statusDetail: ((r.status === 'sent' ? `Sent (${job.kind} ${job.id})${r.sandbox ? ' - test server, not really transmitted' : ''}` : `Not delivered (${job.id}): ${r.reason || ''}`) + (job.omniNote ? ` | ${job.omniNote}` : '')).slice(0, 500),
+      statusDetail: ((r.status === 'sent' ? `${r.queued ? 'Queued' : 'Sent'}${r.via ? ` via ${r.via}` : ''} (${job.kind} ${job.id})${r.sandbox ? ' - test server, not really transmitted' : ''}` : `Not delivered (${job.id}): ${r.reason || ''}`) + (job.omniNote ? ` | ${job.omniNote}` : '')).slice(0, 500),
       providerRef: r.providerRef || null,
       sentAt: r.sentAt ? new Date(r.sentAt) : null,
       attempts: r.attempts || 0,
@@ -579,7 +657,7 @@ async function logHistory(job) {
       await convo.recordOut({
         personType: convo.TYPES[job.audience], personId: r.entityId, personName: r.name, channel: r.channel, subject: r.channel === 'Email' ? r.subject : null,
         body: r.text, address: r.address, status: r.status === 'sent' ? 'SENT' : (r.status === 'blocked' ? 'NOT_SENT_BLOCKED' : 'FAILED'),
-        statusDetail: (r.status === 'sent' ? `Sent (${job.kind} ${job.id})${r.sandbox ? ' - test server, not really transmitted' : ''}` : `Not delivered (${job.id}): ${r.reason || ''}`),
+        statusDetail: (r.status === 'sent' ? `${r.queued ? 'Queued' : 'Sent'}${r.via ? ` via ${r.via}` : ''} (${job.kind} ${job.id})${r.sandbox ? ' - test server, not really transmitted' : ''}` : `Not delivered (${job.id}): ${r.reason || ''}`),
         providerRef: r.providerRef || null, templateLabel: job.purpose, senderUserId: job.sender ? job.sender.senderUserId : null, senderName: job.sender ? job.sender.senderName : null,
         note: job.omniNote || null, at: r.sentAt || r.lastAttemptAt || new Date(),
       }).catch((e) => console.error('[bulk] conversation log:', e.message));
@@ -605,9 +683,17 @@ async function runLane(job, channel) {
   let did = 0;
   for (;;) {
     if (cancelRequested(job.id)) { job.status = 'cancelled'; return did; }
+    if (pauseRequested(job.id)) { job.status = 'paused'; writeJob(job); return did; }
     const now = Date.now();
     const r = job.recipients.find((x) => x.channel === channel && x.status === 'queued' && (!x.nextAttemptAt || Date.parse(x.nextAttemptAt) <= now));
     if (!r) return did;
+    // The number chosen for this send was switched off / taken away from the sender: the send WAITS (paused, with the reason) instead of leaving from another number.
+    if (channel === 'WhatsApp' && job.waNumberId) {
+      // eslint-disable-next-line no-await-in-loop
+      const ck = await require('./waNumbers').recheck(job.waNumberId, job.sender && job.sender.senderUserId, { automatic: !!job.auto }).catch(() => ({ ok: true }));
+      if (!ck.ok) { job.status = 'paused'; job.numberPaused = true; job.pauseReason = String(ck.error || 'The WhatsApp number is not available.').slice(0, 300); writeJob(job); return did; }
+      if (job.pauseReason) { delete job.pauseReason; }
+    }
     r.status = 'sending';
     writeJob(job);
     // eslint-disable-next-line no-await-in-loop
@@ -615,7 +701,7 @@ async function runLane(job, channel) {
     r.attempts = (r.attempts || 0) + 1;
     r.lastAttemptAt = new Date().toISOString();
     if (res.ok) {
-      Object.assign(r, { status: 'sent', sentAt: new Date().toISOString(), providerRef: res.providerRef || null, reason: null, nextAttemptAt: null, sandbox: !!res.sandbox || /sandbox/i.test(String(res.providerRef || '')) });
+      Object.assign(r, { status: 'sent', sentAt: new Date().toISOString(), providerRef: res.providerRef || null, reason: null, nextAttemptAt: null, sandbox: !!res.sandbox || /sandbox/i.test(String(res.providerRef || '')), provider: res.provider || null, via: res.via || r.via || null, queued: !!res.queued, tried: (res.attempts || []).filter((x) => x.status === 'skipped' || x.status === 'failed').map((x) => `${x.provider}: ${x.reason}`).join(' | ') || null });
     } else if (res.transient && r.attempts < MAX_ATTEMPTS) {
       const wait = BACKOFF_MS[Math.min(r.attempts - 1, BACKOFF_MS.length - 1)] || 2000;
       Object.assign(r, { status: 'queued', reason: `Retrying (attempt ${r.attempts} of ${MAX_ATTEMPTS} failed: ${res.error})`.slice(0, 400), nextAttemptAt: new Date(Date.now() + wait).toISOString() });
@@ -635,6 +721,12 @@ async function runOnce() {
   if (running) return { skipped: 'already running' };
   running = true;
   try {
+    // A send that WAITED because its WhatsApp number was switched off / taken away continues by itself when the number is usable again
+    for (const pj of listJobs().filter((j) => j.status === 'paused' && j.numberPaused && j.waNumberId)) {
+      // eslint-disable-next-line no-await-in-loop
+      const ck = await require('./waNumbers').recheck(pj.waNumberId, pj.sender && pj.sender.senderUserId, { automatic: !!pj.auto }).catch(() => ({ ok: false })); // eslint-disable-line global-require
+      if (ck.ok && !pauseRequested(pj.id)) { pj.status = 'queued'; pj.numberPaused = false; delete pj.pauseReason; writeJob(pj); }
+    }
     const jobs = listJobs().filter((j) => j.status === 'queued' || j.status === 'running')
       .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
     for (const job of jobs) {
@@ -678,7 +770,7 @@ async function sendIndividual(user, input) {
   }
   const row = job && job.recipients[0];
   const hideAddr = made.job && made.job.masked;
-  return { jobId: id, masked: !!hideAddr, result: row ? { status: row.status, reason: row.reason || null, address: hideAddr ? access.maskAddress(row.channel, row.address) : row.address, attempts: row.attempts || 0, sandbox: !!row.sandbox, providerRef: row.providerRef || null } : null, finished: !!(job && job.status === 'done') };
+  return { jobId: id, masked: !!hideAddr, result: row ? { status: row.status, reason: row.reason || null, address: hideAddr ? access.maskAddress(row.channel, row.address) : row.address, attempts: row.attempts || 0, sandbox: !!row.sandbox, providerRef: row.providerRef || null, at: row.sentAt || row.lastAttemptAt || null, provider: row.provider || null, via: row.via || null, queued: !!row.queued, tried: row.tried || null, note: row.note || null } : null, finished: !!(job && job.status === 'done') };
 }
 
 // A row left 'sending' by a process that died cannot be known to have gone or
@@ -722,6 +814,33 @@ function cancelJob(id) {
   return { ...job, status: 'cancelling' };
 }
 
+function pauseJob(id) {
+  const job = readJob(id);
+  if (!job) return null;
+  if (!['queued', 'running'].includes(job.status)) return job;
+  fs.writeFileSync(pauseMarkerOf(id), new Date().toISOString());
+  return { ...job, status: 'pausing' };
+}
+async function resumeJob(id) {
+  const job0 = readJob(id);
+  if (!job0) return null;
+  const m = pauseMarkerOf(id);
+  if (m && fs.existsSync(m)) fs.unlinkSync(m);
+  if (running) await new Promise((r) => { setTimeout(r, 1500); }); // a lane may still be finishing its row and would write 'paused' over a resume
+  const job = readJob(id);
+  if (job && job.status === 'paused') { job.status = 'queued'; writeJob(job); kick(); }
+  return job;
+}
+function cancelPaused(id) {
+  const job = readJob(id);
+  if (!job || job.status !== 'paused') return null;
+  job.recipients.forEach((r) => { if (r.status === 'queued') { r.status = 'skipped'; r.reason = 'Cancelled before sending'; } });
+  job.status = 'cancelled'; job.finishedAt = new Date().toISOString();
+  const m = pauseMarkerOf(id); if (m && fs.existsSync(m)) fs.unlinkSync(m);
+  writeJob(job);
+  return job;
+}
+
 // "Retry failed": every FAILED row of a finished job goes back in the queue
 // (a provider outage, or rows interrupted by a restart). Skipped and blocked
 // rows stay as they are — their reason (no number, duplicate, switch off) has
@@ -749,5 +868,5 @@ async function retryFailed(id, user) {
 
 module.exports = {
   recordDelivery, LIMIT, AUDIENCES, createJob, preview, renderScript, sendIndividual, retryFailed, readJob, listJobs, removeJob, summary, reportCsv, reportXlsx,
-  runOnce, kick, start, canSee, cancelJob, mayBulkSend, mayContact, jobDir, buildPlan, SWITCH_OFF_REASON,
+  runOnce, kick, start, canSee, cancelJob, pauseJob, resumeJob, cancelPaused, pauseRequested, mayBulkSend, mayContact, jobDir, buildPlan, SWITCH_OFF_REASON, addressWarning,
 };

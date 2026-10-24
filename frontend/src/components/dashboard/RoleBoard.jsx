@@ -658,7 +658,7 @@ export function DrillPanel({ listUrl, params, setId, onClose }) {
           </table>
         )}
         {data && rows.length > 0 && data.kind === 'client' && (
-          <table className="rdb-tbl"><thead><tr><th>Client</th><th>Agreement</th><th>BDE owner</th><th className="num">Open jobs</th></tr></thead>
+          <table className="rdb-tbl"><thead><tr><th>Client</th><th>Agreement</th><th>BDE owner</th><th className="num">Open requirements</th></tr></thead>
             <tbody>{rows.map((r) => <tr key={r.id}><td>{r.to ? <Link className="rdb-name" to={r.to} onClick={onClose}>{r.name}</Link> : r.name}</td><td><StatusChip tone="amber">{r.agreement || 'Not signed'}</StatusChip></td><td>{r.owner || '—'}</td><td className="num">{fmt(r.openJobs)}</td></tr>)}</tbody>
           </table>
         )}

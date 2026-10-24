@@ -62,8 +62,8 @@ router.get('/status', requirePerm(null, 'administration', 'Integrations', 'view'
         'Ask your Naukri account manager to enable "Amplify" (ATS integration) on your plan.',
         'Open Administration → Integrations → Naukri → Configure.',
         'Choose the posting method "Amplify API", paste the API key, secret key and job endpoint URL, then Save & Connect.',
-        'Press Check connection. Naukri has no test call, so it only checks that the details are filled in. The first job tells the truth.',
-        'Tick Naukri when you Save & Post a job. The first job will show "waiting for Naukri" until Naukri confirms it.',
+        'Press Check connection. Naukri has no test call, so it only checks that the details are filled in. The first requirement tells the truth.',
+        'Tick Naukri when you Save & Post a requirement. The first requirement will show "waiting for Naukri" until Naukri confirms it.',
       ],
       detail: board ? { connection: board.connection, method: board.method || null, lastSuccessAt: board.lastSuccessAt || null, jobs: board.jobs || null, lastError: board.lastError || null, hint: board.ready ? null : (board.hint || null) } : null,
     };
@@ -72,7 +72,7 @@ router.get('/status', requirePerm(null, 'administration', 'Integrations', 'view'
       title: 'Job feed (XML) that Naukri can read',
       state: feedOn ? 'Working' : 'Switched off',
       official: false,
-      what: 'TeamLink keeps an XML list of your live Naukri-ticked jobs at a public link. Naukri publishes no feed format: this only helps if Naukri agrees, for your account, to read it. A job in the feed is "sent, waiting for confirmation", never "Posted".',
+      what: 'TeamLink keeps an XML list of your live Naukri-ticked requirements at a public link. Naukri publishes no feed format: this only helps if Naukri agrees, for your account, to read it. A requirement in the feed is "sent, waiting for confirmation", never "Posted".',
       feedUrl: board ? board.feedUrl || null : null,
       lastRead: board && board.feedLastRead ? board.feedLastRead : null,
       steps: feedOn ? [] : ['Open Administration → Integrations → Naukri → Configure and choose the posting method "XML feed". Then give the feed link to your Naukri account manager and ask them to read it.'],
@@ -121,7 +121,7 @@ router.get('/status', requirePerm(null, 'administration', 'Integrations', 'view'
       title: 'Post by hand with a ready-made job text',
       state: 'Working',
       official: true,
-      what: 'Open any job, press "Post by hand" on the Naukri row: TeamLink gives the job in Naukri\'s order of fields to copy, opens Naukri\'s own page, and after you post it you press "I posted it". The row then reads "Posted by hand" with who and when, never "Posted". Works with a normal Naukri plan.',
+      what: 'Open any requirement, press "Post by hand" on the Naukri row: TeamLink gives the requirement in Naukri\'s order of fields to copy, opens Naukri\'s own page, and after you post it you press "I posted it". The row then reads "Posted by hand" with who and when, never "Posted". Works with a normal Naukri plan.',
       steps: [],
     };
     res.json({ capabilities: [hand, posting, feed, email, intakeApi, resdex, messaging], docs: DOCS, checkedOn: '2026-10-09' });

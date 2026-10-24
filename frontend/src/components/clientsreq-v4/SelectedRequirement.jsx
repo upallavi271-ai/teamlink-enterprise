@@ -24,8 +24,8 @@ import './crq4.css';
 // ONE sentence + ONE button in the Next step box, then the other buttons.
 // ---------------------------------------------------------------------------
 const SECONDARY = {
-  edit: 'Edit job',
-  hold: 'Pause job',
+  edit: 'Edit requirement',
+  hold: 'Pause requirement',
   reopen: null, // label comes from the action itself (Resume / Reopen)
   'assign-tl': 'Change team lead',
   'assign-recruiter': 'Change recruiter',
@@ -46,7 +46,7 @@ export default function SelectedRequirement({
   }, [r && r.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!r) {
-    return <div className="ak-empty">Click a job in the list to see it here.</div>;
+    return <div className="ak-empty">Click a requirement in the list to see it here.</div>;
   }
   const sla = slaInfo(r.sla);
   const primary = rowPrimary(r, role);
@@ -63,7 +63,7 @@ export default function SelectedRequirement({
   return (
     <div className="crq4-sel">
       <div className="crq4-sel-top">
-        <span className="crq4-sel-id"><span>Job ID</span><b>{r.reqCode || r.id.slice(0, 8)}</b></span>
+        <span className="crq4-sel-id"><span>Requirement ID</span><b>{r.reqCode || r.id.slice(0, 8)}</b></span>
         {r.internal && <span className="rr-type internal">Internal</span>}
         <span className="crq4-sel-status"><JobStatusChip job={r} /></span>
       </div>
@@ -91,7 +91,7 @@ export default function SelectedRequirement({
 
       <div className="crq4-sel-kvs">
         {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}`)}
-        {kv('Team lead', <PersonName name={r.tlName} tone="red" live={live} />)}
+        {kv('Team lead', <PersonName name={r.tlName} extra={r.extraTlNames?.length || 0} tone="red" live={live} />)}
         {kv('Recruiter', <PersonName name={r.workedBy} extra={r.coRecruiterNames?.length || 0} tone="amber" live={live} />)}
         {r.bde?.name && kv('Client manager', r.bde.name)}
         {kv('Priority', r.priority ? <PriorityChip value={r.priority} /> : null)}
@@ -112,7 +112,7 @@ export default function SelectedRequirement({
       )}
 
       <div className="crq4-sel-btns">
-        {primary.key !== 'open' && <Link className="btn btn-sm" to={`/requirements/${r.id}`}>Open job</Link>}
+        {primary.key !== 'open' && <Link className="btn btn-sm" to={`/requirements/${r.id}`}>Open requirement</Link>}
         {others.map((a) => (
           <button key={a.key} type="button" className="btn btn-sm" onClick={() => onAction(a.key)}>{a.label}</button>
         ))}

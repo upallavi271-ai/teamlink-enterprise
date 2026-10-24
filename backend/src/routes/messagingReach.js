@@ -30,7 +30,7 @@ const handle = (fn) => async (req, res, next) => {
 
 router.post('/check', handle((req) => R.check(req.user, req.body)));
 router.post('/compose', handle((req) => R.compose(req.user, req.body)));
-router.post('/send', handle(async (req) => { const r = await R.send(req.user, req.body); return r.error ? r : { ...r, created: true }; }));
+router.post('/send', require('../channels/rateLimit').limiter({ perMinute: 20 }), handle(async (req) => { const r = await R.send(req.user, req.body); return r.error ? r : { ...r, created: true }; }));
 router.post('/device-log', handle((req) => R.deviceLog(req.user, req.body)));
 router.post('/call-queue', handle((req) => R.callQueue(req.user, req.body)));
 router.post('/call-log', handle((req) => R.callLog(req.user, req.body)));

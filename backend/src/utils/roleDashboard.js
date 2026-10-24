@@ -24,6 +24,7 @@
 // the very same function, so the number and the list cannot disagree.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
+const RT = require('./reqTeamLeads');
 const V = require('./atsVocab');
 const {
   applicationWhere, requirementWhere, atsScopeOf: scopeOf, invoiceWhere,
@@ -168,7 +169,7 @@ async function shapeReqs(ids, { clientDesk = false, limit = 300 } = {}) {
   });
   const byId = new Map(rows.map((r) => [r.id, r]));
   return page.map((id) => byId.get(id)).filter(Boolean).map((r) => ({
-    id: r.id, title: r.title, reqCode: r.reqCode, status: V.requirementStatusLabel(r.status),
+    id: r.id, title: r.title, reqCode: r.reqCode, status: V.requirementStatusUser(r.status),
     openings: r.openings, department: r.department,
     client: r.internal ? 'TeamLink Internal' : (r.client ? r.client.name : null),
     clientId: clientDesk && !r.internal ? r.clientId : null,
@@ -696,8 +697,10 @@ async function bdeBoard(c) {
 
   // ---- (D) ----
   const [mayReq, mayMove] = await Promise.all([
-    can(c.user, 'ats', 'requirements', 'Create Requirement', 'create'),
-    can(c.user, 'ats', 'candidates', 'Pipeline Stages', 'edit'),
+    // creating a job is the BDE team's and above (user, 2026-10-13; utils/jobCreateRule.js)
+    Promise.resolve(require('./jobCreateRule').canCreateJob(c.user, {}).allowed), // eslint-disable-line global-require
+    // booking an interview is the BDE's (user, 2026-10-12)
+    can(c.user, 'ats', 'interviews', 'Schedule Interview', 'create'),
   ]);
   if (mayReq) b.quick.push({ id: 'new-req', label: '+ New Requirement', to: '/requirements?new=1', primary: true });
   b.quick.push({ id: 'submit', label: 'Submit to Client', to: '/candidates?stage=WITH_BDE,BDE_APPROVED' });
@@ -898,7 +901,7 @@ async function managementBoard(c, req) {
   b.widgets.push({
     id: 'timing', type: 'kv', title: 'Speed', to: '/reports/ats?tab=sla',
     rows: [
-      { label: 'Average time-to-fill', value: fill.length >= 5 ? `${avg(fill)} days` : `Not enough data (${fill.length})`, sub: `requirement raised → first joining · based on ${fill.length} jobs, from ${joinedApps.length} joined people` },
+      { label: 'Average time-to-fill', value: fill.length >= 5 ? `${avg(fill)} days` : `Not enough data (${fill.length})`, sub: `requirement raised → first joining · based on ${fill.length} requirements, from ${joinedApps.length} joined people` },
       { label: 'Average time-to-submit', value: submit.length >= 5 ? `${avg(submit)} days` : `Not enough data (${submit.length})`, sub: 'application added → client submission (recorded moves only)' },
     ],
   });
@@ -994,7 +997,7 @@ async function adminBoard(c) {
     })),
   });
   if (systemAlerts) b.widgets.push({
-    id: 'sync', type: 'sync', title: 'Job source sync status', to: '/admin/integrations?tab=jobportal',
+    id: 'sync', type: 'sync', title: 'Requirement source sync status', to: '/admin/integrations?tab=jobportal',
     rows: integrations.map((i) => ({
       id: i.id, state: i.state, enabled: i.enabled, lastSync: i.lastSync, synced: i.recordsSynced, failed: i.recordsFailed, error: i.error,
       tone: i.recordsFailed > 0 || i.error || /reconnect|expired/i.test(i.state) ? 'red' : (i.connected ? 'green' : 'grey'),
@@ -1014,7 +1017,7 @@ async function adminBoard(c) {
     { id: 'add-user', label: 'Add User', to: '/admin/users', primary: true },
     { id: 'roles', label: 'Manage Roles', to: '/admin/roles' },
     { id: 'm-clients', label: 'Masters: Clients', to: '/clients' },
-    { id: 'm-sources', label: 'Masters: Sources', to: '/admin/integrations', gap: 'No Sources master yet — job sources are configured under Integrations.' },
+    { id: 'm-sources', label: 'Masters: Sources', to: '/admin/integrations', gap: 'No Sources master yet — requirement sources are configured under Integrations.' },
     { id: 'm-stages', label: 'Masters: Stages', to: '/ats/workflow', gap: 'No Stages master yet — the stage workflow is fixed; see the Workflow view.' },
   );
   return b;
@@ -1246,7 +1249,7 @@ async function todayTasks(user) {
   const out = { date: D.t, followUps: [], interviews: [], actions: [], invoices: [], counts: {} };
   if (ats && mayAts) {
     const appScope = applicationWhere(user);
-    const mine = { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, { bdeId: me }, { tlId: me }, { stlId: me }] };
+    const mine = { OR: [{ recruiterId: me }, { recruiterIds: { contains: me } }, { bdeId: me }, RT.tlArm([me]), { stlId: me }] };
     const [fus, ivs, waiting] = await Promise.all([
       prisma.applicationFollowUp.findMany({
         where: { completedAt: null, ownerUserId: me, dueDate: { lte: D.t }, application: { is: and(appScope, { stage: { notIn: ['REJECTED', 'JOINED', 'HIRED'] } }) } },
@@ -1284,7 +1287,7 @@ async function todayTasks(user) {
       const r = a.requirement || {};
       const isMine = (owner === 'Recruiter' && (r.recruiterId === me || String(r.recruiterIds || '').split(',').includes(me)))
         || ((owner === 'BDE' || owner === 'Client') && r.bdeId === me)
-        || (owner === 'TL' && r.tlId === me)
+        || (owner === 'TL' && (r.tlId === me || RT.idsForTl([me]).includes(a.requirementId)))
         || (!!roleWord && owner === roleWord && s.global);
       return isMine && V.applicationDueDate(a) === D.t;
     }).slice(0, 30).map((a) => ({

@@ -96,15 +96,15 @@ export function useAttentionRequirements(requirements) {
 }
 
 export function TopRequirements({ rows, onPick, activeId }) {
-  if (!rows.length) return <div className="ak-empty">No jobs need attention right now.</div>;
+  if (!rows.length) return <div className="ak-empty">No requirements need attention right now.</div>;
   return (
     <table className="ak-table cv4-reqs">
       <thead>
         <tr>
           <th>Req ID</th>
-          <th>Job</th>
-          <th className="num" title="People on this job past their step's time limit">Late</th>
-          <th className="num" title="Profiles waiting for review on this job">Review</th>
+          <th>Requirement</th>
+          <th className="num" title="People on this requirement past their step's time limit">Late</th>
+          <th className="num" title="Profiles waiting for review on this requirement">Review</th>
         </tr>
       </thead>
       <tbody>

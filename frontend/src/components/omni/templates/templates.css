@@ -1,0 +1,66 @@
+/* Templates page, Content Studio and Library: only what gs.css (the prototype's stylesheet) does not already have. Everything is scoped under .gsx. */
+
+/* Names are never cut with "..." (founder rule): they wrap, also on a phone */
+.gsx .rcs-card-foot b,
+.gsx .th-file-meta b,
+.gsx .media-tile b,
+.gsx .studio-asset b,
+.gsx .lib-name { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+.gsx .tpl-acc-btn { align-items: flex-start; }
+.gsx .tpl-acc-btn > span:first-child { flex: 1; min-width: 0; }
+.gsx .media-tile .lib-del { color: var(--red); }
+.gsx .media-tile .tiny-btn { height: 24px; font-size: 9px; padding: 0 7px; }
+
+/* the form and its right rail */
+.gsx .tpl-two { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr); gap: 16px; align-items: start; }
+.gsx .tpl-rail { position: sticky; top: 14px; display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 1100px) { .gsx .tpl-two { grid-template-columns: 1fr; } .gsx .tpl-rail { position: static; } }
+.gsx .tpl-form-grid > div { min-width: 0; }
+.gsx .tpl-form-grid .ta-wrap { position: relative; }
+
+/* insert-a-variable chips and the WhatsApp {{1}} {{2}} mapping */
+.gsx .tpl-var-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.gsx .tpl-var-chip { border: 1px solid #cfe3d6; background: #fff; border-radius: 99px; padding: 4px 10px; font: inherit; font-size: 10px; font-weight: 700; color: var(--green-2); cursor: pointer; }
+.gsx .tpl-var-chip span { color: var(--muted); font-weight: 600; margin-left: 3px; }
+.gsx .tpl-var-chip:hover { background: var(--green-3); border-color: var(--green); }
+.gsx .tpl-map { margin-top: 10px; border: 1px dashed #bfe3d0; border-radius: 10px; background: #fff; padding: 9px 11px; font-size: 10px; line-height: 1.7; color: var(--ink); }
+.gsx .tpl-map b { display: block; font-size: 10px; margin-bottom: 3px; }
+.gsx .tpl-map code { font-family: ui-monospace, Menlo, monospace; background: var(--surface-2); border-radius: 5px; padding: 1px 5px; font-size: 9.5px; }
+.gsx .tpl-map span { color: var(--muted); }
+.gsx .tpl-map-text { margin-top: 4px; padding-top: 5px; border-top: 1px dashed var(--line); font-family: ui-monospace, Menlo, monospace; font-size: 9.5px; color: #4a5b52; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gsx .tpl-readonly .tpl-var-chips { display: none; }
+.gsx .tpl-two fieldset:disabled input, .gsx .tpl-two fieldset:disabled select, .gsx .tpl-two fieldset:disabled textarea { -webkit-text-fill-color: var(--ink); }
+
+/* the RCS handset in the assistant wizard */
+.gsx .wz-prev-card { background: #fff; border-radius: 12px; margin: 34px 12px 0; padding: 34px 14px 16px; text-align: center; position: relative; box-shadow: 0 2px 8px rgba(0, 0, 0, .08); }
+.gsx .wz-prev-card h4 { margin: 0; font-size: 13px; color: var(--ink); }
+.gsx .wz-prev-card p { margin: 5px 0 12px; font-size: 9.5px; color: var(--muted); line-height: 1.5; }
+.gsx .wz-prev-card .rcs-logo { width: 54px; height: 54px; border-radius: 50%; background: var(--surface-2); border: 3px solid #fff; position: absolute; top: -27px; left: 50%; transform: translateX(-50%); overflow: hidden; }
+.gsx .wz-prev-card .rcs-logo img { width: 100%; height: 100%; object-fit: cover; }
+.gsx .rcs-phone .rcs-banner { flex: 0 0 52px; }
+
+/* Content Studio */
+.gsx .st-chans { display: flex; gap: 7px; flex-wrap: wrap; margin: 12px 0 8px; }
+.gsx .st-chan { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 5px 12px 5px 6px; font: inherit; font-size: 11px; font-weight: 700; color: var(--ink); cursor: pointer; }
+.gsx .st-chan i { font-style: normal; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-size: 8.5px; font-weight: 900; }
+.gsx .st-chan.on { background: var(--green-3); }
+.gsx .st-chan small { color: var(--muted); font-weight: 600; font-size: 9px; }
+.gsx .st-count { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.gsx .st-count.over { color: #b3261e; font-weight: 800; }
+.gsx .st-post { border: 1px solid var(--line); border-radius: 14px; background: #fff; padding: 13px; max-width: 480px; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.gsx .st-post-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.gsx .st-av { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 900; font-size: 11px; flex: 0 0 34px; }
+.gsx .st-post-head b { display: block; font-size: 12px; color: var(--ink); }
+.gsx .st-post-head small { color: var(--muted); font-size: 10px; }
+.gsx .st-text { white-space: pre-wrap; color: var(--ink); }
+.gsx .st-media { margin-top: 10px; border-radius: 10px; background: var(--surface-2); min-height: 120px; display: grid; place-items: center; color: var(--muted); font-size: 11px; font-weight: 700; text-align: center; padding: 10px; overflow: hidden; }
+.gsx .st-media img { width: 100%; display: block; max-height: 260px; object-fit: cover; }
+.gsx .st-media.sq { aspect-ratio: 1 / 1; }
+.gsx .st-acts { display: flex; gap: 16px; margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10.5px; font-weight: 700; flex-wrap: wrap; }
+.gsx .st-bubble { border-radius: 14px 14px 14px 4px; padding: 10px 12px; color: #111b21; }
+.gsx .st-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--line); border-radius: 12px; padding: 11px 13px; margin-top: 8px; }
+.gsx .st-row > div { flex: 1; min-width: 180px; }
+.gsx .st-row b { font-size: 12px; color: var(--ink); overflow-wrap: anywhere; }
+.gsx .st-row small { display: block; font-size: 10px; color: var(--muted); }
+.gsx .st-chip { display: inline-flex; align-items: center; gap: 5px; border-radius: 99px; padding: 2px 9px; font-size: 9.5px; font-weight: 800; color: #fff; }
+.gsx .st-limit-note { font-size: 10px; color: var(--muted); margin-top: 6px; }

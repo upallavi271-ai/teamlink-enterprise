@@ -33,6 +33,9 @@ const { toMinutes, isLate, sortedPunches, dayCheckIn, dayCheckOut, monthLabel } 
 const { DEFAULTS: POLICY_DEFAULTS, withExtras } = require('./attendancePolicy');
 const { halfOf: leaveHalfOf } = require('./leaveText');
 const LP = require('./latePermission'); // late coming requests: Approved / Pending / Rejected / Not explained
+const PC = require('./payrollCycle'); // payroll cycle + the absent-without-leave rule
+const ANL = require('./absentNoLeave');
+const PS = require('./punchSources'); // where each punch came from (Web / Biometric / Pulse / HR)
 
 const hhmm = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 
@@ -644,6 +647,25 @@ function howTextOf(inLabel, outLabel) {
 //   at the edge of the range, the range is read SANDWICH_PAD days wider and
 //   cut back at the end.
 const SANDWICH_PAD = 10;
+// Map(employeeId -> [{ from, to }]) for people who REJOINED (EmployeeRecord type REJOINING, status Done; the gap is kept in
+// its notes JSON). Never throws: a failure just means no gap is applied.
+async function rejoinGapsFor(prisma, ids) {
+  const out = new Map();
+  if (!ids || !ids.length) return out;
+  try {
+    const rows = await prisma.employeeRecord.findMany({ where: { type: 'REJOINING', status: 'Done', employeeId: { in: ids } }, select: { employeeId: true, notes: true } });
+    rows.forEach((r) => {
+      let n = null;
+      try { n = JSON.parse(r.notes || 'null'); } catch { n = null; }
+      const g = n && n.gap;
+      if (g && /^\d{4}-\d{2}-\d{2}$/.test(g.from || '') && /^\d{4}-\d{2}-\d{2}$/.test(g.to || '') && g.from <= g.to) {
+        if (!out.has(r.employeeId)) out.set(r.employeeId, []);
+        out.get(r.employeeId).push({ from: g.from, to: g.to });
+      }
+    });
+  } catch { /* no gaps */ }
+  return out;
+}
 const OFF_STATUSES = ['Holiday', 'Weekly Off'];
 const shiftDay = (d, n) => { const x = new Date(`${d}T00:00:00Z`); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 //   asOf (optional) — read the days as if today were this date. The leave
@@ -658,6 +680,9 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
   const from = sandwich ? shiftDay(wantFrom, -SANDWICH_PAD) : wantFrom;
   const to = sandwich ? shiftDay(wantTo, SANDWICH_PAD) : wantTo;
   const ids = employees.map((e) => e.id);
+  // REJOINED PEOPLE (utils/rejoin.js): the days between the last working day of an earlier stint and the rejoining date
+  // read 'Left' (not counted), so a person who came back is not shown absent for the months they were not with the company.
+  const gapsOf = await rejoinGapsFor(prisma, ids);
   const [records, punches, leaves, holidays, regs, imported, leaveTypes, ...dataDays] = await Promise.all([
     prisma.attendance.findMany({ where: { employeeId: { in: ids }, date: { gte: from, lte: to } } }),
     prisma.attendancePunch.findMany({ where: { employeeId: { in: ids }, date: { gte: from, lte: to } } }),
@@ -683,11 +708,30 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
     // Absent (the device / import has not sent that day yet).
     ...[prisma.attendancePunch, prisma.attendance, prisma.attendanceHistory].map((m) => m.groupBy({ by: ['date'], where: { date: { gte: from, lte: to } } })),
   ]);
+  // SUPER ADMIN (founder, 2026-10-15): "all days present for the Super Admin, and marking must still exist".
+  // A Super Admin's working day reads Present whatever the device says. Real check-ins / HR marks still
+  // work and still show their times; approved leave stays leave; holidays and week offs stay days off.
+  const superIds = new Set();
+  try {
+    (await prisma.employee.findMany({ where: { id: { in: ids }, user: { role: 'SUPER_ADMIN' } }, select: { id: true } })).forEach((e) => superIds.add(e.id));
+  } catch { /* no user link on an old database: nobody is auto-present */ }
+  const SUPER_FIXABLE = new Set(['Absent', 'Not Checked In', 'Missing Check-In', 'Missing Check-Out', 'Half Day', 'Checked In', STATUS.NO_DATA, STATUS.INFORMED, STATUS.LEAVE_REVIEW, STATUS.HALF_REVIEW]);
   // Half-day requests that were REJECTED: only a note on the day (never a half day).
-  const rejectedHalf = (await prisma.leaveRequest.findMany({
+  const rejectedRows = await prisma.leaveRequest.findMany({
     where: { employeeId: { in: ids }, status: 'Rejected', fromDate: { lte: to }, toDate: { gte: from } },
     select: { employeeId: true, fromDate: true, toDate: true, reason: true, days: true },
-  })).filter((l) => leaveHalfOf(l)).map((l) => ({ employeeId: l.employeeId, fromDate: String(l.fromDate).slice(0, 10), toDate: String(l.toDate).slice(0, 10) }));
+  });
+  const rejectedHalf = rejectedRows.filter((l) => leaveHalfOf(l)).map((l) => ({ employeeId: l.employeeId, fromDate: String(l.fromDate).slice(0, 10), toDate: String(l.toDate).slice(0, 10) }));
+  // Any rejected request (full day too): still an APPLICATION, so the day is not "absent without leave".
+  const rejectedAny = rejectedRows.map((l) => ({ employeeId: l.employeeId, fromDate: String(l.fromDate).slice(0, 10), toDate: String(l.toDate).slice(0, 10) }));
+  // ABSENT WITHOUT APPLYING LEAVE (2026-10-12): the rule per payroll month, to tag the day.
+  const pcSettings = await PC.getSettings();
+  const awlRuleCache = new Map();
+  const awlRuleOfDate = (d) => {
+    if (!awlRuleCache.has(d)) { const m = PC.monthOfDate(d, pcSettings.cycle); // during the switch-over a date sits in two periods: the LATER (cycle) one decides the rule
+      awlRuleCache.set(d, PC.absentRuleFor(m ? m.months[m.months.length - 1] : d.slice(0, 7), pcSettings.absent)); }
+    return awlRuleCache.get(d);
+  };
   const lateReq = await LP.loadFor(prisma, ids, from, to); // late-coming requests of the range (never throws)
   const lateGap = policyTimes(cfg).lateGap;
   const withData = new Set(dataDays.flat().map((g) => g.date));
@@ -720,9 +764,13 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
     const joined = employee.dateOfJoining ? new Date(employee.dateOfJoining).toISOString().slice(0, 10) : null;
     const left = lastDayOf && lastDayOf.has(employee.id);
     const lastDay = left ? lastDayOf.get(employee.id) : null;
+    const gaps = gapsOf.get(employee.id) || null;
     const rows = range.map((d) => {
       if (left && (!lastDay || d > lastDay)) {
-        return { date: d, status: 'Left', counted: false, checkIn: null, checkOut: null, hours: null, method: null, punches: 0, note: 'No longer on the rolls', present: 0, leave: 0, absent: 0, pending: 0, paid: 0, colour: '' };
+        return { date: d, status: 'Left', counted: false, checkIn: null, checkOut: null, hours: null, method: null, punches: 0, note: 'Left company', present: 0, leave: 0, absent: 0, pending: 0, paid: 0, colour: '' };
+      }
+      if (gaps && gaps.some((g) => d >= g.from && d <= g.to)) {
+        return { date: d, status: 'Left', counted: false, checkIn: null, checkOut: null, hours: null, method: null, punches: 0, note: 'Not with the company (left, then rejoined)', present: 0, leave: 0, absent: 0, pending: 0, paid: 0, colour: '' };
       }
       const k = key(employee.id, d);
       let ps = punchesOf.get(k) || [];
@@ -744,8 +792,23 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
         regularization: regRowOf.has(k) && regRowOf.get(k).status === 'Pending' ? regRowOf.get(k) : null,
         noData: !withData.has(d),
       });
+      if (superIds.has(employee.id) && SUPER_FIXABLE.has(row.status) && !leave) {
+        Object.assign(row, {
+          status: 'Present', counted: true, present: 1, absent: 0, pending: 0, leave: 0, paid: 1, session: null, earlyLogout: false,
+          colour: colourOf('Present'), note: 'Super Admin: present every working day', superAdminPresent: true,
+        });
+        delete row.pendingHalf; delete row.noRecord; delete row.pendingLeaveId; delete row.regularizationId;
+        row.kpi = kpiOf(row);
+        row.reason = 'Present — Super Admin (counted present on every working day)';
+      }
       // A half-day request that was REJECTED is not a half day - the day reads as it would without it, with a note.
       if (rejectedHalf.some((l) => l.employeeId === employee.id && l.fromDate <= d && l.toDate >= d)) row.leaveRejected = true;
+      // THE TAG: a working day absent with no leave applied reads "Absent: no leave applied: 2 LOP" (only from the rule's first payroll month).
+      const awlRule = awlRuleOfDate(d);
+      if (awlRule.active) {
+        const kind = ANL.classify(row, { withData, rejected: rejectedAny.some((l) => l.employeeId === employee.id && l.fromDate <= d && l.toDate >= d) });
+        if (kind) { row.awlKind = kind; row.awlText = ANL.tagText(awlRule, kind); row.awlLop = kind === 'full' ? awlRule.days : awlRule.halfDayDays; }
+      }
       // LATE COMING: a late day carries the state of its request (Approved / Pending / Rejected / Not explained); an approved
       // one is excused under the new rule (utils/latePermission.js).
       LP.annotate(row, lateReq.get(k) || null, lateGap);
@@ -758,7 +821,11 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
       const fin = dayCheckIn(ps);
       row.locationStatus = fin ? (fin.locationStatus || (fin.location ? 'Captured' : fin.method === 'Biometric' ? 'Device' : 'Not captured')) : null;
       row.verification = fin ? (fin.verificationStatus || null) : null;
+      row.distanceM = fin && fin.distanceM != null ? Math.round(fin.distanceM) : null; // metres from the office at check-in
       row.regularization = regOf.get(k) || null;
+      // EVERY raw punch of the day, all sources, with the one the day rule used (utils/punchSources.js; display only).
+      row.punchList = PS.rawPunchList(ps, logOf.get(k) || null, !!(ps.find((p) => p.direction === 'Out')));
+      row.sourceCounts = PS.countsOf(row.punchList);
       return row;
     });
     if (sandwich) applySandwich(rows);
@@ -922,6 +989,17 @@ async function rollOf(prisma, employees) {
         if (!cur || max > cur) lastDayOf.set(g.employeeId, max);
       }
       if (min && (!firstDayOf.has(g.employeeId) || min < firstDayOf.get(g.employeeId))) firstDayOf.set(g.employeeId, min);
+    });
+  }
+  // THE EXIT DATE IS THE LAST DAY ON THE ROLLS (HRMS spec item 7, utils/exitDate.js): a person with a recorded last working
+  // day is on the rolls up to it and 'Left company' after it - whether they are still on notice or already relieved - instead of
+  // guessing from their last attendance. A leaver with no attendance at all stays off the rolls (the older leavers), as before.
+  // Only people with a leaving status are asked about, so this is one cheap read; no exit date on file = the old rule.
+  const leavingNow = employees.filter((e) => LEFT_EMPLOYMENT.includes(e.employmentStatus) || ['Notice Period', 'Exit Process'].includes(e.employmentStatus)).map((e) => e.id);
+  if (leavingNow.length) {
+    const exits = await require('./exitDate').exitDatesFor(leavingNow).catch(() => new Map()); // eslint-disable-line global-require
+    exits.forEach(({ date }, id) => {
+      if (left.has(id)) { if (lastDayOf.get(id)) lastDayOf.set(id, date); } else lastDayOf.set(id, date);
     });
   }
   const earlyStarts = [];

@@ -28,6 +28,16 @@
 //   POST   /sync-logs/:id/retry                 retry one row
 //   POST   /sync-logs/sweep                     run the automatic retry sweep now
 //   GET    /reports/compliance?month=|year=&format=csv|xlsx
+//   Payroll edit and recalculate (2026-10-13):
+//   GET    /entries/:id/edit                    the editor: components, rules, lock reason, edit state
+//   PUT    /entries/:id/edit                    save {fields, earnings, deductions, manual, reason, totals}
+//   POST   /entries/:id/edit/recalc {apply?, reason?}  compare (apply:false) / apply the engine's own numbers
+//   GET    /entries/:id/history                 versions + audit rows + superseded payslips
+//   GET    /runs/:month/changes                 "Changes in this run": every edited record with deltas
+//   POST   /adjustments {employeeId, sourceMonth, kind, amount, label, reason}   arrears / recovery -> next open month
+//   GET    /adjustments?month=&employeeId=&sourceMonth=
+//   edit = Payroll & Compensation / edit (SA, Admin, Accountant, HR); only while the month is Draft / Pending;
+//   the person who edited a record cannot approve it; reopen = Payroll / configure (Super Admin, Admin).
 //
 // ACCESS (resolved by the permission engine, never a role list here):
 //   prepare  hrms / Payroll & Compensation / create     — HR, Accounts, SA/Admin
@@ -44,12 +54,16 @@ const { logAudit } = require('../utils/audit');
 const { monthLabel } = require('../utils/attendanceMath');
 const { NOT_SYSTEM_EMPLOYEE } = require('../utils/systemAccounts');
 const E = require('../utils/payrollEngine');
+const PC = require('../utils/payrollCycle');
 const S = require('../utils/payrollSync');
 // S3 (2026-10-05): ONE journal per payroll month (utils/payrollPosting.js).
 const P = require('../utils/payrollPosting');
 const { compliance } = require('../utils/payrollReports');
 const { toCsv, toXlsx } = require('../utils/tabularExport');
 const { notifyDataIo } = require('../utils/dataIoNotify');
+// Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
+const PEdit = require('../utils/payrollEdit');
+const { ipOf } = require('../utils/clientIp');
 
 function sendTable(res, format, filename, headers, rows, sheet) {
   if (format === 'xlsx') {
@@ -66,16 +80,18 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
   async function accessOf(req) {
     if (req.payrollAccess) return req.payrollAccess;
     const u = req.user;
-    const [prepare, approveH, approveA, post, exportH, ledger] = await Promise.all([
+    const [prepare, approveH, approveA, post, exportH, ledger, editH, reopenH] = await Promise.all([
       can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'create'),
       can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'approve'),
       can(u, 'accounts', 'accounts', 'Journal & Ledger', 'approve'),
       can(u, 'accounts', 'accounts', 'Journal & Ledger', 'create'),
       can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'export'),
       can(u, 'accounts', 'accounts', 'Journal & Ledger', 'view'),
+      can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'edit'),
+      can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'configure'),
     ]);
     const approve = approveH || approveA;
-    req.payrollAccess = { prepare, approve, post, ledger, view: prepare || approve || post || exportH || ledger };
+    req.payrollAccess = { prepare, approve, post, ledger, edit: !!editH, reopen: !!reopenH, view: prepare || approve || post || exportH || ledger || !!editH };
     return req.payrollAccess;
   }
   const need = (flag) => async (req, res, next) => {
@@ -155,13 +171,14 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       prisma.payrollRun.findUnique({ where: { month } }),
       prisma.payrollSyncLog.findMany({ where: { month } }),
     ]);
+    const editStates = await PEdit.readStates(entries.map((e) => e.id));
     const logOf = new Map();
     logs.forEach((l) => { logOf.set(`${l.kind}|${l.employeePayrollRunId}`, l); });
     const sum = (k) => entries.reduce((n, e) => n + (Number(e[k]) || 0), 0);
     const byStatus = {};
     entries.forEach((e) => { byStatus[e.status] = (byStatus[e.status] || 0) + 1; });
     res.json({
-      month, period: monthLabel(month), run, access: await accessOf(req), byStatus,
+      month, period: monthLabel(month), cycle: await PC.cycleFor(month), run, access: await accessOf(req), byStatus,
       totals: {
         employees: entries.length, grossPay: sum('grossPay'), lopDeduction: sum('lopDeduction'), earnedGross: sum('earnedGross'),
         totalDeductions: sum('totalDeductions'), netPay: sum('netPay'), pfEmployer: sum('pfEmployer'), esiEmployer: sum('esiEmployer'),
@@ -169,6 +186,12 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       entries: entries.map((e) => ({
         ...e,
         statusLabel: E.STATUS_LABEL[e.status],
+        lock: PEdit.lockOf(e),
+        edit: (() => {
+          const st = editStates.get(e.id);
+          const last = st && st.versions && st.versions.length > 1 ? st.versions[st.versions.length - 1] : null;
+          return { edited: !!(st && st.edited), versions: st && st.versions ? Math.max(0, st.versions.length - 1) : 0, lastBy: last ? last.byName : null, lastAt: last ? last.at : null };
+        })(),
         accrualSync: logOf.get(`ACCRUAL|${e.id}`) ? (({ payload, ...rest }) => rest)(logOf.get(`ACCRUAL|${e.id}`)) : null,
         paymentSync: logOf.get(`PAYMENT|${e.id}`) ? (({ payload, ...rest }) => rest)(logOf.get(`PAYMENT|${e.id}`)) : null,
       })),
@@ -196,6 +219,63 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       // This employee's share of the month's one journal entry.
       journalPayload: await P.employeeShare(e),
     });
+  });
+
+  // ---- Payroll edit and recalculate (utils/payrollEdit.js) ---------------------------------------
+  const editFail = (res, err) => {
+    if (err && err.status) return res.status(err.status).json({ error: err.message, ...(err.extra || {}) });
+    throw err;
+  };
+  router.get('/entries/:id/edit', need('view'), async (req, res) => {
+    const e = await scopedEntry(req, res);
+    if (!e) return undefined;
+    return res.json(await PEdit.editorPayload(e, await accessOf(req)));
+  });
+  router.put('/entries/:id/edit', need('edit'), async (req, res) => {
+    const e = await scopedEntry(req, res);
+    if (!e) return undefined;
+    try {
+      const r = await PEdit.saveEdit({ entry: e, body: req.body || {}, actor: actor(req), ip: ipOf(req) });
+      return res.json({ ok: true, version: r.version, before: r.before, after: r.after, changes: r.changes, status: r.entry.status, payload: await PEdit.editorPayload(r.entry, await accessOf(req)) });
+    } catch (err) { return editFail(res, err); }
+  });
+  router.post('/entries/:id/edit/recalc', need('edit'), async (req, res) => {
+    const e = await scopedEntry(req, res);
+    if (!e) return undefined;
+    try {
+      if (!(req.body && req.body.apply)) {
+        const c = await PEdit.engineCompare(e);
+        return res.json({ same: c.same, changes: c.changes, before: c.before, after: c.after });
+      }
+      const r = await PEdit.applyEngine({ entry: e, actor: actor(req), ip: ipOf(req), reason: req.body.reason });
+      return res.json({ ok: true, version: r.version, before: r.before, after: r.after, changes: r.changes, payload: await PEdit.editorPayload(r.entry, await accessOf(req)) });
+    } catch (err) { return editFail(res, err); }
+  });
+  router.get('/entries/:id/history', need('view'), async (req, res) => {
+    const e = await scopedEntry(req, res);
+    if (!e) return undefined;
+    return res.json({ ...(await PEdit.historyOf(e)), lock: PEdit.lockOf(e), status: e.status, statusLabel: E.STATUS_LABEL[e.status] });
+  });
+  router.get('/runs/:month/changes', need('view'), async (req, res) => {
+    if (!E.isMonth(req.params.month)) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    return res.json(await PEdit.changesInRun(req.params.month, payrollEmployeeWhere(req)));
+  });
+  router.post('/adjustments', need('edit'), async (req, res) => {
+    const b = req.body || {};
+    const emp = await prisma.employee.findUnique({ where: { id: String(b.employeeId || '') } });
+    if (!emp) return res.status(404).json({ error: 'Employee not found' });
+    if (!matches(emp, payrollEmployeeWhere(req))) return res.status(403).json(OUT_OF_SCOPE);
+    try {
+      const r = await PEdit.createAdjustment({ employeeId: emp.id, sourceMonth: b.sourceMonth, kind: b.kind, amount: b.amount, label: b.label, reason: b.reason, actor: actor(req), ip: ipOf(req) });
+      return res.status(201).json(r);
+    } catch (err) { return editFail(res, err); }
+  });
+  router.get('/adjustments', need('view'), async (req, res) => {
+    const list = await PEdit.listAdjustments({ month: req.query.month || null, employeeId: req.query.employeeId || null, sourceMonth: req.query.sourceMonth || null });
+    const ids = [...new Set(list.map((a) => a.employeeId))];
+    const emps = await prisma.employee.findMany({ where: { AND: [{ id: { in: ids } }, payrollEmployeeWhere(req)] }, select: { id: true, name: true, employeeCode: true } });
+    const of = new Map(emps.map((x) => [x.id, x]));
+    return res.json(list.filter((a) => of.has(a.employeeId)).map((a) => ({ ...a, employeeName: of.get(a.employeeId).name, employeeCode: of.get(a.employeeId).employeeCode })));
   });
 
   // ---- Calculate (drafts) ----------------------------------------------------------
@@ -226,7 +306,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     const entries = await prisma.employeePayrollRun.findMany({ where: { month, employeeId: { in: employees.map((e) => e.id) } }, select: { employeeId: true, status: true } });
     const statusOf = new Map(entries.map((e) => [e.employeeId, e.status]));
     res.json({
-      month, period: monthLabel(month), workingDays,
+      month, period: monthLabel(month), cycle: await PC.cycleFor(month), workingDays,
       rows: employees.map((e) => ({
         employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department,
         payrollStatus: statusOf.get(e.id) || null, ...map.get(e.id),
@@ -242,7 +322,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     if (!matches(emp, payrollEmployeeWhere(req))) return res.status(403).json(OUT_OF_SCOPE);
     const locked = await prisma.employeePayrollRun.findUnique({ where: { employeeId_month: { employeeId: emp.id, month } } });
     if (locked && locked.status !== 'DRAFT') {
-      return res.status(409).json({ error: `${emp.name}'s ${monthLabel(month)} payroll is ${E.STATUS_LABEL[locked.status]} — attendance can only be changed while it is a draft.` });
+      return res.status(409).json({ error: `${emp.name}'s ${monthLabel(month)} payroll is ${E.STATUS_LABEL[locked.status]} — attendance can only be changed before it is submitted.` });
     }
     const policy = await E.getPolicy();
     const { workingDays: defaultWd, map } = await E.attendanceDefaults([emp], month, policy);
@@ -281,7 +361,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     if (!emp) return res.status(404).json({ error: 'Employee not found' });
     if (!matches(emp, payrollEmployeeWhere(req))) return res.status(403).json(OUT_OF_SCOPE);
     const locked = await prisma.employeePayrollRun.findUnique({ where: { employeeId_month: { employeeId: emp.id, month } } });
-    if (locked && locked.status !== 'DRAFT') return res.status(409).json({ error: 'The payroll for this month is no longer a draft.' });
+    if (locked && locked.status !== 'DRAFT') return res.status(409).json({ error: 'The payroll for this month is already submitted.' });
     const prev = await prisma.payrollAttendance.findUnique({ where: { employeeId_month: { employeeId: emp.id, month } } });
     if (!prev) return res.json({ ok: true });
     await prisma.payrollAttendance.delete({ where: { id: prev.id } });
@@ -349,11 +429,20 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
   router.post('/runs/:month/reopen', needAny('approve', 'post'), async (req, res) => {
     const month = monthOf(req);
     if (!month) return res.status(400).json({ error: 'month must be YYYY-MM' });
+    // An approved payroll is re-opened only by the Super Admin (the Payroll "configure" holders): 2026-10-13.
+    if (!(await accessOf(req)).reopen) return res.status(403).json({ error: 'Only the Super Admin can reopen an approved payroll. Ask them to reopen it.' });
     const reason = String((req.body && req.body.reason) || '').trim();
-    if (!reason) return res.status(400).json({ error: 'Say why the payroll is being re-opened.' });
+    if (reason.length < 3) return res.status(400).json({ error: 'Say why the payroll is being re-opened.' });
     try {
       const r = await P.reverseMonth(month, actor(req), { toStatus: 'DRAFT', reason });
       if (!r.ok) return res.status(502).json({ error: `Could not book the reversal in Accounts: ${r.error}`, state: r.state });
+      try {
+        const who = await prisma.user.findMany({
+          where: { role: { in: ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'] }, NOT: [{ email: { contains: 'example.test' } }, { name: { contains: 'ZZTEST' } }] },
+          select: { id: true },
+        });
+        await require('../utils/notify').notifyUsers(who.map((u) => u.id), { title: 'Payroll re-opened', message: `${req.user.name || 'The Super Admin'} re-opened ${monthLabel(month)} payroll (back to Calculated). Reason: ${reason}`, exceptUserId: req.user.id });
+      } catch { /* the re-open stands even if a notification cannot be written */ }
       return res.json(r);
     } catch (err) { return fail(res, err); }
   });

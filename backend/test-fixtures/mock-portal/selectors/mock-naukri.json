@@ -1,0 +1,73 @@
+{
+  "_comment": "Page settings of the LOCAL MOCK 'naukri' board (test-fixtures/mock-portal/server.js). Used by the tests through TL_PORTAL_SELECTORS_NAUKRI. Local addresses only.",
+  "portal": "naukri",
+  "version": "mock-1",
+  "verified": true,
+  "mock": true,
+  "allowedHosts": ["127.0.0.1", "localhost"],
+  "urls": {
+    "login": "{{MOCK_ORIGIN}}/naukri/login",
+    "dashboard": "{{MOCK_ORIGIN}}/naukri/dashboard",
+    "postJob": "{{MOCK_ORIGIN}}/naukri/post-job",
+    "edit": "{{MOCK_ORIGIN}}/naukri/edit/{id}",
+    "listing": "{{MOCK_ORIGIN}}/naukri/job/{id}",
+    "myJobs": "{{MOCK_ORIGIN}}/naukri/my-jobs"
+  },
+  "login": {
+    "username": ["input#usernameField"],
+    "password": ["input#passwordField"],
+    "submit": ["button[type='submit']"],
+    "loggedInProbe": ["a:has-text('Logout')"],
+    "errorProbe": [".error-message"],
+    "errorText": ["invalid"],
+    "logout": ["a:has-text('Logout')"],
+    "waitMs": 3500
+  },
+  "blockers": { "urlPatterns": {}, "selectors": {}, "textPatterns": {} },
+  "postJob": {
+    "fields": {
+      "title": { "selector": ["input[name='jobTitle']"], "type": "text" },
+      "skills": { "selector": ["input[placeholder='Key skills']"], "type": "tags", "max": 15 },
+      "experienceMin": { "selector": ["input[name='minExp']"], "type": "text" },
+      "experienceMax": { "selector": ["input[name='maxExp']"], "type": "text" },
+      "location": { "selector": ["input[name='location']"], "type": "autocomplete", "optionSelector": ["li[role='option']:has-text('{value}')"] },
+      "employmentType": { "selector": ["select[name='employmentType']"], "type": "select" },
+      "salaryMin": { "selector": ["input[name='minSalary']"], "type": "text" },
+      "salaryMax": { "selector": ["input[name='maxSalary']"], "type": "text" },
+      "openings": { "selector": ["input[name='vacancies']"], "type": "text" },
+      "industry": { "selector": ["select[name='industry']"], "type": "select" },
+      "functionalArea": { "selector": ["select[name='functionalArea']"], "type": "select" },
+      "education": { "selector": ["input[name='education']"], "type": "text" },
+      "description": { "selector": ["textarea[name='jobDescription']"], "type": "text" },
+      "contactEmail": { "selector": ["input[name='contactEmail']"], "type": "text" }
+    },
+    "order": ["title", "skills", "experienceMin", "experienceMax", "location", "employmentType", "salaryMin", "salaryMax", "openings", "industry", "functionalArea", "education", "description", "contactEmail"],
+    "preview": ["button#pv"],
+    "submit": ["button[type='submit']:has-text('Post Job')"],
+    "submitEdit": ["button[type='submit']:has-text('Post Job')"],
+    "errorProbe": [".field-error"],
+    "outcomeTimeoutMs": 5000,
+    "success": {
+      "urlPattern": "/posted",
+      "text": ["job posted successfully"],
+      "idSelector": ["[data-job-id]"],
+      "idAttribute": "data-job-id",
+      "idPattern": "job id:\\s*([A-Za-z0-9-]+)",
+      "idFromUrl": "jid=([A-Za-z0-9-]+)",
+      "urlSelector": ["a:has-text('View job')"]
+    }
+  },
+  "verify": {
+    "titleSelector": ["h1"],
+    "notFoundText": ["job not found", "no longer available"]
+  },
+  "unpublish": {
+    "listUrl": "{{MOCK_ORIGIN}}/naukri/my-jobs",
+    "rowSelector": ["tr[data-job-id='{id}']"],
+    "closeButton": ["tr[data-job-id='{id}'] button.close"],
+    "confirm": ["tr[data-job-id='{id}'] button:has-text('Confirm')"],
+    "doneText": ["job closed successfully"]
+  },
+  "timeouts": { "nav": 20000, "action": 12000, "overall": 100000 },
+  "pacing": { "minMs": 0, "maxMs": 0 }
+}

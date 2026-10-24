@@ -160,6 +160,11 @@ function queueEmail(actor, line) {
  */
 async function notifyDataIo(req, opts = {}) {
   try {
+    // HR SUPER ACCESS (utils/hrSuper.js): its delete / export / import alert is raised once, by utils/hrSensitiveAlert.js
+    // (same Super Admin notification, with the exact screen and row count handed over here), so nothing is sent twice.
+    if ((opts.kind === 'export' || opts.kind === 'import') && require('./hrSensitiveAlert').note(req, { module: opts.module, count: opts.count, created: opts.created, updated: opts.updated, what: opts.what ? `${opts.module} ${String(opts.what).replace(/^rows of /, '')}`.trim() : undefined })) { // eslint-disable-line global-require
+      return { message: null, notified: 0, deferred: true };
+    }
     const actor = (req && req.user) || opts.actor || {};
     const kind = opts.kind || 'export';
     const module = opts.module || 'TeamLink';

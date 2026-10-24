@@ -30,6 +30,9 @@ function init() {
       await tf.ready();
       const modelDir = path.join(path.dirname(require.resolve('@vladmandic/face-api/package.json')), 'model');
       await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelDir);
+      // The small, fast detector: used only to START a chunk of a burst that is
+      // split between workers (the first and last frames always use SSD).
+      await faceapi.nets.tinyFaceDetector.loadFromDisk(modelDir);
       await faceapi.nets.faceLandmark68Net.loadFromDisk(modelDir);
       await faceapi.nets.faceRecognitionNet.loadFromDisk(modelDir);
     })();
@@ -53,6 +56,38 @@ function geometry(landmarks) {
   return { yaw: Number(yaw.toFixed(4)), roll: Number(roll.toFixed(2)), ear: Number(ear.toFixed(4)) };
 }
 
+// The two eye boxes from the landmarks (points 36-41 and 42-47), and how much CONTRAST the eyes show in the real picture.
+// An open eye is a dark pupil in a light white: high grey spread. A closed lid is smooth skin: the spread drops. The 68-point landmarks come from a
+// 112-pixel crop of the face, so the eye-aspect-ratio alone is noisy; this second signal reads the full-size pixels and does not depend on it.
+function eyeBoxes(landmarks) {
+  const p = landmarks.positions;
+  const box = (pts) => {
+    const xs = pts.map((q) => q.x); const ys = pts.map((q) => q.y);
+    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  };
+  return [box(p.slice(36, 42)), box(p.slice(42, 48))];
+}
+function eyeContrast(img, boxes) {
+  if (!boxes || !boxes.length) return null;
+  const vals = [];
+  for (const b of boxes) {
+    const w = b.x1 - b.x0; const h = b.y1 - b.y0;
+    const x0 = Math.max(0, Math.floor(b.x0 - 0.15 * w)); const x1 = Math.min(img.width - 1, Math.ceil(b.x1 + 0.15 * w));
+    const y0 = Math.max(0, Math.floor(b.y0 - 0.3 * h)); const y1 = Math.min(img.height - 1, Math.ceil(b.y1 + 0.3 * h));
+    if (x1 - x0 < 4 || y1 - y0 < 2) continue; // eslint-disable-line no-continue
+    let n = 0; let sum = 0; let sum2 = 0;
+    for (let y = y0; y <= y1; y += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        const i = (y * img.width + x) * 3;
+        const g = 0.299 * img.data[i] + 0.587 * img.data[i + 1] + 0.114 * img.data[i + 2];
+        n += 1; sum += g; sum2 += g * g;
+      }
+    }
+    if (n) { const m = sum / n; vals.push(Math.sqrt(Math.max(0, sum2 / n - m * m))); }
+  }
+  return vals.length ? Number((vals.reduce((a, c) => a + c, 0) / vals.length).toFixed(3)) : null;
+}
+
 const box4 = (b) => ({ x: Math.round(b.x), y: Math.round(b.y), width: Math.round(b.width), height: Math.round(b.height) });
 
 function euclid(a, b) {
@@ -70,6 +105,7 @@ async function detectFull(tensor) {
     ...geometry(f.landmarks),
     descriptor: Array.from(f.descriptor),
     lmBox: landmarkBox(f.landmarks),
+    eyes: eyeBoxes(f.landmarks),
   }));
 }
 
@@ -77,6 +113,22 @@ function landmarkBox(landmarks) {
   const xs = landmarks.positions.map((p) => p.x); const ys = landmarks.positions.map((p) => p.y);
   const x0 = Math.min(...xs); const y0 = Math.min(...ys);
   return { cx: (x0 + Math.max(...xs)) / 2, cy: (y0 + Math.max(...ys)) / 2 };
+}
+
+// Fast detection for the first frame of a worker's chunk: the tiny detector,
+// and SSD only when it finds nothing (so a hard frame is never lost).
+async function detectFast(tensor, inputSize = 416, scoreThreshold = 0.5) {
+  const options = new faceapi.TinyFaceDetectorOptions({ inputSize, scoreThreshold });
+  const found = await faceapi.detectAllFaces(tensor, options).withFaceLandmarks().withFaceDescriptors();
+  if (!found.length) return detectFull(tensor);
+  return found.map((f) => ({
+    score: Number(f.detection.score.toFixed(3)),
+    box: box4(f.detection.box),
+    ...geometry(f.landmarks),
+    descriptor: Array.from(f.descriptor),
+    lmBox: landmarkBox(f.landmarks),
+    eyes: eyeBoxes(f.landmarks),
+  }));
 }
 
 // Tracking: the detector box of the previous frame, re-centred on where the
@@ -110,7 +162,7 @@ async function track(tensor, W, H, prev) {
   return {
     // The nominal (unclipped) box, so its size carries to the next frame.
     score: null, tracked: true, box: box4({ x: c.cx + prev.dx - w / 2, y: c.cy + prev.dy - h / 2, width: w, height: h }), ...geometry(landmarks),
-    descriptor: Array.from(descriptor), lmBox: landmarkBox(landmarks),
+    descriptor: Array.from(descriptor), lmBox: landmarkBox(landmarks), eyes: eyeBoxes(landmarks),
   };
 }
 
@@ -118,7 +170,7 @@ async function track(tensor, W, H, prev) {
 // anywhere in the scene is seen at the start and the end); the frames between
 // are tracked from the previous one, falling back to a full detection when
 // tracking drifts.
-async function analyse(images, mode) {
+async function analyse(images, mode, opts = {}) {
   await init();
   const results = [];
   let prev = null;
@@ -128,12 +180,17 @@ async function analyse(images, mode) {
     const tensor = tf.tensor3d(img.data, [img.height, img.width, 3], 'int32');
     try {
       let faces = null;
-      const full = mode !== 'burst' || i === 0 || i === images.length - 1 || !prev;
+      // A chunk of a split burst may start with the fast detector (opts.fastFirst);
+      // the LAST frame of the whole burst (opts.lastFull) always gets SSD.
+      const lastFull = opts.lastFull !== false && i === images.length - 1;
+      const fastStart = mode === 'burst' && i === 0 && opts.fastFirst && !lastFull;
+      const full = mode !== 'burst' || i === 0 || lastFull || !prev;
       if (!full) {
         const t = await track(tensor, img.width, img.height, prev).catch(() => null);
         if (t && anchor && euclid(t.descriptor, anchor) <= 0.55) faces = [t];
       }
-      if (!faces) faces = await detectFull(tensor);
+      // opts.quick (single frames of the fast check-in): the tiny detector at a small input size, SSD only if it finds nothing.
+      if (!faces) faces = opts.quick ? await detectFast(tensor, opts.inputSize || 224, 0.4) : (fastStart ? await detectFast(tensor) : await detectFull(tensor));
       const main = [...faces].sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0];
       if (main) {
         if (!anchor) anchor = main.descriptor;
@@ -144,7 +201,7 @@ async function analyse(images, mode) {
         const dy = prev && main.tracked ? prev.dy : (b.y + b.height / 2) - main.lmBox.cy;
         prev = { box: b, cx: main.lmBox.cx, cy: main.lmBox.cy, dx, dy };
       }
-      results.push({ faces: faces.map(({ lmBox, ...f }) => f) });
+      results.push({ faces: faces.map(({ lmBox, eyes, ...f }) => ({ ...f, eyeContrast: eyeContrast(img, eyes) })) });
     } finally {
       tensor.dispose();
     }
@@ -155,7 +212,7 @@ async function analyse(images, mode) {
 parentPort.on('message', async (msg) => {
   try {
     if (msg.type === 'warm') { await init(); parentPort.postMessage({ id: msg.id, ok: true }); return; }
-    const results = await analyse(msg.images, msg.mode);
+    const results = await analyse(msg.images, msg.mode, msg.opts || {});
     parentPort.postMessage({ id: msg.id, results });
   } catch (err) {
     parentPort.postMessage({ id: msg.id, error: String((err && err.message) || err) });

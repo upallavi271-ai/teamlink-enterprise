@@ -1,4 +1,4 @@
-import { cloneElement, useEffect, useMemo, useState } from 'react';
+import { cloneElement, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import RequirementForm from '../components/RequirementForm.jsx';
@@ -11,6 +11,8 @@ import {
 } from '../atsVocab';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can, canRaiseRequirement, productRole } from '../permissions';
+import AskAddJobModal from '../components/jobs/AskAddJobModal.jsx'; // a TL / STL / Recruiter asks the client manager to add a job (2026-10-13)
+import JobDupWorklist, { JobDupTabs, useJobDupStatus } from '../components/jobs/JobDuplicates.jsx'; // the "Duplicate jobs" tab (2026-10-13)
 import { splitPersonValue, useAtsWorkers } from '../components/PeopleFilter.jsx';
 import AtsDataTools, { useAtsIoAccess } from '../components/AtsDataTools.jsx';
 import ExportMenu from '../components/ExportMenu.jsx';
@@ -24,9 +26,14 @@ import ScrollTable from '../components/ScrollTable.jsx';
 import ColumnChooser, { useColumns } from '../components/jobs/ColumnChooser.jsx';
 import RequirementDrawer from '../components/jobs/RequirementDrawer.jsx';
 import RequirementBulk from '../components/jobs/RequirementBulk.jsx';
+import PostingDashboard from '../components/jobpublish/PostingDashboard.jsx'; // the "Posting" tab (job publishing engine)
+import PublishPopup from '../components/jobpublish/PublishPopup.jsx'; // Post this job / Post selected jobs
 // Pause (reason + date) / Close (filled or cancelled) — change list 2026-10-03 §5.
 import { JobLifecycleDialog } from '../components/jobs/JobLifecycle.jsx';
 import RequestJobModal from '../components/jobs/RequestJobModal.jsx';
+import PostingTracker from '../components/jobdist/PostingTracker.jsx'; // job distribution: where jobs are posted / pending / expired (quick view)
+import { placeName } from '../components/jobdist/distKit.js';
+import PostedOnChips from '../components/jobs/reqsplit/PostedOnChips.jsx'; // 'Posted on' chips: Posted (link) / Queued / Needs your help / Failed
 import { waitingText, secondaryActions } from '../components/jobs/reqActions.js';
 import {
   PriorityChip, priorityLabel, ageText, slaInfo, lastActivityText, fmtDay, fmtWhen, nf,
@@ -59,16 +66,22 @@ import { JobStatusChip, jobStatusByKey } from '../components/jobs/reqStatus.jsx'
 import {
   HowItWorks, FirstTips, Help, usePipelineSteps, stepStageFilter,
 } from '../components/ui/Guide.jsx';
+import Combo from '../components/Combo.jsx';
+import { rowClickProps } from '../utils/rowClick.js';
 
 const JOB_TIPS = [
-  'Each row is one job: a client (or our company) wants people for it.',
+  'Each row is one requirement: a client (or our company) wants people for it.',
   'Click a row to see who works on it and how many people are at each step.',
-  'Press + Add job to start a new one. People for a job are in Candidates & Pipeline.',
+  'People for a requirement are in Candidates & Pipeline.',
 ];
+// The third tip says how a NEW job starts, and that is different for each login (2026-10-13: jobs are created by the BDE team and above).
+const NEW_JOB_TIP = {
+  add: 'Press + Add Requirement to start a new requirement.',
+  request: 'Press + Request requirement to ask for a new requirement. A lead opens it.',
+  ask: 'Need a new requirement? Press "Ask the client manager to add a requirement".',
+};
 // The server's tab names still say "Requirement" / "scope": everyday words on screen.
 const plainWords = (s) => String(s || '')
-  .replace(/\bRequirements\b/g, 'Jobs').replace(/\bRequirement\b/g, 'Job')
-  .replace(/\brequirements\b/g, 'jobs').replace(/\brequirement\b/g, 'job')
   .replace(/in your scope/g, 'in your area').replace(/\bOverdue\b/g, 'Late');
 
 // ---------------------------------------------------------------------------
@@ -103,7 +116,7 @@ const COLUMNS = [
   { key: 'requirement', label: 'Req ID' },
   { key: 'client', label: 'Client' },
   { key: 'department', label: 'Department' },
-  { key: 'position', label: 'Job title' },
+  { key: 'position', label: 'Requirement title' },
   { key: 'location', label: 'Location' },
   { key: 'tl', label: 'Team lead' },
   { key: 'recruiter', label: 'Recruiter' },
@@ -131,6 +144,7 @@ const COLUMNS = [
   { key: 'stage', label: 'Step' },
   { key: 'sla', label: 'Age / SLA', sort: 'sla' },
   { key: 'lastActivity', label: 'Last activity' },
+  { key: 'postedOn', label: 'Posted on' }, // the sites the job really has a posting on (Posted / Queued / Needs your help / Failed)
   { key: 'created', label: 'Posted', sort: 'created' },
   // User 2026-10-03: "12 Oct · 5 days left" (Target date, else Closing date).
   { key: 'deadline', label: 'Deadline' },
@@ -138,15 +152,15 @@ const COLUMNS = [
 const ALL_KEYS = COLUMNS.map((c) => c.key);
 // One-line ? tips on the headings a new person may not know.
 const COL_TIPS = {
-  openings: 'How many people the client wants for this job',
-  myPipeline: 'Your people on this job, by step',
-  pipeline: 'People on this job, by step: checking → sent → interview → selected',
+  openings: 'How many people the client wants for this requirement',
+  myPipeline: 'Your people on this requirement, by step',
+  pipeline: 'People on this requirement, by step: checking → sent → interview → selected',
   submittedRequired: 'People sent to the client so far / people the client wants',
   submissions: 'People sent to the client so far',
-  daysOpen: 'Days since the job was opened',
-  nextAction: 'The one thing to do now on this job',
+  daysOpen: 'Days since the requirement was opened',
+  nextAction: 'The one thing to do now on this requirement',
   sla: 'Late = past the time allowed for its step',
-  deadline: 'The date the client wants the job filled by',
+  deadline: 'The date the client wants the requirement filled by',
   pendingReview: 'People waiting for a recruiter or team lead check',
   status: 'Open = people are being found; On hold = paused; Closed = done',
 };
@@ -157,15 +171,15 @@ const COL_TIPS = {
 const ROLE_COLS = {
   recruiter: {
     def: ['position', 'client', 'location', 'openings', 'myPipeline', 'status', 'nextAction'],
-    extra: ['requirement', 'priority', 'daysOpen', 'skills', 'department', 'stage', 'sla', 'lastActivity', 'created', 'deadline'],
+    extra: ['requirement', 'priority', 'daysOpen', 'skills', 'department', 'stage', 'sla', 'lastActivity', 'postedOn', 'created', 'deadline'],
   },
   tl: {
     def: ['position', 'client', 'recruiter', 'submittedRequired', 'daysOpen', 'status', 'nextAction'],
-    extra: ['requirement', 'openings', 'priority', 'department', 'section', 'tl', 'location', 'skills', 'pipeline', 'candidates', 'pendingReview', 'stage', 'sla', 'lastActivity', 'created', 'bde', 'deadline'],
+    extra: ['requirement', 'openings', 'priority', 'department', 'section', 'tl', 'location', 'skills', 'pipeline', 'candidates', 'pendingReview', 'stage', 'sla', 'lastActivity', 'postedOn', 'created', 'bde', 'deadline'],
   },
   bde: {
     def: ['position', 'client', 'recruiter', 'submissions', 'interviews', 'status', 'nextAction'],
-    extra: ['requirement', 'tl', 'openings', 'selected', 'department', 'location', 'priority', 'daysOpen', 'pipeline', 'joined', 'fee', 'guarantee', 'invoice', 'bde', 'candidates', 'stage', 'sla', 'lastActivity', 'created', 'deadline'],
+    extra: ['requirement', 'tl', 'openings', 'selected', 'department', 'location', 'priority', 'daysOpen', 'pipeline', 'joined', 'fee', 'guarantee', 'invoice', 'bde', 'candidates', 'stage', 'sla', 'lastActivity', 'postedOn', 'created', 'deadline'],
   },
   accounts: {
     def: ['position', 'client', 'joined', 'fee', 'guarantee', 'invoice', 'nextAction'],
@@ -205,6 +219,8 @@ function roleOf(user) {
 const EMPTY_FILTERS = {
   search: '', clientId: '', location: '', bde: '', status: '', priority: '', from: '', to: '', mine: '', sla: '', agreement: '',
   closing: '', nocand: '',
+  // The New button: only requirements posted in the last 7 days ('1').
+  fresh: '',
   // Client | Internal split (the actual workflow; internal hiring is not a separate module).
   type: '',
   // Deadline: overdue | week | month | none (routes/requirements.js listWhere).
@@ -215,13 +231,9 @@ const EMPTY_FILTERS = {
   dstatus: '',
 };
 
+// Only Open or Closed is ever shown (2026-10-13).
 function simpleStatus(r) {
-  if (r.status === 'AGREEMENT_CHECK' || (r.agreementPending && !requirementIsLive(r.status) && r.status !== 'CLOSED' && r.status !== 'ON_HOLD')) return 'Waiting for agreement';
-  if (requirementIsLive(r.status)) return 'Open';
-  if (r.status === 'ON_HOLD') return 'On Hold';
-  if (r.status === 'DRAFT') return 'Draft';
-  if (r.status === 'CLOSED') return 'Closed';
-  return requirementStatusLabel(r.status);
+  return r.status === 'CLOSED' ? 'Closed' : 'Open';
 }
 
 function readSize() {
@@ -244,6 +256,12 @@ async function exportOne(r) {
   setTimeout(() => URL.revokeObjectURL(href), 2000);
 }
 
+// The 'Posted on' chips: the sites the engine posts to, every by-hand place that has a job on it (job distribution), then Expired and Not posted yet.
+const POSTED_CORE = [['', 'Any'], ['naukri', 'Naukri'], ['foundit', 'Foundit'], ['shine', 'Shine'], ['career', 'Careers page']];
+function postedChips(counts, active) {
+  const extra = Object.keys(counts || {}).filter((k) => !['naukri', 'foundit', 'shine', 'career'].includes(k) && ((counts[k] || 0) > 0 || active === k)).map((k) => [k, placeName(k)]);
+  return [...POSTED_CORE, ...extra, ['expired', 'Expired'], ['none', 'Not posted yet']];
+}
 export default function Requirements() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -286,9 +304,18 @@ export default function Requirements() {
   //   ?status= ?clientId= ?type= ?department= ?tlId= ?recruiterId= ?bdeId=
   //   ?new=1 (&clientId=) opens Add Requirement.
   const [searchParams, setSearchParams] = useSearchParams();
+  // Duplicate jobs: a tab inside Jobs (no sidebar entry); a bell link (?tab=duplicates) opens it. The address bar is cleaned below, so keep it in state.
+  const [dupStatus, loadDupStatus] = useJobDupStatus();
+  const [dupOn, setDupOn] = useState(() => searchParams.get('tab') === 'duplicates');
+  const [postOn, setPostOn] = useState(() => searchParams.get('tab') === 'posting'); // the "Posting" tab
+  const [publishFor, setPublishFor] = useState(null); // ids of the jobs in the Post popup
+  const [trackerOpen, setTrackerOpen] = useState(false); // the Posting tracker quick view
   const urlMine = searchParams.get('mine') === '1';
   const urlNew = searchParams.get('new') === '1';
   const urlClient = searchParams.get('clientId') || '';
+  const urlTitle = searchParams.get('title') || ''; // "Job to add" bell: opens the request form with the job already typed
+  // the address bar is cleaned right after the first render, so keep what it asked for
+  const firstUrl = useRef({ isNew: urlNew, client: urlClient, title: urlTitle });
   const urlView = searchParams.get('view');
   const initial = useMemo(() => ({
     filters: {
@@ -368,6 +395,11 @@ export default function Requirements() {
   // Request a job (per-role spec 2026-10-03): a BDE asks, a Manager / Admin opens it.
   const [showRequest, setShowRequest] = useState(false);
   const mayRequestJob = !canRaiseRequirement(user) && can(user, 'ats', 'requirements', 'Requirement Request', 'create');
+  // A TL / STL / Recruiter cannot create a job: one small button asks the client manager (BDE) to add it. The server says who (buttons.ask).
+  const [showAsk, setShowAsk] = useState(false);
+  const isHrUser = productRole(user, 'ats') === 'HR'; // HR adds TeamLink's own openings only
+  const mayAskJob = !canRaiseRequirement(user) && !mayRequestJob && !!(data.permissions && data.permissions.buttons && data.permissions.buttons.ask);
+  const [clientsReady, setClientsReady] = useState(false);
   const [drawer, setDrawer] = useState(null);
   // The row shown in the "Selected requirement" panel: '' = the first row, 'none' = cleared.
   const [pickId, setPickId] = useState('');
@@ -378,20 +410,30 @@ export default function Requirements() {
   const [selected, setSelected] = useState(() => new Map());
   const [rowError, setRowError] = useState('');
   const [postWaitOn, setPostWaitOn] = useState(false); // quick view: only jobs waiting to be posted by hand
+  const [postedOn, setPostedOn] = useState(''); // 'Posted on' filter: any | none | naukri | foundit | shine | linkedin | career
   const [walkPairs, setWalkPairs] = useState(null); // "Post them one by one" (jobs x boards still waiting)
   const [lifeDialog, setLifeDialog] = useState(null); // { kind: 'pause'|'close', job }
 
   useEffect(() => {
-    api.get('/requirements/client-options').then((res) => setClients(res.data)).catch(() => setClients([]));
+    api.get('/requirements/client-options').then((res) => { setClients(res.data); setClientsReady(true); }).catch(() => { setClients([]); setClientsReady(true); });
   }, []);
+  // ?new=1 (+ clientId / title): "+ New job" on a client, the Create requirement quick action, a "Job to add" bell. A login that
+  // asks for jobs gets the request form (client and title filled in); the Add job form is for Admin / HR.
+  const [newDone, setNewDone] = useState(false);
+  useEffect(() => {
+    if (!firstUrl.current.isNew || newDone || !clientsReady) return;
+    setNewDone(true);
+    if (mayRequestJob) setShowRequest(true);
+  }, [newDone, clientsReady, mayRequestJob]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const params = useMemo(() => {
     const p = { ...(canFilter.hierarchy ? toRequirementParams(h, tree.data) : {}) };
     Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'bde') p[k] = v; });
     if (filters.bde) { const b = splitPersonValue(filters.bde); if (b.id) p.bdeId = b.id; else if (b.name) p.bdeName = b.name; }
     if (postWaitOn) p.postWait = '1';
+    if (postedOn) p.postedOn = postedOn;
     return p;
-  }, [filters, h, tree.data, postWaitOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [filters, h, tree.data, postWaitOn, postedOn]); // eslint-disable-line react-hooks/exhaustive-deps
   const paramKey = JSON.stringify(params);
 
   useEffect(() => { setPage(1); }, [paramKey, view, sort, dir, size, showClosed]);
@@ -410,7 +452,7 @@ export default function Requirements() {
         // The server answers which chip it used (the role default on first load).
         if (res.data && res.data.view && res.data.view !== view) setView(res.data.view);
       })
-      .catch((err) => setLoadError(err.response?.data?.error || 'Could not load jobs. Please try again.'))
+      .catch((err) => setLoadError(err.response?.data?.error || 'Could not load requirements. Please try again.'))
       .finally(() => setLoading(false));
   }
   useEffect(() => { load(); }, [paramKey, view, sort, dir, page, size, showClosed]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -445,6 +487,7 @@ export default function Requirements() {
     { key: 'type', label: 'Hiring', value: filters.type === 'internal' ? 'Internal' : filters.type === 'client' ? 'Client' : '', onRemove: () => removeFilter({ type: '' }) },
     { key: 'mine', label: 'Mine', value: filters.mine ? 'Yes' : '', onRemove: () => removeFilter({ mine: '' }) },
     { key: 'sla', label: 'Late', value: filters.sla === 'overdue' ? 'Yes' : '', onRemove: () => removeFilter({ sla: '' }) },
+    { key: 'fresh', label: 'Show', value: filters.fresh === '1' ? 'New (posted in the last 7 days)' : '', onRemove: () => removeFilter({ fresh: '' }) },
     { key: 'closing', label: 'Closing', value: filters.closing === 'week' ? 'This week' : '', onRemove: () => removeFilter({ closing: '' }) },
     { key: 'nocand', label: 'People', value: filters.nocand ? 'None yet' : '', onRemove: () => removeFilter({ nocand: '' }) },
     { key: 'search', label: 'Search', value: filters.search, onRemove: () => removeFilter({ search: '' }) },
@@ -485,10 +528,10 @@ export default function Requirements() {
   });
   // Shown as up to 4 one-click chips under the tabs (and in Saved views).
   const presets = [
-    preset('Urgent', { sort: 'sla', filters: { ...EMPTY_FILTERS, status: 'LIVE', priority: 'Urgent,High' } }, 'Open jobs marked Critical or High'),
-    preset('Due this week', { sort: 'sla', filters: { ...EMPTY_FILTERS, closing: 'week' } }, 'Open jobs due in 7 days'),
-    preset('No people yet', { filters: { ...EMPTY_FILTERS, status: 'LIVE', nocand: '1' } }, 'Open jobs with no people yet'),
-    preset('Late', { sort: 'sla', filters: { ...EMPTY_FILTERS, deadline: 'overdue' } }, 'Jobs past their deadline'),
+    preset('Urgent', { sort: 'sla', filters: { ...EMPTY_FILTERS, status: 'LIVE', priority: 'Urgent,High' } }, 'Open requirements marked Critical or High'),
+    preset('Due this week', { sort: 'sla', filters: { ...EMPTY_FILTERS, closing: 'week' } }, 'Open requirements due in 7 days'),
+    preset('No people yet', { filters: { ...EMPTY_FILTERS, status: 'LIVE', nocand: '1' } }, 'Open requirements with no people yet'),
+    preset('Late', { sort: 'sla', filters: { ...EMPTY_FILTERS, deadline: 'overdue' } }, 'Requirements past their deadline'),
   ];
   const presetOn = (pr) => sameState(savedState, pr.filters);
   const pickPreset = (pr) => (presetOn(pr)
@@ -529,7 +572,7 @@ export default function Requirements() {
     ...COLUMNS.filter((c) => !FIRST.includes(c.key) && !LAST.includes(c.key) && show(c.key) && !folded(c.key)),
     ...LAST.map((k) => COLUMNS.find((c) => c.key === k)).filter((c) => c && show(c.key)),
   ].map((c) => {
-    if (c.key === 'requirement' && mergedJob) return { ...c, label: 'Job' };
+    if (c.key === 'requirement' && mergedJob) return { ...c, label: 'Requirement' };
     if (c.key === 'status' && slaInStatus) return { ...c, label: 'Status', sort: 'sla' };
     if (c.key === 'nextAction') return { ...c, label: 'Next step' };
     return c;
@@ -553,8 +596,10 @@ export default function Requirements() {
   // §6 — bulk checkbox for Admin, TL and BDE only; each action only when the
   // server says this login holds it.
   const perms = data.permissions || {};
+  // Posting a job (Save & Post, by-hand tasks) is not a Recruiter's (user, 2026-10-12): the server says who may.
+  const canPost = can(user, 'ats', 'requirements', 'Job Posting', 'edit');
   const mayExport = !!(ioAccess && (ioAccess.exports || {}).requirements);
-  const bulkActions = { assign: !!perms.assign, priority: !!perms.approve && role !== 'bde', export: mayExport };
+  const bulkActions = { assign: !!perms.assign, priority: !!perms.approve, export: mayExport };
   const canSelect = !!perms.bulk && (bulkActions.assign || bulkActions.priority || bulkActions.export);
   const rowItem = (r) => ({ id: r.id, reqCode: r.reqCode, title: r.title });
   // The jobs x boards still waiting for a person (the ticked jobs, or every one in this login's area).
@@ -595,19 +640,19 @@ export default function Requirements() {
       await api.post(`/requirements/${r.id}/status`, { status });
       load();
     } catch (err) {
-      setRowError(err.response?.data?.error || `Could not ${verb.toLowerCase()} this job. Please try again.`);
+      setRowError(err.response?.data?.error || `Could not ${verb.toLowerCase()} this requirement. Please try again.`);
     }
   }
   async function deleteRow(r) {
     // eslint-disable-next-line no-alert
-    if (!window.confirm(`Delete ${r.reqCode || r.title} for good? Jobs with people can only be closed.`)) return;
+    if (!window.confirm(`Delete ${r.reqCode || r.title} for good? It cannot be brought back. A requirement with people or invoices on it cannot be deleted - close it instead.`)) return;
     setRowError('');
     try {
       await api.delete(`/requirements/${r.id}`);
       setNotice({ lines: [`Deleted ${r.reqCode || r.title}.`], tone: '' });
       load();
     } catch (err) {
-      setRowError(err.response?.data?.error || 'Could not delete this job. Please try again.');
+      setRowError(err.response?.data?.error || 'Could not delete this requirement. Please try again.');
     }
   }
   // The row's other actions (no "⋯" menu, 2026-10-03): up to 2 small
@@ -615,12 +660,12 @@ export default function Requirements() {
   // A BDE closes (never reopens); Admin may also delete.
   const menuFor = (r) => {
     let items = secondaryActions(r, { mayExport });
-    if (role === 'bde') items = items.filter((i) => !['hold', 'reopen'].includes(i.key));
+    // 2026-10-13: the BDE team has every job option a Super Admin has, except Delete (hold and reopen included)
     // A Manager / Assistant Manager acts in their own scope now (2026-10-03);
     // an Assistant Manager / STL holds and resumes only (r.holdOnly).
     if (role === 'recruiter' || role === 'accounts') items = items.filter((i) => ['open', 'export'].includes(i.key));
     if (r.holdOnly) items = items.filter((i) => i.key !== 'close' && !(i.key === 'reopen' && r.status === 'CLOSED'));
-    if (r.mayDelete) items = [...items, { key: 'delete', label: 'Delete job', danger: true }];
+    if (r.mayDelete) items = [...items, { key: 'delete', label: 'Delete requirement', danger: true }];
     return items;
   };
   // The two that sit on the row: Edit, then Pause / Reopen.
@@ -638,7 +683,7 @@ export default function Requirements() {
       case 'close': setLifeDialog({ kind: 'close', job: rowItem(r) }); break;
       case 'reopen': reopenRow(r); break;
       case 'delete': deleteRow(r); break;
-      case 'export': exportOne(r).catch(() => setRowError('Could not export this job. Please try again.')); break;
+      case 'export': exportOne(r).catch(() => setRowError('Could not export this requirement. Please try again.')); break;
       // §6 main actions
       case 'add-candidate': navigate(`/candidates?add=1&requirementId=${encodeURIComponent(r.id)}`); break;
       case 'view-candidates': navigate(`/candidates?requirementId=${encodeURIComponent(r.id)}`); break;
@@ -660,15 +705,16 @@ export default function Requirements() {
   // are hidden — otherwise their own "Not assigned" says the same, once.
   const assigneeLine = (r) => (
     <div className="rr-assignee">
+      {!show('postedOn') && r.postedOn && r.postedOn.length > 0 && <PostedOnChips list={r.postedOn} />}
       {r.posting && (
-        <span className="rr-posting" title="Where this job is posted. Open the job to see each site.">
+        <span className="rr-posting" title="Where this requirement is posted. Open the requirement to see each site.">
           {r.posting.text}
           {r.posting.waitText && <b className="rr-posting-wait">{' · ' + r.posting.waitText}</b>}
         </span>
       )}
       {show('recruiter') ? null : r.assignedTo ? <span>{`Assigned to: ${r.assignedTo}`}</span>
         : r.workedBy ? <span title="Worked from the tracker, not formally assigned">{`Worked by: ${r.workedBy}`}</span> : null}
-      {r.needs && !show('tl') && !show('recruiter') && <span className="rr-unassigned" title={r.needs === 'tl' ? 'No team lead on this job yet' : 'Has a team lead, no recruiter yet'}>{r.needs === 'tl' ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
+      {r.needs && !show('tl') && !show('recruiter') && <span className="rr-unassigned" title={r.needs === 'tl' ? 'No team lead on this requirement yet' : 'Has a team lead, no recruiter yet'}>{r.needs === 'tl' ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
     </div>
   );
   // The row checkbox sits in the first column: "Job ID" when shown, else "Job".
@@ -738,7 +784,13 @@ export default function Requirements() {
       case 'location': return <td key={c.key} className="cell-muted">{r.location || '—'}</td>;
       case 'skills': return <td key={c.key} className="cell-muted" title={r.skills || ''}>{r.skills ? String(r.skills).split(',').slice(0, 3).join(', ') : '—'}</td>;
       case 'section': return <td key={c.key} className="cell-muted">{r.section || '—'}</td>;
-      case 'tl': return <td key={c.key} className="jl-people"><PersonName name={r.tlName} tone="red" live={r.live !== false} /></td>;
+      case 'tl':
+        // SEVERAL TEAM LEADS (2026-10-14): the main one, then "+2"; hover shows everyone.
+        return (
+          <td key={c.key} className="jl-people" title={r.extraTlNames?.length ? [r.tlName, ...r.extraTlNames].filter(Boolean).join(', ') : undefined}>
+            <PersonName name={r.tlName} extra={r.extraTlNames?.length || 0} tone="red" live={r.live !== false} />
+          </td>
+        );
       case 'recruiter':
         return (
           <td key={c.key} className="jl-people" title={[r.workedBy, ...(r.coRecruiterNames || [])].filter(Boolean).join(', ') || undefined}>
@@ -821,6 +873,7 @@ export default function Requirements() {
             {r.lastActivity ? lastActivityText(r.lastActivity) : <span className="small-muted">—</span>}
           </td>
         );
+      case 'postedOn': return <td key={c.key}><PostedOnChips list={r.postedOn} /></td>;
       case 'created': return <td key={c.key} className="cell-muted">{fmtDay(r.createdAt)}</td>;
       case 'deadline': {
         const dl = deadlineInfo(r);
@@ -924,7 +977,7 @@ export default function Requirements() {
       {/* Department, Date range, Client, Recruiter / BDE, Status, Priority,
           Location, Agreement and Search are on the filter card above (v4). */}
       <FacetSelect label="Deadline" allLabel="Any deadline" value={filters.deadline} options={fo('deadline')} onChange={(v) => setDraftFilter({ deadline: v })} />
-      {canFilter.hierarchy && role !== 'bde' && (
+      {canFilter.hierarchy && (
         <HierarchyFilter value={draft.h} onChange={setDraftH} data={tree.data} show={{ department: false, section: true, tl: false, recruiter: false }} />
       )}
       {/* spec D: cascade from Department (shown once a department is picked,
@@ -946,10 +999,10 @@ export default function Requirements() {
       {role !== 'accounts' && <FacetSelect label="Location" allLabel="All locations" value={filters.location} options={fo('location')} onChange={(v) => setDraftFilter({ location: v })} />}
       {canFilter.agreement && (
         <PanelField label="Agreement">
-          <select value={filters.agreement} onChange={(e) => setDraftFilter({ agreement: e.target.value })}>
+          <Combo value={filters.agreement} onChange={(e) => setDraftFilter({ agreement: e.target.value })}>
             <option value="">All agreements</option>
             <option value="pending">Waiting for agreement</option>
-          </select>
+          </Combo>
         </PanelField>
       )}
     </>
@@ -987,6 +1040,29 @@ export default function Requirements() {
     return () => document.removeEventListener('keydown', esc);
   }, [docked, !!current]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The "Duplicate jobs" tab: the header, the strip, and the worklist (only for logins that may open it).
+  // Posting tab: who may look at it (the server decides again for every call).
+  const showPostTab = canPost || ['admin', 'mgmt', 'tl', 'bde'].includes(roleOf(user));
+  const pickJobsTab = (dup) => { setPostOn(false); setDupOn(dup); };
+  const postTab = { show: showPostTab, active: postOn, onPick: () => { setDupOn(false); setPostOn(true); } };
+  if (postOn && showPostTab) {
+    return (
+      <div className="reqrole crq4 crq4-jobs">
+        <CrqHead title="Posting" sub="Which requirements are on which site, what is waiting, and what needs your help." />
+        <JobDupTabs status={dupStatus} active={false} onPick={pickJobsTab} postTab={postTab} />
+        <PostingDashboard canPost={canPost} />
+      </div>
+    );
+  }
+  if (dupOn && dupStatus && dupStatus.visible) {
+    return (
+      <div className="reqrole crq4 crq4-jobs">
+        <CrqHead title="Duplicate requirements" sub="The same requirement saved twice for one client. Join them into one, and nobody is lost." />
+        <JobDupTabs status={dupStatus} active onPick={pickJobsTab} postTab={postTab} />
+        <JobDupWorklist onCountChange={loadDupStatus} />
+      </div>
+    );
+  }
 
   return (
     <div className="reqrole crq4 crq4-jobs">
@@ -994,18 +1070,23 @@ export default function Requirements() {
           drawn under it), then ONE filter card, the KPI tiles, the overview
           row, and the list with the "Selected requirement" panel beside it. */}
       <CrqHead
-        sub="Every job we are hiring for, and how far each one has got."
-        scope={<ScopeLine user={user} count={counts.scopeTotal ?? '…'} noun="job" />}
+        title={isHrUser ? 'Internal Hiring' : undefined}
+        sub={isHrUser ? "TeamLink's own openings, and how far each one has got." : 'Every requirement we are hiring for, and how far each one has got.'}
+        scope={<ScopeLine user={user} count={counts.scopeTotal ?? '…'} noun="requirement" />}
         tools={(
           <>
             <AtsDataTools module="requirements" kinds={['requirements']} onImported={load} body={exportBody} />
+            <button type="button" className={`btn${filters.fresh === '1' ? ' btn-primary' : ''}`} title="Requirements posted in the last 7 days, newest first. Click again to see everything." onClick={() => { if (filters.fresh === '1') removeFilter({ fresh: '' }); else { setSort('created'); setDir('desc'); const vs = ((data && data.views) || []).map((v) => v.key); setView(vs.includes('all') ? 'all' : (vs.includes('open') ? 'open' : view)); setFilters((f) => ({ ...f, fresh: '1' })); } }}>🆕 New</button>
             {canRaiseRequirement(user)
-              ? <button type="button" className="btn btn-primary" onClick={() => openForm()}>+ Add Requirement</button>
-              : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request job</button> : null}
+              ? <button type="button" className="btn btn-primary" onClick={() => openForm()} title={isHrUser ? "TeamLink's own opening (internal hiring)" : undefined}>{isHrUser ? '+ New internal opening' : '+ Add Requirement'}</button>
+              : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request requirement</button> : null}
+            {mayAskJob && <button type="button" className="btn btn-sm" title="Requirements are created by the client manager (BDE) team. Tell them which requirement you need." onClick={() => setShowAsk(true)}>Ask the client manager to add a requirement</button>}
             <SavedViews storageKey="req" current={savedState} onApply={applySaved} presets={presets} label="Saved filters" />
           </>
         )}
       />
+
+      <JobDupTabs status={dupStatus} active={false} onPick={pickJobsTab} postTab={postTab} />
 
       {notice && (
         <div className={`notice ${notice.tone === 'amber' ? 'amber' : ''}`} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -1013,13 +1094,13 @@ export default function Requirements() {
             {notice.lines.map((l) => <div key={l}>{l}</div>)}
           </div>
           <div style={{ display: 'flex', gap: 6 }}>
-            {notice.id && <button type="button" className="btn btn-sm" onClick={() => navigate(`/requirements/${notice.id}`)}>Open job</button>}
+            {notice.id && <button type="button" className="btn btn-sm" onClick={() => navigate(`/requirements/${notice.id}`)}>Open requirement</button>}
             <button type="button" className="btn btn-sm btn-ghost" onClick={() => setNotice(null)} aria-label="Dismiss">×</button>
           </div>
         </div>
       )}
 
-      <FirstTips uid={user?.id} page="jobs" tips={JOB_TIPS} />
+      <FirstTips uid={user?.id} page="jobs" tips={[...JOB_TIPS.slice(0, 2), ...(canRaiseRequirement(user) ? [NEW_JOB_TIP.add] : mayRequestJob ? [NEW_JOB_TIP.request] : mayAskJob ? [NEW_JOB_TIP.ask] : []), JOB_TIPS[2]]} />
 
       {/* One filter card: the page filter bar (Department · Date range · Client ·
           Recruiter / BDE, cascading, server-counted) + Status · Priority ·
@@ -1029,14 +1110,14 @@ export default function Requirements() {
           value: draft.filters.search,
           onChange: (v) => setDraftFilter({ search: v }),
           onSubmit: applyDraft,
-          placeholder: 'Search by job title, client, req ID…',
+          placeholder: isHrUser ? 'Search by requirement title, req ID…' : 'Search by requirement title, client, req ID…',
         }}
       >
         <PageFilterBar
           value={barValue}
           onChange={setBar}
           facetParams={facetParams}
-          show={{ department: canFilter.hierarchy, dateRange: true, client: true, people: canFilter.hierarchy }}
+          show={{ department: canFilter.hierarchy, dateRange: true, client: !isHrUser, people: canFilter.hierarchy }}
           extraSet={activeCount > 0}
           onClear={clearFilters}
         >
@@ -1061,7 +1142,7 @@ export default function Requirements() {
 
       {sum && sum.total > 0 && (
         <div className="crq4-row4">
-          <Panel className="crq4-stagep" title="Requirements by stage" sub="Click a stage to show its jobs">
+          <Panel className="crq4-stagep" title="Requirements by stage" sub="Click a stage to show its requirements">
             <StageFlow
               chain={sum.chain || []}
               active={filters.dstatus}
@@ -1071,11 +1152,11 @@ export default function Requirements() {
           <Panel title="Needs Attention" icon="alert" iconTone="red">
             <AttentionRows items={jobsAttention(sum, { views: viewKeys, onView: onOverviewView, onFilter: (patch) => removeFilter(patch), filters })} />
           </Panel>
-          <Panel title="Requirements by Department" sub={onDepartment ? 'Open jobs · click one' : 'Open jobs in your area'}>
-            <ShareBars rows={deptRows} max={5} empty="No open jobs" />
+          <Panel title="Requirements by Department" sub={onDepartment ? 'Open requirements · click one' : 'Open requirements in your area'}>
+            <ShareBars rows={deptRows} max={5} empty="No open requirements" />
           </Panel>
-          <Panel title="Top Clients by Open Jobs" action={mayClients ? { label: 'View all', to: '/clients' } : undefined}>
-            <RankList rows={clientRows} max={5} empty="No open jobs" />
+          <Panel title="Top Clients by Open Requirements" action={mayClients ? { label: 'View all', to: '/clients' } : undefined}>
+            <RankList rows={clientRows} max={5} empty="No open requirements" />
           </Panel>
         </div>
       )}
@@ -1086,13 +1167,13 @@ export default function Requirements() {
         <div className="crq4-main">
           <Panel
             className="crq4-list"
-            title="Jobs list"
+            title="Requirement list"
             sub={tabLabel !== 'Requirements' ? plainWords(tabLabel) : undefined}
           >
             <div className="crq4-list-tools">
               {/* Status tabs with counts — a 0 tab is hidden for everyone. */}
               <StatusTabs
-                label="Jobs"
+                label="Requirements"
                 tabs={views.map((v) => ({ key: v.key, label: plainWords(v.label), count: counts[v.key], hint: plainWords(v.hint) }))}
                 value={view}
                 onChange={setView}
@@ -1142,20 +1223,33 @@ export default function Requirements() {
               {loadError && <div className="notice red">{loadError}</div>}
               {rowError && <div className="notice red" style={{ display: 'flex', justifyContent: 'space-between' }}>{rowError}<button type="button" className="btn btn-sm btn-ghost" onClick={() => setRowError('')}>×</button></div>}
 
-              {(counts.postWait > 0 || postWaitOn) && (
+              {canPost && (counts.postWait > 0 || postWaitOn) && (
                 <div className="rr-postwait" role="group" aria-label="Waiting to be posted by hand">
                   <button type="button" aria-pressed={postWaitOn} className={`reqq-chip${postWaitOn ? ' is-on' : ''}`} onClick={() => setPostWaitOn((v) => !v)}>
                     {`Waiting to be posted by hand (${nf(counts.postWait || 0)})`}
                   </button>
                   <button type="button" className="btn btn-sm btn-primary" onClick={() => openWalk(null)}>Post them one by one</button>
-                  <span className="small-muted">Naukri, Shine, Indeed or LinkedIn jobs that a person still has to post.</span>
+                  <span className="small-muted">Requirements that a person still has to post by hand on Naukri, Shine, Indeed or LinkedIn.</span>
+                </div>
+              )}
+
+              {data.postedCounts && (
+                <div className="rr-postwait" role="group" aria-label="Posted on">
+                  <b style={{ fontSize: 13 }}>Posted on</b>
+                  {postedChips(data.postedCounts, postedOn).map(([k, label]) => (
+                    <button type="button" key={k || 'any'} aria-pressed={postedOn === k} className={`reqq-chip${postedOn === k ? ' is-on' : ''}`} onClick={() => setPostedOn(k)}>
+                      {k && !['none', 'expired'].includes(k) ? `${label} (${nf(data.postedCounts[k] || 0)})` : label}
+                    </button>
+                  ))}
+                  {canPost && <button type="button" className="btn btn-sm" onClick={() => setTrackerOpen(true)} title="Where every requirement is posted, waiting or expired">Posting tracker</button>}
                 </div>
               )}
 
               {canSelect && selected.size > 0 && (
                 <div className="reqbulk-bar" role="region" aria-label="Bulk actions">
                   <span className="count">{`${nf(selected.size)} selected`}</span>
-                  <button type="button" className="btn btn-sm" title="Walk through the boards that wait for a person to post them" onClick={() => openWalk(selectedItems.map((x) => x.id))}>Post by hand, one by one</button>
+                  {canPost && <button type="button" className="btn btn-sm btn-primary" title="Send the picked requirements to Naukri, Foundit, Shine and the careers page" onClick={() => setPublishFor(selectedItems.map((x) => x.id))}>Post selected requirements</button>}
+                  {canPost && <button type="button" className="btn btn-sm" title="Walk through the boards that wait for a person to post them" onClick={() => openWalk(selectedItems.map((x) => x.id))}>Post by hand, one by one</button>}
                   {/* "Needs a TL" → Assign TL is the one main action; "Needs a recruiter" → Assign recruiter. */}
                   {bulkActions.assign && view !== 'needstl' && <button type="button" className={`btn btn-sm${view === 'unassigned' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-recruiter', items: selectedItems })}>Assign recruiter</button>}
                   {bulkActions.assign && view !== 'unassigned' && <button type="button" className={`btn btn-sm${view === 'needstl' ? ' btn-primary' : ''}`} onClick={() => setBulk({ kind: 'assign-tl', items: selectedItems })}>Assign team lead</button>}
@@ -1165,7 +1259,7 @@ export default function Requirements() {
                       url="/ats-io/export/requirements"
                       body={() => ({ params: { ids: selectedItems.map((x) => x.id).join(',') }, view: 'all', ids: selectedItems.map((x) => x.id) })}
                       label={`Export (${selected.size})`}
-                      note="Only the jobs you picked."
+                      note="Only the requirements you picked."
                     />
                   )}
                   <span className="spacer" />
@@ -1207,10 +1301,9 @@ export default function Requirements() {
                       {data.rows.map((r) => (
                         <tr
                           key={r.id}
-                          className={`row-link${selected.has(r.id) ? ' is-selected' : ''}${current && current.id === r.id ? ' crq4-current' : ''}`}
-                          onClick={() => pickRow(r)}
+                          {...rowClickProps(() => pickRow(r), { className: `${selected.has(r.id) ? 'is-selected' : ''}${current && current.id === r.id ? ' crq4-current' : ''}`.trim() })}
                           onDoubleClick={() => setDrawer(r)}
-                          title="Click to see this job's details · double-click for the quick view"
+                          title="Click to see this requirement's details · double-click for the quick view"
                         >
                           {visible.map((c) => cloneElement(cell(c, r), { 'data-col': c.key }))}
                         </tr>
@@ -1219,39 +1312,39 @@ export default function Requirements() {
                         <tr>
                           <td colSpan={visible.length}>
                             {activeCount ? (
-                              <EmptyState compact title="No jobs match." hint="Clear filters to see all jobs." action={<button type="button" className="btn btn-sm" onClick={clearFilters}>Clear filters</button>} />
+                              <EmptyState compact title="No requirements match." hint="Clear filters to see all requirements." action={<button type="button" className="btn btn-sm" onClick={clearFilters}>Clear filters</button>} />
                             ) : view === 'mine' && role === 'recruiter' ? (
-                              <EmptyState compact icon="💼" title="No jobs for you yet." hint="Ask your team lead to give you a job. It shows here as soon as you are named on it." />
+                              <EmptyState compact icon="💼" title="No requirements for you yet." hint="Ask your team lead to give you a requirement. It shows here as soon as you are named on it." />
                             ) : (
                               <EmptyState
                                 compact
                                 icon="💼"
-                                title="No jobs here yet."
-                                hint={canRaiseRequirement(user) ? 'Press + Add job to add the first one.' : mayRequestJob ? 'Press + Request job, or ask your team lead.' : 'Ask your team lead or the client manager to add one.'}
-                                action={canRaiseRequirement(user) ? <button type="button" className="btn btn-sm btn-primary" onClick={() => openForm()}>+ Add job</button> : undefined}
+                                title="No requirements here yet."
+                                hint={canRaiseRequirement(user) ? 'Press + Add requirement to add the first one.' : mayRequestJob ? 'Press + Request requirement to ask for one. A lead opens it.' : mayAskJob ? 'Requirements are created by the client manager (BDE) team. Press "Ask the client manager to add a requirement".' : 'Requirements are created by the client manager (BDE) team. Ask them to add one.'}
+                                action={canRaiseRequirement(user) ? <button type="button" className="btn btn-sm btn-primary" onClick={() => openForm()}>+ Add requirement</button> : mayAskJob ? <button type="button" className="btn btn-sm" onClick={() => setShowAsk(true)}>Ask the client manager to add a requirement</button> : undefined}
                               />
                             )}
                           </td>
                         </tr>
                       )}
                       {loading && data.rows.length === 0 && (
-                        <tr><td colSpan={visible.length} className="small-muted" style={{ padding: 16 }}>Loading jobs…</td></tr>
+                        <tr><td colSpan={visible.length} className="small-muted" style={{ padding: 16 }}>Loading requirements…</td></tr>
                       )}
                     </tbody>
                   </table>
                 </ScrollTable>
               </div>
-        <Pager page={pageObj} noun="jobs" />
+        <Pager page={pageObj} noun="requirements" />
           </Panel>
         </div>
 
         {current && (() => {
           const sheet = (
-            <aside className={docked ? 'crq4-side' : 'crq4-sheet'} aria-label="The selected job">
+            <aside className={docked ? 'crq4-side' : 'crq4-sheet'} aria-label="The selected requirement">
               <Panel
                 className="crq4-sticky"
-                title="Selected job"
-                extra={<button type="button" className="ak-panel-link crq4-x" onClick={() => setPickId('none')} aria-label="Close the selected job" title="Close">×</button>}
+                title="Selected requirement"
+                extra={<button type="button" className="ak-panel-link crq4-x" onClick={() => setPickId('none')} aria-label="Close the selected requirement" title="Close">×</button>}
               >
                 <SelectedRequirement
                   row={current}
@@ -1265,8 +1358,8 @@ export default function Requirements() {
           );
           // Smaller screen: slides in over the table, dimmed behind; click outside, × or Esc closes it.
           return docked ? sheet : (
-            <div className="crq4-over" role="dialog" aria-modal="true" aria-label="The selected job">
-              <button type="button" className="crq4-over-back" onClick={() => setPickId('none')} aria-label="Close the selected job" tabIndex={-1} />
+            <div className="crq4-over" role="dialog" aria-modal="true" aria-label="The selected requirement">
+              <button type="button" className="crq4-over-back" onClick={() => setPickId('none')} aria-label="Close the selected requirement" tabIndex={-1} />
               {sheet}
             </div>
           );
@@ -1316,6 +1409,8 @@ export default function Requirements() {
         />
       )}
 
+      {trackerOpen && <PostingTracker onClose={() => setTrackerOpen(false)} />}
+      {publishFor && <PublishPopup jobIds={publishFor} titles={Object.fromEntries(selectedItems.map((x) => [x.id, x.title]))} onClose={() => setPublishFor(null)} onDone={load} />}
       {postPanel && <PostingStatusPanel requirementId={postPanel.id} code={postPanel.code} title={postPanel.title} onChanged={load} onClose={() => setPostPanel(null)} />}
       {walkPairs && <PostWalkthrough pairs={walkPairs} onChanged={load} onClose={() => { setWalkPairs(null); load(); }} />}
       {showForm && (
@@ -1327,12 +1422,13 @@ export default function Requirements() {
           onClose={() => setShowForm(false)}
           onSaved={(saved, info) => {
             const lines = [
-              `Saved. ${saved?.reqCode ? `Job ${saved.reqCode}` : 'The job'} is ${requirementStatusLabel(saved?.status)}.`,
+              `Saved. ${saved?.reqCode ? `Requirement ${saved.reqCode}` : 'The requirement'} is ${requirementStatusLabel(saved?.status)}.`,
               saved?.gateNote,
               info?.posting,
             ].filter(Boolean);
             setNotice({ lines, id: saved?.id, code: saved?.reqCode, tone: saved?.gateNote || info?.warn || /not published|could not/i.test(info?.posting || '') ? 'amber' : '' });
             setShowForm(false);
+            if (info?.another) setTimeout(() => setShowForm(true), 60); // "Create Another Job" on the Post step: a fresh blank form
             // Save & Post: each site's status shows live in the corner panel.
             if (info?.openJob && saved?.id) setPostPanel({ id: saved.id, code: saved.reqCode, title: saved.title });
             setSort('created');
@@ -1345,11 +1441,23 @@ export default function Requirements() {
         <RequestJobModal
           endpoint="/requirements/requests"
           clients={clients}
+          presetClientId={firstUrl.current.client}
+          presetTitle={firstUrl.current.title}
           onClose={() => setShowRequest(false)}
           onSent={(r) => {
             setShowRequest(false);
             setNotice({ lines: [r?.message || 'Request sent.'], id: r?.id, code: r?.reqCode, tone: '' });
             load();
+          }}
+        />
+      )}
+      {showAsk && (
+        <AskAddJobModal
+          clients={clients}
+          onClose={() => setShowAsk(false)}
+          onSent={(r) => {
+            setShowAsk(false);
+            setNotice({ lines: [r?.message || 'Sent.'], tone: '' });
           }}
         />
       )}

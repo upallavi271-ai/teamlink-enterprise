@@ -17,3 +17,24 @@
 .vp-why{font-size:12px;color:var(--red);margin-top:2px}
 .vp-invnote{font-size:12.5px;color:var(--ink-soft)}
 @media (max-width:760px){.vp-tabs{padding:0 8px}.vp-tab{padding:10px 10px;font-size:13px}.vp-tile b{font-size:17px}}
+
+/* ---- Vendor Portal v3 (2026-10-23): the account menu in the header, status chips, section blocks of Services & Agreements ---- */
+.vp-acct{position:relative;display:inline-block}
+.vp-acct-menu{position:absolute;right:0;top:calc(100% + 4px);display:flex;flex-direction:column;gap:4px;padding:6px;background:var(--paper-raised,#fff);border:1px solid var(--line,#ddd);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,.12);z-index:30;min-width:150px}
+.vp-acct-menu .btn{justify-content:flex-start;text-align:left}
+.vp-slimtop .vp-top-name{max-width:34vw}
+.vp-section{margin:18px 0 8px}
+.vp-section > h3{margin:0 0 6px}
+.vp-na{color:var(--ink-soft,#6b7280);font-style:italic}
+.vp-tag.vp-orange{background:#fff1e0;color:#a55a00}
+.vp-tag.vp-red{background:#fde8e8;color:#a61b1b}
+.vp-tag.vp-green{background:#e3f6ea;color:#17703a}
+.vp-tag.vp-blue{background:#e5eefc;color:#1f4aa8}
+.vp-tag.vp-yellow{background:#fff7d6;color:#7a5d00}
+.vp-tag.vp-grey{background:#eef0f3;color:#4b5563}
+.vp-list-simple{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.vp-list-simple li{display:flex;gap:10px;flex-wrap:wrap;align-items:center;padding:8px 10px;border:1px solid var(--line,#e5e7eb);border-radius:8px;background:var(--paper-raised,#fff)}
+@media (max-width:640px){.vp-slimtop .vp-top-name{max-width:42vw;font-size:12px}.vp-slimtop .vp-top-name small{display:none}}
+.vp-actions-row{display:flex;gap:8px;justify-content:flex-end;margin:0 0 8px}
+.vp-tile.red b{color:var(--red)}
+.vp-tile small{display:block;font-size:12px;color:var(--ink-soft,#6b7280);font-weight:400;margin-top:2px}

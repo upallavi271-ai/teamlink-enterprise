@@ -17,6 +17,11 @@ import ListFilterBar, { useListFilters, ListEmpty } from '../ui/ListFilters.jsx'
 import Pager, { usePaged } from '../Pager.jsx';
 import DataIoBar from '../dataio/DataIoBar.jsx';
 import PayrollAccountsStrip from './PayrollAccountsStrip.jsx';
+import { usePayrollCycle, monthHeading } from './payrollCycleUi.jsx';
+// Payroll edit and recalculate (2026-10-13)
+import PayrollEditor from './PayrollEditor.jsx';
+import PayrollEditHistory, { ChangesInRun } from './PayrollEditHistory.jsx';
+import Combo from '../Combo.jsx';
 
 const inr0 = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 
@@ -82,13 +87,14 @@ function AttendanceEditor({ row, month, onClose, onSaved }) {
         <div className="field"><label>Days present</label><input type="number" min="0" step="0.5" value={present} onChange={(e) => setPresent(e.target.value)} /></div>
         <div className="field"><label>LOP days</label><input type="number" min="0" step="0.5" value={lop} onChange={(e) => setLop(e.target.value)} /></div>
       </div>
-      <div className="field"><label>Reason (recorded in the audit log) *</label><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Approved regularization not yet in attendance" /></div>
+      <div className="field"><label>Reason (recorded in the audit log)</label><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. Approved regularization not yet in attendance" /></div>
       {error && <div className="error-text">{error}</div>}
     </Modal>
   );
 }
 
 function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
+  usePayrollCycle();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null);
@@ -105,7 +111,7 @@ function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
   }
   return (
     <Panel style={{ marginTop: 16 }}>
-      <PanelHead title={`Attendance input — ${monthLabel(month)}`}>
+      <PanelHead title={`Attendance input — ${monthHeading(month)}`}>
         <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {/* This month's inputs: export all / one employee, and import HR
               overrides with the compulsory sample (src/io/payroll-attendance.js). */}
@@ -117,7 +123,7 @@ function AttendancePanel({ month, canEdit, reloadKey, onChanged }) {
         <>
           <div className="prb-note" style={{ padding: '8px 18px 0' }}>
             Defaults come from the attendance module (absent, half days, days with no check-in, leave beyond the paid allowance, late arrivals beyond the free allowance).
-            HR can override any employee before calculating; every override is audit-logged. Recalculate the drafts afterwards.
+            HR can override any employee before calculating; every override is audit-logged. Recalculate the payroll afterwards.
           </div>
           {error && <div className="error-text" style={{ padding: '0 18px' }}>{error}</div>}
           {data && data.rows.length > 0 && <div style={{ padding: '10px 18px 0' }}><ListFilterBar lf={lf} storageKey="payroll-attendance-input" noun="employees" /></div>}
@@ -218,6 +224,7 @@ function EntryDetail({ id, onClose }) {
 // (Mark paid is now one action for the whole month: PayrollAccountsStrip.jsx.)
 
 export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () => {} }) {
+  usePayrollCycle();
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
@@ -226,6 +233,9 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   const [detail, setDetail] = useState(null);
   const [attKey, setAttKey] = useState(0);
   const [stripKey, setStripKey] = useState(0);
+  const [editId, setEditId] = useState(null); // the pay editor (Edit / Adjust)
+  const [histId, setHistId] = useState(null); // the history drawer
+  const [changesKey, setChangesKey] = useState(0);
 
   function load() {
     setError('');
@@ -261,11 +271,11 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     setBusy('Calculate'); setMessage(''); setError('');
     try {
       const r = await api.post('/payroll/calculate', { month });
-      setMessage(`Calculated ${monthLabel(month)}: ${r.data.created} new draft(s), ${r.data.updated} recalculated, ${r.data.locked.length} already beyond draft (left as they are), ${r.data.skipped.length} skipped (no structure effective this month).`);
+      setMessage(`Calculated ${monthHeading(month)}: ${r.data.created} new record(s), ${r.data.updated} recalculated, ${r.data.locked.length} already submitted (left as they are)${(r.data.edited || []).length ? `, ${r.data.edited.length} edited by hand (left as edited)` : ''}, ${r.data.skipped.length} skipped (no structure effective this month).`);
     } catch (err) { setError(errText(err, 'Could not calculate.')); } finally { setBusy(''); load(); onChanged(); setAttKey((k) => k + 1); }
   }
   async function reject() {
-    const reason = window.prompt('Reason for sending back to draft');
+    const reason = window.prompt('Reason for sending back for changes');
     if (!reason) return;
     const ids = chosen.filter((e) => e.status === 'PENDING_APPROVAL').map((e) => e.id);
     if (!ids.length) { setError('Select the pending records to send back.'); return; }
@@ -282,8 +292,8 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   return (
     <div className="prb">
       <Panel style={{ marginTop: 16 }}>
-        <PanelHead title={`Payroll records — ${monthLabel(month)}`}>
-          {a.prepare && <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={recalc}>{busy === 'Calculate' ? 'Calculating…' : entries.length ? 'Recalculate drafts' : 'Calculate drafts'}</button>}
+        <PanelHead title={`Payroll records — ${monthHeading(month)}`}>
+          {a.prepare && <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={recalc}>{busy === 'Calculate' ? 'Calculating…' : entries.length ? 'Recalculate payroll' : 'Calculate payroll'}</button>}
         </PanelHead>
         <div className="prb-bar">
           {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SYNCED_TO_ACCOUNTS', 'PAID'].map((s) => (
@@ -293,7 +303,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
         </div>
         <PayrollAccountsStrip month={month} reloadKey={reloadKey + stripKey} onChanged={() => { load(); onChanged(); }} />
         <div className="prb-actions">
-          {a.prepare && <button className="btn btn-sm" disabled={!!busy || (!count('DRAFT'))} onClick={() => act('Submitted', '/payroll/entries/submit', idsOr('DRAFT'))}>Submit {chosen.length ? 'selected' : 'all drafts'} for approval</button>}
+          {a.prepare && <button className="btn btn-sm" disabled={!!busy || (!count('DRAFT'))} onClick={() => act('Submitted', '/payroll/entries/submit', idsOr('DRAFT'))}>Submit {chosen.length ? 'selected' : 'all'} for approval</button>}
           {a.approve && (
             <>
               <button className="btn btn-sm" disabled={!!busy || !count('PENDING_APPROVAL')} onClick={() => act('Approved', '/payroll/entries/approve', idsOr('PENDING_APPROVAL'))}>Approve {chosen.length ? 'selected' : 'all pending'}</button>
@@ -302,6 +312,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
             </>
           )}
           {!a.prepare && !a.approve && !a.post && <span className="prb-note">View only.</span>}
+          {a.edit && entries.length > 0 && !entries.some((x) => !x.lock) && <span className="prb-note" data-testid="month-lock-note">{(entries.find((x) => x.lock) || {}).lock?.message}</span>}
           {busy && <span className="prb-note">{busy}…</span>}
         </div>
         {message && <div className="prb-msg">{message}</div>}
@@ -317,7 +328,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
           </div>
         )}
         {!data ? <EmptyMini>Loading…</EmptyMini> : entries.length === 0 ? (
-          <EmptyMini>No payroll records for {monthLabel(month)} yet{a.prepare ? ' — Calculate drafts to create them.' : '.'}</EmptyMini>
+          <EmptyMini>No payroll records for {monthLabel(month)} yet{a.prepare ? ' — Calculate payroll to create them.' : '.'}</EmptyMini>
         ) : lf.rows.length === 0 ? <ListEmpty lf={lf} noun="payroll records" /> : (
           <div className="tbl-wrap">
             <table className="prb-table">
@@ -334,7 +345,7 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                       <td><input type="checkbox" checked={!!selected[e.id]} onChange={(ev) => setSelected((s) => ({ ...s, [e.id]: ev.target.checked }))} /></td>
                       <td><b>{e.employee.employeeCode}</b></td>
                       <td>{e.employee.name}</td>
-                      <td><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>{e.rejectionReason && e.status === 'DRAFT' && <div className="prb-note" title={e.rejectionReason}>sent back</div>}</td>
+                      <td><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>{e.edit && e.edit.edited && <span className="pe-badge" title={`Edited by ${e.edit.lastBy || 'someone'}`}>Edited</span>}{e.rejectionReason && e.status === 'DRAFT' && <div className="prb-note" title={e.rejectionReason}>sent back</div>}</td>
                       <td className="cell-muted">{e.workingDays - e.daysLop}/{e.workingDays}{e.daysLop ? ` (${e.daysLop})` : ''}{e.attendanceSource === 'OVERRIDE' ? ' *' : ''}</td>
                       <td className="cell-muted">{inr0(e.grossPay)}</td>
                       <td className="cell-muted">{inr0(e.lopDeduction)}</td>
@@ -347,7 +358,10 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
                       <td className="cell-muted">{inr0(e.pfEmployer + e.esiEmployer)}</td>
                       <td>{e.status === 'PAID' ? <span className="lb-badge green">Paid</span> : e.status === 'SYNCED_TO_ACCOUNTS' ? <span className="lb-badge green">Posted</span> : <span className="lb-badge grey">Not posted</span>}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>
+                        {a.edit && !e.lock && <button className="btn btn-sm btn-primary" onClick={() => setEditId(e.id)}>Edit</button>}{' '}
+                        {a.edit && e.lock && <button className="btn btn-sm" title={e.lock.message} onClick={() => setEditId(e.id)}>Adjust</button>}{' '}
                         <button className="btn btn-sm" onClick={() => setDetail(e.id)}>Details</button>
+                        {e.edit && e.edit.versions > 0 && <>{' '}<button className="btn btn-sm" onClick={() => setHistId(e.id)}>History</button></>}
                       </td>
                     </tr>
                   );
@@ -358,9 +372,18 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
         )}
         {data && page.total > 0 && <Pager page={page} noun="records" />}
       </Panel>
+      <ChangesInRun month={month} reloadKey={reloadKey + changesKey + (data ? data.entries.length : 0)} />
       <AttendancePanel month={month} canEdit={!!a.prepare} reloadKey={attKey} onChanged={() => {}} />
       {(a.post || a.approve) && <SyncLogPanel month={month} canRetry={!!a.post} reloadKey={reloadKey + (data ? data.entries.length : 0)} onChanged={load} />}
       {detail && <EntryDetail id={detail} onClose={() => setDetail(null)} />}
+      {editId && (
+        <PayrollEditor
+          entryId={editId} canAdjust={!!a.edit}
+          onClose={() => setEditId(null)}
+          onSaved={(msg, keepOpen) => { setMessage(msg); if (!keepOpen) setEditId(null); load(); onChanged(); setStripKey((k) => k + 1); setChangesKey((k) => k + 1); }}
+        />
+      )}
+      {histId && <PayrollEditHistory entryId={histId} onClose={() => setHistId(null)} />}
     </div>
   );
 }
@@ -392,9 +415,9 @@ export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () =>
   return (
     <Panel style={{ marginTop: 16 }}>
       <PanelHead title="Accounts sync log">
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 'auto' }}>
+        <Combo value={filter} onChange={(e) => setFilter(e.target.value)} style={{ width: 'auto' }}>
           <option value="open">Pending / failed</option><option value="all">All</option>
-        </select>
+        </Combo>
         {canRetry && <button className="btn btn-sm" onClick={sweep}>Run retry sweep</button>}
       </PanelHead>
       {msg && <div className="prb-msg">{msg}</div>}

@@ -21,10 +21,10 @@ const fs = require('fs');
 
 const BACK = path.resolve(__dirname, '..');
 const API = String(process.env.TL_API || '').replace(/\/+$/, '').replace(/\/api$/, '');
-if (API !== 'http://localhost:4011') { console.error('Refusing: set TL_API=http://localhost:4011 (the sandbox).'); process.exit(2); }
-process.env.DATABASE_URL = `file:${path.join(BACK, 'prisma', 'sandbox.db').replace(/\\/g, '/')}`;
+if (!/^http:\/\/localhost:40(1[1-9]|[2-9][0-9])$/.test(API) || API.endsWith(':4045')) { console.error('Refusing: set TL_API=http://localhost:4011 (the sandbox) or another free sandbox port 4011-4099 (not 4045).'); process.exit(2); }
+process.env.DATABASE_URL = `file:${path.join(BACK, 'prisma', (process.env.TL_TEST_DB || 'sandbox.db')).replace(/\\/g, '/')}`;
 require(path.join(BACK, 'node_modules/dotenv')).config({ path: path.join(BACK, '.env'), override: false });
-process.env.DATABASE_URL = `file:${path.join(BACK, 'prisma', 'sandbox.db').replace(/\\/g, '/')}`;
+process.env.DATABASE_URL = `file:${path.join(BACK, 'prisma', (process.env.TL_TEST_DB || 'sandbox.db')).replace(/\\/g, '/')}`;
 const prisma = require(path.join(BACK, 'src/db'));
 const jwt = require(path.join(BACK, 'node_modules/jsonwebtoken'));
 const SIGNED = require(path.join(BACK, 'src/utils/vendorSigned'));
@@ -85,6 +85,8 @@ async function main() {
   const A = staffTok(admin); const AC = staffTok(acct); const R = staffTok(rec);
   saved.journal = await prisma.appSetting.findUnique({ where: { key: 'vendor.journalPosting' } });
   saved.emails = await prisma.appSetting.findUnique({ where: { key: 'vendorPortal.settings' } });
+  // DATA: the founder has switched Vendor emails ON in the real database. This suite is about the default (emails OFF: the link is shown to pass on by hand), so start from OFF; cleanup() puts the saved value back.
+  await prisma.appSetting.upsert({ where: { key: 'vendorPortal.settings' }, update: { value: JSON.stringify({ emailsEnabled: false }) }, create: { key: 'vendorPortal.settings', value: JSON.stringify({ emailsEnabled: false }) } });
 
   // =================== A1 / A2 — one master, two doors ======================
   const gA = gstinFor('ABCPZ1234F');
@@ -222,7 +224,8 @@ async function main() {
   let last;
   for (let i = 0; i < 5; i += 1) last = await call('POST', '/vendor-portal/login', { body: { email: lockEmail, password: 'Wrong!Pass1x' } });
   r = await call('POST', '/vendor-portal/login', { body: { email: lockEmail, password: PW('L') } });
-  check('A6', '5 wrong passwords lock the login; even the right password is refused (generic 401)', last.status === 401 && r.status === 401 && r.body.error === 'Invalid credentials.', [last.status, r.status]);
+  // 2026-10-19: a lock is now NAMED (the same words for a real and an unknown login ID, right or wrong password), so the vendor knows to wait.
+  check('A6', '5 wrong passwords lock the login; even the right password is refused (401, and the lock is named with the minutes)', last.status === 401 && last.body.code === 'LOCKED' && r.status === 401 && r.body.code === 'LOCKED' && /paused for [0-9]+ more minutes?/.test(r.body.error) && !r.body.token, [last.status, r.status, r.body]);
   check('A6', 'lockout audited with IP', !!(await prisma.assetAuditLog.findFirst({ where: { vendorUserId: LL.id, action: 'Login locked', ip: { not: null } } })));
   // rate limit: one network hammering one account
   const sameIp = randIp(); let got429 = false;
@@ -243,7 +246,7 @@ async function main() {
   const after = await call('GET', '/vendor-portal/me', { token: TB });
   check('A4', 'deactivating the vendor kills its open session AT ONCE (401)', sessB.status === 200 && r.status === 200 && after.status === 401, [sessB.status, r.status, after.status]);
   r = await call('POST', '/vendor-portal/login', { body: { email: `zztest.spec.vb.${RUN}@example.test`, password: pwB } });
-  check('A4', 'a deactivated vendor cannot sign in (generic 401)', r.status === 401 && r.body.error === 'Invalid credentials.');
+  check('A4', 'a deactivated vendor cannot sign in (401; with the right password the reason is named)', r.status === 401 && r.body.code === 'VENDOR_OFF' && /switched off/i.test(r.body.error), r.body);
   const rowB = await prisma.officeVendor.findUnique({ where: { id: VB.id } });
   check('A4', 'who / when / why recorded', rowB.isActive === false && rowB.deactivatedAt && rowB.deactivatedById === admin.id && /contract ended/.test(rowB.deactivationReason));
   r = await call('POST', '/office-expenses/vendors', { token: AC, body: { name: `zztest vendor beta ${RUN}` } });
@@ -467,7 +470,7 @@ async function main() {
 async function migrationChecks(chk) {
   const { execFileSync } = require('child_process');
   const { DatabaseSync } = require('node:sqlite');
-  const src = new DatabaseSync(path.join(BACK, 'prisma', 'sandbox.db'), { readOnly: true });
+  const src = new DatabaseSync(path.join(BACK, 'prisma', (process.env.TL_TEST_DB || 'sandbox.db')), { readOnly: true });
   const copy = path.join(BACK, 'prisma', `zztest-mig-${RUN}.db`);
   src.exec(`VACUUM INTO '${copy.replace(/\\/g, '/')}'`); src.close();
   const out = path.join(require('os').tmpdir(), `zztest-mig-${RUN}`);

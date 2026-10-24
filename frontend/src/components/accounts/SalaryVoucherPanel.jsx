@@ -15,6 +15,7 @@ import { money, errText } from '../payroll/payrollUi';
 import PayslipView from '../payroll/PayslipView.jsx';
 import './ledgerBooks.css';
 import './salaryVoucher.css';
+import Combo from '../Combo.jsx';
 
 const num = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const dash = (n) => (Number(n) ? num(n) : '—');
@@ -90,10 +91,10 @@ function PayDialog({ detail, entryId, onClose, onDone }) {
         <label>Paid on<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         {mode !== 'Cash' && (
           <label>From which bank
-            <select value={bank} onChange={(e) => setBank(e.target.value)}>
+            <Combo value={bank} onChange={(e) => setBank(e.target.value)}>
               <option value="">Main bank account</option>
               {banks.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}
-            </select>
+            </Combo>
           </label>
         )}
         <label>{mode === 'Cheque' ? 'Cheque no.' : 'UTR / reference'} (for everyone)<input type="text" value={ref} onChange={(e) => setRef(e.target.value)} placeholder="e.g. batch UTR" /></label>

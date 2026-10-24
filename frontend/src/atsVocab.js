@@ -133,7 +133,7 @@ export const REQUIREMENT_STATUS_CODES = [
   'CANDIDATES_AVAILABLE', 'ON_HOLD', 'CLOSED',
 ];
 export const REQUIREMENT_STATUS_LABELS = {
-  DRAFT: 'Draft',
+  DRAFT: 'Not live yet',
   AGREEMENT_CHECK: 'Agreement Check',
   OPEN: 'Open',
   RECRUITER_ASSIGNED: 'Recruiter Assigned',
@@ -145,15 +145,17 @@ export const REQUIREMENT_STATUS_LABELS = {
 // A requirement past the agreement gate and neither parked nor finished.
 export const REQUIREMENT_LIVE_STATUSES = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
 export const requirementIsLive = (status) => REQUIREMENT_LIVE_STATUSES.includes(status);
+// WHAT PEOPLE SEE (user, 2026-10-13): a job is Open or Closed, nothing else. Every stored code except CLOSED reads Open.
+// REQUIREMENT_STATUS_LABELS above is the INTERNAL naming (state machine, logs) and is never drawn.
 export function requirementStatusLabel(code) {
-  return REQUIREMENT_STATUS_LABELS[code] || code || '—';
+  return code === 'CLOSED' ? 'Closed' : 'Open';
 }
+export const requirementStatusUser = requirementStatusLabel;
 // §30: Open and the live states green; On Hold / Draft / Agreement Check
 // (= agreement pending) amber; Closed is informational blue — closing a
 // requirement is not a rejection and must not read red.
 export function requirementBadgeClass(code) {
   if (code === 'CLOSED') return 'new';
-  if (['ON_HOLD', 'DRAFT', 'AGREEMENT_CHECK'].includes(code)) return 'pending';
   return 'active';
 }
 
@@ -165,7 +167,7 @@ export const AGREEMENT_STATUS_CODES = [
   'DRAFT', 'SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING', 'SIGNED', 'ACTIVE', 'EXPIRED', 'REJECTED',
 ];
 export const AGREEMENT_STATUS_LABELS = {
-  DRAFT: 'Draft',
+  DRAFT: 'Made',
   SENT: 'Sent',
   VIEWED: 'Viewed',
   CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
@@ -367,7 +369,7 @@ export const LOCS = ['Hyderabad', 'Bengaluru', 'Pune'];
 
 export const REQUIREMENT_TYPES = ['Client Requirement', 'Internal Requirement'];
 export const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent'];
-export const REQUIREMENT_STATUSES = ['Draft', 'Open', 'On Hold', 'Closed'];
+export const REQUIREMENT_STATUSES = ['Open', 'On Hold', 'Closed'];
 export const EDUCATION_LEVELS = [
   'Any Degree', 'B.Tech', 'B.E', 'MCA', 'MBA', 'M.Tech', 'MBBS', 'B.Pharm', 'B.Sc', 'M.Sc', 'Diploma', 'Other',
 ];
@@ -752,10 +754,10 @@ export function inWorkflowGroup(id, a, ctx = {}) {
 // The flow diagram — boxes in order, each naming the group it counts.
 export const WORKFLOW_FLOW = {
   requirement: [
-    { id: 'client_requirement', label: 'Client job', count: 'requirements.client' },
+    { id: 'client_requirement', label: 'Client Requirement', count: 'requirements.client' },
     { id: 'job_posting', label: 'Job Posting', count: 'requirements.published' },
     { id: 'multiple_sources', label: 'Multiple Sources', count: 'sources' },
-    { id: 'internal_requirement', label: 'Internal job', count: 'requirements.internal' },
+    { id: 'internal_requirement', label: 'Internal Requirement', count: 'requirements.internal' },
     { id: 'hr_sourcing', label: 'HR Sourcing', count: 'hrSourced' },
   ],
   pre: [

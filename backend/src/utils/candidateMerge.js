@@ -325,7 +325,7 @@ async function mergeCandidates({
     entityId: masterId,
     fromValue: JSON.stringify({ donors: snapshot, foldedApplications: folded, mergeLogId: logId }),
     toValue: JSON.stringify({ moved, filled: Object.keys(filled), conflicts: conflictNotes.length }),
-    reason: reason || (kind === 'SAME_PERSON_OTHER_JOB' ? 'Same person, different job' : 'Duplicate candidate merge (confirmed on Candidates > Duplicates)'),
+    reason: reason || (kind === 'SAME_PERSON_OTHER_JOB' ? 'Same person, different requirement' : 'Duplicate candidate merge (confirmed on Candidates > Duplicates)'),
   });
 
   // The duplicate bookkeeping AFTER the merge: the donors' keys / flags go, the kept profile is checked again.

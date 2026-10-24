@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import BulkSendPanel from '../components/BulkSendPanel.jsx';
+import MissingHint from '../components/ui/MissingHint.jsx';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { SourceExtras } from '../components/candidate/CandidateRecord.jsx'; // ATS-100 B5/B6
+import NewPeopleStrip from '../components/candidate/NewPeopleStrip.jsx'; // newly added people who are not on a requirement yet
 import Modal, { SectionHead } from '../components/Modal.jsx';
 // docfill_: "Upload the resume" / "Type it myself" on Add candidate (components/ui/FillFromFile.jsx).
 import { useFillFromFile, FillEntryModal, FillBanner } from '../components/ui/FillFromFile.jsx';
@@ -24,6 +25,7 @@ import {
 import Combo from '../components/Combo.jsx';
 import HierarchyFilter, { EMPTY_HIERARCHY, toParams, hierarchyChips, useHierarchy } from '../components/HierarchyFilter.jsx';
 import AtsDataTools, { runAtsExport, useAtsIoAccess } from '../components/AtsDataTools.jsx';
+import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // the shared template library + campaigns of the ATS (inside this screen, no sidebar entry)
 // cand7_ (Candidates §7): the Progress board.
 import CandidateBoard from '../components/candidate/CandidateBoard.jsx';
 import {
@@ -32,12 +34,26 @@ import {
 import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
 // Where they came from: the clean source list, the tick-box filter with counts, and the cell helpers.
 import MultiFacetSelect from '../components/ui/MultiFacetSelect.jsx';
-import { PICK_SOURCES, IMPORTED_SOURCE, OTHER_SOURCE, recordedAs } from '../utils/candidateSource.js';
+import { PICK_SOURCES, IMPORTED_SOURCE, OTHER_SOURCE, recordedAs, sourceCame, sourceLabel } from '../utils/candidateSource.js';
+import ContactLists, { contactsAllowed } from '../components/broadcast/ContactLists.jsx'; // the Contact lists tab: import, send a job on WhatsApp, replies
+import CandidateSources from '../components/candidate/CandidateSources.jsx'; // the Sources tab: where people came from, and when
 import CandidateDrawer from '../components/CandidateDrawer.jsx';
 import CandidateBulkActions from '../components/CandidateBulkActions.jsx';
-import BulkCallQueue from '../components/BulkCallQueue.jsx';
+import ReachBulkBar from '../components/reach/ReachBulkBar.jsx';
+import AskToBook, { askable, InterviewRequested } from '../components/interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
+import ReachBar from '../components/reach/ReachBar.jsx';
+import ReachRowButtons from '../components/reach/ReachRowButtons.jsx';
+// WhatsApp quick chat (free wa.me links): a row icon, a bulk 'Send WhatsApp' + 'Mark opted in', and the Resume bar (components/wa/)
+import WaButton from '../components/wa/WaButton.jsx';
+import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import WaResume from '../components/wa/WaResume.jsx';
+import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
+import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
+import { useReachRights } from '../components/reach/reachKit.js';
 import SavedViews from '../components/SavedViews.jsx';
 import CandidateDuplicatePanel from '../components/CandidateDuplicatePanel.jsx';
+import { SalaryFitChips, SalaryFields, AddSalaryDialog, salaryCheck } from '../components/SalaryFit.jsx'; // required salary + Salary fit chips (utils/salaryFit.js)
+import FitBreakdown, { useFitBreakdown } from '../components/match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary (four small chips)
 import JobPortalCandidates from '../components/portal/JobPortalCandidates.jsx';
 import DupWorklist from '../components/duplicates/DupWorklist.jsx'; // dup_: the Duplicates tab
 import { DupChip } from '../components/duplicates/DupChip.jsx';
@@ -82,7 +98,7 @@ const STEP_PLAIN = {
   offer: 'Offer', joined: 'Joined', hold: 'On hold', rejected: 'Rejected',
 };
 const CAND_TIPS = [
-  'Each row is one person for one job. The Step column says where they are now.',
+  'Each row is one person for one requirement. The Step column says where they are now.',
   'Click a row to see the person, their CV and their history.',
   'Press the blue Next step button on a row to move them on (for example, Send to client).',
 ];
@@ -94,7 +110,7 @@ const EMPTY = {
   firstName: '', lastName: '', phone: '', email: '', dob: '', gender: '',
   location: LOCS[0], preferredLocation: '',
   currentCompany: '', currentDesignation: '', experienceYears: '', relevantExperienceYears: '',
-  currentSalary: '', expectedSalary: '', noticePeriod: '30 Days',
+  currentSalary: '', expectedSalary: '', currentSalaryUnit: '', expectedSalaryUnit: '', noticePeriod: '30 Days',
   availability: 'Available after notice period', jobPreference: 'Permanent',
   preferredEmploymentType: 'Full Time', preferredWorkMode: 'Hybrid',
   education: 'B.Tech', specialization: '', institute: '', passingYear: '',
@@ -124,6 +140,12 @@ const EMPTY = {
 // ---------------------------------------------------------------------------
 const EMPTY_FILTERS = {
   search: '', clientId: '', requirementId: '', bde: '', location: '', source: '',
+  // The New button: only people / applications added in the last 7 days ('1').
+  new: '',
+  // Came on (the day the person came to us) and how far to trust that day (sheet / imported / applied / entered).
+  cameFrom: '', cameTo: '', cameKind: '',
+  // Joined between (the day the person joined): both ends included.
+  joinedFrom: '', joinedTo: '',
   stage: '', status: '', followUp: '', appliedFrom: '', appliedTo: '',
   // Client | Internal (the actual workflow).
   hiring: '',
@@ -138,13 +160,15 @@ const EMPTY_FILTERS = {
   // ATS layout v3 cards: "Not followed up 7+ / 30+ days" (pipeline) and
   // "Available for matching" (People).
   contactAge: '', available: '',
+  // Salary fit (pipeline: within / slightly / above / missing / nobudget) and People "Salary missing" (1).
+  salaryFit: '', salaryMissing: '',
 };
 // Typed filters wait for typing to pause before they reach the server.
 const TYPED_KEYS = ['skills', 'minExp', 'maxExp', 'maxSalary', 'minMatch'];
 // Filters the Candidate Master (one row per person) does not take.
-const PIPELINE_ONLY = ['stage', 'followUp', 'status', 'skills', 'minExp', 'maxExp', 'notice', 'maxSalary', 'minMatch', 'owner', 'contact', 'rejectedBefore', 'rejSide', 'rejReason', 'contactAge'];
+const PIPELINE_ONLY = ['stage', 'followUp', 'status', 'skills', 'minExp', 'maxExp', 'notice', 'maxSalary', 'minMatch', 'owner', 'contact', 'rejectedBefore', 'rejSide', 'rejReason', 'contactAge', 'salaryFit'];
 // The pipeline does not take the People-only "available" filter.
-const MASTER_ONLY = ['available'];
+const MASTER_ONLY = ['available', 'salaryMissing'];
 const SOURCED_STAGES = 'stage:NEW,AI_INTERVIEW_REQUIRED,AI_INTERVIEW_SCHEDULED,AI_INTERVIEW_COMPLETED';
 // A facet list that always carries the chosen value (a deep-linked 'id:…' or
 // 'seat:…' value is not one of the server's 'name:…' options).
@@ -156,10 +180,14 @@ function withCurrent(options, value, label) {
 const personLabel = (v) => (String(v || '').startsWith('name:') ? v.slice(5) : String(v || '').startsWith('seat:') ? `Recruiter seat ${v.slice(5)}` : 'Selected person');
 
 const MAIN_VIEWS = [
-  { id: 'pipeline', label: 'Job applications', say: 'One row for each person + job. A person who applied to 3 jobs shows 3 times.', hint: 'People already working through a job' },
-  { id: 'job-portal', label: 'New from job portal', say: 'People who applied on the job portal and are not checked yet. Check them, then send to a job.', hint: 'Not checked yet — check, then send to a job' },
-  { id: 'master', label: 'People', say: 'One row for each person, however many jobs they applied to.', hint: 'One row per person, with all their applications' },
+  { id: 'pipeline', label: 'Requirement applications', say: 'One row for each person + requirement. A person who applied to 3 requirements shows 3 times.', hint: 'People already working through a requirement' },
+  { id: 'job-portal', label: 'New from job portal', say: 'People who applied on the job portal and are not checked yet. Check them, then send to a requirement.', hint: 'Not checked yet — check, then send to a requirement' },
+  { id: 'master', label: 'People', say: 'One row for each person, however many requirements they applied to.', hint: 'One row per person, with all their applications' },
   // dup_: the people who look like someone already on file — each is held at the first step until it is sorted out.
+  // Where did people come from, and when? Counts per source, by day / week / month (components/candidate/CandidateSources.jsx).
+  { id: 'sources', label: 'Sources', say: 'How many people came from each source, and when they came.', hint: 'How many people came from each source, and when' },
+  // Company contact lists (CSV / Excel), the job message to them on WhatsApp, and the replies (components/broadcast/ContactLists.jsx).
+  { id: 'contacts', label: 'Contact lists', say: 'Contact lists from a company: import them, send a requirement on WhatsApp, read the replies.', hint: 'Import a contact list and send a requirement to it on WhatsApp' },
   { id: 'duplicates', label: 'Duplicates', say: 'People who look like someone already on file. Check them before they move on.', hint: 'Check these before they move on — merge, same person, not a duplicate, or reject' },
 ];
 const PIPE_SUBS = [
@@ -171,7 +199,7 @@ const PIPE_SUBS = [
   { id: 'rejected', label: 'Rejected', hint: 'Rejected applications — kept, never deleted' },
 ];
 const MASTER_SUBS = [
-  { id: 'all', label: 'All people', hint: 'Every person you can see — one row each, however many jobs' },
+  { id: 'all', label: 'All people', hint: 'Every person you can see — one row each, however many requirements' },
   { id: 'inactive', label: 'Inactive', hint: 'No application activity in the chosen number of days' },
   // cand7_: archived people are hidden everywhere else; open one to bring it back.
   { id: 'archived', label: 'Archived', hint: 'Archived people — hidden from every list, nothing deleted. Open one to bring it back.', archive: true },
@@ -202,20 +230,23 @@ const QUICK_IN_FILTERS = QUICK.filter(([id]) => !QUICK_ON_SCREEN.includes(id));
 const COLUMNS = [
   { id: 'candidate', label: 'Name', locked: true, sort: 'name' },
   // Where from: right after the name (the job sits under the name), shown by default.
-  { id: 'source', label: 'Source', tip: 'Where this person came from: Naukri, Job Portal, Referral… Hover a source to see the word that was recorded.' },
+  { id: 'source', label: 'Source · Came on', sort: 'cameOn', tip: 'Where this person came from, and the day they came. "Not recorded" = nobody wrote the source down. "Imported" = the day the profile was loaded, not the real arrival day. Hover for details.' },
   { id: 'phone', label: 'Phone' },
   { id: 'skills', label: 'Skills' },
   { id: 'experience', label: 'Experience', sort: 'experience' },
   { id: 'ctc', label: 'CTC', sort: 'ctc', tip: 'CTC = yearly salary now (and what they want)' },
+  { id: 'salaryFit', label: 'Salary fit', sort: 'salaryFit', tip: "How well what the person wants fits the client's budget: 100% = inside the budget. Above the budget: budget maximum divided by what they want." },
   { id: 'notice', label: 'Notice period' },
   { id: 'department', label: 'Department' },
   { id: 'stage', label: 'Step', sort: 'stage', tip: 'Where the person is now: checking → sent to client → interview → offer → joined' },
-  { id: 'requirement', label: 'Job' },
+  // Right after Step: for a joined person the day they joined (shown by default, user 2026-10-22: "which date did they join?").
+  { id: 'joining', label: 'Joining date', sort: 'joining', tip: 'The day the person joined (for someone not joined yet: the planned joining day). "Not recorded" = no joining day is on file.' },
+  { id: 'requirement', label: 'Requirement' },
   { id: 'owner', label: 'Owner', tip: 'The person whose move it is now' },
   { id: 'next', label: 'Next step', tip: 'The one thing to do now for this person, and its button' },
   { id: 'lastContact', label: 'Last contact', sort: 'lastContact' },
-  { id: 'fit', label: 'Fit %', sort: 'fit', tip: 'Fit % = how well the CV matches the job (0–100). Higher is better.' },
-  { id: 'applied', label: 'Added', sort: 'applied' },
+  { id: 'fit', label: 'Fit %', sort: 'fit', tip: 'Fit % = how well the person matches the requirement (0–100): Resume, Location and Salary against the client budget (AI too, if Admin counts it). Higher is better.' },
+  { id: 'applied', label: 'Date added', sort: 'applied' },
   { id: 'client', label: 'Client' },
   { id: 'due', label: 'Due', sort: 'due' },
   { id: 'section', label: 'Section' },
@@ -224,14 +255,14 @@ const COLUMNS = [
   { id: 'recruiter', label: 'Recruiter' },
   { id: 'tl', label: 'Team lead' },
   { id: 'bde', label: 'Client manager (BDE)' },
-  { id: 'interview', label: 'Interview', sort: 'interview' },
+  { id: 'interview', label: 'Interview date', sort: 'interview' },
   { id: 'activity', label: 'Last update', sort: 'activity' },
   { id: 'location', label: 'Location' },
 ];
 // 7 columns by default (user, 2026-10-05: "max 7, the rest via Columns"):
 // name (with the job under it) first, then the step and the next step.
 // Notice period, Department, Source… stay one click away under ⚙ Columns.
-const DEFAULT_COLS = ['candidate', 'source', 'phone', 'skills', 'experience', 'ctc', 'stage', 'next'];
+const DEFAULT_COLS = ['candidate', 'source', 'phone', 'skills', 'experience', 'ctc', 'salaryFit', 'stage', 'joining', 'next'];
 const COLUMN_IDS = new Set(COLUMNS.map((c) => c.id));
 // Someone who chose their own columns before the Source column existed keeps them, plus Source after the name.
 function colsFromV6(uid) {
@@ -245,15 +276,36 @@ function colsFromV6(uid) {
   } catch { /* nothing remembered */ }
   return DEFAULT_COLS;
 }
+// Someone who chose their own columns before the Joining date column was shown by default keeps them, plus Joining date after Step.
+const withJoining = (list) => {
+  if (list.includes('joining')) return list;
+  const i = list.indexOf('stage');
+  const next = [...list];
+  next.splice(i >= 0 ? i + 1 : next.length, 0, 'joining');
+  return next;
+};
+function colsFromV7(uid) {
+  try {
+    const old = JSON.parse(localStorage.getItem(`tl.candidates.cols.v7.${uid}`));
+    if (Array.isArray(old) && old.length) return withJoining(old.filter((id) => COLUMN_IDS.has(id)));
+  } catch { /* nothing remembered */ }
+  return withJoining(colsFromV6(uid));
+}
 // Source filter: a comma list (?source=Naukri,Shine) — tick or un-tick one word.
 const csvList = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
 const toggleCsv = (v, one) => { const l = csvList(v); return (l.includes(one) ? l.filter((x) => x !== one) : [...l, one]).join(','); };
 // Client Feedback Pending shows its own list (spec §7).
+// Simple view: the one Salary cell (Now · Wants + the Salary fit chip).
+const SIMPLE_COL = { salary: { id: 'salary', label: 'Salary', sort: 'ctc', tip: 'Now = what they earn now. Wants = what they ask for. The chip says how it fits the client budget.' } };
+// Simple view: ONE set of column widths for the header and every row (a fixed grid).
+const SIMPLE_W = {
+  source: 150, phone: 104, experience: 66, salary: 150, stage: 150, joining: 112, next: 132,
+};
 const FEEDBACK_COLUMNS = ['candidate', 'client', 'requirement', 'ivdate', 'waiting', 'next'];
 // The Rejected tab shows its own set (change list §10): Job (client) · Rejected by · Reason · Date.
 const REJECTED_COLUMNS = [
   { id: 'candidate', label: 'Candidate', locked: true },
-  { id: 'rjjob', label: 'Job (client)' },
+  { id: 'rjjob', label: 'Requirement (client)' },
   { id: 'rjby', label: 'Rejected by' },
   { id: 'rjreason', label: 'Reason' },
   { id: 'rjdate', label: 'Date' },
@@ -262,15 +314,27 @@ const REJECTED_COLUMNS = [
 ];
 const SORT_OPTIONS = [
   ['applied', 'Added date'], ['lastContact', 'Last contact'], ['fit', 'Fit %'], ['experience', 'Experience'], ['ctc', 'CTC'], ['followUp', 'Follow-up date'], ['stage', 'Step'],
-  ['due', 'Due date'], ['interview', 'Interview date'], ['activity', 'Last activity'],
-  ['created', 'Newest'], ['name', 'Name'],
+  ['due', 'Due date'], ['interview', 'Interview date'], ['joining', 'Joining date'], ['activity', 'Last activity'],
+  ['cameOn', 'Came on'], ['created', 'Newest'], ['name', 'Name'],
 ];
-const MASTER_SORTS = [['created', 'Added'], ['name', 'Name'], ['activity', 'Last update']];
+const MASTER_SORTS = [['created', 'Added'], ['cameOn', 'Came on'], ['joining', 'Joining date'], ['name', 'Name'], ['activity', 'Last update']];
+// People list columns (the Columns picker). All on by default, Joining date right after Step; Candidate always stays.
+const MASTER_COLUMNS = [
+  { id: 'candidate', label: 'Candidate', locked: true },
+  { id: 'source', label: 'Source · Came on' },
+  { id: 'phone', label: 'Phone' },
+  { id: 'email', label: 'Email' },
+  { id: 'applications', label: 'Applications' },
+  { id: 'job', label: 'Current job' },
+  { id: 'stage', label: 'Step' },
+  { id: 'joining', label: 'Joining date' },
+];
+const MASTER_DEFAULT_COLS = MASTER_COLUMNS.map((c) => c.id);
 // Built-in Saved Views (filters only — the server still decides what each
 // login may see).
 const SAVED_PRESETS = [
   { name: 'Needs my action', hint: 'Your next moves', filters: { view: 'pipeline', sub: 'all', quick: 'my_pending' } },
-  { name: 'My candidates', hint: 'On jobs you are named on', filters: { view: 'pipeline', sub: 'all', quick: 'my_candidates' } },
+  { name: 'My candidates', hint: 'On requirements you are named on', filters: { view: 'pipeline', sub: 'all', quick: 'my_candidates' } },
   { name: 'Late', hint: 'Due date before today', filters: { view: 'pipeline', sub: 'all', quick: 'overdue' } },
   { name: 'Waiting for client feedback', hint: 'Client interview done, no feedback yet', filters: { view: 'pipeline', sub: 'all', quick: 'client_feedback' } },
   { name: 'Check by team lead', hint: 'Waiting for the team lead', filters: { view: 'pipeline', sub: 'active', filters: { stage: 'st:tl_review' } } },
@@ -302,6 +366,8 @@ function agoText(v) {
 }
 const REJECTED_BEFORE = [['yes', 'Yes, rejected before'], ['no', 'Never rejected']];
 
+// 12 Oct 2026 - one date look for the joining day
+const shortDmy = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${Number(m[3])} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][Number(m[2]) - 1]} ${m[1]}` : 'Not recorded'; };
 const dateTime = (v) => (v
   ? new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
   : '—');
@@ -343,7 +409,7 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
   let main = 'pipeline';
   let sub = '';
   if (rawView === 'job-portal' || rawView === 'jobportal') main = portalAllowed ? 'job-portal' : 'pipeline';
-  else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
+  else if (rawView === 'contacts') { main = 'contacts'; sub = 'all'; } else if (rawView === 'sources') { main = 'sources'; sub = 'all'; } else if (rawView === 'duplicates' || (rawView === 'master' && rawSub === 'duplicates')) { main = dupAllowed ? 'duplicates' : 'master'; sub = 'all'; } else if (rawView === 'master') { main = 'master'; sub = MASTER_SUBS.some((x) => x.id === rawSub) ? rawSub : 'all'; } else if (rawView === 'rejected') { sub = 'all'; status = 'Rejected'; } else if (LEGACY_SUB[rawView]) sub = LEGACY_SUB[rawView];
   else if (rawView === 'pipeline' || !rawView) sub = PIPE_SUBS.some((x) => x.id === rawSub) ? rawSub : '';
   if (stageFilter === 'stage:REJECTED') { stageFilter = ''; status = status || 'Rejected'; }
   if (stageFilter === 'stage:HOLD') { stageFilter = ''; sub = sub || 'hold'; }
@@ -357,11 +423,14 @@ function fromUrl(sp, portalAllowed, dupAllowed = true) {
     quick: sp.get('quick') || '',
     filters: {
       ...EMPTY_FILTERS, stage: stageFilter, status, followUp, bde: sp.get('bde') || '', source: sp.get('source') || '',
+      cameFrom: sp.get('cameFrom') || '', cameTo: sp.get('cameTo') || '', cameKind: sp.get('cameKind') || '',
+      joinedFrom: sp.get('joinedFrom') || '', joinedTo: sp.get('joinedTo') || '',
       requirementId: sp.get('requirementId') || '', clientId: sp.get('clientId') || '',
       hiring: ['client', 'internal'].includes(sp.get('hiring') || sp.get('type')) ? (sp.get('hiring') || sp.get('type')) : '',
     },
     hier: {
       ...EMPTY_HIERARCHY,
+      department: sp.get('department') || '',
       tl: sp.get('tl') || '',
       recruiter: sp.get('recruiter') || (sp.get('positionCode') ? `seat:${sp.get('positionCode')}` : ''),
     },
@@ -410,14 +479,17 @@ export default function Candidates() {
     (v) => v && MASTER_SORTS.some(([k]) => k === v.key));
   // v3: the ATS Pipeline column set (Candidate | Requirement | Client | Stage |
   // Owner | Next Action | Due).
-  const [cols, setCols] = useStoredState(`tl.candidates.cols.v7.${uid}`, () => colsFromV6(uid),
+  const [mcols, setMcols] = useStoredState(`tl.candidates.mcols.v1.${uid}`, MASTER_DEFAULT_COLS,
+    (v) => Array.isArray(v) && v.includes('candidate') && v.every((id) => MASTER_COLUMNS.some((c) => c.id === id)));
+  const [cols, setCols] = useStoredState(`tl.candidates.cols.v8.${uid}`, () => colsFromV7(uid),
     (v) => Array.isArray(v) && v.length > 0 && v.every((id) => COLUMN_IDS.has(id)));
   const [page, setPage] = useState(1);
   // cand7_: List | Progress board (pipeline view, TeamLink staff).
+  // Simple view (default): a few clear columns. Full table: every column, as before. Remembered per person.
+  const [simple, setSimple] = useStoredState(`tl.candidates.simple.v1.${uid}`, true, (v) => typeof v === 'boolean');
   const [layout, setLayout] = useStoredState(`tl.candidates.layout.${uid}`, 'list', (v) => ['list', 'board'].includes(v));
   const boardAllowed = !['CLIENT', 'CANDIDATE'].includes(user?.role);
   const onBoard = boardAllowed && layout === 'board' && main === 'pipeline';
-  const [moreBulk, setMoreBulk] = useState(false);
   const [bulkMsg, setBulkMsg] = useState(null);
   const ioAccess = useAtsIoAccess();
   const mayExportSel = !!(ioAccess && (ioAccess.exports || {}).candidates);
@@ -426,6 +498,12 @@ export default function Candidates() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [tick, setTick] = useState(0);
+  // The New button's number: people added in the last 7 days that this login may see (refreshed after every reload, e.g. after adding one).
+  const [newSum, setNewSum] = useState(null);
+  useEffect(() => {
+    if (['CLIENT', 'CANDIDATE'].includes(user?.role)) return;
+    api.get('/candidates/new-summary').then((r) => setNewSum(r.data)).catch(() => setNewSum(null));
+  }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
   const reload = () => setTick((t) => t + 1);
   const loadDupStatus = () => api.get('/candidate-duplicates/status').then((r) => setDupStatus(r.data)).catch(() => null);
   useEffect(() => { loadDupStatus(); }, [tick]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -434,11 +512,17 @@ export default function Candidates() {
   // and call queue need ({ id: candidateId, latestApplicationId: appId, … }).
   const [selected, setSelected] = useState(() => new Map());
   const [selectNote, setSelectNote] = useState('');
-  const [bulkMode, setBulkMode] = useState(null);
   const [bulkKind, setBulkKind] = useState(null);
-  const [callQueue, setCallQueue] = useState(false);
+  const [waBulk, setWaBulk] = useState(null); // { ids } = WhatsApp list to start; { sessionId } not used here (WaResume owns that)
+  const [waOpt, setWaOpt] = useState(null); // { ids } = Mark opted in
+  const waCfg = useWaConfig();
+  const [waTick, setWaTick] = useState(0);
+  // Who may Call / Message the ticked people (the server decides: not BDE, BDE TL or Accounts).
+  const reach = useReachRights();
   // The Candidate 360 window: { candidateId, applicationId }.
   const [drawer, setDrawer] = useState(null);
+  const [salaryFor, setSalaryFor] = useState(null); // "Add salary" on a row of an old record
+  const [salaryErr, setSalaryErr] = useState({}); // per-box messages on the Add Candidate form
 
   // Keep ?view= / ?sub= in the address bar (shareable), without re-reading
   // our own write as a new deep link.
@@ -446,7 +530,7 @@ export default function Candidates() {
   function writeUrl(nextMain, nextSub) {
     const sp = new URLSearchParams(searchParams);
     sp.set('view', nextMain);
-    if (nextMain === 'job-portal' || nextMain === 'duplicates') sp.delete('sub'); else sp.set('sub', nextSub);
+    if (nextMain === 'job-portal' || nextMain === 'duplicates' || nextMain === 'sources' || nextMain === 'contacts') sp.delete('sub'); else sp.set('sub', nextSub);
     ['add', 'status', 'stage', 'followUp', 'quick', 'layout'].forEach((k) => sp.delete(k));
     ownWrite.current = true;
     setSearchParams(sp, { replace: true });
@@ -576,7 +660,7 @@ export default function Candidates() {
     const { sort: _s, dir: _d, ...rest } = baseParams; // eslint-disable-line no-unused-vars
     return rest;
   }, [baseParams]);
-  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' });
+  const { facets, loading: facetsLoading } = useFacets('candidates', facetParams, { enabled: main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' });
   const facetLabel = (key, value) => ((facets[key] || []).find((o) => String(o.value) === String(value)) || {}).label;
   // How it works: the count at each step, over everything in your area with
   // the other filters on; a click shows the people at that step.
@@ -649,7 +733,7 @@ export default function Candidates() {
   }, [facetParams]);
   const cardKey = JSON.stringify(cardParams);
   useEffect(() => {
-    if (main === 'job-portal' || main === 'duplicates' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
+    if (main === 'job-portal' || main === 'duplicates' || main === 'sources' || main === 'contacts' || ['CLIENT', 'CANDIDATE'].includes(user?.role)) return undefined;
     let live = true;
     // The fast counts first; "available for matching" needs the people rows (the slow build) and
     // is asked for on its own, so nothing else waits for it.
@@ -697,6 +781,11 @@ export default function Candidates() {
     id: r.candidateId, rowId: r.id, latestApplicationId: r.id, name: r.name, phone: r.phone || null,
     requirementTitle: r.requirementTitle, clientName: r.clientName, stageLabel: r.stageDetailLabel || r.currentStageLabel,
   });
+  // Who a row's one-click contact buttons are for (Call / WhatsApp / Email / Message).
+  const personOfRow = (r) => ({
+    id: r.candidateId, name: r.name, applicationId: r.id, job: r.requirementTitle || '',
+    phone: 'phone' in r ? (r.phone || '') : undefined, email: 'email' in r ? (r.email || '') : undefined,
+  });
   function toggleRow(r) {
     setSelected((prev) => {
       const next = new Map(prev);
@@ -723,19 +812,32 @@ export default function Candidates() {
     }
   }
   const clearSelection = () => { setSelected(new Map()); setSelectNote(''); };
+  // Progress board: tick a card, "Select all in this step", "Select all N on the board" (the server lists the ids).
+  const [boardTotal, setBoardTotal] = useState(0);
+  async function selectBoard(col) {
+    setSelectNote('');
+    try {
+      const res = await api.get('/candidates/board', { params: { ...facetParams, idsOnly: '1', ...(col ? { column: col.key } : {}) } });
+      setSelected((prev) => { const next = new Map(prev); res.data.items.forEach((x) => next.set(x.rowId, x)); return next; });
+      if (res.data.capped) setSelectNote(`Only the first ${res.data.items.length.toLocaleString()} of ${res.data.total.toLocaleString()} can be selected at once — narrow the filters.`);
+    } catch (err) {
+      setSelectNote(err.response?.data?.error || 'Could not select them.');
+    }
+  }
+  const boardCardItem = (card) => ({
+    id: card.candidateId, rowId: card.id, latestApplicationId: card.id, name: card.name, phone: card.phone || null,
+    requirementTitle: card.requirementTitle, clientName: card.clientName, stageLabel: card.stageLabel,
+  });
   const selectedItems = [...selected.values()];
   const selectedCandidateIds = [...new Set(selectedItems.map((x) => x.id))];
 
   // What this login may do in bulk — hidden, not disabled.
-  const canEditMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
   const may = {
     assign: can(user, 'ats', 'recruiterbde', 'Team View', 'assign'),
     stage: workflowStages(user).some((s) => !['HOLD', 'REJECTED'].includes(s)),
     interview: canMoveToStage(user, 'INTERVIEW_SCHEDULED') && can(user, 'ats', 'interviews', 'Schedule Interview', 'create'),
     hold: canMoveToStage(user, 'HOLD'),
     reject: canMoveToStage(user, 'REJECTED'),
-    message: canEditMaster,
-    call: canEditMaster,
     addToJob: can(user, 'ats', 'candidates', 'Applications', 'create'),
   };
   async function exportSelected() {
@@ -773,6 +875,7 @@ export default function Candidates() {
           facts: {
             skills: c.skills, experienceYears: c.experienceYears, noticePeriod: c.noticePeriod, currentSalary: c.currentSalary, expectedSalary: c.expectedSalary,
           },
+          salaryFit: c.salaryFit || null,
         },
       });
       return;
@@ -809,6 +912,7 @@ export default function Candidates() {
   }
   const rowCtx = {
     user, onAct: rowAct, menuFor: rowMenuFor, busyId: rowBusy, rejectedTab: main === 'pipeline' && pipeSub === 'rejected', reload,
+    onAddSalary: (r) => setSalaryFor({ candidateId: r.candidateId || r.id, name: r.name }),
   };
 
   function sortBy(key) {
@@ -836,11 +940,11 @@ export default function Candidates() {
   }
   // Filters (n): what is set inside the Filters panel.
   const filterCount = main === 'master'
-    ? [hier.department, hier.section, filters.location, filters.source, filters.appliedFrom || filters.appliedTo].filter(Boolean).length
+    ? [hier.department, hier.section, filters.location, filters.source, filters.appliedFrom || filters.appliedTo, filters.cameFrom || filters.cameTo || filters.cameKind, filters.joinedFrom || filters.joinedTo].filter(Boolean).length
     : [hier.department, hier.section, hier.tl, hier.recruiter, filters.clientId, filters.requirementId, filters.bde,
       filters.stage, filters.status, filters.followUp, filters.location, filters.source, filters.skills,
       filters.minExp || filters.maxExp, filters.notice, filters.maxSalary, filters.minMatch,
-      filters.appliedFrom || filters.appliedTo,
+      filters.appliedFrom || filters.appliedTo, filters.cameFrom || filters.cameTo || filters.cameKind, filters.joinedFrom || filters.joinedTo,
       filters.qualificationId, filters.specialisationId, filters.owner, filters.contact, filters.rejectedBefore, filters.rejSide, filters.rejReason].filter(Boolean).length;
 
   // Saved Views: the view, sub-tab, queue, filters and hierarchy picks.
@@ -886,15 +990,18 @@ export default function Candidates() {
       ...ch, value: String(hier[ch.key] || '').startsWith('name:') ? hier[ch.key].slice(5) : 'selected person',
     })),
     { key: 'search', label: 'Search', value: filters.search, onRemove: () => setFilter({ search: '' }) },
+    { key: 'new', label: 'Show', value: filters.new === '1' ? 'New (added in the last 7 days)' : '', onRemove: () => setFilter({ new: '' }) },
     { key: 'hiring', label: 'Hiring', value: filters.hiring === 'internal' ? 'Internal' : filters.hiring === 'client' ? 'Client' : '', onRemove: () => setFilter({ hiring: '' }) },
     { key: 'quick', label: 'Show', value: main === 'pipeline' && quick ? (QUICK.find((x) => x[0] === quick) || [])[1] : '', onRemove: () => setQuick('') },
     { key: 'bde', label: 'Client manager', value: filters.bde ? (filters.bde.startsWith('name:') ? filters.bde.slice(5) : 'selected') : '', onRemove: () => setFilter({ bde: '' }) },
     { key: 'client', label: 'Client', value: filters.clientId ? (facetLabel('clientId', filters.clientId) || clientNameFromJobs || 'selected') : '', onRemove: () => setFilter({ clientId: '', requirementId: '' }) },
-    { key: 'req', label: 'Job', value: filters.requirementId ? ((chosenJobs.get(filters.requirementId) || {}).title || facetLabel('requirementId', filters.requirementId) || 'selected') : '', onRemove: () => setFilter({ requirementId: '' }) },
+    { key: 'req', label: 'Requirement', value: filters.requirementId ? ((chosenJobs.get(filters.requirementId) || {}).title || facetLabel('requirementId', filters.requirementId) || 'selected') : '', onRemove: () => setFilter({ requirementId: '' }) },
     { key: 'stage', label: 'Step', value: main === 'pipeline' ? stageChipLabel : '', onRemove: () => setFilter({ stage: '' }) },
     { key: 'status', label: 'Status', value: main === 'pipeline' ? filters.status : '', onRemove: () => setFilter({ status: '' }) },
     { key: 'location', label: 'Location', value: filters.location, onRemove: () => setFilter({ location: '' }) },
-    { key: 'source', label: 'Source', value: csvList(filters.source).join(', '), onRemove: () => setFilter({ source: '' }) },
+    { key: 'source', label: 'Source', value: csvList(filters.source).map(sourceLabel).join(', '), onRemove: () => setFilter({ source: '' }) },
+    { key: 'came', label: 'Came on', value: filters.cameFrom || filters.cameTo ? `${filters.cameFrom || '…'} to ${filters.cameTo || '…'}` : (filters.cameKind === 'imported' ? 'Only an import date' : filters.cameKind ? 'Real arrival date' : ''), onRemove: () => setFilter({ cameFrom: '', cameTo: '', cameKind: '' }) },
+    { key: 'joined', label: 'Joined between', value: filters.joinedFrom || filters.joinedTo ? `${filters.joinedFrom || '…'} to ${filters.joinedTo || '…'}` : '', onRemove: () => setFilter({ joinedFrom: '', joinedTo: '' }) },
     { key: 'followUp', label: 'Follow-up', value: main === 'pipeline' ? String(filters.followUp || '').replace(/Overdue/g, 'Late').replace(/Due Today/g, 'Due today') : '', onRemove: () => setFilter({ followUp: '' }) },
     { key: 'from', label: 'Applied from', value: filters.appliedFrom, onRemove: () => setFilter({ appliedFrom: '' }) },
     { key: 'to', label: 'Applied to', value: filters.appliedTo, onRemove: () => setFilter({ appliedTo: '' }) },
@@ -910,6 +1017,8 @@ export default function Candidates() {
     { key: 'notice', label: 'Notice period', value: main === 'pipeline' ? filters.notice : '', onRemove: () => setFilter({ notice: '' }) },
     { key: 'salary', label: 'Expected salary', value: main === 'pipeline' && filters.maxSalary ? `≤ ₹${filters.maxSalary}L` : '', onRemove: () => setFilter({ maxSalary: '' }) },
     { key: 'match', label: 'Fit', value: main === 'pipeline' && filters.minMatch ? `≥ ${filters.minMatch}%` : '', onRemove: () => setFilter({ minMatch: '' }) },
+    { key: 'sfit', label: 'Salary fit', value: main === 'pipeline' && filters.salaryFit ? (facetLabel('salaryFit', filters.salaryFit) || filters.salaryFit) : '', onRemove: () => setFilter({ salaryFit: '' }) },
+    { key: 'smiss', label: 'Salary', value: main === 'master' && filters.salaryMissing === '1' ? 'Missing' : '', onRemove: () => setFilter({ salaryMissing: '' }) },
     { key: 'qual', label: 'Qualification', value: filters.qualificationId ? (facetLabel('qualificationId', filters.qualificationId) || 'selected') : '', onRemove: () => setFilter({ qualificationId: '' }) },
     { key: 'spec', label: 'Specialization', value: filters.specialisationId ? (facetLabel('specialisationId', filters.specialisationId) || 'selected') : '', onRemove: () => setFilter({ specialisationId: '' }) },
     { key: 'owner', label: 'Owner', value: main === 'pipeline' && filters.owner ? (facetLabel('owner', filters.owner) || 'selected') : '', onRemove: () => setFilter({ owner: '' }) },
@@ -947,6 +1056,15 @@ export default function Candidates() {
   async function createCandidate(e, { override = false } = {}) {
     if (e) e.preventDefault();
     setError('');
+    // Current + expected salary are REQUIRED (same words as the server). Odd values only warn, below the boxes.
+    const sal = salaryCheck(form);
+    if (!sal.ok) {
+      setSalaryErr(sal.errors);
+      setError(sal.message);
+      setTimeout(() => { const el = document.getElementById(sal.errors.currentSalary ? 'sf-currentSalary' : 'sf-expectedSalary'); if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus(); } }, 30);
+      return undefined;
+    }
+    setSalaryErr({});
     const body = {
       ...form,
       name: `${form.firstName} ${form.lastName}`.trim(),
@@ -966,6 +1084,7 @@ export default function Candidates() {
         }, 50);
         return undefined;
       }
+      if (err.response?.data?.errors) setSalaryErr(err.response.data.errors);
       return setError(err.response?.data?.error || 'Could not save this candidate');
     }
     let uploadError = '';
@@ -977,6 +1096,10 @@ export default function Candidates() {
       }
     }
     closeForm();
+    // A search or filter left on would hide the person just added: clear them, so the new person is seen at the top at once.
+    setSearch('');
+    setFilters((f) => ({ ...f, search: '', new: '' }));
+    setRowFlash({ ok: true, text: `${created && created.name ? created.name : 'The candidate'} was added${created && created.application ? '' : ' (not on a requirement yet). You will find them at the top.'}` });
     reload();
     // eslint-disable-next-line no-alert
     if (uploadError) window.alert(uploadError);
@@ -987,6 +1110,7 @@ export default function Candidates() {
     resumeFileRef.current = null;
     fill.reset();
     setForm(EMPTY);
+    setSalaryErr({});
     setDupe(null);
     setShowForm(false);
   }
@@ -1000,13 +1124,30 @@ export default function Candidates() {
   }
 
   const rejectedTab = main === 'pipeline' && pipeSub === 'rejected' && quick !== 'client_feedback';
+  // The Joined list always shows the Joining date (user, 2026-10-17: "when did they join").
+  const joinedTab = main === 'pipeline' && pipeSub === 'joined' && quick !== 'client_feedback';
   const visibleCols = rejectedTab ? REJECTED_COLUMNS : quick === 'client_feedback'
-    ? FEEDBACK_COLUMNS.map((id) => ({ id, label: { candidate: 'Candidate', client: 'Client', requirement: 'Job', ivdate: 'Interview date', waiting: 'Days waiting', next: 'Next step' }[id], locked: id === 'candidate' }))
-    : COLUMNS.filter((c) => c.locked || cols.includes(c.id));
+    ? FEEDBACK_COLUMNS.map((id) => ({ id, label: { candidate: 'Candidate', client: 'Client', requirement: 'Requirement', ivdate: 'Interview date', waiting: 'Days waiting', next: 'Next step' }[id], locked: id === 'candidate' }))
+    : (() => {
+      let vc = COLUMNS.filter((c) => c.locked || cols.includes(c.id) || (joinedTab && c.id === 'joining'));
+      if (joinedTab) { vc = vc.filter((c) => c.id !== 'joining'); const i = vc.findIndex((c) => c.id === 'stage'); vc.splice(i >= 0 ? i + 1 : vc.length, 0, COLUMNS.find((c) => c.id === 'joining')); }
+      return vc;
+    })();
   const masterView = main === 'master';
+  const mshow = {};
+  MASTER_COLUMNS.forEach((c) => { mshow[c.id] = c.locked || mcols.includes(c.id); });
+  const isSimple = simple && main === 'pipeline' && !rejectedTab && quick !== 'client_feedback';
+  const shownCols = isSimple
+    ? ['source', 'phone', 'experience', 'salary', 'stage', 'joining', 'next'].reduce((acc, id) => (acc.push(SIMPLE_COL[id] || COLUMNS.find((c) => c.id === id)), acc), [COLUMNS[0]])
+    : visibleCols;
   // The Job cell carries the client name when the Client column is off.
   const cellCtx = {
-    ...rowCtx, showClient: !cols.includes('client'), showJob: !cols.includes('requirement'), contactInStatus: !cols.includes('lastContact'),
+    ...rowCtx,
+    showClient: isSimple || !cols.includes('client'),
+    showJob: isSimple || !cols.includes('requirement'),
+    contactInStatus: isSimple || !cols.includes('lastContact'),
+    simple: isSimple,
+    joinedTab,
   };
   const viewNoun = masterView ? 'candidate' : 'application';
 
@@ -1093,13 +1234,13 @@ export default function Candidates() {
       key: 'board', icon: onBoard ? 'list' : 'chart', label: onBoard ? 'Show as list' : 'Progress board', sub: onBoard ? 'One row per application' : 'People by step, in columns', onClick: () => (onBoard ? pickLayout('list') : openBoard()),
     },
     portalTab && {
-      key: 'portal', icon: 'send', label: 'New from job portal', sub: Number(viewCounts.jobPortal) > 0 ? `${Number(viewCounts.jobPortal).toLocaleString('en-IN')} waiting to be checked` : 'Check, then send to a job', onClick: () => goMain('job-portal'),
+      key: 'portal', icon: 'send', label: 'New from job portal', sub: Number(viewCounts.jobPortal) > 0 ? `${Number(viewCounts.jobPortal).toLocaleString('en-IN')} waiting to be checked` : 'Check, then send to a requirement', onClick: () => goMain('job-portal'),
     },
     {
       key: 'people', icon: 'team', label: 'People', sub: 'One row per person', onClick: () => goMain('master'),
     },
     can(user, 'ats', 'requirements', 'Requirement List', 'view') && {
-      key: 'jobs', icon: 'briefcase', label: 'View jobs', sub: 'Requirements', to: '/requirements',
+      key: 'jobs', icon: 'briefcase', label: 'View requirements', sub: 'Requirements', to: '/requirements',
     },
     can(user, 'ats', 'interviews', 'Calendar View', 'view') && {
       key: 'cal', icon: 'calendar', label: 'Interview calendar', sub: 'Who is interviewed when', to: '/ats/calendar',
@@ -1122,13 +1263,13 @@ export default function Candidates() {
     { key: 'rejected', label: 'Rejected', value: subN('rejected') || 0, tab: 'rejected' },
   ].map((d) => ({ ...d, onClick: () => (d.tab ? goTile(d.tab) : pickStageFilter(d.filter)) }));
   const donutOn = (DONUT.find((d) => (d.tab ? pipeSub === d.tab && plainList : d.filter && stageOn(d.filter))) || {}).key || '';
-  const cardNote = cardOn && main !== 'job-portal' && main !== 'duplicates' && (
+  const cardNote = cardOn && main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
     <div className="small-muted cviews-def">
       {{
         unverified: 'Showing: unverified — new people nobody has checked yet.',
         nf7: 'Showing: not followed up for 7+ days (never contacted counts from the day they were added).',
         nf30: 'Showing: not followed up for 30+ days.',
-        available: 'Showing: available for matching — not on any live job, not joined, not "Do not use".',
+        available: 'Showing: available for matching — not on any live requirement, not joined, not "Do not use".',
       }[cardOn]}
       {' '}
       <button type="button" className="link-btn" onClick={() => setFilter({ stage: cardOn === 'unverified' ? '' : filters.stage, contactAge: '', available: '' })}>Show everyone</button>
@@ -1158,7 +1299,7 @@ export default function Candidates() {
           <p>
             Everyone who applied, and which step they&apos;re at.
             <span className="cv4-scope">
-              {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main !== 'job-portal'
+              {main === 'duplicates' ? <span className="small-muted">People who look like someone already on file</span> : main === 'sources' ? <span className="small-muted">Where people came from, and when</span> : main === 'contacts' ? <span className="small-muted">Company contact lists and requirement messages</span> : main !== 'job-portal'
                 ? <ScopeLine user={user} count={fresh ? fresh.scopeTotal : (viewCounts.master || 0)} noun={viewNoun} />
                 : <span className="small-muted">New from the job portal — not checked yet</span>}
             </span>
@@ -1167,6 +1308,17 @@ export default function Candidates() {
         <div className="ak-page-tools cv4-tools">
           {dupTab && Number(dupStatus.waiting) > 0 && main !== 'duplicates' && (
             <button type="button" className="dupx-badge" onClick={() => goMain('duplicates')} title="People who look like someone already on file. They cannot move on until you check them.">{`${Number(dupStatus.waiting).toLocaleString('en-IN')} duplicate${Number(dupStatus.waiting) === 1 ? '' : 's'} waiting`}</button>
+          )}
+          <AppOmniPanel app="ATS" />
+          {listOn && (
+            <button
+              type="button"
+              className={`btn${filters.new === '1' ? ' btn-primary' : ''}`}
+              title="People added in the last 7 days, newest first. Click again to see everyone."
+              onClick={() => { if (filters.new === '1') setFilter({ new: '' }); else { if (main !== 'master') goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); } }}
+            >
+              {`🆕 New${newSum && newSum.people ? ` (${newSum.people})` : ''}`}
+            </button>
           )}
           {can(user, 'ats', 'candidates', 'Add Candidate', 'create') && (
             <button type="button" className="btn btn-primary cv4-add" onClick={() => { setError(''); setDupe(null); setShowForm(true); }}>+ Add candidate</button>
@@ -1184,15 +1336,15 @@ export default function Candidates() {
               })}
             />
           )}
-          {main !== 'job-portal' && main !== 'duplicates' && (
+          {main !== 'job-portal' && main !== 'duplicates' && main !== 'sources' && main !== 'contacts' && (
             <SavedViews storageKey="cand" label="Saved filters" current={savedState} onApply={applySaved} presets={SAVED_PRESETS} />
           )}
         </div>
       </header>
 
       <div className="cviews cv4-views" role="tablist" aria-label="Candidates views" title={(MAIN_VIEWS.find((v) => v.id === main) || {}).say}>
-        {MAIN_VIEWS.filter((v) => (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates')).map((v) => {
-          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : v.id === 'duplicates' ? (dupStatus ? dupStatus.waiting : null) : viewCounts.jobPortal;
+        {MAIN_VIEWS.filter((v) => (v.id !== 'job-portal' || portalTab) && (v.id !== 'duplicates' || dupTab || main === 'duplicates') && (v.id !== 'sources' || !['CLIENT', 'CANDIDATE'].includes(user?.role)) && (v.id !== 'contacts' || contactsAllowed(user))).map((v) => {
+          const n = v.id === 'pipeline' ? viewCounts.pipeline : v.id === 'master' ? viewCounts.master : v.id === 'duplicates' ? (dupStatus ? dupStatus.waiting : null) : v.id === 'sources' || v.id === 'contacts' ? null : viewCounts.jobPortal;
           return (
             <button
               key={v.id}
@@ -1210,6 +1362,13 @@ export default function Candidates() {
         })}
       </div>
 
+      {main === 'pipeline' && data && data.waiting && (
+        <NewPeopleStrip
+          waiting={data.waiting}
+          searching={!!String(filters.search || search || '').trim()}
+          onShowAll={() => { goMain('master'); setMasterSort({ key: 'created', dir: 'desc' }); setFilter({ new: '1' }); }}
+        />
+      )}
       {main === 'master' && cardNote}
       {stepPopup && (
         <StepPopup
@@ -1223,14 +1382,6 @@ export default function Candidates() {
         />
       )}
 
-      {bulkMode && (
-        <BulkSendPanel
-          mode={bulkMode}
-          candidateIds={selectedCandidateIds}
-          onClose={() => setBulkMode(null)}
-          onSent={() => clearSelection()}
-        />
-      )}
       {bulkKind && (
         <CandidateBulkActions
           kind={bulkKind}
@@ -1240,13 +1391,8 @@ export default function Candidates() {
           onDone={() => { clearSelection(); reload(); }}
         />
       )}
-      {callQueue && (
-        <BulkCallQueue
-          items={selectedItems}
-          onClose={() => setCallQueue(false)}
-          onDone={reload}
-        />
-      )}
+      {waBulk && <WaBulkModal entityType="candidate" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => setWaTick((n) => n + 1)} />}
+      {waOpt && <WaOptInModal entityType="candidate" ids={waOpt.ids} onClose={() => setWaOpt(null)} />}
       {drawer && (
         <CandidateDrawer
           candidateId={drawer.candidateId}
@@ -1256,6 +1402,7 @@ export default function Candidates() {
           onChanged={reload}
         />
       )}
+      {salaryFor && <AddSalaryDialog candidateId={salaryFor.candidateId} name={salaryFor.name} onClose={() => setSalaryFor(null)} onSaved={reload} />}
       {rowKind && (
         <CandidateBulkActions
           kind={rowKind.kind}
@@ -1301,10 +1448,11 @@ export default function Candidates() {
         >
         <form id="addCandidateForm" onSubmit={createCandidate}>
           <FillBanner fill={fill} names={CANDIDATE_FIELD_NAMES} />
+          <MissingHint items={[['the first name', !String(form.firstName || '').trim()], ['the mobile number', !String(form.phone || '').trim()], ['the email', !String(form.email || '').trim()]]} />
           <SectionHead first caps>A. Personal</SectionHead>
           <div className="grid-2">
             <label className={`field${ff('firstName')}`}>
-              <span>First Name *{ft('firstName')}</span>
+              <span>First Name{ft('firstName')}</span>
               <input required value={form.firstName} onBlur={checkDuplicate} onChange={(e) => set({ firstName: e.target.value })} />
             </label>
             <label className={`field${ff('lastName')}`}>
@@ -1312,11 +1460,11 @@ export default function Candidates() {
               <input value={form.lastName} onBlur={checkDuplicate} onChange={(e) => set({ lastName: e.target.value })} />
             </label>
             <label className={`field${ff('phone')}`}>
-              <span>Mobile *{ft('phone')}</span>
+              <span>Mobile{ft('phone')}</span>
               <input required placeholder="10-digit mobile" value={form.phone} onBlur={checkDuplicate} onChange={(e) => set({ phone: e.target.value })} />
             </label>
             <label className={`field${ff('email')}`}>
-              <span>Email *{ft('email')}</span>
+              <span>Email{ft('email')}</span>
               <input required value={form.email} onBlur={checkDuplicate} onChange={(e) => set({ email: e.target.value })} />
             </label>
             <label className={`field${ff('dob')}`}>
@@ -1325,7 +1473,7 @@ export default function Candidates() {
             </label>
             <label className={`field${ff('gender')}`}>
               <span>Gender{ft('gender')}</span>
-              <Combo value={form.gender} onChange={(e) => set({ gender: e.target.value })}>
+              <Combo value={form.gender} allowCustom onChange={(e) => set({ gender: e.target.value })}>
                 {CANDIDATE_GENDERS.map((g) => <option key={g}>{g}</option>)}
               </Combo>
             </label>
@@ -1374,14 +1522,8 @@ export default function Candidates() {
               <span>Relevant Experience (yrs)</span>
               <input type="number" step="0.5" value={form.relevantExperienceYears} onChange={(e) => set({ relevantExperienceYears: e.target.value })} />
             </label>
-            <label className={`field${ff('currentSalary')}`}>
-              <span>Current Salary (₹L){ft('currentSalary')}</span>
-              <input placeholder="e.g. 12L" value={form.currentSalary} onChange={(e) => set({ currentSalary: e.target.value })} />
-            </label>
-            <label className={`field${ff('expectedSalary')}`}>
-              <span>Expected Salary (₹L){ft('expectedSalary')}</span>
-              <input placeholder="e.g. 18L" value={form.expectedSalary} onChange={(e) => set({ expectedSalary: e.target.value })} />
-            </label>
+            {/* Current + Expected salary: REQUIRED, per year or per month, read back in plain words (components/SalaryFit.jsx) */}
+            <SalaryFields form={form} set={set} errors={salaryErr} />
             <label className={`field${ff('noticePeriod')}`}>
               <span>Notice Period{ft('noticePeriod')}</span>
               <Combo value={form.noticePeriod} onChange={(e) => set({ noticePeriod: e.target.value })}>
@@ -1402,7 +1544,7 @@ export default function Candidates() {
             </label>
             <label className="field">
               <span>Employment Type</span>
-              <Combo value={form.preferredEmploymentType} onChange={(e) => set({ preferredEmploymentType: e.target.value })}>
+              <Combo value={form.preferredEmploymentType} allowCustom onChange={(e) => set({ preferredEmploymentType: e.target.value })}>
                 {CANDIDATE_EMPLOYMENT_TYPES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
@@ -1418,8 +1560,8 @@ export default function Candidates() {
           <div className="grid-2">
             <label className={`field${ff('education')}`}>
               <span>Highest Qualification{ft('education')}</span>
-              <Combo value={form.education} onChange={(e) => set({ education: e.target.value })}>
-                {CANDIDATE_EDUCATION.map((x) => <option key={x}>{x}</option>)}
+              <Combo value={form.education} allowCustom onChange={(e) => set({ education: e.target.value })}>
+                {CANDIDATE_EDUCATION.filter((x) => x !== 'Other').map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
             <label className={`field${ff('specialization')}`}>
@@ -1438,7 +1580,7 @@ export default function Candidates() {
 
           <SectionHead caps>D. Skills</SectionHead>
           <label className={`field${ff('skills')}`}>
-            <span>Mandatory Skills * (comma separated){ft('skills')}</span>
+            <span>Mandatory Skills (comma separated){ft('skills')}</span>
             <input required placeholder="Java, Spring Boot, SQL" value={form.skills} onChange={(e) => set({ skills: e.target.value })} />
           </label>
           <div className="grid-2">
@@ -1480,7 +1622,9 @@ export default function Candidates() {
           <div className="grid-2">
             <label className="field">
               <span>Where did this person come from?</span>
-              <Combo value={form.source} onChange={(e) => set({ source: e.target.value })}>
+              {/* Type your own source: it is saved as "Other" with your words as the note (reports group typed sources under Other). */}
+              <Combo value={form.source === OTHER_SOURCE ? (form.sourceNote || OTHER_SOURCE) : form.source} allowCustom
+                onChange={(e) => { const v = e.target.value; if (!v || PICK_SOURCES.includes(v)) set({ source: v, sourceNote: v === OTHER_SOURCE ? form.sourceNote : '' }); else set({ source: OTHER_SOURCE, sourceNote: v }); }}>
                 {PICK_SOURCES.map((x) => <option key={x}>{x}</option>)}
               </Combo>
             </label>
@@ -1507,11 +1651,11 @@ export default function Candidates() {
           <SectionHead caps>G. Job</SectionHead>
           <div className="grid-2">
             <label className="field">
-              <span>Add to job</span>
+              <span>Add to requirement</span>
               <JobPickerCombo value={form.requirementId} onChange={(e) => set({ requirementId: e.target.value })} blank="None — add to database only" enabled={showForm} />
             </label>
             <label className="field">
-              <span>Job / Client</span>
+              <span>Requirement / Client</span>
               <input
                 readOnly
                 placeholder="—"
@@ -1540,6 +1684,8 @@ export default function Candidates() {
               and counts. --- */}
       {main === 'job-portal' && portalTab && <JobPortalCandidates onSentToAts={reload} />}
       {main === 'duplicates' && <DupWorklist onCountChange={() => loadDupStatus()} />}
+      {main === 'sources' && <CandidateSources user={user} />}
+      {main === 'contacts' && <ContactLists user={user} />}
 
       {main === 'master' && (
         <>
@@ -1557,9 +1703,9 @@ export default function Candidates() {
             extra={masterSub === 'inactive' && (
               <label className="cpl-sort" title={defs.inactive || ''}>
                 No activity for
-                <select value={inactiveDays} onChange={(e) => setInactiveDays(Number(e.target.value))}>
+                <Combo value={inactiveDays} onChange={(e) => setInactiveDays(Number(e.target.value))}>
                   {INACTIVE_CHOICES.map((d) => <option key={d} value={d}>{`${d} days`}</option>)}
-                </select>
+                </Combo>
               </label>
             )}
           />
@@ -1588,36 +1734,51 @@ export default function Candidates() {
                       </Combo>
                     </PanelField>
                     {show.source && (
-                      <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
+                      <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
                     )}
+                    <CameOnFilter filters={filters} setFilter={setFilter} />
+                    <JoinedOnFilter filters={filters} setFilter={setFilter} />
                   </>
                 )}
                 sort={masterSort.key}
                 sortOptions={MASTER_SORTS}
-                onSort={(k) => setMasterSort({ key: k, dir: masterSort.dir })}
+                onSort={(k) => setMasterSort({ key: k, dir: k === 'joining' ? 'desc' : masterSort.dir })}
                 sortExtra={(
                   <button type="button" className="btn btn-sm" title="Reverse the order" onClick={() => setMasterSort({ key: masterSort.key, dir: masterSort.dir === 'asc' ? 'desc' : 'asc' })}>
                     {masterSort.dir === 'asc' ? '↑ Asc' : '↓ Desc'}
                   </button>
                 )}
-                right={<span className="small-muted">{loading ? 'Loading…' : 'One row per candidate, however many applications'}</span>}
+                right={(
+                  <>
+                    <ColumnChooser columns={MASTER_COLUMNS} value={mcols} onChange={setMcols} defaults={MASTER_DEFAULT_COLS} />
+                    <span className="small-muted">{loading ? 'Loading…' : 'One row per candidate, however many applications'}</span>
+                  </>
+                )}
                 chips={chips}
                 onClearAll={clearAll}
               />
               {masterSub === 'inactive' && defs.inactive && <div className="small-muted cviews-def">{defs.inactive}</div>}
               {loadError && <div className="error-text">{loadError}</div>}
-              <PhoneCards rows={rows} onOpen={openRow} fresh={!!fresh} loading={loading} />
+              <PhoneCards rows={rows} onOpen={openRow} fresh={!!fresh} loading={loading} user={user} reload={reload} />
               <div className={`tbl-wrap tbl-fit cpl-tablewrap${loading ? ' cpl-loading' : ''}`}>
                 <table className="cpl-table cviews-master">
                   <thead>
                     <tr>
                       <th className="cpl-sticky cpl-sticky-1">Candidate</th>
-                      <th>Source</th>
-                      <th>Phone</th>
-                      <th>Email</th>
-                      <th style={{ textAlign: 'right' }}>Applications</th>
-                      <th>Current job</th>
-                      <th>Step</th>
+                      {mshow.source && <th>Source · Came on</th>}
+                      {mshow.phone && <th>Phone</th>}
+                      {mshow.email && <th>Email</th>}
+                      {mshow.applications && <th style={{ textAlign: 'right' }}>Applications</th>}
+                      {mshow.job && <th>Current job</th>}
+                      {mshow.stage && <th>Step</th>}
+                      {mshow.joining && (
+                        <th className="cpl-joincol" title="The day the person joined (newest first; people with no day on file last). If they joined on another application than the one shown, that day is shown.">
+                          <button type="button" className={`cpl-th${masterSort.key === 'joining' ? ' is-on' : ''}`} style={{ whiteSpace: 'normal', textAlign: 'left' }} onClick={() => setMasterSort({ key: 'joining', dir: masterSort.key === 'joining' && masterSort.dir === 'desc' ? 'asc' : 'desc' })}>
+                            Joining date
+                            <span aria-hidden="true">{masterSort.key === 'joining' ? (masterSort.dir === 'asc' ? ' ▲' : ' ▼') : ' ↕'}</span>
+                          </button>
+                        </th>
+                      )}
                       {masterSub === 'inactive' && <th>Last update</th>}
                     </tr>
                   </thead>
@@ -1632,33 +1793,44 @@ export default function Candidates() {
                           {c.partner && <PartnerBadge p={c.partner} />}
                           <div className="small-muted cviews-code">{c.code}</div>
                         </td>
-                        <Cell col="source" c={c} />
-                        <td className="cell-muted cpl-nowrap">{c.phone || '—'}</td>
-                        <td className="cell-muted cviews-email">{c.email || '—'}</td>
-                        <td style={{ textAlign: 'right' }}><b>{c.applicationsCount}</b></td>
-                        <td>
-                          {c.requirementTitle || <span className="small-muted">No application</span>}
-                          {c.clientName && <div className="small-muted" style={{ fontSize: 11.5 }}>{c.clientName === 'TeamLink Internal' ? 'TeamLink (internal)' : c.clientName}</div>}
-                        </td>
-                        <td>
-                          {c.currentStage
-                            ? (
-                              <>
-                                <StatusChip status={c.currentInJobPortal ? 'New' : c.stageGroupLabel}>{c.currentInJobPortal ? 'Job Portal screening' : (c.currentStageLabel || c.stageGroupLabel)}</StatusChip>
-                                {c.applicationsCount > 1 && <div className="small-muted" style={{ fontSize: 11, marginTop: 2 }}>{`+${c.applicationsCount - 1} other application(s)`}</div>}
-                              </>
-                            )
-                            : <span className="small-muted">—</span>}
-                        </td>
+                        {mshow.source && <Cell col="source" c={c} />}
+                        {mshow.phone && <td className="cell-muted cpl-nowrap">{c.phone || '—'}</td>}
+                        {mshow.email && <td className="cell-muted cviews-email">{c.email || '—'}</td>}
+                        {mshow.applications && <td style={{ textAlign: 'right' }}><b>{c.applicationsCount}</b></td>}
+                        {mshow.job && (
+                          <td>
+                            {c.requirementTitle || <span className="small-muted">No application</span>}
+                            {c.clientName && <div className="small-muted" style={{ fontSize: 11.5 }}>{c.clientName === 'TeamLink Internal' ? 'TeamLink (internal)' : c.clientName}</div>}
+                          </td>
+                        )}
+                        {mshow.stage && (
+                          <td>
+                            {c.currentStage
+                              ? (
+                                <>
+                                  <StatusChip status={c.currentInJobPortal ? 'New' : c.stageGroupLabel}>{c.currentInJobPortal ? 'Job Portal screening' : (c.currentStageLabel || c.stageGroupLabel)}</StatusChip>
+                                  <JoinedLine c={c} />
+                                  <JoinedElsewhere c={c} />
+                                  {c.applicationsCount > 1 && <div className="small-muted" style={{ fontSize: 11, marginTop: 2 }}>{`+${c.applicationsCount - 1} other application(s)`}</div>}
+                                </>
+                              )
+                              : <span className="small-muted">—</span>}
+                          </td>
+                        )}
+                        {mshow.joining && (
+                          <td className="cell-muted cpl-nowrap" title={c.joinedOther ? `Joined on another application: ${[c.joinedOther.requirementTitle, c.joinedOther.clientName].filter(Boolean).join(', ')}` : undefined}>
+                            {c.joiningDay ? shortDmy(c.joiningDay) : (c.joiningDay === null ? 'Not recorded' : dash)}
+                          </td>
+                        )}
                         {masterSub === 'inactive' && <td className="cell-muted cpl-nowrap">{c.lastApplicationActivityAt ? protoDate(c.lastApplicationActivityAt) : '—'}</td>}
                       </tr>
                     ))}
                     {!loading && fresh && rows.length === 0 && (
-                      <tr><td colSpan={8} style={{ padding: 0 }}>
+                      <tr><td colSpan={9} style={{ padding: 0 }}>
                         <EmptyState compact icon="🗂️" title={masterSub === 'inactive' ? 'Nobody is inactive for that long.' : 'No candidates match.'} hint="Try removing a filter." />
                       </td></tr>
                     )}
-                    {!fresh && <tr><td colSpan={8} className="small-muted" style={{ padding: 16 }}>Loading candidates…</td></tr>}
+                    {!fresh && <tr><td colSpan={9} className="small-muted" style={{ padding: 16 }}>Loading candidates…</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -1755,7 +1927,7 @@ export default function Candidates() {
               <section className="ak-panel cv4-listpanel">
           {cardNote}
           <StatusTabs
-            label="Job applications"
+            label="Requirement applications"
             tabs={PIPE_SUBS.map((s) => ({
               key: s.id, label: s.label, hint: s.hint, count: fresh ? Number((counts.subs || {})[s.id] ?? 0) : undefined,
             }))}
@@ -1787,7 +1959,7 @@ export default function Candidates() {
           <ListToolbar
             search={filters.search}
             onSearch={(v) => setFilter({ search: v })}
-            placeholder="Search name, phone, email or job…"
+            placeholder="Search name, phone, email or requirement…"
             filterCount={filterCount}
             panel={(
               <>
@@ -1811,6 +1983,20 @@ export default function Candidates() {
               </span>
             </span>
             <FacetSelect label="Location" allLabel="All locations" value={filters.location} onChange={(v) => setFilter({ location: v })} options={withCurrent(facets.location, filters.location)} loading={facetsLoading} />
+            {main === 'pipeline' && (
+              <FacetSelect
+                label="Salary fit"
+                allLabel="Any"
+                value={filters.salaryFit}
+                onChange={(v) => setFilter({ salaryFit: v })}
+                options={withCurrent(['within', 'slightly', 'above', 'missing', 'nobudget'].map((k) => (facets.salaryFit || []).find((o) => o.value === k)).filter(Boolean), filters.salaryFit)}
+                loading={facetsLoading}
+                title="Is what the person wants inside the client's budget?"
+              />
+            )}
+            {main === 'master' && counts.salaryMissing != null && (
+              <FacetSelect label="Salary" allLabel="All" value={filters.salaryMissing} onChange={(v) => setFilter({ salaryMissing: v })} options={[{ value: '1', label: 'Salary missing', count: counts.salaryMissing }]} title="People whose current or expected salary is not saved" />
+            )}
             <FacetSelect
               label="Status"
               allLabel="All statuses"
@@ -1820,20 +2006,22 @@ export default function Candidates() {
               loading={facetsLoading}
             />
                 <PanelField label="Show only">
-                  <select value={QUICK_IN_FILTERS.some(([id]) => id === quick) ? quick : ''} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (QUICK_IN_FILTERS.some(([id]) => id === quick)) setQuick(''); }}>
+                  <Combo value={QUICK_IN_FILTERS.some(([id]) => id === quick) ? quick : ''} onChange={(e) => { if (e.target.value) pickQuick(e.target.value); else if (QUICK_IN_FILTERS.some(([id]) => id === quick)) setQuick(''); }}>
                     <option value="">Everyone</option>
                     {QUICK_IN_FILTERS.map(([id, l]) => {
                       const n = Number((counts.quick || {})[id] ?? 0);
                       return <option key={id} value={id}>{n > 0 ? `${l} (${n.toLocaleString('en-IN')})` : l}</option>;
                     })}
-                  </select>
+                  </Combo>
                 </PanelField>
                 <HierarchyFilter value={hier} onChange={setHier} show={{ department: false, tl: false, recruiter: false }} />
                 <FacetSelect label="Qualification" allLabel="Any qualification" value={filters.qualificationId} onChange={(v) => setFilter({ qualificationId: v })} options={withCurrent(facets.qualificationId, filters.qualificationId)} loading={facetsLoading} />
                 <FacetSelect label="Specialization" allLabel="Any specialization" value={filters.specialisationId} onChange={(v) => setFilter({ specialisationId: v })} options={withCurrent(facets.specialisationId, filters.specialisationId)} loading={facetsLoading} />
                 {show.source && (
-                  <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
+                  <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
                 )}
+                <CameOnFilter filters={filters} setFilter={setFilter} />
+                <JoinedOnFilter filters={filters} setFilter={setFilter} />
                 <FacetSelect
                   label="Step"
                   allLabel="All steps"
@@ -1859,17 +2047,17 @@ export default function Candidates() {
                 <span className="lph-facet wide cpl-panel-sep">More filters</span>
                 {user?.atsRole !== 'HR' && (
                   <PanelField label="Hiring type">
-                    <select value={filters.hiring || ''} onChange={(e) => setFilter({ hiring: e.target.value, stage: '' })}>
+                    <Combo value={filters.hiring || ''} onChange={(e) => setFilter({ hiring: e.target.value, stage: '' })}>
                       <option value="">Client + internal</option>
-                      <option value="client">Client jobs</option>
+                      <option value="client">Client requirements</option>
                       <option value="internal">Our own openings (internal)</option>
-                    </select>
+                    </Combo>
                   </PanelField>
                 )}
                 {/* Saved views: in the page header (Saved filters ▾). */}
                 <FacetSelect
-                  label="Job"
-                  allLabel="All jobs"
+                  label="Requirement"
+                  allLabel="All requirements"
                   value={filters.requirementId}
                   onChange={(v) => setFilter({ requirementId: v })}
                   options={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
@@ -1886,12 +2074,12 @@ export default function Candidates() {
                   />
                 )}
                 <PanelField label="Follow-up">
-                  <select value={filters.followUp} onChange={(e) => setFilter({ followUp: e.target.value })}>
+                  <Combo value={filters.followUp} onChange={(e) => setFilter({ followUp: e.target.value })}>
                     <option value="">All follow-ups</option>
                     <option value="Due Today,Overdue">Due now (today + late)</option>
                     {FOLLOWUP_STATUSES.map((x) => <option key={x} value={x}>{x === 'Overdue' ? 'Late' : x === 'Due Today' ? 'Due today' : x}</option>)}
                     <option value="Not set">Not set</option>
-                  </select>
+                  </Combo>
                 </PanelField>
                 <FacetSelect label="Notice period" allLabel="Any notice" value={filters.notice} onChange={(v) => setFilter({ notice: v })} options={withCurrent(facets.notice, filters.notice)} loading={facetsLoading} />
                 <PanelField label="Expected salary up to (₹L)">
@@ -1928,7 +2116,13 @@ export default function Candidates() {
                     </button>
                   </span>
                 )}
-                {!onBoard && quick !== 'client_feedback' && !rejectedTab && <ColumnChooser columns={COLUMNS} value={cols} onChange={setCols} defaults={DEFAULT_COLS} />}
+                {!onBoard && main === 'pipeline' && quick !== 'client_feedback' && !rejectedTab && (
+                  <span className="cpl-layout cpl-tstyle" role="group" aria-label="Table style">
+                    <button type="button" className={simple ? 'is-on' : ''} aria-pressed={simple} title="A few clear columns" onClick={() => setSimple(true)}>Simple view</button>
+                    <button type="button" className={!simple ? 'is-on' : ''} aria-pressed={!simple} title="Every column; choose them under Columns" onClick={() => setSimple(false)}>Full table</button>
+                  </span>
+                )}
+                {!onBoard && quick !== 'client_feedback' && !rejectedTab && !isSimple && <ColumnChooser columns={COLUMNS} value={cols} onChange={setCols} defaults={DEFAULT_COLS} />}
               </>
             )}
             chips={chips}
@@ -1942,6 +2136,9 @@ export default function Candidates() {
             </div>
           )}
 
+          {onBoard && selected.size > 0 && (
+            <ReachBar items={selectedItems} total={boardTotal} onSelectAll={() => selectBoard(null)} onClear={clearSelection} onDone={() => { clearSelection(); reload(); }} note={selectNote} />
+          )}
           {onBoard && (
             <CandidateBoard
               params={facetParams}
@@ -1953,51 +2150,61 @@ export default function Candidates() {
               jobOptions={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
               jobId={filters.requirementId}
               onJob={(v) => setFilter({ requirementId: v })}
+              pick={reach.one ? {
+                selected,
+                toggle: (card) => setSelected((prev) => { const next = new Map(prev); if (next.has(card.id)) next.delete(card.id); else next.set(card.id, boardCardItem(card)); return next; }),
+                selectColumn: selectBoard,
+                contactOf: (card) => ({ id: card.candidateId, name: card.name, applicationId: card.id, job: card.requirementTitle || '', phone: 'phone' in card ? (card.phone || '') : undefined }),
+                onTotal: setBoardTotal,
+                onLogged: reload,
+              } : null}
             />
           )}
+          {!onBoard && <WaResume entityType="candidate" refreshKey={waTick} />}
           {!onBoard && selected.size > 0 && (
-            <div className="cpl-bulk">
-              <b>{`${selected.size.toLocaleString()} application${selected.size === 1 ? '' : 's'} selected`}</b>
-              {fresh && selected.size < fresh.total && (
-                <button type="button" className="link-btn" onClick={selectAllMatching}>
-                  {`Select all ${fresh.total.toLocaleString()} matching`}
-                </button>
-              )}
-              <button type="button" className="link-btn" onClick={clearSelection}>Clear</button>
-              <span className="cpl-bulk-sep" />
-              {may.assign && <button type="button" className="btn btn-sm" onClick={() => setBulkKind('assign')}>Assign recruiter</button>}
-              {may.stage && <button type="button" className="btn btn-sm" onClick={() => setBulkKind('stage')}>Move step</button>}
-              {may.addToJob && <button type="button" className="btn btn-sm" onClick={() => setBulkKind('addToJob')}>Add to job</button>}
-              {mayExportSel && <button type="button" className="btn btn-sm" onClick={exportSelected}>⬇ Export selected</button>}
-              <button type="button" className="link-btn" aria-expanded={moreBulk} onClick={() => setMoreBulk((x) => !x)}>{moreBulk ? 'Fewer actions' : 'More actions'}</button>
-              {moreBulk && (
-                <>
-                  {may.interview && <button type="button" className="btn btn-sm" onClick={() => setBulkKind('interview')}>Schedule interview</button>}
-                  {may.call && <button type="button" className="btn btn-sm" onClick={() => setCallQueue(true)}>📞 Call selected</button>}
-                  {may.message && [['WhatsApp', '💬 WhatsApp'], ['Email', '📧 Email'], ['SMS', '✉️ SMS']].map(([mode, label]) => (
-                    <button key={mode} type="button" className="btn btn-sm" onClick={() => setBulkMode(mode)}>{label}</button>
-                  ))}
-                  {may.hold && <button type="button" className="btn btn-sm" onClick={() => setBulkKind('hold')}>Put on hold</button>}
-                  {may.reject && <button type="button" className="btn btn-sm btn-danger" onClick={() => setBulkKind('reject')}>Reject</button>}
-                </>
-              )}
-              {selectNote && <span className="small-muted">{selectNote}</span>}
-              {bulkMsg && <span className={bulkMsg.ok ? 'small-muted' : 'error-text'}>{bulkMsg.text}</span>}
-            </div>
+            <ReachBulkBar
+              selected={selected.size}
+              people={selectedCandidateIds.length}
+              items={selectedItems}
+              selectAll={fresh && selected.size < fresh.total ? { label: `Select all ${fresh.total.toLocaleString('en-IN')}`, onClick: selectAllMatching } : null}
+              onCancel={clearSelection}
+              onDone={() => { clearSelection(); reload(); }}
+              manage={[
+                may.assign && { key: 'assign', icon: '👤', label: 'Assign recruiter', onClick: () => setBulkKind('assign') },
+                may.stage && { key: 'stage', icon: '➡️', label: 'Move step', onClick: () => setBulkKind('stage') },
+                may.addToJob && { key: 'addToJob', icon: '➕', label: 'Add to requirement', onClick: () => setBulkKind('addToJob') },
+                waMayUse(waCfg, 'candidate') && { key: 'wa', icon: '🟢', label: 'Send WhatsApp', onClick: () => setWaBulk({ ids: selectedCandidateIds }) },
+                waMayUse(waCfg, 'candidate') && { key: 'waopt', icon: '✔', label: 'Mark opted in', onClick: () => setWaOpt({ ids: selectedCandidateIds }) },
+                mayExportSel && { key: 'download', icon: '⬇', label: 'Download', onClick: exportSelected },
+              ].filter(Boolean)}
+              also={[
+                may.interview && { key: 'interview', icon: '📅', label: 'Schedule interview', onClick: () => setBulkKind('interview') },
+                may.hold && { key: 'hold', icon: '⏸', label: 'Put on hold', onClick: () => setBulkKind('hold') },
+                may.reject && { key: 'reject', icon: '✖', label: 'Reject', danger: true, onClick: () => setBulkKind('reject') },
+              ].filter(Boolean)}
+              note={[selectNote, bulkMsg && bulkMsg.text].filter(Boolean).join(' ') || null}
+            />
           )}
 
           {!onBoard && loadError && <div className="error-text">{loadError}</div>}
           {!onBoard && (
           <>
-          <PhoneCards rows={rows} onOpen={openRow} fresh={!!fresh} loading={loading} />
+          <PhoneCards rows={rows} onOpen={openRow} fresh={!!fresh} loading={loading} selected={selected} onToggle={toggleRow} contactOf={reach.one ? personOfRow : null} onLogged={reload} user={user} reload={reload} />
           <div className={`tbl-wrap tbl-fit cpl-tablewrap${loading ? ' cpl-loading' : ''}`}>
-            <table className="cpl-table">
+            <table className={`cpl-table${isSimple ? ' is-simple' : ''}${selected.size ? ' has-sel' : ''}`}>
+              {isSimple && (
+                <colgroup>
+                  <col style={{ width: 36 }} />
+                  {shownCols.map((col) => <col key={col.id} style={{ width: SIMPLE_W[col.id] }} />)}
+                  {reach.one && <col style={{ width: 96 }} />}
+                </colgroup>
+              )}
               <thead>
                 <tr>
                   <th className="cpl-sticky cpl-sticky-0" style={{ width: 36 }}>
                     <input type="checkbox" aria-label="Select this page" checked={pageAllOn} onChange={(e) => togglePage(e.target.checked)} />
                   </th>
-                  {visibleCols.map((col) => (
+                  {shownCols.map((col) => (
                     <th key={col.id} className={col.id === 'candidate' ? 'cpl-sticky cpl-sticky-1' : undefined}>
                       {col.sort
                         ? (
@@ -2010,6 +2217,7 @@ export default function Candidates() {
                       {col.tip && <Help text={col.tip} />}
                     </th>
                   ))}
+                  {reach.one && <th className="rch-sticky-right">Contact</th>}
                 </tr>
               </thead>
               <tbody>
@@ -2018,12 +2226,13 @@ export default function Candidates() {
                     <td className="cpl-sticky cpl-sticky-0" onClick={(e) => e.stopPropagation()}>
                       <input type="checkbox" aria-label={`Select ${c.name} — ${c.requirementTitle || ''}`} checked={selected.has(c.id)} onChange={() => toggleRow(c)} />
                     </td>
-                    {visibleCols.map((col) => <Cell key={col.id} col={col.id} c={c} ctx={cellCtx} onOpen={() => openRow(c)} />)}
+                    {shownCols.map((col) => <Cell key={col.id} col={col.id} c={c} ctx={cellCtx} onOpen={() => openRow(c)} />)}
+                    {reach.one && <td className="rch-sticky-right" onClick={(e) => e.stopPropagation()}><ReachRowButtons person={personOfRow(c)} onLogged={reload} /><WaButton entityType="candidate" id={c.candidateId} name={c.name} hasNumber={'phone' in c ? !!c.phone : undefined} applicationId={c.id} /></td>}
                   </tr>
                 ))}
                 {!loading && fresh && rows.length === 0 && (
                   <tr>
-                    <td colSpan={visibleCols.length + 1} style={{ padding: 0 }}>
+                    <td colSpan={shownCols.length + 2} style={{ padding: 0 }}>
                       {chips.some((ch) => ch.value) || quick
                         ? (
                           <EmptyState
@@ -2046,7 +2255,7 @@ export default function Candidates() {
                   </tr>
                 )}
                 {!fresh && (
-                  <tr><td colSpan={visibleCols.length + 1} className="small-muted" style={{ padding: 16 }}>Loading applications…</td></tr>
+                  <tr><td colSpan={shownCols.length + 2} className="small-muted" style={{ padding: 16 }}>Loading applications…</td></tr>
                 )}
               </tbody>
             </table>
@@ -2061,7 +2270,7 @@ export default function Candidates() {
           {filters.status === 'Rejected' && rows.length > 0 && (
             <div className="notice" style={{ marginTop: 14 }}>
               Rejected people are never deleted: they stay under People, and can still be found and matched to
-              other jobs. The client never sees our own reason.
+              other requirements. The client never sees our own reason.
             </div>
           )}
               </section>
@@ -2077,12 +2286,14 @@ export default function Candidates() {
                   {stepFacet}
                   <FacetSelect label="Department" allLabel="All departments" value={hier.department} onChange={(v) => setPageFilters({ ...pfValue, department: v })} options={pfOptions.department} loading={facetsLoading} />
                   {show.source && (
-                    <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={facets.source} loading={facetsLoading} title="Where the person came from" />
+                    <MultiFacetSelect label="Source" allLabel="All sources" plural="sources" value={filters.source} onChange={(v) => setFilter({ source: v })} options={(facets.source || []).map((o) => ({ ...o, label: sourceLabel(o.value) }))} loading={facetsLoading} title="Where the person came from" />
                   )}
+                  <CameOnFilter filters={filters} setFilter={setFilter} />
+                  <JoinedOnFilter filters={filters} setFilter={setFilter} />
                   <FacetSelect label="Client" allLabel="All clients" value={filters.clientId} onChange={(v) => setPageFilters({ ...pfValue, clientId: v })} options={pfOptions.clientId} loading={facetsLoading} />
                   <FacetSelect
-                    label="Job / role"
-                    allLabel="All jobs"
+                    label="Requirement / role"
+                    allLabel="All requirements"
                     value={filters.requirementId}
                     onChange={(v) => setFilter({ requirementId: v })}
                     options={withCurrent(facets.requirementId, filters.requirementId, (chips.find((ch) => ch.key === 'req') || {}).value)}
@@ -2136,7 +2347,8 @@ export default function Candidates() {
             </Panel>
             {show.source ? (
               <Panel icon="send" title="Applications by source" sub="In this list — click to filter">
-                <BarList rows={topFacet(facets.source, 5).map((o) => ({ key: o.value, label: o.label || o.value, value: Number(o.count), onClick: () => setFilter({ source: toggleCsv(filters.source, o.value) }) }))} />
+                <BarList rows={topFacet(facets.source, 5).map((o) => ({ key: o.value, label: sourceLabel(o.value), value: Number(o.count), onClick: () => setFilter({ source: toggleCsv(filters.source, o.value) }) }))} />
+                <button type="button" className="link-btn" style={{ marginTop: 6 }} onClick={() => goMain('sources')}>See people by source and date →</button>
               </Panel>
             ) : (
               <Panel icon="building" title="Applications by client" sub="In this list — click to filter">
@@ -2156,11 +2368,103 @@ export default function Candidates() {
 // One table cell, by column id — the header and the body both walk
 // visibleCols, so a column chooser change can never misalign them.
 const dash = <span className="small-muted">—</span>;
+
+// Fit % with its four chips (Resume · AI · Location · Salary): asked from the server for the rows on screen only.
+// While it loads (or when nothing can be shown) the stored number is shown as before.
+function FitCell({ row }) {
+  const b = useFitBreakdown(row.latestApplicationId || row.applicationId || null);
+  if (b) return <div className="fb-cell"><div className="fb-main">{b.restricted ? `about ${b.total}%` : `${b.total}%`}</div><FitBreakdown b={b} compact showTotal={false} /></div>;
+  return row.matchScore != null ? <b>{`${row.matchScore}%`}</b> : dash;
+}
+// "Nil", "NA", "As per norms" … are not figures: the Salary cell shows a dash instead.
+const MONEY_FILLER = /^(nil|nill|na|n\.a\.?|n\/a|none|null|no|not applicable|not disclosed|as per (the )?(company |industry )?(norms?|standards?)|-+|—|0)$/i;
+const cleanMoney = (v) => { const t = String(v == null ? '' : v).trim(); return t && !MONEY_FILLER.test(t) ? t : null; };
+// "Came on": the day the person came to us (From / To) with three quick picks, and "only people with a real arrival date".
+const dayShift = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
+function CameOnFilter({ filters, setFilter }) {
+  const today = dayShift(0);
+  const mondayBack = (new Date(Date.now() + 330 * 60000).getUTCDay() + 6) % 7;
+  const quick = [['Today', today, today], ['This week', dayShift(-mondayBack), today], ['This month', `${today.slice(0, 7)}-01`, today]];
+  return (
+    <div className="cpl-came-filter">
+      <PanelField label="Came on (from)">
+        <input type="date" value={filters.cameFrom || ''} max={filters.cameTo || undefined} onChange={(e) => setFilter({ cameFrom: e.target.value })} title="The first day they came" />
+      </PanelField>
+      <PanelField label="Came on (to)">
+        <input type="date" value={filters.cameTo || ''} min={filters.cameFrom || undefined} onChange={(e) => setFilter({ cameTo: e.target.value })} title="The last day they came" />
+      </PanelField>
+      <div className="cpl-came-quick">
+        {quick.map(([label, a, b]) => (
+          <button key={label} type="button" className={`btn btn-sm${filters.cameFrom === a && filters.cameTo === b ? ' btn-primary' : ''}`} onClick={() => setFilter({ cameFrom: a, cameTo: b })}>{label}</button>
+        ))}
+        <button type="button" className={`btn btn-sm${filters.cameKind === 'sheet,applied,entered' ? ' btn-primary' : ''}`} title="Leave out people whose only date is the day they were loaded by an import" onClick={() => setFilter({ cameKind: filters.cameKind === 'sheet,applied,entered' ? '' : 'sheet,applied,entered' })}>Real dates only</button>
+      </div>
+    </div>
+  );
+}
+
+// Under the Joined step chip: "Joined · 12 Oct 2026" (small grey), or "Joined · date not recorded". Never blank, never today's date.
+// Not shown in the Joined list itself (the Joining date column sits right beside the step there).
+function JoinedLine({ c, ctx }) {
+  if (!['JOINED', 'HIRED'].includes(c.currentStage) || (ctx && ctx.joinedTab)) return null;
+  // (People list: when the date on the row belongs to ANOTHER application, this shown one has no day of its own.)
+  const day = c.joinedOther ? null : c.joiningDay;
+  const text = `Joined · ${day ? shortDmy(day) : 'date not recorded'}`;
+  return <div className="small-muted cpl-joinedline" style={{ fontSize: 11.5, marginTop: 3 }} title={day ? 'The day this person joined' : 'No joining day is on file for this person'}>{text}</div>;
+}
+// People list: the person joined on a DIFFERENT application than the one shown - say when, and where ("Joined 12 Oct 2026 (Requirement X, Client Y)").
+function JoinedElsewhere({ c }) {
+  const o = c.joinedOther;
+  if (!o || !o.day) return null;
+  const where = [o.requirementTitle, o.clientName].filter(Boolean).join(', ');
+  return <div className="small-muted cpl-joinedline" style={{ fontSize: 11.5, marginTop: 3 }} title={`Joined on another application: ${where}`}>{`Joined ${shortDmy(o.day)}${where ? ` (${where})` : ''}`}</div>;
+}
+
+// "Joined between": the first and the last day the person joined (the Joining date column), with the same three quick picks.
+function JoinedOnFilter({ filters, setFilter }) {
+  const today = dayShift(0);
+  const mondayBack = (new Date(Date.now() + 330 * 60000).getUTCDay() + 6) % 7;
+  const quick = [['Today', today, today], ['This week', dayShift(-mondayBack), today], ['This month', `${today.slice(0, 7)}-01`, today]];
+  return (
+    <div className="cpl-came-filter">
+      <PanelField label="Joined between (from)">
+        <input type="date" value={filters.joinedFrom || ''} max={filters.joinedTo || undefined} onChange={(e) => setFilter({ joinedFrom: e.target.value })} title="The first joining day" />
+      </PanelField>
+      <PanelField label="Joined between (to)">
+        <input type="date" value={filters.joinedTo || ''} min={filters.joinedFrom || undefined} onChange={(e) => setFilter({ joinedTo: e.target.value })} title="The last joining day" />
+      </PanelField>
+      <div className="cpl-came-quick">
+        {quick.map(([label, a, b]) => (
+          <button key={label} type="button" className={`btn btn-sm${filters.joinedFrom === a && filters.joinedTo === b ? ' btn-primary' : ''}`} onClick={() => setFilter({ joinedFrom: a, joinedTo: b })}>{label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function Cell({
   col, c, onOpen, ctx,
 }) {
   switch (col) {
     case 'candidate':
+      if (ctx && ctx.simple) {
+        const job = ctx.showJob && c.requirementTitle ? `${c.requirementTitle}${c.clientName ? ` · ${c.clientName}` : ''}` : c.code;
+        return (
+          <td className="cpl-sticky cpl-sticky-1 cpl-cand">
+            <div className="cpl-s-top">
+              <span className="avatarsm">{initials(c.name)}</span>
+              <span className="cpl-cand-name" title={c.name}>{c.name}</span>
+              <RejectedBadge row={c} minTimes={ctx.rejectedTab ? 2 : 1} />
+            </div>
+            <div className="small-muted cpl-s-line" title={job}>{job}{c.applicationsCount > 1 ? ` · ${c.applicationsCount} applications` : ''}</div>
+            {c.dup && (
+              <div className="cpl-s-line cpl-s-tags">
+                <DupChip dup={c.dup} candidateId={c.candidateId || c.id} onChanged={ctx.reload} />
+              </div>
+            )}
+          </td>
+        );
+      }
       return (
         <td className="cpl-sticky cpl-sticky-1 cpl-cand">
           <span className="avatarsm">{initials(c.name)}</span>
@@ -2170,7 +2474,7 @@ function Cell({
           <div className="small-muted cviews-code">
             {/* v3: the job this row is about, when the Job column is off. */}
             {ctx && ctx.showJob && c.requirementTitle ? `${c.requirementTitle}${c.clientName ? ` · ${c.clientName}` : ''}` : c.code}
-            {c.applicationsCount > 1 && <span title="This person applied to other jobs too — see the People tab">{` · ${c.applicationsCount} applications`}</span>}
+            {c.applicationsCount > 1 && <span title="This person applied to other requirements too — see the People tab">{` · ${c.applicationsCount} applications`}</span>}
           </div>
         </td>
       );
@@ -2189,6 +2493,28 @@ function Cell({
         <td className="cpl-nowrap" title={[c.currentSalary && `Now: ${c.currentSalary}`, c.expectedSalary && `Wants: ${c.expectedSalary}`].filter(Boolean).join('\n') || undefined}>
           {c.currentSalary || dash}
           {c.expectedSalary && <div className="small-muted" style={{ fontSize: 11 }}>{`wants ${c.expectedSalary}`}</div>}
+        </td>
+      );
+    case 'salary': {
+      const now = cleanMoney(c.currentSalary);
+      const want = cleanMoney(c.expectedSalary);
+      return (
+        <td className="cpl-salary" title={[now && `Now ${now}`, want && `Wants ${want}`].filter(Boolean).join('\n') || undefined}>
+          {now && <div className="cpl-s-line">{`Now ${now}`}</div>}
+          {want && <div className="cpl-s-line small-muted">{`Wants ${want}`}</div>}
+          {!now && !want && !c.salaryFit && dash}
+          {c.salaryFit && (
+            <div className="cpl-s-fit">
+              <SalaryFitChips fit={c.salaryFit} compact onAdd={c.salaryFit.prompt === 'Add salary' && ctx && ctx.onAddSalary ? () => ctx.onAddSalary(c) : undefined} />
+            </div>
+          )}
+        </td>
+      );
+    }
+    case 'salaryFit':
+      return (
+        <td className="cpl-nowrap">
+          {c.salaryFit ? <SalaryFitChips fit={c.salaryFit} compact onAdd={c.salaryFit.prompt === 'Add salary' && ctx && ctx.onAddSalary ? () => ctx.onAddSalary(c) : undefined} /> : dash}
         </td>
       );
     case 'notice': return <td className="cell-muted cpl-nowrap">{c.noticePeriod || '—'}</td>;
@@ -2210,7 +2536,7 @@ function Cell({
         </td>
       );
     case 'fit':
-      return <td className="cpl-nowrap">{c.matchScore != null ? <b>{`${c.matchScore}%`}</b> : dash}</td>;
+      return <td><FitCell row={c} /></td>;
     case 'client':
       return (
         <td className="cell-muted cviews-client">
@@ -2256,13 +2582,32 @@ function Cell({
     case 'department': return <td className="cell-muted cpl-nowrap">{c.requirementDepartment || '—'}</td>;
     case 'section': return <td className="cell-muted cpl-nowrap">{c.section || '—'}</td>;
     case 'stage':
+      if (ctx && ctx.simple) {
+        const live = ['Active', 'Hold'].includes(c.pipelineStatus);
+        const note = c.stageKey === 'feedback_pending' ? 'Waiting for feedback' : (c.rejection ? `by ${c.rejection.sideLabel}` : null);
+        return (
+          <td>
+            {c.currentStage
+              ? (
+                <>
+                  <div className="cpl-s-chipbox"><StatusChip status={c.stageGroupLabel}>{c.stageDetailLabel || c.currentStageLabel || c.stageGroupLabel}</StatusChip></div>
+                  {note && <div className="small-muted cpl-s-line" title={note}>{note}</div>}
+                  <JoinedLine c={c} ctx={ctx} />
+                  {live && <div className={`small-muted cpl-s-line${!c.lastContactAt || c.lastContactDays >= 7 ? ' cviews-late' : ''}`} style={{ fontSize: 11.5 }}>{`Last contact: ${agoText(c.lastContactAt)}`}</div>}
+                </>
+              )
+              : dash}
+          </td>
+        );
+      }
       return (
         <td>
           {c.currentStage
             ? (
               <>
-                <StatusChip status={c.stageGroupLabel}>{c.currentStageLabel || c.stageGroupLabel}</StatusChip>
+                <StatusChip status={c.stageGroupLabel}>{ctx && ctx.simple ? (c.stageDetailLabel || c.currentStageLabel || c.stageGroupLabel) : (c.currentStageLabel || c.stageGroupLabel)}</StatusChip>
                 {c.stageKey === 'feedback_pending' && <div className="small-muted" style={{ marginTop: 3 }}>Waiting for feedback</div>}
+                <JoinedLine c={c} ctx={ctx} />
                 {c.rejection && (
                   <div className="small-muted" style={{ marginTop: 3 }} title={[c.rejection.reason, c.rejection.detail, c.rejection.by && `Recorded by ${c.rejection.by}`].filter(Boolean).join('\n')}>
                     {`by ${c.rejection.sideLabel}`}
@@ -2287,7 +2632,7 @@ function Cell({
       const live = ['Active', 'Hold'].includes(c.pipelineStatus);
       return (
         <td title={['Department', 'Section', 'Team lead', 'Recruiter', 'Client manager (BDE)'].map((k, i) => `${k}: ${[c.requirementDepartment, c.section, c.tlName, c.recruiterName, c.bdeName][i] || '—'}`).join('\n')}>
-          {live && c.owner && c.owner !== '—' ? <b style={{ fontWeight: 600 }}>{c.owner}</b> : (live ? <span className="small-muted" title="Nobody is named for this step. Assign the job, or set a follow-up.">No one named</span> : dash)}
+          {live && c.owner && c.owner !== '—' ? <b style={{ fontWeight: 600 }}>{c.owner}</b> : (live ? <span className="small-muted" title="Nobody is named for this step. Assign the requirement, or set a follow-up.">No one named</span> : dash)}
           {live && c.ownerRole && c.ownerRole !== '—' && <div className="small-muted cpl-own">{c.waitingOn ? `${c.ownerRole} · waiting on the client` : c.ownerRole}</div>}
           {!live && chain.length > 0 && <div className="small-muted cpl-own">{chain.join(' · ')}</div>}
         </td>
@@ -2360,15 +2705,26 @@ function Cell({
       return <td className="cell-muted cpl-nowrap">{c.recruiterName || '—'}{c.positionCode && <div className="small-muted">{c.positionCode}</div>}</td>;
     case 'tl': return <td className="cell-muted cpl-nowrap">{c.tlName || '—'}</td>;
     case 'bde': return <td className="cell-muted cpl-nowrap">{c.bdeName || '—'}</td>;
-    case 'interview': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.interviewAt ? dateTime(c.interviewAt) : '—'}</td>;
+    case 'interview': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.interviewAt ? new Date(c.interviewAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' }).replace(',', '') : '—'}</td>;
+    case 'joining': {
+      const joined = c.pipelineStatus === 'Joined' || ['JOINED', 'HIRED'].includes(c.currentStage);
+      return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.joiningDay ? shortDmy(c.joiningDay) : (joined ? 'Not recorded' : (c.joiningPlanned ? `${shortDmy(c.joiningPlanned)} (planned)` : dash))}</td>;
+    }
     case 'applied': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{protoDate(c.appliedDate || c.createdAt)}</td>;
     case 'activity': return <td className="cell-muted" style={{ whiteSpace: 'nowrap' }}>{c.lastActivityAt ? dateTime(c.lastActivityAt) : '—'}</td>;
     case 'location': return <td className="cell-muted">{c.location || '—'}</td>;
     case 'source': {
+      // ONE short cell: "Naukri · 12 Oct (1 day ago)"; unknown reads "Not recorded", an import day reads "Imported 23 Sep".
+      const sc = sourceCame(c);
       const k = c.sourceKey || c.source;
       return (
-        <td className={`cell-source${k === IMPORTED_SOURCE ? ' is-unknown' : ''}`} title={recordedAs(c)}>
-          {k === IMPORTED_SOURCE ? <>Imported sheet<div className="small-muted" style={{ fontSize: 11 }}>unknown origin</div></> : (k || dash)}
+        <td className={`cell-source${k === IMPORTED_SOURCE ? ' is-unknown' : ''}`} title={sc.title}>
+          {k ? (
+            <>
+              <span className="cpl-chip">{sc.src}</span>
+              {sc.when && <div className={`small-muted cpl-came${sc.imported ? ' is-imported' : ''}`}>{sc.when}</div>}
+            </>
+          ) : dash}
         </td>
       );
     }
@@ -2394,24 +2750,46 @@ function PartnerBadge({ p }) {
 
 // ON A PHONE: one card per row instead of the wide table (CSS swaps them).
 function PhoneCards({
-  rows, onOpen, fresh, loading,
+  rows, onOpen, fresh, loading, selected = null, onToggle = null, contactOf = null, onLogged = null, user = null, reload = null,
 }) {
   return (
     <div className="cpl-cards" aria-label="Candidates">
       {rows.map((c) => (
-        <button key={c.id} type="button" className="cpl-card" onClick={() => onOpen(c)}>
+        <div key={c.id} className="cpl-cardwrap">
+        <button type="button" className="cpl-card" onClick={() => onOpen(c)}>
           <span className="cpl-card-top">
             <span className="avatarsm">{initials(c.name)}</span>
             <b>{c.name}</b>
             {c.currentStage && <StatusChip status={c.stageGroupLabel}>{c.currentStageLabel || c.stageGroupLabel}</StatusChip>}
           </span>
-          <span className="cpl-card-line">{[c.requirementTitle, c.clientName].filter(Boolean).join(' · ') || 'No job yet'}</span>
+          <span className="cpl-card-line">{[c.requirementTitle, c.clientName].filter(Boolean).join(' · ') || 'No requirement yet'}</span>
+          {['JOINED', 'HIRED'].includes(c.currentStage) && (
+            <span className="cpl-card-line small-muted">{`Joined · ${(c.joinedOther ? null : c.joiningDay) ? shortDmy(c.joiningDay) : 'date not recorded'}`}</span>
+          )}
+          {c.joinedOther && c.joinedOther.day && (
+            <span className="cpl-card-line small-muted">{`Joined ${shortDmy(c.joinedOther.day)}${[c.joinedOther.requirementTitle, c.joinedOther.clientName].filter(Boolean).length ? ` (${[c.joinedOther.requirementTitle, c.joinedOther.clientName].filter(Boolean).join(', ')})` : ''}`}</span>
+          )}
           {c.partner && <span className="cpl-card-line"><PartnerBadge p={c.partner} /></span>}
           <span className="cpl-card-line small-muted">
-            {[c.sourceKey ? `From ${c.sourceKey}` : null, c.owner && c.owner !== '—' ? `With ${c.owner}` : null, `Last contact: ${agoText(c.lastContactAt)}`, c.matchScore != null ? `Fit ${c.matchScore}%` : null].filter(Boolean).join(' · ')}
+            {[c.sourceKey ? sourceCame(c).text : null, c.owner && c.owner !== '—' ? `With ${c.owner}` : null, `Last contact: ${agoText(c.lastContactAt)}`, c.matchScore != null ? `Fit ${c.matchScore}%` : null].filter(Boolean).join(' · ')}
           </span>
           {c.nextAction && c.nextAction !== '—' && <span className={`cpl-card-next${c.dueStatus === 'overdue' ? ' is-late' : ''}`}>{`Next: ${c.nextAction}${c.dueStatus === 'overdue' ? ' (late)' : ''}`}</span>}
         </button>
+        {c.dup && <div className="rch-card-foot"><DupChip dup={c.dup} candidateId={c.candidateId || c.id} /></div>}
+        {/* Only the BDE books an interview: a Recruiter / TL asks the client manager (same as the table's Next column). */}
+        {user && ['Active', 'Hold'].includes(c.pipelineStatus) && (askable(user, c.currentStage, c.interviewStatus, c.internal)
+          ? <div className="rch-card-foot"><AskToBook applicationId={c.id} requested={c.interviewRequest || null} onDone={() => reload && reload()} /></div>
+          : (c.interviewRequest ? <div className="rch-card-foot"><InterviewRequested request={c.interviewRequest} /></div> : null))}
+        {(onToggle || contactOf) && (
+          <div className="rch-card-foot">
+            {onToggle && contactOf && (
+              <label className="rch-pickbox"><input type="checkbox" checked={!!(selected && selected.has(c.id))} onChange={() => onToggle(c)} aria-label={`Select ${c.name}`} /> Select</label>
+            )}
+            {contactOf && <ReachRowButtons person={contactOf(c)} labelled onLogged={onLogged} />}
+            {contactOf && <WaButton entityType="candidate" id={c.candidateId} name={c.name} hasNumber={'phone' in c ? !!c.phone : undefined} applicationId={c.id} label="WhatsApp" />}
+          </div>
+        )}
+        </div>
       ))}
       {fresh && !loading && rows.length === 0 && <div className="small-muted" style={{ padding: 12 }}>No one matches. Try removing a filter.</div>}
       {!fresh && <div className="small-muted" style={{ padding: 12 }}>Loading…</div>}
@@ -2442,6 +2820,11 @@ function NextCell({ c, ctx, onOpen }) {
             {i === 0 ? `${a.label} →` : a.label}
           </button>
         ))}
+        {/* Only the BDE books an interview: a Recruiter / TL whose person waits for one asks the client manager. */}
+        {live && ctx && askable(ctx.user, c.currentStage, c.interviewStatus, c.internal) && (
+          <AskToBook applicationId={c.id} requested={c.interviewRequest || null} onDone={() => ctx.reload && ctx.reload()} />
+        )}
+        {live && c.interviewRequest && !(ctx && askable(ctx.user, c.currentStage, c.interviewStatus, c.internal)) && <InterviewRequested request={c.interviewRequest} />}
         {acts.length === 0 && live && c.pipelineStatus === 'Hold' && (
           <button type="button" className="link-btn cpl-next" onClick={onOpen}>Review hold →</button>
         )}
@@ -2524,9 +2907,9 @@ function ServerPager({
       )}
       <label className="pager-size">
         Rows per page
-        <select value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))}>
+        <Combo value={pageSize} onChange={(e) => onPageSize(Number(e.target.value))}>
           {PAGE_SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
+        </Combo>
       </label>
     </div>
   );

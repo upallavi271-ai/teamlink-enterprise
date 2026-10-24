@@ -162,14 +162,14 @@ export default function BulkCallQueue({ items, onClose, onDone }) {
       {gwNote && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginBottom: 8 }}>{gwNote.text}</div>}
       <div className="grid-2">
         <label className="field">
-          <span>Why are you calling? *</span>
+          <span>Why are you calling?</span>
           <Combo value={purpose} onChange={(e) => setPurpose(e.target.value)}>
             <option value="">Choose…</option>
             {purposes.map((p) => <option key={p} value={p}>{p}</option>)}
           </Combo>
         </label>
         <label className="field">
-          <span>How did it go? *</span>
+          <span>How did it go?</span>
           <Combo value={callResult} onChange={(e) => setCallResult(e.target.value)}>
             <option value="">Choose…</option>
             {results.map((r) => <option key={r} value={r}>{r}</option>)}

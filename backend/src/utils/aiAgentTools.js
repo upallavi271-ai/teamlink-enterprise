@@ -173,7 +173,10 @@ const TOOLS = [
         take: 200,
       });
       const shared = await clientSharedGate(user, apps);
-      const visible = shared ? apps.filter((a) => shared.has(a.id)) : apps;
+      let visible = shared ? apps.filter((a) => shared.has(a.id)) : apps;
+      // A recruiter is told THEIR candidates only, not a colleague's on a job they share (utils/ownOnly.js).
+      const own = await require('./ownOnly').ownApplicationIds(user); // eslint-disable-line global-require
+      if (own) visible = visible.filter((a) => own.has(a.id));
       const open = visible.filter((a) => !['JOINED', 'HIRED', 'REJECTED'].includes(a.stage));
       const rows = open.map(shapeApplication)
         .sort((a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')));
@@ -191,7 +194,7 @@ const TOOLS = [
 
   {
     name: 'search_requirements',
-    description: 'Find requirements (job openings) the signed-in user is allowed to see. Filter by free text on the title, by status, or by department. Returns at most 25.',
+    description: 'Find requirements (openings) the signed-in user is allowed to see. Filter by free text on the title, by status, or by department. Returns at most 25.',
     input_schema: {
       type: 'object',
       properties: {
@@ -228,7 +231,7 @@ const TOOLS = [
 
   {
     name: 'get_requirement',
-    description: 'Full detail for one requirement, plus its pipeline: how many candidates sit at each stage. Use before drafting a job description or summarising a role.',
+    description: 'Full detail for one requirement, plus its pipeline: how many candidates sit at each stage. Use before writing a job description or summarising a role.',
     input_schema: {
       type: 'object',
       properties: { requirementId: { type: 'string' } },
@@ -407,7 +410,7 @@ const TOOLS = [
 
   {
     name: 'job_description_facts',
-    description: 'The facts to draft a job description from, for one requirement: title, client, skills, experience, budget, location and the existing description. Call this first, then write the JD yourself from what it returns — do not invent a requirement.',
+    description: 'The facts to write a job description from, for one requirement: title, client, skills, experience, budget, location and the existing description. Call this first, then write the JD yourself from what it returns — do not invent a requirement.',
     input_schema: {
       type: 'object',
       properties: { requirementId: { type: 'string' } },
@@ -426,7 +429,7 @@ const TOOLS = [
       return {
         facts: shapeRequirement(r),
         internal: !!r.internal,
-        note: 'Draft from these facts only. The agent cannot save a description — the user does that on the requirement screen.',
+        note: 'Write from these facts only. The agent cannot save a description — the user does that on the requirement screen.',
       };
     },
   },
@@ -453,7 +456,7 @@ const TOOLS = [
           name: c.name,
           industry: c.industry || null,
           status: c.status || null,
-          agreementStatus: c.agreementStatus || null,
+          ...(require('./agreementPrivacy').blindTo(user) ? {} : { agreementStatus: c.agreementStatus || null }), // eslint-disable-line global-require
           liveRequirements: (c.requirements || []).filter((r) => REQUIREMENT_LIVE_STATUSES.includes(r.status)).length,
         })),
       };

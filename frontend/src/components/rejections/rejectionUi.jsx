@@ -15,6 +15,7 @@
 import { useId } from 'react';
 import Combo from '../Combo.jsx';
 import { REJECTED_BY_OPTIONS, REJECTION_REASONS_BY_SIDE, REJECTION_REASON_CATEGORIES } from '../../atsVocab';
+import MissingHint from '../ui/MissingHint.jsx';
 import './Rejections.css';
 
 // "Do not use" reasons — the same list the server keeps (utils/rejections.js).
@@ -62,22 +63,22 @@ export function RejectFields({ value, onChange, allowDnu = true }) {
           <label className={`rjx-kind${!dnu ? ' is-on' : ''}`}>
             <input type="radio" name={group} checked={!dnu} onChange={() => set({ rejectKind: 'not_suitable', reasonCategory: '' })} />
             <span>
-              <b>Not suitable for this job</b>
-              Only this job. The person still shows up for other jobs.
+              <b>Not suitable for this requirement</b>
+              Only this requirement. The person still shows up for other requirements.
             </span>
           </label>
           <label className={`rjx-kind is-dnu${dnu ? ' is-on' : ''}`}>
             <input type="radio" name={group} checked={dnu} onChange={() => set({ rejectKind: 'do_not_use', reasonCategory: '', rejectedBy: v.rejectedBy === 'Client' ? '' : v.rejectedBy })} />
             <span>
               <b>Do not use — needs TL approval</b>
-              Fake resume, abuse, absconded. Once the TL approves, blocked from every job.
+              Fake resume, abuse, absconded. Once the TL approves, blocked from every requirement.
             </span>
           </label>
         </div>
       )}
 
       <div className="rjx-field">
-        <span>Whose decision? *</span>
+        <span>Whose decision?</span>
         <div className="contact-methods">
           {REJECTED_BY_OPTIONS.filter((o) => !(dnu && o.value === 'Client')).map((o) => (
             <button
@@ -94,7 +95,7 @@ export function RejectFields({ value, onChange, allowDnu = true }) {
       </div>
 
       <label className="rjx-field">
-        <span>Reason *</span>
+        <span>Reason</span>
         <Combo
           creatable
           disabled={!v.rejectedBy}
@@ -107,7 +108,7 @@ export function RejectFields({ value, onChange, allowDnu = true }) {
       </label>
 
       <label className="rjx-field">
-        <span>Short note *</span>
+        <span>Short note</span>
         <textarea
           rows="2"
           maxLength={1000}
@@ -130,8 +131,10 @@ export function RejectFields({ value, onChange, allowDnu = true }) {
         </label>
       )}
 
+      <MissingHint items={[['whose decision it was', !v.rejectedBy], ['a reason', !!v.rejectedBy && !String(v.reasonCategory || '').trim()], ['a short note', !String(v.reasonDetail || '').trim()]]} />
+
       {dnu && (
-        <div className="rjx-wait">This job is rejected now. The block on every other job starts only after the TL approves.</div>
+        <div className="rjx-wait">This requirement is rejected now. The block on every other requirement starts only after the TL approves.</div>
       )}
     </div>
   );
@@ -143,12 +146,12 @@ export function RejectFields({ value, onChange, allowDnu = true }) {
 export function RejectedBadge({ row, minTimes = 1 }) {
   if (!row) return null;
   const hist = row.rejectedHistory || [];
-  const lines = hist.map((h) => `${h.requirementTitle || 'Job'}${h.clientName ? ` (${h.clientName})` : ''} — ${h.byLabel || ''}${h.reason ? `, ${h.reason}` : ''}${h.at ? `, ${shortDate(h.at)}` : ''}`);
-  if (row.rejectedHiddenCount > 0) lines.push(`${row.rejectedHiddenCount} more on other teams' jobs`);
+  const lines = hist.map((h) => `${h.requirementTitle || 'Requirement'}${h.clientName ? ` (${h.clientName})` : ''} — ${h.byLabel || ''}${h.reason ? `, ${h.reason}` : ''}${h.at ? `, ${shortDate(h.at)}` : ''}`);
+  if (row.rejectedHiddenCount > 0) lines.push(`${row.rejectedHiddenCount} more on other teams' requirements`);
   const tip = lines.join('\n');
   return (
     <>
-      {row.doNotUse === 'approved' && <span className="rjx-badge" title={`Do not use — blocked from every job.${tip ? `\n${tip}` : ''}`}>Do not use</span>}
+      {row.doNotUse === 'approved' && <span className="rjx-badge" title={`Do not use — blocked from every requirement.${tip ? `\n${tip}` : ''}`}>Do not use</span>}
       {row.doNotUse === 'pending' && <span className="rjx-badge is-wait" title="Do not use — waiting for the TL to approve">Do not use asked</span>}
       {row.doNotUse !== 'approved' && row.rejectedTimes >= minTimes && (
         <span className="rjx-badge" title={tip || undefined}>{`Rejected ${row.rejectedTimes}×`}</span>

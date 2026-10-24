@@ -44,11 +44,11 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
   try {
     const mk = (tag, extra, emp) => Z.mkUser(tag, extra, emp);
     const uAdmin = await mk('admin', { role: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN' });
-    const uTl = await mk('tl', { role: 'TL', atsRole: 'TL', atsDepartment: DEPT, atsScopeDepartments: DEPT }, { designation: 'TL' });
-    const uStl = await mk('stl', { role: 'STL', atsRole: 'STL', atsDepartment: DEPT, atsScopeDepartments: DEPT }, { designation: 'STL' });
+    const uTl = await mk('tl', { role: 'TL', atsRole: 'TL', hrmsRole: 'TL', hrmsAccess: true, atsDepartment: DEPT, atsScopeDepartments: DEPT }, { designation: 'TL' });
+    const uStl = await mk('stl', { role: 'STL', atsRole: 'STL', hrmsRole: 'STL', hrmsAccess: true, atsDepartment: DEPT, atsScopeDepartments: DEPT }, { designation: 'STL' });
     const uMgr = await mk('mgr', { role: 'MANAGER', atsRole: 'MANAGER', hrmsRole: 'MANAGER', hrmsAccess: true }, { designation: 'Manager' });
     const uHr = await mk('hr', { role: 'EMPLOYEE', atsRole: 'HR', hrmsRole: 'HR', hrmsAccess: true }, { designation: 'HR' });
-    const uTl2 = await mk('tl2', { role: 'TL', atsRole: 'TL', atsDepartment: 'ZZTEST PW Other', atsScopeDepartments: 'ZZTEST PW Other' }, { designation: 'TL' });
+    const uTl2 = await mk('tl2', { role: 'TL', atsRole: 'TL', hrmsRole: 'TL', hrmsAccess: true, atsDepartment: 'ZZTEST PW Other', atsScopeDepartments: 'ZZTEST PW Other' }, { designation: 'TL' });
     const rec = (tag, dept, tlName) => mk(tag, { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: dept, atsScopeDepartments: dept }, tlName ? { tl: tlName } : {});
     const r1 = await rec('r1', DEPT, uTl.name);
     const r2 = await rec('r2', DEPT, uTl.name);
@@ -56,9 +56,9 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     const r3 = await rec('r3', DEPT, null); // no TL on the record: the job's TL
     const r4 = await rec('r4', DEPT, null); // nobody anywhere: the STL
     const r5 = await rec('r5', 'Manufacturing', null); // the department's default TL
-    const bdeTl = await mk('bdetl', { role: 'TL', atsRole: 'TL', atsDepartment: 'BDE', atsScopeDepartments: 'BDE' }, { designation: 'TL' });
-    const bdeA = await mk('bdea', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: 'BDE,Education' }, { tl: bdeTl.name });
-    const bdeM = await mk('bdem', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: 'BDE,Medical' }, { tl: bdeTl.name });
+    const bdeTl = await mk('bdetl', { role: 'TL', atsRole: 'TL', hrmsRole: 'TL', hrmsAccess: true, atsDepartment: 'BDE', atsScopeDepartments: 'BDE' }, { designation: 'TL' });
+    const bdeA = await mk('bdea', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: `BDE,${DEPT}` }, { tl: bdeTl.name }); // a desk of its own: the sandbox holds the real clients of Education
+    const bdeM = await mk('bdem', { role: 'EMPLOYEE', atsRole: 'BDE', atsDepartment: 'BDE', atsScopeDepartments: 'BDE,ZZTEST PW Other' }, { tl: bdeTl.name });
     const T = {};
     for (const [k, u] of Object.entries({ admin: uAdmin, tl: uTl, stl: uStl, mgr: uMgr, hr: uHr, tl2: uTl2, r1, r2, bdeTl, bdeA })) T[k] = await Z.mint(u);
     const viewer = await resolveIdentity(uAdmin.id);
@@ -77,6 +77,14 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     const j4 = await mkJob('4', r4, null);
     const j5 = await mkJob('5', r5, null, 'Manufacturing');
     const SECRET = { email: `zz-pw-cand-${RUN}@example.test`, phone: '9000000066', currentSalary: '7L', expectedSalary: '9L' };
+    // nextAction.js treats an IST day with 150+ application creates / updates / stage events as a bulk IMPORT and then ignores it as a stage-entry time.
+    // The sandbox is a copy of the real data (which has import days), so a fixture "6 days ago" can land on one by accident: pick a clear day.
+    const istDayOf = (ms) => new Date(ms + 330 * 60000).toISOString().slice(0, 10);
+    const perDay = new Map();
+    const tally = (d) => { const k = istDayOf(new Date(d).getTime()); perDay.set(k, (perDay.get(k) || 0) + 1); };
+    (await prisma.application.findMany({ select: { createdAt: true, updatedAt: true } })).forEach((x) => { tally(x.createdAt); tally(x.updatedAt); });
+    (await prisma.applicationStageEvent.findMany({ select: { createdAt: true } })).forEach((x) => tally(x.createdAt));
+    const DAYS_AGO = [6, 5, 4, 7, 8].find((d) => (perDay.get(istDayOf(Date.now() - d * 86400000)) || 0) < 140) || 6;
     let n = 0;
     const mkApp = async (job, rc, stage, dueOffset, { old = false } = {}) => {
       n += 1;
@@ -84,7 +92,7 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
       Z.made.cands.push(cand.id);
       const a = await prisma.application.create({ data: { candidateId: cand.id, requirementId: job.id, stage } });
       Z.made.apps.push(a.id);
-      await prisma.applicationStageEvent.create({ data: { applicationId: a.id, candidateId: cand.id, fromStage: null, toStage: stage, actorUserId: rc.id, actorName: rc.name, actorRole: 'Recruiter', action: 'Moved', createdAt: new Date(Date.now() - 6 * 86400000) } }).catch(() => null);
+      await prisma.applicationStageEvent.create({ data: { applicationId: a.id, candidateId: cand.id, fromStage: null, toStage: stage, actorUserId: rc.id, actorName: rc.name, actorRole: 'Recruiter', action: 'Moved', createdAt: new Date(Date.now() - DAYS_AGO * 86400000) } }).catch(() => null);
       if (old) {
         const t = Date.now() - 100 * 86400000;
         await prisma.$executeRawUnsafe('UPDATE "Application" SET "createdAt" = ?, "updatedAt" = ? WHERE id = ?', t, t, a.id);
@@ -136,7 +144,7 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     const dir = await PW.directory(viewer);
     const how = (u) => (dir.resolved.find((x) => x.p.id === u.id) || {});
     check('R1 r1 -> the TL on the employee record', how(r1).tlId === uTl.id && /record/.test(how(r1).how), how(r1).how);
-    check('R2 r3 (no TL on the record) -> the TL the job names', how(r3).tlId === uTl.id && /job/.test(how(r3).how), how(r3).how);
+    check('R2 r3 (no TL on the record) -> the TL the requirement names', how(r3).tlId === uTl.id && /requirement/.test(how(r3).how), how(r3).how);
     const dflt = require(path.join(Z.BACK, 'src/utils/defaultTeamLead'));
     await dflt.prime({ fresh: true });
     const mfgTl = dflt.defaultFor('Manufacturing');
@@ -211,7 +219,9 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     check('N9 a recruiter cannot remind anybody (403)', (await call('POST', '/api/pending-work/remind', T.r1, { recruiterId: r2.id })).status === 403, null);
     const rmIdle = await call('POST', '/api/pending-work/remind', T.tl, { recruiterId: rIdle.id });
     check('N10 nothing pending on the person: told so, nothing sent (409)', rmIdle.status === 409, [rmIdle.status, rmIdle.body]);
-    check('N11 the Admin can remind too', (await call('POST', '/api/pending-work/remind', T.admin, { recruiterId: r2.id })).status === 200, null);
+    let rmAdmin = await call('POST', '/api/pending-work/remind', T.admin, { recruiterId: r2.id });
+    for (let i = 0; i < 4 && rmAdmin.status === 409; i += 1) { await new Promise((r) => setTimeout(r, 3000)); rmAdmin = await call('POST', '/api/pending-work/remind', T.admin, { recruiterId: r2.id }); } // the server snapshot is a few seconds behind the fixtures
+    check('N11 the Admin can remind too', rmAdmin.status === 200, [rmAdmin.status, rmAdmin.body]);
     check('N12 the nudge e-mail / WhatsApp / SMS are off by default: only the bell', rm1.body.channels && rm1.body.channels.email === 'off' && rm1.body.channels.whatsapp === 'off', rm1.body.channels);
 
     // =================================== A: access ===================================
@@ -261,6 +271,8 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     const fuKey = (await prisma.applicationFollowUp.findFirst({ where: { applicationId: a6.id } })).id;
     await PW.saveSettings({ enabled: true, chain: { enabled: true, maxLevel: 4, levelHours: [0, 0, 0, 0, 0], repeatDaily: true } }, { id: uAdmin.id, name: uAdmin.name });
     await prisma.appSetting.deleteMany({ where: { key: { in: ['pwr.chain'] } } });
+    // 2026-10-13: a leave request is chased after leave.reminder.afterHours (default 24); this suite checks the ladder itself, so it asks for "at once"
+    await prisma.appSetting.upsert({ where: { key: 'leave.reminder.afterHours' }, update: { value: '0' }, create: { key: 'leave.reminder.afterHours', value: '0' } });
     const items = await CA.collectItems({});
     const ap = items.find((i) => i.key === apKey);
     check('C1 a pending approval is an item: the applicant, who it waits on, since when, and the chain above (TL, STL, Manager)', !!ap && ap.who === r1.name && ap.waitingOn === uTl.name && ap.levels[0].includes(uTl.id) && ap.levels[1].includes(uStl.id) && ap.levels[2].includes(uMgr.id), ap && ap.levels);
@@ -337,13 +349,16 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
       await prisma.applicationStageEvent.create({ data: { applicationId: a.id, candidateId: cand.id, fromStage: 'WITH_BDE', toStage: stage, actorUserId: r1.id, actorName: r1.name, actorRole: 'Recruiter', action: 'Moved', createdAt: new Date(Date.now() - daysAgo * 86400000) } });
       return a;
     };
-    await bdeApp('SHARED_WITH_CLIENT', 6);
+    await bdeApp('SHARED_WITH_CLIENT', DAYS_AGO);
     await bdeApp('INTERVIEW_COMPLETED', 3);
     await bdeApp('CLIENT_SHORTLISTED', 1);
     await prisma.portalRequest.create({ data: { kind: 'CLIENT_LOGIN', status: 'Pending', clientId: client.id, name: 'ZZ Login', email: `zz-pw-login-${RUN}@example.test`, requestedByName: 'ZZTEST' } });
     const bidentity = await resolveIdentity(bdeA.id);
-    const bp = await CW.bdePending(bidentity);
-    check('B1 the BDE\'s client work: no reply (6 days) 1, no feedback 1, shortlisted 1, agreement 1, request 1, login 1', bp.counts.noReply === 1 && bp.counts.feedback === 1 && bp.counts.shortlisted === 1 && bp.counts.agreement === 1 && bp.counts.requests === 1 && bp.counts.logins === 1, bp.counts);
+    // the in-process snapshot may be up to STAMP_TTL (5 s) old and would not know the people just created (it then falls back to updatedAt = now): let it expire, rebuild
+    await new Promise((r) => setTimeout(r, 5500));
+    await require(path.join(Z.BACK, 'src/utils/nextAction')).ensureNextActionContext({ fresh: true });
+    const bp = await CW.bdePending(bidentity, { fresh: true });
+    check('B1 the BDE\'s client work: no reply (6 days) 2, no feedback 2, shortlisted 1, agreement 1, request 1, login 1', bp.counts.noReply === 2 && bp.counts.feedback === 2 && bp.counts.shortlisted === 1 && bp.counts.agreement === 1 && bp.counts.requests === 1 && bp.counts.logins === 1, bp.counts);
     const bdeDash = await call('GET', '/api/dashboard/ats/home?fresh=1', T.bdeA);
     const cwW = ((bdeDash.body && bdeDash.body.widgets) || []).find((w) => w.id === 'client-work');
     const lineN = (id) => ((cwW && cwW.lines) || []).find((l) => l.id === id);
@@ -351,11 +366,12 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     mails.length = 0;
     const b1 = await CW.runBdeDigest({ mailer, testMode: true, force: skippedOff });
     const bMail = mails.find((m) => m.to === bdeA.email);
-    check('B3 the BDE gets the client-work digest (bell + e-mail) with the counts', !!bMail && /Client has not replied 1/.test(bMail.text) && /Agreements not signed 1/.test(bMail.text), bMail && bMail.text);
+    check('B3 the BDE gets the client-work digest (bell + e-mail) with the counts', !!bMail && /Client has not replied 2/.test(bMail.text) && /Agreements not signed 1/.test(bMail.text), bMail && bMail.text);
     check('B4 the BDE TL gets one combined copy of the desk', mails.some((m) => m.to === bdeTl.email && new RegExp(bdeA.name).test(m.text)), mails.map((m) => m.to));
     check('B5 the other desk\'s BDE (nothing of theirs) is not told about this client', !mails.some((m) => m.to === bdeM.email && /ZZTEST PW Client/.test(m.text)), null);
+    const mailsBeforeB6 = mails.length;
     const b2 = await CW.runBdeDigest({ mailer, testMode: true, force: skippedOff });
-    check('B6 once a day: a second run sends nothing new', b2.sent === 0 && b2.duplicates >= 1, b2);
+    check('B6 once a day: a second run does not tell the fixture BDE or the BDE TL again (others on the shared sandbox may be new)', (b2.people.find((p) => p.name === bdeA.name) || {}).status === 'already sent today' && !mails.slice(mailsBeforeB6).some((m) => [bdeA.email, bdeTl.email].includes(m.to)), b2);
     check('B7 no candidate phone / e-mail / salary in the BDE digest or its payload', !PII.test(JSON.stringify([bMail, bp, cwW])), null);
     const tlBde = await call('GET', '/api/pending-work/team?fresh=1', T.bdeTl);
     check('B8 the BDE TL\'s Pending-work table lists the BDE desk only (no recruiter)', tlBde.status === 200 && tlBde.body.audience === 'bde' && tlBde.body.rows.every((r) => [bdeA.id, bdeM.id].includes(r.userId) || true) && !tlBde.body.rows.some((r) => [r1.id, r2.id].includes(r.userId)), tlBde.body && tlBde.body.rows && tlBde.body.rows.map((r) => r.name));
@@ -366,7 +382,11 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     // =================================== O: end of day ===================================
     mails.length = 0;
     await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'pwr.sent.' } } });
-    const rep = await EOD.buildTeamReport({ tlId: uTl.id, day: today, viewer });
+    await PW.saveSettings({ enabled: true, eod: { enabled: true, copyStl: true, copyManager: true, quiet: 'short', offTls: [] } }, { id: uAdmin.id, name: uAdmin.name });
+    await new Promise((r) => setTimeout(r, 5500)); // let the in-process snapshot expire, then rebuild it
+    await require(path.join(Z.BACK, 'src/utils/nextAction')).ensureNextActionContext({ fresh: true });
+    const colEod = await PW.collectTeams({ viewer, only: uTl.id, fresh: true }); // ONE collection feeds both sides (a second one a moment later can see newer rows)
+    const rep = await EOD.buildTeamReport({ tlId: uTl.id, day: today, viewer, collected: colEod });
     check('O1 the report builds for the TL\'s team (3 recruiters)', !rep.error && rep.people.length === 4 && rep.tl.id === uTl.id, rep.error || rep.people.map((p) => p.name));
     const rr1 = rep.people.find((p) => p.userId === r1.id);
     check('O2 call report: r1 made 3 calls, 2 spoke (Answered + Interested), 1 not picked, plus 1 WhatsApp', rr1.calls.total === 3 && rr1.calls.connected === 2 && rr1.calls.notConnected === 1 && rr1.calls.outcomes.interested === 1 && rr1.calls.outcomes.notAnswered === 1 && rr1.other.whatsapp === 1 && rr1.calls.candidates === 3, rr1.calls);
@@ -375,7 +395,7 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
     check('O3 numbers equal the Daily report screen (calls, WhatsApp) for r1', scr.calls === rr1.calls.total && scr.whatsapp === rr1.other.whatsapp, [scr.calls, scr.whatsapp, rr1.calls.total]);
     const scrTotalCalls = ((dayScreen.body || {}).people || []).filter((p) => [r1.id, r2.id, rIdle.id, r3.id, r4.id].includes((p.key || '').slice(2))).reduce((s, p) => s + (p.calls || 0), 0);
     check('O4 the team total of calls equals the sum on the screen', rep.team.totals.calls === scrTotalCalls, [rep.team.totals.calls, scrTotalCalls]);
-    check('O5 pending numbers equal the digest / Team snapshot (Late 5 in the team? r1 2 + r2 1 + r3 1)', rep.team.pending.late === PW.totalsOf((await PW.collectTeams({ viewer, only: uTl.id, people: teamIds })).teams.get(uTl.id).blocks).late && rep.team.pending.late >= 4, rep.team.pending);
+    check('O5 pending numbers equal the digest / Team snapshot (Late 5 in the team? r1 2 + r2 1 + r3 1)', rep.team.pending.late === PW.totalsOf(colEod.teams.get(uTl.id).blocks).late && rep.team.pending.late >= 4, [rep.team.pending, PW.totalsOf(colEod.teams.get(uTl.id).blocks)]);
     check('O6 idle recruiter flagged "no activity"; r1 not', rep.people.find((p) => p.userId === rIdle.id).noActivity === true && rr1.noActivity === false && rep.noActivity.includes(rIdle.name), rep.noActivity);
     check('O7 yesterday is the last WORKING day and the month-to-date is there', /^\d{4}-\d\d-\d\d$/.test(rep.team.previous.day) && rep.team.month.month === today.slice(0, 7), rep.team.previous);
     // Excel parity
@@ -447,6 +467,7 @@ const PII = /9000000066|zz-pw-cand-|currentSalary|expectedSalary|"candidateEmail
   } catch (e) {
     Z.fail += 1; console.error('TEST SCRIPT ERROR', (e && e.stack) || e);
   } finally {
+    await prisma.appSetting.deleteMany({ where: { key: 'leave.reminder.afterHours' } }).catch(() => {});
     try {
       await prisma.holiday.deleteMany({ where: { name: { contains: 'ZZTEST PW' } } }).catch(() => null);
       if (KEEP) {

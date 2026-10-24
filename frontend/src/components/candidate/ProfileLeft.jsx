@@ -10,7 +10,9 @@
 // (pages/CandidateDetail.jsx). Data: GET /candidates/:id (scoped + redacted on
 // the server — salary is never sent to a client login).
 // ---------------------------------------------------------------------------
+import { useState } from 'react';
 import { protoDate } from '../../atsVocab';
+import { AddSalaryDialog } from '../SalaryFit.jsx'; // add / correct the salary (cleaned and checked on the server)
 import ResumePanel from '../resume/ResumePanel.jsx';
 import { SpecialisationSlot } from './ProfileSlots.jsx';
 import { ProfileTools } from './ProfileTop.jsx';
@@ -45,6 +47,7 @@ export function ResumeTabCard({ c }) {
 export default function ProfileLeft({
   c, user, internal, onChanged, onDeleted, slot,
 }) {
+  const [editSalary, setEditSalary] = useState(false);
   if (!c) return null;
   const skills = list(c.skills);
   const more = [...list(c.goodToHaveSkills), ...list(c.technicalSkills)].filter((s) => !skills.includes(s));
@@ -70,6 +73,8 @@ export default function ProfileLeft({
         <Row k="Experience" v={c.experienceYears != null ? `${c.experienceYears} yrs${c.relevantExperienceYears != null ? ` (${c.relevantExperienceYears} relevant)` : ''}` : ''} />
         {salaryShown && <Row k="Current CTC" v={c.currentSalary} />}
         {salaryShown && <Row k="Expected CTC" v={c.expectedSalary} />}
+        {salaryShown && internal && <button type="button" className="btn btn-sm" style={{ marginTop: 4 }} onClick={() => setEditSalary(true)}>{c.salaryMissing ? '+ Add salary' : 'Edit salary'}</button>}
+        {editSalary && <AddSalaryDialog candidateId={c.id} name={c.name} current={c.currentSalary || ''} expected={c.expectedSalary || ''} why="Write it as 4.5 LPA, or as an amount per month. It is saved as lakhs per year." onClose={() => setEditSalary(false)} onSaved={onChanged} />}
         <Row k="Notice period" v={c.noticePeriod} />
         {c.availability && <Row k="Availability" v={c.availability} />}
         <div className="pfl-label" style={{ marginTop: 10 }}>Skills</div>

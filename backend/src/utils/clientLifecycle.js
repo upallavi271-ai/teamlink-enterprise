@@ -85,6 +85,11 @@ function heldRoles(user) {
   return [u.role, u.atsRole, u.hrmsRole, u.accountsRole, sr.ats, sr.hrms, sr.accounts].filter(Boolean);
 }
 const isSuperAdmin = (user) => heldRoles(user).includes('SUPER_ADMIN');
+// THE BDE TEAM (user, 2026-10-16): every login whose ATS seat is BDE - a desk BDE and the BDE team lead (a TL of the BDE
+// department). Global logins (Super Admin / Admin) are not "the BDE team". Delete and the agreement open / close belong to them too.
+function isBdeTeam(user) {
+  try { return !scopeOf(user).global && (isBdeTl(user) || atsViewRole(user) === 'bde'); } catch { return false; }
+}
 
 async function allows(user, feature, action) {
   return can(user, null, 'clients', feature, action);
@@ -105,7 +110,12 @@ function isDeskBde(user) {
 }
 function ownsClient(user, client) {
   if (!isDeskBde(user)) return true;
-  return !!client && (scopeOf(user).bdeOwnClientIds || []).includes(client.id);
+  // USER RULE 2026-10-13: the whole BDE desk shares the desk's clients - a BDE acts on ANY client of their own desk department
+  // (and on the ones assigned to them); another department's desk stays blocked; the BDE TL covers all (isDeskBde false).
+  const s = scopeOf(user);
+  if (!client) return false;
+  if ((s.bdeOwnClientIds || []).includes(client.id) || (s.clientIds || []).includes(client.id)) return true;
+  return !!client.ownerDepartment && (s.bdeDeskDepartments || []).includes(client.ownerDepartment);
 }
 
 // The role-level answers, once per request.
@@ -125,8 +135,8 @@ async function baseRights(user) {
   ]);
   return {
     pauseEdit, pauseRequest, archive, resumeEdit, deactivateEdit, deactivateRequest, deleteRequest, ownerRequest, mergeRequest, approvalSubmit,
-    // DELETE IS SUPER ADMIN ONLY (binding) — whatever a catalog row says.
-    delete: del && isSuperAdmin(user),
+    // DELETE: Super Admin and (2026-10-16) the whole BDE team - inside their own clients (rightsFor) and with the same guards.
+    delete: del && (isSuperAdmin(user) || isBdeTeam(user)),
     fallback: false,
   };
 }
@@ -152,11 +162,15 @@ function rightsFor(user, client, base) {
     requestDeactivate: !internal && !deactivateOk && !!base.deactivateRequest && own && live,
     archive: !internal && base.archive && lc !== 'Archived',
     unarchive: base.archive && lc === 'Archived',
-    delete: !internal && base.delete,
+    delete: !internal && base.delete && (isSuperAdmin(user) || (own && deptOk)),
     // Delete is a REQUEST for a BDE: an Admin approves, the client is archived (soft delete), every record is kept.
     requestDelete: !internal && !base.delete && !base.archive && !!base.deleteRequest && own && lc !== 'Archived',
-    requestOwner: !internal && !!base.ownerRequest && own && lc !== 'Archived',
-    requestMerge: !internal && !!base.mergeRequest && own,
+    // User rule 2026-10-13: a BDE does everything client-related DIRECTLY except delete. Owner change and merge are direct now
+    // (the request flows stay in the code for roles that only hold a request tick elsewhere).
+    changeOwner: !internal && !!base.ownerRequest && own && lc !== 'Archived',
+    mergeNow: !internal && !!base.mergeRequest && own,
+    requestOwner: false,
+    requestMerge: false,
     submitApproval: !internal && !!base.approvalSubmit && own && lc !== 'Archived',
   };
 }
@@ -231,6 +245,7 @@ module.exports = {
   newWorkRefusal,
   newWorkRefusalFor,
   isSuperAdmin,
+  isBdeTeam,
   departmentOk,
   baseRights,
   rightsFor,

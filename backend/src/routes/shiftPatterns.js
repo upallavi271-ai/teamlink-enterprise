@@ -12,7 +12,7 @@ router.get('/', async (req, res) => {
   res.json(patterns);
 });
 
-router.post('/', requirePerm(null, 'hrms', 'Attendance & Time', 'create'), async (req, res) => {
+router.post('/', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Attendance & Time', 'create'), async (req, res) => {
   const { name, startTime, endTime } = req.body;
   if (!name || !startTime || !endTime) return res.status(400).json({ error: 'name, startTime and endTime are required' });
   const pattern = await prisma.shiftPattern.create({ data: { name, startTime, endTime } });
@@ -20,7 +20,7 @@ router.post('/', requirePerm(null, 'hrms', 'Attendance & Time', 'create'), async
   res.status(201).json(pattern);
 });
 
-router.put('/:id', requirePerm(null, 'hrms', 'Attendance & Time', 'edit'), async (req, res) => {
+router.put('/:id', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Attendance & Time', 'edit'), async (req, res) => {
   const { active } = req.body;
   const pattern = await prisma.shiftPattern.update({ where: { id: req.params.id }, data: { active } });
   res.json(pattern);

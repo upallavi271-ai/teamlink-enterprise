@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import api from '../api';
 import { JobPickerCombo } from './JobPicker.jsx';
 import { protoDate } from '../atsVocab';
+import { usePairCheck, AlreadyAppliedNotice } from './applications/AlreadyApplied.jsx';
 
 // ---------------------------------------------------------------------------
 // "CANDIDATE ALREADY EXISTS" (review #2 §12) — shown on the Add Candidate form
@@ -25,9 +26,12 @@ export default function CandidateDuplicatePanel({
   const [error, setError] = useState('');
   const [done, setDone] = useState({});
 
+  const lock = useRef(false);
   async function addTo(m) {
     const requirementId = reqFor[m.id] || defaultRequirementId;
     if (!requirementId) { setError('Choose the requirement to add them to.'); return; }
+    if (lock.current) return; // double click: one application only
+    lock.current = true;
     setBusy(m.id);
     setError('');
     try {
@@ -35,8 +39,10 @@ export default function CandidateDuplicatePanel({
       setDone((d) => ({ ...d, [m.id]: true }));
       if (onApplied) onApplied(m);
     } catch (err) {
-      setError(err.response?.data?.error || 'Could not add them to this requirement.');
+      // 'Already on this job': the box on screen says where; nothing more to show here.
+      if (!err.alreadyApplied) setError(err.response?.data?.error || 'Could not add them to this requirement.');
     } finally {
+      lock.current = false;
       setBusy('');
     }
   }
@@ -47,7 +53,7 @@ export default function CandidateDuplicatePanel({
         <>
           <div className="cdup-exists-title">This person is already on file</div>
           <div className="small-muted" style={{ marginBottom: 8 }}>
-            One person keeps one profile. Open it, or add them to a job — no second profile is made.
+            One person keeps one profile. Open it, or add them to a requirement — no second profile is made.
           </div>
           {matches.map((m) => (
             <div key={m.id} className="cdup-exists-card">
@@ -91,15 +97,13 @@ export default function CandidateDuplicatePanel({
                     <JobPickerCombo
                       value={reqFor[m.id] || defaultRequirementId || ''}
                       onChange={(e) => setReqFor((x) => ({ ...x, [m.id]: e.target.value }))}
-                      blank="Choose a job…"
+                      blank="Choose a requirement…"
                       disabledIds={m.applications.map((a) => a.requirementId)}
                     />
-                    <button type="button" className="btn btn-sm btn-primary" disabled={busy === m.id} onClick={() => addTo(m)}>
-                      {busy === m.id ? 'Adding...' : 'Add an application'}
-                    </button>
+                    <AddButton m={m} requirementId={reqFor[m.id] || defaultRequirementId || ''} busy={busy === m.id} onAdd={() => addTo(m)} />
                   </>
                 )}
-                {done[m.id] && <span className="status active">Added to the job</span>}
+                {done[m.id] && <span className="status active">Added to the requirement</span>}
               </div>
             </div>
           ))}
@@ -124,5 +128,19 @@ export default function CandidateDuplicatePanel({
       )}
       {error && <div className="error-text">{error}</div>}
     </div>
+  );
+}
+
+// The Add button + the 'already on this job' notice, shown BEFORE the click (one pair-check per picked job).
+function AddButton({ m, requirementId, busy, onAdd }) {
+  const check = usePairCheck(m.id, requirementId);
+  const stop = check.exists || !!check.blocked;
+  return (
+    <>
+      <button type="button" className="btn btn-sm btn-primary" disabled={busy || stop} onClick={onAdd}>
+        {busy ? 'Adding...' : 'Add an application'}
+      </button>
+      <div style={{ flexBasis: '100%' }}><AlreadyAppliedNotice check={check} name={m.name} /></div>
+    </>
   );
 }

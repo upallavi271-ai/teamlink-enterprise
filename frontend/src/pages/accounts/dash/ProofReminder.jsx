@@ -3,43 +3,31 @@ import { Link } from 'react-router-dom';
 import api from '../../../api';
 import DataTable from './DataTable.jsx';
 import AttachProofModal from './AttachProofModal.jsx';
+import ProofReminderAuto from './ProofReminderAuto.jsx';
 import { money, fmtD } from '../../invoices/invFormat';
 
 // 3. PROOF REMINDER (Accounts spec S8.3). Every PAID / RECEIVED record whose
 // proof document is missing, with a reminder to the record's accountant:
-//   in-app      sent by the server, never twice (utils/accountsControl.js)
+//   automatic   the daily summary (WhatsApp + email + bell, 9:30 AM and 5:00 PM India time) goes by itself; the manual 'Remind accountant'
+//               buttons were removed from this screen (2026-10-21), the API stays for emergencies (utils/accountsControl.js)
 //   WhatsApp    a wa.me link with the message ready — the person sends it
 //               from their own WhatsApp; the click is logged
 //   SMS         needs an SMS account (none connected)
-//   Email       behind a switch that is OFF
+//   Email       the daily WhatsApp + email reminders (card at the bottom; ON by default)
 const STATUS_TONE = {
   'Proof Missing': 'red', 'Reminder Pending': 'amber', 'Reminder Sent': 'amber', Resolved: 'green',
 };
 const when = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '—');
 
 export default function ProofReminder({
-  proof, filters, onChanged, flash,
+  proof, onChanged, flash,
 }) {
   const [show, setShow] = useState(''); // '' | 'missing' | 'all'
-  const [busy, setBusy] = useState('');
   const [attach, setAttach] = useState(null);
   const c = proof.counts;
   const link = (r) => (r.kind === 'invoice' ? `/invoices/${r.id}` : '/office');
   const fullText = (r) => `${r.message}\nLink: ${window.location.origin}${r.kind === 'invoice' ? `/invoices/${r.id}` : '/accounts/dashboard#proof'}`;
 
-  const remind = async (keys, what) => {
-    setBusy(keys ? keys[0] : 'all');
-    try {
-      const { data } = await api.post('/dashboard/accounts/control/remind', { keys: keys || [], filters });
-      const bits = [];
-      if (data.sent) bits.push(`${data.sent} reminder${data.sent === 1 ? '' : 's'} sent in the app`);
-      if (data.skipped) bits.push(`${data.skipped} already reminded today — not sent again`);
-      if (data.noAccountant) bits.push(`${data.noAccountant} with no accountant set`);
-      flash(bits.join(' · ') || `Nothing to remind ${what || ''}`.trim());
-      onChanged();
-    } catch (e) { flash(e.response?.data?.error || 'The reminder could not be sent.', 'red'); }
-    setBusy('');
-  };
   const whatsapp = (r) => {
     const url = `https://wa.me/${r.whatsappTo || ''}?text=${encodeURIComponent(fullText(r))}`;
     window.open(url, '_blank', 'noopener');
@@ -72,9 +60,6 @@ export default function ProofReminder({
       render: (r) => (
         <div className="acd-acts">
           <button type="button" className="btn btn-sm btn-primary" onClick={() => setAttach(r)}>Attach proof</button>
-          <button type="button" className="btn btn-sm" disabled={busy === r.key} onClick={() => remind([r.key])} title="An in-app reminder to the accountant — never sent twice">
-            {busy === r.key ? 'Sending…' : 'Remind'}
-          </button>
           <button type="button" className="btn btn-sm" onClick={() => whatsapp(r)} title="Opens WhatsApp with the message ready — you press send">Open WhatsApp</button>
           <span className="acd-pill grey" title="No SMS account is connected yet">SMS: needs SMS account</span>
         </div>
@@ -108,14 +93,11 @@ export default function ProofReminder({
         <span className="acd-pill amber">Reminder Sent · {c.byStatus['Reminder Sent'] || 0}</span>
         <span className="acd-pill green">Proof Attached / Resolved · {c.resolved}</span>
       </div>
+      <div className="small-muted" style={{ margin: '6px 0' }}>The reminders go out by themselves, every day. Nobody has to press a button. See the times and the last message sent in the card at the bottom.</div>
       <div className="acd-btns">
-        <button type="button" className="btn btn-primary" disabled={!c.missing || busy === 'all'} onClick={() => remind(null, 'here')}>{busy === 'all' ? 'Sending…' : 'Remind accountant'}</button>
         <button type="button" className="btn" disabled={!c.missing} onClick={() => setShow(show === 'missing' ? '' : 'missing')}>{show === 'missing' ? 'Hide missing proofs' : 'View missing proofs'}</button>
         <button type="button" className="btn" disabled={!c.missing} onClick={() => setShow('missing')} title="Pick the record in the list, then Attach proof">Attach proof</button>
         <button type="button" className="btn" onClick={() => setShow(show === 'all' ? '' : 'all')}>{show === 'all' ? 'Hide all' : 'View all'}</button>
-        <label className="acd-pill grey" title="Email reminders stay off until the company switches them on" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          <input type="checkbox" checked={false} disabled readOnly /> Email reminders: OFF
-        </label>
       </div>
       {(show === 'missing' || show === 'all') && (
         <DataTable
@@ -135,6 +117,7 @@ export default function ProofReminder({
           <DataTable columns={resolvedCols} rows={proof.resolved} rowKey={(r) => r.key} noun="resolved" empty="No proof has been attached in the last 90 days." />
         </>
       )}
+      <ProofReminderAuto flash={flash} />
       {attach && (
         <AttachProofModal
           rec={attach}

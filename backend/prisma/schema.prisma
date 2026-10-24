@@ -108,6 +108,8 @@ model User {
   // whether a reset is outstanding, and the lockout counters the login uses.
   passwordChangedAt     DateTime?
   passwordResetRequired Boolean   @default(false)
+  // 2026-10-24: a developer / system login that is not staff. No employee record; kept out of the dashboards' recent activity and login counts.
+  internalAccount       Boolean   @default(false)
   failedLoginCount      Int       @default(0)
   lockedUntil           DateTime?
   createdAt   DateTime  @default(now())
@@ -397,6 +399,10 @@ model Requirement {
   applications Application[]
   invoices     Invoice[]
   postings     RequirementPosting[] // Save & Post: one row per posting source
+  postingQueue   PostingQueue[] // job publishing engine (20261013120000_job_publish_queue)
+  postingLogs    PostingLog[]
+  portalPostings PortalPosting[]
+  distPostings   DistPosting[] // job distribution (20261014300000_job_distribution)
 
   // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
   @@index([clientId])
@@ -2483,6 +2489,8 @@ model CourseMaterial {
   durationSeconds Int?
   // Counts toward completion unless marked optional.
   required        Boolean @default(true)
+  // 2026-10-24: Approved | Pending | Rejected. Material added to a live course by a TL / HR is hidden from learners until the chain approves it.
+  approvalStatus  String  @default("Approved")
 
   progress CourseMaterialProgress[]
 
@@ -2590,6 +2598,9 @@ model PolicyDocument {
   category     String? // Policy | Compliance
   mandatory    Boolean  @default(false)
   published    Boolean  @default(true)
+  // 2026-10-24: Approved | Pending | Rejected. A TL / HR upload is Pending until the chain (TL -> ... -> Super Admin) approves it.
+  approvalStatus  String  @default("Approved")
+  pendingChannels String?
   target       String?  @default("All Employees")
   // AUDIENCE (utils/audience.js). Comma-separated department names and a
   // JSON array of Employee.ids. Both NULL = every employee, which is what
@@ -4732,4 +4743,239 @@ model CandidateAlias {
   createdAt   DateTime @default(now())
 
   @@index([candidateId])
+}
+
+// --- Job publishing engine (20261013120000_job_publish_queue) ------------------------------------
+// Publish one job to many portals (Naukri, Foundit, Shine, LinkedIn, the internal career page) through a database
+// queue + a separate worker (src/workers/postingWorker.js). Read and written with plain SQL (src/jobPublish/db.js),
+// so it works before or after prisma generate. DateTime = epoch milliseconds. Docs: docs/job-publishing/.
+model PostingQueue {
+  id              String       @id @default(cuid())
+  requirementId   String? // null for a credential check (VERIFY)
+  requirement     Requirement? @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  portal          String // naukri | foundit | shine | linkedin | career
+  action          String // PUBLISH | REPUBLISH | UNPUBLISH | UPDATE | VERIFY
+  status          String       @default("QUEUED") // QUEUED | RUNNING | SUCCEEDED | FAILED | NEEDS_HUMAN | DEAD | CANCELLED
+  attempts        Int          @default(0)
+  maxAttempts     Int          @default(3)
+  nextRunAt       DateTime     @default(now())
+  scheduledFor    DateTime?
+  lockedBy        String?
+  lockedAt        DateTime?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  payloadHash     String?
+  idempotencyKey  String       @unique
+  dryRun          Boolean      @default(false)
+  batchId         String?
+  requestedBy     String?
+  requestedByName String?
+  errorCode       String?
+  errorMessage    String?
+  retryable       Boolean      @default(false)
+  resultJson      String?
+  createdBy       String?
+  updatedBy       String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @default(now()) @updatedAt
+  logs            PostingLog[]
+
+  @@index([status, nextRunAt])
+  @@index([portal, status])
+  @@index([requirementId, portal])
+  @@index([batchId])
+  @@index([createdAt])
+}
+
+model PostingLog {
+  id             String        @id @default(cuid())
+  queueId        String?
+  queue          PostingQueue? @relation(fields: [queueId], references: [id], onDelete: Cascade)
+  requirementId  String?
+  requirement    Requirement?  @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  portal         String
+  step           String
+  level          String        @default("INFO") // INFO | WARN | ERROR
+  message        String // never a secret
+  screenshotPath String? // a file in the private screenshot folder (never in the repo)
+  durationMs     Int?
+  createdAt      DateTime      @default(now())
+
+  @@index([queueId, createdAt])
+  @@index([requirementId, createdAt])
+  @@index([portal, createdAt])
+}
+
+model PortalCredential {
+  id             String    @id @default(cuid())
+  portal         String
+  accountLabel   String    @default("default")
+  usernameEnc    String? // enc:v1: AES-256-GCM (utils/secrets.js)
+  passwordEnc    String?
+  secretEnc      String?
+  status         String    @default("UNVERIFIED") // CONNECTED | FAILED | UNVERIFIED | NEEDS_HUMAN | DISABLED
+  lastVerifiedAt DateTime?
+  lastError      String?
+  enabled        Boolean   @default(false) // the per-portal automation switch: default OFF
+  dailyLimit     Int?
+  hourlyLimit    Int?
+  minGapSeconds  Int?
+  createdBy      String?
+  updatedBy      String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
+
+  @@unique([portal, accountLabel])
+}
+
+model PortalMapping {
+  id          String   @id @default(cuid())
+  portal      String
+  field       String // employmentType | workMode | experience | salary | location | industry | functionalArea
+  atsValue    String
+  portalValue String
+  portalCode  String?
+  sortOrder   Int      @default(0)
+  active      Boolean  @default(true)
+  origin      String   @default("default") // default | admin
+  createdBy   String?
+  updatedBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@unique([portal, field, atsValue])
+  @@index([portal, field])
+}
+
+model PortalPosting {
+  id            String      @id @default(cuid())
+  requirementId String
+  requirement   Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  portal        String
+  status        String      @default("DRAFT") // DRAFT | QUEUED | PUBLISHED | FAILED | NEEDS_CHECK | UNPUBLISHED | EXPIRED
+  portalJobId   String?
+  portalUrl     String?
+  publishedAt   DateTime?
+  expiresAt     DateTime? // set only by a person (the schedule)
+  autoRepublish Boolean     @default(false) // only when a person chose it
+  lastError     String?
+  lastQueueId   String?
+  lastAction    String?
+  payloadHash   String?
+  verifiedAt    DateTime?
+  createdBy     String?
+  updatedBy     String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @default(now()) @updatedAt
+
+  @@unique([requirementId, portal])
+  @@index([portal, status])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Job distribution (migration 20261014300000_job_distribution). Written with plain SQL by src/jobDist/* (works before or after
+// `prisma generate`); declared here so the schema and the database agree.
+// ---------------------------------------------------------------------------
+model DistPlatform {
+  key           String   @id
+  name          String
+  kind          String   @default("semi") // auto | semi | manual
+  medium        String   @default("job_board")
+  format        String   @default("jd") // jd | short
+  postUrl       String?
+  maxChars      Int?
+  maxTitle      Int?
+  formatHint    String?
+  includeSalary Boolean  @default(true)
+  expiryDays    Int?
+  active        Boolean  @default(true)
+  builtin       Boolean  @default(false)
+  sortOrder     Int      @default(100)
+  updatedBy     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @default(now()) @updatedAt
+}
+
+model DistPosting {
+  id                 String      @id @default(cuid())
+  requirementId      String
+  requirement        Requirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  platform           String
+  state              String      @default("POSTED") // POSTED | TAKEN_DOWN (no row = not posted)
+  postUrl            String?
+  postedAt           DateTime?
+  postedById         String?
+  postedByName       String?
+  expiresAt          DateTime?
+  notes              String?
+  textOverride       String? // the text that was posted, kept for the record
+  reminderSentAt     DateTime?
+  expiryTaskId       String?
+  takedownState      String      @default("NONE") // NONE | ASKED | DONE
+  takedownTaskId     String?
+  takedownAskedAt    DateTime?
+  takedownDoneAt     DateTime?
+  takedownDoneByName String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @default(now()) @updatedAt
+
+  @@unique([requirementId, platform])
+  @@index([platform, state])
+  @@index([expiresAt])
+}
+
+// ---------------------------------------------------------------------------
+// Duplicate jobs (migration 20261013140000_job_duplicates). Written with plain SQL by utils/jobDupes.js / utils/jobMerge.js
+// (works before or after `prisma generate`); declared here so the schema and the database agree.
+// ---------------------------------------------------------------------------
+model JobDupDecision {
+  id            String   @id @default(cuid())
+  pairKey       String   @unique // the two job ids, sorted, joined with |
+  jobAId        String
+  jobBId        String
+  kind          String   @default("NOT_DUPLICATE")
+  reason        String?
+  door          String?
+  decidedById   String?
+  decidedByName String?
+  createdAt     DateTime @default(now())
+}
+
+model JobMergeLog {
+  id              String    @id @default(cuid())
+  keptId          String
+  extraId         String
+  clientId        String?
+  keptCode        String?
+  extraCode       String?
+  summary         String?
+  level           String?
+  status          String    @default("DONE") // DONE | UNDONE
+  openingsRule    String?
+  keptBefore      String? // JSON: the kept job's values before the merge
+  extraBefore     String? // JSON: the merged-away job as it was
+  moved           String? // JSON: id of every row that moved, per table
+  performedById   String?
+  performedByName String?
+  createdAt       DateTime  @default(now())
+  undoUntil       DateTime  @default(now())
+  undoneAt        DateTime?
+  undoneById      String?
+  undoneByName    String?
+
+  @@index([keptId])
+  @@index([extraId])
+  @@index([clientId])
+}
+
+model JobAlias {
+  oldId      String   @id
+  oldCode    String?
+  keptId     String
+  mergeLogId String?
+  createdAt  DateTime @default(now())
+
+  @@index([keptId])
+  @@index([oldCode])
 }

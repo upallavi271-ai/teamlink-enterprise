@@ -205,7 +205,7 @@ export default function CustomRoles({ roles, addSignal, onMeta, onChanged, onEdi
           <form id="custom-role-form" onSubmit={save}>
             {formError && <div className="error-text" style={{ marginBottom: 8 }}>{formError}</div>}
             <div className="grid-2">
-              <label className="field"><span>Role name *</span>
+              <label className="field"><span>Role name</span>
                 <input required maxLength={60} value={form.name} autoFocus placeholder="e.g. Senior Recruiter" onChange={(e) => set({ name: e.target.value })} />
               </label>
               <label className="field"><span>Status</span>

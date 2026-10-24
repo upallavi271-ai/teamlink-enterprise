@@ -278,6 +278,34 @@ if ($FrontendCopyCode -gt 7) {
 Write-Host "Frontend copied" -ForegroundColor Green
 
 # ------------------------------------------------------------
+# COPY THE JOB PORTAL (founder, 2026-10-15)
+#
+# The Job Portal is a SEPARATE app (job-portal-app: its own engine + its own
+# database) that the backend starts as a child process. Earlier deploys sent only
+# backend + frontend, so new Job Portal features never reached the VPS.
+# Sent: job_portal-main + embed (code only). NEVER sent: var (the portal's live
+# database on the VPS), node_modules (installed on the VPS), run (pid/log/heartbeat),
+# job_portal-v11 (the staged upgrade), the v10 backup folder.
+# ------------------------------------------------------------
+
+$LocalPortal = "$LocalRoot\job-portal-app"
+$PackagePortal = $false
+if (Test-Path "$LocalPortal\job_portal-main\package.json") {
+    Write-Host "Copying job portal (code only)..." -ForegroundColor Yellow
+    robocopy "$LocalPortal\job_portal-main" "$TempRoot\job-portal-app\job_portal-main" /E `
+        /XD node_modules "$LocalPortal\job_portal-main\var" .git `
+        /XF "*.log" "*.pid" "*.tmp" ".env" ".env.*" | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "Job portal copy failed. Robocopy exit code: $LASTEXITCODE" }
+    robocopy "$LocalPortal\embed" "$TempRoot\job-portal-app\embed" /E /XF "*.log" | Out-Null
+    if ($LASTEXITCODE -gt 7) { throw "Job portal embed copy failed. Robocopy exit code: $LASTEXITCODE" }
+    if (Test-Path "$TempRoot\job-portal-app\job_portal-main\var") { throw "The job portal database folder (var) must never be in the package." }
+    $PackagePortal = $true
+    Write-Host "Job portal copied" -ForegroundColor Green
+} else {
+    Write-Host "WARNING: job-portal-app\job_portal-main not found - the Job Portal will NOT be updated on the VPS." -ForegroundColor Yellow
+}
+
+# ------------------------------------------------------------
 # VERIFY IMPORTANT FRONTEND FILES
 # ------------------------------------------------------------
 
@@ -471,6 +499,49 @@ UPL=$(sed -n 's/^UPLOAD_DIR=//p' __VPSROOT__/backend/.env | tail -1 | tr -d '\04
 Write-Host "VPS .env preserved" -ForegroundColor Green
 
 # ------------------------------------------------------------
+# JOB PORTAL ON THE VPS
+# Code goes into <VpsRoot>/job-portal-app (overwriting files, never deleting the
+# portal's own var/ database). A copy of the old portal CODE is kept in the backup
+# folder. The backend's .env gets JOB_PORTAL_EMBED=1 and, only when missing, the
+# secrets the backend and the portal share (generated here, on the VPS).
+# ------------------------------------------------------------
+
+if ($PackagePortal) {
+    Write-Host ""
+    Write-Host "Updating the Job Portal on the VPS..." -ForegroundColor Cyan
+    $DeployStep = "updating the Job Portal"
+
+    $PortalCmd = @'
+set -e
+R=__VPSROOT__
+mkdir -p $R/job-portal-app
+if [ -d $R/job-portal-app/job_portal-main ]; then tar -czf __BACKUP__/job-portal-code.tar.gz -C $R/job-portal-app --exclude=node_modules --exclude=var --exclude=run . && echo OLD PORTAL CODE BACKED UP; fi
+cd __NEW__/job-portal-app && tar cf - . | (cd $R/job-portal-app && tar xf -)
+# 2026-10-22: the portal's own runtime (tools/dev-server.mjs: the embedded database @electric-sql/pglite, pg, js-yaml, smtp-server) is listed under
+# devDependencies in its package.json, so this root install MUST include them or the portal stops with "Cannot find package '@electric-sql/pglite'".
+cd $R/job-portal-app/job_portal-main && npm install --include=dev --no-audit --no-fund
+# 2026-10-22: the portal API (express, bcryptjs, ...) has its OWN package.json in api/ and its own node_modules (it is not a workspace of the root).
+# Without this the portal host stops with "Cannot find module 'express'" and /jobs does not answer after a deploy.
+cd $R/job-portal-app/job_portal-main/api && npm install --omit=dev --no-audit --no-fund
+ENVF=$R/backend/.env
+grep -q '^JOB_PORTAL_EMBED=' $ENVF || echo 'JOB_PORTAL_EMBED=1' >> $ENVF
+grep -q '^JOB_PORTAL_SYNC_TOKEN=' $ENVF || echo "JOB_PORTAL_SYNC_TOKEN=$(openssl rand -hex 24)" >> $ENVF
+grep -q '^JOB_PORTAL_PUSH_SECRET=' $ENVF || echo "JOB_PORTAL_PUSH_SECRET=$(openssl rand -hex 24)" >> $ENVF
+grep -q '^JOBPORTAL__AUTH_SECRET=' $ENVF || echo "JOBPORTAL__AUTH_SECRET=$(openssl rand -hex 32)" >> $ENVF
+echo JOB PORTAL CODE UPDATED
+'@
+    $PortalCmd = $PortalCmd.Trim().Replace("`r", "").Replace('__VPSROOT__', $VpsRoot).Replace('__BACKUP__', $RemoteBackup).Replace('__NEW__', $RemoteDeployNew)
+
+    ssh $VpsHost $PortalCmd
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Job portal update failed."
+    }
+
+    Write-Host "Job Portal code updated (its own database was not touched)" -ForegroundColor Green
+}
+
+# ------------------------------------------------------------
 # INSTALL BACKEND
 # ------------------------------------------------------------
 
@@ -582,6 +653,17 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "TeamLink answers its health check" -ForegroundColor Green
 
+# The Job Portal (own engine, own port): warning only, so a slow portal start never rolls back the main app.
+if ($PackagePortal) {
+    $PortalHealth = "for i in 1 2 3 4 5 6 7 8 9 10 11 12; do if curl -s -m 4 -o /dev/null -w '%{http_code}' http://127.0.0.1:4010/jobs/ | grep -q '^200'; then echo JOB PORTAL OK; exit 0; fi; sleep 5; done; echo JOB PORTAL NOT ANSWERING; tail -n 25 '$VpsRoot/job-portal-app/run/portal.log' 2>/dev/null; exit 1"
+    ssh $VpsHost $PortalHealth
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Job Portal answers at /jobs" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: the Job Portal did not answer at /jobs within 60 seconds. TeamLink itself is fine. See the log lines above (job-portal-app/run/portal.log on the VPS)." -ForegroundColor Yellow
+    }
+}
+
 # The same check through the public address (warning only: DNS / nginx are not this script's to fix).
 try {
     $Public = Invoke-WebRequest -Uri "https://teamlink.teamlinks.in/api/health" -UseBasicParsing -TimeoutSec 20
@@ -657,6 +739,7 @@ Write-Host "TeamLink PM2              : RESTARTED" -ForegroundColor Green
 Write-Host "PM2 save                  : DONE" -ForegroundColor Green
 Write-Host "VPS .env                  : PRESERVED" -ForegroundColor Green
 Write-Host "VPS backup                : $RemoteBackup" -ForegroundColor Yellow
+if ($PackagePortal) { Write-Host "Job Portal                : CODE UPDATED (its own database untouched)" -ForegroundColor Green }
 Write-Host "HRMS                      : NOT TOUCHED" -ForegroundColor Green
 Write-Host "Previous version kept at  : $OldBackend  (and $OldFrontend)" -ForegroundColor Yellow
 Write-Host "To go back to it          : .\deploy-local-to-vps.ps1 -RollbackTo $Date" -ForegroundColor Yellow

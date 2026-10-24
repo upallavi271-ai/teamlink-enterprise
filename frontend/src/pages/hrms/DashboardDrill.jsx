@@ -17,6 +17,7 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import ScrollTable from '../../components/ScrollTable.jsx';
 import './dashboard-drill.css';
 import '../attendance/half-leave-chip.css';
+import Combo from '../../components/Combo.jsx';
 
 // The Half day list: where the leave for the other half stands, as a plain colour chip.
 const HL_TONE = { Approved: 'green', 'Pending approval': 'orange', Rejected: 'red', 'No leave applied': 'red' };
@@ -174,10 +175,10 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
             <input type="search" placeholder="Search name, ID, department…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search this list" />
             <label className="hd-sortpick">
               Sort by
-              <select value={sort.key} onChange={(e) => setSort({ key: e.target.value, dir: 1 })}>
+              <Combo value={sort.key} onChange={(e) => setSort({ key: e.target.value, dir: 1 })}>
                 <option value="">Default</option>
                 {cols.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-              </select>
+              </Combo>
               {sort.key && <button type="button" className="btn btn-sm" onClick={() => setSort((s) => ({ ...s, dir: -s.dir }))}>{sort.dir === 1 ? 'A → Z' : 'Z → A'}</button>}
             </label>
             {q && <span className="small-muted">{rows.length} match{rows.length === 1 ? '' : 'es'}</span>}

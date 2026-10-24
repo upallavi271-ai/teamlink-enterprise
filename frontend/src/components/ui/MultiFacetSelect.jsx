@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import './MultiFacetSelect.css';
+import { matchesText, noMatchText } from '../searchMatch.js';
 
 // ---------------------------------------------------------------------------
 // A filter where SEVERAL options can be ticked, each with its count —
@@ -19,10 +20,13 @@ export default function MultiFacetSelect({
 }) {
   const [open, setOpen] = useState(false);
   const box = useRef(null);
+  const [q, setQ] = useState('');
+  const [act, setAct] = useState(0);
   const [flip, setFlip] = useState(false); // open towards the left when there is no room on the right
   const chosen = csvOf(value);
   useLayoutEffect(() => {
     if (!open || !box.current) return;
+    setQ(''); setAct(0);
     const r = box.current.getBoundingClientRect();
     setFlip(r.left + 270 > window.innerWidth);
   }, [open]);
@@ -44,6 +48,12 @@ export default function MultiFacetSelect({
     const order = list.map((o) => String(o.value));
     onChange(next.sort((a, b) => order.indexOf(a) - order.indexOf(b)).join(','));
   };
+  const shown = list.filter((o) => matchesText(o.label, q));
+  const hit = shown[Math.min(act, shown.length - 1)];
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); if (shown.length) setAct((i) => (i + (e.key === 'ArrowDown' ? 1 : -1) + shown.length) % shown.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (hit) toggle(String(hit.value)); }
+  };
   const labelOf = (v) => (list.find((o) => String(o.value) === v) || {}).label || v;
   const summary = !chosen.length ? allLabel
     : chosen.length <= 2 ? chosen.map(labelOf).join(', ')
@@ -58,12 +68,14 @@ export default function MultiFacetSelect({
       </button>
       {open && (
         <div className={`mfs-pop${flip ? ' is-flip' : ''}`} role="listbox" aria-multiselectable="true" aria-label={label}>
+          <input className="mfs-search" type="text" autoFocus autoComplete="off" value={q} placeholder="Type to search" aria-label={`Search ${label}`} onChange={(e) => { setQ(e.target.value); setAct(0); }} onKeyDown={onKey} />
           <div className="mfs-hint">Tick one or more</div>
-          {list.map((o) => {
+          {!shown.length && <div className="mfs-hint">{noMatchText(q)}</div>}
+          {shown.map((o) => {
             const v = String(o.value);
             const on = chosen.includes(v);
             return (
-              <label key={v} className={`mfs-item${on ? ' is-on' : ''}`} role="option" aria-selected={on}>
+              <label key={v} className={`mfs-item${on ? ' is-on' : ''}${q.trim() && o === hit ? ' is-act' : ''}`} role="option" aria-selected={on}>
                 <input type="checkbox" checked={on} onChange={() => toggle(v)} />
                 <span className="mfs-name">{o.label}</span>
                 <span className="mfs-n">{o.count !== undefined && o.count !== null ? nf(o.count) : ''}</span>

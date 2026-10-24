@@ -44,6 +44,7 @@ const XLSX = require('xlsx');
 const ExcelJS = require('exceljs');
 const prisma = require('../db');
 const { requireAuth, can } = require('../middleware/auth');
+const joinDayShared = require('../utils/joinDayShared');
 const { canMoveToStage } = require('../utils/permissions');
 const {
   atsScopeOf: scopeOf, scopeLabel, requirementWhere, clientWhere, applicationInScope, isAssignedTo, matches, candidateWhere,
@@ -55,7 +56,7 @@ const { ATS_IMPORT_SHEETS, LISTS } = require('../utils/importSpec');
 const { buildSheetTemplate } = require('../utils/importTemplate');
 const { internals } = require('./dataImport');
 const {
-  requirementIsLive, requirementStatusLabel, agreementIsActive, agreementStatusLabel, stageLabel,
+  requirementIsLive, requirementStatusLabel, requirementStatusUser, requirementStateWords, agreementIsActive, agreementStatusLabel, stageLabel,
 } = require('../utils/atsVocab');
 const { hiringTypeOf, INTERNAL_HIRE } = require('../utils/joining');
 // Spec 2026-10-03 §B — role rules, batches + undo, big exports, filter counts,
@@ -97,8 +98,9 @@ const { pushNotification } = require('../utils/notify');
 const CSRC = require('../utils/candidateSource'); // the clean source list
 
 const {
-  readSheet, buildIndex, HANDLERS, isDry, findCandidate,
+  readSheet, buildIndex, HANDLERS, isDry, findCandidate, contactMatch,
 } = internals;
+const candidateKeys = require('../utils/candidateDedupe');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -171,6 +173,14 @@ const ymd = (v) => {
   const d = new Date(v);
   return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10);
 };
+// The joining day of a candidate-list row as plain text ("12 Oct 2026"; one rule - utils/joinDayShared.js, already worked out on the row by
+// routes/candidates.js). A joined person with no day on file reads "Not recorded"; someone who has not joined: blank, or their planned day.
+const joiningText = (c) => {
+  const joined = ['JOINED', 'HIRED'].includes(c.currentStage) || !!c.joinedOther || (c.pipelineStatus === 'Joined');
+  if (c.joiningDay) return joinDayShared.dmy(c.joiningDay);
+  if (joined) return 'Not recorded';
+  return c.joiningPlanned ? `${joinDayShared.dmy(c.joiningPlanned)} (planned)` : '';
+};
 // A moment in India time — an interview slot is read as the wall clock.
 const when = (v) => {
   if (!v) return '';
@@ -222,17 +232,17 @@ const EXPORTS = {
     },
     columns: [
       ['Req Code', (r) => r.reqCode || ''],
-      ['Job Title', (r) => r.title],
+      ['Requirement Title', (r) => r.title],
       ['Client', (r) => clientOfReq(r)],
       ['Department', (r) => r.department || ''],
       ['Specialisation', (r) => r.specialisation || '', NO_PDF],
       ['Worked By', (r) => r.workedBy || ''],
       ['Position', (r) => r.workedByPosition || ''],
-      ['TL', (r) => r.tlName || ''],
+      ['TL', (r) => [r.tlName, ...(r.extraTlNames || [])].filter(Boolean).join(', ')],
       ['Co-recruiters', (r) => list(r.coRecruiterNames), NO_PDF],
       ['STL', (r) => r.stlName || '', NO_PDF],
       ['BDE', (r) => nm(r.bde), NO_PDF],
-      ['Status', (r) => requirementStatusLabel(r.status) || r.status || ''],
+      ['Status', (r) => requirementStatusUser(r.status) || r.status || ''],
       ['Priority', (r) => r.priority || '', NO_PDF],
       ['Openings', (r) => r.openings ?? ''],
       ['Filled', (r) => r.filled ?? '', NO_PDF],
@@ -261,7 +271,7 @@ const EXPORTS = {
       if (access && (access.sensitive || access.revenue) && clients.length) {
         const ids = clients.map((c) => c.id);
         const [rows, paid] = await Promise.all([
-          access.sensitive ? prisma.client.findMany({ where: { id: { in: ids } }, select: { id: true, pan: true, tan: true } }) : [],
+          access.sensitive && !require('../utils/agreementWorkflow').hidesHrFor(req.user) ? prisma.client.findMany({ where: { id: { in: ids } }, select: { id: true, pan: true, tan: true } }) : [], // PAN / TAN are Tax & billing (Purna Sir's section): never in a BDE desk's export
           access.revenue ? prisma.invoice.groupBy({ by: ['clientId'], where: { clientId: { in: ids }, status: { not: 'Cancelled' } }, _sum: { amount: true } }) : [],
         ]);
         extra = new Map(ids.map((id) => [id, {}]));
@@ -372,6 +382,9 @@ const EXPORTS = {
       ['Client', (c) => c.clientName || ''],
       ['Stage', (c) => c.currentStageLabel || stageLabel(c.currentStage) || ''],
       ['Pipeline Stage', (c) => c.stageGroupLabel || '', NO_PDF],
+      // The day the person joined, as plain text (12 Oct 2026). "Not recorded" for a joined person with no day on file; a person not
+      // joined yet is blank (or the planned day). One rule: utils/joinDayShared.js; the same value the list shows.
+      ['Joining date', (c) => joiningText(c)],
       ['Worked By', (c) => c.recruiterName || ''],
       ['Position', (c) => c.positionCode || ''],
       ['TL', (c) => c.tlName || ''],
@@ -445,8 +458,8 @@ const EXPORTS = {
         return [
           ['Req Code', (r) => r.reqCode || ''], ['Requirement', (r) => r.title], ['Client', (r) => clientOfReq(r)],
           ['Department', (r) => r.department || ''], ['Recruiter', (r) => nm(r.recruiter) || r.workedBy || ''],
-          ['Position', (r) => r.workedByPosition || ''], ['TL', (r) => r.tlName || ''], ['BDE', (r) => nm(r.bde)],
-          ['Status', (r) => requirementStatusLabel(r.status) || r.status],
+          ['Position', (r) => r.workedByPosition || ''], ['TL', (r) => [r.tlName, ...(r.extraTlNames || [])].filter(Boolean).join(', ')], ['BDE', (r) => nm(r.bde)],
+          ['Status', (r) => requirementStatusUser(r.status) || r.status],
         ];
       }
       if (tab === 'seats') {
@@ -579,7 +592,7 @@ const EXPORTS = {
   portal: {
     perm: ['requirements', 'Job Portal Workspace'],
     entity: 'Requirement',
-    what: (b) => (b.view === 'applications' ? 'Job Portal applications' : 'Job Portal jobs'),
+    what: (b) => (b.view === 'applications' ? 'Job Portal applications' : 'Job Portal requirements'),
     async load(req, b) {
       if (b.view === 'applications') return ((await screen(req, '/job-portal/applications')) || {}).applications || [];
       return ((await screen(req, '/job-portal/workspace')) || {}).jobs || [];
@@ -587,13 +600,13 @@ const EXPORTS = {
     columns: (b) => (b.view === 'applications'
       ? [
         ['Candidate', (a) => a.candidate], ['Email', (a) => a.email || ''], ['Phone', (a) => a.phone || '', NO_PDF],
-        ['Req Code', (a) => a.reqCode || ''], ['Job', (a) => a.job || ''], ['Client', (a) => a.client || ''],
+        ['Req Code', (a) => a.reqCode || ''], ['Requirement', (a) => a.job || ''], ['Client', (a) => a.client || ''],
         ['Department', (a) => a.department || ''], ['Source', (a) => a.sourceKey || a.source || '', NO_PDF],
         ['Stage', (a) => a.stageLabel || ''], ['Applied', (a) => ymd(a.appliedAt)],
         ['Imported to ATS', (a) => (a.imported ? ymd(a.importedAt) || 'Yes' : 'No')],
       ]
       : [
-        ['Req Code', (j) => j.reqCode || ''], ['Job Title', (j) => j.title], ['Client', (j) => j.client || ''],
+        ['Req Code', (j) => j.reqCode || ''], ['Requirement Title', (j) => j.title], ['Client', (j) => j.client || ''],
         ['Department', (j) => j.department || ''], ['Location', (j) => j.location || '', NO_PDF],
         ['Openings', (j) => j.openings ?? ''], ['Status', (j) => j.statusLabel || j.status || ''],
         ['Published', (j) => (j.published ? 'Yes' : 'No')], ['Published On', (j) => ymd(j.publishedAt), NO_PDF],
@@ -621,7 +634,7 @@ const EXPORTS = {
         ['Interview', (c) => when(c.interviewAt)], ['Shared On', (c) => ymd(c.sharedAt)],
       ]
       : [
-        ['Req Code', (r) => r.reqCode || ''], ['Job Title', (r) => r.title], ['Department', (r) => r.department || ''],
+        ['Req Code', (r) => r.reqCode || ''], ['Requirement Title', (r) => r.title], ['Department', (r) => r.department || ''],
         ['Location', (r) => r.location || ''], ['Openings', (r) => r.openings ?? ''], ['Live', (r) => (r.live ? 'Yes' : 'No')],
         ['Published', (r) => (r.published ? 'Yes' : 'No')], ['Shared Candidates', (r) => r.sharedCandidates ?? ''],
         ['Raised On', (r) => ymd(r.raisedAt)],
@@ -711,8 +724,8 @@ async function runExport(req, res) {
   // but EXPORTS only their own (assigned / Owner / second BDE) clients and the jobs of those clients (or naming them).
   {
     const CLc = require('../utils/clientLifecycle'); // eslint-disable-line global-require
-    if (CLc.isDeskBde(req.user) && (moduleId === 'clients' || moduleId === 'requirements')) {
-      const own = new Set(require('../utils/scope').scopeOf(req.user).bdeOwnClientIds || []); // eslint-disable-line global-require
+    if (false && CLc.isDeskBde(req.user) && (moduleId === 'clients' || moduleId === 'requirements')) { // 2026-10-13: the desk shares its clients; the screen's own scope is what is exported
+      const own = new Set(require('../utils/scope').scopeOf(req.user).clientIds || []); // eslint-disable-line global-require
       rows = moduleId === 'clients'
         ? rows.filter((r) => own.has(r.id))
         : rows.filter((r) => own.has(r.clientId) || (r.client && own.has(r.client.id)) || r.bdeId === req.user.id);
@@ -739,6 +752,10 @@ async function runExport(req, res) {
       if (flags.bde) columns = columns.filter((c) => !/^(internal feedback|score|ai.*|feedback)$/i.test(c[0]) || (moduleId === 'candidates'));
     }
   }
+  // AGREEMENTS ARE NOT FOR TLs / STLs / RECRUITERS / HR (2026-10-12): no agreement column, and no agreement word in a cell.
+  const AP = require('../utils/agreementPrivacy'); // eslint-disable-line global-require
+  const apBlind = AP.blindTo(req.user);
+  if (apBlind) columns = columns.filter((c) => !AP.AGREEMENT_COLUMN.test(c[0]));
   if (format === 'pdf') {
     if (rows.length > PDF_ROW_CAP) {
       throw new HttpError(400, { error: `${rows.length} rows is too many for a readable PDF (the limit is ${PDF_ROW_CAP}). Use Excel or CSV, or narrow the filters.` });
@@ -755,7 +772,7 @@ async function runExport(req, res) {
     headers: columns.map((c) => c[0]),
     rows: rows.map((r) => columns.map((c) => {
       const v = c[1](r);
-      return v === undefined ? '' : v;
+      return v === undefined ? '' : (apBlind ? AP.cleanCell(v) : v);
     })),
     sheet: what.slice(0, 31),
     entity: def.entity,
@@ -793,7 +810,7 @@ const KINDS = {
   clients: {
     label: 'Clients', mode: 'create', perm: ['clients', 'Bulk Import', 'create'], // clients role spec §3: Import = Admin only
     examples: [
-      { 'Client Name': 'Sample Client Pvt Ltd', Industry: 'Healthcare', 'Client Type': 'Direct', Status: 'Active', 'Owning Department': 'Medical', 'Primary Contact Name': 'Sample HR', 'Primary Contact Phone': '9000000001', 'Primary Contact Email': 'hr@sample-client.example.com', 'City / State': 'Telangana', City: 'Hyderabad', 'Fee %': 8.33, 'Agreement Status': 'DRAFT' },
+      { 'Client Name': 'Sample Client Pvt Ltd', Industry: 'Healthcare', 'Client Type': 'Direct', Status: 'Active', 'Owning Department': 'Medical', 'Primary Contact Name': 'Sample HR', 'Primary Contact Phone': '9000000001', 'Primary Contact Email': 'hr@sample-client.example.com', 'City / State': 'Telangana', City: 'Hyderabad', 'Fee %': 8.33, 'Agreement Status': 'Made' },
       { 'Client Name': 'Example Industries Pvt Ltd', Industry: 'Manufacturing', 'Client Type': 'Direct', Status: 'Active', 'Owning Department': 'Manufacturing', 'Primary Contact Name': 'Example Recruiter', 'Primary Contact Phone': '9000000002', 'Primary Contact Email': 'jobs@example-industries.example.com', 'City / State': 'Karnataka', City: 'Bengaluru' },
     ],
   },
@@ -807,8 +824,8 @@ const KINDS = {
   requirements: {
     label: 'Requirements', mode: 'create', perm: ['requirements', 'Bulk Import', 'create'], // requirements role spec §3: Admin + BDE
     examples: [
-      { 'Requirement Code': 'SAMPLE-0001', 'Job Title': 'Sample Staff Nurse', 'Client Name': 'Sample Client Pvt Ltd', Department: 'Medical', Status: 'OPEN', Priority: 'High', Openings: 2, 'Mandatory Skills': 'GNM, ICU', Location: 'Hyderabad', 'Closing Date': '31-12-2026' },
-      { 'Requirement Code': 'SAMPLE-0002', 'Job Title': 'Example Lecturer', 'Client Name': 'Example Industries Pvt Ltd', Department: 'Education', Status: 'DRAFT', Openings: 1 },
+      { 'Requirement Code': 'SAMPLE-0001', 'Requirement Title': 'Sample Staff Nurse', 'Client Name': 'Sample Client Pvt Ltd', Department: 'Medical', Status: 'OPEN', Priority: 'High', Openings: 2, 'Mandatory Skills': 'GNM, ICU', Location: 'Hyderabad', 'Closing Date': '31-12-2026' },
+      { 'Requirement Code': 'SAMPLE-0002', 'Requirement Title': 'Example Lecturer', 'Client Name': 'Example Industries Pvt Ltd', Department: 'Education', Status: 'OPEN', Openings: 1 },
     ],
   },
   candidates: {
@@ -914,12 +931,13 @@ const MODULE_OF_KIND = {
 //   null      — no import
 async function importModeOf(user, kindId) {
   if (!KINDS[kindId] && kindId !== 'resumes') return null;
-  const access = await ioAccessFor(user, MODULE_OF_KIND[kindId] || kindId, kindId);
-  if (access.importMode === 'request') return 'request';
-  if (access.importMode === 'direct') {
-    const perm = kindId === 'resumes' ? await can(user, 'ats', 'candidates', 'Add Candidate', 'create') : await mayImportPerm(user, kindId);
-    return perm ? 'direct' : null;
-  }
+  // EVERYBODY IMPORTS, DIRECTLY, NO APPROVAL (founder, 2026-10-23: "approval is not needed, anyone can import"). Every internal ATS login imports straight
+  // away; WHAT it may write is still judged row by row under its own scope (an update of a record outside the sender's area is an error row, and nothing
+  // is overwritten unless "Update existing" is ticked). The two closed doors from the privacy decisions stay: a recruiter has no Clients screen, and the agreement
+  // register is not for the roles that are blind to it. The older "send for approval" path stays in the code for an old pending request, but nothing offers it now.
+  const IO = require('../utils/ioAccess'); // eslint-disable-line global-require
+  const closed = (IO.roleOf(user) === 'RECRUITER' && ['clients', 'agreements'].includes(kindId)) || (kindId === 'agreements' && require('../utils/agreementPrivacy').blindTo(user)); // eslint-disable-line global-require
+  if (IO.isInternalRole(user) && !closed) return 'direct';
   return null;
 }
 async function mayImport(user, kindId) { return !!(await importModeOf(user, kindId)); }
@@ -934,7 +952,7 @@ const ALIASES = {
   'Requirement Code': ['reqcode', 'reqid', 'requirementid', 'jobcode', 'jobid', 'req', 'requirementno', 'reqno'],
   'Candidate Email or Phone': ['email', 'emailid', 'phone', 'mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'candidateemail', 'candidatephone', 'candidatemobile', 'contact', 'contactnumber'],
   'Full Name': ['name', 'candidatename', 'candidate', 'fullname'],
-  'Job Title': ['title', 'jobrole', 'position', 'designation', 'role', 'jobtitle', 'post'],
+  'Requirement Title': ['title', 'requirementtitle', 'jobrole', 'position', 'designation', 'role', 'jobtitle', 'post'],
   Email: ['emailid', 'mail', 'emailaddress', 'candidateemail'],
   Phone: ['mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'contactnumber', 'contactno', 'candidatephone'],
   Stage: ['pipelinestage', 'currentstage'],
@@ -1215,12 +1233,13 @@ const RULES = {
   },
 
   requirements: {
-    keyOf: (d, ix) => ix.norm(d.reqCode),
+    // no Requirement Code in the sheet: the same title for the same client, twice in one file, is the same requirement
+    keyOf: (d, ix) => (d.reqCode ? ix.norm(d.reqCode) : `t|${ix.ckey(d._client)}|${ix.norm(d.title)}`),
     // DUPLICATE = same requirement code, or the same job title for the same
     // client. Updated only with "Update existing" ticked, in scope.
     async guard(ctx, d, note) {
       const { ix, user } = ctx;
-      let id = ix.requirement.get(ix.norm(d.reqCode));
+      let id = d.reqCode ? ix.requirement.get(ix.norm(d.reqCode)) : null;
       let dupBy = id && !isDry(id) ? 'code' : null;
       const clientId = ix.client.get(ix.ckey(d._client));
       if (!dupBy && clientId && !isDry(clientId) && d.title) {
@@ -1243,7 +1262,20 @@ const RULES = {
         return null;
       }
       if (!clientId) throw new Error(`client "${d._client}" is not on file`);
-      const client = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, clientType: true } });
+      const client = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, clientType: true, ownerDepartment: true } });
+      if (!d.reqCode) note('no requirement code in the file: TeamLink gives it one');
+      // NO DEPARTMENT COLUMN (a real sheet often has none): the department of the client, else the one named in the sheet name
+      // ("Manufacturing All Requirements"), else the importer's own. Never a guess that could put it in somebody else's area.
+      if (!d.department) {
+        let dept = client && client.ownerDepartment;
+        let from = 'the department of the client';
+        if (!dept && ctx.sheetName) {
+          const hit = [...ix.department.keys()].filter((n) => n && ix.norm(ctx.sheetName).includes(n));
+          if (hit.length === 1) { dept = (await prisma.department.findMany({ select: { name: true } })).map((x) => x.name).find((x) => ix.norm(x) === hit[0]) || null; from = 'the sheet name'; }
+        }
+        if (!dept && ctx.s && ctx.s.atsDepartment) { dept = ctx.s.atsDepartment; from = 'your department'; }
+        if (dept) { d.department = dept; note(`Department "${dept}" taken from ${from}`); }
+      }
       // The assignment chain as ids, so scope can be judged before the write.
       const uid = (name) => { const u = name ? ix.user.get(ix.norm(name)) : null; return u && !isDry(u) ? u : null; };
       if (d.tl) { const t = uid(d.tl); if (t) d.tlId = t; else note(`TL "${d.tl}" has no login — kept as a name`); }
@@ -1281,10 +1313,19 @@ const RULES = {
 
   candidates: {
     keyOf: (d, ix) => ix.norm(d.email || d.phone || `ref:${d.externalRef}`),
+    // EVERY way of naming the person, so a row with the e-mail only and a later row with the phone only (or "+91 98765 43210" and
+    // "09876543210") are one person inside the file too, not just against what is already on file (founder 2026-10-24: duplicates).
+    keysOf: (d) => {
+      const out = [];
+      const e = candidateKeys.emailKey(d.email); if (e) out.push(`m:${e}`);
+      candidateKeys.phoneKeys(d.phone).forEach((k) => out.push(`t:${k}`));
+      if (d.externalRef) out.push(`r:${norm(d.externalRef)}`);
+      return out;
+    },
     async guard(ctx, d, note) {
       const { ix } = ctx;
       const hit = [d.email, d.phone, d.externalRef && `ref:${d.externalRef}`].filter(Boolean)
-        .map((v) => ix.candidate.get(ix.norm(v))).find(Boolean);
+        .map((v) => ix.candidate.get(ix.norm(v))).find(Boolean) || contactMatch(ix, d);
       const existing = hit && !isDry(hit) ? hit : null;
       let requirement = null;
       if (d._requirement) {
@@ -1525,7 +1566,7 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
   const ix = await buildIndex();
   const s = scopeOf(req.user);
   const ctx = {
-    req, user: req.user, s, global: s.global, dry, ix, reqCache: new Map(),
+    req, user: req.user, s, global: s.global, dry, ix, reqCache: new Map(), sheetName: prepared.sheet || '',
     mayApply: await can(req.user, 'ats', 'candidates', 'Applications', 'create'),
     // "Update existing records" ticked: a row matching a record on file
     // updates it (blank cells keep its values) instead of being skipped.
@@ -1547,11 +1588,13 @@ async function runImport(req, kindId, prepared, { dry, updateExisting = false })
     let key = '';
     try {
       key = rule.keyOf(data, ix);
-      if (key && seen.has(key)) {
+      const allKeys = rule.keysOf ? rule.keysOf(data, ix) : [];
+      if (!allKeys.length && key) allKeys.push(key);
+      if (allKeys.some((k) => seen.has(k))) {
         results.push({ row: fileRow, action: 'duplicate', message: 'the same record is on an earlier row of this file — skipped' });
         continue;
       }
-      if (key) seen.add(key);
+      allKeys.forEach((k) => seen.add(k));
       // eslint-disable-next-line no-await-in-loop
       const verdict = await rule.guard(ctx, data, note);
       if (verdict && verdict.skip) {
@@ -1679,8 +1722,21 @@ router.post('/import/:kind/errors', guarded(async (req, res) => {
   return res.send(out.buffer);
 }));
 
+// ONE IMPORT OF A KIND AT A TIME (founder 2026-10-24: "the same data repeats, duplicates"). Two imports started together (a double click, a slow
+// network retry, two people with the same sheet) each read the same picture of what is on file and both created the rows. They now queue: the second
+// starts after the first has finished and sees its rows, so every row of it is a duplicate. (One server process; PM2 runs one.)
+const importQueue = new Map();
+function inOrder(kind, fn) {
+  const run = (importQueue.get(kind) || Promise.resolve()).catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  importQueue.set(kind, tail);
+  tail.then(() => { if (importQueue.get(kind) === tail) importQueue.delete(kind); });
+  return run;
+}
+
 // One committed import: dry run first, then the real run as a BATCH.
-async function commitImport(req, kindId, prepared, filename, { updateExisting, partial, requestId = null, requestedBy = null }) {
+function commitImport(req, kindId, prepared, filename, opts) { return inOrder(kindId, () => commitImportNow(req, kindId, prepared, filename, opts)); }
+async function commitImportNow(req, kindId, prepared, filename, { updateExisting, partial, requestId = null, requestedBy = null }) {
   // CHECK FIRST, ALWAYS — the same rule as Data Import: a file with errors
   // writes nothing unless the user chose "import the valid rows, skip the rest".
   const dryRun = await runImport(req, kindId, prepared, { dry: true, updateExisting });
@@ -2000,7 +2056,7 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
           name: f.name, email: f.email || null, phone: f.phone || null, location: f.location || null,
           experienceYears: typeof f.experienceYears === 'number' ? f.experienceYears : null,
           noticePeriod: f.noticePeriod || null, currentSalary: f.currentSalary || null, expectedSalary: f.expectedSalary || null,
-          skills: f.skills || null, source: dupId ? null : srcPick, resumeName: meta.fileName,
+          skills: f.skills || null, source: dupId ? null : (typedSource ? typedSource.slice(0, 80) : srcPick), resumeName: meta.fileName, // a typed source goes through the clean list (unknown = Other, the typed words are kept as the first source)
         };
         // eslint-disable-next-line no-await-in-loop
         const action = await HANDLERS.candidate({ data, ix, dry: false, row: 0, note });
@@ -2046,10 +2102,11 @@ router.post('/resumes/commit', express.text({ type: () => true, limit: '2mb' }),
   return res.json({ totals, results, batch });
 }));
 
-router.get('/import/:kind/template', guarded(async (req, res) => {
+// THE TEMPLATE IS FOR EVERYBODY (founder, 2026-10-23): it holds only column names and made-up example rows, never a real record, so any ATS login may
+// download it (to fill it in, or to hand it to the person who may import). Importing itself is still checked by role.
+router.get('/import/:kind/template', require('../middleware/auth').requireProduct('ats'), guarded(async (req, res) => {
   const kindId = req.params.kind;
   if (!KINDS[kindId]) throw new HttpError(404, { error: 'Unknown import' });
-  if (!(await mayImport(req.user, kindId))) throw DENIED(`Importing ${KINDS[kindId].label.toLowerCase()}`);
   const spec = ATS_IMPORT_SHEETS[kindId];
   // Values on file for the free-text columns that must match a record.
   const known = {};

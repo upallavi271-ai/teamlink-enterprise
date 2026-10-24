@@ -7,12 +7,15 @@ const {
   teamRequirementWhere, UNASSIGNED_WHERE, isUnassigned, atsViewRole, clientPickerWhere, applicationWhere, isBdeTl: isBdeTlUser,
 } = require('../utils/scope');
 const { clientLevelFor } = require('../utils/clientRedact');
+const clientSearch = require('../utils/clientSearch');
+const OLD_CODES = require('../utils/requirementOldCode'); // EDU-/MED-/MFG-/ITR- codes from before the one REQ series: search only
 const { logAudit, logFieldChanges } = require('../utils/audit');
 const { listWorkers } = require('../utils/workers');
 const { bdeDirectory } = require('../utils/bdeSeats');
 const { notifyUsers } = require('../utils/notify');
 const { teamLeadUserIdsFor } = require('../utils/positionScope');
 const { MATCH_THRESHOLD, SUGGESTION_THRESHOLD, rankCandidates, computeMatch } = require('../utils/matching');
+const FB = require('../utils/fitBreakdown'); // the Fit breakdown (Resume · AI · Location · Salary) + who sees how much
 const bridge = require('../utils/jobPortalBridge');
 // user notes #7 — post to every source / take down everywhere (utils/jobPosting.js)
 const { autoPost, postingChannels } = require('../utils/jobPosting');
@@ -20,7 +23,7 @@ const { autoPost, postingChannels } = require('../utils/jobPosting');
 const { citiesOf, valuesInCities } = require('../utils/locationMatch');
 const {
   REQUIREMENT_STATUS_CODES, REQUIREMENT_LIVE_STATUSES, requirementIsLive,
-  agreementIsActive, normalizeAgreementStatus, applicationIsOverdue, requirementStatusLabel, stageLabel,
+  agreementIsActive, normalizeAgreementStatus, applicationIsOverdue, requirementStatusLabel, requirementStatusUser, requirementStateWords, stageLabel,
   isPortalSource,
 } = require('../utils/atsVocab');
 // Client Pause / Archive (spec 2026-10-03 §A): a paused or archived client
@@ -29,11 +32,16 @@ const { lifecycleOf: clientLifecycleOf, newWorkRefusal: clientNewWorkRefusal } =
 
 const router = express.Router();
 // Super Admin in any product role (utils/clientLifecycle.js isSuperAdmin).
-const { isSuperAdmin: isSuperAdminUser, isDeskBde } = require('../utils/clientLifecycle');
+const { isSuperAdmin: isSuperAdminUser, isDeskBde, isBdeTeam } = require('../utils/clientLifecycle');
 // ATS layout v3 — the job status chain shown to people (display only).
 const reqDisplay = require('../utils/requirementDisplayStatus');
+const RD = require('../utils/reqDepartments'); // a job can belong to several departments (2026-10-13)
+const RT = require('../utils/reqTeamLeads'); // a job can have several team leads (2026-10-14)
+const agreementPrivacy = require('../utils/agreementPrivacy'); // TL / STL / Recruiter / HR hear no agreement wording (2026-10-12)
 // B9.1: the duplicate-job rule (same client + title + location, still open) on the forms.
 const JD = require('../utils/jobDuplicates');
+// 2026-10-13: who may create a job (BDE team and above) + "Ask the client manager to add a job" for a TL / STL / Recruiter.
+const JC = require('../utils/jobCreateRule');
 
 // POSTED EVERYWHERE, TAKEN DOWN EVERYWHERE (user notes #7). After a
 // requirement is created, edited, bulk-changed or moves status, utils/
@@ -81,10 +89,23 @@ const isClient = (user) => scopeOf(user).role === 'CLIENT';
 //
 // One router.param covers EVERY /:id endpoint below — read and write alike —
 // so no route can forget to scope-check.
+// 2026-10-13: the whole BDE team of a desk shares the desk's jobs: a desk BDE opens and works a job of ANY client of their own desk department (not another desk's).
+async function deskBdeOwnsJob(user, record) {
+  if (!record || record.internal || !record.clientId || !isDeskBde(user)) return false;
+  const c = await prisma.client.findUnique({ where: { id: record.clientId }, select: { id: true, ownerDepartment: true } }).catch(() => null);
+  return !!c && require('../utils/clientLifecycle').ownsClient(user, c); // eslint-disable-line global-require
+}
 router.param('id', async (req, res, next, id) => {
-  const requirement = await prisma.requirement.findUnique({ where: { id } });
+  let requirement = await prisma.requirement.findUnique({ where: { id } });
+  // A merged-away job's old link / code opens the KEPT job (utils/jobMerge.js alias) - opening only, never a write on the wrong job.
+  if (req.method === 'GET') {
+    try {
+      const keptId = await require('../utils/jobMerge').aliasOf(id); // eslint-disable-line global-require
+      if (keptId && keptId !== id) { const kept = await prisma.requirement.findUnique({ where: { id: keptId } }); if (kept) { requirement = kept; req.params.id = kept.id; } }
+    } catch { /* aliases are a courtesy */ }
+  }
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
-  if (!matches(requirement, requirementWhere(req.user))) return res.status(403).json(OUT_OF_SCOPE);
+  if (!matches(requirement, requirementWhere(req.user)) && !(await deskBdeOwnsJob(req.user, requirement))) return res.status(403).json(OUT_OF_SCOPE);
   req.requirement = requirement;
   return next();
 });
@@ -132,7 +153,9 @@ async function requirementPermissions(user, record) {
   // request, as the client's BDE does for their own: every client job (never
   // TeamLink's own internal hiring) is theirs to work.
   const bdeTlOwns = !!record && !record.internal && isBdeTlUser(user);
-  const owned = chain || bdeTlOwns || (s.atsRole === 'STL' && !!record && matches(record, requirementWhere(user)));
+  // the whole BDE team of a desk shares the desk's jobs: a BDE works a colleague's client's job too (user, 2026-10-13)
+  const bdeDeskOwns = !!record && atsViewRole(user) === 'bde' && (matches(record, requirementWhere(user)) || await deskBdeOwnsJob(user, record));
+  const owned = chain || bdeTlOwns || bdeDeskOwns || (s.atsRole === 'STL' && !!record && matches(record, requirementWhere(user)));
   const viewRole = bdeTlOwns ? 'bde' : atsViewRole(user);
   const holdOnly = holdOnlyRole(user);
   // A TL may assign a requirement nobody is on yet (role spec §1: the
@@ -144,15 +167,21 @@ async function requirementPermissions(user, record) {
     edit: edit && owned,
     approve: approve && owned,
     // Role spec §7: a BDE may Close (not Reopen / Hold / Delete).
-    closeOnly: approve && owned && viewRole === 'bde',
+    closeOnly: false, // 2026-10-13: the BDE team has every job option but Delete
     // Per-role spec 2026-10-03: an Assistant Manager / STL may HOLD (and
     // resume from hold) — activating and closing are the Manager's.
     holdOnly: approve && owned && holdOnly,
     // Permanent delete: SUPER ADMIN ONLY (change list §5), never with people on it (DELETE /:id).
-    delete: s.global && isSuperAdminUser(user) && await can(user, 'ats', 'requirements', 'Requirement Detail', 'delete'),
+    // 2026-10-16: the BDE team deletes a job of their own area too (owned = the job is in their scope).
+    delete: ((s.global && isSuperAdminUser(user)) || (isBdeTeam(user) && owned)) && await can(user, 'ats', 'requirements', 'Requirement Detail', 'delete'),
+    // FULL EDIT (founder, 2026-10-16): Super Admin / Admin and the BDE team change EVERY field of a job at any stage, the client and the
+    // job type included (PUT /:id). TL / STL / Recruiter / HR / Manager keep their current limits.
+    fullEdit: edit && owned && (s.global || isBdeTeam(user)),
     assignUnclaimed: assign && unclaimed,
     assign: assign && owned,
-    share: share && (chain || bdeTlOwns),
+    // a TL / STL / Recruiter cannot edit or close a job: "Ask the client manager to edit or close this job" (2026-10-13)
+    askChange: view && JC.mayAskToAdd(user),
+    share: share && (chain || bdeTlOwns || bdeDeskOwns),
     export: exportable,
     pipeline,
     pipelineEdit,
@@ -374,7 +403,7 @@ async function viewerPolicy(user) {
   ]);
   const requestJob = await can(user, 'ats', 'requirements', 'Requirement Request', 'create');
   // Permanent delete: Super Admin only (change list 2026-10-03 §5).
-  del = del && isSuperAdminUser(user);
+  del = del && (isSuperAdminUser(user) || isBdeTeam(user));
   const level = clientLevelFor(user);
   return {
     role,
@@ -387,8 +416,10 @@ async function viewerPolicy(user) {
     invoiceAmounts: commercial && ['admin', 'mgmt', 'accounts'].includes(role),
     // §6 — the bulk checkbox is Admin, TL and BDE only.
     bulk: ['admin', 'tl', 'bde'].includes(role),
-    // 'request' (2026-10-03): a BDE asks for a job instead of creating one.
-    buttons: { add: create, request: !create && requestJob, import: bulkImport, template: bulkImport, export: exportable },
+    // 'request' (2026-10-03): a BDE asks for a job instead of creating one. 2026-10-13: creating a job is the BDE
+    // team's and above (utils/jobCreateRule.js): 'add' = Admin / HR (internal), 'request' = BDE, BDE TL, Manager, Asst
+    // Manager, 'ask' = a TL / STL / Recruiter asks the client manager to add one.
+    buttons: { add: create, request: !create && requestJob, ask: JC.mayAskToAdd(user), import: bulkImport, template: bulkImport, export: exportable },
     sections: {
       // A Manager / Assistant Manager edits jobs in their own scope now
       // (per-role spec 2026-10-03) — no longer the view-only reading.
@@ -397,7 +428,7 @@ async function viewerPolicy(user) {
       pipeline: role === 'recruiter' ? 'own' : role === 'tl' ? 'team' : role === 'accounts' ? 'view' : 'all',
       commercial,
       assign,
-      close: del ? 'all' : (approve && role === 'bde' ? (isDeskBde(user) ? 'ask' : 'close') : (approve && holdOnlyRole(user) ? 'hold' : (approve ? 'all' : null))),
+      close: del ? 'all' : (approve && role === 'bde' ? 'close' : (approve && holdOnlyRole(user) ? 'hold' : (approve ? 'all' : null))),
       delete: del,
     },
   };
@@ -618,7 +649,7 @@ async function listWhere(req) {
   const where = { AND: [requirementWhere(req.user)] };
   const and = where.AND;
 
-  if (q.department) and.push({ department: q.department });
+  if (q.department) and.push(RD.deptArm(String(q.department).split(',')));
   // spec D: Qualification / Specialization filters (master ids).
   if (q.qualificationId) and.push({ qualificationId: q.qualificationId === 'none' ? null : q.qualificationId });
   if (q.specialisationId) and.push({ specialisationId: q.specialisationId === 'none' ? null : q.specialisationId });
@@ -634,7 +665,10 @@ async function listWhere(req) {
   if (q.tlId) {
     // A TL's jobs include the jobs of the department they are the ONE team lead of.
     const own = defaultTl.departmentsOfSingleTl(String(q.tlId));
-    and.push(own.length ? { OR: [{ tlId: q.tlId }, { tlId: null, department: { in: own } }] } : { tlId: q.tlId });
+    // a job matches when ANY of its team leads is the one asked for (several TLs can be comma-separated)
+    const tlList = String(q.tlId).split(',').map((x) => x.trim()).filter(Boolean);
+    const tlArm = RT.tlArm(tlList);
+    and.push(own.length ? { OR: [tlArm, { tlId: null, department: { in: own } }] } : tlArm);
   }
   // BY THE PERSON WHO DID THE WORK, login or not. Imported tracker work is
   // attributed on the follow-ups (ownerName / tlName) — a recruiter who has
@@ -654,6 +688,12 @@ async function listWhere(req) {
   if (q.bdeId) and.push({ bdeId: q.bdeId });
   // ?postWait=1 — live jobs that wait for a person to post them by hand on a board (Save & Post, 2026-10-10).
   if (q.postWait === '1') and.push(require('../utils/jobConnectors').waitingHandWhere()); // eslint-disable-line global-require
+  // ?postedOn=any | none | naukri | foundit | shine | linkedin | career: jobs really posted on that site (PortalPosting PUBLISHED), 2026-10-13.
+  if (q.postedOn && !isClient(req.user)) {
+    const po = await require('../jobPublish/postedOn').idsFor(String(q.postedOn)).catch(() => null); // eslint-disable-line global-require
+    if (po && po.include) and.push({ id: { in: po.include } });
+    else if (po && po.exclude) and.push({ id: { notIn: po.exclude } });
+  }
   // A BDE without a login today, by the name their work is recorded under.
   if (q.bdeName) {
     and.push({ OR: [
@@ -671,7 +711,7 @@ async function listWhere(req) {
       // eslint-disable-next-line no-await-in-loop
       const holderUserId = await seatHolderUserId(code);
       arms.push({ positionCode: code });
-      if (holderUserId) arms.push({ recruiterId: holderUserId }, { recruiterIds: { contains: holderUserId } }, { tlId: holderUserId });
+      if (holderUserId) arms.push({ recruiterId: holderUserId }, { recruiterIds: { contains: holderUserId } }, RT.tlArm([holderUserId]));
     }
     and.push({ OR: arms.length ? arms : [{ positionCode: q.positionCode }] });
   }
@@ -700,6 +740,8 @@ async function listWhere(req) {
     and.push({ status: { in: REQUIREMENT_LIVE_STATUSES } });
     and.push({ OR: [{ targetDate: { gte: today, lte: in7 } }, { closingDate: { gte: today, lte: in7 } }] });
   }
+  // The New button: posted in the last 7 days (a date typed wrongly in the future is left out).
+  if (q.fresh === '1') and.push({ createdAt: { gte: new Date(Date.now() - 7 * 86400000), lte: new Date(Date.now() + 86400000) } });
   if (q.nocand === '1') and.push({ applications: { none: {} } });
   if (q.unassigned === '1') and.push(UNASSIGNED_WHERE);
   // The screen's role chip (My Team / Unassigned / My Clients …) for an
@@ -710,12 +752,13 @@ async function listWhere(req) {
   }
   // The Agreement Pending tab as a filter — so an export of that tab
   // (routes/atsIo.js, which only knows all / open / closed) is that tab.
-  if (q.agreement === 'pending') and.push(AGREEMENT_PENDING_WHERE);
-  if (q.status === 'LIVE') and.push({ status: { in: REQUIREMENT_LIVE_STATUSES } });
-  else if (q.status) and.push({ status: q.status });
+  // (not for a TL / STL / Recruiter / HR: the filter would tell them which jobs wait for an agreement - 2026-10-12)
+  if (q.agreement === 'pending' && !agreementPrivacy.blindTo(req.user)) and.push(AGREEMENT_PENDING_WHERE);
+  if (q.status === 'LIVE' || q.status === 'OPEN') and.push({ status: { not: 'CLOSED' } }); // Open = every stored status except CLOSED (2026-10-13; LIVE is the old spelling)
+  else if (q.status && !(q.status === 'AGREEMENT_CHECK' && agreementPrivacy.blindTo(req.user))) and.push({ status: q.status });
   // ?dstatus= — the status chain people see (Draft · Agreement Approved ·
   // Assigned · Open · On Hold · Filled · Closed), utils/requirementDisplayStatus.js.
-  if (q.dstatus && reqDisplay.DISPLAY_WHERE[q.dstatus]) and.push(reqDisplay.DISPLAY_WHERE[q.dstatus]);
+  if (q.dstatus && reqDisplay.normKey(q.dstatus)) and.push(reqDisplay.DISPLAY_WHERE[reqDisplay.normKey(q.dstatus)]);
   if (q.from) and.push({ createdAt: { gte: new Date(`${q.from}T00:00:00.000Z`) } });
   if (q.to) and.push({ createdAt: { lte: new Date(`${q.to}T23:59:59.999Z`) } });
   // SEARCH EVERYTHING on the row (user 2026-10-03): job title, REQ ID,
@@ -724,9 +767,9 @@ async function listWhere(req) {
   if (q.search) {
     const s = String(q.search).trim();
     and.push({ OR: [
-      { title: { contains: s } }, { skills: { contains: s } }, { reqCode: { contains: s } },
+      { title: { contains: s } }, { skills: { contains: s } }, { reqCode: { contains: s } }, await OLD_CODES.idTerm(s), // an old code (MED-2835) still finds it
       { department: { contains: s } }, { tl: { contains: s } }, { stl: { contains: s } }, { location: { contains: s } },
-      { client: { name: { contains: s } } },
+      await clientSearch.clientRelationTerm(s), // the client's official name OR an old name (ClientAlias)
       { recruiter: { name: { contains: s } } },
       { bde: { name: { contains: s } } },
     ] });
@@ -762,6 +805,9 @@ async function listWhere(req) {
 // ---------------------------------------------------------------------------
 const LIVE_WHERE = { status: { in: REQUIREMENT_LIVE_STATUSES } };
 const NOT_LIVE_WHERE = { status: { notIn: REQUIREMENT_LIVE_STATUSES } };
+// THE TWO STATES PEOPLE SEE (2026-10-13): Open = every stored status except CLOSED; Closed = CLOSED.
+const OPEN_WHERE = { status: { not: 'CLOSED' } };
+const CLOSED_WHERE = { status: 'CLOSED' };
 function roleViewDefs(user, q = {}) {
   const role = atsViewRole(user);
   const me = user.id;
@@ -769,15 +815,15 @@ function roleViewDefs(user, q = {}) {
   const team = teamRequirementWhere(user);
   const V = {
     all: { key: 'all', label: 'All', hint: 'Every requirement in your scope', where: null, test: () => true },
-    open: { key: 'open', label: 'Open', hint: 'Live: Open, Recruiter Assigned, Sourcing, Candidates Available', where: LIVE_WHERE, test: live },
-    closed: { key: 'closed', label: 'Closed', hint: 'Not live: Draft, Agreement Check, On Hold, Closed', where: NOT_LIVE_WHERE, test: (r) => !live(r) },
+    open: { key: 'open', label: 'Open', hint: 'Requirements that are open', where: OPEN_WHERE, test: (r) => r.status !== 'CLOSED' },
+    closed: { key: 'closed', label: 'Closed', hint: 'Requirements that are closed', where: CLOSED_WHERE, test: (r) => r.status === 'CLOSED' },
     mine: { key: 'mine', label: 'My Requirements', hint: 'Requirements you are named on — recruiter, co-recruiter, TL, STL or BDE', where: mineWhere(me), test: (r) => isMineRow(r, me) },
     // "NEEDS A RECRUITER" (change list 2026-10-03 §5, the old "Unassigned"
     // chip renamed; key kept so old links work): open jobs that HAVE a TL but
     // no recruiter — the TL's tool. "NEEDS A TL": open jobs with no TL at all
     // — Admin / Manager / STL assign a department TL first.
-    unassigned: { key: 'unassigned', label: 'Needs a recruiter', hint: 'Open jobs with a TL but no recruiter yet — tick them and press Assign recruiter', where: { AND: [NEEDS_RECRUITER_WHERE, LIVE_WHERE] }, test: (r) => needsRecruiter(r) && live(r) },
-    needstl: { key: 'needstl', label: 'Needs a TL', hint: 'Open jobs with no TL yet — tick them and press Assign TL', where: { AND: [NEEDS_TL_WHERE, LIVE_WHERE] }, test: (r) => !effectiveTl(r) && live(r) },
+    unassigned: { key: 'unassigned', label: 'Needs a recruiter', hint: 'Open requirements with a TL but no recruiter yet — tick them and press Assign recruiter', where: { AND: [NEEDS_RECRUITER_WHERE, LIVE_WHERE] }, test: (r) => needsRecruiter(r) && live(r) },
+    needstl: { key: 'needstl', label: 'Needs a TL', hint: 'Open requirements with no TL yet — tick them and press Assign TL', where: { AND: [NEEDS_TL_WHERE, LIVE_WHERE] }, test: (r) => !effectiveTl(r) && live(r) },
     team: { key: 'team', label: 'My Team', hint: "Requirements assigned to you and your team's recruiters", where: team, test: (r) => matches(r, team) },
     myclients: { key: 'myclients', label: 'My Clients', hint: 'Requirements of the clients you own', where: null, test: () => true },
     joined: { key: 'joined', label: 'Joined / Billing', hint: 'Requirements with joined candidates — the ones that bill', where: null, test: () => true },
@@ -842,9 +888,9 @@ const needsRecruiter = (r) => !!r && !!effectiveTl(r) && !r.recruiterId && !csv(
 // "MY" as a where — the ?mine=1 filter and the My Requirements tab (review
 // #3 §4) share it, so the tab count and the tab's rows can never disagree.
 const mineWhere = (me) => ({ OR: [
-  { recruiterId: me }, { recruiterIds: { contains: me } }, { tlId: me }, { stlId: me }, { bdeId: me },
+  { recruiterId: me }, { recruiterIds: { contains: me } }, RT.tlArm([me]), { stlId: me }, { bdeId: me },
 ] });
-const isMineRow = (r, me) => [r.recruiterId, r.tlId, r.stlId, r.bdeId].includes(me) || csv(r.recruiterIds).includes(me);
+const isMineRow = (r, me) => [r.recruiterId, r.tlId, r.stlId, r.bdeId].includes(me) || csv(r.recruiterIds).includes(me) || RT.extrasOf(r.id).includes(me);
 
 // §2 — the AGREEMENT PENDING tab: held at Agreement Check, or a client
 // requirement that is not closed while its client's agreement is not Active
@@ -969,6 +1015,9 @@ async function enrichRows(found, user, { activity = false } = {}) {
       // The department's ONE team lead stands in for an empty TL (default TL).
       tlName: r.tlId ? (people.get(r.tlId) || r.tl || null) : ((defaultTl.defaultFor(r.department) || {}).name || r.tl || null),
       tlIsDefault: !r.tlId && !!defaultTl.defaultFor(r.department),
+      // SEVERAL TEAM LEADS (2026-10-14): tlId stays the main one; the rest are 'also assigned'.
+      extraTlIds: RT.extrasOf(r.id),
+      extraTlNames: RT.extrasOf(r.id).map((id) => people.get(id)).filter(Boolean),
       bdeLabel: bdeDir && r.bde ? bdeDir.pickerLabelFor(r.bde.name) : null,
       stlName: people.get(r.stlId) || r.stl || null,
       coRecruiterNames: csv(r.recruiterIds).map((id) => people.get(id)).filter(Boolean),
@@ -980,6 +1029,7 @@ async function enrichRows(found, user, { activity = false } = {}) {
       filled,
       remaining: Math.max(0, (r.openings || 1) - filled),
       live: requirementIsLive(r.status),
+      departments: RD.departmentsOf(r), // [primary, ...extras] (2026-10-13)
     };
     // §13 / §14 — beside the status, never instead of it.
     const stages = apps.map((a) => a.stage);
@@ -1106,7 +1156,7 @@ router.get('/', async (req, res) => {
   // say "of N total". No view asked for (first load) = the role's default.
   const defs = roleViewDefs(req.user, q);
   const viewDef = defs.views.find((v) => v.key === q.view)
-    || (q.view === 'agreement' ? defs.byKey.agreement : null)
+    || (q.view === 'agreement' && !agreementPrivacy.blindTo(req.user) ? defs.byKey.agreement : null)
     || defs.views.find((v) => v.key === defs.defaultView);
   const view = viewDef.key;
   const scopeW = requirementWhere(req.user);
@@ -1195,16 +1245,27 @@ router.get('/', async (req, res) => {
   const rows = await enrichRows(found, req.user, { activity: true });
   // Save & Post: "Posted on 2/6 sites" + how many sites wait for a person, per row and in the scope.
   let postWait = 0;
+  let postedCounts = null;
   if (!isClient(req.user)) {
     const jc = require('../utils/jobConnectors'); // eslint-disable-line global-require
     const postSum = await jc.listSummaries(rows).catch(() => new Map());
     rows.forEach((r) => { const s = postSum.get(r.id); if (s) r.posting = s; });
-    postWait = await prisma.requirement.count({ where: { AND: [scopeW, jc.waitingHandWhere()] } }).catch(() => 0);
+    // 'Posted on' chips from the publishing engine: one entry per site that has a real row (Posted / Queued / Needs your help / Failed).
+    try {
+      const po = require('../jobPublish/postedOn'); // eslint-disable-line global-require
+      const mine = await po.forRows(rows.map((r) => r.id));
+      rows.forEach((r) => { r.postedOn = mine.get(r.id) || []; });
+      const access = require('../jobPublish/access'); // eslint-disable-line global-require
+      postedCounts = await po.counts(await access.scopedIds(req.user));
+    } catch { /* the publishing tables may not exist yet */ }
+    // The by-hand posting tasks are for people who may post (not a Recruiter: user, 2026-10-12).
+    if (await can(req.user, 'ats', 'requirements', 'Job Posting', 'edit')) postWait = await prisma.requirement.count({ where: { AND: [scopeW, jc.waitingHandWhere()] } }).catch(() => 0);
   }
   const policy = await viewerPolicy(req.user);
   return res.json({
     rows, total, page, pageSize, pages, sort, dir, view,
     counts: { ...counts, filtered: all, scopeTotal, postWait },
+    postedCounts,
     // The screen draws exactly these chips, in this order (role spec §4).
     views: defs.views.map((v) => ({ key: v.key, label: v.label, hint: v.hint })),
     defaultView: defs.defaultView,
@@ -1243,7 +1304,7 @@ router.get('/picker', async (req, res, next) => {
     else and.push({ status: { not: 'CLOSED' } });
     if (q.clientId) and.push({ clientId: String(q.clientId) });
     const s = String(q.q || '').trim();
-    if (s) and.push({ OR: [{ title: { contains: s } }, { reqCode: { contains: s } }, { client: { name: { contains: s } } }] });
+    if (s) and.push({ OR: [{ title: { contains: s } }, { reqCode: { contains: s } }, await OLD_CODES.idTerm(s), await clientSearch.clientRelationTerm(s)] });
     const where = { AND: and };
     const limit = Math.min(100, Math.max(1, Number(q.limit) || 30));
     const [found, total] = await Promise.all([
@@ -1404,6 +1465,7 @@ async function peopleFor(rows) {
   rows.forEach((r) => {
     [r.tlId, r.stlId].forEach((id) => id && ids.add(id));
     csv(r.recruiterIds).forEach((id) => ids.add(id));
+    RT.extrasOf(r.id).forEach((id) => ids.add(id)); // extra team leads
   });
   if (!ids.size) return new Map();
   const users = await prisma.user.findMany({ where: { id: { in: [...ids] } }, select: { id: true, name: true } });
@@ -1439,7 +1501,8 @@ async function assignableWhere(user) {
     // assignee. SQLite LIKE is case-insensitive for ASCII.
     NOT: [{ name: { contains: 'zztest' } }, { email: { contains: 'example.test' } }],
   };
-  if (!s.global) {
+  // the BDE team assigns the TL and the recruiter of a job of their clients, whatever department the person is in (2026-10-13)
+  if (!s.global && !['bde', 'bdeTl'].includes(JC.kindOf(user))) {
     // THE BDE BENCH IS NOT COMPANY-WIDE EITHER. This used to carry an
     // unconditional `{ atsRole: 'BDE' }` arm on the grounds that a BDE works
     // across desks — true of the ROLE, but not of any particular BDE. The
@@ -1536,6 +1599,7 @@ async function allTlBench() {
     currentSeatsByUser(ids),
   ]) : [[], new Map()];
   const open = new Map(load.map((x) => [x.tlId, x._count._all]));
+  (await RT.extraLoad(ids, REQUIREMENT_LIVE_STATUSES)).forEach((n, id) => open.set(id, (open.get(id) || 0) + n)); // jobs they are an extra TL on
   return live.map((u) => ({
     id: u.id,
     name: u.name,
@@ -1571,6 +1635,9 @@ const inTeam = (team, person) => !!team && (team.ids.includes(person.id)
 // (their next actions past due — "Who has pending work").
 async function recruiterBench(user, { tlId = null, department = null } = {}) {
   const s = scopeOf(user);
+  // The BDE TL leads the client managers: she has no recruiters under her, so there is nobody to offer
+  // (user, 2026-10-12: a recruiter never appears under a BDE TL).
+  if (isBdeTlUser(user)) return { mode: 'team', groups: [{ key: 'mine', label: 'Your team', people: [] }] };
   const users = await prisma.user.findMany({
     where: { AND: [await assignableWhere(user), { atsRole: 'RECRUITER' }] },
     select: {
@@ -1681,7 +1748,7 @@ router.get('/assignable-people', requirePerm('ats', 'recruiterbde', 'Team View',
     select: { id: true, department: true },
   }) : [];
   const deptCount = new Map();
-  jobs.forEach((j) => { const d = j.department || ''; deptCount.set(d, (deptCount.get(d) || 0) + 1); });
+  jobs.forEach((j) => { RD.departmentsOf(j).forEach((d) => { deptCount.set(d, (deptCount.get(d) || 0) + 1); }); if (!j.department) deptCount.set('', (deptCount.get('') || 0) + 1); });
   const deptList = () => [...deptCount.entries()].map(([name, count]) => ({ name: name || null, count })).sort((a, b) => b.count - a.count);
   // &kind=assign-tl (user, 2026-10-05): every department's TLs — the jobs'
   // own department(s) first on the screen. &kind=assign-recruiter: the
@@ -1716,6 +1783,7 @@ router.get('/assignable-people', requirePerm('ats', 'recruiterbde', 'Team View',
   ]) : [[], []];
   const recOpen = new Map(recLoad.map((x) => [x.recruiterId, x._count._all]));
   const tlOpen = new Map(tlLoad.map((x) => [x.tlId, x._count._all]));
+  (await RT.extraLoad(ids, REQUIREMENT_LIVE_STATUSES)).forEach((n, id) => tlOpen.set(id, (tlOpen.get(id) || 0) + n));
   return res.json({
     departments: [...deptCount.entries()].map(([name, count]) => ({ name: name || null, count })).sort((a, b) => b.count - a.count),
     jobs: jobs.map((j) => ({ id: j.id, department: j.department || null })),
@@ -1758,6 +1826,8 @@ router.post('/bulk', async (req, res, next) => {
     }
 
     let target = null;
+    let targets = null; // several recruiters at once
+    let tlTargets = null; // several team leads at once (first = main) — 2026-10-14
     let priority = null;
     if (action === 'priority') {
       priority = String(b.priority || '') === 'Critical' ? 'Urgent' : String(b.priority || '');
@@ -1776,6 +1846,31 @@ router.post('/bulk', async (req, res, next) => {
         },
       }) : null);
       if (target && !anyTl && !stillWorking(target)) target = null;
+      // SEVERAL RECRUITERS AT ONCE (2026-10-13): userIds = the whole recruiter team for the ticked jobs (first = primary).
+      if (action === 'assign-recruiter' && Array.isArray(b.userIds) && b.userIds.length > 1) {
+        const want = [...new Set(b.userIds.map(String).filter(Boolean))].slice(0, 12);
+        const people = await prisma.user.findMany({
+          where: { AND: [await assignableWhere(user), { id: { in: want } }, { atsRole: 'RECRUITER' }] },
+          select: {
+            id: true, name: true, atsDepartment: true, atsScopeDepartments: true,
+            employee: { select: { employmentStatus: true } },
+          },
+        });
+        const okPeople = want.map((id) => people.find((p) => p.id === id)).filter((p) => p && stillWorking(p));
+        if (okPeople.length !== want.length) return res.status(400).json({ error: 'One of the recruiters is not on your assignment list. Pick again.' });
+        targets = okPeople;
+        target = okPeople[0];
+      }
+      // SEVERAL TEAM LEADS AT ONCE (2026-10-14): userIds = the whole TL team for the ticked jobs (first = main).
+      if (action === 'assign-tl' && Array.isArray(b.userIds) && b.userIds.length) {
+        const want = [...new Set(b.userIds.map(String).filter(Boolean))];
+        if (want.length > RT.MAX_TLS) return res.status(400).json({ error: `A requirement can have at most ${RT.MAX_TLS} team leads.` });
+        const bench = (await mayPickAnyTl(user)) ? await allTlBench() : [];
+        const okTls = want.map((id) => bench.find((t) => t.id === id)).filter(Boolean);
+        if (okTls.length !== want.length) return res.status(400).json({ error: 'One of the team leads is not on your list (left, or not a team lead). Pick again.' });
+        tlTargets = okTls;
+        target = okTls[0];
+      }
       if (!target) {
         return res.status(400).json({
           error: `Choose an active ${wantRole === 'TL' ? 'TL' : 'recruiter'} from your own team — that person is not on your assignment list.`,
@@ -1827,21 +1922,25 @@ router.post('/bulk', async (req, res, next) => {
       }
 
       const field = action === 'assign-tl' ? 'tlId' : 'recruiterId';
+      const teamIds = targets ? targets.map((t) => t.id) : null;
       // The job's TL — or, when none is named, its department's one default TL.
       const eff = r.tlId ? { id: r.tlId } : defaultTl.defaultFor(r.department);
-      if (r[field] === target.id) { results.push({ ...base, ok: false, skipped: true, error: `Already with ${target.name}` }); continue; }
+      const wantTlExtras = action === 'assign-tl' ? (tlTargets ? tlTargets.slice(1).map((t) => t.id) : []) : null;
+      if (action === 'assign-tl' && r.tlId === target.id && RT.extrasOf(r.id).join(',') === wantTlExtras.join(',')) { results.push({ ...base, ok: false, skipped: true, error: `Already with ${tlTargets ? tlTargets.map((t) => t.name).join(', ') : target.name}` }); continue; }
+      if (action === 'assign-tl' ? false : teamIds ? (r.recruiterId === teamIds[0] && csv(r.recruiterIds).join(',') === teamIds.slice(1).join(',')) : r[field] === target.id) { results.push({ ...base, ok: false, skipped: true, error: `Already with ${target.name}` }); continue; }
       // eslint-disable-next-line no-await-in-loop
       if (action === 'assign-recruiter' && r.department && !targetDepts.includes(r.department) && !(eff && inTeam(await tlTeam(eff.id), target))) {
         results.push({
           ...base,
           ok: false,
           error: eff
-            ? `This job is in ${r.department}, and ${target.name} is not in its team lead's team. Pick someone from that team, or change the team lead first.`
-            : `This job is in ${r.department} and has no team lead yet. Pick its team lead first, or a ${r.department} recruiter.`,
+            ? `This requirement is in ${r.department}, and ${target.name} is not in its team lead's team. Pick someone from that team, or change the team lead first.`
+            : `This requirement is in ${r.department} and has no team lead yet. Pick its team lead first, or a ${r.department} recruiter.`,
         });
         continue;
       }
       const data = { [field]: target.id };
+      if (teamIds && action !== 'assign-tl') data.recruiterIds = teamIds.slice(1).join(',') || null;
       if (action === 'assign-tl') data.tl = target.name;
       else {
         // eslint-disable-next-line no-await-in-loop
@@ -1853,6 +1952,8 @@ router.post('/bulk', async (req, res, next) => {
       }
       // eslint-disable-next-line no-await-in-loop
       const updated = await prisma.requirement.update({ where: { id: r.id }, data });
+      // eslint-disable-next-line no-await-in-loop
+      if (action === 'assign-tl') await RT.setExtras(r.id, target.id, wantTlExtras); // assigning TLs REPLACES the team (several = main + also assigned)
       // What Undo puts back (routes/jobLifecycleRoutes.js, 24 h).
       undoRows.push({
         id: r.id,
@@ -1868,22 +1969,22 @@ router.post('/bulk', async (req, res, next) => {
         entityId: r.id,
         fromValue: [r.tlId, r.recruiterId, r.bdeId].filter(Boolean).join(' / ') || 'unassigned',
         toValue: [updated.tlId, updated.recruiterId, updated.bdeId].filter(Boolean).join(' / ') || 'unassigned',
-        reason: `Bulk ${action === 'assign-tl' ? 'Assign TL' : 'Assign Recruiter'}: ${target.name}`,
+        reason: `Bulk ${action === 'assign-tl' ? 'Assign TL' : 'Assign Recruiter'}: ${(tlTargets || targets) ? (tlTargets || targets).map((t) => t.name).join(', ') : target.name}`,
       });
       // eslint-disable-next-line no-await-in-loop
       await notifyAssignment(updated, user.id);
       // eslint-disable-next-line no-await-in-loop
       await pushToPortal(updated, { user, trigger: 'status', prevStatus: r.status });
-      results.push({ ...base, ok: true, to: target.name });
+      results.push({ ...base, ok: true, to: (tlTargets || targets) ? (tlTargets || targets).map((t) => t.name).join(', ') : target.name });
     }
     const undoId = undoRows.length
-      ? await require('./jobLifecycleRoutes').recordUndo({ undoId: b.undoId ? String(b.undoId) : null, user, action, targetName: target.name, rows: undoRows }) // eslint-disable-line global-require
+      ? await require('./jobLifecycleRoutes').recordUndo({ undoId: b.undoId ? String(b.undoId) : null, user, action, targetName: targets ? targets.map((t) => t.name).join(', ') : target.name, rows: undoRows }) // eslint-disable-line global-require
       : (b.undoId || null);
     return res.json({
       action,
       results,
       undoId,
-      targetName: target ? target.name : null,
+      targetName: targets ? targets.map((t) => t.name).join(', ') : (target ? target.name : null),
       done: results.filter((x) => x.ok).length,
       skipped: results.filter((x) => x.skipped).length,
       failed: results.filter((x) => !x.ok && !x.skipped).length,
@@ -1916,15 +2017,15 @@ router.get('/summary', async (req, res, next) => {
     const chainKeys = reqDisplay.DISPLAY_STATUSES.map((s) => s.key);
     const [total, open, needsTl, needsRec, late, waiting, hold, chainCounts, byDept, byClient] = await Promise.all([
       count(base),
-      count(within(LIVE_WHERE)),
+      count(within(OPEN_WHERE)),
       keys.includes('needstl') ? count(within({ AND: [NEEDS_TL_WHERE, LIVE_WHERE] })) : null,
       keys.includes('unassigned') ? count(within({ AND: [NEEDS_RECRUITER_WHERE, LIVE_WHERE] })) : null,
       count(lateWhere),
       ['admin', 'mgmt', 'bde'].includes(role) ? count(within(AGREEMENT_PENDING_WHERE)) : null,
-      count(within({ status: 'ON_HOLD' })),
+      Promise.resolve(0), // On hold is no longer a state people see (2026-10-13)
       Promise.all(chainKeys.map((k) => count(within(reqDisplay.DISPLAY_WHERE[k])))),
-      prisma.requirement.groupBy({ by: ['department'], where: within(LIVE_WHERE), _count: { _all: true } }),
-      prisma.requirement.groupBy({ by: ['clientId'], where: within(LIVE_WHERE), _count: { _all: true } }),
+      prisma.requirement.groupBy({ by: ['department'], where: within(OPEN_WHERE), _count: { _all: true } }),
+      prisma.requirement.groupBy({ by: ['clientId'], where: within(OPEN_WHERE), _count: { _all: true } }),
     ]);
     const topClients = byClient.sort((a, b) => b._count._all - a._count._all).slice(0, 8);
     const names = topClients.length
@@ -1934,7 +2035,7 @@ router.get('/summary', async (req, res, next) => {
       role,
       total,
       cards: {
-        open, needsTl, needsRecruiter: needsRec, late, waitingAgreement: waiting, hold,
+        open, needsTl, needsRecruiter: needsRec, late, waitingAgreement: waiting,
       },
       chain: reqDisplay.DISPLAY_STATUSES.map((s, i) => ({
         key: s.key, label: s.label, tone: s.tone, hint: s.hint, count: chainCounts[i],
@@ -1966,13 +2067,62 @@ router.get('/posting-sources', async (req, res) => {
   return res.json({ sources: await require('../utils/jobConnectors').sourceChoices(req.user) }); // eslint-disable-line global-require
 });
 
+// THE PLACES A JOB'S "PREFERRED LOCATION" IS PICKED FROM (2026-10-13). Before GET /:id.
+router.get('/locations', async (req, res, next) => {
+  try {
+    if (isClient(req.user)) return res.status(403).json({ error: 'This is internal to TeamLink.' });
+    const kind = JC.kindOf(req.user);
+    return res.json({ ...(await require('../utils/jobLocations').list()), canAdd: ['admin', 'bde', 'bdeTl'].includes(kind) }); // eslint-disable-line global-require
+  } catch (e) { return next(e); }
+});
+router.post('/locations', async (req, res, next) => {
+  try {
+    if (!['admin', 'bde', 'bdeTl'].includes(JC.kindOf(req.user))) return res.status(403).json({ error: 'The client manager (BDE) team and Admin add new places. Ask them.' });
+    const out = await require('../utils/jobLocations').add(req.body && req.body.name, req.user); // eslint-disable-line global-require
+    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    return res.json({ ok: true, name: out.name, message: `Added ${out.name}.` });
+  } catch (e) { return next(e); }
+});
+// OPEN LISTS (2026-10-14): the shared lists behind "type your own" dropdowns (Education, Employment type, ...).
+router.get('/open-lists', async (req, res, next) => {
+  try {
+    if (isClient(req.user)) return res.status(403).json({ error: 'This is internal to TeamLink.' });
+    const OV = require('../utils/openVocab'); // eslint-disable-line global-require
+    return res.json({ lists: await OV.allLists(), canAdd: OV.isTeam(req.user) });
+  } catch (e) { return next(e); }
+});
+router.post('/open-lists/:key', async (req, res, next) => {
+  try {
+    const OV = require('../utils/openVocab'); // eslint-disable-line global-require
+    if (!OV.KEY_RE.test(req.params.key) || !(req.params.key in OV.BASE)) return res.status(404).json({ error: 'That list does not exist.' });
+    const v = OV.clean(req.body && req.body.value);
+    if (v.length < 2) return res.status(400).json({ error: 'Write at least 2 letters.' });
+    const r = await OV.consider(req.params.key, v, req.user);
+    return res.json({ ok: true, value: r.value, added: r.added, flagged: r.flagged });
+  } catch (e) { return next(e); }
+});
+// THE DEPARTMENT PICKER OF THE JOB FORM (founder, 2026-10-16): the Admin / Super Admin and the whole BDE team (BDE, BDE TL) pick from
+// EVERY active department of the company (the Departments master, the BDE department included) - a job can be worked by any
+// department. Only this picker is widened: what a login can SEE (jobs, clients, candidates) is still decided by utils/scope.js.
+// Everybody else gets { departments: null } and keeps the list their own scope gives them. A closed list: nothing is created here.
+router.get('/department-options', async (req, res, next) => {
+  try {
+    if (!(scopeOf(req.user).global || isBdeTeam(req.user))) return res.json({ departments: null, all: false });
+    const { activeOnly } = require('../utils/masters'); // eslint-disable-line global-require
+    const rows = await prisma.department.findMany({ where: activeOnly('Department'), select: { name: true }, orderBy: { name: 'asc' } });
+    return res.json({ departments: rows.map((d) => d.name), all: true });
+  } catch (err) { return next(err); }
+});
 router.get('/client-options', async (req, res) => {
   const rows = await prisma.client.findMany({
     where: clientPickerWhere(req.user), // names only; a TL keeps the department directory to raise a requirement
     select: { id: true, name: true, ownerDepartment: true, agreementStatus: true },
     orderBy: { name: 'asc' },
   });
-  res.json(rows.map((c) => ({ ...c, agreementStatus: normalizeAgreementStatus(c.agreementStatus) })));
+  // aliases = the client's OLD names, for the box's type-to-search only; the box still shows `name`.
+  const out = rows.map((c) => ({ ...c, agreementStatus: normalizeAgreementStatus(c.agreementStatus) }));
+  if (clientLevelFor(req.user) !== 'client') await clientSearch.attachAliases(out);
+  res.json(out);
 });
 
 // EVERYONE WHO WORKED THE REQUIREMENTS THIS CALLER CAN SEE — current and
@@ -2146,10 +2296,12 @@ router.get('/:id/summary', async (req, res) => {
   };
   // No Agreements for this role (TL, Recruiter): only whether the gate holds
   // the requirement back — never the agreement's own status or terms.
-  if (!r.internal && !policy.agreementView) out.agreement = { active: out.agreement.active, held: out.agreement.held, canOpen: false };
+  // (2026-10-12: not even that - a TL / Recruiter is told only that the job is on hold, never why.)
+  if (!r.internal && !policy.agreementView) { out.gate = { onHold: !!out.agreement.held, message: out.agreement.held ? agreementPrivacy.HOLD_MESSAGE : null }; delete out.agreement; }
   if (!forClient) {
     out.team = {
       tl: person(r.tlId, (r.tlId && people.get(r.tlId)) || r.tl),
+      alsoTls: RT.extrasOf(r.id).map((id) => person(id, people.get(id))).filter(Boolean), // 'also assigned' team leads (2026-10-14)
       stl: person(r.stlId, (r.stlId && people.get(r.stlId)) || r.stl),
       recruiters: [
         person(r.recruiterId, recruiter && recruiter.name, true),
@@ -2207,7 +2359,7 @@ router.post('/templates', requirePerm('ats', 'requirements', 'Create Requirement
   const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
   if (name.length < 2) return res.status(400).json({ error: 'Give the template a name (e.g. "Maths teacher — school").', field: 'name' });
   const fields = templateFieldsOf(pickRequirement(req.body.fields || req.body));
-  if (!String(fields.title || '').trim()) return res.status(400).json({ error: 'Fill in the job title before saving it as a template.', field: 'title' });
+  if (!String(fields.title || '').trim()) return res.status(400).json({ error: 'Fill in the requirement title before saving it as a template.', field: 'title' });
   const list = await readTemplates();
   const same = list.find((t) => t.name.toLowerCase() === name.toLowerCase());
   const row = {
@@ -2219,8 +2371,36 @@ router.post('/templates', requirePerm('ats', 'requirements', 'Create Requirement
   }
   const next = same ? list.map((t) => (t.id === same.id ? row : t)) : [...list, row];
   await writeTemplates(next.slice(-200), req.user);
-  await logAudit({ userId: req.user.id, action: same ? 'Job template updated' : 'Job template saved', entity: 'JobTemplate', entityId: row.id, toValue: name });
+  await logAudit({ userId: req.user.id, action: same ? 'Requirement template updated' : 'Requirement template saved', entity: 'JobTemplate', entityId: row.id, toValue: name });
   res.status(same ? 200 : 201).json({ ...row, mine: true, replaced: !!same });
+});
+// EDIT a saved job template (2026-10-14): same gate as saving one (Create Requirement) — the person who saved it, or an Admin.
+// Send a new name and / or new fields; nothing else changes, and the template keeps its id.
+router.put('/templates/:tid', requirePerm('ats', 'requirements', 'Create Requirement', 'create'), async (req, res) => {
+  const list = await readTemplates();
+  const t = list.find((x) => x.id === req.params.tid);
+  if (!t) return res.status(404).json({ error: 'That template is gone already.' });
+  if (t.createdById !== req.user.id && !['SUPER_ADMIN', 'ADMIN'].includes(req.user.role)) {
+    return res.status(403).json({ error: `Only ${t.createdByName || 'the person who saved it'} or an Admin can change this template.` });
+  }
+  const next = { ...t };
+  if (req.body.name !== undefined) {
+    const name = String(req.body.name || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    if (name.length < 2) return res.status(400).json({ error: 'Give the template a name (e.g. "Maths teacher — school").', field: 'name' });
+    if (list.some((x) => x.id !== t.id && x.name.toLowerCase() === name.toLowerCase())) return res.status(409).json({ error: `There is already a template called "${name}" — pick another name.`, field: 'name' });
+    next.name = name;
+  }
+  if (req.body.fields !== undefined) {
+    const fields = templateFieldsOf(pickRequirement(req.body.fields || {}));
+    if (!String(fields.title || '').trim()) return res.status(400).json({ error: 'Fill in the requirement title before saving the template.', field: 'title' });
+    next.fields = fields;
+  }
+  if (req.body.name === undefined && req.body.fields === undefined) return res.status(400).json({ error: 'Nothing to change — send a new name or new requirement details.' });
+  next.updatedAt = new Date().toISOString();
+  next.updatedByName = req.user.name;
+  await writeTemplates(list.map((x) => (x.id === t.id ? next : x)), req.user);
+  await logAudit({ userId: req.user.id, action: 'Requirement template changed', entity: 'JobTemplate', entityId: t.id, fromValue: t.name, toValue: next.name });
+  res.json({ ...next, mine: next.createdById === req.user.id });
 });
 router.delete('/templates/:tid', requirePerm('ats', 'requirements', 'Create Requirement', 'create'), async (req, res) => {
   const list = await readTemplates();
@@ -2230,15 +2410,24 @@ router.delete('/templates/:tid', requirePerm('ats', 'requirements', 'Create Requ
     return res.status(403).json({ error: `Only ${t.createdByName || 'the person who saved it'} or an Admin can remove this template.` });
   }
   await writeTemplates(list.filter((x) => x.id !== t.id), req.user);
-  await logAudit({ userId: req.user.id, action: 'Job template removed', entity: 'JobTemplate', entityId: t.id, fromValue: t.name });
+  await logAudit({ userId: req.user.id, action: 'Requirement template removed', entity: 'JobTemplate', entityId: t.id, fromValue: t.name });
   res.json({ ok: true });
 });
 
-router.post('/:id/copy', requirePerm('ats', 'requirements', 'Create Requirement', 'create'), async (req, res) => {
+// 2026-10-13: copying a job is creating one. Admin copies any job; HR copies an internal job; a BDE / BDE TL / Manager /
+// Asst Manager copy a CLIENT job of their own area (the copy is a DRAFT either way, nothing goes live by itself).
+router.post('/:id/copy', JC.requireJobCreate({ needs: 'any', internalOf: (req) => !!(req.requirement && req.requirement.internal) }), async (req, res) => {
   const before = req.requirement; // scope-checked by router.param
+  if (req.jobCreate.mode === 'request' && before.internal) return res.status(403).json(JC.BODY);
   const client = await prisma.client.findUnique({ where: { id: before.clientId } });
-  if (!client) return res.status(400).json({ error: 'The client of this job is no longer on file.' });
-  const pausedRefusal = before.internal ? null : clientNewWorkRefusal(client, 'a new job');
+  if (req.jobCreate.mode === 'request' && client) {
+    const kind = JC.kindOf(req.user);
+    const where = ['manager', 'am'].includes(kind) ? clientPickerWhere(req.user) : clientWhere(req.user);
+    const inArea = await prisma.client.findFirst({ where: { AND: [{ id: client.id }, where] }, select: { id: true } });
+    if (!inArea) return res.status(403).json({ error: 'Pick a requirement of one of your clients to copy.' });
+  }
+  if (!client) return res.status(400).json({ error: 'The client of this requirement is no longer on file.' });
+  const pausedRefusal = before.internal ? null : clientNewWorkRefusal(client, 'a new requirement');
   if (pausedRefusal) return res.status(409).json(pausedRefusal);
   const data = templateFieldsOf(pickRequirement(before));
   // The creator sits on the chain in their own role (same as Add job); every
@@ -2261,11 +2450,12 @@ router.post('/:id/copy', requirePerm('ats', 'requirements', 'Create Requirement'
       postingSources: 'None',
     },
   });
+  if (RD.extrasOf(before.id).length) await RD.setExtras(copy.id, copy.department, RD.extrasOf(before.id));
   await logAudit({
-    userId: req.user.id, action: 'Job copied', entity: 'Requirement', entityId: copy.id,
-    fromValue: `${before.reqCode || before.id} · ${before.title}`, toValue: `${copy.reqCode} (Draft)`,
+    userId: req.user.id, action: 'Requirement copied', entity: 'Requirement', entityId: copy.id,
+    fromValue: `${before.reqCode || before.id} · ${before.title}`, toValue: `${copy.reqCode} (not live yet)`,
   });
-  await logAudit({ userId: req.user.id, action: 'Copied to a new job', entity: 'Requirement', entityId: before.id, toValue: copy.reqCode });
+  await logAudit({ userId: req.user.id, action: 'Copied to a new requirement', entity: 'Requirement', entityId: before.id, toValue: copy.reqCode });
   res.status(201).json({ ...copy, copiedFrom: { id: before.id, reqCode: before.reqCode, title: before.title } });
 });
 
@@ -2371,6 +2561,9 @@ router.get('/:id', async (req, res) => {
     sections: policy.sections,
     viewRole: policy.role,
     tlName: people.get(requirement.tlId) || requirement.tl || null,
+    tlIds: RT.tlsOf(requirement),
+    extraTlIds: RT.extrasOf(requirement.id),
+    extraTlNames: RT.extrasOf(requirement.id).map((id) => people.get(id)).filter(Boolean),
     stlName: people.get(requirement.stlId) || requirement.stl || null,
     coRecruiters: csv(requirement.recruiterIds).map((id) => ({ id, name: people.get(id) || id, seat: seatOf(id) })),
     seats: {
@@ -2384,6 +2577,7 @@ router.get('/:id', async (req, res) => {
     // §7 — the SAME counts the list row and the quick drawer show.
     pipeline: pipelineCounts(stages, { internal: !!requirement.internal }),
     displayStatus: reqDisplay.displayStatusOf(requirement, allPeople, allJoined),
+    departments: RD.departmentsOf(requirement), // [primary, ...extras] (2026-10-13)
     ageDays: ageDaysOf(requirement.createdAt),
     sla: requirementSla(requirement, apps).sla,
     lastActivity: la ? { at: la.at, by: isClient(req.user) ? null : la.by, what: la.what } : null,
@@ -2426,9 +2620,16 @@ router.get('/:id', async (req, res) => {
   // §7 Fee / Agreement terms ❌ for a TL and a Recruiter: only whether the
   // agreement gate holds this requirement back, never the agreement itself.
   if (!requirement.internal && !policy.agreementView && !isClient(req.user)) {
-    payload.agreement = { active: agreementActive, held: requirement.status === 'AGREEMENT_CHECK', canOpen: false, canManage: false };
+    const heldNow = requirement.status === 'AGREEMENT_CHECK';
+    payload.gate = { onHold: heldNow, message: heldNow ? agreementPrivacy.HOLD_MESSAGE : null };
+    delete payload.agreement; // 2026-10-12: no agreement info at all for these roles
   }
 
+  // the Accept step of a client's request (utils/requestAccept.js): shown to staff only
+  if (!isClient(req.user)) {
+    const rs = await require('../utils/requestAccept').get(requirement.id); // eslint-disable-line global-require
+    if (rs) { payload.requestState = rs.state; payload.requestAcceptedBy = rs.byName || null; payload.requestAcceptedAt = rs.acceptedAt || null; }
+  }
   // A client never receives the internal pipeline detail on their own req.
   if (isClient(req.user)) {
     const shaped = shapeForClient(payload);
@@ -2469,20 +2670,26 @@ router.get('/:id/workers', async (req, res) => {
 router.get('/:id/candidate-search', async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
-  const linked = await prisma.application.findMany({ where: { requirementId: req.requirement.id }, select: { candidateId: true } });
+  // People already on this job are SHOWN (with where they are), not hidden: a search that came back empty for someone who
+  // is already here looked like "Add application is not accepted". A client-manager (BDE) login searches by name only.
+  const bde = require('../utils/clientLifecycle').isBdeTeam(req.user); // eslint-disable-line global-require
   const rows = await prisma.candidate.findMany({
     where: {
       AND: [
         candidateWhere(req.user),
-        { id: { notIn: linked.map((a) => a.candidateId) } },
-        { OR: [{ name: { contains: q } }, { phone: { contains: q } }, { email: { contains: q } }] },
+        { OR: bde ? [{ name: { contains: q } }] : [{ name: { contains: q } }, { phone: { contains: q } }, { email: { contains: q } }] },
       ],
     },
     select: { id: true, name: true, location: true, experienceYears: true },
     orderBy: { name: 'asc' },
     take: 20,
   });
-  return res.json(rows);
+  const apps = rows.length ? await prisma.application.findMany({ where: { requirementId: req.requirement.id, candidateId: { in: rows.map((r) => r.id) } }, select: { id: true, candidateId: true, stage: true } }) : [];
+  const on = new Map(apps.map((a) => [a.candidateId, a]));
+  return res.json(rows.map((c) => {
+    const a = on.get(c.id);
+    return { ...c, onJob: a ? { applicationId: a.id, step: require('../utils/atsVocab').stageLabelFor(a.stage, { internal: !!req.requirement.internal }), link: `/candidates/${c.id}?application=${a.id}` } : null };
+  }));
 });
 
 // ---------------------------------------------------------------------------
@@ -2515,7 +2722,7 @@ router.post('/:id/posting-log', async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   const perms = await requirementPermissions(req.user, requirement);
-  if (!perms.edit && !perms.share) return res.status(403).json({ error: "Recording postings isn't included in your role's permissions." });
+  if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
   const source = String(req.body?.source || '').trim();
   const action = String(req.body?.action || '').trim();
   if (!POSTING_LOG_SOURCES.includes(source)) return res.status(400).json({ error: 'Unknown posting source.' });
@@ -2538,15 +2745,15 @@ router.get('/:id/postings', async (req, res) => {
   if (isClient(req.user)) return res.status(403).json({ error: 'Posting status is internal to TeamLink.' });
   const perms = await requirementPermissions(req.user, req.requirement);
   const out = await postingChannels(req.requirement, req.user);
-  return res.json({ ...out, canRetry: !!(perms.edit || perms.share) });
+  return res.json({ ...out, canRetry: !!perms.share });
 });
 
 router.post('/:id/postings/retry', async (req, res) => {
   if (isClient(req.user)) return res.status(403).json({ error: 'Posting is internal to TeamLink.' });
   const perms = await requirementPermissions(req.user, req.requirement);
-  if (!perms.edit && !perms.share) return res.status(403).json({ error: "Posting isn't included in your role's permissions for this requirement." });
+  if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
   if (!requirementIsLive(req.requirement.status)) {
-    return res.status(400).json({ error: `A requirement at "${requirementStatusLabel(req.requirement.status)}" is not posted anywhere — reopen it first.` });
+    return res.status(400).json({ error: `A requirement at "${requirementStateWords(req.requirement.status)}" is not posted anywhere — reopen it first.` });
   }
   const result = await autoPost(req.requirement.id, { actorId: req.user.id, actorName: req.user.name, trigger: 'retry', skipSources: true });
   // Every failed / not-yet-posted source's connector, waited for (utils/jobConnectors.js).
@@ -2654,22 +2861,35 @@ router.get('/:id/matching-candidates', requirePerm('ats', 'requirements', 'Match
 
   // The prototype's requirement detail lists suggestions down to 50%, while the
   // "Matching Candidates" count tile only counts those at or above 70%.
-  const ranked = rankCandidates(candidates, requirement, {
+  let ranked = rankCandidates(candidates, requirement, {
     excludeIds: new Set(linked.map((a) => a.candidateId)),
     threshold: req.query.threshold ? Number(req.query.threshold) : SUGGESTION_THRESHOLD,
   });
+  // Salary (2026-10-13): counts for the chips, and the two optional filters (both OFF unless asked):
+  // ?hideAbove=1 leaves out people who want more than the client's maximum (not-known salaries stay);
+  // ?salaryWithin=1 keeps only people inside the budget. Sort ?sort=salary = by the Salary fit %.
+  const restricted = FB.isRestricted(req.user);
+  const flag = (v) => /^(1|true|yes)$/i.test(String(v || ''));
+  const salaryCounts = FB.salaryCounts(ranked.map((c) => c.match));
+  const budget = require('../utils/salaryFit').budgetOf(requirement); // eslint-disable-line global-require
+  const salaryInfo = { hasBudget: budget.state === 'set', budgetText: budget.state === 'set' ? budget.text : null, counts: salaryCounts };
+  ranked = require('../utils/resumeMatch').salaryFilter(ranked, { hideAbove: flag(req.query.hideAbove), salaryWithin: flag(req.query.salaryWithin) }); // eslint-disable-line global-require
+  if (!restricted && req.query.sort === 'salary') ranked = ranked.slice().sort((a, b) => ((b.match.salPct ?? -1) - (a.match.salPct ?? -1)) || (b.match.overall - a.match.overall));
+  // The BDE team gets a rounded total, a label and the Salary word only; everyone else the four-part breakdown.
+  const shapeRow = (c) => ({ ...c, match: FB.shapeMatch(c.match, restricted) });
   // ?limit=N — the detail page's shape: the top N plus the counts, instead of
   // shipping every one of thousands of suggestions to draw eight of them.
   if (req.query.limit) {
     const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 10));
     return res.json({
-      rows: ranked.slice(0, limit),
+      rows: ranked.slice(0, limit).map(shapeRow),
       total: ranked.length,
       strong: ranked.filter((c) => c.match.overall >= MATCH_THRESHOLD).length,
       threshold: MATCH_THRESHOLD,
+      salary: salaryInfo,
     });
   }
-  return res.json(ranked);
+  return res.json(ranked.map(shapeRow));
 });
 
 // §23 — THE REQUIREMENT'S ACTIVITY: who did what, when, and why. One feed
@@ -2770,31 +2990,59 @@ function pickRequirement(body) {
     // "— Not assigned —" arrives as an empty string; a relation field has to be
     // null, not '', or the write fails on a foreign key that does not exist.
     else if (['recruiterId', 'bdeId', 'tlId', 'stlId', 'qualificationId', 'specialisationId'].includes(key)) data[key] = body[key] || null;
+    else if (key === 'department' && Array.isArray(body.departments)) continue; // the list below decides (first = primary)
     else if (key === 'recruiterIds') {
       data.recruiterIds = Array.isArray(body.recruiterIds)
         ? body.recruiterIds.filter(Boolean).join(',')
         : (body.recruiterIds || null);
     } else data[key] = body[key];
   }
+  // SEVERAL DEPARTMENTS (2026-10-13): body.departments = ['Medical','Manufacturing']; the first is the PRIMARY
+  // (Requirement.department), the rest are kept as extras (utils/reqDepartments.js).
+  if (Array.isArray(body.departments)) {
+    const list = RD.clean(body.departments);
+    if (list.length) data.department = list[0];
+  }
+  // SEVERAL TEAM LEADS (2026-10-14): body.tlIds = [main, also, also]; the first is Requirement.tlId, the rest live in utils/reqTeamLeads.js.
+  if (Array.isArray(body.tlIds)) {
+    const tls = RT.clean(body.tlIds);
+    data.tlId = tls[0] || null;
+    if (!tls.length) data.tl = null;
+  }
   return data;
 }
-
-// REQ-0001, REQ-0002 … the human-facing Requirement ID.
-async function nextRequirementCode() {
-  const used = await prisma.requirement.count();
-  for (let n = used + 1; n < used + 500; n += 1) {
-    const code = `REQ-${String(n).padStart(4, '0')}`;
-    // eslint-disable-next-line no-await-in-loop
-    const clash = await prisma.requirement.findFirst({ where: { reqCode: code }, select: { id: true } });
-    if (!clash) return code;
-  }
-  return `REQ-${Date.now()}`;
+// The extra team leads the body asks for (undefined = not touched).
+function extraTlsOf(body) {
+  if (!body || !Array.isArray(body.tlIds)) return undefined;
+  return RT.clean(body.tlIds).slice(1);
 }
+// Every team lead must be an active TL (the same list the picker shows); the ones already on the job stay allowed.
+// Returns { error } or { names: Map(id -> name) }.
+async function checkTlTeam(list, before) {
+  const ids = RT.clean(list);
+  if (ids.length > RT.MAX_TLS) return { error: `A requirement can have at most ${RT.MAX_TLS} team leads.` };
+  if (!ids.length) return { names: new Map() };
+  const ok = new Set((await allTlBench()).map((t) => t.id));
+  if (before) [before.tlId, ...RT.extrasOf(before.id)].forEach((id) => id && ok.add(id));
+  const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } });
+  const names = new Map(users.map((u) => [u.id, u.name]));
+  const bad = ids.find((id) => !ok.has(id) || !names.has(id));
+  if (bad) return { error: `${names.get(bad) || 'One of the people you picked'} is not an active team lead (they may have left, or are not a TL). Untick them and pick again.` };
+  return { names };
+}
+// The extra departments the body asks for (undefined = not touched).
+function extraDeptsOf(body) {
+  if (!body || !Array.isArray(body.departments)) return undefined;
+  return RD.clean(body.departments).slice(1);
+}
+
+// REQ-0001, REQ-0002 … the human-facing Requirement ID (utils/requirementCode.js, shared with the Excel import).
+const { nextRequirementCode } = require('../utils/requirementCode');
 
 // Tell the people now on the chain that they have been given the requirement.
 async function notifyAssignment(requirement, actorId, verb = 'assigned to you') {
   const ids = [requirement.recruiterId, requirement.bdeId, requirement.tlId, requirement.stlId,
-    ...csv(requirement.recruiterIds)];
+    ...csv(requirement.recruiterIds), ...RT.extrasOf(requirement.id)];
   // And the TL of each assigned recruiter's SEAT (Positions -> reportsTo):
   // the team lead hears that one of their seats was given work even when the
   // requirement does not name them as its TL.
@@ -2872,31 +3120,86 @@ async function seatOfRecruiter(userId) {
 // REQUEST A JOB (per-role spec 2026-10-03) — a BDE no longer creates a job;
 // they ask for one for THEIR client. Saved as a DRAFT a Manager / Admin
 // activates (utils/requirementRequest.js).
-router.post('/requests', requirePerm('ats', 'requirements', 'Requirement Request', 'create'), async (req, res) => {
-  const clientId = String((req.body && req.body.clientId) || '');
-  const own = clientId && await prisma.client.findFirst({ where: { AND: [{ id: clientId }, clientWhere(req.user)] }, select: { id: true } });
-  if (!own) return res.status(403).json({ error: 'Pick one of your own clients for this request.', field: 'clientId' });
+// 2026-10-13: ONE rule says who may ask (utils/jobCreateRule.js: BDE, BDE TL, Manager, Asst Manager, Admin); a TL / STL /
+// Recruiter gets the plain sentence and the "Ask the client manager to add a job" button instead.
+async function askForJob(req, res, body) {
+  const clientId = String((body && body.clientId) || '');
+  const kind = JC.kindOf(req.user);
+  // A BDE (desk or team lead) works THEIR clients; a Manager / Asst Manager the clients of their area; an Admin any client.
+  const where = ['manager', 'am'].includes(kind) ? clientPickerWhere(req.user) : clientWhere(req.user);
+  const own = clientId && await prisma.client.findFirst({ where: { AND: [{ id: clientId }, where] }, select: { id: true } });
+  // A desk BDE raises a job only for THEIR OWN client, not a colleague's of the same desk (spec 2026-10-10).
+  if (!own || (!['bde', 'bdeTl'].includes(kind) && !require('../utils/clientLifecycle').ownsClient(req.user, own))) { // eslint-disable-line global-require
+    return res.status(403).json({ error: kind === 'bde' || kind === 'bdeTl' ? 'Pick one of your own clients for this request.' : 'Pick a client from your list for this request.', field: 'clientId' });
+  }
+  const via = { admin: 'Admin', manager: 'Manager', am: 'Assistant Manager' }[kind] || 'BDE';
   // eslint-disable-next-line global-require
-  const out = await require('../utils/requirementRequest').createRequirementRequest(req.body, { user: req.user, via: 'BDE' });
+  const out = await require('../utils/requirementRequest').createRequirementRequest(body, { user: req.user, via });
   return res.status(out.status).json(out.body);
+}
+router.post('/requests', JC.requireJobCreate({ needs: 'any' }), requirePerm('ats', 'requirements', 'Requirement Request', 'create'), async (req, res) => askForJob(req, res, req.body));
+
+// "ASK THE CLIENT MANAGER TO EDIT OR CLOSE THIS JOB" (2026-10-13): a TL / STL / Recruiter on a job in their scope.
+router.post('/:id/ask-change', async (req, res, next) => {
+  try {
+    if (!JC.mayAskToAdd(req.user)) return res.status(JC.mayManageJobs(req.user) ? 409 : 403).json(JC.mayManageJobs(req.user) ? { error: 'You can change this requirement yourself.' } : JC.MANAGE_BODY);
+    const out = await require('../utils/jobAsk').askChange(req.user, req.requirement, req.body); // eslint-disable-line global-require
+    return res.status(out.status).json(out.body);
+  } catch (err) { return next(err); }
 });
 
+// "ASK THE CLIENT MANAGER TO ADD A JOB" (2026-10-13): a TL / STL / Recruiter cannot create a job; they tell the client
+// manager (BDE) what they need. A bell (+ mail when connected) goes to the client's BDE, else the desk BDE, else the BDE TL
+// (utils/jobAsk.js). Only what was typed is sent; once per request.
+router.post('/ask-add', async (req, res, next) => {
+  try {
+    if (!JC.mayAskToAdd(req.user)) {
+      if (JC.canCreateJob(req.user, {}).allowed) return res.status(409).json({ error: 'You can add this requirement yourself: press "Request requirement".' });
+      return res.status(403).json(JC.BODY);
+    }
+    if (!(await can(req.user, 'ats', 'requirements', 'Requirement List', 'view'))) return res.status(403).json({ error: "This action isn't included in your role's permissions" });
+    const out = await require('../utils/jobAsk').ask(req.user, req.body, { // eslint-disable-line global-require
+      clientVisible: async (id) => !!(await prisma.client.findFirst({ where: { AND: [{ id }, clientPickerWhere(req.user)] }, select: { id: true } })),
+    });
+    return res.status(out.status).json(out.body);
+  } catch (err) { return next(err); }
+});
+
+// What a request needs from a full job body (the BDE / Manager "request a job" draft carries the main fields only).
+const requestBodyOf = (b) => {
+  const x = b || {};
+  return {
+    title: x.title, clientId: x.clientId, department: x.department, openings: x.openings, location: x.location, skills: x.skills,
+    experience: x.experience, jobDescription: x.jobDescription || x.description, salary: x.salary, closingDate: x.closingDate,
+    notes: x.notes, joinBy: x.joinBy, salaryMonthlyMin: x.salaryMonthlyMin, salaryMonthlyMax: x.salaryMonthlyMax,
+    // the twin check (utils/jobDupGuard.js): what it compares, and the "Create anyway" answer
+    specialisation: x.specialisation, employmentType: x.employmentType, duplicateOverride: x.duplicateOverride, duplicateReason: x.duplicateReason,
+  };
+};
+// HR raises TeamLink's OWN openings: the body says internal, or names no client at all.
+const hrInternalIntent = (req) => !!req.body && (req.body.internal === true || req.body.internal === 'true' || !req.body.clientId);
+
 // One click = one job: the form's one-time Idempotency-Key (utils/idempotency.js).
-router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'create'), require('../utils/idempotency').idempotent('requirement'), async (req, res) => { // eslint-disable-line global-require
+// 2026-10-13: creating a job is the BDE team's and above (utils/jobCreateRule.js). Super Admin / Admin create it as sent;
+// HR creates INTERNAL jobs only; a BDE / BDE TL / Manager / Asst Manager send the same body as a REQUEST (a draft a lead
+// opens, exactly like "Request job"); a TL / STL / Recruiter / anyone else gets the plain 403.
+router.post('/', JC.requireJobCreate({ needs: 'any', internalOf: hrInternalIntent }), require('../utils/idempotency').idempotent('requirement'), async (req, res) => { // eslint-disable-line global-require
+  if (req.jobCreate && req.jobCreate.mode === 'request') return askForJob(req, res, requestBodyOf(req.body));
   const { status } = req.body;
   let { clientId } = req.body;
   const data = pickRequirement(req.body);
+  await require('../utils/openVocab').applyJob(req, data, null); // typed Education / Qualification / Specialization (2026-10-14) // eslint-disable-line global-require
   // INTERNAL HR raises INTERNAL jobs only (per-role spec 2026-10-03) — never
   // a client requirement, whatever the form sent.
   if (scopeOf(req.user).atsRole === 'HR' && !scopeOf(req.user).global) { data.internal = true; data.bdeId = null; }
   // Prototype saveNewRequirement(): title, full job description and at least
   // one mandatory skill are required unless the requirement is saved as Draft.
-  if (!String(data.title || '').trim()) return res.status(400).json({ error: 'Enter a job title.', field: 'title' });
+  if (!String(data.title || '').trim()) return res.status(400).json({ error: 'Enter a requirement title.', field: 'title' });
   data.title = String(data.title).trim();
   const asDraft = status === 'DRAFT';
   if (!asDraft) {
     if (!String(data.jobDescription || data.description || '').trim()) {
-      return res.status(400).json({ error: 'Enter the full job description (or use Save Draft to finish it later).', field: 'jobDescription' });
+      return res.status(400).json({ error: 'Enter the full job description (or use Save for later to finish it).', field: 'jobDescription' });
     }
     if (!String(data.skills || '').trim()) {
       return res.status(400).json({ error: 'Enter at least one mandatory skill (comma separated).', field: 'skills' });
@@ -2921,16 +3224,23 @@ router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'creat
     return res.status(403).json({ error: 'That client is outside your scope — pick one of the clients in your list.', field: 'clientId' });
   }
   if (data.internal) data.bdeId = null;
+  // a desk BDE creates a job for THEIR OWN client only, not a colleague's of the same desk (spec 2026-10-10)
 
   // B9.1 DUPLICATE JOB. The import-time rule (same client + same title, plus
   // the location) on the form too: an OPEN job like this one already exists →
   // 409 with that job; "Create anyway" needs a reason, which is audited.
   // Never for Save Draft.
+  // 2026-10-13: the full duplicate-jobs rule (utils/jobDupGuard.js): a twin of this job on the same client -> a plain card with
+  // Open the existing job / Add openings / Create anyway / Cancel (409 DUPLICATE_JOB with the matches).
   let dupNote = null;
+  let dupGuard = null;
   if (!asDraft && !data.internal) {
-    const dup = await JD.findDuplicateJob({ clientId, title: data.title, location: data.location });
-    if (dup && !JD.overrideOk(req.body)) return res.status(409).json(JD.duplicateRefusal(dup));
-    if (dup) dupNote = { existing: dup, reason: JD.overrideReasonOf(req.body) };
+    dupGuard = await require('../utils/jobDupGuard').guardCreate({ ...req.body, ...data, clientId }, { user: req.user, door: 'Add requirement' }); // eslint-disable-line global-require
+    if (dupGuard.block) return res.status(dupGuard.block.status).json(dupGuard.block.body);
+    if (dupGuard.override && dupGuard.matches.length) {
+      const first = dupGuard.matches[0];
+      dupNote = { existing: { id: first.id, reqCode: first.reqCode, title: first.title }, reason: dupGuard.reason || 'Created anyway: a different requirement' };
+    }
   }
 
   // THE CREATOR STAYS ON THEIR OWN REQUIREMENT. Scope is the assignment chain
@@ -2939,14 +3249,20 @@ router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'creat
   // saved. Whoever raises it is put on the chain in their own role when that
   // slot is empty; an explicit choice is never overridden.
   const role = scopeOf(req.user).atsRole;
-  if (role === 'TL' && !data.tlId) { data.tlId = req.user.id; data.tl = data.tl || req.user.name || null; }
+  if (role === 'TL' && !data.tlId && !isBdeTlUser(req.user)) { data.tlId = req.user.id; data.tl = data.tl || req.user.name || null; }
   if (role === 'STL' && !data.stlId) { data.stlId = req.user.id; data.stl = data.stl || req.user.name || null; }
-  if (role === 'BDE' && !data.internal && !data.bdeId) data.bdeId = req.user.id;
+  if ((role === 'BDE' || isBdeTlUser(req.user)) && !data.internal && !data.bdeId) data.bdeId = req.user.id;
   // A department with ONE team lead gives that TL to the job (default TL).
   const autoTl = await defaultTl.applyDefault(data);
 
   const assigneeProblem = await badAssignee(data);
   if (assigneeProblem) return res.status(400).json({ error: assigneeProblem });
+  const newExtraTls = extraTlsOf(req.body);
+  if (Array.isArray(req.body.tlIds)) {
+    const tlCheck = await checkTlTeam(req.body.tlIds, null);
+    if (tlCheck.error) return res.status(400).json({ error: tlCheck.error });
+    if (data.tlId) data.tl = tlCheck.names.get(data.tlId) || data.tl || null;
+  }
 
   // The recruiter's SEAT, so the work is filed under the position as well as
   // the person (positions are permanent — utils/positionScope.js).
@@ -2996,15 +3312,22 @@ router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'creat
   }
   if (dupNote) {
     await logAudit({
-      userId: req.user.id, action: 'Duplicate job created anyway', entity: 'Requirement', entityId: requirement.id,
+      userId: req.user.id, action: 'Duplicate requirement created anyway', entity: 'Requirement', entityId: requirement.id,
       fromValue: `${dupNote.existing.reqCode || dupNote.existing.id} · ${dupNote.existing.title}`, toValue: requirement.reqCode, reason: dupNote.reason,
     });
+  }
+  if (dupGuard && dupGuard.override) await require('../utils/jobDupGuard').afterCreate(requirement, dupGuard.matches, { user: req.user, reason: dupGuard.reason, door: 'Add requirement' }); // eslint-disable-line global-require
+  const extraDepts = extraDeptsOf(req.body);
+  if (extraDepts && extraDepts.length) await RD.setExtras(requirement.id, requirement.department, extraDepts);
+  if (newExtraTls && newExtraTls.length) {
+    await RT.setExtras(requirement.id, requirement.tlId, newExtraTls);
+    await logAudit({ userId: req.user.id, action: 'Team leads set', entity: 'Requirement', entityId: requirement.id, toValue: [requirement.tlId, ...newExtraTls].join(', '), reason: 'Several team leads on a new requirement' });
   }
   await notifyAssignment(requirement, req.user.id);
   // A requirement that is live the moment it is saved is posted on every
   // source now; one parked at Draft / Agreement Check posts when it goes live.
   await pushToPortal(requirement, { user: req.user, trigger: 'create' });
-  res.status(201).json({ ...requirement, gateNote, agreementStatus: normalizeAgreementStatus(client.agreementStatus) });
+  res.status(201).json({ ...requirement, departments: RD.departmentsOf(requirement), tlIds: RT.tlsOf(requirement), gateNote, agreementStatus: normalizeAgreementStatus(client.agreementStatus) });
 });
 
 // EXACTLY WHAT TO DO when a client requirement is held at the agreement gate
@@ -3012,7 +3335,7 @@ router.post('/', requirePerm('ats', 'requirements', 'Create Requirement', 'creat
 // someone who cannot (Agreement Lifecycle is Super Admin / Admin; the client
 // record itself is the client desk's).
 const AGREEMENT_LABELS = {
-  DRAFT: 'Draft', SENT: 'Sent', VIEWED: 'Viewed', CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
+  DRAFT: 'Made', SENT: 'Sent', VIEWED: 'Viewed', CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
   SIGNED: 'Signed (not yet activated)', ACTIVE: 'Active', EXPIRED: 'Expired', REJECTED: 'Rejected',
 };
 // The next step on the client's agreement, as a sentence (Agreement tab of
@@ -3034,6 +3357,8 @@ function agreementStepText(client) {
 }
 
 async function agreementGateNote(user, client) {
+  // A TL / STL / Recruiter / HR login hears no agreement wording (user, 2026-10-12): the job is simply on hold.
+  if (agreementPrivacy.blindTo(user)) return `Saved for later. ${agreementPrivacy.HOLD_MESSAGE}`;
   const status = normalizeAgreementStatus(client.agreementStatus);
   const label = AGREEMENT_LABELS[status] || status;
   const [manage, desk] = await Promise.all([
@@ -3075,9 +3400,42 @@ async function agreementGateNote(user, client) {
 // The fields that decide scope. Kept next to the rule they serve.
 const ASSIGNMENT_FIELDS = ['recruiterId', 'bdeId', 'tlId', 'stlId', 'recruiterIds', 'accountManager'];
 
+// FULL EDIT: moving a job to another client, or flipping it between a client job and TeamLink's own (internal) job.
+// Guards: an invoice already raised on the job keeps its client (refused, plain words); the new client must be one the login may raise
+// work for and must not be paused / archived; a LIVE job moved to a client whose agreement is not Active goes back to waiting for the
+// agreement (it never goes live around the gate). People already on the job keep their step. Returns { status, body } to refuse, or null.
+async function fullEditClientMove(user, before, data, body) {
+  const wantInternal = body.internal === undefined ? !!before.internal : Boolean(body.internal);
+  let wantClient = body.clientId !== undefined && body.clientId !== '' ? body.clientId : before.clientId;
+  if (wantInternal) wantClient = await internalClientId();
+  const typeChanged = wantInternal !== !!before.internal;
+  const clientChanged = !!wantClient && wantClient !== before.clientId;
+  if (!typeChanged && !clientChanged) { delete data.clientId; delete data.internal; return null; }
+  // Making a job TeamLink's own (internal) job takes it out of the client manager team's view, so only an Admin does that.
+  if (wantInternal && typeChanged && !scopeOf(user).global) return { status: 403, body: { error: "Only an Admin can make a requirement TeamLink's own requirement. The client manager team changes the client instead.", field: 'type' } };
+  if (!wantInternal && !wantClient) return { status: 400, body: { error: 'Pick the client for this requirement.', field: 'clientId' } };
+  const invoices = await prisma.invoice.count({ where: { requirementId: before.id } });
+  if (invoices) return { status: 409, body: { error: `This requirement already has ${invoices} invoice(s), so its client and requirement type cannot be changed now.`, field: 'clientId' } };
+  if (!wantInternal) {
+    const client = await prisma.client.findUnique({ where: { id: wantClient } });
+    if (!client) return { status: 400, body: { error: 'That client is no longer on file — pick the client again.', field: 'clientId' } };
+    const paused = clientNewWorkRefusal(client, 'this requirement');
+    if (paused) return { status: 409, body: { ...paused, field: 'clientId' } };
+    if (!scopeOf(user).global && !(await prisma.client.findFirst({ where: { AND: [{ id: wantClient }, clientPickerWhere(user)] }, select: { id: true } }))) {
+      return { status: 403, body: { error: 'That client is outside your area — pick one of the clients in your list.', field: 'clientId' } };
+    }
+    if (requirementIsLive(before.status) && !agreementIsActive(client.agreementStatus)) data.status = 'AGREEMENT_CHECK';
+  } else {
+    data.bdeId = null;
+  }
+  data.clientId = wantClient;
+  data.internal = wantInternal;
+  return null;
+}
+
 // Human labels for the audit trail, so a row reads "Job Title" and not "title".
 const FIELD_LABELS = {
-  title: 'Job Title',
+  title: 'Requirement Title',
   description: 'Description',
   department: 'Department',
   priority: 'Priority',
@@ -3123,7 +3481,7 @@ const sameValue = (a, b) => {
   return norm(a) === norm(b);
 };
 
-router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res, next) => {
+router.put('/:id', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'edit'), async (req, res, next) => {
   try {
     // VIEW != EDIT: holding the edit action is not enough — the record has to
     // be one this user is actually on, unless their scope is global.
@@ -3132,10 +3490,13 @@ router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edi
 
     const before = req.requirement;
     const data = pickRequirement(req.body);
+    await require('../utils/openVocab').applyJob(req, data, before); // typed Education / Qualification / Specialization (2026-10-14) // eslint-disable-line global-require
 
     // --- the assignment gate ------------------------------------------------
     const touchedAssignment = ASSIGNMENT_FIELDS
       .filter((k) => k in data && !sameValue(data[k], before[k]));
+    let wantTlExtras = extraTlsOf(req.body);
+    if (wantTlExtras !== undefined && RT.extrasOf(before.id).join(',') !== wantTlExtras.join(',') && !touchedAssignment.includes('tlId')) touchedAssignment.push('tlId');
     if (touchedAssignment.length && !perms.assign) {
       return res.status(403).json({
         error: 'Changing the assignment chain is a scope change and needs the assign permission, '
@@ -3146,22 +3507,32 @@ router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edi
     // Fields the caller may not change are dropped rather than silently kept
     // in the update — a request that tried nothing is never refused, so an
     // edit form that round-trips unchanged assignment values still works.
-    if (!perms.assign) ASSIGNMENT_FIELDS.forEach((k) => { delete data[k]; });
+    if (!perms.assign) { ASSIGNMENT_FIELDS.forEach((k) => { delete data[k]; }); wantTlExtras = undefined; }
+    if (wantTlExtras !== undefined) {
+      const tlCheck = await checkTlTeam(req.body.tlIds, before);
+      if (tlCheck.error) return res.status(400).json({ error: tlCheck.error });
+      if (data.tlId) data.tl = tlCheck.names.get(data.tlId) || data.tl || null;
+    }
 
     // status only moves through /activate, /assign and /status, which enforce
     // the agreement gate — it is deliberately not editable here.
     delete data.status;
     // The client is not editable here either: moving a requirement to another
     // client re-decides the agreement gate and the whole commercial record.
-    delete data.clientId;
-    // Nor is the Requirement Type: flipping a client requirement to internal
-    // would walk it round the agreement gate. And the portal sync status moves
-    // only through POST /:id/portal-sync and the Job Portal, which check it.
-    delete data.internal;
+    // 2026-10-16: Super Admin / Admin and the BDE team may change it (perms.fullEdit) - with the guards in fullEditClientMove.
+    // Nor is the Requirement Type for the others: flipping a client requirement to internal would walk it round the agreement
+    // gate. And the portal sync status moves only through POST /:id/portal-sync and the Job Portal, which check it.
     delete data.portalSyncStatus;
+    if (perms.fullEdit) {
+      const refused = await fullEditClientMove(req.user, before, data, req.body);
+      if (refused) return res.status(refused.status).json(refused.body);
+    } else {
+      delete data.clientId;
+      delete data.internal;
+    }
     const problem = requirementProblem(req.body, data);
     if (problem) return res.status(400).json({ error: problem });
-    if ('title' in data && !String(data.title || '').trim()) return res.status(400).json({ error: 'Job title cannot be empty.', field: 'title' });
+    if ('title' in data && !String(data.title || '').trim()) return res.status(400).json({ error: 'Requirement title cannot be empty.', field: 'title' });
     // B9.1: a renamed / relocated open job must not become a second copy of
     // another open job for the same client (same rule as Add job; "Save
     // anyway" with a reason, audited). Drafts are not checked.
@@ -3171,7 +3542,7 @@ router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edi
       if (dup && !JD.overrideOk(req.body)) return res.status(409).json(JD.duplicateRefusal(dup, { editing: true }));
       if (dup) {
         await logAudit({
-          userId: req.user.id, action: 'Duplicate job kept anyway', entity: 'Requirement', entityId: before.id,
+          userId: req.user.id, action: 'Duplicate requirement kept anyway', entity: 'Requirement', entityId: before.id,
           fromValue: `${dup.reqCode || dup.id} · ${dup.title}`, toValue: before.reqCode, reason: JD.overrideReasonOf(req.body),
         });
       }
@@ -3197,11 +3568,33 @@ router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edi
       .map((k) => ({ field: k, label: FIELD_LABELS[k] || k, from: before[k], to: data[k] }));
     await require('../utils/specialisations').nameChanges(changes); // spec D: ids -> names in the trail
 
-    if (!changes.length) {
-      return res.json({ ...before, unchanged: true });
+    // SEVERAL DEPARTMENTS: compare the whole list (primary + extras) as one change.
+    const wantExtras = extraDeptsOf(req.body);
+    let deptsChange = null;
+    if (wantExtras !== undefined) {
+      const newPrimary = data.department || before.department;
+      const nowList = RD.departmentsOf(before).join(', ');
+      const nextList = RD.clean([newPrimary, ...wantExtras]).join(', ');
+      if (nowList !== nextList) deptsChange = { field: 'departments', label: 'Departments', from: nowList || null, to: nextList || null };
+    }
+    if (deptsChange) changes.push(deptsChange);
+    // SEVERAL TEAM LEADS: one change for the whole list (main first).
+    if (wantTlExtras !== undefined) {
+      const nowTls = RT.tlsOf(before);
+      const nextTls = RT.clean([data.tlId !== undefined ? data.tlId : before.tlId, ...wantTlExtras]);
+      if (nowTls.join(',') !== nextTls.join(',')) {
+        const nameOf = async (ids) => { const us = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true } }) : []; const m = new Map(us.map((u) => [u.id, u.name])); return ids.map((i) => m.get(i) || i).join(', ') || null; };
+        changes.push({ field: 'tlTeam', label: 'Team leads', from: await nameOf(nowTls), to: await nameOf(nextTls) });
+      }
     }
 
-    const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
+    if (!changes.length) {
+      return res.json({ ...before, departments: RD.departmentsOf(before), unchanged: true });
+    }
+
+    const requirement = Object.keys(data).length ? await prisma.requirement.update({ where: { id: before.id }, data }) : before;
+    if (wantExtras !== undefined) await RD.setExtras(requirement.id, requirement.department, wantExtras);
+    if (wantTlExtras !== undefined) await RT.setExtras(requirement.id, requirement.tlId, wantTlExtras);
 
     // One summary row for the activity strip …
     await logAudit({
@@ -3239,7 +3632,7 @@ router.put('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'edi
     // so the posting there says what the requirement now says.
     await pushToPortal(requirement, { user: req.user, trigger: 'edit' });
 
-    return res.json({ ...requirement, changedFields: changes.map((c) => c.label) });
+    return res.json({ ...requirement, departments: RD.departmentsOf(requirement), tlIds: RT.tlsOf(requirement), changedFields: changes.map((c) => c.label) });
   } catch (err) {
     return next(err);
   }
@@ -3274,6 +3667,15 @@ router.post('/:id/assign', requirePerm('ats', 'requirements', 'Requirement Detai
       : (req.body.recruiterIds || null);
   }
   if (req.body.accountManager !== undefined) data.accountManager = req.body.accountManager || null;
+  // SEVERAL TEAM LEADS (2026-10-14): tlIds = [main, also...] (the 'Change team' dialog).
+  const wantTlExtras = extraTlsOf(req.body);
+  if (Array.isArray(req.body.tlIds)) {
+    const tls = RT.clean(req.body.tlIds);
+    data.tlId = tls[0] || null;
+    const tlCheck = await checkTlTeam(tls, before);
+    if (tlCheck.error) return res.status(400).json({ error: tlCheck.error });
+    data.tl = data.tlId ? (tlCheck.names.get(data.tlId) || null) : null;
+  }
 
   // Assigning a recruiter to a live requirement advances the workflow.
   const willHaveRecruiter = (data.recruiterId !== undefined ? data.recruiterId : before.recruiterId)
@@ -3294,16 +3696,18 @@ router.post('/:id/assign', requirePerm('ats', 'requirements', 'Requirement Detai
   }
 
   const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
+  if (wantTlExtras !== undefined) await RT.setExtras(requirement.id, requirement.tlId, wantTlExtras);
   await logAudit({
     userId: req.user.id,
     action: 'Requirement assignment changed',
     entity: 'Requirement',
     entityId: requirement.id,
-    fromValue: [before.tlId, before.recruiterId, before.bdeId].filter(Boolean).join(' / ') || 'unassigned',
-    toValue: [requirement.tlId, requirement.recruiterId, requirement.bdeId].filter(Boolean).join(' / ') || 'unassigned',
+    fromValue: [...RT.clean([before.tlId, ...RT.extrasOf(before.id)]), before.recruiterId, before.bdeId].filter(Boolean).join(' / ') || 'unassigned',
+    toValue: [...(wantTlExtras !== undefined ? RT.clean([requirement.tlId, ...wantTlExtras]) : [requirement.tlId]), requirement.recruiterId, requirement.bdeId].filter(Boolean).join(' / ') || 'unassigned',
+    reason: wantTlExtras !== undefined && wantTlExtras.length ? `Team leads: main + ${wantTlExtras.length} also assigned` : null,
   });
   await notifyAssignment(requirement, req.user.id);
-  res.json(requirement);
+  res.json({ ...requirement, tlIds: RT.tlsOf(requirement) });
 });
 
 // VIEW != APPROVE. Holding the approve action is not enough to open, hold or
@@ -3316,6 +3720,7 @@ async function approveDenied(user, record) {
 
 // The agreement-gate refusal, with the exact steps (see agreementGateNote).
 async function gateRefusal(user, client, lead) {
+  if (agreementPrivacy.blindTo(user)) return `${lead}. ${agreementPrivacy.HOLD_MESSAGE}`;
   if (!client) return `${lead} — the client agreement is not Active.`;
   const note = await agreementGateNote(user, client);
   return `${lead}: ${note.replace(/^Saved at Agreement Check — not live yet, because /, '').replace(' When the agreement is Active, open this requirement and press Activate Requirement.', ' Then press Activate Requirement here.')}`;
@@ -3327,28 +3732,48 @@ async function gateRefusal(user, client, lead) {
 // who find it in their Jobs list to pick up - and then pick the recruiter.
 async function tellTlJobIsOpen(requirement, client, actorId) {
   if (requirement.internal) return;
-  let ids = requirement.tlId ? [requirement.tlId] : [];
-  if (!ids.length && requirement.department) {
+  let ids = RT.tlsOf(requirement);
+  const jobDepts = RD.departmentsOf(requirement);
+  if (!ids.length && jobDepts.length) {
     const tls = await prisma.user.findMany({
-      where: { status: { not: 'Inactive' }, atsRole: 'TL', OR: [{ atsDepartment: requirement.department }, { atsScopeDepartments: { contains: requirement.department } }] },
+      where: { status: { not: 'Inactive' }, atsRole: 'TL', OR: jobDepts.flatMap((d) => [{ atsDepartment: d }, { atsScopeDepartments: { contains: d } }]) },
       select: { id: true, name: true, email: true },
     });
     ids = tls.filter((u) => !(!process.env.TEST_MODE && /zztest|example\.test/i.test(`${u.name} ${u.email}`))).map((u) => u.id);
   }
   await notifyUsers(ids, {
-    title: `New job opened — ${requirement.reqCode || requirement.title}`,
+    title: `New requirement opened — ${requirement.reqCode || requirement.title}`,
     message: `${requirement.title}${client ? ` for ${client.name}` : ''} is open now. Pick a recruiter for it.\nOpen: /requirements/${requirement.id}`,
     exceptUserId: actorId,
   });
 }
 
 // Activate — the agreement gate. Draft / Agreement Check -> Open.
-router.post('/:id/activate', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
+// ACCEPT a client's requirement request (founder, 2026-10-23): the client's BDE / BDE TL (or a Manager / Admin) takes it; only then does "Create requirement" open.
+router.post('/:id/accept-request', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
+  const RA = require('../utils/requestAccept'); // eslint-disable-line global-require
+  const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
+  if (!existing) return res.status(404).json({ error: 'Requirement not found' });
+  const denied = await approveDenied(req.user, existing);
+  if (denied) return res.status(403).json({ error: denied });
+  if (existing.status !== 'DRAFT' || existing.internal) return res.status(409).json({ error: 'Only a new request waiting for you can be accepted.' });
+  const cur = await RA.get(existing.id);
+  if (cur && cur.state === 'accepted') return res.json({ ok: true, already: true, requestState: 'accepted', requestAcceptedBy: cur.byName || null });
+  const done = await RA.accept(existing.id, req.user);
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Requirement request accepted', entity: 'Requirement', entityId: existing.id, toValue: `${existing.reqCode || existing.title} accepted by ${req.user.name}` });
+  return res.json({ ok: true, requestState: 'accepted', requestAcceptedBy: done.byName || null, requestAcceptedAt: done.acceptedAt });
+});
+
+router.post('/:id/activate', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
   const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true } });
   const denied = await approveDenied(req.user, existing);
   if (denied) return res.status(403).json({ error: denied });
   if (holdOnlyRole(req.user)) return res.status(403).json({ error: 'An Assistant Manager / STL can put a requirement on hold; activating it is a Manager or Admin action.' });
   if (requirementIsLive(existing.status)) return res.status(400).json({ error: 'This requirement is already open' });
+  // A client's request is taken first (Accept), then created. A draft with no accept row (older ones) is not held back.
+  if (!existing.internal && existing.status === 'DRAFT' && (await require('../utils/requestAccept').stateOf(existing.id)) === 'requested') { // eslint-disable-line global-require
+    return res.status(409).json({ error: 'Accept this request first (press Accept), then create the requirement.', code: 'ACCEPT_FIRST' });
+  }
   // The gate is an ACTIVE agreement, not merely a signed one. Internal
   // requirements have no client agreement to wait on.
   if (!existing.internal && !agreementIsActive(existing.client && existing.client.agreementStatus)) {
@@ -3358,8 +3783,15 @@ router.post('/:id/activate', requirePerm('ats', 'requirements', 'Requirement Det
     });
   }
 
+  // A draft (a client's / BDE's request) becomes a real job here: the twin check runs now too (utils/jobDupGuard.js).
+  let openGuard = null;
+  if (!existing.internal && existing.status === 'DRAFT') {
+    openGuard = await require('../utils/jobDupGuard').guardCreate({ ...existing, duplicateOverride: req.body && req.body.duplicateOverride, duplicateReason: req.body && req.body.duplicateReason }, { user: req.user, door: 'Open requirement', excludeId: existing.id }); // eslint-disable-line global-require
+    if (openGuard.block) return res.status(openGuard.block.status).json(openGuard.block.body);
+  }
   const status = (existing.recruiterId || csv(existing.recruiterIds).length) ? 'RECRUITER_ASSIGNED' : 'OPEN';
   const requirement = await prisma.requirement.update({ where: { id: req.params.id }, data: { status } });
+  if (openGuard && openGuard.override) await require('../utils/jobDupGuard').afterCreate(requirement, openGuard.matches, { user: req.user, reason: openGuard.reason, door: 'Open requirement' }); // eslint-disable-line global-require
   await logAudit({
     userId: req.user.id, action: 'Requirement activated', entity: 'Requirement',
     entityId: requirement.id, fromValue: existing.status, toValue: status,
@@ -3388,21 +3820,13 @@ const NEXT_STATUS = {
   CLOSED: ['OPEN', 'DRAFT'],
 };
 
-router.post('/:id/status', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
+router.post('/:id/status', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
   const existing = await prisma.requirement.findUnique({ where: { id: req.params.id }, include: { client: true, _count: { select: { applications: true } } } });
   const denied = await approveDenied(req.user, existing);
   if (denied) return res.status(403).json({ error: denied });
   const to = String(req.body.status || '').toUpperCase();
   if (!REQUIREMENT_STATUS_CODES.includes(to)) return res.status(400).json({ error: 'Unknown requirement status.' });
-  // Role spec §7 — a BDE may CLOSE a requirement of their own client; Reopen,
-  // Hold and every other move are Admin's.
-  if ((atsViewRole(req.user) === 'bde' || isBdeTlUser(req.user)) && to !== 'CLOSED') {
-    return res.status(403).json({ error: 'A BDE pauses and resumes a job with the Pause / Resume buttons, and asks to close it. Reopening is an Admin action.' });
-  }
-  // BDE business workspace (2026-10-10): a desk BDE does not close a job, they ASK (Ask to close) and a Manager / Admin approves.
-  if (to === 'CLOSED' && isDeskBde(req.user)) {
-    return res.status(403).json({ error: 'A BDE asks to close a job: press Ask to close. A Manager or an Admin approves it.', code: 'CLOSE_NEEDS_APPROVAL' });
-  }
+  // 2026-10-13: the BDE team has complete access to a job except delete: close, hold, resume and reopen directly (was: close only / ask).
   // Per-role spec 2026-10-03: an Assistant Manager / STL HOLDS (and resumes
   // a held requirement); closing and reopening are a Manager's / Admin's.
   if (holdOnlyRole(req.user) && !(to === 'ON_HOLD' || (existing.status === 'ON_HOLD' && to !== 'CLOSED'))) {
@@ -3411,8 +3835,8 @@ router.post('/:id/status', requirePerm('ats', 'requirements', 'Requirement Detai
   const allowed = NEXT_STATUS[existing.status] || [];
   if (!allowed.includes(to)) {
     return res.status(400).json({
-      error: `A requirement at "${requirementStatusLabel(existing.status)}" cannot move to "${requirementStatusLabel(to)}". `
-        + `From here it can go to: ${allowed.map((x) => requirementStatusLabel(x)).join(', ') || 'nowhere'}.`,
+      error: `A requirement at "${requirementStateWords(existing.status)}" cannot move to "${requirementStateWords(to)}". `
+        + `From here it can go to: ${allowed.map((x) => requirementStateWords(x)).join(', ') || 'nowhere'}.`,
     });
   }
   if (requirementIsLive(to) && !existing.internal && !agreementIsActive(existing.client && existing.client.agreementStatus)) {
@@ -3436,19 +3860,13 @@ router.post('/:id/status', requirePerm('ats', 'requirements', 'Requirement Detai
 
 // Open/close toggle — the prototype's toggleRequirementStatus(), kept so the
 // existing button and any caller still work.
-router.post('/:id/toggle-status', requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
+router.post('/:id/toggle-status', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Requirement Detail', 'approve'), async (req, res) => {
   const existing = req.requirement;
   const denied = await approveDenied(req.user, existing);
   if (denied) return res.status(403).json({ error: denied });
   const status = requirementIsLive(existing.status) ? 'CLOSED' : 'OPEN';
   if (holdOnlyRole(req.user)) {
     return res.status(403).json({ error: 'An Assistant Manager / STL can put a requirement on hold; opening or closing it is a Manager or Admin action.' });
-  }
-  if (status === 'CLOSED' && isDeskBde(req.user)) {
-    return res.status(403).json({ error: 'A BDE asks to close a job: press Ask to close. A Manager or an Admin approves it.', code: 'CLOSE_NEEDS_APPROVAL' });
-  }
-  if (status !== 'CLOSED' && (atsViewRole(req.user) === 'bde' || isBdeTlUser(req.user))) {
-    return res.status(403).json({ error: 'A BDE can close a requirement, but reopening it is an Admin action.' });
   }
   if (status === 'OPEN' && !existing.internal) {
     const client = await prisma.client.findUnique({ where: { id: existing.clientId } });
@@ -3471,7 +3889,9 @@ router.post('/:id/toggle-status', requirePerm('ats', 'requirements', 'Requiremen
 router.delete('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', 'delete'), async (req, res) => {
   const r = req.requirement;
   if (!isSuperAdminUser(req.user)) {
-    return res.status(403).json({ error: 'Only the Super Admin can delete a job for good. Close it instead.' });
+    // 2026-10-16: the BDE team too - for a job of their own area (the same record rule as editing it).
+    const perms = isBdeTeam(req.user) ? await requirementPermissions(req.user, r) : null;
+    if (!perms || !perms.delete) return res.status(403).json({ error: 'Only the Super Admin or the BDE team (for requirements in their own area) can delete a requirement for good. Close it instead.' });
   }
   const [apps, invoices] = await Promise.all([
     prisma.application.count({ where: { requirementId: r.id } }),
@@ -3479,12 +3899,15 @@ router.delete('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', '
   ]);
   if (apps || invoices) {
     return res.status(409).json({
-      error: `${r.reqCode || 'This job'} has ${apps} ${apps === 1 ? 'person' : 'people'}${invoices ? ` and ${invoices} invoice(s)` : ''} on it, so it cannot be deleted. Close it instead.`,
+      error: `${r.reqCode || 'This requirement'} has ${apps} ${apps === 1 ? 'person' : 'people'}${invoices ? ` and ${invoices} invoice(s)` : ''} on it, so it cannot be deleted. Close it instead.`,
     });
   }
   await prisma.requirement.delete({ where: { id: r.id } });
+  await RT.removeJob(r.id);
+  await RD.removeJob(r.id);
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: 'Requirement deleted', entity: 'Requirement',
+    reason: isSuperAdminUser(req.user) ? undefined : 'Deleted by the BDE team',
     entityId: r.id, fromValue: `${r.reqCode || ''} ${r.title || ''}`.trim(), toValue: 'deleted',
   });
   return res.json({ ok: true, id: r.id });
@@ -3492,7 +3915,7 @@ router.delete('/:id', requirePerm('ats', 'requirements', 'Requirement Detail', '
 
 // Job Portal sync status. The portal itself is another module's; this records
 // where the requirement stands with it, which the detail screen shows.
-router.post('/:id/portal-sync', requirePerm('ats', 'requirements', 'Job Posting', 'edit'), async (req, res) => {
+router.post('/:id/portal-sync', require('../utils/postingGuard').requirePosting('ats', 'requirements', 'Job Posting', 'edit'), async (req, res) => {
   // OWNERSHIP, not only scope (review #3 access audit): seeing a requirement
   // is not being on its chain — the same rule as PUT /:id (requirementPermissions).
   if (!(await requirementPermissions(req.user, req.requirement)).share) {
@@ -3519,7 +3942,7 @@ router.post('/:id/portal-sync', requirePerm('ats', 'requirements', 'Job Posting'
 // Templated job description built from the requirement + client — the
 // prototype's jobDescriptionHtml(). Saved onto description, which is what the
 // public Job Portal (routes/public.js) already shows candidates.
-router.post('/:id/generate-jd', requirePerm('ats', 'requirements', 'Job Posting', 'edit'), async (req, res) => {
+router.post('/:id/generate-jd', require('../utils/postingGuard').requirePosting('ats', 'requirements', 'Job Posting', 'edit'), async (req, res) => {
   // OWNERSHIP, not only scope (review #3 access audit): seeing a requirement
   // is not being on its chain — the same rule as PUT /:id (requirementPermissions).
   if (!(await requirementPermissions(req.user, req.requirement)).share) {

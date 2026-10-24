@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import { useSpecTree } from '../../utils/specMaster';
 import SpecPicker from '../SpecPicker.jsx';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // The candidate's Qualification · Specialization (spec D, 2026-10-03) — one
@@ -86,9 +87,9 @@ export default function SpecialisationLine({ candidateId, onChanged }) {
         <div style={{ marginTop: 8 }}>
           <label className="field">
             <span>Department</span>
-            <select value={form.department} onChange={(e) => setForm({ department: e.target.value, qualificationId: '', specialisationId: '' })}>
+            <Combo value={form.department} onChange={(e) => setForm({ department: e.target.value, qualificationId: '', specialisationId: '' })}>
               {depts.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
-            </select>
+            </Combo>
           </label>
           <SpecPicker
             department={form.department}

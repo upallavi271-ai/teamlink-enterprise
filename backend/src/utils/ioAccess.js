@@ -66,8 +66,7 @@ function importModeFor(role, kind) {
 function mayExportModule(role, module) {
   if (!role) return false;
   if (['CLIENT', 'CANDIDATE'].includes(role)) return false; // their portals, not these screens
-  if (role === 'RECRUITER' && ['clients', 'agreements'].includes(module)) return false;
-  if (role === 'ACCOUNTANT') return ['requirements', 'joining', 'dashboard', 'reports'].includes(module);
+  if (role === 'RECRUITER' && ['clients', 'agreements'].includes(module)) return false; // a recruiter has no Clients screen at all (client names only)
   return true;
 }
 
@@ -78,7 +77,8 @@ function localIoAccessFor(user, module, kind = null) {
     role,
     import: !!importMode,
     importMode,
-    export: mayExportModule(role, module),
+    // the agreement register is not for a TL / STL / Recruiter / HR (2026-10-12; the BDE team lead is a BDE here)
+    export: mayExportModule(role, module) && !(module === 'agreements' && require('./agreementPrivacy').blindTo(user)), // eslint-disable-line global-require
     exportScope: EXPORT_SCOPE[role] || 'own',
     // PAN / Aadhaar / bank details: HR, Admin, Super Admin only.
     sensitive: ['SUPER_ADMIN', 'ADMIN', 'HR'].includes(role),
@@ -99,6 +99,12 @@ const SHARED_MODULE = {
 // feature for — those stay with the table above + the kind's own permission.
 const SHARED_IMPORT = ['requirements', 'clients', 'candidates'];
 
+// EVERYBODY (founder, 2026-10-23: "import and export buttons for everyone"): every internal ATS login can use Import and Export on every screen.
+// WHICH ROWS stays the screen's own scope (own / team / department / all) and PAN / bank / revenue columns stay with their roles, so a wider button
+// never means wider data. An import a role may not make straight away goes as a REQUEST an Admin / Manager approves (utils/ioAccess importModeFor
+// + routes/atsIo.js importModeOf), exactly like a BDE's.
+const isInternalRole = (user) => { const r = ROLE_OF(user); return !!r && !['CLIENT', 'CANDIDATE'].includes(r); };
+
 async function ioAccessFor(user, module, kind = null) {
   const local = localIoAccessFor(user, module, kind);
   const sharedId = SHARED_MODULE[module];
@@ -114,6 +120,7 @@ async function ioAccessFor(user, module, kind = null) {
   // The Role Catalog answer wins (configurable per role); a field it does not
   // give — and an import it has no feature for — falls back to the table.
   const out = { ...local, ...shared };
+  if (isInternalRole(user)) out.export = local.export; // everybody may export what their own screen shows (the privacy blocks below still apply)
   // Which Role Catalog import a kind is: only these kinds have one.
   const IMPORT_OF_KIND = {
     requirements: 'requirements', clients: 'clients', agreements: 'clients', candidates: 'candidates', applications: 'candidates', resumes: 'candidates',
@@ -126,6 +133,10 @@ async function ioAccessFor(user, module, kind = null) {
     out.export = false; out.import = false; out.importMode = null;
   }
   if (kind && !out.importMode && out.import) out.importMode = local.importMode || 'direct';
+  // Agreements are not for a TL / STL / Recruiter / HR: no register export, no agreement import (2026-10-12).
+  if ((module === 'agreements' || kind === 'agreements') && require('./agreementPrivacy').blindTo(user)) { // eslint-disable-line global-require
+    out.export = false; out.import = false; out.importMode = null;
+  }
   return out;
 }
 
@@ -134,4 +145,4 @@ function mayApproveImport(user) {
   return ['SUPER_ADMIN', 'ADMIN', 'MANAGER'].includes(ROLE_OF(user));
 }
 
-module.exports = { ioAccessFor, localIoAccessFor, mayApproveImport, roleOf: ROLE_OF, CANDIDATE_KINDS };
+module.exports = { ioAccessFor, localIoAccessFor, mayApproveImport, roleOf: ROLE_OF, isInternalRole, CANDIDATE_KINDS };

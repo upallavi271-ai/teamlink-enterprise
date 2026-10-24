@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import './match.css';
+import FitBreakdown from './FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
 
 const ENGINE = { local: 'built-in matching', ai: 'AI matching' };
 
@@ -33,7 +34,7 @@ export default function SimilarCandidatesPanel({ requirementId, onAdd }) {
     setBusy(c.id); setSaid('');
     try {
       await onAdd(c.id);
-      setSaid(`✓ ${c.name} added to this job.`);
+      setSaid(`✓ ${c.name} added to this requirement.`);
       setN((x) => x + 1);
     } catch (e) {
       setSaid(`✗ ${(e && e.response && e.response.data && e.response.data.error) || 'Could not add. Please try again.'}`);
@@ -60,6 +61,7 @@ export default function SimilarCandidatesPanel({ requirementId, onAdd }) {
           </span>
           <span className="b8-sim-pct" title="How close in meaning">{`${c.similarPct}% similar`}</span>
           <span className="small-muted" title={c.match.reason}>{`Fit ${c.match.overall}%`}</span>
+          <FitBreakdown b={c.match.breakdown} compact showTotal={false} />
           {data.canAdd && onAdd && (
             <button type="button" className="btn btn-sm btn-primary" disabled={busy === c.id} onClick={() => add(c)}>{busy === c.id ? 'Adding…' : 'Add'}</button>
           )}

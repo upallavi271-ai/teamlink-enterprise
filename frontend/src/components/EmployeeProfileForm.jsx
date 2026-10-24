@@ -94,7 +94,7 @@ export default function EmployeeProfileForm({
   const FL = useFieldLayout();
   // The label HR gave the field, its ✱ when required, and its help text.
   const labelOf = (k, fallback) => FL.label(k, fallback);
-  const star = (k) => (FL.enforced(k) ? <b className="xf-req"> ✱</b> : null);
+  const star = (k) => null;
   const help = (k) => (FL.help(k) ? <small className="cell-muted">{FL.help(k)}</small> : null);
   const writable = (who) => !readOnly && (who === 'both' || (who === 'hr' && mode === 'hr'));
   const inForm = (k) => Object.prototype.hasOwnProperty.call(form, k);

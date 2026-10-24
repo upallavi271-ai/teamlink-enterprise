@@ -33,7 +33,7 @@ router.use(requirePerm('ats', 'candidates', 'Candidate List', 'view'));
 const wrap = (fn) => async (req, res, next) => {
   try {
     const out = await fn(req, res);
-    if (out && out.status) return res.status(out.status).json(out.body);
+    if (out && out !== res && !res.headersSent && Number.isInteger(out.status)) return res.status(out.status).json(out.body); // a handler that already answered returns res itself (res.status is a function)
     return undefined;
   } catch (err) { return next(err); }
 };

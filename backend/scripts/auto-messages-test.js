@@ -371,7 +371,7 @@ const OK_DOMAIN = 'zztest-sandbox.in'; // not a reserved test domain, so the fak
       const { a: a4, c: c4 } = await mkApp('INTERVIEW_COMPLETED');
       await move(a4.id, 'SELECTED');
       const r4 = await lastRow(a4.id);
-      check('I5 a job switched off: skipped "switched off for this job"', jo.status === 200 && r4.status === 'SKIPPED' && /for this job/.test(r4.statusReason) && (await cmsgs(c4.id)).length === 0, r4);
+      check('I5 a job switched off: skipped "switched off for this job"', jo.status === 200 && r4.status === 'SKIPPED' && /for this requirement/.test(r4.statusReason) && (await cmsgs(c4.id)).length === 0, r4);
       await call('PUT', `/api/auto-messages/jobs/${job.id}`, T.rec, { mode: 'approval' });
       const { a: a5 } = await mkApp('INTERVIEW_COMPLETED');
       await move(a5.id, 'SELECTED');

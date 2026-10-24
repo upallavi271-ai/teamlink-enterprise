@@ -5,6 +5,8 @@ import StatusChip from '../ui/StatusChip.jsx';
 import PostByHand from './PostByHand.jsx';
 import PostWalkthrough from './PostWalkthrough.jsx';
 import JobTextPanel from './JobTextPanel.jsx';
+import ReadyTemplatePanel from '../broadcast/ReadyTemplatePanel.jsx'; // the ready template (job post, WhatsApp, SMS, email)
+import PostEverywhere from '../broadcast/PostEverywhere.jsx'; // one 'Post to all selected places' button
 import Modal from '../Modal.jsx';
 import './jobops.css';
 import './jobPostingSites.css';
@@ -36,13 +38,14 @@ export default function JobPostingSites({ requirementId, version, onChanged }) {
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
   const [writing, setWriting] = useState(false); // the Write the job text window
+  const [kit, setKit] = useState(false); // the ready template + Post to all selected places window
   const [byHand, setByHand] = useState(null); // the board whose "Post by hand" helper is open
   const [walk, setWalk] = useState(false); // "Post them one by one"
   const polls = useRef(0);
 
   const load = () => api.get(`/requirements/${requirementId}/posting-sites`)
     .then((r) => { setData(r.data); setError(''); })
-    .catch((e) => setError(e.response?.data?.error || 'Could not load where this job is posted.'));
+    .catch((e) => setError(e.response?.data?.error || 'Could not load where this requirement is posted.'));
   useEffect(() => { polls.current = 0; load(); }, [requirementId, version]); // eslint-disable-line react-hooks/exhaustive-deps
   // Posting runs in the background: look again while a site is still going.
   useEffect(() => {
@@ -102,26 +105,28 @@ export default function JobPostingSites({ requirementId, version, onChanged }) {
             {busy === 'retry-all' ? 'Trying…' : `Retry failed (${failed.length})`}
           </button>
         )}
-        {edit && <button type="button" className="btn btn-sm btn-primary" onClick={() => setWriting(true)}>Write the job posts</button>}
+        {edit && <button type="button" className="btn btn-sm btn-primary" onClick={() => setKit(true)}>Ready template and post everywhere</button>}
+        {edit && <button type="button" className="btn btn-sm" onClick={() => setWriting(true)}>Write the job posts</button>}
         <button type="button" className="btn btn-sm" disabled={busy === 'refresh'} onClick={refresh}>{busy === 'refresh' ? 'Looking…' : 'Refresh'}</button>
       </div>
-      {edit && <div className="small-muted jps-hint">Write the job posts: ready-to-paste text for Naukri, Shine, Indeed and LinkedIn, made from this job.</div>}
+      {edit && <div className="small-muted jps-hint">Write the job posts: ready-to-paste text for Naukri, Shine, Indeed and LinkedIn, made from this requirement.</div>}
       {data.sites.map((s) => (
         <div key={s.id} className={`jobops-site${s.ticked ? '' : ' is-off'}`}>
           <label className="jobops-tick">
-            <input type="checkbox" checked={s.ticked} disabled={!edit || busy === s.id} onChange={() => toggle(s)} />
+            {/* Only a login that may post sees the tick boxes (a Recruiter reads the status, nothing to press). */}
+            {edit && <input type="checkbox" checked={s.ticked} disabled={busy === s.id} onChange={() => toggle(s)} />}
             <b>{s.name}</b>
           </label>
           <StatusChip tone={s.code === 'NOT_SELECTED' ? 'grey' : (TONE[s.tone] || 'grey')}>{s.label || s.status}</StatusChip>
           {s.ticked && s.modeLabel && s.code !== 'NOT_SELECTED' && <span className={`jps-mode is-${s.mode}`} title="Auto = TeamLink puts it there. By hand = a person did. Not connected = no account is connected yet.">{s.modeLabel}</span>}
           <span className="jobops-site-btns">
-            {(s.code === 'POSTED' || s.code === 'POSTED_BY_HAND') && s.link && <a className="btn btn-sm" href={fullLink(s.link)} target="_blank" rel="noreferrer">View job ↗</a>}
+            {(s.code === 'POSTED' || s.code === 'POSTED_BY_HAND') && s.link && <a className="btn btn-sm" href={fullLink(s.link)} target="_blank" rel="noreferrer">View requirement ↗</a>}
             {edit && s.ticked && s.hand && s.hand.offer && (
               <button type="button" className={`btn btn-sm${s.mode === 'none' ? ' btn-primary' : ''}`} onClick={() => setByHand(s)}>
                 {s.code === 'TAKE_DOWN_BY_HAND' ? 'I took it down…' : s.code === 'POSTED_BY_HAND' ? 'Details' : 'Post by hand'}
               </button>
             )}
-            {needsSetup(s) && (s.setupLink
+            {edit && needsSetup(s) && (s.setupLink
               ? <Link className="btn btn-sm" to={s.setupLink}>Configure integration</Link>
               : <span className="small-muted">Ask your admin</span>)}
             {edit && s.canRetry && (
@@ -131,7 +136,7 @@ export default function JobPostingSites({ requirementId, version, onChanged }) {
             )}
           </span>
           <span className="jobops-why" style={{ whiteSpace: 'pre-line' }}>
-            {s.code === 'NOT_SELECTED' ? 'Not ticked for this job.' : s.reason}
+            {s.code === 'NOT_SELECTED' ? 'Not ticked for this requirement.' : s.reason}
             {s.hand && s.hand.overdue && s.code !== 'NOT_SELECTED' && (
               <span className="jps-late">{` Not posted by hand yet — waiting ${s.hand.waitedHours} hours.`}</span>
             )}
@@ -143,15 +148,23 @@ export default function JobPostingSites({ requirementId, version, onChanged }) {
       ))}
       {note && <div className="jobops-ok" role="status">{note}</div>}
       {error && <div className="error-text">{error}</div>}
+      {kit && (
+        <Modal title="Ready template and post everywhere" size="xwide" onClose={() => setKit(false)} foot={<button type="button" className="btn" onClick={() => setKit(false)}>Close</button>}>
+          <div className="grid-2" style={{ alignItems: 'start' }}>
+            <ReadyTemplatePanel requirementId={requirementId} />
+            <PostEverywhere requirementId={requirementId} canPost={edit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
+          </div>
+        </Modal>
+      )}
       {writing && (
         <Modal title="Write the job posts" size="wide" onClose={() => setWriting(false)} foot={<button type="button" className="btn" onClick={() => setWriting(false)}>Close</button>}>
-          <div className="small-muted" style={{ marginBottom: 8 }}>Ready-to-paste text for Naukri, Shine, Indeed and LinkedIn, written from this job. Read it once before you post.</div>
+          <div className="small-muted" style={{ marginBottom: 8 }}>Ready-to-paste text for Naukri, Shine, Indeed and LinkedIn, written from this requirement. Read it once before you post.</div>
           <JobTextPanel requirementId={requirementId} />
         </Modal>
       )}
       {walk && (
         <PostWalkthrough
-          pairs={waitingHand.map((s) => ({ requirementId, board: s.id, boardName: s.name, title: 'this job', waitedHours: (s.hand && s.hand.waitedHours) || 0 }))}
+          pairs={waitingHand.map((s) => ({ requirementId, board: s.id, boardName: s.name, title: 'this requirement', waitedHours: (s.hand && s.hand.waitedHours) || 0 }))}
           onClose={() => { setWalk(false); load(); }}
           onChanged={() => { if (onChanged) onChanged(); }}
         />

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import StatusChip from '../ui/StatusChip.jsx';
 import './followups.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // WHEN IS A FOLLOW-UP DUE, PER STEP — the editable settings table (spec C1
@@ -93,9 +94,9 @@ export default function FollowUpRules() {
                             onChange={(e) => change(row, { days: e.target.value === '' ? '' : Number(e.target.value) })}
                           />
                         )}
-                        <select aria-label={`Rule for ${row.label}`} value={v.mode} onChange={(e) => change(row, { mode: e.target.value })}>
+                        <Combo aria-label={`Rule for ${row.label}`} value={v.mode} onChange={(e) => change(row, { mode: e.target.value })}>
                           {(table.modes || []).map((m) => <option key={m.id} value={m.id}>{MODE_SHORT[m.id] || m.label}</option>)}
-                        </select>
+                        </Combo>
                       </span>
                     ) : (
                       <span>{v.mode === 'none' ? MODE_SHORT.none : `${v.days} ${MODE_SHORT[v.mode]}`}</span>

@@ -1,6 +1,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const prisma = require('../db');
+const joinDayShared = require('../utils/joinDayShared');
+const JL = require('../utils/joinDayList'); // the joining day in the lists (feeds joinDayShared from the rows already loaded)
 const { requireAuth, requirePerm, requireProduct } = require('../middleware/auth');
 const {
   requirementWhere, matches, atsScopeOf: scopeOf, atsScopeCached, OUT_OF_SCOPE, CLIENT_SHARED_STAGES, applicationInScope,
@@ -27,10 +29,12 @@ const { currentFollowUpsByApplication, CALL_RESULTS } = require('../utils/follow
 // C1 (2026-10-03): Last contact + the Not followed up / Due today / Followed up badge.
 const FV = require('../utils/followupVisibility');
 const SALARY = require('../utils/salaryFit'); // salary: required on create, the Salary fit %, one helper
+const FB = require('../utils/fitBreakdown'); // the Fit breakdown (Resume · AI · Location · Salary) + who sees how much
 const PT = require('../utils/pipelineTally'); // one definition of every Candidates & Pipeline count
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
 // The paged list's in-memory working set (kept current by deltas).
 const { getListState, markCandidateDirty } = require('../utils/candidateListCache');
+const ADDED = require('../utils/candidateAddedBy'); // who typed / uploaded each person: that login keeps seeing them before any requirement
 // THE ACTUAL WORKFLOW (2026-09-29): an internal opening's stages read HR Review /
 // Dept Head / TL, and its next action is the internal chain's.
 const { stageLabelFor, nextActionForStage: wfNextAction } = require('../utils/atsVocab');
@@ -57,6 +61,9 @@ const { isPreAtsApplication } = require('../utils/atsVocab');
 // WHERE DID THEY COME FROM: one clean source list + the function that maps any stored word onto it
 // (utils/candidateSource.js). Computed ONCE per decorated row, never per request.
 const CS = require('../utils/candidateSource');
+// WHEN DID THEY COME: one date + one trust word per person (utils/cameOn.js), used by the list, the Sources tab, the exports and the profile.
+const CAME = require('../utils/cameOn');
+const clientSearch = require('../utils/clientSearch'); // old client names are searchable (ClientAlias)
 
 const router = express.Router();
 router.use(requireAuth);
@@ -609,15 +616,24 @@ function stageSortKey(r) {
   const i = stageIndex(r.currentStage);
   return i < 0 ? 800 : i;
 }
+// A date typed wrongly in an old sheet (say December when it is October) must not sit above everyone who really arrived today:
+// anything more than a day in the future counts as unknown (null = last), so the newest REAL arrival comes first.
+const notFuture = (t) => (Number.isFinite(t) && t <= Date.now() + 86400000 ? t : null);
+// "New" = added in the last NEW_DAYS days (the founder's New button on every list).
+const NEW_DAYS = 7;
+const isNewRow = (r) => { const t = new Date(r.createdAt).getTime(); return Number.isFinite(t) && t >= Date.now() - NEW_DAYS * 86400000 && t <= Date.now() + 86400000; };
 const SORTS = {
-  applied: (r) => (r.appliedDate ? new Date(r.appliedDate).getTime() : new Date(r.createdAt).getTime()),
+  applied: (r) => notFuture(r.appliedDate ? new Date(r.appliedDate).getTime() : new Date(r.createdAt).getTime()),
   followUp: (r) => (r.followUp && r.followUp.dueDate ? r.followUp.dueDate : null),
   stage: stageSortKey,
   due: (r) => r.dueDate || null,
   interview: (r) => (r.interviewAt ? new Date(r.interviewAt).getTime() : null),
+  joining: (r) => (r.joiningDay || r.joiningPlanned || null),
   name: (r) => String(r.name || '').toLowerCase(),
   activity: (r) => (r.lastActivityAt ? new Date(r.lastActivityAt).getTime() : null),
-  created: (r) => new Date(r.createdAt).getTime(),
+  created: (r) => notFuture(new Date(r.createdAt).getTime()),
+  // Came on: the date the person came to us (utils/cameOn.js); a row with none sorts last.
+  cameOn: (r) => (r.cameOn ? new Date(r.cameOn).getTime() : null),
   masterActivity: (r) => (r.lastApplicationActivityAt ? new Date(r.lastApplicationActivityAt).getTime() : null),
   // cand7_: Last contact ("Never" = 0, so oldest-first puts them on top) and Fit %.
   lastContact: (r) => (r.lastContactAt ? new Date(r.lastContactAt).getTime() : 0),
@@ -696,7 +712,7 @@ async function pagedRowsFor(user) {
   const shared = s.global && s.role !== 'CANDIDATE' && viewerKind(user) === 'internal';
   const memoId = shared ? 'G' : user.id;
   // (a shared copy is the same for every global login: their own department / team fields do not matter)
-  const key = (shared ? ['G', st.version, istDay(new Date())] : [user.id, st.version, istDay(new Date()), scopeSig(s)]).join('|');
+  const key = (shared ? ['G', st.version, istDay(new Date())] : [user.id, st.version, istDay(new Date()), scopeSig(s), ADDED.version()]).join('|');
   const hit = memoGet(ROW_MEMO, memoId, key);
   if (hit) return hit.rows;
   // Requests that arrive together for the same login share one build.
@@ -710,23 +726,46 @@ async function pagedRowsFor(user) {
   return job;
 }
 
+// The import days (150+ profiles created that day), worked out once per data version.
+let BULK_MEMO = { v: null, set: null };
+function bulkDaysFor(st) {
+  if (!BULK_MEMO.set || BULK_MEMO.v !== st.version) BULK_MEMO = { v: st.version, set: CAME.bulkDaysOf(st.candidates) };
+  return BULK_MEMO.set;
+}
+
 async function buildPagedRows(user, st, s, shared = false) {
   let candidates = st.candidates;
   let sharedIds = null;
   if (s.role === 'CANDIDATE') candidates = candidates.filter((c) => c.id === s.candidateId);
   else if (!s.global) {
-    candidates = candidates.filter((c) => c.applications.some((a) => a.requirement && applicationInScope(user, a)));
+    // People this login typed in / uploaded and has not yet put on a requirement stay visible to them (utils/candidateAddedBy.js).
+    const mine = await ADDED.idsOf(user.id);
+    const inScope = (c) => c.applications.some((a) => a.requirement && applicationInScope(user, a));
+    const addedOnly = candidates.filter((c) => mine.has(c.id) && !inScope(c));
+    candidates = candidates.filter(inScope);
     sharedIds = await clientSharedApplicationIds(user, candidates);
     if (sharedIds) candidates = candidates.filter((c) => visibleApplications(user, c.applications, sharedIds).length > 0);
+    if (addedOnly.length) candidates = candidates.concat(addedOnly);
   }
   const me = user.id;
   const todayIst = istDay(new Date());
   const sections = await sectionMap();
+  const bulkDays = bulkDaysFor(st);
+  // The client's OLD names (ClientAlias) are searchable too: typing "vcare" finds people on jobs of "Prabs VCare Health Clinic".
+  // They only feed the search text (hay); no row shows them. A client login never gets them.
+  const aliasOf = viewerKind(user) === 'client' ? new Map() : await clientSearch.aliasMap();
+  // The joining day of the people who joined (one read for the few joined applications that carry no day of their own).
+  const joinMoves = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
   return candidates.map((c) => {
     const row = decorate(c, { user, sharedIds, followUps: st.followUps });
+    // Came on: the date + how far to trust it (utils/cameOn.js). TeamLink logins only (a client / the candidate is served none).
+    if (viewerKind(user) === 'internal') { const co = CAME.cameOnOf(c, c.applications, bulkDays); row.cameOn = co.at.toISOString(); row.cameOnDay = co.day; row.cameOnKind = co.kind; }
     const apps = row.applications || [];
     const latest = apps.find((a) => a.id === row.latestApplicationId) || null;
     row.pipelineStatus = pipelineStatusOf(row.currentStage);
+    // The joining date (user, 2026-10-22): the day the person joined, from the joined application this login sees (the shown one first).
+    const ji = JL.joinInfoOfPerson(apps, row.latestApplicationId, joinMoves);
+    if (ji) { row.joiningDay = ji.day; row.joinedOther = ji.other; row.joinedDays = ji.days; }
     // "Salary missing" (current or expected pay cannot be read) - TeamLink logins only; nobody is blocked by it.
     if (!shared && viewerKind(user) === 'internal') row.salaryMissing = SALARY.missingOf(c);
     // Ownership (spec #2 §24): Department · Section · TL · Recruiter · BDE.
@@ -753,7 +792,7 @@ async function buildPagedRows(user, st, s, shared = false) {
     // across every application this login sees, not only the latest.
     row.hay = [
       row.name, row.email, row.phone, row.skills, row.requirementId,
-      ...apps.map((a) => (a.requirement ? `${a.requirement.title} ${a.requirement.client ? a.requirement.client.name : ''}` : '')),
+      ...apps.map((a) => (a.requirement ? `${a.requirement.title} ${a.requirement.client ? a.requirement.client.name : ''} ${(aliasOf.get(a.requirement.clientId) || []).join(' ')}` : '')),
     ].filter(Boolean).join(' ').toLowerCase();
     row.phoneDigits = String(row.phone || '').replace(/\D/g, '');
     return row;
@@ -779,6 +818,25 @@ function sourceSetOf(param) {
   return SOURCE_SETS.get(k);
 }
 
+// ?cameFrom=YYYY-MM-DD&cameTo=YYYY-MM-DD (IST days, both ends included) and ?cameKind=sheet,imported,applied,entered.
+// A row with no 'came on' date is left out as soon as a date range is asked for.
+const DAY_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
+function cameMatches(r, q) {
+  if (q.cameFrom && DAY_RE.test(String(q.cameFrom)) && !(r.cameOnDay && r.cameOnDay >= q.cameFrom)) return false;
+  if (q.cameTo && DAY_RE.test(String(q.cameTo)) && !(r.cameOnDay && r.cameOnDay <= q.cameTo)) return false;
+  if (q.cameKind && !String(q.cameKind).split(',').map((x) => x.trim()).includes(r.cameOnKind)) return false;
+  return true;
+}
+
+// ?joinedFrom=YYYY-MM-DD&joinedTo=YYYY-MM-DD ("Joined between", both days included): the person joined on a day inside the range
+// (on any of the joined applications this login sees). Someone with no joining day on file is left out as soon as a range is asked for.
+function joinedMatches(days, q) {
+  const from = q.joinedFrom && DAY_RE.test(String(q.joinedFrom)) ? String(q.joinedFrom) : '';
+  const to = q.joinedTo && DAY_RE.test(String(q.joinedTo)) ? String(q.joinedTo) : '';
+  if (!from && !to) return true;
+  return (days || []).some((d) => d && (!from || d >= from) && (!to || d <= to));
+}
+
 function rowMatches(r, q, ctx, { skipStage = false } = {}) {
   if (ctx.search) {
     const digits = ctx.search.replace(/\D/g, '');
@@ -786,7 +844,10 @@ function rowMatches(r, q, ctx, { skipStage = false } = {}) {
     if (!r.hay.includes(ctx.search) && !phoneHit) return false;
   }
   if (q.location && r.location !== q.location) return false;
+  if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
+  if (!cameMatches(r, q)) return false;
+  if (!joinedMatches(r.joinedDays, q)) return false;
   // cand7_: the person's master Qualification / Specialisation ('none' = not mapped).
   if (q.qualificationId && (r.qualificationId || 'none') !== q.qualificationId) return false;
   if (q.specialisationId && (r.specialisationId || 'none') !== q.specialisationId) return false;
@@ -826,6 +887,8 @@ const PAGED_EXTRA_FIELDS = [
   // spec #2 §24 / §29 — ownership and the optional columns.
   'bdeName', 'section', 'lastActivityAt',
   'salaryMissing', // "Add salary" prompt + the Salary missing filter
+  'cameOn', 'cameOnDay', 'cameOnKind', // Source · Came on
+  'joiningDay', 'joiningPlanned', 'joinedOther', // Joining date column (joinedOther: the person joined on ANOTHER application than the shown one)
 ];
 function pagedOut(row) {
   const out = slimForList(row);
@@ -883,6 +946,8 @@ async function buildPipelineRows(user, st, s, snap) {
   const fitViewer = internalViewer ? SALARY.viewerFor(require('../utils/clientRedact').privacyFlagsFor(user)) : null; // eslint-disable-line global-require
   const today = todayIst();
   const sections = await sectionMap();
+  const bulkDays = bulkDaysFor(st);
+  const aliasOf = kind === 'client' ? new Map() : await clientSearch.aliasMap(); // old client names: search text only
   // C1: latest contact per application + the per-stage due rules (only used
   // once the user has confirmed them) — utils/followupVisibility.js.
   const [contactIdx, contactRules] = internalViewer
@@ -901,12 +966,15 @@ async function buildPipelineRows(user, st, s, snap) {
   // eslint-disable-next-line global-require
   if (internalViewer) { try { partnerOwners = await require('../utils/partners').ownerMap(candidates); } catch { partnerOwners = new Map(); } }
   const rows = [];
+  // Joining date column: a joined application with no joining date and no joined-at time is dated by its move into Joined (the ATS reports' rule).
+  const joinedMoveAt = await JL.movesFor(candidates.flatMap((c) => c.applications || []));
   let preAts = 0;
   let people = 0;
   candidates.forEach((c) => {
     const apps = s.global ? (c.applications || []) : visibleApplications(user, c.applications, sharedIds);
     if (s.global || apps.length) people += 1;
     const inAts = apps.filter((a) => !isPreAtsApplication(a));
+    const co = internalViewer ? CAME.cameOnOf(c, c.applications, bulkDays) : null;
     preAts += apps.length - inAts.length;
     inAts.forEach((a) => {
       const r = a.requirement || null;
@@ -969,6 +1037,9 @@ async function buildPipelineRows(user, st, s, snap) {
         dueStatus: na.dueStatus,
         overdue: na.dueStatus === 'overdue',
         stageEnteredAt: na.enteredAt,
+        // The joining date column (user, 2026-10-17): the day a JOINED person joined (one rule: utils/joinDayShared.js), else the planned day of someone not joined yet.
+        joiningDay: ['JOINED', 'HIRED'].includes(a.stage) ? joinDayShared.joinDay({ joiningDate: a.joiningDate || (snap.appDates.get(a.id) || {}).joiningDate, joinedAt: a.joinedAt }, joinedMoveAt.get(a.id) || na.enteredAt) : null,
+        joiningPlanned: ['JOINED', 'HIRED'].includes(a.stage) ? null : joinDayShared.typedDay(a.joiningDate || (snap.appDates.get(a.id) || {}).joiningDate),
         followUp: fu,
         followUpNeed: followUpNeed(a),
         recruiterName: (internalViewer && fu && fu.ownerName) || (r && r.recruiter ? r.recruiter.name : null),
@@ -996,6 +1067,7 @@ async function buildPipelineRows(user, st, s, snap) {
           return { rejSide: (x && x.side) || 'none', rejReason: (x && x.reason) || 'Not recorded' };
         })() : {}),
         candidateAddedAt: c.createdAt,
+        ...(co ? { cameOn: co.at.toISOString(), cameOnDay: co.day, cameOnKind: co.kind } : {}),
         needsAction: needsActionBy(a, na, viewer),
         isNew: isNewUnreviewed(a, na, viewer, snap),
         clientFeedbackPending: cfp,
@@ -1017,7 +1089,7 @@ async function buildPipelineRows(user, st, s, snap) {
         || String(r.recruiterIds || '').split(',').includes(me)));
       row.interviewToday = !!a.interviewAt && istDay(a.interviewAt) === today
         && !['CANCELLED', 'NO_SHOW'].includes(a.interviewStatus);
-      row.hay = [c.name, c.email, c.phone, r ? r.title : '', r ? r.reqCode : '', row.clientName, a.requirementId]
+      row.hay = [c.name, c.email, c.phone, r ? r.title : '', r ? r.reqCode : '', row.clientName, ...(r && r.clientId ? aliasOf.get(r.clientId) || [] : []), a.requirementId]
         .filter(Boolean).join(' ').toLowerCase();
       row.phoneDigits = String(c.phone || '').replace(/\D/g, '');
       rows.push(row);
@@ -1044,7 +1116,10 @@ function pipelineRowMatches(r, q, ctx, { skipStage = false } = {}) {
     if (!r.hay.includes(ctx.search) && !phoneHit) return false;
   }
   if (q.location && r.location !== q.location) return false;
+  if (q.new === '1' && !isNewRow(r)) return false;
   if (q.source && !sourceSetOf(q.source).has(r.sourceKey)) return false;
+  if (!cameMatches(r, q)) return false;
+  if (!joinedMatches(r.pipelineStatus === 'Joined' && r.joiningDay ? [r.joiningDay] : [], q)) return false;
   if (q.status) {
     const wanted = String(q.status).split(',');
     const legacy = { 'On Hold': 'Hold', Closed: 'Joined' };
@@ -1158,6 +1233,39 @@ function pageOf(rows, q) {
   return { pageRows: rows.slice((page - 1) * pageSize, page * pageSize), page, pages, pageSize };
 }
 
+// PEOPLE WHO ARE NOT ON ANY REQUIREMENT YET (founder, 2026-10-23). The pipeline has one row per APPLICATION, so a person typed in by hand or
+// uploaded as a resume (no requirement chosen) has no row there. This returns them for a strip above the table: the newest ones (added in the
+// last 7 days), plus - when something is typed in Search - everybody without an application who matches it by name, phone, e-mail or skills.
+// Same reach as the lists: Admin sees all; everybody else only the people they added themselves.
+async function waitingPeople(user, search) {
+  if (viewerKind(user) !== 'internal') return { total: 0, rows: [] };
+  const st = await getListState();
+  const s = scopeOf(user);
+  const mine = s.global ? null : await ADDED.idsOf(user.id);
+  const term = String(search || '').trim().toLowerCase();
+  const digits = term.replace(/\D/g, '');
+  const hide = require('../utils/clientLifecycle').isBdeTeam(user); // eslint-disable-line global-require
+  const hits = st.candidates.filter((c) => {
+    if ((c.applications || []).length) return false;
+    if (mine && !mine.has(c.id)) return false;
+    if (c.profileStatus === 'Archived') return false;
+    if (term) {
+      const hay = [c.name, c.email, c.phone, c.skills].filter(Boolean).join(' ').toLowerCase();
+      return hay.includes(term) || (digits.length >= 4 && String(c.phone || '').replace(/\D/g, '').includes(digits));
+    }
+    return isNewRow(c);
+  }).sort((x, y) => (notFuture(new Date(y.createdAt).getTime()) || 0) - (notFuture(new Date(x.createdAt).getTime()) || 0));
+  const rows = hits.slice(0, 8).map((c) => {
+    const src = CS.sourceOfApplication(null, c);
+    return {
+      id: c.id, code: candidateCode(c.id), name: c.name, location: c.location || null, skills: c.skills || null,
+      phone: hide ? null : c.phone || null, email: hide ? null : c.email || null,
+      sourceKey: src.key || null, sourceRaw: src.raw || null, addedAt: c.createdAt,
+    };
+  });
+  return { total: hits.length, rows };
+}
+
 async function pipelineList(req, res, sub) {
   const q = req.query;
   const quick = QUEUES[q.quick] ? q.quick : null;
@@ -1235,6 +1343,8 @@ async function pipelineList(req, res, sub) {
   const pageOut = pg.pageRows.map(pipelineOut);
   if (isInternalViewer(req.user)) await require('../utils/candidateDupes').attachFlags(pageOut); // eslint-disable-line global-require  // dup_: the red "Duplicate" chip
   if (isInternalViewer(req.user)) await require('../utils/rejections').attachRejectionBadges(req.user, pageOut); // eslint-disable-line global-require
+  // "Interview requested by <recruiter>" (a Recruiter / TL asked the client manager to book): utils/interviewRequest.js
+  if (isInternalViewer(req.user)) await require('../utils/interviewRequest').attachTo(pageOut); // eslint-disable-line global-require
   return res.json({
     view: 'pipeline',
     sub: effSub,
@@ -1257,6 +1367,7 @@ async function pipelineList(req, res, sub) {
       stageRole: role,
     },
     definitions: QUEUE_DEFINITIONS,
+    waiting: await waitingPeople(req.user, q.search).catch(() => ({ total: 0, rows: [] })),
   });
 }
 
@@ -1266,7 +1377,7 @@ const QUEUE_DEFINITIONS = {
   overdue: 'Overdue — the next action’s due date is before today. Due date = an open follow-up’s due date, otherwise the day the application entered its current stage in TeamLink + that stage’s SLA days. Rows imported with their stage already set have no due date until someone moves them or sets a follow-up.',
   due_today: 'Due Today — the next action’s due date (follow-up due date, or stage entry + SLA) is today.',
   new: 'New / Unreviewed — entered your workflow (sent to ATS, added, or moved to a step you own) and nobody has acted since: no stage move, note, call, message or follow-up after it arrived.',
-  client_feedback: 'Interview done, no feedback — the interview for a client job has happened and nobody has recorded the feedback yet (no client feedback form, no interview result). This counts every such application, old imported ones included; the dashboard counts only the ones still recent.',
+  client_feedback: 'Interview done, no feedback — the interview for a client requirement has happened and nobody has recorded the feedback yet (no client feedback form, no interview result). This counts every such application, old imported ones included; the dashboard counts only the ones still recent.',
   my_candidates: 'My Candidates — applications on requirements you are named on, or follow-ups you own.',
   today_interviews: 'Today’s Interviews — an interview scheduled for today (not cancelled / no-show).',
 };
@@ -1426,6 +1537,23 @@ async function masterSourceFacet(user, q) {
   return { counts, total };
 }
 
+// THE SOURCES TAB (routes/candidateSources.js) counts exactly the rows the People list (All people) shows for the same filters:
+// the same decorated rows, the same scope, the same matcher. `skip` blanks some filters (for the cascading option counts); the
+// person filters (recruiter / TL / BDE) are looked up once per distinct combination.
+async function peopleFor(user, q, skip = [], personCache = new Map()) {
+  const qq = { ...q, stage: '', followUp: '' };
+  skip.forEach((k) => { qq[k] = ''; });
+  let ids = null;
+  if (hasPersonQuery(qq)) {
+    const key = JSON.stringify([qq.recruiter, qq.tl, qq.bde, qq.positionCode]);
+    if (!personCache.has(key)) personCache.set(key, attributedApplications(user, qq).then((a) => (a ? a.ids : null)));
+    ids = await personCache.get(key);
+  }
+  const ctx = { search: String(qq.search || '').trim().toLowerCase(), personIds: ids };
+  const all = await pagedRowsFor(user);
+  return { all, rows: all.filter((r) => r.profileStatus !== 'Archived' && rowMatches(r, qq, ctx)) };
+}
+
 async function pagedList(req, res) {
   const { view, sub } = normaliseViewSub(req.query.view, req.query.sub);
   if (view === 'master') return masterList(req, res, sub);
@@ -1544,12 +1672,88 @@ function slimForList(row) {
 // The visible pipeline and the views, served from the same definition the
 // server filters with, so the screen cannot drift from the rules.
 // The ONE clean source list every picker and filter offers (utils/candidateSource.js).
+// THE NEW BUTTON'S NUMBERS: people added in the last 7 days that this login may see, and how many of them are not on any requirement yet.
+// Light: reads the in-memory working set, and looks only at the few people added this week. Must stay above /:id.
+router.get('/new-summary', async (req, res, next) => {
+  try {
+    const st = await getListState();
+    const s = scopeOf(req.user);
+    const mine = s.global ? null : await ADDED.idsOf(req.user.id);
+    const recent = st.candidates.filter(isNewRow);
+    let people = 0; let unplaced = 0; let today = 0;
+    const todayIst = istDay(new Date());
+    recent.forEach((c) => {
+      const apps = c.applications || [];
+      const reach = s.global || (mine && mine.has(c.id)) || apps.some((a) => a.requirement && applicationInScope(req.user, a));
+      if (!reach) return;
+      people += 1;
+      if (!apps.length) unplaced += 1;
+      if (istDay(c.createdAt) === todayIst) today += 1;
+    });
+    return res.set('Cache-Control', 'no-store').json({ days: NEW_DAYS, people, unplaced, today });
+  } catch (err) { return next(err); }
+});
+
 router.get('/source-options', (req, res) => {
   res.json({ pick: CS.PICKER_SOURCES, all: CS.SOURCES, imported: CS.IMPORTED, other: CS.OTHER });
 });
 
+// The Sources tab: where people came from and when (counts only; routes/candidateSources.js). Must stay above /:id.
+router.use('/sources', require('./candidateSources'));
+
 router.get('/pipeline-view', (req, res) => {
   res.json({ groups: groupsWithDetail(), views: CANDIDATE_VIEWS });
+});
+
+// CANDIDATE PICKER (type + dropdown, for every "Add application" box): a light search, never the whole master.
+// ?q= name / CAN-code / phone digits / email (a BDE-team login: name and code only - no phone, no email),
+// ?requirementId= marks the people already on that job ("onJob") instead of hiding them. Scoped like the list. At most 20.
+// Must stay above /:id.
+router.get('/picker', async (req, res, next) => {
+  try {
+    const { candidateWhere } = require('../utils/scope'); // eslint-disable-line global-require
+    const q = String(req.query.q || '').trim();
+    const bde = require('../utils/clientLifecycle').isBdeTeam(req.user); // eslint-disable-line global-require
+    const digits = q.replace(/\D/g, '');
+    const bare = q.replace(/^(id|can|cand|cl)[-\s#:]*/i, '');
+    const idLike = /^[a-z0-9]{4,}$/i.test(bare) ? bare.toLowerCase() : '';
+    const arms = [{ name: { contains: q } }];
+    if (idLike) arms.push({ id: { endsWith: idLike } });
+    if (!bde) {
+      arms.push({ email: { contains: q } });
+      // a phone is found by its LAST digits (what people remember), or by the whole number
+      if (digits.length >= 4) arms.push({ phone: { endsWith: digits.slice(-10) } });
+      if (digits.length >= 7) arms.push({ phone: { contains: digits.slice(-10) } });
+    }
+    const mineIds = [...(await ADDED.idsOf(req.user.id))].slice(-500); // people this login added and has not put on a requirement yet
+    const reach = mineIds.length ? { OR: [candidateWhere(req.user), { id: { in: mineIds } }] } : candidateWhere(req.user);
+    const where = { AND: [reach, ...(q ? [{ OR: arms }] : [])] };
+    const ids = String(req.query.ids || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 20);
+    const rows = await prisma.candidate.findMany({
+      where: ids.length ? { AND: [reach, { id: { in: ids } }] } : where,
+      select: { id: true, name: true, location: true, experienceYears: true, phone: true, currentDesignation: true },
+      orderBy: q ? { name: 'asc' } : { createdAt: 'desc' },
+      take: 20,
+    });
+    let onJob = new Map();
+    const requirementId = String(req.query.requirementId || '');
+    if (requirementId && rows.length) {
+      const apps = await prisma.application.findMany({ where: { requirementId, candidateId: { in: rows.map((r) => r.id) } }, select: { id: true, candidateId: true, stage: true, requirement: { select: { internal: true } } } });
+      onJob = new Map(apps.map((a) => [a.candidateId, { applicationId: a.id, step: stageLabelFor(a.stage, { internal: !!(a.requirement && a.requirement.internal) }), link: `/candidates/${a.candidateId}?application=${a.id}` }]));
+    }
+    return res.json({
+      rows: rows.map((c) => ({
+        id: c.id,
+        code: candidateCode(c.id),
+        name: c.name,
+        location: c.location || null,
+        experienceYears: c.experienceYears,
+        designation: c.currentDesignation || null,
+        ...(bde ? {} : { phoneTail: c.phone ? String(c.phone).replace(/\D/g, '').slice(-4) : null }),
+        onJob: onJob.get(c.id) || null,
+      })),
+    });
+  } catch (err) { return next(err); }
 });
 
 // Must stay above /:id so "check-duplicate" isn't read as a candidate id.
@@ -2028,7 +2232,7 @@ async function loadInScope(req, res) {
       res.status(403).json(OUT_OF_SCOPE);
       return null;
     }
-  } else if (!s.global && decorated.applications.length === 0) {
+  } else if (!s.global && decorated.applications.length === 0 && !(await ADDED.addedBy(req.user.id, candidate.id))) {
     res.status(403).json(OUT_OF_SCOPE);
     return null;
   }
@@ -2059,10 +2263,13 @@ function isThinProfile(c) {
 }
 const THIN_TEXT = 'Not enough details to score. Add skills, experience or a resume to see the fit.';
 
-function aiMatchFor(candidate, application) {
+function aiMatchFor(candidate, application, restricted = false) {
   const requirement = application && application.requirement;
   if (!requirement) return null;
   const m = computeMatch(candidate, requirement);
+  // 2026-10-13: the Fit breakdown (Resume · AI · Location · Salary). A login without the Candidate contact & salary
+  // switch gets a rounded total, a label and the Salary word only (utils/fitBreakdown.js).
+  const breakdown = FB.breakdownOf(m, restricted);
   if (isThinProfile(candidate)) {
     return {
       requirementId: requirement.id,
@@ -2071,8 +2278,26 @@ function aiMatchFor(candidate, application) {
       thin: true,
       matchedSkills: [], missingSkills: [], goodMatched: [], goodMissing: [],
       experienceMatch: null, educationMatch: null, locationMatch: null, salaryMatch: null, noticeMatch: null,
+      breakdown: null,
       reasons: [], gaps: [],
       recommendation: THIN_TEXT,
+      advisory: 'AI match is supporting information for a human recruiter. It does not screen, '
+        + 'shortlist or reject anyone — every stage change in this pipeline is made by a named person '
+        + 'and recorded in Pipeline History.',
+    };
+  }
+  if (restricted) {
+    return {
+      requirementId: requirement.id,
+      requirementTitle: requirement.title,
+      overall: breakdown.total,
+      approx: true,
+      label: breakdown.label,
+      matchedSkills: m.matchedSkills,
+      missingSkills: m.missingSkills,
+      salaryMatch: { percent: null, word: FB.salaryWord(m), reason: FB.salaryWord(m) },
+      breakdown,
+      recommendation: recommendationFor(breakdown.total),
       advisory: 'AI match is supporting information for a human recruiter. It does not screen, '
         + 'shortlist or reject anyone — every stage change in this pipeline is made by a named person '
         + 'and recorded in Pipeline History.',
@@ -2082,6 +2307,7 @@ function aiMatchFor(candidate, application) {
     requirementId: requirement.id,
     requirementTitle: requirement.title,
     overall: m.overall,
+    breakdown,
     matchedSkills: m.matchedSkills,
     missingSkills: m.missingSkills,
     goodMatched: m.goodMatched,
@@ -2089,7 +2315,7 @@ function aiMatchFor(candidate, application) {
     experienceMatch: { percent: m.expPct, reason: m.expReason, relevantPercent: m.relevPct, relevantReason: m.relevReason },
     educationMatch: { percent: m.eduPct, reason: m.eduReason },
     locationMatch: { percent: m.locPct, reason: m.locReason },
-    salaryMatch: { percent: m.salPct, reason: m.salReason },
+    salaryMatch: { percent: m.salPct, word: m.salWord, known: m.salKnown, reason: m.salReason },
     noticeMatch: { percent: m.notPct, reason: m.notReason },
     reasons: m.reasons,
     gaps: m.gaps,
@@ -2197,8 +2423,13 @@ async function pipelineHistoryFor(applications, kind) {
         // come from the SNAPSHOT on the event, falling back to the live
         // relation for events written before those columns existed — so a
         // renamed client cannot rewrite why someone was rejected.
+        // CLIENT NAME AS SHOWN (2026-10-17, official legal name): the label beside the event is the client's CURRENT
+        // name while the event is about that same client (same clientId, or none stored); the stored snapshot
+        // (ApplicationStageEvent.clientName) is untouched and still the fallback / the record of what was said then.
         requirementTitleAtTime: e.requirementTitle || ctx,
-        clientName: e.clientName
+        clientName: (a.requirement && !a.requirement.internal && a.requirement.client && a.requirement.client.name
+          && (!e.clientId || e.clientId === a.requirement.clientId) ? a.requirement.client.name : null)
+          || e.clientName
           || (a.requirement && (a.requirement.internal ? 'TeamLink Internal' : a.requirement.client && a.requirement.client.name))
           || null,
         // WHICH SIDE the decision came from. Never inferred from the role at
@@ -2244,7 +2475,8 @@ async function matchingFor(user, candidate, decorated) {
 // What the screens read of a matching job: id, title, client, place, openings, fit %.
 // (The full job row, with its pipeline and notes, was 2.5-7 MB for one person.)
 const MATCH_TOP = 20;
-const slimMatch = (r) => ({
+const slimMatch = (r, restricted = false) => ({
+  breakdown: FB.breakdownOf(r.match, restricted),
   id: r.id,
   reqCode: r.reqCode || null,
   title: r.title,
@@ -2252,7 +2484,30 @@ const slimMatch = (r) => ({
   department: r.department || null,
   location: r.location || null,
   openings: r.openings ?? null,
-  fit: r.match.overall,
+  fit: restricted ? FB.round10(r.match.overall) : r.match.overall,
+});
+
+// A LIMITED CANDIDATE VIEW for the BDE team (founder, 2026-10-16): a person who is only in the "Good fit for this job" list is not in any
+// pipeline yet, so the full page (which needs an application in the login's scope) refuses. The BDE team can still open them here:
+// name, place, experience, skills, education and the steps they are at - NEVER phone, email, salary, documents, resume text or notes.
+router.get('/:id/limited', async (req, res, next) => {
+  try {
+    if (!require('../utils/clientLifecycle').isBdeTeam(req.user)) return res.status(403).json(OUT_OF_SCOPE); // eslint-disable-line global-require
+    const c = await prisma.candidate.findUnique({
+      where: { id: req.params.id },
+      select: {
+        id: true, name: true, location: true, experienceYears: true, relevantExperienceYears: true, skills: true, goodToHaveSkills: true, technicalSkills: true,
+        education: true, specialization: true, currentDesignation: true, noticePeriod: true, profileStatus: true,
+        applications: { select: { id: true, stage: true, requirement: { select: { id: true, title: true, reqCode: true, clientId: true, internal: true, client: { select: { name: true } } } } } },
+      },
+    });
+    if (!c) return res.status(404).json({ error: 'Candidate not found' });
+    const seeIds = new Set((await prisma.requirement.findMany({ where: requirementWhere(req.user), select: { id: true } })).map((r) => r.id));
+    const steps = c.applications.filter((a) => a.requirement && seeIds.has(a.requirement.id))
+      .map((a) => ({ job: a.requirement.title, code: a.requirement.reqCode || null, client: a.requirement.internal ? null : (a.requirement.client && a.requirement.client.name) || null, step: stageLabelFor(a.stage, { internal: !!a.requirement.internal }) }));
+    const { applications, ...person } = c; // eslint-disable-line no-unused-vars
+    return res.json({ limited: true, ...person, steps, hidden: 'Phone, email, salary and documents are not shown to the client manager (BDE) team.' });
+  } catch (err) { return next(err); }
 });
 
 router.get('/:id', async (req, res) => {
@@ -2328,11 +2583,13 @@ router.get('/:id', async (req, res) => {
   const stageEvents = decorated.applications.length ? await prisma.applicationStageEvent.findMany({
     where: { applicationId: { in: decorated.applications.map((a) => a.id) } },
     orderBy: { createdAt: 'desc' },
-    select: { applicationId: true, createdAt: true },
+    select: { applicationId: true, createdAt: true, toStage: true },
   }) : [];
   const stageSince = new Map();
   const stageMoves = new Map();
+  const joinedMoveAt = new Map(); // the latest move into Joined (the last-resort source of the joining day)
   stageEvents.forEach((e) => {
+    if (JL.isJoined(e.toStage) && !joinedMoveAt.has(e.applicationId)) joinedMoveAt.set(e.applicationId, e.createdAt);
     if (!stageSince.has(e.applicationId)) stageSince.set(e.applicationId, e.createdAt);
     stageMoves.set(e.applicationId, (stageMoves.get(e.applicationId) || 0) + 1);
   });
@@ -2357,6 +2614,8 @@ router.get('/:id', async (req, res) => {
     })(),
     stageSince: stageSince.get(a.id) || a.updatedAt || a.createdAt,
     stageMoves: stageMoves.get(a.id) || 0,
+    // "Joined on <date>" beside the Joined step (one rule: utils/joinDayShared.js). Only a joined application carries it.
+    ...(JL.isJoined(a.stage) ? { joiningDay: JL.dayOfApp(a, null, joinedMoveAt.get(a.id)) } : {}),
     stageLabel: stageLabelFor(a.stage, { internal: isInternalApp(a, a.requirement) }),
     stageGroup: groupIdOfStage(a.stage),
     stageGroupLabel: groupLabelOfStage(a.stage),
@@ -2381,6 +2640,9 @@ router.get('/:id', async (req, res) => {
     ...(kind === 'internal' ? { salaryFit: SALARY.fitFor(candidate, a.requirement, detailFitViewer) } : {}),
   }));
 
+  // "Interview requested by <recruiter>" on the application (internal logins; no contact data is involved).
+  if (kind === 'internal') await require('../utils/interviewRequest').attachTo(applications); // eslint-disable-line global-require
+
   const latest = [...rawApplications].sort((a, b) => String(b.id).localeCompare(String(a.id)))[0] || null;
 
   // --- The tabs, each from its own source ---------------------------------
@@ -2388,10 +2650,10 @@ router.get('/:id', async (req, res) => {
 
   // Communications are between TeamLink and the candidate. The candidate is a
   // party to them and sees their own; a CLIENT is not, and is served none.
-  const communications = kind === 'client' ? [] : await prisma.candidateMessage.findMany({
+  const communications = kind === 'client' ? [] : await require('../utils/waNumbers').filterRows(req.user, await prisma.candidateMessage.findMany({ // eslint-disable-line global-require
     where: { candidateId: candidate.id },
     orderBy: { createdAt: 'desc' },
-  });
+  })); // WhatsApp chats on numbers this login may not use are left out
 
   const documents = await prisma.candidateDocument.findMany({
     // b5_: a document deleted with a reason stays in the history, not on the tab.
@@ -2500,6 +2762,21 @@ router.get('/:id', async (req, res) => {
     if (others.length) duplicateHint = { count: others.length, names: others.slice(0, 3).map((m) => m.name), canMerge: isDupAdmin(req.user) };
   }
 
+  // CAME FROM <source> ON <date>, ADDED BY <name> (the profile header): the same date the list and the Sources tab use (utils/cameOn.js).
+  let came = null;
+  if (kind === 'internal') {
+    const stNow = await getListState();
+    const co = CAME.cameOnOf(candidate, candidate.applications, bulkDaysFor(stNow));
+    const made = await prisma.auditLog.findFirst({
+      where: { entity: 'Candidate', entityId: candidate.id, OR: [{ action: { startsWith: 'Candidate created' } }, { action: { startsWith: 'Candidate self-registered' } }] },
+      orderBy: { createdAt: 'asc' },
+      select: { actorName: true, userId: true, action: true },
+    }).catch(() => null);
+    let addedBy = made && made.actorName ? made.actorName : null;
+    if (made && !addedBy && made.userId) addedBy = ((await prisma.user.findUnique({ where: { id: made.userId }, select: { name: true } }).catch(() => null)) || {}).name || null;
+    came = { cameOn: co.at.toISOString(), cameOnDay: co.day, cameOnKind: co.kind, cameOnLabel: CAME.KIND_LABEL[co.kind], addedByName: addedBy };
+  }
+
   const dupRow = { id: candidate.id };
   if (kind === 'internal') await require('../utils/candidateDupes').attachFlags([dupRow]); // eslint-disable-line global-require
   // The BDE team (user, 2026-10-09) sees the person's name, step, client
@@ -2509,6 +2786,7 @@ router.get('/:id', async (req, res) => {
   const bdeView = !!((f) => f && f.bde)(require('../utils/clientRedact').privacyFlagsFor(req.user));
   res.json({
     ...decorated,
+    ...(came || {}),
     code: candidateCode(candidate.id),
     applications,
     // 'both' | 'current' | 'expected' | null: the gentle "Add salary" prompt on old records (nothing is blocked).
@@ -2522,7 +2800,7 @@ router.get('/:id', async (req, res) => {
     // dup_: the red chip + "Check duplicates" on the profile, and the old id this page was reached by after a merge.
     dup: bdeView || kind !== 'internal' ? null : dupRow.dup || null,
     mergedFrom: req.aliasFrom || null,
-    matchingRequirements: matchingRequirements.slice(0, MATCH_TOP).map(slimMatch),
+    matchingRequirements: matchingRequirements.slice(0, MATCH_TOP).map((r) => slimMatch(r, FB.isRestricted(req.user))),
     matchingTotal: matchingRequirements.length,
     // Thin profile (no skills, no experience, no resume): the Fit tab says "Not enough details to score".
     profileThin: kind === 'internal' ? isThinProfile(candidate) : false,
@@ -2551,7 +2829,7 @@ router.get('/:id', async (req, res) => {
     },
     // AI Match is internal evaluation detail: never served to a client, and
     // never served to the candidate being evaluated.
-    aiMatch: kind === 'internal' && latest && !bdeView ? aiMatchFor(candidate, latest) : null,
+    aiMatch: kind === 'internal' && latest && !bdeView ? aiMatchFor(candidate, latest, FB.isRestricted(req.user)) : null,
     pipelineHistory,
     communications: bdeView ? [] : communications,
     communicationsNote: await commsNote(),
@@ -2582,7 +2860,8 @@ router.get('/:id/matching-requirements', async (req, res) => {
   const all = await matchingFor(req.user, loaded.candidate, loaded.decorated);
   const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
   const limit = Math.min(200, Math.max(1, parseInt(req.query.limit, 10) || 50));
-  return res.json({ rows: all.slice(offset, offset + limit).map(slimMatch), total: all.length, offset, limit });
+  const restricted = FB.isRestricted(req.user);
+  return res.json({ rows: all.slice(offset, offset + limit).map((r) => slimMatch(r, restricted)), total: all.length, offset, limit });
 });
 
 router.get('/:id/location-requirements', async (req, res) => {
@@ -2609,7 +2888,7 @@ router.get('/:id/location-requirements', async (req, res) => {
     select: {
       id: true, reqCode: true, title: true, internal: true, department: true, location: true, openings: true, status: true,
       skills: true, goodToHaveSkills: true, experience: true, education: true, workMode: true, employmentType: true,
-      salary: true, joiningTimeline: true, jobPreference: true, createdAt: true,
+      salary: true, salaryType: true, joiningTimeline: true, jobPreference: true, createdAt: true,
       client: { select: { name: true } },
     },
   });
@@ -2642,15 +2921,20 @@ router.get('/:id/communications', async (req, res) => {
   if (viewerKind(req.user) === 'client') {
     return res.status(403).json({ error: 'Candidate communications are not available to this login' });
   }
-  const rows = await prisma.candidateMessage.findMany({
+  const rows = await require('../utils/waNumbers').filterRows(req.user, await prisma.candidateMessage.findMany({ // eslint-disable-line global-require
     where: { candidateId: req.params.id },
     orderBy: { createdAt: 'desc' },
-  });
+  }));
   // A role that may not see the number (the BDE team) reads the history with the address hidden.
   const cRule = await require('../utils/contactAccess').ruleFor(req.user, 'candidates').catch(() => null); // eslint-disable-line global-require
-  if (cRule && cRule.mode === 'masked') {
+  if (!cRule || cRule.mode === 'masked' || !cRule.allowed) {
     const CA = require('../utils/contactAccess'); // eslint-disable-line global-require
-    rows.forEach((r) => { r.recipient = CA.maskedHint(r.recipient); r.body = CA.scrubFor(r.body); r.senderEmail = null; });
+    rows.forEach((r) => {
+      r.recipient = CA.maskedHint(r.recipient); r.body = CA.scrubFor(r.body); r.senderEmail = null;
+      // security fix 2026-10-13: delivery errors and subjects quote the address too
+      const KEEP = new Set(['id', 'candidateId', 'applicationId', 'channel', 'template', 'trigger', 'status', 'providerRef', 'recipient', 'senderUserId', 'senderEmployeeId']);
+      Object.keys(r).forEach((k) => { if (typeof r[k] === 'string' && r[k] && !KEEP.has(k)) r[k] = CA.scrubFor(r[k]); });
+    });
   }
   res.json({
     rows,
@@ -3160,6 +3444,10 @@ function pickCandidate(body) {
   for (const key of CANDIDATE_FIELDS.numeric) {
     if (body[key] !== undefined && body[key] !== '' && body[key] !== null) data[key] = Number(body[key]);
   }
+  // Typed-in values (2026-10-14, utils/openVocab.js): no HTML, spaces collapsed, at most 80 characters, no duplicate skills.
+  { const OV = require('../utils/openVocab'); // eslint-disable-line global-require
+    ['education', 'specialization', 'institute', 'preferredEmploymentType', 'currentDesignation', 'gender'].forEach((k) => { if (typeof data[k] === 'string') data[k] = OV.clean(data[k]); });
+    ['skills', 'goodToHaveSkills', 'technicalSkills', 'softSkills'].forEach((k) => { if (typeof data[k] === 'string') data[k] = OV.cleanSkills(data[k]); }); }
   // "Do not use" is set only by the TL's approval (routes/rejections.js),
   // never typed into a profile form.
   if (data.profileStatus === 'Do Not Use') delete data.profileStatus;
@@ -3236,7 +3524,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
         const reason = String(req.body.overrideReason || '').trim().slice(0, 300);
         if (reason.length < 5) {
           return res.status(409).json({
-            error: `${data.name} does not meet this job's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
+            error: `${data.name} does not meet this requirement's rules: ${fit.overrideWhy.join('; ')}. To add them anyway, say why.`,
             code: 'NEEDS_OVERRIDE',
             why: fit.overrideWhy,
             fit: fit.match.overall,
@@ -3273,6 +3561,7 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
   }
 
   const candidate = await prisma.candidate.create({ data });
+  await ADDED.record(candidate.id, req.user, 'manual'); // this login keeps seeing the person even before any requirement
   await writeSourceNote(candidate.id, req.user, req.body);
   await logAudit({ userId: req.user.id, action: 'Candidate created (manual)', entity: 'Candidate', entityId: candidate.id, toValue: 'Active' });
   if (strong.length) {
@@ -3420,3 +3709,7 @@ module.exports.inPipelineSub = inPipelineSub;
 module.exports.normaliseViewSub = normaliseViewSub;
 module.exports.pagedRowsFor = pagedRowsFor;
 module.exports.masterSourceFacet = masterSourceFacet;
+// routes/candidateSources.js (the Sources tab): the same rows as the People list, the stage history and the data version.
+module.exports.peopleFor = peopleFor;
+module.exports.reachedMap = reachedMap;
+module.exports.scopeSig = scopeSig;

@@ -1,0 +1,15 @@
+/* The candidate's "How to prepare" page. Scoped: .ipp* (pages/InterviewPrepPage.jsx). Phone first. */
+.ipp { min-height: 100vh; background: #f3f6fb; padding: 16px; display: flex; justify-content: center; align-items: flex-start; }
+.ipp-card { width: 100%; max-width: 680px; background: #fff; border: 1px solid #dde3ee; border-radius: 16px; padding: 20px 20px 24px; box-shadow: 0 2px 10px rgba(20, 40, 90, .06); color: #1c2433; font-size: 16px; line-height: 1.5; }
+.ipp-brand { font-weight: 800; color: #1d5fd1; letter-spacing: .3px; margin-bottom: 4px; }
+.ipp h1 { font-size: 22px; line-height: 1.25; margin: 4px 0 10px; }
+.ipp h2 { font-size: 17px; margin: 20px 0 6px; color: #1a3f8f; }
+.ipp ol, .ipp ul { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 8px; }
+.ipp ol.ipp-dash { list-style: disc; }
+.ipp-when { background: #eaf1ff; border-radius: 12px; padding: 10px 14px; margin: 8px 0; }
+.ipp-lead { color: #445; }
+.ipp-warn { background: #fff0d6; border-radius: 10px; padding: 8px 12px; color: #7a4a00; }
+.ipp-err { color: #8a1c14; }
+.ipp-contact { margin-top: 20px; padding-top: 12px; border-top: 1px solid #e6ebf3; }
+.ipp-end { font-weight: 700; font-size: 18px; margin: 12px 0 0; }
+@media (max-width: 480px) { .ipp { padding: 8px; } .ipp-card { padding: 16px 14px 20px; border-radius: 12px; } .ipp h1 { font-size: 20px; } }

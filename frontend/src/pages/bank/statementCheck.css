@@ -1,0 +1,59 @@
+/* Statements Matching: the status strip, the list of uploaded transactions, the import summary (scoped under .sc-). */
+.sc-wrap { margin: 10px 0 12px; }
+.sc-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.sc-card {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; cursor: pointer;
+  padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line, #dde5e2); background: var(--paper-raised, #fff); color: var(--ink, #22333b);
+  font: inherit; min-width: 0;
+}
+.sc-card:hover { border-color: var(--brand, #4a6f64); }
+.sc-card.on { border-color: var(--brand, #4a6f64); box-shadow: 0 0 0 2px var(--brand-ring, rgba(94, 139, 126, .34)); }
+.sc-card:focus-visible { outline: 2px solid var(--brand, #4a6f64); outline-offset: 2px; }
+.sc-num { font-size: 22px; font-weight: 700; line-height: 1.1; }
+.sc-label { font-size: 12px; line-height: 1.25; color: var(--ink-soft, #56666e); overflow-wrap: anywhere; }
+.sc-card.sc-green .sc-num { color: var(--green, #0f6b4f); }
+.sc-card.sc-red .sc-num { color: var(--red, #b02318); }
+.sc-card.sc-amber .sc-num { color: var(--amber, #8a5206); }
+.sc-card.sc-blue .sc-num { color: var(--blue, #1b58c0); }
+.sc-card.sc-grey .sc-num, .sc-card.sc-quiet .sc-num { color: var(--ink-soft, #56666e); }
+.sc-listhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 6px 0; }
+.sc-list { border: 1px solid var(--line, #dde5e2); border-radius: 10px; background: var(--paper-raised, #fff); max-height: 340px; overflow-y: auto; }
+.sc-empty { padding: 14px; }
+.sc-row { padding: 9px 12px; border-bottom: 1px solid var(--line-soft, #e9efec); border-left: 4px solid transparent; }
+.sc-row:last-child { border-bottom: 0; }
+.sc-row.sc-t-green { border-left-color: var(--st-green, #1f9d55); }
+.sc-row.sc-t-amber { border-left-color: var(--st-yellow, #e0a100); }
+.sc-row.sc-t-red { border-left-color: var(--st-red, #d03b3b); }
+.sc-row.sc-t-grey { border-left-color: var(--st-grey, #9aa5ad); }
+.sc-r-top { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; font-size: 12.5px; }
+.sc-r-no { color: var(--ink-soft, #56666e); }
+.sc-r-amt { margin-left: auto; font-weight: 600; white-space: nowrap; }
+.sc-r-amt.in { color: var(--green, #0f6b4f); }
+.sc-r-amt.out { color: var(--ink, #22333b); }
+.sc-pill { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; border: 1px solid transparent; white-space: nowrap; }
+.sc-pill.sc-green { background: var(--st-green-tint, #e5f0ea); color: var(--st-green-ink, #0f6b4f); }
+.sc-pill.sc-amber { background: var(--st-yellow-tint, #fdf3d6); color: var(--st-yellow-ink, #7a5600); }
+.sc-pill.sc-red { background: var(--st-red-tint, #fbebea); color: var(--st-red-ink, #b02318); }
+.sc-pill.sc-grey { background: var(--st-grey-tint, #eef1f0); color: var(--st-grey-ink, #56666e); }
+.sc-r-narr { margin-top: 3px; font-size: 13px; overflow-wrap: anywhere; word-break: break-word; }
+.sc-r-ref { margin-top: 1px; overflow-wrap: anywhere; }
+.sc-r-why { margin-top: 4px; font-size: 12.5px; color: var(--ink-soft, #56666e); overflow-wrap: anywhere; }
+.sc-r-why.bad { color: var(--red, #b02318); font-weight: 600; }
+.sc-r-choose { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+.sc-pager { display: flex; align-items: center; gap: 12px; justify-content: center; margin-top: 8px; }
+.sc-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; margin: 8px 0 4px; }
+.sc-sum-item { display: flex; flex-direction: column; padding: 8px 12px; border-radius: 10px; background: var(--brand-tint, #e6efeb); color: var(--brand-ink, #2a4139); }
+.sc-sum-item b { font-size: 20px; line-height: 1.15; }
+.sc-sum-item span { font-size: 12px; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .sc-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .sc-card { padding: 6px 8px; }
+  .sc-num { font-size: 18px; }
+  .sc-label { font-size: 11px; }
+  .sc-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .sc-sum-item { padding: 6px 8px; }
+  .sc-sum-item b { font-size: 17px; }
+  .sc-sum-item span { font-size: 11px; }
+  .sc-r-amt { margin-left: 0; }
+  .sc-list { max-height: 300px; }
+}

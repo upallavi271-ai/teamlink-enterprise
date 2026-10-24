@@ -9,6 +9,9 @@ import {
   useTokens, smsInfo, CHANNEL_ICON, STATUS_WORD, canManageTemplates, useUsable, useChannels, purposesFor, templateFor, Highlighted,
 } from './msgKit.js';
 import './messaging.css';
+import Combo from '../Combo.jsx';
+import { useWaSender } from './WaSender.jsx';
+import AppCampaignModal from '../omni/library/AppCampaignModal.jsx'; // Omni-Channel: the same people and channels as a campaign (Save for later, approval, schedule, tracking)
 
 // ---------------------------------------------------------------------------
 // SEND A MESSAGE — to ONE person (SendMessageDialog) or to MANY (SendManyDialog).
@@ -41,7 +44,7 @@ const MODE_CHANNELS = { Email: ['Email'], WhatsApp: ['WhatsApp'], SMS: ['SMS'], 
 export const BULK_LIMIT = 500;
 
 export function SendManyDialog({
-  mode, ids, candidateIds, audience = 'candidates', note, applicationId, requirementId, purposeLabel, onClose, onSent,
+  mode, ids, candidateIds, audience = 'candidates', note, applicationId, requirementId, purposeLabel, onClose, onSent, app,
 }) {
   const { user } = useAuth() || {};
   const targets = ids || candidateIds || [];
@@ -58,6 +61,7 @@ export function SendManyDialog({
   const [busy, setBusy] = useState(false);
   const [job, setJob] = useState(null);
   const [fin, setFin] = useState(false);
+  const [campaignOpen, setCampaignOpen] = useState(false); // "Make it a campaign" (Omni-Channel app campaign)
   const [tick, setTick] = useState(0); // a failed check tries again by itself (the server may be restarting)
   const tries = useRef(0);
   const refs = useRef({});
@@ -87,8 +91,11 @@ export function SendManyDialog({
     return out;
   }, [channels, purpose, language, edits, usable]);
 
+  // WhatsApp: which company number the messages leave from (only the numbers the Admin gave this login)
+  const wa = useWaSender(channels.includes('WhatsApp'));
   const request = {
     audience, ids: targets, channels, purposeKey: purpose || undefined, language, perChannel, applicationId, requirementId, purpose: writeOwn ? 'Message' : undefined,
+    waNumberId: channels.includes('WhatsApp') ? wa.numberId : undefined,
   };
   const ready = !tooMany && targets.length && channels.length && purpose !== null && !(writeOwn && channels.some((c) => !(edits[c] && edits[c].body && edits[c].body.trim())));
 
@@ -121,6 +128,12 @@ export function SendManyDialog({
     return (
       <Modal wide title={`Sending to ${job.entities} ${noun}${job.entities === 1 ? '' : 's'}`} onClose={onClose} footer={<button type="button" className="btn btn-primary" onClick={onClose}>{fin ? 'Done' : 'Close (sending goes on)'}</button>}>
         <JobProgress jobId={job.id} initial={job} noun={noun} onJob={(j) => setFin(!['queued', 'running', 'cancelling'].includes(j.status))} />
+        {channels.includes('WhatsApp') && (
+          <div className="notice" style={{ marginTop: 12 }}>
+            <b>Where the replies come:</b> in Follow-ups → WhatsApp chats. What you sent and what they answer are in the <b>same chat</b>, in order.
+            {' '}<Link className="btn btn-sm btn-primary" to={targets.length === 1 ? `/ats/followups?sub=chats&chat=${{ candidates: 'CANDIDATE', clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(targets[0])}` : '/ats/followups?sub=chats'} onClick={onClose}>{targets.length === 1 ? 'Open this conversation' : 'Open WhatsApp chats'}</Link>
+          </div>
+        )}
       </Modal>
     );
   }
@@ -152,11 +165,13 @@ export function SendManyDialog({
       onClose={onClose}
       footer={<>
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
-        <button type="button" className="btn btn-primary" disabled={!pv || !(pv.peopleToSend > 0)} onClick={() => setStage('confirm')}>
+        <button type="button" className="btn" disabled={!targets.length || tooMany} title="Keep the same people as a campaign: save it for later, ask for approval, schedule it and follow every message" onClick={() => setCampaignOpen(true)}>Make it a campaign…</button>
+        <button type="button" className="btn btn-primary" disabled={!pv || !(pv.peopleToSend > 0) || (channels.includes('WhatsApp') && channels.length === 1 && !wa.canSend)} onClick={() => setStage('confirm')}>
           {pv && pv.peopleToSend > 0 ? `Next: send to ${pv.peopleToSend}` : 'Nobody to send to yet'}
         </button>
       </>}
     >
+      {campaignOpen && <AppCampaignModal app={app || (audience === 'employees' ? 'HRMS' : 'ATS')} audience={audience} ids={targets} channels={channels} onClose={() => setCampaignOpen(false)} onSaved={() => {}} />}
       {note && <div className="notice" style={{ marginBottom: 10 }}>{note}</div>}
       {tooMany && <div className="msg-box red">{targets.length} chosen. At most {BULK_LIMIT} at a time. Narrow the list and send in batches.</div>}
 
@@ -177,10 +192,10 @@ export function SendManyDialog({
 
       <div className="field">
         <label>What is it for?<ManageLink user={user} /></label>
-        <select value={purpose === null ? '' : (writeOwn ? '__own' : purpose)} onChange={(e) => setPurpose(e.target.value === '__own' ? '' : e.target.value)}>
+        <Combo value={purpose === null ? '' : (writeOwn ? '__own' : purpose)} onChange={(e) => setPurpose(e.target.value === '__own' ? '' : e.target.value)}>
           {purposes.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
           <option value="__own">Write my own message</option>
-        </select>
+        </Combo>
       </div>
       {langs.length > 1 && !writeOwn && (
         <div className="field">
@@ -189,6 +204,7 @@ export function SendManyDialog({
         </div>
       )}
 
+      {channels.includes('WhatsApp') && wa.node}
       {channels.map((c) => {
         const t = purpose ? templateFor(usable, purpose, c, language) : null;
         const locked = !!(t && t.locked);

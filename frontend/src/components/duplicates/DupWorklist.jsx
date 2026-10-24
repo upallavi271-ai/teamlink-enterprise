@@ -4,6 +4,7 @@ import api from '../../api';
 import { StatusTabs } from '../ui/ListPageHeader.jsx';
 import { DupPairCard } from './DupCheckPanel.jsx';
 import './Duplicates.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE DUPLICATES TAB of Candidates & Pipeline.
@@ -19,10 +20,10 @@ const err = (e, fallback) => e?.response?.data?.error || fallback;
 function Facet({ label, value, onChange, options, allLabel }) {
   if (!options || options.length === 0) return null;
   return (
-    <select aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
+    <Combo aria-label={label} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{allLabel}</option>
       {options.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>)}
-    </select>
+    </Combo>
   );
 }
 
@@ -48,7 +49,7 @@ function Obvious({ onChanged }) {
   return (
     <section className="dupx-sub">
       <h3>Obvious ones — a list to approve</h3>
-      <div className="small-muted">Same phone, same name, different jobs. Nothing is merged until a TL or Admin approves.</div>
+      <div className="small-muted">Same phone, same name, different requirements. Nothing is merged until a TL or Admin approves.</div>
       {!open && <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} onClick={() => setOpen(true)}>Show the list</button>}
       {open && !data && <div className="small-muted" style={{ marginTop: 8 }}>Loading…</div>}
       {open && data && (
@@ -60,7 +61,7 @@ function Obvious({ onChanged }) {
                 {p.canApprove && <input type="checkbox" style={{ width: 'auto', height: 'auto' }} checked={pick.has(p.flagId)} onChange={(e) => setPick((s) => { const n = new Set(s); if (e.target.checked) n.add(p.flagId); else n.delete(p.flagId); return n; })} />}
                 <span><b>{p.merge.name}</b>{' → into '}<b>{p.keep.name}</b></span>
               </label>
-              <span className="small-muted">{`${p.applicationsMoved} job(s) move${p.recruiter ? ` · ${p.recruiter}` : ''}`}</span>
+              <span className="small-muted">{`${p.applicationsMoved} requirement(s) move${p.recruiter ? ` · ${p.recruiter}` : ''}`}</span>
             </div>
           ))}
           {approvable.length > 0 && (

@@ -50,8 +50,8 @@ function portalCause(reason) {
   if (/did not answer in time/i.test(t)) return { key: 'slow', text: 'The Job Portal was too slow to answer.' };
   if (/SYNC_TOKEN|secret|answered 401|answered 403/i.test(t)) return { key: 'key', text: 'The Job Portal key is missing or wrong on the server.' };
   if (/SANDBOX/i.test(t)) return { key: 'sandbox', text: 'Test copy — the Job Portal is never contacted from here.' };
-  if (/Duplicate application/i.test(t)) return { key: 'dup', text: 'Somebody applied twice to the same job (the second one was not added — correct).' };
-  if (/does not exist/i.test(t)) return { key: 'gone', text: 'An application came for a job that was deleted here.' };
+  if (/Duplicate application/i.test(t)) return { key: 'dup', text: 'Somebody applied twice to the same requirement (the second one was not added — correct).' };
+  if (/does not exist/i.test(t)) return { key: 'gone', text: 'An application came for a requirement that was deleted here.' };
   return { key: 'other', text: t.slice(0, 160) || 'Unknown reason.' };
 }
 const PORTAL_FIX = {
@@ -61,7 +61,7 @@ const PORTAL_FIX = {
   key: 'Ask the person who set up the server to check the Job Portal keys in backend/.env (names only: JOB_PORTAL_SYNC_TOKEN, JOB_PORTAL_PUSH_SECRET).',
   sandbox: 'Nothing to fix — this is the test copy.',
   dup: 'Nothing to fix.',
-  gone: 'Nothing to fix — the job no longer exists.',
+  gone: 'Nothing to fix — the requirement no longer exists.',
   other: 'Read the reason, fix it, then press Try sync now.',
 };
 
@@ -99,7 +99,7 @@ async function jobPortalCard() {
       name: 'Job Portal',
       status: 'Built in',
       tone: 'green',
-      message: `Built in — the job portal is part of TeamLink (${cfg.url}). No sync needed. ${live} job${live === 1 ? '' : 's'} on it now; applications reach Candidates at once.`,
+      message: `Built in — the job portal is part of TeamLink (${cfg.url}). No sync needed. ${live} requirement${live === 1 ? '' : 's'} on it now; applications reach Candidates at once.`,
       failedTotal: failedRows.length,
       failedSinceLastGood: open.length,
       lastGoodAt: since,
@@ -115,8 +115,8 @@ async function jobPortalCard() {
   if (sandbox) { status = 'Test copy'; tone = 'orange'; message = 'This is the test copy — the Job Portal is never contacted from here.'; }
   else if (!cfg.configured) { status = 'Not set up'; tone = 'orange'; message = 'The Job Portal keys are not set on this server, so nothing is synced.'; }
   else if (lastFailed) { status = 'Problem'; tone = 'red'; message = `The last sync did not work: ${portalCause(lastRun.reason).text}`; }
-  else if (failedJobs.length) { status = 'Problem'; tone = 'red'; message = `${failedJobs.length} job${failedJobs.length === 1 ? ' is' : 's are'} not on the Job Portal yet.`; }
-  else { status = 'Working'; tone = 'green'; message = 'Jobs and applications are syncing.'; }
+  else if (failedJobs.length) { status = 'Problem'; tone = 'red'; message = `${failedJobs.length} requirement${failedJobs.length === 1 ? ' is' : 's are'} not on the Job Portal yet.`; }
+  else { status = 'Working'; tone = 'green'; message = 'Requirements and applications are syncing.'; }
   return {
     id: 'jobportal',
     name: 'Job Portal sync',
@@ -130,7 +130,7 @@ async function jobPortalCard() {
     jobsNotOnPortal: failedJobs.map((j) => ({ id: j.id, reqCode: j.reqCode, title: j.title })),
     groups: [...groups.values()].sort((a, b) => b.count - a.count),
     lostData: false,
-    note: 'A failed sync run does not lose any candidate or application: the next run that works sends every open job again and pulls the last 90 days of applications.',
+    note: 'A failed sync run does not lose any candidate or application: the next run that works sends every open requirement again and pulls the last 90 days of applications.',
     fix: groups.size ? [...groups.values()].sort((a, b) => b.sinceLastGood - a.sinceLastGood)[0].fix : 'Nothing to fix.',
     retry: { label: 'Try sync now', method: 'post', url: '/admin/integrations/job-portal/sync' },
   };

@@ -480,7 +480,7 @@ const AGREEMENT_STATUSES = [
   'DRAFT', 'SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING', 'SIGNED', 'ACTIVE', 'EXPIRED', 'REJECTED',
 ];
 const AGREEMENT_STATUS_LABELS = {
-  DRAFT: 'Draft',
+  DRAFT: 'Made',
   SENT: 'Sent',
   VIEWED: 'Viewed',
   CLIENT_CONFIRMATION_PENDING: 'Client Confirmation Pending',
@@ -516,7 +516,7 @@ const LOCS = ['Hyderabad', 'Bengaluru', 'Pune'];
 
 const REQUIREMENT_TYPES = ['Client Requirement', 'Internal Requirement'];
 const PRIORITIES = ['Low', 'Medium', 'High', 'Urgent']; // default Medium
-const REQUIREMENT_STATUSES = ['Draft', 'Open', 'On Hold', 'Closed'];
+const REQUIREMENT_STATUSES = ['Open', 'On Hold', 'Closed'];
 
 // --- Requirement workflow --------------------------------------------------
 // Draft -> Agreement Check -> Open -> Recruiter Assigned -> Sourcing
@@ -533,7 +533,7 @@ const REQUIREMENT_STATUS_CODES = [
   'CANDIDATES_AVAILABLE', 'ON_HOLD', 'CLOSED',
 ];
 const REQUIREMENT_STATUS_LABELS = {
-  DRAFT: 'Draft',
+  DRAFT: 'Not live yet',
   AGREEMENT_CHECK: 'Agreement Check',
   OPEN: 'Open',
   RECRUITER_ASSIGNED: 'Recruiter Assigned',
@@ -552,6 +552,17 @@ function requirementIsLive(status) {
 }
 function requirementStatusLabel(code) {
   return REQUIREMENT_STATUS_LABELS[code] || code || '-';
+}
+// WHAT PEOPLE SEE (user, 2026-10-13): only Open or Closed. Every stored code except CLOSED reads Open.
+// requirementStatusLabel above stays the INTERNAL name (logs, state-machine); never show it in a list, chip, filter or export.
+function requirementStatusUser(code) {
+  return code === 'CLOSED' ? 'Closed' : 'Open';
+}
+// The same state in a mid-sentence phrase, for "This job is ___, so ..." messages.
+function requirementStateWords(code) {
+  return {
+    DRAFT: 'not live yet', AGREEMENT_CHECK: 'waiting for the client agreement', ON_HOLD: 'paused', CLOSED: 'closed',
+  }[code] || 'open';
 }
 
 // --- Job portal sync -------------------------------------------------------
@@ -1025,6 +1036,8 @@ module.exports = {
   REQUIREMENT_LIVE_STATUSES,
   requirementIsLive,
   requirementStatusLabel,
+  requirementStatusUser,
+  requirementStateWords,
   PORTAL_SYNC_STATUSES,
   PORTAL_APPLICATION_SOURCE,
   PORTAL_APPLICATION_SOURCES,

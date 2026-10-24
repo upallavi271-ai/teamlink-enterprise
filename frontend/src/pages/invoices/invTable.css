@@ -199,10 +199,64 @@
 .inv-tbar .colchooser-item input { width: 15px; height: 15px; margin: 0; }
 .inv-tbar .colchooser-item.is-locked { color: var(--ink-soft, #5b6478); cursor: default; }
 .inv-tbar .colchooser-reset { margin-top: 6px; font-size: 12px; font-weight: 600; }
-/* The shared ScrollSync box (components/accounts/ScrollSync.jsx) now holds
-   the table: it scrolls sideways only, with synced top + bottom bars, and
-   lifts the header under the app's top bar and the TOTAL row above the
-   bottom bar — so the box no longer needs its own height. */
-.tlss-body.inv-grid-wrap { max-height: none; overflow-x: auto; overflow-y: hidden; border-top: 1px solid var(--line); }
+/* The shared ScrollSync box (components/accounts/ScrollSync.jsx, fit mode) holds
+   the table: ONE box that scrolls both ways with synced top + bottom sideways
+   bars and a NATIVE sticky header / TOTAL row (2026-10-14: the old script that
+   lifted them with translateY on every scroll made the table jump and flicker).
+   Height, overflow and overscroll come from ScrollSync.css (.tlss-fit). */
+.tlss-body.inv-grid-wrap { border-top: 1px solid var(--line); }
 .inv-tpanel .tlss { border-top: 0; }
 .inv-tpanel .tlss-bar { margin-left: 8px; margin-right: 8px; }
+
+/* ---- Compact table (2026-10-14): every column kept, far less sideways scrolling ----
+   Narrower cells, short columns for the small values, fixed right-aligned
+   money columns, long text cut with an ellipsis (the full value is the
+   cell's title), a thin group-label row above the header, and compact
+   Actions. Pinned columns / header / TOTAL rules above stay as they are. */
+.inv-grid { --inv-gh: 24px; --inv-c1: 118px; --inv-c2: 190px; font-size: 12.5px; }
+.inv-grid th, .inv-grid td { padding-left: 8px; padding-right: 8px; }
+.inv-grid td { padding-top: 7px; padding-bottom: 7px; }
+.inv-grid th.c-date, .inv-grid th.c-due { min-width: 92px; }
+.inv-grid th.c-btype { min-width: 120px; max-width: 150px; }
+.inv-grid th.c-cgstin { min-width: 140px; }
+.inv-grid th.c-dept { min-width: 100px; }
+.inv-grid th.c-rec { min-width: 130px; max-width: 170px; }
+.inv-grid th.c-cands { min-width: 64px; width: 64px; }
+.inv-grid th.c-payinggst { min-width: 76px; width: 76px; }
+.inv-grid th.c-age { min-width: 56px; width: 56px; }
+.inv-grid th.c-sent { min-width: 84px; }
+.inv-grid th.c-pays { min-width: 70px; width: 70px; }
+.inv-grid th.c-proof { min-width: 56px; }
+.inv-grid th.c-tdscert { min-width: 76px; }
+.inv-grid th.c-status { min-width: 90px; }
+.inv-grid th.c-before, .inv-grid th.c-after, .inv-grid th.c-receivable,
+.inv-grid th.c-received, .inv-grid th.c-pending { min-width: 112px; width: 112px; }
+.inv-grid th.c-gst, .inv-grid th.c-tds { min-width: 104px; }
+.inv-grid td.num, .inv-grid tfoot td.num { font-variant-numeric: tabular-nums; font-size: 12px; }
+.inv-grid th { padding-top: 8px; padding-bottom: 8px; font-size: 10.5px; letter-spacing: .04em; }
+/* long text: one line, ellipsis, full value on hover (title) */
+.inv-grid .inv-ell-rec { max-width: 160px; }
+.inv-grid .inv-ell-bt { max-width: 140px; }
+/* group label row */
+.inv-grid thead tr.inv-groups th {
+  top: 0; z-index: 4; height: var(--inv-gh); padding-top: 3px; padding-bottom: 3px;
+  font-size: 10px; letter-spacing: .1em; text-align: left; line-height: 1.2;
+  background: #162a4d; color: #c9d5ec; box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .1);
+  border-left: 0;
+}
+.inv-grid thead tr.inv-groups th.g-amounts { background: #1d3763; }
+.inv-grid thead tr.inv-groups th.g-collection { background: #234172; }
+.inv-grid thead tr.inv-groups th.g-act { background: #162a4d; }
+.inv-grid thead tr.inv-groups th.stk-l1, .inv-grid thead tr.inv-groups th.stk-l2, .inv-grid thead tr.inv-groups th.stk-r { z-index: 6; }
+.tlss.tlss-fit .tlss-body .inv-grid thead tr.inv-heads th { top: var(--inv-gh); }
+.tlss.tlss-fit .tlss-body .inv-grid thead tr.inv-groups th { top: 0; }
+/* compact Actions: icon + short label, three separate buttons in about 200px */
+.inv-grid th.c-act { min-width: 196px; }
+.inv-grid .inv-acts { gap: 4px; flex-wrap: nowrap; }
+.inv-grid .inv-acts .btn { padding: 3px 8px; font-size: 11.5px; white-space: nowrap; }
+@media (max-width: 1100px) { .inv-grid { --inv-c1: 104px; --inv-c2: 150px; } }
+/* The box scrolls: anything scrolled into view (a row, a panel, a focused
+   control) lands clear of the sticky header (group + heading rows) and the
+   sticky TOTAL row instead of behind them. */
+.tlss-body.inv-grid-wrap { scroll-padding-top: 72px; scroll-padding-bottom: 56px; }
+.inv-grid tbody tr.inv-row, .inv-grid tbody tr.cg-detail { scroll-margin-top: 72px; scroll-margin-bottom: 56px; }

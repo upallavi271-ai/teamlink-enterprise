@@ -32,6 +32,32 @@
 //   HIKE % = (expected - current) / current x 100. A fresher (current = 0) has
 //   no hike (shown as "Fresher").
 //
+// MATCHING (2026-10-13): the same Salary fit % is ONE factor of the matching score
+// (utils/matching.js computeMatch -> matchFactor() below), next to Resume and Location:
+//   * the factor VALUE is the Salary fit % above (100 inside / below the budget, max / expected above it);
+//   * NOT KNOWN is neutral: no expected salary, a salary that cannot be read ("As per norms", "Negotiable",
+//     "NA"), one that is clearly a slip ("30000k", under Rs 5,000 a month, over Rs 1.5 crore a year), a bare
+//     amount that could be monthly OR yearly (see rule 5), or a job with no budget / an hourly job. The factor
+//     is then LEFT OUT and the other weights are re-normalised, so the person is never punished for what we do
+//     not know, and the breakdown says "Salary: not known". A salary is never read as zero.
+//
+// HOW A CANDIDATE'S AMOUNT IS READ (monthly vs yearly), first rule that applies wins:
+//   1. It says its period: "per month", "/month", "pm", "monthly", "LPM" (lakh per month) = a MONTH;
+//      "LPA", "p.a.", "per year", "CTC" = a YEAR.
+//   2. It says a unit: "4.5 L / lakh / lac" = lakhs a YEAR (a month only with "LPM"); "1.2 cr" = crores a year.
+//   3. "k": under 100 is thousands a MONTH ("35k" = 35,000 a month); 100 and over is a YEAR ("450k").
+//   4. A bare number is read by its SIZE: under 1,000 = lakhs a year ("4.5" = 4.5 LPA); 1,000 to 99,999 =
+//      rupees a MONTH ("35000" = 35,000 a month = 4.2 LPA); 300,000 and over = rupees a YEAR ("650000").
+//      "25-30,000" and "25 - 30000": the small first number takes the thousands of the last one.
+//   5. 100,000 to 299,999 with nothing else said ("150000") could be Rs 1.5 lakh a month (a doctor) or Rs
+//      1.5 lakh a year (a fresher). It is NOT GUESSED: it is read as a year for the old Salary fit chip, but
+//      marked ambiguous, and the matching factor treats it as not known. A job paid by the MONTH settles it
+//      (monthly), because then everybody quotes monthly.
+//   6. The job's own pay type (Requirement.salaryType) is used for the job's BUDGET ("25k - 30k" on a Monthly
+//      job is read per month; an Annual job's bare number is lakhs) and for rule 5; on a Monthly job a bare 10
+//      to 99 ("35") is thousands a month.
+//   A range ("25-30k") is read at its HIGHER end (what they would take at most is what the budget must hold).
+//
 // Everything below is pure (no database), so the rules can be tested as a table.
 // ---------------------------------------------------------------------------
 
@@ -57,16 +83,18 @@ const parseCache = new Map();
 // opts.unit: 'year' | 'month' - the default for an amount that says nothing
 // about its own period (the toggle next to the box / the job's salary type).
 // opts.force: the unit wins even over an "L" figure (a Monthly job's band).
+// opts.job: 'month' | 'year' - how the JOB pays (Requirement.salaryType); only settles what the amount itself leaves open (rules 5 and 6 above).
 // Returns { ok, blank, fresher, lpa, annual, unit, assumed, range, reason }
 //   ok       a usable amount was read
 //   lpa      the YEARLY amount in lakhs (4.5)   (a range gives its higher end)
 //   annual   the same in rupees
 //   unit     'year' | 'month' - the period the person WROTE
 //   assumed  the period was guessed from the size of the number, not written
+//   ambiguous  100,000-299,999 with no unit and no monthly job: monthly OR yearly, not guessed (rule 5); read as a year here
 //   range    { lo, hi } in LPA when two amounts were written
 //   reason   'blank' | 'unclear' | 'no_unit' (bare small number with a month toggle)
 function parseAmount(raw, opts = {}) {
-  const key = `${opts.unit || ''}${opts.force ? '!' : ''}|${raw}`;
+  const key = `${opts.unit || ''}${opts.force ? '!' : ''}${opts.job || ''}|${raw}`;
   if (parseCache.has(key)) return parseCache.get(key);
   const out = parseAmountUncached(raw, opts);
   if (parseCache.size > 20000) parseCache.clear();
@@ -94,13 +122,17 @@ function parseAmountUncached(raw, opts) {
   if (!nums.length || nums.some((x) => !Number.isFinite(x.n))) return { ok: false, blank: false, reason: 'unclear' };
   // "35-40k": the first number takes the unit of the last one.
   if (nums.length === 2 && nums[0].mag === null && nums[1].mag !== null) { nums[0].mag = nums[1].mag; nums[0].word = nums[1].word; }
+  // "25-30,000" / "25 - 30000": a small first number takes the thousands of the last one (rule 4).
+  if (nums.length === 2 && nums[0].mag === null && nums[1].mag === null && nums[0].n < 1000 && nums[1].n >= 1000) nums[0].n *= 1000;
 
   const saysMonth = MONTH_RE.test(flat) || nums.some((x) => x.word === 'lpm');
   const saysYear = !saysMonth && YEAR_RE.test(flat);
+  // rule 6: on a Monthly job a bare 10-99 ("35") is thousands a month.
+  if (opts.job === 'month' && !opts.unit && !saysMonth && !saysYear && nums.every((x) => x.mag === null && x.n >= 10 && x.n < 100)) nums.forEach((x) => { x.mag = 1000; });
   const last = nums[nums.length - 1];
 
   // the period of the amount
-  let unit; let assumed = false;
+  let unit; let assumed = false; let ambiguous = false;
   if (saysMonth) unit = 'month';
   else if (saysYear) unit = 'year';
   else if (opts.force && (opts.unit === 'month' || opts.unit === 'year')) unit = opts.unit; // a Monthly job: its figures are monthly
@@ -113,7 +145,10 @@ function parseAmountUncached(raw, opts) {
     const v = last.n;
     if (v < 1000) { unit = 'year'; assumed = true; } // 4.5 -> 4.5 LPA
     else if (v < 100000) { unit = 'month'; assumed = true; } // 45000 -> a month
-    else { unit = 'year'; assumed = true; } // 650000 -> a year
+    else if (v < 300000) { // 150000: Rs 1.5 lakh a month OR a year - not guessed (rule 5)
+      assumed = true;
+      if (opts.job === 'month') unit = 'month'; else { unit = 'year'; ambiguous = true; }
+    } else { unit = 'year'; assumed = true; } // 650000 -> a year
   }
 
   const rupeesOf = (x) => {
@@ -137,6 +172,7 @@ function parseAmountUncached(raw, opts) {
     ok: true, fresher: hi === 0, lpa: round(hi / LAKH, 3), annual: Math.round(hi), unit, assumed,
   };
   if (annualParts.length === 2 && lo !== hi) res.range = { lo: round(lo / LAKH, 3), hi: round(hi / LAKH, 3) };
+  if (ambiguous) res.ambiguous = true;
   return res;
 }
 
@@ -259,7 +295,7 @@ function budgetOf(requirement) {
   const raw = requirement && requirement.salary != null ? String(requirement.salary).trim() : '';
   if (!raw || /^[-–—\s]+$/.test(raw) || !/\d/.test(raw)) return { state: 'none', min: null, max: null, text: '' };
   const type = String((requirement && requirement.salaryType) || '').toLowerCase();
-  if (type.startsWith('hour')) return { state: 'unusable', min: null, max: null, text: raw, why: 'The job pays by the hour.' };
+  if (type.startsWith('hour')) return { state: 'unusable', min: null, max: null, text: raw, why: 'The requirement pays by the hour.' };
   const monthly = type.startsWith('month');
   const popts = monthly ? { unit: 'month', force: true } : {}; // an Annual job's bare number is lakhs; "25k" is read as a month
   const lower = raw.toLowerCase();
@@ -313,6 +349,50 @@ function fitMath(expected, current, budget) {
   return res;
 }
 
+// ---- the MATCHING factor ---------------------------------------------------------
+// A figure outside this band is a slip of the finger, not a salary: it is "not known" for matching.
+const PLAUSIBLE_LPA = { min: 0.5, max: 150 }; // Rs 5,000 a month .. Rs 1.5 crore a year
+const NOT_KNOWN = 'Not known';
+const budgetCache = new Map();
+function budgetCached(requirement) {
+  const key = `${requirement && requirement.salaryType != null ? requirement.salaryType : ''}|${requirement && requirement.salary != null ? requirement.salary : ''}`;
+  let b = budgetCache.get(key);
+  if (!b) {
+    b = budgetOf(requirement);
+    if (budgetCache.size > 5000) budgetCache.clear();
+    budgetCache.set(key, b);
+  }
+  return b;
+}
+const jobPays = (requirement) => {
+  const type = String((requirement && requirement.salaryType) || '').toLowerCase();
+  return type.startsWith('month') ? 'month' : (type.startsWith('hour') ? 'hour' : 'year');
+};
+
+// ONE candidate on ONE job -> the factor the matching score uses. Pure; reads only the two salary
+// strings of the candidate and the job's salary + salaryType. NEVER returns rupees: only a fit % (0-100),
+// a band and plain words, so it is safe for any login that may see a score.
+//   { known, state, pct, band, word, belowRange, why }
+//   state  'ok' | 'no-salary' | 'unclear' | 'ambiguous' | 'implausible' | 'no-budget' | 'hourly'
+//   pct    the Salary fit % (100 inside or below the budget, max / expected above); null when not known
+//   word   'Within budget' | 'Slightly above' | 'Above budget' | 'Not known'
+function matchFactor(candidate, requirement) {
+  const raw = candidate ? candidate.expectedSalary : null;
+  const p = parseAmount(raw, { job: jobPays(requirement) });
+  const unknown = (state, why) => ({ known: false, state, pct: null, band: null, word: NOT_KNOWN, belowRange: false, why });
+  if (p.blank) return unknown('no-salary', 'No expected salary is saved for this person yet.');
+  if (!p.ok) return unknown('unclear', 'The expected salary is written in a way we cannot read (for example "as per norms").');
+  if (p.fresher) return unknown('no-salary', 'No expected salary is saved for this person yet.');
+  if (p.ambiguous) return unknown('ambiguous', 'The expected salary could be per month or per year, so it is not used.');
+  if (p.lpa < PLAUSIBLE_LPA.min || p.lpa > PLAUSIBLE_LPA.max) return unknown('implausible', 'The expected salary looks like a typing slip, so it is not used.');
+  const budget = budgetCached(requirement);
+  if (budget.state === 'unusable') return unknown('hourly', 'This requirement pays by the hour, so the salary is not compared.');
+  if (budget.state !== 'set') return unknown('no-budget', 'The client has not given a salary budget for this requirement yet.');
+  const m = fitMath(p.lpa, null, budget);
+  const b = BANDS[m.band];
+  return { known: true, state: 'ok', pct: m.pct, band: m.band, word: b.label, belowRange: !!m.belowRange, why: null };
+}
+
 // Which filter buckets a fit falls into (a row can sit in more than one).
 function filterKeysOf(f) {
   if (!f) return [];
@@ -350,7 +430,7 @@ function fitFor(candidate, requirement, viewer = { numbers: true, bucket: false 
   }
   if (m.state === 'no-budget') {
     out.label = 'Client budget not set';
-    out.budgetPrompt = 'Ask the client manager (BDE) to add the job budget';
+    out.budgetPrompt = 'Ask the client manager (BDE) to add the requirement budget';
     out.tone = 'grey';
     out.icon = '–';
     out.budgetText = null;
@@ -383,7 +463,7 @@ function fitFor(candidate, requirement, viewer = { numbers: true, bucket: false 
 function explain(f) {
   if (!f) return '';
   if (f.state === 'no-salary') return 'This person\'s expected salary is not saved yet.';
-  if (f.state === 'no-budget') return 'The job has no budget (salary range) from the client yet.';
+  if (f.state === 'no-budget') return 'The requirement has no budget (salary range) from the client yet.';
   if (f.band === 'within') return f.belowRange ? 'Wants less than the client\'s minimum: within budget (below range).' : 'Wants pay inside the client\'s budget: 100%.';
   return `Wants more than the client's maximum: fit is the budget maximum divided by what the person wants (${f.pct}%).`;
 }
@@ -416,5 +496,5 @@ function viewerFor(privacy) {
 
 module.exports = {
   parseAmount, fmtLpa, plainLpa, plainBoth, validateSalaries, checkEdit, checkOne, sanity, budgetOf, fitMath, fitFor, missingOf, normaliseLoose, filterKeysOf, explain, viewerFor,
-  BANDS, FILTER_LABELS, MSG, LAKH, SLIGHT,
+  BANDS, FILTER_LABELS, MSG, LAKH, SLIGHT, matchFactor, PLAUSIBLE_LPA, NOT_KNOWN,
 };

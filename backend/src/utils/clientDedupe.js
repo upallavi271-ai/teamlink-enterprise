@@ -541,6 +541,19 @@ async function mergeClients({ primaryId, donorIds, name, splitOut, note, user, e
       return o;
     });
 
+    // UNDO MEMORY (2026-10-13): which rows came from which donor, so a merge can be taken back within 7 days.
+    const undo = {
+      primaryPrev: Object.fromEntries(Object.keys(plan.primaryUpdate).map((k) => [k, plan.primary[k] === undefined ? null : plan.primary[k]])),
+      requirements: await tx.requirement.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      invoices: await tx.invoice.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      users: await tx.user.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      stageEvents: await tx.applicationStageEvent.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      feedback: await tx.interviewFeedback.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      auditRows: await tx.auditLog.findMany({ where: { entity: 'Client', entityId: inDonors }, select: { id: true, entityId: true } }),
+      aliases: await tx.clientAlias.findMany({ where: { clientId: inDonors }, select: { id: true, clientId: true } }),
+      scopeUsers: plan.scopeUsers.map((u) => ({ id: u.id, atsScopeClients: u.atsScopeClients })),
+      aliasKeysCreated: plan.aliasPlan.filter((x) => !x.skip).map((x) => x.aliasKey),
+    };
     const moved = {};
     moved.requirements = (await tx.requirement.updateMany({ where: { clientId: inDonors }, data: { clientId: primaryId } })).count;
     moved.applications = plan.moved.applications; // they follow their requirement
@@ -590,7 +603,7 @@ async function mergeClients({ primaryId, donorIds, name, splitOut, note, user, e
         donorIds: ids.join(','),
         donorSnapshot: JSON.stringify(snapshot),
         moved: JSON.stringify({ ...moved, aliasesCreated: aliasesCreated.length }),
-        filledFields: JSON.stringify({ filled: plan.filled, kept: plan.kept, previousName: plan.primary.name, aliases: aliasesCreated }),
+        filledFields: JSON.stringify({ filled: plan.filled, kept: plan.kept, previousName: plan.primary.name, aliases: aliasesCreated, undo }),
         note: noteText,
         mergedById: (user && user.id) || null,
         mergedByName: (user && user.name) || null,
@@ -667,6 +680,64 @@ async function mergeSafeGroups({ groupIds, user }) {
   };
 }
 
+const UNDO_DAYS = 7;
+// UNDO a merge (within 7 days): the donors come back exactly as they were, with their jobs, invoices, logins, history rows
+// and aliases; the survivor gets its earlier values back. Only for merges made after the undo memory existed.
+async function undoMerge({ mergeId, user, reason }) {
+  const rec = await prisma.clientMerge.findUnique({ where: { id: String(mergeId || '') } });
+  if (!rec) throw new MergeError('That merge was not found.', 404);
+  let info = {};
+  try { info = JSON.parse(rec.filledFields || '{}') || {}; } catch { info = {}; }
+  if (info.undoneAt) throw new MergeError('This merge was already undone.', 409);
+  if (!info.undo) throw new MergeError('This merge is older than the undo feature, so it cannot be undone.', 409);
+  if (Date.now() - new Date(rec.createdAt).getTime() > UNDO_DAYS * 86400000) throw new MergeError(`Undo is possible for ${UNDO_DAYS} days only.`, 410);
+  const u = info.undo;
+  const snapshot = JSON.parse(rec.donorSnapshot || '[]');
+  return prisma.$transaction(async (tx) => {
+    const primary = await tx.client.findUnique({ where: { id: rec.primaryId } });
+    if (!primary) throw new MergeError('The client these were merged into no longer exists.', 409);
+    // the survivor first: its earlier values back (this frees any code / agreement no. it took from a donor)
+    if (Object.keys(u.primaryPrev || {}).length) await tx.client.update({ where: { id: primary.id }, data: u.primaryPrev });
+    // the donors, as they were
+    // eslint-disable-next-line no-restricted-syntax
+    for (const d of snapshot) {
+      const row = { ...d };
+      // eslint-disable-next-line no-await-in-loop
+      if (await tx.client.findUnique({ where: { id: row.id }, select: { id: true } })) throw new MergeError('One of the merged clients exists again - nothing was undone.', 409);
+      // eslint-disable-next-line no-await-in-loop
+      await tx.client.create({ data: row });
+    }
+    const back = async (model, list, field) => {
+      // eslint-disable-next-line no-restricted-syntax
+      for (const r of list || []) {
+        // eslint-disable-next-line no-await-in-loop
+        await model.updateMany({ where: { id: r.id }, data: { [field]: r[field] } });
+      }
+    };
+    await back(tx.requirement, u.requirements, 'clientId');
+    await back(tx.invoice, u.invoices, 'clientId');
+    await back(tx.user, u.users, 'clientId');
+    await back(tx.applicationStageEvent, u.stageEvents, 'clientId');
+    await back(tx.interviewFeedback, u.feedback, 'clientId');
+    await back(tx.auditLog, u.auditRows, 'entityId');
+    await back(tx.clientAlias, u.aliases, 'clientId');
+    if ((u.aliasKeysCreated || []).length) await tx.clientAlias.deleteMany({ where: { aliasKey: { in: u.aliasKeysCreated }, clientId: rec.primaryId } });
+    // eslint-disable-next-line no-restricted-syntax
+    for (const su of u.scopeUsers || []) {
+      // eslint-disable-next-line no-await-in-loop
+      await tx.user.update({ where: { id: su.id }, data: { atsScopeClients: su.atsScopeClients } }).catch(() => null);
+    }
+    await tx.clientMerge.update({ where: { id: rec.id }, data: { filledFields: JSON.stringify({ ...info, undo: undefined, undoneAt: new Date().toISOString(), undoneBy: (user && user.name) || null }) } });
+    await tx.auditLog.create({
+      data: {
+        userId: (user && user.id) || null, actorName: (user && user.name) || null, action: 'Client merge undone', entity: 'Client', entityId: rec.primaryId,
+        fromValue: rec.primaryName, toValue: snapshot.map((d) => d.name).join(' | ').slice(0, 2000), reason: String(reason || '').trim().slice(0, 500) || 'Undone',
+      },
+    });
+    return { ok: true, restored: snapshot.map((d) => ({ id: d.id, name: d.name })) };
+  }, { maxWait: 15000, timeout: 120000 });
+}
+
 async function mergeHistory(limit = 200) {
   const rows = await prisma.clientMerge.findMany({ orderBy: { createdAt: 'desc' }, take: limit });
   const parse = (s, d) => { try { return JSON.parse(s); } catch { return d; } };
@@ -677,6 +748,8 @@ async function mergeHistory(limit = 200) {
     donorIds: r.donorIds.split(',').filter(Boolean),
     donorNames: parse(r.donorSnapshot, []).map((d) => d.name),
     moved: parse(r.moved, {}),
+    undoable: !!(parse(r.filledFields, {}) || {}).undo && !(parse(r.filledFields, {}) || {}).undoneAt && Date.now() - new Date(r.createdAt).getTime() <= UNDO_DAYS * 86400000,
+    undone: !!(parse(r.filledFields, {}) || {}).undoneAt,
     filled: (parse(r.filledFields, {}) || {}).filled || [],
     note: r.note,
     mergedByName: r.mergedByName,
@@ -1022,7 +1095,7 @@ async function applyPlan({ keys, user, testOnly = false } = {}) {
 
 module.exports = {
   clean, tok, fullKey, baseKey, coreKey, headOf, tidyName, junkReason, isInternalClient,
-  computeGroups, previewMerge, mergeClients, mergeSafeGroups, mergeHistory, MergeError, computePlan, applyPlan,
+  computeGroups, previewMerge, mergeClients, mergeSafeGroups, mergeHistory, undoMerge, MergeError, computePlan, applyPlan,
   // Read-only helpers reused by utils/clientDuplicates.js (Add Client duplicate check).
   osa, thr, dig,
 };

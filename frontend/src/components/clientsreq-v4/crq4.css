@@ -311,3 +311,7 @@ main:has(> .crq4) > .tabs .tab.active{background:var(--navy);border-color:var(--
 }
 /* The heading tips move into the heading's tooltip in the fitted table. */
 .crq4-jobs .crq4-fit th .gd-help{display:none}
+
+/* ---- Names fit (2026-10-17): rank-list names wrap to 2 lines instead of "..." ---- */
+.crq4-rank-name{white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.25}
+.crq4-attn-label,.crq4-share-lbl{white-space:normal;overflow-wrap:anywhere;line-height:1.25}

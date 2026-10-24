@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import ResumeEditForm from './ResumeEditForm.jsx';
 import './ResumePanel.css';
+import Combo from '../Combo.jsx';
 
 const when = (v) => (v ? new Date(v).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
 const kb = (n) => (n ? `${Math.max(1, Math.round(n / 1024))} KB` : '');
@@ -136,7 +137,7 @@ function Details({ v }) {
 export default function ResumePanel({ candidateId, candidateName, candidatePhone, candidateEmail }) {
   const [data, setData] = useState(null);
   const [hidden, setHidden] = useState(false);
-  const [mode, setMode] = useState('view'); // view | side | edit
+  const [mode, setMode] = useState('view'); // view | side | how | edit
   const [selId, setSelId] = useState('');
   const [leftId, setLeftId] = useState('');
   const [rightId, setRightId] = useState('');
@@ -149,6 +150,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
   const [over, setOver] = useState(false);
   const [undoId, setUndoId] = useState(''); // the version just hidden (Undo)
   const fileRef = useRef(null);
+  const editedRef = useRef(null);
 
   function load(selectId) {
     return api.get(`/candidate-resumes/${candidateId}`)
@@ -222,6 +224,29 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
     } finally { setBusy(''); }
   }
 
+  // Founder, 2026-10-22: a PDF is edited in iLovePDF, a Word file in Word, and the result is uploaded here as the Edited resume (what a client sees).
+  // The server refuses a file that still shows the candidate's phone number or e-mail.
+  async function uploadEdited(file) {
+    if (!file) return;
+    setError(''); setFlash('');
+    if (data && file.size > data.maxBytes) { setError(`That file is larger than ${Math.round(data.maxBytes / 1048576)} MB.`); return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    setBusy('edited');
+    try {
+      const res = await api.post(`/candidate-resumes/${candidateId}/upload-edited`, fd);
+      setFlash(`✓ ${res.data.resume.label} saved. Clients see this one.${res.data.couldNotCheck ? ' We could not read text from the file, so please check yourself that no phone number or e-mail is in it.' : ''}`);
+      setDetails({});
+      await load(res.data.resume.id);
+      setMode('side');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not upload. Please try again.');
+    } finally {
+      setBusy('');
+      if (editedRef.current) editedRef.current.value = '';
+    }
+  }
+
   async function openEditor() {
     setError('');
     // Start from the newest edited version, else the current original.
@@ -270,9 +295,9 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
   const undoV = undoId ? hiddenList.find((v) => v.id === undoId) : null;
 
   const versionSelect = (value, onChange, list) => (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
+    <Combo value={value} onChange={(e) => onChange(e.target.value)}>
       {list.map((v) => <option key={v.id} value={v.id}>{`${v.label}${v === data.originals[0] || v === data.edited[0] ? ' (latest)' : ''} · ${when(v.createdAt)}`}</option>)}
-    </select>
+    </Combo>
   );
 
   return (
@@ -300,7 +325,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
               </button>
             )}
             {hasAny && data.canEdit && mode !== 'edit' && (
-              <button type="button" className="btn btn-sm" disabled={busy === 'editor'} onClick={openEditor}>✎ Edit resume</button>
+              <button type="button" className="btn btn-sm" disabled={busy === 'editor'} onClick={() => { setError(''); setFlash(''); setMode('how'); }}>✎ Edit resume</button>
             )}
             {hasAny && data.edited.length > 0 && data.originals.length > 0 && mode !== 'side' && (
               <button type="button" className="btn btn-sm" onClick={() => setMode('side')}>⇆ Compare original and edited</button>
@@ -367,7 +392,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
                   <b>{v.kind === 'EDITED' ? v.label : 'Original resume'}</b>
                   <div className="small-muted">
                     {v.kind === 'EDITED'
-                      ? `TeamLink format · ${v.createdByName || '—'} · ${when(v.createdAt)} · clients see this one`
+                      ? `${String(v.parser || '').startsWith('uploaded') ? 'Edited and uploaded' : 'TeamLink format'} · ${v.createdByName || '—'} · ${when(v.createdAt)} · clients see this one`
                       : `As uploaded, never changed · ${v.fileName || ''}`}
                   </div>
                 </div>
@@ -420,6 +445,49 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
         </div>
       )}
 
+      {mode === 'how' && (() => {
+        const o = data.originals[0] || null;
+        const isPdf = !!o && o.format === 'pdf';
+        const isWord = !!o && (o.format === 'docx' || o.format === 'doc');
+        return (
+          <div className="rsm-card">
+            <h3 className="rsm-main-title">Edit resume</h3>
+            {!o && <div className="small-muted">Upload the original resume first.</div>}
+            {o && (
+              <>
+                <div className="notice amber" style={{ margin: '8px 0' }}>
+                  <b>Remove the phone number, e-mail and address</b> from the resume while you edit. Clients see the edited file, and we check it when you upload.
+                </div>
+                <ol className="rsm-steps" style={{ margin: '8px 0 8px 18px', lineHeight: 1.9 }}>
+                  <li>
+                    <Downloads candidateId={candidateId} v={o} name={name} onError={setError} />
+                    <span className="small-muted">{` the original ${isPdf ? 'PDF' : 'Word file'} (${o.fileName || ''})`}</span>
+                  </li>
+                  {isPdf && (
+                    <li>
+                      <a className="btn btn-sm btn-primary" href="https://www.ilovepdf.com/edit-pdf" target="_blank" rel="noopener noreferrer">Open iLovePDF — Edit PDF ↗</a>
+                      <span className="small-muted"> choose the file you just downloaded, remove the contact details, make your changes, then download the result.</span>
+                    </li>
+                  )}
+                  {isWord && <li><b>Open it in Word</b><span className="small-muted"> remove the contact details, make your changes, and save it as .docx (File → Save As).</span></li>}
+                  <li>
+                    <button type="button" className="btn btn-sm btn-primary" disabled={busy === 'edited'} onClick={() => editedRef.current && editedRef.current.click()}>
+                      {busy === 'edited' ? 'Checking and saving…' : `⬆ Upload the edited ${isPdf ? 'PDF' : 'Word file'}`}
+                    </button>
+                    <span className="small-muted"> it becomes the next Edited resume.</span>
+                  </li>
+                </ol>
+                {isPdf && <div className="small-muted">iLovePDF is another company&apos;s website: the file you choose there leaves TeamLink.</div>}
+                <input ref={editedRef} type="file" accept={isPdf ? '.pdf,application/pdf' : '.docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.pdf,application/pdf'} style={{ display: 'none' }} onChange={(e) => uploadEdited(e.target.files && e.target.files[0])} />
+              </>
+            )}
+            <div style={{ marginTop: 10 }}>
+              <button type="button" className="link-btn" disabled={busy === 'editor'} onClick={openEditor}>Or write the edited resume in TeamLink&apos;s own form</button>
+            </div>
+          </div>
+        );
+      })()}
+
       {mode === 'edit' && draft && (
         <div className="rsm-card">
           <ResumeEditForm
@@ -444,7 +512,7 @@ export default function ResumePanel({ candidateId, candidateName, candidatePhone
                 {all.slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).map((v) => (
                   <tr key={v.id}>
                     <td><span className={`status ${v.kind === 'EDITED' ? 'active' : 'new'}`}>{v.label}</span></td>
-                    <td className="cell-muted">{v.kind === 'EDITED' ? `TeamLink format · PDF${v.hasDocx ? ' + DOCX' : ''}` : `${v.fileName} · ${kb(v.size)}`}</td>
+                    <td className="cell-muted">{v.kind === 'EDITED' ? `${String(v.parser || '').startsWith('uploaded') ? 'Edited and uploaded' : 'TeamLink format'} · PDF${v.hasDocx ? ' + DOCX' : ''}` : `${v.fileName} · ${kb(v.size)}`}</td>
                     <td className="cell-muted">{v.createdByName || '—'}</td>
                     <td className="cell-muted">{when(v.createdAt)}</td>
                     <td><button type="button" className="link-btn" onClick={() => { setSelId(v.id); setMode('view'); }}>Open</button></td>

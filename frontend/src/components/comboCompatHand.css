@@ -1,0 +1,13 @@
+/* Hand-written fixes for <Combo> where a class used to sit on the <select> itself.
+   (comboCompat.css is generated; this one is edited by hand.) */
+.combo.rv4-select{flex:none;width:auto;margin:0;min-width:140px;padding:0;border:0;background:none;height:auto}
+.combo.rv4-select input[type=text]{height:40px;border:1px solid var(--line);border-radius:10px;background:var(--paper-raised);font-size:13px}
+.combo.pwk-sel{min-height:0}
+.combo.pwk-sel input[type=text]{min-height:34px}
+.combo.oe-sel{padding:0;min-height:0;min-width:92px;border:0;background:none}
+.combo.oe-sel input[type=text]{min-height:36px}
+.combo.oe-sel.set input[type=text]{border-color:var(--navy);background:var(--navy-tint);color:var(--navy);font-weight:600}
+@media (max-width:640px){.combo.oe-sel{width:100%;max-width:none}}
+/* a dropdown that sits inside a line of text ("Show [All] rows") stays on that line */
+label .combo.combo-inline,.combo.combo-inline{display:inline-block;width:auto;min-width:110px;vertical-align:middle}
+.pager-size .combo{width:auto;min-width:76px}

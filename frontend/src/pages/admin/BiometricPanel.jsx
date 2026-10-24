@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import './BiometricPanel.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Biometric device card (Administration -> Integrations -> Connections).
@@ -195,10 +196,10 @@ export default function BiometricPanel({ onConfigure, onChanged }) {
                   <td>{u.punches}</td>
                   <td className="cell-muted">{u.lastPunchAt}</td>
                   <td>
-                    <select value={pick[u.pin] ?? u.suggestedEmployeeId ?? ''} onChange={(e) => setPick((p) => ({ ...p, [u.pin]: e.target.value }))}>
+                    <Combo value={pick[u.pin] ?? u.suggestedEmployeeId ?? ''} onChange={(e) => setPick((p) => ({ ...p, [u.pin]: e.target.value }))}>
                       <option value="">{employees ? 'Choose employee…' : 'Loading…'}</option>
                       {(employees || []).map((e) => <option key={e.id} value={e.id}>{e.name} ({e.employeeCode})</option>)}
-                    </select>
+                    </Combo>
                   </td>
                   <td><button type="button" className="btn btn-sm btn-primary" disabled={!(pick[u.pin] ?? u.suggestedEmployeeId)} onClick={() => map(u.pin, pick[u.pin] ?? u.suggestedEmployeeId)}>Link</button></td>
                 </tr>

@@ -1,9 +1,13 @@
-// "Record a payment" — a receipt against one invoice. It goes through the
-// existing POST /invoices/:id/payments, which applies the shared receipt rules
+// "Record a payment" — a receipt against one CLIENT INVOICE (the rows passed in
+// are client invoices, invoices/clientInvoice.js). A client invoice of ONE
+// candidate goes through the existing POST /invoices/:id/payments; one of several
+// candidates goes through POST /invoices/group/payments, which splits the money
+// across its candidate rows in one transaction (idempotent by `key`).
+// The single-invoice route, which applies the shared receipt rules
 // (utils/accounts.js receiptProblem / invoiceAfterReceipt): it writes the
 // InvoicePayment row, moves receivedAmount, paidDate and the status, and
 // writes the audit log. Nothing is kept in the browser.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -22,11 +26,14 @@ export default function PaymentModal({ rows, initialId, onClose, onSaved }) {
   const [amount, setAmount] = useState(first ? first.pending.toFixed(2) : '');
   const [date, setDate] = useState(todayIso());
   const [method, setMethod] = useState('Bank Transfer');
-  const [reference, setReference] = useState('');
+  const [reference, setReference] = useState(first?.proofRef || ''); // a proof's UTR is carried over (invoicePaymentState action)
   const [notes, setNotes] = useState('');
   const [errs, setErrs] = useState({});
   const [busy, setBusy] = useState(false);
   const [fail, setFail] = useState('');
+  // One key per opening of this window: pressing Save twice, or retrying after a
+  // dropped connection, can never record the same money twice.
+  const payKey = useRef(`p${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`);
 
   // A payment cannot predate its invoice — unless the invoice is dated ahead
   // (the ATS dates a joining's invoice joining + 6 days), where money that
@@ -38,6 +45,7 @@ export default function PaymentModal({ rows, initialId, onClose, onSaved }) {
     setId(nextId);
     const r = open.find((x) => x.id === nextId);
     if (r) setAmount(r.pending.toFixed(2));
+    if (r && r.proofRef) setReference(r.proofRef);
     setErrs({});
   };
 
@@ -57,11 +65,18 @@ export default function PaymentModal({ rows, initialId, onClose, onSaved }) {
     if (Object.keys(e).length) return;
     setBusy(true); setFail('');
     try {
-      const res = await api.post(`/invoices/${inv.id}/payments`, {
+      const body = {
         amount: Math.min(amt, inv.pending), date, method, reference: reference.trim() || null, notes: notes.trim() || null,
-      });
-      const after = res.data.invoice;
-      const left = Math.max(0, Number(after.total || 0) - Number(after.receivedAmount || 0));
+      };
+      let left;
+      if (inv.members && inv.members.length > 1) {
+        const res = await api.post('/invoices/group/payments', { ...body, invoiceIds: inv.ids, key: payKey.current });
+        left = Math.max(0, Math.round((inv.pending - res.data.total) * 100) / 100);
+      } else {
+        const res = await api.post(`/invoices/${inv.id}/payments`, body);
+        const after = res.data.invoice;
+        left = Math.max(0, Number(after.total || 0) - Number(after.receivedAmount || 0));
+      }
       onSaved(inv.id, `Recorded ${money2(amt)} against ${inv.invoiceNumber}${left <= 0.5 ? ' — invoice fully paid.' : ` — ${money2(left)} still pending.`}`);
     } catch (err) {
       setFail(err.response?.data?.error || 'The payment could not be saved.');
@@ -87,13 +102,16 @@ export default function PaymentModal({ rows, initialId, onClose, onSaved }) {
           <label className="field"><span>Invoice</span>
             <Combo value={id} onChange={(e) => pick(e.target.value)}>
               {open.map((r) => (
-                <option key={r.id} value={r.id}>{`${r.invoiceNumber} · ${r.client} · ${money2(r.pending)} pending`}</option>
+                <option key={r.id} value={r.id}>{`${r.invoiceNumber} · ${r.client}${r.members && r.members.length > 1 ? ` · ${r.members.length} candidates` : ''} · ${money2(r.pending)} pending`}</option>
               ))}
             </Combo>
           </label>
           {inv && (
             <div className="inv-callout">
               Receivable after TDS <b>{money2(inv.receivable)}</b> · received so far <b>{money2(inv.received)}</b> · still pending <b>{money2(inv.pending)}</b>
+              {inv.members && inv.members.length > 1 && (
+                <div className="small-muted">This payment is for the whole invoice of {inv.members.length} candidates. It is shared between them in proportion to what each still owes.</div>
+              )}
             </div>
           )}
           <div className="inv-form">

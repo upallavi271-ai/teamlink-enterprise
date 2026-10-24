@@ -1,50 +1,48 @@
 import StatusChip from '../ui/StatusChip.jsx';
 
 // ---------------------------------------------------------------------------
-// THE JOB STATUS CHAIN PEOPLE SEE (ATS layout v3, 2026-10-03):
+// THE ONLY TWO JOB STATES PEOPLE SEE (user, 2026-10-13): OPEN and CLOSED. "Nothing else should exist."
 //
-//   Draft → Agreement Approved → Assigned → Open → On Hold → Filled / Closed
-//
-// A display label only; the stored status never changes. The server computes
-// it (backend/src/utils/requirementDisplayStatus.js → row.displayStatus) and
-// filters by it (?dstatus=). This mirror is for a row that has no
-// displayStatus yet (an older response) — same rule, same words.
-// Colours: yellow waiting · blue going on · green filled · grey closed.
+// A display label only; the stored status never changes (DRAFT, AGREEMENT_CHECK, ON_HOLD, OPEN, RECRUITER_ASSIGNED,
+// SOURCING, CANDIDATES_AVAILABLE all read Open; CLOSED reads Closed). The server computes it
+// (backend/src/utils/requirementDisplayStatus.js -> row.displayStatus) and filters by it (?dstatus=open|closed).
+// This mirror is for a row that has no displayStatus yet (an older response) - same rule, same words.
+// WHY a job closed (Filled / Client cancelled / On hold / Other) is a reason kept with the close, never a status.
+// A plain sentence that explains an Open job that is not live yet ("Waiting for the client agreement") is TEXT on the
+// job page (jobNoteOf), never a chip, a filter or a status.
+// Colours: blue open - grey closed.
 // ---------------------------------------------------------------------------
 export const JOB_STATUSES = [
-  { key: 'draft', label: 'Draft', tone: 'amber', hint: 'Not live yet. A new job request waits here until it is checked and opened.' },
-  { key: 'approved', label: 'Agreement Approved', tone: 'amber', hint: 'Live, but no recruiter on it yet.' },
-  { key: 'assigned', label: 'Assigned', tone: 'blue', hint: 'A recruiter is on it. No people added yet.' },
-  { key: 'open', label: 'Open', tone: 'blue', hint: 'People are being worked on this job.' },
-  { key: 'hold', label: 'On Hold', tone: 'amber', hint: 'Paused for now.' },
-  { key: 'filled', label: 'Filled', tone: 'green', hint: 'Closed. People joined.' },
-  { key: 'closed', label: 'Closed', tone: 'grey', hint: 'Closed. Nobody joined.' },
+  { key: 'open', label: 'Open', tone: 'blue', hint: 'This requirement is open.' },
+  { key: 'closed', label: 'Closed', tone: 'grey', hint: 'This requirement is closed. You can reopen it.' },
 ];
 const BY_KEY = Object.fromEntries(JOB_STATUSES.map((s) => [s.key, s]));
-const LIVE = ['OPEN', 'RECRUITER_ASSIGNED', 'SOURCING', 'CANDIDATES_AVAILABLE'];
+// Old links (?dstatus=draft ...) fold into the two states.
+const ALIAS = { draft: 'open', approved: 'open', assigned: 'open', hold: 'open', live: 'open', filled: 'closed' };
 
-export const jobStatusByKey = (k) => BY_KEY[k] || null;
+export const jobStatusByKey = (k) => BY_KEY[k] || BY_KEY[ALIAS[k]] || null;
 
 // r: a job row. Uses the server's displayStatus when it is there.
 export function jobStatusOf(r) {
   if (!r) return null;
-  if (r.displayStatus && r.displayStatus.key) return r.displayStatus;
-  const s = r.status;
-  const people = Number(r.candidates ?? r.pipeline?.candidates ?? 0);
-  const joined = Number(r.filled ?? r.pipeline?.joined ?? 0);
-  let key = null;
-  if (s === 'DRAFT' || s === 'AGREEMENT_CHECK') key = 'draft';
-  else if (s === 'ON_HOLD') key = 'hold';
-  else if (s === 'CLOSED') key = joined > 0 ? 'filled' : 'closed';
-  else if (LIVE.includes(s)) {
-    const rec = r.recruiterId || String(r.recruiterIds || '').trim() || (r.coRecruiters || []).length;
-    key = people > 0 ? 'open' : rec ? 'assigned' : 'approved';
-  }
-  return key ? BY_KEY[key] : { key: 'other', label: s || '—', tone: 'grey', hint: '' };
+  if (r.displayStatus && (r.displayStatus.key === 'open' || r.displayStatus.key === 'closed')) return r.displayStatus;
+  return r.status === 'CLOSED' ? BY_KEY.closed : BY_KEY.open;
+}
+
+// One plain sentence for an Open job that is not live yet (job page text, not a status).
+export function jobNoteOf(r) {
+  if (!r) return '';
+  if (r.displayStatus && r.displayStatus.note) return r.displayStatus.note;
+  if (r.status === 'AGREEMENT_CHECK') return 'Not live yet: waiting for the client agreement.';
+  if (r.status === 'DRAFT') return 'Not live yet: still being prepared.';
+  if (r.status === 'ON_HOLD') return 'Paused for now. Resume it when ready.';
+  return '';
 }
 
 export function JobStatusChip({ job, status }) {
   const ds = status || jobStatusOf(job);
   if (!ds) return <span className="cell-muted">—</span>;
-  return <StatusChip status={ds.label} tone={ds.tone} title={ds.hint || undefined} />;
+  const key = ds.key === 'closed' ? 'closed' : 'open';
+  const def = BY_KEY[key];
+  return <StatusChip status={def.label} tone={def.tone} title={def.hint} />;
 }

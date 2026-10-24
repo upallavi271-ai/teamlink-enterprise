@@ -15,6 +15,7 @@ const { accountIndex, paise } = require('./ledger');
 const { buildAccrualPayload, buildPaymentPayload } = require('./payrollSync');
 const { monthlyPayrollTotals, FINAL_STATUSES } = require('./payrollTotals');
 const { monthLabel } = require('./attendanceMath');
+const PC = require('./payrollCycle'); // payroll cycle: the dates behind a payroll month name
 
 const r2 = (p) => p / 100;
 
@@ -132,7 +133,7 @@ async function legacyReconciliation(month) {
   const payable = accountBooked.get('2100') || { credit: 0, debit: 0 };
   const legacy = hrms.source === 'legacy-run';
   return {
-    month, period: monthLabel(month),
+    month, period: monthLabel(month), rangeText: PC.cycleSync(month).rangeText, heading: PC.cycleSync(month).heading,
     source: hrms.source,
     note: legacy ? `${monthLabel(month)} was processed as a month run before per-employee payroll and the ledger existed; nothing was booked to the journal for it, so there is nothing to reconcile.` : null,
     hrms: {
@@ -155,6 +156,7 @@ async function legacyReconciliation(month) {
 // payment once paid); booked = every HRMS-payroll journal line of the month,
 // reversals included (so a reversed posting nets to zero).
 async function reconciliation(month) {
+  await PC.getSettings();
   // eslint-disable-next-line global-require
   const P = require('./payrollPosting');
   const legacyJournals = await prisma.journalEntry.count({ where: { month, referenceType: { in: ['PAYROLL_RUN', 'PAYROLL_PAYMENT'] } } });
@@ -229,7 +231,7 @@ async function reconciliation(month) {
   const sp = booked.get(codeOf('salaryPayable').code) || { debit: 0, credit: 0 };
   const legacy = hrms.source === 'legacy-run';
   return {
-    month, period: monthLabel(month), source: hrms.source, mode: 'month',
+    month, period: monthLabel(month), rangeText: PC.cycleSync(month).rangeText, heading: PC.cycleSync(month).heading, source: hrms.source, mode: 'month',
     note: legacy ? `${monthLabel(month)} was processed as a month run before per-employee payroll and the ledger existed; nothing was booked to the journal for it, so there is nothing to reconcile.`
       : st.records && !st.finalized ? `${st.blockReason}` : null,
     posted: st.posted, journalEntryId: st.journalEntry ? st.journalEntry.id : null,
@@ -247,6 +249,7 @@ async function reconciliation(month) {
 
 // ---- Compliance -------------------------------------------------------------
 async function compliance({ month = null, year = null, includeDraft = false }) {
+  await PC.getSettings();
   const statuses = includeDraft ? ['DRAFT', 'PENDING_APPROVAL', ...FINAL_STATUSES] : FINAL_STATUSES;
   if (month) {
     const entries = await prisma.employeePayrollRun.findMany({
@@ -265,7 +268,7 @@ async function compliance({ month = null, year = null, includeDraft = false }) {
     totals.employees = rows.length;
     totals.esiEmployees = rows.filter((r) => r.esiTotal > 0).length;
     totals.pfEmployees = rows.filter((r) => r.pfTotal > 0).length;
-    return { month, period: monthLabel(month), statuses, rows, totals };
+    return { month, period: monthLabel(month), rangeText: PC.cycleSync(month).rangeText, heading: PC.cycleSync(month).heading, statuses, rows, totals };
   }
   const y = Number(year) || new Date().getFullYear();
   const entries = await prisma.employeePayrollRun.findMany({ where: { year: y, status: { in: statuses } } });
@@ -275,7 +278,7 @@ async function compliance({ month = null, year = null, includeDraft = false }) {
     const list = entries.filter((e) => e.month === key);
     const s = (k) => list.reduce((n, e) => n + e[k], 0);
     months.push({
-      month: key, period: monthLabel(key), employees: list.length, earnedGross: s('earnedGross'),
+      month: key, period: monthLabel(key), rangeText: PC.cycleSync(key).rangeText, employees: list.length, earnedGross: s('earnedGross'),
       pfEmployee: s('pfEmployee'), pfEmployer: s('pfEmployer'), pfTotal: s('pfEmployee') + s('pfEmployer'),
       esiEmployee: s('esiEmployee'), esiEmployer: s('esiEmployer'), esiTotal: s('esiEmployee') + s('esiEmployer'),
       tds: s('tds'), professionalTax: s('professionalTax'),

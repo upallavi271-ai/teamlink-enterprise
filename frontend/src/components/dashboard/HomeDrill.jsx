@@ -36,7 +36,7 @@ const dateTime = (v) => {
   return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 };
 const FACET_ALL = {
-  d_client: 'All clients', d_job: 'All jobs', d_rec: 'All recruiters', d_tl: 'All team leads', d_bde: 'All client managers', d_step: 'All steps', d_due: 'Any', d_dept: 'All departments',
+  d_client: 'All clients', d_job: 'All requirements', d_rec: 'All recruiters', d_tl: 'All team leads', d_bde: 'All client managers', d_step: 'All steps', d_due: 'Any', d_dept: 'All departments',
 };
 
 function DueCell({ r }) {
@@ -93,7 +93,7 @@ function Rows({ data, onClose }) {
     const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Candidate</th><th>Job</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th><th>Updated</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th><th>Updated</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
             <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}</td>
@@ -112,7 +112,7 @@ function Rows({ data, onClose }) {
     const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Job</th><th>Client</th><th>Department</th><th>{bdeView ? 'Client manager (BDE)' : 'Recruiter'}</th><th>Status</th><th className="num">Openings</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Requirement</th><th>Client</th><th>Department</th><th>{bdeView ? 'Client manager (BDE)' : 'Recruiter'}</th><th>Status</th><th className="num">Openings</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
             <td><b className="hd-name">{r.title}</b>{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
@@ -129,7 +129,7 @@ function Rows({ data, onClose }) {
   }
   if (k === 'client') {
     return (
-      <table className="hd-tbl"><thead><tr><th>Client</th><th>Agreement</th><th>Client manager (BDE)</th><th className="num">Open jobs</th><th aria-label="Open" /></tr></thead>
+      <table className="hd-tbl"><thead><tr><th>Client</th><th>Agreement</th><th>Client manager (BDE)</th><th className="num">Open requirements</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => <tr key={r.id}><td><b className="hd-name">{r.name}</b></td><td><StatusChip tone={agreementTone(r.agreement)}>{r.agreement || 'Not signed'}</StatusChip></td><td>{r.owner || '—'}</td><td className="num">{fmt(r.openJobs)}</td><td><OpenLink to={r.to} onClose={onClose} /></td></tr>)}</tbody>
       </table>
     );
@@ -164,7 +164,7 @@ function Rows({ data, onClose }) {
   }
   if (k === 'event') {
     return (
-      <table className="hd-tbl"><thead><tr><th>Candidate</th><th>Job</th><th>Moved from</th><th>To</th><th>By</th><th>When</th><th aria-label="Open" /></tr></thead>
+      <table className="hd-tbl"><thead><tr><th>Candidate</th><th>Requirement</th><th>Moved from</th><th>To</th><th>By</th><th>When</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => <tr key={r.id}><td><b className="hd-name">{r.candidate}</b></td><td>{r.requirement}</td><td>{r.from}</td><td><StatusChip status={r.to} /></td><td>{r.by || '—'}</td><td className="hd-sub">{dateTime(r.at)}</td><td><OpenLink to={`/candidates/${r.candidateId}`} onClose={onClose} /></td></tr>)}</tbody>
       </table>
     );
@@ -262,7 +262,7 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
             <ListToolbar
               search={data.searchable ? search : undefined}
               onSearch={data.searchable ? setSearch : undefined}
-              placeholder={data.kind === 'app' ? 'Search name, job, client…' : 'Search…'}
+              placeholder={data.kind === 'app' ? 'Search name, requirement, client…' : 'Search…'}
               searchWidth={220}
               filterCount={chips.length}
               panel={panel}

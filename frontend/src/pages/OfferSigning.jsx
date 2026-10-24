@@ -155,6 +155,11 @@ export default function OfferSigning() {
           {view.open && <div className="ofs-due"><span>Answer by</span><b>{day(view.expiresAt)}</b></div>}
         </section>
 
+        {view.clientFile && (
+          <div style={{ margin: '0 0 12px' }}>
+            <button type="button" className="btn btn-primary ofs-main" onClick={async () => { const r = await api.get(`/offer-link/${token}/client-file`, { responseType: 'blob' }); const href = URL.createObjectURL(r.data); window.open(href, '_blank', 'noopener'); setTimeout(() => URL.revokeObjectURL(href), 60000); }}>Open your offer letter</button>
+          </div>
+        )}
         <pre className="ofs-letter">{view.letter}</pre>
 
         {view.open && !mode && (
@@ -170,7 +175,7 @@ export default function OfferSigning() {
         {view.open && mode === 'decline' && (
           <form className="agr-card" onSubmit={decline}>
             <h3>Decline the offer</h3>
-            <label className="field"><span>Why? (a few words) *</span>
+            <label className="field"><span>Why? (a few words)</span>
               <textarea rows="3" maxLength={500} value={reason} placeholder="e.g. I took another job" onChange={(e) => setReason(e.target.value)} />
             </label>
             <div className="ofs-two">
@@ -184,7 +189,7 @@ export default function OfferSigning() {
           <div className="agr-card">
             <h3>Step 1 — Your signature</h3>
             <p className="small-muted">Pick one way: draw it, type your name, or upload a picture of it.</p>
-            <label className="field"><span>Your full name *</span>
+            <label className="field"><span>Your full name</span>
               <input value={name} autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="e.g. Priya Sharma" />
             </label>
             <SignatureCapture name={name} onChange={setSig} />
@@ -211,7 +216,7 @@ export default function OfferSigning() {
               <span>Your signature: <img src={`/api/offer-link/${token}/file/sign?v=${bust}`} alt="Your signature" /></span>
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRedoSign(true)}>Change</button>
             </div>
-            <label className="field"><span>Your full name *</span>
+            <label className="field"><span>Your full name</span>
               <input value={name} autoComplete="name" onChange={(e) => setName(e.target.value)} />
             </label>
             <div className="agrs-step">
@@ -222,7 +227,7 @@ export default function OfferSigning() {
                 <button type="button" className="btn agrs-codebtn" disabled={busy === 'code' || cooldown > 0} onClick={sendCode}>
                   {busy === 'code' ? 'Sending…' : (cooldown > 0 ? `Send again in ${cooldown}s` : (sent ? 'Send the code again' : 'Email me the code'))}
                 </button>
-                <label className="field" style={{ marginTop: 8 }}><span>The 6-digit code *</span>
+                <label className="field" style={{ marginTop: 8 }}><span>The 6-digit code</span>
                   <input className="agr-otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />
                 </label>
               </div>

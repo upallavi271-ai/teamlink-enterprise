@@ -12,6 +12,7 @@ import '../../components/ui/ListFilters.css';
 import MonthCalendar from './MonthCalendar.jsx';
 import './attendance-self.css';
 import './attendance-calendar.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // HRMS-24 §11 — the MONTHLY SUMMARY (with the old "Reports (Monthly)" merged
@@ -211,10 +212,10 @@ function MonthlyTable({ preset = null, goList = null }) {
             onClearAll={appliedOn ? clearAll : undefined}
             primary={(
               <>
-                <select value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Month or period">
+                <Combo value={mode} onChange={(e) => setMode(e.target.value)} aria-label="Month or period">
                   <option value="month">Month</option>
                   <option value="period">Custom period</option>
-                </select>
+                </Combo>
                 {mode === 'month' ? (
                   <>
                     <button type="button" className="btn btn-sm" onClick={() => shiftMonth(-1)} aria-label="Previous month">◀</button>
@@ -230,23 +231,23 @@ function MonthlyTable({ preset = null, goList = null }) {
                   </span>
                 )}
                 <input type="search" placeholder="Employee name…" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="Employee name" />
-                <select value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department" title="Department">
+                <Combo value={f.department} onChange={(e) => setF({ ...f, department: e.target.value })} aria-label="Department" title="Department">
                   <option value="">All departments</option>
                   {departments.map((d) => <option key={d}>{d}</option>)}
-                </select>
+                </Combo>
                 <button type="submit" className="btn btn-sm btn-primary">Apply</button>
               </>
             )}
           >
             <input placeholder="Employee ID" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} aria-label="Employee ID" />
-            <select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} aria-label="Role" title="Role">
+            <Combo value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} aria-label="Role" title="Role">
               <option value="">All roles</option>
               {roles.map((r) => <option key={r}>{r}</option>)}
-            </select>
-            <select value={f.hrStatus} onChange={(e) => setF({ ...f, hrStatus: e.target.value })} aria-label="Employee status" title="Employee status">
+            </Combo>
+            <Combo value={f.hrStatus} onChange={(e) => setF({ ...f, hrStatus: e.target.value })} aria-label="Employee status" title="Employee status">
               <option value="">All employee statuses</option>
               {HR_STATUS_CHOICES.map((s) => <option key={s}>{s}</option>)}
-            </select>
+            </Combo>
           </MoreFilters>
           <FilterChips filters={chips} onClearAll={appliedOn ? clearAll : undefined} />
         </form>

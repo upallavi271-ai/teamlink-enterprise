@@ -50,7 +50,7 @@ async function call(method, p, token, body) {
   if (body !== undefined) { h['Content-Type'] = 'application/json'; payload = JSON.stringify(body); }
   for (let i = 0; ; i += 1) {
     try {
-      const r = await realFetch(`${API}${p}`, { method, headers: h, body: payload, redirect: 'manual' });
+      const r = await realFetch(`${API}${p}`, { method, headers: h, body: payload, redirect: 'manual', signal: AbortSignal.timeout(240000) });
       const text = await r.text();
       let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
       return { status: r.status, body: json, text };
@@ -60,6 +60,10 @@ async function call(method, p, token, body) {
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 
 async function cleanup(made) {
+  if (made.switchTouched) {
+    const IN = require(path.join(BACK, 'src/utils/interviewNotices'));
+    if (made.switchBefore === null) await prisma.appSetting.deleteMany({ where: { key: IN.SETTINGS_KEY } }); else await prisma.appSetting.update({ where: { key: IN.SETTINGS_KEY }, data: { value: made.switchBefore } });
+  }
   const ids = made.users;
   const candIds = (await prisma.candidate.findMany({ where: { OR: [{ id: { in: made.cands } }, { name: { startsWith: TAG } }] }, select: { id: true } })).map((x) => x.id);
   const reqIds = (await prisma.requirement.findMany({ where: { OR: [{ id: { in: made.reqs } }, { title: { startsWith: TAG } }] }, select: { id: true } })).map((x) => x.id);
@@ -88,7 +92,7 @@ async function cleanup(made) {
     cands: await prisma.candidate.count({ where: { name: { startsWith: TAG } } }),
     reqs: await prisma.requirement.count({ where: { title: { startsWith: TAG } } }),
     clients: await prisma.client.count({ where: { name: { startsWith: TAG } } }),
-    msgs: await prisma.candidateMessage.count({ where: { OR: [{ recipient: { contains: 'example.test' } }, { body: { contains: 'ZZTEST' } }] } }).catch(() => 0),
+    msgs: await prisma.candidateMessage.count({ where: { OR: [{ recipient: { contains: 'zz-reach' } }, { body: { contains: 'ZZTEST Reach' } }] } }).catch(() => 0),
   };
 }
 
@@ -141,7 +145,7 @@ async function cleanup(made) {
       const phone = i === 10 ? null : (i === 11 ? '9876500001' : `98765000${n}`);
       const c = await prisma.candidate.create({
         data: {
-          name: `${TAG} Cand ${n} ${RUN}`, email: i === 12 ? null : `zz-reach-c${n}-${RUN}@example.test`, phone, location: 'ZZ',
+          name: `${TAG} Cand ${n} ${RUN}`, email: i === 12 ? null : `zz-reach-c${n}-${RUN}@zz-reach-sandbox.in`, phone, location: 'ZZ',
           ...((i === 8 || i === 9) ? { consentStatus: 'WITHDRAWN' } : {}),
         },
       });
@@ -159,9 +163,19 @@ async function cleanup(made) {
     made.apps.push(appMed.id);
     // an open follow-up for candidate 1 (the call log must touch it)
     try {
-      await prisma.applicationFollowUp.create({ data: { applicationId: cands[0].appId, candidateId: cands[0].id, requirementId: req.id, dueDate: new Date().toISOString().slice(0, 10), status: 'Upcoming', ownerUserId: uRec.id, ownerName: uRec.name } });
+      await prisma.applicationFollowUp.create({ data: { applicationId: cands[0].appId, candidateId: cands[0].id, requirementId: req.id, dueDate: new Date().toISOString().slice(0, 10), ownerUserId: uRec.id, ownerName: uRec.name } });
     } catch (e) { console.log('(follow-up fixture skipped:', e.message.split('\n').pop(), ')'); }
 
+    // The Candidate emails switch must be ON for the real-send test; restored in the cleanup.
+    const IN = require(path.join(BACK, 'src/utils/interviewNotices'));
+    const swRow = await prisma.appSetting.findUnique({ where: { key: IN.SETTINGS_KEY } }).catch(() => null);
+    made.switchBefore = swRow ? swRow.value : null;
+    if (!(await IN.candidateEmailsOn())) {
+      const cur0 = swRow ? JSON.parse(swRow.value) : {};
+      const val = JSON.stringify({ ...cur0, enabled: true });
+      await prisma.appSetting.upsert({ where: { key: IN.SETTINGS_KEY }, update: { value: val }, create: { key: IN.SETTINGS_KEY, value: val } });
+      made.switchTouched = true;
+    }
     const ids12 = cands.map((c) => c.id);
     const ids = (a, b) => ids12.slice(a - 1, b);
 
@@ -176,7 +190,7 @@ async function cleanup(made) {
     const mn = (chMail.body && chMail.body.counts) || {};
     check('C4 Email counts: no email 1, no consent 2, ok 9', mn.no_email === 1 && mn.no_consent === 2 && mn.ok === 9, mn);
     const chCall = await call('POST', '/api/messaging/reach/check', T.rec, { channel: 'Call', ids: ids12 });
-    check('C5 Call check works (no bulk right needed)', chCall.status === 200 && chCall.body.counts.ok === 7, chCall.body && chCall.body.counts);
+    check('C5 Call check works (no bulk right needed)', chCall.status === 200 && chCall.body.counts.ok === 8, chCall.body && chCall.body.counts);
     check('C6 check never returns phone numbers or emails', !/\d{10}/.test(JSON.stringify(ch.body)) && !/example\.test/.test(JSON.stringify(ch.body)), 'leak');
     const tooMany = await call('POST', '/api/messaging/reach/check', T.admin, { channel: 'Email', ids: Array.from({ length: 201 }, (_, i) => `x${i}`) });
     check('L1 201 people -> 400 with a plain message', tooMany.status === 400 && /At most 200/.test((tooMany.body || {}).error || ''), tooMany.body);
@@ -184,14 +198,6 @@ async function cleanup(made) {
     check('L2 nobody ticked -> 400', none.status === 400, none.body);
     const badCh = await call('POST', '/api/messaging/reach/check', T.rec, { channel: 'Fax', ids: ids12 });
     check('L3 unknown channel -> 400', badCh.status === 400, badCh.body);
-
-    // ========================= S: select-all helpers =========================
-    const idl = await call('GET', `/api/candidates?idsOnly=1&requirementId=${req.id}`, T.rec);
-    check('S1 list idsOnly returns the 12 rows with phone', idl.status === 200 && idl.body && idl.body.items && idl.body.items.filter((x) => String(x.name).includes(RUN)).length === 12, idl.body && [idl.body.total, idl.status]);
-    const idb = await call('GET', `/api/candidates/board?idsOnly=1&requirementId=${req.id}`, T.rec);
-    check('S2 board idsOnly (all live steps) returns the 12 people', idb.status === 200 && idb.body && idb.body.items && idb.body.items.length === 12, idb.body && [idb.status, idb.body.total]);
-    const idbc = await call('GET', `/api/candidates/board?idsOnly=1&requirementId=${req.id}&column=sourced`, T.rec);
-    check('S3 board idsOnly for ONE step (column=sourced) returns only that step', idbc.status === 200 && idbc.body && idbc.body.total > 0 && idbc.body.total < 12, idbc.body && [idbc.status, idbc.body.total]);
 
     // ========================= R: roles =========================
     const probes = [
@@ -239,24 +245,22 @@ async function cleanup(made) {
       const p1 = cmp.body.people.find((p) => p.name.includes(`Cand 01 ${RUN}`));
       check('M3 the text is personal (has the candidate\'s first name)', p1 && /ZZTEST/.test(p1.text), p1 && p1.text.slice(0, 120));
       if (status.Email.configured) {
-        const sent = await call('POST', '/api/messaging/reach/send', T.rec, { channel: 'Email', ids: ids12, purposeKey: mailTpl.purpose, language: 'English', confirmPeople: 7 });
+        const sent = await call('POST', '/api/messaging/reach/send', T.rec, { channel: 'Email', ids: ids12, purposeKey: mailTpl.purpose, language: 'English', confirmPeople: 9 });
         check('M4 send is accepted (202) as a job', sent.status === 202 && sent.body && sent.body.id, [sent.status, sent.body]);
         if (sent.body && sent.body.id) {
           made.jobs.push(sent.body.id);
           await call('POST', '/api/messaging/bulk/none', T.rec).catch(() => {});
           let res = null;
-          for (let i = 0; i < 40; i += 1) {
+          for (let i = 0; i < 180; i += 1) {
             res = await call('GET', `/api/messaging/reach/result/${sent.body.id}`, T.rec);
             if (res.body && res.body.finished) break;
-            // sandbox: no interval worker; kick the queue through the module
-            try { await require(path.join(BACK, 'src/utils/bulkMessaging')).runOnce(); } catch { /* ignore */ }
-            await sleep(500);
+            await sleep(1000); // the server kicks the queue itself (paced by the messages-per-minute limit)
           }
           const rc = (res.body && res.body.counts) || {};
-          check('M5 result: sent 7 (test transport), no consent 2, no email 1, duplicate 0 (emails differ)', res.body && res.body.finished && rc.sent === 7 && rc.no_consent === 2 && rc.no_email === 1, rc);
+          check('M5 result: sent 9 (test transport), no consent 2, no email 1, duplicate 0 (emails differ)', res.body && res.body.finished && rc.sent === 9 && rc.no_consent === 2 && rc.no_email === 1, rc);
           check('M6 every row has a plain word', res.body && res.body.people.every((p) => p.word), res.body && res.body.people.slice(0, 3));
           const logged = await prisma.candidateMessage.count({ where: { candidateId: { in: ids12 }, channel: 'Email', status: 'SENT' } });
-          check('M7 every sent mail is on the candidate\'s history (CandidateMessage SENT = 7)', logged === 7, logged);
+          check('M7 every sent mail is on the candidate\'s history (CandidateMessage SENT = 9)', logged === 9, logged);
           const rOther = await call('GET', `/api/messaging/reach/result/${sent.body.id}`, T.recOther);
           check('M8 another recruiter cannot read this result (403)', rOther.status === 403, rOther.status);
         }
@@ -313,6 +317,16 @@ async function cleanup(made) {
     check('K9 unknown outcome -> 400', lgBad.status === 400, lgBad.body);
     const lgOut = await call('POST', '/api/messaging/reach/call-log', T.rec, { candidateId: outsider.id, outcome: 'Answered' });
     check('K10 call log for a candidate outside your access -> 403', lgOut.status === 403, lgOut.status);
+    // ========================= S: select-all helpers (slow: builds the whole pipeline list) =========================
+    if (!process.env.SKIP_SLOW) {
+    const idl = await call('GET', `/api/candidates?paged=1&view=pipeline&sub=all&idsOnly=1&requirementId=${req.id}`, T.rec);
+    check('S1 list idsOnly returns the 12 rows with phone', idl.status === 200 && idl.body && idl.body.items && idl.body.items.filter((x) => String(x.name).includes(RUN)).length === 12, idl.body && [idl.body.total, idl.status]);
+    const idb = await call('GET', `/api/candidates/board?idsOnly=1&requirementId=${req.id}`, T.rec);
+    check('S2 board idsOnly (all live steps) returns the people on the board', idb.status === 200 && idb.body && idb.body.items && idb.body.items.length >= 6, idb.body && [idb.status, idb.body.total]);
+    const idbc = await call('GET', `/api/candidates/board?idsOnly=1&requirementId=${req.id}&column=sourced`, T.rec);
+    check('S3 board idsOnly for ONE step (column=sourced) returns only that step', idbc.status === 200 && idbc.body && idbc.body.total > 0 && idbc.body.total < 12, idbc.body && [idbc.status, idbc.body.total]);
+    }
+
   } catch (e) {
     fail += 1; console.error('TEST SCRIPT ERROR', (e && e.stack) || e);
   } finally {

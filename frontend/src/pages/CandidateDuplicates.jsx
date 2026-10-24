@@ -8,6 +8,7 @@ import { ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager from '../components/Pager.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import './CandidateDuplicates.css';
+import Combo from '../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // Candidates > Duplicates (Super Admin / Admin) — review #2 §12.
@@ -261,19 +262,19 @@ export default function CandidateDuplicates({ embedded = false }) {
           <>
             <input type="search" placeholder="Search name, phone or email…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search" />
             {kind === 'contact' && s && (
-              <select value={agreement} onChange={(e) => setAgreement(e.target.value)} title="Name agreement">
+              <Combo value={agreement} onChange={(e) => setAgreement(e.target.value)} title="Name agreement">
                 <option value="">All names</option>
                 <option value="same">{`Same name (${s.contact.sameName})`}</option>
                 <option value="variant">{`Name variant (${s.contact.nameVariant})`}</option>
                 <option value="different">{`Different names — check (${s.contact.nameDifferent})`}</option>
-              </select>
+              </Combo>
             )}
             {kind === 'contact' && s && (s.contact.byPhone > 0 && s.contact.byEmail > 0 || !!matchedBy) && (
-              <select value={matchedBy} onChange={(e) => setMatchedBy(e.target.value)} title="Matched by">
+              <Combo value={matchedBy} onChange={(e) => setMatchedBy(e.target.value)} title="Matched by">
                 <option value="">Phone or email</option>
                 <option value="phone">{`Same phone (${s.contact.byPhone})`}</option>
                 <option value="email">{`Same email (${s.contact.byEmail})`}</option>
-              </select>
+              </Combo>
             )}
             {s && s.keptSeparate > 0 && (
               <button type="button" className="link-btn small-muted" onClick={openKept}>{`Kept separate (${s.keptSeparate})`}</button>
@@ -283,10 +284,10 @@ export default function CandidateDuplicates({ embedded = false }) {
         extra={(
           <label className="small-muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
             Sort
-            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+            <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
               <option value="">As detected</option>
               <option value="size">Most records first</option>
-            </select>
+            </Combo>
           </label>
         )}
       />

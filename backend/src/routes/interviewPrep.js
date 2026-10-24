@@ -31,8 +31,12 @@ const mayAct = async (user) => (await can(user, 'ats', 'interviews', 'Schedule I
 const mayLook = async (user) => (await mayAct(user)) || (await can(user, 'ats', 'interviews', 'Calendar View', 'view'));
 async function rights(user) {
   const vr = scope.clientViewRole(user);
-  const act = await mayAct(user);
-  const edit = act && !['bde', 'client', 'candidate', 'none', 'accounts'].includes(vr) && !['MANAGER', 'ASSISTANT_MANAGER'].includes(user.atsRole) && !['MANAGER', 'ASSISTANT_MANAGER'].includes(user.role);
+  // INTERVIEWS ARE BOOKED BY THE BDE ONLY (user, 2026-10-12), so the preparation questions follow whoever books
+  // (the BDE and BDE TL send them through TeamLink: the candidate's number stays hidden, the server sends) AND the
+  // Recruiter / TL who work the candidate and give the feedback keep the card they always had. Manager / Assistant
+  // Manager / Accounts read only.
+  const act = (await mayAct(user)) || (await can(user, 'ats', 'interviews', 'Interview Feedback', 'create'));
+  const edit = act && !['client', 'candidate', 'none', 'accounts'].includes(vr) && !['MANAGER', 'ASSISTANT_MANAGER'].includes(user.atsRole) && !['MANAGER', 'ASSISTANT_MANAGER'].includes(user.role);
   return { look: await mayLook(user), edit, role: vr };
 }
 const typeOf = (v) => (PREP.TYPES[String(v || '')] ? String(v) : '');
@@ -118,7 +122,7 @@ router.post('/interviews/:id/prep/regenerate', async (req, res, next) => {
     const out = await PREP.ensurePack(app.requirement, type, { user: req.user, regenerate: true, useAi: b.ai !== false });
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: `Interview preparation written again (${PREP.TYPES[type]})`, entity: 'Requirement', entityId: app.requirementId, toValue: out.pack.source === 'ai' ? 'AI' : 'template' });
     const payload = await PREP.appPayload(req.user, app, { type, canEdit: true, canSend: true, req });
-    return res.json({ ...payload, saved: out.pack.source === 'ai' ? 'Written again by AI. Please read it before you send it.' : `Written again from the job (template).${out.pack.aiNote ? ` ${out.pack.aiNote}` : ''}` });
+    return res.json({ ...payload, saved: out.pack.source === 'ai' ? 'Written again by AI. Please read it before you send it.' : `Written again from the requirement (template).${out.pack.aiNote ? ` ${out.pack.aiNote}` : ''}` });
   } catch (err) { return next(err); }
 });
 
@@ -152,7 +156,7 @@ router.get('/jobs/:requirementId/prep', async (req, res, next) => {
     const rt = await rights(req.user);
     if (!rt.look) return res.status(403).json(DENIED);
     const r = await prisma.requirement.findFirst({ where: { id: req.params.requirementId, ...scope.requirementWhere(req.user) }, include: { client: true } });
-    if (!r) return res.status(404).json({ error: 'Job not found' });
+    if (!r) return res.status(404).json({ error: 'Requirement not found' });
     const type = typeOf(req.query.type) || (r.internal ? 'team' : 'client');
     const out = await PREP.ensurePack(r, type, { user: req.user });
     return res.json({ requirementId: r.id, job: r.title, type, types: Object.entries(PREP.TYPES).map(([key, label]) => ({ key, label })), pack: PREP.packView(out.pack, out.f), stale: out.stale, canEdit: false });

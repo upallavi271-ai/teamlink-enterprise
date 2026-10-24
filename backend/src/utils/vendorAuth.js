@@ -116,7 +116,10 @@ function vendorSessionGuard(req, res, next) {
   return res.status(403).json({ error: 'Forbidden. A vendor login can open only the Vendor Portal.', vendorPortal: true });
 }
 
-async function createSession(vendorUser, req) {
+// opts.previewBy = the staff member's name: an ADMIN PREVIEW session (opened
+// through a single-use handoff, routes/vendorLogins.js /open-portal). It is
+// read-only (requireVendor refuses every non-GET) and says so in /me.
+async function createSession(vendorUser, req, opts = {}) {
   const now = new Date();
   const meta = VC.requestMeta(req);
   const s = await prisma.vendorSession.create({
@@ -125,11 +128,11 @@ async function createSession(vendorUser, req) {
       expiresAt: new Date(now.getTime() + VC.CFG.maxHours * 3600000),
       lastSeenAt: now,
       ip: meta.ip,
-      userAgent: meta.userAgent ? meta.userAgent.slice(0, 200) : null,
+      userAgent: opts.previewBy ? `Admin preview by ${String(opts.previewBy).slice(0, 80)}` : (meta.userAgent ? meta.userAgent.slice(0, 200) : null),
     },
   });
   const token = jwt.sign(
-    { typ: TYP, vuid: vendorUser.id, vid: vendorUser.vendorId },
+    { typ: TYP, vuid: vendorUser.id, vid: vendorUser.vendorId, ...(opts.previewBy ? { prev: String(opts.previewBy).slice(0, 80) } : {}) },
     secret(),
     { audience: AUDIENCE, jwtid: s.id, expiresIn: `${VC.CFG.maxHours}h`, algorithm: 'HS256' },
   );
@@ -177,7 +180,11 @@ function requireVendor({ allowPasswordChange = false } = {}) {
         await revokeSessions(s.vendorUserId, 'inactive');
         return out(res);
       }
-      if (vu.mustChangePassword && !allowPasswordChange) {
+      // ADMIN PREVIEW: view-only, whatever the vendor login itself may do.
+      if (claims.prev && !['GET', 'HEAD'].includes(req.method) && !String(req.originalUrl || '').split('?')[0].endsWith('/logout')) {
+        return res.status(403).json({ error: 'This is an Admin preview. It is view-only.', preview: true });
+      }
+      if (vu.mustChangePassword && !allowPasswordChange && !claims.prev) {
         return res.status(403).json({ error: 'Please set a new password first.', mustChangePassword: true });
       }
       if (now - new Date(s.lastSeenAt).getTime() > TOUCH_EVERY_MS) {
@@ -186,7 +193,7 @@ function requireVendor({ allowPasswordChange = false } = {}) {
       req.vendor = {
         userId: vu.id, vendorId: vu.vendorId, vendorName: vu.vendor ? vu.vendor.name : '', name: vu.name,
         email: vu.email, canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost,
-        mustChangePassword: !!vu.mustChangePassword, sessionId: s.id, row: vu,
+        mustChangePassword: !!vu.mustChangePassword, sessionId: s.id, row: vu, preview: claims.prev || null,
       };
       return next();
     } catch (err) { return next(err); }

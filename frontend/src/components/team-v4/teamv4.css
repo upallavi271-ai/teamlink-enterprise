@@ -144,3 +144,8 @@ button.tv4-ins:hover{border-color:#B9C8E0}
 .tv4-details-title{display:flex;align-items:baseline;gap:10px;margin:6px 0 4px}
 .tv4-details-title h2{font-family:var(--font-ui);font-size:16px;font-weight:700;margin:0;color:var(--ink)}
 .tv4-details-title span{font-size:12px;color:var(--ink-faint)}
+
+/* ---- Names fit (2026-10-17): people and activity titles wrap to 2 lines instead of "..." ---- */
+.tv4-member-name,.tv4-perf-who span,.tv4-cal-name,.tv4-act-title,.tv4-act-sub,.tv4-link,.tv4-member-role{
+  white-space:normal;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow-wrap:anywhere;line-height:1.25}
+.tv4-link{display:inline-block;max-width:100%;-webkit-line-clamp:unset}

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import PasswordAlertSetting from '../../components/PasswordAlertSetting.jsx';
 
 // Company Setup — the prototype's companySetupView() (line 9693), field for
 // field: a two-column screen with Company Information and Employment Policies
@@ -66,6 +67,7 @@ export default function CompanySetup() {
               <textarea rows="2" value={form.address} onChange={(e) => set({ address: e.target.value })} /></div>
             <button className="btn btn-primary btn-sm" onClick={save}>Save Company Info</button>
           </div>
+          <PasswordAlertSetting />
           <div className="card">
             <h3 style={{ fontSize: 14, marginBottom: 10 }}>Employment Policies</h3>
             {data.policies.map((p) => (

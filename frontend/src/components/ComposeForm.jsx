@@ -23,7 +23,7 @@ import './AudiencePicker.css';
 export function Field({ label, required = false, hint, children, style }) {
   return (
     <div className="field" style={style}>
-      {label && <label>{label}{required && <span className="compose-req"> *</span>}</label>}
+      {label && <label>{label}</label>}
       {children}
       {hint && <div className="compose-hint">{hint}</div>}
     </div>
@@ -60,7 +60,7 @@ export function AiAssist({ kind, title, text, onText }) {
     try {
       const res = await api.post('/audience/assist', { kind, title, text });
       onText(res.data.text);
-      setNote(text ? 'Polished — review before sending.' : 'Drafted — review before sending.');
+      setNote(text ? 'Polished — review before sending.' : 'Written — review before sending.');
     } catch (err) {
       setNote(err.response?.data?.error || 'AI Assist is not available right now.');
     } finally {

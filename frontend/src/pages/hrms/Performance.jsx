@@ -134,11 +134,11 @@ export default function Performance() {
         </Combo>
         <label className="lf-sort">
           Sort
-          <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
             <option value="new">Newest first</option>
             <option value="score">Score (high to low)</option>
             <option value="period">Period (latest first)</option>
-          </select>
+          </Combo>
         </label>
       </PeopleFilterBar>
 

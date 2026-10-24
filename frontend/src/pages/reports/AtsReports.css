@@ -14,3 +14,10 @@
 .atsrep .rpv-more-tiles{background:none;border:none;color:#2563eb;cursor:pointer;font:inherit;font-size:13px;padding:0;margin:-4px 0 12px}
 .atsrep .rpv-tiles-extra{margin-bottom:12px}
 @media (max-width:900px){.atsrep .rch-grid{grid-template-columns:minmax(0,1fr)}}
+
+/* The list behind a number (drill-down): names whole, dates / phone / seat on one line, so it fits 1366 px (2026-10-17). */
+.modal .tbl-wrap .ats-drill-table td{font-size:12px;padding:6px 6px;vertical-align:middle}
+.modal .tbl-wrap .ats-drill-table th{font-size:11px;padding:6px 6px;vertical-align:middle}
+.ats-drill-table td.nw{white-space:nowrap}
+.ats-drill-table td.src{max-width:96px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ats-drill-table th .link-btn{text-align:left}

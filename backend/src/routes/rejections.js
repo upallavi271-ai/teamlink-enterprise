@@ -61,7 +61,7 @@ async function requirementInScope(req, res, id) {
 const FIT_REQ_SELECT = {
   id: true, reqCode: true, title: true, internal: true, location: true, status: true,
   skills: true, goodToHaveSkills: true, experience: true, education: true, workMode: true, employmentType: true,
-  salary: true, joiningTimeline: true, jobPreference: true, clientId: true, specialisationId: true,
+  salary: true, salaryType: true, joiningTimeline: true, jobPreference: true, clientId: true, specialisationId: true,
   department: true,
   client: { select: { name: true } },
 };
@@ -263,7 +263,10 @@ router.get('/requirement/:id/tabs', requirePerm('ats', 'requirements', 'Matching
   const page = scored.slice(0, opts.limit);
   const hist = await rj.scopedHistory(req.user, page.map((x) => x.c.id));
   const canAdd = requirementIsLive(requirement.status) && await can(req.user, 'ats', 'candidates', 'Applications', 'create');
-  const rows = page.map(({ c, match }) => {
+  const restricted = require('../utils/fitBreakdown').isRestricted(req.user); // eslint-disable-line global-require
+  const rows = page.map(({ c, match: fullMatch }) => {
+    // The Fit with its breakdown; the BDE team gets a rounded total + label + the Salary word only.
+    const match = require('../utils/fitBreakdown').shapeMatch(fullMatch, restricted); // eslint-disable-line global-require
     const h = hist.get(c.id) || { visible: [], hiddenCount: 0, count: 0, doNotUse: null };
     const allRecs = (ix.byCandidate.get(c.id) || []).filter((x) => x.requirementId !== requirement.id);
     const same = requirement.internal ? [] : allRecs.filter((x) => x.side === 'Client' && x.clientId && x.clientId === requirement.clientId);
@@ -377,7 +380,7 @@ router.post('/do-not-use/:stepId/decide', async (req, res) => {
         title: approved ? `"Do not use" approved — ${ev.candidate ? ev.candidate.name : 'candidate'}` : `"Do not use" declined — ${ev.candidate ? ev.candidate.name : 'candidate'}`,
         message: approved
           ? `${req.user.name} approved it. The candidate is now blocked from every match list.`
-          : `${req.user.name} declined it${note ? `: ${note}` : ''}. The reject stays as "Not suitable for this job".`,
+          : `${req.user.name} declined it${note ? `: ${note}` : ''}. The reject stays as "Not suitable for this requirement".`,
       });
     } catch { /* never undoes the decision */ }
   }

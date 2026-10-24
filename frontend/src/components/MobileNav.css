@@ -1,0 +1,148 @@
+/* The phone menu (user, 2026-10-12): below 900px the left sidebar is a drawer
+   that slides in from the left over a dim backdrop. Behaviour lives in
+   ./useMobileDrawer.js, markup in ./Shell.jsx. Desktop (>900px) is untouched.
+
+   This file loads BEFORE styles.css, so every rule is prefixed .app-shell (or
+   html.tl-nav-open) to win on specificity.
+
+   Layers (low -> high): page 0-120 (header 30, AI button 120) < backdrop 900
+   < drawer 910 < "View as" banner 1000 (the drawer starts BELOW it) < job
+   request popup 1200 and every dialog. */
+
+/* Rows hidden by a collapsed group must not be reachable with Tab. */
+.app-shell .sb-sub{transition:max-height .18s ease, visibility 0s linear .18s}
+.app-shell .sb-group:not(.open)>.sb-sub{visibility:hidden}
+.app-shell .sb-group.open>.sb-sub{transition:max-height .18s ease, visibility 0s}
+.app-shell .sb-leaf-list{transition:max-height .18s ease, visibility 0s linear .18s}
+.app-shell .sb-sub-group:not(.open)>.sb-leaf-list{visibility:hidden}
+.app-shell .sb-sub-group.open>.sb-leaf-list{transition:max-height .18s ease, visibility 0s}
+
+/* Keyboard focus ring on the menu rows. */
+.app-shell .sidebar [role="button"]:focus-visible,
+.app-shell .sidebar [role="link"]:focus-visible,
+.app-shell .sidebar a:focus-visible,
+.app-shell .sidebar .sidebar-close:focus-visible,
+.app-shell .hamburger:focus-visible{outline:2px solid var(--navy, #1f3864);outline-offset:-2px;border-radius:8px}
+
+/* Desktop: the phone-only pieces stay out of the way. */
+.app-shell .sidebar-user,
+.app-shell .sidebar-search{display:none}
+.app-shell .hamburger .hb-label{font-size:13px;font-weight:600}
+
+@media (max-width: 900px){
+  /* --- The Menu button: icon + word, 44px tall --- */
+  .app-shell .topbar .hamburger{
+    display:inline-flex;align-items:center;gap:7px;flex:none;
+    width:auto;height:44px;min-width:44px;padding:0 12px 0 11px;margin-left:-4px;
+    background:#fff;border:1px solid var(--line);border-radius:10px;
+    color:var(--navy, #1f3864);font:inherit;cursor:pointer;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .app-shell .topbar .hamburger .hb-ico{font-size:20px;line-height:1}
+  .app-shell .topbar .hamburger[aria-expanded="true"]{background:var(--navy-tint, #eef3fb);border-color:var(--navy, #1f3864)}
+  .app-shell .topbar-right{gap:8px;min-width:0}
+
+  /* --- The drawer --- */
+  .app-shell .sidebar{
+    position:fixed;left:0;top:0;bottom:0;height:100vh;height:100dvh;
+    width:min(300px, 86vw);max-width:86vw;
+    z-index:910;
+    transform:translateX(-102%);visibility:hidden;
+    transition:transform .22s ease, visibility 0s linear .22s;
+    box-shadow:none;
+    overscroll-behavior:contain;
+    -webkit-overflow-scrolling:touch;
+    padding-left:env(safe-area-inset-left);
+  }
+  .app-shell .sidebar.open{
+    transform:none;visibility:visible;
+    transition:transform .22s ease, visibility 0s;
+    box-shadow:6px 0 28px rgba(10,15,28,.28);
+  }
+  /* Below the "View as" banner, never under it. */
+  html.tl-viewas-on .app-shell .sidebar{top:var(--tl-viewas-h,38px);height:calc(100vh - var(--tl-viewas-h,38px));height:calc(100dvh - var(--tl-viewas-h,38px))}
+
+  .app-shell .sidebar-brand{
+    justify-content:space-between;align-items:center;gap:10px;
+    padding:10px 8px 10px 16px;min-height:64px;
+    position:sticky;top:0;background:#fff;z-index:2;
+  }
+  .app-shell .sidebar-brand a{flex:0 1 auto;min-height:44px;display:flex;align-items:center}
+  .app-shell .sidebar .sidebar-close{
+    display:inline-flex;align-items:center;justify-content:center;flex:none;
+    width:44px;height:44px;border-radius:10px;font-size:20px;line-height:1;
+    background:var(--card2, #f3f5f9);color:var(--ink, #22333b);border:0;cursor:pointer;
+  }
+
+  /* --- Backdrop --- */
+  .app-shell .sidebar-overlay{
+    display:block;position:fixed;inset:0;z-index:900;
+    background:rgba(10,15,28,.5);
+    opacity:0;visibility:hidden;pointer-events:none;
+    transition:opacity .22s ease, visibility 0s linear .22s;
+  }
+  .app-shell .sidebar-overlay.show{opacity:1;visibility:visible;pointer-events:auto;transition:opacity .22s ease, visibility 0s}
+
+  /* --- Comfortable tap targets: 44px rows --- */
+  .app-shell .sidebar-nav{padding:8px 10px 12px}
+  .app-shell .sidebar .sb-item,
+  .app-shell .sidebar .sb-group-head,
+  .app-shell .sidebar .sb-sub-head,
+  .app-shell .sidebar .sb-sub-item,
+  .app-shell .sidebar .sb-leaf{min-height:44px;display:flex;align-items:center;box-sizing:border-box;font-size:14.5px}
+  .app-shell .sidebar .sb-sub-head,
+  .app-shell .sidebar .sb-group-head{justify-content:space-between}
+  .app-shell .sidebar .sb-leaf{padding-top:6px;padding-bottom:6px;font-size:14px}
+  .app-shell .sidebar .sb-sub-head .chev,
+  .app-shell .sidebar .sb-group-head .chev{width:28px;text-align:center;font-size:14px}
+  .app-shell .sidebar .sb-ico{font-size:15px}
+
+  /* --- Who is signed in + Sign out, pinned to the bottom of the drawer --- */
+  .app-shell .sidebar-user{
+    display:flex;align-items:center;gap:10px;margin-top:auto;
+    position:sticky;bottom:0;background:#fff;z-index:2;
+    padding:10px 14px calc(10px + env(safe-area-inset-bottom));
+    border-top:1px solid var(--line-soft, #e8ecf2);
+  }
+  .app-shell .sidebar-user .avatar{flex:none}
+  .app-shell .sidebar-user .su-who{min-width:0;flex:1;display:flex;flex-direction:column;line-height:1.25}
+  .app-shell .sidebar-user .su-who b{font-size:13.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-shell .sidebar-user .su-who span{font-size:12px;color:var(--ink-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .app-shell .sidebar-user .btn{min-height:44px;padding:0 14px;flex:none}
+
+  /* --- No page scroll behind the open drawer --- */
+  html.tl-nav-open,
+  html.tl-nav-open body{overflow:hidden}
+}
+
+/* Search lives in the drawer on a phone. */
+@media (max-width: 640px){
+  .app-shell .sidebar-search{display:block;padding:4px 12px 8px;border-bottom:1px solid var(--line-soft, #e8ecf2)}
+  .app-shell .sidebar .gsearch{display:block;width:100%}
+  .app-shell .sidebar .gsearch input,
+  .app-shell .sidebar .gsearch.gsx input{width:100%;height:44px;box-sizing:border-box;font-size:16px;padding-left:34px}
+  .app-shell .sidebar .gsearch::before{top:12px;left:12px;font-size:16px}
+  .app-shell .sidebar .gsx .gsx-panel{position:static;width:auto;max-width:none;max-height:45vh;margin-top:6px;box-shadow:none}
+}
+
+/* Sign out moves into the drawer when the top bar gets crowded. */
+@media (max-width: 480px){
+  .app-shell .topbar .tb-signout{display:none}
+  .app-shell .topbar{gap:8px;padding:0 12px}
+}
+
+@media (prefers-reduced-motion: reduce){
+  .app-shell .sidebar,
+  .app-shell .sidebar.open,
+  .app-shell .sidebar-overlay,
+  .app-shell .sidebar-overlay.show{transition:none !important}
+}
+
+/* Very small phones (320-360px): keep the Menu button and every header item on one line. */
+@media (max-width: 360px){
+  .app-shell .topbar{gap:6px;padding:0 8px}
+  .app-shell .topbar-right{gap:6px}
+  .app-shell .topbar .hamburger{padding:0 9px;gap:5px;margin-left:0}
+  .app-shell .topbar .tt-btn{padding:3px 8px;font-size:12px;gap:4px}
+  .app-shell .topbar .rolechip{padding:4px 8px}
+}

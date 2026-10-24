@@ -257,7 +257,7 @@ export default function AgreementSigning() {
             <h3>Step 2 — Your signature</h3>
             <p className="small-muted">Pick one way: draw it, type your name, or upload a picture of it.</p>
             {sig.method === 'typed' && (
-              <label className="field"><span>Your full name *</span>
+              <label className="field"><span>Your full name</span>
                 <input value={who.name} autoComplete="name" placeholder="e.g. Priya Sharma" onChange={(e) => setWho({ ...who, name: e.target.value })} />
               </label>
             )}
@@ -311,10 +311,10 @@ export default function AgreementSigning() {
               <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setEmudhra(false); setRedo('sign'); }}>Use another way to sign</button>
             </div>
             <div className="agr-fields agrs-fields">
-              <label className="field"><span>Your full name (as on Aadhaar) *</span>
+              <label className="field"><span>Your full name (as on Aadhaar)</span>
                 <input value={who.name} onChange={(e) => setWho({ ...who, name: e.target.value })} autoComplete="name" placeholder="e.g. Priya Sharma" />
               </label>
-              <label className="field"><span>Your designation *</span>
+              <label className="field"><span>Your designation</span>
                 <input value={who.designation} onChange={(e) => setWho({ ...who, designation: e.target.value })} autoComplete="organization-title" placeholder="e.g. HR Manager" />
               </label>
             </div>
@@ -337,10 +337,10 @@ export default function AgreementSigning() {
               <span>Stamp: <img src={img('client-stamp')} alt="Your company stamp" /> <button type="button" className="btn btn-sm btn-ghost" onClick={() => setRedo('stamp')}>Change</button></span>
             </div>
             <div className="agr-fields agrs-fields">
-              <label className="field"><span>Your full name *</span>
+              <label className="field"><span>Your full name</span>
                 <input value={who.name} onChange={(e) => setWho({ ...who, name: e.target.value })} autoComplete="name" placeholder="e.g. Priya Sharma" />
               </label>
-              <label className="field"><span>Your designation *</span>
+              <label className="field"><span>Your designation</span>
                 <input value={who.designation} onChange={(e) => setWho({ ...who, designation: e.target.value })} autoComplete="organization-title" placeholder="e.g. HR Manager" />
               </label>
             </div>
@@ -354,7 +354,7 @@ export default function AgreementSigning() {
                 <button type="button" className="btn agrs-codebtn" disabled={busy === 'code' || cooldown > 0} onClick={sendCode}>
                   {busy === 'code' ? 'Sending…' : (cooldown > 0 ? `Send again in ${cooldown}s` : (sent ? 'Send the code again' : 'Email me the code'))}
                 </button>
-                <label className="field" style={{ marginTop: 8 }}><span>The 6-digit code *</span>
+                <label className="field" style={{ marginTop: 8 }}><span>The 6-digit code</span>
                   <input className="agr-otp" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otp} onChange={(e) => setOtp(e.target.value.replace(/\D/g, ''))} />
                 </label>
               </div>

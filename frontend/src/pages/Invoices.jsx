@@ -1,7 +1,7 @@
 import {
   Fragment, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
@@ -9,6 +9,15 @@ import Combo from '../components/Combo.jsx';
 import FilterChips from '../components/FilterChips.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import ClientGroups, { buildClientGroups } from './invoices/ClientGroups.jsx';
+// One client = one row: the client-invoice rows + panel, the invoice window, the grouping.
+import ClientInvoiceRows, { CI_HEADS, ciHeadClass } from './invoices/ClientInvoiceRows.jsx';
+// WhatsApp quick chat (free wa.me links): row ticks + 'Send WhatsApp' for payment reminders, Resume bar (components/wa/)
+import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import WaResume from '../components/wa/WaResume.jsx';
+import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
+import ClientInvoiceView from './invoices/ClientInvoiceView.jsx';
+import { groupIndex, buildClientInvoices } from './invoices/clientInvoice';
+import { cardsOf, chipsOf, rowsForAge } from './invoices/invSummary';
 import '../components/ui/ui.css';
 import AccountsImport from '../components/AccountsImport.jsx';
 import PaymentModal from './invoices/PaymentModal.jsx';
@@ -20,23 +29,26 @@ import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 import CreditNotesPanel from './invoices/CreditNotesPanel.jsx';
 import PartnerPayoutsPanel from './invoices/PartnerPayoutsPanel.jsx'; // B7: agency / freelancer payouts
 import {
-  money, money2, fmtD, daysSince,
+  money, money2, fmtD,
 } from './invoices/invFormat';
 import { saveBlob } from './office/officeUtil';
+import { invoiceDocumentHtml, esc } from './invoices/invoiceDoc';
 import {
-  ALL, changeFilter, reconcile, departmentOptions, sectionOptions, employeeOptions, describeEmployee,
+  ALL, changeFilter, reconcile, departmentOptions, sectionOptions, employeeOptions, roleOptions, describeEmployee,
   waitingUnder, sectionByKey, personByKey, deptLabelOf,
 } from './invoices/invHierarchy';
 import PeriodPicker, { periodText } from '../components/accounts/PeriodPicker.jsx';
-import ColumnChooser, { useStoredState } from '../components/ColumnChooser.jsx';
 import MultiPick from './invoices/MultiPick.jsx';
 import ScrollSync from '../components/accounts/ScrollSync.jsx';
 import {
   NONE, APPLY_TO, PERIOD_PRESETS, ALL_PERIOD, periodOn, STATUS_OPTS, statusLabel, GST_OPTS, GST_HISTORY,
-  BLANK_FILTERS, normFilters, normPeriod, passes, facetCounts,
+  BLANK_FILTERS, normFilters, normPeriod, passes, facetCounts, resolveClients,
   DUE_OPTS, TDS_STATUS_OPTS, GST_TYPE_OPTS, rateLabel,
 } from './invoices/invFilters';
-import { pct } from './invoices/invTax';
+import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // Omni-Channel: the shared template library + payment follow-up campaigns of Accounts (inside this screen)
+import AppCampaignModal from '../components/omni/library/AppCampaignModal.jsx';
+import { shared as omniShared } from '../components/omni/omniApi.js';
+import useClientLabel from '../components/clients/useClientLabel.js'; // "Name - Location" for same-name clients (2026-10-22)
 import './invoices/invoices.css';
 import './invoices/invTable.css';
 import './invoices/invFilters.css';
@@ -62,169 +74,8 @@ export function Stat({ n, l, s, tone }) {
   );
 }
 
-const esc = (s) => String(s == null ? '' : s)
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
-// ---------------------------------------------------------------------------
-// The printable tax invoice. Everything on it comes from
-// GET /invoices/:id/document, so the paper copy can never disagree with the
-// register. The client copy is what gets emailed; the internal copy adds the
-// recruiter and the department and is never sent out.
-// ---------------------------------------------------------------------------
-export function invoiceDocumentHtml(d, mode) {
-  const forClient = mode !== 'internal';
-  const showRec = !forClient && d.lines.some((l) => l.recruiter);
-  const gst = d.totals.gst;
-  const n = (v) => money2(v).replace('₹', '');
-  const taxHead = d.inter
-    ? '<th colspan="2" class="grp">IGST</th>'
-    : '<th colspan="2" class="grp">CGST</th><th colspan="2" class="grp">SGST</th>';
-  const taxSub = d.inter
-    ? '<th class="n sm">%</th><th class="n sm">Amt</th>'
-    : '<th class="n sm">%</th><th class="n sm">Amt</th><th class="n sm">%</th><th class="n sm">Amt</th>';
-  const style = `
-  @page{size:A4;margin:10mm}
-  *{box-sizing:border-box}
-  body{margin:0;font:11px/1.4 Arial,Helvetica,sans-serif;color:#000;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-  .inv{border:1px solid #000;max-width:190mm;margin:0 auto;min-height:272mm;display:flex;flex-direction:column}
-  .pageno{max-width:190mm;margin:2mm auto 0;text-align:right;font-size:9px;color:#333}
-  table{border-collapse:collapse;width:100%}
-  .hd{display:flex;border-bottom:1px solid #000}
-  .hd .lg{width:140px;padding:10px;display:flex;align-items:flex-start}
-  .hd .lg img{max-width:130px;max-height:52px;object-fit:contain}
-  .hd .co{flex:1;padding:10px 8px}
-  .hd .co h1{margin:0 0 4px;font-size:14px;font-weight:bold;text-transform:uppercase;max-width:30ch;line-height:1.25}
-  .hd .co .l{font-size:10px;line-height:1.5}
-  .hd .ti{width:230px;padding:12px 14px;display:flex;align-items:center;justify-content:flex-end}
-  .hd .ti span{font-size:26px}
-  .meta{display:flex;border-bottom:1px solid #000}
-  .meta .l{flex:1;border-right:1px solid #000}
-  .meta .r{flex:1;padding:6px 10px;font-size:10.5px}
-  .meta table td{padding:3px 10px;font-size:10.5px;vertical-align:top}
-  .meta table td.k{color:#333;width:44%}
-  .meta table td.v{font-weight:bold}
-  .band{background:#e8e8e8;padding:4px 10px;font-weight:bold;font-size:10.5px;border-bottom:1px solid #000}
-  .bill{padding:9px 10px;border-bottom:1px solid #000;font-size:10.5px;line-height:1.55}
-  .bill .nm{font-weight:bold;font-size:12px;text-transform:uppercase;margin-bottom:2px}
-  table.items th{background:#e8e8e8;border:1px solid #000;padding:5px 6px;font-size:10px;font-weight:bold;text-align:left}
-  table.items th.grp{text-align:center}
-  table.items th.sm{font-weight:normal;font-size:9.5px}
-  table.items td{border:1px solid #000;padding:6px;font-size:10.5px;vertical-align:top}
-  table.items td.n,table.items th.n{text-align:right}
-  table.items td.c{text-align:center}
-  .desc .sub{color:#555;font-size:9.5px;margin-top:2px}
-  td.rec{text-align:center;font-weight:600;font-size:10px}
-  .foot{display:flex;border-top:1px solid #000}
-  .foot .lft{flex:1.15;padding:9px 10px;border-right:1px solid #000;position:relative}
-  .foot .rgt{width:44%}
-  .blank{flex:1}
-  .words b{display:block;font-size:10px;font-weight:normal;color:#333}
-  .words i{font-style:italic;font-weight:bold;font-size:10.5px;display:block;margin-top:2px}
-  .notes{margin-top:10px;font-size:10px;line-height:1.5}
-  .notes b{display:block;font-size:10px;color:#333;font-weight:normal;margin-bottom:2px}
-  .tot td{padding:5px 12px;font-size:11px}
-  .tot td.n{text-align:right;white-space:nowrap}
-  .tot tr.g td{font-weight:bold;border-top:1px solid #000}
-  .tot tr.b td{font-weight:bold;font-size:12.5px;border-top:1px solid #000;border-bottom:1px solid #000}
-  .sign{min-height:120px;border-top:1px solid #000;text-align:center;padding:6px 4px 10px}
-  .sign span{display:block;font-size:10.5px;padding-top:3px;border-top:1px solid #000;width:70%;margin:46px auto 0}
-  .tdsnote{padding:6px 10px;border-top:1px solid #000;font-size:9.5px;color:#333}
-  `;
-  const co = d.company;
-  const rows = d.lines.map((l) => `<tr>
-    <td class="c">${l.n}</td>
-    <td class="desc">${esc(l.description)}${(!forClient && l.department) ? `<div class="sub">${esc(l.department)}</div>` : ''}</td>
-    ${showRec ? `<td class="rec">${esc(l.recruiter || '—')}</td>` : ''}
-    <td class="n">${l.salary != null ? String(Math.round(l.salary)) : ''}</td>
-    <td class="n">${esc(l.sac)}</td>
-    <td class="n">${Number(l.qty).toFixed(2)}</td>
-    <td class="n">${n(l.rate)}</td>
-    ${gst > 0 ? (d.inter
-    ? `<td class="n">${d.gstPct}%</td><td class="n">${n(l.gst)}</td>`
-    : `<td class="n">${d.halfPct}%</td><td class="n">${n(l.cgst)}</td><td class="n">${d.halfPct}%</td><td class="n">${n(l.sgst)}</td>`) : ''}
-    <td class="n">${n(l.amount)}</td>
-  </tr>`).join('');
-
-  const inner = `<div class="inv">
-    <div class="hd">
-      <div class="lg">${co.logoUrl ? `<img src="${esc(co.logoUrl)}" alt="">` : ''}</div>
-      <div class="co">
-        <h1>${esc(co.legalName)}</h1>
-        <div class="l">${co.addressLines.map(esc).join('<br>')}${co.gstin ? `<br>GSTIN ${esc(co.gstin)}` : ''}</div>
-      </div>
-      <div class="ti"><span>${d.title}</span></div>
-    </div>
-    <div class="meta">
-      <div class="l"><table>
-        <tr><td class="k">#</td><td class="v">: ${esc(d.invoiceNumber)}</td></tr>
-        <tr><td class="k">Invoice Date</td><td class="v">: ${fmtD(d.invoiceDate)}</td></tr>
-        <tr><td class="k">Terms</td><td class="v">: ${esc(d.terms)}</td></tr>
-        <tr><td class="k">Due Date</td><td class="v">: ${fmtD(d.dueDate)}</td></tr>
-        <tr><td class="k">Billing Type</td><td class="v">: ${esc(d.billingType)}</td></tr>
-      </table></div>
-      <div class="r"><table><tr><td class="k">Place Of Supply</td><td class="v">: ${esc(d.placeOfSupply)}</td></tr></table></div>
-    </div>
-    ${forClient ? '' : '<div class="band" style="background:#FBF3DE;color:#7A5A08">INTERNAL COPY — recruiter and department shown · not for the client</div>'}
-    <div class="band">Bill To</div>
-    <div class="bill">
-      <div class="nm">${esc(d.client.name)}</div>
-      ${d.client.addressLines.map(esc).join(',<br>')}${d.client.addressLines.length ? '<br>' : ''}
-      ${d.client.gstin ? `GSTIN ${esc(d.client.gstin)}` : (forClient ? '' : '<span style="color:#B3261E">Client GSTIN not on file — add it in Client Master</span>')}
-    </div>
-    <table class="items">
-      <thead>
-        <tr>
-          <th rowspan="2" style="width:26px">#</th>
-          <th rowspan="2">Item &amp; Description</th>
-          ${showRec ? '<th rowspan="2" style="width:74px">Recruiter</th>' : ''}
-          <th rowspan="2" class="n" style="width:60px">Salary</th>
-          <th rowspan="2" class="n" style="width:66px">HSN/SAC</th>
-          <th rowspan="2" class="n" style="width:40px">Qty</th>
-          <th rowspan="2" class="n" style="width:76px">Rate</th>
-          ${gst > 0 ? taxHead : ''}
-          <th rowspan="2" class="n" style="width:82px">Amount</th>
-        </tr>
-        <tr>${gst > 0 ? taxSub : ''}</tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-    <div class="foot">
-      <div class="lft">
-        <div class="words"><b>Total In Words</b><i>${esc(d.words.total)}</i></div>
-        ${d.words.netAfterTds ? `<div class="words"><b>Net Payable After TDS In Words</b><i>${esc(d.words.netAfterTds)}</i></div>` : ''}
-        <div class="notes"><b>Notes</b>
-          ${esc(co.bank.accountName)}<br>
-          ${co.bank.accountNumber ? `Account Number: ${esc(co.bank.accountNumber)}<br>` : ''}
-          ${co.bank.ifsc ? `IFSC: ${esc(co.bank.ifsc)}<br>` : ''}
-          ${co.bank.branch ? `Branch: ${esc(co.bank.branch)}<br>` : ''}
-          ${co.bank.accountType ? `Account Type: ${esc(co.bank.accountType)}<br>` : ''}
-          ${co.bank.upi ? `Virtual Payment Address: ${esc(co.bank.upi)}` : ''}
-        </div>
-      </div>
-      <div class="rgt">
-        <table class="tot">
-          <tr><td>Sub Total</td><td class="n">${n(d.totals.subTotal)}</td></tr>
-          ${gst > 0 ? (d.inter
-    ? `<tr><td>IGST${d.gstPct} (${d.gstPct}%)</td><td class="n">${n(d.totals.gst)}</td></tr>`
-    : `<tr><td>CGST${d.halfPct} (${d.halfPct}%)</td><td class="n">${n(d.totals.cgst)}</td></tr>
-                 <tr><td>SGST${d.halfPct} (${d.halfPct}%)</td><td class="n">${n(d.totals.sgst)}</td></tr>`) : ''}
-          <tr class="g"><td>Total</td><td class="n">${money2(d.totals.invoiceValue)}</td></tr>
-          ${d.totals.tds > 0 ? `<tr><td>Less: TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')}${d.tdsBase === 'gross' ? ' (on the total)' : ''}</td><td class="n">(${n(d.totals.tds)})</td></tr>
-            <tr class="g"><td>Net Payable After TDS</td><td class="n">${money2(d.totals.receivable)}</td></tr>` : ''}
-          ${d.totals.paid > 0 ? `<tr><td>Amount Received</td><td class="n">${n(d.totals.paid)}</td></tr>` : ''}
-          ${d.totals.credited > 0 ? `<tr><td>Less: Credit Notes</td><td class="n">(${n(d.totals.credited)})</td></tr>` : ''}
-          ${d.totals.debited > 0 ? `<tr><td>Add: Debit Notes</td><td class="n">${n(d.totals.debited)}</td></tr>` : ''}
-          <tr class="b"><td>Balance Due</td><td class="n">${money2(d.totals.balance)}</td></tr>
-        </table>
-        <div class="sign"><span>Authorized Signature</span></div>
-      </div>
-    </div>
-    <div class="blank"></div>
-    ${d.totals.tds > 0 ? `<div class="tdsnote">TDS @ ${d.tdsPct}% u/s ${esc(d.tdsSection || '194J')} (${money2(d.totals.tds)}) ${d.tdsBase === 'gross' ? 'is worked out on the total including GST, as agreed for this invoice' : 'is deductible on the professional fee only, not on GST'}. Net payable after TDS: ${money2(d.totals.balance)}. Kindly share Form 16A after deduction.</div>` : ''}
-  </div>
-  <div class="pageno">1</div>`;
-  return { style, inner };
-}
+// The printable invoice template lives in invoices/invoiceDoc.js (pure, testable); re-exported for InvoiceDetail.
+export { invoiceDocumentHtml };
 
 // Open the printable copy in its own window and send it to the printer.
 export async function openInvoicePrint(invoiceId, mode) {
@@ -245,32 +96,10 @@ export async function openInvoicePrint(invoiceId, mode) {
 // column chooser and rows that open in place.
 // ---------------------------------------------------------------------------
 
-// THE INVOICE TABLE (Accounts spec 2) — exactly these 21 columns, in this
-// order, always. Invoice No + Client are pinned left, Actions pinned right.
-const COLUMNS = [
-  ['inv', 'Invoice No'], ['date', 'Invoice Date'], ['client', 'Client'], ['btype', 'Billing Type'],
-  ['cgstin', 'Client GSTIN'], ['dept', 'Department'], ['rec', 'Recruiter'], ['before', 'Before GST'],
-  ['gst', 'GST Charged'], ['after', 'After GST'], ['tds', 'TDS Deducted'], ['receivable', 'Net Receivable'],
-  ['received', 'Received'], ['pending', 'Balance'], ['pays', 'Payments'], ['proof', 'Proof'],
-  ['tdscert', 'TDS Cert'], ['due', 'Due Date'], ['age', 'Age'], ['sent', 'Sent'], ['act', 'Actions'],
-];
-// Pinned columns' classes (invoices/invTable.css). The Client column's left
-// offset is the Invoice No column's width (--inv-c1 there); below 1200px only
-// Invoice No stays pinned on the left.
-const STICKY = { inv: 'stk-l1', client: 'stk-l2', act: 'stk-r' };
-// The Columns chooser (S7.7f): Invoice No and Actions always show.
-const LOCKED_COLS = new Set(['inv', 'act']);
-const DEFAULT_COLS = COLUMNS.map(([k]) => k);
-const COL_OPTIONS = COLUMNS.map(([id, label]) => ({ id, label, locked: LOCKED_COLS.has(id) }));
-const validCols = (v) => Array.isArray(v) && v.every((k) => DEFAULT_COLS.includes(k));
-
+// THE INVOICE LIST (2026-10-14, founder spec "one client = one row"): ONE row per
+// client invoice with 7 columns (invoices/ClientInvoiceRows.jsx CI_HEADS). Every
+// other figure of the old 23 columns lives in the row's detail panel.
 const GROUP_BY = [['inv', 'Invoice'], ['client', 'Client'], ['dept', 'Department'], ['rec', 'Recruiter'], ['month', 'Invoice month']];
-
-const NUM_COLS = new Set(['before', 'gst', 'after', 'tds', 'receivable', 'received', 'pending', 'pays']);
-// The money columns the totals row adds up, with the row field behind each.
-const MONEY_FIELD = {
-  before: 'billing', gst: 'gst', after: 'invoiceValue', tds: 'tds', receivable: 'receivable', received: 'received', pending: 'pending',
-};
 
 // The age buckets the register computes (utils/accounts.js ageBucket), with
 // the labels the approved design prints.
@@ -295,8 +124,8 @@ const loadViews = () => {
 };
 const loadGroup = () => {
   const g = readStore(GROUP_KEY);
-  // Default: one expandable group per client (the same client name no longer repeats down the page).
-  return GROUP_BY.some(([v]) => v === g) ? g : 'client';
+  // Default: the invoice list, one row per client invoice (Group by Client is one click away).
+  return GROUP_BY.some(([v]) => v === g) ? g : 'inv';
 };
 
 // The Sort dropdown over the invoice table (newest first by default).
@@ -346,14 +175,23 @@ const readShowAll = () => { const v = readStore(SHOWALL_KEY); return v == null ?
 
 export default function Invoices() {
   const { user } = useAuth();
+  const clientLabel = useClientLabel();
   const canCreate = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canPay = can(user, 'accounts', 'accounts', 'Payments', 'create');
   const canExport = can(user, 'accounts', 'accounts', 'Invoices', 'export');
-  const canBankView = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
+  const canBankView = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view'); // eslint-disable-line no-unused-vars
+  // Who may add a missing date of joining from the panel: the joining editors and Accounts.
+  const canJoin = can(user, 'ats', 'interviews', 'Joining', 'edit') || can(user, 'accounts', 'accounts', 'Invoices', 'edit');
 
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [flash, setFlash] = useState('');
+  const [payCampaign, setPayCampaign] = useState(null); // { ids } = the clients behind the ticked invoices, for a payment follow-up campaign
+  const [payErr, setPayErr] = useState('');
+  const [waSel, setWaSel] = useState(() => new Set()); // client invoices ticked for WhatsApp (the lead invoice id of each)
+  const [waBulk, setWaBulk] = useState(null);
+  const [waTick, setWaTick] = useState(0);
+  const waOn = waMayUse(useWaConfig(), 'invoice');
   // { from, to, preset, applyTo } — the shared Accounts calendar (S7.3).
   const [period, setPeriod] = useState(ALL_PERIOD);
   const [filters, setFilters] = useState(BLANK_FILTERS);
@@ -372,14 +210,16 @@ export default function Invoices() {
   const [sort, setSort] = useState('new');
   const [showAll, setShowAllState] = useState(readShowAll);
   const setShowAll = (next) => { setShowAllState(next); writeStore(SHOWALL_KEY, next ? '1' : '0'); };
-  const [cols, setCols] = useStoredState(`tl.invoices.cols.${user?.id || 'me'}`, DEFAULT_COLS, validCols);
-  const navigate = useNavigate();
+  // Which client invoices have their detail panel open (several at once). ONE toggle serves the row, the Invoice No and the arrow.
+  const [openInv, setOpenInv] = useState(() => new Set());
+  const toggleInv = useCallback((k) => setOpenInv((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; }), []);
+  const [viewFor, setViewFor] = useState(null); // null | a client invoice (the invoice window)
   const bellRef = useRef(null);
   const noticeRef = useRef(null);
   const tableRef = useRef(null);
 
   // LINKS INTO THIS PAGE (the Accounts desk / Management dashboards):
-  //   ?period=M:2026-09 | Q2:2026 | FY:2026   ?status=Overdue   ?client=<name>
+  //   ?period=M:2026-09 | Q2:2026 | FY:2026   ?status=Overdue   ?clientId=<client id>  (or ?client=<name>, turned into the id(s) once the register is in)
   //   ?age=0-30 | 31-60 | 61-90 | 90+ | 60+   ?join=new | <applicationId>
   //   ?pay=1 | <invoiceId>   — read once on arrival.
   const [urlQ, setUrlQ] = useSearchParams();
@@ -391,7 +231,7 @@ export default function Invoices() {
     const p = urlQ.get('period');
     if (p) setPeriod(normPeriod(p));
     const status = urlQ.get('status');
-    const client = urlQ.get('client');
+    const client = urlQ.get('clientId') || urlQ.get('client');
     if (status || client) setFilters((f) => normFilters({ ...f, ...(status ? { status } : {}), ...(client ? { clients: [client] } : {}) }));
     const AGE = { '0-30': '0–30 days', '31-60': '31–60 days', '61-90': '61–90 days', '90+': '90+ days', '60+': '60+' };
     if (AGE[urlQ.get('age')]) setAge(AGE[urlQ.get('age')]);
@@ -403,11 +243,21 @@ export default function Invoices() {
 
   // The whole register once; the Period and every other filter then work in
   // the browser over the same rows (invoices/invFilters.js), instantly.
+  // Two loads can overlap (a payment, then a quick second change): only the LATEST answer is shown, an older
+  // one that arrives late is ignored (and its request is aborted), so the cards never show stale money.
+  const loadSeq = useRef(0);
+  const loadCtl = useRef(null);
   const load = useCallback(() => {
-    api.get('/invoices/register', { params: { period: 'all' } })
-      .then((res) => setData(res.data))
-      .catch((e) => setError(e.response?.data?.error || 'That did not work.'));
+    loadSeq.current += 1;
+    const mine = loadSeq.current;
+    if (loadCtl.current) loadCtl.current.abort();
+    const ctl = new AbortController();
+    loadCtl.current = ctl;
+    api.get('/invoices/register', { params: { period: 'all' }, signal: ctl.signal })
+      .then((res) => { if (mine === loadSeq.current) setData(res.data); })
+      .catch((e) => { if (mine === loadSeq.current && !(e && (e.code === 'ERR_CANCELED' || e.name === 'CanceledError'))) setError(e.response?.data?.error || 'That did not work.'); });
   }, []);
+  useEffect(() => () => { loadSeq.current += 1; if (loadCtl.current) loadCtl.current.abort(); }, []);
   useEffect(load, [load]);
 
   useEffect(() => { writeStore(GROUP_KEY, group); }, [group]);
@@ -449,7 +299,28 @@ export default function Invoices() {
   // filters leave; options with nothing behind them are hidden.
   const fc = useMemo(() => facetCounts(data?.rows || [], filters, period, stance), [data, filters, period, stance]);
   const keep = (n, picked) => n > 0 || picked;
-  const clientOpts = useMemo(() => (data?.clients || []).map((c) => ({ value: c, label: c, count: fc.clients.get(c) || 0 })), [data, fc]);
+  // The Client list is made of client IDS (two clients may share a name: told apart by their Location on screen).
+  const clientList = useMemo(() => {
+    if (data?.clientList) return data.clientList;
+    const m = new Map();
+    (data?.rows || []).forEach((r) => { if (r.clientId && !m.has(r.clientId)) m.set(r.clientId, { id: r.clientId, name: r.client }); });
+    return [...m.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }, [data]);
+  const clientName = useMemo(() => {
+    // Same-name clients are two LOCATIONS: "Name - Location" (components/clients/useClientLabel.js). Only if two still read the same, a short id is added.
+    const labels = clientList.map((c) => [c.id, clientLabel(c)]);
+    const dup = new Set(labels.map(([, l]) => l).filter((n, i, a) => a.indexOf(n) !== i));
+    return new Map(labels.map(([id, l]) => [id, dup.has(l) ? `${l} (id …${String(id).slice(-5)})` : l]));
+  }, [clientList, clientLabel]);
+  const clientOpts = useMemo(() => clientList.map((c) => ({ value: c.id, label: clientName.get(c.id) || c.name, count: fc.clients.get(c.id) || 0 })), [clientList, clientName, fc]);
+  // A client name from an old link / saved view becomes the client id(s) as soon as the list is known.
+  useEffect(() => {
+    if (!clientList.length) return;
+    setFilters((f) => {
+      if (!f.clients.length || f.clients.every((v) => clientList.some((c) => c.id === v))) return f;
+      return { ...f, clients: resolveClients(f.clients, clientList) };
+    });
+  }, [clientList]);
   const recOpts = useMemo(() => {
     const list = [...fc.recs.keys(), ...filters.recs.filter((k) => !fc.recs.has(k))]
       .filter((k) => k !== NONE)
@@ -460,11 +331,13 @@ export default function Invoices() {
   const deptList = deptOpts.map((o) => ({ ...o, count: fc.dept.get(o.value) || 0 })).filter((o) => keep(o.count, filters.dept === o.value));
   const secOpts = useMemo(() => sectionOptions(hier, filters.dept), [hier, filters.dept]);
   const secList = secOpts.map((o) => ({ ...o, count: fc.section.get(o.value) || 0 })).filter((o) => keep(o.count, filters.section === o.value));
-  const empOpts = useMemo(() => employeeOptions(hier, filters.dept, filters.section), [hier, filters.dept, filters.section]);
-  const empList = empOpts.map((o) => ({ ...o, count: fc.rec.get(o.value) || 0 })).filter((o) => keep(o.count, filters.rec === o.value));
-  const roleList = [...new Set([...(data?.roles || []), ...fc.role.keys()])].sort()
-    .map((r) => ({ value: r, count: fc.role.get(r) || 0 })).filter((o) => keep(o.count, filters.role === o.value));
-  const empInfo = filters.rec !== ALL ? describeEmployee(hier, filters.rec, filters.dept, filters.section) : null;
+  // Role = the department's seats (EDU-1…, TL) and Employee = whoever held the chosen seat, current or former.
+  const empOpts = useMemo(() => employeeOptions(hier, filters.dept, filters.section, filters.role), [hier, filters.dept, filters.section, filters.role]);
+  // Current holders always show; former holders only when they have invoices in view.
+  const empList = empOpts.map((o) => ({ ...o, count: fc.rec.get(o.value) || 0 })).filter((o) => keep(o.count, filters.rec === o.value || o.current));
+  const roleOpts = useMemo(() => roleOptions(hier, filters.dept, filters.section), [hier, filters.dept, filters.section]);
+  const roleList = roleOpts.map((o) => ({ ...o, count: fc.role.get(o.value) || 0 })).filter((o) => keep(o.count, filters.role === o.value));
+  const empInfo = filters.rec !== ALL ? describeEmployee(hier, filters.rec, filters.dept, filters.section, filters.role) : null;
   // P4 — GST / TDS lists, counted over what the OTHER filters leave; a value
   // with nothing behind it is hidden unless it is the one picked.
   const rateList = (m, picked) => [...m.keys()].sort((a, b) => Number(a) - Number(b))
@@ -482,23 +355,33 @@ export default function Invoices() {
     if (!data) return [];
     return data.rows.filter((r) => passes(r, filters, period, stance));
   }, [data, filters, period, stance]);
+  // ONE CLIENT = ONE ROW. The register's candidate rows are grouped (invoices/clientInvoice.js)
+  // AFTER the filters, so every card, chip, the TOTAL and the downloads still add up the same rows.
+  const index = useMemo(() => groupIndex(data?.rows || []), [data]);
+  // The client invoices of everything the other filters leave: the age chips count THESE, and a chip keeps
+  // each client invoice whole ('60+' = the Accounts desk's link: 61–90 and 90+ together).
+  const baseGroups = useMemo(() => buildClientInvoices(base, index), [base, index]);
   const rows = useMemo(() => {
-    // '60+' (the Accounts desk's aging bucket) = 61–90 and 90+ together.
-    const list = age === 'All' ? base : base.filter((r) => (age === '60+' ? ['61–90 days', '90+ days'].includes(r.age) : r.age === age));
+    const list = rowsForAge(base, baseGroups, age);
     const cmp = (SORTS.find(([k]) => k === sort) || SORTS[0])[2];
     return [...list].sort(cmp);
-  }, [base, age, sort]);
+  }, [base, baseGroups, age, sort]);
+  const allGroups = useMemo(() => buildClientInvoices(data?.rows || [], index), [data, index]);
+  const cmpOf = (SORTS.find(([k]) => k === sort) || SORTS[0])[2];
+  const invGroups = useMemo(() => buildClientInvoices(rows, index).sort(cmpOf), [rows, index, cmpOf]);
+  // any candidate invoice id -> the id its row answers to
+  const leadOf = useMemo(() => {
+    const m = new Map();
+    allGroups.forEach((g) => g.ids.forEach((id) => m.set(id, g.id)));
+    return m;
+  }, [allGroups]);
 
-  // The table's own column order (COLUMNS), less what the Columns chooser hid.
-  const active = useMemo(() => COLUMNS.filter(([k]) => LOCKED_COLS.has(k) || (cols || DEFAULT_COLS).includes(k)), [cols]);
-
-  // The groups in display order — also the order ⭳ Excel writes.
+  // The other groupings: heading rows, each holding its client invoices.
   const grouped = useMemo(() => {
-    if (group === 'inv' || group === 'client') return null; // flat table / the client-group table (ClientGroups)
-    const keyOf = (r) => (group === 'client' ? r.client
-      : group === 'dept' ? (r.department || '—')
-        : group === 'rec' ? (r.recruiter || 'not assigned')
-          : (r.invoiceMonth || '—'));
+    if (group === 'inv' || group === 'client') return null; // the plain list / the client table (ClientGroups)
+    const keyOf = (r) => (group === 'dept' ? (r.department || '—')
+      : group === 'rec' ? (r.recruiter || 'not assigned')
+        : (r.invoiceMonth || '—'));
     const map = new Map();
     rows.forEach((r) => {
       const k = String(keyOf(r) || '—');
@@ -510,20 +393,20 @@ export default function Invoices() {
     return keys.map((k) => ({
       key: k,
       label: group === 'month' ? (map.get(k)[0].invoiceMonthLabel || k) : k,
-      list: map.get(k),
+      rows: map.get(k),
+      list: buildClientInvoices(map.get(k), index).sort(cmpOf),
     }));
-  }, [rows, group]);
-  // The downloads follow the screen's order: grouped by client (every client's invoices together) in client mode.
+  }, [rows, group, index, cmpOf]);
+  // The downloads follow the screen's order (a client invoice's candidates stay together).
   const displayRows = useMemo(() => {
-    if (grouped) return grouped.flatMap((g) => g.list);
-    if (group === 'client') return buildClientGroups(rows, sort).flatMap((g) => g.list);
-    return rows;
-  }, [grouped, rows, group, sort]);
-  // Paged 25 / 50 / 100 when the table is one flat list; grouped, every group
-  // shows whole so its subtotals always match the rows under it.
-  const page = usePaged(rows);
-  // The client-group table pages over CLIENTS (a client's invoices are never split across pages).
-  const clientGroups = useMemo(() => buildClientGroups(rows, sort), [rows, sort]);
+    if (grouped) return grouped.flatMap((g) => g.list.flatMap((x) => x.members));
+    if (group === 'client') return buildClientGroups(rows, sort, index).flatMap((g) => g.inv.flatMap((x) => x.members));
+    return invGroups.flatMap((x) => x.members);
+  }, [grouped, rows, group, sort, index, invGroups]);
+  // Paged 25 / 50 / 100 when the list is flat; grouped, every group shows whole so its subtotals always match the rows under it.
+  const page = usePaged(invGroups);
+  // The client table pages over CLIENTS (a client's invoices are never split across pages).
+  const clientGroups = useMemo(() => buildClientGroups(rows, sort, index), [rows, sort, index]);
   const cpage = usePaged(clientGroups, 25);
 
   // "Needs attention" — the bell.
@@ -566,7 +449,8 @@ export default function Invoices() {
     waiting: 0, groups: [], notBillable: [], recent: [],
   }, filters);
 
-  const live = rows.filter((r) => r.status !== 'Cancelled');
+  // ONE reading of the money for the six cards and the age chips (invoices/invSummary.js).
+  const st = cardsOf(rows, invGroups);
   // THE TOTALS ROW — over every invoice the current filters and search leave
   // (`rows` is the whole filtered register the server sent, never a page of
   // it), so it is always the sum of the rows the table shows. It is worked
@@ -586,34 +470,15 @@ export default function Invoices() {
     tdsDeducted: sumOf(rows.filter((r) => r.tdsStatus === 'Deducted'), (r) => r.tds),
     tdsCertified: sumOf(rows.filter((r) => r.tdsStatus === 'Certificate Received'), (r) => r.tds),
   };
-  const st = {
-    candidates: sumOf(live, (r) => r.candidates),
-    clients: new Set(live.map((r) => r.client)).size,
-    total: sumOf(live, (r) => r.invoiceValue),
-    received: sumOf(live, (r) => r.received),
-    receivable: sumOf(live, (r) => r.receivable),
-    pending: sumOf(live, (r) => Math.max(0, r.pending)),
-    overdue: live.filter((r) => r.pending > 0.5 && r.daysOverdue > 0),
-  };
-
-  // Aging chips over everything the other filters leave.
-  const openBase = base.filter((r) => r.status !== 'Cancelled' && r.pending > 0.5);
-  const chipData = BUCKETS.map((b) => {
-    if (b.k === 'Settled') {
-      const list = base.filter((r) => r.age === 'Settled');
-      return { ...b, count: list.length, amt: sumOf(list, (r) => r.received), note: 'received' };
-    }
-    const list = b.k === 'All' ? base : openBase.filter((r) => r.age === b.k);
-    const amt = sumOf(b.k === 'All' ? openBase : list, (r) => r.pending);
-    return { ...b, count: list.length, amt, note: b.k === 'All' ? 'pending' : undefined };
-  });
+  // Aging chips over everything the other filters leave: every client invoice that still owes sits in ONE bucket.
+  const chipData = chipsOf(baseGroups).map((c) => ({ ...c, ...(BUCKETS.find((b) => b.k === c.k) || {}) }));
   const maxAmt = Math.max(1, ...chipData.filter((c) => c.k !== 'All' && c.k !== 'Settled').map((c) => c.amt));
   // The TDS pill reads the same rows as the cards and the table.
   const certDue = rows.filter((r) => r.status !== 'Cancelled' && r.received > 0 && r.tds > 0.5 && r.tdsCert !== 'in hand');
   const openTds = sumOf(rows.filter((r) => r.status !== 'Cancelled' && r.pending > 0.5), (r) => r.tds);
   // Header counts (S7.6): candidates on the invoices shown, and how many of
   // those placements the ATS marks as dropped.
-  const shownCands = sumOf(rows, (r) => r.candidates);
+  const shownCands = new Set(rows.map((r) => r.candidateId).filter(Boolean)).size;
   const dropped = rows.filter((r) => /drop/i.test(String(r.joiningStatus || ''))).length;
 
   // A saved view keeps EVERYTHING on screen: period (with its "Apply to"),
@@ -633,7 +498,7 @@ export default function Invoices() {
     // Older views held a period word ('M:2026-09') and a single client name.
     setPeriod(normPeriod(v.period));
     // Anything that is not a valid department / section / employee now goes back to All.
-    setFilters(reconcile(normFilters(v.filters), hier, validDepts));
+    setFilters(reconcile({ ...normFilters(v.filters), clients: resolveClients(normFilters(v.filters).clients, clientList) }, hier, validDepts));
     setAge(v.age || 'All');
     if (GROUP_BY.some(([g]) => g === v.group)) setGroup(v.group);
     if (SORTS.some(([s]) => s === v.sort)) setSort(v.sort);
@@ -654,7 +519,7 @@ export default function Invoices() {
   const activeBits = [
     periodOn(period) && { t: 'Period', v: `${periodText(period)} · by ${(APPLY_TO.find((o) => o.value === period.applyTo) || APPLY_TO[0]).label.toLowerCase()}`, fix: () => setPeriod(ALL_PERIOD) },
     filters.q.trim() && { t: 'Search', v: `"${filters.q.trim()}"`, fix: () => setOne('q', '') },
-    filters.clients.length > 0 && { t: 'Client', v: many(filters.clients, (c) => c), fix: () => setOne('clients', []) },
+    filters.clients.length > 0 && { t: 'Client', v: many(filters.clients, (c) => clientName.get(c) || c), fix: () => setOne('clients', []) },
     filters.dept !== ALL && { t: 'Department', v: deptLabelOf(hier, filters.dept), fix: () => setF('dept', ALL) },
     filters.section !== ALL && { t: 'Section', v: (sectionByKey(hier, filters.section) || {}).label || filters.section, fix: () => setF('section', ALL) },
     filters.role !== ALL && { t: 'Role', v: filters.role, fix: () => setOne('role', ALL) },
@@ -696,16 +561,17 @@ export default function Invoices() {
   // Bring one row into view inside the table's own scroll box and light it
   // up for a moment — after a payment, or from the bell.
   const focusRow = (id) => {
-    setHot(id);
-    if (!grouped) {
-      const ix = rows.findIndex((r) => r.id === id);
+    const lead = leadOf.get(id) || id;
+    setHot(lead);
+    if (!grouped && group !== 'client') {
+      const ix = invGroups.findIndex((g) => g.id === lead);
       if (ix >= 0) page.setPage(Math.floor(ix / page.size) + 1);
     }
     setTimeout(() => {
-      const el = document.querySelector(`tr[data-inv="${id}"]`);
+      const el = document.querySelector(`tr[data-inv="${lead}"]`);
       if (el) { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); el.focus({ preventScroll: true }); }
     }, 150);
-    setTimeout(() => setHot((h) => (h === id ? null : h)), 4000);
+    setTimeout(() => setHot((h) => (h === lead ? null : h)), 4000);
   };
   const pickNote = (n) => {
     setMenu(null);
@@ -724,135 +590,27 @@ export default function Invoices() {
     </div>
   );
 
-  // The Form 16A file itself, fetched with the login's token (never a public URL).
-  const viewTdsCert = async (r) => {
-    try {
-      const res = await api.get(`/invoices/${r.id}/tds-certificate/file`, { params: { inline: 1 }, responseType: 'blob' });
-      const url = URL.createObjectURL(res.data);
-      window.open(url, '_blank', 'noopener');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch {
-      setError('The TDS certificate file could not be opened.');
-    }
+
+  // What every client-invoice row and panel can do (ONE set of handlers for both groupings).
+  const handlers = {
+    canPay,
+    canJoin,
+    onPay: (g) => setPayFor({ id: g.id }),
+    onAccount: (g) => setAccountFor({ clientId: g.clientId, client: g.client }),
+    onView: (g) => setViewFor(g),
+    onChanged: load,
+    wa: waOn ? { sel: waSel, toggle: (id) => setWaSel((prev) => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; }) } : null,
   };
-
-  const payable = (r) => canPay && r.pending > 0.5 && r.status !== 'Cancelled';
-
-  const cell = (key, r) => {
-    const cls = [STICKY[key], NUM_COLS.has(key) ? 'num' : ''].filter(Boolean).join(' ') || undefined;
-    switch (key) {
-      case 'inv': return (
-        <td key={key} className={`${cls} inv-no`}>
-          <Link className="inv-mono" to={`/invoices/${r.id}`} title="Open the full invoice">{r.invoiceNumber}</Link>
-          {r.status === 'Cancelled' && <div className="small-muted">cancelled</div>}
-          {r.taxCheck?.level === 'mismatch' && (
-            <div className="inv-taxwarn" title={r.taxCheck.issues.join(' · ')}>Check GST / TDS</div>
-          )}
-        </td>
-      );
-      case 'date': return <td key={key}>{fmtD(r.invoiceDate)}</td>;
-      case 'client': return (
-        <td key={key} className={cls} title={r.client}>
-          <div className="inv-cell-ellip" style={{ fontWeight: 500 }}>{r.client}</div>
-          <div className="small-muted inv-cell-ellip">{r.candidateName || 'no candidate linked'}</div>
-        </td>
-      );
-      case 'btype': return <td key={key}>{r.billingType || '—'}</td>;
-      case 'cgstin': return (
-        <td key={key} className="inv-mono">
-          {r.clientGstin || <span className="small-muted">{r.clientGstinText && r.clientGstinKind !== 'number' ? r.clientGstinText : '—'}</span>}
-        </td>
-      );
-      case 'dept': return <td key={key}>{r.department && r.department !== '—' ? deptLabelOf(hier, r.department) : '—'}</td>;
-      case 'rec': return <td key={key} title={r.recruiter ? undefined : r.attribution || undefined}>{r.recruiter || <span className="small-muted">—</span>}</td>;
-      // P4 — compact tax cells: "18% · ₹18,000.00" with the split / TDS status under it.
-      case 'gst': return (
-        <td key={key} className={cls} title={r.gst > 0.005 ? `${r.gstTypeLabel} — ${r.gstType === 'IGST' ? `IGST ${pct(r.gstPercent)} ${money2(r.igst)}` : `CGST ${pct(r.gstPercent / 2)} ${money2(r.cgst)} + SGST ${pct(r.gstPercent / 2)} ${money2(r.sgst)}`}` : 'No GST on this invoice'}>
-          {r.gst > 0.005 ? <span className="inv-tax">{pct(r.gstPercent)} · {money2(r.gst)}</span> : <span className="small-muted">No GST</span>}
-          {r.gst > 0.005 && <div className="small-muted inv-taxsub">{r.gstType === 'IGST' ? 'IGST' : 'CGST + SGST'}</div>}
-        </td>
-      );
-      case 'tds': return (
-        <td key={key} className={cls} title={r.tds > 0.005 ? `TDS ${pct(r.tdsPercent)} on the amount ${r.tdsBase === 'gross' ? 'after' : 'before'} GST${r.tdsSection ? ` · u/s ${r.tdsSection}` : ''} · ${r.tdsStatus}` : 'No TDS on this invoice'}>
-          {r.tds > 0.005 ? <span className="inv-tax">{pct(r.tdsPercent)} · {money2(r.tds)}</span> : <span className="small-muted">No TDS</span>}
-          {r.tds > 0.005 && <div className="small-muted inv-taxsub">{r.tdsStatus}</div>}
-        </td>
-      );
-      case 'before': case 'after': case 'receivable': case 'received':
-        return (
-          <td key={key} className={cls}>
-            {money2(r[MONEY_FIELD[key]])}
-            {/* B2 — the figure is after an issued credit / debit note. */}
-            {key === 'receivable' && (r.noteCredit || r.noteDebit) && (
-              <div className="cn-tag" title={`As invoiced ${money2(r.asBilled?.receivable)}`}>after {[...(r.noteCredit?.numbers || []), ...(r.noteDebit?.numbers || [])].join(', ')}</div>
-            )}
-          </td>
-        );
-      case 'pending': return (
-        <td key={key} className={cls} style={{ fontWeight: 600, color: r.pending > 0.5 ? 'var(--red)' : undefined }}>
-          {money2(r.pending)}
-          {r.refundOpen > 0.005 && <div className="cn-tag">Refund due {money2(r.refundOpen)}</div>}
-        </td>
-      );
-      case 'pays': return <td key={key} className={cls}>{r.paymentCount}</td>;
-      case 'proof': return (
-        <td key={key}>
-          {r.proofCount > 0
-            ? (
-              <Link to={`/invoices/${r.id}#proof`} className="inv-proof" title={`${r.proofCount} bank statement line(s) prove the payment — open them`}>
-                <span aria-hidden="true">🔗</span>{r.proofCount > 1 ? ` ${r.proofCount}` : ''}
-                <span className="sr-only"> bank proof</span>
-              </Link>
-            )
-            : <span className="small-muted">-</span>}
-        </td>
-      );
-      case 'tdscert': {
-        if (!(r.tds > 0.5)) return <td key={key}><span className="small-muted">-</span></td>;
-        if (r.tdsCertHasFile) return <td key={key}><button type="button" className="link-btn" onClick={() => viewTdsCert(r)}>View</button></td>;
-        if (r.tdsCertReceived) return <td key={key}><Link to={`/invoices/${r.id}#tds`} title="Received — no file uploaded yet">View</Link></td>;
-        return <td key={key}><span className="status priority-medium">Pending</span></td>;
-      }
-      case 'due': return <td key={key}>{fmtD(r.dueDate)}</td>;
-      case 'age': {
-        const old = daysSince(r.invoiceDate);
-        return <td key={key}>{r.pending > 0.5 && r.status !== 'Cancelled' && old != null ? `${Math.max(0, old)} days` : '-'}</td>;
-      }
-      case 'sent': return (
-        <td key={key}>
-          {r.sentVia ? <span className="status priority-low">{r.sentVia} · {fmtD(r.sentDate)}</span> : <span className="status">Not sent</span>}
-        </td>
-      );
-      default: return (
-        <td key={key} className={cls}>
-          <div className="inv-acts">
-            {r.clientId && (
-              <button type="button" className="btn btn-sm" title={`${r.client} — every invoice and receipt, as a ledger`} onClick={() => setAccountFor({ clientId: r.clientId, client: r.client })}>Account</button>
-            )}
-            <button type="button" className="btn btn-sm" onClick={() => navigate(`/invoices/${r.id}`)}>View Invoice</button>
-            {payable(r) && (
-              <button type="button" className="btn btn-sm btn-gold" onClick={() => setPayFor({ id: r.id })}>+ Payment</button>
-            )}
-          </div>
-        </td>
-      );
-    }
-  };
-
-  const rowEl = (r) => (
-    <tr key={r.id} data-inv={r.id} tabIndex={-1} className={`inv-row${hot === r.id ? ' hot' : ''}`}>
-      {active.map(([key]) => cell(key, r))}
-    </tr>
-  );
+  const rowsOf = (list) => <ClientInvoiceRows groups={list} open={openInv} toggle={toggleInv} hot={hot} handlers={handlers} />;
 
   let body;
   if (!grouped) {
-    body = page.slice.map(rowEl);
+    body = rowsOf(page.slice);
   } else {
     body = grouped.map((g) => (
       <Fragment key={`g-${g.key}`}>
         <tr className="inv-grp">
-          <td colSpan={active.length}>
+          <td colSpan={CI_HEADS.length}>
             {/* Pinned to the left edge so the heading stays in view while the table scrolls sideways. */}
             <div className="inv-grp-in">
               <div>
@@ -860,15 +618,15 @@ export default function Invoices() {
                 <span className="small-muted" style={{ marginLeft: 8 }}>{g.list.length} invoice(s)</span>
               </div>
               <div className="inv-grp-sums">
-                <span>Before GST<b>{money2(sumOf(g.list, (r) => r.billing))}</b></span>
-                <span>After GST<b>{money2(sumOf(g.list, (r) => r.invoiceValue))}</b></span>
-                <span>Received<b>{money2(sumOf(g.list, (r) => r.received))}</b></span>
-                <span>Pending<b>{money2(sumOf(g.list, (r) => r.pending))}</b></span>
+                <span>Before GST<b>{money2(sumOf(g.rows, (r) => r.billing))}</b></span>
+                <span>After GST<b>{money2(sumOf(g.rows, (r) => r.invoiceValue))}</b></span>
+                <span>Received<b>{money2(sumOf(g.rows, (r) => r.received))}</b></span>
+                <span>Pending<b>{money2(sumOf(g.rows, (r) => r.pending))}</b></span>
               </div>
             </div>
           </td>
         </tr>
-        {g.list.map(rowEl)}
+        {rowsOf(g.list)}
       </Fragment>
     ));
   }
@@ -937,6 +695,7 @@ export default function Invoices() {
           <p className="inv-lede">Bills raised to clients for the candidates we placed — what was billed, what came in, and what is still owed after TDS.</p>
         </div>
         <div className="inv-head-actions">
+          <AppOmniPanel app="Accounts" className="btn inv-hbtn" />
           <div className="inv-bellwrap" ref={bellRef}>
             <button
               type="button"
@@ -995,8 +754,8 @@ export default function Invoices() {
           </label>
           <span className="invf-count" aria-live="polite">
             {activeBits.length
-              ? `${activeBits.length} filter${activeBits.length > 1 ? 's' : ''} applied · ${rows.length} of ${data.rows.length} invoices`
-              : `No filters applied · all ${data.rows.length} invoices`}
+              ? `${activeBits.length} filter${activeBits.length > 1 ? 's' : ''} applied · ${invGroups.length} of ${allGroups.length} invoices`
+              : `No filters applied · all ${allGroups.length} invoices`}
             {hiddenOn > 0 && ` · ${hiddenOn} of them hidden — turn on “Show all filters” to see`}
           </span>
           <button type="button" className="btn btn-sm invf-clear" disabled={!activeBits.length} onClick={resetAll}>Clear all</button>
@@ -1034,9 +793,9 @@ export default function Invoices() {
             )}
             {showAll && (
               <Field label="Role" count={roleList.length} htmlFor="invf-role">
-                <Combo id="invf-role" value={filters.role} onChange={(e) => setOne('role', e.target.value || ALL)}>
+                <Combo id="invf-role" title="The chosen department's seats — pick one to narrow the Employee list" value={filters.role} onChange={(e) => setF('role', e.target.value)}>
                   <option value="All">All roles</option>
-                  {roleList.map((o) => <option key={o.value} value={o.value}>{`${o.value} (${o.count})`}</option>)}
+                  {roleList.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>)}
                 </Combo>
               </Field>
             )}
@@ -1060,7 +819,7 @@ export default function Invoices() {
                 >
                   <option value="All">Everyone</option>
                   {empList.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${o.count})`}</option>)}
-                  {empList.length === 0 && <option value="__none" disabled>No employees found in this section.</option>}
+                  {empList.length === 0 && <option value="__none" disabled>No employees found for these choices.</option>}
                 </Combo>
                 {empInfo && <span className="invf-note" title={empInfo.text}>{empInfo.text}</span>}
               </Field>
@@ -1303,12 +1062,12 @@ export default function Invoices() {
       )}
 
       <section className="inv-stats" aria-label="Headline figures">
-        <div className="inv-stat"><div className="inv-stat-l">Total candidates</div><div className="inv-stat-v">{st.candidates}</div><div className="small-muted">on {live.length} invoice{live.length === 1 ? '' : 's'}</div></div>
-        <div className="inv-stat"><div className="inv-stat-l">Total clients</div><div className="inv-stat-v">{st.clients}</div><div className="small-muted">{live.length} invoice(s){ni.waiting ? ` · ${ni.waiting} not invoiced yet` : ''}</div></div>
+        <div className="inv-stat" title="Each person counted once, however many invoices name them"><div className="inv-stat-l">Total candidates</div><div className="inv-stat-v">{st.candidates}</div><div className="small-muted">placed on {st.invoices} invoice{st.invoices === 1 ? '' : 's'}</div></div>
+        <div className="inv-stat" title="Clients that have an invoice here (each client counted once, by its own id)"><div className="inv-stat-l">Total clients</div><div className="inv-stat-v">{st.clients}</div><div className="small-muted">{st.invoices} invoice{st.invoices === 1 ? '' : 's'}{ni.waiting ? ` · ${ni.waiting} not invoiced yet` : ''}</div></div>
         <div className="inv-stat"><div className="inv-stat-l">Total amount</div><div className="inv-stat-v">{money(st.total)}</div><div className="small-muted">after GST</div></div>
         <div className="inv-stat good"><div className="inv-stat-l">Amount received</div><div className="inv-stat-v">{money(st.received)}</div><div className="small-muted">{st.receivable ? Math.round((st.received / st.receivable) * 100) : 0}% of what&apos;s receivable</div></div>
-        <div className="inv-stat"><div className="inv-stat-l">Pending amount</div><div className="inv-stat-v">{money(st.pending)}</div><div className="small-muted">after TDS is withheld</div></div>
-        <div className={`inv-stat${st.overdue.length ? ' bad' : ''}`}><div className="inv-stat-l">Overdue invoices</div><div className="inv-stat-v">{st.overdue.length}</div><div className="small-muted">{st.overdue.length ? `${money(sumOf(st.overdue, (r) => r.pending))} past due` : 'nothing past due'}</div></div>
+        <div className="inv-stat" title="What is receivable (after TDS, credit notes and adjustments) minus what has been received"><div className="inv-stat-l">Pending amount</div><div className="inv-stat-v">{money(st.pending)}</div><div className="small-muted">{st.overpaidCount ? `after TDS · ${money(Math.abs(st.overpaid))} received in excess on ${st.overpaidCount} invoice${st.overpaidCount === 1 ? '' : 's'} is set off` : 'after TDS is withheld'}</div></div>
+        <div className={`inv-stat${st.overdueCount ? ' bad' : ''}`} title="Invoices that still owe money and whose due date is before today"><div className="inv-stat-l">Overdue invoices</div><div className="inv-stat-v">{st.overdueCount}</div><div className="small-muted">{st.overdueCount ? `${money(st.overdueAmount)} past due` : 'nothing past due'}</div></div>
       </section>
 
       <section className="inv-panel" aria-label="Aging">
@@ -1354,23 +1113,22 @@ export default function Invoices() {
       <section className="inv-panel inv-tpanel" aria-label="Invoices">
         <div className="inv-tbar">
           <h3>
-            Invoices · {rows.length.toLocaleString('en-IN')}
+            Invoices · {invGroups.length.toLocaleString('en-IN')}
             <span className="count">
-              {rows.length !== data.rows.length ? `of ${data.rows.length} · ` : ''}
+              {invGroups.length !== allGroups.length ? `of ${allGroups.length} · ` : ''}
               {shownCands} candidate{shownCands === 1 ? '' : 's'} · {dropped ? `${dropped} dropped` : 'none dropped'}
             </span>
           </h3>
           <div className="inv-tbar-r">
-            <ColumnChooser columns={COL_OPTIONS} value={cols} onChange={setCols} defaults={DEFAULT_COLS} label="Columns" />
             <label className="inv-inline">Sort
-              <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <Combo value={sort} onChange={(e) => setSort(e.target.value)}>
                 {SORTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
             <label className="inv-inline">Group by
-              <select value={group} onChange={(e) => setGroup(e.target.value)}>
+              <Combo value={group} onChange={(e) => setGroup(e.target.value)}>
                 {GROUP_BY.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
+              </Combo>
             </label>
           </div>
         </div>
@@ -1378,63 +1136,71 @@ export default function Invoices() {
             header row kept under the app top bar and the TOTAL row above the
             bottom bar; Invoice No (+ Client on wide screens) pinned left,
             Actions pinned right (invoices/invTable.css). */}
+        {payCampaign && <AppCampaignModal app="Accounts" audience="clients" ids={payCampaign.ids} onClose={() => setPayCampaign(null)} />}
+        {waOn && <WaResume entityType="invoice" refreshKey={waTick} />}
+        {waOn && waSel.size > 0 && (
+          <div className="wa-banner" role="region" aria-label="Selected invoices">
+            <b>{waSel.size} selected</b>
+            <button type="button" className="btn btn-sm wa-go" onClick={() => setWaBulk({ ids: [...waSel] })}>🟢 Send WhatsApp</button>
+            <button type="button" className="btn btn-sm" title="A payment follow-up campaign to the billing contacts of the clients behind these invoices" onClick={async () => { setPayErr(''); try { const r = await omniShared.post('/sources/invoice-clients', { invoiceIds: [...waSel] }); setPayCampaign({ ids: r.ids }); } catch (e) { setPayErr((e.response && e.response.data && e.response.data.error) || 'Could not prepare the list.'); } }}>Payment follow-up campaign</button>
+            {payErr && <span className="small-muted" role="alert">{payErr}</span>}
+            <button type="button" className="btn btn-sm" onClick={() => setWaSel(new Set())}>Cancel</button>
+          </div>
+        )}
         {group === 'client' ? (
           <div className="inv-tablebox" aria-label="Invoices by client">
             <ClientGroups
               groups={cpage.slice}
               allRows={rows}
-              canPay={canPay}
-              onPay={(id) => setPayFor({ id })}
-              onAccount={(g) => setAccountFor({ clientId: g.clientId, client: g.client })}
-              canBank={canBankView}
+              rowProps={{
+                open: openInv, toggle: toggleInv, hot, handlers, shown: invGroups,
+              }}
             />
           </div>
         ) : (
-          <>
-        <div ref={tableRef} className="inv-tablebox" aria-label="Invoice table — scrolls sideways">
-        <ScrollSync className="inv-grid-wrap" deps={[rows.length, active.length, page.page, page.size, group]}>
-          <table className="inv-grid">
-            <thead>
-              <tr>
-                {active.map(([key, label]) => (
-                  <th key={key} scope="col" className={[STICKY[key], NUM_COLS.has(key) ? 'num' : '', `c-${key}`].filter(Boolean).join(' ')}>{label}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {body}
-              {rows.length === 0 && (
-                <tr>
-                  <td colSpan={active.length} className="small-muted" style={{ textAlign: 'center', padding: 28 }}>
-                    <div className="inv-grp-in" style={{ justifyContent: 'center' }}>
-                      No invoices match these filters
-                      {' '}<button type="button" className="link-btn" onClick={resetAll}>Clear all filters</button>
-                    </div>
-                  </td>
-                </tr>
-              )}
-            </tbody>
-            {rows.length > 0 && (
-              <tfoot>
-                <tr>
-                  {active.map(([key]) => {
-                    const cls = [STICKY[key], NUM_COLS.has(key) ? 'num' : ''].filter(Boolean).join(' ') || undefined;
-                    if (key === 'inv') return <td key={key} className={cls}><span className="tf-k">TOTAL</span> <span className="tf-n">{totals.count} invoice{totals.count === 1 ? '' : 's'}</span></td>;
-                    if (key === 'pays') return <td key={key} className={cls}>{totals.pays}</td>;
-                    if (MONEY_FIELD[key]) return <td key={key} className={cls}>{money2(totals[key])}</td>;
-                    // One continuous band — the empty cells carry no fill or rule of their own.
-                    return <td key={key} className={[cls, 'tf-blank'].filter(Boolean).join(' ')} aria-hidden="true" />;
-                  })}
-                </tr>
-              </tfoot>
-            )}
-          </table>
-        </ScrollSync>
-        </div>
-          </>
+          <div ref={tableRef} className="inv-tablebox" aria-label="Invoice list — one row per client invoice">
+            <ScrollSync fit className="inv-grid-wrap" deps={[invGroups.length, page.page, page.size, group, openInv.size]}>
+              <table className="inv-grid ci-grid">
+                <thead>
+                  <tr className="inv-heads">
+                    {CI_HEADS.map(([key, label]) => (
+                      <th key={key} scope="col" className={ciHeadClass(key)}>{label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {body}
+                  {rows.length === 0 && (
+                    <tr>
+                      <td colSpan={CI_HEADS.length} className="small-muted" style={{ textAlign: 'center', padding: 28 }}>
+                        <div className="inv-grp-in" style={{ justifyContent: 'center' }}>
+                          No invoices match these filters
+                          {' '}<button type="button" className="link-btn" onClick={resetAll}>Clear all filters</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+                {rows.length > 0 && (
+                  <tfoot>
+                    <tr>
+                      <td className="stk-l1"><span className="tf-k">TOTAL</span> <span className="tf-n">{invGroups.length} invoice{invGroups.length === 1 ? '' : 's'}</span></td>
+                      {CI_HEADS.slice(1, -1).map(([key]) => {
+                        const v = { before: totals.before, gst: totals.after - totals.before, after: totals.after, tds: totals.tds, receivable: totals.receivable, received: totals.received, pending: totals.pending }[key];
+                        return v === undefined
+                          ? <td key={key} className="tf-blank" aria-hidden="true" />
+                          : <td key={key} className="num">{money2(v)}</td>;
+                      })}
+                      <td className="tf-blank stk-r" aria-hidden="true" />
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </ScrollSync>
+          </div>
         )}
         {group === 'client' && clientGroups.length > 10 && <Pager page={cpage} noun="clients" />}
-        {group !== 'client' && !grouped && rows.length > 25 && <Pager page={page} noun="invoices" />}
+        {group !== 'client' && !grouped && invGroups.length > 25 && <Pager page={page} noun="invoices" />}
         <p className="inv-foot">
           Fee is the client&apos;s agreed percentage of the candidate&apos;s annual CTC (or a flat fee per hire). GST is charged at the
           client&apos;s rate on the fee — CGST + SGST within our state, IGST when the client is in another state. Clients withhold
@@ -1450,10 +1216,12 @@ export default function Invoices() {
           onClose={() => setAccountFor(null)}
         />
       )}
+      {waBulk && <WaBulkModal entityType="invoice" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => { setWaSel(new Set()); setWaTick((n) => n + 1); }} />}
+      {viewFor && <ClientInvoiceView g={viewFor} docHtml={invoiceDocumentHtml} onClose={() => setViewFor(null)} />}
       {payFor && (
         <PaymentModal
-          rows={data.rows}
-          initialId={payFor.id}
+          rows={allGroups}
+          initialId={payFor.id ? (leadOf.get(payFor.id) || payFor.id) : null}
           onClose={() => setPayFor(null)}
           onSaved={(id, msg) => { setPayFor(null); setFlash(msg); load(); focusRow(id); }}
         />

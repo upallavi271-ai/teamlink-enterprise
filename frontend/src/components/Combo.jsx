@@ -33,6 +33,10 @@ import {
   useLayoutEffect, useMemo, useRef, useState,
 } from 'react';
 import { createPortal } from 'react-dom';
+import './comboCompat.css';
+import './comboCompatHand.css';
+import { cleanCustom, sameOption, resolveCustom, CUSTOM_MAX } from './customValue.js';
+import { matchesText, noMatchText } from './searchMatch.js';
 
 // The text of an <option>'s children, whatever shape they arrive in
 // ({c.name} ({c.code}) is an array, a number is a number, and so on).
@@ -63,11 +67,17 @@ function collect(children, group, out) {
   return out;
 }
 
+const BIG_LIST = 20;
+
 export default function Combo({
   value, onChange, children, creatable = false, disabled = false, required = false,
   className = '', style, placeholder, title, id, name, autoFocus,
-  emptyText = 'No match', onSearch, ...rest
+  emptyText = 'No match', onSearch,
+  // allowCustom (2026-10-14): type your own value when the list has none. customLabel 'Add' = stored in a shared list.
+  allowCustom = false, customLabel = 'Use', validateCustom, onCreateOption, maxCustomLength = CUSTOM_MAX,
+  ...rest
 }) {
+  const free = creatable || allowCustom;
   const options = useMemo(() => collect(children, null, []), [children]);
   const current = value === null || value === undefined ? '' : String(value);
   const selected = options.find((o) => o.value === current);
@@ -79,7 +89,9 @@ export default function Combo({
 
   // What the input shows when it is not being typed into.
   const display = selected ? (selected.value === '' ? '' : selected.label)
-    : (current && creatable ? current : '');
+    : (current && free ? current : '');
+  // A value typed earlier (not in the list) is shown in the list as 'Your own: X'.
+  const own = allowCustom && current && !selected ? current : '';
 
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -95,16 +107,20 @@ export default function Combo({
   useEffect(() => { if (searchRef.current) searchRef.current(open ? query : ''); }, [open, query]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
     // onSearch = the options already come filtered from the server.
-    if (!q || onSearch) return options;
-    return options.filter((o) => o.label.toLowerCase().includes(q) || o.value.toLowerCase().includes(q));
+    if (!query.trim() || onSearch) return options;
+    return options.filter((o) => matchesText(o.label, query) || matchesText(o.value, query));
   }, [options, query]);
 
+  // 2026-10-16: typing always works, also on a phone and also for a short list.
+  const tiny = false;
   const typed = query.trim();
   const exact = filtered.some((o) => o.label.toLowerCase() === typed.toLowerCase());
-  const showCreate = creatable && !!typed && !exact;
-  const rows = showCreate ? [...filtered, { create: true, value: typed, label: typed }] : filtered;
+  const ownRow = own && (!typed || own.toLowerCase().includes(typed.toLowerCase())) ? [{ own: true, value: own, label: `Your own: ${own}` }] : [];
+  const typedClean = allowCustom ? cleanCustom(typed, maxCustomLength) : typed;
+  const dupOfOwn = allowCustom && !!own && own.toLowerCase() === typedClean.toLowerCase();
+  const showCreate = free && !!typedClean && !exact && !dupOfOwn;
+  const rows = [...ownRow, ...filtered, ...(showCreate ? [{ create: true, value: typedClean, label: typedClean }] : [])];
 
   const place = useCallback(() => {
     const el = wrapRef.current;
@@ -153,15 +169,31 @@ export default function Combo({
     onChange?.({ target: { value: next, name }, currentTarget: { value: next, name } });
   }
 
-  function commit(row) {
+  async function commit(row) {
     if (!row || row.disabled) return;
+    if (row.create && allowCustom) { await pickCustom(typed); return; }
     fire(row.value);
     setOpen(false); setQuery('');
   }
 
+  // allowCustom: a case-insensitive match picks the existing option; otherwise the cleaned text is the value.
+  const [customErr, setCustomErr] = useState('');
+  async function pickCustom(raw) {
+    const r = resolveCustom(options, raw, validateCustom);
+    if (r.value === undefined) { setCustomErr(r.error || ''); return false; }
+    let v = r.value;
+    if (!r.existing && onCreateOption) {
+      try { const made = await onCreateOption(v); if (!made) return false; v = made; }
+      catch (e) { setCustomErr((e && e.response && e.response.data && e.response.data.error) || 'That did not save. Try again.'); return false; }
+    }
+    setCustomErr('');
+    fire(v); setOpen(false); setQuery('');
+    return true;
+  }
+
   function openList() {
     if (disabled) return;
-    setQuery('');
+    setQuery(''); setCustomErr('');
     setActive(Math.max(0, options.findIndex((o) => o.value === current)));
     setOpen(true);
   }
@@ -170,7 +202,13 @@ export default function Combo({
     setOpen(false);
     // Creatable: whatever was typed is a real value, so keep it rather than
     // throwing the user's typing away. Searchable: typed junk is dropped.
-    if (!revert && creatable && query.trim() && query.trim() !== display) fire(query.trim());
+    if (!revert && creatable && !allowCustom && query.trim() && query.trim() !== display) fire(query.trim());
+    // allowCustom: keep typed text on leaving only when it is an exact match or nothing in the list matches it.
+    else if (!revert && allowCustom && query.trim() && query.trim() !== display) {
+      const hit = sameOption(options, query);
+      if (hit) fire(hit.value);
+      else if (!filtered.length) { const r = resolveCustom(options, query, validateCustom); if (r.value !== undefined && !onCreateOption) fire(r.value); }
+    }
     setQuery('');
   }
 
@@ -189,6 +227,7 @@ export default function Combo({
       e.preventDefault();
       const row = rows[active];
       if (row) commit(row);
+      else if (allowCustom && typed) pickCustom(typed);
       else if (creatable && typed) { fire(typed); setOpen(false); setQuery(''); }
       return;
     }
@@ -217,21 +256,30 @@ export default function Combo({
         {rows.map((o, i) => (
           <div
             key={`${o.create ? 'new' : 'o'}:${o.value}:${i}`}
+            id={`${listId}-${i}`}
             role="option"
             aria-selected={!o.create && o.value === current}
-            className={`combo-opt${i === active ? ' active' : ''}${o.disabled ? ' disabled' : ''}${o.create ? ' create' : ''}${!o.create && o.value === current ? ' picked' : ''}`}
+            className={`combo-opt${i === active ? ' active' : ''}${o.disabled ? ' disabled' : ''}${o.create ? ' create' : ''}${!o.create && o.value === current ? ' picked' : ''}${o.own ? ' own' : ''}`}
             onMouseEnter={() => setActive(i)}
             onClick={() => commit(o)}
           >
-            {o.create ? <>Use “<b>{o.label}</b>”</> : (o.label || <span className="combo-dim">{hint}</span>)}
+            {o.create ? <>{customLabel} “<b>{o.label}</b>”</> : (o.label || <span className="combo-dim">{hint}</span>)}
             {o.group && !o.create && <span className="combo-group">{o.group}</span>}
           </div>
         ))}
-        {!rows.length && (
-          <div className="combo-opt disabled">
-            {creatable ? 'Type a value…' : emptyText}
+        {options.length > BIG_LIST && !!rows.length && (
+          <div className="combo-count" aria-hidden="true">
+            {query.trim()
+              ? `${filtered.filter((o) => o.value !== '').length} of ${options.length - (blank ? 1 : 0)} shown`
+              : `${options.length - (blank ? 1 : 0)} choices — type to search`}
           </div>
         )}
+        {!rows.length && (
+          <div className="combo-opt disabled">
+            {free ? 'Type a value…' : noMatchText(query, emptyText)}
+          </div>
+        )}
+        {customErr && <div className="combo-opt disabled combo-err" role="alert">{customErr}</div>}
       </div>
     </div>,
     document.body,
@@ -240,10 +288,10 @@ export default function Combo({
   // Only offer "clear" where empty is a value the field actually accepts: a
   // dropdown with no blank option (the workspace switcher, Employment type)
   // has no legal empty state, so clearing it would send junk to the handler.
-  const showClear = !disabled && !!current && !required && (!!blank || creatable);
+  const showClear = !disabled && !!current && !required && (!!blank || free);
 
   return (
-    <div
+    <span
       ref={wrapRef}
       className={`combo${disabled ? ' is-disabled' : ''}${className ? ` ${className}` : ''}`}
       style={style}
@@ -263,6 +311,10 @@ export default function Combo({
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
         aria-autocomplete="list"
+        aria-activedescendant={open && rows.length ? `${listId}-${active}` : undefined}
+        aria-haspopup="listbox"
+        readOnly={tiny || undefined}
+        inputMode={tiny ? 'none' : undefined}
         title={title}
         autoFocus={autoFocus}
         disabled={disabled}
@@ -290,6 +342,6 @@ export default function Combo({
       )}
       <span className="combo-caret" aria-hidden="true" />
       {list}
-    </div>
+    </span>
   );
 }

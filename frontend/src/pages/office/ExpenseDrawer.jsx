@@ -5,10 +5,12 @@
 // Edit (full details), Delete and Close. No page change.
 import { useEffect, useRef, useState } from 'react';
 import api from '../../api';
-import Modal from '../../components/Modal.jsx';
+import BankLineModal from '../bank/BankLineModal.jsx';
 import AddGstin from './AddGstin.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
 import { money2, fmtD } from './officeUtil';
+import { payChip, proofRow, lineRowOf, sameLine } from './paymentProof';
+import './payproof.css';
 
 const when = (v) => {
   if (!v) return '—';
@@ -31,6 +33,7 @@ export default function ExpenseDrawer({
   const [busy, setBusy] = useState('');
   const [adding, setAdding] = useState(false);
   const [note, setNote] = useState('');
+  // The bank statement line behind the proof: { proof, detail, failed, error } while the window is open.
   const [line, setLine] = useState(null);
   const closeRef = useRef(null);
   const fileRef = useRef(null);
@@ -42,8 +45,10 @@ export default function ExpenseDrawer({
       .catch((e) => setErr(e.response?.data?.error || 'The details could not be loaded.'));
   };
   useEffect(() => {
+    // A remembered copy shows at once, but the status is always asked again: it must be the saved one, never a stale one.
     const hit = detailCache.get(id);
-    if (hit) setD(hit); else { setD(null); load(); }
+    if (hit) setD(hit); else setD(null);
+    load();
     setAdding(false); setNote('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
@@ -55,11 +60,17 @@ export default function ExpenseDrawer({
   }, [onClose]);
 
   const refresh = () => { detailCache.drop(id); load(); onChanged(); };
-  // The bank statement line this bill was paid off (the register's "View line").
-  const viewLine = async () => {
-    setLine({ loading: true });
-    try { setLine((await api.get(`/office-expenses/${id}/bank-line`)).data); } catch (e) {
-      setLine(null); setErr(e.response?.data?.error || 'The bank line could not be loaded.');
+  // "View line" opens EXACTLY the line this bill points at, in the same window the Bank statements table uses
+  // (GET /api/banks/:bankId/transactions/:txnId) - the bank and line ids come from the server's checked answer.
+  const viewLine = async (proof) => {
+    setLine({ proof, detail: null, failed: false });
+    try {
+      const r = await api.get(`/banks/${encodeURIComponent(proof.bankId)}/transactions/${encodeURIComponent(proof.txnId)}`);
+      if (!sameLine(r.data, proof)) throw new Error('wrong line');
+      setLine({ proof, detail: r.data, failed: false });
+    } catch (e) {
+      if (e.response && e.response.status === 403) { setLine(null); setErr('Your login cannot open Bank statements, so the line cannot be shown here.'); return; }
+      setLine({ proof, detail: null, failed: true });
     }
   };
   const act = async (action, extra = {}) => {
@@ -102,6 +113,9 @@ export default function ExpenseDrawer({
   const billName = d ? x.proofName : s.bill?.name;
   const billOnServer = d ? !!x.attachment?.onServer : !!s.bill?.onServer;
   const can = x.can || {};
+  const pay = d ? x.payment : null; // the server's one answer: is it really paid, and is the proof link good?
+  const chip = payChip(pay);
+  const proof = proofRow(pay);
   const editable = canManage && d && (can.edit || can.override);
 
   return (
@@ -144,7 +158,11 @@ export default function ExpenseDrawer({
           <Row k="GST %">{`${gstRate || 0}%`}</Row>
           <Row k="GST Amount">{money2(gst)}</Row>
           <Row k="Total">{money2(total)}</Row>
-          <Row k="Status"><ApprovalBadge s={st} /></Row>
+          <Row k="Status">
+            <ApprovalBadge s={st} />
+            {chip && <span className={chip.cls} title={chip.title}>{chip.text}</span>}
+            {pay && pay.state !== 'no_link' && <div className="oe-pay-why small-muted">{pay.reason}</div>}
+          </Row>
           <Row k="Bill / Invoice">
             {(d ? x.billNumber : s.billNumber) && <div className="num">{d ? x.billNumber : s.billNumber}</div>}
             {billName ? (
@@ -176,10 +194,17 @@ export default function ExpenseDrawer({
               {x.paidByUser && <Row k="Marked paid">{x.paidByUser.name} · {when(x.paidAt)}</Row>}
               {st === 'REIMBURSED' && x.reimbursedByUser && <Row k="Reimbursed">{x.reimbursedByUser.name} · {when(x.reimbursedAt)}</Row>}
               {st === 'REJECTED' && <Row k="Rejected">{x.rejectedBy?.name || '—'} · {when(x.rejectedAt)} — <b>{x.rejectionReason}</b></Row>}
-              {x.bankTxnId && (
+              {proof.kind === 'valid' && (
                 <Row k="Proof of payment">
-                  Bank statement line{' '}
-                  <button type="button" className="link-btn" onClick={viewLine}>View line</button>
+                  {proof.title}{' '}
+                  <button type="button" className="link-btn" onClick={() => viewLine(proof)}>View line</button>
+                  {proof.note && <div className="oe-pay-why small-muted">{proof.note} - a linked line is a reference, not a payment, until it is matched to this bill.</div>}
+                </Row>
+              )}
+              {proof.kind === 'broken' && (
+                <Row k="Proof of payment">
+                  <b className="oe-pay-bad">{proof.title}</b>
+                  <div className="oe-pay-why small-muted">{proof.reason}</div>
                 </Row>
               )}
             </>
@@ -216,31 +241,15 @@ export default function ExpenseDrawer({
         <input ref={fileRef} type="file" hidden accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/png,image/jpeg" onChange={onFile} />
       </aside>
       {line && (
-        <Modal title="Bank statement line" note={code} size="wide" onClose={() => setLine(null)}
-          footer={<button type="button" className="btn btn-primary" onClick={() => setLine(null)}>Close</button>}>
-          {line.loading ? <div className="small-muted">Loading the statement…</div> : (
-            <div className="tbl-wrap">
-              <table className="oe-stmt">
-                <thead><tr><th>Date</th><th>Narration</th><th>Ref / UTR</th><th className="num">Debit</th><th className="num">Credit</th><th className="num">Balance</th></tr></thead>
-                <tbody>
-                  {line.around.map((t) => (
-                    <tr key={t.id} className={t.match ? 'oe-stmt-match' : 'oe-stmt-dim'}>
-                      <td className="oe-nowrap">{fmtD(t.date)}</td>
-                      <td>{t.description}</td>
-                      <td className="oe-nowrap">{t.reference || '—'}</td>
-                      <td className="num">{t.type === 'Debit' ? money2(t.amount) : ''}</td>
-                      <td className="num">{t.type === 'Credit' ? money2(t.amount) : ''}</td>
-                      <td className="num">{t.balance != null ? money2(t.balance) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <div className="small-muted" style={{ marginTop: 8 }}>
-                Difference against the bill (after TDS): {Math.abs(line.difference) < 0.5 ? 'exact match' : money2(line.difference)}
-              </div>
-            </div>
-          )}
-        </Modal>
+        <BankLineModal
+          row={lineRowOf(line.proof)}
+          bank={null}
+          detail={line.detail}
+          loading={!line.detail && !line.failed}
+          failed={line.failed}
+          extraRows={[['Bill', <span className="s6-mono">{code}</span>], ['Bill payment', pay ? pay.label : '—']]}
+          onClose={() => setLine(null)}
+        />
       )}
     </>
   );

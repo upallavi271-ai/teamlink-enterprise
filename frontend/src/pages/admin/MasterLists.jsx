@@ -7,6 +7,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 import { refreshSpecTree, loadListMasters } from '../../utils/specMaster';
 import './MasterLists.css';
+import Combo from '../../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // ADMINISTRATION -> MASTER LISTS (spec D + §18, 2026-10-03)
@@ -34,16 +35,16 @@ const HELP = {
   depts: 'Add or switch off departments in Departments & Teams.',
   sources: 'Where a candidate came from — Naukri, Referral, Job Portal.',
   rejectReasons: 'Why someone was rejected. Pick who each reason is for.',
-  priorities: 'How urgent a job is.',
-  locations: 'Cities offered for jobs and candidates.',
-  review: 'The app guessed the specialization of old jobs and people.',
+  priorities: 'How urgent a requirement is.',
+  locations: 'Cities offered for requirements and candidates.',
+  review: 'The app guessed the specialization of old requirements and people.',
 };
 const num = (n) => Number(n || 0).toLocaleString('en-IN');
 const plural = (n, one, many) => `${num(n)} ${n === 1 ? one : many}`;
 const errText = (e, fallback) => e?.response?.data?.error || fallback;
 const usedLine = (jobs, people) => {
   const parts = [];
-  if (jobs) parts.push(plural(jobs, 'job', 'jobs'));
+  if (jobs) parts.push(plural(jobs, 'requirement', 'requirements'));
   if (people) parts.push(plural(people, 'person', 'people'));
   return parts.length ? `Used by ${parts.join(' · ')}` : 'Not used yet';
 };
@@ -302,7 +303,7 @@ function DeptsTab({ master }) {
             <div className="mlx-main">
               <b>{d.name}</b>
               <span className="mlx-used">
-                {[d.jobs ? plural(d.jobs, 'job', 'jobs') : 'No jobs yet',
+                {[d.jobs ? plural(d.jobs, 'requirement', 'requirements') : 'No requirements yet',
                   d.qualifications.length ? plural(d.qualifications.length, 'qualification', 'qualifications') : null,
                   d.specialisations.length ? plural(d.specialisations.length, 'specialization', 'specializations') : null].filter(Boolean).join(' · ')}
               </span>
@@ -340,16 +341,16 @@ function NameModal({
       )}
     >
       <label className="field">
-        <span>Name *</span>
+        <span>Name</span>
         <input autoFocus value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} />
       </label>
       {withQualification && (
         <label className="field">
           <span>Qualification</span>
-          <select value={form.qualificationId || ''} onChange={(e) => setForm({ ...form, qualificationId: e.target.value })}>
+          <Combo value={form.qualificationId || ''} onChange={(e) => setForm({ ...form, qualificationId: e.target.value })}>
             <option value="">No qualification</option>
             {withQualification.filter((q) => q.active || q.id === form.qualificationId).map((q) => <option key={q.id} value={q.id}>{q.name}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       <label className="field">
@@ -366,7 +367,7 @@ function NameModal({
 const LIST_WORDS = {
   sources: { one: 'source', add: '+ Add source', usedBy: ['record', 'records'] },
   rejectReasons: { one: 'reason', add: '+ Add reason', usedBy: ['rejection', 'rejections'] },
-  priorities: { one: 'priority', add: '+ Add priority', usedBy: ['job', 'jobs'] },
+  priorities: { one: 'priority', add: '+ Add priority', usedBy: ['requirement', 'requirements'] },
   locations: { one: 'location', add: '+ Add location', usedBy: ['record', 'records'] },
 };
 const SIDE_LABELS = [['Client', 'Client'], ['Internal', 'Our team'], ['Candidate', 'Candidate']];
@@ -517,7 +518,7 @@ function SimpleNameModal({
       )}
     >
       <label className="field">
-        <span>Name *</span>
+        <span>Name</span>
         <input autoFocus value={name} maxLength={60} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') submit(); }} />
       </label>
       {withSides && (
@@ -606,7 +607,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
     setScanning(true);
     try {
       const r = await api.post('/specialisations/suggestions/scan', {}, { timeout: 180000 });
-      setFlash({ text: `Done. ${num(r.data.requirementSuggestions)} jobs and ${num(r.data.candidateSuggestions)} people have a suggestion. Nothing was changed yet.` });
+      setFlash({ text: `Done. ${num(r.data.requirementSuggestions)} requirements and ${num(r.data.candidateSuggestions)} people have a suggestion. Nothing was changed yet.` });
       setStatus('PENDING');
       setPage(1);
       refresh();
@@ -617,7 +618,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
   const acceptAll = async () => {
     const n = data?.total || 0;
     if (!n) return;
-    if (!window.confirm(`Accept all ${num(n)} suggestions in this list? Each job or person gets the suggested specialization.`)) return;
+    if (!window.confirm(`Accept all ${num(n)} suggestions in this list? Each requirement or person gets the suggested specialization.`)) return;
     setBusy(true);
     try {
       const r = await api.post('/specialisations/suggestions/accept-filter', {
@@ -627,7 +628,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
         },
       });
       refresh();
-      setFlash({ text: `Accepted ${num(r.data.accepted)}: ${plural(r.data.requirements, 'job', 'jobs')} and ${plural(r.data.candidates, 'person', 'people')} updated. Undo one at a time from the Accepted tab.` });
+      setFlash({ text: `Accepted ${num(r.data.accepted)}: ${plural(r.data.requirements, 'requirement', 'requirements')} and ${plural(r.data.candidates, 'person', 'people')} updated. Undo one at a time from the Accepted tab.` });
     } catch (e) {
       setFlash({ text: errText(e, 'Could not accept them. Refresh and try again.'), bad: true });
     } finally { setBusy(false); }
@@ -644,7 +645,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
     <>
       <div className="notice">
         <span>
-          <b>These are only suggestions.</b> Nothing changes on a job or a person until you click <b>Accept</b>.
+          <b>These are only suggestions.</b> Nothing changes on a requirement or a person until you click <b>Accept</b>.
         </span>
       </div>
       <div className="mlx-bar">
@@ -660,7 +661,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
       </div>
       {nothingYet && (
         <div className="mlx-empty">
-          No suggestions yet. Press <b>Find suggestions</b> — the app looks at every job and person that has no specialization yet. It only makes suggestions; it changes nothing.
+          No suggestions yet. Press <b>Find suggestions</b> — the app looks at every requirement and person that has no specialization yet. It only makes suggestions; it changes nothing.
         </div>
       )}
 
@@ -669,36 +670,36 @@ function ReviewTab({ master, setFlash, onCounts }) {
           <input type="search" placeholder="Search old value or reason…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Search suggestions" />
           {typeOpts.length > 0 && (
             <label>
-              <span>Jobs or people</span>
-              <select value={f.entityType} onChange={(e) => setFilter({ entityType: e.target.value })}>
+              <span>Requirements or people</span>
+              <Combo value={f.entityType} onChange={(e) => setFilter({ entityType: e.target.value })}>
                 <option value="">Both</option>
-                {typeOpts.map((o) => <option key={o.value} value={o.value}>{`${o.value === 'REQUIREMENT' ? 'Jobs' : 'People'} (${num(o.count)})`}</option>)}
-              </select>
+                {typeOpts.map((o) => <option key={o.value} value={o.value}>{`${o.value === 'REQUIREMENT' ? 'Requirements' : 'People'} (${num(o.count)})`}</option>)}
+              </Combo>
             </label>
           )}
           {deptOpts.length > 0 && (
             <label>
               <span>Department</span>
-              <select value={f.departmentId} onChange={(e) => setFilter({ departmentId: e.target.value })}>
+              <Combo value={f.departmentId} onChange={(e) => setFilter({ departmentId: e.target.value })}>
                 <option value="">All departments</option>
                 {deptOpts.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${num(o.count)})`}</option>)}
-              </select>
+              </Combo>
             </label>
           )}
           {specOpts.length > 0 && (
             <label>
               <span>Suggested specialization</span>
-              <select value={f.specialisationId} onChange={(e) => setFilter({ specialisationId: e.target.value })}>
+              <Combo value={f.specialisationId} onChange={(e) => setFilter({ specialisationId: e.target.value })}>
                 <option value="">All</option>
                 {specOpts.map((o) => <option key={o.value} value={o.value}>{`${o.label} (${num(o.count)})`}</option>)}
-              </select>
+              </Combo>
             </label>
           )}
           <label>
             <span>How sure</span>
-            <select value={f.conf} onChange={(e) => setFilter({ conf: e.target.value })}>
+            <Combo value={f.conf} onChange={(e) => setFilter({ conf: e.target.value })}>
               {CONF.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
+            </Combo>
           </label>
         </div>
       )}
@@ -722,7 +723,7 @@ function ReviewTab({ master, setFlash, onCounts }) {
           return (
             <div key={s.id} className="mlx-sugg">
               <div className="mlx-sugg-who">
-                <span className="mlx-kind">{s.entityType === 'REQUIREMENT' ? 'Job' : 'Person'}</span>
+                <span className="mlx-kind">{s.entityType === 'REQUIREMENT' ? 'Requirement' : 'Person'}</span>
                 {s.record.link ? <Link to={s.record.link} target="_blank" rel="noreferrer">{s.record.label}</Link> : <b>{s.record.label}</b>}
                 {s.record.sub && <span className="small-muted">{` · ${s.record.sub}`}</span>}
                 <div className="small-muted">{`Old value: ${s.record.oldValue || '—'}${s.record.education ? ` · Education: ${s.record.education}` : ''}`}</div>
@@ -804,14 +805,14 @@ function ChangeModal({
       <div className="small-muted" style={{ marginBottom: 8 }}>{`Old value: ${s.record.oldValue || '—'}`}</div>
       <label className="field">
         <span>Department</span>
-        <select value={deptId} onChange={(e) => { setDeptId(e.target.value); setSpecId(''); }}>
+        <Combo value={deptId} onChange={(e) => { setDeptId(e.target.value); setSpecId(''); }}>
           <option value="">Pick a department</option>
           {master.departments.filter((d) => d.active && d.specialisations.some((x) => x.active)).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-        </select>
+        </Combo>
       </label>
       <label className="field">
         <span>Specialization</span>
-        <select value={specId} onChange={(e) => setSpecId(e.target.value)} disabled={!dept}>
+        <Combo value={specId} onChange={(e) => setSpecId(e.target.value)} disabled={!dept}>
           <option value="">Pick one</option>
           {(dept?.qualifications || []).filter((q) => q.active).map((q) => {
             const list = specs.filter((x) => x.qualificationId === q.id);
@@ -822,7 +823,7 @@ function ChangeModal({
             ) : null;
           })}
           {specs.filter((x) => !x.qualificationId).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
-        </select>
+        </Combo>
       </label>
       <div className="small-muted">Not in the list? Add it on the Specializations tab first.</div>
     </Modal>

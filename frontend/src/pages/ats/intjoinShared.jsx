@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ListToolbar, FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import api from '../../api';
 import Combo from '../../components/Combo.jsx';
+import { clientAliasText } from '../../components/searchMatch.js'; // old client names find a row (matching only)
 import PeopleFilter, { useAtsWorkers, personOptions } from '../../components/PeopleFilter.jsx';
 import HierarchyFilter, { toParams, hierarchyChips, useHierarchy } from '../../components/HierarchyFilter.jsx';
 import MoreFilters from '../../components/ui/MoreFilters.jsx';
@@ -15,7 +16,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { can } from '../../permissions';
 
 export const fmtDate = (iso) => (iso
-  ? new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  ? new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
   : '—');
 export const fmtTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—');
 export const money = (n) => (n === '' || n == null ? '—' : `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`);
@@ -256,7 +257,7 @@ export function IntJoinFilters({
     { key: 'status', label: statusLabel, value: statusOpt ? statusOpt.label : filters.status, onRemove: () => setFilter({ status: '' }) },
     { key: 'hiringType', label: 'Hiring type', value: filters.hiringType, onRemove: () => setFilter({ hiringType: '' }) },
     { key: 'client', label: 'Client', value: filters.client, onRemove: () => setFilter({ client: '' }) },
-    { key: 'requirement', label: 'Job', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
+    { key: 'requirement', label: 'Requirement', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
     { key: 'candidate', label: 'Candidate', value: filters.candidate, onRemove: () => setFilter({ candidate: '' }) },
     { key: 'bde', label: 'Client manager (BDE)', value: bdeLabel, onRemove: () => setFilter({ bde: '' }) },
     { key: 'dates', label: dateLabel, value: dates, onRemove: () => setFilter({ from: '', to: '' }) },
@@ -272,7 +273,7 @@ export function IntJoinFilters({
           <>
             <input
               type="search"
-              placeholder="Search name or job…"
+              placeholder="Search name or requirement…"
               value={filters.q}
               onChange={(e) => setFilter({ q: e.target.value })}
               style={{ minWidth: 220 }}
@@ -293,9 +294,9 @@ export function IntJoinFilters({
           <>
             <label className="lf-sort">
               Sort
-              <select value={filters.sort || ''} onChange={(e) => setFilter({ sort: e.target.value })}>
+              <Combo value={filters.sort || ''} onChange={(e) => setFilter({ sort: e.target.value })}>
                 {sorts.map((s) => <option key={s.key} value={s.key}>{s.label}</option>)}
-              </select>
+              </Combo>
             </label>
             <span className="small-muted lf-count">
               {active && total != null
@@ -307,7 +308,7 @@ export function IntJoinFilters({
       >
         <HierarchyFilter value={h} onChange={setHier} show={{ department: false, section: false, recruiter: false }} />
         {!noClient && clientDesk && sel('client', 'All clients', opts.clients, 'Client')}
-        {sel('requirement', 'All jobs', opts.requirements, 'Job')}
+        {sel('requirement', 'All requirements', opts.requirements, 'Requirement')}
         {sel('candidate', 'All candidates', opts.candidates, 'Candidate')}
         <PeopleFilter role="BDE" department={filters.department} value={filters.bde} onChange={(v) => setFilter({ bde: v })} />
         <span className="lf-dates" title={dateLabel}>
@@ -343,7 +344,7 @@ export function matchesShared(row, filters, dateValue, personIds = null) {
   if (personIds && !personIds.has(row.id)) return false;
   if (filters.hiringType && row.hiringType !== filters.hiringType) return false;
   if (!inRange(dateValue, filters.from, filters.to)) return false;
-  if (q && !`${row.candidate.name} ${row.candidate.email || ''} ${row.requirement.title} ${row.requirement.client?.name || ''} ${row.interviewCode || ''}`.toLowerCase().includes(q)) return false;
+  if (q && !`${row.candidate.name} ${row.candidate.email || ''} ${row.requirement.title} ${row.requirement.client?.name || ''} ${clientAliasText(row.requirement.client?.name)} ${row.interviewCode || ''}`.toLowerCase().includes(q)) return false;
   return true;
 }
 
@@ -360,7 +361,7 @@ export function useIntJoinList(allRows, {
   status = null, // { label, get(row) -> value, text(value) -> label }
   dateOf = () => null,
   defaultSort = '',
-  placeholder = 'Search name or job…',
+  placeholder = 'Search name or requirement…',
   sortOptions = null,
 } = {}) {
   const { user } = useAuth();
@@ -378,7 +379,7 @@ export function useIntJoinList(allRows, {
   ], [clientDesk, status]);
   const searched = useMemo(() => {
     const q = f.q.trim().toLowerCase();
-    return (allRows || []).filter((r) => !q || `${r.candidate.name} ${r.requirement.title} ${r.requirement.client?.name || ''}`.toLowerCase().includes(q));
+    return (allRows || []).filter((r) => !q || `${r.candidate.name} ${r.requirement.title} ${r.requirement.client?.name || ''} ${clientAliasText(r.requirement.client?.name)}`.toLowerCase().includes(q));
   }, [allRows, f.q]);
   const values = useMemo(() => Object.fromEntries(fields.map((x) => [x.key, f[x.key]])), [fields, f]);
   const facets = useLocalFacets(searched, fields, values);
@@ -392,7 +393,7 @@ export function useIntJoinList(allRows, {
     return list;
   }, [searched, fields, values, sort]); // eslint-disable-line react-hooks/exhaustive-deps
   const label = (key, v) => ((facets[key] || []).find((o) => String(o.value) === String(v)) || {}).label || v;
-  const NAMES = { department: 'Department', client: 'Client', job: 'Job', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const NAMES = { department: 'Department', client: 'Client', job: 'Requirement', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
   const chips = [
     ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
     f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
@@ -413,7 +414,7 @@ export function useIntJoinList(allRows, {
           {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
           <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
           {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
-          <FacetSelect label="Job" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All jobs" />
+          <FacetSelect label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
           <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
           <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
         </>
@@ -438,7 +439,7 @@ export function useIntJoinList(allRows, {
 export const PAGE_SIZES_IJ = [25, 50, 100, 200];
 const FILTER_KEYS_IJ = ['department', 'client', 'job', 'recruiter', 'hiringType', 'status'];
 export function useIntJoinPaged(url, {
-  view = 'all', status = null, placeholder = 'Search name or job…', sortOptions = null, defaultSort = '',
+  view = 'all', status = null, placeholder = 'Search name or requirement…', sortOptions = null, defaultSort = '',
 } = {}) {
   const { user } = useAuth();
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
@@ -507,7 +508,7 @@ export function useIntJoinPaged(url, {
     ...(status ? [{ key: 'status' }] : []),
     { key: 'department' }, ...(clientDesk ? [{ key: 'client' }] : []), { key: 'job' }, { key: 'recruiter' }, { key: 'hiringType' },
   ];
-  const NAMES = { department: 'Department', client: 'Client', job: 'Job', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
+  const NAMES = { department: 'Department', client: 'Client', job: 'Requirement', recruiter: 'Recruiter', hiringType: 'Hiring', status: status ? status.label : 'Status' };
   const chips = [
     ...fields.filter((x) => f[x.key]).map((x) => ({ key: x.key, label: NAMES[x.key], value: label(x.key, f[x.key]), onRemove: () => set({ [x.key]: '' }) })),
     f.q && { key: 'q', label: 'Search', value: f.q, onRemove: () => set({ q: '' }) },
@@ -529,7 +530,7 @@ export function useIntJoinPaged(url, {
           {status && <FacetSelect label={status.label} value={f.status} onChange={(v) => set({ status: v })} options={facets.status} allLabel="Any" />}
           <FacetSelect label="Department" value={f.department} onChange={(v) => set({ department: v })} options={facets.department} allLabel="All departments" />
           {clientDesk && <FacetSelect label="Client" value={f.client} onChange={(v) => set({ client: v })} options={facets.client} allLabel="All clients" />}
-          <FacetSelect label="Job" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All jobs" />
+          <FacetSelect label="Requirement" value={f.job} onChange={(v) => set({ job: v })} options={facets.job} allLabel="All requirements" />
           <FacetSelect label="Recruiter" value={f.recruiter} onChange={(v) => set({ recruiter: v })} options={facets.recruiter} allLabel="All recruiters" />
           <FacetSelect label="Hiring" value={f.hiringType} onChange={(v) => set({ hiringType: v })} options={facets.hiringType} allLabel="Both kinds" />
         </>

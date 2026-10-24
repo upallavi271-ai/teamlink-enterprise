@@ -132,7 +132,7 @@ const STATUS_WORDS = {
   Dropped: 'Did not join / left',
 };
 const PAYOUT_WORDS = {
-  Draft: 'Payout being prepared', Approved: 'Payout approved — waiting to be paid', Paid: 'Paid', Cancelled: 'Payout cancelled',
+  Draft: 'Payout waiting for approval', Approved: 'Payout approved — waiting to be paid', Paid: 'Paid', Cancelled: 'Payout cancelled',
 };
 
 // ---- notices ----------------------------------------------------------------
@@ -171,7 +171,7 @@ async function syncSubmission(applicationId, { note = null, userId = null } = {}
     await logAudit({ userId, action: 'Partner submission status changed', entity: 'PartnerSubmission', entityId: sub.id, fromValue: sub.status, toValue: next, reason: note || undefined });
     await noticePartner(sub.partnerId, {
       title: `${sub.name}: ${STATUS_WORDS[next] || next}`,
-      message: `Job: ${app.requirement ? app.requirement.title : ''}. Submission ${sub.code || ''}.`,
+      message: `Requirement: ${app.requirement ? app.requirement.title : ''}. Submission ${sub.code || ''}.`,
       email: true,
     });
     return updated;
@@ -263,7 +263,7 @@ async function expenseCancelled(expenseId, reason, user) {
 
 // ---- payouts ----------------------------------------------------------------------
 async function approvers() {
-  try { return await require('./vendorConfig').billReviewers(); } catch { return []; } // eslint-disable-line global-require
+  try { return await require('./vendorConfig').billReviewers('partnerPayout'); } catch { return []; } // eslint-disable-line global-require
 }
 
 // JOINED (+ the client invoice) → one Draft payout per partner-sourced
@@ -305,7 +305,7 @@ async function onJoined({ applicationId, invoice = null, userId = null }) {
       preparedByName: maker ? maker.name : null,
     });
     await logAudit({
-      userId, action: 'Partner payout drafted', entity: 'PartnerPayout', entityId: payout.id,
+      userId, action: 'Partner payout made', entity: 'PartnerPayout', entityId: payout.id,
       toValue: `${payout.number} · ${partner.name} · ${payout.candidateName} · fee ₹${payout.fee} + GST ₹${payout.gst} − TDS ₹${payout.tds} = ₹${payout.net} · hold until ${payout.holdUntil || '—'}`,
     });
     const who = await approvers();
@@ -344,7 +344,7 @@ async function onLeft({ applicationId, inside, leftOn = null, reason = null, use
           status: 'Draft', preparedById: user ? user.id : null, preparedByName: user ? user.name : null, notes: why,
         });
         // eslint-disable-next-line no-await-in-loop
-        await logAudit({ userId: user ? user.id : null, action: 'Partner clawback drafted', entity: 'PartnerPayout', entityId: cb.id, fromValue: p.number, toValue: `${cb.number} · ₹${cb.net}`, reason: why });
+        await logAudit({ userId: user ? user.id : null, action: 'Partner clawback made', entity: 'PartnerPayout', entityId: cb.id, fromValue: p.number, toValue: `${cb.number} · ₹${cb.net}`, reason: why });
         out.push(cb);
       } else {
         // eslint-disable-next-line no-await-in-loop

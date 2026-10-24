@@ -91,8 +91,8 @@ export default function NoteModal({
         ? await api.patch(`/invoices/credit-notes/${draft.id}`, body)
         : await api.post('/invoices/credit-notes', { ...body, invoiceId: inv.id, kind: k, applicationId: pre.applicationId || undefined });
       onSaved(res.data, draft
-        ? `Saved. The draft ${WORD[k]} now takes ${money2(res.data.net)}.`
-        : `Saved as a draft ${WORD[k]} on ${inv.number}. Another Accounts approver now issues it.`);
+        ? `Saved. The ${WORD[k]} now takes ${money2(res.data.net)}.`
+        : `Saved ${WORD[k]} (not issued yet) on ${inv.number}. Another Accounts approver now issues it.`);
     } catch (e) {
       setFail(e.response?.data?.error || 'The note could not be saved.');
       setBusy(false);
@@ -101,19 +101,19 @@ export default function NoteModal({
 
   return (
     <Modal
-      title={`${draft ? 'Change draft' : 'New'} ${WORD[k]}`}
+      title={`${draft ? 'Change' : 'New'} ${WORD[k]}`}
       onClose={onClose}
       size="wide"
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !inv} onClick={save}>{busy ? 'Saving…' : 'Save draft'}</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !inv} onClick={save}>{busy ? 'Saving…' : 'Save for later'}</button>
         </>
       )}
     >
       <div className="cn-form">
         {!applicationId && !draft && !invoiceId && (
-          <label className="field"><span>Invoice *</span>
+          <label className="field"><span>Invoice</span>
             <Combo value={invId} onChange={(e) => { setPre(null); setInvId(e.target.value); }}>
               <option value="">Pick the invoice…</option>
               {pickable.map((r) => (
@@ -134,19 +134,19 @@ export default function NoteModal({
         {inv && (
           <>
             <div className="cn-grid">
-              <label className="field"><span>Reason *</span>
+              <label className="field"><span>Reason</span>
                 <Combo value={reason} onChange={(e) => setReason(e.target.value)}>
                   <option value="">Pick a reason…</option>
                   {reasons.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
                 </Combo>
               </label>
-              <label className="field"><span>Amount before GST * (₹)</span>
+              <label className="field"><span>Amount before GST (₹)</span>
                 <input type="number" min="1" step="0.01" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={k === 'credit' ? `up to ${inv.maxCredit}` : ''} />
               </label>
               <label className="field"><span>Note date</span>
                 <input type="date" value={date} min={inv.date ? String(inv.date).slice(0, 10) : undefined} onChange={(e) => setDate(e.target.value)} />
               </label>
-              <label className="field cn-span"><span>Details{reason === 'other' ? ' *' : ' (optional)'}</span>
+              <label className="field cn-span"><span>Details{reason === 'other' ? '' : ' (optional)'}</span>
                 <input value={text} maxLength={1000} placeholder="e.g. Candidate left in week 3, client agreed to a credit" onChange={(e) => setText(e.target.value)} />
               </label>
             </div>
@@ -172,7 +172,7 @@ export default function NoteModal({
                 </tbody>
               </table>
             )}
-            <div className="small-muted">Saved as a draft. It changes nothing until another Accounts approver issues it.</div>
+            <div className="small-muted">Saved but not issued. It changes nothing until another Accounts approver issues it.</div>
           </>
         )}
         {fail && <div className="notice red"><span>{fail}</span></div>}

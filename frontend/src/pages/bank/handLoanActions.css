@@ -1,0 +1,64 @@
+/* Hand loans - the Edit and Remove buttons beside the heading, the "which entry?" window and the remove window.
+   Everything is scoped under .hla-* and sits on the .s6-* look of bank-s6.css (white, navy, the same type). */
+
+.hla-title-row { display: flex; align-items: center; gap: 8px 14px; flex-wrap: wrap; min-width: 0; }
+.hla-title-row h3 { flex: 1 1 200px; min-width: 0; overflow-wrap: anywhere; }
+.hla-acts { display: inline-flex; gap: 8px; flex: none; }
+.hla-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 30px; padding: 0 12px; border-radius: 8px; background: #fff;
+  font: inherit; font-size: 12.5px; font-weight: 600; white-space: nowrap; cursor: pointer;
+}
+.hla-btn svg { width: 14px; height: 14px; flex: none; }
+.hla-btn.edit { border: 1.5px solid #2358a3; color: #2358a3; }
+.hla-btn.edit:hover:not(:disabled) { background: #eaf1fb; }
+.hla-btn.remove { border: 1.5px solid var(--s6-red); color: var(--s6-red); }
+.hla-btn.remove:hover:not(:disabled) { background: var(--s6-red-tint); }
+.hla-btn:disabled { opacity: .45; cursor: not-allowed; }
+.hla-btn:focus-visible { outline: 2px solid var(--s6-navy); outline-offset: 2px; }
+.hla-btn.solid-red { background: var(--s6-red); border: 1.5px solid var(--s6-red); color: #fff; height: 34px; font-size: 13px; }
+.hla-btn.solid-red:hover:not(:disabled) { background: #8f2620; }
+
+/* the "which entry?" list */
+.hla-search { width: 100%; height: 36px; border: 1px solid var(--s6-line); border-radius: 8px; padding: 0 12px; font: inherit; font-size: 13.5px; background: #fff; margin-bottom: 10px; box-sizing: border-box; }
+.hla-search:focus { outline: 2px solid rgba(30, 58, 95, .25); border-color: var(--s6-navy); }
+.hla-list { display: flex; flex-direction: column; gap: 8px; }
+.hla-pick {
+  display: block; width: 100%; text-align: left; background: #fff; border: 1px solid var(--s6-line); border-radius: 10px;
+  padding: 10px 12px; font: inherit; color: var(--s6-ink); cursor: pointer; min-width: 0;
+}
+.hla-pick:hover { border-color: var(--s6-navy); background: #f7f9fc; }
+.hla-pick:focus-visible { outline: 2px solid var(--s6-navy); outline-offset: 1px; }
+.hla-pick-top { display: flex; justify-content: space-between; gap: 6px 12px; align-items: baseline; flex-wrap: wrap; }
+.hla-pick-name { font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
+.hla-pick-amt { font-family: var(--s6-mono); font-weight: 700; font-size: 13.5px; }
+.hla-pick-sub { font-size: 12.5px; color: var(--s6-ink-soft); margin-top: 2px; overflow-wrap: anywhere; }
+.hla-pick-note { font-size: 12.5px; color: var(--s6-ink); margin-top: 2px; overflow-wrap: anywhere; }
+.hla-several { font-size: 12px; color: var(--s6-amber); font-weight: 600; margin-bottom: 8px; }
+.hla-empty { padding: 16px; text-align: center; color: var(--s6-ink-soft); font-size: 13.5px; }
+
+/* the remove window */
+.hla-reason { width: 100%; height: 38px; border: 1px solid var(--s6-line); border-radius: 8px; padding: 0 12px; font: inherit; font-size: 13.5px; box-sizing: border-box; }
+.hla-reason:focus { outline: 2px solid rgba(30, 58, 95, .25); border-color: var(--s6-navy); }
+.hla-reason[aria-invalid="true"] { border-color: var(--s6-red); }
+.hla-chips { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0 4px; }
+.hla-label { display: block; font-size: 12.5px; font-weight: 700; color: var(--s6-ink); margin: 12px 0 6px; }
+.hla-err { color: var(--s6-red); font-size: 12px; margin-top: 4px; font-weight: 600; }
+
+/* facts under the edit form */
+.hla-facts { background: var(--s6-panel); border-radius: 10px; padding: 8px 12px; margin-top: 8px; font-size: 12.5px; color: var(--s6-ink-soft); }
+.hla-facts b { color: var(--s6-ink); }
+
+/* removed entries (kept for the record) */
+.hla-removed { margin: 16px 0 0; border: 1px solid var(--s6-line); border-radius: 12px; background: #fff; }
+.hla-removed > summary { cursor: pointer; padding: 10px 14px; font-weight: 700; font-size: 13.5px; list-style: none; }
+.hla-removed > summary::-webkit-details-marker { display: none; }
+.hla-removed > summary::before { content: '▸'; display: inline-block; margin-right: 8px; color: var(--s6-ink-soft); }
+.hla-removed[open] > summary::before { content: '▾'; }
+.hla-removed .s6-tbl { margin: 0 12px 12px; }
+
+@media (max-width: 720px) {
+  .hla-title-row h3 { font-size: 18px; }
+  .hla-acts .hla-btn { height: 34px; }
+  .hla-pick-top { flex-direction: column; gap: 2px; }
+}

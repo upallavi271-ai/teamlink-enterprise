@@ -356,7 +356,7 @@ router.post('/credit-notes', ...notesOnly, requirePerm('accounts', 'accounts', '
     },
   });
   await logAudit({
-    userId: req.user.id, action: `${CN.KIND_LABEL[kind]} drafted`, entity: 'CreditNote', entityId: note.id,
+    userId: req.user.id, action: `${CN.KIND_LABEL[kind]} made (not issued)`, entity: 'CreditNote', entityId: note.id,
     toValue: `${inv.invoiceNumber || inv.id.slice(-6)} · ${money(note.amount)} before GST · net ${money(note.net)} · ${TAX.reasonLabel(kind, note.reason)}`,
   });
   res.status(201).json(CN.shapeNote(note, inv));
@@ -371,14 +371,14 @@ router.patch('/credit-notes/:id', ...notesOnly, requirePerm('accounts', 'account
   const got = await scopedNote(req, res);
   if (!got) return;
   const { note, inv } = got;
-  if (note.status !== 'Draft') return res.status(400).json({ error: `This note is ${note.status.toLowerCase()} — only a draft can be changed.` });
-  if (!(await makerOrApprover(req, note))) return res.status(403).json({ error: 'Only the person who made this draft, or an Accounts approver, can change it.' });
+  if (note.status !== 'Draft') return res.status(400).json({ error: `This note is ${note.status.toLowerCase()} — only a note that is not issued can be changed.` });
+  if (!(await makerOrApprover(req, note))) return res.status(403).json({ error: 'Only the person who made this note, or an Accounts approver, can change it.' });
   const ctx = await invoiceContext(inv);
   const read = readBody(req.body, inv, ctx, note.kind, note);
   if (read.error) return res.status(400).json({ error: read.error });
   const updated = await prisma.creditNote.update({ where: { id: note.id }, data: read.data });
   await logAudit({
-    userId: req.user.id, action: `${CN.KIND_LABEL[note.kind]} draft changed`, entity: 'CreditNote', entityId: note.id,
+    userId: req.user.id, action: `${CN.KIND_LABEL[note.kind]} changed (not issued)`, entity: 'CreditNote', entityId: note.id,
     fromValue: `${money(note.amount)} · net ${money(note.net)}`, toValue: `${money(updated.amount)} · net ${money(updated.net)}`,
   });
   res.json(CN.shapeNote(updated, inv));
@@ -389,10 +389,10 @@ router.delete('/credit-notes/:id', ...notesOnly, requirePerm('accounts', 'accoun
   if (!got) return;
   const { note, inv } = got;
   if (note.status !== 'Draft') return res.status(400).json({ error: 'An issued note is never deleted — cancel it instead.' });
-  if (!(await makerOrApprover(req, note))) return res.status(403).json({ error: 'Only the person who made this draft, or an Accounts approver, can remove it.' });
+  if (!(await makerOrApprover(req, note))) return res.status(403).json({ error: 'Only the person who made this note, or an Accounts approver, can remove it.' });
   await prisma.creditNote.delete({ where: { id: note.id } });
   await logAudit({
-    userId: req.user.id, action: `${CN.KIND_LABEL[note.kind]} draft removed`, entity: 'CreditNote', entityId: note.id,
+    userId: req.user.id, action: `${CN.KIND_LABEL[note.kind]} removed (not issued)`, entity: 'CreditNote', entityId: note.id,
     fromValue: `${inv.invoiceNumber || inv.id.slice(-6)} · ${money(note.amount)}`,
   });
   res.json({ removed: true });
@@ -454,7 +454,7 @@ router.post('/credit-notes/:id/issue', ...notesOnly, async (req, res) => {
   const { note } = got;
   if (!(await CN.isNoteApprover(req.user))) return res.status(403).json({ error: CN.APPROVER_ONLY });
   if (note.createdById && note.createdById === req.user.id) {
-    return res.status(403).json({ error: 'You made this draft, so another approver must issue it (maker-checker).' });
+    return res.status(403).json({ error: 'You made this note, so another approver must issue it (maker-checker).' });
   }
   if (note.status !== 'Draft') return res.status(400).json({ error: `This note is already ${note.status.toLowerCase()}.` });
   // The rates and the limit are re-read now: another note may have been issued since the draft.
@@ -519,7 +519,7 @@ router.post('/credit-notes/:id/cancel', ...notesOnly, async (req, res) => {
   if (!got) return;
   const { note } = got;
   if (!(await CN.isNoteApprover(req.user))) return res.status(403).json({ error: CN.APPROVER_ONLY });
-  if (note.status !== 'Issued') return res.status(400).json({ error: note.status === 'Draft' ? 'A draft is not issued — remove it instead.' : 'Already cancelled.' });
+  if (note.status !== 'Issued') return res.status(400).json({ error: note.status === 'Draft' ? 'This note is not issued — remove it instead.' : 'Already cancelled.' });
   const reason = String(req.body.reason || '').trim().slice(0, 500);
   if (!reason) return res.status(400).json({ error: 'Say why the note is being cancelled.' });
   if (note.refundPaidOn) return res.status(400).json({ error: 'The refund on this note was already paid back to the client — it cannot be cancelled.' });
@@ -595,7 +595,7 @@ async function noteDocument(note, inv) {
     kind: note.kind,
     draft: note.status === 'Draft',
     status: note.status,
-    number: note.number || 'DRAFT',
+    number: note.number || 'NOT ISSUED',
     noteDate: note.noteDate,
     reasonLabel: TAX.reasonLabel(note.kind, note.reason),
     reasonText: note.reasonText || '',
@@ -694,7 +694,7 @@ router.post('/credit-notes/export.xlsx', ...notesOnly, requirePerm('accounts', '
     'Before GST', 'GST type', 'GST %', 'CGST', 'SGST', 'IGST', 'GST', 'TDS %', 'TDS effect', 'Net', 'Set against balance', 'Refund due', 'Refund paid on',
     'Made by', 'Issued by'];
   const aoa = [['Credit & debit notes'], [`Filters: ${String((req.body && req.body.filters) || '').slice(0, 300) || 'none'}`], [], head];
-  list.forEach((r) => aoa.push([r.displayNumber, r.kindLabel, r.status, r.noteDate, r.invoiceNumber, r.invoiceDate || '', r.client || '', r.candidate || '',
+  list.forEach((r) => aoa.push([r.displayNumber, r.kindLabel, r.status === 'Draft' ? 'Not issued' : r.status, r.noteDate, r.invoiceNumber, r.invoiceDate || '', r.client || '', r.candidate || '',
     r.reasonLabel, r.reasonText || '', r.amount, r.gstTypeLabel, r.gstPercent, r.cgst, r.sgst, r.igst, r.gst, r.tdsPercent, r.tds, r.net, r.applied, r.refundDue,
     r.refundPaidOn || '', r.createdByName || '', r.approvedByName || '']));
   if (!list.length) aoa.push(['No note matches these filters']);
@@ -726,7 +726,7 @@ router.get('/margin', requireInternal, async (req, res) => {
     rows,
     totals: marginTotals(rows),
     incentiveSource,
-    rule: 'Margin = fee billed (before GST) + debit notes − credit notes − recruiter incentive − partner payout (the partner fee before GST of every Draft / Approved / Paid payout; a clawback counts back). Payouts: Invoices → Partner payouts.',
+    rule: 'Margin = fee billed (before GST) + debit notes − credit notes − recruiter incentive − partner payout (the partner fee before GST of every payout waiting for approval / approved / paid; a clawback counts back). Payouts: Invoices → Partner payouts.',
   });
 });
 router.post('/margin/export.xlsx', requireInternal, requirePerm('accounts', 'accounts', 'Invoices', 'export'), async (req, res) => {

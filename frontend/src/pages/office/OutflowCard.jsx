@@ -7,6 +7,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import { money, MONTH_FULL } from './officeUtil';
 import './office.css';
+import Combo from '../../components/Combo.jsx';
 
 const monthOfDashSel = (sel) => {
   const m = /^M:(\d{4})-(\d{2})$/.exec(String(sel || ''));
@@ -53,12 +54,12 @@ export default function OutflowCard({ period }) {
           <div className="oe-outflow-n">{data ? money(data.total_outflow) : (err ? '—' : '…')}</div>
         </div>
         <span className="oe-outflow-pick" onClick={stop} onKeyDown={stop} role="presentation">
-          <select className="oe-sel" value={ym[1]} aria-label="Month" onChange={(e) => setYm([ym[0], Number(e.target.value)])}>
+          <Combo className="oe-sel" value={ym[1]} aria-label="Month" onChange={(e) => setYm([ym[0], Number(e.target.value)])}>
             {MONTH_FULL.map((m, i) => <option key={m} value={i}>{m}</option>)}
-          </select>
-          <select className="oe-sel" value={ym[0]} aria-label="Year" onChange={(e) => setYm([Number(e.target.value), ym[1]])}>
+          </Combo>
+          <Combo className="oe-sel" value={ym[0]} aria-label="Year" onChange={(e) => setYm([Number(e.target.value), ym[1]])}>
             {years.map((y) => <option key={y} value={y}>{y}</option>)}
-          </select>
+          </Combo>
         </span>
       </div>
       {err && <div className="oe-mb-err" onClick={stop} role="presentation">{err} <button type="button" className="link-btn" onClick={load}>Retry</button></div>}

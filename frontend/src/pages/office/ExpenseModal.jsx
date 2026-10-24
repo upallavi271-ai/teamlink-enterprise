@@ -347,7 +347,7 @@ export default function ExpenseModal({
           </div>
         )}
         {overriding && (
-          <label className={`field oe-span3${bad('overrideReason') ? ' oe-qx-bad' : ''}`} data-invalid={inv('overrideReason')} onBlur={touch('overrideReason')}><span>Reason for the correction *</span>
+          <label className={`field oe-span3${bad('overrideReason') ? ' oe-qx-bad' : ''}`} data-invalid={inv('overrideReason')} onBlur={touch('overrideReason')}><span>Reason for the correction</span>
             <input value={form.overrideReason} onChange={(e) => set('overrideReason', e.target.value)} placeholder="e.g. Vendor sent a revised invoice — GST rate was 12%, not 18%" />
             <FieldErr k="overrideReason" />
           </label>
@@ -355,7 +355,7 @@ export default function ExpenseModal({
 
         <FormSection id={SECTIONS[0].id} title={SECTIONS[0].title} className="oe-span3" />
         {/* Category · Expense date · Expense account */}
-        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category *</span>
+        <div className={`field${bad('category') ? ' oe-qx-bad' : ''}`} data-invalid={inv('category')} onBlur={touch('category')}><span>Category</span>
           <Combo creatable={!!acc.approver} value={form.category} onChange={(e) => pickCategory(e.target.value)} placeholder={acc.approver ? 'Pick or type a category' : 'Pick a category'} aria-label="Category">
             {[...new Set([...(cats || opts.allCategories || []), ...(form.category ? [form.category] : [])])].sort((a, b) => a.localeCompare(b))
               .map((c) => <option key={c} value={c}>{c}</option>)}
@@ -374,7 +374,7 @@ export default function ExpenseModal({
           )}
           {catErr && <Hint tone="bad">{catErr}</Hint>}
         </div>
-        <label className={`field${bad('expenseDate') ? ' oe-qx-bad' : ''}`} data-invalid={inv('expenseDate')} onBlur={touch('expenseDate')}><span>Expense date *</span>
+        <label className={`field${bad('expenseDate') ? ' oe-qx-bad' : ''}`} data-invalid={inv('expenseDate')} onBlur={touch('expenseDate')}><span>Expense date</span>
           <input type="date" required value={form.expenseDate} onChange={(e) => set('expenseDate', e.target.value)} />
           <FieldErr k="expenseDate" />
         </label>
@@ -386,19 +386,19 @@ export default function ExpenseModal({
 
         {/* Payment frequency · Custom months covered */}
         <label className="field"><span>Payment frequency</span>
-          <select value={form.frequency} onChange={(e) => set('frequency', e.target.value)}>
+          <Combo value={form.frequency} onChange={(e) => set('frequency', e.target.value)}>
             {[...new Set([...FREQ, form.frequency])].map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Custom months covered</span>
           <input type="number" min="1" max="120" step="1" placeholder={`by frequency · ${FREQ_MONTHS[form.frequency] || 1}`} value={form.monthsCovered} onChange={(e) => set('monthsCovered', e.target.value)} />
           <Hint>Blank = what the frequency covers</Hint>
         </label>
         <label className="field"><span>Kind</span>
-          <select value={form.entryKind} onChange={(e) => set('entryKind', e.target.value)}>
+          <Combo value={form.entryKind} onChange={(e) => set('entryKind', e.target.value)}>
             <option value="expense">Expense — money the office spent</option>
             <option value="hand">Hand loan / owner&apos;s money — not an expense</option>
-          </select>
+          </Combo>
         </label>
 
         {/* Reason */}
@@ -409,36 +409,36 @@ export default function ExpenseModal({
 
         <FormSection id={SECTIONS[1].id} title={SECTIONS[1].title} className="oe-span3" />
         {/* Bill amount · GST applicable · GST rate */}
-        <label className={`field${bad('baseAmount') ? ' oe-qx-bad' : ''}`} data-invalid={inv('baseAmount')} onBlur={touch('baseAmount')}><span>Bill amount — before GST (₹) *</span>
+        <label className={`field${bad('baseAmount') ? ' oe-qx-bad' : ''}`} data-invalid={inv('baseAmount')} onBlur={touch('baseAmount')}><span>Bill amount — before GST (₹)</span>
           <input type="number" min="0" step="0.01" required inputMode="decimal" value={form.baseAmount} onChange={(e) => setMoney('baseAmount', e.target.value)} />
           <FieldErr k="baseAmount" />
         </label>
         <label className="field"><span>GST applicable</span>
-          <select value={form.gstApplicable} onChange={(e) => { setMoney('gstApplicable', e.target.value); if (e.target.value === 'Yes' && !(Number(form.gstRatePct) > 0)) set('gstRatePct', '18'); }}>
+          <Combo value={form.gstApplicable} onChange={(e) => { setMoney('gstApplicable', e.target.value); if (e.target.value === 'Yes' && !(Number(form.gstRatePct) > 0)) set('gstRatePct', '18'); }}>
             <option>Yes</option><option>No</option>
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>GST rate (%)</span>
-          <select value={form.gstApplicable === 'Yes' ? form.gstRatePct : '0'} disabled={form.gstApplicable !== 'Yes'} onChange={(e) => setMoney('gstRatePct', e.target.value)}>
+          <Combo value={form.gstApplicable === 'Yes' ? form.gstRatePct : '0'} disabled={form.gstApplicable !== 'Yes'} onChange={(e) => setMoney('gstRatePct', e.target.value)}>
             {[...new Set([...(opts.gstRates || [0, 5, 12, 18, 28]).map(String), String(form.gstRatePct), '0'])]
               .sort((a, b) => Number(a) - Number(b)).map((r) => <option key={r} value={r}>{r}%</option>)}
-          </select>
+          </Combo>
         </label>
 
         {/* TDS applicable · TDS rate · Goods or service */}
         <label className="field"><span>TDS applicable</span>
-          <select value={form.tdsApplicable} onChange={(e) => { setMoney('tdsApplicable', e.target.value); if (e.target.value === 'Yes' && !(Number(form.tdsRatePct) > 0)) set('tdsRatePct', '10'); }}>
+          <Combo value={form.tdsApplicable} onChange={(e) => { setMoney('tdsApplicable', e.target.value); if (e.target.value === 'Yes' && !(Number(form.tdsRatePct) > 0)) set('tdsRatePct', '10'); }}>
             <option>No</option><option>Yes</option>
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>TDS rate (%)</span>
-          <select value={form.tdsApplicable === 'Yes' ? form.tdsRatePct : '0'} disabled={form.tdsApplicable !== 'Yes'} onChange={(e) => setMoney('tdsRatePct', e.target.value)}>
+          <Combo value={form.tdsApplicable === 'Yes' ? form.tdsRatePct : '0'} disabled={form.tdsApplicable !== 'Yes'} onChange={(e) => setMoney('tdsRatePct', e.target.value)}>
             {[...new Set([...(opts.tdsRates || [0, 1, 2, 5, 10]).map(String), String(form.tdsRatePct), '0'])]
               .sort((a, b) => Number(a) - Number(b)).map((r) => <option key={r} value={r}>{r}%</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Goods or service</span>
-          <select value={form.supplyType} onChange={(e) => set('supplyType', e.target.value)}>{SUPPLY.map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.supplyType} onChange={(e) => set('supplyType', e.target.value)}>{SUPPLY.map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
 
         {/* HSN/SAC */}
@@ -471,27 +471,27 @@ export default function ExpenseModal({
 
         {/* GST treatment · Source of supply · Destination of supply */}
         <label className="field"><span>GST treatment</span>
-          <select value={form.gstTreatment} onChange={(e) => set('gstTreatment', e.target.value)}>{[...new Set([...TREAT, form.gstTreatment])].map((x) => <option key={x}>{x}</option>)}</select>
+          <Combo value={form.gstTreatment} onChange={(e) => set('gstTreatment', e.target.value)}>{[...new Set([...TREAT, form.gstTreatment])].map((x) => <option key={x}>{x}</option>)}</Combo>
         </label>
         <label className="field"><span>Source of supply</span>
-          <select value={form.sourceState} onChange={(e) => set('sourceState', e.target.value)}>
+          <Combo value={form.sourceState} onChange={(e) => set('sourceState', e.target.value)}>
             <option value="">— State —</option>
             {[...new Set([...STATES, form.sourceState].filter(Boolean))].map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Destination of supply</span>
-          <select value={form.destState} onChange={(e) => set('destState', e.target.value)}>
+          <Combo value={form.destState} onChange={(e) => set('destState', e.target.value)}>
             <option value="">— State —</option>
             {[...new Set([...STATES, form.destState].filter(Boolean))].map((x) => <option key={x}>{x}</option>)}
-          </select>
+          </Combo>
           {form.sourceState && form.destState && <Hint>{interState ? 'Inter-state — IGST' : 'Within the state — CGST + SGST'}</Hint>}
         </label>
 
         {/* Reverse charge */}
         <label className="field"><span>Reverse charge</span>
-          <select value={form.reverseCharge} onChange={(e) => set('reverseCharge', e.target.value)}>
+          <Combo value={form.reverseCharge} onChange={(e) => set('reverseCharge', e.target.value)}>
             <option>No</option><option>Yes</option>
-          </select>
+          </Combo>
         </label>
 
         <FormSection id={SECTIONS[3].id} title={SECTIONS[3].title} className="oe-span3" />
@@ -510,9 +510,9 @@ export default function ExpenseModal({
 
         {/* Payment mode · Bill no · Payment status */}
         <label className="field"><span>Payment mode</span>
-          <select value={form.paymentMode} onChange={(e) => set('paymentMode', e.target.value)}>
+          <Combo value={form.paymentMode} onChange={(e) => set('paymentMode', e.target.value)}>
             {[...new Set(['Cash', 'Bank Transfer', 'UPI', 'Cheque', ...(opts.modes || []), form.paymentMode])].map((m) => <option key={m}>{m}</option>)}
-          </select>
+          </Combo>
         </label>
         <label className="field"><span>Bill / Invoice no</span>
           <input value={form.billNumber} onChange={(e) => set('billNumber', e.target.value)} placeholder="The vendor's invoice number" />
@@ -524,10 +524,10 @@ export default function ExpenseModal({
           </div>
         ) : (
           <label className="field"><span>Status on saving</span>
-            <select value={form.approvalStatus} onChange={(e) => set('approvalStatus', e.target.value)}>
+            <Combo value={form.approvalStatus} onChange={(e) => set('approvalStatus', e.target.value)}>
               <option value="PENDING">Pending</option>
               <option value="PAID">Paid (signed off by me)</option>
-            </select>
+            </Combo>
             <Hint>Approver only — recorded as your sign-off</Hint>
           </label>
         )}

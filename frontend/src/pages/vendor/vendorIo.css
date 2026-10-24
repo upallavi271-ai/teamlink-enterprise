@@ -1,0 +1,29 @@
+/* Export + Import buttons of the vendor portals (VendorIo.jsx, 2026-10-19). Scoped under .vio-*. */
+.vio-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 10px; }
+.vio-btns { display: flex; flex-wrap: wrap; gap: 6px; }
+.vio-note { font-size: 12.5px; max-width: 520px; }
+.vio-assets { background: var(--line-soft, #eef3f1); border-radius: 8px; padding: 4px 8px; }
+.vio-ok { font-size: 12.5px; color: var(--green, #0F6B4F); }
+.vio-err { font-size: 12.5px; color: var(--red, #b3261e); max-width: 640px; }
+.vio-dlg { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.vio-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; }
+.vio-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+.vio-cols { overflow-wrap: anywhere; }
+.vio-wait { padding: 10px; border: 1px dashed var(--line, #dde5e2); border-radius: 10px; text-align: center; color: var(--ink-soft, #56666E); }
+.vio-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.vio-card { border: 1px solid var(--line, #dde5e2); border-left-width: 5px; border-radius: 10px; padding: 8px 10px; background: var(--paper-raised, #fff); display: flex; flex-direction: column; }
+.vio-card b { font-size: 20px; line-height: 1.2; }
+.vio-card span { font-size: 12.5px; color: var(--ink-soft, #56666E); }
+.vio-card.green { border-left-color: var(--st-green, #1f9d55); }
+.vio-card.blue { border-left-color: var(--st-blue, #2a78d6); }
+.vio-card.red { border-left-color: var(--st-red, #d03b3b); }
+.vio-chk { font-size: 13px; display: inline-flex; gap: 6px; align-items: center; }
+.vio-table { max-height: 320px; overflow: auto; }
+.vio-table table { width: 100%; }
+.vio-wrap { overflow-wrap: anywhere; word-break: break-word; min-width: 120px; }
+.vio-more { padding: 6px; }
+@media (max-width: 640px) { .vio-note, .vio-err { max-width: 100%; } .vio-table { max-height: 260px; } }
+.vio-updated { font-size: 12.5px; margin: -4px 0 8px; }
+.vio-tabs { margin: 0 0 8px; }
+.vio-wt { white-space: normal; max-width: 150px; text-align: left; border-radius: 10px; line-height: 1.3; padding-top: 3px; padding-bottom: 3px; }
+.vio-table td, .vio-table th { white-space: normal; vertical-align: top; } .vio-table td:first-child, .vio-table th:first-child { width: 44px; } @media (max-width: 640px) { .vio-table td, .vio-table th { padding: 8px 6px; } }

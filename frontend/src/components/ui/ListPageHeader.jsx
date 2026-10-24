@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
 import FilterChips from '../FilterChips.jsx';
 import './ListPageHeader.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE SAME LAYOUT IN EVERY MODULE (user's spec 2026-10-03 §B):
@@ -126,9 +127,9 @@ export function ListToolbar({
         {sortOptions && sortOptions.length > 1 && (
           <label className="lph-sort">
             <span>Sort</span>
-            <select value={sort} onChange={(e) => onSort(e.target.value)}>
+            <Combo value={sort} onChange={(e) => onSort(e.target.value)}>
               {sortOptions.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-            </select>
+            </Combo>
             {sortExtra}
           </label>
         )}
@@ -175,12 +176,12 @@ export function FacetSelect({
   return (
     <label className="lph-facet" title={title || label}>
       <span className="lph-facet-lbl">{label}</span>
-      <select value={value || ''} onChange={(e) => onChange(e.target.value)} style={style}>
+      <Combo value={value || ''} onChange={(e) => onChange(e.target.value)} style={style}>
         <option value="">{allLabel || 'Any'}</option>
         {list.map((o) => (
           <option key={o.value} value={o.value}>{`${o.label}${o.count !== undefined && o.count !== null ? ` (${Number(o.count).toLocaleString('en-IN')})` : ''}`}</option>
         ))}
-      </select>
+      </Combo>
     </label>
   );
 }

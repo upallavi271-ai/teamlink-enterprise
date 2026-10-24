@@ -3,7 +3,8 @@ import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
 import { PRIORITY_CHOICES, priorityLabel } from './reqFormat.jsx';
-import { TlOptions, RecruiterOptions, leastBusyTl } from './assignPeople.jsx';
+import { TlOptions, RecruiterOptions, RecruiterMulti, leastBusyTl } from './assignPeople.jsx';
+import TlChecklist from './TlChecklist.jsx'; // several team leads as checkboxes (2026-10-14)
 import './jobops.css';
 
 // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const [bench, setBench] = useState(null); // { departments, jobs, people }
   const [dept, setDept] = useState('');
   const [userId, setUserId] = useState('');
+  const [userIds, setUserIds] = useState([]); // several recruiters at once (2026-10-13); the first is the main one
   const [recommended, setRecommended] = useState('');
   const [priority, setPriority] = useState('');
   const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
         // the only one, or the least busy of several — so it is one click.
         if (kind === 'assign-tl' && named.length === 1) {
           const best = leastBusyTl((d.people || []).filter((p) => (p.atsRole || p.role) === 'TL'), named[0].name);
-          if (best) { setUserId(best.id); setRecommended(best.id); }
+          if (best) { setUserId(best.id); setRecommended(best.id); setUserIds([best.id]); }
         }
       })
       .catch(() => { setBench({ departments: [], jobs: [], people: [] }); setError('Could not load the people you can assign.'); });
@@ -86,7 +88,10 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
   const people = assign && bench
     ? bench.people.filter((p) => anyDept || !dept || (p.departments || [p.atsDepartment]).includes(dept))
     : [];
-  const ready = assign ? !!userId && jobs.length > 0 : !!priority;
+  const multi = kind === 'assign-recruiter'; // pick one or MORE recruiters, as checkboxes grouped by team (2026-10-14)
+  const multiTl = kind === 'assign-tl'; // pick one or MORE team leads, as checkboxes (2026-10-14)
+  const several = multi || multiTl;
+  const ready = assign ? (several ? userIds.length > 0 : !!userId) && jobs.length > 0 : !!priority;
   const one = items.length === 1;
 
   async function run() {
@@ -99,7 +104,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
       for (let i = 0; i < jobs.length; i += BATCH) {
         const ids = jobs.slice(i, i + BATCH).map((x) => x.id);
         // eslint-disable-next-line no-await-in-loop
-        const res = await api.post('/requirements/bulk', assign ? { action: kind, ids, userId, undoId } : { action: kind, ids, priority });
+        const res = await api.post('/requirements/bulk', assign ? { action: kind, ids, userId: several ? userIds[0] : userId, ...(several && userIds.length > 1 ? { userIds } : {}), undoId } : { action: kind, ids, priority });
         all.push(...(res.data.results || []));
         undoId = res.data.undoId || undoId;
         targetName = res.data.targetName || targetName;
@@ -131,8 +136,8 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
     const okRows = result.rows.filter((x) => x.ok);
     const bad = result.rows.filter((x) => !x.ok);
     const headline = assign
-      ? (okRows.length ? `Assigned ${result.targetName || 'them'} to ${plural(okRows.length, 'job', 'jobs')}.` : 'Nothing was changed.')
-      : (okRows.length ? `Priority changed on ${plural(okRows.length, 'job', 'jobs')}.` : 'Nothing was changed.');
+      ? (okRows.length ? `Assigned ${result.targetName || 'them'} to ${plural(okRows.length, 'requirement', 'requirements')}.` : 'Nothing was changed.')
+      : (okRows.length ? `Priority changed on ${plural(okRows.length, 'requirement', 'requirements')}.` : 'Nothing was changed.');
     return (
       <Modal
         title={TITLES[kind]}
@@ -151,7 +156,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
           {!undone && assign && okRows.length > 0 && <div className="small-muted">You can undo this for 24 hours.</div>}
           {bad.length > 0 && (
             <details className="jobops-left" open={bad.length <= 5}>
-              <summary>{`${plural(bad.length, 'job was', 'jobs were')} not changed — see why`}</summary>
+              <summary>{`${plural(bad.length, 'requirement was', 'requirements were')} not changed — see why`}</summary>
               <div className="reqbulk-results">
                 {bad.map((x) => (
                   <div key={x.id} className="reqbulk-row">
@@ -170,13 +175,13 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
 
   return (
     <Modal
-      title={`${TITLES[kind]} — ${one ? (items[0].reqCode || items[0].title) : plural(items.length, 'job', 'jobs')}`}
+      title={`${TITLES[kind]} — ${one ? (items[0].reqCode || items[0].title) : plural(items.length, 'requirement', 'requirements')}`}
       onClose={onClose}
       footer={(
         <>
           <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
           <button type="button" className="btn btn-primary" disabled={!ready || busy} onClick={run}>
-            {busy ? 'Working…' : `${TITLES[kind]}${!one && jobs.length ? ` to ${plural(jobs.length, 'job', 'jobs')}` : ''}`}
+            {busy ? 'Working…' : `${TITLES[kind]}${!one && jobs.length ? ` to ${plural(jobs.length, 'requirement', 'requirements')}` : ''}`}
           </button>
         </>
       )}
@@ -184,7 +189,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
       <div className="jobops">
         {!assign ? (
           <label className="field">
-            <span>Priority *</span>
+            <span>Priority</span>
             <Combo value={priority} onChange={(e) => setPriority(e.target.value)}>
               <option value="">Choose…</option>
               {PRIORITY_CHOICES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
@@ -194,7 +199,7 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
           <>
             {many && (
               <>
-                <p className="jobops-lead">These jobs are in different departments. Do one department at a time.</p>
+                <p className="jobops-lead">These requirements are in different departments. Do one department at a time.</p>
                 <div className="jobops-depts" role="group" aria-label="Department">
                   {depts.map((d) => (
                     <button
@@ -209,11 +214,28 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
                 </div>
               </>
             )}
+            {multiTl && (
+              <div className="field">
+                <span>Team leads</span>
+                <TlChecklist tls={people} loading={bench === null} value={userIds} department={dept} onChange={setUserIds} />
+              </div>
+            )}
+            {multi && (
+              <div className="field">
+                <span>Recruiters</span>
+                <RecruiterMulti
+                  bench={bench && { groups: bench.groups || [{ key: 'all', label: dept || 'Recruiters', people }] }}
+                  value={{ recruiterId: userIds[0] || '', recruiterIds: userIds.slice(1) }}
+                  onChange={(r) => setUserIds([r.recruiterId, ...r.recruiterIds].filter(Boolean))}
+                />
+              </div>
+            )}
+            {!several && (
             <label className="field">
               <span>
                 {anyDept
-                  ? `${kind === 'assign-tl' ? 'Team lead — any department' : 'Recruiter — least busy first'} *`
-                  : `${kind === 'assign-tl' ? 'Team lead' : 'Recruiter'}${dept ? ` in ${dept}` : ''} *`}
+                  ? `${kind === 'assign-tl' ? 'Team lead — any department' : 'Recruiter — least busy first'}`
+                  : `${kind === 'assign-tl' ? 'Team lead' : 'Recruiter'}${dept ? ` in ${dept}` : ''}`}
               </span>
               <Combo value={userId} onChange={(e) => setUserId(e.target.value)} disabled={bench === null}>
                 <option value="">
@@ -223,21 +245,22 @@ export default function RequirementBulk({ kind, items, onClose, onDone }) {
                 {anyDept && kind !== 'assign-tl' && RecruiterOptions({ groups: bench.groups || [] })}
                 {!anyDept && people.map((p) => (
                   <option key={p.id} value={p.id}>
-                    {`${p.name}${p.seat ? ` · ${p.seat.code || p.seat}` : ''} · ${p.openJobs ? plural(p.openJobs, 'open job', 'open jobs') : 'no open jobs'}`}
+                    {`${p.name}${p.seat ? ` · ${p.seat.code || p.seat}` : ''} · ${p.openJobs ? plural(p.openJobs, 'open requirement', 'open requirements') : 'no open requirements'}`}
                   </option>
                 ))}
               </Combo>
             </label>
-            {kind === 'assign-tl' && recommended && userId === recommended && (() => {
+            )}
+            {kind === 'assign-tl' && recommended && (multiTl ? (userIds.length === 1 && userIds[0] === recommended) : userId === recommended) && (() => {
               const p = people.find((x) => x.id === recommended);
-              return p ? <div className="jobops-ok">{`Recommended: ${p.name} — the ${dept || 'department'} team lead with the fewest open jobs. You can pick someone else.`}</div> : null;
+              return p ? <div className="jobops-ok">{`Recommended: ${p.name} — the ${dept || 'department'} team lead with the fewest open requirements. You can pick someone else.`}</div> : null;
             })()}
-            {anyDept && kind !== 'assign-tl' && (() => {
+            {anyDept && kind !== 'assign-tl' && !userIds.length && (() => {
               const top = people.find((p) => p.leastBusy);
               return top ? <div className="jobops-ok">{`Least busy: ${top.name}`}</div> : null;
             })()}
             {bench && !bench.jobs.length && (
-              <div className="error-text">These jobs are outside your area, so you cannot assign them.</div>
+              <div className="error-text">These requirements are outside your area, so you cannot assign them.</div>
             )}
             {bench && bench.jobs.length > 0 && !people.length && (
               <div className="small-muted">{`Ask an Admin to add a ${lower} for ${dept || 'this department'} in Administration → Users.`}</div>

@@ -55,6 +55,7 @@ async function access(user) {
 }
 
 const INCLUDE = { partner: { select: { name: true, type: true, gstin: true, paymentTermsDays: true, gstRegistered: true, tdsSection: true, tdsPercent: true, feeType: true, feePercent: true, feeFixed: true, guaranteeDays: true } } };
+const word = (s) => (s === 'Draft' ? 'Waiting for approval' : s); // the stored value stays Draft; people read this
 const onHold = (p) => !!(p.holdUntil && p.holdUntil > P.todayIst() && ['Draft', 'Approved'].includes(p.status));
 function view(p, extra = {}) {
   return {
@@ -63,7 +64,7 @@ function view(p, extra = {}) {
     candidateName: p.candidateName, requirementTitle: p.requirementTitle, clientName: p.clientName, joinedOn: p.joinedOn, month: p.joinedOn ? String(p.joinedOn).slice(0, 7) : null,
     ctc: p.ctc, feeType: p.feeType, feePercent: p.feePercent, feeFixed: p.feeFixed, fee: p.fee, gstPercent: p.gstPercent, gst: p.gst, tdsSection: p.tdsSection, tdsPercent: p.tdsPercent, tds: p.tds, net: p.net,
     holdUntil: p.holdUntil, onHold: onHold(p), status: p.status,
-    statusText: p.status === 'Cancelled' ? 'Cancelled' : (onHold(p) ? `${p.status} · on hold until ${p.holdUntil}` : (p.status === 'Approved' ? 'Approved · to be paid' : p.status)),
+    statusText: p.status === 'Cancelled' ? 'Cancelled' : (onHold(p) ? `${word(p.status)} · on hold until ${p.holdUntil}` : (p.status === 'Approved' ? 'Approved · to be paid' : word(p.status))),
     preparedByName: p.preparedByName, approvedByName: p.approvedByName, approvedAt: p.approvedAt, paidOn: p.paidOn, paidRef: p.paidRef, paidMode: p.paidMode, paidByName: p.paidByName, bankTxnId: p.bankTxnId,
     expenseId: p.expenseId, expenseCode: extra.expenseCode || null, cancelReason: p.cancelReason, cancelledByName: p.cancelledByName, notes: p.notes,
     partnerInvoice: p.partnerInvoiceFile ? { name: p.partnerInvoiceName, number: p.partnerInvoiceNumber, date: p.partnerInvoiceDate, size: p.partnerInvoiceSize } : null,
@@ -119,11 +120,12 @@ router.get('/', async (req, res) => {
   const q = req.query || {};
   const all = await decorate(await prisma.partnerPayout.findMany({ include: INCLUDE, orderBy: { createdAt: 'desc' } }));
   const s = str(q.q).toLowerCase();
+  const oldNames = s ? await require('../utils/clientSearch').aliasNameMap().catch(() => new Map()) : new Map(); // eslint-disable-line global-require
   const pass = (r, skip) => (skip === 'partnerId' || !str(q.partnerId) || r.partnerId === str(q.partnerId))
     && (skip === 'status' || !str(q.status) || r.status === str(q.status))
     && (skip === 'client' || !str(q.client) || r.clientName === str(q.client))
     && (skip === 'month' || !str(q.month) || r.month === str(q.month))
-    && (!s || [r.number, r.candidateName, r.partner, r.clientName, r.requirementTitle, r.invoiceNumber, r.paidRef].some((v) => String(v || '').toLowerCase().includes(s)));
+    && (!s || [r.number, r.candidateName, r.partner, r.clientName, ...(oldNames.get(String(r.clientName || '').trim().toLowerCase()) || []), r.requirementTitle, r.invoiceNumber, r.paidRef].some((v) => String(v || '').toLowerCase().includes(s)));
   const rows = all.filter((r) => pass(r));
   const facet = (key, label, skip) => {
     const m = new Map();
@@ -135,7 +137,7 @@ router.get('/', async (req, res) => {
     totals: totalsOf(rows),
     facets: {
       partnerId: facet((r) => r.partnerId, (r) => r.partner, 'partnerId'),
-      status: facet((r) => r.status, (r) => r.status, 'status'),
+      status: facet((r) => r.status, (r) => word(r.status), 'status'),
       client: facet((r) => r.clientName, (r) => r.clientName, 'client'),
       month: facet((r) => r.month, (r) => r.month, 'month'),
     },
@@ -163,14 +165,14 @@ router.post('/create-for/:applicationId', requirePerm('accounts', 'accounts', 'I
   if (!inv) return res.status(409).json({ error: 'Raise the client invoice first (Invoices → Joined, not invoiced). The payout follows the invoice.' });
   const p = await P.onJoined({ applicationId: app.id, invoice: inv, userId: req.user.id });
   if (!p) return res.status(500).json({ error: 'Could not make the payout. Check the partner master (fee terms).' });
-  return respond(res, p.id, `${p.number} drafted.`);
+  return respond(res, p.id, `${p.number} made.`);
 });
 
 // Draft edits: the fee (override), notes, the hold date (Admin). Re-computed on the server.
 router.patch('/:id', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {
   const p = await load(req.params.id);
   if (!p) return res.status(404).json({ error: 'Payout not found.' });
-  if (p.status !== 'Draft') return res.status(409).json({ error: `Only a Draft can be edited — this one is ${p.status}.` });
+  if (p.status !== 'Draft') return res.status(409).json({ error: `Only a payout waiting for approval can be edited — this one is ${p.status}.` });
   const b = req.body || {};
   const data = {}; const changes = [];
   if (b.fee !== undefined && b.fee !== '' && b.fee !== null) {
@@ -201,7 +203,7 @@ router.post('/:id/approve', async (req, res) => {
   if (p.preparedById && p.preparedById === req.user.id) {
     return res.status(403).json({ error: `Maker-checker: ${p.preparedByName || 'you'} prepared this payout, so a different approver must approve it.`, makerChecker: true });
   }
-  if (!(Math.abs(p.net) > 0)) return res.status(409).json({ error: 'The payout is ₹0 — set the fee first (edit the draft) or cancel it.' });
+  if (!(Math.abs(p.net) > 0)) return res.status(409).json({ error: 'The payout is ₹0 — set the fee first (edit the payout) or cancel it.' });
   const partner = await prisma.partner.findUnique({ where: { id: p.partnerId } });
   const terms = Number(partner.paymentTermsDays || 0);
   const byTerms = P.addDays(P.todayIst(), terms);
@@ -219,7 +221,7 @@ router.post('/:id/approve', async (req, res) => {
     }
   }
   await logAudit({
-    userId: req.user.id, actorName: actorOf(req), action: p.kind === 'CLAWBACK' ? 'Partner clawback approved' : 'Partner payout approved', entity: 'PartnerPayout', entityId: p.id, fromValue: 'Draft',
+    userId: req.user.id, actorName: actorOf(req), action: p.kind === 'CLAWBACK' ? 'Partner clawback approved' : 'Partner payout approved', entity: 'PartnerPayout', entityId: p.id, fromValue: 'Waiting for approval',
     toValue: `${p.number} · ${partner.name} · ₹${p.net}${expense ? ` · booked as ${expense.expenseCode || expense.id} (due ${dueDate})` : ''}${p.holdUntil ? ` · hold until ${p.holdUntil}` : ''}`, approvalStatus: 'Approved', approvedByName: actorOf(req), approvedAt: new Date(),
   });
   await P.noticePartner(p.partnerId, { title: `${p.candidateName}: ${p.kind === 'CLAWBACK' ? 'recovery approved' : 'payout approved'}`, message: `${p.number} — ₹${Math.abs(p.net).toLocaleString('en-IN')}${p.holdUntil && p.holdUntil > P.todayIst() ? `, paid after ${p.holdUntil}` : ''}.`, email: true });
@@ -290,7 +292,7 @@ router.post('/:id/clawback', async (req, res) => {
   const list = await P.onLeft({ applicationId: p.applicationId, inside: true, reason, user: req.user });
   const cb = (list || []).find((x) => x.kind === 'CLAWBACK');
   if (!cb) return res.status(500).json({ error: 'Could not record the clawback.' });
-  return respond(res, cb.id, `${cb.number} drafted — approve it, then mark it recovered when the money comes back.`);
+  return respond(res, cb.id, `${cb.number} made — approve it, then mark it recovered when the money comes back.`);
 });
 
 // The partner's invoice file (optional) — Accounts can attach it too.
@@ -325,7 +327,7 @@ router.get('/:id/partner-invoice/file', async (req, res) => {
 function book(rows, title, sub) {
   const head = ['Payout no', 'Type', 'Status', 'Partner', 'Candidate', 'Job', 'Client', 'Joined on', 'Client invoice', 'CTC', 'Fee basis', 'Fee (before GST)', 'GST %', 'GST', 'TDS section', 'TDS %', 'TDS', 'Net payable', 'On hold until', 'Approved by', 'Paid on', 'Paid ref', 'Mode', 'Expense', 'Partner invoice', 'Notes'];
   const aoa = [[title], [sub || ''], [], head];
-  rows.forEach((r) => aoa.push([r.number, r.kind === 'CLAWBACK' ? 'Clawback' : 'Payout', r.status, r.partner, r.candidateName || '', r.requirementTitle || '', r.clientName || '', r.joinedOn || '', r.invoiceNumber || '', r.ctc || '',
+  rows.forEach((r) => aoa.push([r.number, r.kind === 'CLAWBACK' ? 'Clawback' : 'Payout', word(r.status), r.partner, r.candidateName || '', r.requirementTitle || '', r.clientName || '', r.joinedOn || '', r.invoiceNumber || '', r.ctc || '',
     r.feeType === 'FIXED' ? 'Fixed' : `${r.feePercent || ''}% of CTC`, r.fee, r.gstPercent, r.gst, r.tdsSection || '', r.tdsPercent, r.tds, r.net, r.holdUntil || '', r.approvedByName || '', r.paidOn || '', r.paidRef || '', r.paidMode || '', r.expenseCode || '', r.partnerInvoice ? (r.partnerInvoice.number || r.partnerInvoice.name) : '', r.notes || '']));
   const t = totalsOf(rows);
   aoa.push(['TOTAL', '', '', `${rows.length} row(s)`, '', '', '', '', '', '', '', t.fee, '', t.gst, '', '', t.tds, t.net]);

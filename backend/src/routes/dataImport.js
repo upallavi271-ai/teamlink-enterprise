@@ -532,7 +532,7 @@ const HANDLERS = {
     return 'created';
   },
 
-  async employee({ data, ix, dry, row }) {
+  async employee({ data, ix, dry, row, actor }) {
     const code = data.employeeCode;
     const existing = ix.employeeByCode.get(ix.norm(code));
 
@@ -616,8 +616,9 @@ const HANDLERS = {
     } else {
       let userId = null;
       if (wantLogin && loginEmail) {
-        const taken = await prisma.user.findUnique({ where: { email: loginEmail } });
+        const taken = await prisma.user.findFirst({ where: { email: loginEmail } });
         if (taken) throw new Error(`the login ${loginEmail} already belongs to somebody else`);
+        { const why = await require('../utils/roleGuard').checkRoleChange({ actor, current: null, next: { role: loginRoleFor(mapping), ...productRolesForDesignation(mapping) } }); if (why) throw new Error(why); } // eslint-disable-line global-require
         const user = await prisma.user.create({
           data: {
             name: fields.name,
@@ -831,6 +832,7 @@ const HANDLERS = {
         ats: access.atsAccess && roles.atsRole !== 'NONE',
         accounts: access.accountsAccess && roles.accountsRole !== 'NONE',
       });
+      { const why = await require('../utils/roleGuard').checkRoleChange({ actor, current: null, next: { role, ...roles } }); if (why) throw new Error(why); } // eslint-disable-line global-require
       const user = await prisma.user.create({
         data: {
           name: e.name,
@@ -856,7 +858,13 @@ const HANDLERS = {
       ix.userByEmail.set(ix.norm(email), user.id);
       ix.user.set(ix.norm(e.name), user.id);
     } else {
-      if (Object.keys(patch).length) await prisma.user.update({ where: { id: targetId }, data: patch });
+      if (Object.keys(patch).length) {
+        const cur = await prisma.user.findUnique({ where: { id: targetId } });
+        const why = await require('../utils/roleGuard').checkRoleChange({ actor, current: cur, next: patch }); // eslint-disable-line global-require
+        if (why) throw new Error(why);
+        await prisma.user.update({ where: { id: targetId }, data: patch });
+        await require('../utils/roleGuard').noteRoleChange({ actor, current: cur, next: patch, source: 'import' }); // eslint-disable-line global-require
+      }
       if (!emp.userId) {
         await prisma.employee.update({ where: { id: emp.id }, data: { userId: targetId } });
         emp.userId = targetId;
@@ -1133,7 +1141,8 @@ const HANDLERS = {
       }
     }
 
-    const key = ix.norm(data.reqCode);
+    // A sheet with no Requirement Code: the requirement is known by its title + client, and a NEW one is given a code by TeamLink.
+    const key = data.reqCode ? ix.norm(data.reqCode) : `t|${ix.ckey(data._client)}|${ix.norm(data.title)}`;
     const id = ix.requirement.get(key);
     // A PAUSED / ARCHIVED client takes no NEW requirement (spec 2026-10-03
     // §A) — checked in the preview too, so the dry run reports the row.
@@ -1150,9 +1159,15 @@ const HANDLERS = {
       await prisma.requirement.update({ where: { id }, data: fields });
       return 'updated';
     }
+    if (!fields.reqCode) fields.reqCode = await require('../utils/requirementCode').nextRequirementCode(); // eslint-disable-line global-require
     // A department with ONE team lead gives that TL to a new job (default TL).
     await require('../utils/defaultTeamLead').applyDefault(fields); // eslint-disable-line global-require
+    // A twin of this job on the same client is noticed (never blocked: an import is a batch) and shows on Jobs > Duplicate jobs.
+    const twins = !fields.internal && fields.status !== 'DRAFT'
+      ? await require('../utils/jobDupGuard').guardCreate(fields, { door: 'Excel import', silent: true }).catch(() => null) // eslint-disable-line global-require
+      : null;
     const row = await prisma.requirement.create({ data: fields });
+    if (twins && twins.matches && twins.matches.length) await require('../utils/jobDupGuard').noteSilent(row, twins.matches, { door: 'Excel import' }); // eslint-disable-line global-require
     ix.requirement.set(key, row.id);
     return 'created';
   },
@@ -1204,7 +1219,13 @@ const HANDLERS = {
     return 'created';
   },
 
-  async application({ data, ix, dry, note }) {
+  async application({ data, ix, dry, note, actor }) {
+    // INTERVIEWS ARE BOOKED BY THE BDE (user, 2026-10-12): a sheet cannot put a person at "Interview fixed" for a login
+    // that may not book one (a Recruiter / TL / STL / Manager / Asst Manager). Admin, the BDE, the BDE TL and HR pass.
+    if (data.stage === 'INTERVIEW_SCHEDULED' && actor && actor.id) {
+      const refusal = await require('../utils/permissions').canMoveToStage(actor, 'INTERVIEW_SCHEDULED'); // eslint-disable-line global-require
+      if (refusal) throw new Error(refusal.body.error);
+    }
     const candidateId = findCandidate(ix, data._candidate);
     if (!candidateId) throw new Error(`candidate "${data._candidate}" is not on the Candidates sheet or in the system`);
     const requirementId = ix.requirement.get(ix.norm(data._requirement));
@@ -1584,6 +1605,7 @@ const HANDLERS = {
       data: {
         invoiceId: inv.id,
         date: data.date,
+        dateSource: 'sheet',
         amount,
         method: data.method || 'Bank Transfer',
         reference,
@@ -1892,9 +1914,20 @@ router.post('/check', ADMIN, async (req, res, next) => {
 });
 
 // --- commit ----------------------------------------------------------------
+// ONE DATA IMPORT AT A TIME (founder 2026-10-24: the same data repeated): two commits started together would each read the same "already on
+// file" picture and both create the rows. The second waits for the first, then finds its rows already there. (One server process.)
+let importTail = Promise.resolve();
+function holdImport() {
+  let release; const mine = new Promise((r) => { release = r; });
+  const wait = importTail; importTail = importTail.then(() => mine);
+  return wait.then(() => release);
+}
+
 router.post('/commit', ADMIN, async (req, res, next) => {
+  let release = null;
   try {
     const { wb, filename } = await workbookFrom(req);
+    release = await holdImport();
 
     // CHECK FIRST, ALWAYS. A commit on a file with errors would write the
     // good rows and leave the user to work out which ones — so unless they
@@ -1922,6 +1955,8 @@ router.post('/commit', ADMIN, async (req, res, next) => {
     const handled = multipartError(err, res);
     if (handled) return handled;
     return next(err);
+  } finally {
+    if (release) release();
   }
 });
 
@@ -1945,5 +1980,5 @@ module.exports = router;
 // The row reader, the lookup maps and the per-sheet handlers, for the ATS
 // screens' one-sheet imports (routes/atsIo.js) — the same code, not a copy.
 module.exports.internals = {
-  readSheet, buildIndex, HANDLERS, rawText, isDry, findCandidate, IMPORTED_BY,
+  readSheet, buildIndex, HANDLERS, rawText, isDry, findCandidate, IMPORTED_BY, contactMatch,
 };

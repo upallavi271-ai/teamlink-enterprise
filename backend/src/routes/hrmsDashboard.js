@@ -13,6 +13,7 @@ const LP = require('../utils/latePermission');
 const LP_STATES = LP.STATE_KEYS;
 const leaveReconcile = require('../utils/leaveReconcile');
 const { halfOf } = require('../utils/leaveText');
+const leaveGenuine = require('../utils/leaveGenuine'); // 2026-10-13: Pending Approvals count only GENUINE pending leave
 const { withoutSystemAccounts } = require('../utils/systemAccounts');
 
 const router = express.Router();
@@ -204,7 +205,10 @@ async function buildDashboard(req, period) {
   const deptRows = headcountByDepartmentOf(employees);
   // Pending leave that belongs to people who have already left: counted in
   // Leave Approvals (every pending request is), and said so beside the tile.
-  const leaveApprovalsFromLeft = await prisma.leaveRequest.count({ where: { employeeId: { in: ids }, status: 'Pending', employee: { employmentStatus: { in: LEFT_STATUSES } } } });
+  // 2026-10-13 (HRMS item 8): the Pending Approvals figures count GENUINE pending only (employee still working, not a duplicate,
+  // dates not long past). The rest is told beside the tile (and listed for HR under Leave -> Pulse sync -> Old pending).
+  const pendingSplit = await leaveGenuine.pendingBuckets({ employeeIds: ids });
+  const leaveApprovalsFromLeft = pendingSplit.leaver.length;
 
   // BIRTHDAYS and WORK ANNIVERSARIES in the next 30 days — all of them, soonest
   // first (it used to stop at 4 of each and say "next 30 days"); the panel
@@ -254,6 +258,9 @@ async function buildDashboard(req, period) {
     // number is the length of its list (GET /list?tile=...): both come from
     // the same predicates in EMP_TILE below. The system Super Admin account is
     // not an employee and is left out of Total (withoutSystemAccounts above).
+    // EXIT APPROVALS (HRMS spec item 6): only the Super Admin and the HR desk are sent this. 'Left this month' counts the LAST WORKING DAY
+    // of approved exits (utils/exitDate.js), so a changed date moves the person to the right month.
+    exitApprovals: await exitApprovalsLine(req.user, today),
     employeeOverview: {
       total: employees.length,
       active: employees.filter(EMP_TILE.active).length,
@@ -320,13 +327,15 @@ async function buildDashboard(req, period) {
     charts: [...(computed ? computed.charts : []), ...leaveBuilt.charts],
     leaveOverview: {
       total: leaveRequests.length,
-      pending: leaveRequests.filter((l) => l.status === 'Pending').length,
+      pending: leaveRequests.filter((l) => l.status === 'Pending' && !pendingSplit.reasonOf.has(l.id)).length,
       approved: leaveRequests.filter((l) => l.status === 'Approved').length,
       rejected: leaveRequests.filter((l) => l.status === 'Rejected').length,
       // Cancelled + cancellation requests are the rest of the total, so
       // Pending + Approved + Rejected + Cancelled = Leave Requests.
       cancelled: leaveRequests.filter((l) => l.status === 'Cancelled').length,
       cancellationRequests: leaveRequests.filter((l) => l.status === 'Cancellation Requested').length,
+      // Pending in this range that is NOT genuine (left / duplicate / long past): kept out of Pending so the numbers stay honest.
+      pendingOther: leaveRequests.filter((l) => l.status === 'Pending' && pendingSplit.reasonOf.has(l.id)).length,
       upcoming: leaveUpcoming,
       // Approved requests counted as REQUESTS, split full day / half day, and how many PEOPLE they are.
       approvedFullDay: leaveRequests.filter((l) => l.status === 'Approved' && !halfOf(l)).length,
@@ -334,8 +343,10 @@ async function buildDashboard(req, period) {
       approvedPeople: new Set(leaveRequests.filter((l) => l.status === 'Approved').map((l) => l.employeeId)).size,
     },
     pendingTasks: {
-      leaveApprovals: leavePending,
+      leaveApprovals: pendingSplit.genuine.length,
       leaveApprovalsFromLeft,
+      leaveOldPending: pendingSplit.old.length,
+      leaveDuplicatePending: pendingSplit.duplicate.length,
       attendanceRegularization: regularizations.length,
       lateComing: lateComingPending,
       assetsAssigned: assets,
@@ -372,6 +383,21 @@ const EMP_TILE = {
 };
 
 // The filtered, scoped employee set every figure on the page is counted over.
+async function exitApprovalsLine(user, today) {
+  try {
+    const exitDate = require('../utils/exitDate'); // eslint-disable-line global-require
+    if (!exitDate.isHrDesk(user)) return null;
+    const waiting = await prisma.approvalStep.count({ where: { workflow: 'resignation', status: 'Pending' } });
+    const month = today.slice(0, 7);
+    const gone = await prisma.employee.findMany({ where: withoutSystemAccounts({ employmentStatus: { in: ['Notice Period', 'Exit Process', 'Relieved', 'Exited', 'Terminated'] } }), select: { id: true } });
+    const dates = await exitDate.exitDatesFor(gone.map((g) => g.id));
+    let exitsThisMonth = 0;
+    dates.forEach((x) => { if (x.date.slice(0, 7) === month && x.date <= today) exitsThisMonth += 1; });
+    const MON = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    return { waiting, exitsThisMonth, monthLabel: `${MON[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}` };
+  } catch { return null; }
+}
+
 async function loadBase(req) {
   const allEmployees = await prisma.employee.findMany({
     where: withoutSystemAccounts(employeeWhere(req.user)), // Super Admin is a system account, not headcount
@@ -696,6 +722,7 @@ async function buildList(req, tile, part) {
       ? { employeeId: { in: ids }, status: 'Approved', fromDate: { gt: today } }
       : { employeeId: { in: ids }, fromDate: { lt: dayStr.lt }, toDate: { gte: period.from }, ...(LEAVE_TILE_STATUS[tile] ? { status: LEAVE_TILE_STATUS[tile] } : {}) };
     let leaves = await prisma.leaveRequest.findMany({ where, orderBy: { fromDate: 'desc' } });
+    if (tile === 'leavePending') { const g = await leaveGenuine.genuinePendingIds({ employeeIds: ids }); leaves = leaves.filter((l) => g.has(l.id)); }
     // Approved: ?part=full|half (the split the Leave overview shows next to the Approved tile).
     if (tile === 'leaveApproved' && (part === 'full' || part === 'half')) leaves = leaves.filter((l) => (part === 'half') === !!halfOf(l));
     const note = tile === 'leaveUpcoming' ? 'Approved leave that starts after today.' : `Leave requests that overlap ${spanText(period)}.${tile === 'leaveApproved' ? ' One row per REQUEST: a person with two requests shows twice.' : ''}`;
@@ -704,10 +731,11 @@ async function buildList(req, tile, part) {
 
   // ---- pending tasks (the state of things now) ----
   if (tile === 'taskLeave') {
-    const leaves = await prisma.leaveRequest.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { fromDate: 'desc' } });
+    const gset = await leaveGenuine.genuinePendingIds({ employeeIds: ids });
+    const leaves = (await prisma.leaveRequest.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { fromDate: 'desc' } })).filter((l) => gset.has(l.id));
     const rows = leaves.map(leaveRow);
     const gone = rows.filter((r) => LEFT_STATUSES.includes(r.status)).length;
-    return out({ note: `Every pending leave request, whatever dates it covers.${gone ? ` ${gone} of them are from people who have left (see the Employee status column).` : ''}`, columns: LEAVE_COLS, rows });
+    return out({ note: 'Genuinely pending leave: the person still works here, it is not a duplicate and the dates are not long past. Others are under Leave > Pulse sync > Old pending.', columns: LEAVE_COLS, rows });
   }
   if (tile === 'taskRegularization') {
     const regs = await prisma.attendanceRegularization.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { date: 'desc' } });

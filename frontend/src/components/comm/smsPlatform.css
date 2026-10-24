@@ -1,0 +1,24 @@
+/* SMS Push Platform screens: scoped under existing cm-* classes plus a few sp-* helpers. */
+.sp-field { margin-bottom: 4px; }
+.sp-field label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 3px; }
+.sp-field textarea { width: 100%; box-sizing: border-box; }
+.sp-list { margin: 6px 0 0 18px; padding: 0; font-size: 13px; line-height: 1.5; }
+.sp-small { font-size: 13px !important; word-break: break-all; }
+.sp-code { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: #f6f8fb; border-radius: 8px; padding: 8px 10px; }
+.sp-code code { word-break: break-all; font-size: 12.5px; flex: 1; min-width: 220px; }
+.sp-preview { background: #fff; border: 1px dashed #9db7e3; border-radius: 8px; padding: 8px 10px; margin: 6px 0; white-space: pre-wrap; font-size: 14px; }
+.sp-ro { margin: 0; padding: 7px 0; }
+.sp-check { display: flex; gap: 8px; align-items: center; font-size: 13.5px; margin: 8px 0; }
+.sp-result { margin-top: 12px; }
+.sp-scroll { overflow-x: auto; }
+.sp-words { max-width: 260px; white-space: normal; word-break: break-word; }
+.sp-actions { white-space: nowrap; }
+.sp-actions .btn { margin-right: 4px; }
+.sp-click { cursor: pointer; }
+.sp-click:hover { background: #f6f8fb; }
+.sp-h4 { font-size: 13px; margin: 14px 0 6px; }
+.sp-bar { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; margin: 4px 0; font-size: 13px; }
+.sp-bar div { background: #eef1f5; border-radius: 6px; height: 12px; overflow: hidden; }
+.sp-bar i { display: block; height: 100%; background: #2563eb; border-radius: 6px; }
+.cm-pill.unknown { background: #fff4e5; color: #7a4100; }
+@media (max-width: 640px) { .sp-bar { grid-template-columns: 80px 1fr 32px; } }

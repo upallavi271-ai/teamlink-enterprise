@@ -97,22 +97,26 @@ async function loadClient(req, res, clientId) {
   });
   if (!client) { res.status(404).json({ error: 'Client not found, or not in your area.' }); return null; }
   if (client.clientType === 'Internal') { res.status(400).json({ error: 'TeamLink\'s own internal client has no portal.' }); return null; }
-  const approve = base.approve && departmentOk(u, client);
+  // THE BDE'S OWN CLIENTS (user rule 2026-10-13: everything client-related except delete): the client's BDE and the BDE TL add,
+  // invite, reset, disable and set the ticks of a client login DIRECTLY - no approval.
+  const CL = require('../utils/clientLifecycle'); // eslint-disable-line global-require
+  const bdeDirect = base.request && !base.approve && (require('../utils/scope').isBdeTl(u) || (CL.isDeskBde(u) && CL.ownsClient(u, client))); // eslint-disable-line global-require
+  const approve = (base.approve && departmentOk(u, client)) || bdeDirect;
   return { client, rights: { view: base.view || approve, request: base.request && !approve, approve } };
 }
 
 const MAIL_WORDS = {
-  VIEW: 'see your jobs and the candidates we send you', DECIDE: 'shortlist, hold or reject candidates', INTERVIEW: 'ask for an interview',
-  FEEDBACK: 'give feedback after an interview', REQUEST: 'ask for a new job', AGREEMENT: 'see your agreement', INVOICES: 'see your invoices',
+  VIEW: 'see your requirements and the candidates we send you', DECIDE: 'shortlist, hold or reject candidates', INTERVIEW: 'ask for an interview',
+  FEEDBACK: 'give feedback after an interview', REQUEST: 'ask for a new requirement', AGREEMENT: 'see your agreement', INVOICES: 'see your invoices',
 };
 function inviteMail({ name, company, link, expiresAt, caps }) {
   const when = expiresAt.toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
   const parts = (caps || []).map((k) => MAIL_WORDS[k]).filter(Boolean);
   const what = parts.length
     ? (parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`)
-    : 'see your jobs, the candidates we send you, interviews and feedback';
+    : 'see your requirements, the candidates we send you, interviews and feedback';
   const first = (caps || []).includes('VIEW') || !(caps || []).length
-    ? 'First time? After you sign in you will see "Your jobs" and "Candidates for review" — open a candidate to see the resume and give your decision.'
+    ? 'First time? After you sign in you will see "Your requirements" and "Candidates for review" — open a candidate to see the resume and give your decision.'
     : 'First time? After you sign in, the buttons you can use are shown on the first page.';
   return [
     `Hello ${name || 'there'},`,

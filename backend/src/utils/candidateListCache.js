@@ -59,6 +59,8 @@ const APPLICATION_SELECT = {
   // firstSource: the board a portal application came through (utils/candidateSource.js).
   source: true, firstSource: true, portalImportedAt: true, hiringType: true,
   interviewResult: true, interviewCompletedAt: true,
+  // the Joining date column (2026-10-17)
+  joiningDate: true, joinedAt: true,
 };
 // The requirement stays whole (scope matching reads a dozen of its fields);
 // its relations are narrowed to what the list shows.

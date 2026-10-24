@@ -98,17 +98,29 @@ app.use(require('./utils/partnerAuth').partnerSessionGuard);
 // logins share the staff secret, so they get a deny-by-default allow-list of
 // the portal paths instead of a separate token. Every other /api path = 403.
 app.use(require('./utils/externalPortalAuth').externalSessionGuard);
+// ...and every JSON answer to those four kinds of login is scrubbed of staff-only keys (safety net, 2026-10-13).
+app.use(require('./utils/externalPortalAuth').outboundScrub);
+// GENERAL API RATE LIMIT (utils/apiRateLimit.js, 2026-10-13): 600/min per signed-in login, 120/min per IP otherwise, stricter for
+// sign-in, reset, exports and bulk sends; 429 in plain words. Skipped for /api/health, non-/api paths and the sandbox.
+app.use(require('./utils/apiRateLimit').apiRateLimit);
 // THE TEAMLINK JOB PORTAL at /jobs (utils/jobPortalEmbed.js): the customer's
 // portal, unchanged, proxied from its internal port. Ahead of every body
 // parser so uploads stream through. JOB_PORTAL_EMBED=0 switches it off.
 app.use(require('./utils/jobPortalEmbed').proxy());
+// GREEN START (Omni-Channel app) at /omni-gs (web) and /omni-gs-api (its API): own app, signed-cookie + role gated,
+// OFF unless GREENSTART_ENABLED=true (utils/greenStartEmbed.js). Ahead of the body parsers so the API streams through.
+app.use(require('./utils/greenStartEmbed').proxy());
 // Security headers (nosniff, frame, referrer, HSTS in production over https, report-only CSP on /api).
 // After the /jobs proxy on purpose: the embedded Job Portal keeps its own headers.
 app.use(require('./utils/webSecurity').securityHeaders);
 // Provider callbacks (WhatsApp delivery ticks + replies, SMS delivery reports, call
 // results): public, each proves itself; brings its own body parser to keep the raw
 // bytes for the signature check (routes/webhooks.js).
+// EXOTEL AI CALLING (2026-10-22): Exotel's status callback + the Voicebot text turn. Own proof (secret key / signature / IP list), own body parser. Ahead of the general webhooks router. calling/webhook.js
+app.use('/api/webhooks/exotel-ai', require('./calling/webhook'));
 app.use('/api/webhooks', require('./routes/webhooks'));
+// Omni-Channel email delivery events (bounce / complaint / delivered): signed, raw body, so it sits before the JSON parser (routes/outreachWebhook.js).
+app.use('/api/public/outreach/webhook', require('./routes/outreachWebhook'));
 // CORS: open only for the public paths third parties use; everything else = CORS_ORIGINS / this site / localhost in dev.
 app.use(require('./utils/webSecurity').corsMiddleware());
 app.use(express.json());
@@ -118,6 +130,11 @@ app.get('/api/health', (req, res) => res.json({ ok: true }));
 // only GET, plus a short allow-list of POSTs that just read. Ahead of every
 // router, so no route can forget it.
 app.use('/api', require('./utils/viewAs').viewAsGuard);
+// EXIT GUARD scope (utils/exitFlow.js): marks a web request, so a leaving status (Relieved / Exited / Terminated) can only be
+// written with an approved exit behind it. Scripts and workers run outside a request and are not affected.
+app.use('/api', require('./utils/exitFlow').requestScope);
+app.use('/api', require('./utils/reqDepartments').middleware); // extra departments of a job: index refreshed per request burst (2026-10-13)
+app.use('/api', require('./utils/reqTeamLeads').middleware); // extra team leads of a job (reqTls.<jobId>), same pattern (2026-10-14)
 
 // ---------------------------------------------------------------------------
 // TeamLink Job Portal — served verbatim as a static asset.
@@ -167,6 +184,14 @@ app.get(/^\/omnichannel(\/.*)?$/, (req, res, next) => {
   return res.sendFile(path.join(OMNICHANNEL_DIR, 'index.html'));
 });
 
+// AGREEMENTS ARE NOT FOR TLs / STLs / RECRUITERS / HR (user, 2026-10-12) - the safety net behind the per-route cuts
+// (utils/agreementPrivacy.js): no agreement key or wording leaves these routers for those logins.
+app.use([
+  '/api/clients', '/api/client-merge', '/api/requirements', '/api/job-portal', '/api/candidates', '/api/candidate-resumes', '/api/candidate-duplicates',
+  '/api/doc-fill', '/api/rejections', '/api/applications', '/api/followups', '/api/dashboard', '/api/reports', '/api/ats-reports', '/api/ats-daily',
+  '/api/ats-report-pack', '/api/pending-work', '/api/ats', '/api/ats-io', '/api/assistant', '/api/agent', '/api/insights', '/api/auth', '/api/admin/notifications',
+  '/api/messaging', '/api/agreement', '/api/offer-link', '/api/job-publish', '/api/job-dist', '/api/job-broadcast', '/api/join-drop',
+], require('./utils/agreementPrivacy').agreementGuard);
 // Client contact / commercial fields reach the client desk only — see
 // utils/clientRedact.js. Mounted ahead of the ATS routers it filters.
 app.use([
@@ -181,6 +206,8 @@ app.use([
 ], require('./utils/clientRedact').atsPrivacyGuard);
 app.use('/api/auth', authRoutes);
 app.use('/api/clients', clientRoutes);
+// AGREEMENT PREPARATION WORKFLOW (2026-10-13): BDE > Purna Sir (HR) > BDE TL > client. Its own door so the HR step never opens the client routes.
+app.use('/api/agreement-flow', require('./routes/agreementFlow'));
 app.use('/api/client-merge', require('./routes/clientMerge')); // Duplicate clients (SA/Admin)
 // JOB PORTAL MIRROR. After any successful write to one requirement (edit,
 // status change, close, reopen …) a requirement that has ever been published
@@ -196,17 +223,38 @@ app.use('/api/requirements/:id', (req, res, next) => {
   next();
 });
 app.use('/api/requirements', requirementRoutes);
+// JOB PUBLISHING (2026-10-13): publish one job to many portals through a queue; a separate worker does the posting
+// (npm run posting-worker, never started here). Nothing runs at load. routes/jobPublish.js, docs/job-publishing/.
+app.use('/api/job-publish', require('./routes/jobPublish'));
+// JOB DISTRIBUTION (2026-10-14): the Distribute tab of a job: Posting Kit, tracked links, Posted tracker. routes/jobDist.js, docs/job-publishing/DISTRIBUTE.md.
+app.use('/api/job-dist', require('./routes/jobDist'));
+// NAUKRI -> SHINE BY-HAND WORKFLOW (2026-10-15): saved state + audit of the sequential posting. routes/jobFlow.js, jobFlow/.
+app.use('/api/job-flow', require('./routes/jobFlow'));
+// Job template + post to all places + contact lists + WhatsApp job broadcast (docs/job-broadcast/FLOW.md). Nothing runs at load.
+app.use('/api/job-broadcast', require('./routes/jobBroadcast'));
+// OMNI-CHANNEL OUTREACH (2026-10-14): contacts, groups, imports, templates, channels (staff) + the public unsubscribe page (no login). Nothing runs at load.
+app.use('/api/outreach', require('./routes/outreach'));
+app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API for the app screens: template library, app campaigns, replies, connections (own checks per route)
+app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
+app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
+app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)
+app.use('/api/public/outreach', require('./routes/outreachPublic'));
+app.use(require('./routes/outreachPublic')); // the short /u/<token> unsubscribe link (same router, its own paths)
 // The Job Portal WORKSPACE API. Its own mount, but not its own module: every
 // route inside is guarded on a feature of `requirements`, which is where the
 // Job Portal lives in the navigation too (Jobs / Requirements -> Job Portal).
 app.use('/api/job-portal', jobPortalRoutes);
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
 app.use('/api/portal', require('./routes/portal'));
+// JOINING & DROP (2026-10-17): the joining record, the drop, the client's replacement decision, the journey, the client history (routes/joinDrop.js).
+app.use('/api/join-drop', require('./routes/joinDrop'));
 app.use('/api/candidates', candidateRoutes);
 // resume_: resume files, versions, edits and the 3-number match (routes/candidateResumes.js).
 app.use('/api/candidate-resumes', require('./routes/candidateResumes'));
 // dup_: candidate duplicates — the worklist, the Check duplicates panel, the resolutions (routes/candidateDuplicates.js).
 app.use('/api/candidate-duplicates', require('./routes/candidateDuplicates'));
+// jobdup_: duplicate jobs — the worklist, the merge, the creation card (routes/jobDuplicates.js).
+app.use('/api/job-duplicates', require('./routes/jobDuplicates'));
 // docfill_: "Fill from a file" for Add job / Add candidate / Add client (routes/docFill.js).
 app.use('/api/doc-fill', require('./routes/docFill'));
 // Rejections read-back, "Do not use" approvals, the Matching tabs (routes/rejections.js).
@@ -215,6 +263,7 @@ app.use('/api/applications', applicationRoutes);
 // followup_: the follow-up record, one per application. See routes/followups.js.
 app.use('/api/followups', followUpRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/new-items', require('./routes/newItems')); // the New button on every dashboard (2026-10-13)
 app.use('/api/employees', employeeRoutes);
 app.use('/api/employee-fields', employeeFieldRoutes);
 app.use('/api/attendance', attendanceRoutes);
@@ -249,6 +298,8 @@ app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
 app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
+// Role-wise recruitment performance (same Performance & Development screen; routes/rolePerformance.js).
+app.use('/api/role-performance', require('./routes/rolePerformance'));
 // Payroll -> Incentives: department-wise rules, awards, approval (routes/incentives.js).
 app.use('/api/incentives', require('./routes/incentives'));
 // ATS-100 B6: employee referrals, campus drives, campaign costs (routes/sourcing.js).
@@ -266,11 +317,19 @@ app.use('/api/masters', require('./routes/masters'));
 app.use('/api/specialisations', require('./routes/specialisations'));
 // Email / SMS / WhatsApp channel status and queued bulk send (utils/bulkMessaging.js).
 app.use('/api/messaging', require('./routes/messaging'));
+// Communication Automation: providers, WhatsApp QR prototype, Android SMS phone, Communication log (routes/comm.js).
+app.use('/api/wa-numbers', require('./routes/waNumbers')); // many WhatsApp numbers: list, assign, reconnect (Admin) + my-numbers (staff)
+app.use('/api/comm', require('./routes/comm'));
+app.use('/api/sms-platform', require('./routes/smsPlatform')); // SMS Push Platform screens (Admin)
 // Automatic stage messages: rules, scheduled list, approvals (routes/autoMessages.js).
 app.use('/api/auto-messages', require('./routes/autoMessages'));
 app.use('/api/conversations', require('./routes/conversations'));
+app.use('/api/wa-chats', require('./routes/waChats')); // the recruiter's WhatsApp chat screen: list, chat, send, follow-up, media, Admin test tools (utils/waChats.js)
 app.use('/api/admin/view-as', require('./routes/viewAs')); // Super Admin read-only View as
 app.use('/api/admin/integration-health', require('./routes/integrationHealth')); // Job Portal / Email / eSSL / AI health (read-only + person-pressed retry)
+app.use('/api/admin/logins', require('./routes/adminLogins')); // separate logins on one email: status, existing-logins panel, per-login activation / sign-out (2026-10-21)
+// EXOTEL AI CALLING (2026-10-22): admin settings, recruiter calls, offers, dashboard; /portal/* is the Job Portal's door (routes/aiCalling.js, calling/*).
+app.use('/api/ai-calling', require('./routes/aiCalling'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/reports', reportRoutes);
 // ATS -> Reports: the ten recruitment reports, their drill-down and exports.
@@ -281,13 +340,25 @@ app.use('/api/ats-daily', require('./routes/atsDaily'));
 app.use('/api/ats-report-pack', require('./routes/atsReportPack'));
 // Pending work -> the TL (digest, escalation, Remind), the BDE's client work, the end-of-day report.
 app.use('/api/pending-work', require('./routes/pendingWork'));
+// Proof reminder: daily WhatsApp + e-mail to the Accountant (utils/proofReminders.js).
+app.use('/api/proof-reminders', require('./routes/proofReminders'));
+// Who gets each Accounts reminder: the Admin's table (utils/accountsReminderSettings.js).
+app.use('/api/accounts-reminders', require('./routes/accountsReminders'));
+// WhatsApp click-to-chat (free wa.me links, nothing is sent from the server): routes/waChat.js.
+app.use('/api/wa', require('./routes/waChat'));
 app.use('/api/office-expenses', officeRoutes);
+// Vendor portal: Accounts' review of repair bills vendors UPLOADED as photos / PDFs, read by AI (routes/vendorBillUploads.js). Before /api/vendor-bills.
+app.use('/api/vendor-bills/uploads', require('./routes/vendorBillUploads'));
 // Vendor portal (P3): Accounts review of bills vendors sent (routes/vendorBills.js).
 app.use('/api/vendor-bills', require('./routes/vendorBills'));
 // Admin → Company Setup → Vendor logins (routes/vendorLogins.js).
 app.use('/api/vendor-logins', require('./routes/vendorLogins'));
 // Admin Vendor Management: the vendor master (routes/vendorMaster.js).
 app.use('/api/vendor-master', require('./routes/vendorMaster'));
+// Vendor modules (2026-10-14): ID card orders (HR), SIM + connections (Assets), vendor invoices / monthly bills review (Accounts).
+app.use('/api/id-card-orders', require('./routes/idCardOrders'));
+app.use('/api/sim-connections', require('./routes/simConnections'));
+app.use('/api/vendor-module-bills', require('./routes/vendorModuleBills'));
 // Invoices -> Add Client + client picker (routes/invoiceClients.js).
 app.use('/api/invoice-clients', require('./routes/invoiceClients'));
 // The vendor portal itself — the only API a vendor token can reach.
@@ -316,9 +387,13 @@ app.use('/api/ats', interviewsJoiningRoutes);
 // "Now tell them" after an interview is booked / moved / cancelled, and the interview reminder plan
 // (routes/interviewTell.js, utils/interviewTell.js, utils/interviewEngine.js).
 app.use('/api/ats', require('./routes/interviewTell'));
+// Google Meet link, the interview e-mails (with calendar invite) and Start interview (routes/interviewMeet.js).
+app.use('/api/ats', require('./routes/interviewMeet'));
 // Interview preparation: suggested questions from the JD for a client / team / AI interview (routes/interviewPrep.js,
 // utils/interviewPrep.js). The candidate's own page is public by signed link: /api/public/interview-prep/:token.
 app.use('/api/ats', require('./routes/interviewPrep'));
+// "Ask the client manager to book" - only the BDE books an interview (routes/interviewRequest.js).
+app.use('/api/ats', require('./routes/interviewRequest'));
 // The AI Assistant (answers) and AI Agent (proposes, acts only on Confirm).
 // One model wrapper behind both — utils/ai.js: local Ollama by default, Claude
 // with AI_PROVIDER=claude, whose key stays in the encrypted credential store.
@@ -354,6 +429,8 @@ app.use('/api/positions', positionRoutes);
 app.use('/api/agreement', agreementSealRoutes);
 // B3 (2026-10-06): the candidate's offer letter link — public, by token (routes/offerLink.js).
 app.use('/api/offer-link', require('./routes/offerLink'));
+// 2026-10-13 client hiring: the candidate's joining-letter link, public by token (routes/joiningLink.js).
+app.use('/api/joining-link', require('./routes/joiningLink'));
 app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: true }));
 // Rewards & Recognition -> NOMINATION (hrms-24 §13): Nominated -> Pending Review
 // -> Approved / Rejected -> Awarded. Its own table; see routes/nominations.js.
@@ -362,6 +439,8 @@ app.use('/api/disciplinary', employeeRecordRouter('DISCIPLINARY', { createRoles:
 app.use('/api/shift-roster', employeeRecordRouter('SHIFT', { denyHrmsRoles: ['TL'] }));
 app.use('/api/timesheet', employeeRecordRouter('TIMESHEET'));
 app.use('/api/assets', employeeRecordRouter('ASSET', { createRoles: true }));
+// "Report a problem" on an asset an employee holds; an approved REPAIR complaint becomes a repair job for the assets vendor (2026-10-19).
+app.use('/api/asset-complaints', require('./routes/assetComplaints'));
 // Expense & Travel Claims carry a real bill/receipt — the one record type with
 // a stored attachment today (see backend/src/utils/attachments.js).
 app.use('/api/expenses', employeeRecordRouter('EXPENSE', { attachments: true }));
@@ -382,6 +461,8 @@ app.use('/api/shift-patterns', shiftPatternRoutes);
 app.use((err, req, res, next) => {
   console.error(err);
   if (res.headersSent) return next(err);
+  // An exit that cannot be finished yet / a refused exit-date change: the reason, in plain words (utils/exitFlow.js, utils/exitDate.js).
+  if (err && err.exitBlocked) return res.status(err.status || 403).json({ error: err.message, ...(err.code ? { code: err.code } : {}) });
   // A broken link to another record (Prisma P2003) is the caller's data, not a crash.
   if (err && err.code === 'P2003') {
     return res.status(400).json({ error: 'One of the linked records (client, person or position) no longer exists. Pick it again and retry.' });
@@ -396,11 +477,21 @@ const server = app.listen(PORT, () => {
   // background now, so the first page after a restart is fast. Off in the
   // sandbox unless CANDIDATE_WARMUP=1 (utils/candidateWarmup.js).
   require('./utils/candidateWarmup').start();
+  // GREEN START (Omni-Channel): this backend starts it and keeps it running (database, Redis, server, worker, entrance), like the Job Portal below.
+  // Memory guard, back-off, no start without Redis. GREENSTART_ENABLED / GREENSTART_AUTOSTART switch it off. In the test sandbox it only runs with a test settings file.
+  require('./utils/greenStartSupervisor').start();
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // The email sending worker. A no-op until Administration → Integrations has
   // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
   mailWorker.start();
+  // Uploaded repair bills: picks up bills a restart left waiting to be read by AI (utils/billUploadAi.js; BILL_AI_SWEEP_MS=0 switches it off).
+  require('./utils/billUploadAi').start();
+  // Omni-Channel Outreach sending loop: does nothing until an Admin switches "Outreach sending" on (outreach/runner.js; DB lease, one loop at a time).
+  require('./outreach/runner').start();
+  // Omni-Channel: scheduled app campaigns + live campaign rows (every 30 s) and failed provider events (retry, every 60 s). Both skip the test sandbox.
+  require('./outreach/omni/appCampaigns').start();
+  require('./outreach/omni/replyRouter').start();
   // The embedded Job Portal (/jobs): started here, kept running, adopted if
   // a nodemon restart left it up (utils/jobPortalEmbed.js).
   require('./utils/jobPortalEmbed').start();
@@ -417,6 +508,7 @@ const server = app.listen(PORT, () => {
   // Attendance: late-login / missing-punch alerts for TODAY only, never
   // backfilled (utils/attendanceAlerts.js; ATTENDANCE_ALERTS_INTERVAL_MS, default 5 min, 0 = off).
   require('./utils/attendanceAlerts').startSweep();
+  require('./utils/faceReview').startSelfieSweep(); // web check-in selfies are deleted after the retention days (default 30)
   // Daily report e-mails (7 PM TL / weekly Manager) — does nothing until a
   // Super Admin switches them on; OFF by default (utils/dailyReportMail.js).
   require('./utils/dailyReportMail').startSweep();
@@ -429,6 +521,8 @@ const server = app.listen(PORT, () => {
   // Pending-work digest to the TL (10:30), escalation, BDE client-work digest, end-of-day report (18:45):
   // one tick every 5 minutes, each part sent once a day (utils/pendingWork.js).
   require('./utils/pendingWork').startSweep();
+  // Proof reminder: 10:00 and 17:00 IST WhatsApp + e-mail to the Accountant - OFF until an Admin switches it on (utils/proofReminders.js).
+  require('./utils/proofReminders').startSweep();
   // Interview reminders (day before / 1 hour before / feedback missing /
   // guarantee ending), every 15 min — OFF until an Admin switches it on
   // (utils/interviewNotices.js).
@@ -447,7 +541,13 @@ const server = app.listen(PORT, () => {
   require('./utils/backup').startSchedule();
   // A seat is freed when its holder leaves; this is the daily safety net (utils/seatRelease.js).
   require('./utils/seatRelease').startSweep();
+  // The notice period ends -> the person is Relieved by itself (the day after the last working day), HR is told (utils/noticeAutoExit.js; NOTICE_AUTO_EXIT=0 = off).
+  require('./utils/noticeAutoExit').startSweep();
+  // Job broadcast: continues ONLY a campaign a person already started; with none, no timer runs (broadcast/campaign.js).
+  require('./broadcast/campaign').resumeAtBoot();
 });
 // LMS course videos (up to 300 MB, utils/lmsMedia.js) arrive as ONE streamed
 // request; Node's default 5-minute requestTimeout would cut a slow upload off.
 server.requestTimeout = 30 * 60 * 1000;
+// EXOTEL AI CALLING: accepts Exotel's Voicebot WebSocket (needs the optional `ws` module; audio needs a speech service, see calling/voicebot.js).
+try { require('./calling/voicebot').attachWebSocket(server); } catch (err) { console.error('[ai-calling] websocket:', err.message); }

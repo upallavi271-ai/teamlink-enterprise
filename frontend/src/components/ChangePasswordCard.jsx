@@ -22,6 +22,8 @@ export default function ChangePasswordCard({ style }) {
     setBusy(true);
     try {
       const res = await api.post('/auth/change-password', f);
+      // Older sign-ins ended; this browser keeps working with the fresh token.
+      if (res.data.token) { try { localStorage.setItem('tl_token', res.data.token); } catch { /* ignore */ } }
       setF({ currentPassword: '', newPassword: '', confirmPassword: '' });
       setDone(res.data.message || 'Password changed.');
     } catch (err) {

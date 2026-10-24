@@ -5,6 +5,7 @@ import { atsRoleOf } from '../../nav';
 import { FacetSelect, useFacets } from './ListPageHeader.jsx';
 import './ListPageHeader.css';
 import './PageFilterBar.css';
+import Combo from '../Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE SAME FILTERS ON EVERY PAGE (ATS layout v3, 2026-10-03):
@@ -191,9 +192,9 @@ export default function PageFilterBar({
       {want.dateRange && (
         <label className="lph-facet pfb-range">
           <span className="lph-facet-lbl">Date range</span>
-          <select value={value.range || ''} onChange={(e) => set({ range: e.target.value, ...(e.target.value === 'custom' ? {} : { from: '', to: '' }) })}>
+          <Combo value={value.range || ''} onChange={(e) => set({ range: e.target.value, ...(e.target.value === 'custom' ? {} : { from: '', to: '' }) })}>
             {(ranges || DATE_RANGES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          </Combo>
         </label>
       )}
       {want.dateRange && value.range === 'custom' && (
@@ -211,7 +212,7 @@ export default function PageFilterBar({
       {want.people && (peopleList.length > 0 || personValue) && (
         <label className="lph-facet">
           <span className="lph-facet-lbl">Recruiter / BDE</span>
-          <select value={personValue} onChange={(e) => setPerson(e.target.value)}>
+          <Combo value={personValue} onChange={(e) => setPerson(e.target.value)}>
             <option value="">Everyone</option>
             {groups.map((g) => {
               const opts = peopleList.filter((o) => (o.group || '') === g).map((o) => (
@@ -219,7 +220,7 @@ export default function PageFilterBar({
               ));
               return g ? <optgroup key={g} label={g}>{opts}</optgroup> : opts;
             })}
-          </select>
+          </Combo>
         </label>
       )}
       {children}

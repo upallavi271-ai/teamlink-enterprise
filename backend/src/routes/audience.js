@@ -67,10 +67,10 @@ router.post('/assist', async (req, res, next) => {
     const system = [
       `You help an HR team write ${KINDS[kind]} inside an HRMS.`,
       'Return ONLY the finished text for the field — no preamble, no quotes, no markdown headings, no sign-off placeholders like [Name].',
-      'Keep it professional, plain and concise (under 120 words unless the draft is longer). Do not invent names, dates, numbers or policies that are not in the input.',
-      text ? 'Polish the draft: fix grammar and clarity, keep its meaning and facts.' : 'Write a first draft from the title.',
+      'Keep it professional, plain and concise (under 120 words unless the text is longer). Do not invent names, dates, numbers or policies that are not in the input.',
+      text ? 'Polish the text: fix grammar and clarity, keep its meaning and facts.' : 'Write a first version from the title.',
     ].join('\n');
-    const prompt = `Title: ${title || '(none)'}\n\n${text ? `Draft:\n${text}` : 'No draft yet.'}`;
+    const prompt = `Title: ${title || '(none)'}\n\n${text ? `Text:\n${text}` : 'No text yet.'}`;
     try {
       const out = await ai.chat(system, [{ role: 'user', content: prompt }]);
       const clean = String(out || '').trim().replace(/^["“]|["”]$/g, '');

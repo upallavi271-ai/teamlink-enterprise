@@ -10,6 +10,9 @@
 .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 18px; }
 .pf-grid b { display: block; font-weight: 600; word-break: break-word; }
 .pf-grid .pf-wide { grid-column: 1 / -1; }
+.pf-note { border: 1.5px dashed #7cc4a0; background: #f2faf6; border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.5; }
+.pf-note.amber { border-color: #e0b35c; background: #fdf4e1; }
+.pf-note.blue { border-color: #9db8dd; background: #f2f6fc; }
 @media (max-width: 600px) {
   .pf-facts span { min-width: 45%; }
   .pf-grid { grid-template-columns: 1fr 1fr; }

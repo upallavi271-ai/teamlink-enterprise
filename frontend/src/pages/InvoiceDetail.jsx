@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import RepliesPanel from '../components/omni/RepliesPanel.jsx'; // Omni-Channel: replies matched to this record (same replies as Inbox & Replies)
 import { Link, useLocation, useParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -16,8 +17,10 @@ import {
 import './invoices/invTax.css';
 import './invoices/proof.css';
 // B2 — credit / debit notes on this invoice, and its placement margin.
+import MissingHint from '../components/ui/MissingHint.jsx';
 import NoteModal, { openNotePdf } from './invoices/NoteModal.jsx';
 import { CancelNote, RefundPaid } from './invoices/CreditNotesPanel.jsx';
+import { creditNoteStatus } from '../utils/statusWords.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -182,7 +185,9 @@ export default function InvoiceDetail() {
   const gstPct = invoice.gstPercent ?? invoice.client?.gstPercent ?? null;
   const tdsPct = invoice.tdsPercent ?? invoice.client?.tdsPercent ?? null;
   const modes = [...new Set(payments.map((p) => p.method || '—'))];
-  const noProof = payments.filter((p) => !p.reference);
+  const histById = new Map((invoice.paymentHistory || []).map((h) => [h.id, h]));
+  const hOf = (p) => histById.get(p.id) || {};
+  const noProof = payments.filter((p) => !p.reference && !hOf(p).bankTxnId);
   const proofLines = invoice.proofLines || [];
   // Where the invoice stands by what has been matched against it.
   const settleWord = invoice.status === 'Cancelled' ? 'Cancelled'
@@ -311,6 +316,25 @@ export default function InvoiceDetail() {
           <div className="small-muted" style={{ marginTop: 8 }}>
             {pct}% of the receivable collected · <span className={`status ${statusClass(invoice.status)}`}>{invoice.status}</span>
           </div>
+          {invoice.payState && invoice.payState.needsRecord && (
+            <div className="notice" style={{ marginTop: 12 }}>
+              <span>
+                <span className="status priority-high">{invoice.payState.short}</span>{' '}
+                {invoice.payState.reason}
+                {canManage && pending > 0.5 && (
+                  <>{' '}<button
+                    type="button"
+                    className="btn btn-sm btn-gold"
+                    onClick={() => {
+                      setForm({ ...form, amount: pending.toFixed(2), reference: (invoice.payState.action && invoice.payState.action.reference) || form.reference });
+                      const el = document.getElementById('record-payment');
+                      if (el && el.scrollIntoView) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }}
+                  >Record payment</button></>
+                )}
+              </span>
+            </div>
+          )}
           {noProof.length > 0 && (
             <div className="notice" style={{ marginTop: 12 }}>
               <span>
@@ -348,7 +372,7 @@ export default function InvoiceDetail() {
               return (
                 <div key={n.id} className="kv" style={{ alignItems: 'flex-start' }}>
                   <span className="k">
-                    <b className="inv-mono">{n.displayNumber}</b> · {n.kindLabel} · <span className={`cn-chip ${n.status}`}>{n.status}</span>
+                    <b className="inv-mono">{n.displayNumber}</b> · {n.kindLabel} · <span className={`cn-chip ${n.status}`}>{creditNoteStatus(n.status)}</span>
                     <div className="small-muted">{fmtD(n.noteDate)} · {n.reasonLabel}{n.reasonText ? ` — ${n.reasonText}` : ''}</div>
                     {n.refundOpen > 0.005 && <div><span className="cn-chip refund">Refund due {money2(n.refundOpen)}</span></div>}
                     {n.refundPaidOn && <div className="small-muted">Refund paid {fmtD(n.refundPaidOn)}</div>}
@@ -365,7 +389,7 @@ export default function InvoiceDetail() {
                       {n.status === 'Draft' && (mine || invoice.canApproveNotes) && (
                         <>
                           <button type="button" className="btn btn-sm" onClick={() => setNoteFor({ draft: n })}>Change</button>
-                          <button type="button" className="btn btn-sm" onClick={() => run(async () => { await api.delete(`/invoices/credit-notes/${n.id}`); setSaidNote('Draft removed.'); })}>Remove</button>
+                          <button type="button" className="btn btn-sm" onClick={() => run(async () => { await api.delete(`/invoices/credit-notes/${n.id}`); setSaidNote('Removed.'); })}>Remove</button>
                         </>
                       )}
                       {n.refundOpen > 0.005 && canManage && <button type="button" className="btn btn-sm" onClick={() => setRefundNote(n)}>Refund paid</button>}
@@ -393,10 +417,26 @@ export default function InvoiceDetail() {
       )}
 
       <div className="card section">
-        <h3>Payments / instalments</h3>
-        <div className="small-muted" style={{ marginBottom: 10 }}>
-          {payments.length} payment(s) · {money2(received)}
+        <h3>Payment history</h3>
+        <div className="small-muted" style={{ marginBottom: 6 }}>
+          {payments.length} payment(s) · each with the date the money actually arrived
         </div>
+        {/* The whole story on one line: what was billed, what came in, what is left. */}
+        <div className="kv-strip" style={{ display: 'flex', flexWrap: 'wrap', gap: 18, margin: '4px 0 12px', fontSize: 14 }}>
+          <span>Invoice <b>{invoice.invoiceNumber}</b> · {invoice.client?.name || '—'}</span>
+          <span>Amount to receive <b>{money2(receivable)}</b></span>
+          <span>Total paid <b style={{ color: 'var(--green)' }}>{money2(received)}</b></span>
+          <span>Balance due <b style={{ color: pending > 0.5 ? 'var(--red)' : undefined }}>{money2(pending)}</b></span>
+          <span>Status <b>{settleWord}</b></span>
+          {invoice.firstPaymentDate && <span>First payment <b>{fmtD(invoice.firstPaymentDate)}</b></span>}
+          {invoice.lastPaymentDate && invoice.lastPaymentDate !== invoice.firstPaymentDate && <span>Last payment <b>{fmtD(invoice.lastPaymentDate)}</b></span>}
+        </div>
+        {invoice.unitemised > 0.005 && (
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            {money2(invoice.unitemised)} of the total came in without a receipt line (older import) — its date is not on file
+            {invoice.paidDate ? `; the import sheet says ${fmtD(invoice.paidDate)}` : ''}.
+          </div>
+        )}
         <div className="tbl-wrap">
           <table>
             <thead>
@@ -418,10 +458,14 @@ export default function InvoiceDetail() {
                       <td>{monthOf(p.date)}</td>
                       <td className="num" style={{ fontWeight: 600 }}>{money2(p.amount)}</td>
                       <td>{p.method || '—'}</td>
-                      <td>{p.reference || '—'}</td>
+                      <td>{p.reference || hOf(p).bankLineReference || '—'}</td>
                       <td className="num">{money2(Math.max(0, receivable - run2))}</td>
-                      <td>{p.reference ? <span className="status priority-low">reference on file</span> : <span className="status priority-high">no proof</span>}</td>
-                      <td>{p.recordedBy || '—'}</td>
+                      <td>
+                        {hOf(p).bankTxnId
+                          ? <span className="status priority-low" title={`Bank statement line dated ${fmtD(hOf(p).bankLineDate)}`}>bank statement{hOf(p).bankLineReference ? ` · ${hOf(p).bankLineReference}` : ''}</span>
+                          : (p.reference ? <span className="status priority-low">reference on file</span> : <span className="status priority-high">no proof</span>)}
+                      </td>
+                      <td>{p.recordedBy || '—'}{hOf(p).recordedAt && <div className="small-muted">recorded {fmtD(hOf(p).recordedAt)}</div>}</td>
                       {canManage && (
                         <td>
                           {/* A receipt that came from a reconciled bank line is undone
@@ -455,17 +499,17 @@ export default function InvoiceDetail() {
         </div>
 
         {canManage && pending > 0.5 && invoice.status !== 'Cancelled' && (
-          <form onSubmit={addPayment} style={{ marginTop: 14 }}>
+          <form id="record-payment" onSubmit={addPayment} style={{ marginTop: 14 }}>
             <div className="small-muted" style={{ marginBottom: 8 }}>
               {payments.length
                 ? 'Record only what came in now — the balance stays pending and you record the next part when it arrives.'
                 : 'First payment on this invoice. If the client is paying in parts, record only what came in now — the balance stays pending and you record the next part when it arrives.'}
             </div>
             <div className="grid-3">
-              <label className="field"><span>Payment date *</span>
+              <label className="field"><span>Payment date</span>
                 <input required type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
               </label>
-              <label className="field"><span>Received amount * (₹)</span>
+              <label className="field"><span>Received amount (₹)</span>
                 <input required type="number" step="0.01" max={pending} placeholder={pending.toFixed(2)} value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
               </label>
               <label className="field"><span>Payment method</span>
@@ -480,6 +524,7 @@ export default function InvoiceDetail() {
                 <input value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
               </label>
             </div>
+            <MissingHint items={[['the payment date', !form.date], ['the received amount', !String(form.amount).trim()]]} />
             <div className="qa-row">
               <button className="btn btn-primary btn-sm" type="submit">Record payment</button>
               <button className="btn btn-sm" type="button" onClick={() => run(() => api.patch(`/invoices/${id}/pay`, { date: form.date }))}>Settle in full</button>
@@ -701,7 +746,7 @@ export default function InvoiceDetail() {
                 <iframe
                   title="Invoice preview"
                   style={{ width: '100%', height: 640, border: 0, background: '#fff' }}
-                  srcDoc={(() => { const { style, inner } = invoiceDocumentHtml(doc, preview); return `<style>${style}</style>${inner}`; })()}
+                  srcDoc={(() => { const { style, inner } = invoiceDocumentHtml(doc, preview); return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${inner}</body></html>`; })()}
                 />
               </div>
             </div>
@@ -832,6 +877,7 @@ function SendInvoice({ doc, invoice, message, onPrint, onClose, onSent }) {
           <button className="btn btn-primary" onClick={openEmail}>✉ Open email</button>
         </div>
       </div>
+      {invoice.clientId && <RepliesPanel audience="clients" id={invoice.clientId} title={`Replies from ${invoice.client?.name || 'the client'} (Omni-Channel)`} />}
     </div>
   );
 }

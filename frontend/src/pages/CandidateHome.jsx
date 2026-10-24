@@ -5,6 +5,7 @@ import Modal from '../components/Modal.jsx';
 import {
   Chip, Tabs, Stat, InterviewLine, fmtDate, openFile,
 } from './portal/portalUi.jsx';
+import Combo from '../components/Combo.jsx';
 
 // ---------------------------------------------------------------------------
 // THE CANDIDATE PORTAL (user notes #4, point 3) — where a signed-in candidate
@@ -293,10 +294,10 @@ export default function CandidateHome() {
                 ? extras.documents.map((d) => <div className="tlp-meta" key={d.id}><b>{d.docType}</b> · {d.name} · {fmtDate(d.createdAt)}</div>)
                 : <div className="tlp-meta">No documents uploaded yet. Your recruiter will tell you which ones are needed.</div>}
               <div className="tlp-actions">
-                <select value={docType} onChange={(e) => setDocType(e.target.value)} aria-label="Document type">
+                <Combo value={docType} allowCustom onChange={(e) => setDocType(e.target.value)} aria-label="Document type">
                   <option value="">Choose the document…</option>
                   {extras.documentTypes.map((t) => <option key={t} value={t}>{t}</option>)}
-                </select>
+                </Combo>
                 <label className={`btn btn-sm btn-primary${docType ? '' : ' disabled'}`} style={{ cursor: docType ? 'pointer' : 'not-allowed', opacity: docType ? 1 : 0.6 }}>
                   {uploading ? 'Uploading…' : 'Upload'}
                   <input ref={docRef} type="file" accept="application/pdf,image/png,image/jpeg" hidden onChange={uploadDoc} disabled={uploading || !docType} />

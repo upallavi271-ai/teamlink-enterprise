@@ -1,3 +1,4 @@
+import { matchesText, noMatchText } from '../../components/searchMatch.js';
 import {
   useEffect, useId, useMemo, useRef, useState,
 } from 'react';
@@ -35,10 +36,9 @@ export default function MultiPick({
   }, [open]);
 
   const shown = useMemo(() => {
-    const t = q.trim().toLowerCase();
     return options
       .filter((o) => Number(o.count) > 0 || picked.has(o.value))
-      .filter((o) => !t || String(o.label).toLowerCase().includes(t));
+      .filter((o) => matchesText(String(o.label), q));
   }, [options, q, picked]);
 
   const labelOf = (v) => (options.find((o) => o.value === v) || {}).label || v;
@@ -75,7 +75,7 @@ export default function MultiPick({
             placeholder={searchHint || `Search ${noun}s…`}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && shown.length === 1) { e.preventDefault(); toggle(shown[0].value); }
+              if (e.key === 'Enter' && shown.length >= 1) { e.preventDefault(); toggle(shown[0].value); }
             }}
           />
           <div className="invf-mp-acts">
@@ -83,7 +83,7 @@ export default function MultiPick({
             <button type="button" className="link-btn" onClick={() => onChange([])} disabled={!value.length}>Clear</button>
           </div>
           <div className="invf-mp-list">
-            {shown.length === 0 && <div className="small-muted invf-mp-none">Nothing matches “{q.trim()}”.</div>}
+            {shown.length === 0 && <div className="small-muted invf-mp-none">{noMatchText(q, 'Nothing to pick.')}</div>}
             {shown.map((o) => (
               <label key={o.value} className={`invf-mp-opt${o.special ? ' special' : ''}`}>
                 <input type="checkbox" checked={picked.has(o.value)} onChange={() => toggle(o.value)} />

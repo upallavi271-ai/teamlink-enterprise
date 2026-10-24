@@ -9,7 +9,7 @@ import {
   interviewStatusLabel, interviewStatusClass, resultClass, aiStatusClass, stageLabel,
 } from '../../atsVocab';
 import './InterviewCalendar.css';
-import { productRole, can, canRaiseRequirement } from '../../permissions';
+import { productRole, can, canRaiseRequirement, canStartJob } from '../../permissions';
 
 // Schedule Interview / edit: reschedule, cancel, confirm, start, complete (P5).
 const canSchedule = (user) => can(user, 'ats', 'interviews', 'Schedule Interview', 'edit');
@@ -30,8 +30,9 @@ import Pager, { usePaged } from '../../components/Pager.jsx';
 import { HiringTypeChip } from './intjoinShared.jsx';
 import Combo from '../../components/Combo.jsx';
 import ScheduleInterview from '../../components/ScheduleInterview.jsx';
+import AskToBook, { askable } from '../../components/interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
 // "Rescheduled / Cancelled — now tell them" (Call · WhatsApp · SMS · Mail to the candidate + the team), 2026-10-10.
-import InterviewTell from '../../components/interviews/InterviewTell.jsx';
+import { InterviewTellWithPrep as InterviewTell, InterviewPrepSection, InterviewPrepButton } from '../../components/interviews/InterviewPrep.jsx'; // booking window + preparation questions
 // Change list §11 (2026-10-03): the short feedback form (with "Did not
 // attend" inside it), the Day / Week / Month calendar toggle, late feedback
 // in red, and the Admin switch for automatic reminders.
@@ -43,6 +44,8 @@ import { Modal } from '../../components/proto.jsx';
 import PanelView from '../../components/interviews/PanelView.jsx';
 import PanelPicker from '../../components/interviews/PanelPicker.jsx';
 import MeetingLinkButton from '../../components/interviews/MeetingLinkButton.jsx';
+// 2026-10-14: Start interview (opens the Meet link), e-mail status with Resend, Admin e-mail / Meet settings.
+import { StartInterviewButton, InterviewMailStatus, MeetSettings } from '../../components/interviews/MeetStart.jsx';
 // A name opens the candidate window right here (checklist §13), not another page.
 import CandidateDrawer from '../../components/CandidateDrawer.jsx';
 
@@ -369,10 +372,20 @@ export default function InterviewCalendar() {
   const showCand = (r) => setOpenCand({ candidateId: r.candidate.id, applicationId: r.id });
   // ?schedule=1 (the BDE dashboard's "Schedule Interview") opens the dialog.
   const [scheduling, setScheduling] = useState(() => searchParams.get('schedule') === '1' && canSchedule(user));
+  // ?book=<application> (the bell "Interview to book" a recruiter's request sends the client manager) opens the booking window on that person.
+  useEffect(() => {
+    const id = searchParams.get('book');
+    if (!id || !canSchedule(user)) return;
+    api.get('/ats/interviews/bookable', { params: { id } })
+      .then((r) => { const row = (r.data.rows || [])[0]; if (row) setScheduling({ preset: row }); })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // P5 (2026-10-09): the calendar's actions ask the cells they belong to.
   const canAct = canSchedule(user);
   const canFeedback = can(user, 'ats', 'interviews', 'Interview Feedback', 'create');
+  // Only the BDE books (canAct); a Recruiter / TL still runs the interview and gives feedback (canRun).
+  const canRun = canAct || canFeedback;
   // May this login take the Selected / On hold / Rejected decision right in
   // the feedback form? (The server checks it again.)
   const canDecide = can(user, 'ats', 'interviews', 'Interview Feedback', 'approve');
@@ -667,7 +680,9 @@ export default function InterviewCalendar() {
     if (body.nextRound) {
       const next = (Number(row.round) || 1) + 1;
       msg = `Saved. ${first} goes to round ${next}. Pick the time.`;
-      setScheduling({ preset: { id: row.id, candidate: row.candidate, job: row.requirement.title, client: row.requirement.client?.name || 'TeamLink', round: next } });
+      // Only the BDE books the next round: the others are told who does.
+      if (canAct) setScheduling({ preset: { id: row.id, candidate: row.candidate, job: row.requirement.title, client: row.requirement.client?.name || 'TeamLink', round: next } });
+      else msg = `Saved. ${first} goes to round ${next}. The client manager (BDE) books it: press "Ask the client manager to book" on the candidate.`;
     } else if (canDecide && (body.result !== 'Rejected' || rej)) {
       const dec = body.result === 'Rejected'
         ? {
@@ -682,7 +697,7 @@ export default function InterviewCalendar() {
       try {
         await api.post(`/ats/interviews/${row.id}/decision`, dec);
         msg = body.result === 'Selected' ? `Saved. ${first} is selected. Next: the offer.`
-          : body.result === 'Hold' ? `Saved. ${first} is on hold.` : `Saved. ${first} is rejected for this job.`;
+          : body.result === 'Hold' ? `Saved. ${first} is on hold.` : `Saved. ${first} is rejected for this requirement.`;
       } catch (err) {
         msg = `Feedback saved. The decision was not saved: ${err.response?.data?.error || 'try again on the Feedback tab.'}`;
       }
@@ -704,7 +719,7 @@ export default function InterviewCalendar() {
     { key: 'phase', label: 'Step', value: filters.phase ? (PHASE_LABEL[filters.phase] || filters.phase) : '', onRemove: () => setPhase('') },
     { key: 'status', label: 'Status', value: filters.status ? interviewStatusLabel(filters.status) : '', onRemove: () => setFilter({ status: '' }) },
     { key: 'type', label: 'Type', value: filters.type, onRemove: () => setFilter({ type: '' }) },
-    { key: 'req', label: 'Job', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
+    { key: 'req', label: 'Requirement', value: filters.requirement, onRemove: () => setFilter({ requirement: '' }) },
     { key: 'cand', label: 'Candidate', value: filters.candidate, onRemove: () => setFilter({ candidate: '' }) },
     { key: 'ht', label: 'Hiring type', value: filters.hiringType, onRemove: () => setFilter({ hiringType: '' }) },
     { key: 'date', label: 'Date', value: filters.date ? fmtDate(filters.date) : '', onRemove: () => setFilter({ date: '' }) },
@@ -860,9 +875,9 @@ export default function InterviewCalendar() {
   };
   const quickActions = [
     canAct && { key: 'book', icon: 'plus', label: 'Book interview', sub: 'Pick a candidate, time and panel', onClick: () => setScheduling(true), tone: 'blue' },
-    canRaiseRequirement(user) && { key: 'job', icon: 'briefcase', label: 'Post a job', sub: 'Create a new requirement', to: '/requirements?new=1', tone: 'blue' },
+    canStartJob(user) && { key: 'job', icon: 'briefcase', label: canRaiseRequirement(user) ? 'Post a requirement' : 'Request a requirement', sub: canRaiseRequirement(user) ? 'Create a new requirement' : 'A lead opens it', to: '/requirements?new=1', tone: 'blue' },
     can(user, 'ats', 'candidates', 'Add Candidate', 'create') && { key: 'cand', icon: 'user', label: 'Add candidate', sub: 'Add a candidate by hand', to: '/candidates?add=1', tone: 'violet' },
-    can(user, 'ats', 'requirements', 'Requirement List', 'view') && { key: 'jobs', icon: 'list', label: 'View all jobs', sub: 'Every requirement in your area', to: '/requirements', tone: 'green' },
+    can(user, 'ats', 'requirements', 'Requirement List', 'view') && { key: 'jobs', icon: 'list', label: 'View all requirements', sub: 'Every requirement in your area', to: '/requirements', tone: 'green' },
     can(user, 'ats', 'candidates', 'Candidate List', 'view') && { key: 'cands', icon: 'users', label: 'View candidates', sub: 'Search and filter candidates', to: '/candidates', tone: 'amber' },
     can(user, 'ats', 'interviews', 'Interview Feedback', 'view') && { key: 'fb', icon: 'chat', label: 'Interview feedback', sub: 'Decide after the interview', to: '/ats/interview-feedback', tone: 'red' },
   ].filter(Boolean).slice(0, 5);
@@ -939,7 +954,7 @@ export default function InterviewCalendar() {
         <KpiTile
           icon="chat" tone="violet" label="Interview done, no feedback" value={cards.feedback} loading={!loaded}
           sub={cards.late > 0 ? `${cards.late.toLocaleString('en-IN')} late (more than a day)` : (cards.feedback ? 'Interview done, feedback not in' : 'All feedback is in')}
-          title="The interview is done (or its booked time has passed) and nobody has written the feedback yet. Counts every hiring type, so it can be bigger than the dashboard, which counts client jobs that are still recent."
+          title="The interview is done (or its booked time has passed) and nobody has written the feedback yet. Counts every hiring type, so it can be bigger than the dashboard, which counts client requirements that are still recent."
           onClick={() => openList('feedback')}
         />
       </KpiRow>
@@ -954,7 +969,7 @@ export default function InterviewCalendar() {
           options={pfOptions}
           show={{ department: true, dateRange: false, client: true, people: false }}
         />
-        <FacetSelect label="Job / Requirement" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={barFacets.requirement} allLabel="All jobs" />
+        <FacetSelect label="Requirement" value={filters.requirement} onChange={(v) => setFilter({ requirement: v })} options={barFacets.requirement} allLabel="All requirements" />
         <FacetSelect label="Interview type" value={filters.type} onChange={pickType} options={barTypeOptions} allLabel="All types" />
         <FacetSelect label="Status" value={filters.status} onChange={(v) => setFilter({ status: v })} options={barFacets.status} allLabel="All statuses" />
         <PageFilterBar
@@ -970,7 +985,7 @@ export default function InterviewCalendar() {
             type="search"
             value={filters.q}
             onChange={(e) => setFilter({ q: e.target.value })}
-            placeholder="Search name, job or interview ID…"
+            placeholder="Search name, requirement or interview ID…"
             aria-label="Search interviews"
           />
         </label>
@@ -1020,7 +1035,7 @@ export default function InterviewCalendar() {
           onClear={() => setSelId(null)}
           onOpenCandidate={showCand}
           onFull={(r) => setDialog({ kind: 'detail', row: r })}
-          actions={shownRow && canAct ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} /></div> : null}
+          actions={shownRow && canRun ? <div className="iv4-det-acts"><Actions row={shownRow} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} /></div> : null}
         />
       </div>
 
@@ -1036,7 +1051,7 @@ export default function InterviewCalendar() {
             <div className="ak-empty">{loaded ? (cards.week > 0 ? 'No interviews today — see Upcoming.' : 'No interviews today.') : 'Loading…'}</div>
           ) : (
             <table className="ak-table">
-              <thead><tr><th>Time</th><th>Candidate</th><th>Job / ID</th><th>Client</th><th>Status</th><th aria-label="Open" /></tr></thead>
+              <thead><tr><th>Time</th><th>Candidate</th><th>Requirement / ID</th><th>Client</th><th>Status</th><th aria-label="Open" /></tr></thead>
               <tbody>
                 {todayRows.slice(0, 6).map((r) => (
                   <tr key={r.id} className="ak-row-click" onClick={() => focusRow(r)}>
@@ -1159,12 +1174,12 @@ export default function InterviewCalendar() {
                 panel={(
                   <>
                     <PanelField label="Step">
-                      <select value={filters.phase || ''} onChange={(e) => setPhase(e.target.value)}>
+                      <Combo value={filters.phase || ''} onChange={(e) => setPhase(e.target.value)}>
                         <option value="">Any step</option>
                         {[...INTERVIEW_LIFECYCLE, ...INTERVIEW_EXCEPTIONS].filter(([id]) => (phaseCounts[id] || 0) > 0 || filters.phase === id).map(([id]) => (
                           <option key={id} value={id}>{`${PHASE_LABEL[id]} (${(phaseCounts[id] || 0).toLocaleString('en-IN')})`}</option>
                         ))}
-                      </select>
+                      </Combo>
                     </PanelField>
                     {/* Department, client, job, type, status, dates, recruiter / BDE and search are on the bar above. */}
                     <HierarchyFilter value={{ ...hier, department: pf.department }} onChange={(v) => { setHier({ ...v, department: '' }); if (v.tl) setMine(false); }} show={{ department: false, recruiter: false }} />
@@ -1180,7 +1195,7 @@ export default function InterviewCalendar() {
                 <div className="tbl-wrap">
                   <table>
                     <thead>
-                      <tr><th>Candidate</th><th>Job</th><th>Client</th><th>Hiring</th><th>Shortlisted</th><th>Next</th></tr>
+                      <tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Hiring</th><th>Shortlisted</th><th>Next</th></tr>
                     </thead>
                     <tbody>
                       {shortlisted.map((r) => (
@@ -1201,7 +1216,9 @@ export default function InterviewCalendar() {
                                   Book interview
                                 </button>
                               )
-                              : <span className="small-muted">Waiting for a booking</span>}
+                              : (askable(user, 'CLIENT_SHORTLISTED', null, false)
+                                ? <AskToBook applicationId={r.id} requested={r.interviewRequest || null} />
+                                : <span className="small-muted">Waiting for the client manager to book</span>)}
                           </td>
                         </tr>
                       ))}
@@ -1258,7 +1275,7 @@ export default function InterviewCalendar() {
                           {r.cancelReason && <div className="ivv3-sub2" title={r.cancelReason}>{r.cancelReason}</div>}
                         </td>
                         <td style={{ whiteSpace: 'nowrap' }}>
-                          {!canAct ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} />}
+                          {!canRun ? <span className="small-muted">—</span> : <Actions row={r} advance={advance} setDialog={setDialog} onNextRound={bookNext} canFeedback={canFeedback} canBook={canAct} onStarted={load} />}
                         </td>
                       </tr>
                     ))}
@@ -1288,7 +1305,7 @@ export default function InterviewCalendar() {
               <ListToolbar
                 search={aiQ}
                 onSearch={setAiQ}
-                placeholder="Search name, job or AI interview ID…"
+                placeholder="Search name, requirement or AI interview ID…"
                 filterCount={aiStatus ? 1 : 0}
                 sort={aiSort}
                 sortOptions={[['', 'Default order'], ['deadline', 'Due soonest'], ['candidate', 'Name A–Z']]}
@@ -1300,7 +1317,7 @@ export default function InterviewCalendar() {
                 onClearAll={() => { setAiStatus(''); setAiQ(''); }}
                 panel={<FacetSelect label="Status" value={aiStatus} onChange={setAiStatus} options={aiFacets.status} allLabel="All statuses" />}
               />
-              <AiTab rows={aiRows} pager={aiPager} loading={aiLoading} canAct={canAct} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
+              <AiTab rows={aiRows} pager={aiPager} loading={aiLoading} canAct={can(user, 'ats', 'interviews', 'AI Interview', 'edit')} act={act} emptyLabel={AI_EMPTY[views.ai]} mine={mine} onOpen={showCand} />
             </>
           )}
         </div>
@@ -1360,6 +1377,7 @@ export default function InterviewCalendar() {
           )}
         </div>
       )}
+      {isAdmin && <MeetSettings onMessage={(m, bad) => (bad ? setError(m) : setNotice(m))} />}
       {isAdmin && reminders && reminders.staff && (
         <div className="ivx-admin">
           <span title="Bell reminders inside TeamLink for the interviewers (panel), the recruiter, the team lead and the client manager (BDE). Separate from Candidate emails.">
@@ -1384,11 +1402,13 @@ export default function InterviewCalendar() {
 // The prototype's ivActionsHtml(): what you can do depends entirely on where the
 // interview currently is.
 function Actions({
-  row, advance, setDialog, onNextRound = null, canFeedback = true,
+  row, advance, setDialog, onNextRound = null, canFeedback = true, canBook = true, onStarted = null,
 }) {
   const st = row.status;
   const next = INTERVIEW_NEXT[st];
   const nextLabel = next === 'CONFIRMED' ? 'Confirm' : next === 'STARTED' ? 'Start' : 'Complete';
+  // ONLY THE BDE BOOKS (user, 2026-10-12): book / move / cancel are for a login that may book (canBook). A Recruiter or
+  // TL still runs the interview (Confirm / Start / Complete), gives feedback and tells the candidate.
   // The slot has passed: the one next thing is the feedback (where "Did not
   // attend" also lives — there is no No Show button on the row).
   const passed = !!row.interviewAt && new Date(row.interviewAt).getTime() < Date.now()
@@ -1397,7 +1417,8 @@ function Actions({
     return (
       <>
         {canFeedback && <><button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'feedback', row })}>Add feedback</button>{' '}</>}
-        <button className={'btn btn-sm' + (canFeedback ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>
+        {canBook && <button className={'btn btn-sm' + (canFeedback ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>}
+        {!canBook && <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>}
       </>
     );
   }
@@ -1405,8 +1426,8 @@ function Actions({
   if (['CANCELLED', 'NO_SHOW', 'RESCHEDULED'].includes(st)) {
     return (
       <>
-        <button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}
-        {st === 'RESCHEDULED' && <button className="btn btn-sm" onClick={() => advance(row, 'CONFIRMED')}>Confirm</button>}{' '}
+        {canBook && <><button className="btn btn-sm btn-primary" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}</>}
+        {st === 'RESCHEDULED' && <><button className={'btn btn-sm' + (canBook ? '' : ' btn-primary')} onClick={() => advance(row, 'CONFIRMED')}>Confirm</button>{' '}</>}
         <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'tell', row })}>Tell them</button>{' '}
         <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>
       </>
@@ -1419,7 +1440,7 @@ function Actions({
       <>
         {/* The decision is taken on the Feedback tab of this same screen. */}
         {decide && canFeedback && <><Link className="btn btn-sm btn-primary" to="/ats/interview-feedback">Decide</Link>{' '}</>}
-        {decide && onNextRound && <><button type="button" className="btn btn-sm" onClick={() => onNextRound(row)}>{`Book round ${(Number(row.round) || 1) + 1}`}</button>{' '}</>}
+        {decide && onNextRound && canBook && <><button type="button" className="btn btn-sm" onClick={() => onNextRound(row)}>{`Book round ${(Number(row.round) || 1) + 1}`}</button>{' '}</>}
         {canFeedback && (
           <button className={'btn btn-sm' + (decide ? '' : ' btn-primary')} onClick={() => setDialog({ kind: 'feedback', row })}>
             {['COMPLETED', 'FEEDBACK_SUBMITTED'].includes(st) ? 'Edit feedback' : 'Add feedback'}
@@ -1431,10 +1452,14 @@ function Actions({
   }
   return (
     <>
-      {next && <><button className="btn btn-sm btn-primary" onClick={() => advance(row, next)}>{nextLabel}</button>{' '}</>}
-      <button className="btn btn-sm" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}
+      {/* START INTERVIEW (2026-10-14): the blue button opens the Meet link and marks the interview started. Shown to the
+          interviewer, the booker, the BDE team, the job's team lead and an Admin (the server decides: row.start). */}
+      <StartInterviewButton row={row} onChanged={onStarted} />{' '}
+      {next && next !== 'STARTED' && <><button className="btn btn-sm btn-primary" onClick={() => advance(row, next)}>{nextLabel}</button>{' '}</>}
+      {canBook && <><button className="btn btn-sm" onClick={() => setDialog({ kind: 'reschedule', row })}>Reschedule</button>{' '}</>}
       <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'tell', row })}>Tell them</button>{' '}
-      <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'cancel', row })}>Cancel interview</button>
+      {canBook && <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'cancel', row })}>Cancel interview</button>}
+      {!canBook && <button className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'history', row })}>History</button>}
     </>
   );
 }
@@ -1484,9 +1509,9 @@ function RescheduleForm({ dialog, setDialog, act, error }) {
         }}
       >
         <div className="grid-2">
-          <label className="field"><span>New date &amp; time *</span>
+          <label className="field"><span>New date &amp; time</span>
             <input required type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} /></label>
-          <label className="field"><span>Reason *</span>
+          <label className="field"><span>Reason</span>
             <input required value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why is it moving?" /></label>
         </div>
         <button className="btn btn-primary btn-sm" type="submit">Reschedule</button>
@@ -1506,7 +1531,7 @@ function CancelForm({ dialog, setDialog, act, error }) {
           act(() => api.post(`/ats/interviews/${row.id}/cancel`, { reason, viaPopup: true }), 'Saved. Interview cancelled. The person stays at their step.', () => setDialog({ kind: 'tell', row, tellKind: 'cancelled', saved: `Saved. ${row.candidate.name} · interview cancelled. The person stays at their step.` }));
         }}
       >
-        <label className="field" style={{ marginBottom: 10 }}><span>Why? *</span>
+        <label className="field" style={{ marginBottom: 10 }}><span>Why?</span>
           <textarea required rows="2" value={reason} onChange={(e) => setReason(e.target.value)} /></label>
         <button className="btn btn-primary btn-sm" type="submit">Cancel interview</button>
       </form>
@@ -1522,6 +1547,7 @@ function DetailPanel({
   const link = row.meetingLink;
   const [editPanel, setEditPanel] = useState(null);
   const [panelErr, setPanelErr] = useState('');
+  const [mailKey, setMailKey] = useState(0);
   const live = ['SCHEDULED', 'CONFIRMED', 'STARTED', 'RESCHEDULED'].includes(row.status);
   async function savePanel() {
     setPanelErr('');
@@ -1566,8 +1592,11 @@ function DetailPanel({
           </>
         )}
       </div>
+      {row.canSetLink && !!link && <div style={{ marginBottom: 6 }}><StartInterviewButton row={{ ...row, start: { show: true, can: true, needsLink: true, online: true, label: 'Change the Meet link' } }} onChanged={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} /></div>}
+      <div style={{ marginBottom: 10 }}><InterviewMailStatus applicationId={row.id} reloadKey={mailKey} /></div>
+      <InterviewPrepSection applicationId={row.id} />
       <div className="ivx-actions">
-        {canAct && <Actions row={row} advance={advance} setDialog={setDialog} onNextRound={onNextRound} canFeedback={can(user, 'ats', 'interviews', 'Interview Feedback', 'create')} />}
+        {(canAct || can(user, 'ats', 'interviews', 'Interview Feedback', 'create')) && <Actions row={row} advance={advance} setDialog={setDialog} onNextRound={onNextRound} canFeedback={can(user, 'ats', 'interviews', 'Interview Feedback', 'create')} canBook={canAct} onStarted={() => { setMailKey((k) => k + 1); if (onChanged) onChanged({}); }} />}
         <button type="button" className="btn btn-sm btn-ghost" onClick={() => onOpen(row)}>Open candidate</button>
       </div>
     </Panel>
@@ -1621,7 +1650,7 @@ function AiTab({
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>Candidate</th><th>Job</th><th>Score</th><th>Status</th>
+              <th>ID</th><th>Candidate</th><th>Requirement</th><th>Score</th><th>Status</th>
               <th>Due by</th><th>Result</th><th>Summary</th><th>Actions</th>
             </tr>
           </thead>
@@ -1648,6 +1677,7 @@ function AiTab({
                     {r.feedback || (r.score != null ? 'See summary on the profile.' : '—')}
                   </td>
                   <td style={{ whiteSpace: 'nowrap' }}>
+                    <InterviewPrepButton applicationId={r.id} type="ai" label="Preparation" />{' '}
                     {!canAct ? <span className="small-muted">—</span> : (
                       <>
                         {r.stage === 'AI_INTERVIEW_COMPLETED' && (

@@ -21,7 +21,7 @@ const span = (from, to) => `${day(from) || 'start not recorded'} – ${day(to) |
 export const leftLine = (leftOn) => (leftOn ? `Left on ${day(leftOn)}` : 'Left · last day not recorded');
 
 const COLS = [
-  ['added', 'Added', 'Candidates they put forward on a job'],
+  ['added', 'Put on a requirement', 'People they put on a requirement'],
   ['sent', 'Sent to client', 'Of those, sent to the client'],
   ['interviews', 'Interviews', 'Reached an interview'],
   ['selected', 'Selected', 'Selected or offered'],
@@ -101,8 +101,8 @@ export default function FormerHistory({ personId, onClose }) {
                         <b className={t[k] ? '' : 'is-zero'}>{t[k] ? fmt(t[k]) : 'None'}</b>
                       </div>
                     ))}
-                    <div className="fh-tile" title="Jobs they worked on">
-                      <span className="small-muted">Jobs</span>
+                    <div className="fh-tile" title="Requirements they worked on">
+                      <span className="small-muted">Requirements</span>
                       <b>{fmt(t.jobs)}</b>
                     </div>
                   </div>
@@ -182,14 +182,14 @@ export default function FormerHistory({ personId, onClose }) {
             </Section>
 
             {/* --- Jobs --- */}
-            <Section title={`Jobs they worked${d.jobs.length ? ` (${fmt(d.jobs.length)})` : ''}`}>
+            <Section title={`Requirements they worked${d.jobs.length ? ` (${fmt(d.jobs.length)})` : ''}`}>
               {d.jobs.length
                 ? (
                   <div className="fh-list">
                     {jobs.map((j) => (
                       <div key={j.id} className="fh-row">
                         <div className="fh-row-main">
-                          <Link to={`/requirements/${j.id}`} className="fh-strong">{j.title || 'Job'}</Link>
+                          <Link to={`/requirements/${j.id}`} className="fh-strong">{j.title || 'Requirement'}</Link>
                           <span className="small-muted">{[j.reqCode, j.client, j.department].filter(Boolean).join(' · ')}</span>
                         </div>
                         <div className="small-muted">
@@ -199,12 +199,12 @@ export default function FormerHistory({ personId, onClose }) {
                     ))}
                     {d.jobs.length > JOBS_PREVIEW && (
                       <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAllJobs(!allJobs)}>
-                        {allJobs ? `Show the first ${JOBS_PREVIEW}` : `Show all ${fmt(d.jobs.length)} jobs`}
+                        {allJobs ? `Show the first ${JOBS_PREVIEW}` : `Show all ${fmt(d.jobs.length)} requirements`}
                       </button>
                     )}
                   </div>
                 )
-                : <EmptyState compact icon="💼" title="No jobs recorded under their name." />}
+                : <EmptyState compact icon="💼" title="No requirements recorded under their name." />}
             </Section>
 
             {/* --- Who took over --- */}
@@ -228,7 +228,7 @@ export default function FormerHistory({ personId, onClose }) {
                     <div>{`${fmt(d.openWork.count)} of their candidates are still in process.`}</div>
                     {d.openWork.nowWith.length > 0 && (
                       <div className="small-muted">
-                        {`Their jobs are now with ${d.openWork.nowWith.slice(0, 3).map((w) => `${w.name} (${fmt(w.count)})`).join(', ')}.`}
+                        {`Their requirements are now with ${d.openWork.nowWith.slice(0, 3).map((w) => `${w.name} (${fmt(w.count)})`).join(', ')}.`}
                       </div>
                     )}
                   </div>

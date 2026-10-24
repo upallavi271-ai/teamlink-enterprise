@@ -32,7 +32,8 @@ const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm, can } = require('../middleware/auth');
 const { logAudit } = require('../utils/audit');
-const { employeeRecordWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
+const { employeeRecordWhere, employeeWhere, employeeInScope, OUT_OF_SCOPE } = require('../utils/scope');
+const { withoutSystemAccounts } = require('../utils/systemAccounts');
 const { systemRequesterError } = require('../utils/systemAccounts');
 const chain = require('../utils/chainRoute');
 const D = require('../utils/attendanceDays');
@@ -44,6 +45,14 @@ const workflow = require('../utils/approvalWorkflow');
 
 const router = express.Router();
 router.use(requireAuth);
+
+// WHO CAN BE PICKED (HRMS item 3, 2026-10-13): only people who still work here. Exited, Relieved, Terminated,
+// Inactive and Exit Process employees (treated as left, like the seat rule) and people whose login is switched off
+// never appear in the Late-coming pickers, and the server refuses their id.
+const LEFT_EMPLOYMENT = ['Exited', 'Relieved', 'Terminated', 'Inactive', 'Exit Process', 'Suspended'];
+const isWorking = (e) => !!e && !LEFT_EMPLOYMENT.includes(e.employmentStatus);
+const workingWhere = () => ({ AND: [{ employmentStatus: { notIn: LEFT_EMPLOYMENT } }, { OR: [{ userId: null }, { user: { is: { status: { not: 'Inactive' } } } }] }] });
+const LEFT_MESSAGE = 'That person no longer works here (exited, relieved or inactive), so a late-coming request cannot be made for them.';
 
 const WF = 'latePermission';
 const KEY = 'latePermission.settings';
@@ -111,8 +120,24 @@ async function planFor(employee, date, body, settings) {
   return { kind, arrivedAt: null, expectedTime };
 }
 
+// The "Add for a person" picker: working employees in the caller's scope, narrowed by department, with counts.
+// GET /api/late-permissions/people?department=  ->  { people:[{id,name,employeeCode,department,designation,userId}], departments:[{name,count}] }
+router.get('/people', async (req, res) => {
+  try {
+    if (req.user.caps.hrmsSelfOnly) return res.json({ people: [], departments: [] });
+    const base = { AND: [employeeWhere(req.user), workingWhere(), withoutSystemAccounts({})] };
+    const sel = { id: true, name: true, employeeCode: true, department: true, designation: true, userId: true };
+    const rows = await prisma.employee.findMany({ where: base, select: sel, orderBy: { name: 'asc' } });
+    const counts = new Map();
+    rows.forEach((e) => { const d = e.department || 'No department'; counts.set(d, (counts.get(d) || 0) + 1); });
+    const dept = String(req.query.department || '').trim();
+    const people = dept ? rows.filter((e) => (e.department || 'No department') === dept) : rows;
+    res.json({ people, departments: [...counts.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (err) { res.status(500).json({ error: 'Could not load the list of people.' }); }
+});
+
 router.get('/settings', async (req, res) => res.json({ ...(await getSettings()), reasons: LP.REASONS }));
-router.put('/settings', requirePerm(null, 'hrms', 'Attendance & Time', 'configure'), async (req, res) => {
+router.put('/settings', require('../utils/internalHr').blockRoute('settings'), requirePerm(null, 'hrms', 'Attendance & Time', 'configure'), async (req, res) => {
   const cur = await getSettings();
   const next = { ...cur };
   if (req.body.pastDays !== undefined) {
@@ -141,6 +166,7 @@ async function targetEmployee(req, employeeId) {
   const e = await prisma.employee.findUnique({ where: { id: String(employeeId) } });
   if (!e) return { error: { status: 404, body: { error: 'That employee was not found.' } } };
   if (!employeeInScope(req.user, e)) return { error: { status: 403, body: OUT_OF_SCOPE } };
+  if (!isWorking(e)) return { error: { status: 400, body: { error: LEFT_MESSAGE } } };
   return { employee: e, own };
 }
 
@@ -227,6 +253,9 @@ router.post('/', async (req, res) => {
     employee = await prisma.employee.findUnique({ where: { id: String(body.employeeId) } });
     if (!employee) return res.status(404).json({ error: 'That employee was not found.' });
     if (!employeeInScope(req.user, employee)) return res.status(403).json(OUT_OF_SCOPE);
+    if (!isWorking(employee)) return res.status(400).json({ error: LEFT_MESSAGE });
+    const lu = employee.userId ? await prisma.user.findUnique({ where: { id: employee.userId }, select: { status: true } }) : null;
+    if (lu && lu.status === 'Inactive') return res.status(400).json({ error: LEFT_MESSAGE });
   }
   if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
   { const sys = await systemRequesterError(employee, 'late coming'); if (sys) return res.status(403).json({ error: sys }); }
@@ -289,6 +318,7 @@ async function decideOne(user, id, status, comment) {
     data: { status, decidedAt: new Date(), decidedById: user.id, decidedBy: user.name || user.email, decisionNote: comment || null },
   });
   await logAudit({ userId: user.id, action: `Late coming ${status.toLowerCase()}`, entity: 'LatePermission', entityId: perm.id, fromValue: 'Pending', toValue: `${status}${comment ? ` · ${comment}` : ''}` });
+  if (status === 'Approved') require('../utils/attendanceTasks').closeFixedFor(perm.employeeId);
   hrmsNotify.latePermissionDecided({ perm, employee: existing.employee, by: user }).catch((e) => console.error('[latePermission] notify failed', e.message));
   return { status: 200, body: { ...perm, attachmentFile: undefined } };
 }

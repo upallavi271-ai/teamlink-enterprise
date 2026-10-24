@@ -42,8 +42,15 @@ const ALLOWED = {
   'application/pdf': 'pdf',
 };
 
+// Word files: NOT in ALLOWED. Only a caller that asks for them (store(..., { allowWord: true }), the
+// client's own agreement) can store one, so every other uploader keeps refusing them.
+const WORD_TYPES = {
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/msword': 'doc',
+};
+
 // A stored name this module produced, and nothing else.
-const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf)$/;
+const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf|docx|doc)$/;
 
 function uploadDir() {
   const dir = process.env.UPLOAD_DIR
@@ -65,6 +72,10 @@ function sniffAgrees(mime, buf) {
         && buf.slice(8, 12).toString('latin1') === 'WEBP';
     case 'application/pdf':
       return buf.slice(0, 5).toString('latin1') === '%PDF-';
+    case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
+      return buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04; // zip
+    case 'application/msword':
+      return buf.length >= 8 && buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
     default:
       return false;
   }
@@ -170,14 +181,14 @@ async function parseMultipart(req, { maxBytes = MAX_BYTES } = {}) {
 // Throws an Error whose `.code` names the reason, so the route can phrase it.
 // `maxBytes` lets a caller with a larger stated limit (the bank panel's bill,
 // 8 MB) raise the cap for its own upload; everything else keeps MAX_BYTES.
-function store(file, { maxBytes = MAX_BYTES } = {}) {
+function store(file, { maxBytes = MAX_BYTES, allowWord = false } = {}) {
   if (!file || !file.data || !file.data.length) {
     throw Object.assign(new Error('NO_FILE'), { code: 'NO_FILE' });
   }
   if (file.data.length > maxBytes) {
     throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
   }
-  const ext = ALLOWED[file.contentType];
+  const ext = ALLOWED[file.contentType] || (allowWord ? WORD_TYPES[file.contentType] : undefined);
   if (!ext) throw Object.assign(new Error('BAD_TYPE'), { code: 'BAD_TYPE' });
   if (!sniffAgrees(file.contentType, file.data)) {
     throw Object.assign(new Error('CONTENT_MISMATCH'), { code: 'CONTENT_MISMATCH' });
@@ -219,6 +230,6 @@ const MESSAGE = {
 };
 
 module.exports = {
-  MAX_BYTES, ALLOWED, MESSAGE,
+  MAX_BYTES, ALLOWED, WORD_TYPES, MESSAGE,
   uploadDir, parseMultipart, store, resolveStored, remove, safeDisplayName,
 };

@@ -75,3 +75,6 @@
   .tlpp-months{flex-direction:column}
   .tlpp-month{min-width:0}
 }
+
+.tlpp-find{width:100%;box-sizing:border-box;font:inherit;font-size:13px;padding:6px 10px;margin-bottom:4px;border:1px solid #d6dbe6;border-radius:8px}
+@media (max-width:720px){.tlpp-find{flex:1 1 100%}}

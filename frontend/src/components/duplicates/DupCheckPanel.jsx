@@ -66,7 +66,7 @@ export function ProfileBox({ p, tag, isNew, matched = [] }) {
           {p.otherAreaApplications > 0 && <div className="small-muted">{`${p.otherAreaApplications} more with another team`}</div>}
         </div>
       )}
-      {p.applications && p.applications.length === 0 && <div className="dupx-apps small-muted">No job yet</div>}
+      {p.applications && p.applications.length === 0 && <div className="dupx-apps small-muted">No requirement yet</div>}
     </div>
   );
 }
@@ -121,7 +121,7 @@ function MergeDialog({ item, mode, onClose, onDone }) {
     >
       <div className="dupx-merge">
         <div className="small-muted" style={{ marginBottom: 8 }}>
-          One person keeps one profile. Pick the profile to keep. Everything else (jobs, notes, documents, messages) moves to it. {mode !== 'request' && 'You can undo a merge for 7 days.'}
+          One person keeps one profile. Pick the profile to keep. Everything else (requirements, notes, documents, messages) moves to it. {mode !== 'request' && 'You can undo a merge for 7 days.'}
         </div>
         <div className="dupx-keep" role="radiogroup" aria-label="Which profile to keep">
           {[flag.matchCandidateId, flag.candidateId].map((id, i) => {
@@ -161,8 +161,8 @@ function MergeDialog({ item, mode, onClose, onDone }) {
               {showAll ? 'Show only the details that differ' : 'Show every detail'}
             </button>
             <ul className="dupx-moves">
-              <li>{`${pv.plan.counts.applications} job application(s) move to the kept profile`}</li>
-              {pv.plan.counts.conflicts > 0 && <li>{`${pv.plan.counts.conflicts} job where both applied — the one further ahead is kept`}</li>}
+              <li>{`${pv.plan.counts.applications} requirement application(s) move to the kept profile`}</li>
+              {pv.plan.counts.conflicts > 0 && <li>{`${pv.plan.counts.conflicts} requirement where both applied — the one further ahead is kept`}</li>}
               <li>{`${pv.plan.counts.notes} note(s), ${pv.plan.counts.documents} document(s), ${pv.plan.counts.messages} message(s), ${pv.plan.counts.followUps} follow-up(s) move too`}</li>
               <li>The old profile’s link keeps working — it opens the kept profile.</li>
             </ul>
@@ -252,7 +252,7 @@ export function DupPairCard({ item, onChanged, selectable = false, selected = fa
               <button type="button" className="btn" onClick={() => setAsk(ask === 'decline' ? null : 'decline')}>Not approved</button>
             )}
             {caps.canResolve && !requested && (
-              <button type="button" className="btn" disabled={!!busy} onClick={() => call('same-person', {}, 'same')} title="Adds the new job application to the existing profile">Same person – different job</button>
+              <button type="button" className="btn" disabled={!!busy} onClick={() => call('same-person', {}, 'same')} title="Adds the new requirement application to the existing profile">Same person – different requirement</button>
             )}
             {caps.canResolve && (
               <button type="button" className="btn" onClick={() => setAsk(ask === 'not' ? null : 'not')} title="They are two different people">Not a duplicate</button>

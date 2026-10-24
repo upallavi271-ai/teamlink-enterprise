@@ -39,7 +39,7 @@
 const prisma = require('../db');
 const { logAudit } = require('./audit');
 const bridge = require('./jobPortalBridge');
-const { requirementIsLive, requirementStatusLabel } = require('./atsVocab');
+const { requirementIsLive, requirementStateWords } = require('./atsVocab');
 
 const JOB_BOARDS = [
   { id: 'naukri', name: 'Naukri' },
@@ -218,7 +218,7 @@ async function autoPost(requirementId, ctx = {}) {
       await logAudit({
         userId: ctx.actorId || null, actorName: ctx.actorName || null,
         action: 'Requirement taken down from all sources', entity: 'Requirement', entityId: r.id,
-        fromValue: 'Published', toValue: `Requirement is ${requirementStatusLabel(r.status)}`,
+        fromValue: 'Published', toValue: `Requirement is ${requirementStateWords(r.status)}`,
       });
     }
 
@@ -282,10 +282,10 @@ async function postingChannels(r, user = null) {
 // The Job Portal's failure in words a new joiner understands.
 function plainPortalReason(raw) {
   const t = String(raw || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-  if (!t) return 'The Job Portal did not accept the job last time.';
-  if (/not reachable/i.test(t)) return 'The Job Portal app was not running, so the job could not be sent. Start the Job Portal app, then press Retry.';
+  if (!t) return 'The Job Portal did not accept the requirement last time.';
+  if (/not reachable/i.test(t)) return 'The Job Portal app was not running, so the requirement could not be sent. Start the Job Portal app, then press Retry.';
   if (/did not answer in time/i.test(t)) return 'The Job Portal was too slow to answer. Press Retry in a minute.';
-  if (/Cannot (POST|PUT)/i.test(t) || /answered 404/i.test(t)) return 'The Job Portal app is an old version that cannot take jobs yet. Update the Job Portal app, then press Retry.';
+  if (/Cannot (POST|PUT)/i.test(t) || /answered 404/i.test(t)) return 'The Job Portal app is an old version that cannot take requirements yet. Update the Job Portal app, then press Retry.';
   if (/answered 401|answered 403|token|secret/i.test(t)) return 'The Job Portal refused our key. Ask the Admin to check the Job Portal key on the server.';
   if (/SANDBOX/i.test(t)) return 'This is the test copy — the Job Portal is never contacted from here.';
   return `The Job Portal said: ${t.slice(0, 160)}`;
