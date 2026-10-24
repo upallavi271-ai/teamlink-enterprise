@@ -390,7 +390,7 @@ Write-Host "Upload successful" -ForegroundColor Green
 Write-Host ""
 Write-Host "[5/10] Creating VPS backup..." -ForegroundColor Cyan
 
-ssh $VpsHost "mkdir -p '$RemoteBackup' && cp '$VpsRoot/backend/prisma/dev.db' '$RemoteBackup/dev.db' && cp '$VpsRoot/backend/.env' '$RemoteBackup/.env' && echo 'VPS BACKUP SUCCESSFUL' && ls -lh '$RemoteBackup'"
+ssh $VpsHost "mkdir -p '$RemoteBackup' && cp '$VpsRoot/backend/prisma/dev.db' '$RemoteBackup/dev.db' && for f in dev.db-wal dev.db-shm; do if [ -f '$VpsRoot/backend/prisma/'`$f ]; then cp '$VpsRoot/backend/prisma/'`$f '$RemoteBackup/'`$f; fi; done && cp '$VpsRoot/backend/.env' '$RemoteBackup/.env' && echo 'VPS BACKUP SUCCESSFUL' && ls -lh '$RemoteBackup'"
 
 if ($LASTEXITCODE -ne 0) {
     throw "VPS backup failed. Deployment stopped."
@@ -463,7 +463,11 @@ if ($KeepVps) {
 
     Write-Host "Restoring VPS database..." -ForegroundColor Yellow
 
-    ssh $VpsHost "cp '$OldBackend/prisma/dev.db' '$VpsRoot/backend/prisma/dev.db' && rm -f '$VpsRoot/backend/prisma/dev.db-wal' '$VpsRoot/backend/prisma/dev.db-shm' && echo 'VPS DATABASE KEPT'"
+    # FIX 2026-10-24 (data loss): the database runs in WAL mode (backend/src/db.js), so the newest committed rows sit in dev.db-wal until
+    # SQLite checkpoints them. Copying dev.db alone and deleting the -wal file threw those rows away on every deploy (found when the
+    # developer login made minutes before a deploy vanished). TeamLink is stopped at this point (step 6), so the three files are consistent:
+    # copy all of them; SQLite replays the WAL when the new code opens the database.
+    ssh $VpsHost "rm -f '$VpsRoot/backend/prisma/dev.db-wal' '$VpsRoot/backend/prisma/dev.db-shm' && cp '$OldBackend/prisma/dev.db' '$VpsRoot/backend/prisma/dev.db' && for f in dev.db-wal dev.db-shm; do if [ -f '$OldBackend/prisma/'`$f ]; then cp '$OldBackend/prisma/'`$f '$VpsRoot/backend/prisma/'`$f; fi; done && echo 'VPS DATABASE KEPT (with its WAL)'"
 
     if ($LASTEXITCODE -ne 0) {
         throw "Could not restore VPS database."

@@ -293,7 +293,7 @@ deploy_teamlink() {   # new commit
   if [ "$DRY" = 1 ]; then log "[dry-run] TeamLink package built: backend $(du -sh "$PKG/backend" | cut -f1), frontend $(du -sh "$PKG/frontend" | cut -f1), portal=$portal. Nothing was stopped or replaced."; return 0; fi
 
   step="backup"
-  mkdir -p "$BK" && cp "$LIVE/backend/prisma/dev.db" "$BK/dev.db" && cp "$LIVE/backend/.env" "$BK/.env" || { alert "backup failed: deploy stopped"; return 1; }
+  mkdir -p "$BK" && cp "$LIVE/backend/prisma/dev.db" "$BK/dev.db" && for f in dev.db-wal dev.db-shm; do if [ -f "$LIVE/backend/prisma/$f" ]; then cp "$LIVE/backend/prisma/$f" "$BK/$f"; fi; done && cp "$LIVE/backend/.env" "$BK/.env" || { alert "backup failed: deploy stopped"; return 1; }
   local UPL; UPL=$(sed -n 's/^UPLOAD_DIR=//p' "$LIVE/backend/.env" | tail -1 | tr -d '\042\047\r'); UPL=${UPL:-$HOME/.teamlink-uploads}
   [ -d "$UPL/resumes" ] && tar -czf "$BK/resumes.tar.gz" -C "$UPL" resumes
   log "TeamLink deploy of ${1:0:8} starting (backup $BK)"
@@ -305,8 +305,11 @@ deploy_teamlink() {   # new commit
     mv "$LIVE/backend" "$OLDB"; mv "$LIVE/frontend" "$OLDF"
     cp -a "$PKG/backend" "$LIVE/backend"; cp -a "$PKG/frontend" "$LIVE/frontend"
     cp "$OLDB/.env" "$LIVE/backend/.env"
-    # the live database is KEPT (never replaced by a deploy)
-    cp "$OLDB/prisma/dev.db" "$LIVE/backend/prisma/dev.db"; rm -f "$LIVE/backend/prisma/dev.db-wal" "$LIVE/backend/prisma/dev.db-shm"
+    # the live database is KEPT (never replaced by a deploy). WAL mode: the newest committed rows sit in dev.db-wal until a checkpoint,
+    # so the -wal / -shm files go WITH it (FIX 2026-10-24: deleting them threw those rows away). TeamLink is stopped here, so they are consistent.
+    rm -f "$LIVE/backend/prisma/dev.db-wal" "$LIVE/backend/prisma/dev.db-shm"
+    cp "$OLDB/prisma/dev.db" "$LIVE/backend/prisma/dev.db"
+    for f in dev.db-wal dev.db-shm; do if [ -f "$OLDB/prisma/$f" ]; then cp "$OLDB/prisma/$f" "$LIVE/backend/prisma/$f"; fi; done
     if [ "$portal" = 1 ]; then
       R=$LIVE; mkdir -p "$R/job-portal-app"
       if [ -d "$R/job-portal-app/job_portal-main" ]; then tar -czf "$BK/job-portal-code.tar.gz" -C "$R/job-portal-app" --exclude=node_modules --exclude=var --exclude=run . ; fi
