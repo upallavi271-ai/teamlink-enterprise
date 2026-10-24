@@ -219,6 +219,7 @@ export default function ControlTower() {
   const [busy, setBusy] = useState(false);
   const [showChecks, setShowChecks] = useState(false);
   const [panel, setPanel] = useState(null);
+  const mayExport = useDrillRight('admin');
   const load = useCallback(() => {
     setBusy(true); setError('');
     api.get('/dashboard/control-tower').then((r) => setD(r.data)).catch((e) => setError(e.response?.data?.error || 'The Control Tower could not be loaded.')).finally(() => setBusy(false));
@@ -235,6 +236,25 @@ export default function ControlTower() {
   if (!d) return <div className="ct-loading">Loading the Control Tower…</div>;
   const dh = d.dataHealth;
   const failing = dh.checks.filter((c) => !c.ok);
+  // The whole page as one file (founder 2026-10-24: an Export on this dashboard too): every figure on the screen, section by section.
+  const buildPage = () => {
+    const rows = [];
+    const add = (section, item, value, note = '') => rows.push([section, item, value === null || value === undefined ? '' : value, note]);
+    d.kpis.forEach((k) => add('Overview', k.label, k.value, [k.sub, k.scope].filter(Boolean).join(' · ')));
+    d.attention.forEach((r) => add('Needs attention now', r.title, r.count, [r.unit, r.money ? inr0(r.money) : '', `Owner: ${r.owner}`, r.scope].filter(Boolean).join(' · ')));
+    d.pipeline.stages.forEach((s) => add('Hiring pipeline', s.label, s.count, `${s.pct}% of ${d.pipeline.total} applications`));
+    add('Hiring pipeline', 'Rejected (outside the chain)', d.pipeline.outside.rejected);
+    add('Hiring pipeline', 'On hold (outside the chain)', d.pipeline.outside.hold);
+    add('Cash collection', 'Received (all time)', d.cash.receivedAllTime, d.cash.scope);
+    d.cash.months.forEach((m) => add('Cash collection', m.label, m.amount));
+    add('System & integrations health', 'Connected', d.integrations.connected);
+    add('System & integrations health', 'Needs attention', d.integrations.errors);
+    add('System & integrations health', 'Not connected', d.integrations.notConnected);
+    d.integrations.top.forEach((t) => add('Top connection issues', t.name, t.state, t.note));
+    dh.checks.forEach((c) => add('Data health', c.label, c.ok ? 'OK' : 'Needs attention', c.detail));
+    d.activity.forEach((a) => add('Recent critical activity', `${stamp(a.at)} · ${a.area}`, a.event, a.owner));
+    return { headers: ['Section', 'Item', 'Value', 'Note'], rows };
+  };
   return (
     <section className="ct" aria-label="360 degree Control Tower">
       <header className="ct-head">
@@ -249,6 +269,7 @@ export default function ControlTower() {
           </button>
           <span className={`ct-meta ct-need${d.needsAttention ? ' on' : ''}`}><span aria-hidden="true">⚠</span> {d.needsAttention} item{d.needsAttention === 1 ? '' : 's'} need attention</span>
           <button type="button" className="btn btn-sm" disabled={busy} onClick={load}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+          <DrillExport name="360 Control Tower" allowed={mayExport} build={buildPage} title="Download everything on this dashboard as one file (opens in Excel)" />
         </div>
       </header>
       {error && <div className="notice red" style={{ marginBottom: 8 }}><span>{error} (showing the last figures)</span></div>}
