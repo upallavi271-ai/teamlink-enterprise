@@ -46,6 +46,8 @@ mkdir -p api web docs supabase/migrations; printf 'select 1;\n' > supabase/migra
 git add -A; git commit -qm "portal base"; git push -q origin main
 git clone -q "$T/subs/omni.git" "$T/dev_omni" 2>/dev/null; cd "$T/dev_omni"; git config user.email d@x; git config user.name dev; git checkout -q -b main
 mkdir -p gs-api/src green-start-web/src docs sdk; echo '{"name":"gs"}' > gs-api/package.json; echo g1 > gs-api/src/main.ts; echo w1 > green-start-web/src/app.ts; echo n1 > docs/note.md; echo s1 > sdk/s.js
+# a long list of files (like the real Green Start: 1897 files): the list of changed files must not break the build decisions of the first deploy
+mkdir -p gs-api/src/gen; for i in $(seq 1 3000); do echo $i > gs-api/src/gen/generated-module-file-name-with-padding-to-make-the-list-long-$i.ts; done
 git add -A; git commit -qm "omni base"; git push -q origin main
 # ---- main: TeamLink + the two submodules (the .gitmodules urls are https://github.com/... like on the real repo) ----
 git clone -q "$T/remote.git" "$T/dev" 2>/dev/null; cd "$T/dev"; git config user.email d@x; git config user.name dev; git checkout -q -b main
@@ -144,5 +146,9 @@ ok "S14 letter-case require: ALERT 'would crash on start', the app was NOT stopp
 cd $T/dev; printf "const f = require('./routes/followups');\n" > backend/src/index.js; git commit -qam "fix the letter case"; git pull -q --rebase origin main; git push -q origin main; cd $T
 : > $T/calls.log; out=$(VPS_EDITS=0 run)
 ok "S14b after the fix the deploy goes through" "$(grep -q 'pm2 restart' $T/calls.log && [ ! -f $T/state/ALERT ] && echo 1 || echo 0)" "$out"
+
+# ---- S15: "rebuild-gs" rebuilds, migrates and restarts Green Start from the code in the clone, without touching TeamLink ----
+: > $T/calls.log; out=$(run rebuild-gs)
+ok "S15 rebuild-gs: Green Start built + restarted, TeamLink NOT stopped, database dumped first" "$(grep -q 'gs-api && npm run build' $T/calls.log && grep -q 'green-start-web && npm run build' $T/calls.log && grep -q 'systemctl restart green-start-api' $T/calls.log && ! grep -q 'pm2' $T/calls.log && ls $T/state/backups/greenstart-*/greenstart-db.sql.gz >/dev/null 2>&1 && echo 1 || echo 0)" "$out"
 
 echo; echo "$pass passed, $fail failed"; rm -rf "$T/pkg"; [ "$fail" = 0 ]

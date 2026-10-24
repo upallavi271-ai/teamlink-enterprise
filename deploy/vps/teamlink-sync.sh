@@ -42,7 +42,7 @@ GS_USER=${GS_USER:-greenstart}
 GS_DB=${GS_DB:-greenstart}           # name of Green Start's Postgres database; it is dumped before every Green Start deploy ("" = do not)
 DRY=${DRY_RUN:-0}
 STAMP=$(date +%Y-%m-%d-%H%M%S)
-MODE=${1:-normal}     # normal | accept-github (a VPS edit that clashes: keep the GitHub version) | accept-vps (keep the VPS version)
+MODE=${1:-normal}     # normal | rebuild-gs (rebuild + migrate + restart Green Start now) | accept-github (a VPS edit that clashes: keep the GitHub version) | accept-vps (keep the VPS version)
 CONFLICTS=""
 SUBS=${SUBS:-"job-portal-app/job_portal-main green-start-app"}   # the git submodules this server uses
 SUBS_BAD=""
@@ -463,11 +463,12 @@ deploy_greenstart() {   # new commit  old commit
     # only the helper files that already live in run/ on the server (gate, local bind, seed scripts); the rest of run/ is for the PC
     for f in "$GS"/run/*; do b=$(basename "$f"); [ -f "$local_run/$b" ] && cp -p "$local_run/$b" "$GS/run/$b"; done
     chown -R "$GS_USER:$GS_USER" "$GS/gs-api" "$GS/green-start-web" "$GS/run"
-    if echo "$changed" | grep -q 'gs-api/package'; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npm install --no-audit --no-fund"; fi
-    if echo "$changed" | grep -q 'green-start-web/package'; then runuser -u "$GS_USER" -- bash -lc "cd $GS/green-start-web && npm install --no-audit --no-fund"; fi
-    if echo "$changed" | grep -q 'gs-api/prisma'; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npx prisma generate && npx prisma migrate deploy"; fi
-    if echo "$changed" | grep -q '^green-start-app/gs-api/'; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npm run build"; fi
-    if echo "$changed" | grep -q '^green-start-app/green-start-web/'; then runuser -u "$GS_USER" -- bash -lc "cd $GS/green-start-web && npm run build"; fi
+    # (grep -q <<< , not  echo | grep -q : with "set -o pipefail" a long list makes grep quit early, echo dies of SIGPIPE and the test says "no")
+    if grep -q 'gs-api/package' <<< "$changed"; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npm install --no-audit --no-fund"; fi
+    if grep -q 'green-start-web/package' <<< "$changed"; then runuser -u "$GS_USER" -- bash -lc "cd $GS/green-start-web && npm install --no-audit --no-fund"; fi
+    if grep -q 'gs-api/prisma' <<< "$changed"; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npx prisma generate && npx prisma migrate deploy"; fi
+    if grep -q '^green-start-app/gs-api/' <<< "$changed"; then runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npm run build"; fi
+    if grep -q '^green-start-app/green-start-web/' <<< "$changed"; then runuser -u "$GS_USER" -- bash -lc "cd $GS/green-start-web && npm run build"; fi
     systemctl restart green-start-api green-start-worker green-start-gate
   ) >>"$LOG" 2>&1
   local rc=$?
@@ -509,6 +510,15 @@ deploy_if_new() {
 }
 
 # ---- run ---------------------------------------------------------------------------------------------------------------------------
+# rebuild-gs: build + migrate + restart Green Start from the code that is in the clone NOW (everything counts as changed). For a deploy whose Green Start
+# build steps were skipped. The Green Start database is dumped first (deploy_greenstart does that), a failed build puts the previous code back.
+if [ "$MODE" = rebuild-gs ]; then
+  g fetch --quiet origin "$BRANCH" || { log "GitHub not reachable"; exit 1; }
+  sync_subs || { log "cannot read the sub repos$SUBS_BAD"; exit 1; }
+  sub_used green-start-app || { log "green-start-app is not in SUBS on this server"; exit 1; }
+  log "rebuild-gs: rebuilding Green Start from $(g rev-parse --short HEAD)"
+  deploy_greenstart "$(g rev-parse HEAD)" ""; exit $?
+fi
 if [ -z "$(cat "$STATE/deployed-commit" 2>/dev/null)" ] && [ ! -d "$STATE/base/teamlink-backend" ]; then
   log "first run: recording what is on the VPS now as the starting point for edit detection"
   [ "$DRY" = 1 ] || sync_base_from_live
