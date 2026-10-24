@@ -17,6 +17,7 @@ echo "npm \$*" >> $T/calls.log
 [ -f $T/FAIL ] && [ "\$1" = "run" ] && exit 1
 exit 0
 EOF
+printf '#!/bin/sh\necho "-- dump of $*"\n' > "$T/bin/pg_dump"
 chmod +x "$T"/bin/*
 # ---- a health server that always answers 200 {"ok":true} ----
 fuser -k 48110/tcp 48120/tcp >/dev/null 2>&1; sleep 1
@@ -81,6 +82,7 @@ ok "S2 first run: TeamLink deployed (a.js v1), .env and database kept" "$([ "$(c
 ok "S2b Job Portal came from the submodule (api/x.js = j1, web/index.html there, no .git copied)" "$([ "$(cat $T/live/$PORTAL/api/x.js)" = j1 ] && [ -f $T/live/$PORTAL/web/index.html ] && [ ! -e $T/live/$PORTAL/.git ] && echo 1 || echo 0)" "$out"
 ok "S2b2 existing VPS data untouched: backend extra folder, Green Start pgdata, Job Portal var/ database" "$([ "$(cat $T/live/backend/keepdata/state.json)" = kept ] && [ "$(cat $T/gs/run/pgdata/PG_VERSION)" = biometric-rows ] && [ "$(cat $T/live/$PORTAL/var/db.sqlite)" = portal-db ] && echo 1 || echo 0)" "$(ls $T/live/backend $T/gs/run)"
 ok "S2b3 Job Portal migrations: the already-applied file keeps its VPS bytes (CRLF), the new one arrives" "$([ "$(grep -c $'\r' $T/live/$PORTAL/supabase/migrations/0001_a.sql)" -ge 1 ] && [ -f $T/live/$PORTAL/supabase/migrations/0002_b.sql ] && echo 1 || echo 0)" "$(od -c $T/live/$PORTAL/supabase/migrations/0001_a.sql | head -2)"
+ok "S2b4 database backups made by the deploy: TeamLink dev.db, Job Portal var/, Green Start Postgres dump" "$(b=$(ls -dt /root/teamlink-backups/*-before-auto-deploy | head -1); g=$(ls -dt $T/state/backups/greenstart-* | head -1); [ -f $b/dev.db ] && [ -s $b/portal-var.tgz ] && tar -tzf $b/portal-var.tgz | grep -q db.sqlite && [ -f $g/greenstart-db.sql.gz ] && echo 1 || echo 0)" "$(ls -dt /root/teamlink-backups/*-before-auto-deploy | head -1)"
 ok "S2c Green Start came from the submodule (main.ts g1, app.ts w1) and was BUILT (first deploy = everything is new)" "$([ "$(cat $T/gs/gs-api/src/main.ts)" = g1 ] && [ "$(cat $T/gs/green-start-web/src/app.ts)" = w1 ] && grep -q 'gs-api && npm run build' $T/calls.log && grep -q 'systemctl restart green-start-api' $T/calls.log && echo 1 || echo 0)" "$(tail -5 $T/calls.log)"
 ok "S2c2 the helper file gate.mjs came from green-start-helpers/run of the MAIN repo; the database WAL file (newest rows) stayed" "$([ "$(cat $T/gs/run/gate.mjs)" = gate1 ] && [ "$(cat $T/live/backend/prisma/dev.db-wal 2>/dev/null)" = walrows ] && echo 1 || echo 0)" "$(ls $T/live/backend/prisma)"
 ok "S2d deployed commit recorded; docs/ and sdk/ of Green Start are not on the server" "$([ "$(cat $T/state/deployed-commit)" = "$(mainhead)" ] && [ ! -e $T/gs/docs ] && [ ! -e $T/gs/gs-api/docs ] && echo 1 || echo 0)" "$(cat $T/state/STATUS)"

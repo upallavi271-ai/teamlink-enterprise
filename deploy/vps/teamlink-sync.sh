@@ -38,6 +38,7 @@ PM2_NAME=${PM2_NAME:-teamlink-enterprise}
 PORT=${PORT:-4010}
 GS_API_PORT=${GS_API_PORT:-4020}
 GS_USER=${GS_USER:-greenstart}
+GS_DB=${GS_DB:-greenstart}           # name of Green Start's Postgres database; it is dumped before every Green Start deploy ("" = do not)
 DRY=${DRY_RUN:-0}
 STAMP=$(date +%Y-%m-%d-%H%M%S)
 MODE=${1:-normal}     # normal | accept-github (a VPS edit that clashes: keep the GitHub version) | accept-vps (keep the VPS version)
@@ -357,6 +358,8 @@ deploy_teamlink() {   # new commit
     set -e
     S() { echo "$1" > "$STATE/laststep"; }
     S stopping; pm2 stop "$PM2_NAME"
+    # the Job Portal's own database (var/) is saved too: its migrations run when it starts, and the rollback below does not undo them
+    if [ -d "$LIVE/job-portal-app/job_portal-main/var" ]; then S "saving the Job Portal database"; tar -czf "$BK/portal-var.tgz" -C "$LIVE/job-portal-app/job_portal-main" var; fi
     OLDB="$LIVE/backend-old-$STAMP"; OLDF="$LIVE/frontend-old-$STAMP"
     mv "$LIVE/backend" "$OLDB"; mv "$LIVE/frontend" "$OLDF"
     cp -a "$PKG/backend" "$LIVE/backend"; cp -a "$PKG/frontend" "$LIVE/frontend"
@@ -401,6 +404,7 @@ deploy_teamlink() {   # new commit
       [ -d "$PKG/job-portal-app/embed" ] && rsync -ac --delete "$PKG/job-portal-app/embed/" "$STATE/base/jobportal-embed/"
     fi
     ls -dt "$LIVE"/backend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf     # keep the 3 newest previous releases
+    ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +11 | xargs -r rm -rf     # keep the 10 newest database backups
     ls -dt "$LIVE"/frontend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
     return 0
   fi
@@ -417,6 +421,10 @@ deploy_greenstart() {   # new commit  old commit
   if [ "$DRY" = 1 ]; then log "[dry-run] Green Start: $(echo "$changed" | grep -c .) changed file(s) would be deployed"; return 0; fi
   log "Green Start deploy of ${new:0:8} starting"
   mkdir -p "$BK"
+  if command -v pg_dump >/dev/null 2>&1 && [ -n "$GS_DB" ]; then
+    ( set -o pipefail; runuser -u postgres -- pg_dump "$GS_DB" | gzip > "$BK/greenstart-db.sql.gz" ) 2>>"$LOG" || { alert "could not save the Green Start database ($GS_DB): its deploy was stopped"; return 1; }
+    log "Green Start database saved to $BK/greenstart-db.sql.gz"
+  fi
   tar -czf "$BK/gs-code.tar.gz" -C "$GS" --exclude=node_modules --exclude=.env --exclude=uploads gs-api/src gs-api/dist gs-api/package.json gs-api/package-lock.json green-start-web/src green-start-web/dist run 2>/dev/null
   (
     set -e
@@ -436,6 +444,7 @@ deploy_greenstart() {   # new commit  old commit
   local rc=$?
   if [ $rc -eq 0 ] && health_gs; then
     log "Green Start is healthy on ${new:0:8}"
+    ls -dt "$STATE"/backups/greenstart-* 2>/dev/null | tail -n +11 | xargs -r rm -rf     # keep the 10 newest
     rsync -ac --delete --exclude-from="$STATE/exclude-gs.txt" "$GS/gs-api/" "$STATE/base/greenstart-api/" 2>/dev/null
     rsync -ac --delete --exclude-from="$STATE/exclude-gs.txt" "$GS/green-start-web/" "$STATE/base/greenstart-web/" 2>/dev/null
     rsync -ac --delete --exclude-from="$STATE/exclude-gs.txt" "$GS/run/" "$STATE/base/greenstart-run/" 2>/dev/null
