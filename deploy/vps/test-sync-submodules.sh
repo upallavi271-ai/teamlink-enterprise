@@ -41,7 +41,7 @@ G() { git -C "$@"; }
 mkbare() { git init -q --bare "$1"; git -C "$1" symbolic-ref HEAD refs/heads/main; }
 mkbare "$T/subs/job_portal.git"; mkbare "$T/subs/omni.git"; mkbare "$T/remote.git"
 git clone -q "$T/subs/job_portal.git" "$T/dev_jp" 2>/dev/null; cd "$T/dev_jp"; git config user.email d@x; git config user.name dev; git checkout -q -b main
-mkdir -p api web docs; echo '{"name":"p"}' > package.json; echo '{}' > api/package.json; echo j1 > api/x.js; echo '<html>' > web/index.html; echo d1 > docs/readme.md; echo r > README.md
+mkdir -p api web docs supabase/migrations; printf 'select 1;\n' > supabase/migrations/0001_a.sql; printf 'select 2;\n' > supabase/migrations/0002_b.sql; echo '{"name":"p"}' > package.json; echo '{}' > api/package.json; echo j1 > api/x.js; echo '<html>' > web/index.html; echo d1 > docs/readme.md; echo r > README.md
 git add -A; git commit -qm "portal base"; git push -q origin main
 git clone -q "$T/subs/omni.git" "$T/dev_omni" 2>/dev/null; cd "$T/dev_omni"; git config user.email d@x; git config user.name dev; git checkout -q -b main
 mkdir -p gs-api/src green-start-web/src docs sdk; echo '{"name":"gs"}' > gs-api/package.json; echo g1 > gs-api/src/main.ts; echo w1 > green-start-web/src/app.ts; echo n1 > docs/note.md; echo s1 > sdk/s.js
@@ -63,6 +63,7 @@ echo old > live/backend/src/a.js; echo 'SECRET=1' > live/backend/.env; echo db >
 echo 'inv-old' > live/frontend/src/pages/Invoices.jsx; echo jold > live/$PORTAL/api/x.js; echo '{"name":"p"}' > live/$PORTAL/package.json
 echo gold > gs/gs-api/src/main.ts; touch gs/gs-api/.env; echo gate0 > gs/run/gate.mjs
 mkdir -p live/backend/keepdata gs/run/pgdata live/$PORTAL/var; echo kept > live/backend/keepdata/state.json; echo biometric-rows > gs/run/pgdata/PG_VERSION; echo portal-db > live/$PORTAL/var/db.sqlite
+mkdir -p live/$PORTAL/supabase/migrations; printf 'select 1;\r\n' > live/$PORTAL/supabase/migrations/0001_a.sql
 touch key
 run() { VPS_EDITS=${VPS_EDITS:-1} GH_PREFIX=file://$T/ GIT_ALLOW_PROTOCOL=file:https:ssh:git LIVE=$T/live GS=$T/gs SRC=$T/src STATE=$T/state REPO=$T/remote.git KEY=$T/key PORT=48110 GS_API_PORT=48120 PM2_NAME=tl-test GS_USER=root PATH=$T/bin:$PATH bash "$SCRIPT" "$@" 2>&1; }
 mainhead() { G "$T/remote.git" rev-parse main; }
@@ -79,6 +80,7 @@ out=$(run)
 ok "S2 first run: TeamLink deployed (a.js v1), .env and database kept" "$([ "$(cat $T/live/backend/src/a.js)" = v1 ] && [ "$(head -1 $T/live/backend/.env)" = 'SECRET=1' ] && [ "$(cat $T/live/backend/prisma/dev.db)" = db ] && echo 1 || echo 0)" "$out"
 ok "S2b Job Portal came from the submodule (api/x.js = j1, web/index.html there, no .git copied)" "$([ "$(cat $T/live/$PORTAL/api/x.js)" = j1 ] && [ -f $T/live/$PORTAL/web/index.html ] && [ ! -e $T/live/$PORTAL/.git ] && echo 1 || echo 0)" "$out"
 ok "S2b2 existing VPS data untouched: backend extra folder, Green Start pgdata, Job Portal var/ database" "$([ "$(cat $T/live/backend/keepdata/state.json)" = kept ] && [ "$(cat $T/gs/run/pgdata/PG_VERSION)" = biometric-rows ] && [ "$(cat $T/live/$PORTAL/var/db.sqlite)" = portal-db ] && echo 1 || echo 0)" "$(ls $T/live/backend $T/gs/run)"
+ok "S2b3 Job Portal migrations: the already-applied file keeps its VPS bytes (CRLF), the new one arrives" "$([ "$(grep -c $'\r' $T/live/$PORTAL/supabase/migrations/0001_a.sql)" -ge 1 ] && [ -f $T/live/$PORTAL/supabase/migrations/0002_b.sql ] && echo 1 || echo 0)" "$(od -c $T/live/$PORTAL/supabase/migrations/0001_a.sql | head -2)"
 ok "S2c Green Start came from the submodule (main.ts g1, app.ts w1) and was BUILT (first deploy = everything is new)" "$([ "$(cat $T/gs/gs-api/src/main.ts)" = g1 ] && [ "$(cat $T/gs/green-start-web/src/app.ts)" = w1 ] && grep -q 'gs-api && npm run build' $T/calls.log && grep -q 'systemctl restart green-start-api' $T/calls.log && echo 1 || echo 0)" "$(tail -5 $T/calls.log)"
 ok "S2c2 the helper file gate.mjs came from green-start-helpers/run of the MAIN repo; the database WAL file (newest rows) stayed" "$([ "$(cat $T/gs/run/gate.mjs)" = gate1 ] && [ "$(cat $T/live/backend/prisma/dev.db-wal 2>/dev/null)" = walrows ] && echo 1 || echo 0)" "$(ls $T/live/backend/prisma)"
 ok "S2d deployed commit recorded; docs/ and sdk/ of Green Start are not on the server" "$([ "$(cat $T/state/deployed-commit)" = "$(mainhead)" ] && [ ! -e $T/gs/docs ] && [ ! -e $T/gs/gs-api/docs ] && echo 1 || echo 0)" "$(cat $T/state/STATUS)"

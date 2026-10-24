@@ -317,6 +317,21 @@ rollback_teamlink() {   # stamp
     cd backend && pm2 restart "$PM2_NAME" --update-env && pm2 save ) >>"$LOG" 2>&1
 }
 
+# The Job Portal records a checksum of every migration file it applied (and refuses to start if one "was edited after being applied").
+# So a migration file that is the same as the one on the VPS except for its line endings (CRLF from a Windows upload vs LF from git) keeps the
+# bytes it has on the VPS. New migration files come from the package as they are.
+keep_live_migration_bytes() {   # package_migrations_dir  live_migrations_dir
+  local pd=$1 ld=$2 rel kept=0
+  [ -d "$pd" ] && [ -d "$ld" ] || return 0
+  while IFS= read -r rel; do
+    [ -f "$ld/$rel" ] || continue
+    cmp -s "$pd/$rel" "$ld/$rel" && continue
+    if diff -q --strip-trailing-cr "$pd/$rel" "$ld/$rel" >/dev/null 2>&1; then cp -p "$ld/$rel" "$pd/$rel"; kept=$((kept+1)); fi
+  done < <(cd "$pd" && find . -name '*.sql' | sed 's#^\./##')
+  [ "$kept" -gt 0 ] && log "kept the VPS line endings of $kept already-applied migration file(s) in ${pd##*/job-portal-app/}"
+  return 0
+}
+
 deploy_teamlink() {   # new commit
   local PKG="$STATE/pkg" BK="/root/teamlink-backups/$STAMP-before-auto-deploy" step="packaging"
   rm -rf "$PKG"; mkdir -p "$PKG/backend" "$PKG/frontend"
@@ -330,6 +345,7 @@ deploy_teamlink() {   # new commit
   fi
   [ -d "$PKG/job-portal-app/job_portal-main/var" ] && { alert "the Job Portal database folder (var) was in the package: stopped"; return 1; }
   [ -f "$PKG/frontend/src/pages/Invoices.jsx" ] || { alert "package check failed (Invoices.jsx missing): stopped"; return 1; }
+  [ "$portal" = 1 ] && keep_live_migration_bytes "$PKG/job-portal-app/job_portal-main/supabase/migrations" "$LIVE/job-portal-app/job_portal-main/supabase/migrations"
   if [ "$DRY" = 1 ]; then log "[dry-run] TeamLink package built: backend $(du -sh "$PKG/backend" | cut -f1), frontend $(du -sh "$PKG/frontend" | cut -f1), portal=$portal. Nothing was stopped or replaced."; return 0; fi
 
   step="backup"
