@@ -26,6 +26,7 @@
 #   Test run:  DRY_RUN=1 /opt/teamlink-sync/teamlink-sync.sh      (prints what it WOULD do; changes nothing)
 # ============================================================================
 set -uo pipefail
+export HOME=${HOME:-/root}      # systemd gives a service no HOME: git then cannot find its saved GitHub login, and "set -u" stops on $HOME
 
 LIVE=${LIVE:-/opt/teamlink-enterprise}
 GS=${GS:-/opt/green-start}
@@ -359,7 +360,17 @@ deploy_teamlink() {   # new commit
     S() { echo "$1" > "$STATE/laststep"; }
     S stopping; pm2 stop "$PM2_NAME"
     # the Job Portal's own database (var/) is saved too: its migrations run when it starts, and the rollback below does not undo them
-    if [ -d "$LIVE/job-portal-app/job_portal-main/var" ]; then S "saving the Job Portal database"; tar -czf "$BK/portal-var.tgz" -C "$LIVE/job-portal-app/job_portal-main" var; fi
+    if [ -d "$LIVE/job-portal-app/job_portal-main/var" ]; then
+      # the Job Portal runs its own Postgres inside var/dev-db; it needs a few seconds to shut down after "pm2 stop". Copy it only when it is down.
+      PIDF="$LIVE/job-portal-app/job_portal-main/var/dev-db/postmaster.pid"; w=0
+      portal_pg_up() { [ -f "$PIDF" ] && kill -0 "$(head -1 "$PIDF" 2>/dev/null)" 2>/dev/null; }
+      S "waiting for the Job Portal database to stop"
+      while portal_pg_up && [ $w -lt 90 ]; do sleep 1; w=$((w+1)); done
+      if portal_pg_up; then echo "the Job Portal database is still running after 90 s: not saving it, deploy stopped"; exit 1; fi
+      [ $w -gt 0 ] && echo "waited ${w}s for the Job Portal database to stop"
+      S "saving the Job Portal database"
+      tar -czf "$BK/portal-var.tgz" -C "$LIVE/job-portal-app/job_portal-main" var || [ $? -eq 1 ]     # exit 1 = a file changed while reading; fine once Postgres is down
+    fi
     OLDB="$LIVE/backend-old-$STAMP"; OLDF="$LIVE/frontend-old-$STAMP"
     mv "$LIVE/backend" "$OLDB"; mv "$LIVE/frontend" "$OLDF"
     cp -a "$PKG/backend" "$LIVE/backend"; cp -a "$PKG/frontend" "$LIVE/frontend"
