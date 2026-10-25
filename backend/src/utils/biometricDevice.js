@@ -15,13 +15,12 @@
 // ---------------------------------------------------------------------------
 
 const prisma = require('../db');
-const { isLate, daySplit, directionFromState } = require('./attendanceMath');
+const { isLate, daySplit, directionFromState, sortedPunches } = require('./attendanceMath');
 const punchGuard = require('./punchGuard');
 
-// The device heartbeats every `Delay` seconds (we hand it 30 in the options
-// below). Three minutes of silence is a missed heartbeat several times over.
+// The device heartbeats every `Delay` seconds (10 in the options below).
+// Three minutes of silence is a missed heartbeat many times over.
 const HEARTBEAT_FRESH_MS = 3 * 60 * 1000;
-const DEVICE_DELAY_SECONDS = 30;
 
 const DEFAULT_DEVICE = {
   vendor: 'eSSL X2008 (ADMS/iClock)',
@@ -64,7 +63,13 @@ function parseInfo(json) {
 
 async function findDevice(serial) {
   if (!serial) return null;
-  return prisma.biometricDevice.findUnique({ where: { serialNumber: String(serial).trim() } });
+  const sn = String(serial).trim();
+  const exact = await prisma.biometricDevice.findUnique({ where: { serialNumber: sn } });
+  if (exact) return exact;
+  // A serial typed in a different case on the Integrations screen is still
+  // the same device (SQLite compares case-sensitively).
+  const all = await prisma.biometricDevice.findMany();
+  return all.find((d) => d.serialNumber.toUpperCase() === sn.toUpperCase()) || null;
 }
 
 // Devices that called /iclock with a serial nobody registered — shown on the
@@ -102,22 +107,29 @@ function parseInfoParam(raw) {
 }
 
 // The reply to the device's first call (GET /iclock/cdata?SN=..&options=all).
+// EXACTLY the options of the owner's working HRMS integration (2026-10-25):
+// IST (TimeZone=330), real-time ATTLOG every minute, all day. Stamps of 0
+// make the device re-send the punches it holds; the log de-duplicates them,
+// so a punch missed while the link was down still arrives.
+// NO clock commands — no "SET OPTIONS DateTime=", "DateTime=" or "ServerTZ=":
+// those moved the device clock and stamped punches 30 minutes wrong.
 function optionsReply(device) {
   return [
     `GET OPTION FROM: ${device.serialNumber}`,
-    `ATTLOGStamp=${device.attlogStamp || '0'}`,
-    `Stamp=${device.attlogStamp || '0'}`,
-    'OPERLOGStamp=9999',
-    'OpStamp=9999',
-    'ATTPHOTOStamp=None',
+    'STAMP=0',
+    'ATTLOGSTAMP=0',
+    'OPERLOGStamp=0',
+    'ATTPHOTOStamp=0',
     'ErrorDelay=30',
-    `Delay=${DEVICE_DELAY_SECONDS}`,
-    'TransTimes=00:00;14:05',
+    'Delay=10',
+    'TransTimes=00:00;23:59',
     'TransInterval=1',
-    'TransFlag=TransData AttLog\tOpLog\tEnrollUser\tChgUser',
+    'TransFlag=TransData AttLog',
+    'TimeZone=330',
     'Realtime=1',
     'Encrypt=None',
-  ].join('\n');
+    '',
+  ].join('\r\n');
 }
 
 // Marks the day from ALL of that day's punches with the shared rule
@@ -125,6 +137,7 @@ function optionsReply(device) {
 // punch when check-out was never pressed. Recomputed on every punch, so a
 // batch that arrives out of order still ends up right.
 async function markDay(employeeId, date, cfg) {
+  await settleBiometricDirections(employeeId, date);
   const punches = await prisma.attendancePunch.findMany({ where: { employeeId, date } });
   const day = daySplit(punches);
   const checkIn = day.checkIn ? day.checkIn.time : null;
@@ -135,7 +148,34 @@ async function markDay(employeeId, date, cfg) {
       data: { employeeId, date, status: checkIn && isLate(checkIn, cfg.graceTime) ? 'Late' : 'Present', checkIn, checkOut },
     });
   } else if (existing.checkIn !== checkIn || existing.checkOut !== checkOut) {
-    await prisma.attendance.update({ where: { id: existing.id }, data: { checkIn, checkOut } });
+    const data = { checkIn, checkOut };
+    // An earlier punch arrived late: Present / Late follow the new punch-in.
+    // Any other status (leave, half day, set by HR) is left as it is.
+    if (checkIn && existing.checkIn !== checkIn && ['Present', 'Late'].includes(existing.status)) {
+      data.status = isLate(checkIn, cfg.graceTime) ? 'Late' : 'Present';
+    }
+    await prisma.attendance.update({ where: { id: existing.id }, data });
+  }
+}
+
+// PUNCH-IN / PUNCH-OUT FROM THE DEVICE (user, 2026-10-25). The X2008 sends
+// state 0 for a plain finger / face punch, so the state key cannot be trusted
+// to say In or Out — the day would never get a punch-out. As in the owner's
+// HRMS: the day's FIRST punch is the punch-in and every later device punch is
+// an Out, so the LAST punch is the punch-out and the latest punch shows as
+// such. Only device punches are re-labelled; a punch HR entered keeps the
+// direction HR gave it. Re-run on every punch, so late batches settle right.
+async function settleBiometricDirections(employeeId, date) {
+  const ps = sortedPunches(await prisma.attendancePunch.findMany({
+    where: { employeeId, date }, select: { id: true, time: true, clockTime: true, method: true, direction: true },
+  }));
+  if (!ps.length) return;
+  const firstId = ps[0].id;
+  for (const p of ps) {
+    if (p.method !== 'Biometric') continue;
+    const want = p.id === firstId ? 'In' : 'Out';
+    // eslint-disable-next-line no-await-in-loop
+    if (p.direction !== want) await prisma.attendancePunch.update({ where: { id: p.id }, data: { direction: want } });
   }
 }
 
@@ -169,11 +209,48 @@ async function applyLog(log, employeeId, device, cfg) {
   return punch;
 }
 
+// Which employee a device PIN is. Employee.biometricPin first (set on the
+// Integrations screen). Failing that, the PIN the device was enrolled with is
+// usually the employee code — "TL509", or just its number "509" — so an
+// employee whose code matches, and only one, is taken and their
+// biometricPin is filled in so the screen shows the link. No match -> the
+// line waits unmapped, as before.
+let codeIndex = null;
+async function employeeForPin(pin) {
+  const byPin = await prisma.employee.findFirst({ where: { biometricPin: pin }, select: { id: true } });
+  if (byPin) return byPin.id;
+  if (!codeIndex) {
+    const rows = await prisma.employee.findMany({
+      where: { biometricPin: null }, select: { id: true, employeeCode: true, employmentStatus: true },
+    });
+    codeIndex = { at: Date.now(), rows };
+  }
+  const want = String(pin).trim().toUpperCase();
+  const num = /^\d+$/.test(want) ? String(Number(want)) : null;
+  const left = (st) => ['relieved', 'exited', 'terminated', 'resigned', 'absconded'].includes(String(st || '').toLowerCase());
+  const live = codeIndex.rows.filter((r) => !left(r.employmentStatus));
+  let hits = live.filter((r) => String(r.employeeCode).trim().toUpperCase() === want);
+  if (!hits.length && num) {
+    hits = live.filter((r) => {
+      const digits = String(r.employeeCode).replace(/\D+/g, '');
+      return digits && String(Number(digits)) === num;
+    });
+  }
+  if (hits.length !== 1) return null;
+  const emp = hits[0];
+  await prisma.employee.update({ where: { id: emp.id }, data: { biometricPin: pin } }).catch(() => null);
+  codeIndex.rows = codeIndex.rows.filter((r) => r.id !== emp.id);
+  return emp.id;
+}
+// The code index is rebuilt for each upload batch (employees change).
+function resetCodeIndex() { codeIndex = null; }
+
 // POST /iclock/cdata?table=ATTLOG — lines of
 //   PIN \t YYYY-MM-DD HH:MM:SS \t status \t verify \t workcode \t ...
 async function ingestAttlog(device, body) {
   const lines = String(body || '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const cfg = await hrConfig();
+  resetCodeIndex();
   const pinCache = new Map();
   let stored = 0; let duplicate = 0; let applied = 0; let unmapped = 0; let invalid = 0;
   let latest = device.lastPunchAt || null;
@@ -186,18 +263,20 @@ async function ingestAttlog(device, body) {
     const key = { deviceSerial: device.serialNumber, pin, punchAt: at };
     // eslint-disable-next-line no-await-in-loop
     const seen = await prisma.biometricPunchLog.findUnique({ where: { deviceSerial_pin_punchAt: key } });
-    if (seen) { duplicate += 1; continue; }
+    // Already on attendance -> nothing to do. Logged but never applied (its PIN
+    // was unmapped, or processing failed part-way) -> apply it now: the device
+    // re-sends its punches (stamps of 0), and that is how a missed punch heals.
+    if (seen && (seen.attendancePunchId || seen.employeeId)) { duplicate += 1; continue; }
     // eslint-disable-next-line no-await-in-loop
-    const log = await prisma.biometricPunchLog.create({
+    const log = seen || await prisma.biometricPunchLog.create({
       data: { ...key, statusCode: f[2] != null ? String(f[2]).trim() : null, verifyCode: f[3] != null ? String(f[3]).trim() : null, raw: line.slice(0, 500) },
     }).catch((e) => { if (e && e.code === 'P2002') return null; throw e; }); // the same push twice at once
     if (!log) { duplicate += 1; continue; }
-    stored += 1;
+    if (seen) duplicate += 1; else stored += 1;
     if (!latest || at > latest) latest = at;
     if (!pinCache.has(pin)) {
       // eslint-disable-next-line no-await-in-loop
-      const emp = await prisma.employee.findFirst({ where: { biometricPin: pin }, select: { id: true } });
-      pinCache.set(pin, emp ? emp.id : null);
+      pinCache.set(pin, await employeeForPin(pin));
     }
     const employeeId = pinCache.get(pin);
     if (employeeId) {

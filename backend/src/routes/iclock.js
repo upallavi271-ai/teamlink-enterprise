@@ -11,10 +11,18 @@
 //   POST /iclock/cdata?SN=..&table=ATTLOG  punches       -> "OK: <n>"
 //   POST /iclock/cdata?SN=..&table=OPERLOG users/ops     -> "OK: <n>"
 //   POST /iclock/cdata?SN=..&table=USERINFO user list    -> "OK: <n>"
-//   GET  /iclock/getrequest?SN=..          heartbeat     -> queued commands, or "OK"
+//   GET  /iclock/getrequest?SN=..          heartbeat     -> "OK"
 //   POST /iclock/devicecmd?SN=..           command reply -> "OK"
+//   GET  /iclock/rtdata?SN=..              real-time ping -> "OK"
 //
-// Some firmware adds ".aspx" to the paths; both spellings are served.
+// getrequest / devicecmd / rtdata answer ONLY "OK" (owner's working HRMS
+// settings, 2026-10-25): no command ever goes to the device — above all no
+// clock sync ("SET OPTIONS DateTime=", "DateTime=", "ServerTZ="), which once
+// stamped every punch 30 minutes wrong.
+//
+// Mounted twice (index.js): /iclock/* and /api/biometric-device/* — Nginx on
+// :8080 forwards the device's /iclock/cdata.aspx to /api/biometric-device/cdata,
+// the HRMS layout. Some firmware adds ".aspx"; both spellings are served.
 // Every request from a registered serial refreshes lastSeenAt.
 // ---------------------------------------------------------------------------
 
@@ -57,11 +65,8 @@ const wrap = (h) => (req, res) => Promise.resolve(h(req, res)).catch((err) => {
   if (!res.headersSent) res.status(500).type('text/plain').send('ERROR');
 });
 
-// A fresh connection (device boot / reconnect) also asks for the user list.
-router.get(/^\/cdata(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'handshake', (device) => {
-  bio.queueUserQuery(device.serialNumber);
-  return reply(res, bio.optionsReply(device));
-})));
+// First contact (device boot / reconnect): the device options.
+router.get(/^\/cdata(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'handshake', (device) => reply(res, bio.optionsReply(device)))));
 
 router.post(/^\/cdata(\.aspx)?$/, wrap((req, res) => {
   const table = String(req.query.table || '').toUpperCase();
@@ -83,14 +88,12 @@ router.post(/^\/cdata(\.aspx)?$/, wrap((req, res) => {
   });
 }));
 
-router.get(/^\/getrequest(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'heartbeat', async (device) => {
-  await bio.queueUserQueryIfEmpty(device.serialNumber);
-  return reply(res, bio.takeCommands(device.serialNumber) || 'OK');
-})));
+router.get(/^\/getrequest(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'heartbeat', () => reply(res, 'OK'))));
 router.post(/^\/devicecmd(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'command reply', (device) => {
   bio.noteCommandReply(device.serialNumber, typeof req.body === 'string' ? req.body : '');
   return reply(res, 'OK');
 })));
+router.all(/^\/rtdata(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'heartbeat', () => reply(res, 'OK'))));
 router.all(/^\/(ping|registry|push)(\.aspx)?$/, wrap((req, res) => withDevice(req, res, 'heartbeat', () => reply(res, 'OK'))));
 
 module.exports = router;

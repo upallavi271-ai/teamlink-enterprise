@@ -171,6 +171,10 @@ void JOB_PORTAL_DIR;
 // BIOMETRIC DEVICE — the eSSL ADMS / iClock push endpoint (routes/iclock.js).
 // No login: only a serial registered under Integrations -> Biometric is served.
 app.use('/iclock', require('./routes/iclock'));
+// The same endpoints under the HRMS layout: Nginx on :8080 forwards the
+// device's /iclock/cdata.aspx to /api/biometric-device/cdata (and getrequest,
+// devicecmd, rtdata). No login here either — the serial is the key.
+app.use('/api/biometric-device', require('./routes/iclock'));
 
 app.use('/job-portal', (req, res) => res.redirect(302, `${require('./utils/jobPortalBridge').portalUrl()}/`));
 
