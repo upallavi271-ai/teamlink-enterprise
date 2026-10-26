@@ -89,7 +89,7 @@ async function main() {
   if (!args.delta) throw new Error('Use --delta <delta.json> (or --revert <undo.json>)');
   const delta = L.readJson(args.delta);
   const doApply = !!args.apply;
-  const out = await engine.run(ad, delta, { dryRun: !doApply, prefer: !!args.prefer });
+  const out = await engine.run(ad, delta, { dryRun: !doApply, prefer: !!args.prefer, checkParents: true });
 
   // Files: which pushed document rows point to files that are not on this machine?
   const have = indexFiles(uploadDir());

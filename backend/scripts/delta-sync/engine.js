@@ -63,6 +63,11 @@ async function run(adapter, delta, options) {
   const dryRun = !!options.dryRun;
   const only = options.only || null;
   const prefer = !!options.prefer; // conflicts on the same row: the incoming value wins (explicitly chosen by the founder)
+  // checkParents: a row whose parent row does not exist on the target (and is not being added in this same run) is a
+  // CONFLICT of its own. Without this check the final broken-link check rolled back the WHOLE run because of one such row.
+  const checkParents = !!options.checkParents;
+  const planned = {}; // table -> Set(pkKey) of rows added (or already there) earlier in this run
+  const pkCache = {};
   const soft = new Set(delta.softColumns || []);
   const results = [];
   const undo = { format: 1, ops: [] };
@@ -71,6 +76,31 @@ async function run(adapter, delta, options) {
   const addBlocked = (t, pk) => { (blocked[t] || (blocked[t] = new Set())).add(pkKey(pk)); };
   const tables = delta.order.filter((t) => delta.tables[t] && delta.tables[t].ops.some((o) => !only || only.has(o.id)));
   const out = { results, undo, refused, dropped: {}, rolledBack: false, fkNew: [] };
+
+  async function parentPkCols(db, P) {
+    if (pkCache[P] === undefined) {
+      const rows = await db.all('PRAGMA table_info(' + qid(P) + ')');
+      pkCache[P] = rows.length ? rows.filter((r) => num(r.pk) > 0).sort((a, b) => num(a.pk) - num(b.pk)).map((r) => r.name) : null;
+    }
+    return pkCache[P];
+  }
+  // name of a parent table whose row does not exist on the target, or null
+  async function missingParent(db, dt, op) {
+    for (const fk of dt.fks) {
+      if (op.k === 'U' && !fk.from.some((c) => op.changed.includes(c))) continue;
+      const vals = fk.from.map((c) => op.row[c]);
+      if (vals.some((v) => v === null || v === undefined)) continue;
+      const ppk = await parentPkCols(db, fk.table);
+      if (!ppk || !ppk.length) continue;
+      const to = fk.to.map((x) => x || null);
+      const target = to.every((x) => x === null) ? ppk : to;
+      if (target.join() !== ppk.join()) continue; // not a primary-key link: left to the final broken-link check
+      if (planned[fk.table] && planned[fk.table].has(pkKey(vals))) continue;
+      const hit = await db.all('SELECT 1 AS x FROM ' + qid(fk.table) + ' WHERE ' + ppk.map((c, i) => qid(c) + ' = ' + lit(vals[i])).join(' AND ') + ' LIMIT 1');
+      if (!hit.length) return fk.table;
+    }
+    return null;
+  }
 
   async function process(db) {
     const tinfo = await loadTarget(db, delta, tables);
@@ -112,6 +142,16 @@ async function run(adapter, delta, options) {
           if (op.k === 'I') addBlocked(t, op.pk);
           continue;
         }
+        if (checkParents) {
+          const miss = await missingParent(db, dt, op);
+          if (miss) {
+            res.status = 'conflict';
+            res.reason = 'points to a ' + miss + ' row that does not exist on the target (deleted there, or never copied)';
+            res.detail = { parentMissing: miss };
+            if (op.k === 'I') addBlocked(t, op.pk);
+            continue;
+          }
+        }
         try {
           if (op.k === 'I') await doInsert(db, dt, ti, op, res); else await doUpdate(db, dt, ti, op, res);
         } catch (e) {
@@ -120,6 +160,7 @@ async function run(adapter, delta, options) {
           if (op.k === 'I') addBlocked(t, op.pk);
         }
         if (res.status === 'conflict' && op.k === 'I') addBlocked(t, op.pk);
+        if (op.k === 'I' && (res.status === 'applied' || res.status === 'already')) (planned[t] || (planned[t] = new Set())).add(pkKey(op.pk));
       }
     }
   }

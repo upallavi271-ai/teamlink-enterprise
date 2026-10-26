@@ -12,7 +12,7 @@ const report = require('./report');
 async function classify(delta, targetFile, opts) {
   const db = L.openDb(targetFile, true);
   try {
-    return await engine.run(L.nodeAdapter(db), delta, { dryRun: true, prefer: !!(opts && opts.prefer) });
+    return await engine.run(L.nodeAdapter(db), delta, { dryRun: true, prefer: !!(opts && opts.prefer), checkParents: true });
   } finally { db.close(); }
 }
 
