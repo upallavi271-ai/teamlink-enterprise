@@ -120,7 +120,11 @@ async function webPunchGuard(db, employeeId, date, direction) {
   if (!last) {
     return { ok: false, code: 'NOT_CHECKED_IN', message: 'You have not checked in today, so there is nothing to check out. If you forgot to check in, ask your TL or HR to correct the day.' };
   }
-  if (last.direction === 'Out') {
+  // A CHECK-OUT COUNTS WHICHEVER WAY IT IS DONE (founder 2026-10-26: "check-out web check, biometric methods nunchi vesina thisukovali").
+  // A device punch reads "Out" only because it is the latest one so far (a lunch break looks like that until the person comes back), so it
+  // never blocks a web check-out: the web check-out is recorded, the device punch becomes an interval (utils/biometricDevice.js
+  // settledDirections) and the day's check-out is the web one. Only the person's own earlier web / phone / HR check-out is "already out".
+  if (last.direction === 'Out' && last.method !== 'Biometric') {
     return { ok: false, duplicate: true, punch: last, code: 'ALREADY_OUT', message: `Already checked out at ${clock12(last.time)}.` };
   }
   return { ok: true };

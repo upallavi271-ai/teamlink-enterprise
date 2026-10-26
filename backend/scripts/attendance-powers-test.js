@@ -81,6 +81,28 @@ const Z = require('./lib/zzfix')('APW');
     Z.check('B3 Check-In pressed twice (9:19, 10:10) stays two check-ins — no check-out', dirs([P('09:19', 'Biometric', 'In', '0'), P('10:10', 'Biometric', 'Out', '0')]) === 'In In');
     Z.check('B4 a web punch keeps its own direction; a device punch with no state keeps its own', dirs([P('09:00', 'Web Check-in'), P('18:00', 'Web Check-in', 'Out'), P('18:05', 'Biometric', 'Out')]) === 'In Out Out');
 
+    // a check-out counts whichever way it is done: a lunch device punch (reads Out until they come back) does not block the web check-out
+    {
+      const D7 = '2026-10-21';
+      const q = (time, direction, method, deviceState) => prisma.attendancePunch.create({ data: { employeeId: mEmp.id, date: D7, time, direction, method, deviceState: deviceState || null, source: method === 'Biometric' ? 'Biometric device' : 'Web' } });
+      const { settleBiometricDirections } = require('../src/utils/biometricDevice'); // eslint-disable-line global-require
+      await q('09:00', 'In', 'Web Check-in'); await new Promise((r) => setTimeout(r, 20));
+      await q('13:00', 'In', 'Biometric', '2'); await settleBiometricDirections(mEmp.id, D7); // Break-Out key: reads Out
+      const g = await webPunchGuard(prisma, mEmp.id, D7, 'Out');
+      await new Promise((r) => setTimeout(r, 20)); await q('18:10', 'Out', 'Web Check-in'); await settleBiometricDirections(mEmp.id, D7);
+      const ps = await prisma.attendancePunch.findMany({ where: { employeeId: mEmp.id, date: D7 }, orderBy: { time: 'asc' } });
+      const split = require('../src/utils/attendanceMath').daySplit(ps); // eslint-disable-line global-require
+      Z.check('B7 after a biometric Break-Out (lunch) the web check-out is still allowed, and it is the check-out of the day', g.ok === true && split.checkOut && split.checkOut.time === '18:10', [g, ps.map((p) => p.time + ' ' + p.direction), split.checkOut && split.checkOut.time]);
+      const g2 = await webPunchGuard(prisma, mEmp.id, D7, 'Out');
+      Z.check('B8 a second web check-out after the web one is still "Already checked out"', g2.ok === false && g2.code === 'ALREADY_OUT', g2.code);
+      const D8 = '2026-10-22';
+      const r8 = (time, direction, method, deviceState) => prisma.attendancePunch.create({ data: { employeeId: mEmp.id, date: D8, time, direction, method, deviceState: deviceState || null, source: method === 'Biometric' ? 'Biometric device' : 'Web' } });
+      await r8('09:05', 'In', 'Web Check-in'); await new Promise((r) => setTimeout(r, 20)); await r8('18:30', 'In', 'Biometric', '1'); await settleBiometricDirections(mEmp.id, D8); // Check-Out key
+      const ps8 = await prisma.attendancePunch.findMany({ where: { employeeId: mEmp.id, date: D8 }, orderBy: { time: 'asc' } });
+      const s8 = require('../src/utils/attendanceMath').daySplit(ps8); // eslint-disable-line global-require
+      Z.check('B9 web check-in, biometric Check-Out at the end of the day: the biometric punch is the check-out', s8.checkOut && s8.checkOut.time === '18:30', [ps8.map((p) => p.time + ' ' + p.direction), s8.checkOut && s8.checkOut.time]);
+    }
+
     // 4 — who else is on leave
     await prisma.leaveRequest.create({ data: { employeeId: mEmp.id, type: 'Casual', fromDate: '2026-11-02', toDate: '2026-11-03', days: 2, status: 'Approved', reason: 'ZZTEST APW' } });
     const w = await Z.call('GET', '/api/leave/who-else?from=2026-11-03&to=2026-11-04', eTok);
