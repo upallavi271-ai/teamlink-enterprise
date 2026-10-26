@@ -322,8 +322,9 @@ export default function EmployeeDetail() {
               Grant Edit Access
             </button>
           )}
-          {isAdmin && employee.isLocked === false && <button className="btn btn-sm" onClick={toggleLock}>Lock</button>}
-          {isAdmin && employee.isLocked === true && <button className="btn btn-sm" onClick={toggleLock}>Unlock now</button>}
+          {/* HR locks / unlocks the employee form too (founder 2026-10-26), not only the Admin */}
+          {(isAdmin || isHR) && employee.isLocked === false && <button className="btn btn-sm" onClick={toggleLock}>🔒 Lock form</button>}
+          {(isAdmin || isHR) && employee.isLocked === true && <button className="btn btn-sm" onClick={toggleLock}>🔓 Unlock form</button>}
           {isAdmin && employee.user && (
             <button className="btn btn-sm" disabled={busy === 'credentials'} onClick={sendCredentials}>
               {busy === 'credentials' ? 'Sending…' : 'Send sign-in details'}

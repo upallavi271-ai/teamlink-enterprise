@@ -3214,6 +3214,7 @@ router.patch('/:id/unlock-request/reject', requirePerm(null, 'hrms', 'Employee M
 router.patch('/:id/toggle-lock', requirePerm(null, 'hrms', 'Employee Management', 'configure'), async (req, res) => {
   const existing = await prisma.employee.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, existing))) return res.status(403).json({ error: 'This record is outside your department scope' });
   const nextLocked = !existing.isLocked;
   const hours = grantHours(req.body && req.body.hours);
   const employee = await prisma.employee.update({

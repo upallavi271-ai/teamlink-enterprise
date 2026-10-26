@@ -87,6 +87,18 @@ const Z = require('./lib/zzfix')('APW');
     Z.check('W1 applying for leave shows who in the team / department is on leave those days', w.status === 200 && names.includes(mate.name) && !names.includes(emp.name), [w.status, names]);
     const w2 = await Z.call('GET', '/api/leave/who-else?from=2026-11-10&to=2026-11-11', eTok);
     Z.check('W2 nobody listed when nobody is away', w2.status === 200 && w2.body.team.length === 0 && w2.body.department.length === 0, w2.text.slice(0, 160));
+    // the department cap is a reminder, not a block (founder 2026-10-26)
+    const cfg = await prisma.hrConfig.findFirst();
+    const capBefore = cfg ? { concurrentLeaveCapFlat: cfg.concurrentLeaveCapFlat, concurrentLeaveCapPct: cfg.concurrentLeaveCapPct } : null;
+    if (cfg) await prisma.hrConfig.update({ where: { id: cfg.id }, data: { concurrentLeaveCapFlat: 1, concurrentLeaveCapPct: 100 } });
+    try {
+      const types = await Z.call('GET', '/api/leave/availability', eTok);
+      const list = (types.body && (types.body.types || types.body.rows || types.body)) || [];
+      const pick = (Array.isArray(list) ? list : []).find((t) => Number(t.available ?? t.remaining ?? 0) >= 1);
+      const typeName = pick ? (pick.type || pick.name || pick.code) : 'Casual';
+      const ap = await Z.call('POST', '/api/leave', eTok, { type: typeName, fromDate: '2026-11-03', toDate: '2026-11-03', reason: 'ZZTEST APW hospital' });
+      Z.check('W3 a colleague away does NOT stop the apply: saved, with a reminder', ap.status === 201 && /on leave at once/.test(ap.body.teamNotice || ''), [ap.status, ap.text.slice(0, 220)]);
+    } finally { if (cfg) await prisma.hrConfig.update({ where: { id: cfg.id }, data: capBefore }); }
   } catch (e) { Z.fail += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 900) : e); } finally {
     try {
       if (before) await prisma.appSetting.update({ where: { key: KEY }, data: { value: before.value } });

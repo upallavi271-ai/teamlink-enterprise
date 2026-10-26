@@ -304,7 +304,7 @@ router.put('/approval-levels/:level', require('../utils/internalHr').blockRoute(
   }
 });
 
-// Blocks a new application if too much of the employee's department would be on
+// Says (no longer blocks - founder 2026-10-26) when too much of the employee's department would be on
 // leave for the same dates at once — whichever cap (% or flat headcount) is
 // stricter wins, matching the reference app's Concurrent Leave Cap policy.
 async function wouldExceedConcurrentCap(employee, fromDate, toDate) {
@@ -359,8 +359,9 @@ router.post('/', async (req, res, next) => {
       const clash = await duplicateOf({ employeeId, type, fromDate, toDate, halfDay });
       if (clash) return res.status(409).json({ error: `You already have ${/leave$/i.test(clash.type) ? clash.type : `${clash.type} leave`} on these dates (${clash.status === 'Cancellation Requested' ? 'Approved' : clash.status}).`, duplicateOf: clash.id });
     }
-    const capError = await wouldExceedConcurrentCap(employee, fromDate, toDate);
-    if (capError) return res.status(409).json({ error: capError });
+    // A REMINDER, NOT A BLOCK (founder 2026-10-26: "employee apply cheyochu, leave apply avali, valla department lo leave lo unna kuda"):
+    // the employee may apply even when colleagues are away; the cap is only said back with the saved request.
+    req.leaveTeamNotice = await wouldExceedConcurrentCap(employee, fromDate, toDate);
   }
   if (String(toDate) < String(fromDate)) return res.status(400).json({ error: 'To date cannot be before From date.' });
   // LEAVE ENDS WITH THE JOB (HRMS spec item 7, utils/exitDate.js): no leave for days after the last working day.
@@ -432,7 +433,7 @@ router.post('/', async (req, res, next) => {
   try { if (employee) early = await earlyLogout.snapshot(leave, employee); } catch (err) { console.error('[leave] early-logout check failed', err.message); }
   // HRMS item 2: the first approver on the chain (the TL) hears at once, bell + email, once per request.
   hrmsNotify.leaveRaised({ leave, employee, early }).catch((e) => console.error('[leave] notify approver failed', e.message));
-  return res.status(201).json({ ...leave, workflow: chain });
+  return res.status(201).json({ ...leave, workflow: chain, ...(req.leaveTeamNotice ? { teamNotice: req.leaveTeamNotice } : {}) });
   } catch (err) {
     return next(err);
   }

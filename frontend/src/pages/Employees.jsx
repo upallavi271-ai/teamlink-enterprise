@@ -568,6 +568,23 @@ export default function Employees() {
     if (ok && detail && detail.id === e.id) setDetail({ ...detail, loginStatus: lock ? 'Locked' : 'Active', passwordStatus: detail.passwordStatus ? { ...detail.passwordStatus, account: lock ? 'Locked' : 'Active' } : detail.passwordStatus });
   }
 
+  // LOCK / UNLOCK THE EMPLOYEE FORM (founder 2026-10-26: "HR ki lock and unlock option evvu employee management lo employee form ni").
+  // Locked = the employee cannot change their own details. Unlock opens it for a window (48 h unless HR types another number).
+  async function setFormLock(e, lock) {
+    let body = {};
+    if (lock) {
+      if (!window.confirm(`Lock ${e.name}'s employee form? They cannot change their details until HR unlocks it.`)) return;
+    } else {
+      const hours = window.prompt(`Unlock ${e.name}'s employee form so they can change their details.\n\nFor how many hours? (empty = 48)`, '48');
+      if (hours === null) return;
+      const reason = window.prompt('Reason (optional):', '') || '';
+      body = { hours: Number(hours) || 48, reason: reason || undefined };
+    }
+    const ok = await run(() => api.patch(`/employees/${e.id}/toggle-lock`, body),
+      lock ? `${e.name}'s employee form is locked.` : `${e.name}'s employee form is unlocked for ${body.hours} hours.`);
+    if (ok) api.get('/employees').then((res) => setHr(res.data)).catch(() => {});
+  }
+
   async function submitReset(e) {
     e.preventDefault();
     const ok = await run(() => api.post(`/employees/management/${resetFor.id}/reset-password`, { password: resetPassword }),
@@ -1017,6 +1034,9 @@ export default function Employees() {
                             : <button className="btn btn-sm" title="Stop this person signing in (they are signed out now)" onClick={() => setLoginLock(e, true)}>🔒 Lock login</button>}
                         </>
                       )}
+                      {caps.configure && h && (h.isLocked
+                        ? <button className="btn btn-sm" title="Let this person change their employee details again" onClick={() => setFormLock(e, false)}>🔓 Unlock form</button>
+                        : <button className="btn btn-sm" title="Stop this person changing their employee details" onClick={() => setFormLock(e, true)}>🔒 Lock form</button>)}
                       {/* Everyone who can open this screen may export a person in
                           their scope (the Super Admin is notified of every export). */}
                       <button
@@ -1418,6 +1438,16 @@ export default function Employees() {
                 </div>
               ))}
             </>
+          )}
+          {caps.configure && hrById[detail.id] && (
+            <div className="kv"><span className="k">Employee form</span>
+              <span>
+                {hrById[detail.id].isLocked ? 'Locked' : 'Open'}{' '}
+                {hrById[detail.id].isLocked
+                  ? <button className="btn btn-sm" onClick={() => setFormLock(detail, false)}>🔓 Unlock form</button>
+                  : <button className="btn btn-sm" onClick={() => setFormLock(detail, true)}>🔒 Lock form</button>}
+              </span>
+            </div>
           )}
           <div className="section-label">Login &amp; product access</div>
           {detail.userId ? (
