@@ -273,7 +273,9 @@ function newDayStatus({
     if (approved && approved.half) {
       return out(STATUS.HALF_LEAVE_ABSENT, { counted: true, ...leaveShare(approved, 0.5), absent: 0.5 + (approved.unpaid ? 0.5 : 0), ...leaveTag(approved), note: `${approved.half} leave, the other half not worked` });
     }
-    if (pendingLeave && date !== today) {
+    // A LEAVE APPLIED IS A LEAVE DAY, approved or still waiting - today too (founder 2026-10-26: "leave ani apply chesthe approve
+    // ayina kaakapoyina leave ane count"), never "Not in yet" with a punch prompt.
+    if (pendingLeave) {
       const n = pendingLeave.half ? 0.5 : 1;
       // A half-day request that is still waiting counts as a Half day (pendingHalf) - the leave state chip says "Pending approval".
       return out(STATUS.LEAVE_REVIEW, { counted: true, pending: n, absent: 1 - n, note: 'Leave is waiting for approval', pendingLeaveId: pendingLeave.id || null, ...(pendingLeave.half ? { pendingHalf: true } : {}) });
@@ -411,7 +413,9 @@ function legacyDayStatus({
     if (approved && approved.half) {
       return out(STATUS.HALF_LEAVE_ABSENT, { counted: true, ...leaveShare(approved, 0.5), absent: 0.5 + (approved.unpaid ? 0.5 : 0), ...leaveTag(approved), note: `${approved.half} leave, the other half not worked` });
     }
-    if (pendingLeave && date !== today) {
+    // A LEAVE APPLIED IS A LEAVE DAY, approved or still waiting - today too (founder 2026-10-26: "leave ani apply chesthe approve
+    // ayina kaakapoyina leave ane count"), never "Not in yet" with a punch prompt.
+    if (pendingLeave) {
       const n = pendingLeave.half ? 0.5 : 1;
       return out(STATUS.LEAVE_REVIEW, { counted: true, pending: n, absent: 1 - n, note: 'Leave is waiting for approval', pendingLeaveId: pendingLeave.id || null });
     }

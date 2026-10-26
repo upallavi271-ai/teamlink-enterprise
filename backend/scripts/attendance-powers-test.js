@@ -88,6 +88,14 @@ const Z = require('./lib/zzfix')('APW');
     Z.check('W1 applying for leave shows who in the team / department is on leave those days', w.status === 200 && names.includes(mate.name) && !names.includes(emp.name), [w.status, names]);
     const w2 = await Z.call('GET', '/api/leave/who-else?from=2026-11-10&to=2026-11-11', eTok);
     Z.check('W2 nobody listed when nobody is away', w2.status === 200 && w2.body.team.length === 0 && w2.body.department.length === 0, w2.text.slice(0, 160));
+    // a leave applied for TODAY (still waiting) is a leave day, not "Not in yet" (founder 2026-10-26)
+    {
+      const today = require('../src/utils/attendanceDays').localDate(); // eslint-disable-line global-require
+      await prisma.leaveRequest.create({ data: { employeeId: eEmp.id, type: 'Casual', fromDate: today, toDate: today, days: 1, status: 'Pending', reason: 'ZZTEST APW today' } });
+      const md = await Z.call('GET', `/api/attendance/my-days?from=${today}&to=${today}`, eTok);
+      const row = (md.body && md.body.rows || []).find((r) => r.date === today);
+      Z.check('W4 leave applied for today (waiting for approval) shows as leave, not "Not in yet"', md.status === 200 && row && row.status === 'Leave Under Review', [md.status, row && row.status]);
+    }
     // the department cap is a reminder, not a block (founder 2026-10-26)
     const cfg = await prisma.hrConfig.findFirst();
     const capBefore = cfg ? { concurrentLeaveCapFlat: cfg.concurrentLeaveCapFlat, concurrentLeaveCapPct: cfg.concurrentLeaveCapPct } : null;
