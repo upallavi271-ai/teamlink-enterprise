@@ -1952,6 +1952,12 @@ router.post('/bulk', async (req, res, next) => {
       }
       // eslint-disable-next-line no-await-in-loop
       const updated = await prisma.requirement.update({ where: { id: r.id }, data });
+      // the same hand-over as the single assign (founder 2026-10-26 own-candidates rule)
+      if (action !== 'assign-tl') {
+        const onIt = [updated.recruiterId, ...csv(updated.recruiterIds)].filter(Boolean);
+        // eslint-disable-next-line no-await-in-loop, global-require
+        await prisma.application.updateMany({ where: { requirementId: updated.id, OR: [{ ownerRecruiterId: null }, ...(onIt.length ? [{ ownerRecruiterId: { notIn: onIt } }] : [])] }, data: { ownerRecruiterId: require('../utils/applicationOwner').defaultOwnerOf(updated) } }).catch(() => null);
+      }
       // eslint-disable-next-line no-await-in-loop
       if (action === 'assign-tl') await RT.setExtras(r.id, target.id, wantTlExtras); // assigning TLs REPLACES the team (several = main + also assigned)
       // What Undo puts back (routes/jobLifecycleRoutes.js, 24 h).
@@ -3696,10 +3702,16 @@ router.post('/:id/assign', requirePerm('ats', 'requirements', 'Requirement Detai
   }
 
   const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
-  // A recruiter taken off the requirement leaves their candidates to whoever works it now (founder 2026-10-26 own-candidates rule).
+  // WHOSE CANDIDATES NOW (founder 2026-10-26): a candidate with no recruiter yet, or whose recruiter was taken off this requirement,
+  // goes to the requirement's main recruiter now (utils/applicationOwner.js). Candidates of recruiters still on the job stay theirs.
   {
+    const AO = require('../utils/applicationOwner'); // eslint-disable-line global-require
     const onIt = [requirement.recruiterId, ...csv(requirement.recruiterIds)].filter(Boolean);
-    await prisma.application.updateMany({ where: { requirementId: requirement.id, ownerRecruiterId: onIt.length ? { notIn: onIt } : { not: null } }, data: { ownerRecruiterId: null } }).catch(() => null);
+    const to = AO.defaultOwnerOf(requirement);
+    await prisma.application.updateMany({
+      where: { requirementId: requirement.id, OR: [{ ownerRecruiterId: null }, ...(onIt.length ? [{ ownerRecruiterId: { notIn: onIt } }] : [])] },
+      data: { ownerRecruiterId: to },
+    }).catch(() => null);
   }
   if (wantTlExtras !== undefined) await RT.setExtras(requirement.id, requirement.tlId, wantTlExtras);
   await logAudit({

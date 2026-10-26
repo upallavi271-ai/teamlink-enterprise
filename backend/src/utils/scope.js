@@ -502,7 +502,10 @@ function clientWhere(user) {
 // One shared rule: an application is visible when its requirement is, or when
 // it belongs to the signed-in candidate.
 // A RECRUITER SEES ONLY THEIR OWN CANDIDATES (founder 2026-10-26): on top of the requirement rule, an application must be theirs
-// (ownerRecruiterId) or nobody's yet (a portal application, an old row). TLs, BDEs and above are not narrowed by this.
+// (ownerRecruiterId). Wherever it came from - portal, job board, careers page, import - it is given to the requirement's own
+// recruiter the moment it is made (utils/applicationOwner.js), so a co-recruiter on the same job never sees it. An application
+// with NO owner is one whose requirement has no recruiter (old imported work): it stays with whoever the requirement rule gives it
+// to - the seat holder / TL - as before. TLs, BDEs and above are not narrowed by this.
 function ownOnlyArm(s) {
   return s && s.atsRole === 'RECRUITER' && s.userId ? { OR: [{ ownerRecruiterId: s.userId }, { ownerRecruiterId: null }] } : null;
 }

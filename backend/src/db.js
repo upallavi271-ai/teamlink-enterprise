@@ -82,4 +82,13 @@ prisma.$use(async (params, next) => {
   return next(params);
 });
 
+// owner_: an application created without a recruiter (portal, job board, careers page, import ...) goes to the requirement's own
+// recruiter (utils/applicationOwner.js, founder 2026-10-26). Never throws.
+prisma.$use(async (params, next) => {
+  if (params.model === 'Application' && params.action === 'create') {
+    try { await require('./utils/applicationOwner').before(prisma, params); } catch (err) { console.error('[owner] hook:', err.message); } // eslint-disable-line global-require
+  }
+  return next(params);
+});
+
 module.exports = prisma;

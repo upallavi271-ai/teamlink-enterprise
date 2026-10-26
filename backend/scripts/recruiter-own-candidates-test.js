@@ -28,7 +28,8 @@ const Z = require('./lib/zzfix')('ROC');
     const apB = await Z.call('POST', '/api/applications', T.b, { candidateId: cB.id, requirementId: req.id });
     const idA = apA.body && apA.body.id; const idB = apB.body && apB.body.id;
     if (idA) Z.made.apps.push(idA); if (idB) Z.made.apps.push(idB);
-    const portal = await prisma.application.create({ data: { candidateId: cP.id, requirementId: req.id, stage: 'RECRUITER_REVIEW', source: 'Naukri' } }); // unowned, like an old row
+    // a job-portal / job-board application: made without a recruiter, like the portal intake does
+    const portal = await prisma.application.create({ data: { candidateId: cP.id, requirementId: req.id, stage: 'NEW', source: 'TeamLink Job Portal', firstSource: 'Naukri' } });
     Z.made.apps.push(portal.id);
     const own = async (id) => (await prisma.application.findUnique({ where: { id } })).ownerRecruiterId;
     Z.check('O1 each recruiter\'s added candidate is theirs', apA.status === 201 && apB.status === 201 && await own(idA) === recA.id && await own(idB) === recB.id, [apA.status, apB.status]);
@@ -43,12 +44,12 @@ const Z = require('./lib/zzfix')('ROC');
     const txt = listB.text || '';
     Z.check('O6 recruiter B\'s candidate list does not carry A\'s candidate', listB.status === 200 && !txt.includes(cA.id) && txt.includes(cB.id), [listB.status, txt.includes(cA.id), txt.includes(cB.id)]);
 
-    Z.check('O7 an unowned (portal / old) application is seen by both recruiters on the job', await seesApp('a', portal.id) && await seesApp('b', portal.id), null);
-    const mv = await Z.call('PATCH', `/api/applications/${portal.id}/stage`, T.b, { stage: 'TL_REVIEW', comment: 'ZZTEST ROC' });
-    Z.check('O8 the recruiter who works it first makes it theirs; the other no longer sees it', (mv.status === 200 || mv.status === 201) && await own(portal.id) === recB.id && !(await seesApp('a', portal.id)), [mv.status, (mv.body && mv.body.error) || '', await own(portal.id)]);
+    Z.check('O7 a portal / job-board application goes straight to the requirement recruiter (A, the main one)', await own(portal.id) === recA.id, await own(portal.id));
+
+    Z.check('O8 nobody else sees it: not recruiter B; the TL does', await seesApp('a', portal.id) && !(await seesApp('b', portal.id)) && await seesApp('tl', portal.id), { a: await seesApp('a', portal.id), b: await seesApp('b', portal.id), tl: await seesApp('tl', portal.id) });
 
     const as = await Z.call('POST', `/api/requirements/${req.id}/assign`, T.tl, { recruiterId: recB.id, recruiterIds: [recB.id] });
-    Z.check('O9 recruiter A taken off the job: A\'s candidates pass to whoever works it now (B sees them)', (as.status === 200) && await own(idA) === null && await seesApp('b', idA), [as.status, (as.body && as.body.error) || '', await own(idA)]);
+    Z.check('O9 recruiter A taken off the job: A candidates (and the portal one) go to the recruiter on it now (B); A no longer sees them', as.status === 200 && await own(idA) === recB.id && await own(portal.id) === recB.id && await seesApp('b', idA) && !(await seesApp('a', idA)), [as.status, (as.body && as.body.error) || '', await own(idA), await own(portal.id)]);
   } catch (e) { Z.fail += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 900) : e); } finally {
     await Z.cleanup().catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));
     console.log(`\n${Z.pass} passed, ${Z.fail} failed`);

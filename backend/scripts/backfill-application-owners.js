@@ -5,9 +5,10 @@
 // daggara vunna candidates inkokari dhaanlo kanipinchakudadhu").
 //
 // The same attribution ATS Reports use (utils/workers.js): the recruiter on the application's follow-up record (imported trackers
-// carry it), else the last real recruiter who moved it. NOT the requirement's main recruiter - on a job with two recruiters that
-// would hand every unowned candidate to one of them. The owner is set only when that person can sign in as a RECRUITER and is
-// still on the requirement; everything else stays unowned (every recruiter on the job keeps seeing it, as before).
+// carry it), else the last real recruiter who moved it - when that person can sign in as a RECRUITER and is still on the requirement.
+// Everything else goes to the requirement's own recruiter (its main recruiter, else the first assigned: utils/applicationOwner.js),
+// founder 2026-10-26: "ekkada nunchi vachina, ahh respective recruiter & tl daggara ki vellali, inka evariki kanipinchakudadhu".
+// A requirement with no recruiter leaves its candidates unowned (only its TL and above see them) until a recruiter is assigned.
 //
 //   node scripts/backfill-application-owners.js                         DRY RUN on prisma/dev.db
 //   node scripts/backfill-application-owners.js --db <copy.db> --apply  on a copy
@@ -56,12 +57,15 @@ const W = require('../src/utils/workers');
       select: {
         id: true,
         requirement: { select: { recruiterId: true, recruiterIds: true } },
+        // (the requirement's recruiter is the fallback owner)
         followUps: { select: { ownerUserId: true, ownerName: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
         stageEvents: { where: W.REAL_EVENT, select: { actorUserId: true, actorName: true, actorRole: true, createdAt: true }, orderBy: { createdAt: 'asc' } },
       },
     }));
     const set = new Map();
-    let notOnJob = 0; let nobody = 0;
+    let notOnJob = 0; let nobody = 0; let toMain = 0; let noRecruiter = 0;
+    const AO = require('../src/utils/applicationOwner');
+    const fallback = (a) => { const d = AO.defaultOwnerOf(a.requirement); if (d) { set.set(a.id, d); toMain += 1; } else noRecruiter += 1; };
     for (const a of apps) {
       const fu = [...a.followUps].reverse().find((x) => x.ownerName || x.ownerUserId);
       let who = fu ? dir.person(fu.ownerUserId, fu.ownerName) : null;
@@ -69,16 +73,16 @@ const W = require('../src/utils/workers');
         const ev = [...a.stageEvents].reverse().find((e) => W.roleOfLabel(e.actorRole) === 'RECRUITER' && W.realActor(e));
         if (ev) who = dir.person(ev.actorUserId, ev.actorName);
       }
-      if (!who || !who.userId || !recruiters.has(who.userId)) { nobody += 1; continue; } // eslint-disable-line no-continue
+      if (!who || !who.userId || !recruiters.has(who.userId)) { nobody += 1; fallback(a); continue; } // eslint-disable-line no-continue
       const r = a.requirement || {};
       const onJob = r.recruiterId === who.userId || String(r.recruiterIds || '').split(',').map((x) => x.trim()).includes(who.userId);
-      if (!onJob) { notOnJob += 1; continue; } // eslint-disable-line no-continue
+      if (!onJob) { notOnJob += 1; fallback(a); continue; } // eslint-disable-line no-continue
       set.set(a.id, who.userId);
     }
     const perPerson = {};
     set.forEach((uid) => { const n = recruiters.get(uid).name; perPerson[n] = (perPerson[n] || 0) + 1; });
     console.log(`Database: ${dbArg}${isReal ? '  (REAL)' : ''}`);
-    console.log(`Unowned applications: ${apps.length}. Owner found: ${set.size}. No recruiter login behind it: ${nobody}. That recruiter is no longer on the job: ${notOnJob} (they stay unowned).`);
+    console.log(`Unowned applications: ${apps.length}. Given an owner: ${set.size} (by who worked it: ${set.size - toMain}; to the requirement's own recruiter: ${toMain}). Requirement has no recruiter (stay with its TL only): ${noRecruiter}. [no recruiter login behind the work: ${nobody}, that recruiter left the job: ${notOnJob}]`);
     console.log('Per recruiter:', perPerson);
     if (!APPLY) { console.log('\nDRY RUN: nothing was changed.'); return; }
     const out = path.resolve(isReal ? path.join(os.homedir(), '.teamlink-backups', `backfill-owners-${STAMP}`) : path.join(path.dirname(dbArg), `backfill-owners-${STAMP}`));
