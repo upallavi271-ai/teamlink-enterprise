@@ -482,14 +482,15 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   // WHERE THE APPROVAL STOPS (founder 2026-10-26: "TL ki 2 day leave approvals untai; once TL approve chesthe HR, Super Admin malli approve
   // cheyyakkarledu kani chain lo kanipinchali"; a leave TL and HR approved must not stay Pending): a TL approving within the TL rule, or HR
   // approving, GRANTS the leave. The levels above are then shown in the chain as Visibility (they see it, they need not act).
+  // OVER THE TL LIMIT (founder 2026-10-26, again: "2 days kante ekkuva untey HR, Super Admin daggaraki vellali approvals ki"): the TL may approve
+  // it, and it then goes straight to HR (levels between TL and HR are shown as Visibility); HR's (or the Super Admin's) approval grants it.
   let stopsHere = false;
+  let toHrNext = false;
   if (status === 'Approved' && existing.status === 'Pending' && pendingStep && pendingStep.level === 'HR') stopsHere = true;
   if (status === 'Approved' && existing.status === 'Pending' && policy.actingAsTl(req.user, pendingStep)) {
     const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
     if (verdict.allowed && verdict.rule && verdict.rule.enabled && pendingStep && pendingStep.level === 'TL') stopsHere = true;
-    if (!verdict.allowed) {
-      return res.status(403).json({ error: `TL approval limit: ${verdict.note}`, reassign: true, tlRule: verdict.rule });
-    }
+    if (!verdict.allowed && pendingStep && pendingStep.level === 'TL') toHrNext = true;
     if (!comment && !String(approvalReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a TL approves a leave request.', tlReasonRequired: true });
     }
@@ -518,6 +519,18 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
       note: status === 'Rejected' ? String(rejectReason).trim() : ([comment, approvalReason].filter(Boolean).join(' — ') || null),
     });
     if (result.error) return res.status(result.error.status).json(result.error.body);
+    if (toHrNext && !result.complete) {
+      const hrStep = steps.find((s) => s.level === 'HR' && s.seq > pendingStep.seq && ['Waiting', 'Pending'].includes(s.status));
+      if (hrStep) {
+        await prisma.approvalStep.updateMany({
+          where: { workflow: WF, recordId: existing.id, seq: { gt: pendingStep.seq, lt: hrStep.seq }, status: { in: ['Pending', 'Waiting'] } },
+          data: { status: 'Visibility', note: 'Not needed - a leave over the TL limit goes from the TL to HR. Shown for information.' },
+        });
+        await prisma.approvalStep.update({ where: { id: hrStep.id }, data: { status: 'Pending', activatedAt: new Date() } });
+        result.nextLevel = 'HR';
+        if (hrStep.approverUserId) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hrStep.approverUserId }).catch(() => {});
+      }
+    }
     if (stopsHere && !result.complete) {
       const who = pendingStep.level === 'HR' ? 'HR' : 'the TL (within the TL leave limit)';
       await prisma.approvalStep.updateMany({

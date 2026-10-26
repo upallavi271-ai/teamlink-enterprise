@@ -192,7 +192,8 @@ export function LeaveDecidePanel({ data, onDone }) {
   const depts = [...deptCount.entries()].map(([name, count]) => ({ name, count }));
   const shownTargets = dept ? allTargets.filter((t) => (t.department || 'No department') === dept) : allTargets;
   const tl = data.tl;
-  const tlBlocked = !!(tl && !tl.allowed);
+  // over the TL limit the TL still approves; the request then goes to HR (founder 2026-10-26) - so Approve is never switched off
+  const tlBlocked = false;
 
   async function send(kind) {
     setError('');
@@ -282,7 +283,7 @@ export function LeaveDecidePanel({ data, onDone }) {
           </>
         )}
       </div>
-      {tlBlocked && mode !== 'reassign' && <div className="lvx-muted" style={{ marginTop: 4 }}>Approve is off for this request — use Reassign to send it to HR or your manager.</div>}
+
     </div>
   );
 }

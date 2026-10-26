@@ -80,8 +80,8 @@ async function evaluateTlRule(rule, request) {
     return {
       allowed,
       rule,
-      note: allowed ? `Within the TL limit (${rule.limit} day${rule.limit === 1 ? '' : 's'}). A reason is required to approve.`
-        : `More than ${rule.limit} day${rule.limit === 1 ? '' : 's'} — reassign to HR/Manager.`,
+      note: allowed ? `Within the TL limit (${rule.limit} day${rule.limit === 1 ? '' : 's'}): your approval grants it. A reason is required to approve.`
+        : `More than ${rule.limit} day${rule.limit === 1 ? '' : 's'}: when you approve, it goes to HR for the final approval.`,
     };
   }
   // count: TL-level approvals for this employee in the leave's start month.
@@ -100,7 +100,7 @@ async function evaluateTlRule(rule, request) {
     used,
     note: allowed
       ? `${used} of ${rule.limit} TL approvals used for this employee in ${monthLabel(ym)}. A reason is required to approve.`
-      : `${used} of ${rule.limit} TL approvals already used for this employee in ${monthLabel(ym)} — reassign to HR/Manager.`,
+      : `${used} of ${rule.limit} TL approvals already used for this employee in ${monthLabel(ym)} - when you approve, it goes to HR for the final approval.`,
   };
 }
 
