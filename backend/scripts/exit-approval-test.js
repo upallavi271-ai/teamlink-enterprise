@@ -398,16 +398,17 @@ async function cleanup() {
     ok(rep2.status === 403, 'the report is HR / Super Admin only');
     const same = await http(hr.u, 'PUT', `/resignations/exit/${rec9}/date`, { date: addDays(TODAY, 12), reason: 'same again' });
     ok(same.status === 400, 'same date refused');
-    // finalised + past date -> Super Admin only
+    // finalised + past date -> HR or the Super Admin (founder 2026-10-26: "previous exit date cheyyadaniki HR ki kuda permission undali")
     const ov9 = await http(sa1.u, 'POST', `/resignations/exit/employee/${P6.e.id}/finalize-override`, { reason: 'Test of the finished-exit date rule' });
     const rec6 = (await prisma.employeeRecord.findFirst({ where: { employeeId: P6.e.id, type: 'RESIGNATION' } })).id;
     ok(ov9.status === 200, 'P6 finished by override');
     await prisma.resignationDetail.updateMany({ where: { employeeId: P6.e.id }, data: { resignationDate: addDays(TODAY, -40) } });
-    const past = await http(hr.u, 'PUT', `/resignations/exit/${rec6}/date`, { date: addDays(TODAY, -3), reason: 'correction of the last day' });
-    ok(past.status === 403 && /Super Admin/.test(past.body.error), 'a past date on a finished exit needs the Super Admin', `${past.status} ${past.text.slice(0, 160)}`);
+    const past = await http(hr.u, 'PUT', `/resignations/exit/${rec6}/date`, { date: addDays(TODAY, -4), reason: 'correction of the last day' });
+    ok(past.status === 200, 'HR may move a finished exit to a past date too', `${past.status} ${past.text.slice(0, 160)}`);
+    const saNotesBefore = (await notes(sa2.u.id, `Last working day changed: ${P6.e.name}`)).length; // HR's change above told the Super Admins
     const past2 = await http(sa1.u, 'PUT', `/resignations/exit/${rec6}/date`, { date: addDays(TODAY, -3), reason: 'correction of the last day' });
     ok(past2.status === 200, 'Super Admin may', `${past2.status} ${past2.text.slice(0, 160)}`);
-    ok((await notes(sa2.u.id, `Last working day changed: ${P6.e.name}`)).length === 0, 'no extra Super Admin notice when a Super Admin changed it');
+    ok((await notes(sa2.u.id, `Last working day changed: ${P6.e.name}`)).length === saNotesBefore, 'no extra Super Admin notice when a Super Admin changed it');
 
     console.log('\nB3. sync everywhere');
     const D = require('../src/utils/attendanceDays');

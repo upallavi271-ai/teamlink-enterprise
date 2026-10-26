@@ -78,7 +78,10 @@ const path = require('path');
     await prisma.employee.update({ where: { id: bareEmp.id }, data: { employmentStatus: 'Notice Period' } });
     await exitFlow.ensureExitRecord(bareEmp, { id: su.id, name: su.name }, {});
     const got = (await NA.progressFor([bareEmp.id])).get(bareEmp.id);
-    Z.check('N1 notice by status alone: counted from today for the policy days (45)', got && got.total === 45 && got.day === 0 && got.left === 45, got);
+    // founder 2026-10-26 (replaces the 10-23 "count from today"): with no resignation on file the resignation date is NOT invented as today;
+    // HR / the Super Admin enter the real one and the last working day follows. Until then there is no day count and no automatic exit.
+    const det = await prisma.resignationDetail.findFirst({ where: { employeeId: bareEmp.id } });
+    Z.check('N1 notice by status alone: no made-up resignation date (not today); waits for HR to enter the real one', det && det.resignationDate === '' && !(got && got.day != null && got.left != null && got.left > 0 && got.total === 45 && got.day === 0), [det && det.resignationDate, got]);
   } catch (e) { Z.fail += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 800) : e); } finally {
     // the rows this test made on people, BEFORE the people are removed (foreign keys)
     try {

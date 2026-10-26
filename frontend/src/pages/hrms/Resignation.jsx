@@ -11,7 +11,7 @@ import { ComposeModal, Field, AiAssist, useSubmit, CheckLine } from '../../compo
 import ApprovalChain, { ApprovalChainLine, fmtDateTime } from '../../components/ApprovalChain.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { useSearchParams } from 'react-router-dom';
-import ExitApprovals, { ExitRecordModal } from './ExitCenter.jsx';
+import ExitApprovals, { ExitRecordModal, EditDateModal } from './ExitCenter.jsx';
 import './Resignation.css';
 
 // ---------------------------------------------------------------------------
@@ -428,6 +428,9 @@ function printLetter(node, title) {
 
 // ---- ONE RESIGNATION: the letter as filed + its full approval history -------
 function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) {
+  // EDIT THE DATES (founder 2026-10-26: "resignation lo edit access - super admin ki, hr ki vundali"): resigned on, notice days and the
+  // last working day (it follows resigned on + notice days). The server lets only the HR desk / Super Admin save.
+  const [editDates, setEditDates] = useState(false);
   const [data, setData] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [error, setError] = useState('');
@@ -492,7 +495,7 @@ function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) 
             <div><span>Status</span><b><span className={`status ${statusCls(r.status)}`}>{r.status}</span></b></div>
             <div><span>Requested Last Working Date</span><b>{f?.requestedLastWorkingDate ? lorDate(f.requestedLastWorkingDate) : '—'}</b></div>
             <div><span>Approved Last Working Date</span><b>{f?.approvedLastWorkingDate ? lorDate(f.approvedLastWorkingDate) : (SERVING.includes(r.status) && r.lastWorkingDate ? lorDate(r.lastWorkingDate) : '—')}</b></div>
-            <div><span>Resigned on (date and time)</span><b>{r.resignedOn || '—'}</b></div>
+            <div><span>Resigned on (date and time)</span><b>{f?.resignationDate ? (r.resignedOn || lorDate(f.resignationDate)) : 'Not set yet (HR to enter)'}</b></div>
             <div><span>Reason</span><b>{r.reason || '—'}</b></div>
             <div><span>Notice days</span><b>{r.noticePeriodDays ?? '—'}</b></div>
             <div><span>Submitted</span><b>{r.submittedAt ? fmtDateTime(r.submittedAt) : '—'}</b></div>
@@ -500,6 +503,18 @@ function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) 
             <div><span>Reporting Manager</span><b>{r.employeeInfo?.reportingManager || '—'}</b></div>
           </div>
 
+          {isHR && !['Rejected', 'Withdrawn'].includes(r.status) && (
+            <div style={{ marginTop: 8 }}>
+              <button type="button" className="btn btn-sm" onClick={() => setEditDates(true)}>✏ Edit dates (resigned on, notice, last working day)</button>
+            </div>
+          )}
+          {editDates && (
+            <EditDateModal
+              record={{ id: r.id, lastWorkingDate: f?.approvedLastWorkingDate || r.lastWorkingDate || '', resignationDate: f?.resignationDate || '', noticeDays: r.noticePeriodDays }}
+              onClose={() => setEditDates(false)}
+              onSaved={() => { setEditDates(false); load(); onChanged(); }}
+            />
+          )}
           <SectionLabel style={{ marginTop: 16 }}>Approval Chain</SectionLabel>
           {mayDecide && lastStep && (
             <Field label="Approved last working date (optional)" hint={`Blank keeps the requested date (${f?.requestedLastWorkingDate ? lorDate(f.requestedLastWorkingDate) : '—'}). Used only when this approval is the final one.`}>

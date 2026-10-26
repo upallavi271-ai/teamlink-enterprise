@@ -723,7 +723,10 @@ router.put('/:id/dates', async (req, res, next) => {
     }
     if (newRes && !exitDate.realDate(newRes)) return plain(res, 400, 'Pick the resignation date as a real date.');
     let newLwd = blank(b.lastWorkingDate) ? curLwd : String(b.lastWorkingDate).trim();
-    if (blank(b.lastWorkingDate) && b.recalculate && newRes && newDays != null) newLwd = exitFlow.noticeEnd(newRes, newDays);
+    // the resignation date (or the notice days) moved and no exit date was given: the last working day follows = resignation date + notice days
+    // (founder 2026-10-26), unless the caller says recalculate:false
+    const startMoved = newRes !== curRes || (b.noticeDays !== undefined && !blank(b.noticeDays));
+    if (blank(b.lastWorkingDate) && (b.recalculate || (startMoved && b.recalculate !== false)) && newRes && newDays != null) newLwd = exitFlow.noticeEnd(newRes, newDays);
     if (newLwd && !exitDate.realDate(newLwd)) return plain(res, 400, 'Pick the last working day as a real date.');
 
     const joined = employee.dateOfJoining ? new Date(employee.dateOfJoining).toISOString().slice(0, 10) : null;

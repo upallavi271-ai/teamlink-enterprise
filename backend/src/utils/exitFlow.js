@@ -379,7 +379,10 @@ async function ensureExitRecord(employee, by, { status } = {}) {
   // automatic exit (utils/noticeAutoExit.js) work. HR can change the last working day afterwards (utils/exitDate.js setExitDate).
   const serving = SERVING.includes(st);
   const noticeDays = serving ? (await hrConfig()).noticePeriodDays : null;
-  const lwdDefault = serving ? noticeEnd(new Date().toISOString().slice(0, 10), noticeDays) : null;
+  // 2026-10-26 (founder): "actual ga employee resignation pettina date nunchi notice period count ayyi last working day display avvali" - the
+  // day a screen first opened this person is NOT their resignation date. With no resignation on file the date stays empty ("not set")
+  // until HR / the Super Admin enters it; the last working day then follows as resignation date + notice days (exit dates editor).
+  const lwdDefault = null;
   const record = await prisma.employeeRecord.create({
     data: {
       type: 'RESIGNATION', employeeId: employee.id, title: 'Exit recorded by HR', status: st, date: lwdDefault, raisedBy: by ? (by.name || by.email) : null,
@@ -391,7 +394,7 @@ async function ensureExitRecord(employee, by, { status } = {}) {
     data: {
       recordId: record.id, employeeId: employee.id, employeeCode: employee.employeeCode || null, employeeName: employee.name,
       department: employee.department || null, designation: employee.designation || null,
-      resignationDate: new Date().toISOString().slice(0, 10), resignationTime: `${String(nowClock.getHours()).padStart(2, '0')}:${String(nowClock.getMinutes()).padStart(2, '0')}`,
+      resignationDate: '', resignationTime: null,
       source: 'Recorded by HR from the exit date', reason: 'Other', reasonOther: 'Recorded by HR', noticePeriodDays: noticeDays,
       ...(serving ? { requestedLastWorkingDate: lwdDefault, approvedLastWorkingDate: lwdDefault } : {}),
       submittedByUserId: by ? by.id : null, submittedByName: by ? (by.name || by.email) : 'System',

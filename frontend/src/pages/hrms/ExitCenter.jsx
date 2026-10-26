@@ -46,7 +46,7 @@ export function ExitChip({ stage, label, onClick }) {
 
 // ---- Edit exit date --------------------------------------------------------------------
 // HR (Internal HR: Divya, Purna) and the Super Admin fix the resignation date, the notice period and the exit date here (founder 2026-10-24).
-function EditDateModal({ record, onClose, onSaved }) {
+export function EditDateModal({ record, onClose, onSaved }) {
   const current = record.lastWorkingDate || '';
   const curRes = record.resignationDate || '';
   const curDays = record.noticeDays == null ? '' : String(record.noticeDays);
@@ -65,6 +65,8 @@ function EditDateModal({ record, onClose, onSaved }) {
   const suggested = noticeEndOf(resDate, days);
   // Picking "move the last working day to resigned on + notice days" fills the date for them to see (they can still change it).
   useEffect(() => { if (recalc && suggested) setDate(suggested); }, [recalc, suggested]);
+  // the resignation date (or notice days) moved: the last working day follows by default = resigned on + notice days (founder 2026-10-26)
+  useEffect(() => { if (startOrDaysMoved) setRecalc(true); }, [resDate, days]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!date || date === current || date === checked) return undefined;
