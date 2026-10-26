@@ -39,6 +39,12 @@ const isReal = dbArg.toLowerCase() === DEV_DB.toLowerCase();
 const APPLY = has('--apply');
 const UNDO = val('--undo');
 const FILE = val('--file');
+// --delete-others (founder 2026-10-26, later: "only the sheet's requirements must be in Medical, delete the rest, nothing extra"):
+// AFTER the replace has run, every Medical requirement that is NOT one of the sheet's is DELETED - by default only one with no candidate
+// and no invoice on it (the app's own rule for deleting a requirement). With --with-candidates the ones that have candidates go too (their
+// applications, follow-ups and stage history with them); a requirement that has an INVOICE is never deleted (Accounts would break).
+const DELETE_OTHERS = has('--delete-others');
+const WITH_CANDIDATES = has('--with-candidates');
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const OUT = path.resolve(val('--out', path.join(os.tmpdir(), `replace-medical-${STAMP}`)));
 const DEPT = 'Medical';
@@ -186,6 +192,37 @@ async function doUndo() {
     fs.mkdirSync(OUT, { recursive: true });
     fs.writeFileSync(path.join(OUT, 'plan.json'), JSON.stringify({ sheet: reqs.map(({ clientRow, match, ...s }) => ({ ...s, clientId: clientRow ? clientRow.id : null, matchCode: match ? match.reqCode : null })), close: toClose.map((r) => r.reqCode), newClients: [...newClients.values()], skipped }, null, 1));
     console.log(`Full plan: ${path.join(OUT, 'plan.json')}`);
+    if (DELETE_OTHERS) {
+      if (toCreate) { console.log(`\nREFUSED: ${toCreate} sheet requirement(s) are not in TeamLink yet. Run the replace (--apply) first, then --delete-others.`); return; }
+      const others = old.filter((r) => !used.has(r.id));
+      const ids = others.map((r) => r.id);
+      const inv = new Set((await prisma.invoice.findMany({ where: { requirementId: { in: ids } }, select: { requirementId: true } })).map((x) => x.requirementId));
+      const del = others.filter((r) => !inv.has(r.id) && (WITH_CANDIDATES || r._count.applications === 0));
+      const apps = del.reduce((n, r) => n + r._count.applications, 0);
+      console.log(`\nDELETE OTHERS: ${others.length} Medical requirement(s) are not in the sheet. Deleting ${del.length}${WITH_CANDIDATES ? ` (with their ${apps} candidate application(s))` : ' (no candidate, no invoice on them)'}; kept: ${others.length - del.length} (${inv.size} with an invoice${WITH_CANDIDATES ? '' : ', the rest have candidates'}).`);
+      if (!APPLY) { console.log('\nDRY RUN: nothing was changed.'); return; }
+      const bakDir2 = path.resolve(isReal ? path.join(os.homedir(), '.teamlink-backups', `delete-medical-extra-${STAMP}`) : path.join(OUT, 'backup'));
+      fs.mkdirSync(bakDir2, { recursive: true });
+      const bak2 = path.join(bakDir2, 'before.db');
+      await prisma.$executeRawUnsafe(`VACUUM INTO '${bak2.split(path.sep).join('/').replace(/'/g, "''")}'`);
+      const delIds = del.map((r) => r.id);
+      const rows = await prisma.requirement.findMany({ where: { id: { in: delIds } } });
+      fs.writeFileSync(path.join(bakDir2, 'deleted-requirements.json'), JSON.stringify(rows, null, 1));
+      await prisma.$transaction(async (tx) => {
+        const appIds = (await tx.application.findMany({ where: { requirementId: { in: delIds } }, select: { id: true } })).map((a) => a.id);
+        for (const [model, field] of [['applicationFollowUp', 'applicationId'], ['applicationStageEvent', 'applicationId'], ['interviewFeedback', 'applicationId'], ['interviewEvent', 'applicationId']]) {
+          if (appIds.length && tx[model]) await tx[model].deleteMany({ where: { [field]: { in: appIds } } }).catch(() => null); // eslint-disable-line no-await-in-loop
+        }
+        if (appIds.length) await tx.application.deleteMany({ where: { id: { in: appIds } } });
+        for (const model of ['applicationFollowUp', 'applicationStageEvent', 'partnerJobShare', 'partnerSubmission', 'scheduledMessage', 'candidateReferral', 'campusDrive']) {
+          if (tx[model]) await tx[model].deleteMany({ where: { requirementId: { in: delIds } } }).catch(() => null); // eslint-disable-line no-await-in-loop
+        }
+        await tx.requirement.deleteMany({ where: { id: { in: delIds } } });
+        await tx.auditLog.create({ data: { action: `Medical requirements not in the sheet deleted: ${delIds.length}${WITH_CANDIDATES ? ` (with ${apps} applications)` : ''}`, entity: 'Requirement', toValue: path.basename(FILE), actorName: WHO } });
+      }, { timeout: 900000 });
+      console.log(`\nDONE: ${delIds.length} requirement(s) deleted.\nBackup (the whole database before this): ${bak2}\nThe deleted rows: ${path.join(bakDir2, 'deleted-requirements.json')}\nTo undo: stop TeamLink, copy the backup over prisma/dev.db (remove dev.db-wal / dev.db-shm), start TeamLink.`);
+      return;
+    }
     if (!APPLY) { console.log('\nDRY RUN: nothing was changed.'); return; }
 
     const bakDir = path.resolve(isReal ? path.join(os.homedir(), '.teamlink-backups', `replace-medical-${STAMP}`) : path.join(OUT, 'backup'));
