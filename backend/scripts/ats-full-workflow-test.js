@@ -144,8 +144,15 @@ const err = (r) => (r ? [r.status, (r.body && (r.body.error || r.body.code)) || 
     step('Recruiter', '8a cannot book the client interview (the BDE books it)', !ok2(recBook), err(recBook));
     const bk = await C('POST', `/api/ats/interviews/${ids.app}/book`, 'bde', bookBody);
     step('BDE', '8b books the interview (Interview Scheduled)', ok2(bk) && await stage() === 'INTERVIEW_SCHEDULED', err(bk));
+    const invRows = (bk.body && bk.body.invites && bk.body.invites.rows) || [];
+    step('BDE', '8b2 the invite goes to the client AND the candidate', invRows.some((x) => /Client/.test(x.role || '')) && invRows.some((x) => /Candidate/.test(x.role || '')), invRows.map((x) => x.role));
     const cf = await C('POST', `/api/ats/interviews/${ids.app}/client-feedback`, 'client', { overall: 'Strong Java, good communication (ZZTEST WFL)', recommendation: 'Selected', ratings: { technical: 4, communication: 4 } });
     step('Client', '8c gives interview feedback', ok2(cf), err(cf));
+    const seen = await prisma.notification.findMany({ where: { userId: { in: [bde.id, bdeTl.id, rec.id, tl.id] }, title: { startsWith: 'Client feedback' } }, select: { userId: true } });
+    const got = (u) => seen.some((n) => n.userId === u.id);
+    step('System', "8c2 the client's feedback reaches the BDE, BDE TL, recruiter and TL", got(bde) && got(bdeTl) && got(rec) && got(tl), { bde: got(bde), bdeTl: got(bdeTl), rec: got(rec), tl: got(tl) });
+    const tellC = await C('POST', `/api/candidates/${ids.cand}/contact`, 'rec', { method: 'Email', purpose: 'Interview feedback', subject: 'Interview feedback', body: 'Hi Arjun, the client liked your interview (ZZTEST WFL).', applicationId: ids.app });
+    step('Recruiter', "8c3 sends the client's feedback to the candidate (kept in the candidate's messages)", tellC.status === 201, err(tellC));
     const fb = await C('POST', `/api/ats/interviews/${ids.app}/feedback`, 'rec', { feedback: 'Client liked him (ZZTEST WFL)', result: 'Selected', score: 8 });
     step('Recruiter', '8d records the interview feedback (Interview Completed)', ok2(fb) && await stage() === 'INTERVIEW_COMPLETED', [err(fb), await stage()]);
     const dc = await C('POST', `/api/ats/interviews/${ids.app}/decision`, 'tl', { decision: 'Selected' });

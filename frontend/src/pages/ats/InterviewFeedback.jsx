@@ -120,7 +120,11 @@ export default function InterviewFeedback() {
                       {decidable && canClient && (
                         <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDialog({ kind: 'client', row: r })}>{r.clientFeedback ? 'Edit client words' : 'Add client words'}</button>
                       )}
-                      {(!decidable || (!canInternal && !canClient && !canDecide)) && <span className="small-muted">—</span>}
+                      {/* founder 2026-10-26: once the client's feedback is in, the recruiter sends it to the candidate */}
+                      {canInternal && r.clientFeedback && r.candidate && (
+                        <button type="button" className="btn btn-sm" onClick={() => setDialog({ kind: 'tellCandidate', row: r })}>Send feedback to candidate</button>
+                      )}
+                      {(!decidable || (!canInternal && !canClient && !canDecide)) && !(canInternal && r.clientFeedback) && <span className="small-muted">—</span>}
                     </div>
                   </td>
                 </tr>
@@ -168,6 +172,9 @@ export default function InterviewFeedback() {
           onClose={() => setDialog(null)}
           onSubmit={(body) => run(() => api.post(`/ats/interviews/${dialog.row.id}/client-feedback`, body), 'Saved what the client said.')}
         />
+      )}
+      {dialog?.kind === 'tellCandidate' && (
+        <TellCandidateFeedback row={dialog.row} onClose={() => setDialog(null)} onSent={(msg) => { setDialog(null); run(() => Promise.resolve(), msg); }} />
       )}
       {dialog?.kind === 'decision' && (
         <DecisionForm
@@ -256,6 +263,50 @@ function DecisionForm({ row, onClose, onSubmit }) {
           <div className="ivx-hint">{internal ? 'Next: an offer from TeamLink, then joining and the employee record.' : 'Next: the offer, then joining and the invoice.'}</div>
         )}
       </div>
+    </Modal>
+  );
+}
+
+// SEND THE CLIENT'S FEEDBACK TO THE CANDIDATE (founder 2026-10-26). The recruiter reads the words first and may change them; it goes
+// through the normal candidate message (Email), so it is in the candidate's Communications history like every other message.
+function TellCandidateFeedback({ row, onClose, onSent }) {
+  const fb = row.clientFeedback || {};
+  const first = String((row.candidate && row.candidate.name) || '').trim().split(/s+/)[0] || 'there';
+  const result = fb.recommendation === 'Selected' ? 'the client liked your interview and has selected you for the next step'
+    : fb.recommendation === 'Rejected' ? 'the client has decided not to go ahead this time'
+      : 'the client has put your profile on hold for now';
+  const job = (row.requirement && row.requirement.title) || 'the role';
+  const [text, setText] = useState(`Hi ${first},
+
+Feedback from your interview for ${job}: ${result}.
+${fb.overall ? `
+What they said: ${fb.overall}
+` : ''}
+I will call you about the next step.
+
+- TeamLink`);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function send(e) {
+    e.preventDefault();
+    if (!text.trim()) { setErr('Write the message first.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post(`/candidates/${row.candidate.id}/contact`, { method: 'Email', purpose: 'Interview feedback', subject: `Interview feedback: ${job}`, body: text, applicationId: row.id });
+      const st = r.data && r.data.row && r.data.row.status;
+      onSent(st === 'QUEUED' ? `Feedback sent to ${row.candidate.name} by email.` : `Feedback saved on ${row.candidate.name}'s record${r.data && r.data.row && r.data.row.statusDetail ? ` (${r.data.row.statusDetail})` : ''}.`);
+    } catch (er) { setErr((er.response && er.response.data && er.response.data.error) || 'It could not be sent.'); setBusy(false); }
+  }
+  return (
+    <Modal title="Send the client's feedback to the candidate" onClose={onClose}
+      footer={<><button type="button" className="btn" onClick={onClose}>Close</button><button type="submit" form="ivx-tell" className="btn btn-primary" disabled={busy}>{busy ? 'Sending...' : 'Send by email'}</button></>}>
+      <form id="ivx-tell" onSubmit={send}>
+        {err && <div className="error-text">{err}</div>}
+        <div className="small-muted" style={{ marginBottom: 8 }}>Client said: <b>{fb.recommendation || '—'}</b>{fb.submittedBy ? ` (by ${fb.submittedBy})` : ''}. Check the words before sending; the client's name is not in it.</div>
+        <label className="field"><span>Message to {row.candidate.name}</span>
+          <textarea rows="9" value={text} onChange={(e) => setText(e.target.value)} />
+        </label>
+      </form>
     </Modal>
   );
 }

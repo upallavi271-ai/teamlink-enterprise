@@ -189,6 +189,7 @@ export function MeetSettings({ onMessage }) {
         <div className="ims-panel">
           <Sw k="emailCandidate" label="Email the candidate when an interview is booked" />
           <Sw k="emailInterviewer" label="Email the interviewer" />
+          <Sw k="emailClient" label="Email the client (their recruitment contact)" />
           <Sw k="emailChanges" label="Email on reschedule or cancel" />
           <Sw k="copyTeam" label="Send a copy to the person who booked, the team lead and the client manager (BDE)" />
           <Sw k="calendarAutoLink" label={`Make the Meet link automatically (Google Calendar${d.calendarReady ? '' : ' is not connected yet: Integrations > Calendar Sync'})`} hint="Only works when Google Calendar is connected. Nothing is called without it." />

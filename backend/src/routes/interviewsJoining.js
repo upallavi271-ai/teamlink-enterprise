@@ -304,9 +304,11 @@ router.post('/interviews/:id/client-feedback', requirePerm('ats', 'interviews', 
   // The client's answer reaches everyone on the job, and the client's own BDE even when the job names none.
   try {
     const rq = app.requirement || {};
-    await notifyUsers(await withClientBdes([rq.recruiterId, ...String(rq.recruiterIds || '').split(',').map((x) => x.trim()), rq.tlId, rq.bdeId], rq), {
+    // founder 2026-10-26: the client's feedback shows to the BDE, the BDE TL, the recruiter(s) and the TL; then the recruiter sends it to the candidate
+    const bdeTls = rq.internal ? [] : await require('../utils/clientBdes').bdeTlIds().catch(() => []); // eslint-disable-line global-require
+    await notifyUsers([...(await withClientBdes([rq.recruiterId, ...String(rq.recruiterIds || '').split(',').map((x) => x.trim()), rq.tlId, rq.bdeId], rq)), ...bdeTls], {
       title: `Client feedback: ${app.candidate ? app.candidate.name : 'Candidate'} — ${recommendation}`,
-      message: `${rq.title || 'Requirement'}${rq.client ? ` — ${rq.client.name}` : ''}. Open Interviews to see it and decide.`,
+      message: `${rq.title || 'Requirement'}${rq.client ? ` — ${rq.client.name}` : ''}. Open Interview Feedback to see it. Recruiter: send it to the candidate from there.`,
       exceptUserId: req.user.id,
     });
   } catch (err) { console.error('[client-feedback] could not notify:', err.message); } // eslint-disable-line no-console

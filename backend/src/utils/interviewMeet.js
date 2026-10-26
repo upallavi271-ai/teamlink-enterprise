@@ -21,7 +21,7 @@ const sandbox = require('./sandbox');
 const KEY = 'interview-meet';
 const MAIL_PREFIX = 'interview-mail:';
 const DEFAULTS = {
-  emailCandidate: true, emailInterviewer: true, emailChanges: true, copyTeam: false,
+  emailCandidate: true, emailInterviewer: true, emailClient: true, emailChanges: true, copyTeam: false,
   defaultMeetLink: '', calendarAutoLink: false, startBeforeMin: 15, startAfterMin: 120,
 };
 const isTest = (s) => /zztest|example\.test/i.test(String(s || ''));
@@ -40,6 +40,7 @@ async function loadSettings() {
   return {
     emailCandidate: v.emailCandidate !== false,
     emailInterviewer: v.emailInterviewer !== false,
+    emailClient: v.emailClient !== false,
     emailChanges: v.emailChanges !== false,
     copyTeam: v.copyTeam === true,
     defaultMeetLink: typeof v.defaultMeetLink === 'string' ? v.defaultMeetLink : '',
@@ -53,7 +54,7 @@ async function saveSettings(patch, user) {
   const cur = await loadSettings();
   const next = { ...cur };
   delete next.updatedByName;
-  ['emailCandidate', 'emailInterviewer', 'emailChanges', 'copyTeam', 'calendarAutoLink'].forEach((k) => { if (typeof patch[k] === 'boolean') next[k] = patch[k]; });
+  ['emailCandidate', 'emailInterviewer', 'emailClient', 'emailChanges', 'copyTeam', 'calendarAutoLink'].forEach((k) => { if (typeof patch[k] === 'boolean') next[k] = patch[k]; });
   if (patch.startBeforeMin !== undefined) next.startBeforeMin = cleanInt(patch.startBeforeMin, 0, 240, cur.startBeforeMin);
   if (patch.startAfterMin !== undefined) next.startAfterMin = cleanInt(patch.startAfterMin, 15, 720, cur.startAfterMin);
   if (patch.defaultMeetLink !== undefined) {
@@ -246,6 +247,14 @@ async function recipientsOf(app, event, settings, actor) {
       const users = await prisma.user.findMany({ where: { name: { in: names }, status: 'Active' }, select: { id: true, name: true, email: true } }).catch(() => []);
       users.forEach((u) => add({ key: `user:${u.id}`, role: 'Interviewer', name: u.name, email: u.email, kind: 'staff', on: settings.emailInterviewer && changeOn }));
     }
+  }
+  // THE CLIENT TOO (founder 2026-10-26: "bde interview schedule chestharu, client ki, candidate ki kalipi"): the client's recruitment
+  // contact (else the main contact) gets the same invite. Never on a TeamLink internal job.
+  {
+    const r = app.requirement || {};
+    const c = r.client;
+    const em = c && !r.internal ? String(c.recruitmentContactEmail || c.contactEmail || '').trim() : '';
+    if (em) add({ key: 'client', role: 'Client', name: c.recruitmentContactName || c.contactName || c.name, email: em, kind: 'staff', on: settings.emailClient && changeOn });
   }
   if (settings.copyTeam) {
     const r = app.requirement || {};
