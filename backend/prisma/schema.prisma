@@ -532,6 +532,10 @@ model Application {
   requirementId   String
   requirement     Requirement @relation(fields: [requirementId], references: [id])
   stage           String      @default("NEW")
+  // THE RECRUITER WHOSE CANDIDATE THIS IS (founder 2026-10-26: "oka recruiter daggara vunna candidates inkokari dhaanlo kanipinchakudadhu").
+  // Set when a recruiter adds the person, or takes the first step on an unowned one (a portal application). A recruiter sees only
+  // their own and the unowned applications of the requirements they are on; TLs and above see all (utils/scope.js).
+  ownerRecruiterId String?
   interviewStatus String?
   interviewAt     DateTime?
 
@@ -620,6 +624,7 @@ model Application {
   @@unique([candidateId, requirementId])
   // ATS dashboard performance (migration 20260926140000_ats_dashboard_indexes).
   @@index([requirementId])
+  @@index([ownerRecruiterId])
   @@index([stage])
   @@index([requirementId, stage]) // perf_indexes 20261009210000
   @@index([createdAt])

@@ -501,7 +501,17 @@ function clientWhere(user) {
 // --- Applications / pipeline / interviews ----------------------------------
 // One shared rule: an application is visible when its requirement is, or when
 // it belongs to the signed-in candidate.
+// A RECRUITER SEES ONLY THEIR OWN CANDIDATES (founder 2026-10-26): on top of the requirement rule, an application must be theirs
+// (ownerRecruiterId) or nobody's yet (a portal application, an old row). TLs, BDEs and above are not narrowed by this.
+function ownOnlyArm(s) {
+  return s && s.atsRole === 'RECRUITER' && s.userId ? { OR: [{ ownerRecruiterId: s.userId }, { ownerRecruiterId: null }] } : null;
+}
 function applicationWhere(user) {
+  const base = applicationWhereBase(user);
+  const own = ownOnlyArm(atsScopeOf(user));
+  return own ? { AND: [base, own] } : base;
+}
+function applicationWhereBase(user) {
   const s = atsScopeOf(user);
   if (s.global) return {};
   // HR falls through to the requirement rule below: internal openings only.
@@ -630,6 +640,8 @@ function applicationInScope(user, application) {
   const s = ctx.s;
   if (s.global) return true;
   if (!application) return false;
+  // another recruiter's candidate (founder 2026-10-26)
+  if (s.atsRole === 'RECRUITER' && application.ownerRecruiterId && application.ownerRecruiterId !== s.userId) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
   const r = application.requirement;
   if (s.atsRole === 'BDE' || ctx.bdeTl) {

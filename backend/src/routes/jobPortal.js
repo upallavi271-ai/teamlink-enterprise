@@ -701,6 +701,7 @@ async function sendToAts(req, res) {
       portalImportedAt: new Date(),
       portalImportedBy: req.user.id,
       stage: 'RECRUITER_REVIEW',
+      ...(!application.ownerRecruiterId && req.user.atsRole === 'RECRUITER' ? { ownerRecruiterId: req.user.id } : {}),
       hiringType: hiringTypeOf(application, application.requirement),
       source,
       firstSource: application.firstSource || source,

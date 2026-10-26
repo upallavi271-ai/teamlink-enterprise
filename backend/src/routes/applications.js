@@ -354,6 +354,8 @@ async function addApplication(user, {
       candidateId: candidate.id,
       requirementId: requirement.id,
       stage: 'NEW',
+      // a recruiter's own candidate (founder 2026-10-26): only they (and the TL and above) see it
+      ...(user && user.atsRole === 'RECRUITER' ? { ownerRecruiterId: user.id } : {}),
       matchScore: match.overall,
       // B8: the scoring version + explanation + (when ineligible) the override.
       ...(versioned ? {
@@ -756,6 +758,8 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     where: { id: applicationId },
     data: {
       stage,
+      // the first recruiter to work an unowned application (a portal one) makes it theirs
+      ...(!existing.ownerRecruiterId && user && user.atsRole === 'RECRUITER' ? { ownerRecruiterId: user.id } : {}),
       interviewStatus: stage === 'INTERVIEW_SCHEDULED' ? 'SCHEDULED' : stage === 'INTERVIEW_COMPLETED' ? 'COMPLETED' : existing.interviewStatus,
       // §34 — the AI interview's own status follows the AI stages, so the
       // calendar's AI list does not keep saying "Required" after it was taken.

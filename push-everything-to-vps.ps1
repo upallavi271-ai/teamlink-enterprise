@@ -10,7 +10,8 @@
 #   3  Medical requirements = the founder's sheet                                    - push-medical-sheet-to-vps.ps1 -Apply
 #   4  delete the Medical requirements not in the sheet (with their candidates)      - push-medical-sheet-to-vps.ps1 -DeleteOthers -Apply
 #   5  keep only the signed-agreements zip clients                                   - push-zip-clients-only-to-vps.ps1 -Apply
-#   6  the developer login as Super Admin (asks for its password; press Enter to skip; never stored or shown)
+#   6  whose candidate is it: old applications get their recruiter (backfill-application-owners.js, backup first)
+#   7  the developer login as Super Admin (asks for its password; press Enter to skip; never stored or shown)
 # Every data step backs up the live database first and is safe to run twice. Do not click inside this window while it runs
 # (a click pauses PowerShell; press Enter to continue).
 #   -SkipDeploy   start from step 2 (the code is already deployed)
@@ -20,7 +21,7 @@ $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $VpsHost = 'root@72.61.233.104'
 $VpsRoot = '/opt/teamlink-enterprise'
-function Step($n, $text) { Write-Host "`n==================== STEP $n of 6: $text ====================" -ForegroundColor Cyan }
+function Step($n, $text) { Write-Host "`n==================== STEP $n of 7: $text ====================" -ForegroundColor Cyan }
 
 if (-not $SkipDeploy) {
   Step 1 'Deploying the code (live database kept)'
@@ -40,13 +41,17 @@ Step 4 'Medical requirements not in the sheet: deleted'
 Step 5 'Only the signed-agreements zip clients'
 & (Join-Path $Root 'push-zip-clients-only-to-vps.ps1') -Apply
 
-Step 6 'Developer login (Super Admin)'
+Step 6 'Old applications: their recruiter (own-candidates rule)'
+ssh $VpsHost "cd $VpsRoot/backend && TL_ALLOW_REAL_APPLY=1 node scripts/backfill-application-owners.js --apply --really-real"
+if ($LASTEXITCODE -ne 0) { throw 'Step 6 (owners) failed (see the lines above).' }
+
+Step 7 'Developer login (Super Admin)'
 $sec = Read-Host 'Password for the developer login (press Enter to skip)' -AsSecureString
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
 if ($plain) {
   $quoted = "'" + ($plain -replace "'", "'\''") + "'"
   ssh $VpsHost "cd $VpsRoot/backend && TL_NEW_PASSWORD=$quoted TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --apply --really-real && TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --make-super-admin --apply --really-real"
-  if ($LASTEXITCODE -ne 0) { throw 'Step 6 (developer login) failed (see the lines above).' }
+  if ($LASTEXITCODE -ne 0) { throw 'Step 7 (developer login) failed (see the lines above).' }
   $plain = $null
 } else { Write-Host 'Skipped.' -ForegroundColor Yellow }
 

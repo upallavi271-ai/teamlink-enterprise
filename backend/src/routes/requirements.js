@@ -3696,6 +3696,11 @@ router.post('/:id/assign', requirePerm('ats', 'requirements', 'Requirement Detai
   }
 
   const requirement = await prisma.requirement.update({ where: { id: before.id }, data });
+  // A recruiter taken off the requirement leaves their candidates to whoever works it now (founder 2026-10-26 own-candidates rule).
+  {
+    const onIt = [requirement.recruiterId, ...csv(requirement.recruiterIds)].filter(Boolean);
+    await prisma.application.updateMany({ where: { requirementId: requirement.id, ownerRecruiterId: onIt.length ? { notIn: onIt } : { not: null } }, data: { ownerRecruiterId: null } }).catch(() => null);
+  }
   if (wantTlExtras !== undefined) await RT.setExtras(requirement.id, requirement.tlId, wantTlExtras);
   await logAudit({
     userId: req.user.id,
