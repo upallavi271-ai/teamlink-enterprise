@@ -72,13 +72,14 @@ const Z = require('./lib/zzfix')('APW');
     const k3 = await webPunchGuard(prisma, eEmp.id, D6, 'In');
     Z.check('F4 one unlock = one more check-in; the next check-out locks the day again', k3.ok === false && k3.code === 'DAY_LOCKED', k3.code);
 
-    // 5 — device punches after a web check-in are intervals
+    // 5 — the key pressed on the device decides In / Out (owner 2026-10-26)
     let n = 0;
-    const P = (time, method, direction = 'In') => ({ id: `p${n += 1}`, time, method, direction });
+    const P = (time, method, direction = 'In', deviceState = null) => ({ id: `p${n += 1}`, time, method, direction, deviceState });
     const dirs = (ps) => { const w = settledDirections(ps); return ps.map((x) => w.get(x.id) || x.direction).join(' '); };
-    Z.check('B1 web 9:00 + device 9:05 = the same arrival (In In), not a check-out', dirs([P('09:00', 'Web Check-in'), P('09:05', 'Biometric')]) === 'In In');
-    Z.check('B2 web in, device 13:00 / 13:45 / 18:30 = out for lunch, back, leave (In Out In Out)', dirs([P('09:00', 'Web Check-in'), P('13:00', 'Biometric'), P('13:45', 'Biometric'), P('18:30', 'Biometric')]) === 'In Out In Out');
-    Z.check('B3 one device punch before a web check-out is an interval (In In Out)', dirs([P('09:00', 'Web Check-in'), P('13:00', 'Biometric'), P('18:00', 'Web Check-in', 'Out')]) === 'In In Out');
+    Z.check('B1 web check-in 9:00 + device Check-In 9:05 = two check-ins (In In), not a check-out', dirs([P('09:00', 'Web Check-in'), P('09:05', 'Biometric', 'Out', '0')]) === 'In In');
+    Z.check('B2 device Check-In / Break-Out / Break-In / Check-Out = In Out In Out', dirs([P('09:00', 'Biometric', 'Out', '0'), P('13:00', 'Biometric', 'In', '2'), P('13:45', 'Biometric', 'Out', '3'), P('18:30', 'Biometric', 'In', '1')]) === 'In Out In Out');
+    Z.check('B3 Check-In pressed twice (9:19, 10:10) stays two check-ins — no check-out', dirs([P('09:19', 'Biometric', 'In', '0'), P('10:10', 'Biometric', 'Out', '0')]) === 'In In');
+    Z.check('B4 a web punch keeps its own direction; a device punch with no state keeps its own', dirs([P('09:00', 'Web Check-in'), P('18:00', 'Web Check-in', 'Out'), P('18:05', 'Biometric', 'Out')]) === 'In Out Out');
 
     // 4 — who else is on leave
     await prisma.leaveRequest.create({ data: { employeeId: mEmp.id, type: 'Casual', fromDate: '2026-11-02', toDate: '2026-11-03', days: 2, status: 'Approved', reason: 'ZZTEST APW' } });
