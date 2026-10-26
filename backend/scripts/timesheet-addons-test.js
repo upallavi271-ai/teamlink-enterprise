@@ -58,6 +58,25 @@ const Z = require('./lib/zzfix')('TSA');
     const bad = await Z.call('GET', '/api/tasks/reports?from=2026-11-30&to=2026-11-01', L);
     Z.check('D2 a To before From is refused in plain words', bad.status === 400, [bad.status, names(bad).slice(0, 100)]);
 
+    // files on a task (mark as done with photos / documents)
+    {
+      const d = await mkTask('D', '2026-10-02', '2026-10-03');
+      const E2 = await Z.call('POST', `/api/tasks/${d.t.id}/complete`, E, { note: 'ZZTEST TSA done' });
+      const png = Buffer.from('89504E470D0A1A0A0000000D49484452000000010000000108060000001F15C4890000000D49444154789C6360000002000154A24F5D0000000049454E44AE426082', 'hex');
+      const up = async (tok, buf, name, type) => { const fd = new FormData(); fd.append('file', new Blob([buf], { type }), name); const r = await fetch(`${Z.API}/api/tasks/${d.t.id}/files`, { method: 'POST', headers: { Authorization: `Bearer ${tok}` }, body: fd }); return { status: r.status, body: await r.json().catch(() => ({})) }; };
+      const u1 = await up(E, png, 'site-photo.png', 'image/png');
+      Z.check('U1 after Mark as done the person uploads a photo', E2.status >= 200 && E2.status < 300 && u1.status === 201 && u1.body.fileName === 'site-photo.png', [E2.status, u1.status, u1.body]);
+      const lst = await Z.call('GET', '/api/tasks', L);
+      const row = (Array.isArray(lst.body) ? lst.body : []).find((x) => x.id === d.t.id);
+      const get = await Z.call('GET', `/api/tasks/${d.t.id}/files/${u1.body.id}`, L);
+      Z.check('U2 the lead sees the file on the task and opens it', row && row.files && row.files.length === 1 && get.status === 200 && get.buf.length === png.length, [row && row.files && row.files.length, get.status]);
+      const bad = await up(E, Buffer.from('MZ fake exe'), 'virus.exe', 'application/octet-stream');
+      Z.check('U3 a file that is not a photo / PDF / Word is refused in plain words', bad.status === 400 && /photos|PDF|Word/.test(bad.body.error || ''), [bad.status, bad.body]);
+      const E3 = await Z.mint(emp2);
+      const other = await up(E3, png, 'x.png', 'image/png');
+      Z.check('U4 somebody not on the task cannot attach files to it', other.status === 403 || other.status === 404, other.status);
+    }
+
     // the cards
     const ins = await Z.call('GET', '/api/insights/timesheet', L);
     const tiles = (ins.body && ins.body.tiles) || [];

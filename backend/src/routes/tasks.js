@@ -522,7 +522,7 @@ router.get('/', VIEW, async (req, res, next) => {
       where: and.length ? { AND: [where, ...and] } : where,
       orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
       take: 5000,
-      include: { addOns: { orderBy: { createdAt: 'asc' } } },
+      include: { addOns: { orderBy: { createdAt: 'asc' } }, files: { orderBy: { createdAt: 'asc' }, select: { id: true, fileName: true, contentType: true, size: true, uploadedByName: true, createdAt: true } } },
     });
     const hrs = await hoursMap(tasks.map((t) => t.id));
     const rightsOf = await rightsFor(req.user, view);
@@ -1135,6 +1135,56 @@ router.post('/:id/reassign', VIEW, async (req, res, next) => {
     if (req.body.assigneeId === t.assigneeId) return res.status(400).json({ field: 'assigneeId', error: `${t.assigneeName} already has this task.` });
     const out = await applyManage(me, t, { assigneeId: req.body.assigneeId }, String(req.body.note || req.body.reason || '').trim() || undefined);
     return res.status(out.status).json(out.body);
+  } catch (err) { return next(err); }
+});
+
+// --- FILES: photos / documents on a task (founder 2026-10-26: "marked as done lo uploads option kuda pettu") ----------------
+// The person doing it (or whoever manages it) attaches PNG / JPEG / WebP photos, PDF or Word documents (5 MB each, one per request);
+// anyone who can open the task can open its files. Every upload is a note on the task.
+const attachments = require('../utils/attachments');
+router.post('/:id/files', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    const r = await taskRights(me, t);
+    if (!r.assignee && !r.manage) return res.status(403).json(DENIED);
+    if (t.status === 'Cancelled') return res.status(400).json({ error: 'This task is cancelled.' });
+    let up;
+    try { up = await attachments.parseMultipart(req); } catch (err) { return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'The upload could not be read.' }); }
+    let stored;
+    try { stored = attachments.store(up.file, { allowWord: true }); } catch (err) { return res.status(400).json({ error: err.code === 'BAD_TYPE' ? 'Only photos (PNG, JPEG, WebP), PDF or Word files can be attached.' : (attachments.MESSAGE[err.code] || 'That file could not be saved.') }); }
+    const file = await prisma.taskFile.create({ data: { taskId: t.id, storedName: stored.billFile, fileName: stored.billName, contentType: stored.billMime, size: stored.billSize, uploadedById: me.id, uploadedByName: me.name } });
+    await noteOnTask(t, me, `${me.name} attached ${stored.billName}`);
+    return res.status(201).json({ id: file.id, fileName: file.fileName, contentType: file.contentType, size: file.size, uploadedByName: file.uploadedByName, createdAt: file.createdAt });
+  } catch (err) { return next(err); }
+});
+router.get('/:id/files/:fileId', VIEW, async (req, res, next) => {
+  try {
+    const found = await reachable(req.user, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const file = await prisma.taskFile.findFirst({ where: { id: req.params.fileId, taskId: found.task.id } });
+    const full = file && attachments.resolveStored(file.storedName);
+    if (!full) return res.status(404).json({ error: 'That file is not here any more.' });
+    res.set('Content-Type', file.contentType);
+    res.set('Content-Disposition', `inline; filename="${String(file.fileName).replace(/[^\w.\- ]/g, '_')}"`);
+    res.set('X-Content-Type-Options', 'nosniff');
+    return res.sendFile(full);
+  } catch (err) { return next(err); }
+});
+router.delete('/:id/files/:fileId', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const file = await prisma.taskFile.findFirst({ where: { id: req.params.fileId, taskId: found.task.id } });
+    if (!file) return res.status(404).json({ error: 'That file is not on this task.' });
+    if (file.uploadedById !== me.id && !(await taskRights(me, found.task)).manage) return res.status(403).json(DENIED);
+    await prisma.taskFile.delete({ where: { id: file.id } });
+    attachments.remove(file.storedName);
+    await noteOnTask(found.task, me, `${me.name} removed the file ${file.fileName}`);
+    return res.json({ ok: true });
   } catch (err) { return next(err); }
 });
 

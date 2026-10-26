@@ -13,7 +13,7 @@ import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import './timesheet-priority.css';
 import './timesheet-tasks.css';
-import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
+import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, TaskFiles, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
 import IdeasBox from './IdeasBox.jsx';
 
 // Timesheet — "Track and assign work".
@@ -370,6 +370,7 @@ export default function Timesheet({ standalone = false }) {
                             </div>
                             {t.status === 'Cancelled' && <div className="small-muted">{cancelLine(t)}</div>}
                             <AddOnList t={t} me={myId} onChanged={load} setError={setError} />
+                            <TaskFiles t={t} />
                             {t.reviewedByName && (
                               <div className="small-muted">
                                 Checked by {t.reviewedByName}

@@ -3666,6 +3666,7 @@ model Task {
 
   comments TaskComment[]
   addOns   TaskAddOn[]
+  files    TaskFile[]
   // when and by whom it was cancelled (founder 2026-10-26: "task cancelled ithey ye date lo indhi ani kanipinchali")
   cancelledAt     DateTime?
   cancelledByName String?
@@ -3693,6 +3694,23 @@ model TaskAddOn {
   addedById   String
   addedByName String
   createdAt   DateTime  @default(now())
+
+  @@index([taskId])
+}
+
+// PROOF OF WORK (founder 2026-10-26: "marked as done lo uploads option kuda pettu, photos or documents upload cheyadaniki"): photos /
+// documents attached to a task, mostly when it is marked done. The file is stored by utils/attachments.js (its own name on disk).
+model TaskFile {
+  id             String   @id @default(cuid())
+  taskId         String
+  task           Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  storedName     String
+  fileName       String
+  contentType    String
+  size           Int
+  uploadedById   String
+  uploadedByName String
+  createdAt      DateTime @default(now())
 
   @@index([taskId])
 }

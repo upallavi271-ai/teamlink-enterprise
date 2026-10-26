@@ -66,6 +66,39 @@ export function cancelLine(t) {
   return `Cancelled${on}${by}${t.cancelReason ? ` - ${t.cancelReason}` : ''}`;
 }
 
+// FILES (founder 2026-10-26: "marked as done lo uploads option kuda pettu"): photos / documents on a task.
+const FILE_ACCEPT = 'image/png,image/jpeg,image/webp,application/pdf,.doc,.docx';
+export async function uploadTaskFiles(taskId, files) {
+  const failed = [];
+  for (const file of files) {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    // eslint-disable-next-line no-await-in-loop
+    try { await api.post(`/tasks/${taskId}/files`, fd); } catch (er) { failed.push(`${file.name}: ${apiError(er, 'could not be uploaded')}`); }
+  }
+  return failed;
+}
+export function TaskFiles({ t }) {
+  const list = t.files || [];
+  if (!list.length) return null;
+  async function open(f) {
+    const w = window.open('', '_blank');
+    try {
+      const r = await api.get(`/tasks/${t.id}/files/${f.id}`, { responseType: 'blob' });
+      const url = URL.createObjectURL(r.data);
+      if (w) w.location.href = url; else window.location.href = url;
+    } catch { if (w) w.close(); }
+  }
+  return (
+    <div className="small-muted" style={{ marginTop: 6 }}>
+      <b>Files ({list.length}):</b>{' '}
+      {list.map((f, i) => (
+        <span key={f.id}>{i ? ' · ' : ''}<button type="button" className="btn btn-sm btn-ghost" style={{ padding: '0 4px' }} onClick={() => open(f)} title={`Added by ${f.uploadedByName}`}>{f.contentType && f.contentType.startsWith('image/') ? '🖼' : '📄'} {f.fileName}</button></span>
+      ))}
+    </div>
+  );
+}
+
 // ADD-ONS: more work added onto a task (instead of changing it). The person ticks each one when it is done.
 export function AddOnList({ t, me, onChanged, setError }) {
   const list = t.addOns || [];
@@ -412,6 +445,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
       {t.description && <div className="tt-notes">{t.description}</div>}
       {t.status === 'Cancelled' && <div className="tt-notes">{cancelLine(t)}</div>}
       <AddOnList t={t} me={me} onChanged={() => dlg.reload()} setError={dlg.setError} />
+      <TaskFiles t={t} />
       {t.reviewState === 'Changes Requested' && t.reviewNote && <div className="tt-notes">{t.reviewedByName} asked for changes: {t.reviewNote}</div>}
       {(t.hoursLogged > 0 || est != null) && (
         <div className="tt-hours">
@@ -475,11 +509,17 @@ function Footer({ onClose, busy, label, form, danger }) {
 
 function DoneDialog({ task, onClose, onDone }) {
   const [note, setNote] = useState('');
+  const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   async function go(e) {
     e.preventDefault(); setBusy(true); setErr('');
-    try { await api.post(`/tasks/${task.id}/complete`, { note }); onDone(`"${task.name}" is marked as done. ${task.assignedByName && task.assignedById !== task.assigneeId ? `${task.assignedByName} will check it.` : ''}`); } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
+    try {
+      await api.post(`/tasks/${task.id}/complete`, { note });
+      const failed = files.length ? await uploadTaskFiles(task.id, files) : [];
+      const added = files.length - failed.length;
+      onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. ${task.assignedByName && task.assignedById !== task.assigneeId ? `${task.assignedByName} will check it.` : ''}${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
+    } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
   }
   return (
     <Modal title="Mark as done" onClose={onClose} foot={<Footer onClose={onClose} busy={busy} label="Mark as done" form="tt-done" />}>
@@ -489,6 +529,10 @@ function DoneDialog({ task, onClose, onDone }) {
         <label className="field"><span>What did you do? (optional)</span>
           <textarea rows="3" value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: Called all 20, 6 are interested" />
         </label>
+        <label className="field"><span>Photos or documents (optional)</span>
+          <input type="file" multiple accept={FILE_ACCEPT} onChange={(e) => setFiles([...e.target.files].slice(0, 10))} />
+        </label>
+        {files.length > 0 && <div className="small-muted" style={{ marginBottom: 8 }}>{files.map((x) => x.name).join(', ')} - photos (PNG, JPEG, WebP), PDF or Word, 5 MB each</div>}
         <div className="small-muted">Add your hours first with "Add hours" so your lead can see the time you spent.</div>
       </form>
     </Modal>
