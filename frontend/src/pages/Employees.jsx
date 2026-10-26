@@ -556,6 +556,18 @@ export default function Employees() {
     }
   }
 
+  // LOCK / UNLOCK A LOGIN (founder 2026-10-25): HR locks a login (no sign-in, signed out now) and unlocks it (also clears a wrong-password lock).
+  const loginLocked = (e) => !!e && (e.loginStatus === 'Locked' || (e.passwordStatus && e.passwordStatus.account === 'Locked'));
+  async function setLoginLock(e, lock) {
+    const reason = window.prompt(lock
+      ? `Lock ${e.name}'s login? They are signed out now and cannot sign in until you unlock it.\n\nReason (optional):`
+      : `Unlock ${e.name}'s login? They can sign in again.\n\nReason (optional):`, '');
+    if (reason === null) return;
+    const ok = await run(() => api.post(`/employees/management/${e.id}/login-lock`, { lock, reason }),
+      lock ? `${e.name}'s login is locked. They are signed out and cannot sign in until you unlock it.` : `${e.name}'s login is unlocked. They can sign in again.`);
+    if (ok && detail && detail.id === e.id) setDetail({ ...detail, loginStatus: lock ? 'Locked' : 'Active', passwordStatus: detail.passwordStatus ? { ...detail.passwordStatus, account: lock ? 'Locked' : 'Active' } : detail.passwordStatus });
+  }
+
   async function submitReset(e) {
     e.preventDefault();
     const ok = await run(() => api.post(`/employees/management/${resetFor.id}/reset-password`, { password: resetPassword }),
@@ -1000,6 +1012,9 @@ export default function Employees() {
                         <>
                           <button className="btn btn-sm" title="Set a temporary password — they must change it at next sign-in" onClick={() => { setResetFor(e); setResetPassword(''); }}>Reset Password</button>
                           <button className="btn btn-sm" title="Email a single-use set-password link" onClick={() => sendReset(e)}>Send Reset</button>
+                          {loginLocked(e)
+                            ? <button className="btn btn-sm" title="Let this person sign in again" onClick={() => setLoginLock(e, false)}>🔓 Unlock login</button>
+                            : <button className="btn btn-sm" title="Stop this person signing in (they are signed out now)" onClick={() => setLoginLock(e, true)}>🔒 Lock login</button>}
                         </>
                       )}
                       {/* Everyone who can open this screen may export a person in
@@ -1417,6 +1432,9 @@ export default function Employees() {
                 <div style={{ display: 'flex', gap: 8, margin: '8px 0 4px' }}>
                   <button className="btn btn-sm" onClick={() => { setResetFor(detail); setResetPassword(''); }}>Reset Password</button>
                   <button className="btn btn-sm" onClick={() => sendReset(detail)}>Send Password Reset</button>
+                  {loginLocked(detail)
+                    ? <button className="btn btn-sm" onClick={() => setLoginLock(detail, false)}>🔓 Unlock login</button>
+                    : <button className="btn btn-sm" onClick={() => setLoginLock(detail, true)}>🔒 Lock login</button>}
                 </div>
               )}
             </>

@@ -13,7 +13,8 @@ export function passwordLine(ps) {
 export function PasswordBadge({ ps }) {
   if (!ps) return null;
   if (ps.account === 'Locked') {
-    return <span className="status rejected" title={`Locked until ${new Date(ps.lockedUntil).toLocaleString()}`}>Account Locked</span>;
+    // a lock HR set has no end time (2026-10-25); a wrong-password lock ends by itself
+    return <span className="status rejected" title={ps.lockedUntil ? `Locked until ${new Date(ps.lockedUntil).toLocaleString()}` : 'Locked by HR: no sign-in until HR unlocks it'}>{ps.lockedUntil ? 'Account Locked' : 'Locked by HR'}</span>;
   }
   const cls = ps.password === 'Reset Required' ? 'pending'
     : ps.password === 'Awaiting First Password' ? 'new' : 'active';
@@ -29,7 +30,7 @@ export function PasswordStatusRows({ ps }) {
       <div className="kv"><span className="k">Last password change</span><span>{ps.passwordChangedAt ? new Date(ps.passwordChangedAt).toLocaleString() : 'Never changed'}</span></div>
       <div className="kv"><span className="k">Password reset required</span><span>{ps.passwordResetRequired ? `Yes${ps.resetLinkPending ? ' — reset link sent' : ''}` : 'No'}</span></div>
       <div className="kv"><span className="k">Account</span>
-        <span>{ps.account === 'Locked' ? `Locked until ${new Date(ps.lockedUntil).toLocaleString()}` : ps.account}</span></div>
+        <span>{ps.account === 'Locked' ? (ps.lockedUntil ? `Locked until ${new Date(ps.lockedUntil).toLocaleString()}` : 'Locked by HR (no sign-in until HR unlocks it)') : ps.account}</span></div>
     </>
   );
 }

@@ -135,6 +135,7 @@ async function spend(password, done) {
 async function finishSignIn(req, res, user) {
   // A login an admin has disabled on the Users screen is really disabled.
   if (user.status && user.status !== 'Active') {
+    if (user.status === 'Locked') return res.status(403).json({ error: 'This login is locked by HR. Ask HR to unlock it.' });
     return res.status(403).json({ error: `This login is ${user.status.toLowerCase()} — ask an administrator to re-enable it` });
   }
 

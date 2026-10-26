@@ -2159,6 +2159,39 @@ router.post('/management/:id/toggle-login', requirePerm(null, 'hrms', 'Employee 
   res.json(shapeEmployeeMgmtRow(fresh));
 });
 
+// LOCK / UNLOCK A LOGIN (founder 2026-10-25: "HR must have a lock & unlock option").
+//   lock    the person cannot sign in (status "Locked") and every session they have open ends at once
+//   unlock  they can sign in again; it also clears a lock left by too many wrong passwords
+// The HR desk (HR, Super Admin, Admin, or Employee Management / configure), with an optional reason, audited. Nobody locks their own login;
+// only a Super Admin locks a Super Admin or an Admin (utils/roleGuard.js, the same rule as the password reset).
+router.post('/management/:id/login-lock', requirePerm(null, 'hrms', 'Employee Management', 'edit'), async (req, res) => {
+  if (!(await mayManagePasswords(req.user))) return res.status(403).json({ error: 'Locking a login is for HR and the Super Admin.' });
+  const employee = await prisma.employee.findUnique({ where: { id: req.params.id }, include: { user: true } });
+  if (!employee) return res.status(404).json({ error: 'Employee not found' });
+  if (!(await assertInScope(req, employee))) return res.status(403).json({ error: 'This record is outside your department scope' });
+  if (!employee.user) return res.status(404).json({ error: 'That employee has no login yet.' });
+  const lock = req.body && (req.body.lock === true || req.body.lock === 'true');
+  if (lock && employee.user.id === req.user.id) return res.status(409).json({ error: 'You cannot lock your own login.' });
+  { const why = require('../utils/roleGuard').checkPasswordTarget({ actor: req.user, target: employee.user }); if (why) return res.status(403).json({ error: 'Only a Super Admin can lock or unlock a Super Admin or an Admin login.' }); } // eslint-disable-line global-require
+  const reason = String((req.body && req.body.reason) || '').trim().slice(0, 300) || null;
+  const prev = employee.user.status || 'Active';
+  if (lock) {
+    if (prev === 'Locked') return res.status(409).json({ error: `${employee.name}'s login is already locked.` });
+    await prisma.user.update({ where: { id: employee.user.id }, data: { status: 'Locked' } });
+    await require('../utils/loginAccounts').revokeSessions(employee.user.id); // eslint-disable-line global-require
+  } else {
+    const timeLocked = !!(employee.user.lockedUntil && new Date(employee.user.lockedUntil) > new Date());
+    if (prev === 'Active' && !timeLocked) return res.status(409).json({ error: `${employee.name}'s login is not locked.` });
+    await prisma.user.update({ where: { id: employee.user.id }, data: { status: 'Active', lockedUntil: null, failedLoginCount: 0 } });
+  }
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name, action: lock ? 'Login locked by HR' : 'Login unlocked by HR',
+    entity: 'User', entityId: employee.user.id, fromValue: prev, toValue: lock ? 'Locked' : 'Active', reason: reason || undefined,
+  });
+  const fresh = await prisma.employee.findUnique({ where: { id: req.params.id }, include: EMP_MGMT_INCLUDE });
+  res.json({ ok: true, row: shapeEmployeeMgmtRow(fresh), passwordStatus: passwordStatusOf(fresh.user) });
+});
+
 // PASSWORD ACTIONS ARE THE HR DESK'S (hrms-24 §12): HR, Super Admin and Admin
 // — or whoever holds Employee Management / configure. A TL / STL may edit
 // their people's records but does not hand out their passwords.
