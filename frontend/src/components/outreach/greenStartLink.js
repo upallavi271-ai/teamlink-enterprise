@@ -37,7 +37,9 @@ const WAIT_PAGE = '<p style="font-family:system-ui,sans-serif;padding:24px;color
 
 // deps: { postSession(): Promise, openWindow(url, target): Window|null, assign(url), goLocal(), notify(msg) }
 // returns { mode: 'local' | 'tab' | 'same-tab' | 'cancelled' | 'error', reason? }
-export async function openGreenStart({ url, postSession, openWindow, assign, goLocal, notify }) {
+// getTicket (optional, founder 2026-10-26 "login page remove cheyyu"): asks TeamLink for a one-click sign-in ticket; with one the tab lands
+// on Green Start's /auth/teamlink already signed in to the company account, without one on Green Start itself (its login page).
+export async function openGreenStart({ url, postSession, openWindow, assign, goLocal, notify, getTicket }) {
   if (!url) { if (goLocal) goLocal(); return { mode: 'local' }; }
   // 1. the tab, synchronously (before any await), so a pop-up blocker sees a real click
   let tab = null;
@@ -52,12 +54,19 @@ export async function openGreenStart({ url, postSession, openWindow, assign, goL
     if (notify) notify(`Could not open Green Start: ${reason}`);
     return { mode: 'error', reason };
   }
+  let dest = url;
+  if (getTicket) {
+    try {
+      const t = await getTicket();
+      if (t && t.ticket) dest = `${String(url).replace(/\/+$/, '')}/auth/teamlink#ticket=${encodeURIComponent(t.ticket)}&next=${encodeURIComponent(t.next || '/app')}`;
+    } catch { /* no ticket: Green Start's own login page, as before */ }
+  }
   // 3. send the tab on; it must not be able to reach back into TeamLink
   if (tab && tab.closed) return { mode: 'cancelled' }; // the person closed the new tab while waiting: nothing more to do
   if (tab) {
     try { tab.opener = null; } catch { /* ignore */ }
-    try { tab.location.href = url; return { mode: 'tab' }; } catch { /* fall through */ }
+    try { tab.location.href = dest; return { mode: 'tab' }; } catch { /* fall through */ }
   }
-  assign(url); // pop-ups are blocked: open it in this tab; the pass is already set
+  assign(dest); // pop-ups are blocked: open it in this tab; the pass is already set
   return { mode: 'same-tab' };
 }

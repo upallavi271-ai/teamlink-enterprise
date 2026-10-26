@@ -180,7 +180,7 @@ export function GreenStartView({ st, err, busy, ready, onCheck, onAction, onLog,
     <div className="gs-wrap">
       <div className="gs-bar">
         <span className="gs-title">Green Start</span>
-        <span className="oc-note">Your own app for WhatsApp, SMS and email campaigns. It has its own login (separate from TeamLink) and its own contacts.</span>
+        <span className="oc-note">Your own app for WhatsApp, SMS and email campaigns, with its own contacts. It opens already signed in to the company account.</span>
         <span className="gs-links">
           {ready && st && st.canControl && <button type="button" className="gs-link gs-linkbtn" onClick={() => setManage((v) => !v)}>{manage ? 'Hide manage' : 'Manage'}</button>}
           <button type="button" className="gs-link gs-linkbtn" onClick={() => setHelp((v) => !v)}>{help ? 'Hide help' : 'Help'}</button>
@@ -200,6 +200,7 @@ export function GreenStartView({ st, err, busy, ready, onCheck, onAction, onLog,
           <Parts st={st} />
           <Resources st={st} />
           <div className="gs-actions"><Controls st={st} onAction={onAction} onLog={onLog} /></div>
+          <SsoAccount />
         </div>
       )}
       {log && (
@@ -212,6 +213,27 @@ export function GreenStartView({ st, err, busy, ready, onCheck, onAction, onLog,
         <p className="gs-small">Backups: {st.backups.count} kept (newest 7), last {st.backups.lastAt ? new Date(st.backups.lastAt).toLocaleString() : 'none yet'}. Folder: <code>{st.backups.dir}</code>{st.backups.lastError ? ` · ${st.backups.lastError}` : ''}</p>
       )}
       {frameSlot}
+    </div>
+  );
+}
+
+// Admin: which Green Start account everybody opens with (no login page). Empty = Green Start's own login page.
+function SsoAccount() {
+  const [v, setV] = useState(null);
+  const [email, setEmail] = useState('');
+  const [msg, setMsg] = useState('');
+  useEffect(() => { api.get('/omni-gs/sso-settings').then((r) => { setV(r.data); setEmail(r.data.email || ''); }).catch(() => setV(false)); }, []);
+  if (v === null || v === false) return null;
+  const save = async () => {
+    try { const r = await api.put('/omni-gs/sso-settings', { email }); setMsg(r.data.email ? `Saved. Everybody opens Green Start as ${r.data.email}.` : 'Saved. Green Start shows its own login page.'); } catch (e) { setMsg((e.response && e.response.data && e.response.data.error) || 'Could not save.'); }
+  };
+  return (
+    <div className="gs-small" style={{ marginTop: 10 }}>
+      <b>Open without the login page.</b> Company Green Start account (email):{' '}
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@yourcompany.com" style={{ minWidth: 240 }} />{' '}
+      <button type="button" className="gs-btn gs-btn2" onClick={save}>Save</button>
+      {!v.secretSet && <div>One-click sign-in is not switched on on this server yet (GREENSTART_SSO_SECRET), so the login page still shows.</div>}
+      {msg && <div role="status">{msg}</div>}
     </div>
   );
 }
@@ -311,8 +333,19 @@ export default function GreenStart() {
     return () => window.removeEventListener('resize', fit);
   }, [ready, st]);
 
-  const src = `${gsOrigin(st && st.port)}/login`; // the product signs you in here (and goes on to its dashboard if you already are)
-  const frameSlot = ready ? (
+  // NO LOGIN PAGE (founder 2026-10-26): when the server has one-click sign-in set up, the frame opens Green Start already signed in to
+  // the company account (a single-use 60 s ticket from POST /api/omni-gs/sso-ticket). Not set up = Green Start's own login, as before.
+  const [sso, setSso] = useState(undefined); // undefined = asking, null = not set up, string = the signed-in link
+  useEffect(() => {
+    if (!ready || sso !== undefined) return;
+    api.post('/omni-gs/sso-ticket').then((r) => {
+      const t = r.data && r.data.ticket;
+      setSso(t ? `${gsOrigin(st && st.port)}/auth/teamlink#ticket=${encodeURIComponent(t)}&next=${encodeURIComponent(r.data.next || '/app')}` : null);
+    }).catch(() => setSso(null));
+  }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  const loginUrl = `${gsOrigin(st && st.port)}/login`; // the product signs you in here (and goes on to its dashboard if you already are)
+  const src = sso || loginUrl;
+  const frameSlot = ready && sso !== undefined ? (
     <iframe
       ref={frame}
       title="Green Start"
@@ -323,5 +356,5 @@ export default function GreenStart() {
     />
   ) : null;
 
-  return <GreenStartView st={st} err={err} busy={busy} ready={ready} onCheck={check} onAction={act} onLog={showLog} log={log} logPart={logPart} note={note} frameSlot={frameSlot} srcUrl={src} />;
+  return <GreenStartView st={st} err={err} busy={busy} ready={ready} onCheck={check} onAction={act} onLog={showLog} log={log} logPart={logPart} note={note} frameSlot={frameSlot} srcUrl={loginUrl} />;
 }

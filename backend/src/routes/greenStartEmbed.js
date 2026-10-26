@@ -59,6 +59,55 @@ router.get('/log', adminOnly, limited, (req, res) => {
   return res.set('Cache-Control', 'no-store').json(out); // lines are scrubbed: no emails, tokens, passwords, keys
 });
 
+// ---- OPEN GREEN START WITHOUT ITS LOGIN PAGE (founder 2026-10-26: "login page remove cheyyu, direct ga omnichannel open cheyyi";
+// asked, he chose ONE company account for everybody) ------------------------------------------------------------------------
+// Green Start's own one-click sign-in from TeamLink (green-start-app/docs/integrations/TEAMLINK_SSO.md): a signed, single-use,
+// 60-second ticket for the company's Green Start account. Needs GREENSTART_SSO_SECRET here (the same value as Green Start's
+// TEAMLINK_SSO_SECRET) and the company account's email (Admin sets it below; GREENSTART_SSO_EMAIL as the default). Missing either
+// = the frame shows Green Start's own login page, exactly as before. Every open is an audit row with who opened it.
+const crypto = require('crypto');
+const prisma = require('../db');
+
+const SSO_EMAIL_KEY = 'omni.gs.ssoEmail';
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+async function ssoEmail() {
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { key: SSO_EMAIL_KEY } });
+    const v = row ? String(JSON.parse(row.value) || '').trim() : '';
+    if (v) return v;
+  } catch { /* fall back to the env */ }
+  return String(process.env.GREENSTART_SSO_EMAIL || '').trim();
+}
+function greenStartTicket({ email, name, externalUserId }) {
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const header = b64({ alg: 'HS256', typ: 'JWT' });
+  const payload = b64({ iss: 'teamlink', aud: 'greenstart', email, name, ...(externalUserId ? { externalUserId: String(externalUserId) } : {}), iat: now, exp: now + 60, jti: crypto.randomUUID() });
+  const signature = crypto.createHmac('sha256', process.env.GREENSTART_SSO_SECRET).update(`${header}.${payload}`).digest('base64url');
+  return `${header}.${payload}.${signature}`;
+}
+
+router.post('/sso-ticket', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const secret = String(process.env.GREENSTART_SSO_SECRET || '');
+  if (secret.length < 32) return res.json({ ticket: null, reason: 'One-click sign-in is not set up on this server (GREENSTART_SSO_SECRET).' });
+  const email = await ssoEmail();
+  if (!EMAIL_RE.test(email)) return res.json({ ticket: null, reason: 'An Admin has not picked the company Green Start account yet (Omni-Channel → Manage).' });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Opened Omni-Channel (Green Start) with the company account', entity: 'GreenStart', toValue: email }).catch(() => {});
+  return res.json({ ticket: greenStartTicket({ email, name: 'TeamLink', externalUserId: req.user.id }), next: '/app' });
+});
+router.get('/sso-settings', adminOnly, async (req, res) => {
+  res.json({ email: await ssoEmail(), secretSet: String(process.env.GREENSTART_SSO_SECRET || '').length >= 32 });
+});
+router.put('/sso-settings', adminOnly, async (req, res) => {
+  const email = String((req.body && req.body.email) || '').trim().toLowerCase();
+  if (email && !EMAIL_RE.test(email)) return res.status(400).json({ error: 'That is not an email address.' });
+  const value = JSON.stringify(email);
+  await prisma.appSetting.upsert({ where: { key: SSO_EMAIL_KEY }, create: { key: SSO_EMAIL_KEY, value }, update: { value } });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel company Green Start account set', entity: 'AppSetting', entityId: SSO_EMAIL_KEY, toValue: email || '(none - login page)' });
+  res.json({ email });
+});
+
 router.post('/session', (req, res) => {
   if (!G.enabled()) return res.status(404).json({ error: 'Green Start is switched off on this server (GREENSTART_ENABLED).' });
   G.issueCookies(req, res, String(req.user.id || req.user.userId || 'u').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) || 'u');
