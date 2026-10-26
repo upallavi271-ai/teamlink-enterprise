@@ -38,7 +38,11 @@
     "AttendanceHistory": "attendance history belongs to the live site. Never touched by a sync",
     "AttendanceHistorySummary": "attendance history belongs to the live site. Never touched by a sync",
     "MessageTemplate": "e-mail / WhatsApp / SMS message templates are SETTINGS of the live site. Remove this line only if you want local template edits to travel",
-    "MessageTemplateVersion": "e-mail / WhatsApp / SMS message template versions: see MessageTemplate"
+    "MessageTemplateVersion": "e-mail / WhatsApp / SMS message template versions: see MessageTemplate",
+
+    "OmniCreditLedger": "message-credit ledger: entries written by whichever machine sent the messages (credits belong to the live account)",
+    "OmniCreditAllowance": "message-credit allowances belong to the live account",
+    "OmniRecharge": "message-credit recharges belong to the live account"
   },
 
   "excludedNamePatterns": [
