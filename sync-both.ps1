@@ -8,6 +8,8 @@
 #                                  notification and exits with a non-zero code on any conflict/error
 #   .\sync-both.ps1 -Prefer VPS    settle every conflict in favour of the LIVE site (or -Prefer Local)
 #   .\sync-both.ps1 -UndoLast      put both databases back as they were before the last sync
+#   .\sync-both.ps1 -LocalToLiveOnly   only send localhost changes to the live site; nothing from the live
+#                                  site is written to localhost (combine with -DryRun to preview)
 #
 # What it does: new and edited rows made on localhost are added to the live site, and new and edited
 # rows made on the live site are added to localhost. Only the changed boxes are written. Nothing is
@@ -20,7 +22,8 @@ param(
     [switch]$Auto,
     [ValidateSet("None", "Local", "VPS")][string]$Prefer = "None",
     [switch]$InitBaselineFromOriginal,
-    [switch]$UndoLast
+    [switch]$UndoLast,
+    [switch]$LocalToLiveOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -200,10 +203,16 @@ try {
     $AlLive  = [int]$RL.counts.already
     $AlLocal = [int]$RV.counts.already
     $Conf    = [int]$RL.counts.conflicts + [int]$RV.counts.conflicts
+    if ($LocalToLiveOnly) {
+        # nothing from the live site is written to localhost: ignore that half completely
+        $ToLocal = 0; $AlLocal = 0
+        $Conf    = [int]$RL.counts.conflicts
+    }
     Copy-Item $DL (Join-Path $Hist "delta-local.json") -Force
     Copy-Item $DV (Join-Path $Hist "delta-live.json") -Force
 
     Say ""
+    if ($LocalToLiveOnly) { Say "-LocalToLiveOnly: the LIVE SITE -> LOCALHOST half above is for information only. Nothing is written to localhost." Yellow }
     Say "SUMMARY: $ToLive row(s) go to the LIVE site, $ToLocal row(s) come to LOCALHOST, $Conf conflict(s)." Yellow
     if ($Conf -gt 0 -and $Prefer -eq "None") { Say "Conflicts are skipped on BOTH sides. To settle them yourself: -Prefer VPS (live wins) or -Prefer Local (localhost wins)." Yellow }
     if ($Prefer -ne "None") { Say "-Prefer $Prefer : on every conflict the $Prefer value wins; the other value is saved in the undo file." Yellow }

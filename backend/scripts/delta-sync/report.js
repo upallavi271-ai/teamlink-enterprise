@@ -99,7 +99,7 @@ function format(delta, out, mode, extra) {
   if (out.rolledBack) {
     say('SAFETY STOP: the broken-link check found ' + (out.fkNewCount || out.fkNew.length) + ' new broken link(s), e.g.:');
     for (const f of out.fkNew.slice(0, 10)) say('  - table ' + f.table + ' row ' + f.rowid + ' points to a missing row in ' + f.parent);
-    say('  NOTHING was changed on the live site.');
+    say('  NOTHING was changed in the database this step was applied to (the other side is reported separately).');
     say('');
   }
 
