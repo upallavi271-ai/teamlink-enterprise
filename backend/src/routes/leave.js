@@ -479,8 +479,14 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   // A TL approving: within the configured limit (default: requests of at most
   // 2 days), and never without a reason. Past the limit the TL reassigns the
   // request to HR / their manager instead. Enforced HERE, whatever the screen.
+  // WHERE THE APPROVAL STOPS (founder 2026-10-26: "TL ki 2 day leave approvals untai; once TL approve chesthe HR, Super Admin malli approve
+  // cheyyakkarledu kani chain lo kanipinchali"; a leave TL and HR approved must not stay Pending): a TL approving within the TL rule, or HR
+  // approving, GRANTS the leave. The levels above are then shown in the chain as Visibility (they see it, they need not act).
+  let stopsHere = false;
+  if (status === 'Approved' && existing.status === 'Pending' && pendingStep && pendingStep.level === 'HR') stopsHere = true;
   if (status === 'Approved' && existing.status === 'Pending' && policy.actingAsTl(req.user, pendingStep)) {
     const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
+    if (verdict.allowed && verdict.rule && verdict.rule.enabled && pendingStep && pendingStep.level === 'TL') stopsHere = true;
     if (!verdict.allowed) {
       return res.status(403).json({ error: `TL approval limit: ${verdict.note}`, reassign: true, tlRule: verdict.rule });
     }
@@ -499,7 +505,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     // the same reason off the same list would be noise, not a control.
     // A Super Admin deciding directly (out of turn) IS the final step.
     const isDirect = workflow.hasDirectPower(req.user, WF, steps) && pendingStep.approverUserId !== req.user.id;
-    const isFinalStep = isDirect || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED);
+    const isFinalStep = isDirect || stopsHere || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED);
     if (status === 'Approved' && isFinalStep) {
       const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
       if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
@@ -512,6 +518,14 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
       note: status === 'Rejected' ? String(rejectReason).trim() : ([comment, approvalReason].filter(Boolean).join(' — ') || null),
     });
     if (result.error) return res.status(result.error.status).json(result.error.body);
+    if (stopsHere && !result.complete) {
+      const who = pendingStep.level === 'HR' ? 'HR' : 'the TL (within the TL leave limit)';
+      await prisma.approvalStep.updateMany({
+        where: { workflow: WF, recordId: existing.id, status: { in: ['Pending', 'Waiting'] } },
+        data: { status: 'Visibility', note: `Not needed - approved by ${who}. Shown for information.` },
+      });
+      result.complete = true; result.outcome = 'Approved'; result.nextLevel = null;
+    }
     chainOutcome = result;
 
     await logAudit({
