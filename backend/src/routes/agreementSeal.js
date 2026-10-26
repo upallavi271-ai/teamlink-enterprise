@@ -207,11 +207,37 @@ router.get('/:clientId/executed', requireAuth, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// THE REAL SIGNED PAPER FIRST (founder 2026-10-26: "the agreement PDFs are dummy; the signed agreements I gave must show as they are").
+// A client signed on PAPER (the imported signed agreements, 2026-10-17) has no e-sign record and no agreement text, so building the PDF
+// from the record gave an empty template. When the client was NOT signed through TeamLink's e-sign and an imported signed agreement PDF is on
+// file, that file itself is served, unchanged (the newest by agreement date). E-signed agreements keep the PDF built from the record.
+async function paperSignedPdf(client) {
+  if (!client || client.agreementClientSealedAt || client.agreementEsignTxnId) return null;
+  try {
+    const files = await require('./agreementSignedFiles').filesOf(client.id); // eslint-disable-line global-require
+    const pdf = files.find((f) => f.mime === 'application/pdf' && !/^confirmation/i.test(f.label) && !/confirmation/i.test(f.kind || ''))
+      || files.find((f) => f.mime === 'application/pdf');
+    if (!pdf) return null;
+    const doc = await prisma.clientDocument.findUnique({ where: { id: pdf.id }, select: { fileStored: true, fileName: true } });
+    const file = doc ? attachments.resolveStored(doc.fileStored) : null;
+    return file ? { file, name: doc.fileName || `${client.name}-signed-agreement.pdf` } : null;
+  } catch { return null; }
+}
+
 router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
   try {
     const loaded = await loadForView(req, res);
     if (!loaded) return undefined;
     const { client } = loaded;
+    if (!req.query.copy) {
+      const paper = await paperSignedPdf(client);
+      if (paper) {
+        res.set('Cache-Control', 'private, no-store');
+        res.set('Content-Type', 'application/pdf');
+        res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${paper.name.replace(/[^\w.() -]+/g, '-').slice(0, 120)}"`);
+        return res.sendFile(paper.file);
+      }
+    }
     // A kept older signed copy can be downloaded whatever the step is now.
     // Not signed yet: the DRAFT PDF (light grey DRAFT watermark, empty "Initial here"
     // boxes), so a draft is never mistaken for an executed copy (user, 2026-10-10).
@@ -907,6 +933,13 @@ router.get('/token/:token/pdf', async (req, res, next) => {
       res.set('Content-Type', 'application/pdf');
       res.set('Content-Disposition', `attachment; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-eMudhra-signed.pdf"`);
       return res.sendFile(file);
+    }
+    const paper = await paperSignedPdf(client); // signed on paper: the real signed file, unchanged
+    if (paper) {
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Content-Type', 'application/pdf');
+      res.set('Content-Disposition', `attachment; filename="${paper.name.replace(/[^\w.() -]+/g, '-').slice(0, 120)}"`);
+      return res.sendFile(paper.file);
     }
     if (!signing.executedSummary(client).pdfAvailable) return res.status(409).json({ error: 'The PDF is available once the agreement is signed.' });
     // eslint-disable-next-line global-require
