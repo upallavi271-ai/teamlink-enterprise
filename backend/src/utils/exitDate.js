@@ -223,8 +223,9 @@ async function setExitDate({ employeeId, date, reason, note = null, user, source
   if (resignedOn && to < resignedOn) throw new ExitDateError(400, `The last working day cannot be before the resignation date (${dmy(resignedOn)}).`);
   const finalised = record.status === 'Relieved' || ['Relieved', 'Exited', 'Terminated'].includes(employee.employmentStatus);
   const today = todayIso();
-  if (finalised && to < today && !isSuperAdmin(user)) {
-    throw new ExitDateError(403, `${employee.name} has already left. Only the Super Admin can move the last working day to a date in the past.`);
+  // HR may move it to a past date too (founder 2026-10-26: "previous exit date cheyyadaniki HR ki kuda permission undali")
+  if (finalised && to < today && !isSuperAdmin(user) && !isHrDesk(user) && !(user && user.hrSuper)) {
+    throw new ExitDateError(403, `${employee.name} has already left. Only HR or the Super Admin can move the last working day to a date in the past.`);
   }
   const pay = await payrollStatusOn(to);
   const payFrom = from ? await payrollStatusOn(from) : null;

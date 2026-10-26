@@ -712,12 +712,14 @@ async function timesheetInsights(req, reach, period) {
   per.forEach((p) => { const d = p.employee.department || 'No department'; byDept.set(d, round1((byDept.get(d) || 0) + p.hours)); });
   return {
     tiles: [
-      { key: 'hours', label: 'Hours Worked', value: hours },
-      { key: 'days', label: 'Days With Hours', value: dayCount },
-      { key: 'avg', label: 'Avg Hours / Day', value: dayCount ? round1(hours / dayCount) : 0 },
-      { key: 'tasks', label: 'Tasks', value: tasks.length },
-      { key: 'completed', label: 'Completed', value: tasks.filter((t) => t.status === 'Completed').length },
-      { key: 'overdue', label: 'Overdue', value: per.reduce((s, p) => s + p.overdue, 0) },
+      // CLEAR CARDS (founder 2026-10-26): every card says in one line what it counts. Hours come from attendance (check-in to
+      // check-out); the task cards come from Timesheet tasks - two different things, so a day can show tasks and 0 hours.
+      { key: 'hours', label: 'Hours at office', value: hours, hint: 'Check-in to check-out (attendance)' },
+      { key: 'days', label: 'Days with check-out', value: dayCount, hint: 'Days with both check-in and check-out' },
+      { key: 'avg', label: 'Average hours a day', value: dayCount ? round1(hours / dayCount) : 0, hint: 'Hours at office / those days' },
+      { key: 'tasks', label: 'Tasks', value: tasks.length, hint: `${tasks.filter((t) => ['Not Started', 'In Progress', 'On Hold'].includes(t.status)).length} open · ${tasks.filter((t) => t.status === 'Completed').length} done · ${tasks.filter((t) => t.status === 'Cancelled').length} cancelled` },
+      { key: 'completed', label: 'Tasks done', value: tasks.filter((t) => t.status === 'Completed').length, hint: 'Marked as done' },
+      { key: 'overdue', label: 'Tasks overdue', value: per.reduce((s, p) => s + p.overdue, 0), hint: 'Past the due date and not done' },
     ],
     charts: [
       {

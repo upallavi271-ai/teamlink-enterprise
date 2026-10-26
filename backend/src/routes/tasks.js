@@ -522,6 +522,7 @@ router.get('/', VIEW, async (req, res, next) => {
       where: and.length ? { AND: [where, ...and] } : where,
       orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
       take: 5000,
+      include: { addOns: { orderBy: { createdAt: 'asc' } } },
     });
     const hrs = await hoursMap(tasks.map((t) => t.id));
     const rightsOf = await rightsFor(req.user, view);
@@ -559,9 +560,16 @@ router.get('/', VIEW, async (req, res, next) => {
 router.get('/reports', VIEW, async (req, res, next) => {
   try {
     const where = await visibleWhere(req.user);
-    const tasks = await prisma.task.findMany({ where });
+    // DATE FILTER (founder 2026-10-26): a task counts when its window overlaps From - To (the same rule as the list and the export)
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    const from = day(req.query.from); const to = day(req.query.to);
+    if (from && to && to < from) return res.status(400).json({ error: 'The To date is before the From date.' });
+    const and = [];
+    if (from) and.push({ OR: [{ endDate: { gte: from } }, { endDate: null }] });
+    if (to) and.push({ OR: [{ startDate: { lte: to } }, { startDate: null }] });
+    const tasks = await prisma.task.findMany({ where: and.length ? { AND: [where, ...and] } : where });
     const now = today();
-    const hrs = await hoursMap(tasks.map((t) => t.id));
+    const hrs = await hoursMap(tasks.map((t) => t.id), from || to ? { from, to } : undefined);
 
     const byStatus = TASK_STATUSES.map((status) => ({
       status, count: tasks.filter((t) => t.status === status).length,
@@ -622,6 +630,7 @@ router.get('/reports', VIEW, async (req, res, next) => {
     const withDue = tasks.filter((t) => t.endDate);
     res.json({
       generatedAt: new Date().toISOString(),
+      range: { from, to },
       total: tasks.length,
       byStatus,
       byPriority,
@@ -989,7 +998,7 @@ async function applyManage(me, t, b, reason) {
       data.reviewState = 'Not Submitted';
     }
     // Reopened after a cancel: the reason no longer applies.
-    if (t.status === 'Cancelled') { data.reviewNote = null; data.reviewedByName = null; data.reviewedAt = null; data.reviewedById = null; }
+    if (t.status === 'Cancelled') { data.reviewNote = null; data.reviewedByName = null; data.reviewedAt = null; data.reviewedById = null; data.cancelledAt = null; data.cancelledByName = null; }
   }
 
   if (b.dependent !== undefined) data.dependent = !!b.dependent;
@@ -1129,6 +1138,61 @@ router.post('/:id/reassign', VIEW, async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// --- ADD-ONS (founder 2026-10-26: "task change anedhi kakunda add-ons undali") ----------------------------
+// Extra work added ONTO a task instead of rewriting it: the giver / lead adds a line (with an optional due day), the person ticks it
+// when done. The original task stays as it was given; every add-on is written down on the task's notes.
+router.post('/:id/addons', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    if (!(await taskRights(me, t)).manage) return res.status(403).json(DENIED);
+    if (!OPEN_STATUSES.includes(t.status)) return res.status(400).json({ error: `This task is ${t.status.toLowerCase()}. Open it again before adding more work to it.` });
+    const text = String((req.body && req.body.text) || '').trim();
+    if (text.length < 3) return res.status(400).json({ field: 'text', error: 'Write what more has to be done.' });
+    if (text.length > 1000) return res.status(400).json({ field: 'text', error: 'Keep it under 1000 characters.' });
+    const dueDate = req.body.dueDate ? String(req.body.dueDate).slice(0, 10) : null;
+    if (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) return res.status(400).json({ field: 'dueDate', error: 'Pick the due day as a date.' });
+    const addOn = await prisma.taskAddOn.create({ data: { taskId: t.id, text, dueDate, addedById: me.id, addedByName: me.name } });
+    await noteOnTask(t, me, `${me.name} added more work: ${text}${dueDate ? ` (by ${dueDate})` : ''}`);
+    await logAudit({ userId: me.id, action: 'Task add-on added', entity: 'Task', entityId: t.id, toValue: text.slice(0, 190) });
+    await quiet(hrmsNotify.taskChanged(t, me, 'More work added to your task', `${me.name} added to "${t.name}": ${text}`));
+    return res.status(201).json(addOn);
+  } catch (err) { return next(err); }
+});
+router.patch('/:id/addons/:addOnId', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    const r = await taskRights(me, t);
+    if (!r.assignee && !r.manage) return res.status(403).json(DENIED);
+    const a = await prisma.taskAddOn.findFirst({ where: { id: req.params.addOnId, taskId: t.id } });
+    if (!a) return res.status(404).json({ error: 'That add-on is not on this task.' });
+    const done = !!(req.body && req.body.done);
+    const addOn = await prisma.taskAddOn.update({ where: { id: a.id }, data: done ? { done: true, doneAt: new Date(), doneByName: me.name } : { done: false, doneAt: null, doneByName: null } });
+    await noteOnTask(t, me, `${me.name} marked the add-on "${a.text.slice(0, 80)}" as ${done ? 'done' : 'not done'}`);
+    return res.json(addOn);
+  } catch (err) { return next(err); }
+});
+router.delete('/:id/addons/:addOnId', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    if (!(await taskRights(me, t)).manage) return res.status(403).json(DENIED);
+    const a = await prisma.taskAddOn.findFirst({ where: { id: req.params.addOnId, taskId: t.id } });
+    if (!a) return res.status(404).json({ error: 'That add-on is not on this task.' });
+    if (a.done) return res.status(400).json({ error: 'It is already done, so it stays on the task.' });
+    await prisma.taskAddOn.delete({ where: { id: a.id } });
+    await noteOnTask(t, me, `${me.name} removed the add-on "${a.text.slice(0, 80)}"`);
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
 // Cancel (not once it is Done). A reason is required and is shown on the task.
 router.post('/:id/cancel', VIEW, async (req, res, next) => {
   try {
@@ -1146,6 +1210,7 @@ router.post('/:id/cancel', VIEW, async (req, res, next) => {
       data: {
         status: 'Cancelled', completedAt: null, reviewState: 'Not Submitted',
         reviewNote: reason, reviewedById: null, reviewedByName: null, reviewedAt: null,
+        cancelledAt: new Date(), cancelledByName: me.name,
       },
     });
     await noteOnTask(task, me, `${me.name} cancelled this task - ${reason}`);

@@ -58,6 +58,43 @@ export function dueOf(t, today) {
 }
 const hoursText = (n) => (Math.round(Number(n || 0) * 100) / 100).toString();
 
+// "Cancelled on 26 Oct 2026 by Divya - reason" (founder 2026-10-26: the day a task was cancelled must show)
+export function cancelLine(t) {
+  if (t.status !== 'Cancelled') return null;
+  const on = t.cancelledAt ? ` on ${dmy(String(t.cancelledAt).slice(0, 10))}` : '';
+  const by = t.cancelledByName ? ` by ${t.cancelledByName}` : '';
+  return `Cancelled${on}${by}${t.cancelReason ? ` - ${t.cancelReason}` : ''}`;
+}
+
+// ADD-ONS: more work added onto a task (instead of changing it). The person ticks each one when it is done.
+export function AddOnList({ t, me, onChanged, setError }) {
+  const list = t.addOns || [];
+  if (!list.length) return null;
+  const r = t.rights || {};
+  const mayTick = r.assignee || r.manage || t.assigneeId === me;
+  async function tick(a) {
+    try { await api.patch(`/tasks/${t.id}/addons/${a.id}`, { done: !a.done }); onChanged(); } catch (er) { setError(apiError(er, 'That could not be saved.')); }
+  }
+  async function drop(a) {
+    if (!window.confirm(`Remove the add-on "${a.text}"?`)) return;
+    try { await api.delete(`/tasks/${t.id}/addons/${a.id}`); onChanged(); } catch (er) { setError(apiError(er, 'That could not be removed.')); }
+  }
+  return (
+    <div className="tt-addons">
+      <div className="small-muted" style={{ fontWeight: 600, marginTop: 6 }}>Add-ons ({list.filter((a) => a.done).length} of {list.length} done)</div>
+      {list.map((a) => (
+        <div key={a.id} className="small-muted" style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginTop: 2 }}>
+          <input type="checkbox" checked={a.done} disabled={!mayTick} onChange={() => tick(a)} aria-label={`Done: ${a.text}`} />
+          <span style={{ textDecoration: a.done ? 'line-through' : 'none' }}>
+            {a.text}{a.dueDate ? ` (by ${dmy(a.dueDate)})` : ''} <span style={{ opacity: 0.75 }}>- added by {a.addedByName}{a.done && a.doneAt ? `, done ${dmy(String(a.doneAt).slice(0, 10))}` : ''}</span>
+          </span>
+          {r.manage && !a.done && <button type="button" className="btn btn-sm btn-ghost" style={{ padding: '0 6px' }} onClick={() => drop(a)} title="Remove this add-on">✕</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function apiError(err, fallback) {
   const d = err && err.response && err.response.data;
   return (d && d.error) || fallback;
@@ -373,7 +410,8 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         <div className={`tt-due ${due.tone}`}>{due.text}</div>
       </div>
       {t.description && <div className="tt-notes">{t.description}</div>}
-      {t.status === 'Cancelled' && t.cancelReason && <div className="tt-notes">Cancelled: {t.cancelReason}</div>}
+      {t.status === 'Cancelled' && <div className="tt-notes">{cancelLine(t)}</div>}
+      <AddOnList t={t} me={me} onChanged={() => dlg.reload()} setError={dlg.setError} />
       {t.reviewState === 'Changes Requested' && t.reviewNote && <div className="tt-notes">{t.reviewedByName} asked for changes: {t.reviewNote}</div>}
       {(t.hoursLogged > 0 || est != null) && (
         <div className="tt-hours">
@@ -391,6 +429,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         {r.manage && canReview && waiting && !mine && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('extend', t)}>Move date</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('reassign', t)}>Give to someone else</button>}
+        {r.manage && open && <button className="btn btn-sm" title="Add more work to this task without changing it" onClick={() => dlg.open('addon', t)}>＋ Add-on</button>}
         {r.manage && t.status !== 'Completed' && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('edit', t)}>Change</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('cancel', t)}>Cancel task</button>}
         {r.manage && (t.status === 'Completed' || t.status === 'Cancelled') && <button className="btn btn-sm" onClick={() => dlg.open('reopen', t)}>Open it again</button>}
@@ -420,8 +459,9 @@ export function useTaskDialogs({ options, reload, setNotice, setError }) {
     else if (d.kind === 'review') node = <ReviewDialog {...props} />;
     else if (d.kind === 'reopen') node = <ReopenDialog {...props} />;
     else if (d.kind === 'note') node = <NoteDialog {...props} />;
+    else if (d.kind === 'addon') node = <AddOnDialog {...props} />;
   }
-  return { node, open, close };
+  return { node, open, close, reload, setError };
 }
 
 function Footer({ onClose, busy, label, form, danger }) {
@@ -498,6 +538,32 @@ function ExtendDialog({ task, onClose, onDone }) {
         <div className="small-muted" style={{ marginBottom: 10 }}>For {task.assigneeName} - now due {task.endDate ? dmy(task.endDate) : 'with no date'}</div>
         <label className="field"><span>New due date</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="field"><span>Why? (optional)</span><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example: Waiting for the client" /></label>
+      </form>
+    </Modal>
+  );
+}
+
+function AddOnDialog({ task, onClose, onDone }) {
+  const [text, setText] = useState('');
+  const [due, setDue] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function go(e) {
+    e.preventDefault();
+    if (text.trim().length < 3) { setErr('Write what more has to be done.'); return; }
+    setBusy(true); setErr('');
+    try { await api.post(`/tasks/${task.id}/addons`, { text, dueDate: due || null }); onDone(`Add-on added to "${task.name}". ${task.assigneeName} has been told.`); } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
+  }
+  return (
+    <Modal title="Add more work (add-on)" onClose={onClose} foot={<Footer onClose={onClose} busy={busy} label="Add it" form="tt-addon" />}>
+      <form id="tt-addon" onSubmit={go}>
+        {err && <div className="error-text">{err}</div>}
+        <div className="tt-name" style={{ marginBottom: 4 }}>{task.name}</div>
+        <div className="small-muted" style={{ marginBottom: 10 }}>For {task.assigneeName}. The task stays as it was given; this is added below it.</div>
+        <label className="field"><span>What more has to be done?</span>
+          <textarea rows="3" value={text} onChange={(e) => setText(e.target.value)} placeholder="For example: Also call the 5 candidates from last week" autoFocus />
+        </label>
+        <label className="field"><span>By when? (optional)</span><input type="date" value={due} onChange={(e) => setDue(e.target.value)} /></label>
       </form>
     </Modal>
   );

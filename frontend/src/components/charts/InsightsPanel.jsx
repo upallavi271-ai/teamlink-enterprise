@@ -75,7 +75,7 @@ export default function InsightsPanel({
   const cells = [
     // `tileKeys` also sets the order.
     ...(data ? (tileKeys ? tileKeys.map((k) => (data.tiles || []).find((t) => t.key === k)).filter(Boolean) : (data.tiles || []))
-      .map((t) => ({ label: t.label, value: t.money ? fullValue(t.value, 'money') : t.value })) : []),
+      .map((t) => ({ label: t.label, value: t.money ? fullValue(t.value, 'money') : t.value, hint: t.hint })) : []),
     ...(extraTiles || []).filter(Boolean),
   ];
 

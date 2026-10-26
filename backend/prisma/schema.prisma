@@ -3660,6 +3660,10 @@ model Task {
   updatedAt      DateTime  @updatedAt
 
   comments TaskComment[]
+  addOns   TaskAddOn[]
+  // when and by whom it was cancelled (founder 2026-10-26: "task cancelled ithey ye date lo indhi ani kanipinchali")
+  cancelledAt     DateTime?
+  cancelledByName String?
 
   @@index([assigneeId])
   @@index([assignedById])
@@ -3670,6 +3674,24 @@ model Task {
 
 // The comment button on the task row. Anyone who can reach the task can read
 // and add one — the thread is the task's own audit of what happened.
+// ADD-ONS (founder 2026-10-26: "task change anedhi kakunda add-ons undali"): extra work added onto a task instead of rewriting it.
+// Each one is its own line with its own done tick; the original task text stays as it was given.
+model TaskAddOn {
+  id          String    @id @default(cuid())
+  taskId      String
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  text        String
+  dueDate     String?
+  done        Boolean   @default(false)
+  doneAt      DateTime?
+  doneByName  String?
+  addedById   String
+  addedByName String
+  createdAt   DateTime  @default(now())
+
+  @@index([taskId])
+}
+
 model TaskComment {
   id         String   @id @default(cuid())
   taskId     String

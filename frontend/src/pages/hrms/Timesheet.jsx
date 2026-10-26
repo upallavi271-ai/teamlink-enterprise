@@ -13,7 +13,7 @@ import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import './timesheet-priority.css';
 import './timesheet-tasks.css';
-import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
+import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
 import IdeasBox from './IdeasBox.jsx';
 
 // Timesheet — "Track and assign work".
@@ -200,10 +200,12 @@ export default function Timesheet({ standalone = false }) {
   ];
   const moreOn = [filters.from || filters.to, pf.dueFrom || pf.dueTo, pf.review, pf.code, pf.name, pf.role].filter(Boolean).length;
 
-  async function openReports() {
+  // Task Reports: From - To dates (founder 2026-10-26: "task reports lo dates filter undali"). Empty = every task.
+  const [repRange, setRepRange] = useState({ from: '', to: '' });
+  async function openReports(range = repRange) {
     setError('');
     try {
-      const res = await api.get('/tasks/reports');
+      const res = await api.get('/tasks/reports', { params: { from: range.from || undefined, to: range.to || undefined } });
       setReports(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'The task report could not be built.');
@@ -234,7 +236,7 @@ export default function Timesheet({ standalone = false }) {
         <div className="panel-head">
           <h3>Tasks</h3>
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button className="btn" onClick={openReports}>Task Reports</button>
+            <button className="btn" onClick={() => openReports()}>Task Reports</button>
             <button className="btn" onClick={() => { setError(''); setNotice(''); setFeedbackOpen(true); }} disabled={!options} title="Send feedback to the R&D team">💬 Feedback to R&D</button>
             <IdeasBox />
             <button className="btn btn-primary" onClick={() => { setError(''); setNotice(''); setNewOpen(true); }} disabled={!options}>+ New task</button>
@@ -360,7 +362,8 @@ export default function Timesheet({ standalone = false }) {
                             <div className="small-muted">
                               Given to {t.assigneeName} · Given by {t.assignedByName}
                             </div>
-                            {t.status === 'Cancelled' && t.cancelReason && <div className="small-muted">Cancelled: {t.cancelReason}</div>}
+                            {t.status === 'Cancelled' && <div className="small-muted">{cancelLine(t)}</div>}
+                            <AddOnList t={t} me={myId} onChanged={load} setError={setError} />
                             {t.reviewedByName && (
                               <div className="small-muted">
                                 Checked by {t.reviewedByName}
@@ -395,6 +398,9 @@ export default function Timesheet({ standalone = false }) {
                             )}{' '}
                             {t.assigneeId === myId && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>Add hours</button>}{' '}
                             {r.manage && !['Completed', 'Cancelled'].includes(t.status) && <button className="btn btn-sm" onClick={() => dlg.open('edit', t)}>Change</button>}{' '}
+                            {/* not done yet: give it to someone else, or add more work to it (founder 2026-10-26) */}
+                            {r.manage && ['Not Started', 'In Progress', 'On Hold'].includes(t.status) && <button className="btn btn-sm" onClick={() => dlg.open('reassign', t)}>Give to someone else</button>}{' '}
+                            {r.manage && ['Not Started', 'In Progress', 'On Hold'].includes(t.status) && <button className="btn btn-sm" title="Add more work to this task without changing it" onClick={() => dlg.open('addon', t)}>＋ Add-on</button>}{' '}
                             <button className="btn btn-sm btn-ghost" onClick={() => dlg.open('note', t)}>Notes {t.commentCount || 0}</button>
                           </td>
                         </tr>
@@ -450,13 +456,20 @@ export default function Timesheet({ standalone = false }) {
         <Modal
           title="Task Reports"
           size="wide"
-          note={`${reports.total} task(s) in your scope`}
+          note={`${reports.total} task(s) in your scope${repRange.from || repRange.to ? ` · ${repRange.from ? ddmmyyyy(repRange.from) : 'start'} to ${repRange.to ? ddmmyyyy(repRange.to) : 'today'}` : ' · all dates'}`}
           onClose={() => setReports(null)}
           foot={<button className="btn" onClick={() => setReports(null)}>Close</button>}
         >
+          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 12 }}>
+            <label className="field" style={{ margin: 0 }}><span>From</span><input type="date" value={repRange.from} onChange={(e) => setRepRange((r) => ({ ...r, from: e.target.value }))} /></label>
+            <label className="field" style={{ margin: 0 }}><span>To</span><input type="date" value={repRange.to} onChange={(e) => setRepRange((r) => ({ ...r, to: e.target.value }))} /></label>
+            <button className="btn btn-sm btn-primary" onClick={() => openReports(repRange)}>Apply</button>
+            {(repRange.from || repRange.to) && <button className="btn btn-sm" onClick={() => { const r = { from: '', to: '' }; setRepRange(r); openReports(r); }}>All dates</button>}
+            <span className="small-muted">A task counts when its start-to-due days fall in this range.</span>
+          </div>
           {reports.total === 0 ? (
             <div className="empty-mini">
-              There are no tasks in your scope yet, so there is nothing to report on.
+              There are no tasks for these dates, so there is nothing to report on.
             </div>
           ) : (
             <>

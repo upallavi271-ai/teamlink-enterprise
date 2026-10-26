@@ -42,7 +42,8 @@ export function StatRow({ cells, columns }) {
   return (
     <div className="stat-row" style={style}>
       {cells.map((c) => {
-        const inner = <><div className="v">{c.value}</div><div className="l">{c.label}</div></>;
+        // optional `hint`: one plain line under the label saying what the number counts
+        const inner = <><div className="v">{c.value}</div><div className="l">{c.label}</div>{c.hint && <div className="small-muted" style={{ marginTop: 2, fontSize: 12 }}>{c.hint}</div>}</>;
         return c.to
           ? <Link key={c.label} className="stat-cell" data-goto="1" to={c.to} style={{ textDecoration: 'none', color: 'inherit' }}>{inner}</Link>
           : <div key={c.label} className="stat-cell">{inner}</div>;
