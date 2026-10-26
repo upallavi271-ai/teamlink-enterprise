@@ -20,11 +20,14 @@ async function updateBaseline(baselineFile, delta, result, ddlSources) {
   L.snapshotTo(baselineFile, next, true);
   const db = L.openDb(next, false);
   let out;
+  let skipped = [];
   try {
     createMissingTables(db, delta, ids, ddlSources || []);
-    out = await engine.run(L.nodeAdapter(db), delta, { dryRun: false, only: ids });
-    const bad = out.results.filter((r) => r.status !== 'applied' && r.status !== 'already');
-    if (bad.length) throw new Error('The baseline copy could not take ' + bad.length + ' change(s) (' + bad[0].table + ': ' + bad[0].reason + '). Baseline not changed.');
+    out = await engine.run(L.nodeAdapter(db), delta, { dryRun: false, only: ids, checkParents: true });
+    if (out.rolledBack) throw new Error('The baseline copy failed the broken-link check. Baseline not changed.');
+    // A few changes the baseline copy cannot take (for example a job code the old baseline still uses for another row) are simply
+    // left out: they stay "different", show up as "already there" in the next report, and nothing is lost.
+    skipped = out.results.filter((r) => r.status !== 'applied' && r.status !== 'already');
     const ic = db.prepare('PRAGMA integrity_check').get().integrity_check;
     if (ic !== 'ok') throw new Error('Baseline copy failed the integrity check. Baseline not changed.');
   } catch (e) {
@@ -35,7 +38,7 @@ async function updateBaseline(baselineFile, delta, result, ddlSources) {
   for (const s of ['-wal', '-shm']) { try { fs.unlinkSync(next + s); } catch { /* none */ } }
   fs.copyFileSync(baselineFile, prev);
   fs.renameSync(next, baselineFile);
-  return { advanced: ids.size, applied: out.results.filter((r) => r.status === 'applied').length, already: out.results.filter((r) => r.status === 'already').length };
+  return { advanced: ids.size - skipped.length, skipped: skipped.length, firstSkipped: skipped[0] ? skipped[0].table + ': ' + skipped[0].reason : '', applied: out.results.filter((r) => r.status === 'applied').length, already: out.results.filter((r) => r.status === 'already').length };
 }
 
 // A table that is new on the other side may not exist in the baseline yet: create it (same CREATE TABLE) so
@@ -62,5 +65,6 @@ if (require.main === module) {
     if (!a.baseline || !a.delta || !a.result) { console.error('Use: node update-baseline.js --baseline <baseline.db> --delta <delta.json> --result <result.json>'); process.exit(2); }
     const r = await updateBaseline(a.baseline, L.readJson(a.delta), L.readJson(a.result), a['ddl-from'] ? String(a['ddl-from']).split(',') : []);
     console.log('Baseline moved forward by ' + r.advanced + ' change(s) (' + r.applied + ' added/updated, ' + r.already + ' already there). Old baseline kept as baseline.prev.db');
+    if (r.skipped) console.log('Note: ' + r.skipped + ' change(s) could not be recorded in the baseline (first: ' + r.firstSkipped + '). Harmless: they show as "already there" in the next report.');
   })().catch((e) => { console.error('ERROR: ' + e.message); process.exit(1); });
 }

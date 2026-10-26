@@ -11,6 +11,7 @@ const DS = path.join(__dirname, 'delta-sync');
 const L = require(path.join(DS, 'lib.js'));
 const { makeDelta } = require(path.join(DS, 'make-delta.js'));
 const engine = require(path.join(DS, 'engine.js'));
+const { updateBaseline } = require(path.join(DS, 'update-baseline.js'));
 
 const W = fs.mkdtempSync(path.join(os.tmpdir(), 'parent-test-'));
 const F = (n) => path.join(W, n);
@@ -97,6 +98,18 @@ async function run(file, delta, opts) {
   const rd = await run(F('t-dry.db'), delta, { dryRun: true, checkParents: true });
   const sig = (x) => x.results.map((e) => e.id + ':' + e.status).join(',');
   ok(sig(rd) === sig(r), 'classification (dry) == application (real)');
+
+  console.log('\n-- moving the baseline forward');
+  const statuses = r.results.map((x) => ({ id: x.id, table: x.table, k: x.k, status: x.status }));
+  fs.copyFileSync(F('baseline.db'), F('bl1.db'));
+  let bl = await updateBaseline(F('bl1.db'), delta, { statuses, rolledBack: false }, []);
+  ok(bl.skipped === 0 && has(F('bl1.db'), 'Requirement', 'r9') && has(F('bl1.db'), 'ApplicationFollowUp', 'f_ok'), 'the baseline takes what was applied');
+  // the old baseline still uses job code REQ-9 for another row: the baseline cannot take r9, but must not fail
+  fs.copyFileSync(F('baseline.db'), F('bl2.db'));
+  seed(F('bl2.db'), (d) => put(d, 'Requirement', { id: 'rz', clientId: 'c1', reqCode: 'REQ-9' }));
+  let threw = null;
+  try { bl = await updateBaseline(F('bl2.db'), delta, { statuses, rolledBack: false }, []); } catch (e) { threw = e; }
+  ok(!threw && bl.skipped >= 1 && has(F('bl2.db'), 'ApplicationFollowUp', 'f_ok') && !has(F('bl2.db'), 'Requirement', 'r9'), 'a change the baseline cannot take is left out (' + (threw ? threw.message : 'skipped ' + bl.skipped + ': ' + bl.firstSkipped) + ')');
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   fs.rmSync(W, { recursive: true, force: true });
