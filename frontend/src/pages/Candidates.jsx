@@ -46,6 +46,7 @@ import ReachRowButtons from '../components/reach/ReachRowButtons.jsx';
 // WhatsApp quick chat (free wa.me links): a row icon, a bulk 'Send WhatsApp' + 'Mark opted in', and the Resume bar (components/wa/)
 import WaButton from '../components/wa/WaButton.jsx';
 import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import SendManyDialog from '../components/messaging/SendMessage.jsx';
 import WaResume from '../components/wa/WaResume.jsx';
 import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
@@ -513,6 +514,7 @@ export default function Candidates() {
   const [selected, setSelected] = useState(() => new Map());
   const [selectNote, setSelectNote] = useState('');
   const [bulkKind, setBulkKind] = useState(null);
+  const [waMany, setWaMany] = useState(null); // { ids }: WhatsApp to the ticked people, like the single WhatsApp window
   const [waBulk, setWaBulk] = useState(null); // { ids } = WhatsApp list to start; { sessionId } not used here (WaResume owns that)
   const [waOpt, setWaOpt] = useState(null); // { ids } = Mark opted in
   const waCfg = useWaConfig();
@@ -1391,6 +1393,10 @@ export default function Candidates() {
           onDone={() => { clearSelection(); reload(); }}
         />
       )}
+      {waMany && (
+        <SendManyDialog mode="WhatsApp" audience="candidates" ids={waMany.ids} onClose={() => setWaMany(null)} onSent={() => { setWaTick((n) => n + 1); }}
+          onOwnWhatsApp={() => { const ids = waMany.ids; setWaMany(null); setWaBulk({ ids }); }} />
+      )}
       {waBulk && <WaBulkModal entityType="candidate" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => setWaTick((n) => n + 1)} />}
       {waOpt && <WaOptInModal entityType="candidate" ids={waOpt.ids} onClose={() => setWaOpt(null)} />}
       {drawer && (
@@ -2173,7 +2179,9 @@ export default function Candidates() {
                 may.assign && { key: 'assign', icon: '👤', label: 'Assign recruiter', onClick: () => setBulkKind('assign') },
                 may.stage && { key: 'stage', icon: '➡️', label: 'Move step', onClick: () => setBulkKind('stage') },
                 may.addToJob && { key: 'addToJob', icon: '➕', label: 'Add to requirement', onClick: () => setBulkKind('addToJob') },
-                waMayUse(waCfg, 'candidate') && { key: 'wa', icon: '🟢', label: 'Send WhatsApp', onClick: () => setWaBulk({ ids: selectedCandidateIds }) },
+                // BULK WHATSAPP = ONE PERSON'S WHATSAPP, FOR MANY (founder 2026-10-26): the same purposes / templates and the same company
+                // number as the single WhatsApp window; without a company number it falls back to your own WhatsApp, one by one.
+                waMayUse(waCfg, 'candidate') && { key: 'wa', icon: '🟢', label: 'Send WhatsApp', onClick: () => setWaMany({ ids: selectedCandidateIds }) },
                 waMayUse(waCfg, 'candidate') && { key: 'waopt', icon: '✔', label: 'Mark opted in', onClick: () => setWaOpt({ ids: selectedCandidateIds }) },
                 mayExportSel && { key: 'download', icon: '⬇', label: 'Download', onClick: exportSelected },
               ].filter(Boolean)}

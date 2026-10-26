@@ -44,7 +44,7 @@ const MODE_CHANNELS = { Email: ['Email'], WhatsApp: ['WhatsApp'], SMS: ['SMS'], 
 export const BULK_LIMIT = 500;
 
 export function SendManyDialog({
-  mode, ids, candidateIds, audience = 'candidates', note, applicationId, requirementId, purposeLabel, onClose, onSent, app,
+  mode, ids, candidateIds, audience = 'candidates', note, applicationId, requirementId, purposeLabel, onClose, onSent, app, onOwnWhatsApp,
 }) {
   const { user } = useAuth() || {};
   const targets = ids || candidateIds || [];
@@ -165,6 +165,10 @@ export function SendManyDialog({
       onClose={onClose}
       footer={<>
         <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        {/* like one person's WhatsApp (founder 2026-10-26): no company number for this login -> each one in your own WhatsApp */}
+        {onOwnWhatsApp && channels.length === 1 && channels[0] === 'WhatsApp' && !wa.canSend && (
+          <button type="button" className="btn btn-primary" onClick={onOwnWhatsApp} title="Opens each person in your own WhatsApp with the message filled in, one click each">Open in my WhatsApp, one by one</button>
+        )}
         <button type="button" className="btn" disabled={!targets.length || tooMany} title="Keep the same people as a campaign: save it for later, ask for approval, schedule it and follow every message" onClick={() => setCampaignOpen(true)}>Make it a campaign…</button>
         <button type="button" className="btn btn-primary" disabled={!pv || !(pv.peopleToSend > 0) || (channels.includes('WhatsApp') && channels.length === 1 && !wa.canSend)} onClick={() => setStage('confirm')}>
           {pv && pv.peopleToSend > 0 ? `Next: send to ${pv.peopleToSend}` : 'Nobody to send to yet'}
