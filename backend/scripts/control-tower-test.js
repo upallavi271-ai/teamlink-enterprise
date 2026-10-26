@@ -62,10 +62,14 @@ async function call(p, token) {
     check('P1 Pending actions = ATS applications waiting for someone + leave awaiting decision', kp.pending.value === pendAts + leave, [kp.pending.value, pendAts, leave]);
     const row = Object.fromEntries(d.attention.map((a) => [a.key, a]));
     const since = new Date(Date.now() - 30 * 86400000).toISOString().replace('T', ' ').replace('Z', '');
-    const syncDb = (await prisma.syncLog.count({ where: { status: 'Failed', createdAt: { gte: new Date(Date.now() - 30 * 86400000) } } }));
+    // 2026-10-26: sync = failures since the last good sync (within 30 days); feedback = interviews of the last 30 days
+    const lastOk = await prisma.syncLog.findFirst({ where: { status: { not: 'Failed' } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } });
+    const s30 = new Date(Date.now() - 30 * 86400000);
+    const syncDb = await prisma.syncLog.count({ where: { status: 'Failed', createdAt: { gt: lastOk && lastOk.createdAt > s30 ? lastOk.createdAt : s30 } } });
+    const fbDb = await prisma.application.count({ where: { stage: 'INTERVIEW_COMPLETED', OR: [{ interviewAt: { gte: s30 } }, { interviewAt: null, updatedAt: { gte: s30 } }] } });
     check('A1 the leave, bank, feedback and sync rows equal the database', row.leave.count === leave
       && row.bank.count === await q("select count(*) n from BankTransaction where reconStatus='Unmatched'")
-      && row.feedback.count === await q("select count(*) n from Application where stage='INTERVIEW_COMPLETED'")
+      && Math.abs(row.feedback.count - fbDb) <= 1
       && Math.abs(row.sync.count - syncDb) <= 1, [d.attention.map((x) => [x.key, x.count]), syncDb, since]);
     check('A2 every attention row has an owner, a scope word, a link and an action button', d.attention.every((a) => a.owner && a.scope && a.to && a.action && a.title), d.attention);
     check('A3 client invoices and vendor bills are SEPARATE rows, each with its own overdue', !!row['overdue-inv'] && !!row['overdue-bills'] && row['overdue-inv'].title !== row['overdue-bills'].title, null);

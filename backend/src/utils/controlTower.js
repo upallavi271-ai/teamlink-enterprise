@@ -72,6 +72,18 @@ async function build() {
     prisma.employee.count({ where: withoutSystemAccounts({ employmentStatus: 'Active', OR: [{ email: null }, { email: '' }] }) }),
   ]);
 
+  // ---- WHAT REALLY NEEDS ATTENTION (founder 2026-10-26: "why getting like this?") ----
+  // Sync: a failure counts only while it is still failing - after the job portal synced fine again, earlier failures (typically a server
+  // restart while the portal was off) are resolved, not 166 open problems. Feedback: interviews of the last 30 days; older rows still at
+  // "Interview Completed" are old tracker data, said separately. Leave: the count stays, with how many are for dates already over.
+  const lastOk = await prisma.syncLog.findFirst({ where: { status: { not: 'Failed' } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }).catch(() => null);
+  const failFrom = lastOk && lastOk.createdAt > since30 ? lastOk.createdAt : since30;
+  const syncStillFailing = await prisma.syncLog.count({ where: { status: 'Failed', createdAt: { gt: failFrom } } }).catch(() => syncFailed);
+  const recentCut = new Date(Date.now() - 30 * 86400000);
+  const feedbackRecent = await prisma.application.count({ where: { stage: 'INTERVIEW_COMPLETED', OR: [{ interviewAt: { gte: recentCut } }, { interviewAt: null, updatedAt: { gte: recentCut } }] } }).catch(() => null);
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const leaveDatesOver = await prisma.leaveRequest.count({ where: { status: 'Pending', toDate: { lt: todayIso } } }).catch(() => 0);
+
   // ---- people ----
   const empBy = Object.fromEntries(empGroups.map((g) => [g.employmentStatus, g._count._all]));
   const employeesTotal = empGroups.reduce((s, g) => s + g._count._all, 0);
@@ -133,10 +145,10 @@ async function build() {
 
   // ---- the attention queue ----
   const rows = [
-    { key: 'sync', title: 'ATS data sync failures', sub: 'Job-portal and requirement sync failures', count: syncFailed, unit: 'failed / 30 days', scope: 'Last 30 days', to: '/admin/integrations?tab=jobportal', action: 'Review failures', owner: 'Admin', tone: 'red' },
+    { key: 'sync', title: 'ATS data sync failures', sub: syncStillFailing ? 'Job-portal and requirement sync failures since the last good sync' : `Nothing failing now (the job portal synced fine${lastOk ? ` on ${lastOk.createdAt.toISOString().slice(0, 10)}` : ''}; ${syncFailed} older failure(s) in 30 days, e.g. a restart while the portal was off)`, count: syncStillFailing, unit: 'still failing', scope: 'Since the last good sync', to: '/admin/integrations?tab=jobportal', action: 'Review failures', owner: 'Admin', tone: 'red' },
     { key: 'portal', title: 'Requirements that failed to post', sub: 'Live requirements the job portal did not accept', count: portalFailed, unit: 'requirements', scope: 'Now', to: '/admin/integrations?tab=jobportal', action: 'Review', owner: 'Admin', tone: 'red' },
-    { key: 'feedback', title: 'Interview feedback pending', sub: 'Interviews done, feedback not yet recorded', count: num(byStage.INTERVIEW_COMPLETED), unit: 'pending', scope: 'Now', to: '/candidates?stage=INTERVIEW_COMPLETED', action: 'Open queue', owner: 'Recruiters / Client managers', tone: 'amber' },
-    { key: 'leave', title: 'Leave requests awaiting decision', sub: 'Employee / TL leave requests', count: leavePending, unit: 'pending', scope: 'Now', to: '/leave', action: 'Review requests', owner: 'HR / Team leads', tone: 'amber' },
+    { key: 'feedback', title: 'Interview feedback pending', sub: feedbackRecent == null ? 'Interviews done, feedback not yet recorded' : `Interviews of the last 30 days, feedback not yet recorded${num(byStage.INTERVIEW_COMPLETED) - feedbackRecent > 0 ? ` (+${num(byStage.INTERVIEW_COMPLETED) - feedbackRecent} older ones from old trackers still at Interview Completed)` : ''}`, count: feedbackRecent == null ? num(byStage.INTERVIEW_COMPLETED) : feedbackRecent, unit: 'pending', scope: 'Last 30 days', to: '/candidates?stage=INTERVIEW_COMPLETED', action: 'Open queue', owner: 'Recruiters / Client managers', tone: 'amber' },
+    { key: 'leave', title: 'Leave requests awaiting decision', sub: leaveDatesOver ? `Employee / TL leave requests - ${leaveDatesOver} of them for dates already over (old requests never decided)` : 'Employee / TL leave requests', count: leavePending, unit: 'pending', scope: 'Now', to: '/leave', action: 'Review requests', owner: 'HR / Team leads', tone: 'amber' },
     { key: 'bank', title: 'Unmatched bank transactions', sub: 'Bank statement lines not yet matched to an invoice or bill', count: unmatched, unit: 'lines', scope: 'Now', to: '/bank', action: 'Reconcile', owner: 'Accounts', tone: 'amber' },
     { key: 'overdue-inv', title: 'Overdue client invoices', sub: 'Money clients owe us, past the due date', count: overdueInv.length, unit: 'invoices', money: overdueAmt, scope: 'Now', to: '/invoices?status=Overdue', action: 'Open invoices', owner: 'Accounts', tone: 'red' },
     { key: 'overdue-bills', title: 'Overdue vendor bills', sub: 'Money we owe vendors, past the due date', count: payDue.length, unit: 'bills', money: payDueAmt, scope: 'Now', to: '/office', action: 'Open bills', owner: 'Accounts', tone: 'red' },
@@ -144,7 +156,7 @@ async function build() {
 
   // ---- data health: real checks ----
   const checks = [
-    { key: 'sync', set: 'sync', label: 'Job-portal sync without failures (30 days)', ok: syncFailed === 0, detail: `${syncFailed} failed`, to: '/admin/integrations?tab=jobportal' },
+    { key: 'sync', set: 'sync', label: 'Job-portal sync without failures (now)', ok: syncStillFailing === 0, detail: `${syncStillFailing} still failing`, to: '/admin/integrations?tab=jobportal' },
     { key: 'integrations', set: 'integrations', filter: 'Needs attention', label: 'Integrations without errors', ok: intErrors.length === 0, detail: `${intErrors.length} with errors`, to: '/admin/integrations' },
     { key: 'portal', set: 'portal', label: 'Live requirements accepted by the job portal', ok: portalFailed === 0, detail: `${portalFailed} failed to post`, to: '/admin/integrations?tab=jobportal' },
     { key: 'bank', set: 'bank', label: 'Bank lines matched', ok: unmatched === 0, detail: `${unmatched} unmatched`, to: '/bank' },

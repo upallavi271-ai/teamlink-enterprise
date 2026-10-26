@@ -67,8 +67,9 @@ function appRow(a) {
   };
 }
 const APP_COLS = [col('candidate', 'Candidate', 'text', 'candidate'), col('stage', 'Step', 'status', 'stage'), col('requirement', 'Requirement', 'text', 'requirement'), col('client', 'Client'), col('added', 'Added', 'date', 'added')];
-async function apps(p, stages, { notIn } = {}) {
+async function apps(p, stages, { notIn, extra } = {}) {
   const and = [stages ? { stage: { in: stages } } : { stage: { notIn: notIn || TERMINAL } }];
+  if (extra) and.push(extra);
   if (p.text) and.push({ OR: [{ candidate: { is: { name: { contains: p.text } } } }, { candidate: { is: { email: { contains: p.text } } } }, { candidate: { is: { phone: { contains: p.text } } } }, { requirement: { is: { title: { contains: p.text } } } }, { requirement: { is: { reqCode: { contains: p.text } } } }, { requirement: { is: { client: { is: { name: { contains: p.text } } } } } }] });
   const where = { AND: and };
   const order = orderOf(p, {
@@ -125,8 +126,10 @@ const SETS = {
     return { title: `Hiring pipeline: ${label}`, sub: 'Where applications are today (a snapshot).', ...r };
   },
   async feedback(p) {
-    const r = await apps(p, PENDING_TYPES.feedback);
-    return { title: 'Interview feedback pending', sub: 'Interviews done, feedback not yet recorded.', ...r };
+    // the same rows the attention card counts (utils/controlTower.js, 2026-10-26): interviews of the last 30 days
+    const cut = new Date(Date.now() - 30 * DAY);
+    const r = await apps(p, PENDING_TYPES.feedback, { extra: { OR: [{ interviewAt: { gte: cut } }, { interviewAt: null, updatedAt: { gte: cut } }] } });
+    return { title: 'Interview feedback pending', sub: 'Interviews of the last 30 days, feedback not yet recorded.', ...r };
   },
   async pending(p) {
     const f = p.filter || 'all';
@@ -195,13 +198,16 @@ const SETS = {
     };
   },
   async sync(p) {
-    const since = new Date(Date.now() - 30 * DAY);
-    const and = [{ status: 'Failed' }, { createdAt: { gte: since } }];
+    // the same rows the attention card counts (2026-10-26): failures since the last good sync, within 30 days
+    const since30 = new Date(Date.now() - 30 * DAY);
+    const lastOk = await prisma.syncLog.findFirst({ where: { status: { not: 'Failed' } }, orderBy: { createdAt: 'desc' }, select: { createdAt: true } }).catch(() => null);
+    const since = lastOk && lastOk.createdAt > since30 ? lastOk.createdAt : since30;
+    const and = [{ status: 'Failed' }, { createdAt: { gt: since } }];
     if (p.text) and.push({ OR: [{ reason: { contains: p.text } }, { recordRef: { contains: p.text } }, { entity: { contains: p.text } }] });
     const order = orderOf(p, { time: (d) => ({ createdAt: d }), entity: (d) => ({ entity: d }) }, 'time');
     const res = await dbPage(p, { count: () => prisma.syncLog.count({ where: { AND: and } }), findMany: ({ skip, take }) => prisma.syncLog.findMany({ where: { AND: and }, orderBy: order, skip, take }) });
     return {
-      title: 'ATS data sync failures', sub: 'Job-portal and requirement sync failures in the last 30 days.', ...res,
+      title: 'ATS data sync failures', sub: 'Job-portal and requirement sync failures since the last good sync.', ...res,
       columns: [col('time', 'When', 'datetime', 'time'), col('entity', 'What', 'text', 'entity'), col('ref', 'Record'), col('reason', 'Reason')],
       rows: res.rows.map((l) => ({ id: l.id, c: { time: l.createdAt, entity: l.entity, ref: l.recordRef || '-', reason: String(l.reason || '-').replace(/\s+/g, ' ').slice(0, 160) }, d: [field('Full reason', l.reason)] })),
     };
