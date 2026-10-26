@@ -23,7 +23,22 @@
     "BiometricPunchLog": "raw punch log fed by the device on the live site",
     "Conversation": "live WhatsApp/chat conversations belong to the live site",
     "ConversationMessage": "live WhatsApp/chat messages belong to the live site",
-    "CandidateMessage": "messages already sent from this machine (test sends); live messages belong to the live site"
+    "CandidateMessage": "messages already sent from this machine (test sends); live messages belong to the live site",
+
+    "LeaveRequest": "LEAVE MANAGEMENT lives on the live site (requests, approvals). Never touched by a sync",
+    "LeaveBalance": "LEAVE MANAGEMENT lives on the live site. Never touched by a sync",
+    "LeaveType": "LEAVE MANAGEMENT settings live on the live site. Never touched by a sync",
+    "LeaveReason": "LEAVE MANAGEMENT settings live on the live site. Never touched by a sync",
+    "Holiday": "holiday calendar belongs to leave management on the live site",
+    "Task": "TIMESHEET tasks are entered on the live site. Never touched by a sync",
+    "TaskComment": "TIMESHEET task comments are entered on the live site. Never touched by a sync",
+    "Attendance": "attendance (biometric / check-in) is written by the live site. Never touched by a sync",
+    "AttendancePunch": "biometric punches are written by the live site. Never touched by a sync",
+    "AttendanceRegularization": "attendance requests belong to the live site. Never touched by a sync",
+    "AttendanceHistory": "attendance history belongs to the live site. Never touched by a sync",
+    "AttendanceHistorySummary": "attendance history belongs to the live site. Never touched by a sync",
+    "MessageTemplate": "e-mail / WhatsApp / SMS message templates are SETTINGS of the live site. Remove this line only if you want local template edits to travel",
+    "MessageTemplateVersion": "e-mail / WhatsApp / SMS message template versions: see MessageTemplate"
   },
 
   "excludedNamePatterns": [
@@ -40,6 +55,9 @@
   },
 
   "rowFilters": {
+    "EmployeeRecord": {
+      "excludeWhere": { "column": "type", "regex": "^TIMESHEET$", "reason": "TIMESHEET entries are typed on the live site (EmployeeRecord also holds KT, targets, resignations... which DO travel)" }
+    },
     "AuditLog": {
       "excludeWhere": { "column": "action", "regex": "^(Signed in|Signed out|Sign-in|Sign in|Login|Logged|Logout|Session|Token|Password reset link|Failed login)", "reason": "login/session noise" }
     }
@@ -61,8 +79,6 @@
 
   "appSetting": {
     "allowPrefixes": [
-      "leave.meta.",
-      "attendance.load.",
       "ats.openList.",
       "employee_field_groups"
     ],
@@ -72,8 +88,6 @@
       "job-templates"
     ],
     "reasons": {
-      "leave.meta.": "extra leave-day notes (data typed by HR)",
-      "attendance.load.": "attendance load records (data typed by HR)",
       "ats.openList.": "type-in dropdown lists (skills, industries...) that users extend",
       "employee_field_groups": "custom employee profile field groups (HR-made)",
       "ats.jobLocations": "job location list (typed in)",
