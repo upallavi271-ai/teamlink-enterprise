@@ -45,6 +45,9 @@ export default function InsightsPanel({
   const [ownRange, setOwnRange] = useDateRange(storageKey || `tl_range_${module}`);
   const range = hostRange || ownRange;
   const [department, setDepartment] = useState('');
+  // TEAM (founder 2026-10-26): once a department is picked, the server lists its teams (Team A / Team B ...) and one can be picked
+  const [team, setTeam] = useState('');
+  useEffect(() => { setTeam(''); }, [department]);
   const dept = hostDepartment !== undefined ? hostDepartment : department;
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(true);
@@ -53,6 +56,7 @@ export default function InsightsPanel({
   const query = {
     ...rangeParams(range),
     ...(dept ? { department: dept } : {}),
+    ...(dept && team ? { team } : {}),
     ...(mine ? { mine: '1' } : {}),
     ...(params || {}),
   };
@@ -89,6 +93,12 @@ export default function InsightsPanel({
             <Combo value={department} onChange={(e) => setDepartment(e.target.value)} title="Department">
               <option value="">All departments</option>
               {data.departments.map((d) => <option key={d} value={d}>{d}</option>)}
+            </Combo>
+          )}
+          {data && dept && (data.teams || []).length > 0 && (
+            <Combo value={team} onChange={(e) => setTeam(e.target.value)} title="Team">
+              <option value="">All teams</option>
+              {data.teams.map((t) => <option key={t} value={t}>{t}</option>)}
             </Combo>
           )}
           {children}

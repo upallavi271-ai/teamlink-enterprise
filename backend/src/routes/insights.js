@@ -664,14 +664,20 @@ async function timesheetData(req, reach, period) {
     if (!people.some((p) => p.employeeId === asked) && !view.global) throw new HttpError(403, OUT_OF_SCOPE);
     people = people.filter((p) => p.employeeId === asked);
   }
-  const employees = await prisma.employee.findMany({
+  let employees = await prisma.employee.findMany({
     where: {
       id: { in: people.map((p) => p.employeeId) },
       ...(view.global && dept ? { department: dept } : {}),
     },
-    select: { id: true, employeeCode: true, name: true, department: true, designation: true, dateOfJoining: true, userId: true },
+    select: { id: true, employeeCode: true, name: true, department: true, team: true, designation: true, dateOfJoining: true, userId: true },
     orderBy: { name: 'asc' },
   });
+  // TEAM-WISE (founder 2026-10-26: "Education department click chesthe Team A / Team B ravali"): the teams of the picked department,
+  // and ?team= narrows to one of them.
+  const teamOf = (e) => (e.team && String(e.team).trim()) || 'No team';
+  const teams = dept ? [...new Set(employees.map(teamOf))].sort() : [];
+  const team = str(req.query.team);
+  if (team) employees = employees.filter((e) => teamOf(e) === team);
   const cfg = await hrConfig();
   const { days } = await D.loadDays(prisma, { employees, from: period.from, to: period.to, cfg, preview: true });
   const visible = await tasksRoute.visibleWhere(req.user);
@@ -701,11 +707,13 @@ async function timesheetData(req, reach, period) {
       overdue: mine.filter((t) => t.endDate && t.endDate < today && ['Not Started', 'In Progress', 'On Hold'].includes(t.status)).length,
     };
   });
-  return { per, tasks };
+  return { per, tasks, teams, team, teamOf };
 }
 
 async function timesheetInsights(req, reach, period) {
-  const { per, tasks } = await timesheetData(req, reach, period);
+  const { per, tasks, teams, teamOf } = await timesheetData(req, reach, period);
+  const byTeam = new Map();
+  per.forEach((p) => { const t = teamOf(p.employee); byTeam.set(t, round1((byTeam.get(t) || 0) + p.hours)); });
   const hours = round1(per.reduce((s, p) => s + p.hours, 0));
   const dayCount = per.reduce((s, p) => s + p.days, 0);
   const byDept = new Map();
@@ -721,6 +729,7 @@ async function timesheetInsights(req, reach, period) {
       { key: 'completed', label: 'Tasks done', value: tasks.filter((t) => t.status === 'Completed').length, hint: 'Marked as done' },
       { key: 'overdue', label: 'Tasks overdue', value: per.reduce((s, p) => s + p.overdue, 0), hint: 'Past the due date and not done' },
     ],
+    teams,
     charts: [
       {
         id: 'ts-trend', kind: 'trend', title: 'Hours worked', sub: 'Check-in to check-out hours', unit: 'hours', series: ['Hours'],
@@ -730,6 +739,11 @@ async function timesheetInsights(req, reach, period) {
         id: 'ts-dept', kind: 'bar', title: 'Hours by department', unit: 'hours',
         rows: [...byDept.entries()].map(([label, value]) => ({ label, value })).filter((r) => r.value > 0).sort((a, b) => b.value - a.value),
       },
+      // a department is picked: its teams (Team A / Team B ...) side by side
+      ...(teams.length ? [{
+        id: 'ts-team', kind: 'bar', title: 'Hours by team', sub: 'Teams of this department', unit: 'hours',
+        rows: teams.map((t) => ({ label: t, value: byTeam.get(t) || 0 })),
+      }] : []),
       {
         id: 'ts-emp', kind: 'bar', title: 'Hours by employee', sub: 'Top 12 in the range', unit: 'hours',
         rows: per.filter((p) => p.hours > 0).sort((a, b) => b.hours - a.hours).slice(0, 12).map((p) => ({ label: p.employee.name, value: p.hours })),

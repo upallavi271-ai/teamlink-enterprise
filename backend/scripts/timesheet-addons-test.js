@@ -62,6 +62,16 @@ const Z = require('./lib/zzfix')('TSA');
     const ins = await Z.call('GET', '/api/insights/timesheet', L);
     const tiles = (ins.body && ins.body.tiles) || [];
     Z.check('H1 every Hours at Work card has a one-line explanation', ins.status === 200 && tiles.length === 6 && tiles.every((t) => t.hint), tiles.map((t) => [t.label, t.hint]));
+    // team-wise: a department picked lists its teams; a team narrows to it
+    await prisma.employee.updateMany({ where: { userId: emp.id }, data: { team: 'ZZTEST TSA Team A' } });
+    await prisma.employee.updateMany({ where: { userId: emp2.id }, data: { team: 'ZZTEST TSA Team B' } });
+    const dp = await Z.call('GET', '/api/insights/timesheet?department=R%26D', L);
+    const tA = await Z.call('GET', '/api/insights/timesheet?department=R%26D&team=ZZTEST%20TSA%20Team%20A', L);
+    const teamChart = (dp.body && dp.body.charts || []).find((c) => c.id === 'ts-team');
+    Z.check('H2 picking a department shows its teams (Team A / Team B) and a team narrows to it', dp.status === 200 && (dp.body.teams || []).includes('ZZTEST TSA Team A') && (dp.body.teams || []).includes('ZZTEST TSA Team B') && !!teamChart && tA.status === 200, [dp.status, dp.body && dp.body.teams, !!teamChart, tA.status]);
+    const tl = await Z.call('GET', '/api/tasks', L);
+    const anyTeam = (Array.isArray(tl.body) ? tl.body : []).some((x) => x.assignee && x.assignee.team);
+    Z.check('H3 the task list carries the team of each person (for the Team filter)', tl.status === 200 && anyTeam, tl.status);
   } catch (e) { Z.fail += 1; console.log('FAIL  crashed', e && e.stack ? e.stack.slice(0, 900) : e); } finally {
     try { await prisma.task.deleteMany({ where: { name: { contains: 'ZZTEST TSA' } } }); } catch (e) { console.log('task cleanup', String(e.message).slice(0, 140)); }
     await Z.cleanup([(p) => p.auditLog.deleteMany({ where: { reason: { contains: 'ZZTEST TSA' } } })]).catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));

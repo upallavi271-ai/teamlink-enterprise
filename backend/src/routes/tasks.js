@@ -536,7 +536,7 @@ router.get('/', VIEW, async (req, res, next) => {
     // by the person. Read-only, and only for the tasks already let through.
     const assignees = await prisma.employee.findMany({
       where: { userId: { in: [...new Set(tasks.map((t) => t.assigneeId))] } },
-      select: { userId: true, employeeCode: true, name: true, department: true, designation: true, employmentStatus: true },
+      select: { userId: true, employeeCode: true, name: true, department: true, team: true, designation: true, employmentStatus: true },
     });
     const assigneeOf = Object.fromEntries(assignees.map((e) => [e.userId, e]));
     const now = today();

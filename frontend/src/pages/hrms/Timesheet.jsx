@@ -148,8 +148,12 @@ export default function Timesheet({ standalone = false }) {
     { key: 'status', get: (t) => [t.overdue ? 'Overdue' : t.status] }, // not finished + date passed = Overdue, counted once (never also as In Progress)
     { key: 'assigneeId', get: (t) => t.assigneeId, label: (v, t) => t.assigneeName },
     { key: 'department', get: (t) => t.department || (t.assignee && t.assignee.department) || '' },
+    // TEAM-WISE (founder 2026-10-26): with a department picked, its teams (Team A / Team B ...) as a filter
+    { key: 'team', get: (t) => (t.assignee && t.assignee.team) || 'No team' },
   ], []);
-  const facetValues = { priority: pf.priority, status: pf.status, assigneeId: filters.assigneeId, department: filters.department };
+  const [team, setTeam] = useState('');
+  useEffect(() => { setTeam(''); }, [filters.department]);
+  const facetValues = { priority: pf.priority, status: pf.status, assigneeId: filters.assigneeId, department: filters.department, team };
   const facets = useLocalFacets(tasks, FACET_FIELDS, facetValues);
   const orderBy = (list, order) => [...list].sort((a, b) => (order.indexOf(a.value) < 0 ? 99 : order.indexOf(a.value)) - (order.indexOf(b.value) < 0 ? 99 : order.indexOf(b.value)));
   const taskDept = (t) => t.department || (t.assignee && t.assignee.department) || '';
@@ -159,6 +163,7 @@ export default function Timesheet({ standalone = false }) {
     && (!pf.status || (pf.status === 'Overdue' ? t.overdue : (t.status === pf.status && !t.overdue)))
     && (!filters.assigneeId || t.assigneeId === filters.assigneeId)
     && (!filters.department || taskDept(t) === filters.department)
+    && (!team || ((t.assignee && t.assignee.team) || 'No team') === team)
     && (!pf.dueFrom || (t.endDate && t.endDate >= pf.dueFrom))
     && (!pf.dueTo || (t.endDate && t.endDate <= pf.dueTo)));
   const assigneeRoles = peopleOptions(tasks, assigneeOf).roles;
@@ -284,6 +289,7 @@ export default function Timesheet({ standalone = false }) {
                       <FacetSelect label="Employee" allLabel="Everyone" value={filters.assigneeId} onChange={(v) => setFilters((f) => ({ ...f, assigneeId: v }))}
                         options={(facets.assigneeId || []).slice().sort((a, b) => a.label.localeCompare(b.label))} />
                       <FacetSelect label="Department" allLabel="All departments" value={filters.department} onChange={(v) => setFilters((f) => ({ ...f, department: v }))} options={facets.department || []} />
+                      {filters.department && <FacetSelect label="Team" allLabel="All teams" value={team} onChange={setTeam} options={facets.team || []} />}
                     </>
                   )}
                   extra={(
