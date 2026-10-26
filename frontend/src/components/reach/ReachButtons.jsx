@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ReachDialog from './ReachDialog.jsx';
+import SendManyDialog from '../messaging/SendMessage.jsx';
 import CallQueueSheet from './CallQueueSheet.jsx';
 import { useReachRights, REACH_MAX } from './reachKit.js';
 import './reach.css';
@@ -13,7 +14,7 @@ import './reach.css';
 // ---------------------------------------------------------------------------
 export default function ReachButtons({ items, onCancel, onDone }) {
   const rights = useReachRights();
-  const [open, setOpen] = useState(null); // 'Call' | 'SMS' | 'WhatsApp' | 'Email'
+  const [open, setOpen] = useState(null); // 'Call' | 'SMS' | 'WhatsApp' | 'Email' | 'WhatsAppOwn'
   if (!rights.loaded || !rights.one) return null;
   const uniq = [...new Map(items.map((x) => [x.id, x])).values()];
   const tooMany = uniq.length > REACH_MAX;
@@ -33,7 +34,14 @@ export default function ReachButtons({ items, onCancel, onDone }) {
         {onCancel && <button type="button" className="btn btn-sm rch-b rch-b-cancel" onClick={onCancel}>Cancel</button>}
       </div>
       {open === 'Call' && <CallQueueSheet items={uniq} onClose={() => setOpen(null)} onDone={onDone} />}
-      {open && open !== 'Call' && <ReachDialog channel={open} items={uniq} onClose={() => setOpen(null)} onDone={onDone} />}
+      {/* WHATSAPP TO MANY = ONE PERSON'S WHATSAPP (founder 2026-10-26): the same window, templates, company number and send path as
+          the single WhatsApp, so the messages look the same and the replies land in the same chats. No company number for this
+          login -> "Open in my WhatsApp, one by one" (the honest one-at-a-time list). */}
+      {open === 'WhatsApp' && (
+        <SendManyDialog mode="WhatsApp" audience="candidates" ids={uniq.map((x) => x.id)} onClose={() => setOpen(null)} onSent={onDone} onOwnWhatsApp={() => setOpen('WhatsAppOwn')} />
+      )}
+      {open === 'WhatsAppOwn' && <ReachDialog channel="WhatsApp" items={uniq} onClose={() => setOpen(null)} onDone={onDone} />}
+      {open && !['Call', 'WhatsApp', 'WhatsAppOwn'].includes(open) && <ReachDialog channel={open} items={uniq} onClose={() => setOpen(null)} onDone={onDone} />}
     </>
   );
 }
