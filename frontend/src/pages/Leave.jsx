@@ -150,6 +150,51 @@ function capLabel(t) {
   return t.unit === 'unpaid' ? 'Unpaid' : `${t.cap}/${t.unit}`;
 }
 
+// LEAVE BALANCE CARDS (founder 2026-10-26: "when an employee applies leave the leave cards must show"): one card per leave type -
+// what is available now (balance minus pending), "x left of y", and what is waiting. `avail` = GET /leave/availability types.
+export function LeaveBalanceCards({ avail, picked, onPick }) {
+  if (!avail || !avail.length) return null;
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: 8, marginBottom: 12 }}>
+      {avail.map((t) => (
+        <button
+          key={t.type} type="button" onClick={onPick ? () => onPick(t.type) : undefined}
+          style={{ textAlign: 'left', border: `1px solid ${picked === t.type ? 'var(--navy)' : 'var(--line)'}`, borderTop: `3px solid ${t.limited && t.available <= 0 ? 'var(--red, #c0392b)' : 'var(--navy)'}`, borderRadius: 8, padding: '8px 10px', background: picked === t.type ? 'var(--navy-tint, #eef3fb)' : 'var(--paper-raised, #fff)', cursor: onPick ? 'pointer' : 'default' }}
+        >
+          <div style={{ fontSize: 10.5, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--ink-faint)', fontWeight: 700 }}>{t.type}</div>
+          <div style={{ fontSize: 20, fontWeight: 600, lineHeight: 1.2 }}>{t.limited ? t.available : '∞'}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-soft)' }}>
+            {t.limited ? `${t.remaining} left of ${t.total}` : 'No limit'}{t.pending ? ` · ${t.pending} waiting` : ''}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// WHO ELSE IS ON LEAVE THEN (founder 2026-10-26): a reminder of the colleagues in the same team / department who are on leave (or have
+// asked for it) on the chosen dates. Only a reminder: applying is never blocked by it.
+function WhoElseOnLeave({ from, to, employeeId }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    if (!from || !to || to < from) { setData(null); return undefined; }
+    let alive = true;
+    api.get('/leave/who-else', { params: { from, to, employeeId: employeeId || undefined } })
+      .then((r) => { if (alive) setData(r.data); }).catch(() => { if (alive) setData(null); });
+    return () => { alive = false; };
+  }, [from, to, employeeId]);
+  if (!data || (!data.team.length && !data.department.length)) return null;
+  const line = (p) => `${p.name} (${p.fromDate.slice(8, 10)}-${p.fromDate.slice(5, 7)}${p.toDate !== p.fromDate ? ` to ${p.toDate.slice(8, 10)}-${p.toDate.slice(5, 7)}` : ''}${p.status === 'Pending' ? ', asked' : ''})`;
+  return (
+    <div className="notice amber" style={{ display: 'block', marginBottom: 10, fontSize: 12.5 }}>
+      <b>Reminder:</b>{' '}
+      {data.team.length > 0 && <>in your team{data.teamName ? ` (${data.teamName})` : ''} <b>{data.team.length}</b> {data.team.length === 1 ? 'person is' : 'people are'} on leave on these dates: {data.team.map(line).join(', ')}. </>}
+      {data.department.length > 0 && <>In your department ({data.departmentName}) <b>{data.department.length}</b> more: {data.department.slice(0, 8).map(line).join(', ')}{data.department.length > 8 ? ` and ${data.department.length - 8} more` : ''}. </>}
+      You can still apply.
+    </div>
+  );
+}
+
 // The prototype's Apply Leave modal (openApplyLeaveModal, line 3908).
 function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved }) {
   const [form, setForm] = useState({ employeeId: '', type: types[0]?.name || '', dayMode: 'full', halfDay: 'First Half', days: 1, fromDate: '', toDate: '', reason: '' });
@@ -224,6 +269,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
           </Combo>
         </div>
       )}
+      <LeaveBalanceCards avail={avail} picked={form.type} onPick={(type) => { if (types.some((t) => t.name === type)) setForm({ ...form, type }); }} />
       <div className="field">
         <label>Type</label>
         <Combo value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
@@ -261,6 +307,7 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
             : <>Counted: <b>{count.countedDays}</b> day{count.countedDays === 1 ? '' : 's'} of {count.calendarDays}. Not counted: {count.skipped.map((s) => `${s.date.slice(8, 10)}-${s.date.slice(5, 7)} (${s.reason})`).join(', ')}.</>}
         </div>
       )}
+      <WhoElseOnLeave from={form.fromDate} to={half ? form.fromDate : form.toDate} employeeId={isHR ? form.employeeId : undefined} />
       <div className="field"><label>Reason</label><textarea rows="2" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} /></div>
       {over && canOverride && (
         <label className="lvx-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
@@ -350,7 +397,10 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
   const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
   const [error, setError] = useState('');
 
+  // The person's own leave cards on top of the page (founder 2026-10-26); a login with no employee record gets none.
+  const [myAvail, setMyAvail] = useState(null);
   function load() {
+    api.get('/leave/availability').then((r) => setMyAvail(r.data.types || [])).catch(() => setMyAvail(null));
     api.get('/leave').then((res) => setRequests(res.data));
     api.get('/leave/types').then((res) => setTypes(res.data));
     api.get('/leave/reasons').then((res) => setReasons(res.data));
@@ -449,6 +499,12 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
           rejected, cancelled, cancellation requests, approved days and who
           is on leave today. Filters → tiles → charts, then the lists below
           with their own filter bar. */}
+      {myAvail && myAvail.length > 0 && (
+        <Panel style={{ marginBottom: 14 }}>
+          <PanelHead title="My leave balance" />
+          <div style={{ padding: '10px 14px 2px' }}><LeaveBalanceCards avail={myAvail} /></div>
+        </Panel>
+      )}
       <InsightsPanel module="leave" storageKey="tl_range_leave" />
 
       <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>

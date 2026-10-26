@@ -174,7 +174,8 @@ const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
     const out2 = await verified(A, { direction: 'Out', key: `k-out2-${RUN}` });
     check('I9 a repeated check-out is a no-op: "Already checked out at"', out2.status === 200 && out2.body.duplicate === true && /^Already checked out at/.test(out2.body.message) && (await punchesOf(A.e, 'Out')).length === 1, out2.body);
     const in2 = await verified(A, { key: `k-in2-${RUN}` });
-    check('I10 checking in again AFTER a check-out is allowed (a new open day)', in2.status === 201 && (await punchesOf(A.e, 'In')).length === 2, in2.body);
+    // founder 2026-10-26: the day locks at the check-out; only the Super Admin unlocks it (attendance-powers-test covers the unlock)
+    check('I10 checking in again AFTER a check-out is refused: the day is locked (DAY_LOCKED)', in2.status === 409 && in2.body.code === 'DAY_LOCKED' && (await punchesOf(A.e, 'In')).length === 1, [in2.status, in2.body]);
     const dayRow = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId: A.e.id, date: today } } });
     const split = require(path.join(BACK, 'src/utils/attendanceMath')).daySplit(await punchesOf(A.e));
     check('I11 the day still reads first check-in / last check-out (no double counting)', !!dayRow && dayRow.checkIn === split.checkIn.time, [dayRow, split.checkIn && split.checkIn.time]);
@@ -192,7 +193,7 @@ const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
     const manual = (e, time, direction = 'In') => call('POST', '/api/attendance/punches', SA.tok, { employeeId: e.id, date: today, time, direction, method: 'Face' });
     const aIn = (await punchesOf(A.e, 'In')).sort((x, y) => x.time.localeCompare(y.time))[0];
     const hrSame = await manual(A.e, aIn.time, 'In');
-    check('H1 HR typing a check-in for the same minute is the same punch', hrSame.status === 200 && hrSame.body.duplicate === true && (await punchesOf(A.e, 'In')).length === 2, hrSame.body);
+    check('H1 HR typing a check-in for the same minute is the same punch', hrSame.status === 200 && hrSame.body.duplicate === true && (await punchesOf(A.e, 'In')).length === 1, hrSame.body);
     const hrLater = await manual(C.e, '23:58', 'Out');
     const hrAgain = await manual(C.e, '23:58', 'Out');
     check('H2 a new minute is recorded once, the repeat is the same punch', hrLater.status === 201 && hrAgain.status === 200 && hrAgain.body.duplicate === true, [hrLater.status, hrAgain.status]);

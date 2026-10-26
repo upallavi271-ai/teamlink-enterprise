@@ -88,12 +88,32 @@ const clock12 = (t) => {
 
 // Web / phone check-in: may this person punch In / Out right now?
 //   { ok:true } | { ok:false, duplicate:true, punch, code, message } | { ok:false, code, message }
+// THE DAY LOCKS AT THE CHECK-OUT (founder 2026-10-26: "once the check-in is frozen only the Super Admin can unfreeze it"). After the
+// person's own check-out (web / phone / HR - not a device punch, whose direction is settled from the day) nothing re-opens the day:
+// a new check-in is refused until the Super Admin unlocks that day (AppSetting attendance.unlock.<employeeId>.<date>, written by
+// POST /api/attendance/day-unlock). One unlock = one more check-in; the next check-out locks the day again.
+const unlockKey = (employeeId, date) => `attendance.unlock.${employeeId}.${date}`;
+async function unlockedSince(db, employeeId, date) {
+  try {
+    const row = await db.appSetting.findUnique({ where: { key: unlockKey(employeeId, date) } });
+    const v = row ? JSON.parse(row.value) : null;
+    return v && v.at ? new Date(v.at) : null;
+  } catch { return null; }
+}
+
 async function webPunchGuard(db, employeeId, date, direction) {
   const rows = await dayPunches(db, employeeId, date);
   const last = rows[rows.length - 1];
   if (direction === 'In') {
     if (last && last.direction === 'In') {
       return { ok: false, duplicate: true, punch: last, code: 'ALREADY_IN', message: `Already checked in at ${clock12(last.time)}.` };
+    }
+    const ownOut = [...rows].reverse().find((p) => p.direction === 'Out' && p.method !== 'Biometric');
+    if (ownOut && last === ownOut) {
+      const at = await unlockedSince(db, employeeId, date);
+      if (!at || at < new Date(ownOut.createdAt)) {
+        return { ok: false, code: 'DAY_LOCKED', message: `You checked out at ${clock12(ownOut.time)}, so today's attendance is locked. Only the Super Admin can unlock it.` };
+      }
     }
     return { ok: true };
   }
@@ -117,4 +137,4 @@ function withLock(key, fn) {
   return run;
 }
 
-module.exports = { minGapSec, resetGapCache, strengthOf, dayPunches, nearDuplicate, mergeStronger, webPunchGuard, withLock, clock12, toMin };
+module.exports = { minGapSec, resetGapCache, strengthOf, dayPunches, nearDuplicate, mergeStronger, webPunchGuard, withLock, clock12, toMin, unlockKey };

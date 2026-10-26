@@ -128,6 +128,31 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
     await api.post('/attendance', { employeeId, date, status });
     load();
   }
+  // SUPER ADMIN POWERS (founder 2026-10-26): change the in / out times (HR too when the Super Admin allows it) and unlock a day that is
+  // locked after the person's check-out. The server decides; these flags only show the buttons.
+  const [perm, setPerm] = useState(null);
+  const [markMsg, setMarkMsg] = useState('');
+  useEffect(() => { if (isHR) api.get('/attendance/time-edit-setting').then((r) => setPerm(r.data)).catch(() => setPerm(null)); }, [isHR]);
+  const errOf = (e, f) => (e && e.response && e.response.data && e.response.data.error) || f;
+  async function editTimes(r) {
+    const ci = window.prompt(`Check-in time for ${r.name} on ${fmtDay(date)} (HH:MM, 24-hour; empty = leave it out):`, r.checkIn ? String(r.checkIn).slice(0, 5) : '');
+    if (ci === null) return;
+    const co = window.prompt(`Check-out time for ${r.name} (HH:MM, 24-hour; empty = leave it out):`, r.checkOut ? String(r.checkOut).slice(0, 5) : '');
+    if (co === null) return;
+    const reason = window.prompt('Why are the times changing? (optional)', '') || '';
+    const marked = r.status && r.status !== 'Not marked' ? r.status : 'Present';
+    try {
+      await api.post('/attendance', { employeeId: r.employeeId, date, status: marked, checkIn: ci.trim() || null, checkOut: co.trim() || null, timesEdit: true, reason });
+      setMarkMsg(`Times saved for ${r.name}: ${ci.trim() || '—'} to ${co.trim() || '—'}.`); load();
+    } catch (e) { setMarkMsg(errOf(e, 'The times could not be saved.')); }
+  }
+  async function unlockDay(r) {
+    if (!window.confirm(`Unlock ${r.name}'s attendance for ${fmtDay(date)}? They can check in once more.`)) return;
+    try { await api.post('/attendance/day-unlock', { employeeId: r.employeeId, date }); setMarkMsg(`${r.name} can check in again for ${fmtDay(date)}.`); } catch (e) { setMarkMsg(errOf(e, 'Could not unlock the day.')); }
+  }
+  async function setHrTimeEdit(on) {
+    try { const r = await api.put('/attendance/time-edit-setting', { hrMayEdit: on }); setPerm((p) => ({ ...p, hrMayEdit: r.data.hrMayEdit })); } catch (e) { setMarkMsg(errOf(e, 'Could not save the setting.')); }
+  }
   const pickRange = (from, to) => { setRange({ from, to }); setKpi(''); };
 
   // Mark Attendance filters — all of them work together, with the KPI card.
@@ -231,7 +256,13 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
             shown={marking.length} total={markingAll.length} style={{ margin: '12px 18px' }}
           >
             {kpi && <button className="btn btn-sm" onClick={() => setKpi('')} title="Show everyone again">✕ {KPI_NAME[kpi] || kpi}</button>}
+            {perm && perm.canChangeSetting && (
+              <label className="small-muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center', marginLeft: 8 }} title="Only the Super Admin changes times unless this is on">
+                <input type="checkbox" checked={!!perm.hrMayEdit} onChange={(e) => setHrTimeEdit(e.target.checked)} /> HR may change times
+              </label>
+            )}
           </PeopleFilterBar>
+          {markMsg && <div className="small-muted" role="status" style={{ margin: '0 18px 8px' }}>{markMsg}</div>}
           <ScrollTable>
             <table>
               <thead><tr><th>Code</th><th>Name</th><th>Department</th><th title="From punches, marks, leave, holidays">Day status</th><th title="What HR marked (the Mark buttons change this)">Marked</th><th>In</th><th>Out</th><th>Location</th><th style={{ textAlign: 'right' }}>Mark</th></tr></thead>
@@ -247,9 +278,11 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
                     <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                     <td className="cell-muted">{r.location || '—'}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                      {canMark ? ['Present', 'Absent', 'Half Day'].map((s) => (
-                        <button key={s} className="btn btn-sm" style={{ marginLeft: 4 }} onClick={() => mark(r.employeeId, s)}>{s}</button>
+                      {canMark ? [['Present', 'Present'], ['Absent', 'Absent'], ['Half Day', 'Half Day'], ['On Leave', 'Leave']].map(([s, label]) => (
+                        <button key={s} className="btn btn-sm" style={{ marginLeft: 4 }} onClick={() => mark(r.employeeId, s)}>{label}</button>
                       )) : <span className="cell-muted">—</span>}
+                      {perm && perm.mayEditTimes && <button className="btn btn-sm" style={{ marginLeft: 4 }} title="Change the check-in / check-out time" onClick={() => editTimes(r)}>⏱ Time</button>}
+                      {perm && perm.mayUnlockDay && r.checkOut && <button className="btn btn-sm" style={{ marginLeft: 4 }} title="Let this person check in once more today (the day locks at the check-out)" onClick={() => unlockDay(r)}>🔓 Unlock</button>}
                     </td>
                   </tr>
                 ))}

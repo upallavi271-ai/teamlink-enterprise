@@ -394,6 +394,8 @@ module.exports = function registerSelfAttendance(router, { getConfig, methodsOf,
       throw err;
     }
     if (blocked) { if (stored) attachments.remove(stored.billFile); return answerGuard(res, blocked); }
+    // the device punches of the day are re-read with this web punch in place (a device punch just before a web check-out is an interval)
+    await require('../utils/biometricDevice').settleBiometricDirections(own.id, punch.date).catch(() => {}); // eslint-disable-line global-require
     await D.applyPunchToDay(prisma, punch, cfg);
     // Items 4/6: working on a leave day changes what the leave uses.
     leaveCharge.afterAttendanceChange(own.id, punch.date);

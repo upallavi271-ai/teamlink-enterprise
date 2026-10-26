@@ -1172,6 +1172,9 @@ model Attendance {
   status     String // Present | Absent | Late | Half Day | Leave
   checkIn    String?
   checkOut   String?
+  // set when the Super Admin (or HR, when allowed) changed the times in Marked attendance: these times then stand over the punches
+  timesSetBy String?
+  timesSetAt DateTime?
   createdAt  DateTime @default(now())
 
   @@unique([employeeId, date])

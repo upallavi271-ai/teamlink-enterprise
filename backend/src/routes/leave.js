@@ -1069,6 +1069,38 @@ router.get('/holidays', async (req, res) => {
 router.get('/holiday-types', (req, res) => res.json(HOLIDAY_TYPES));
 
 // How many days of from..to a leave request really uses: Sundays and company holidays are not counted.
+// WHO ELSE IS ON LEAVE THEN (founder 2026-10-26: "when an employee applies, show a reminder like 'people in your team / department are on
+// leave' - but they can still apply"). For the dates being applied for: the colleagues of the SAME TEAM, and of the same department,
+// with an approved or pending leave overlapping them. A reminder only - the request is never blocked by it. Names, dates and status only
+// (never the leave type or reason). The person themselves is left out. HR applying for somebody passes ?employeeId=.
+router.get('/who-else', async (req, res, next) => {
+  try {
+    const from = String(req.query.from || '').slice(0, 10);
+    const to = String(req.query.to || req.query.from || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to) || to < from) return res.status(400).json({ error: 'Send from and to dates (YYYY-MM-DD).' });
+    let me = null;
+    if (req.query.employeeId) {
+      const e = await prisma.employee.findUnique({ where: { id: String(req.query.employeeId) } });
+      if (e && employeeInScope(req.user, e)) me = e;
+    }
+    if (!me) me = await prisma.employee.findFirst({ where: { userId: req.user.id } });
+    if (!me || !me.department) return res.json({ team: [], department: [], teamName: null, departmentName: null });
+    const rows = await prisma.leaveRequest.findMany({
+      where: {
+        status: { in: ['Approved', 'Pending'] }, fromDate: { lte: to }, toDate: { gte: from }, employeeId: { not: me.id },
+        employee: { is: { department: me.department, employmentStatus: { notIn: ['Relieved', 'Exited'] } } },
+      },
+      select: { fromDate: true, toDate: true, status: true, days: true, employee: { select: { id: true, name: true, team: true, designation: true } } },
+      orderBy: { fromDate: 'asc' },
+      take: 200,
+    });
+    const shape = (r) => ({ name: r.employee.name, designation: r.employee.designation || null, fromDate: r.fromDate, toDate: r.toDate, status: r.status, days: r.days });
+    const team = me.team ? rows.filter((r) => r.employee.team && r.employee.team === me.team).map(shape) : [];
+    const department = rows.filter((r) => !(me.team && r.employee.team === me.team)).map(shape);
+    return res.json({ teamName: me.team || null, departmentName: me.department, team, department });
+  } catch (err) { return next(err); }
+});
+
 router.get('/day-count', async (req, res) => {
   const from = String(req.query.from || '').slice(0, 10);
   const to = String(req.query.to || req.query.from || '').slice(0, 10);

@@ -147,7 +147,7 @@ async function markDay(employeeId, date, cfg) {
     await prisma.attendance.create({
       data: { employeeId, date, status: checkIn && isLate(checkIn, cfg.graceTime) ? 'Late' : 'Present', checkIn, checkOut },
     });
-  } else if (existing.checkIn !== checkIn || existing.checkOut !== checkOut) {
+  } else if (!existing.timesSetBy && (existing.checkIn !== checkIn || existing.checkOut !== checkOut)) { // times set by the Super Admin / HR stand
     const data = { checkIn, checkOut };
     // An earlier punch arrived late: Present / Late follow the new punch-in.
     // Any other status (leave, half day, set by HR) is left as it is.
@@ -165,17 +165,48 @@ async function markDay(employeeId, date, cfg) {
 // an Out, so the LAST punch is the punch-out and the latest punch shows as
 // such. Only device punches are re-labelled; a punch HR entered keeps the
 // direction HR gave it. Re-run on every punch, so late batches settle right.
+//
+// INTERVALS, NOT AN EARLY CHECK-OUT (founder 2026-10-26: "a web check-in and then a biometric check-in must be taken as an interval, not a
+// check-out; and many biometric check-ins are intervals"). Over ALL of the day's punches, in time order:
+//   * a punch within NEAR_MIN minutes of the punch before it is the same arrival / the same visit (a web check-in on the phone and then
+//     the finger on the device) - a device punch like that is an "In" and never ends the day;
+//   * of the rest, the first is the punch-in, the LAST is the punch-out (as before), and the device punches in between alternate
+//     Out / In = break out / back from break (intervals);
+//   * web / phone / HR punches keep the direction the person pressed.
+const NEAR_MIN = 15;
+const minOf = (p) => { const m = /^(\d{1,2}):(\d{2})/.exec(p.clockTime || p.time || ''); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+function settledDirections(ps) {
+  const want = new Map();
+  const kept = [];
+  for (const p of ps) {
+    const prev = kept[kept.length - 1];
+    const near = prev && minOf(p) != null && minOf(prev) != null && minOf(p) - minOf(prev) < NEAR_MIN;
+    if (near) { if (p.method === 'Biometric') want.set(p.id, 'In'); continue; } // eslint-disable-line no-continue
+    kept.push(p);
+  }
+  kept.forEach((p, k) => {
+    if (p.method !== 'Biometric') return;
+    if (k === 0) want.set(p.id, 'In');
+    else if (k === kept.length - 1) want.set(p.id, 'Out');
+    else {
+      // a break-out needs a way back: one device punch right before an explicit web / HR check-out is just an interval (In)
+      const next = kept[k + 1];
+      const beforeWebOut = next && next.method !== 'Biometric' && next.direction === 'Out';
+      want.set(p.id, k % 2 === 1 && !beforeWebOut ? 'Out' : 'In');
+    }
+  });
+  return want;
+}
 async function settleBiometricDirections(employeeId, date) {
   const ps = sortedPunches(await prisma.attendancePunch.findMany({
     where: { employeeId, date }, select: { id: true, time: true, clockTime: true, method: true, direction: true },
   }));
   if (!ps.length) return;
-  const firstId = ps[0].id;
+  const want = settledDirections(ps);
   for (const p of ps) {
-    if (p.method !== 'Biometric') continue;
-    const want = p.id === firstId ? 'In' : 'Out';
+    const w = want.get(p.id);
     // eslint-disable-next-line no-await-in-loop
-    if (p.direction !== want) await prisma.attendancePunch.update({ where: { id: p.id }, data: { direction: want } });
+    if (w && p.direction !== w) await prisma.attendancePunch.update({ where: { id: p.id }, data: { direction: w } });
   }
 }
 
@@ -398,4 +429,5 @@ module.exports = {
   portOf, splitVendor, deviceState, parseInfo, parseInfoParam, findDevice, touch,
   noteUnknown, listUnknown, optionsReply, ingestAttlog, ingestOperlog, applyPin,
   queueUserQuery, queueUserQueryIfEmpty, takeCommands, noteCommandReply, commandStatus,
+  settleBiometricDirections, settledDirections,
 };

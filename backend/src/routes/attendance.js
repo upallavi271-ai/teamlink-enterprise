@@ -217,9 +217,61 @@ router.get('/', async (req, res) => {
   res.json(attendance);
 });
 
+// ---- SUPER ADMIN POWERS ON A DAY (founder 2026-10-26) ------------------------------------------------------------------------------
+//   * UNLOCK a day that is locked after the person's check-out (utils/punchGuard.js webPunchGuard): only the Super Admin.
+//   * CHANGE THE CHECK-IN / CHECK-OUT TIMES in Marked attendance: the Super Admin always; HR only while the Super Admin allows it
+//     (AppSetting 'attendance.hrTimeEdit' = { on }).
+// "Super Admin" here = the real Super Admin role (the Internal HR delegates who act like one for other screens are HR for this).
+const isRealSuperAdmin = (u) => !!u && (u.role === 'SUPER_ADMIN' || u.hrmsRole === 'SUPER_ADMIN') && !u.hrSuper;
+const isHrDeskUser = (u) => !!u && (['HR', 'ADMIN'].includes(u.role) || ['HR', 'ADMIN'].includes(u.hrmsRole) || !!u.hrSuper);
+const TIME_EDIT_KEY = 'attendance.hrTimeEdit';
+async function hrTimeEditOn() {
+  try { const r = await prisma.appSetting.findUnique({ where: { key: TIME_EDIT_KEY } }); return !!(r && JSON.parse(r.value).on); } catch { return false; }
+}
+async function mayEditTimes(u) { return isRealSuperAdmin(u) || (isHrDeskUser(u) && await hrTimeEditOn()); }
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+router.get('/time-edit-setting', async (req, res) => {
+  res.json({ hrMayEdit: await hrTimeEditOn(), canChangeSetting: isRealSuperAdmin(req.user), mayEditTimes: await mayEditTimes(req.user), mayUnlockDay: isRealSuperAdmin(req.user) });
+});
+router.put('/time-edit-setting', async (req, res) => {
+  if (!isRealSuperAdmin(req.user)) return res.status(403).json({ error: 'Only the Super Admin decides whether HR may change attendance times.' });
+  const on = !!(req.body && req.body.hrMayEdit);
+  const value = JSON.stringify({ on, by: req.user.name, at: new Date().toISOString() });
+  await prisma.appSetting.upsert({ where: { key: TIME_EDIT_KEY }, create: { key: TIME_EDIT_KEY, value }, update: { value } });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: `HR may change attendance times: ${on ? 'ON' : 'OFF'}`, entity: 'AppSetting', entityId: TIME_EDIT_KEY, toValue: on ? 'ON' : 'OFF' });
+  res.json({ hrMayEdit: on });
+});
+
+router.post('/day-unlock', async (req, res) => {
+  if (!isRealSuperAdmin(req.user)) return res.status(403).json({ error: 'Only the Super Admin can unlock a day after the check-out.' });
+  const { employeeId, date } = req.body || {};
+  if (!employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return res.status(400).json({ error: 'employeeId and date (YYYY-MM-DD) are required' });
+  const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, userId: true } });
+  if (!emp) return res.status(404).json({ error: 'Employee not found' });
+  const key = require('../utils/punchGuard').unlockKey(emp.id, date); // eslint-disable-line global-require
+  const value = JSON.stringify({ at: new Date().toISOString(), by: req.user.name, reason: String((req.body && req.body.reason) || '').slice(0, 200) || null });
+  await prisma.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Attendance day unlocked by the Super Admin', entity: 'Employee', entityId: emp.id, toValue: date, reason: (req.body && req.body.reason) || undefined });
+  if (emp.userId) {
+    await prisma.notification.create({ data: { userId: emp.userId, title: 'You can check in again', message: `The Super Admin unlocked your attendance for ${date}. You can check in again.`, channel: 'In-App', recipient: `dayunlock|${emp.id}|${date}|${Date.now()}`, status: 'Delivered' } }).catch(() => null);
+  }
+  res.json({ ok: true, employeeId: emp.id, date });
+});
+
 // Employees mark their own attendance; HR/managers can mark for anyone.
 router.post('/', async (req, res) => {
   const { date, status, checkIn, checkOut } = req.body;
+  // MARKED ATTENDANCE TIME CHANGE (founder 2026-10-26): times are written only by the Super Admin (or HR when allowed), and then they
+  // stand over the device / web punches for that day (Attendance.timesSetBy, read by utils/attendanceDays.js).
+  const timesEdit = !!(req.body && req.body.timesEdit);
+  if (timesEdit) {
+    if (!(await mayEditTimes(req.user))) return res.status(403).json({ error: 'Changing check-in / check-out times is for the Super Admin, or HR when the Super Admin allows it.' });
+    if ((checkIn && !HHMM.test(checkIn)) || (checkOut && !HHMM.test(checkOut))) return res.status(400).json({ error: 'Times must be HH:MM (24-hour), e.g. 09:30 or 18:15.' });
+    if (checkIn && checkOut && checkOut <= checkIn) return res.status(400).json({ error: 'The check-out must be after the check-in.' });
+  } else if (!req.user.caps.hrmsSelfOnly && (checkIn !== undefined || checkOut !== undefined) && !(await mayEditTimes(req.user))) {
+    return res.status(403).json({ error: 'Changing check-in / check-out times is for the Super Admin, or HR when the Super Admin allows it.' });
+  }
   let employeeId = req.body.employeeId;
   if (req.user.caps.hrmsSelfOnly) {
     const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
@@ -235,12 +287,24 @@ router.post('/', async (req, res) => {
     if (!employeeInScope(req.user, target)) return res.status(403).json(OUT_OF_SCOPE);
   }
 
+  const before = await prisma.attendance.findUnique({ where: { employeeId_date: { employeeId, date } } });
+  // times the Super Admin / HR set are not overwritten by the person's own mark
+  if (!timesEdit && before && before.timesSetBy && ((checkIn !== undefined && checkIn !== before.checkIn) || (checkOut !== undefined && checkOut !== before.checkOut))) {
+    return res.status(403).json({ error: `These times were set by ${before.timesSetBy}. Ask HR to change them.` });
+  }
+  const timeData = timesEdit ? { checkIn: checkIn || null, checkOut: checkOut || null, timesSetBy: req.user.name || req.user.email, timesSetAt: new Date() } : { checkIn, checkOut };
   const attendance = await prisma.attendance.upsert({
     where: { employeeId_date: { employeeId, date } },
-    update: { status, checkIn, checkOut },
-    create: { employeeId, date, status, checkIn, checkOut },
+    update: { status, ...timeData },
+    create: { employeeId, date, status, ...timeData },
   });
   await logAudit({ userId: req.user.id, action: 'Attendance marked', entity: 'Attendance', entityId: attendance.id, toValue: status });
+  if (timesEdit) {
+    await logAudit({
+      userId: req.user.id, actorName: req.user.name, action: 'Attendance times changed', entity: 'Attendance', entityId: attendance.id,
+      fromValue: before ? `${before.checkIn || '—'} - ${before.checkOut || '—'}` : '(none)', toValue: `${checkIn || '—'} - ${checkOut || '—'}`, reason: (req.body && req.body.reason) || undefined,
+    });
+  }
   res.status(201).json(attendance);
 });
 

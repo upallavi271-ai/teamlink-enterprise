@@ -228,8 +228,10 @@ function newDayStatus({
   const ps = sortedPunches(punches);
   const fin = dayCheckIn(ps);
   const lout = dayCheckOut(ps);
-  const checkIn = (fin && fin.time) || (record && record.checkIn) || null;
-  let checkOut = (lout && lout.time) || (record && record.checkOut) || null;
+  // times the Super Admin (or HR, when allowed) set in Marked attendance stand over the punches (2026-10-26)
+  const setByHr = !!(record && record.timesSetBy);
+  const checkIn = (setByHr && record.checkIn) || (fin && fin.time) || (record && record.checkIn) || null;
+  let checkOut = (setByHr && record.checkOut) || (lout && lout.time) || (record && record.checkOut) || null;
   if (checkOut && checkIn && toMinutes(checkOut) != null && toMinutes(checkIn) != null && toMinutes(checkOut) <= toMinutes(checkIn)) {
     // An "out" earlier than the first "in" is not the end of this session.
     checkOut = null;
@@ -367,8 +369,10 @@ function legacyDayStatus({
   const ps = sortedPunches(punches);
   const fin = dayCheckIn(ps);
   const lout = dayCheckOut(ps);
-  const checkIn = (fin && fin.time) || (record && record.checkIn) || null;
-  let checkOut = (lout && lout.time) || (record && record.checkOut) || null;
+  // times the Super Admin (or HR, when allowed) set in Marked attendance stand over the punches (2026-10-26)
+  const setByHr = !!(record && record.timesSetBy);
+  const checkIn = (setByHr && record.checkIn) || (fin && fin.time) || (record && record.checkIn) || null;
+  let checkOut = (setByHr && record.checkOut) || (lout && lout.time) || (record && record.checkOut) || null;
   if (checkOut && checkIn && toMinutes(checkOut) != null && toMinutes(checkIn) != null && toMinutes(checkOut) <= toMinutes(checkIn)) {
     // An "out" earlier than the first "in" is not the end of this session.
     checkOut = null;
@@ -932,7 +936,7 @@ async function applyPunchToDay(prisma, punch, cfg) {
     } else if (!existing.checkIn) {
       await prisma.attendance.update({ where: { id: existing.id }, data: { checkIn: punch.time } });
     }
-  } else if (existing) {
+  } else if (existing && !existing.timesSetBy) { // times set by the Super Admin / HR are not overwritten by a later punch
     await prisma.attendance.update({ where: { id: existing.id }, data: { checkOut: punch.time } });
   }
 }
