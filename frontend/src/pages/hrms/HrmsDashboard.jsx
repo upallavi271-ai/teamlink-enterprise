@@ -157,7 +157,7 @@ function HrDashboard() {
 
       <SectionLabel>Employee Overview</SectionLabel>
       <Tiles section="emp" drill={drill} onPick={pick} cells={[
-        { id: 'total', tile: 'total', value: eo.total, label: now('Total Employees') },
+        { id: 'total', tile: 'total', value: eo.total, label: now('Total Employees'), help: `Active ${eo.active} + Notice period ${eo.servingNotice} + Exit process ${eo.exitProcess} + Left ${eo.left} (Relieved ${eo.relieved}, Exited ${eo.exited})${eo.other ? ` + Other ${eo.other}` : ''} = ${eo.total}. The system Super Admin account is not counted.` },
         { id: 'headcount', tile: 'empHeadcount', value: eo.headcount, label: now('Headcount'), help: 'The people working here now: everybody who has not left (Active + Serving notice + Exit process).' },
         { id: 'active', tile: 'active', value: eo.active, label: now('Active') },
         { id: 'notice', tile: 'notice', value: eo.servingNotice, label: now('Serving Notice') },
@@ -165,19 +165,6 @@ function HrDashboard() {
         { id: 'left', tile: 'left', value: eo.left, label: now('Left'), parts: [{ label: 'Relieved', n: eo.relieved, part: 'relieved' }, { label: 'Exited', n: eo.exited, part: 'exited' }] },
         ...(eo.other ? [{ id: 'other', tile: 'other', value: eo.other, label: now('Other Status'), sub: (eo.otherStatuses || []).join(', ') }] : []),
       ]} />
-      {/* THE FIRST ROW ADDS UP — said out loud, like the attendance row does. */}
-      <div className="hd-eq">
-        Active <b>{eo.active}</b> + Notice period <b>{eo.servingNotice}</b> + Exit process <b>{eo.exitProcess}</b> + Left <b>{eo.left}</b> (Relieved {eo.relieved} · Exited {eo.exited}){eo.other ? <> + Other <b>{eo.other}</b></> : null} = Total employees <b>{eo.total}</b>.
-        {' '}The system Super Admin account is not counted as an employee.
-      </div>
-      {/* EXIT APPROVALS (HRMS spec item 6): for the Super Admin and HR desk only (the server sends it only to them). */}
-      {data.exitApprovals && (
-        <div className="hd-eq">
-          {data.exitApprovals.waiting > 0 ? <>Exit approvals waiting: <b>{data.exitApprovals.waiting}</b></> : <>No exit is waiting for approval</>}
-          {' · '}{data.exitApprovals.exitsThisMonth > 0 ? <>Left in {data.exitApprovals.monthLabel}: <b>{data.exitApprovals.exitsThisMonth}</b></> : <>Nobody has left in {data.exitApprovals.monthLabel} so far</>}.
-          {' '}<Link to="/employee-services?tab=resignation&view=exits">Open Exit approvals</Link>
-        </div>
-      )}
       <div className="hd-subhead">{`For ${p.name}`}</div>
       <Tiles section="emp" drill={drill} onPick={pick} cells={[
         { id: 'new', tile: 'newJoiners', value: eo.newJoiners, label: inP('New Joiners') },
@@ -197,12 +184,12 @@ function HrDashboard() {
           the range runs on past it), out of the people on the rolls that day.
           The buckets add up to the headcount, and match the Attendance
           page's Dashboard for the same date. */}
-      <SectionLabel>{`Attendance on ${ao.asOf} — people on the rolls that day${p.days > 1 ? ` (last day of ${p.name}; the charts below cover the whole range)` : ''}`}</SectionLabel>
+      <SectionLabel>{`Attendance on ${ao.asOf}`}</SectionLabel>
       {/* THE TILE SET (user, 2026-10-09): Present / Absent / Half day / On leave / Week off-Holiday
           always add up to the Headcount. Present = everyone who came to work, so Late, Early
           logout, Missing check-in and Missing check-out are only small notes INSIDE it. */}
       <Tiles section="att" drill={drill} onPick={pick} cells={[
-        { id: 'headcount', tile: 'headcount', value: ao.headcount, label: 'Headcount on the rolls', sub: headcountNote,
+        { id: 'headcount', tile: 'headcount', value: ao.headcount, label: 'Headcount on the rolls', help: 'Present + Absent + Half day + On leave + Week off / Holiday (+ Not checked in yet) = Headcount. Late, early logout and missing punches are already inside Present.', sub: headcountNote,
           help: 'Everyone on the company rolls on this date: joined on or before it and not yet left. The five tiles beside it add up to this number.' },
         {
           id: 'present', tile: 'present', value: ao.present, label: 'Present', sub: 'Came to work',
@@ -251,29 +238,13 @@ function HrDashboard() {
         // Regularization Pending (now) was the same figure as "Attendance
         // Regularization" under Pending Tasks & Approvals — shown there once.
       ]} />
-      <div className="hd-eq" data-testid="att-equation">
-        Present <b>{ao.present}</b> + Absent <b>{ao.absent}</b> + Half day <b>{ao.halfDay}</b> + On leave <b>{ao.onLeave}</b> + Week off / Holiday <b>{ao.offDay}</b>
-        {ao.noRecord ? <> + No device data <b>{ao.noRecord}</b></> : ''}{ao.notYet ? <> + Not checked in yet <b>{ao.notYet}</b></> : ''}{ao.upcoming ? <> + Upcoming <b>{ao.upcoming}</b></> : ''} = Headcount <b>{ao.headcount}</b>
-        {'. '}Late, Early logout, Missing check-in and Missing check-out are not extra tiles - those people are already counted in Present.
-      </div>
-      {ao.lateChips ? <div className="hd-eq" data-testid="late-chips">{ao.lateChips}. An approved late coming stays Present and is not counted as a late arrival.</div> : null}
       {drill && drill.section === 'att' && (
         <DrillPanel drill={drill} expected={drill.expected} params={params} onClose={() => setDrill(null)} moreTo="/attendance" moreLabel="Open the full Attendance page" />
       )}
 
-      <SectionLabel>{`Leave Overview — requests overlapping ${p.name}`}</SectionLabel>
-      {/* THE LEAVE NUMBERS EXPLAIN THEMSELVES: requests -> where each lands in the attendance tiles. */}
-      <div className="hd-eq hd-lv-sentence" data-testid="leave-sentence">
-        <b>Leave requests {lo.total}</b> = Approved <b>{lo.approved}</b>
-        {lr.requests > 0 && landWords.length > 0 ? <> → {landWords.join(' + ')}</> : null}
-        {lo.pending || lo.rejected || lo.cancelled || lo.cancellationRequests ? <> + Pending <b>{lo.pending}</b>{lo.pendingOther ? <> + Old or left pending <b>{lo.pendingOther}</b></> : null} + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null}</> : null}.
-        {' '}This overview counts <b>requests</b>; the attendance tiles count <b>people</b> on {ao.asOf}.
-        {lo.approvedPeople != null && lo.approvedPeople !== lo.approved ? <> The {lo.approved} approved requests are from <b>{lo.approvedPeople}</b> {lo.approvedPeople === 1 ? 'person' : 'people'} (a person with two requests counts twice here).</> : null}
-        {lr.peopleWithMore ? <> {lr.peopleWithMore} {lr.peopleWithMore === 1 ? 'person has' : 'people have'} two approved requests on {ao.asOf}.</> : null}
-        {p.days > 1 ? <> Rule for a range: the requests are all those that overlap {p.name}; the attendance tiles show the last day ({ao.asOf}), and the arrows below are for that day.</> : null}
-      </div>
+      <SectionLabel>{`Leave — ${p.name}`}</SectionLabel>
       <Tiles section="leave" drill={drill} onPick={pick} cells={[
-        { id: 'total', tile: 'leaveTotal', value: lo.total, label: 'Leave Requests' },
+        { id: 'total', tile: 'leaveTotal', value: lo.total, label: 'Leave Requests', help: 'Every leave request that overlaps the period: Pending + Approved + Rejected + Cancelled. It counts requests; the attendance cards count people.' },
         { id: 'pending', tile: 'leavePending', value: lo.pending, label: 'Pending Approvals', sub: 'Only leave dated in this range' },
         {
           id: 'approved', tile: 'leaveApproved', value: lo.approved, label: 'Approved', sub: `${lo.approvedFullDay || 0} full day · ${lo.approvedHalfDay || 0} half day · ${lo.approvedPeople || 0} ${lo.approvedPeople === 1 ? 'person' : 'people'}`,
@@ -284,10 +255,6 @@ function HrDashboard() {
         ...(lo.cancellationRequests ? [{ id: 'asked', tile: 'leaveCancelAsked', value: lo.cancellationRequests, label: 'Cancellation Asked' }] : []),
         { id: 'upcoming', tile: 'leaveUpcoming', value: lo.upcoming, label: 'Upcoming Leaves (from today)', sub: 'Approved, starting after today. Not part of the total.' },
       ]} />
-      <div className="hd-eq">
-        Pending <b>{lo.pending}</b>{lo.pendingOther ? <> + Old or left pending <b>{lo.pendingOther}</b></> : null} + Approved <b>{lo.approved}</b> + Rejected <b>{lo.rejected}</b> + Cancelled <b>{lo.cancelled}</b>{lo.cancellationRequests ? <> + Cancellation asked <b>{lo.cancellationRequests}</b></> : null} = Leave Requests <b>{lo.total}</b>.
-        {/* The split of the approved requests is the sentence above the tiles and the chips under Approved. */}
-      </div>
       {drill && drill.section === 'leave' && (
         <DrillPanel drill={drill} expected={drill.expected} params={params} onClose={() => setDrill(null)} moreTo="/leave" moreLabel="Open Leave Requests" />
       )}
@@ -296,7 +263,7 @@ function HrDashboard() {
           tiles above: same range, same filters, same scope. */}
       {(data.charts || []).length > 0 && (
         <>
-          <SectionLabel>{`Charts — ${p.name} (attendance charts are person-days: every day of the range added up)`}</SectionLabel>
+          <SectionLabel>{`Charts — ${p.name}`}</SectionLabel>
           <div className="tlc-grid2 hd-charts">
             {data.charts.map((c) => <ChartFromSpec key={c.id} spec={c} />)}
           </div>
@@ -340,9 +307,6 @@ function HrDashboard() {
                 ))}
               </div>
             )}
-          <div className="small-muted" style={{ fontSize: 11.5, padding: '8px 14px' }}>
-            Working <b>{deptWorking}</b> + Left <b>{deptLeft}</b> = Total employees <b>{eo.total}</b>. Working = everyone except Relieved / Exited.
-          </div>
         </Panel>
         <Panel>
           <PanelHead title={`Birthdays & Anniversaries (next 30 days) — ${data.celebrations.length}`} />
