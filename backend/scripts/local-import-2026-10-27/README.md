@@ -22,6 +22,17 @@ node scripts/local-import-2026-10-27/import-agreement-clients.js --zip "<extract
 
 Add `--apply` to write. `add-sheet-clients.js` takes the same `--med / --mfg / --edu`. `joinings-run.js --db <file> [--create-clients] -- <importer args>`.
 
+## Added later the same day
+
+| Script | What it does |
+|--------|--------------|
+| `edu-resolve.js` | Maps the "college" column of an Education sheet to the local clients (the joinings importer's name rules + hand-checked short names); writes a JSON map and lists what did not match. |
+| `edu-tracker-plan.js` | PLAN only: the Education interview tracker -> the app's own Candidates and Applications import files (one candidate per phone / e-mail, one application per person + college, the latest row decides the step). The files are then checked and committed through `/api/ats-io/import/<kind>/check` and `/commit`. |
+| `edu1-import.js` | Edu - 1 Requirement Sheet: one "Faculty requirement" per college (Running = OPEN, Stopped = CLOSED), nothing new where one already exists, disagreements listed and left alone. `--bde "<name>"` sets the client manager of colleges that are new. |
+| `edu2-clients.js` | Maps every row of the Edu - 2 sheet to its client (input for `edu-tl.js`). |
+| `edu-tl.js` | Sets the TL on Education requirements by sheet: `--team-a "<TL>"` for Edu - 1 colleges, `--team-b "<TL>"` for Edu - 2 colleges; only where no TL is written yet; a college on both sheets is left alone. |
+| `recruiter-report.js` | Read only: the recruiter-wise / BDE-wise / client-wise status report as one Excel file (candidate phone numbers and e-mails left out). Write it outside the repository. |
+
 ## Done through the app, not by a script
 
 - Employees: HRMS > Employee Management > Import (`/api/employees/bulk-import`) with the global employee export; leavers imported as Inactive, then given their Relieved / Exited status.
