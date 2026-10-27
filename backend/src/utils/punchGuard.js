@@ -90,7 +90,7 @@ const clock12 = (t) => {
 //   { ok:true } | { ok:false, duplicate:true, punch, code, message } | { ok:false, code, message }
 // THE DAY LOCKS AT THE CHECK-OUT (founder 2026-10-26: "once the check-in is frozen only the Super Admin can unfreeze it"). After the
 // person's own check-out (web / phone / HR - not a device punch, whose direction is settled from the day) nothing re-opens the day:
-// a new check-in is refused until the Super Admin unlocks that day (AppSetting attendance.unlock.<employeeId>.<date>, written by
+// a new check-in is refused until the Super Admin or HR unlocks that day (AppSetting attendance.unlock.<employeeId>.<date>, written by
 // POST /api/attendance/day-unlock). One unlock = one more check-in; the next check-out locks the day again.
 const unlockKey = (employeeId, date) => `attendance.unlock.${employeeId}.${date}`;
 async function unlockedSince(db, employeeId, date) {
@@ -112,7 +112,7 @@ async function webPunchGuard(db, employeeId, date, direction) {
     if (ownOut && last === ownOut) {
       const at = await unlockedSince(db, employeeId, date);
       if (!at || at < new Date(ownOut.createdAt)) {
-        return { ok: false, code: 'DAY_LOCKED', message: `You checked out at ${clock12(ownOut.time)}, so today's attendance is locked. Only the Super Admin can unlock it.` };
+        return { ok: false, code: 'DAY_LOCKED', message: `You checked out at ${clock12(ownOut.time)}, so today's attendance is locked. Only the Super Admin or HR can unlock it.` };
       }
     }
     return { ok: true };

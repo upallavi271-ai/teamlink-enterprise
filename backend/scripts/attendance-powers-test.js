@@ -63,14 +63,19 @@ const Z = require('./lib/zzfix')('APW');
     await p('09:00', 'In', 'Web Check-in'); await new Promise((r) => setTimeout(r, 20)); await p('18:00', 'Out', 'Web Check-in');
     const k1 = await webPunchGuard(prisma, eEmp.id, D6, 'In');
     Z.check('F1 after their own check-out a new check-in is refused: DAY_LOCKED', k1.ok === false && k1.code === 'DAY_LOCKED', k1);
-    const hu = await Z.call('POST', '/api/attendance/day-unlock', hTok, { employeeId: eEmp.id, date: D6 });
-    Z.check('F2 HR cannot unlock the day (only the Super Admin)', hu.status === 403, hu.status);
-    const su = await Z.call('POST', '/api/attendance/day-unlock', sTok, { employeeId: eEmp.id, date: D6, reason: 'ZZTEST APW forgot the laptop' });
+    const adm = await mk('adm', 'ADMIN', 'Management');
+    const au = await Z.call('POST', '/api/attendance/day-unlock', await Z.mint(adm), { employeeId: eEmp.id, date: D6 });
+    const eu = await Z.call('POST', '/api/attendance/day-unlock', eTok, { employeeId: eEmp.id, date: D6 });
+    Z.check('F2 an Admin or the employee cannot unlock the day (Super Admin and HR only)', au.status === 403 && eu.status === 403, [au.status, eu.status]);
+    const hu = await Z.call('POST', '/api/attendance/day-unlock', hTok, { employeeId: eEmp.id, date: D6, reason: 'ZZTEST APW forgot the laptop' });
     const k2 = await webPunchGuard(prisma, eEmp.id, D6, 'In');
-    Z.check('F3 the Super Admin unlocks it and the person can check in again', su.status === 200 && k2.ok === true, [su.status, k2]);
+    Z.check('F3 HR unlocks it and the person can check in again', hu.status === 200 && k2.ok === true, [hu.status, k2]);
     await new Promise((r) => setTimeout(r, 20)); await p('19:00', 'In', 'Web Check-in'); await new Promise((r) => setTimeout(r, 20)); await p('20:00', 'Out', 'Web Check-in');
     const k3 = await webPunchGuard(prisma, eEmp.id, D6, 'In');
     Z.check('F4 one unlock = one more check-in; the next check-out locks the day again', k3.ok === false && k3.code === 'DAY_LOCKED', k3.code);
+    const su = await Z.call('POST', '/api/attendance/day-unlock', sTok, { employeeId: eEmp.id, date: D6, reason: 'ZZTEST APW' });
+    const k4 = await webPunchGuard(prisma, eEmp.id, D6, 'In');
+    Z.check('F5 the Super Admin can unlock it too', su.status === 200 && k4.ok === true, [su.status, k4]);
 
     // 5 — the key pressed on the device decides In / Out (owner 2026-10-26)
     let n = 0;
