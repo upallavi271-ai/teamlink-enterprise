@@ -24,6 +24,8 @@ const TAX = require('../utils/invoiceTax');
 const CI = require('../utils/clientInvoice');
 // 2026-10-21 — "proof attached, nothing received" says so (utils/invoicePaymentState.js): a proof is never money by itself.
 const IPS = require('../utils/invoicePaymentState');
+// Verified by the bank, or only recorded? (Accounts prompt 2026-10-27)
+const IV = require('../utils/invoiceVerify');
 // Map<invoiceId, [{ date, amount }]> of the bank credits in state Matched (not yet Reconciled) that point at those invoices.
 async function matchedCreditsOf(ids) {
   const out = new Map();
@@ -474,6 +476,12 @@ function paymentHistoryOf(i, received, txnById) {
       bankLineDate: t ? t.date : null,
       bankLineReference: t ? (t.reference || null) : null,
       bankLineState: t ? t.reconStatus : null,
+      // where the receipt came from, and whether a real bank credit stands behind it (utils/invoiceVerify.js)
+      source: IV.sourceOf(p),
+      verified: IV.rowVerified(p, p.bankTxnId ? (t || null) : null),
+      matchMethod: t ? (t.matchedBy || null) : null,
+      verifiedOn: t ? (t.matchedDate || null) : null,
+      statementFile: t ? (t.importFile || null) : null,
       // A receipt is "proved" by a statement line, or by a reference the person typed.
       proof: t ? 'bank statement' : (p.reference ? 'reference typed' : null),
       recordedBy: p.recordedBy || null,
@@ -541,7 +549,7 @@ async function buildRegister(user, query) {
   // The statement lines behind the receipts (one query), for the Bank Line links and the reconciliation status.
   const txnIds = [...new Set(invoices.flatMap((x) => x.payments.map((p) => p.bankTxnId)).filter(Boolean))];
   const txnRows = txnIds.length
-    ? await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } }, select: { id: true, date: true, reference: true, reconStatus: true, amount: true } })
+    ? await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } }, select: { id: true, date: true, reference: true, reconStatus: true, amount: true, type: true, matchedBy: true, matchedDate: true, importFile: true } })
     : [];
   const txnById = new Map(txnRows.map((t) => [t.id, t]));
   // bank credits matched to an invoice but not yet posted as a receipt (state Matched): the invoice says so instead of a bare Pending
@@ -673,6 +681,7 @@ async function buildRegister(user, query) {
       ...paymentFacts(i, received, txnById),
       // Is the Pending real, or is there proof with no payment recorded? One answer for the list, details, dashboard and exports.
       payState: IPS.brief(IPS.judge({ ...i, status }, { pending: wn.hasNotes ? wn.pending : ROUND(receivable - received), matchedLines: matchedOf.get(i.id) || [] })),
+      verify: (({ state, label, tone, reason, verifiedAmount, pendingVerification, missingEvidence, installments, lastPaymentDate }) => ({ state, label, tone, reason, verifiedAmount, pendingVerification, missingEvidence, installments, lastPaymentDate }))(IV.verifyOf({ ...i, status }, wn.hasNotes ? wn.pending : ROUND(receivable - received), txnById)),
       ...paymentHistoryOf(i, received, txnById),
       // Total paid / balance as the screen's own figures (no new calculation).
       paidTotal: received,
@@ -1493,6 +1502,7 @@ router.get('/:id', async (req, res) => {
     ...paymentHistoryOf(synced, synced.receivedAmount, new Map(txns.map((t) => [t.id, t]))),
     paidTotal: ROUND(Number(synced.receivedAmount || 0)),
     payState: IPS.brief(IPS.judge(synced, { pending: wn.hasNotes ? wn.pending : invoiceOutstanding(synced), matchedLines: (await matchedCreditsOf([synced.id])).get(synced.id) || [] })),
+    verify: IV.verifyOf(synced, wn.hasNotes ? wn.pending : invoiceOutstanding(synced), new Map(txns.map((t) => [t.id, t]))),
     notesReady: CNU.ready(),
     creditNotes: notes.map((n) => CNU.shapeNote(n, invoice)),
     afterNotes: wn.hasNotes ? {
