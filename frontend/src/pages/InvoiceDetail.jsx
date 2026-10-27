@@ -11,6 +11,7 @@ import Combo from '../components/Combo.jsx';
 import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // P4 — GST & TDS: the invoice summary block and its edit form.
 import TaxEditModal from './invoices/TaxEditModal.jsx';
+import StatementView from './bank/StatementView.jsx';
 import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
 } from './invoices/invTax';
@@ -84,6 +85,7 @@ export default function InvoiceDetail() {
   const canNote = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
   const [openLine, setOpenLine] = useState(null); // payment id whose bank line is open under Proof
+  const [stmtOf, setStmtOf] = useState(null); // bank line whose statement is open (View Statement)
   const [lineData, setLineData] = useState({});
   const [lineErr, setLineErr] = useState({});
   const lineAsked = useRef('');
@@ -145,13 +147,6 @@ export default function InvoiceDetail() {
       .then((r) => { if (lineAsked.current === k) setLineData((m) => ({ ...m, [k]: r.data })); })
       .catch((e) => { if (lineAsked.current === k) setLineErr((m) => ({ ...m, [k]: e.response?.data?.error || 'This bank line could not be opened.' })); });
   };
-  // "View proof" on a payment-history row: jump to that payment's own proof (and open its bank line, when it has one).
-  const showProofOf = (p) => {
-    const line = p.bankTxnId ? (invoice.proofLines || []).find((l) => l.txnId === p.bankTxnId) : null;
-    if (line) toggleLine(p, line, true);
-    const el = document.getElementById(`proof-${p.id}`);
-    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
-  };
   const viewTdsCert = async () => {
     try {
       const res = await api.get(`/invoices/${id}/tds-certificate/file`, { params: { inline: 1 }, responseType: 'blob' });
@@ -201,6 +196,10 @@ export default function InvoiceDetail() {
   const modes = [...new Set(payments.map((p) => p.method || '—'))];
   const histById = new Map((invoice.paymentHistory || []).map((h) => [h.id, h]));
   const hOf = (p) => histById.get(p.id) || {};
+  // each payment's bank reconciliation (Matched / review / not matched) and the line whose statement can be opened
+  const reconById = new Map((invoice.paymentRecon || []).map((r) => [r.paymentId, r]));
+  const rOf = (p) => reconById.get(p.id) || null;
+  const TONE = { green: 'priority-low', amber: 'priority-medium', red: 'priority-high' };
   const noProof = payments.filter((p) => !p.reference && !hOf(p).bankTxnId);
   const proofLines = invoice.proofLines || [];
   // Where the invoice stands by what has been matched against it.
@@ -445,6 +444,13 @@ export default function InvoiceDetail() {
           {invoice.firstPaymentDate && <span>First payment <b>{fmtD(invoice.firstPaymentDate)}</b></span>}
           {invoice.lastPaymentDate && invoice.lastPaymentDate !== invoice.firstPaymentDate && <span>Last payment <b>{fmtD(invoice.lastPaymentDate)}</b></span>}
         </div>
+        {invoice.reconSummary && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8, fontSize: 13 }} data-testid="pay-recon">
+            <span>Payment Status <b className={`status ${invoice.reconSummary.paymentStatus === 'Paid' ? 'priority-low' : invoice.reconSummary.paymentStatus === 'Unpaid' ? 'priority-high' : 'priority-medium'}`}>{invoice.reconSummary.paymentStatus}</b></span>
+            <span>Bank Reconciliation Status <b className={`status ${invoice.reconSummary.reconStatus === 'Matched' ? 'priority-low' : invoice.reconSummary.reconStatus === 'Unmatched' ? 'priority-high' : invoice.reconSummary.reconStatus === '—' ? '' : 'priority-medium'}`}>{invoice.reconSummary.reconStatus}</b></span>
+            {invoice.reconSummary.label !== `${invoice.reconSummary.paymentStatus} · ${invoice.reconSummary.reconStatus}` && invoice.reconSummary.reconStatus !== '—' && <b>{invoice.reconSummary.label}</b>}
+          </div>
+        )}
         {invoice.verify && (
           <div className={`notice ${invoice.verify.tone === 'green' ? 'green' : invoice.verify.tone === 'red' ? 'red' : invoice.verify.tone === 'amber' ? 'amber' : ''}`} style={{ marginBottom: 10, display: 'block' }} data-testid="pay-verify">
             <div><b>{invoice.verify.label}</b> - {invoice.verify.reason}</div>
@@ -494,7 +500,22 @@ export default function InvoiceDetail() {
                         {hOf(p).bankTxnId
                           ? <span className="status priority-low" title={`Bank statement line dated ${fmtD(hOf(p).bankLineDate)}`}>bank statement{hOf(p).bankLineReference ? ` · ${hOf(p).bankLineReference}` : ''}</span>
                           : (p.reference ? <span className="status priority-medium" title="A reference was typed; no bank line is linked yet">reference typed - not verified</span> : <span className="status priority-high">no proof</span>)}
-                        <div><button type="button" className="link-btn" onClick={() => showProofOf(p)}>View proof</button></div>
+                        {rOf(p) && <div><span className={`status ${TONE[rOf(p).recon.tone] || ''}`} title={rOf(p).recon.why || undefined}>{rOf(p).recon.label}</span></div>}
+                        {rOf(p) && rOf(p).recon.state === 'review' && canBank && (rOf(p).recon.candidates || []).length > 0 && (
+                          <div className="small-muted">
+                            {rOf(p).recon.why}:{' '}
+                            {rOf(p).recon.candidates.slice(0, 4).map((c, k) => <span key={c.txnId}>{k ? ', ' : ''}<Link to={`/bank?line=${encodeURIComponent(c.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>{fmtD(c.date)} {money2(c.amount)}</Link></span>)}
+                          </div>
+                        )}
+                        <div>
+                          {canBank && rOf(p) && rOf(p).statementTxnId
+                            ? <button type="button" className="link-btn" onClick={() => setStmtOf(rOf(p).statementTxnId)}>View Statement</button>
+                            : (hOf(p).bankTxnId && canBank ? <span className="small-muted">Bank Statement Not Available</span> : null)}
+                          {' · '}
+                          {invoice.proofHasFile
+                            ? <button type="button" className="link-btn" onClick={viewProofFile}>View Payment Proof</button>
+                            : <span className="small-muted">Payment Proof Not Available</span>}
+                        </div>
                       </td>
                       <td>{p.recordedBy || '—'}{hOf(p).recordedAt && <div className="small-muted">recorded {fmtD(hOf(p).recordedAt)}</div>}</td>
                       {canManage && (
@@ -649,7 +670,12 @@ export default function InvoiceDetail() {
                         {d.otherInvoices && d.otherInvoices.count > 0 && <div className="pf-wide small-muted">The same bank line also paid {d.otherInvoices.count} other invoice(s) ({money2(d.otherInvoices.amount)}).</div>}
                         {d.import && <div className="pf-wide small-muted">From statement file {d.import.file}, imported {fmtD(d.import.importedOn)}.</div>}
                         {/* that exact statement line, opened in its full window on the Bank screen (Back returns here) */}
-                        {canBank && <div className="pf-wide"><Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>Open in Bank &amp; Reconciliation →</Link></div>}
+                        {canBank && (
+                          <div className="pf-wide">
+                            {rOf(p) && rOf(p).statementTxnId && <><button type="button" className="link-btn" onClick={() => setStmtOf(rOf(p).statementTxnId)}>View Statement</button>{' · '}</>}
+                            <Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>Open in Bank &amp; Reconciliation →</Link>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -764,6 +790,8 @@ export default function InvoiceDetail() {
         </div>
       )}
 
+      {/* View Statement: the actual statement the payment's line came from, the line highlighted */}
+      {stmtOf && <StatementView txnId={stmtOf} onClose={() => setStmtOf(null)} />}
       {preview && doc && (
         <div className="overlay show" onClick={() => setPreview(null)}>
           <div className="modal xwide" onClick={(e) => e.stopPropagation()}>

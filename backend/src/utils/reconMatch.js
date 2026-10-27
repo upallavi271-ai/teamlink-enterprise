@@ -212,6 +212,28 @@ function decideCredit(txn, ctx) {
     return R.review(why, { rule: 1, kind: 'receipt-proof', conflicts: [why], candidates: { paymentIds: payHits.map((p) => p.id) } });
   }
 
+  // RUNG 1b - the narration names ONE invoice (a strong number) that already has a receipt of exactly this amount recorded
+  // by hand with no bank line: this line is that receipt's proof (no money moves). Checked before rung 2 so a payment
+  // recorded before the statement was imported is never received a second time.
+  {
+    const named1 = invoicesNamed(narrUpper, ctx.invoices.filter((i) => i.status !== 'Cancelled'));
+    if (named1.length === 1 && named1[0].strong) {
+      const inv = named1[0].inv;
+      const waiting = (ctx.payments || []).filter((p) => p.invoiceId === inv.id && !p.bankTxnId && toPaise(p.amount) === amountP);
+      if (waiting.length === 1) {
+        return R.auto({
+          rule: 1, kind: 'receipt-proof', action: { type: 'linkPayment', paymentId: waiting[0].id },
+          invoiceId: inv.id, invoiceNumber: inv.invoiceNumber, client: inv.client ? inv.client.name : null,
+          evidence: [`invoice number ${inv.invoiceNumber} is written in the narration`, `a receipt of exactly ${waiting[0].amount} on that invoice has no bank line yet`, 'direction: money in'],
+        });
+      }
+      if (waiting.length > 1) {
+        const why = `Invoice ${inv.invoiceNumber} has ${waiting.length} recorded receipts of exactly ${amountP / 100} with no bank line - pick which one this line is`;
+        return R.review(why, { rule: 1, kind: 'receipt-proof', invoiceId: inv.id, conflicts: [why], candidates: { paymentIds: waiting.map((p) => p.id) } });
+      }
+    }
+  }
+
   // who is named (used by rungs 2 and 3, and to detect conflicts)
   const named = clientNamed(narrNorm, ctx);
   const namedId = named && !named.ambiguous ? named.clientId : null;

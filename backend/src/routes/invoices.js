@@ -26,6 +26,7 @@ const CI = require('../utils/clientInvoice');
 const IPS = require('../utils/invoicePaymentState');
 // Verified by the bank, or only recorded? (Accounts prompt 2026-10-27)
 const IV = require('../utils/invoiceVerify');
+const PBL = require('../utils/paymentBankLink');
 // Map<invoiceId, [{ date, amount }]> of the bank credits in state Matched (not yet Reconciled) that point at those invoices.
 async function matchedCreditsOf(ids) {
   const out = new Map();
@@ -1497,8 +1498,27 @@ router.get('/:id', async (req, res) => {
   // B2 — this invoice's credit / debit notes and its figures after them.
   const notes = CNU.ready() ? ((await CNU.notesByInvoice([invoice.id])).get(invoice.id) || []) : [];
   const wn = TAX.withNotes(synced, notes);
+  // Each payment's bank reconciliation (utils/paymentBankLink.js) and the invoice's two statuses, kept apart:
+  // Payment Status (Unpaid / Partially Paid / Paid) and Bank Reconciliation Status (Matched / Partially Matched /
+  // Unmatched / Under Review). Possible lines are named only to a login that may see Bank & Reconciliation.
+  const seesBank = await can(req.user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
+  const txnById = new Map(txns.map((t) => [t.id, t]));
+  const openInvoices = (synced.payments || []).some((p) => !p.bankTxnId && Number(p.amount) > 0)
+    ? await prisma.invoice.findMany({ where: { status: { not: 'Cancelled' } }, select: { id: true, invoiceNumber: true, status: true } }) : [];
+  const paymentRecon = [];
+  for (const p of synced.payments || []) {
+    const t = p.bankTxnId ? (txnById.get(p.bankTxnId) || null) : null;
+    const search = !p.bankTxnId && Number(p.amount) > 0 ? await PBL.searchFor(p, { invoice: synced, invoices: openInvoices }) : null;
+    const r = PBL.paymentRecon(p, t, !!(t && t.importBatch), search);
+    if (!seesBank) delete r.candidates;
+    paymentRecon.push({ paymentId: p.id, amount: ROUND(Number(p.amount || 0)), statementTxnId: r.statement ? p.bankTxnId : null, recon: r });
+  }
+  const reconSummary = PBL.invoiceRecon({
+    status: synced.status, received: ROUND(Number(synced.receivedAmount || 0)), pending: wn.hasNotes ? wn.pending : invoiceOutstanding(synced), rows: paymentRecon,
+  });
   res.json({
     ...rest, tdsCertHasFile: !!tdsCertFile, proofHasFile: !!proofFile, proofLines, ...taxPayload(synced, company),
+    paymentRecon, reconSummary,
     ...paymentHistoryOf(synced, synced.receivedAmount, new Map(txns.map((t) => [t.id, t]))),
     paidTotal: ROUND(Number(synced.receivedAmount || 0)),
     payState: IPS.brief(IPS.judge(synced, { pending: wn.hasNotes ? wn.pending : invoiceOutstanding(synced), matchedLines: (await matchedCreditsOf([synced.id])).get(synced.id) || [] })),
@@ -1839,7 +1859,10 @@ router.post('/:id/payments', requirePerm('accounts', 'accounts', 'Payments', 'cr
     userId: req.user.id, action: 'Payment recorded', entity: 'Invoice', entityId: invoice.id,
     fromValue: invoice.status, toValue: `${status} — ₹${amount}`,
   });
-  res.status(201).json({ invoice: decorate(updated), payment });
+  // The statement may already be imported: link this receipt to its bank line when the match is reliable
+  // (exact amount + its reference / the invoice number on the line). Ambiguous = left for review, nothing linked.
+  const bankLink = await PBL.autoLink(payment.id, req);
+  res.status(201).json({ invoice: decorate(updated), payment, bankLink: { linked: bankLink.linked, review: bankLink.review || null, why: bankLink.why || null } });
 });
 
 router.delete('/:id/payments/:paymentId', requirePerm('accounts', 'accounts', 'Payments', 'delete'), async (req, res) => {
@@ -1876,7 +1899,7 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
   const date = String(req.body?.date || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Enter the date the money arrived.' });
   if (date > new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)) return res.status(400).json({ error: 'A payment date cannot be in the future.' });
-  await prisma.invoicePayment.create({
+  const settled = await prisma.invoicePayment.create({
     data: {
       invoiceId: invoice.id, date, amount: outstanding,
       method: req.body?.method || 'Bank Transfer', dateSource: 'entered',
@@ -1888,7 +1911,8 @@ router.patch('/:id/pay', requirePerm('accounts', 'accounts', 'Invoices', 'edit')
     data: { receivedAmount: ROUND(Number(invoice.receivedAmount || 0) + outstanding), status: 'Paid', paidDate: date },
   });
   await logAudit({ userId: req.user.id, action: 'Invoice paid', entity: 'Invoice', entityId: invoice.id, fromValue: invoice.status, toValue: 'Paid' });
-  res.json(decorate(updated));
+  const bankLink = await PBL.autoLink(settled.id, req);
+  res.json({ ...decorate(updated), bankLink: { linked: bankLink.linked, review: bankLink.review || null, why: bankLink.why || null } });
 });
 
 router.patch('/:id/cancel', requirePerm('accounts', 'accounts', 'Invoices', 'edit'), async (req, res) => {

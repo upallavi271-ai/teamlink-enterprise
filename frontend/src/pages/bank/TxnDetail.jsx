@@ -9,6 +9,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { money2, fmtD } from '../invoices/invFormat';
 import Combo from '../../components/Combo.jsx';
+import StatementView from './StatementView.jsx';
 
 const Row = ({ k, children }) => (<div className="td-kv"><i>{k}</i><b>{children}</b></div>);
 
@@ -25,6 +26,7 @@ export default function TxnDetail({
   const [notes, setNotes] = useState([]);
   const [noteId, setNoteId] = useState('');
   const [busy, setBusy] = useState(false);
+  const [stmt, setStmt] = useState(false); // the statement this line came from, line highlighted
 
   const load = () => api.get(`/bank/${txnId}/detail`).then((r) => { setD(r.data); setErr(''); if (onLoaded) onLoaded(r.data); })
     .catch((e) => setErr(e.response?.status === 404
@@ -76,7 +78,9 @@ export default function TxnDetail({
             <Row k="Statement file">{d.import ? d.import.file : 'Added by hand (no statement file)'}</Row>
             <Row k="Statement imported on">{d.import ? `${fmtD(d.import.importedOn)}${d.import.by ? ` by ${d.import.by}` : ''}` : (d.importedAt ? fmtD(d.importedAt) : '—')}</Row>
             <Row k="Row in the file">{d.sourceLine || '—'}</Row>
+            {d.import && <div className="td-wide"><button type="button" className="link-btn" onClick={() => setStmt(true)}>View Statement (this line highlighted)</button></div>}
           </div>
+          {stmt && <StatementView txnId={d.id} onClose={() => setStmt(false)} />}
           <div className="td-grid">
             <Row k="Transaction date (on the statement)">{fmtD(d.transactionDate)}</Row>
             <Row k="Value date">{d.valueDate ? fmtD(d.valueDate) : '—'}</Row>

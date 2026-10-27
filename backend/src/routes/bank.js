@@ -3758,6 +3758,19 @@ function parseCsv(text) {
   return { rows, bad, failed, stated };
 }
 
+// "View Statement" (invoice payments, the line window): the actual statement a line came from, the line highlighted.
+// Read only; the Bank & Reconciliation view permission of this router applies (utils/bankStatementView.js).
+router.get('/statement-of/:txnId', async (req, res) => {
+  try {
+    const out = await require('../utils/bankStatementView').statementOf(req.params.txnId, { txnState }); // eslint-disable-line global-require
+    if (out.status) return res.status(out.status).json({ error: out.error });
+    return res.json(out);
+  } catch (e) {
+    console.error('[bank] statement-of', e); // eslint-disable-line no-console
+    return res.status(500).json({ error: 'The bank statement could not be opened just now.' });
+  }
+});
+
 // Matching, allocation, Unallocated queue, reversals, mappings (routes/bankRecon.js).
 const autoRef = { api: null };
 const reconHelpers = {
@@ -3776,5 +3789,6 @@ router.prepareStatement = prepareStatement;
 router.importBatch = importBatch;
 router.reconsiderOpenLines = reconsiderOpenLines;
 router.lineDetail = recon.lineDetail;
+router.linkPayment = linkPayment; // utils/paymentBankLink.js: a payment recorded after its statement was imported
 router.releaseLineForBill = releaseLineForBill;
 module.exports = router;
