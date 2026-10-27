@@ -157,8 +157,8 @@ function HrDashboard() {
 
       <SectionLabel>Employee Overview</SectionLabel>
       <Tiles section="emp" drill={drill} onPick={pick} cells={[
-        { id: 'headcount', tile: 'headcount', value: eo.headcount, label: now('Headcount'), help: 'The people working here now: everybody who has not left (Active + Serving notice + Exit process).' },
         { id: 'total', tile: 'total', value: eo.total, label: now('Total Employees') },
+        { id: 'headcount', tile: 'empHeadcount', value: eo.headcount, label: now('Headcount'), help: 'The people working here now: everybody who has not left (Active + Serving notice + Exit process).' },
         { id: 'active', tile: 'active', value: eo.active, label: now('Active') },
         { id: 'notice', tile: 'notice', value: eo.servingNotice, label: now('Serving Notice') },
         { id: 'exit', tile: 'exitProcess', value: eo.exitProcess, label: now('Exit Process') },

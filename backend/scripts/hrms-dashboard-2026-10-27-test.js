@@ -11,6 +11,7 @@ const Z = require('./lib/zzfix')('HDB');
 (async () => {
   const { prisma } = Z;
   let annId = null;
+  const created = { leaves: [] };
   try {
     const hr = await Z.mkUser('hr', { role: 'HR', hrmsRole: 'HR', hrmsAccess: true, atsRole: 'NONE', atsAccess: false }, { designation: 'HR Executive', department: 'HR' });
     const emp = await Z.mkUser('emp', { role: 'EMPLOYEE', hrmsRole: 'EMPLOYEE', hrmsAccess: true, atsRole: 'NONE', atsAccess: false }, { designation: 'Executive', department: 'R&D' });
@@ -26,10 +27,25 @@ const Z = require('./lib/zzfix')('HDB');
     const dr = await Z.call('GET', '/api/hrms/dashboard?status=Exit', S);
     Z.check('D2 with Status = Exit (left) the designations count the people who left (the left can still be found)', (dr.body.filterOptions.counts.designation.Employee || 0) > 100, dr.body.filterOptions.counts.designation);
     Z.check('D3 the Headcount card = everybody who has not left; Active + Notice + Exit process + Other add up to it', eo.headcount === eo.active + eo.servingNotice + eo.exitProcess + eo.other && eo.headcount === eo.total - eo.left, eo);
-    const hl = await Z.call('GET', '/api/hrms/dashboard/list?tile=headcount', S);
+    const hl = await Z.call('GET', '/api/hrms/dashboard/list?tile=empHeadcount', S);
     Z.check('D4 the Headcount card opens its list (same number)', hl.status === 200 && (hl.body.total === eo.headcount || (hl.body.rows || []).length === eo.headcount), [hl.status, hl.body.total]);
     Z.check('D5 Banka Mrudula is in Reporting manager (3 R&D people report to her)', o.managers.some((m) => /Mrudula/.test(m.name) && m.count >= 3), o.managers.map((m) => `${m.name}(${m.count})`));
     void working;
+    // the attendance row's own Headcount list is NOT the Employee Overview one (different keys)
+    const ah = await Z.call('GET', '/api/hrms/dashboard/list?tile=headcount', S);
+    Z.check('D6 the attendance Headcount list still opens its own list (people on the rolls that day)', ah.status === 200 && /Headcount on the rolls/.test(ah.body.title || ''), [ah.status, ah.body.title]);
+    // Pending tasks: each waiting request carries its id and which decision the panel offers (Approve / Reject)
+    const tl = await Z.call('GET', '/api/hrms/dashboard/list?tile=taskLeave', S);
+    const tr = await Z.call('GET', '/api/hrms/dashboard/list?tile=taskRegularization', S);
+    const tlc = await Z.call('GET', '/api/hrms/dashboard/list?tile=taskLateComing', S);
+    Z.check('D7 the waiting-leave / correction / late-coming lists offer a decision and every row has its request id', tl.body.decide === 'leave' && tr.body.decide === 'regularization' && tlc.body.decide === 'late' && [tl, tr, tlc].every((x) => (x.body.rows || []).every((r) => !!r.reqId)), [tl.body.decide, tr.body.decide, tlc.body.decide]);
+    // approving from the list = the Leave page's own decision route (a request of the test employee, decided by the Super Admin)
+    const ee = await prisma.employee.findFirst({ where: { userId: emp.id } });
+    const lv = await prisma.leaveRequest.create({ data: { employeeId: ee.id, type: 'Casual', fromDate: '2026-12-01', toDate: '2026-12-01', days: 1, status: 'Pending', reason: 'ZZTEST HDB' } });
+    created.leaves.push(lv.id);
+    const ap = await Z.call('PATCH', `/api/leave/${lv.id}/decision`, S, { status: 'Rejected', comment: 'ZZTEST HDB not now', rejectReason: 'ZZTEST HDB not now' });
+    const lv2 = await prisma.leaveRequest.findUnique({ where: { id: lv.id } });
+    Z.check('D8 a Reject from the list goes through the leave decision route (with the reason)', ap.status === 200 && lv2.status === 'Rejected', [ap.status, ap.body && ap.body.error, lv2.status]);
 
     // ---- pause ----
     const post = await Z.call('POST', '/api/announcements', H, { title: `ZZTEST HDB notice ${Z.RUN}`, body: 'ZZTEST HDB body', category: 'General', date: new Date().toISOString().slice(0, 10), target: 'All Employees', audience: { mode: 'everyone' } });
@@ -52,6 +68,8 @@ const Z = require('./lib/zzfix')('HDB');
     Z.check('P7 Resume: back on the employee\'s list and in the bell', p2.status === 200 && p2.body.paused === false && (await Z.call('GET', '/api/announcements', E)).body.some((a) => a.id === annId) && inBell(await myBell()), p2.body);
   } catch (err) { Z.fail += 1; console.log('FAIL  crashed', err && err.stack ? err.stack.slice(0, 900) : err); } finally {
     try {
+      await prisma.approvalStep.deleteMany({ where: { recordId: { in: created.leaves } } }).catch(() => null);
+      await prisma.leaveRequest.deleteMany({ where: { id: { in: created.leaves } } }).catch(() => null);
       if (annId) {
         const a = await prisma.announcement.findUnique({ where: { id: annId } });
         if (a) await prisma.notification.deleteMany({ where: { title: `Announcement: ${a.title}` } });

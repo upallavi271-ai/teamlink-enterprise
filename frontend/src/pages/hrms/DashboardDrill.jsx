@@ -126,6 +126,36 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
     return list;
   }, [data, q, sort]); // eslint-disable-line react-hooks/exhaustive-deps
   const page = usePaged(rows, 25);
+  // APPROVE / REJECT RIGHT HERE (founder 2026-10-27) on the Pending tasks lists: leave, attendance corrections, late coming. The same
+  // decision routes the Leave / Attendance pages use, so the approval chain, its rules (TL remarks, approval reasons) and the scope apply.
+  const [acting, setActing] = useState('');
+  const [doneIds, setDoneIds] = useState({});
+  const URL_OF = { leave: (id) => `/leave/${id}/decision`, regularization: (id) => `/attendance/regularizations/${id}/decision`, late: (id) => `/late-permissions/${id}/decision` };
+  async function decide(r, status) {
+    if (!data || !data.decide || !r.reqId || acting) return;
+    let comment = '';
+    if (status === 'Rejected') {
+      comment = window.prompt(`Why is ${r.name}'s request rejected?`, '') || '';
+      if (!comment.trim()) { setError('A rejection needs a reason. Nothing was changed.'); return; }
+    }
+    const body = { status, comment, reason: comment, rejectReason: status === 'Rejected' ? comment : undefined };
+    setActing(r.reqId); setError(''); setSaved('');
+    try {
+      try { await api.patch(URL_OF[data.decide](r.reqId), body); } catch (e) {
+        const d = (e.response && e.response.data) || {};
+        // the leave rules may ask for more: a TL's remarks, or one of the approval reasons
+        if (e.response && e.response.status === 400 && (d.tlReasonRequired || d.reasons)) {
+          const more = d.reasons ? window.prompt(`${d.error}\nType one of: ${d.reasons.join(' / ')}`, d.reasons[0] || '') : window.prompt(d.error, '');
+          if (!more || !more.trim()) throw e;
+          await api.patch(URL_OF[data.decide](r.reqId), d.reasons ? { ...body, approvalReason: more.trim() } : { ...body, comment: more.trim() });
+        } else throw e;
+      }
+      setDoneIds((m) => ({ ...m, [r.reqId]: status }));
+      setSaved(`${r.name}: ${status === 'Approved' ? 'approved' : 'rejected'}.`);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not save the decision.');
+    } finally { setActing(''); }
+  }
   const click = (key) => setSort((cur) => (cur.key === key ? { key, dir: -cur.dir } : { key, dir: 1 }));
 
   async function excel() {
@@ -205,6 +235,7 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                       <button type="button" className="hd-th" onClick={() => click(c.key)}>{c.label}{sort.key === c.key ? (sort.dir === 1 ? ' ▲' : ' ▼') : ''}</button>
                     </th>
                   ))}
+                  {data.decide && <th>Action</th>}
                 </tr>
               </thead>
               <tbody>
@@ -215,9 +246,19 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                         {ci === 0 ? <b>{show(c, r[c.key])}</b> : cell(c, r[c.key])}
                       </td>
                     ))}
+                    {data.decide && (
+                      <td data-label="Action" style={{ whiteSpace: 'nowrap' }}>
+                        {doneIds[r.reqId]
+                          ? <span className={`status ${doneIds[r.reqId] === 'Approved' ? 'priority-low' : 'priority-high'}`}>{doneIds[r.reqId]}</span>
+                          : <>
+                            <button type="button" className="btn btn-sm btn-primary" disabled={!!acting} onClick={() => decide(r, 'Approved')}>{acting === r.reqId ? '…' : 'Approve'}</button>{' '}
+                            <button type="button" className="btn btn-sm" disabled={!!acting} onClick={() => decide(r, 'Rejected')}>Reject</button>
+                          </>}
+                      </td>
+                    )}
                   </tr>
                 ))}
-                {rows.length === 0 && <tr><td colSpan={cols.length || 1} className="hd-empty">{q ? 'Nothing matches your search.' : 'Nobody in this list.'}</td></tr>}
+                {rows.length === 0 && <tr><td colSpan={(cols.length || 1) + (data.decide ? 1 : 0)} className="hd-empty">{q ? 'Nothing matches your search.' : 'Nobody in this list.'}</td></tr>}
               </tbody>
             </table>
           </ScrollTable>
