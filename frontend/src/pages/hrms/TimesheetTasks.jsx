@@ -252,6 +252,8 @@ export function TaskForm({ options, task, onClose, onSaved }) {
   const [q, setQ] = useState('');
   const [dept, setDept] = useState('');
   const [team, setTeam] = useState('');
+  // designation group (Super Admin / HR / STL / TL / Manager / Assistant Manager / Employees), from the HRMS role
+  const [role, setRole] = useState('');
   const [errs, setErrs] = useState({});
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -273,9 +275,12 @@ export function TaskForm({ options, task, onClose, onSaved }) {
     return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   };
   const base = people.filter(matchQ);
-  const depts = countBy(base.filter((p) => !team || p.team === team), 'department');
-  const teams = countBy(base.filter((p) => !dept || p.department === dept), 'team');
-  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team));
+  const okRole = (p) => !role || p.roleGroup === role;
+  const depts = countBy(base.filter((p) => (!team || p.team === team) && okRole(p)), 'department');
+  const teams = countBy(base.filter((p) => (!dept || p.department === dept) && okRole(p)), 'team');
+  const ROLE_ORDER = ['Super Admin', 'HR', 'STL', 'TL', 'Manager', 'Assistant Manager', 'Employees'];
+  const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && p.roleGroup === r).length;
+  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && okRole(p));
 
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allShownOn = shown.length > 0 && shown.every((p) => picked.has(p.userId));
@@ -360,6 +365,15 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                 {teams.map(([t, n]) => (
                   <button type="button" key={t} className={`tt-chip${team === t ? ' on' : ''}`} onClick={() => setTeam(team === t ? '' : t)}>{t} <b>{n}</b></button>
                 ))}
+              </div>
+            )}
+            {people.some((p) => p.roleGroup) && (
+              <div className="tt-chips" role="group" aria-label="Designation">
+                <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team)).length}</b></button>
+                {ROLE_ORDER.map((r) => {
+                  const n = roleCount(r);
+                  return <button type="button" key={r} className={`tt-chip${role === r ? ' on' : ''}`} disabled={!n && role !== r} onClick={() => setRole(role === r ? '' : r)}>{r} <b>{n}</b></button>;
+                })}
               </div>
             )}
             <div className="tt-people" role="group" aria-label="People">

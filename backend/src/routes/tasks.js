@@ -236,6 +236,9 @@ function asDate(value, label) {
 // Two separate questions, answered by the two halves of the engine:
 //   1. MAY they assign to anyone but themselves?  -> can(), the action matrix
 //   2. WHICH people?                              -> scope.js, the data scope
+const ROLE_GROUP = { SUPER_ADMIN: 'Super Admin', ADMIN: 'Super Admin', HR: 'HR', STL: 'STL', TL: 'TL', MANAGER: 'Manager', ASSISTANT_MANAGER: 'Assistant Manager' };
+const roleGroupOf = (u) => ROLE_GROUP[String((u && (u.hrmsRole || u.role)) || '').toUpperCase()] || 'Employees';
+
 async function assignable(me) {
   const self = {
     userId: me.id,
@@ -256,7 +259,7 @@ async function assignable(me) {
     where: { AND: and },
     select: {
       id: true, userId: true, name: true, employeeCode: true, department: true, team: true, designation: true,
-      employmentStatus: true, user: { select: { status: true } },
+      employmentStatus: true, user: { select: { status: true, role: true, hrmsRole: true } },
     },
     orderBy: { name: 'asc' },
   });
@@ -271,6 +274,9 @@ async function assignable(me) {
       department: e.department || null,
       team: e.team || null,
       designation: e.designation || null,
+      // DESIGNATION GROUP (founder 2026-10-27: "designation wise ga kuda: Super Admin, HR, STL, TL, Manager, Assistant Manager, Employees"):
+      // from the HRMS role (the typed designation text is not reliable)
+      roleGroup: roleGroupOf(e.user),
       self: e.userId === me.id,
     }));
 
