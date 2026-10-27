@@ -42,12 +42,20 @@ const withinNextDays = (dateStr, days, todayStr) => {
   return !!n && n.days >= 0 && n.days <= days;
 };
 
+// RECRUITER IS AN EMPLOYEE (founder 2026-10-27: "recruiter employee veru kaadu, employee matram kanipiste chalu"): for the
+// designation filter a stored "Recruiter" reads as "Employee" — no Recruiter option, counted and matched under Employee.
+// The employee records keep what they hold.
+const dashDesignation = (d) => {
+  const s = String(d || '').trim();
+  return /^recruiter$/i.test(s) ? 'Employee' : s;
+};
+
 // The dashboard's filters (department, location, status, designation, reporting
 // manager, and a name / employee-ID search), all AND'd together.
 function matchesFilters(e, q) {
   if (q.department && e.department !== q.department) return false;
   if (q.location && e.location !== q.location) return false;
-  if (q.designation && (e.designation || '') !== q.designation) return false;
+  if (q.designation && dashDesignation(e.designation) !== dashDesignation(q.designation)) return false;
   if (q.q) {
     const hay = `${e.name || ''} ${e.employeeCode || ''}`.toLowerCase();
     if (!String(q.q).toLowerCase().split(/s+/).filter(Boolean).every((t) => hay.includes(t))) return false;
@@ -242,7 +250,7 @@ async function buildDashboard(req, period) {
       // DESIGNATIONS COUNT THE PEOPLE WORKING NOW (founder 2026-10-27): "Employee 325" counted the 297 who left. With no Status picked the
       // list is the working people only; a Status picked (e.g. Relieved) counts that status, so the left can still be found.
       const forDesig = req.query.status ? without('designation') : without('designation').filter((e) => !LEFT_STATUSES.includes(e.employmentStatus));
-      const desig = keep(tally(forDesig, (e) => e.designation), req.query.designation);
+      const desig = keep(tally(forDesig, (e) => dashDesignation(e.designation)), req.query.designation && dashDesignation(req.query.designation));
       return {
         departments: [...dept.keys()].sort(),
         locations: [...loc.keys()].sort(),

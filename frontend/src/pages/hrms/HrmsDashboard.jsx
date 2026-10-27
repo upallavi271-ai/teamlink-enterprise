@@ -9,7 +9,6 @@ import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import DateRangePicker, { useDateRange, rangeParams } from '../../components/DateRangePicker.jsx';
-import DeptAttendanceChart from './DeptAttendanceChart.jsx';
 import { Tiles, DrillPanel } from './DashboardDrill.jsx';
 // Recruiter joinings (2026-10-05): Super Admin's month-end popup + a recruiter's own figure.
 import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13), HRMS lines only (2026-10-24)
@@ -259,24 +258,8 @@ function HrDashboard() {
         <DrillPanel drill={drill} expected={drill.expected} params={params} onClose={() => setDrill(null)} moreTo="/leave" moreLabel="Open Leave Requests" />
       )}
 
-      {/* hrms-24 §9 — built by the server from exactly the figures in the
-          tiles above: same range, same filters, same scope. */}
-      {/* ONE CHART (founder 2026-10-27: "charts repeat ga unnayi - anni charts kakunda antha okka chart lo"): the status / leave-type /
-          leave-status charts only repeated the cards above, so the dashboard shows the one chart the cards cannot: every department,
-          Present / Half day / Absent / On leave in one bar each (leave is inside it as "On leave"). */}
-      {/* 2026-10-27 (founder: "chart ala bagaledhu, inka clear ga evvu"): its own clearer chart (DeptAttendanceChart) —
-          status colours, numbers on the bars, total and % present per department; an empty period says so instead of vanishing. */}
-      {(() => {
-        const one = (data.charts || []).find((c) => c.id === 'att-dept');
-        if (!one) return null;
-        return (
-          <>
-            <SectionLabel>{`Department-wise — ${p.name}`}</SectionLabel>
-            <div className="hd-charts hd-att"><DeptAttendanceChart spec={one} period={p.name} /></div>
-          </>
-        );
-      })()}
-
+      {/* NO CHART (founder 2026-10-27: "chart remove chey"): the department-wise chart is gone; the cards above carry the numbers.
+          The server still sends data.charts; the dashboard just does not draw it. */}
       <div style={{ marginTop: 16 }}>
         <PanelPad>
           <h3 style={{ marginBottom: 12, fontSize: 14 }}>Pending Tasks &amp; Approvals (now)</h3>
