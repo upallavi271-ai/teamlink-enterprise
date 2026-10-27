@@ -112,8 +112,21 @@ async function myRepair(v, id) {
   return { repair, asset: repair.asset, side };
 }
 async function myAsset(v, id) {
-  const L = await HS.listing(v); // the same rule as the Assets page: an asset held by an employee with no open repair job is not the vendor's to open
-  return prisma.asset.findFirst({ where: { AND: [{ id: String(id || '') }, L.where] } });
+  const L = await HS.listing(v); // the same rule as the Assets page (since 27 Oct 2026 that includes the assets employees hold; never SIM cards)
+  return prisma.asset.findFirst({ where: { AND: [{ id: String(id || '') }, L.where] }, include: { assignedTo: { select: HOLDER_SELECT } } });
+}
+// THE ASSIGNMENT HISTORY HRMS HOLDS: the asset's own history lines about who held it (assigned / returned / moved / handed over), oldest first.
+// HRMS keeps them as text in Asset.history - there is no separate assignment table - so they are shown as written, with their own dates.
+const ASSIGN_WORDS = /assign|return|handed|hand over|moved|transfer|holder|→|unassign|given to|taken back|seat/i;
+function assignmentHistory(a) {
+  let h = [];
+  try { h = JSON.parse(a.history || '[]'); } catch { h = []; }
+  if (!Array.isArray(h)) h = [];
+  const M = MK();
+  // HRMS writes the newest line FIRST (routes/assetInventory.js pushHistory unshift): reversed, then a stable sort by time keeps same-minute lines in order
+  return [...h].reverse().filter((e) => e && ASSIGN_WORDS.test(String(e.text || '')))
+    .map((e) => ({ at: e.at || null, by: e.by || null, text: M.text(String(e.text || ''), a.id) }))
+    .sort((x, y) => String(x.at || '').localeCompare(String(y.at || '')));
 }
 
 // ---- views -------------------------------------------------------------------------------------
@@ -177,6 +190,14 @@ async function tag(repairs) {
 }
 // What the vendor may know of the department: the department NAME only (the holder's, or the seat's), never who holds the asset.
 const deptOf = (a) => (a.assignedTo && a.assignedTo.department) || HS.deptOfSeat(a.location) || null;
+// WHO HOLDS IT (founder 2026-10-27): name, employee ID, designation and department - nothing else about the person.
+const HOLDER_SELECT = { id: true, name: true, employeeCode: true, designation: true, department: true, employmentStatus: true };
+const LEFT = ['Relieved', 'Exited'];
+function holderOf(a) {
+  const e = a.assignedTo;
+  if (!e) return null;
+  return { name: e.name || null, employeeCode: e.employeeCode || null, designation: e.designation || null, department: e.department || null, left: LEFT.includes(e.employmentStatus) };
+}
 function assetView(a, v, info, openRepair, showInvoice = false) {
   const M = MK();
   const base = VP.vendorAssetView(a, { ...v, canViewCost: false }); // the amount is handled below (amountsOf); the old purchaseCost / invoiceNo fields stay out
@@ -191,6 +212,7 @@ function assetView(a, v, info, openRepair, showInvoice = false) {
     serialNumber: M.text(a.serialNumber, a.id) || t.serial || null,
     brand: (info && info.brand) || t.brand || null, model: (info && info.model) || t.model || null, condition: info ? info.condition || null : null,
     department: deptOf(a), assignedVendor: v.vendorName, repairStage: openRepair ? openRepair.stage : null, repairNo: openRepair ? openRepair.repairNo : null,
+    holder: holderOf(a), assignment: a.assignedToId ? 'Assigned' : 'Unassigned', assignedAt: iso(a.assignedAt), assignedBy: a.assignedByName || null, updatedAt: iso(a.updatedAt),
   };
 }
 const OPEN_STAGES = ['Awaiting repair', 'Sent for repair', 'Under repair'];
@@ -232,13 +254,15 @@ async function listAssets(v, q = {}) {
   await ensureMask();
   const L = await HS.listing(v);
   // view=all (no tab on the page; used by the scope tests) is simply both tabs together: nothing outside what the vendor may see
-  const tab = ['repair', 'all'].includes(str(q.view)) ? str(q.view) : 'available';
-  const where = tab === 'repair' ? L.repairWhere : (tab === 'all' ? L.where : L.availableWhere);
-  const [assets, repairs, nAvail, nRepair] = await Promise.all([
-    where === HS.NONE ? [] : prisma.asset.findMany({ where, include: { assignedTo: { select: { department: true } } }, orderBy: { assetCode: 'asc' }, take: 5000 }),
+  const tab = ['repair', 'available', 'assigned'].includes(str(q.view)) ? str(q.view) : 'all';
+  const where = tab === 'repair' ? L.repairWhere : (tab === 'available' ? L.availableWhere : (tab === 'assigned' ? L.heldWhere : L.where));
+  const [assets, repairs, nAvail, nRepair, nHeld, nAll] = await Promise.all([
+    where === HS.NONE ? [] : prisma.asset.findMany({ where, include: { assignedTo: { select: HOLDER_SELECT } }, orderBy: { assetCode: 'asc' }, take: 5000 }),
     loadRepairs(v),
     L.availableWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.availableWhere }),
     L.repairWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.repairWhere }),
+    L.heldWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.heldWhere }),
+    L.where === HS.NONE ? 0 : prisma.asset.count({ where: L.where }),
   ]);
   const info = await infoRows(assets.map((a) => a.id));
   const open = new Map();
@@ -249,16 +273,21 @@ async function listAssets(v, q = {}) {
   const all = assets.map((a) => assetView(a, v, info.get(a.id), open.get(a.id)));
   const s = str(q.q).toLowerCase();
   const keep = (r, skip) => (!str(q.category) || skip === 'category' || r.category === str(q.category))
+    && (!str(q.department) || skip === 'department' || r.department === str(q.department))
+    && (!str(q.assignment) || skip === 'assignment' || r.assignment === str(q.assignment))
+    && (!str(q.designation) || skip === 'designation' || (r.holder && r.holder.designation) === str(q.designation))
     && (!str(q.status) || skip === 'status' || r.status === str(q.status))
     && (!str(q.condition) || skip === 'condition' || r.condition === str(q.condition))
-    && (!s || [r.assetCode, r.name, r.category, r.brand, r.model, r.serialNumber, r.condition, r.status, r.location, r.department].some((x) => String(x || '').toLowerCase().includes(s)));
+    && (!s || [r.assetCode, r.name, r.category, r.brand, r.model, r.serialNumber, r.condition, r.status, r.location, r.department, r.holder && r.holder.name, r.holder && r.holder.employeeCode, r.holder && r.holder.designation].some((x) => String(x || '').toLowerCase().includes(s)));
   const rows = all.filter((r) => keep(r));
   return {
     ...paged(rows, q, 'assetCode', ASSET_SORTS), assignedTotal: all.length, canEdit: v.canEdit, canViewCost: v.canViewCost, showAmounts: v.showAmounts !== false, conditions: CONDITIONS,
-    view: tab, tabs: { available: nAvail, repair: nRepair }, openRepairJobs: L.openRepairs.length,
+    view: tab, tabs: { all: nAll, assigned: nHeld, available: nAvail, repair: nRepair }, openRepairJobs: L.openRepairs.length, refreshedAt: new Date().toISOString(),
     facets: {
       category: facet(all.filter((r) => keep(r, 'category')), (r) => r.category), status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status),
       condition: facet(all.filter((r) => keep(r, 'condition')), (r) => r.condition),
+      department: facet(all.filter((r) => keep(r, 'department')), (r) => r.department), assignment: facet(all.filter((r) => keep(r, 'assignment')), (r) => r.assignment),
+      designation: facet(all.filter((r) => keep(r, 'designation')), (r) => (r.holder ? r.holder.designation : null)),
     },
   };
 }
@@ -309,6 +338,8 @@ async function assetDetail(v, id) {
     asset: { ...assetView(a, v, info.get(a.id), openOne, boughtHere), warrantyUntil: a.warrantyUntil || null, amcUntil: a.amcUntil || null, updatedAt: iso(a.updatedAt) },
     purchase: purchaseOf(boughtHere ? a : { ...a, invoiceNo: null }, px.rows, v), repairs: views, history, canEdit: v.canEdit && scoped, editNote: scoped ? null : 'This asset is with you for a repair. The company keeps its details.',
     conditions: CONDITIONS,
+    // who holds it now, and every hand-over HRMS wrote down (27 Oct 2026); a missing history is said, never made up
+    assignment: (() => { const hist = assignmentHistory(a); return { current: holderOf(a), status: a.assignedToId ? 'Assigned' : 'Unassigned', assignedAt: iso(a.assignedAt), assignedBy: a.assignedByName || null, returnedAt: iso(a.returnedAt), history: hist, note: hist.length ? null : 'HRMS has no earlier hand-over recorded for this asset.' }; })(),
   };
 }
 

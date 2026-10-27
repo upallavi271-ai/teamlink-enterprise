@@ -241,13 +241,13 @@ const made = { users: [], vendors: [], assets: [], repairs: [], expenses: [] };
     const aud2 = await raw(`SELECT "action" FROM "AssetAuditLog" WHERE "vendorId" = ? AND "action" = 'Asset access removed'`, V1.id);
     check('C', 'every removal is audited too', aud2.length === 2, aud2);
     // a grant on a real HRMS category: reads the company's real rows by their own ids
-    const realCat = (await raw(`SELECT "category", COUNT(*) AS n FROM "Asset" WHERE "assetCode" NOT LIKE 'ZZAH-%' AND "status" NOT IN ('Retired','Sold','Written off') GROUP BY "category" ORDER BY n DESC`))[0];
+    const realCat = (await raw(`SELECT "category", COUNT(*) AS n FROM "Asset" WHERE "assetCode" NOT LIKE 'ZZAH-%' AND "category" NOT LIKE '%sim%' AND "status" NOT IN ('Retired','Sold','Written off') GROUP BY "category" ORDER BY n DESC`))[0];
     if (realCat) {
       put = await http('PUT', `${G}/${V1.id}`, T.admin, { assetIds: [], categories: [realCat.category] });
       r = await allRows(L1);
-      const realIds = (await raw(`SELECT "id" FROM "Asset" WHERE "category" = ? AND (("status" = 'Available' AND "assignedToId" IS NULL) OR "status" = 'In Repair')`, realCat.category)).map((x) => x.id);
+      const realIds = (await raw(`SELECT "id" FROM "Asset" WHERE "category" = ? AND "status" NOT IN ('Retired','Sold','Written off')`, realCat.category)).map((x) => x.id);
       const seenReal = idsOf(r).filter((i) => realIds.includes(i));
-      check('G', `granting the real HRMS category "${realCat.category}" shows the real rows: the ${realIds.length} that are free in stock or under repair (the others are held by employees and are not shown: founder decision 2026-10-19); an independent SQL count agrees`, seenReal.length === realIds.length && sameSet(seenReal, realIds), [seenReal.length, realIds.length]);
+      check('G', `granting the real HRMS category "${realCat.category}" shows the real rows: all ${realIds.length} of them, also the ones employees hold (founder decision 2026-10-27; SIM cards stay in the Airtel Bills portal); an independent SQL count agrees`, seenReal.length === realIds.length && sameSet(seenReal, realIds), [seenReal.length, realIds.length]);
       const pageRows = [];
       for (let p = 1; p <= r.body.pages; p += 1) pageRows.push(...(await http('GET', `${AP}/assets?view=all&pageSize=100&page=${p}`, L1.token)).body.rows); // eslint-disable-line no-await-in-loop
       check('G', 'over all pages every asset appears once (no duplicate id, no duplicate code) and the count equals the total', pageRows.length === r.body.total && new Set(pageRows.map((x) => x.id)).size === pageRows.length && new Set(pageRows.map((x) => x.assetCode)).size === pageRows.length, [pageRows.length, r.body.total]);
@@ -290,15 +290,14 @@ const made = { users: [], vendors: [], assets: [], repairs: [], expenses: [] };
       const t = resp.text;
       const bad = [];
       if (emp) {
-        if (emp.name && emp.name.length >= 4 && t.includes(emp.name)) bad.push('employee name');
+        // 27 Oct 2026 (founder): the vendor sees WHO holds an asset - name, employee ID, designation, department - so those are allowed now
         if (emp.email && t.includes(emp.email)) bad.push('employee email');
         if (emp.phone && String(emp.phone).length >= 8 && t.includes(String(emp.phone))) bad.push('employee phone');
-        if (emp.employeeCode && t.includes(`"${emp.employeeCode}"`)) bad.push('employee code');
       }
       for (const key of ['"assignedTo"', '"assignedToId"', 'assignedByName', 'bankAccount', 'accountNumber', 'ifsc', 'paidBankAccountId', 'paidVia', 'gstPaid', 'purchaseCost', 'salvageValue', 'depreciation', 'history":"[', 'must not leak', V2.name]) if (t.includes(key)) bad.push(key);
       sweep.push([name, bad]);
     }
-    check('F', 'no employee detail, bank / cost / depreciation / history text and no other vendor\'s name in the list, detail, overview, repairs or invoices answers', sweep.every(([, b]) => !b.length), sweep.filter(([, b]) => b.length));
+    check('F', 'no employee e-mail / phone, bank / cost / depreciation / history text and no other vendor\'s name in the list, detail, overview, repairs or invoices answers', sweep.every(([, b]) => !b.length), sweep.filter(([, b]) => b.length));
     const dc = await http('GET', `${AP}/assets/${a1.id}`, L1c.token);
     const lc = await allRows(L1c);
     check('F', 'purchase value is shown only to a login with "Show purchase value"', dc.status === 200 && Number(dc.body.asset.amount) === 12345.67 && lc.body.rows.find((x) => x.id === a1.id).amount === 12345.67 && row1.amount === 12345.67 && !('purchaseCost' in row1)); // amounts are shown by default now

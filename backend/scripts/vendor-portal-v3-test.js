@@ -169,16 +169,16 @@ const FOUR = ['Dashboard', 'Bills & Invoices', 'Payments & Outstanding', 'Servic
     check('E2 Services & Agreements is empty (no agreements, services, orders or charges)', svE.counts.agreements === 0 && svE.counts.services === 0 && svE.counts.orders === 0 && svE.counts.charges === 0, svE.counts);
 
     // ---- protected modules ----
-    // The files of the Assets and ID Card vendor portals. Fingerprints (first 16 hex of sha256) taken on 2026-10-23, before this change was
+    // The files of the Assets and ID Card vendor portals. Fingerprints (first 16 hex of sha256) taken on 2026-10-23 and re-taken on 2026-10-27 after the Assets Vendor Portal master prompt (Stage B) changed them on purpose, before this change was
     // finished: none of these files was opened for editing (their modified times are all older than that day). A later, deliberate change to one
     // of them must update the fingerprint here on purpose.
     const crypto = require('crypto');
     const PROTECTED = {
-      'backend/src/utils/assetVendorPortal.js': '2c5481efd6cf3076', 'backend/src/utils/assetVendorSchema.js': '36885129121f5a71', 'backend/src/utils/assetVendorPayments.js': 'f6dcf91f4837e22b',
+      'backend/src/utils/assetVendorPortal.js': 'cbb4e109bf963202', 'backend/src/utils/assetVendorSchema.js': '36885129121f5a71', 'backend/src/utils/assetVendorPayments.js': 'f6dcf91f4837e22b',
       'backend/src/routes/assetVendorPortal.js': '44f18812895e6ea4', 'backend/src/utils/idCardVendorPortal.js': '2de6eaeaa555740e', 'backend/src/utils/idCardVendorSchema.js': '2360fa92de971bc9',
-      'backend/src/routes/idCardVendorPortal.js': '78ef0b2a86059b29', 'frontend/src/pages/vendor/AssetPortalDashboard.jsx': '11166149c5dd1bad', 'frontend/src/pages/vendor/AssetPortalAssets.jsx': '8f19d011f9002780',
-      'frontend/src/pages/vendor/AssetPortalOrders.jsx': '8cc214ba309e29bf', 'frontend/src/pages/vendor/AssetPortalRepairs.jsx': '5cb57e50b09b5a6d', 'frontend/src/pages/vendor/AssetPortalHistory.jsx': '725460142b0a1422',
-      'frontend/src/pages/vendor/AssetPortalInvoices.jsx': '92bd2a4c0979d460', 'frontend/src/pages/vendor/IdCardDashboard.jsx': '25ed6866b9ca93f2', 'frontend/src/pages/vendor/IdCardRequests.jsx': '22aa6a87f326d520',
+      'backend/src/routes/idCardVendorPortal.js': '78ef0b2a86059b29', 'frontend/src/pages/vendor/AssetPortalDashboard.jsx': 'c95042b12d3b76d6', 'frontend/src/pages/vendor/AssetPortalAssets.jsx': '6bb9b24fb4ef5bf5',
+      'frontend/src/pages/vendor/AssetPortalOrders.jsx': 'b9c15f82fd994d08', 'frontend/src/pages/vendor/AssetPortalRepairs.jsx': 'b7be964e04367c76', 'frontend/src/pages/vendor/AssetPortalHistory.jsx': 'b1cd8fe92f31e849',
+      'frontend/src/pages/vendor/AssetPortalInvoices.jsx': '2e317fa913fec19d', 'frontend/src/pages/vendor/IdCardDashboard.jsx': '25ed6866b9ca93f2', 'frontend/src/pages/vendor/IdCardRequests.jsx': '22aa6a87f326d520',
       'frontend/src/pages/vendor/idCardCommon.jsx': '856a1e8b8684bfe5', 'frontend/src/pages/vendor/assetPortalCommon.jsx': 'ccf2b13a8a5ec0c8',
     };
     const moved = Object.entries(PROTECTED).filter(([rel, want]) => crypto.createHash('sha256').update(fs.readFileSync(path.join(BACK, '..', rel))).digest('hex').slice(0, 16) !== want).map(([rel]) => rel);

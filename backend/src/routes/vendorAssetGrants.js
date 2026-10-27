@@ -47,7 +47,7 @@ async function categoryCounts() {
 }
 
 const slim = (p, take = 400) => ({
-  total: p.total, byReason: p.byReason, available: p.available, underRepair: p.underRepair, repairJobs: p.repairJobs, hiddenHeld: p.hiddenHeld,
+  total: p.total, byReason: p.byReason, available: p.available, underRepair: p.underRepair, withEmployees: p.withEmployees, noHolderNamed: p.noHolderNamed, repairJobs: p.repairJobs, hiddenHeld: p.hiddenHeld,
   rows: p.rows.slice(0, take).map((r) => ({ assetId: r.id, assetCode: r.assetCode, name: r.name, category: r.category, status: r.status, reasons: r.reasons, reasonText: r.reasonText })),
   shown: Math.min(take, p.total),
 });
@@ -76,6 +76,14 @@ router.put('/category-map', wrap(async (req, res) => {
   });
   const m = await HS.autoMap();
   res.json({ ok: true, message: 'Saved. It applies on each vendor\'s next page load.', map: m.map, custom: m.custom });
+}));
+
+// The 227 reconciliation for one vendor (Stage B, 27 Oct 2026): HRMS total vs expected, SIM cards (Airtel portal), what this vendor sees, gaps.
+router.get('/:vendorId/reconciliation', wrap(async (req, res) => {
+  const vendor = await vendorOf(req, res);
+  if (!vendor) return undefined;
+  const out = await require('../utils/assetVendorReconcile').reconcile(vendor.id); // eslint-disable-line global-require
+  return res.json({ vendor: { id: vendor.id, name: vendor.name }, ...out });
 }));
 
 router.get('/:vendorId', wrap(async (req, res) => {

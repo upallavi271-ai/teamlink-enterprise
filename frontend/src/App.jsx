@@ -96,9 +96,7 @@ import VendorServices from './pages/vendor/VendorServices.jsx';
 import VendorDashboard from './pages/vendor/VendorDashboard.jsx';
 import AssetPortalDashboard from './pages/vendor/AssetPortalDashboard.jsx';
 import AssetPortalAssets from './pages/vendor/AssetPortalAssets.jsx';
-import AssetPortalOrders from './pages/vendor/AssetPortalOrders.jsx';
 import AssetPortalRepairs from './pages/vendor/AssetPortalRepairs.jsx';
-import AssetPortalHistory from './pages/vendor/AssetPortalHistory.jsx';
 import AssetPortalInvoices from './pages/vendor/AssetPortalInvoices.jsx';
 import IdCardDashboard from './pages/vendor/IdCardDashboard.jsx';
 import IdCardRequests from './pages/vendor/IdCardRequests.jsx';
@@ -146,9 +144,9 @@ export default function App() {
       {/* The Assets Vendor Portal (2026-10-19): the four pages an ASSET vendor sees instead of the four above (the shell sends a vendor to its own portal). */}
       <Route path="/vendor/asset-portal/dashboard" element={<AssetPortalDashboard />} />
       <Route path="/vendor/asset-portal/assets" element={<AssetPortalAssets />} />
-      <Route path="/vendor/asset-portal/orders" element={<AssetPortalOrders />} />
+      <Route path="/vendor/asset-portal/orders" element={<Navigate to="/vendor/asset-portal/invoices?tab=orders" replace />} />
       <Route path="/vendor/asset-portal/repairs" element={<AssetPortalRepairs />} />
-      <Route path="/vendor/asset-portal/history" element={<AssetPortalHistory />} />
+      <Route path="/vendor/asset-portal/history" element={<Navigate to="/vendor/asset-portal/repairs?tab=history" replace />} />
       <Route path="/vendor/asset-portal/invoices" element={<AssetPortalInvoices />} />
       {/* The ID Card Vendor Portal (2026-10-19): the Dashboard + the four modules (one screen, four views) in the vendor sidebar. */}
       <Route path="/vendor/idcard-portal/dashboard" element={<IdCardDashboard />} />

@@ -36,8 +36,8 @@ function Body() {
         <Link to="/vendor/asset-portal/assets" className="vp-tile"><span>Assets with you</span><b>{d.assets.total}</b></Link>
         <Link to="/vendor/asset-portal/repairs" className="vp-tile orange"><span>Repairs open</span><b>{d.repairs.open}</b></Link>
         <Link to="/vendor/asset-portal/repairs?stage=Completed" className="vp-tile green"><span>Repairs done</span><b>{stage('Completed') + stage('Returned')}</b></Link>
-        <Link to="/vendor/asset-portal/orders" className="vp-tile"><span>Orders</span><b>{d.orders.total}</b></Link>
-        <Link to="/vendor/asset-portal/orders" className="vp-tile orange"><span>Orders still to deliver</span><b>{d.orders.open}</b></Link>
+        <Link to="/vendor/asset-portal/invoices?tab=orders" className="vp-tile"><span>Orders</span><b>{d.orders.total}</b></Link>
+        <Link to="/vendor/asset-portal/invoices?tab=orders" className="vp-tile orange"><span>Orders still to deliver</span><b>{d.orders.open}</b></Link>
         <Link to="/vendor/asset-portal/repairs" className="vp-tile"><span>Repair estimates</span><b>{rs(d.repairs.estimateTotal)}</b></Link>
         <Link to="/vendor/asset-portal/repairs" className="vp-tile green"><span>Final repair cost</span><b>{rs(d.repairs.finalTotal)}</b></Link>
         <Link to="/vendor/asset-portal/invoices" className="vp-tile orange"><span>Waiting to be paid</span><b>{rs(d.payments.outstanding)}</b></Link>

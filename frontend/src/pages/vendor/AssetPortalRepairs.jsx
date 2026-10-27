@@ -9,6 +9,7 @@ import { StepTag, StepRow, HistoryList, PayTag, PayLine, STEP_HELP, STEPS, Warra
 import { VendorIoBar } from './VendorIo.jsx';
 import { UploadBillButton } from './AssetPortalBillUploads.jsx'; // Upload repair bill (photo / scan / PDF, read by AI, checked by Accounts)
 import useAutoRefresh from './useAutoRefresh.js';
+import { HistoryBody } from './AssetPortalHistory.jsx';
 import './vendorModules.css';
 
 // /vendor/asset-portal/repairs - Repairs in the Assets Vendor Portal. These are the company's OWN repair records (the same ones Accounts reads):
@@ -17,10 +18,18 @@ import './vendorModules.css';
 // repair's history (who, when, old to new) and cannot be erased.
 const SORTS = [['dateReported', 'Reported on'], ['repairNo', 'Repair number'], ['assetCode', 'Asset ID'], ['stage', 'Step'], ['estimate', 'Estimate'], ['finalCost', 'Final cost']];
 
+// REPAIRS & HRMS TICKETS (one of the four modules, 27 Oct 2026): Repairs | Repair history (the old /history address opens the second tab)
 export default function AssetPortalRepairs() {
+  const [params, setParams] = useSearchParams();
+  const tab = params.get('tab') === 'history' ? 'history' : 'repairs';
+  const go = (t) => { const n = new URLSearchParams(params); if (t === 'repairs') n.delete('tab'); else n.set('tab', t); n.delete('open'); setParams(n, { replace: true }); };
   return (
-    <VendorShell title="Repairs" sub="The repairs the company has given you: update each step, add your estimate, final cost and invoice.">
-      <Body />
+    <VendorShell title="Repairs & HRMS Tickets" sub="The repairs the company has given you: update each step, add your estimate, final cost and invoice. Every change is in Repair history.">
+      <div className="vp-seg vio-tabs" role="tablist" aria-label="Repairs or history">
+        <button type="button" role="tab" aria-selected={tab === 'repairs'} className={`vp-chip${tab === 'repairs' ? ' on' : ''}`} onClick={() => go('repairs')}>Repairs</button>
+        <button type="button" role="tab" aria-selected={tab === 'history'} className={`vp-chip${tab === 'history' ? ' on' : ''}`} onClick={() => go('history')}>Repair history</button>
+      </div>
+      {tab === 'history' ? <HistoryBody /> : <Body />}
     </VendorShell>
   );
 }

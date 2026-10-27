@@ -6,6 +6,7 @@ import VendorPager from './VendorPager.jsx';
 import { day } from './vendorFormat.js';
 import { rs, PayTag, PayLine } from './assetPortalCommon.jsx';
 import { VendorIoBar } from './VendorIo.jsx';
+import { OrdersBody } from './AssetPortalOrders.jsx';
 import { MyBills, UploadBillButton } from './AssetPortalBillUploads.jsx'; // "My bills": the repair bills this vendor uploaded as photos / PDFs
 import './vendorModules.css';
 import './billUploads.css';
@@ -15,7 +16,7 @@ import './billUploads.css';
 // bank statement: Pending, Paid (the bank payment is matched), Partially Paid, Overdue, Reversed. You cannot change it, and no bank detail is shown.
 export default function AssetPortalInvoices() {
   return (
-    <VendorShell title="Invoices" sub="Your invoices, and whether Accounts has paid them.">
+    <VendorShell title="Invoices & Payments" sub="Your invoices and bills, whether Accounts has paid them, and the orders the company gave you.">
       <InvoiceTabs />
     </VendorShell>
   );
@@ -23,20 +24,22 @@ export default function AssetPortalInvoices() {
 
 // Two views of the same page: the invoices, and "My bills" (photos / PDFs of bills you uploaded, with where each one is).
 function InvoiceTabs() {
-  const [tab, setTab] = useState(() => (new URLSearchParams(window.location.search).get('tab') === 'bills' ? 'bills' : 'invoices'));
+  // INVOICES & PAYMENTS (one of the four modules, 27 Oct 2026): Invoices | My bills | Orders (the old /orders address opens Orders)
+  const [tab, setTab] = useState(() => { const t = new URLSearchParams(window.location.search).get('tab'); return t === 'bills' || t === 'orders' ? t : 'invoices'; });
   const [unseen, setUnseen] = useState(0);
   const [stamp, setStamp] = useState(0);
   const loadSummary = useCallback(() => { vendorApi.get('/asset-portal/bill-uploads/summary').then((r) => setUnseen(r.data.unseen || 0)).catch(() => {}); }, []);
   useEffect(() => { loadSummary(); }, [loadSummary, tab]);
-  const pick = (t) => { setTab(t); try { window.history.replaceState(null, '', t === 'bills' ? '?tab=bills' : window.location.pathname); } catch { /* ignore */ } };
+  const pick = (t) => { setTab(t); try { window.history.replaceState(null, '', t === 'invoices' ? window.location.pathname : `?tab=${t}`); } catch { /* ignore */ } };
   return (
     <>
       <div className="bu-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'invoices'} className={tab === 'invoices' ? 'on' : ''} onClick={() => pick('invoices')}>Invoices</button>
         <button type="button" role="tab" aria-selected={tab === 'bills'} className={tab === 'bills' ? 'on' : ''} onClick={() => pick('bills')}>My bills{unseen > 0 ? <span className="bu-new">{unseen} new</span> : null}</button>
+        <button type="button" role="tab" aria-selected={tab === 'orders'} className={tab === 'orders' ? 'on' : ''} onClick={() => pick('orders')}>Orders</button>
         <span style={{ marginLeft: 'auto' }}><UploadBillButton label="Upload repair bill" onDone={() => { pick('bills'); setStamp((x) => x + 1); loadSummary(); }} /></span>
       </div>
-      {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : <Body />}
+      {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : tab === 'orders' ? <OrdersBody /> : <Body />}
     </>
   );
 }
