@@ -11,6 +11,7 @@ const Z = require('./lib/zzfix')('HDB');
 (async () => {
   const { prisma } = Z;
   let annId = null;
+  let empAnnId = null;
   const created = { leaves: [] };
   try {
     const hr = await Z.mkUser('hr', { role: 'HR', hrmsRole: 'HR', hrmsAccess: true, atsRole: 'NONE', atsAccess: false }, { designation: 'HR Executive', department: 'HR' });
@@ -80,17 +81,35 @@ const Z = require('./lib/zzfix')('HDB');
     Z.check('P6 paused: not on the HRMS dashboard', !(dash.body.announcements || []).some((a) => a.id === annId), (dash.body.announcements || []).map((a) => a.title));
     const p2 = await Z.call('PUT', `/api/announcements/${annId}/pause`, H, { paused: false });
     Z.check('P7 Resume: back on the employee\'s list and in the bell', p2.status === 200 && p2.body.paused === false && (await Z.call('GET', '/api/announcements', E)).body.some((a) => a.id === annId) && inBell(await myBell()), p2.body);
+
+    // ---- everyone may post (employee -> own department), with who / role / dept / time ----
+    const cp = await Z.call('GET', '/api/announcements/can-post', E);
+    Z.check('A1 an employee may post, to their own department', cp.status === 200 && cp.body.canPost === true && cp.body.mode === 'department' && cp.body.department === 'R&D', cp.body);
+    const ch = await Z.call('GET', '/api/announcements/can-post', H);
+    Z.check('A2 HR posts with the full Send-to picker', ch.body.canPost === true && ch.body.mode === 'picker', ch.body);
+    const epost = await Z.call('POST', '/api/announcements', E, { title: `ZZTEST HDB emp ${Z.RUN}`, body: 'ZZTEST HDB emp body', category: 'General', date: new Date().toISOString().slice(0, 10), pinned: true, audience: { mode: 'everyone' } });
+    empAnnId = epost.body && epost.body.id;
+    const erow = epost.status === 201 ? await prisma.announcement.findUnique({ where: { id: empAnnId } }) : null;
+    Z.check('A3 the employee\'s notice goes to their department only, not pinned (even when asked)', epost.status === 201 && erow && /R&D department/.test(erow.target || '') && !erow.pinned, [epost.status, epost.body && epost.body.error, erow && erow.target, erow && erow.pinned]);
+    const sl = await Z.call('GET', '/api/announcements', S);
+    const mine = sl.body.find((a) => a.id === empAnnId);
+    Z.check('A4 the Super Admin sees it with who posted it, their role, department and the time', !!mine && mine.postedBy && mine.postedByRole === 'Employee' && mine.postedByDept === 'R&D' && !!mine.postedAt, mine && [mine.postedBy, mine.postedByRole, mine.postedByDept, mine.postedAt]);
   } catch (err) { Z.fail += 1; console.log('FAIL  crashed', err && err.stack ? err.stack.slice(0, 900) : err); } finally {
     try {
       await prisma.approvalStep.deleteMany({ where: { recordId: { in: created.leaves } } }).catch(() => null);
       await prisma.leaveRequest.deleteMany({ where: { id: { in: created.leaves } } }).catch(() => null);
+      for (const id of [empAnnId].filter(Boolean)) {
+        const a = await prisma.announcement.findUnique({ where: { id } });
+        if (a) await prisma.notification.deleteMany({ where: { title: `Announcement: ${a.title}` } });
+        await prisma.announcement.deleteMany({ where: { id } });
+      }
       if (annId) {
         const a = await prisma.announcement.findUnique({ where: { id: annId } });
         if (a) await prisma.notification.deleteMany({ where: { title: `Announcement: ${a.title}` } });
         await prisma.announcement.deleteMany({ where: { id: annId } });
       }
     } catch (e) { console.log('cleanup', String(e.message).slice(0, 160)); }
-    await Z.cleanup([(p) => p.auditLog.deleteMany({ where: { OR: [{ entityId: annId || '-' }, { toValue: { contains: 'ZZTEST HDB' } }] } })]).catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));
+    await Z.cleanup([(p) => p.auditLog.deleteMany({ where: { OR: [{ entityId: annId || '-' }, { entityId: empAnnId || '-' }, { toValue: { contains: 'ZZTEST HDB' } }] } })]).catch((e) => console.log('cleanup problem', String(e.message).slice(0, 160)));
     console.log(`\n${Z.pass} passed, ${Z.fail} failed`);
     await Z.prisma.$disconnect();
     process.exit(Z.fail ? 1 : 0);

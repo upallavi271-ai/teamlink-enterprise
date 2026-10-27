@@ -23,6 +23,9 @@ const CATEGORIES = ['General', 'Policy', 'Event', 'Holiday'];
 // to and whether it is pinned.
 const EMPTY_AN_FILTERS = { q: '', category: '', target: '', pinned: '', from: '', to: '' };
 const postedOf = (a) => a.date || a.createdAt;
+// "Posted by Ravi (TL · Education) · 27 Oct 2026, 3:45 PM"
+const postedAtText = (a) => { const t = a.postedAt || a.createdAt; if (!t) return a.date || ''; const d = new Date(t); return Number.isNaN(d.getTime()) ? (a.date || '') : d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }); };
+const postedByText = (a) => `${a.postedBy || 'Unknown'}${a.postedByRole || a.postedByDept ? ` (${[a.postedByRole, a.postedByDept].filter(Boolean).join(' · ')})` : ''}`;
 const AN_SORTS = [
   ['pinned', 'Pinned first', null], // the server's order: pinned, then newest
   ['new', 'Newest first', (a, b) => String(postedOf(b)).localeCompare(String(postedOf(a)))],
@@ -42,7 +45,8 @@ export const AN_FEATURES = [
 // Category, Send to (components/AudiencePicker.jsx — Everyone, one or MANY
 // departments, or named employees), Also deliver via, Pin to top, then
 // [Post Announcement] [Cancel].
-function NewAnnouncementModal({ onClose, onSaved }) {
+function NewAnnouncementModal({ onClose, onSaved, postInfo }) {
+  const deptOnly = postInfo && postInfo.mode === 'department';
   const [form, setForm] = useState({ title: '', body: '', category: 'General', pinned: false, meetingLink: '', meetingAt: '' });
   const [audience, setAudience] = useState(EMPTY_AUDIENCE);
   const [channels, setChannels] = useState([]);
@@ -53,7 +57,7 @@ function NewAnnouncementModal({ onClose, onSaved }) {
     if (!form.title.trim()) { setError('Enter a title.'); return; }
     if (!form.body.trim()) { setError('Enter the announcement text.'); return; }
     if (linkError) { setError(linkError); return; }
-    if (!audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
+    if (!deptOnly && !audienceReady(audience)) { setError(audience.mode === 'departments' ? 'Pick at least one department.' : 'Pick at least one employee.'); return; }
     const link = form.meetingLink.trim();
     const res = await run(() => api.post('/announcements', {
       ...form, meetingLink: link, meetingAt: link ? form.meetingAt : '', audience, channels, date: new Date().toISOString().slice(0, 10),
@@ -86,9 +90,13 @@ function NewAnnouncementModal({ onClose, onSaved }) {
           </Field>
         )}
       </div>
-      <AudiencePicker value={audience} onChange={setAudience} />
-      <DeliverVia value={channels} onChange={setChannels} />
-      <CheckLine checked={form.pinned} onChange={(pinned) => setForm({ ...form, pinned })}>Pin to top</CheckLine>
+      {deptOnly
+        ? <Field label="Send to"><div className="small-muted">Everyone in your department ({postInfo.department}) — your team, your TL and seniors. HR and the Super Admin see every announcement.</div></Field>
+        : <>
+          <AudiencePicker value={audience} onChange={setAudience} />
+          <DeliverVia value={channels} onChange={setChannels} />
+          <CheckLine checked={form.pinned} onChange={(pinned) => setForm({ ...form, pinned })}>Pin to top</CheckLine>
+        </>}
     </ComposeModal>
   );
 }
@@ -149,7 +157,10 @@ export default function Announcements({ view, onOpen, onBack }) {
   // PAUSE (2026-10-27): a paused notice is off the dashboard and out of the bell until Resume
   async function togglePause(a) { await api.put(`/announcements/${a.id}/pause`, { paused: !a.paused }); load(); }
 
-  const newButton = isHR && <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>+ New Announcement</button>;
+  // EVERYONE may post (founder 2026-10-27); the server says to whom (all / their scope / their department)
+  const [postInfo, setPostInfo] = useState(null);
+  useEffect(() => { api.get('/announcements/can-post').then((r) => setPostInfo(r.data)).catch(() => setPostInfo(null)); }, []);
+  const newButton = (isHR || (postInfo && postInfo.canPost)) && <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>+ New Announcement</button>;
   const sortCmp = (AN_SORTS.find(([k]) => k === sort) || AN_SORTS[0])[2];
   const filtered = announcements.filter((a) => textMatches(`${a.title} ${a.body || ''}`, nf.q)
     && (!nf.category || (a.category || 'General') === nf.category)
@@ -198,6 +209,7 @@ export default function Announcements({ view, onOpen, onBack }) {
   const modal = modalOpen && (
     <NewAnnouncementModal
       onClose={() => setModalOpen(false)}
+      postInfo={postInfo}
       onSaved={(a) => { setModalOpen(false); setSent(`Posted to ${a.target || 'everyone'} — ${a.reached ?? 0} employee(s). ${a.deliveryText || ''}`); load(); }}
     />
   );
@@ -238,12 +250,14 @@ export default function Announcements({ view, onOpen, onBack }) {
       <FeatureScreen title="Announcement Archive" sub="Every announcement ever posted." onBack={onBack}>
         {bar}
         <FeatureTable
-          heads={['Date', 'Title', 'Category', 'Pinned']}
+          heads={['Posted on', 'Title', 'Posted by', 'Sent to', 'Category', 'Pinned']}
           empty={none}
           rows={page.slice.map((a) => (
             <tr key={a.id}>
-              <td>{a.date || '—'}</td>
+              <td style={{ whiteSpace: 'nowrap' }}>{postedAtText(a) || '—'}</td>
               <td>{a.title}</td>
+              <td>{postedByText(a)}</td>
+              <td className="cell-muted">{a.target || 'everyone'}</td>
               <td className="cell-muted">{a.category || 'General'}</td>
               <td className="cell-muted">{a.pinned ? 'Pinned' : '—'}</td>
             </tr>
@@ -268,7 +282,8 @@ export default function Announcements({ view, onOpen, onBack }) {
               <span>
                 {a.paused && <span className="badge" style={{ marginRight: 6, background: 'var(--amber-bg, #fef3c7)', color: 'var(--amber, #92400e)' }} title={a.pausedBy ? `Paused by ${a.pausedBy}` : 'Paused'}>Paused</span>}
                 {a.pinned && '📌 '}<button type="button" className="mtg-open-title" onClick={() => setOpenedId(a.id)} title="Open this announcement">{a.title}</button><br />
-                <span className="cell-muted" style={{ fontSize: 11.5 }}>{a.body} · {a.target || ''} · {a.date || ''}</span>
+                <span className="cell-muted" style={{ fontSize: 11.5 }}>{a.body}</span><br />
+                <span className="cell-muted" style={{ fontSize: 11.5 }}>Posted by <b>{postedByText(a)}</b> · to {a.target || 'everyone'} · {postedAtText(a)}</span>
                 {a.meetingLink && <><br /><JoinMeeting small href={a.meetingLink} when={a.meetingWhen} /></>}
               </span>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

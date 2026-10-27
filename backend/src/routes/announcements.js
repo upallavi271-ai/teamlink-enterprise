@@ -88,6 +88,35 @@ function shape(a) {
   };
 }
 
+// WHO MAY POST, AND TO WHOM (founder 2026-10-27: "andaru new announcement create chesukovachu; valla hierarchy lo kanipinchali; Super Admin ki
+// anni theliyali - evaru, ey time, date"): HR / Super Admin (the create right) post to anyone; a lead (TL / STL / Manager) posts inside their
+// own scope (the Send-to picker already allows only that); an employee posts to their own department (their team, TL and seniors see it).
+// The Super Admin and HR see every announcement, each with who posted it, their role and department, and the exact date and time.
+const ROLE_WORD = { SUPER_ADMIN: 'Super Admin', ADMIN: 'Admin', HR: 'HR', STL: 'STL', TL: 'TL', MANAGER: 'Manager', ASSISTANT_MANAGER: 'Assistant Manager', EMPLOYEE: 'Employee' };
+async function postingMode(user) {
+  const mayCreate = await require('../utils/permissions').can(user, null, 'hrms', 'Employee Services', 'create').catch(() => false); // eslint-disable-line global-require
+  if (mayCreate) return { mode: 'picker' };
+  const own = await prisma.employee.findFirst({ where: { userId: user.id }, select: { department: true } });
+  if (!own) return { mode: 'none', reason: 'Only people on the employee rolls can post an announcement.' };
+  if (user.caps && user.caps.hrmsSelfOnly) {
+    return own.department ? { mode: 'department', department: own.department } : { mode: 'none', reason: 'Your employee record has no department yet. Ask HR to add it, then you can post.' };
+  }
+  return { mode: 'picker' }; // a lead: the picker offers only their own scope
+}
+router.get('/can-post', async (req, res) => {
+  const m = await postingMode(req.user);
+  res.json({ canPost: m.mode !== 'none', ...m });
+});
+async function withPosters(rows) {
+  const ids = [...new Set(rows.map((a) => a.postedById).filter(Boolean))];
+  const users = ids.length ? await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, role: true, hrmsRole: true, employee: { select: { department: true, designation: true } } } }).catch(() => []) : [];
+  const byId = new Map(users.map((u) => [u.id, u]));
+  return rows.map((a) => {
+    const u = byId.get(a.postedById);
+    return { ...a, postedByRole: u ? (ROLE_WORD[String(u.hrmsRole || u.role || '').toUpperCase()] || null) : null, postedByDept: u && u.employee ? u.employee.department || null : null, postedAt: a.createdAt };
+  });
+}
+
 router.get('/', async (req, res) => {
   const ctx = await viewerContext(req.user);
   const departments = scopeDepartments(req.user) || [];
@@ -95,11 +124,15 @@ router.get('/', async (req, res) => {
   const legacy = legacyReach(departments);
   // a PAUSED notice is shown only to those who may edit announcements (with a Paused tag + Resume); everybody else does not see it
   const mayEdit = await require('../utils/permissions').can(req.user, null, 'hrms', 'Employee Services', 'edit').catch(() => false); // eslint-disable-line global-require
-  res.json(announcements.filter((a) => reaches(ctx, a, legacy) && (mayEdit || !PAUSE.isPaused(a))).map(shape));
+  res.json(await withPosters(announcements.filter((a) => reaches(ctx, a, legacy) && (mayEdit || !PAUSE.isPaused(a))).map(shape)));
 });
 
-router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async (req, res) => {
-  const { title, body, category, pinned, date } = req.body;
+router.post('/', async (req, res) => {
+  const how = await postingMode(req.user);
+  if (how.mode === 'none') return res.status(403).json({ error: how.reason });
+  const { title, body, category, date } = req.body;
+  // pinning to the top stays with those who manage announcements
+  const pinned = how.mode === 'picker' && (await require('../utils/permissions').can(req.user, null, 'hrms', 'Employee Services', 'create').catch(() => false)) ? req.body.pinned : false; // eslint-disable-line global-require
   let { target } = req.body;
   if (!title || !body || !date) return res.status(400).json({ error: 'title, body and date are required' });
   const meetingLink = String(req.body.meetingLink || '').trim();
@@ -111,10 +144,15 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async
 
   // The Send-to picker. A caller that sends no audience (an older client
   // posting { target: 'Medical Department' }) is handled exactly as before.
-  const aud = parseAudience(req.body);
+  const aud = how.mode === 'department' ? null : parseAudience(req.body);
   let reached = null;
   let columns = { departments: null, employeeIds: null };
-  if (aud) {
+  if (how.mode === 'department') {
+    // an employee's notice: everyone working in their department (their team, TL, STL and above see it; HR / Super Admin see every notice)
+    reached = await prisma.employee.findMany({ where: { department: how.department, userId: { not: null }, employmentStatus: { notIn: ['Relieved', 'Exited'] } }, select: { id: true, userId: true, name: true, email: true, phone: true, department: true } });
+    columns = { departments: how.department, employeeIds: null };
+    target = `${how.department} department`;
+  } else if (aud) {
     const out = await resolveAudience(req.user, aud);
     if (!out.ok) return res.status(out.status).json({ error: out.error });
     reached = out.employees;
@@ -144,7 +182,7 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async
   if (reached) {
     delivery = await deliver({
       employees: reached,
-      channels: parseChannels(req.body.channels),
+      channels: how.mode === 'department' ? [] : parseChannels(req.body.channels),
       title: `Announcement: ${title}`,
       message: `${body}${meetingLines}`,
       by: req.user,

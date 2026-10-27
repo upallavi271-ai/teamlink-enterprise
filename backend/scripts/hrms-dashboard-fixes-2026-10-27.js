@@ -8,6 +8,8 @@
 //   2. "paina unna demo announcements remove chey" - the three demo / test notices on the Announcements page are deleted, with the bell
 //      notifications they made: "Diwali Holiday Schedule" and "Updated WFH Policy" (rows from prisma/seed.js: poster text "Vasu (Admin)", no user id) and
 //      "[AI-TEST] Office closed Friday". Matched by exact title AND no poster / the [AI-TEST] tag - a real notice is never touched.
+//   3. "remove this team - asala ee team maa company lo ledhu" - an employee whose team is a placeholder word ("Team", "-", "NA" ...) gets
+//      no team, so the fake "Team" label / chip goes away. Real team names are never touched.
 //
 //   node scripts/hrms-dashboard-fixes-2026-10-27.js                                   DRY RUN
 //   TL_ALLOW_REAL_APPLY=1 node scripts/hrms-dashboard-fixes-2026-10-27.js --apply --really-real
@@ -56,8 +58,13 @@ const lc = (s) => String(s || '').trim().toLowerCase();
       notes.push(...n.map((x) => x.id));
     }
     console.log(`2. demo announcements to delete: ${del.length} (${del.map((a) => a.title).join(' | ') || '-'}), with ${notes.length} bell notification(s)`);
+    // 3. founder 2026-10-27 (live screenshot "B Koushik · Medical · Team"): "asala ee team maa company lo ledhu" - a team saved as a
+    //    placeholder word (Team, -, NA ...) is not a team: cleared, so no fake "Team" chip / label shows anywhere.
+    const JUNK_TEAM = new Set(['team', '-', '--', 'na', 'n/a', 'none', 'nil', '0', '.']);
+    const junk = (await prisma.employee.findMany({ where: { team: { not: null } }, select: { id: true, name: true, team: true } })).filter((e) => e.team.trim() && JUNK_TEAM.has(e.team.trim().toLowerCase()));
+    console.log(`3. placeholder team values to clear: ${junk.length}${junk.length ? ` (${junk.map((e) => `${e.name}: "${e.team}"`).join(', ')})` : ''}`);
     if (!APPLY) { console.log('\nDRY RUN: nothing was changed.'); return; }
-    if (!toSet.length && !del.length) { console.log('\nNothing to do.'); return; }
+    if (!toSet.length && !del.length && !junk.length) { console.log('\nNothing to do.'); return; }
 
     const dir = path.join(os.homedir(), '.teamlink-backups', `hrms-dashboard-fixes-${new Date().toISOString().replace(/[:.]/g, '-')}`);
     fs.mkdirSync(dir, { recursive: true });
@@ -68,12 +75,16 @@ const lc = (s) => String(s || '').trim().toLowerCase();
         await tx.employee.update({ where: { id: e.id }, data: { reportingManagerId: mgr[0].id } });
         await tx.auditLog.create({ data: { action: 'Reporting manager set', entity: 'Employee', entityId: e.id, fromValue: '-', toValue: MANAGER, actorName: 'HRMS dashboard fixes 2026-10-27' } });
       }
+      for (const e of junk) {
+        await tx.employee.update({ where: { id: e.id }, data: { team: null } });
+        await tx.auditLog.create({ data: { action: 'Placeholder team cleared', entity: 'Employee', entityId: e.id, fromValue: e.team, toValue: '-', actorName: 'HRMS dashboard fixes 2026-10-27' } });
+      }
       if (notes.length) await tx.notification.deleteMany({ where: { id: { in: notes } } });
       for (const a of del) {
         await tx.announcement.delete({ where: { id: a.id } });
         await tx.auditLog.create({ data: { action: 'Announcement deleted (demo)', entity: 'Announcement', entityId: a.id, fromValue: a.title, actorName: 'HRMS dashboard fixes 2026-10-27' } });
       }
     });
-    console.log(`\nDONE: ${toSet.length} reporting manager(s) set, ${del.length} demo announcement(s) and ${notes.length} notification(s) deleted.\nBackup: ${bak}`);
+    console.log(`\nDONE: ${toSet.length} reporting manager(s) set, ${del.length} demo announcement(s) and ${notes.length} notification(s) deleted, ${junk.length} placeholder team(s) cleared.\nBackup: ${bak}`);
   } finally { await prisma.$disconnect(); }
 })().catch((e) => { console.error(String(e && e.stack ? e.stack : e).slice(0, 900)); process.exit(1); });
