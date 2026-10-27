@@ -11,6 +11,7 @@
 // the panel says so out loud if they ever differ.
 // ---------------------------------------------------------------------------
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { ApprovalChainModal } from '../../components/ApprovalChain.jsx';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import Pager, { usePaged } from '../../components/Pager.jsx';
@@ -92,6 +93,9 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
   const mayCsv = useDrillRight('hrms');
   const box = useRef(null);
   const seq = useRef(0);
+  // the approval chain popup (founder 2026-10-27: click the chain, see it, approve / reject right there) + a reload after a decision
+  const [chainFor, setChainFor] = useState(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const query = { ...params, tile: drill.tile, ...(drill.part ? { part: drill.part } : {}), ...(drill.scope ? { scope: drill.scope } : {}) };
   const sig = JSON.stringify(query);
 
@@ -101,7 +105,7 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
     api.get('/hrms/dashboard/list', { params: query })
       .then((res) => { if (mine === seq.current) setData(res.data); })
       .catch((e) => { if (mine === seq.current) setError(e.response?.data?.error || 'Could not load this list. Please try again.'); });
-  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sig, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Bring the list into view when it opens (it opens under the tiles, in place).
   useEffect(() => { if (box.current && box.current.scrollIntoView) box.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [drill.section, drill.tile]);
@@ -130,6 +134,8 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
   // decision routes the Leave / Attendance pages use, so the approval chain, its rules (TL remarks, approval reasons) and the scope apply.
   const [acting, setActing] = useState('');
   const [doneIds, setDoneIds] = useState({});
+  const CHAIN_TYPE = { leave: 'leave', regularization: 'regularization', late: 'latePermission' };
+  const openChain = (r) => { if (data && data.decide && r.reqId) setChainFor({ type: CHAIN_TYPE[data.decide], id: r.reqId, name: r.name }); };
   const URL_OF = { leave: (id) => `/leave/${id}/decision`, regularization: (id) => `/attendance/regularizations/${id}/decision`, late: (id) => `/late-permissions/${id}/decision` };
   async function decide(r, status) {
     if (!data || !data.decide || !r.reqId || acting) return;
@@ -243,7 +249,9 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                   <tr key={`${r.id || ''}|${r.from || r.date || r.kind || ''}|${i}`}>
                     {cols.map((c, ci) => (
                       <td key={c.key} data-label={c.label} className={c.key === 'why' ? 'hd-why' : ci === 0 ? 'hd-first' : ''} style={c.kind === 'date' || c.kind === 'time' ? { whiteSpace: 'nowrap' } : undefined}>
-                        {ci === 0 ? <b>{show(c, r[c.key])}</b> : cell(c, r[c.key])}
+                        {ci === 0 ? <b>{show(c, r[c.key])}</b> : (c.key === 'chain' && data.decide && r.reqId
+                          ? <button type="button" className="link-btn" style={{ textAlign: 'left' }} title="Open the approval chain (approve / reject there when it is your turn)" onClick={() => openChain(r)}>{r.chain}</button>
+                          : cell(c, r[c.key]))}
                       </td>
                     ))}
                     {data.decide && (
@@ -256,6 +264,7 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                             <button type="button" className="btn btn-sm btn-primary" disabled={!!acting} onClick={() => decide(r, 'Approved')}>{acting === r.reqId ? '…' : 'Approve'}</button>{' '}
                             <button type="button" className="btn btn-sm" disabled={!!acting} onClick={() => decide(r, 'Rejected')}>Reject</button>
                           </>}
+                        {' '}<button type="button" className="btn btn-sm btn-ghost" onClick={() => openChain(r)}>Open chain</button>
                       </td>
                     )}
                   </tr>
@@ -267,6 +276,15 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
           {page.total > 0 && <Pager page={page} noun={noun} />}
           {moreTo && <div className="hd-more"><Link to={moreTo}>{moreLabel || 'Open the full page'}</Link></div>}
         </>
+      )}
+      {chainFor && (
+        <ApprovalChainModal
+          type={chainFor.type}
+          recordId={chainFor.id}
+          title={`${chainFor.name}: approval chain`}
+          onClose={() => setChainFor(null)}
+          onChanged={() => { setSaved(`${chainFor.name}: decision saved.`); setReloadKey((k) => k + 1); }}
+        />
       )}
     </div>
   );
