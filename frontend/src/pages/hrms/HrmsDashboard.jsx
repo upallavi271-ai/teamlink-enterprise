@@ -261,14 +261,20 @@ function HrDashboard() {
 
       {/* hrms-24 §9 — built by the server from exactly the figures in the
           tiles above: same range, same filters, same scope. */}
-      {(data.charts || []).length > 0 && (
-        <>
-          <SectionLabel>{`Charts — ${p.name}`}</SectionLabel>
-          <div className="tlc-grid2 hd-charts">
-            {data.charts.map((c) => <ChartFromSpec key={c.id} spec={c} />)}
-          </div>
-        </>
-      )}
+      {/* ONE CHART (founder 2026-10-27: "charts repeat ga unnayi - anni charts kakunda antha okka chart lo"): the status / leave-type /
+          leave-status charts only repeated the cards above, so the dashboard shows the one chart the cards cannot: every department,
+          Present / Half day / Absent / On leave in one bar each (leave is inside it as "On leave"). */}
+      {(() => {
+        const one = (data.charts || []).find((c) => c.id === 'att-dept');
+        if (!one || !(one.rows || []).length) return null;
+        const spec = { ...one, title: 'Department-wise attendance and leave', sub: `Person-days in ${p.name}: Present (late included), Half day, Absent and On leave, one bar per department. Leave waiting for approval is in the Leave cards above.` };
+        return (
+          <>
+            <SectionLabel>{`Department-wise — ${p.name}`}</SectionLabel>
+            <div className="hd-charts"><ChartFromSpec spec={spec} /></div>
+          </>
+        );
+      })()}
 
       <div style={{ marginTop: 16 }}>
         <PanelPad>
