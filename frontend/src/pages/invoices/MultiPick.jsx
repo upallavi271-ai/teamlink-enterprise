@@ -38,7 +38,7 @@ export default function MultiPick({
   const shown = useMemo(() => {
     return options
       .filter((o) => Number(o.count) > 0 || picked.has(o.value))
-      .filter((o) => matchesText(String(o.label), q));
+      .filter((o) => matchesText(`${o.label} ${o.search || ""} ${o.sub || ""}`, q));
   }, [options, q, picked]);
 
   const labelOf = (v) => (options.find((o) => o.value === v) || {}).label || v;
@@ -87,7 +87,7 @@ export default function MultiPick({
             {shown.map((o) => (
               <label key={o.value} className={`invf-mp-opt${o.special ? ' special' : ''}`}>
                 <input type="checkbox" checked={picked.has(o.value)} onChange={() => toggle(o.value)} />
-                <span className="invf-mp-lbl">{o.label}</span>
+                <span className="invf-mp-lbl">{o.label}{o.sub ? <small className="invf-mp-sub">{o.sub}</small> : null}</span>
                 <span className="invf-mp-n">{Number(o.count || 0).toLocaleString('en-IN')}</span>
               </label>
             ))}

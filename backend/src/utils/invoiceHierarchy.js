@@ -177,8 +177,20 @@ async function loadHierarchy(dir) {
     return e ? { key: `e:${e.id}`, name: e.name, employeeId: e.id } : { key: p.key, name: p.label, employeeId: null };
   };
 
+  // Who sat in this seat on this day (YYYY-MM-DD) — the stored tenure, never a guess. null when the seat was empty
+  // that day, the day is unknown, or two tenures overlap it.
+  const posByCode = new Map(positions.map((p) => [p.code, p]));
+  const holderOn = (code, day) => {
+    const p = posByCode.get(code);
+    const dd = String(day || '').slice(0, 10);
+    if (!p || !/^\d{4}-\d{2}-\d{2}$/.test(dd)) return null;
+    const hits = p.assignments.filter((a) => realTenure(a) && a.fromDate <= dd && (!a.toDate || a.toDate >= dd));
+    const e = hits.length === 1 ? d.empById.get(hits[0].employeeId) : null;
+    return e ? { key: `e:${e.id}`, name: e.name, employeeId: e.id, via: 'seat' } : null;
+  };
+
   return {
-    dir: d, departments, sectionByKey, seats, people, employeeOf,
+    dir: d, departments, sectionByKey, seats, people, employeeOf, holderOn,
   };
 }
 
@@ -194,7 +206,15 @@ function attributeApplication(app, h, fallback) {
     };
   }
   const at = attribute(app.requirement, app.followUps || [], app.stageEvents || [], h.dir.person);
-  const rec = h.employeeOf(at.recruiter);
+  let rec = h.employeeOf(at.recruiter);
+  // RECRUITER NAMES FROM HRMS (founder 2026-10-27: the Recruiter list showed "EDU-2 · Edu 2"): an imported tracker wrote
+  // the seat's own name ("Edu 2") or a short form ("K.Lakshmi") as the owner, which matches no HRMS employee. When the
+  // seat is known, the employee who held it on the joining date (PositionAssignment) is the recruiter. With no seat or
+  // no single holder that day the recorded name stays, flagged by its non-employee key - never a guessed person.
+  if (rec && !rec.employeeId && at.seat && h.holderOn) {
+    const held = h.holderOn(at.seat, app.joiningDate);
+    if (held) rec = held;
+  }
   const tl = h.employeeOf(at.tl);
   const seat = at.seat ? h.seats.get(at.seat) : null;
   const reqDept = clean(app.requirement?.department);

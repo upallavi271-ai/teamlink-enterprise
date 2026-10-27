@@ -106,6 +106,28 @@ export function personLabel(p, entries) {
     .filter(Boolean).join(' · ');
 }
 
+// THE RECRUITER NAME FILTER (founder 2026-10-27): the HRMS name first, then when they worked as a recruiter —
+//   "Mula Pranayini — Nov 2025 to Feb 2026"     "D Sony — Oct 2026 to Present"
+// from the stored seat tenures (PositionAssignment), each tenure on its own ("Jan 2025 to Mar 2025, Jun 2025 to Sep 2025").
+// The seat code is a separate small line, never the name. A name the tracker recorded that matches no employee says so.
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const monYear = (iso) => { const m = /^(\d{4})-(\d{2})/.exec(String(iso || '')); return m ? `${MON[Number(m[2]) - 1]} ${m[1]}` : ''; };
+export function recruiterOption(h, key, recordedName) {
+  const p = personByKey(h, key);
+  if (!key.startsWith('e:')) {
+    return { label: `${recordedName || 'Unknown'} — not found in HRMS`, sub: '', search: recordedName || '' };
+  }
+  const all = p && !p.unplaced ? (p.entries || []) : [];
+  const recs = all.filter((e) => e.role === 'Recruiter');
+  const list = [...(recs.length ? recs : all)].sort((a, b) => String(a.from || '').localeCompare(String(b.from || '')));
+  const name = (p && p.name) || recordedName || 'Unknown';
+  const periods = list.length
+    ? list.map((e) => `${monYear(e.from) || 'start not recorded'} to ${e.to ? monYear(e.to) : (e.current ? 'Present' : 'end not recorded')}`).join(', ')
+    : 'Dates unavailable';
+  const seats = [...new Set(list.map((e) => e.seat).filter(Boolean))].join(', ');
+  return { label: `${name} — ${periods}`, sub: seats, search: `${name} ${seats}` };
+}
+
 // Employee options for the department / section in view: its TL(s) and
 // recruiters, current first, then former — the stored structure only. (A name
 // an invoice carries that holds no seat in the structure is not offered; its

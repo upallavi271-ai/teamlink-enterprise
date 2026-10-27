@@ -35,7 +35,7 @@ import { saveBlob } from './office/officeUtil';
 import { invoiceDocumentHtml, esc } from './invoices/invoiceDoc';
 import {
   ALL, changeFilter, reconcile, departmentOptions, sectionOptions, employeeOptions, roleOptions, describeEmployee,
-  waitingUnder, sectionByKey, personByKey, deptLabelOf,
+  waitingUnder, sectionByKey, personByKey, deptLabelOf, recruiterOption,
 } from './invoices/invHierarchy';
 import PeriodPicker, { periodText } from '../components/accounts/PeriodPicker.jsx';
 import MultiPick from './invoices/MultiPick.jsx';
@@ -324,7 +324,7 @@ export default function Invoices() {
   const recOpts = useMemo(() => {
     const list = [...fc.recs.keys(), ...filters.recs.filter((k) => !fc.recs.has(k))]
       .filter((k) => k !== NONE)
-      .map((k) => ({ value: k, label: fc.recLabel.get(k) || (personByKey(hier, k) || {}).name || k, count: fc.recs.get(k) || 0 }))
+      .map((k) => ({ value: k, ...recruiterOption(hier, k, fc.recLabel.get(k) || (personByKey(hier, k) || {}).name || k), count: fc.recs.get(k) || 0 }))
       .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
     return [{ value: NONE, label: 'Unassigned (no recruiter)', count: fc.recs.get(NONE) || 0, special: true }, ...list];
   }, [fc, filters.recs, hier]);

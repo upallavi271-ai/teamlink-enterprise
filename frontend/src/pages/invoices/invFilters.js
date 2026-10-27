@@ -186,7 +186,8 @@ export function searchMatch(r, q) {
 }
 
 export const recKeyOf = (r) => r.recruiterKey || NONE;
-export const recLabelOf = (r) => (r.recruiterKey ? [r.seat, r.recruiter].filter(Boolean).join(' · ') : 'Unassigned');
+// the recruiter's own name only - the seat code is shown on its own line in the list (Invoices.jsx recruiterOption)
+export const recLabelOf = (r) => (r.recruiterKey ? (r.recruiter || 'Unknown') : 'Unassigned');
 
 // One row through every filter — `skip` leaves one out (for that filter's own
 // option counts: each list is counted over what the OTHER filters leave).

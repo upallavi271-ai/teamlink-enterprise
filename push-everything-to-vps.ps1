@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $VpsHost = 'root@72.61.233.104'
 $VpsRoot = '/opt/teamlink-enterprise'
-function Step($n, $text) { Write-Host "`n==================== STEP $n of 8: $text ====================" -ForegroundColor Cyan }
+function Step($n, $text) { Write-Host "`n==================== STEP $n of 9: $text ====================" -ForegroundColor Cyan }
 
 if (-not $SkipDeploy) {
   Step 1 'Deploying the code (live database kept)'
@@ -54,13 +54,17 @@ Step 7 'HRMS dashboard data (reporting manager, demo announcements)'
 ssh $VpsHost "cd $VpsRoot/backend && TL_ALLOW_REAL_APPLY=1 node scripts/hrms-dashboard-fixes-2026-10-27.js --apply --really-real"
 if ($LASTEXITCODE -ne 0) { throw 'Step 7 (HRMS dashboard data) failed (see the lines above).' }
 
-Step 8 'Developer login (Super Admin)'
+Step 8 'R&D designations (R&D TL, R&D-1, R&D-2, R&D-3; same permissions)'
+ssh $VpsHost "cd $VpsRoot/backend && TL_ALLOW_REAL_APPLY=1 node scripts/rnd-designations-2026-10-27.js --apply --really-real"
+if ($LASTEXITCODE -ne 0) { throw 'Step 8 (R&D designations) failed (see the lines above).' }
+
+Step 9 'Developer login (Super Admin)'
 $sec = Read-Host 'Password for the developer login (press Enter to skip)' -AsSecureString
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
 if ($plain) {
   $quoted = "'" + ($plain -replace "'", "'\''") + "'"
   ssh $VpsHost "cd $VpsRoot/backend && TL_NEW_PASSWORD=$quoted TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --apply --really-real && TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --make-super-admin --apply --really-real"
-  if ($LASTEXITCODE -ne 0) { throw 'Step 8 (developer login) failed (see the lines above).' }
+  if ($LASTEXITCODE -ne 0) { throw 'Step 9 (developer login) failed (see the lines above).' }
   $plain = $null
 } else { Write-Host 'Skipped.' -ForegroundColor Yellow }
 
