@@ -9,7 +9,7 @@ import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import DateRangePicker, { useDateRange, rangeParams } from '../../components/DateRangePicker.jsx';
-import ChartFromSpec from '../../components/charts/ChartFromSpec.jsx';
+import DeptAttendanceChart from './DeptAttendanceChart.jsx';
 import { Tiles, DrillPanel } from './DashboardDrill.jsx';
 // Recruiter joinings (2026-10-05): Super Admin's month-end popup + a recruiter's own figure.
 import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13), HRMS lines only (2026-10-24)
@@ -264,14 +264,15 @@ function HrDashboard() {
       {/* ONE CHART (founder 2026-10-27: "charts repeat ga unnayi - anni charts kakunda antha okka chart lo"): the status / leave-type /
           leave-status charts only repeated the cards above, so the dashboard shows the one chart the cards cannot: every department,
           Present / Half day / Absent / On leave in one bar each (leave is inside it as "On leave"). */}
+      {/* 2026-10-27 (founder: "chart ala bagaledhu, inka clear ga evvu"): its own clearer chart (DeptAttendanceChart) —
+          status colours, numbers on the bars, total and % present per department; an empty period says so instead of vanishing. */}
       {(() => {
         const one = (data.charts || []).find((c) => c.id === 'att-dept');
-        if (!one || !(one.rows || []).length) return null;
-        const spec = { ...one, title: 'Department-wise attendance and leave', sub: `Person-days in ${p.name}: Present (late included), Half day, Absent and On leave, one bar per department. Leave waiting for approval is in the Leave cards above.` };
+        if (!one) return null;
         return (
           <>
             <SectionLabel>{`Department-wise — ${p.name}`}</SectionLabel>
-            <div className="hd-charts"><ChartFromSpec spec={spec} /></div>
+            <div className="hd-charts hd-att"><DeptAttendanceChart spec={one} period={p.name} /></div>
           </>
         );
       })()}
