@@ -697,7 +697,6 @@ export default function InvoiceDetail() {
         <h3>Dates &amp; papers</h3>
         <div className="kv"><span className="k">Invoice date</span><span>{fmtD(invoice.invoiceDate)}</span></div>
         <div className="kv"><span className="k">Payment due</span><span>{fmtD(invoice.dueDate)}</span></div>
-        <div className="kv"><span className="k">Payment terms</span><span>{invoice.paymentTerms || '—'}</span></div>
         <div className="kv">
           <span className="k">Sent to client</span>
           <span>
