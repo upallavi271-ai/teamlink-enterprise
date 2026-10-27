@@ -753,7 +753,8 @@ async function importantAlerts(user, s, appScope) {
       const live = new Set(rows.filter((r) => r.status === 'Pending' && !bad.has(r.id)).map((r) => r.id));
       return mine.filter((x) => x.workflow !== 'leave' || live.has(x.recordId)).length;
     })(),
-    prisma.notification.findMany({ where: { userId: me, read: false, createdAt: { gte: new Date(Date.now() - expireDays * 86400000) } }, select: { id: true, title: true, message: true, recipient: true } }),
+    prisma.notification.findMany({ where: { userId: me, read: false, createdAt: { gte: new Date(Date.now() - expireDays * 86400000) }, ...require('../utils/announcementPause').PAUSED_HIDE }, // eslint-disable-line global-require
+      select: { id: true, title: true, message: true, recipient: true } }),
     canDo(user, null, 'dashboard', 'System Alerts', 'view'),
   ]);
   lines.push({ id: 'approvals', label: 'Approvals waiting on me', count: approvals, tone: 'amber', to: '/leave' });

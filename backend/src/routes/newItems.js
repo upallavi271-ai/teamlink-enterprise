@@ -166,7 +166,8 @@ async function build(user, module = null) {
   const [seen, mine, notes] = await Promise.all([
     loadSeen(user.id),
     !module || module === 'ats' ? derived(user) : [],
-    prisma.notification.findMany({ where: { userId: user.id, createdAt: { gte: new Date(Date.now() - 30 * DAY) } }, orderBy: { createdAt: 'desc' }, take: 60 }).catch(() => []),
+    prisma.notification.findMany({ where: { userId: user.id, createdAt: { gte: new Date(Date.now() - 30 * DAY) }, ...require('../utils/announcementPause').PAUSED_HIDE }, // eslint-disable-line global-require
+      orderBy: { createdAt: 'desc' }, take: 60 }).catch(() => []),
   ]);
   const refs = mine.map((m) => m.ref).filter(Boolean);
   const items = [...mine];

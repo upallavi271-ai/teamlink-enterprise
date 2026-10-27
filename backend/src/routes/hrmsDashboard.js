@@ -107,7 +107,8 @@ async function buildDashboard(req, period) {
     prisma.leaveRequest.count({ where: { employeeId: { in: ids }, status: 'Approved', fromDate: { gt: today } } }),
     prisma.attendanceRegularization.findMany({ where: { employeeId: { in: ids }, status: 'Pending' } }),
     prisma.holiday.findMany({ orderBy: { date: 'asc' } }),
-    prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, take: 4 }),
+    // a PAUSED announcement (utils/announcementPause.js) is not on the dashboard
+    prisma.announcement.findMany({ orderBy: { createdAt: 'desc' }, take: 40 }).then((rows) => rows.filter((a) => !require('../utils/announcementPause').isPaused(a)).slice(0, 4)), // eslint-disable-line global-require
     // These four counted the WHOLE COMPANY while every tile above them was
     // already restricted to `ids` — so a TL's "Pending Tasks" panel reported
     // other departments' assets, training, targets and tickets.
@@ -238,7 +239,10 @@ async function buildDashboard(req, period) {
       // Spec item 7 — every reporting manager of the people on this dashboard.
       const mgrName = new Map(allEmployees.filter((e) => e.reportingManager).map((e) => [e.reportingManagerId, e.reportingManager.name]));
       if (req.query.manager && !mgr.has(req.query.manager)) mgr.set(req.query.manager, 0);
-      const desig = keep(tally(without('designation'), (e) => e.designation), req.query.designation);
+      // DESIGNATIONS COUNT THE PEOPLE WORKING NOW (founder 2026-10-27): "Employee 325" counted the 297 who left. With no Status picked the
+      // list is the working people only; a Status picked (e.g. Relieved) counts that status, so the left can still be found.
+      const forDesig = req.query.status ? without('designation') : without('designation').filter((e) => !LEFT_STATUSES.includes(e.employmentStatus));
+      const desig = keep(tally(forDesig, (e) => e.designation), req.query.designation);
       return {
         departments: [...dept.keys()].sort(),
         locations: [...loc.keys()].sort(),
@@ -263,6 +267,7 @@ async function buildDashboard(req, period) {
     exitApprovals: await exitApprovalsLine(req.user, today),
     employeeOverview: {
       total: employees.length,
+      headcount: employees.filter(EMP_TILE.headcount).length,
       active: employees.filter(EMP_TILE.active).length,
       newJoiners: employees.filter(joinedInRange).length,
       onLeave: onLeave.size,
@@ -377,6 +382,8 @@ const EMP_TILE = {
   notice: (e) => e.employmentStatus === 'Notice Period',
   exitProcess: (e) => e.employmentStatus === 'Exit Process',
   left: (e) => LEFT_STATUSES.includes(e.employmentStatus),
+  // HEADCOUNT (founder 2026-10-27): the people working here now = everybody who has not left (Active + Notice + Exit process + Other)
+  headcount: (e) => !LEFT_STATUSES.includes(e.employmentStatus),
   relieved: (e) => e.employmentStatus === 'Relieved',
   exited: (e) => e.employmentStatus === 'Exited',
   other: (e) => !TILE_STATUSES.includes(e.employmentStatus),

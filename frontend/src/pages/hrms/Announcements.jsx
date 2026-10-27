@@ -146,6 +146,8 @@ export default function Announcements({ view, onOpen, onBack }) {
   );
 
   async function togglePin(a) { await api.put(`/announcements/${a.id}/pin`); load(); }
+  // PAUSE (2026-10-27): a paused notice is off the dashboard and out of the bell until Resume
+  async function togglePause(a) { await api.put(`/announcements/${a.id}/pause`, { paused: !a.paused }); load(); }
 
   const newButton = isHR && <button className="btn btn-primary btn-sm" onClick={() => setModalOpen(true)}>+ New Announcement</button>;
   const sortCmp = (AN_SORTS.find(([k]) => k === sort) || AN_SORTS[0])[2];
@@ -264,12 +266,14 @@ export default function Announcements({ view, onOpen, onBack }) {
           {shown.length === 0 ? none : page.slice.map((a) => (
             <AssignRow key={a.id}>
               <span>
+                {a.paused && <span className="badge" style={{ marginRight: 6, background: 'var(--amber-bg, #fef3c7)', color: 'var(--amber, #92400e)' }} title={a.pausedBy ? `Paused by ${a.pausedBy}` : 'Paused'}>Paused</span>}
                 {a.pinned && '📌 '}<button type="button" className="mtg-open-title" onClick={() => setOpenedId(a.id)} title="Open this announcement">{a.title}</button><br />
                 <span className="cell-muted" style={{ fontSize: 11.5 }}>{a.body} · {a.target || ''} · {a.date || ''}</span>
                 {a.meetingLink && <><br /><JoinMeeting small href={a.meetingLink} when={a.meetingWhen} /></>}
               </span>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 <span className={`status ${a.category === 'Policy' ? 'pending' : 'active'}`}>{a.category || 'General'}</span>
+                {isHR && <button className="btn btn-sm" title={a.paused ? 'Show it again on the dashboard and in notifications' : 'Hide it from the dashboard and notifications (kept on file)'} onClick={() => togglePause(a)}>{a.paused ? 'Resume' : 'Pause'}</button>}
                 {isHR && <button className="btn btn-sm" onClick={() => togglePin(a)}>{a.pinned ? 'Unpin' : 'Pin'}</button>}
               </span>
             </AssignRow>

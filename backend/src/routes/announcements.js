@@ -1,6 +1,7 @@
 const express = require('express');
 const prisma = require('../db');
 const { requireAuth, requirePerm } = require('../middleware/auth');
+const PAUSE = require('../utils/announcementPause');
 const { logAudit } = require('../utils/audit');
 const { scopeDepartments } = require('../utils/scope');
 const {
@@ -81,6 +82,9 @@ function shape(a) {
     meetingLink: meeting && meeting.link ? meeting.link : null,
     meetingAt: meeting && meeting.at ? meeting.at : null,
     meetingWhen: meeting && meeting.at ? meetingWhen(meeting.at) : null,
+    paused: PAUSE.isPaused(a),
+    pausedAt: (PAUSE.pausedInfo(a) || {}).at || null,
+    pausedBy: (PAUSE.pausedInfo(a) || {}).by || null,
   };
 }
 
@@ -89,7 +93,9 @@ router.get('/', async (req, res) => {
   const departments = scopeDepartments(req.user) || [];
   const announcements = await prisma.announcement.findMany({ orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }] });
   const legacy = legacyReach(departments);
-  res.json(announcements.filter((a) => reaches(ctx, a, legacy)).map(shape));
+  // a PAUSED notice is shown only to those who may edit announcements (with a Paused tag + Resume); everybody else does not see it
+  const mayEdit = await require('../utils/permissions').can(req.user, null, 'hrms', 'Employee Services', 'edit').catch(() => false); // eslint-disable-line global-require
+  res.json(announcements.filter((a) => reaches(ctx, a, legacy) && (mayEdit || !PAUSE.isPaused(a))).map(shape));
 });
 
 router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async (req, res) => {
@@ -157,6 +163,16 @@ router.put('/:id/pin', requirePerm(null, 'hrms', 'Employee Services', 'edit'), a
   if (!existing) return res.status(404).json({ error: 'Announcement not found' });
   const announcement = await prisma.announcement.update({ where: { id: req.params.id }, data: { pinned: !existing.pinned } });
   res.json(announcement);
+});
+
+// PAUSE / RESUME (2026-10-27): off the dashboard and out of the bell while paused; Resume brings both back.
+router.put('/:id/pause', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res) => {
+  const existing = await prisma.announcement.findUnique({ where: { id: req.params.id } });
+  if (!existing) return res.status(404).json({ error: 'Announcement not found' });
+  const want = req.body && typeof req.body.paused === 'boolean' ? req.body.paused : !PAUSE.isPaused(existing);
+  const row = await PAUSE.setPaused(existing, want, req.user);
+  await logAudit({ userId: req.user.id, action: want ? 'Announcement paused' : 'Announcement resumed', entity: 'Announcement', entityId: existing.id, toValue: existing.title });
+  res.json(shape(row));
 });
 
 router.delete('/:id', requirePerm(null, 'hrms', 'Employee Services', 'delete'), async (req, res) => {

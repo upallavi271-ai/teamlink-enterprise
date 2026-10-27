@@ -209,8 +209,8 @@ async function sectionPolicies(user, rich) {
         ],
       },
       orderBy: [{ pinned: 'desc' }, { createdAt: 'desc' }],
-      take: rich ? 3 : 2,
-    }).catch(() => []),
+      take: 10,
+    }).then((rows) => rows.filter((a) => !require('./announcementPause').isPaused(a)).slice(0, rich ? 3 : 2)).catch(() => []), // eslint-disable-line global-require
   ]);
   const lines = [];
   if (types.length) {

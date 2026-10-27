@@ -1104,7 +1104,9 @@ router.get('/notifications', async (req, res) => {
   // A TL / STL / Recruiter / HR login never gets a line about an agreement (utils/agreementPrivacy.js).
   const noAgreement = require('../utils/agreementPrivacy').notificationFilter(req.user); // eslint-disable-line global-require
   if (req.query.page !== undefined) {
-    const own = noAgreement ? { AND: [{ userId: req.user.id }, noAgreement] } : { userId: req.user.id };
+    // rows hidden by a PAUSED announcement (utils/announcementPause.js) are left out
+    const PH = require('../utils/announcementPause').PAUSED_HIDE; // eslint-disable-line global-require
+    const own = noAgreement ? { AND: [{ userId: req.user.id }, noAgreement, PH] } : { AND: [{ userId: req.user.id }, PH] };
     const and = [own];
     const q = String(req.query.q || '').trim();
     if (q) and.push({ OR: [{ title: { contains: q } }, { message: { contains: q } }, { recipient: { contains: q } }] });
@@ -1127,7 +1129,7 @@ router.get('/notifications', async (req, res) => {
     return res.json({ rows: await withMailStatus(rows.map(shapeNotification)), total, page, pageSize, channels, unread });
   }
   const notifications = await prisma.notification.findMany({
-    where: noAgreement ? { AND: [{ userId: req.user.id }, noAgreement] } : { userId: req.user.id },
+    where: { AND: [{ userId: req.user.id }, require('../utils/announcementPause').PAUSED_HIDE, ...(noAgreement ? [noAgreement] : [])] }, // eslint-disable-line global-require
     // Name only — never the password hash (hrms-24 §12).
     include: { user: { select: { id: true, name: true } } },
     orderBy: { createdAt: 'desc' },
