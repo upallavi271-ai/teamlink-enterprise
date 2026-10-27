@@ -234,6 +234,14 @@ export function FeedbackSent({ tasks, myId }) {
 // ---------------------------------------------------------------------------
 // The New task / Edit task form
 // ---------------------------------------------------------------------------
+// A team as it is worth showing: 'Team-A' -> 'Team A'; a bare 'Team', '-', 'NA' ... is no team at all.
+const JUNK_TEAM = new Set(['team', '-', '--', 'na', 'n/a', 'none', 'nil', '0', '.']);
+export function teamOf(p) {
+  const t = String((p && p.team) || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t || JUNK_TEAM.has(t.toLowerCase())) return '';
+  return t.replace(/^team\s+([a-z0-9]+)$/i, (m, x) => `Team ${x.toUpperCase()}`);
+}
+
 export function TaskForm({ options, task, onClose, onSaved }) {
   const editing = !!task;
   const me = options.me || {};
@@ -276,10 +284,18 @@ export function TaskForm({ options, task, onClose, onSaved }) {
   };
   const base = people.filter(matchQ);
   const okRole = (p) => !role || p.roleGroup === role;
-  const depts = countBy(base.filter((p) => (!team || p.team === team) && okRole(p)), 'department');
+  // TEAMS (founder 2026-10-27): only once a department is picked, and only real teams - Education's Team A / Team B. A department
+  // with one team (its seats say just "Team") or a placeholder word shows no Team row.
+  const teams = (() => {
+    if (!dept) return [];
+    const m = new Map();
+    base.filter((p) => p.department === dept && okRole(p)).forEach((p) => { const t = teamOf(p); if (t) m.set(t, (m.get(t) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+  })();
+  const depts = countBy(base.filter((p) => (!team || teamOf(p) === team) && okRole(p)), 'department');
   const ROLE_ORDER = ['Super Admin', 'HR', 'STL', 'TL', 'Manager', 'Assistant Manager', 'Employees'];
-  const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && p.roleGroup === r).length;
-  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && okRole(p));
+  const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && p.roleGroup === r).length;
+  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && okRole(p));
 
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allShownOn = shown.length > 0 && shown.every((p) => picked.has(p.userId));
@@ -352,16 +368,23 @@ export function TaskForm({ options, task, onClose, onSaved }) {
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search anyone by name" aria-label="Search people" style={{ marginBottom: 8 }} />
             {depts.length > 1 && (
               <div className="tt-chips" role="group" aria-label="Department">
-                <button type="button" className={`tt-chip${!dept ? ' on' : ''}`} onClick={() => setDept('')}>All departments <b>{base.filter((p) => !team || p.team === team).length}</b></button>
+                <button type="button" className={`tt-chip${!dept ? ' on' : ''}`} onClick={() => setDept('')}>All departments <b>{base.filter((p) => !team || teamOf(p) === team).length}</b></button>
                 {depts.map(([d, n]) => (
                   <button type="button" key={d} className={`tt-chip${dept === d ? ' on' : ''}`} onClick={() => { setDept(dept === d ? '' : d); setTeam(''); }}>{d} <b>{n}</b></button>
                 ))}
               </div>
             )}
-            {/* No Team chips (founder 2026-10-27: "Team remove chey - ee team maa company lo ledhu"): pick by department and designation. */}
+            {teams.length > 1 && (
+              <div className="tt-chips" role="group" aria-label="Team">
+                <button type="button" className={`tt-chip${!team ? ' on' : ''}`} onClick={() => setTeam('')}>All of {dept} <b>{base.filter((p) => p.department === dept && okRole(p)).length}</b></button>
+                {teams.map(([t, n]) => (
+                  <button type="button" key={t} className={`tt-chip${team === t ? ' on' : ''}`} onClick={() => setTeam(team === t ? '' : t)}>{t} <b>{n}</b></button>
+                ))}
+              </div>
+            )}
             {people.some((p) => p.roleGroup) && (
               <div className="tt-chips" role="group" aria-label="Designation">
-                <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team)).length}</b></button>
+                <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team)).length}</b></button>
                 {ROLE_ORDER.map((r) => {
                   const n = roleCount(r);
                   return <button type="button" key={r} className={`tt-chip${role === r ? ' on' : ''}`} disabled={!n && role !== r} onClick={() => setRole(role === r ? '' : r)}>{r} <b>{n}</b></button>;
@@ -374,7 +397,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                   <input type="checkbox" checked={picked.has(p.userId)} onChange={() => toggle(p.userId)} />
                   <span>
                     <span className="tt-pn">{p.self ? `${p.name} (me)` : p.name}</span>
-                    <span className="tt-ps">{[p.designation, p.department].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
+                    <span className="tt-ps">{[p.designation, p.department, teamOf(p)].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
                   </span>
                 </label>
               ))}
