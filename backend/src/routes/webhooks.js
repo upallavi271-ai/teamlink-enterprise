@@ -193,6 +193,16 @@ function twilioSignatureOk(req, token) {
   return safeEq(req.get('x-twilio-signature'), want);
 }
 
+// A simple limit on the SMS Push Platform report address (the provider has no signature: the secret key in the address is the check)
+const SMSGW_HITS = new Map();
+function smsgwRateOk(ip) {
+  const now = Date.now(); const k = String(ip || '-');
+  const h = (SMSGW_HITS.get(k) || []).filter((t) => now - t < 60000);
+  h.push(now); SMSGW_HITS.set(k, h);
+  if (SMSGW_HITS.size > 5000) SMSGW_HITS.clear();
+  return h.length <= 600;
+}
+
 router.all('/sms/:provider', async (req, res) => {
   try {
     const provider = String(req.params.provider || '').toLowerCase();
@@ -208,6 +218,21 @@ router.all('/sms/:provider', async (req, res) => {
     const raw = req.method === 'GET' ? req.query : req.body;
     const items = (Array.isArray(raw) ? raw : [raw]).filter((x) => x && typeof x === 'object');
     let matched = 0;
+    if (provider === 'smsgw') {
+      // SMS Push Platform (founder's DLR prompt 2026-10-27): message_id, dlrstatus, msisdn, sender_id, submittime, delvtime, dlrcode -
+      // read, checked and applied by utils/smsPushDlrReport.js (idempotent; a report for another number is not applied). At most 200
+      // reports per call; the provider gets 200 OK whatever happens (a 4xx / 5xx only makes it retry the same report).
+      if (!smsgwRateOk(req.ip)) return res.status(429).json({ error: 'Too many delivery reports from this address; try again in a minute.' });
+      const DR = require('../utils/smsPushDlrReport'); // eslint-disable-line global-require
+      const tally = {};
+      for (const it of items.slice(0, 200)) {
+        // eslint-disable-next-line no-await-in-loop
+        const out = await DR.applyReport(DR.parseReport(it), 'push');
+        matched += out.matched || 0;
+        tally[out.outcome] = (tally[out.outcome] || 0) + 1;
+      }
+      return res.status(200).json({ ok: true, matched, outcomes: tally });
+    }
     for (const it0 of items) {
       let ref; let status; let error = null; let at = null;
       // SMS Push Platform: names are matched without caring about capitals

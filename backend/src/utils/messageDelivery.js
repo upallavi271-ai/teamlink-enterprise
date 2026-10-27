@@ -90,6 +90,7 @@ async function applyStatusInner(info, status) {
   const rows = await prisma.candidateMessage.findMany({ where: { providerRef: String(info.providerRef) } }).catch(() => []);
   for (const row of rows) {
     const current = String(row.status || '').toUpperCase();
+    if (current === status) continue; // the same report again: nothing to change // eslint-disable-line no-continue
     if (status !== 'FAILED' && (RANK[current] || 0) >= RANK[status]) continue; // eslint-disable-line no-continue
     const label = status === 'DELIVERED' ? 'Delivered' : status === 'READ' ? 'Read' : status === 'FAILED' ? 'Not delivered' : 'Sent';
     const stamp = at.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -109,7 +110,7 @@ async function applyStatusInner(info, status) {
 
   // 1b. the adapter layer's record of this message (provider, status ticks history - channels/store.js)
   try {
-    const rec = await require('../channels/store').applyStatus(String(info.providerRef), status.toLowerCase(), { at, error: info.error || null }); // eslint-disable-line global-require
+    const rec = await require('../channels/store').applyStatus(String(info.providerRef), status.toLowerCase(), { at, error: info.error || null, extra: info.extra || null }); // eslint-disable-line global-require
     if (rec && !matched) matched = 1;
   } catch { /* the record is optional */ }
 

@@ -80,6 +80,9 @@ const mock = http.createServer((req, res) => {
       let r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001', proving: true });
       const q = new URL(GOT[0].url, 'http://x').searchParams;
       Z.check('A1 accepted: the documented reply is read (msgid ZZ1ABC, ackid AK1 kept for the delivery report)', r.ok && r.providerRef === 'ZZ1ABC' && r.ackId === 'AK1', r);
+      const held2 = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Automatic ATS text', templateId: '1107000000000000001' });
+      Z.check('G0b test SMS accepted but no delivery report back yet: automatic SMS still held, says it waits for a delivery report', !held2.ok && held2.notProven && /delivery report/.test(held2.error), held2.error);
+      await require(path.join(Z.BACK, 'src/utils/smsPushDlrReport')).markDlrSeen('test'); // as if its delivery report came back
       Z.check('A2 httpapi.jsp = the manual\'s GET form, the DOCUMENTED names in the address: username, password, to (10 digits), from, text, pe_id, template_id; its own Sender ID', GOT[0].method === 'GET' && /\/smsapi\/httpapi\.jsp\?/.test(GOT[0].url) && !GOT[0].body && q.get('username') === USER && q.get('to') === '9876543210' && q.get('template_id') === '1107000000000000001' && q.get('pe_id') === '1101234567890123456' && q.get('from') === 'TMLINK' && q.get('text') === 'Hi Ravi, hello' && !q.has('coding'), GOT[0]);
       Z.check('A3 the username goes exactly as typed (no spaces, encoded once), the password as its own "password" parameter', q.get('username') === USER && q.get('password') === PASS && (GOT[0].url.match(/username=/g) || []).length === 1, GOT[0].url.replace(PASS, '***'));
       // the manual's JSON form: POST jsonapi.jsp with a JSON body, "to" as a list
@@ -268,6 +271,36 @@ const mock = http.createServer((req, res) => {
     Z.check('F2 usage by source module is real (HRMS 1, ATS 2) and no balance is invented', dash.body.byModule.find((m) => m.module === 'HRMS').count === 1 && dash.body.byModule.find((m) => m.module === 'ATS').count === 2 && dash.body.credits === null && /no documented balance/.test(dash.body.creditsNote), dash.body.byModule);
     const csv = await Z.call('GET', `/api/sms-platform/history.csv?from=${today}&to=${today}`, aTok);
     Z.check('F3 CSV export: header + a row per SMS, UTF-8', csv.status === 200 && /^﻿"Date and time"/.test(csv.text) && csv.text.split('\r\n').length === 4 + b0.requests, csv.text.slice(0, 200));
+
+    // ---- Push DLR with the DOCUMENTED fields (founder's DLR prompt 2026-10-27) ----------------------------------------------------------
+    const store = require(path.join(Z.BACK, 'src/channels/store'));
+    const DR = require(path.join(Z.BACK, 'src/utils/smsPushDlrReport'));
+    const dref = `ZZDLR${Z.RUN}`; const dack = `ZZACK${Z.RUN}`;
+    await store.record({ channel: 'SMS', provider: 'sms.gateway', direction: 'OUT', to: '919876543211', status: 'sent', providerRef: dref, ackId: dack, module: 'ATS', personName: 'ZZTEST SPT dlr' });
+    const push = (body) => Z.call('POST', `/api/webhooks/sms/smsgw?key=${DLR}`, null, body);
+    let pr = await push({ message_id: dref, dlrstatus: 'DELIVRD', msisdn: '919999999999', sender_id: 'TMLINK', submittime: '2026-10-27 10:00:01', delvtime: '2026-10-27 10:00:09', dlrcode: '000' });
+    let drec = await store.byRef(dref);
+    Z.check('D1 a report for ANOTHER number than the message went to is not applied', pr.status === 200 && pr.body.outcomes['number-mismatch'] === 1 && drec.status === 'sent', [pr.body, drec.status]);
+    pr = await push({ message_id: '<script>', dlrstatus: 'DELIVRD' });
+    Z.check('D2 an unreadable message_id is ignored (checked before anything is looked up), still 200 so the provider does not retry it', pr.status === 200 && pr.body.outcomes.invalid === 1, pr.body);
+    pr = await push({ message_id: dref, dlrstatus: 'SUBMITTED', msisdn: '9876543211' });
+    Z.check('D3 SUBMITTED is not final: nothing changes', pr.body.outcomes['not-final'] === 1 && (await store.byRef(dref)).status === 'sent', pr.body);
+    pr = await push({ message_id: dref, dlrstatus: 'DELIVRD', msisdn: '919876543211', sender_id: 'TMLINK', submittime: '2026-10-27 10:00:01', delvtime: '2026-10-27 10:00:09', dlrcode: '000' });
+    drec = await store.byRef(dref);
+    Z.check('D4 documented fields: DELIVRD -> delivered; delvtime (India time) and submittime, sender_id and dlrcode kept on the record', pr.body.outcomes.applied === 1 && drec.status === 'delivered' && drec.providerDeliveredAt === '2026-10-27T04:30:09.000Z' && drec.providerSubmitAt === '2026-10-27T04:30:01.000Z' && drec.dlrSenderId === 'TMLINK' && drec.dlrCode === '000', [pr.body, drec]);
+    const hist = drec.history.length;
+    pr = await push({ message_id: dref, dlrstatus: 'DELIVRD', msisdn: '919876543211', delvtime: '2026-10-27 10:00:09', dlrcode: '000' });
+    Z.check('D5 the same report again (a provider retry) changes nothing: no new history line', pr.body.outcomes.duplicate === 1 && (await store.byRef(dref)).history.length === hist, [pr.body, hist]);
+    const dref2 = `ZZDLR2${Z.RUN}`; const dack2 = `ZZACK2${Z.RUN}`;
+    await store.record({ channel: 'SMS', provider: 'sms.gateway', direction: 'OUT', to: '9876543212', status: 'sent', providerRef: dref2, ackId: dack2, module: 'HRMS', personName: 'ZZTEST SPT dlr2' });
+    pr = await Z.call('GET', `/api/webhooks/sms/smsgw?key=${DLR}&message_id=${dack2}&dlrstatus=UNDELIV&msisdn=9876543212&dlrcode=882`, null);
+    const d2 = await store.byRef(dref2);
+    Z.check('D6 a GET report naming the ACKID finds its SMS; UNDELIV -> failed with the operator code', pr.status === 200 && d2.status === 'failed' && /undeliv \(code 882\)/.test(d2.error || ''), [pr.body, d2.status, d2.error]);
+    const wrong = await Z.call('POST', '/api/webhooks/sms/smsgw?key=nope', null, { message_id: dref2, dlrstatus: 'DELIVRD' });
+    Z.check('D7 a report without the secret key is refused (403) and changes nothing', wrong.status === 403 && (await store.byRef(dref2)).status === 'failed', wrong.status);
+    Z.check('D8 the first applied report records that delivery reports work (automatic SMS needs it)', !!(await DR.dlrSeen()), await DR.dlrSeen());
+    Z.check('D9 "YYYY-MM-DD HH:mm:ss" is India time; nonsense and far-future times are not believed', DR.parseProviderTime('2026-10-27 10:00:09').toISOString() === '2026-10-27T04:30:09.000Z' && DR.parseProviderTime('tomorrow') === null && DR.parseProviderTime('2099-01-01 00:00:00') === null);
+    created.keys.push(dref, dack, dref2, dack2);
     // test-connection (the safe check) records itself
     const tc = await A('POST', '/test-connection');
     Z.check('F4 test connection with nothing accepted: not proven, nothing sent', tc.status === 200 && tc.body.ok === false && tc.body.needsConfirmation === true, tc.body);

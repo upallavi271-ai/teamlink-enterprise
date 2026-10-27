@@ -55,6 +55,8 @@ async function record(rec) {
   try {
     await put(key, row);
     if (row.providerRef) await put(`${REF}${row.providerRef}`, { k: key });
+    // a delivery report may name the ackid instead of the message id (SMS Push Platform): both find the record
+    if (row.ackId && row.ackId !== row.providerRef) await put(`${REF}${row.ackId}`, { k: key });
   } catch (e) { console.error('[comm] record:', e.message); } // eslint-disable-line no-console
   return { ...row, _key: key };
 }
@@ -68,16 +70,19 @@ async function byRef(ref) {
 }
 
 // Moves a record on. A status never goes backwards; "failed" always wins. Returns the record or null.
-async function applyStatus(ref, status, { at = new Date(), error = null, detail = null } = {}) {
+async function applyStatus(ref, status, { at = new Date(), error = null, detail = null, extra = null } = {}) {
   const rec = await byRef(ref);
   if (!rec) return null;
   const s = String(status || '').toLowerCase();
   if (!['queued', 'sent', 'delivered', 'read', 'failed'].includes(s)) return rec;
+  // the same report again (a provider retry) changes nothing and adds no history line
+  if (s === rec.status && s !== 'queued') return rec;
   if (s !== 'failed' && rec.status === 'failed') return rec;
   if (s !== 'failed' && (RANK[rec.status] || 0) >= RANK[s] && !(rec.status === 'queued' && s === 'queued')) return rec;
   rec.status = s;
   if (s === 'failed') rec.error = String(error || detail || 'The provider reported the message as not delivered').slice(0, 400);
   rec.history.push({ status: s, at: new Date(at).toISOString(), detail: detail || (s === 'failed' ? rec.error : null) });
+  if (extra && typeof extra === 'object') Object.assign(rec, extra);
   const key = rec._key; delete rec._key;
   await put(key, rec).catch(() => {});
   return { ...rec, _key: key };

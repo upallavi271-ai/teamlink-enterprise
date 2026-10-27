@@ -394,8 +394,17 @@ async function sendSms({ to, kind = 'bulk', text, vars, templateId, senderId, pr
   // Founder 2026-10-27: "Do not enable automatic ATS / Job Portal SMS until a real test SMS succeeds." Until the provider has accepted one
   // message from here (the Test SMS on Administration -> Integrations -> SMS Gateway, sent with proving: true), every other SMS is held
   // as "not configured" - recorded, never transmitted, never called sent.
-  if (cfg.provider === 'SMSGW' && !proving && !(await pushLastAccepted())) {
-    return { ok: false, notConfigured: true, notProven: true, transient: false, provider: 'SMSGW', error: 'SMS Push Platform is saved but not proven yet: send one Test SMS from Administration → Integrations → SMS Gateway. Until a real test SMS is accepted, no automatic SMS (ATS, Job Portal, campaigns) is sent.' };
+  if (cfg.provider === 'SMSGW' && !proving) {
+    const accepted = await pushLastAccepted();
+    const dlr = accepted ? await require('./smsPushDlrReport').dlrSeen() : null; // eslint-disable-line global-require
+    if (!accepted || !dlr) {
+      return {
+        ok: false, notConfigured: true, notProven: true, transient: false, provider: 'SMSGW',
+        error: !accepted
+          ? 'SMS Push Platform is saved but not proven yet: send one Test SMS from Administration → Integrations → SMS Gateway. Until a real test SMS is accepted and its delivery report comes back, no automatic SMS (ATS, campaigns) is sent.'
+          : 'SMS Push Platform accepted the test SMS, but no delivery report has come back yet (Push DLR or "Check delivery now"). Automatic SMS (ATS, campaigns) starts once one delivery report is received.',
+      };
+    }
   }
   await core.acquire('SMS');
   if (cfg.provider === 'MSG91') return viaMsg91(cfg, { mobile, kind, vars: vars || [body], templateId });
@@ -443,6 +452,6 @@ async function testConnection() {
 async function validateSms() { return (await smsConfig({ ignoreSwitch: true })).problems; }
 
 // New login details = not proven any more: the next Test SMS proves them again.
-async function forgetProof() { const prisma = require('../db'); await prisma.appSetting.deleteMany({ where: { key: PUSH_KEY } }).catch(() => {}); } // eslint-disable-line global-require
+async function forgetProof() { const prisma = require('../db'); await prisma.appSetting.deleteMany({ where: { key: { in: [PUSH_KEY, 'smsgw.dlrSeen'] } } }).catch(() => {}); } // eslint-disable-line global-require
 
 module.exports = { smsConfig, validateSms, forgetProof, sendSms, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };
