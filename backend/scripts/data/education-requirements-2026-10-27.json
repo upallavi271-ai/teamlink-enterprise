@@ -1,0 +1,159 @@
+{
+  "_about": "Education requirements read by hand from the founder's 'Edu - 2 Requirement Sheet (3).xlsx' (tab Sheet1, 2026-10-27). One entry per sheet row: the zip client it belongs to (exact client name in TeamLink; null = not a zip client, so it is left out), the status from the Remarks column (Running = OPEN, On Hold = ON_HOLD, No Requirement / Stop Requirement = CLOSED) and one position per role with the count the sheet gives (a range like 3-5 takes the top number). Rows with no position at all (No Requirement / Agreement not Done) create nothing. The sheet text of the row becomes the requirement's description.",
+  "rows": [
+    { "row": 2, "sheet": "Annamacharya Institute of Technology & Science", "client": null, "why": "not one of the zip clients (Sri Annamacharya Institute of Technology and Sciences is a different name; not merged on a guess)" },
+    { "row": 3, "sheet": "Sai Spurthi Institute Of Technology", "client": "Sai Spurthi Institute Of Technology", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 2, "qualification": "M.Tech CSE" } ] },
+    { "row": 4, "sheet": "JOGINPALLY B.R. Engineering College (JBREC)", "client": "Joginpally B.R. Engineering College", "status": "ON_HOLD", "positions": [
+      { "title": "Assistant Professor — CSE", "openings": 4, "qualification": "M.Tech CSE" } ] },
+    { "row": 5, "sheet": "VNR Vignana Jyothi Institute of Engineering & Technology", "client": "VNR Vignana Jyothi Institute of Engineering and Technology", "status": "CLOSED", "positions": [] },
+    { "row": 6, "sheet": "Scient Institute Of Technology", "client": "Scient Institute of Technology", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 6, "qualification": "M.Tech CSE" },
+      { "title": "Lab Programmer — B.Tech CSE", "openings": 1, "qualification": "B.Tech CSE" } ] },
+    { "row": 7, "sheet": "Malla reddy university", "client": "Malla Reddy University", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE / PhD CSE", "openings": 5, "qualification": "M.Tech CSE, PhD CSE" } ] },
+    { "row": 8, "sheet": "ANURAG ENGINEERING COLLEGE", "client": "Anurag Engineering College", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" } ] },
+    { "row": 9, "sheet": "CMR Institute of Technology", "client": null, "why": "not one of the zip clients (CMR Engineering College is a different college)" },
+    { "row": 10, "sheet": "Siddhartha Engineering College", "client": null, "why": "not one of the zip clients (Siddhartha Institute of Technology and Science is a different college)" },
+    { "row": 11, "sheet": "St.Martin's Engineering College", "client": "St. Martin's Engineering College", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 10, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 2, "qualification": "PhD CSE" } ] },
+    { "row": 12, "sheet": "Malla Reddy Institute of Technology & science (MRITS)", "client": null, "why": "not one of the zip clients" },
+    { "row": 13, "sheet": "Vignan's Institute of Management and Technology for Women", "client": null, "why": "not one of the zip clients" },
+    { "row": 14, "sheet": "Mother Theresa College", "client": "Mother Theresa Institute of Technology and Science", "status": "CLOSED", "positions": [] },
+    { "row": 15, "sheet": "Joglnpally ,B.R Pharmacy College", "client": "Joginpally B.R Pharmacy College", "status": "CLOSED", "positions": [] },
+    { "row": 16, "sheet": "Pydah College of Engineering", "client": "Pydah College of Engineering", "status": "OPEN", "positions": [
+      { "title": "Faculty / Trainer — Cloud Computing, AI & ML, CSE", "openings": 10, "qualification": "5 years industry experience" },
+      { "title": "Trainer — ServiceNow, Salesforce & Pega", "openings": 1, "qualification": "Certified" },
+      { "title": "Network Administrator", "openings": 1, "qualification": "15 years experience" } ] },
+    { "row": 17, "sheet": "Jayaprakash Narayan Engineering College", "client": "Jayaprakash Narayan Engineering college", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 4, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Assistant Professor — MCA", "openings": 12, "qualification": "MCA" },
+      { "title": "Assistant Professor — MCA PhD", "openings": 1, "qualification": "MCA, PhD" },
+      { "title": "Assistant Professor — Physics", "openings": 1, "qualification": "M.Sc Physics" },
+      { "title": "Assistant Professor — Mathematics", "openings": 1, "qualification": "M.Sc Mathematics" } ] },
+    { "row": 18, "sheet": "Aurora College-Chikadapally", "client": null, "why": "not one of the zip clients" },
+    { "row": 19, "sheet": "T.R.R College of Technology", "client": "T.R.R College of Technology", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 3, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — Physics", "openings": 1, "qualification": "M.Sc Physics" },
+      { "title": "Assistant Professor — Mathematics", "openings": 1, "qualification": "M.Sc Mathematics, NET / SET" } ] },
+    { "row": 20, "sheet": "MLRIT (Marri Laxman Reddy Institute of Technology and Science)", "client": null, "why": "not one of the zip clients" },
+    { "row": 21, "sheet": "Royal College of Engineering & Technology", "client": "Royal College of Engineering & Technology", "status": "ON_HOLD", "positions": [
+      { "title": "Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Associate Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" } ] },
+    { "row": 22, "sheet": "Guru Nanak", "client": null, "why": "not one of the zip clients" },
+    { "row": 23, "sheet": "NTR Memorial Trust NTR High School (CBSE)", "client": "NTR High School", "status": "OPEN", "positions": [
+      { "title": "Teacher — English (CBSE)", "openings": 1, "qualification": "B.Ed, CBSE experience 3-8 years" },
+      { "title": "Teacher — Mathematics (CBSE)", "openings": 1, "qualification": "B.Ed, CBSE experience 3-10 years" },
+      { "title": "Teacher — Physics (CBSE)", "openings": 1, "qualification": "B.Ed, CBSE experience 3-8 years" },
+      { "title": "CBSE Coordinator", "openings": 1, "qualification": "B.Ed, CBSE experience 2-5 years" },
+      { "title": "Teacher — Telugu (CBSE)", "openings": 1, "qualification": "B.Ed, CBSE experience 3-8 years" },
+      { "title": "Physical Education Teacher (PET)", "openings": 1, "qualification": "B.Ed, experience 0-3 years" } ] },
+    { "row": 24, "sheet": "Swarna Bharathi Institute of Science & Technology", "client": "Swarna Bharathi Institute of Science and Technology", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 3, "qualification": "M.Tech CSE, 2-3 years experience" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Assistant Professor — Mathematics", "openings": 2, "qualification": "M.Sc Mathematics" },
+      { "title": "Assistant Professor — Chemistry", "openings": 1, "qualification": "M.Sc Chemistry" },
+      { "title": "Assistant Professor — Physics", "openings": 1, "qualification": "M.Sc Physics" } ] },
+    { "row": 25, "sheet": "Holy Mary Institute of Technology & Science", "client": "Holy Mary Institute of Technology & Science", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — M.Pharm Pharmaceutics", "openings": 1, "qualification": "M.Pharm Pharmaceutics" },
+      { "title": "Assistant Professor — M.Pharm Pharmacology", "openings": 1, "qualification": "M.Pharm Pharmacology" },
+      { "title": "Assistant Professor — M.Pharm Pharmaceutical Analysis", "openings": 1, "qualification": "M.Pharm Pharmaceutical Analysis" },
+      { "title": "Assistant Professor — M.Pharm Pharmaceutical Chemistry", "openings": 1, "qualification": "M.Pharm Pharmaceutical Chemistry" },
+      { "title": "Assistant Professor — Pharm D", "openings": 1, "qualification": "Pharm D" } ] },
+    { "row": 26, "sheet": "Institute of Aeronautical Engineering (IARE)", "client": null, "why": "not one of the zip clients" },
+    { "row": 27, "sheet": "Lords Engineering College", "client": "Lords Institute of Engineering & Technology", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — English", "openings": 3, "qualification": "M.A English" },
+      { "title": "Assistant Professor — Mathematics", "openings": 2, "qualification": "M.Sc Mathematics" },
+      { "title": "Assistant Professor — Physics", "openings": 3, "qualification": "M.Sc Physics" },
+      { "title": "Technical Trainer — Python, Java, Data Structures", "openings": 1, "qualification": "" },
+      { "title": "Assistant Professor — M.Tech ECE", "openings": 1, "qualification": "M.Tech ECE" },
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Lab Programmer — MCA", "openings": 1, "qualification": "MCA (fresher)" },
+      { "title": "Data Entry Operator", "openings": 1, "qualification": "Any graduation (PG also eligible)" } ] },
+    { "row": 28, "sheet": "Geethanjali College of Engineering & Technology (GCTC)", "client": "Geethanjali College of Engineering & Technology", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Assistant Professor — MCA", "openings": 1, "qualification": "MCA" } ] },
+    { "row": 29, "sheet": "Shri Vishnu Engineering College for Women (SVECW)", "client": null, "why": "not one of the zip clients" },
+    { "row": 30, "sheet": "Sri Chaitanya Karimnagar", "client": null, "why": "no zip client is clearly this college (Sri Chaitanya Group of Colleges / Sri Chaitanya IBBA are not sure matches)" },
+    { "row": 31, "sheet": "Arjun college", "client": null, "why": "not one of the zip clients" },
+    { "row": 32, "sheet": "Sri Chaitanya Institute of Technology & Research", "client": null, "why": "no zip client is clearly this college" },
+    { "row": 33, "sheet": "Avanthi Institute Of Engineering & Technology", "client": null, "why": "not one of the zip clients" },
+    { "row": 34, "sheet": "Talla padmavathi College of Engineering", "client": "Talla Padmavathi College of Engineering (Autonomous)", "status": "OPEN", "note": "sheet Remarks says Running; the Positions column says Vasu sir said not to conduct interviews", "positions": [
+      { "title": "Assistant Professor — ECE", "openings": 3, "qualification": "M.Tech ECE, 2-3 years experience" } ] },
+    { "row": 35, "sheet": "Stanley College Of Engineering & Technology For Women", "client": "Stanley College of Engineering & Technology for Women", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" } ] },
+    { "row": 36, "sheet": "Ravindra College of Engineering And Womens", "client": "Ravindra College of Engineering for Women", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — PhD CSE", "openings": 5, "qualification": "PhD CSE (experienced)" } ] },
+    { "row": 37, "sheet": "Methodist Engineering College and Technology", "client": "Methodist College Engineering and Technology", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE (local, Telugu mandatory)" } ] },
+    { "row": 38, "sheet": "Presidency University", "client": "Presidency University", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — CSE (M.Tech / PhD)", "openings": 20, "qualification": "M.Tech CSE, PhD CSE" } ] },
+    { "row": 39, "sheet": "Ramachandra College of Engineering", "client": "Ramachandra College of Engineering Eluru", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — PhD CSE / IoT / AIML / AIDS", "openings": 6, "qualification": "PhD CSE, IoT, AIML, AIDS" } ] },
+    { "row": 40, "sheet": "Sri Vasavi Engineering College", "client": "Sri Vasavi Engineering College", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 18, "qualification": "M.Tech CSE (B.Tech any branch)" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 6, "qualification": "PhD, M.Tech CSE" } ] },
+    { "row": 41, "sheet": "Pragati Engineering College", "client": "Pragati Engineering College", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 5, "qualification": "M.Tech CSE" } ] },
+    { "row": 42, "sheet": "Amrita Sai Institute of Science and Technology", "client": "Amrita Sai Institute of Science and Technology Paritala", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" },
+      { "title": "Associate Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" } ] },
+    { "row": 43, "sheet": "NTR Memorial Trust NTR Jr & Degree College", "client": "NTR Junior & Degree College", "status": "OPEN", "positions": [
+      { "title": "Lecturer — English", "openings": 1, "qualification": "M.A English, 3-10 years" },
+      { "title": "Lecturer — Physics", "openings": 1, "qualification": "M.Sc Physics, 3-15 years" },
+      { "title": "Lecturer — Economics", "openings": 1, "qualification": "M.Sc Economics, 3-15 years" },
+      { "title": "Lecturer — History", "openings": 1, "qualification": "M.A History, 3-10 years" },
+      { "title": "Lecturer — Logical Reasoning", "openings": 1, "qualification": "Any PG, 3-8 years" },
+      { "title": "Lecturer — Polity and Current Affairs", "openings": 1, "qualification": "Any PG, 3-8 years" },
+      { "title": "Lecturer — Management and Commerce", "openings": 1, "qualification": "Any PG, 3-8 years" },
+      { "title": "Vice Principal (Female)", "openings": 1, "qualification": "B.Ed, English teaching experience, minimum 1 year" } ] },
+    { "row": 44, "sheet": "Vageswari", "client": null, "why": "not one of the zip clients" },
+    { "row": 45, "sheet": "Aurora College - Uppal", "client": null, "why": "not one of the zip clients" },
+    { "row": 46, "sheet": "SVS GROUP OF INSTITUTIONS", "client": null, "why": "not one of the zip clients" },
+    { "row": 47, "sheet": "Bonam Venkata Chalamayya Engineering College", "client": "BVC Engineering College, Autonomous", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE / PhD CSE", "openings": 8, "qualification": "M.Tech CSE, PhD CSE" },
+      { "title": "Visiting Faculty", "openings": 30, "qualification": "" } ] },
+    { "row": 48, "sheet": "VSB Engineering College", "client": "VSB Group of Institutions, Karur and Coimbatore", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — CSE, English, Mathematics", "openings": 20, "qualification": "M.Tech CSE, ME / M.Sc PhD, English, Maths (if not PhD: NET / SET)" } ] },
+    { "row": 49, "sheet": "Sri Sai Institute Of Technology and Science", "client": "Sri Sai Institute Of Technology And Science", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — PhD ECE", "openings": 1, "qualification": "PhD ECE" },
+      { "title": "Assistant Professor — PhD CSE", "openings": 1, "qualification": "PhD CSE" },
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE" } ] },
+    { "row": 49, "sheet": "Shri Sai College of Engineering and Technology (new requirement in the Sri Sai row)", "client": "Shri Sai College of Engineering & Technology", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — PhD MBA", "openings": 1, "qualification": "PhD in MBA, minimum 5 years teaching" } ] },
+    { "row": 50, "sheet": "Bapatla Engineering College", "client": null, "why": "not one of the zip clients" },
+    { "row": 51, "sheet": "Hiray College", "client": null, "why": "not one of the zip clients" },
+    { "row": 52, "sheet": "St.Mary's Group of Institutions", "client": "St Mary's Group of Institutions", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 1, "qualification": "M.Tech CSE, fresher to 2 years" } ] },
+    { "row": 53, "sheet": "Ellanki college", "client": null, "why": "not one of the zip clients" },
+    { "row": 54, "sheet": "Jaya Prakash Narayan College Of Engineering", "client": null, "why": "the same zip client as row 17 (Jayaprakash Narayan Engineering college) with the same positions; row 17 is Running, so this No Requirement copy is not added twice" },
+    { "row": 55, "sheet": "Daripally Anantha Ramulu College of Engineering and Technology", "client": null, "why": "not one of the zip clients" },
+    { "row": 56, "sheet": "VNR Vignana Jyothi Institute of Engineering & Technology", "client": "VNR Vignana Jyothi Institute of Engineering and Technology", "status": "CLOSED", "positions": [] },
+    { "row": 57, "sheet": "Surya Engineering College", "client": "Surya Engineering College", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Tech CSE", "openings": 5, "qualification": "M.Tech CSE" } ] },
+    { "row": 58, "sheet": "UNNAMALAI INSTITUTE OF TECHNOLOGY", "client": "Unnamalai Institute Of Technology", "status": "CLOSED", "positions": [
+      { "title": "Assistant Professor — PhD CSE / Cyber / AI", "openings": 4, "qualification": "Doctorate in CSE / Cyber / AI" },
+      { "title": "Assistant Professor — English", "openings": 1, "qualification": "PhD / NET / SET English" },
+      { "title": "Assistant Professor — Mathematics", "openings": 2, "qualification": "Doctorate / NET / SET Mathematics" },
+      { "title": "Assistant Professor — Chemistry", "openings": 1, "qualification": "Doctorate / NET / SET Chemistry" } ] },
+    { "row": 59, "sheet": "GSFC University", "client": "GSFC University", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — Fire Engineering / Industrial Safety", "openings": 5, "qualification": "M.E. / M.Tech Fire Engineering, Fire Protection, Industrial Safety, HSE (min 55%)" } ] },
+    { "row": 60, "sheet": "Prathap Narender Reddy College of Pharmacy", "client": "Prathap Narender Reddy College of Pharmacy", "status": "OPEN", "positions": [
+      { "title": "Assistant Professor — M.Pharm Pharmaceutical Analysis", "openings": 2, "qualification": "M.Pharm Pharmaceutical Analysis" },
+      { "title": "Assistant Professor — M.Pharm Pharmacognosy", "openings": 2, "qualification": "M.Pharm Pharmacognosy" },
+      { "title": "Assistant Professor — Pharm D", "openings": 2, "qualification": "Pharm D" } ] },
+    { "row": 61, "sheet": "GVR & S College of Engineering & Technology", "client": "GVR & S College of Engineering & Technology", "status": "OPEN", "note": "Running, but the sheet gives no position; one general Faculty requirement keeps it on the list", "positions": [
+      { "title": "Faculty", "openings": 1, "qualification": "" } ] },
+    { "row": 62, "sheet": "Chinmaya Jnana School", "client": "CHINMAYA JNANA", "status": "OPEN", "note": "Remarks column is empty; the row says New Requirement, so it is taken as open", "positions": [
+      { "title": "Teacher — Primary / Middle School", "openings": 1, "qualification": "Bachelor's / Master's in the subject, B.Ed / D.El.Ed" },
+      { "title": "Principal", "openings": 1, "qualification": "Master's in Education or the subject, B.Ed" } ] }
+  ]
+}
