@@ -91,7 +91,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'configure'),
     ]);
     const approve = approveH || approveA;
-    req.payrollAccess = { prepare, approve, post, ledger, edit: !!editH, reopen: !!reopenH, view: prepare || approve || post || exportH || ledger || !!editH };
+    req.payrollAccess = { prepare, approve, post, ledger, edit: !!editH, reopen: !!reopenH, export: !!exportH, view: prepare || approve || post || exportH || ledger || !!editH };
     return req.payrollAccess;
   }
   const need = (flag) => async (req, res, next) => {
@@ -204,6 +204,41 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     if (!matches(e.employee, payrollEmployeeWhere(req))) { res.status(403).json(OUT_OF_SCOPE); return null; }
     return e;
   }
+
+  // EXPORT THE MONTH'S CALCULATED PAYROLL (founder 2026-10-27: "process payroll lo export option pettu"): every record the
+  // Payroll records table shows (the same scope, optional department), one row per employee, as Excel or CSV. Bank account,
+  // PAN and UAN numbers are left out of the file. Needs the Payroll export right.
+  router.get('/runs/:month/export', need('export'), async (req, res) => {
+    const month = req.params.month;
+    if (!E.isMonth(month)) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
+    const format = String(req.query.format || 'xlsx').toLowerCase() === 'csv' ? 'csv' : 'xlsx';
+    const where = { month, employee: payrollEmployeeWhere(req) };
+    if (req.query.department) where.employee = { AND: [payrollEmployeeWhere(req), { department: String(req.query.department) }] };
+    const entries = await prisma.employeePayrollRun.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeCode: true, department: true, designation: true } } },
+      orderBy: { employee: { name: 'asc' } },
+    });
+    const edited = await PEdit.readStates(entries.map((e) => e.id));
+    const n = (v) => Math.round(Number(v) || 0);
+    const headers = ['Employee ID', 'Name', 'Department', 'Designation', 'Pay type', 'Working days', 'Days present', 'LOP days',
+      'Basic', 'HRA', 'Special allowance', 'Conveyance', 'Bonus', 'Incentive', 'Other earnings', 'Gross', 'LOP amount', 'Earned gross',
+      'PF (employee)', 'ESI (employee)', 'Professional tax', 'TDS', 'Other deductions', 'Total deductions', 'Net pay',
+      'PF (employer)', 'ESI (employer)', 'Gratuity', 'Status', 'Edited by hand'];
+    const rows = entries.map((e) => [e.employee.employeeCode || '', e.employee.name, e.employee.department || '', e.employee.designation || '', e.payMode || '',
+      e.workingDays ?? '', e.daysPresent ?? '', e.daysLop ?? '',
+      n(e.basic), n(e.hra), n(e.specialAllowance), n(e.conveyance), n(e.bonus), n(e.incentive), n(e.arrears), n(e.grossPay), n(e.lopDeduction), n(e.earnedGross),
+      n(e.pfEmployee), n(e.esiEmployee), n(e.professionalTax), n(e.tds), n(e.otherDeductions), n(e.totalDeductions), n(e.netPay),
+      n(e.pfEmployer), n(e.esiEmployer), n(e.gratuity), E.STATUS_LABEL[e.status] || e.status, (edited.get(e.id) || {}).edited ? 'Yes' : 'No']);
+    if (entries.length) {
+      const t = (k) => entries.reduce((s, e) => s + n(e[k]), 0);
+      rows.push(['', 'TOTAL', '', '', '', '', '', '', t('basic'), t('hra'), t('specialAllowance'), t('conveyance'), t('bonus'), t('incentive'), t('arrears'), t('grossPay'),
+        t('lopDeduction'), t('earnedGross'), t('pfEmployee'), t('esiEmployee'), t('professionalTax'), t('tds'), t('otherDeductions'), t('totalDeductions'), t('netPay'),
+        t('pfEmployer'), t('esiEmployer'), t('gratuity'), '', '']);
+    }
+    await logAudit({ userId: req.user.id, action: `Payroll exported (${format.toUpperCase()})`, entity: 'EmployeePayrollRun', toValue: `${month} - ${entries.length} record(s)` });
+    return sendTable(res, format, `payroll-${month}${req.query.department ? `-${String(req.query.department).replace(/[^A-Za-z0-9]+/g, '-')}` : ''}`, headers, rows, 'Payroll');
+  });
 
   router.get('/entries/:id', need('view'), async (req, res) => {
     const e = await scopedEntry(req, res);

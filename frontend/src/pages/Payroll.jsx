@@ -14,6 +14,7 @@ import DataIoBar from '../components/dataio/DataIoBar.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 // SPEC B: per-employee payroll records (approval, Accounts sync, mark paid).
 import PayrollRunBoard from '../components/payroll/PayrollRunBoard.jsx';
+import PayrollEditor from '../components/payroll/PayrollEditor.jsx';
 import { STATUS_LABEL as RUN_STATUS } from '../components/payroll/payrollUi';
 import CompliancePanel from '../components/payroll/CompliancePanel.jsx';
 import { ReconciliationPanel } from './accounts/JournalLedger.jsx';
@@ -769,6 +770,15 @@ function ProcessTab({ canRun, canSeeRuns }) {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [boardKey, setBoardKey] = useState(0);
+  // EDIT FROM THE PREVIEW (founder 2026-10-27: "calculate ayina payroll edit chesela pettu"): a row that already has a saved
+  // payroll record gets Edit (or Adjust once the month is approved / posted / paid) - the same editor as Payroll records below.
+  const [saved, setSaved] = useState({ byEmp: {}, access: {} });
+  const [editId, setEditId] = useState(null);
+  function loadSaved(m = month) {
+    api.get(`/payroll/entries?month=${m}`)
+      .then((r) => setSaved({ byEmp: Object.fromEntries((r.data.entries || []).map((x) => [x.employeeId, x])), access: r.data.access || {} }))
+      .catch(() => setSaved({ byEmp: {}, access: {} }));
+  }
 
   function loadRuns() { if (canRun) api.get('/payroll/runs').then((res) => setRuns(res.data)); }
   useEffect(() => {
@@ -783,6 +793,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
     try {
       const res = await api.get(`/payroll/preview?month=${month}${department ? `&department=${encodeURIComponent(department)}` : ''}`);
       setPreview(res.data);
+      loadSaved(month);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not calculate the run');
     }
@@ -796,6 +807,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
       setMessage(`Payroll for ${res.data.period}: ${res.data.created} new, ${res.data.updated} recalculated — net ${inr(res.data.totals?.net)}.${locked} Submit them for approval below.`);
       setPreview(null);
       loadRuns();
+      loadSaved(month);
       setBoardKey((k) => k + 1);
     } catch (err) {
       setError(err.response?.data?.error || 'Could not process the run');
@@ -863,7 +875,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
             {preview.rows.length > 0 && <div style={{ marginTop: 10 }}><ListFilterBar lf={previewLf} storageKey="payroll-preview" noun="employees" /></div>}
             <div className="tbl-wrap" style={{ marginTop: 10 }}>
               <table>
-                <thead><tr><th>Code</th><th>Name</th><th>Pay Type</th><th>Gross</th><th>PF + PT</th><th>LOP Days</th><th>LOP</th><th>Late Days</th><th>Late Cut</th><th>Net</th></tr></thead>
+                <thead><tr><th>Code</th><th>Name</th><th>Pay Type</th><th>Gross</th><th>PF + PT</th><th>LOP Days</th><th>LOP</th><th>Late Days</th><th>Late Cut</th><th>Net</th>{saved.access.edit && <th />}</tr></thead>
                 <tbody>
                   {previewPage.slice.map((r) => (
                     <tr key={r.employeeId}>
@@ -875,11 +887,23 @@ function ProcessTab({ canRun, canSeeRuns }) {
                       <td className="cell-muted">{inr(r.lopDeduction)}</td>
                       <td className="cell-muted">{r.lateDays}</td>
                       <td className="cell-muted">{inr(r.lateCut)}</td>
-                      <td><b>{inr(r.netPay)}</b></td>
+                      <td>
+                        <b>{inr(r.netPay)}</b>
+                        {saved.byEmp[r.employeeId] && saved.byEmp[r.employeeId].edit && saved.byEmp[r.employeeId].edit.edited && (
+                          <div className="small-muted" title="Saved record, changed by hand">Saved (edited): {inr(saved.byEmp[r.employeeId].netPay)}</div>
+                        )}
+                      </td>
+                      {saved.access.edit && (
+                        <td>
+                          {saved.byEmp[r.employeeId]
+                            ? <button className={`btn btn-sm${saved.byEmp[r.employeeId].lock ? '' : ' btn-primary'}`} title={saved.byEmp[r.employeeId].lock ? saved.byEmp[r.employeeId].lock.message : 'Change this person\'s pay'} onClick={() => setEditId(saved.byEmp[r.employeeId].id)}>{saved.byEmp[r.employeeId].lock ? 'Adjust' : 'Edit'}</button>
+                            : <span className="cell-muted" title="Press Confirm first - then it can be edited">—</span>}
+                        </td>
+                      )}
                     </tr>
                   ))}
-                  {preview.rows.length === 0 && <tr><td colSpan="10" className="small-muted" style={{ padding: 16 }}>Nobody in this run has a salary structure yet — set a CTC on the Salary Structure tab first.</td></tr>}
-                  {preview.rows.length > 0 && previewLf.rows.length === 0 && <tr><td colSpan="10"><ListEmpty lf={previewLf} noun="employees" /></td></tr>}
+                  {preview.rows.length === 0 && <tr><td colSpan={saved.access.edit ? 11 : 10} className="small-muted" style={{ padding: 16 }}>Nobody in this run has a salary structure yet — set a CTC on the Salary Structure tab first.</td></tr>}
+                  {preview.rows.length > 0 && previewLf.rows.length === 0 && <tr><td colSpan={saved.access.edit ? 11 : 10}><ListEmpty lf={previewLf} noun="employees" /></td></tr>}
                 </tbody>
               </table>
             </div>
@@ -903,6 +927,13 @@ function ProcessTab({ canRun, canSeeRuns }) {
         )}
       </PanelPad>
 
+      {editId && (
+        <PayrollEditor
+          entryId={editId} canAdjust={!!saved.access.edit}
+          onClose={() => setEditId(null)}
+          onSaved={(msg, keepOpen) => { setMessage(msg); if (!keepOpen) setEditId(null); loadSaved(month); setBoardKey((k) => k + 1); }}
+        />
+      )}
       {/* SPEC B — the month's per-employee records: approval, Accounts sync, mark paid. */}
       <PayrollRunBoard month={month} reloadKey={boardKey} onChanged={loadRuns} />
 

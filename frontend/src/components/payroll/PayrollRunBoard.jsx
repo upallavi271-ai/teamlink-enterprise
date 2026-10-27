@@ -281,6 +281,25 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     if (!ids.length) { setError('Select the pending records to send back.'); return; }
     await act('Sent back', '/payroll/entries/reject', { ids, reason });
   }
+  // Export the month's calculated payroll (founder 2026-10-27): the same records as the table, Excel or CSV.
+  async function exportAs(format) {
+    setBusy(format === 'xlsx' ? 'Making Excel' : 'Making CSV'); setError('');
+    try {
+      const res = await api.get(`/payroll/runs/${month}/export`, { params: { format }, responseType: 'blob' });
+      const cd = res.headers['content-disposition'] || '';
+      const m = /filename="?([^";]+)"?/.exec(cd);
+      const href = URL.createObjectURL(res.data);
+      const link = document.createElement('a');
+      link.href = href; link.download = (m && m[1]) || `payroll-${month}.${format}`; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 2000);
+      setMessage(`${format === 'xlsx' ? 'Excel' : 'CSV'} file is ready.`);
+    } catch (err) {
+      let msg = 'The file could not be made.';
+      const d = err.response && err.response.data;
+      if (d instanceof Blob) { try { msg = JSON.parse(await d.text()).error || msg; } catch { /* keep */ } } else if (d && d.error) msg = d.error;
+      setError(msg);
+    } finally { setBusy(''); }
+  }
   const count = (s) => (data?.byStatus || {})[s] || 0;
   // Filters narrow what is SHOWN; the header checkbox ticks the rows shown.
   // A bulk button with nothing ticked still acts on the whole month, as it
@@ -293,6 +312,8 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     <div className="prb">
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title={`Payroll records — ${monthHeading(month)}`}>
+          {a.export && entries.length > 0 && <button className="btn btn-sm" disabled={!!busy} onClick={() => exportAs('xlsx')}>Export Excel</button>}
+          {a.export && entries.length > 0 && <button className="btn btn-sm" disabled={!!busy} onClick={() => exportAs('csv')}>Export CSV</button>}
           {a.prepare && <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={recalc}>{busy === 'Calculate' ? 'Calculating…' : entries.length ? 'Recalculate payroll' : 'Calculate payroll'}</button>}
         </PanelHead>
         <div className="prb-bar">
