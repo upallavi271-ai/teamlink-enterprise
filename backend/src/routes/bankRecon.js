@@ -662,6 +662,7 @@ module.exports = function makeRecon(H) {
     try { source = txn.sourceRow ? JSON.parse(txn.sourceRow) : null; } catch { source = null; }
     return {
       id: txn.id,
+      bankAccountId: account ? account.id : null, // the account the Bank screen opens when a line is deep-linked (/bank?line=)
       bank: account ? `${account.bank}${account.accNo ? ` - xxxx${String(account.accNo).slice(-4)}` : ''}` : null,
       transactionDate: txn.date,
       valueDate: txn.valueDate || null,

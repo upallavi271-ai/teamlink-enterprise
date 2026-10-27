@@ -17,3 +17,7 @@
 .td-form { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border, #d6dde8); border-left: 4px solid #2563eb; border-radius: 6px; background: var(--card-alt, #f7f9fc); }
 .td-form .field { display: block; margin: 6px 0; }
 @media (max-width: 600px) { .ua-search { min-width: 100%; } .ua-head { flex-direction: column; } }
+/* The statement a line came from (account, file, import date) sits above its own facts. */
+.td-stmt { padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dashed var(--border, #d6dde8); }
+/* Opened from an invoice: that invoice's allocation row stands out. */
+tr.td-here td { background: #fff8e1; font-weight: 600; }

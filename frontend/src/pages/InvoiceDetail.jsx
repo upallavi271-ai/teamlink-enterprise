@@ -648,7 +648,8 @@ export default function InvoiceDetail() {
                         <div><i>Difference (received minus allocated)</i><b>{d.difference == null ? '—' : money2(d.difference)}</b></div>
                         {d.otherInvoices && d.otherInvoices.count > 0 && <div className="pf-wide small-muted">The same bank line also paid {d.otherInvoices.count} other invoice(s) ({money2(d.otherInvoices.amount)}).</div>}
                         {d.import && <div className="pf-wide small-muted">From statement file {d.import.file}, imported {fmtD(d.import.importedOn)}.</div>}
-                        {canBank && <div className="pf-wide"><Link className="link-btn" to="/bank">Open in Bank &amp; Reconciliation →</Link></div>}
+                        {/* that exact statement line, opened in its full window on the Bank screen (Back returns here) */}
+                        {canBank && <div className="pf-wide"><Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>Open in Bank &amp; Reconciliation →</Link></div>}
                       </div>
                     );
                   })()}

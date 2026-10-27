@@ -2,6 +2,8 @@
 // was allocated to and the difference - plus the safe ways to put a wrong match right:
 // take one allocation back, mark a receipt as bounced / returned, tie a payment-out to a
 // client refund. Everything is a separate, plainly named button (no menus).
+// Also opened straight from an invoice's Proof of payment (/bank?line=<id>&invoice=<id>): then the
+// invoice's own allocation row is marked and a "Back to the invoice" button sits in the footer.
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
@@ -10,7 +12,9 @@ import Combo from '../../components/Combo.jsx';
 
 const Row = ({ k, children }) => (<div className="td-kv"><i>{k}</i><b>{children}</b></div>);
 
-export default function TxnDetail({ txnId, transactions = [], canManage, onClose, onChanged }) {
+export default function TxnDetail({
+  txnId, transactions = [], canManage, onClose, onChanged, onLoaded, invoiceId = null, onBack = null,
+}) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
@@ -22,8 +26,10 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
   const [noteId, setNoteId] = useState('');
   const [busy, setBusy] = useState(false);
 
-  const load = () => api.get(`/bank/${txnId}/detail`).then((r) => { setD(r.data); setErr(''); })
-    .catch((e) => setErr(e.response?.data?.error || 'This line could not be opened.'));
+  const load = () => api.get(`/bank/${txnId}/detail`).then((r) => { setD(r.data); setErr(''); if (onLoaded) onLoaded(r.data); })
+    .catch((e) => setErr(e.response?.status === 404
+      ? 'This bank line is no longer on file - it may have been removed with its statement. Nothing else was opened.'
+      : (e.response?.data?.error || 'This line could not be opened.')));
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [txnId]);
   useEffect(() => {
     if (form === 'refund' && !notes.length) {
@@ -49,12 +55,28 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
   const canReverse = canManage && d && d.type === 'Credit' && d.state !== 'Reversed' && d.state !== 'Ignored';
 
   return (
-    <Modal wide title="Bank transaction" onClose={onClose} footer={<button className="btn btn-primary" onClick={onClose}>Close</button>}>
+    <Modal
+      size="wide"
+      title="Bank transaction"
+      onClose={onClose}
+      footer={(
+        <>
+          {onBack && <button type="button" className="btn" onClick={onBack}>← Back to the invoice</button>}
+          <button type="button" className="btn btn-primary" onClick={onClose}>Close</button>
+        </>
+      )}
+    >
       {err && <div className="notice red" style={{ marginBottom: 8 }}><span>{err}</span></div>}
       {said && <div className="notice" style={{ marginBottom: 8 }}><span>{said}</span></div>}
       {!d && !err && <div className="small-muted">Loading…</div>}
       {d && (
         <>
+          <div className="td-grid td-stmt">
+            <Row k="Bank account">{d.bank || '—'}</Row>
+            <Row k="Statement file">{d.import ? d.import.file : 'Added by hand (no statement file)'}</Row>
+            <Row k="Statement imported on">{d.import ? `${fmtD(d.import.importedOn)}${d.import.by ? ` by ${d.import.by}` : ''}` : (d.importedAt ? fmtD(d.importedAt) : '—')}</Row>
+            <Row k="Row in the file">{d.sourceLine || '—'}</Row>
+          </div>
           <div className="td-grid">
             <Row k="Transaction date (on the statement)">{fmtD(d.transactionDate)}</Row>
             <Row k="Value date">{d.valueDate ? fmtD(d.valueDate) : '—'}</Row>
@@ -64,15 +86,16 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
             <Row k="Credit (money in)">{d.credit != null ? money2(d.credit) : '—'}</Row>
             <Row k="Reference / UTR">{d.reference || '—'}</Row>
             <Row k="Bank transaction id">{d.bankTxnId || '—'}</Row>
-            <Row k="Bank">{d.bank || '—'}</Row>
+            <Row k="Balance after this line">{d.balance != null ? money2(d.balance) : '—'}</Row>
             <Row k="Client / vendor">{d.clientOrVendor || '—'}</Row>
             <Row k="Status">{d.reviewReason && d.state === 'Unmatched' ? 'Needs review' : d.state}</Row>
+            {d.type === 'Credit' && <Row k="Allocated to invoices">{money2(d.allocated)}</Row>}
+            {d.type === 'Credit' && <Row k="Unallocated">{money2(d.unallocated)}</Row>}
             <Row k="Difference (amount minus what it is linked to)">{d.difference == null ? '—' : money2(d.difference)}</Row>
           </div>
           {d.reviewReason && d.state === 'Unmatched' && <div className="notice amber" style={{ marginTop: 8 }}><span><b>Why it needs a look:</b> {d.reviewReason}</span></div>}
           {d.reverses && <div className="small-muted" style={{ marginTop: 8 }}>This debit is the return of the credit of {fmtD(d.reverses.date)} ({money2(d.reverses.amount)}).</div>}
           {d.reversedBy && <div className="small-muted" style={{ marginTop: 8 }}>This credit was returned on {fmtD(d.reversedBy.date)}.</div>}
-          {d.import && <div className="small-muted" style={{ marginTop: 8 }}>From {d.import.file} (imported {fmtD(d.import.importedOn)} by {d.import.by || '—'}){d.sourceLine ? `, row ${d.sourceLine}` : ''}.</div>}
 
           {(d.allocations.length > 0) && (
             <>
@@ -82,8 +105,8 @@ export default function TxnDetail({ txnId, transactions = [], canManage, onClose
                   <thead><tr><th>Invoice</th><th>Client</th><th>Candidate</th><th>Date</th><th className="num">Amount</th><th /></tr></thead>
                   <tbody>
                     {d.allocations.map((a) => (
-                      <tr key={a.paymentId}>
-                        <td>{a.invoiceNumber || '—'}{a.reversal ? ' (reversal)' : ''}</td><td>{a.client || '—'}</td><td>{a.candidate || '—'}</td>
+                      <tr key={a.paymentId} className={invoiceId && a.invoiceId === invoiceId ? 'td-here' : undefined}>
+                        <td>{a.invoiceNumber || '—'}{a.reversal ? ' (reversal)' : ''}{invoiceId && a.invoiceId === invoiceId && <span className="small-muted"> · the invoice you came from</span>}</td><td>{a.client || '—'}</td><td>{a.candidate || '—'}</td>
                         <td>{fmtD(a.date)}</td><td className="num">{money2(a.amount)}</td>
                         <td>{canManage && !a.reversal && d.state !== 'Reversed' && <button type="button" className="btn btn-sm" onClick={() => { setForm({ takeBack: a.paymentId }); setReason(''); }}>Take back</button>}</td>
                       </tr>

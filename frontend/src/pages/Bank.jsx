@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
@@ -108,14 +109,44 @@ export default function Bank() {
   // S5 / S6: the proof strip, what the bank takes, and the hand-loans pill.
   const [extras, setExtras] = useState({ proof: null, charges: null, loans: null });
   const [loansOpen, setLoansOpen] = useState(false);
+  // /bank?line=<txnId>&invoice=<invoiceId> — an invoice's "Open in Bank & Reconciliation": that exact
+  // statement line opens in its full window (over its own account's lines, Every line tab) for anyone who
+  // may see this screen; only a login with edit gets the write buttons inside it. A line that is gone says
+  // so plainly and nothing else is opened.
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const deepLine = params.get('line') || '';
+  const deepInvoice = params.get('invoice') || '';
+  const deepShown = useRef('');
+  const onDeepLoaded = useCallback((d) => {
+    if (deepShown.current === d.id) return;
+    deepShown.current = d.id;
+    if (d.bankAccountId) setAccountId(d.bankAccountId);
+    setTab('all'); setPage(0); setView('account');
+  }, []);
+  const closeDeep = useCallback(() => {
+    deepShown.current = '';
+    setParams((q) => { const n = new URLSearchParams(q); n.delete('line'); n.delete('invoice'); return n; }, { replace: true });
+  }, [setParams]);
+  // Back to the invoice: one step back when the invoice is what opened this page, else straight to it.
+  const backToInvoice = useCallback(() => {
+    if (window.history.state && window.history.state.idx > 0) navigate(-1);
+    else navigate(`/invoices/${encodeURIComponent(deepInvoice)}#proof`);
+  }, [navigate, deepInvoice]);
 
+  // Only the newest load's answer is used — an older one (say the first account, asked before a deep-linked
+  // line said which account it is on) must not land after it and switch the account back.
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const mine = ++loadSeq.current;
+    const fresh = () => mine === loadSeq.current;
     Promise.all([
       api.get('/bank/proof').then((r) => r.data).catch(() => null),
       api.get('/bank/charges').then((r) => r.data).catch(() => ({ failed: true, months: [] })),
       api.get('/bank/hand-loans').then((r) => r.data.summary).catch(() => null),
     ]).then(([proof, charges, loans]) => setExtras({ proof, charges, loans }));
     api.get('/bank/accounts').then((a) => {
+      if (!fresh()) return;
       setAccounts(a.data.accounts);
       setCashInHand(a.data.cashInHand);
       const id = a.data.accounts.some((x) => x.id === accountId) ? accountId : (a.data.accounts[0]?.id || '');
@@ -132,6 +163,7 @@ export default function Bank() {
         api.get(`/bank/imports${q}`),
         api.get('/bank/rules'),
       ]).then(([t, s, i, p, g, m, im, r]) => {
+        if (!fresh()) return;
         setTransactions(t.data);
         setSummary(s.data);
         setInvoices(i.data);
@@ -235,6 +267,20 @@ export default function Bank() {
           group={group} setGroup={setGroup}
           openKeys={openKeys} setOpenKeys={setOpenKeys}
           clientFilter={clientFilter} setClientFilter={setClientFilter}
+        />
+      )}
+
+      {deepLine && (
+        <TxnDetail
+          key={deepLine}
+          txnId={deepLine}
+          transactions={transactions}
+          canManage={canManage}
+          invoiceId={deepInvoice || null}
+          onLoaded={onDeepLoaded}
+          onBack={deepInvoice ? backToInvoice : null}
+          onClose={closeDeep}
+          onChanged={load}
         />
       )}
 
