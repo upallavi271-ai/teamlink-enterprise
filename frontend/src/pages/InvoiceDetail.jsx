@@ -575,9 +575,20 @@ export default function InvoiceDetail() {
               <div className="pf-facts">
                 <span><i>Payment Date</i> {fmtD(p.date)}</span>
                 <span><i>Payment Amount</i> {money2(p.amount)}</span>
+                {line && Number(line.amount) > Number(p.amount) + 0.5 && (
+                  <span><i>Bank line amount</i> {money2(line.amount)}</span>
+                )}
                 <span><i>Transaction Reference / UTR</i> {(line && line.reference) || p.reference || '—'}</span>
                 {!line && <span className="small-muted">{p.method || 'Recorded by hand'}{p.recordedBy ? ` · ${p.recordedBy}` : ''}</span>}
               </div>
+              {line && Array.isArray(line.sharedWith) && line.sharedWith.length > 0 && (
+                <div className="small-muted" style={{ marginTop: 4 }}>
+                  One bank line of {money2(line.amount)}: {money2(p.amount)} here, the rest paid{' '}
+                  {line.sharedWith.map((o, k) => (
+                    <span key={o.invoiceId}>{k ? ', ' : ''}<Link to={`/invoices/${o.invoiceId}`}>{o.invoiceNumber || 'another invoice'}</Link> ({money2(o.applied)})</span>
+                  ))}.
+                </div>
+              )}
               {opened && (
                 <div className="pf-drawer" role="region" aria-label="Bank transaction">
                   {!lineData[p.id] && !lineErr[p.id] && <div className="small-muted">Loading the bank line…</div>}

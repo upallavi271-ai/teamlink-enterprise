@@ -165,7 +165,8 @@ export function buildClientInvoices(rows, index) {
       received: sum(live, (m) => m.received),
       pending: pendingSum,
       paymentCount: sum(members, (m) => m.paymentCount),
-      proofCount: sum(members, (m) => m.proofCount),
+      // the DIFFERENT bank lines behind the candidate lines: one client payment split over three candidates is ONE bank line, not three
+      proofCount: members.some((m) => Array.isArray(m.proofTxnIds)) ? new Set(members.flatMap((m) => m.proofTxnIds || [])).size : sum(members, (m) => m.proofCount),
       status: groupStatus(members),
       // 2026-10-21: proof attached but nothing received - the status says why instead of a bare Pending (server: utils/invoicePaymentState.js).
       ...proofNote(live),

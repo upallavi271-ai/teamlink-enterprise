@@ -641,6 +641,7 @@ async function buildRegister(user, query) {
       // Proof = the bank statement lines behind the receipts (InvoicePayment
       // .bankTxnId — auto-linked or confirmed on Bank & Reconciliation).
       proofCount: new Set(i.payments.map((p) => p.bankTxnId).filter(Boolean)).size,
+      proofTxnIds: [...new Set(i.payments.map((p) => p.bankTxnId).filter(Boolean))],
       tdsCertReceived: !!i.tdsCertReceived,
       tdsCertHasFile: !!i.tdsCertFile,
       status,
@@ -1461,6 +1462,9 @@ router.get('/:id', async (req, res) => {
   const txns = txnIds.length ? await prisma.bankTransaction.findMany({ where: { id: { in: txnIds } } }) : [];
   const accs = txns.length ? await prisma.bankAccount.findMany({ select: { id: true, bank: true, accNo: true } }) : [];
   const accOf = (id) => accs.find((a) => a.id === id) || accs[0] || null;
+  // One bank line can pay several invoices (a client paying for three candidates at once): the others it paid, so the
+  // page can say "₹1,00,000 line - ₹41,300 here, the rest to 1882-1 and 1882-2" instead of looking like a ₹41,300 line.
+  const elsewhere = txnIds.length ? await prisma.invoicePayment.findMany({ where: { bankTxnId: { in: txnIds }, invoiceId: { not: invoice.id } }, select: { bankTxnId: true, amount: true, invoiceId: true, invoice: { select: { invoiceNumber: true } } } }) : [];
   const proofLines = txns.map((t) => {
     const acc = accOf(t.bankAccountId);
     const applied = ROUND((invoice.payments || []).filter((p) => p.bankTxnId === t.id).reduce((s, p) => s + Number(p.amount || 0), 0));
@@ -1472,6 +1476,9 @@ router.get('/:id', async (req, res) => {
       amount: ROUND(t.amount),
       applied,
       linkedOnly: (invoice.payments || []).some((p) => p.bankTxnId === t.id && p.bankLinked),
+      sharedWith: Object.values(elsewhere.filter((p) => p.bankTxnId === t.id).reduce((o, p) => {
+        const k = p.invoiceId; o[k] = o[k] || { invoiceId: k, invoiceNumber: p.invoice ? p.invoice.invoiceNumber : null, applied: 0 }; o[k].applied = ROUND(o[k].applied + Number(p.amount || 0)); return o;
+      }, {})),
       bank: acc ? `${acc.bank}${acc.accNo ? ` · xxxx${String(acc.accNo).slice(-4)}` : ''}` : null,
     };
   }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
