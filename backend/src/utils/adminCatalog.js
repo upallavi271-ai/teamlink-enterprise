@@ -38,7 +38,18 @@ const SMS_FIELDS = {
   pushPe: 'SMS Push Platform: DLT Principal Entity ID (PE ID)',
   pushNames: 'SMS Push Platform: request field names (advanced, JSON)',
   pushOk: 'SMS Push Platform: how a message id looks in the answer (advanced, pattern)',
+  // 2026-10-27 (founder's SMS Push prompt): SMS Push Platform keeps its OWN sender id and DLT template ids, so switching the provider never
+  // sends with another provider's sender / templates. The shared fields above stay for MSG91 / Fast2SMS / Twilio, exactly as before.
+  pushSender: 'SMS Push Platform: Sender ID',
+  pushBulkTpl: 'SMS Push Platform: DLT Template ID — Bulk / General',
+  pushLinkTpl: 'SMS Push Platform: DLT Template ID — Agreement Link (optional)',
+  pushOtpTpl: 'SMS Push Platform: DLT Template ID — OTP (optional)',
 };
+
+// The SMS form's second column is a HINT for these fields (shown greyed in the empty box), never a value: before 2026-10-27 the form filled an
+// empty box with it and Save stored "SMS Push Platform only" as a username / "one var: the message" as a template id. The server also treats a
+// stored value equal to its hint as empty (utils/smsGateway.js), so rows saved that way read as "not set".
+const SMS_PROVIDER_CHOICES = ['MSG91', 'Fast2SMS', 'Twilio', 'SMS Push Platform'];
 
 // SMS through an Android phone with an SMS-gateway app on it (channels/androidSms.js). Labels are the keys the adapter reads.
 const ANDROID_FIELDS = {
@@ -85,11 +96,30 @@ const INTEGRATION_CATALOG = [
       [SMS_FIELDS.bulkTpl, 'one var: the message'],
       [SMS_FIELDS.dlrSecret, 'type any text; use the same in the delivery-report URL of your SMS provider'],
       [SMS_FIELDS.pushUrl, 'https://web.smsgw.in/smsapi/httpapi.jsp'],
-      [SMS_FIELDS.pushUser, 'SMS Push Platform only'],
+      [SMS_FIELDS.pushUser, 'the API username your provider gave you'],
       [SMS_FIELDS.pushPass, 'the API password, not the portal login password'],
+      [SMS_FIELDS.pushSender, 'the DLT-registered header for this account, e.g. 6 letters'],
       [SMS_FIELDS.pushPe, '19 digits, from your DLT registration'],
-      [SMS_FIELDS.pushNames, 'blank = the standard names; set only if the provider document says otherwise'],
-      [SMS_FIELDS.pushOk, 'blank = the standard; set only if the provider document says otherwise']] },
+      [SMS_FIELDS.pushBulkTpl, 'the approved DLT template id (digits) of the campaign message'],
+      [SMS_FIELDS.pushLinkTpl, 'only if agreement-link SMS go through this provider'],
+      [SMS_FIELDS.pushOtpTpl, 'only if OTP SMS go through this provider'],
+      [SMS_FIELDS.pushNames, 'blank = the documented names (username, password, to, from, text, pe_id, template_id)'],
+      [SMS_FIELDS.pushOk, 'blank = the documented reply (ackid / msgid)']],
+    // hints (greyed text, never saved as a value), the provider dropdown and which fields each provider shows
+    hints: [SMS_FIELDS.sid, SMS_FIELDS.linkTpl, SMS_FIELDS.otpTpl, SMS_FIELDS.bulkTpl, SMS_FIELDS.dlrSecret, SMS_FIELDS.pushUser, SMS_FIELDS.pushPass,
+      SMS_FIELDS.pushSender, SMS_FIELDS.pushPe, SMS_FIELDS.pushBulkTpl, SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
+    choices: { [SMS_FIELDS.provider]: SMS_PROVIDER_CHOICES },
+    byProvider: {
+      field: SMS_FIELDS.provider,
+      shared: [SMS_FIELDS.provider, SMS_FIELDS.dlrSecret],
+      groups: {
+        MSG91: [SMS_FIELDS.sender, SMS_FIELDS.key, SMS_FIELDS.linkTpl, SMS_FIELDS.otpTpl, SMS_FIELDS.bulkTpl],
+        Fast2SMS: [SMS_FIELDS.sender, SMS_FIELDS.key, SMS_FIELDS.linkTpl, SMS_FIELDS.otpTpl, SMS_FIELDS.bulkTpl],
+        Twilio: [SMS_FIELDS.sender, SMS_FIELDS.key, SMS_FIELDS.sid],
+        'SMS Push Platform': [SMS_FIELDS.pushUrl, SMS_FIELDS.pushUser, SMS_FIELDS.pushPass, SMS_FIELDS.pushSender, SMS_FIELDS.pushPe, SMS_FIELDS.pushBulkTpl,
+          SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
+      },
+    } },
   // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
   // fields were added with the sending worker: "Encryption" chooses SSL vs
   // STARTTLS (587/STARTTLS is the common case, 465/SSL the other), and the
@@ -295,6 +325,7 @@ module.exports = {
   integrationById,
   WA_FIELDS,
   SMS_FIELDS,
+  SMS_PROVIDER_CHOICES,
   ANDROID_FIELDS,
   QR_FIELDS,
 };

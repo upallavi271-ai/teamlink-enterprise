@@ -129,6 +129,8 @@ function recordArgs(channel, m, id, res, extra = {}) {
     jobId: meta.jobId || null, attachments: (m.media || []).map((x) => x.name), retries: meta.attempt ? Math.max(0, meta.attempt - 1) : 0, masked: !!meta.masked,
     detail: extra.detail || null, numberId: res.numberId || null, numberLabel: res.numberLabel || null,
     module: meta.module || moduleOf(meta), preview: meta.preview || null, dltTemplateId: m.templateId || null, senderIdUsed: m.senderId || null, unknown: !!res.unknown,
+    // SMS Push Platform: the acknowledgement id its Pull DLR API is asked with (utils/smsPushDlr.js)
+    ackId: res.ackId || null,
   };
 }
 

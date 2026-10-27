@@ -15,15 +15,26 @@ const PASS = 'zz-secret-pass-9';
 const USER = 'zzuser';
 const DLR = 'zz-dlr-secret';
 const GOT = [];
+const DLR_ASKED = [];
+const DLR_REPLY = {};
 let MODE = 'ok';
 const mock = http.createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
+    // the Pull DLR API (manual): GET dlrresp.jsp?ackid=..., XML with one <dlrinfo> per message
+    if (req.url.startsWith('/dlrresponse/dlrresp.jsp')) {
+      DLR_ASKED.push(req.url);
+      res.setHeader('content-type', 'text/xml');
+      const ack = new URL(req.url, 'http://x').searchParams.get('ackid');
+      res.end(DLR_REPLY[ack] || '<dlr></dlr>');
+      return;
+    }
     GOT.push({ method: req.method, url: req.url, body: Buffer.concat(chunks).toString('utf8') });
+    // the documented send reply: {data:{ackid, msgid:["<id>,<mobile>"]}}; a refusal {Error:{ErrorCode, ErrorDesc}}
+    if (MODE === 'ok') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ data: { ackid: `AK${GOT.length}`, msgid: [`ZZ${GOT.length}ABC,9876543210`] } })); return; }
     res.setHeader('content-type', 'text/plain');
-    if (MODE === 'ok') res.end(`status=SUCCESS msgid:ZZ${GOT.length}ABC`);
-    else if (MODE === 'err') res.end('errorcode:02 errordesc:invalid template id');
+    if (MODE === 'err') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ Error: { ErrorCode: '011', ErrorDesc: 'Invalid Mobile Number' } })); }
     else if (MODE === 'echo') res.end(`errordesc:bad login ${USER} ${PASS}`);
     else res.end('OK');
   });
@@ -41,14 +52,17 @@ const mock = http.createServer((req, res) => {
     const F = CAT.SMS_FIELDS;
     const { writeValues } = require(path.join(Z.BACK, 'src/utils/integrationStore'));
     const setSms = async (fields, extra = {}) => {
-      const w = await writeValues('sms', fields);
+      // the whole form, as the screen sends it (a field not sent keeps its stored value since 2026-10-27)
+      const blank = Object.fromEntries(CAT.integrationById('sms').fields.map(([l]) => [l, '']));
+      const w = await writeValues('sms', { ...blank, ...fields });
       const values = JSON.parse(JSON.stringify(w.values)); Object.assign(values, extra);
       const data = { values: JSON.stringify(values), enabled: true, connected: true, state: 'Connected' };
       await prisma.integration.upsert({ where: { id: 'sms' }, create: { id: 'sms', ...data }, update: data });
     };
     const full = {
-      [F.provider]: 'SMS Push Platform', [F.sender]: 'TMLINK', [F.pushUrl]: 'https://web.smsgw.in/smsapi/httpapi.jsp', [F.pushUser]: USER, [F.pushPass]: PASS,
-      [F.pushPe]: '1101234567890123456', [F.dlrSecret]: DLR,
+      // the shared Sender ID belongs to MSG91 / Fast2SMS / Twilio: SMS Push Platform must use its own (TMLINK), never OTHERX
+      [F.provider]: 'SMS Push Platform', [F.sender]: 'OTHERX', [F.pushSender]: 'TMLINK', [F.pushUrl]: 'https://web.smsgw.in/smsapi/httpapi.jsp', [F.pushUser]: USER, [F.pushPass]: PASS,
+      [F.pushPe]: '1101234567890123456', [F.pushBulkTpl]: '1107000000000000001', [F.dlrSecret]: DLR,
     };
     const clearAccepted = () => prisma.appSetting.deleteMany({ where: { key: { in: ['smsgw.accepted', 'smspush.lasttest'] } } });
     await clearAccepted();
@@ -62,25 +76,56 @@ const mock = http.createServer((req, res) => {
       Z.check('A0 before any accepted SMS: "not proven", no call made, says what to do', !r0.ok && r0.needsConfirmation && /Send test SMS/.test(r0.result) && GOT.length === 0, r0);
       let r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001' });
       const q = new URLSearchParams(GOT[0] && GOT[0].body);
-      Z.check('A1 accepted: id read from the answer, nothing else needed', r.ok && /^ZZ1ABC$/.test(r.providerRef), r);
-      Z.check('A2 POST form with the standard names; mobile with 91; DLT template id + PE id + sender', GOT[0].method === 'POST' && q.get('username') === USER && q.get('mobileno') === '919876543210' && q.get('templateid') === '1107000000000000001' && q.get('entityid') === '1101234567890123456' && q.get('sendername') === 'TMLINK' && q.get('message') === 'Hi Ravi, hello', GOT[0]);
+      Z.check('A1 accepted: the documented reply is read (msgid ZZ1ABC, ackid AK1 kept for the delivery report)', r.ok && r.providerRef === 'ZZ1ABC' && r.ackId === 'AK1', r);
+      Z.check('A2 POST form with the DOCUMENTED names: username, password, to (10 digits), from, text, pe_id, template_id; its own Sender ID', GOT[0].method === 'POST' && q.get('username') === USER && q.get('to') === '9876543210' && q.get('template_id') === '1107000000000000001' && q.get('pe_id') === '1101234567890123456' && q.get('from') === 'TMLINK' && q.get('text') === 'Hi Ravi, hello' && !q.has('coding'), GOT[0]);
       Z.check('A3 the password travels in the body, never in the address', !GOT[0].url.includes(PASS) && q.get('password') === PASS, GOT[0].url);
       r0 = await G.testConnection();
       Z.check('A4 after an accepted SMS the connection is "connected" and says when', r0.ok && r0.verified && /ZZ1ABC/.test(r0.result), r0);
 
       MODE = 'err';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
-      Z.check('A5 an error answer is a refusal, not retried, with the provider words', !r.ok && r.providerError && !r.transient && /invalid template id/.test(r.error), r);
+      Z.check('A5 the documented refusal {Error:{ErrorCode 011}} is a refusal, not retried, in plain words with the code', !r.ok && r.providerError && !r.transient && /code 011/.test(r.error) && /mobile number is not valid/.test(r.error), r);
       MODE = 'echo';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A6 a provider that echoes the login back: username and password are scrubbed from the message', !r.ok && !r.error.includes(PASS) && !r.error.includes(USER), r.error);
       MODE = 'weird';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A7 an answer with no readable id is UNKNOWN: not sent, not retried, says so', !r.ok && r.unknown && !r.transient && /NOT counted as sent/.test(r.error), r);
+      await setSms({ ...full, [F.pushBulkTpl]: '' }, { __devBaseUrl: BASE });
+      GOT.length = 0;
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x' });
-      Z.check('A8 no DLT template id -> nothing is sent, says why', !r.ok && r.notConfigured && /DLT/.test(r.error), r);
+      Z.check('A8 no DLT template id (none on the message, no Bulk / General id set) -> nothing is sent, says why', GOT.length === 0 && !r.ok && r.notConfigured && /DLT/.test(r.error), r);
+      await setSms(full, { __devBaseUrl: BASE });
       r = await G.sendSms({ to: '12345', kind: 'bulk', text: 'x', templateId: '1' });
       Z.check('A9 a bad number is refused before any call', !r.ok && r.invalid, r);
+
+      // Unicode (Telugu) goes with coding=2 (the manual)
+      MODE = 'ok'; GOT.length = 0;
+      r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'నమస్తే రవి', templateId: '1107000000000000001' });
+      const qu = new URLSearchParams(GOT[0] && GOT[0].body);
+      Z.check('A13 Telugu text is sent as Unicode: coding=2, the text unchanged', r.ok && qu.get('coding') === '2' && qu.get('text') === 'నమస్తే రవి', [r, GOT[0] && GOT[0].body]);
+      // the campaign template: with no template of its own, a bulk SMS uses the SMS Push Platform Bulk / General DLT id (not OTP / link)
+      GOT.length = 0;
+      r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Campaign words' });
+      Z.check('A14 a campaign SMS without its own template uses the Bulk / General DLT Template ID', r.ok && new URLSearchParams(GOT[0].body).get('template_id') === '1107000000000000001', GOT[0] && GOT[0].body);
+
+      // ---- the Pull DLR API --------------------------------------------------------------------------------------------------
+      DLR_REPLY.AK1 = '<dlr><dlrinfo><msgid>ZZ1ABC,9876543210</msgid><ackid>AK1</ackid><mob>9876543210</mob><dlrdesc>DELIVRD</dlrdesc></dlrinfo></dlr>';
+      DLR_REPLY.AK2 = '<dlr><dlrinfo><msgid>ZZ2ABC</msgid><ackid>AK2</ackid><dlrdesc>SUBMITTED</dlrdesc></dlrinfo></dlr>';
+      let pd = await G.pullDelivery('AK1');
+      Z.check('A15 the Pull DLR API is asked with the ackid only (no login in the address) and DELIVRD reads as delivered', pd.ok && pd.reports.length === 1 && pd.reports[0].msgid === 'ZZ1ABC' && pd.reports[0].status === 'delivered' && /ackid=AK1$/.test(DLR_ASKED[0]) && !DLR_ASKED[0].includes(PASS) && !DLR_ASKED[0].includes(USER), [pd, DLR_ASKED]);
+      pd = await G.pullDelivery('AK2');
+      Z.check('A16 SUBMITTED is not a delivery report: nothing is reported', pd.ok && pd.reports.length === 0, pd);
+      // a record kept with its ackid moves to Delivered only through the provider's report
+      const store = require(path.join(Z.BACK, 'src/channels/store'));
+      const DLRJ = require(path.join(Z.BACK, 'src/utils/smsPushDlr'));
+      const recRef = `ZZPULL${Z.RUN}`;
+      await store.record({ channel: 'SMS', provider: 'sms.gateway', to: '+919876543210', template: 'ZZTEST SPT pull', status: 'sent', providerRef: recRef, ackId: `AKP${Z.RUN}` });
+      DLR_REPLY[`AKP${Z.RUN}`] = `<dlr><dlrinfo><msgid>${recRef}</msgid><dlrdesc>UNDELIV</dlrdesc></dlrinfo></dlr>`;
+      const po = await DLRJ.pullOne(await store.byRef(recRef));
+      const after = await store.byRef(recRef);
+      Z.check('A17 pulling one record: UNDELIV from the provider marks it Failed, the try is counted', po.asked && po.applied === 1 && after.status === 'failed' && after.dlrPullCount === 1, [po, after && after.status, after && after.dlrPullCount]);
+      if (after && after._key) await prisma.appSetting.deleteMany({ where: { key: { in: [after._key, `comm.ref.${recRef}`] } } }); // not counted on the dashboard below
 
       // settings change the request: other names, GET, a fixed extra
       MODE = 'ok'; GOT.length = 0;
@@ -89,11 +134,30 @@ const mock = http.createServer((req, res) => {
       mock.removeAllListeners('request');
       mock.on('request', (req, res) => { GOT.push({ method: req.method, url: req.url, body: '' }); res.end('tracking=T9XYZ'); });
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hello', templateId: '1107000000000000001' });
-      Z.check('A10 field names, method and a fixed extra come from the settings; the id pattern too', r.ok && r.providerRef === 'T9XYZ' && GOT[0].method === 'GET' && /mobile=919876543210/.test(GOT[0].url) && /smstype=TRANS/.test(GOT[0].url) && !/mobileno=/.test(GOT[0].url), [r, GOT[0]]);
+      Z.check('A10 field names, method and a fixed extra come from the settings; the id pattern too', r.ok && r.providerRef === 'T9XYZ' && GOT[0].method === 'GET' && /mobile=9876543210/.test(GOT[0].url) && /smstype=TRANS/.test(GOT[0].url) && !/[?&]to=/.test(GOT[0].url), [r, GOT[0]]);
       const bad = await (async () => { await setSms({ ...full, [F.pushNames]: '{oops' }); return G.smsConfig(); })();
       Z.check('A11 broken JSON in the field names is reported, not guessed', !bad.configured && /not valid JSON/.test(bad.reason), bad.reason);
       const noPe = await (async () => { await setSms({ ...full, [F.pushPe]: '' }); return G.smsConfig(); })();
       Z.check('A12 no PE id -> "Configuration Required" naming the PE id', !noPe.configured && /PE ID/.test(noPe.reason), noPe.reason);
+      const cfgOf = async (vals) => { await setSms({ ...full, ...vals }); return G.smsConfig(); };
+      let c1 = await cfgOf({ [F.pushUrl]: 'https://evil.example.com/smsapi/httpapi.jsp' });
+      Z.check('A18 a send address on any other host is refused (the password only ever goes to web.smsgw.in)', !c1.configured && /web\.smsgw\.in/.test(c1.reason), c1.reason);
+      c1 = await cfgOf({ [F.pushSender]: '' });
+      Z.check('A19 no SMS Push Sender ID -> not configured; the other provider\'s Sender ID is never borrowed', !c1.configured && /own Sender ID/.test(c1.reason), c1.reason);
+      c1 = await cfgOf({ [F.pushBulkTpl]: 'one var: the message' });
+      Z.check('A20 a template id that is words (a description), not digits, is reported', !c1.configured && /digits only/.test(c1.reason), c1.reason);
+      c1 = await cfgOf({ [F.pushBulkTpl]: '1101234567890123456' });
+      Z.check('A21 the PE ID typed as the template id is caught (they are different numbers)', !c1.configured && /same number/.test(c1.reason), c1.reason);
+      c1 = await cfgOf({ [F.pushLinkTpl]: '', [F.pushOtpTpl]: '' });
+      Z.check('A22 empty Agreement-link / OTP template ids do not stop a campaign-only setup', c1.configured, c1.reason);
+      // a value saved from the old form's greyed hint reads as "not set"
+      await setSms({ ...full }, { [F.pushUser]: 'SMS Push Platform only' });
+      c1 = await G.smsConfig();
+      Z.check('A23 "SMS Push Platform only" (the old greyed hint) is never used as the username', !c1.configured && c1.push.user === '' && /API username/.test(c1.reason), c1.push.user);
+      // the form's hint sent back as a value is stored as empty, and a provider's settings the form did not send are kept
+      await setSms({ ...full, [F.key]: 'zz-msg91-key', [F.bulkTpl]: '1207000000000000002' });
+      const w2 = await writeValues('sms', { [F.provider]: 'SMS Push Platform', [F.pushBulkTpl]: CAT.integrationById('sms').fields.find(([l]) => l === F.pushBulkTpl)[1] });
+      Z.check('A24 saving keeps MSG91\'s template / key when the form did not send them, and never stores a hint as a value', w2.values[F.bulkTpl] === '1207000000000000002' && /enc:v1:/.test(w2.values[F.key] || '') && w2.values[F.pushBulkTpl] === '', [w2.values[F.bulkTpl], w2.values[F.pushBulkTpl]]);
     } finally { process.env.TEST_MODE = sandboxFlag; }
 
     // ======================= B. the screens API (the sandbox server: its SMS send is fake, never transmitted) =======================
@@ -177,6 +241,21 @@ const mock = http.createServer((req, res) => {
     const tc = await A('POST', '/test-connection');
     Z.check('F4 test connection with nothing accepted: not proven, nothing sent', tc.status === 200 && tc.body.ok === false && tc.body.needsConfirmation === true, tc.body);
 
+    // ---- Test SMS on Integrations > SMS Gateway (the sandbox server never transmits) --------------------------------------------------
+    // Integrations > SMS Gateway is a Super Admin screen (administration · Integrations · configure)
+    const sup = await Z.mkUser('sup', { role: 'SUPER_ADMIN', hrmsRole: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN', accountsRole: 'SUPER_ADMIN', hrmsAccess: true, atsAccess: true, accountsAccess: true });
+    const sTok = await Z.mint(sup);
+    const tsBody = { to: '9876543299', text: `ZZTEST SPT test words ${Z.RUN}` };
+    const ts = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);
+    Z.check('H1 Test SMS: the provider accepted it -> "Accepted by Provider — Delivery Pending" (never "Delivered")', ts.status === 200 && ts.body.status === 'Accepted by Provider — Delivery Pending' && !/Delivered\b/.test(ts.body.status.replace('Delivery Pending', '')), ts.body);
+    const ts2 = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);
+    Z.check('H2 the same test again within a minute is refused (a double click never sends two SMS)', ts2.status === 409 && ts2.body.outcome === 'Duplicate', [ts2.status, ts2.body]);
+    const ts3 = await Z.call('POST', '/api/admin/integrations/sms/test-message', rTok, { to: '9876543298', text: 'x' });
+    Z.check('H3 a Recruiter cannot send a Test SMS (403)', ts3.status === 403, ts3.status);
+    const integ = await Z.call('GET', '/api/admin/integrations', sTok);
+    const smsCard = (Array.isArray(integ.body) ? integ.body : (integ.body.channels || integ.body.integrations || [])).find((x) => x.id === 'sms');
+    Z.check('H4 the SMS Gateway card carries the provider dropdown (4 providers), the hints and the per-provider fields; no password', !!smsCard && (smsCard.choices[F.provider] || []).join(',') === 'MSG91,Fast2SMS,Twilio,SMS Push Platform' && smsCard.hints.includes(F.pushUser) && smsCard.byProvider.groups['SMS Push Platform'].includes(F.pushSender) && !JSON.stringify(smsCard).includes(PASS), smsCard && Object.keys(smsCard));
+
     // ---- no secret anywhere -----------------------------------------------------------------------------------------------------------
     const everything = JSON.stringify([ov.body, h.body, dash.body, det.body, tc.body]);
     Z.check('G1 the API password and the report secret appear in no answer', !everything.includes(PASS) && !everything.includes(DLR));
@@ -192,7 +271,7 @@ const mock = http.createServer((req, res) => {
       const mine = recs.filter((x) => String(x.value).includes('ZZTEST SPT'));
       const refs = mine.map((x) => { try { return JSON.parse(x.value).providerRef; } catch { return null; } }).filter(Boolean);
       await prisma.appSetting.deleteMany({ where: { key: { in: [...mine.map((x) => x.key), ...refs.map((x) => `comm.ref.${x}`)] } } }).catch(() => {});
-      await prisma.auditLog.deleteMany({ where: { OR: [{ actorName: { contains: 'ZZTEST SPT' } }, { entityId: { in: created.tpls } }, { entityId: 'sms', action: 'SMS connection test' }] } }).catch(() => {});
+      await prisma.auditLog.deleteMany({ where: { OR: [{ actorName: { contains: 'ZZTEST SPT' } }, { entityId: { in: created.tpls } }, { entityId: 'sms', action: 'SMS connection test' }, { entityId: 'sms', action: 'SMS test message' }] } }).catch(() => {});
       if (original) await prisma.integration.update({ where: { id: 'sms' }, data: { values: original.values, enabled: original.enabled, connected: original.connected, state: original.state } });
       else await prisma.integration.deleteMany({ where: { id: 'sms' } });
     } catch (e) { console.log('cleanup problem', String(e.message).slice(0, 200)); }

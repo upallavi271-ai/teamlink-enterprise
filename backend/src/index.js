@@ -491,6 +491,8 @@ const server = app.listen(PORT, () => {
   // The email sending worker. A no-op until Administration → Integrations has
   // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
   mailWorker.start();
+  // SMS Push Platform: ask its Pull DLR API about SMS still waiting for a delivery report (off in the sandbox / SMS_PUSH_DLR_PULL=off)
+  require('./utils/smsPushDlr').start();
   // Uploaded repair bills: picks up bills a restart left waiting to be read by AI (utils/billUploadAi.js; BILL_AI_SWEEP_MS=0 switches it off).
   require('./utils/billUploadAi').start();
   // Omni-Channel Outreach sending loop: does nothing until an Admin switches "Outreach sending" on (outreach/runner.js; DB lease, one loop at a time).

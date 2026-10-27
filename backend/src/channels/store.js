@@ -49,6 +49,7 @@ async function record(rec) {
     ...(rec.module ? { module: rec.module } : {}), ...(rec.preview ? { preview: String(rec.preview).slice(0, 160) } : {}),
     ...(rec.dltTemplateId ? { dltTemplateId: String(rec.dltTemplateId).slice(0, 60) } : {}), ...(rec.senderIdUsed ? { senderIdUsed: String(rec.senderIdUsed).slice(0, 30) } : {}),
     ...(rec.unknown ? { unknown: true } : {}),
+    ...(rec.ackId ? { ackId: String(rec.ackId).slice(0, 80) } : {}),
   };
   const key = `${P}${dayKey(at)}.${id}`;
   try {

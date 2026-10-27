@@ -116,9 +116,18 @@ async function writeValues(id, incoming) {
   const next = {};
   let filled = 0;
 
-  channel.fields.forEach(([label]) => {
+  const hints = new Set(channel.hints || []);
+  channel.fields.forEach(([label, ph]) => {
     const secret = isSecretField(id, label);
-    const raw = incoming[label] == null ? '' : String(incoming[label]);
+    // A field the form did not send at all (another provider's settings) keeps what is stored; it is never wiped by a save.
+    if (incoming[label] === undefined && stored[label] !== undefined) {
+      next[label] = stored[label];
+      if (String(stored[label] || '').trim()) filled += 1;
+      return;
+    }
+    let raw = incoming[label] == null ? '' : String(incoming[label]);
+    // the greyed hint is never a value (an older form sent it back as one)
+    if (hints.has(label) && ph && raw.trim() === String(ph).trim()) raw = '';
     if (!secret) {
       next[label] = raw;
       if (raw.trim()) filled += 1;

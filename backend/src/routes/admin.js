@@ -1533,6 +1533,8 @@ function shapeIntegration(channel, row) {
   return {
     id: channel.id, name: channel.name, group: channel.group, glyph: channel.glyph,
     desc: channel.desc, fields: channel.fields,
+    // the form's helpers: greyed hints that are never values, dropdown choices, and which fields each provider shows (SMS Gateway)
+    ...(channel.hints ? { hints: channel.hints } : {}), ...(channel.choices ? { choices: channel.choices } : {}), ...(channel.byProvider ? { byProvider: channel.byProvider } : {}),
     enabled: row ? row.enabled : false,
     state: row ? row.state : 'Not Connected',
     values,
@@ -2128,23 +2130,41 @@ router.get('/integrations/messaging/status', requirePerm(null, 'administration',
   res.json(await require('../utils/messaging').channelStatus());
 });
 
+const TEST_MSG_SEEN = new Map();
 router.post('/integrations/:id/test-message', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res, next) => {
   if (!['sms', 'whatsapp'].includes(req.params.id)) return next();
   const to = String(req.body.to || '').trim();
   if (!to) return res.status(400).json({ error: 'Enter the mobile number to send the test to.' });
   const channel = req.params.id === 'sms' ? 'SMS' : 'WhatsApp';
-  const text = `TeamLink test message from Administration → Integrations (${req.user.name}). If you received this, ${channel} works.`;
+  // SMS (2026-10-27): the admin types the message - with SMS Push Platform / MSG91 it must be the text of the approved Bulk / General DLT template
+  const typed = String(req.body.text || '').trim().slice(0, 1000);
+  const text = typed || `TeamLink test message from Administration → Integrations (${req.user.name}). If you received this, ${channel} works.`;
+  // one test per number + text a minute: a double click never sends two SMS
+  const dupKey = `${req.params.id}|${to.replace(/\D/g, '')}|${text}`;
+  const last = TEST_MSG_SEEN.get(dupKey);
+  if (last && Date.now() - last < 60000) return res.status(409).json({ error: 'This test was sent a moment ago. Wait a minute before sending the same test again.', outcome: 'Duplicate' });
+  TEST_MSG_SEEN.set(dupKey, Date.now());
+  if (TEST_MSG_SEEN.size > 500) TEST_MSG_SEEN.clear();
   // eslint-disable-next-line global-require
-  const result = await require('../utils/messaging').send(channel, { to, kind: 'bulk', text, vars: [text] });
-  const summary = result.ok ? `Test ${channel} accepted by the provider (${result.providerRef || 'no ref'})` : `${result.outcome} — ${result.error}`;
+  const result = await require('../utils/messaging').send(channel, { to, kind: 'bulk', text, vars: [text], meta: { purpose: `Test ${channel}`, module: 'Integrations', senderUserId: req.user.id, senderName: req.user.name, preview: text } });
+  // the words the screen shows: accepted is NOT delivered
+  const err = String(result.error || '');
+  const word = result.ok ? 'Accepted by Provider — Delivery Pending'
+    : result.notConfigured ? 'Configuration Missing'
+      : result.invalid ? 'Validation Failed'
+        : result.unknown ? 'Unknown answer (not counted as sent)'
+          : /did not answer|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|timed? ?out|HTTP 5\d\d/i.test(err) ? 'Connection Failed'
+            : /auth|login|user ?name|password|credential|HTTP 401|HTTP 403/i.test(err) ? 'Authentication Failed'
+              : 'Request Rejected';
+  const summary = result.ok ? `Test ${channel}: ${word} (${result.providerRef || 'no ref'})` : `${word} — ${err}`;
   await recordEvent(req.params.id, { action: 'Test Message', by: req.user.name, result: summary.slice(0, 480) });
   await prisma.integration.update({
     where: { id: req.params.id },
     data: { lastTest: new Date(), lastTestResult: summary.slice(0, 480), error: result.ok ? null : String(result.error || '').slice(0, 480) },
   }).catch(() => {});
   await logAudit({ userId: req.user.id, action: `${channel} test message`, entity: 'Integration', entityId: req.params.id, toValue: result.outcome });
-  if (!result.ok) return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, notConfigured: !!result.notConfigured });
-  return res.json({ ok: true, outcome: result.outcome, providerRef: result.providerRef || null });
+  if (!result.ok) { TEST_MSG_SEEN.delete(dupKey); return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, status: word, notConfigured: !!result.notConfigured }); }
+  return res.json({ ok: true, outcome: result.outcome, status: word, providerRef: result.providerRef || null });
 });
 
 router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {

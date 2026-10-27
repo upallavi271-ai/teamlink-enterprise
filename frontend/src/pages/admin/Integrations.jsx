@@ -48,6 +48,54 @@ function stateClass(state) {
   return 'pending';
 }
 
+// SMS GATEWAY FORM HELPERS (2026-10-27): the provider dropdown's value from whatever was stored ("SMSGW", "sms push platform" ...), and the
+// fields one provider uses (the others stay saved, only hidden). Mirrors utils/smsGateway.js providerOf.
+function providerChoice(raw, choices) {
+  const p = String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const hit = p.startsWith('MSG91') ? 'MSG91' : (p.startsWith('FAST2') ? 'Fast2SMS' : (p.startsWith('TWILIO') ? 'Twilio'
+    : (p.startsWith('SMSGW') || p.startsWith('SMSPUSH') || p.startsWith('PUSH') ? 'SMS Push Platform' : '')));
+  return (choices || []).includes(hit) ? hit : '';
+}
+function visibleFields(channel, values) {
+  const bp = channel.byProvider;
+  if (!bp) return channel.fields;
+  const choice = providerChoice(values[bp.field], (channel.choices || {})[bp.field]);
+  const show = new Set([...(bp.shared || []), ...((bp.groups || {})[choice] || [])]);
+  return channel.fields.filter(([label]) => show.has(label));
+}
+
+// Test SMS on the SMS Gateway form: a real send through the saved settings to the admin's own number; the answer says what the provider did.
+function SmsTestBox() {
+  const [to, setTo] = useState('');
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  async function send() {
+    if (busy) return;
+    setMsg(null);
+    if (!to.trim()) { setMsg({ ok: false, text: 'Enter your own mobile number for the test.' }); return; }
+    setBusy(true);
+    try {
+      const r = await api.post('/admin/integrations/sms/test-message', { to: to.trim(), text: text.trim() });
+      setMsg({ ok: true, text: `${r.data.status || 'Accepted by Provider'}${r.data.providerRef ? ` · reference ${r.data.providerRef}` : ''}. Delivered shows only after the provider's delivery report (SMS Push Platform > History).` });
+    } catch (e) {
+      const d = (e.response && e.response.data) || {};
+      setMsg({ ok: false, text: `${d.status || d.outcome || 'Failed'}: ${d.error || e.message}` });
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="field" style={{ borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 10, marginTop: 6 }}>
+      <label>Test SMS (save first; this sends one real SMS)</label>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+        <input type="tel" placeholder="Your own mobile number, e.g. 98XXXXXXXX" value={to} onChange={(e) => setTo(e.target.value)} />
+        <textarea rows={2} placeholder="The message. For SMS Push Platform / MSG91 type the exact text of the approved Bulk / General DLT template." value={text} onChange={(e) => setText(e.target.value)} />
+        <div><button type="button" className="btn btn-sm" disabled={busy} onClick={send}>{busy ? 'Sending…' : 'Send test SMS'}</button></div>
+      </div>
+      {msg && <div className={`notice ${msg.ok ? 'green' : 'red'}`} style={{ marginTop: 6 }}><span>{msg.text}</span></div>}
+    </div>
+  );
+}
+
 export default function Integrations() {
   // Administration → Integrations → Job Portal is ?tab=jobportal (the admin
   // dashboard's job-source status links there); /ats/job-portal opens on it.
@@ -111,10 +159,13 @@ export default function Integrations() {
   function openConfigure(c) {
     setConfiguring({
       channel: c,
-      values: Object.fromEntries(c.fields.map(([label, ph]) => [
-        label,
-        (c.secretFields || []).includes(label) ? '' : (c.values[label] || ph || ''),
-      ])),
+      // a HINT (c.hints) is only greyed text, never a value; a stored value equal to its hint was a mistake of the old form and opens empty
+      values: Object.fromEntries(c.fields.map(([label, ph]) => {
+        const stored = c.values[label] || '';
+        if ((c.secretFields || []).includes(label)) return [label, ''];
+        if ((c.hints || []).includes(label)) return [label, stored && stored.trim() === String(ph || '').trim() ? '' : stored];
+        return [label, stored || ph || ''];
+      })),
     });
   }
 
@@ -307,8 +358,21 @@ export default function Integrations() {
           </>}
         >
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>{configuring.channel.desc}</div>
-          {configuring.channel.fields.map(([label, placeholder]) => {
+          {visibleFields(configuring.channel, configuring.values).map(([label, placeholder]) => {
             const secret = (configuring.channel.secretFields || []).includes(label);
+            const opts = (configuring.channel.choices || {})[label];
+            if (opts) {
+              const cur = providerChoice(configuring.values[label], opts);
+              return (
+                <div className="field" key={label}>
+                  <label>Provider</label>
+                  <Combo value={cur} onChange={(e) => setConfiguring((c) => ({ ...c, values: { ...c.values, [label]: e.target.value } }))}>
+                    {!cur && <option value="">Choose the provider…</option>}
+                    {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </Combo>
+                </div>
+              );
+            }
             const hint = (configuring.channel.secretHints || {})[label];
             // A posting-method choice, e.g. "Posting method (Amplify API / XML feed)".
             const choice = /^Posting method \((.+)\)$/.exec(label);
@@ -347,6 +411,7 @@ export default function Integrations() {
               </div>
             );
           })}
+          {configuring.channel.id === 'sms' && <SmsTestBox />}
           <div className="cell-muted" style={{ fontSize: 11.5, fontStyle: 'italic' }}>
             {configuring.channel.id === 'biometric'
               ? 'Saved in the TeamLink database. The device pushes its heartbeat and punches to this endpoint; the status shows Connected once a heartbeat arrives, and Last Seen updates automatically.'

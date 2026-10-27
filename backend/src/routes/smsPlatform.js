@@ -211,6 +211,17 @@ router.get('/history/detail', wrap(async (req, res) => {
 }));
 
 // ---- dashboard --------------------------------------------------------------------------
+// SMS Push Platform: ask the provider's Pull DLR API about one SMS now (the background job asks on its own every 10 minutes).
+router.post('/history/check-delivery', wrap(async (req, res) => {
+  const ref = String((req.body && req.body.ref) || '').trim();
+  if (!ref) return res.status(400).json({ error: 'Which SMS? (ref)' });
+  const rec = await store.byRef(ref);
+  if (!rec || rec.channel !== 'SMS') return res.status(404).json({ error: 'No such SMS record.' });
+  const out = await require('../utils/smsPushDlr').pullOne(rec); // eslint-disable-line global-require
+  const now = await store.byRef(ref);
+  return res.json({ ...out, status: now ? statusOf(now) : null, message: out.error ? out.error : (out.applied ? 'The provider reported on this SMS; the status is updated.' : 'The provider has no final delivery report for this SMS yet (still pending).') });
+}));
+
 router.get('/dashboard', wrap(async (req, res) => {
   const { from, to } = range(req.query);
   const rows = await smsRecords({ from, to, module: req.query.module });

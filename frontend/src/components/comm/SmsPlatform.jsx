@@ -303,6 +303,13 @@ function HistoryTab() {
     } catch (e) { setErr(errOf(e, 'The export failed.')); }
   };
   const open = async (r) => { try { const x = await api.get('/sms-platform/history/detail', { params: r.providerRef ? { ref: r.providerRef } : { id: r.id } }); setDetail(x.data); } catch (e) { setErr(errOf(e, 'No detail.')); } };
+  // SMS Push Platform: ask the provider's delivery report for this SMS now (it is also asked every 10 minutes on its own)
+  const [checking, setChecking] = useState(false); const [checkMsg, setCheckMsg] = useState('');
+  const checkNow = async () => {
+    if (checking || !detail || !detail.providerRef) return;
+    setChecking(true); setCheckMsg('');
+    try { const r = await api.post('/sms-platform/history/check-delivery', { ref: detail.providerRef }); setCheckMsg(r.data.message); await open(detail); } catch (e) { setCheckMsg(errOf(e, 'Could not ask the provider.')); } finally { setChecking(false); }
+  };
   const pages = d ? Math.max(1, Math.ceil(d.total / d.size)) : 1;
   return (
     <div className="cm-card">
@@ -342,6 +349,9 @@ function HistoryTab() {
           <div className="sp-preview">{detail.preview || '(words not kept)'}</div>
           <div className="cm-help">{detail.module} · {detail.template || 'no template'} · sender {detail.senderId || '—'} · DLT {detail.dltTemplateId || '—'} · by {detail.by || '—'}</div>
           {detail.error && <div className="cm-line cm-orange">{detail.error}</div>}
+          {detail.providerRef && detail.delivery === 'Submitted' && (
+            <div className="cm-help"><button type="button" className="btn btn-sm" disabled={checking} onClick={checkNow}>{checking ? 'Asking…' : 'Check delivery now'}</button>{checkMsg && <span> {checkMsg}</span>}</div>
+          )}
           <h4 className="sp-h4">What happened</h4>
           <ul className="sp-list">{(detail.history || []).map((h) => <li key={`${h.at}-${h.status}`}>{fmt(h.at)} · <b>{h.status}</b>{h.detail ? ` · ${h.detail}` : ''}</li>)}</ul>
         </Modal>

@@ -63,7 +63,7 @@ const MAP = {
   sent: 'SENT', accepted: 'SENT', queued: 'SENT', submitted: 'SENT',
   delivered: 'DELIVERED', delivrd: 'DELIVERED', success: 'DELIVERED',
   read: 'READ', seen: 'READ',
-  failed: 'FAILED', undelivered: 'FAILED', undeliv: 'FAILED', rejected: 'FAILED', expired: 'FAILED', error: 'FAILED', blocked: 'FAILED',
+  failed: 'FAILED', undelivered: 'FAILED', undeliv: 'FAILED', rejected: 'FAILED', rejectd: 'FAILED', expired: 'FAILED', error: 'FAILED', blocked: 'FAILED',
 };
 const norm = (s) => MAP[String(s || '').toLowerCase().replace(/[^a-z]/g, '')] || null;
 
