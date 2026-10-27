@@ -277,7 +277,6 @@ export function TaskForm({ options, task, onClose, onSaved }) {
   const base = people.filter(matchQ);
   const okRole = (p) => !role || p.roleGroup === role;
   const depts = countBy(base.filter((p) => (!team || p.team === team) && okRole(p)), 'department');
-  const teams = countBy(base.filter((p) => (!dept || p.department === dept) && okRole(p)), 'team');
   const ROLE_ORDER = ['Super Admin', 'HR', 'STL', 'TL', 'Manager', 'Assistant Manager', 'Employees'];
   const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && p.roleGroup === r).length;
   const shown = base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && okRole(p));
@@ -359,14 +358,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                 ))}
               </div>
             )}
-            {teams.length > 1 && (
-              <div className="tt-chips" role="group" aria-label="Team">
-                <button type="button" className={`tt-chip${!team ? ' on' : ''}`} onClick={() => setTeam('')}>All teams <b>{base.filter((p) => !dept || p.department === dept).length}</b></button>
-                {teams.map(([t, n]) => (
-                  <button type="button" key={t} className={`tt-chip${team === t ? ' on' : ''}`} onClick={() => setTeam(team === t ? '' : t)}>{t} <b>{n}</b></button>
-                ))}
-              </div>
-            )}
+            {/* No Team chips (founder 2026-10-27: "Team remove chey - ee team maa company lo ledhu"): pick by department and designation. */}
             {people.some((p) => p.roleGroup) && (
               <div className="tt-chips" role="group" aria-label="Designation">
                 <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team)).length}</b></button>
@@ -382,7 +374,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                   <input type="checkbox" checked={picked.has(p.userId)} onChange={() => toggle(p.userId)} />
                   <span>
                     <span className="tt-pn">{p.self ? `${p.name} (me)` : p.name}</span>
-                    <span className="tt-ps">{[p.designation, p.department, p.team].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
+                    <span className="tt-ps">{[p.designation, p.department].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
                   </span>
                 </label>
               ))}
