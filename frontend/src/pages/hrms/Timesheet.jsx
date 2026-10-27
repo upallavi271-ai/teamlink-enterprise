@@ -13,7 +13,7 @@ import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import './timesheet-priority.css';
 import './timesheet-tasks.css';
-import { TaskForm, GivenToMe, IGave, LateStrip, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, TaskFiles, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
+import { TaskForm, GivenToMe, IGave, LateStrip, DayEndDialog, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, TaskFiles, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
 import IdeasBox from './IdeasBox.jsx';
 
 // Timesheet — "Track and assign work".
@@ -85,7 +85,8 @@ export default function Timesheet({ standalone = false }) {
   const [sort, setSort] = useState('');
   const [view, setView] = useState(null); // 'mine' | 'gave' | 'all'
   const [newOpen, setNewOpen] = useState(false);
-  const [feedbackOpen, setFeedbackOpen] = useState(false); // feedback to the R&D team (any department may send it)
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [dayEndOpen, setDayEndOpen] = useState(false); // End of day: every task's state today (founder 2026-10-27) // feedback to the R&D team (any department may send it)
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [reports, setReports] = useState(null);
@@ -242,6 +243,7 @@ export default function Timesheet({ standalone = false }) {
           <h3>Tasks</h3>
           <span style={{ display: 'inline-flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn" onClick={() => openReports()}>Task Reports</button>
+            <button className="btn" onClick={() => setDayEndOpen(true)} title="Every task today: completed (TL approved), waiting for TL approval, partly done, in progress">End of day</button>
             <button className="btn" onClick={() => { setError(''); setNotice(''); setFeedbackOpen(true); }} disabled={!options} title="Send feedback to the R&D team">💬 Feedback to R&D</button>
             <IdeasBox />
             <button className="btn btn-primary" onClick={() => { setError(''); setNotice(''); setNewOpen(true); }} disabled={!options}>+ New task</button>
@@ -451,6 +453,7 @@ export default function Timesheet({ standalone = false }) {
           }}
         />
       )}
+      {dayEndOpen && <DayEndDialog today={options && options.today} onClose={() => setDayEndOpen(false)} />}
       {feedbackOpen && (
         <FeedbackToRd
           onClose={() => setFeedbackOpen(false)}

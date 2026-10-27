@@ -38,9 +38,11 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 export function stateOf(t) {
   if (t.status === 'Cancelled') return { word: 'Cancelled', tone: 'grey' };
   if (t.status === 'Completed') {
-    if (t.reviewState === 'Approved') return { word: 'Done and checked', tone: 'green' };
+    // founder 2026-10-27: done is COMPLETED only after the TL approves it
+    if (t.reviewState === 'Approved') return { word: 'Completed (TL approved)', tone: 'green' };
     if (t.reviewState === 'Changes Requested') return { word: 'Needs changes', tone: 'red' };
-    return { word: 'Done - waiting to be checked', tone: 'orange' };
+    if (t.reviewState === 'Pending Review') return { word: `Done - waiting for ${t.approver ? `${t.approver}'s` : 'TL'} approval`, tone: 'orange' };
+    return { word: 'Completed', tone: 'green' };
   }
   if (t.overdue) return { word: 'Overdue', tone: 'red' };
   if (t.status === 'In Progress') return { word: 'Working on it', tone: 'blue' };
@@ -503,6 +505,64 @@ export function LateStrip({ tasks, me, dlg }) {
   );
 }
 
+// END OF DAY (founder 2026-10-27): every task's state today - completed (TL approved), waiting for TL approval, partly done,
+// in progress, not started, sent back, late - one row per person. The Super Admin / HR see everyone, a lead their own people.
+const DAY_TONE = { completed: 'green', waiting: 'orange', sentback: 'red', partial: 'blue', inprogress: 'blue', onhold: 'orange', notstarted: 'grey' };
+export function DayEndDialog({ onClose, today }) {
+  const [day, setDay] = useState(today || new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [only, setOnly] = useState('');
+  useEffect(() => {
+    let live = true;
+    setData(null); setErr('');
+    api.get('/tasks/day-end', { params: { date: day } }).then((r) => { if (live) setData(r.data); }).catch((e) => { if (live) setErr(apiError(e, 'The end-of-day list could not be opened.')); });
+    return () => { live = false; };
+  }, [day]);
+  const people = data ? data.people.map((p) => ({ ...p, tasks: p.tasks.filter((t) => !only || (only === 'late' ? t.late : t.state === only)) })).filter((p) => p.tasks.length) : [];
+  return (
+    <Modal title="End of day - task status" wide onClose={onClose} foot={<button className="btn" onClick={onClose}>Close</button>}>
+      <label className="small-muted tt-date">Day <input type="date" value={day} onChange={(e) => setDay(e.target.value || day)} /></label>
+      {err && <div className="error-text">{err}</div>}
+      {!data && !err && <div className="small-muted">Loading...</div>}
+      {data && (
+        <>
+          <div className="tt-chips" role="group" aria-label="Show" style={{ margin: '10px 0' }}>
+            <button type="button" className={`tt-chip${!only ? ' on' : ''}`} onClick={() => setOnly('')}>All <b>{data.total}</b></button>
+            {data.states.filter((s) => data.counts[s.key] > 0).map((s) => (
+              <button type="button" key={s.key} className={`tt-chip ${DAY_TONE[s.key]}${only === s.key ? ' on' : ''}`} onClick={() => setOnly(only === s.key ? '' : s.key)}>{s.label} <b>{data.counts[s.key]}</b></button>
+            ))}
+            {data.late > 0 && <button type="button" className={`tt-chip red${only === 'late' ? ' on' : ''}`} onClick={() => setOnly(only === 'late' ? '' : 'late')}>Late <b>{data.late}</b></button>}
+          </div>
+          {!people.length && <div className="empty-mini">No task to show for this day.</div>}
+          {people.map((p) => (
+            <div key={p.userId} style={{ marginBottom: 12 }}>
+              <div className="tt-name">{p.name}<span className="small-muted">{[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ') ? ` · ${[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ')}` : ''}</span></div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Task</th><th>Status</th><th>Given by</th><th>Due</th><th className="num">Hours today</th><th className="num">Hours in all</th></tr></thead>
+                  <tbody>
+                    {p.tasks.map((t) => (
+                      <tr key={t.id}>
+                        <td>{t.name}</td>
+                        <td><span className={`tt-state ${DAY_TONE[t.state]}`}>{t.label}</span>{t.late && <span className="tt-state red" style={{ marginLeft: 4 }}>{t.daysLate} {t.daysLate === 1 ? 'day' : 'days'} late</span>}{t.why && <div className="small-muted">{t.why}</div>}</td>
+                        <td>{t.givenBy}</td>
+                        <td>{t.due ? dmy(t.due) : '—'}</td>
+                        <td className="num">{hoursText(t.hoursToday)}</td>
+                        <td className="num">{hoursText(t.hoursTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </Modal>
+  );
+}
+
 export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
   const st = stateOf(t);
   const due = dueOf(t, today);
@@ -546,7 +606,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         {mine && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>Add hours</button>}
         {mine && open && t.status !== 'In Progress' && <button className="btn btn-sm" onClick={() => dlg.open('done', t)}>Mark as done</button>}
         {!mine && (r.assignee || r.manage) && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>See hours</button>}
-        {r.manage && canReview && waiting && !mine && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it</button>}
+        {r.review && waiting && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it and approve</button>}
         {r.manage && open && !(mine && t.overdue) && <button className="btn btn-sm" onClick={() => dlg.open('extend', t)}>Move date</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('reassign', t)}>Give to someone else</button>}
         {r.manage && open && <button className="btn btn-sm" title="Add more work to this task without changing it" onClick={() => dlg.open('addon', t)}>＋ Add-on</button>}
@@ -603,10 +663,11 @@ function DoneDialog({ task, onClose, onDone }) {
   async function go(e) {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      await api.post(`/tasks/${task.id}/complete`, { note });
+      const done = await api.post(`/tasks/${task.id}/complete`, { note });
+      const approver = done && done.data ? done.data.approver : null;
       const failed = files.length ? await uploadTaskFiles(task.id, files) : [];
       const added = files.length - failed.length;
-      onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. ${task.assignedByName && task.assignedById !== task.assigneeId ? `${task.assignedByName} will check it.` : ''}${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
+      onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. It counts as completed after ${approver ? `${approver} (your TL)` : 'your TL'} approves it.${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
     } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
   }
   return (
