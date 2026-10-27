@@ -626,6 +626,27 @@ async function buildList(req, tile, part) {
   const { employees, ids } = await loadBase(req);
   const byId = new Map(employees.map((e) => [e.id, e]));
   const out = (extra) => ({ tile, part, title, period, today, note: '', ...extra });
+  // THE APPROVAL CHAIN ON THE PENDING LISTS (founder 2026-10-27: "approve / reject chain wise gane ravali"): each waiting request shows its
+  // chain step by step, and Approve / Reject is offered only to the person whose turn it is (the decision route checks the same again).
+  const STEP_WORD = { Approved: 'Approved', Rejected: 'Rejected', Pending: 'Pending now', Waiting: 'Waiting', Visibility: 'Sees only', Skipped: 'Skipped' };
+  const LEVEL_WORD = { TL: 'TL', STL: 'STL', HR: 'HR', ASSISTANT_MANAGER: 'Asst Manager', MANAGER: 'Manager', SUPER_ADMIN: 'Super Admin' };
+  const withChain = async (workflow, rows) => {
+    const recIds = rows.map((r) => r.reqId).filter(Boolean);
+    const steps = recIds.length ? await prisma.approvalStep.findMany({ where: { workflow, recordId: { in: recIds }, level: { not: 'EMPLOYEE' } }, orderBy: { seq: 'asc' } }).catch(() => []) : [];
+    const byRec = new Map();
+    steps.forEach((s) => { if (!byRec.has(s.recordId)) byRec.set(s.recordId, []); byRec.get(s.recordId).push(s); });
+    return rows.map((r) => {
+      const list = byRec.get(r.reqId) || [];
+      const now = list.filter((s) => s.status === 'Pending');
+      return {
+        ...r,
+        chain: list.length ? list.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}: ${STEP_WORD[s.status] || s.status}`.replace(/\s+/g, ' ')).join(' → ') : 'No chain yet (the first decision builds it)',
+        waitingFor: now.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}`.trim()).join(' / ') || null,
+        // a request with no chain yet: the server builds it on the first decision and decides whether this login may act
+        myTurn: list.length ? now.some((s) => s.approverUserId === req.user.id) : true,
+      };
+    });
+  };
   const leaveRow = (l) => {
     const e = byId.get(l.employeeId);
     return { ...personOf(e), reqId: l.id, leaveType: l.type, from: String(l.fromDate).slice(0, 10), to: String(l.toDate).slice(0, 10), days: l.days ?? '', leaveStatus: l.status, applied: dstr(l.createdAt), status: e.employmentStatus || '' };
@@ -740,19 +761,19 @@ async function buildList(req, tile, part) {
   if (tile === 'taskLeave') {
     const gset = await leaveGenuine.genuinePendingIds({ employeeIds: ids });
     const leaves = (await prisma.leaveRequest.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { fromDate: 'desc' } })).filter((l) => gset.has(l.id));
-    const rows = leaves.map(leaveRow);
+    const rows = await withChain('leave', leaves.map(leaveRow));
     const gone = rows.filter((r) => LEFT_STATUSES.includes(r.status)).length;
-    return out({ note: 'Genuinely pending leave: the person still works here, it is not a duplicate and the dates are not long past. Others are under Leave > Pulse sync > Old pending.', columns: LEAVE_COLS, rows, decide: 'leave' });
+    return out({ note: 'Genuinely pending leave: the person still works here, it is not a duplicate and the dates are not long past. Others are under Leave > Pulse sync > Old pending.', columns: [...LEAVE_COLS, C('chain', 'Approval chain')], rows, decide: 'leave' });
   }
   if (tile === 'taskRegularization') {
     const regs = await prisma.attendanceRegularization.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { date: 'desc' } });
-    const rows = regs.map((r) => ({ ...personOf(byId.get(r.employeeId)), reqId: r.id, date: r.date, reqIn: r.requestedCheckIn || '', reqOut: r.requestedCheckOut || '', reason: r.reason || '', applied: dstr(r.createdAt) }));
-    return out({ note: 'Attendance corrections waiting for approval.', columns: [C('name', 'Name'), C('employeeCode', 'Employee ID'), C('department', 'Department'), C('date', 'For date', 'date'), C('reqIn', 'Asked in time', 'time'), C('reqOut', 'Asked out time', 'time'), C('reason', 'Reason'), C('applied', 'Asked on', 'date')], rows, decide: 'regularization' });
+    const rows = await withChain('regularization', regs.map((r) => ({ ...personOf(byId.get(r.employeeId)), reqId: r.id, date: r.date, reqIn: r.requestedCheckIn || '', reqOut: r.requestedCheckOut || '', reason: r.reason || '', applied: dstr(r.createdAt) })));
+    return out({ note: 'Attendance corrections waiting for approval.', columns: [C('name', 'Name'), C('employeeCode', 'Employee ID'), C('department', 'Department'), C('date', 'For date', 'date'), C('reqIn', 'Asked in time', 'time'), C('reqOut', 'Asked out time', 'time'), C('reason', 'Reason'), C('applied', 'Asked on', 'date'), C('chain', 'Approval chain')], rows, decide: 'regularization' });
   }
   if (tile === 'taskLateComing') {
     const lps = prisma.latePermission ? await prisma.latePermission.findMany({ where: { employeeId: { in: ids }, status: 'Pending' }, orderBy: { date: 'desc' } }) : [];
-    const rows = lps.map((r) => ({ ...personOf(byId.get(r.employeeId)), reqId: r.id, date: r.date, came: r.arrivedAt || r.expectedTime || '', reason: r.reason || '', applied: dstr(r.requestedAt) }));
-    return out({ note: 'Late coming requests waiting for approval. Approve or reject them here (or on Attendance → Late coming).', columns: [C('name', 'Name'), C('employeeCode', 'Employee ID'), C('department', 'Department'), C('date', 'For date', 'date'), C('came', 'Came at / will come by', 'time'), C('reason', 'Reason'), C('applied', 'Asked on', 'date')], rows, decide: 'late' });
+    const rows = await withChain('latePermission', lps.map((r) => ({ ...personOf(byId.get(r.employeeId)), reqId: r.id, date: r.date, came: r.arrivedAt || r.expectedTime || '', reason: r.reason || '', applied: dstr(r.requestedAt) })));
+    return out({ note: 'Late coming requests waiting for approval. Approve or reject them here (or on Attendance → Late coming).', columns: [C('name', 'Name'), C('employeeCode', 'Employee ID'), C('department', 'Department'), C('date', 'For date', 'date'), C('came', 'Came at / will come by', 'time'), C('reason', 'Reason'), C('applied', 'Asked on', 'date'), C('chain', 'Approval chain')], rows, decide: 'late' });
   }
   if (tile === 'taskAssets' || tile === 'taskTargets' || tile === 'taskTickets') {
     const where = tile === 'taskAssets' ? { type: 'ASSET', status: 'Assigned' } : tile === 'taskTargets' ? { type: 'TARGET', status: 'In Progress' } : { type: 'HELPDESK', status: { notIn: ['Resolved', 'Closed'] } };

@@ -45,6 +45,19 @@ const Z = require('./lib/zzfix')('HDB');
     created.leaves.push(lv.id);
     const ap = await Z.call('PATCH', `/api/leave/${lv.id}/decision`, S, { status: 'Rejected', comment: 'ZZTEST HDB not now', rejectReason: 'ZZTEST HDB not now' });
     const lv2 = await prisma.leaveRequest.findUnique({ where: { id: lv.id } });
+    // chain-wise: a leave whose TL step is pending shows its chain; only the TL gets the buttons
+    const tlu = await Z.mkUser('tl', { role: 'TL', hrmsRole: 'TL', hrmsAccess: true, atsRole: 'NONE', atsAccess: false }, { designation: 'TL', department: 'R&D' });
+    const lv3 = await prisma.leaveRequest.create({ data: { employeeId: ee.id, type: 'Casual', fromDate: '2026-12-08', toDate: '2026-12-08', days: 1, status: 'Pending', reason: 'ZZTEST HDB chain' } });
+    created.leaves.push(lv3.id);
+    await prisma.approvalStep.createMany({ data: [
+      { workflow: 'leave', recordId: lv3.id, level: 'TL', seq: 1, mode: 'required', approverUserId: tlu.id, approverName: tlu.name, status: 'Pending', activatedAt: new Date() },
+      { workflow: 'leave', recordId: lv3.id, level: 'HR', seq: 5, mode: 'required', approverUserId: hr.id, approverName: hr.name, status: 'Waiting' },
+    ] });
+    const asSa = (await Z.call('GET', '/api/hrms/dashboard/list?tile=taskLeave', S)).body.rows.find((r) => r.reqId === lv3.id);
+    const asTl = (await Z.call('GET', '/api/hrms/dashboard/list?tile=taskLeave', await Z.mint(tlu))).body;
+    const tlRow = (asTl.rows || []).find((r) => r.reqId === lv3.id);
+    Z.check('D9 the row shows the chain step by step (TL pending now, HR waiting) and says whose turn it is', !!asSa && /TL .*: Pending now → HR .*: Waiting/.test(asSa.chain) && /TL/.test(asSa.waitingFor || ''), asSa);
+    Z.check('D10 chain-wise: not the Super Admin\'s turn -> no buttons for them; the TL whose turn it is gets them', asSa && asSa.myTurn === false && (!tlRow || tlRow.myTurn === true), [asSa && asSa.myTurn, tlRow ? tlRow.myTurn : 'TL cannot see the list']);
     Z.check('D8 a Reject from the list goes through the leave decision route (with the reason)', ap.status === 200 && lv2.status === 'Rejected', [ap.status, ap.body && ap.body.error, lv2.status]);
 
     // ---- pause ----

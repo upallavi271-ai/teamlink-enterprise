@@ -250,7 +250,9 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                       <td data-label="Action" style={{ whiteSpace: 'nowrap' }}>
                         {doneIds[r.reqId]
                           ? <span className={`status ${doneIds[r.reqId] === 'Approved' ? 'priority-low' : 'priority-high'}`}>{doneIds[r.reqId]}</span>
-                          : <>
+                          : r.myTurn === false
+                            ? <span className="small-muted" title="The approval goes step by step: it is another approver's turn now.">Waiting for {r.waitingFor || 'the next approver'}</span>
+                            : <>
                             <button type="button" className="btn btn-sm btn-primary" disabled={!!acting} onClick={() => decide(r, 'Approved')}>{acting === r.reqId ? '…' : 'Approve'}</button>{' '}
                             <button type="button" className="btn btn-sm" disabled={!!acting} onClick={() => decide(r, 'Rejected')}>Reject</button>
                           </>}
