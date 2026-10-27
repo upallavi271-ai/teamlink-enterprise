@@ -196,8 +196,13 @@ function daysBetween(a, b) {
 // What a row carries on top of the stored task.
 function decorate(t, now = today()) {
   const overdue = isOverdue(t, now);
+  // LATE TASKS (founder 2026-10-27): the newest "why late + new day" request (rows read with `delays`, newest first)
+  const lastDelay = Array.isArray(t.delays) && t.delays.length ? t.delays[0] : null;
   return {
     ...t,
+    lastDelay,
+    delayPending: !!(lastDelay && lastDelay.status === 'Pending'),
+    needsReason: overdue && !(lastDelay && lastDelay.status === 'Pending'),
     priority: t.priority || 'Medium',
     overdue,
     daysLate: overdue ? daysBetween(t.endDate, now) : 0,
@@ -528,7 +533,7 @@ router.get('/', VIEW, async (req, res, next) => {
       where: and.length ? { AND: [where, ...and] } : where,
       orderBy: [{ startDate: 'desc' }, { createdAt: 'desc' }],
       take: 5000,
-      include: { addOns: { orderBy: { createdAt: 'asc' } }, files: { orderBy: { createdAt: 'asc' }, select: { id: true, fileName: true, contentType: true, size: true, uploadedByName: true, createdAt: true } } },
+      include: { delays: { orderBy: { createdAt: 'desc' }, take: 3 }, addOns: { orderBy: { createdAt: 'asc' } }, files: { orderBy: { createdAt: 'asc' }, select: { id: true, fileName: true, contentType: true, size: true, uploadedByName: true, createdAt: true } } },
     });
     const hrs = await hoursMap(tasks.map((t) => t.id));
     const rightsOf = await rightsFor(req.user, view);
@@ -981,6 +986,9 @@ async function applyManage(me, t, b, reason) {
   try {
     if (b.endDate !== undefined) {
       const v = asDate(b.endDate, 'Task end date');
+      if ((v || '') !== (t.endDate || '') && me.id === t.assigneeId && isOverdue(t)) {
+        return bad('endDate', 'This task is late, so you cannot move its date yourself. Use "Ask for more time": write why it is late and the new day - your lead decides.');
+      }
       endDate = v;
       if ((v || '') !== (t.endDate || '')) { data.endDate = v; data.overdueRemindedOn = null; track('endDate', 'Due date', t.endDate, v); }
     }
@@ -1246,6 +1254,77 @@ router.delete('/:id/addons/:addOnId', VIEW, async (req, res, next) => {
     await prisma.taskAddOn.delete({ where: { id: a.id } });
     await noteOnTask(t, me, `${me.name} removed the add-on "${a.text.slice(0, 80)}"`);
     return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+
+// --- LATE TASKS: WHY + NEW DAY (founder 2026-10-27: "task assign chesukuntunnaru kaani serious ga teesukovadam ledhu, due day
+// ipoyaka em cheyyali") --------------------------------------------------------------------------------------------------------
+// Past its due day a task cannot be moved by the person it is for (applyManage refuses). They ASK: why it is late + the new day.
+// The decider is whoever gave it; for a task they gave themselves, their reporting manager (a lead with them in scope may also
+// decide). Approve -> the due day moves; No -> it stays late, with the reason they were told. Every step is on the task's notes.
+async function delayDeciders(t) {
+  if (t.assignedById && t.assignedById !== t.assigneeId) return [t.assignedById];
+  const e = await prisma.employee.findFirst({ where: { userId: t.assigneeId }, select: { reportingManager: { select: { userId: true } } } });
+  const rm = e && e.reportingManager && e.reportingManager.userId;
+  return rm && rm !== t.assigneeId ? [rm] : [];
+}
+router.post('/:id/delay', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    if (t.assigneeId !== me.id) return res.status(403).json({ error: 'Only the person this task is for can ask for more time.' });
+    if (!OPEN_STATUSES.includes(t.status)) return res.status(400).json({ error: `This task is ${t.status.toLowerCase()}, so it needs no more time.` });
+    if (!t.endDate) return res.status(400).json({ error: 'This task has no due day, so there is nothing to move.' });
+    const reason = String((req.body && req.body.reason) || '').trim();
+    if (reason.length < 5) return res.status(400).json({ field: 'reason', error: 'Write why it is late, in a few words.' });
+    if (reason.length > 1000) return res.status(400).json({ field: 'reason', error: 'Keep it under 1000 characters.' });
+    const newDate = String((req.body && req.body.newDate) || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) return res.status(400).json({ field: 'newDate', error: 'Pick the new day you will finish it.' });
+    if (newDate < today()) return res.status(400).json({ field: 'newDate', error: 'The new day cannot be in the past.' });
+    if (newDate <= t.endDate) return res.status(400).json({ field: 'newDate', error: `Pick a day after the due day (${fmtDay(t.endDate)}).` });
+    const pending = await prisma.taskDelay.findFirst({ where: { taskId: t.id, status: 'Pending' } });
+    if (pending) return res.status(409).json({ error: `You already asked for ${fmtDay(pending.newDate)}. Wait for the answer.` });
+    const delay = await prisma.taskDelay.create({ data: { taskId: t.id, reason, oldDate: t.endDate, newDate, askedById: me.id, askedByName: me.name } });
+    await noteOnTask(t, me, `${me.name} asked for more time: due ${fmtDay(t.endDate)} -> ${fmtDay(newDate)}. Why late: ${reason}`);
+    await logAudit({ userId: me.id, action: 'Task more time asked', entity: 'Task', entityId: t.id, fromValue: t.endDate, toValue: `${newDate} - ${reason}`.slice(0, 190) });
+    const deciders = await delayDeciders(t);
+    for (const uid of deciders) {
+      // eslint-disable-next-line no-await-in-loop
+      await quiet(hrmsNotify.taskChanged(t, me, 'More time asked', `"${t.name}" was due ${fmtDay(t.endDate)}. Why late: ${reason}. Asks for ${fmtDay(newDate)}. Approve or say no on the Timesheet.`, uid));
+    }
+    const names = deciders.length ? (await prisma.user.findMany({ where: { id: { in: deciders } }, select: { name: true } })).map((u) => u.name) : [];
+    return res.status(201).json({ delay, askedFrom: names });
+  } catch (err) { return next(err); }
+});
+router.post('/:id/delay/:delayId/decision', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    const d = await prisma.taskDelay.findFirst({ where: { id: req.params.delayId, taskId: t.id } });
+    if (!d) return res.status(404).json({ error: 'That request is not on this task.' });
+    if (d.status !== 'Pending') return res.status(400).json({ error: `This was already ${d.status === 'Approved' ? 'approved' : 'turned down'} by ${d.decidedByName || 'someone'}.` });
+    const may = me.id !== t.assigneeId && ((await taskRights(me, t)).manage || (await delayDeciders(t)).includes(me.id));
+    if (!may) return res.status(403).json({ error: 'Only the person who gave this task (or their lead) can decide.' });
+    const approve = !!(req.body && req.body.approve);
+    const note = String((req.body && req.body.note) || '').trim();
+    if (!approve && note.length < 3) return res.status(400).json({ field: 'note', error: 'Write why not, so they know what to do.' });
+    const moveDate = approve && OPEN_STATUSES.includes(t.status);
+    await prisma.$transaction(async (tx) => {
+      await tx.taskDelay.update({ where: { id: d.id }, data: { status: approve ? 'Approved' : 'Rejected', decidedById: me.id, decidedByName: me.name, decidedAt: new Date(), decideNote: note || null } });
+      if (moveDate) await tx.task.update({ where: { id: t.id }, data: { endDate: d.newDate, overdueRemindedOn: null } });
+    });
+    await noteOnTask(t, me, approve
+      ? `${me.name} gave more time: new due day ${fmtDay(d.newDate)}${note ? ` - ${note}` : ''}`
+      : `${me.name} said no to more time (asked ${fmtDay(d.newDate)}): ${note}`);
+    await logAudit({ userId: me.id, action: approve ? 'Task more time approved' : 'Task more time refused', entity: 'Task', entityId: t.id, fromValue: d.oldDate, toValue: approve ? d.newDate : `refused - ${note}`.slice(0, 190) });
+    await quiet(hrmsNotify.taskChanged(t, me, approve ? 'More time given' : 'More time not given', approve
+      ? `New due day for "${t.name}": ${fmtDay(d.newDate)}.${note ? ` ${note}` : ''}`
+      : `No to ${fmtDay(d.newDate)} for "${t.name}": ${note}. It is still late - finish it as soon as you can.`));
+    return res.json({ ok: true, status: approve ? 'Approved' : 'Rejected', endDate: moveDate ? d.newDate : t.endDate });
   } catch (err) { return next(err); }
 });
 

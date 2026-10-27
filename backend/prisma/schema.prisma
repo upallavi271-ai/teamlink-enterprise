@@ -3667,6 +3667,7 @@ model Task {
   comments TaskComment[]
   addOns   TaskAddOn[]
   files    TaskFile[]
+  delays   TaskDelay[]
   // when and by whom it was cancelled (founder 2026-10-26: "task cancelled ithey ye date lo indhi ani kanipinchali")
   cancelledAt     DateTime?
   cancelledByName String?
@@ -3682,6 +3683,29 @@ model Task {
 // and add one — the thread is the task's own audit of what happened.
 // ADD-ONS (founder 2026-10-26: "task change anedhi kakunda add-ons undali"): extra work added onto a task instead of rewriting it.
 // Each one is its own line with its own done tick; the original task text stays as it was given.
+// LATE TASKS (founder 2026-10-27: "due day ipoyaka kuda dani em cheyyali"): once a task is past its due day, the person it is for
+// cannot move the date themselves (even on a task they gave themselves). They write WHY it is late and the NEW day they will finish;
+// whoever gave it (for a task they gave themselves: their reporting manager / lead) approves - the due day moves - or says no.
+model TaskDelay {
+  id            String    @id @default(cuid())
+  taskId        String
+  task          Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  reason        String
+  oldDate       String?
+  newDate       String // YYYY-MM-DD
+  askedById     String
+  askedByName   String
+  status        String    @default("Pending") // Pending | Approved | Rejected
+  decidedById   String?
+  decidedByName String?
+  decidedAt     DateTime?
+  decideNote    String?
+  createdAt     DateTime  @default(now())
+
+  @@index([taskId])
+  @@index([status])
+}
+
 model TaskAddOn {
   id          String    @id @default(cuid())
   taskId      String

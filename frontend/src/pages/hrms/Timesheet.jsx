@@ -13,7 +13,7 @@ import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import './timesheet-priority.css';
 import './timesheet-tasks.css';
-import { TaskForm, GivenToMe, IGave, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, TaskFiles, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
+import { TaskForm, GivenToMe, IGave, LateStrip, useTaskDialogs, PRI_WORD, cancelLine, AddOnList, TaskFiles, FeedbackToRd, FeedbackSent } from './TimesheetTasks.jsx';
 import IdeasBox from './IdeasBox.jsx';
 
 // Timesheet — "Track and assign work".
@@ -258,6 +258,7 @@ export default function Timesheet({ standalone = false }) {
           )}
 
           {!options && <div className="small-muted">Loading...</div>}
+          {options && <LateStrip tasks={tasks} me={options.me.id} dlg={dlg} />}
           {options && cur === 'mine' && <GivenToMe tasks={tasks} options={options} dlg={dlg} busy={busyId} onStart={onStart} />}
           {options && cur === 'gave' && canGive && (
             <IGave tasks={tasks} options={options} dlg={dlg} busy={busyId} onStart={onStart} reload={load} setNotice={setNotice} setError={setError} />

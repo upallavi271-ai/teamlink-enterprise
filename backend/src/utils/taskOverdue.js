@@ -44,7 +44,7 @@ async function remind({ open, users, today, notify, settings, mailer, now, userO
     if (!userOk(u)) { out.skipped += 1; continue; }
     const late = daysBetween(t.endDate, today);
     const title = `Task overdue: ${t.name} (was due ${dmy(t.endDate)})`;
-    const message = `Your task "${t.name}" is ${late} day${late === 1 ? '' : 's'} late. It was due ${dmy(t.endDate)}. Priority: ${t.priority || 'Medium'}. Status: ${t.status}. Please finish it or ask ${t.assignedByName || 'your manager'} to move the date.`;
+    const message = `Your task "${t.name}" is ${late} day${late === 1 ? '' : 's'} late. It was due ${dmy(t.endDate)}. Priority: ${t.priority || 'Medium'}. Status: ${t.status}. Please finish it, or open the Timesheet and tap "Ask for more time": write why it is late and the new day.`;
     // eslint-disable-next-line no-await-in-loop
     const r = skipAssignee && skipAssignee(u) ? { inApp: false, email: false } : await notify('taskLate', { userId: u.id, name: u.name, email: u.email }, { title, message }, { now, settings, mailer });
     // eslint-disable-next-line no-await-in-loop

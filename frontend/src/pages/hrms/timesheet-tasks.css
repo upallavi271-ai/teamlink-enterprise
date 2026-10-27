@@ -97,3 +97,14 @@
 .tt-pn,.tt-ps{display:block}
 .tt-date{display:flex;flex-direction:column;gap:2px}
 @media (max-width:640px){.tt-date{flex:1 1 44%}.tt-date input{width:100%}}
+
+/* LATE TASKS (2026-10-27): why late + new day */
+.tt-late { margin: 8px 0; padding: 8px 10px; border-radius: 8px; border: 1px solid #f1b5b5; background: #fdf1f1; color: #8a1f1f; font-size: 13px; line-height: 1.45; }
+.tt-late.wait { border-color: #f0d49a; background: #fdf7ea; color: #7a5410; }
+.tt-late-acts { margin-top: 6px; }
+.tt-late-strip { margin-bottom: 12px; }
+.tt-late-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+@media (prefers-color-scheme: dark) {
+  .tt-late { background: #3a1d1d; border-color: #7a3434; color: #f6c9c9; }
+  .tt-late.wait { background: #3a2f17; border-color: #7a6024; color: #f3dfb0; }
+}

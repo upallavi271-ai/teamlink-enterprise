@@ -432,6 +432,62 @@ export function TaskForm({ options, task, onClose, onSaved }) {
 // ---------------------------------------------------------------------------
 // One task as a card
 // ---------------------------------------------------------------------------
+// LATE TASKS (founder 2026-10-27): past the due day, the person writes WHY + the NEW day; the giver (for a self-given task: their
+// reporting manager / lead) approves - the date moves - or says no. Shown on the card; the bell carries the same.
+export function LateBox({ t, mine, r, dlg }) {
+  const d = t.lastDelay;
+  const open = ['Not Started', 'In Progress', 'On Hold'].includes(t.status);
+  if (!open) return null;
+  if (t.delayPending && d) {
+    const decide = !mine && r.manage;
+    return (
+      <div className="tt-late wait">
+        <div><b>{mine ? 'You asked' : `${d.askedByName} asked`} for more time</b>: due {dmy(d.oldDate)} → <b>{dmy(d.newDate)}</b></div>
+        <div>Why late: {d.reason}</div>
+        {decide
+          ? <div className="tt-late-acts"><button className="btn btn-primary btn-sm" onClick={() => dlg.open('delayDecide', t)}>Approve or say no</button></div>
+          : <div className="small-muted">Waiting for the answer.</div>}
+      </div>
+    );
+  }
+  if (!t.needsReason) return null;
+  const no = d && d.status === 'Rejected' ? d : null;
+  return (
+    <div className="tt-late">
+      <div><b>{t.daysLate} {t.daysLate === 1 ? 'day' : 'days'} late</b> - it was due {dmy(t.endDate)}.{mine ? ' Write why it is late and the new day you will finish it.' : ` ${t.assigneeName} has not said why yet.`}</div>
+      {no && <div>Last ask ({dmy(no.newDate)}) - {no.decidedByName} said no: {no.decideNote}</div>}
+      {mine && <div className="tt-late-acts"><button className="btn btn-primary btn-sm" onClick={() => dlg.open('delay', t)}>Ask for more time</button></div>}
+    </div>
+  );
+}
+
+// The strip on top of the Timesheet: my late tasks with no reason yet, and the asks waiting for me.
+export function LateStrip({ tasks, me, dlg }) {
+  const owe = tasks.filter((t) => t.assigneeId === me && t.needsReason);
+  const asks = tasks.filter((t) => t.assigneeId !== me && t.delayPending && t.rights && t.rights.manage);
+  if (!owe.length && !asks.length) return null;
+  return (
+    <div className="tt-late-strip">
+      {owe.length > 0 && (
+        <div className="tt-late">
+          <b>{owe.length === 1 ? '1 of your tasks is late' : `${owe.length} of your tasks are late`}.</b> For each one, write why and the new day.
+          <div className="tt-late-list">
+            {owe.map((t) => <button type="button" key={t.id} className="btn btn-sm" onClick={() => dlg.open('delay', t)}>{t.name} · {t.daysLate} {t.daysLate === 1 ? 'day' : 'days'} late</button>)}
+          </div>
+        </div>
+      )}
+      {asks.length > 0 && (
+        <div className="tt-late wait">
+          <b>{asks.length === 1 ? '1 person asks' : `${asks.length} people ask`} for more time.</b>
+          <div className="tt-late-list">
+            {asks.map((t) => <button type="button" key={t.id} className="btn btn-sm" onClick={() => dlg.open('delayDecide', t)}>{t.assigneeName}: {t.name} → {dmy(t.lastDelay.newDate)}</button>)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
   const st = stateOf(t);
   const due = dueOf(t, today);
@@ -457,6 +513,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         <div className={`tt-due ${due.tone}`}>{due.text}</div>
       </div>
       {t.description && <div className="tt-notes">{t.description}</div>}
+      <LateBox t={t} mine={mine} r={r} dlg={dlg} />
       {t.status === 'Cancelled' && <div className="tt-notes">{cancelLine(t)}</div>}
       <AddOnList t={t} me={me} onChanged={() => dlg.reload()} setError={dlg.setError} />
       <TaskFiles t={t} />
@@ -475,7 +532,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         {mine && open && t.status !== 'In Progress' && <button className="btn btn-sm" onClick={() => dlg.open('done', t)}>Mark as done</button>}
         {!mine && (r.assignee || r.manage) && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>See hours</button>}
         {r.manage && canReview && waiting && !mine && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it</button>}
-        {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('extend', t)}>Move date</button>}
+        {r.manage && open && !(mine && t.overdue) && <button className="btn btn-sm" onClick={() => dlg.open('extend', t)}>Move date</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('reassign', t)}>Give to someone else</button>}
         {r.manage && open && <button className="btn btn-sm" title="Add more work to this task without changing it" onClick={() => dlg.open('addon', t)}>＋ Add-on</button>}
         {r.manage && t.status !== 'Completed' && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('edit', t)}>Change</button>}
@@ -508,6 +565,8 @@ export function useTaskDialogs({ options, reload, setNotice, setError }) {
     else if (d.kind === 'reopen') node = <ReopenDialog {...props} />;
     else if (d.kind === 'note') node = <NoteDialog {...props} />;
     else if (d.kind === 'addon') node = <AddOnDialog {...props} />;
+    else if (d.kind === 'delay') node = <DelayDialog {...props} />;
+    else if (d.kind === 'delayDecide') node = <DelayDecideDialog {...props} />;
   }
   return { node, open, close, reload, setError };
 }
@@ -596,6 +655,68 @@ function ExtendDialog({ task, onClose, onDone }) {
         <div className="small-muted" style={{ marginBottom: 10 }}>For {task.assigneeName} - now due {task.endDate ? dmy(task.endDate) : 'with no date'}</div>
         <label className="field"><span>New due date</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
         <label className="field"><span>Why? (optional)</span><input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example: Waiting for the client" /></label>
+      </form>
+    </Modal>
+  );
+}
+
+function DelayDialog({ task, onClose, onDone }) {
+  const [date, setDate] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const min = new Date().toISOString().slice(0, 10);
+  async function go(e) {
+    e.preventDefault();
+    if (reason.trim().length < 5) { setErr('Write why it is late, in a few words.'); return; }
+    if (!date) { setErr('Pick the new day you will finish it.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post(`/tasks/${task.id}/delay`, { reason: reason.trim(), newDate: date });
+      const who = (r.data && r.data.askedFrom && r.data.askedFrom.length) ? r.data.askedFrom.join(', ') : 'your lead';
+      onDone(`Asked ${who} for ${dmy(date)}. The due day moves when they approve.`);
+    } catch (er) { setErr(apiError(er, 'That could not be sent.')); setBusy(false); }
+  }
+  return (
+    <Modal title="Ask for more time" onClose={onClose} foot={<Footer onClose={onClose} busy={busy} label="Send" form="tt-delay" />}>
+      <form id="tt-delay" onSubmit={go}>
+        {err && <div className="error-text">{err}</div>}
+        <div className="tt-name" style={{ marginBottom: 4 }}>{task.name}</div>
+        <div className="small-muted" style={{ marginBottom: 10 }}>It was due {dmy(task.endDate)}{task.daysLate ? ` - ${task.daysLate} ${task.daysLate === 1 ? 'day' : 'days'} late` : ''}.</div>
+        <label className="field"><span>Why is it late?</span><textarea rows="3" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="For example: Waiting for the data from Accounts" /></label>
+        <label className="field"><span>New day you will finish it</span><input type="date" value={date} min={min} onChange={(e) => setDate(e.target.value)} /></label>
+      </form>
+    </Modal>
+  );
+}
+
+function DelayDecideDialog({ task, onClose, onDone }) {
+  const d = task.lastDelay || {};
+  const [approve, setApprove] = useState(true);
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function go(e) {
+    e.preventDefault();
+    if (!approve && note.trim().length < 3) { setErr('Write why not, so they know what to do.'); return; }
+    setBusy(true); setErr('');
+    try {
+      await api.post(`/tasks/${task.id}/delay/${d.id}/decision`, { approve, note: note.trim() });
+      onDone(approve ? `Approved. New due day: ${dmy(d.newDate)}. ${task.assigneeName} has been told.` : `Said no. ${task.assigneeName} has been told; the task stays late.`);
+    } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
+  }
+  return (
+    <Modal title="More time asked" onClose={onClose} foot={<Footer onClose={onClose} busy={busy} label={approve ? 'Approve' : 'Say no'} form="tt-delay-decide" danger={!approve} />}>
+      <form id="tt-delay-decide" onSubmit={go}>
+        {err && <div className="error-text">{err}</div>}
+        <div className="tt-name" style={{ marginBottom: 4 }}>{task.name}</div>
+        <div className="small-muted" style={{ marginBottom: 8 }}>{d.askedByName} · due {dmy(d.oldDate)} → asks for <b>{dmy(d.newDate)}</b></div>
+        <div className="tt-notes" style={{ marginBottom: 10 }}>Why late: {d.reason}</div>
+        <div className="tt-chips" role="group" aria-label="Decision">
+          <button type="button" className={`tt-chip green${approve ? ' on' : ''}`} onClick={() => setApprove(true)}>Approve - move the date</button>
+          <button type="button" className={`tt-chip red${!approve ? ' on' : ''}`} onClick={() => setApprove(false)}>Say no</button>
+        </div>
+        <label className="field"><span>{approve ? 'Note (optional)' : 'Why not?'}</span><input value={note} onChange={(e) => setNote(e.target.value)} placeholder={approve ? 'For example: OK, but no more delays' : 'For example: The client needs it today'} /></label>
       </form>
     </Modal>
   );
