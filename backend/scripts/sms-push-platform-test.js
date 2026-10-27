@@ -36,6 +36,7 @@ const mock = http.createServer((req, res) => {
     res.setHeader('content-type', 'text/plain');
     if (MODE === 'err') { res.setHeader('content-type', 'application/json'); res.end(JSON.stringify({ Error: { ErrorCode: '011', ErrorDesc: 'Invalid Mobile Number' } })); }
     else if (MODE === 'echo') res.end(`errordesc:bad login ${USER} ${PASS}`);
+    else if (MODE === 'user') res.end('<errordesc:username doesnot exist or invalid or username wrongly encoded,errorcode:01 />');
     else res.end('OK');
   });
 });
@@ -74,11 +75,22 @@ const mock = http.createServer((req, res) => {
     try {
       let r0 = await G.testConnection();
       Z.check('A0 before any accepted SMS: "not proven", no call made, says what to do', !r0.ok && r0.needsConfirmation && /Send test SMS/.test(r0.result) && GOT.length === 0, r0);
-      let r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001' });
-      const q = new URLSearchParams(GOT[0] && GOT[0].body);
+      const held = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Automatic ATS text', templateId: '1107000000000000001' });
+      Z.check('G0 before a real test SMS was accepted, an automatic SMS is held: not sent, no call made, says to send a Test SMS', !held.ok && held.notProven && held.notConfigured && GOT.length === 0 && /Test SMS/.test(held.error), [held, GOT.length]);
+      let r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001', proving: true });
+      const q = new URL(GOT[0].url, 'http://x').searchParams;
       Z.check('A1 accepted: the documented reply is read (msgid ZZ1ABC, ackid AK1 kept for the delivery report)', r.ok && r.providerRef === 'ZZ1ABC' && r.ackId === 'AK1', r);
-      Z.check('A2 POST form with the DOCUMENTED names: username, password, to (10 digits), from, text, pe_id, template_id; its own Sender ID', GOT[0].method === 'POST' && q.get('username') === USER && q.get('to') === '9876543210' && q.get('template_id') === '1107000000000000001' && q.get('pe_id') === '1101234567890123456' && q.get('from') === 'TMLINK' && q.get('text') === 'Hi Ravi, hello' && !q.has('coding'), GOT[0]);
-      Z.check('A3 the password travels in the body, never in the address', !GOT[0].url.includes(PASS) && q.get('password') === PASS, GOT[0].url);
+      Z.check('A2 httpapi.jsp = the manual\'s GET form, the DOCUMENTED names in the address: username, password, to (10 digits), from, text, pe_id, template_id; its own Sender ID', GOT[0].method === 'GET' && /\/smsapi\/httpapi\.jsp\?/.test(GOT[0].url) && !GOT[0].body && q.get('username') === USER && q.get('to') === '9876543210' && q.get('template_id') === '1107000000000000001' && q.get('pe_id') === '1101234567890123456' && q.get('from') === 'TMLINK' && q.get('text') === 'Hi Ravi, hello' && !q.has('coding'), GOT[0]);
+      Z.check('A3 the username goes exactly as typed (no spaces, encoded once), the password as its own "password" parameter', q.get('username') === USER && q.get('password') === PASS && (GOT[0].url.match(/username=/g) || []).length === 1, GOT[0].url.replace(PASS, '***'));
+      // the manual's JSON form: POST jsonapi.jsp with a JSON body, "to" as a list
+      await setSms({ ...full, [F.pushUrl]: 'https://web.smsgw.in/smsapi/jsonapi.jsp' }, { __devBaseUrl: BASE });
+      GOT.length = 0;
+      const rj = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001' });
+      let jb = null; try { jb = JSON.parse(GOT[0].body); } catch { jb = null; }
+      Z.check('A3b jsonapi.jsp: POST with a JSON body {username, password, from, to:[number], text, pe_id, template_id}, nothing in the address', rj.ok && GOT[0].method === 'POST' && /jsonapi\.jsp$/.test(GOT[0].url) && jb && jb.username === USER && jb.password === PASS && Array.isArray(jb.to) && jb.to[0] === '9876543210' && jb.pe_id === '1101234567890123456', [rj.ok, GOT[0] && GOT[0].method, GOT[0] && GOT[0].url]);
+      await setSms(full, { __devBaseUrl: BASE });
+      GOT.length = 0;
+      await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Hi Ravi, hello', templateId: '1107000000000000001' });
       r0 = await G.testConnection();
       Z.check('A4 after an accepted SMS the connection is "connected" and says when', r0.ok && r0.verified && /ZZ1ABC/.test(r0.result), r0);
 
@@ -86,6 +98,9 @@ const mock = http.createServer((req, res) => {
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A5 the documented refusal {Error:{ErrorCode 011}} is a refusal, not retried, in plain words with the code', !r.ok && r.providerError && !r.transient && /code 011/.test(r.error) && /mobile number is not valid/.test(r.error), r);
       Z.check('A5b the provider\'s own answer comes back word for word with the refusal (for the screen)', !!r.providerResponse && /011/.test(r.providerResponse) && !r.providerResponse.includes(PASS), r.providerResponse);
+      MODE = 'user';
+      r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
+      Z.check('A5c the live refusal "username doesnot exist ... wrongly encoded": shown word for word with the HTTP status, plus what to check (never the username itself)', !r.ok && /HTTP 200/.test(r.providerResponse || '') && /username doesnot exist/.test(r.providerResponse) && /API username/.test(r.error) && /"username" parameter/.test(r.error) && !r.error.includes(USER) && !r.error.includes(PASS), [r.error, r.providerResponse]);
       MODE = 'echo';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A6 a provider that echoes the login back: username and password are scrubbed from the message', !r.ok && !r.error.includes(PASS) && !r.error.includes(USER), r.error);
@@ -103,12 +118,12 @@ const mock = http.createServer((req, res) => {
       // Unicode (Telugu) goes with coding=2 (the manual)
       MODE = 'ok'; GOT.length = 0;
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'నమస్తే రవి', templateId: '1107000000000000001' });
-      const qu = new URLSearchParams(GOT[0] && GOT[0].body);
+      const qu = new URL(GOT[0].url, 'http://x').searchParams;
       Z.check('A13 Telugu text is sent as Unicode: coding=2, the text unchanged', r.ok && qu.get('coding') === '2' && qu.get('text') === 'నమస్తే రవి', [r, GOT[0] && GOT[0].body]);
       // the campaign template: with no template of its own, a bulk SMS uses the SMS Push Platform Bulk / General DLT id (not OTP / link)
       GOT.length = 0;
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'Campaign words' });
-      Z.check('A14 a campaign SMS without its own template uses the Bulk / General DLT Template ID', r.ok && new URLSearchParams(GOT[0].body).get('template_id') === '1107000000000000001', GOT[0] && GOT[0].body);
+      Z.check('A14 a campaign SMS without its own template uses the Bulk / General DLT Template ID', r.ok && new URL(GOT[0].url, 'http://x').searchParams.get('template_id') === '1107000000000000001', GOT[0] && GOT[0].url.replace(PASS, '***'));
 
       // ---- the Pull DLR API --------------------------------------------------------------------------------------------------
       DLR_REPLY.AK1 = '<dlr><dlrinfo><msgid>ZZ1ABC,9876543210</msgid><ackid>AK1</ackid><mob>9876543210</mob><dlrdesc>DELIVRD</dlrdesc></dlrinfo></dlr>';
@@ -150,6 +165,12 @@ const mock = http.createServer((req, res) => {
         if (!c.configured && /HTTP API endpoint/.test(c.reason)) refused.push(u);
       }
       Z.check('A18b plain http, a bare IP, localhost, an internal name, a login in the address, or no address: refused (the password never goes there)', refused.length === 6, refused);
+      // founder 2026-10-27: every SMS Push field filled in, but the Provider box still said MSG91 (its pre-filled value) -> "No API key"
+      c1 = await cfgOf({ [F.provider]: 'MSG91' });
+      Z.check('G1 Provider box left at MSG91 + the SMS Push Platform username and password filled in: it IS SMS Push Platform (no API key asked)', c1.configured && c1.provider === 'SMSGW' && c1.providerInferred && !/API key/.test(c1.reason), [c1.provider, c1.reason]);
+      c1 = await cfgOf({ [F.provider]: 'MSG91', [F.key]: 'msg91-real-key' });
+      Z.check('G2 a provider with its own API key is never overridden', c1.provider === 'MSG91' && !c1.providerInferred, c1.provider);
+      await setSms(full, { [F.key]: '' }); // the MSG91 key typed for G2 goes again (a blank secret box keeps the stored one)
       c1 = await cfgOf({ [F.pushSender]: '' });
       Z.check('A19 no SMS Push Sender ID -> not configured; the other provider\'s Sender ID is never borrowed', !c1.configured && /own Sender ID/.test(c1.reason), c1.reason);
       c1 = await cfgOf({ [F.pushBulkTpl]: 'one var: the message' });
@@ -169,7 +190,7 @@ const mock = http.createServer((req, res) => {
     } finally { process.env.TEST_MODE = sandboxFlag; }
 
     // ======================= B. the screens API (the sandbox server: its SMS send is fake, never transmitted) =======================
-    await setSms(full);
+    await setSms(full, { [F.key]: '' });
     await clearAccepted();
     const admin = await Z.mkUser('adm', { role: 'ADMIN', hrmsRole: 'ADMIN', atsRole: 'ADMIN', accountsRole: 'ADMIN', hrmsAccess: true, accountsAccess: true });
     const rec = await Z.mkUser('rec', { role: 'EMPLOYEE', atsRole: 'RECRUITER', atsDepartment: 'Medical', atsScopeDepartments: 'Medical' }, { designation: 'Recruiter' });
@@ -189,6 +210,8 @@ const mock = http.createServer((req, res) => {
     };
     const tOk = await mkTpl('ok', '1107000000000000009'); const tNo = await mkTpl('nodlt', null);
 
+    const day0 = new Date().toISOString().slice(0, 10);
+    const b0 = (await A('GET', `/dashboard?from=${day0}&to=${day0}`)).body.counts || { requests: 0, submitted: 0, failed: 0, delivered: 0, unknown: 0, pendingReports: 0 };
     let r = await A('POST', '/send', { recipients: [{ mobile: '9876543210', name: 'Ravi' }] });
     Z.check('C1 no template -> refused (an arbitrary message is never assumed approved)', r.status === 400 && /approved template/i.test(r.body.error), r.body);
     r = await A('POST', '/send', { templateId: tNo.id, recipients: [{ mobile: '9876543210', name: 'Ravi' }] });
@@ -241,10 +264,10 @@ const mock = http.createServer((req, res) => {
     // ---- dashboard + export ---------------------------------------------------------------------------------------------------
     const dash = await A('GET', `/dashboard?from=${today}&to=${today}`);
     const c = dash.body.counts;
-    Z.check('F1 dashboard counts are the records: 3 requests, 3 submitted, 2 reported failed by the provider, 0 delivered, none "unknown"', dash.status === 200 && c.requests === 3 && c.submitted === 3 && c.failed === 2 && c.delivered === 0 && c.unknown === 0 && c.pendingReports === 1, dash.body);
+    Z.check('F1 dashboard counts are the records: 3 requests, 3 submitted, 2 reported failed by the provider, 0 delivered, none "unknown"', dash.status === 200 && c.requests - b0.requests === 3 && c.submitted - b0.submitted === 3 && c.failed - b0.failed === 2 && c.delivered - b0.delivered === 0 && c.unknown - b0.unknown === 0 && c.pendingReports - b0.pendingReports === 1, [c, b0]);
     Z.check('F2 usage by source module is real (HRMS 1, ATS 2) and no balance is invented', dash.body.byModule.find((m) => m.module === 'HRMS').count === 1 && dash.body.byModule.find((m) => m.module === 'ATS').count === 2 && dash.body.credits === null && /no documented balance/.test(dash.body.creditsNote), dash.body.byModule);
     const csv = await Z.call('GET', `/api/sms-platform/history.csv?from=${today}&to=${today}`, aTok);
-    Z.check('F3 CSV export: header + a row per SMS, UTF-8', csv.status === 200 && /^﻿"Date and time"/.test(csv.text) && csv.text.split('\r\n').length === 4, csv.text.slice(0, 200));
+    Z.check('F3 CSV export: header + a row per SMS, UTF-8', csv.status === 200 && /^﻿"Date and time"/.test(csv.text) && csv.text.split('\r\n').length === 4 + b0.requests, csv.text.slice(0, 200));
     // test-connection (the safe check) records itself
     const tc = await A('POST', '/test-connection');
     Z.check('F4 test connection with nothing accepted: not proven, nothing sent', tc.status === 200 && tc.body.ok === false && tc.body.needsConfirmation === true, tc.body);
@@ -264,8 +287,18 @@ const mock = http.createServer((req, res) => {
     const sv2 = await Z.call('PUT', '/api/admin/integrations/sms/configure', sTok, { values: { ...blankForm, ...full } });
     const row2 = await prisma.integration.findUnique({ where: { id: 'sms' } });
     Z.check('V3 Save with everything right: switched on; no API key / auth token was asked for', sv2.status === 200 && row2.enabled === true && row2.connected === true, [sv2.status, sv2.body.error, row2.enabled]);
+    await setSms(full, { [F.key]: '' }); // a blank secret box keeps the stored key: clear any MSG91 key this database copy carries
+    const sv3 = await Z.call('PUT', '/api/admin/integrations/sms/configure', sTok, { values: { ...blankForm, ...full, [F.provider]: 'MSG91' } });
+    const row3 = await prisma.integration.findUnique({ where: { id: 'sms' } });
+    const stored3 = (await require(path.join(Z.BACK, 'src/utils/integrationStore')).readConfig('sms')).values[F.provider];
+    Z.check('V4 Save with the Provider box at MSG91 and the SMS Push login filled: saved as SMS Push Platform and switched on', sv3.status === 200 && row3.enabled === true && stored3 === 'SMS Push Platform', [sv3.status, sv3.body.error, stored3]);
+    const tcon = await Z.call('POST', '/api/admin/integrations/sms/test', sTok, {});
+    const row4 = await prisma.integration.findUnique({ where: { id: 'sms' } });
+    Z.check('V5 Test connection on SMS Push Platform says "send a Test SMS" and does NOT mark it Reconnect Required', tcon.status === 200 && /Test SMS/i.test(tcon.body.result || '') && row4.state !== 'Reconnect Required', [tcon.status, tcon.body.result, row4.state]);
     const ts = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);
     Z.check('H1 Test SMS: the provider accepted it -> "Accepted by Provider — Delivery Pending" (never "Delivered")', ts.status === 200 && ts.body.status === 'Accepted by Provider — Delivery Pending' && !/Delivered\b/.test(ts.body.status.replace('Delivery Pending', '')), ts.body);
+    const row5 = await prisma.integration.findUnique({ where: { id: 'sms' } });
+    Z.check('V6 an accepted Test SMS marks the channel Connected', ts.status === 200 && row5.state === 'Connected' && row5.connected === true, [ts.status, row5.state]);
     const ts2 = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);
     Z.check('H2 the same test again within a minute is refused (a double click never sends two SMS)', ts2.status === 409 && ts2.body.outcome === 'Duplicate', [ts2.status, ts2.body]);
     const ts3 = await Z.call('POST', '/api/admin/integrations/sms/test-message', rTok, { to: '9876543298', text: 'x' });
