@@ -11,9 +11,10 @@
 #   4  delete the Medical requirements not in the sheet (with their candidates)      - push-medical-sheet-to-vps.ps1 -DeleteOthers -Apply
 #   5  keep only the signed-agreements zip clients                                   - push-zip-clients-only-to-vps.ps1 -Apply
 #   6  Education + Manufacturing requirements = the founder's sheets (others deleted)   - push-edu-mfg-sheets-to-vps.ps1 -Apply
-#   7  whose candidate is it: old applications get their recruiter (backfill-application-owners.js, backup first)
-#   8  leaves already granted (TL within the limit, or HR) but still Pending -> Approved (finish-approved-leaves.js, backup first)
-#   9  the developer login as Super Admin (asks for its password; press Enter to skip; never stored or shown)
+#   7  joinings list = the joinings sheets (colleges back as Inactive, import, sync)   - push-joinings-sheets-to-vps.ps1 -Apply
+#   8  whose candidate is it: old applications get their recruiter (backfill-application-owners.js, backup first)
+#   9  leaves already granted (TL within the limit, or HR) but still Pending -> Approved (finish-approved-leaves.js, backup first)
+#   10 the developer login as Super Admin (asks for its password; press Enter to skip; never stored or shown)
 # Every data step backs up the live database first and is safe to run twice. Do not click inside this window while it runs
 # (a click pauses PowerShell; press Enter to continue).
 #   -SkipDeploy   start from step 2 (the code is already deployed)
@@ -23,7 +24,7 @@ $ErrorActionPreference = 'Stop'
 $Root = $PSScriptRoot
 $VpsHost = 'root@72.61.233.104'
 $VpsRoot = '/opt/teamlink-enterprise'
-function Step($n, $text) { Write-Host "`n==================== STEP $n of 9: $text ====================" -ForegroundColor Cyan }
+function Step($n, $text) { Write-Host "`n==================== STEP $n of 10: $text ====================" -ForegroundColor Cyan }
 
 if (-not $SkipDeploy) {
   Step 1 'Deploying the code (live database kept)'
@@ -46,22 +47,25 @@ Step 5 'Only the signed-agreements zip clients'
 Step 6 'Education + Manufacturing requirements from the sheets'
 & (Join-Path $Root 'push-edu-mfg-sheets-to-vps.ps1') -Apply
 
-Step 7 'Old applications: their recruiter (own-candidates rule)'
+Step 7 'Joinings list from the joinings sheets'
+& (Join-Path $Root 'push-joinings-sheets-to-vps.ps1') -Apply
+
+Step 8 'Old applications: their recruiter (own-candidates rule)'
 ssh $VpsHost "cd $VpsRoot/backend && TL_ALLOW_REAL_APPLY=1 node scripts/backfill-application-owners.js --apply --really-real"
-if ($LASTEXITCODE -ne 0) { throw 'Step 7 (owners) failed (see the lines above).' }
+if ($LASTEXITCODE -ne 0) { throw 'Step 8 (owners) failed (see the lines above).' }
 
-Step 8 'Leaves already granted but still Pending'
+Step 9 'Leaves already granted but still Pending'
 ssh $VpsHost "cd $VpsRoot/backend && TL_ALLOW_REAL_APPLY=1 node scripts/finish-approved-leaves.js --apply --really-real"
-if ($LASTEXITCODE -ne 0) { throw 'Step 8 (leaves) failed (see the lines above).' }
+if ($LASTEXITCODE -ne 0) { throw 'Step 9 (leaves) failed (see the lines above).' }
 
-Step 9 'Developer login (Super Admin)'
+Step 10 'Developer login (Super Admin)'
 $sec = Read-Host 'Password for the developer login (press Enter to skip)' -AsSecureString
 $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec))
 if ($plain) {
   $quoted = "'" + ($plain -replace "'", "'\''") + "'"
   ssh $VpsHost "cd $VpsRoot/backend && TL_NEW_PASSWORD=$quoted TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --apply --really-real && TL_ALLOW_REAL_APPLY=1 node scripts/create-developer-login.js --make-super-admin --apply --really-real"
-  if ($LASTEXITCODE -ne 0) { throw 'Step 9 (developer login) failed (see the lines above).' }
+  if ($LASTEXITCODE -ne 0) { throw 'Step 10 (developer login) failed (see the lines above).' }
   $plain = $null
 } else { Write-Host 'Skipped.' -ForegroundColor Yellow }
 
-Write-Host "`nALL DONE. Open https://teamlink.teamlinks.in and check: Attendance (Leave / Time / Unlock), Apply Leave, Clients (View agreement), Requirements (Education / Manufacturing from the sheets)." -ForegroundColor Green
+Write-Host "`nALL DONE. Open https://teamlink.teamlinks.in and check: Attendance (Leave / Time / Unlock), Apply Leave, Clients (View agreement), Requirements (Education / Manufacturing from the sheets), Joining (Joined and dropped = the sheets)." -ForegroundColor Green
