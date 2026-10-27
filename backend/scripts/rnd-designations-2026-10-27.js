@@ -36,7 +36,8 @@ const WANT = [
   { designation: 'R&D TL', name: 'BANKA MRUDULA' },
   { designation: 'R&D-1', name: 'G. V. KEERTHI' },
   { designation: 'R&D-2', name: 'MANGALAPALLI SRAVANTHI' },
-  { designation: 'R&D-3', name: 'NAGA DURGA' },
+  // the HRMS record reads 'Durga Nagendra' (no word-for-word match): the founder confirmed it is her (2026-10-27, 'avunu')
+  { designation: 'R&D-3', name: 'NAGA DURGA', confirmed: 'Durga Nagendra' },
 ];
 const SEAT_RENAME = [['RND-1', 'R&D-1'], ['RND-2', 'R&D-2']];
 const SEAT_OFF = ['RND-3'];
@@ -65,7 +66,7 @@ const sameRoles = (a, b) => ROLE_KEYS.every((k) => (a[k] ?? null) === (b[k] ?? n
     const skipped = [];
     const used = new Set();
     for (const w of WANT) {
-      const hits = rnd.filter((e) => fits(w.name, words(e.name)) && !used.has(e.id));
+      const hits = rnd.filter((e) => (fits(w.name, words(e.name)) || (w.confirmed && words(e.name).join(" ") === words(w.confirmed).join(" "))) && !used.has(e.id));
       if (hits.length !== 1) { skipped.push(`${w.name} (${w.designation}): ${hits.length ? `${hits.length} matches (${hits.map((e) => e.name).join(', ')})` : 'no working R&D employee matches'} - check by hand`); continue; }
       const e = hits[0];
       used.add(e.id);
