@@ -1970,6 +1970,19 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
   }
   if (!written.filled) return res.status(400).json({ error: 'Enter at least one credential to connect this channel.' });
   await integrationRow(channel.id);
+  // SMS (founder 2026-10-27): the settings are checked here, on the server, and the channel is switched on ONLY when they pass.
+  // With a problem the values stay saved (nothing typed is lost) but the channel stays off and the screen lists what to fix.
+  if (channel.id === 'sms') {
+    // the new values first (the check reads what is stored), then the check
+    await prisma.integration.update({ where: { id: channel.id }, data: { values: JSON.stringify(written.values) } });
+    const problems = await require('../utils/smsGateway').validateSms(); // eslint-disable-line global-require
+    if (problems.length) {
+      const off = await prisma.integration.update({ where: { id: channel.id }, data: { values: JSON.stringify(written.values), enabled: false, connected: false, state: 'Not Connected', error: problems.join(' ').slice(0, 480) } });
+      await recordEvent(channel.id, { action: 'Saved - not switched on', by: req.user.name, result: problems.join(' ').slice(0, 480) });
+      await logAudit({ userId: req.user.id, action: 'Integration saved (validation failed)', entity: 'Integration', entityId: channel.id, toValue: `${problems.length} problem(s)` });
+      return res.status(422).json({ ...shapeIntegration(channel, off), error: `Saved, but SMS is NOT switched on - fix this first: ${problems.join(' ')}`, problems, saved: true });
+    }
+  }
   const row = await prisma.integration.update({
     where: { id: channel.id },
     data: {
@@ -2165,7 +2178,7 @@ router.post('/integrations/:id/test-message', requirePerm(null, 'administration'
     data: { lastTest: new Date(), lastTestResult: summary.slice(0, 480), error: result.ok ? null : String(result.error || '').slice(0, 480) },
   }).catch(() => {});
   await logAudit({ userId: req.user.id, action: `${channel} test message`, entity: 'Integration', entityId: req.params.id, toValue: result.outcome });
-  if (!result.ok) { TEST_MSG_SEEN.delete(dupKey); return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, status: word, notConfigured: !!result.notConfigured }); }
+  if (!result.ok) { TEST_MSG_SEEN.delete(dupKey); return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, status: word, notConfigured: !!result.notConfigured, providerResponse: result.providerResponse || null }); }
   return res.json({ ok: true, outcome: result.outcome, status: word, providerRef: result.providerRef || null });
 });
 
@@ -2179,6 +2192,10 @@ router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Int
   try { values = row.values ? JSON.parse(row.values) : {}; } catch { values = {}; }
   if (!Object.values(values).filter((v) => String(v).trim()).length) {
     return res.status(400).json({ error: `Add credentials first — open Configure for ${channel.name}.` });
+  }
+  if (channel.id === 'sms') {
+    const problems = await require('../utils/smsGateway').validateSms(); // eslint-disable-line global-require
+    if (problems.length) return res.status(422).json({ error: `SMS cannot be switched on yet: ${problems.join(' ')}`, problems });
   }
   const next = await prisma.integration.update({
     where: { id: channel.id },

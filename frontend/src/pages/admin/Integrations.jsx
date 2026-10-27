@@ -80,7 +80,8 @@ function SmsTestBox() {
       setMsg({ ok: true, text: `${r.data.status || 'Accepted by Provider'}${r.data.providerRef ? ` · reference ${r.data.providerRef}` : ''}. Delivered shows only after the provider's delivery report (SMS Push Platform > History).` });
     } catch (e) {
       const d = (e.response && e.response.data) || {};
-      setMsg({ ok: false, text: `${d.status || d.outcome || 'Failed'}: ${d.error || e.message}` });
+      // the provider's own answer, word for word (login details blanked by the server), under the plain-words reason
+      setMsg({ ok: false, text: `${d.status || d.outcome || 'Failed'}: ${d.error || e.message}${d.providerResponse ? ` - Provider answer: ${d.providerResponse}` : ''}` });
     } finally { setBusy(false); }
   }
   return (
@@ -175,7 +176,9 @@ export default function Integrations() {
       () => api.put(`/admin/integrations/${configuring.channel.id}/configure`, { values: configuring.values }),
       bio
         ? (r) => `Biometric device ${r.data.device?.serialNumber} saved — ${r.data.state}.`
-        : configuring.channel.id === 'whatsapp'
+        : configuring.channel.id === 'sms'
+          ? 'SMS settings checked on the server and switched on. Send a test SMS to your own number to prove the login, sender ID and DLT details.'
+          : configuring.channel.id === 'whatsapp'
           ? (r) => (r.data && r.data.waCheck && r.data.waCheck.summary) || 'WhatsApp saved.'
           : `${configuring.channel.name} connected (configuration saved — no live call made).`,
     );

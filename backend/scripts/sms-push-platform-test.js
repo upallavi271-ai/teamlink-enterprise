@@ -85,6 +85,7 @@ const mock = http.createServer((req, res) => {
       MODE = 'err';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A5 the documented refusal {Error:{ErrorCode 011}} is a refusal, not retried, in plain words with the code', !r.ok && r.providerError && !r.transient && /code 011/.test(r.error) && /mobile number is not valid/.test(r.error), r);
+      Z.check('A5b the provider\'s own answer comes back word for word with the refusal (for the screen)', !!r.providerResponse && /011/.test(r.providerResponse) && !r.providerResponse.includes(PASS), r.providerResponse);
       MODE = 'echo';
       r = await G.sendSms({ to: '9876543210', kind: 'bulk', text: 'x', templateId: '1107000000000000001' });
       Z.check('A6 a provider that echoes the login back: username and password are scrubbed from the message', !r.ok && !r.error.includes(PASS) && !r.error.includes(USER), r.error);
@@ -140,8 +141,15 @@ const mock = http.createServer((req, res) => {
       const noPe = await (async () => { await setSms({ ...full, [F.pushPe]: '' }); return G.smsConfig(); })();
       Z.check('A12 no PE id -> "Configuration Required" naming the PE id', !noPe.configured && /PE ID/.test(noPe.reason), noPe.reason);
       const cfgOf = async (vals) => { await setSms({ ...full, ...vals }); return G.smsConfig(); };
-      let c1 = await cfgOf({ [F.pushUrl]: 'https://evil.example.com/smsapi/httpapi.jsp' });
-      Z.check('A18 a send address on any other host is refused (the password only ever goes to web.smsgw.in)', !c1.configured && /web\.smsgw\.in/.test(c1.reason), c1.reason);
+      // founder 2026-10-27: the provider's own HTTP API endpoint may be its own public https domain; never http, an IP or an internal name
+      let c1 = await cfgOf({ [F.pushUrl]: 'https://sms.provider-example.com/smsapi/httpapi.jsp' });
+      Z.check('A18 the provider\'s own public https endpoint is accepted', c1.configured, c1.reason);
+      const refused = [];
+      for (const u of ['http://web.smsgw.in/smsapi/httpapi.jsp', 'https://10.0.0.5/smsapi/httpapi.jsp', 'https://localhost/x', 'https://sms.internal/x', 'https://user:pw@web.smsgw.in/x', 'not a url']) {
+        const c = await cfgOf({ [F.pushUrl]: u });
+        if (!c.configured && /HTTP API endpoint/.test(c.reason)) refused.push(u);
+      }
+      Z.check('A18b plain http, a bare IP, localhost, an internal name, a login in the address, or no address: refused (the password never goes there)', refused.length === 6, refused);
       c1 = await cfgOf({ [F.pushSender]: '' });
       Z.check('A19 no SMS Push Sender ID -> not configured; the other provider\'s Sender ID is never borrowed', !c1.configured && /own Sender ID/.test(c1.reason), c1.reason);
       c1 = await cfgOf({ [F.pushBulkTpl]: 'one var: the message' });
@@ -246,6 +254,16 @@ const mock = http.createServer((req, res) => {
     const sup = await Z.mkUser('sup', { role: 'SUPER_ADMIN', hrmsRole: 'SUPER_ADMIN', atsRole: 'SUPER_ADMIN', accountsRole: 'SUPER_ADMIN', hrmsAccess: true, atsAccess: true, accountsAccess: true });
     const sTok = await Z.mint(sup);
     const tsBody = { to: '9876543299', text: `ZZTEST SPT test words ${Z.RUN}` };
+    // SAVE & CONNECT checks the settings on the server; the channel is switched on ONLY when they pass (founder 2026-10-27)
+    const blankForm = Object.fromEntries(CAT.integrationById('sms').fields.map(([l]) => [l, '']));
+    const sv1 = await Z.call('PUT', '/api/admin/integrations/sms/configure', sTok, { values: { ...blankForm, ...full, [F.pushPe]: '' } });
+    const row1 = await prisma.integration.findUnique({ where: { id: 'sms' } });
+    Z.check('V1 Save with a problem (no PE ID): saved, but NOT switched on; the screen is told what to fix', sv1.status === 422 && sv1.body.saved === true && /PE ID/.test(sv1.body.error) && row1.enabled === false && row1.connected === false, [sv1.status, sv1.body.error, row1.enabled]);
+    const rc = await Z.call('POST', '/api/admin/integrations/sms/connect', sTok, {});
+    Z.check('V2 Reconnect is refused too while the settings have a problem', rc.status === 422 && /PE ID/.test(rc.body.error || ''), [rc.status, rc.body.error]);
+    const sv2 = await Z.call('PUT', '/api/admin/integrations/sms/configure', sTok, { values: { ...blankForm, ...full } });
+    const row2 = await prisma.integration.findUnique({ where: { id: 'sms' } });
+    Z.check('V3 Save with everything right: switched on; no API key / auth token was asked for', sv2.status === 200 && row2.enabled === true && row2.connected === true, [sv2.status, sv2.body.error, row2.enabled]);
     const ts = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);
     Z.check('H1 Test SMS: the provider accepted it -> "Accepted by Provider — Delivery Pending" (never "Delivered")', ts.status === 200 && ts.body.status === 'Accepted by Provider — Delivery Pending' && !/Delivered\b/.test(ts.body.status.replace('Delivery Pending', '')), ts.body);
     const ts2 = await Z.call('POST', '/api/admin/integrations/sms/test-message', sTok, tsBody);

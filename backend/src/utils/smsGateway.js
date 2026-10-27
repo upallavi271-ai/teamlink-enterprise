@@ -48,10 +48,23 @@ const valOf = (v, label) => {
   const t = String((v && v[label]) || '').trim();
   return t && ((HINT[label] && t === HINT[label]) || (LEGACY_HINT[label] || []).includes(t)) ? '' : t;
 };
-// the only host the SMS Push Platform address may point at (the password goes there)
+// The SMS Push Platform address (the password goes there). Founder 2026-10-27: the provider's own HTTP API endpoint may be any PUBLIC
+// https address - web.smsgw.in or the provider's own domain. Never plain http, localhost, a bare IP or a private / internal name.
 const PUSH_HOSTS = ['web.smsgw.in'];
-const pushHostOk = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && PUSH_HOSTS.includes(u.hostname.toLowerCase()); } catch { return false; } };
+const PRIVATE_NAME = /^(localhost|.*\.(local|internal|lan|home|corp|intranet|localdomain))$/i;
+const pushHostOk = (url) => {
+  try {
+    const u = new URL(url);
+    const h = u.hostname.toLowerCase();
+    if (u.protocol !== 'https:' || u.username || u.password) return false;
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':') || h.startsWith('[')) return false; // a bare IP (v4 / v6)
+    if (PRIVATE_NAME.test(h) || !h.includes('.')) return false;
+    return true;
+  } catch { return false; }
+};
 const PUSH_DLR_URL = 'https://web.smsgw.in/dlrresponse/dlrresp.jsp';
+// the Pull DLR address on the SAME provider as the send address (the manual's path)
+const pushDlrUrl = (sendUrl) => { try { return pushHostOk(sendUrl) ? `${new URL(sendUrl).origin}/dlrresponse/dlrresp.jsp` : PUSH_DLR_URL; } catch { return PUSH_DLR_URL; } };
 // the error codes the provider's manual lists
 const PUSH_ERRORS = {
   '010': 'The Sender ID is not valid for this account', 10: 'The Sender ID is not valid for this account',
@@ -104,7 +117,7 @@ async function pushLastAccepted() {
 }
 
 // Is SMS switched on, and if not, why not — in words for a screen.
-async function smsConfig() {
+async function smsConfig({ ignoreSwitch = false } = {}) {
   const cfg = await readConfig('sms');
   const v = cfg.values || {};
   const provider = providerOf(v[F.provider]);
@@ -146,13 +159,13 @@ async function smsConfig() {
       else if (!/^\d{10,25}$/.test(out.push.pe)) problems.push('The DLT Principal Entity ID (PE ID) is a number from your DLT registration (usually 19 digits), not a template id.');
       ['bulk', 'link', 'otp'].forEach((k) => { const t = out.templates[k]; if (t && !/^\d{6,25}$/.test(t)) problems.push(`The SMS Push Platform ${k === 'bulk' ? 'Bulk / General' : k === 'link' ? 'Agreement Link' : 'OTP'} DLT Template ID must be the approved template's number (digits only), not the message text.`); });
       if (out.push.pe && out.push.pe === out.templates.bulk) problems.push('The PE ID and the Bulk / General DLT Template ID are the same number: the PE ID is your entity id, the template id belongs to one message.');
-      if (!core.devOverride(v) && !pushHostOk(out.push.url)) problems.push('The SMS Push Platform send address must be an https address on web.smsgw.in (for example https://web.smsgw.in/smsapi/httpapi.jsp).');
+      if (!core.devOverride(v) && !pushHostOk(out.push.url)) problems.push('The SMS Push Platform HTTP API endpoint must be the provider\'s full public https address (for example https://web.smsgw.in/smsapi/httpapi.jsp) - not http, an IP address or an internal name.');
       const np = pushNamesProblem(out.push.names); if (np) problems.push(np);
       if (out.push.idPattern) { try { new RegExp(out.push.idPattern, 'i'); } catch { problems.push('The message-id pattern is not a valid pattern.'); } }
     } else if (!out.key) problems.push('No API key / auth token.');
     if (provider === 'TWILIO' && !out.sid) problems.push('Twilio needs the Account SID.');
     if (provider === 'TWILIO' && !out.sender) problems.push('Twilio needs a From number or Messaging Service SID.');
-    if (!cfg.row.enabled) problems.push('The channel is switched off.');
+    if (ignoreSwitch) { /* checking the settings themselves, before the channel is switched on */ } else if (!cfg.row.enabled) problems.push('The channel is switched off.');
     else if (!cfg.connected) problems.push('The channel is disconnected — reconnect it in Administration → Integrations.');
   }
   return { ...out, configured: problems.length === 0, problems, reason: problems.join(' ') };
@@ -263,7 +276,7 @@ async function viaSmsPush(cfg, { mobile, kind, text, templateId: ownTemplate, se
   // "coding: 2 for Unicode SMS, default non-Unicode" (manual): Telugu / Hindi text goes as Unicode
   if (n.coding && /[^\x00-\x7F]/.test(text)) form.set(n.coding, '2');
   Object.entries(n.extra).forEach(([k, v]) => form.set(k, String(v)));
-  if (!cfg.pushDev && !pushHostOk(p.url)) return { ok: false, notConfigured: true, transient: false, provider: 'SMSGW', error: 'The SMS Push Platform send address must be an https address on web.smsgw.in. Nothing was sent.' };
+  if (!cfg.pushDev && !pushHostOk(p.url)) return { ok: false, notConfigured: true, transient: false, provider: 'SMSGW', error: 'The SMS Push Platform HTTP API endpoint must be a public https address. Nothing was sent.' };
   const url = cfg.pushDev ? `${cfg.base}${new URL(p.url).pathname}` : p.url;
   // the password goes in the BODY (POST) unless the provider's document says GET; it is never put in anything we keep
   const res = n.method === 'GET'
@@ -273,22 +286,22 @@ async function viaSmsPush(cfg, { mobile, kind, text, templateId: ownTemplate, se
   const said = scrub(res.networkError || (res.json ? JSON.stringify(res.json) : res.text)).replace(/\s+/g, ' ').trim().slice(0, 300);
   // a timeout may have reached the provider, so only "cannot reach it at all" is retried (a repeat could send the SMS twice)
   if (res.networkError) return { ok: false, provider: 'SMSGW', transient: /ENOTFOUND|ECONNREFUSED|EAI_AGAIN/i.test(res.networkError), error: core.tidy(`SMS Push Platform did not answer: ${said}`) };
-  if (!res.ok) return { ok: false, provider: 'SMSGW', status: res.status, transient: core.isTransientHttp(res.status), error: core.tidy(`SMS Push Platform HTTP ${res.status}: ${said}`) };
+  if (!res.ok) return { ok: false, provider: 'SMSGW', status: res.status, transient: core.isTransientHttp(res.status), error: core.tidy(`SMS Push Platform HTTP ${res.status}: ${said}`), providerResponse: said || null };
   const body = res.json ? JSON.stringify(res.json) : String(res.text || '');
   const reply = parsePushReply(res.json, body);
   if (reply.errorCode || reply.errorDesc) {
     const code = String(reply.errorCode || '').trim();
     const auth = /auth|login|user\s*name|password|credential/i.test(reply.errorDesc || '');
-    return { ok: false, provider: 'SMSGW', transient: false, providerError: true, authFailed: auth, errorCode: code || null, error: core.tidy(`SMS Push Platform refused it${code ? ` (code ${code})` : ''}: ${PUSH_ERRORS[code] || scrub(reply.errorDesc) || said}`) };
+    return { ok: false, provider: 'SMSGW', transient: false, providerError: true, authFailed: auth, errorCode: code || null, error: core.tidy(`SMS Push Platform refused it${code ? ` (code ${code})` : ''}: ${PUSH_ERRORS[code] || scrub(reply.errorDesc) || said}`), providerResponse: said || null };
   }
   let id = reply.msgid || reply.ackid || null;
   if (!id && p.idPattern) { try { const m = new RegExp(p.idPattern, 'i').exec(body); id = m && (m[1] || m[0]) ? String(m[1] || m[0]).slice(0, 80) : null; } catch { id = null; } }
   // an error word with no id is a refusal: a refused message must never look sent
-  if (!id && PUSH_ERROR.test(body)) return { ok: false, provider: 'SMSGW', transient: false, providerError: true, authFailed: /auth|login|password|user/i.test(body), error: core.tidy(`SMS Push Platform refused it: ${said}`) };
+  if (!id && PUSH_ERROR.test(body)) return { ok: false, provider: 'SMSGW', transient: false, providerError: true, authFailed: /auth|login|password|user/i.test(body), error: core.tidy(`SMS Push Platform refused it: ${said}`), providerResponse: said || null };
   if (!id) { try { const m = new RegExp(PUSH_DEFAULT_ID, 'i').exec(body); id = m && m[1] ? String(m[1]).slice(0, 80) : null; } catch { id = null; } }
   if (!id) {
     // We cannot tell from this answer whether the provider took the message. Not retried (it might have), not called sent.
-    return { ok: false, provider: 'SMSGW', transient: false, unknown: true, error: core.tidy(`SMS Push Platform answered, but TeamLink cannot read a message id from it, so it is NOT counted as sent. Answer: ${said || '(empty)'}. Check the request field names / message-id pattern against the provider's API document before sending again.`) };
+    return { ok: false, provider: 'SMSGW', transient: false, unknown: true, error: core.tidy(`SMS Push Platform answered, but TeamLink cannot read a message id from it, so it is NOT counted as sent. Answer: ${said || '(empty)'}. Check the request field names / message-id pattern against the provider's API document before sending again.`), providerResponse: said || null };
   }
   const prisma = require('../db'); // eslint-disable-line global-require
   const mark = JSON.stringify({ at: new Date().toISOString(), ref: id });
@@ -319,7 +332,7 @@ async function pullDelivery(ackId) {
   const id = String(ackId || '').trim();
   if (!/^[A-Za-z0-9._-]{3,80}$/.test(id)) return { ok: false, error: 'No acknowledgement id to ask about.' };
   const cfg = await smsConfig();
-  const url = cfg.pushDev && cfg.base ? `${cfg.base}/dlrresponse/dlrresp.jsp` : PUSH_DLR_URL;
+  const url = cfg.pushDev && cfg.base ? `${cfg.base}/dlrresponse/dlrresp.jsp` : pushDlrUrl(cfg.push && cfg.push.url);
   const res = await core.httpJson(`${url}?ackid=${encodeURIComponent(id)}`, { headers: { accept: '*/*' } });
   if (res.networkError) return { ok: false, error: core.tidy(`SMS Push Platform did not answer: ${res.networkError}`) };
   if (!res.ok) return { ok: false, error: `SMS Push Platform HTTP ${res.status}` };
@@ -393,4 +406,7 @@ async function testConnection() {
     : { ok: false, result: `Failed — ${failure(res, 'TWILIO').error}` };
 }
 
-module.exports = { smsConfig, sendSms, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, PUSH_HOSTS };
+// The settings as saved, checked on the server (the on / off switch left out): [] = good to switch on.
+async function validateSms() { return (await smsConfig({ ignoreSwitch: true })).problems; }
+
+module.exports = { smsConfig, validateSms, sendSms, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };
