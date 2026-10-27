@@ -45,6 +45,9 @@ const FILE = val('--file');
 // applications, follow-ups and stage history with them); a requirement that has an INVOICE is never deleted (Accounts would break).
 const DELETE_OTHERS = has('--delete-others');
 const WITH_CANDIDATES = has('--with-candidates');
+// --zip-only (2026-10-27, ATS reset): only clients already on file (the signed-agreement zip clients); a sheet row of any other client is left
+// out and NO client is created.
+const ZIP_ONLY = has('--zip-only');
 const STAMP = new Date().toISOString().replace(/[:.]/g, '-');
 const OUT = path.resolve(val('--out', path.join(os.tmpdir(), `replace-medical-${STAMP}`)));
 const DEPT = 'Medical';
@@ -158,7 +161,15 @@ async function doUndo() {
       if (top && top.strength !== 'possible' && byIdC.get(top.id)) viaDup.set(name, byIdC.get(top.id));
     }
     const clientOf = (name) => byFull.get(fullKey(name)) || byBase.get(baseKey(name)) || viaDup.get(name) || null;
-    reqs.forEach((s) => { const c = clientOf(s.client); s.clientRow = c; if (!c) newClients.set(fullKey(s.client), s.client); });
+    reqs.forEach((s) => { const c = clientOf(s.client); s.clientRow = c; if (!c && !ZIP_ONLY) newClients.set(fullKey(s.client), s.client); });
+    if (ZIP_ONLY) {
+      // a ZIP client = one holding a signed agreement (ClientDocument AGREEMENT_SIGNED); the colleges kept Inactive for joinings history are not
+      const zip = new Set((await prisma.clientDocument.findMany({ where: { kind: 'AGREEMENT_SIGNED' }, select: { clientId: true } })).map((d) => d.clientId));
+      reqs.forEach((s) => { if (s.clientRow && !zip.has(s.clientRow.id)) s.clientRow = null; });
+      const out = reqs.filter((s) => !s.clientRow);
+      if (out.length) skipped.push(...[...new Set(out.map((s) => s.client))].map((n) => `not a zip client, left out: ${n}`));
+      reqs.splice(0, reqs.length, ...reqs.filter((s) => s.clientRow));
+    }
 
     const old = await prisma.requirement.findMany({
       where: { department: DEPT, internal: false },

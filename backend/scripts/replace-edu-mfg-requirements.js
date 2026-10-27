@@ -188,7 +188,10 @@ function fit(s, r) {
     const byExact = new Map(clients.map((c) => [c.name.trim().toLowerCase(), c]));
     const byFull = new Map(); const byBase = new Map();
     clients.forEach((c) => { const f = fullKey(c.name); byFull.set(f, byFull.has(f) ? null : c); const b = baseKey(c.name); byBase.set(b, byBase.has(b) ? null : c); });
-    const clientOf = (s) => byExact.get(s.clientName.trim().toLowerCase()) || (s.dept === 'Manufacturing' ? (byFull.get(fullKey(s.clientName)) || byBase.get(baseKey(s.clientName))) : null) || null;
+    // only ZIP clients (a signed agreement on file): the colleges kept Inactive for joinings history never get requirements
+    const zip = new Set((await prisma.clientDocument.findMany({ where: { kind: 'AGREEMENT_SIGNED' }, select: { clientId: true } })).map((d) => d.clientId));
+    const clientOf0 = (s) => byExact.get(s.clientName.trim().toLowerCase()) || (s.dept === 'Manufacturing' ? (byFull.get(fullKey(s.clientName)) || byBase.get(baseKey(s.clientName))) : null) || null;
+    const clientOf = (s) => { const c = clientOf0(s); return c && zip.has(c.id) ? c : null; };
     const notZip = new Map();
     sheet.forEach((s) => { s.client = clientOf(s); if (!s.client) notZip.set(`${s.dept}: ${s.sheetName}`, (notZip.get(`${s.dept}: ${s.sheetName}`) || 0) + 1); });
     const eduMissing = sheet.filter((s) => s.dept === 'Education' && !s.client);
