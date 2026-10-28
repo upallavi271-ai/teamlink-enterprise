@@ -55,12 +55,22 @@ export const AS_FEATURES = [
 ];
 
 // SIM Card / Mobile Phone / Phone Charger: the SIM + phone import (2026-10-05).
-const ASSET_CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Mobile', 'Mobile Phone', 'Phone Charger', 'SIM Card', 'Headset', 'ID Card', 'Other'];
+// 2026-10-28: Mouse and Laptop Charger added (founder: "add asset lo category lo mouse ane option ledu"); Desktop removed ("desktop category teesey")
+const ASSET_CATEGORIES = ['Laptop', 'Laptop Charger', 'Monitor', 'Mouse', 'Keyboard', 'Mobile Phone', 'Phone Charger', 'SIM Card', 'Headset', 'ID Card', 'Other'];
+// ONE NAME PER CATEGORY (founder 2026-10-28; the server stores the same names, backend/src/utils/assetCategory.js): "Head Set" is
+// "Headset", "Mobile" is "Mobile Phone", and spellings that differ only in case / spaces / hyphens are shown once.
+const CAT_SAME = { headset: 'Headset', headsets: 'Headset', mobile: 'Mobile Phone', mobiles: 'Mobile Phone', mobilephone: 'Mobile Phone', phonemobile: 'Mobile Phone' };
+const catKey = (c) => String(c || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+function oneCategoryList(list) {
+  const seen = new Map();
+  list.filter(Boolean).forEach((c) => { const name = CAT_SAME[catKey(c)] || c; if (!seen.has(catKey(name))) seen.set(catKey(name), name); });
+  return [...seen.values()];
+}
 
 // The reference compose layout. One asset is ONE thing, so these forms keep
 // single-target semantics: add one asset, and allocate (or transfer) it to
 // one employee.
-function AddAssetModal({ onClose, onSaved }) {
+function AddAssetModal({ onClose, onSaved, categories = ASSET_CATEGORIES }) {
   const [form, setForm] = useState({ name: '', category: 'Laptop', assetType: '', location: '', purchaseDate: new Date().toISOString().slice(0, 10), purchaseCost: '', warrantyUntil: '', ...accountsDefaults() });
   const { busy, error, setError, run } = useSubmit();
   async function submit() {
@@ -73,7 +83,7 @@ function AddAssetModal({ onClose, onSaved }) {
       <Field label="Asset name" required><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Dell Latitude 5440" /></Field>
       <Field label="Category">
         <Combo creatable value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>
-          {ASSET_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
+          {categories.map((c) => <option key={c}>{c}</option>)}
         </Combo>
       </Field>
       <Row>
@@ -244,9 +254,9 @@ export default function Assets({ view, onOpen, onBack }) {
   const done = (close) => (message) => { close(null); if (message) setFlash(message); load(); };
   const assetModals = (
     <>
-      {adding && <AddAssetModal onClose={() => setAdding(false)} onSaved={(m) => { setAdding(false); setFlash(m || 'Asset added.'); load(); }} />}
+      {adding && <AddAssetModal categories={oneCategoryList([...ASSET_CATEGORIES, ...assets.map((a) => a.category)])} onClose={() => setAdding(false)} onSaved={(m) => { setAdding(false); setFlash(m || 'Asset added.'); load(); }} />}
       {allocating && <AllocateAssetModal asset={allocating} people={people} onClose={() => setAllocating(null)} onSaved={done(setAllocating)} />}
-      {editing && <EditAssetModal asset={editing} categories={[...new Set([...ASSET_CATEGORIES, ...assets.map((a) => a.category).filter(Boolean)])]} onClose={() => setEditing(null)} onSaved={done(setEditing)} />}
+      {editing && <EditAssetModal asset={editing} categories={oneCategoryList([...ASSET_CATEGORIES, ...assets.map((a) => a.category)])} onClose={() => setEditing(null)} onSaved={done(setEditing)} />}
       {flash && <div className="asrep-flash" role="status">{flash}</div>}
     </>
   );
@@ -307,7 +317,7 @@ export default function Assets({ view, onOpen, onBack }) {
   assets.filter((a) => textMatches(`${a.assetCode} ${a.name} ${a.category || ''} ${a.assetType || ''} ${a.location || ''} ${a.assignedToName || ''}`, af.q)
     && peopleMatches(a, { ...af, department: '' }, holderOf, undefined, purchasedOf) && inDept(a, af.department))
     .forEach((a) => { const c = a.category || 'Other'; catHeld[c] = (catHeld[c] || 0) + 1; });
-  const assetCategories = [...new Set([...ASSET_CATEGORIES, ...assets.map((a) => a.category).filter(Boolean)])];
+  const assetCategories = oneCategoryList([...ASSET_CATEGORIES, ...assets.map((a) => a.category)]);
   const assetBar = (statuses = ASSET_STATUSES, rows = shownAssets) => (
     <PeopleFilterBar
       filters={af} setFilters={setAf} search="Asset code, name, type or location" people={hrView}

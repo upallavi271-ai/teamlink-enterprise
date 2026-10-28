@@ -79,8 +79,8 @@ function parseType(assetType) {
 // (PUT /api/vendor-logins/asset-grants/category-map); until then these defaults apply. A key saved by Admin replaces its default list.
 const AUTO_DEFAULTS = {
   it_service: [
-    'Laptop', 'Laptop Charger', 'Mouse', 'Head Set', 'Mobile Phone', 'Mobile', 'Phone Charger', 'Monitor',
-    'Desktop', 'Keyboard', 'Tablet', 'Printer', 'Scanner', 'Router', 'Webcam', 'Pen Drive', 'Hard Disk', 'Docking Station', 'UPS',
+    'Laptop', 'Laptop Charger', 'Mouse', 'Headset', 'Mobile Phone', 'Phone Charger', 'Monitor',
+    'Keyboard', 'Tablet', 'Printer', 'Scanner', 'Router', 'Webcam', 'Pen Drive', 'Hard Disk', 'Docking Station', 'UPS',
   ],
 };
 const MAP_SETTING = 'vendor.assetCategoryMap';

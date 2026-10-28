@@ -30,6 +30,7 @@
 // by display name.
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
+const { canonicalCategory } = require('./assetCategory');
 const path = require('path');
 const prisma = require('../db');
 const io = require('./moduleIo');
@@ -47,7 +48,7 @@ const STATUSES = ['Available', 'Assigned', 'In Repair', 'Retired'];
 const REPAIR_TYPES = ['Repair', 'Service', 'AMC', 'Replacement of part'];
 const REPAIR_STATUSES = ['Reported', 'In Repair', 'Completed', 'Cancelled'];
 const PAID_VIA = ['Bank', 'Cash', 'Payable'];
-const DEFAULT_CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Mobile', 'Headset', 'Mouse', 'Keyboard', 'Furniture', 'Other'];
+const DEFAULT_CATEGORIES = ['Laptop', 'Monitor', 'Mobile Phone', 'Headset', 'Mouse', 'Keyboard', 'Furniture', 'Other'];
 
 const SECTIONS = {
   pending: { label: 'Pending from HRMS', kinds: ['purchase', 'repair', 'disposal'], sources: ['hrms'] },
@@ -574,7 +575,7 @@ async function validateAssetRows(rows) {
       if (cost === 0) notes.push('Cost is 0 - nothing will be posted to the books for it.');
       if (!usedCategories.has(str(r.category).toLowerCase())) notes.push(`New category "${str(r.category)}" - its ledgers are made when the purchase is posted.`);
       out.data = {
-        assetCode: code, name: str(r.name), category: str(r.category), assetType: str(r.assetType) || null, purchaseDate: date, purchaseCost: cost, gstPaid: gst, paidVia,
+        assetCode: code, name: str(r.name), category: canonicalCategory(str(r.category)), assetType: str(r.assetType) || null, purchaseDate: date, purchaseCost: cost, gstPaid: gst, paidVia,
         vendor: str(r.vendor) || null, invoiceNo: str(r.invoiceNo) || null, serialNumber: serial || null, location: str(r.location) || null, usefulLifeYears: life,
         depreciationMethod: method, salvageValue: salvage, status, warrantyUntil: warranty, holder,
       };

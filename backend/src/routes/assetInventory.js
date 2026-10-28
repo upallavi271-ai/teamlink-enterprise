@@ -1,5 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
+const { canonicalCategory, categoriesInUse } = require('../utils/assetCategory');
 const crypto = require('crypto');
 const { scopeOf, hrmsGlobal, employeeWhere } = require('../utils/scope');
 const attachments = require('../utils/attachments');
@@ -466,7 +467,7 @@ router.post('/', requirePerm(null, 'hrms', 'Employee Services', 'create'), async
     data: {
       assetCode: await nextCode(),
       name,
-      category: category || 'Laptop',
+      category: canonicalCategory(category, await categoriesInUse(prisma)) || 'Laptop', // one name per category (utils/assetCategory.js)
       status: 'Available',
       purchaseDate: purchaseDate || new Date().toISOString().slice(0, 10),
       purchaseCost: purchaseCost ?? null,
@@ -594,7 +595,7 @@ router.patch('/:id', requirePerm(null, 'hrms', 'Employee Services', 'edit'), asy
     if (status === 'Available' && asset.assignedToId) return res.status(400).json({ error: 'Someone holds this asset. Use Return first.' });
     const want = {
       name: body.name === undefined ? undefined : str(body.name),
-      category: body.category === undefined ? undefined : (str(body.category) || 'Other'),
+      category: body.category === undefined ? undefined : (canonicalCategory(str(body.category), await categoriesInUse(prisma)) || 'Other'),
       assetType: body.assetType === undefined ? undefined : (str(body.assetType) || null),
       location: body.location === undefined ? undefined : (str(body.location) || null),
       purchaseDate: body.purchaseDate === undefined ? undefined : (str(body.purchaseDate) || null),
