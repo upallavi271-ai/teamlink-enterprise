@@ -121,8 +121,8 @@ const KIND_IMPORTS = {
     { key: 'order-status', spec: 'order-status', title: 'Import order status', help: 'Move many orders one step forward from Excel or CSV.', needs: 'Allow editing' },
   ],
   idcards: [{ key: 'order-status', spec: 'order-status', title: 'Import order status', help: 'Move many ID card orders one step forward from Excel or CSV.', needs: 'Update order status' }],
-  finance: [{ key: 'bills', spec: 'bills-finance', title: 'Import invoices', help: 'Send many invoices to Accounts from Excel or CSV (one line = one invoice).', needs: 'Raise / upload invoices' }],
-  telecom: [{ key: 'bills', spec: 'bills-telecom', title: 'Import bills', help: 'Send many monthly bills to Accounts from Excel or CSV (one line = one bill).', needs: 'Send a bill' }],
+  finance: [{ key: 'bills', spec: 'bills-finance', title: 'Import invoices', help: 'Send invoices to Accounts from the invoice PDF itself, or from Excel or CSV (one line = one invoice).', needs: 'Raise / upload invoices' }],
+  telecom: [{ key: 'bills', spec: 'bills-telecom', title: 'Import bills', help: 'Send your bills to Accounts from the bill PDF itself (one PDF may hold many bills), or from Excel or CSV (one line = one bill).', needs: 'Send a bill' }],
 };
 const importsOf = (kind) => KIND_IMPORTS[kind] || [];
 const importOf = (kind, key) => importsOf(kind).find((i) => i.key === key) || null;
@@ -165,12 +165,22 @@ function scanFormulas(buffer) {
   });
   if (hits.length) throw new ImportError(400, `This file contains ${hits.length} formula${hits.length === 1 ? '' : 's'} (${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', ...' : ''}). Formulas are never read. Copy the cells and paste them as values only, then try again.`, { formulas: hits.slice(0, 20) });
 }
-function parse(spec, buffer, fileName) {
+async function parse(spec, buffer, fileName, ctx = null) {
   // BILL IMPORTS READ ANY EXCEL / CSV (founder 2026-10-28: "alanti file upload chesina tisukovali, rules undakudadhu"): the columns are
   // found by their usual names, the sample file is only a help. utils/vendorBillFlexImport.js
   if (spec.flexible) {
     if (!Buffer.isBuffer(buffer) || !buffer.length) throw new ImportError(400, 'Choose the file first. The file is empty.');
     if (buffer.length > MAX_BYTES) throw new ImportError(413, 'The file is too big. The most allowed is 5 MB.');
+    // ... AND THE PROVIDER'S OWN PDF BILL (founder 2026-10-28, Airtel: "aa file upload chesina adhi tisukovali"): read from the PDF's
+    // text (a scan by the AI bill reader when it is on); each bill keeps the PDF as its copy. utils/vendorBillPdfImport.js
+    const PDF = require('./vendorBillPdfImport'); // eslint-disable-line global-require
+    if (PDF.isPdf(buffer, fileName)) {
+      let pdf;
+      try { pdf = await PDF.readPdf(buffer, fileName, { hints: { vendorName: ctx && ctx.v ? ctx.v.vendorName : '' } }); } catch (err) { throw new ImportError(err.status || 400, err.message); }
+      const name = /\.pdf$/i.test(String(fileName || '')) ? String(fileName) : `${String(fileName || 'bill')}.pdf`;
+      const file = { filename: name.slice(0, 120), contentType: 'application/pdf', data: buffer };
+      return { rows: pdf.rows.map((r) => ({ ...r, _file: file })), flexible: true, skipped: pdf.skipped, header: pdf.header };
+    }
     let got;
     try { got = require('./vendorBillFlexImport').readAny(buffer, fileName); } catch (err) { throw new ImportError(err.status || 400, err.message); } // eslint-disable-line global-require
     if (got.rows.length > MAX_ROWS) throw new ImportError(400, `Import at most ${MAX_ROWS} bills at a time (this file has ${got.rows.length}).`);
@@ -261,13 +271,16 @@ const HANDLERS = {
         ...(row.notes ? { dueOptional: true } : {}), // a free-format file without a due date is still taken (Accounts sets it)
       };
       const create = require('../routes/vendorModulePortal').saveBill; // eslint-disable-line global-require
-      const r = await create(ctx.req, monthly ? 'monthly_bill' : 'invoice', fields, null, {
-        noFile: true, dry, quiet: true, remarksPrefix: '[Excel import]',
+      const file = row._file || null; // a bill read from a PDF keeps that PDF as its copy
+      const r = await create(ctx.req, monthly ? 'monthly_bill' : 'invoice', fields, file, {
+        noFile: !file, dry, quiet: true, remarksPrefix: file ? '' : '[Excel import]',
         extraCheck: monthly ? (d) => ATB.duplicateInAccounts(ctx.v, d) : undefined,
       });
       if (r.status === 409 && r.duplicate) return { outcome: 'duplicate', message: r.body.error };
       if (r.status !== 200 && r.status !== 201) return rowErr(r.body.error || 'This bill was refused.', '', r.body.field || null);
-      return { outcome: 'ok', message: dry ? 'Will be sent to Accounts.' : `Sent to Accounts (${r.body.bill ? r.body.bill.billCode : ''}).`, changes: ['New bill'] };
+      // what was read, so the vendor sees the numbers before Confirm (a PDF bill especially)
+      const read = `Bill ${fields.billNumber}${monthly && period ? ` · ${period}` : ''} · ₹${str(row.amount)}${Number(row.gst) ? ` + GST ₹${str(row.gst)}` : ''}${fields.dueDate ? ` · due ${fields.dueDate}` : ''}${notes}`;
+      return { outcome: 'ok', message: dry ? `Will be sent to Accounts: ${read}.` : `Sent to Accounts (${r.body.bill ? r.body.bill.billCode : ''}): ${read}.`, changes: ['New bill'] };
     },
   },
 };
@@ -327,7 +340,7 @@ const slimRows = (recs) => recs.map((r) => ({ line: r.line, label: r.label, outc
 async function preview(ctx, buffer, fileName) {
   const imp = importOf(ctx.kind, ctx.importKey);
   if (!imp) throw new ImportError(404, 'There is no Import for this page.');
-  const parsed = parse(specOf(imp), buffer, fileName);
+  const parsed = await parse(specOf(imp), buffer, fileName, ctx);
   const recs = await HS.withScopeCache(() => processRows(ctx, imp, parsed.rows, true));
   const t = tally(recs);
   return {
@@ -366,7 +379,7 @@ async function confirm(ctx, buffer, fileName, rawKey) {
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(idem)) throw new ImportError(400, 'This import cannot be sent safely. Close the window, open Import again and press Preview, then Confirm.');
   const imp = importOf(ctx.kind, ctx.importKey);
   if (!imp) throw new ImportError(404, 'There is no Import for this page.');
-  const parsed = parse(specOf(imp), buffer, fileName); // refuses a bad file before the key is used
+  const parsed = await parse(specOf(imp), buffer, fileName, ctx); // refuses a bad file before the key is used
   await SCH.ensure();
   const hash = crypto.createHash('sha256').update(buffer).digest('hex');
   let mine = await claim(ctx, idem, fileName, hash);
