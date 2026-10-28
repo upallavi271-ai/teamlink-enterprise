@@ -48,8 +48,14 @@ RAM_GB=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
 DISK_GB=$(df -Pk /opt | awk 'NR==2 {printf "%d", $4/1024/1024}')
 say "Machine: ${RAM_GB} GB RAM, ${DISK_GB} GB free on /opt"
 [ "$RAM_GB" -ge 14 ] || warn "Less than 16 GB RAM: Vexyl TTS + STT may not both fit. Continuing, but expect slow or failed starts."
-[ "$DISK_GB" -ge 15 ] || { echo "Need about 15 GB free on /opt for the models."; exit 1; }
 GPU=0; if command -v nvidia-smi >/dev/null && nvidia-smi >/dev/null 2>&1; then GPU=1; say "NVIDIA GPU found: CUDA builds will be used."; fi
+# each Vexyl server has its own venv with its own PyTorch (the CUDA build is ~2-4 GB each) + ~9 GB of models
+NEED_GB=15; [ "$GPU" = "1" ] && NEED_GB=30
+[ "$DISK_GB" -ge "$NEED_GB" ] || { echo "Need about ${NEED_GB} GB free on /opt (models + PyTorch)."; exit 1; }
+if [ "$SKIP_ASTERISK" = "0" ] && [ -f /etc/asterisk/pjsip.conf ] && grep -q '^\[transport-udp\]' /etc/asterisk/pjsip.conf; then
+  echo "/etc/asterisk/pjsip.conf already defines [transport-udp]; pjsip_synway.conf defines it too (a duplicate breaks SIP)."
+  echo "Remove one of them (or rename the template's transport), then run this again. Nothing was changed."; exit 1
+fi
 
 # ---- 1. packages -----------------------------------------------------------------------------------------------------
 say "Installing system packages"
@@ -94,7 +100,14 @@ sudo -u vexyl -H bash -c "cd '$STT_DIR' && [ -d venv ] || python3 -m venv venv"
 sudo -u vexyl -H bash -c "cd '$STT_DIR' && . venv/bin/activate && pip install --upgrade pip -q && pip install -q torch torchaudio --index-url '$TORCH_INDEX' && pip install -q transformers websockets numpy onnxruntime soundfile huggingface_hub"
 if [ ! -f "$STT_DIR/.model-ok" ]; then
   say "Downloading the STT model (about 3 GB with its files)"
-  sudo -u vexyl -H env HF_TOKEN="${HF_TOKEN:-}" bash -c "cd '$STT_DIR' && . venv/bin/activate && python3 -c \"from transformers import AutoModel; AutoModel.from_pretrained('ai4bharat/indic-conformer-600m-multilingual', trust_remote_code=True)\""
+  # The token goes to a file only the vexyl user can read (never on a command line, where "ps" would show it), is read by
+  # huggingface_hub through HF_TOKEN_PATH, and is deleted right after the download.
+  TOKEN_FILE=$(sudo -u vexyl mktemp "$BASE/.hf-token.XXXXXX")
+  chmod 600 "$TOKEN_FILE"
+  printf '%s' "${HF_TOKEN:-}" > "$TOKEN_FILE"
+  trap 'rm -f "$TOKEN_FILE"' EXIT
+  sudo -u vexyl -H env HF_TOKEN_PATH="$TOKEN_FILE" bash -c "cd '$STT_DIR' && . venv/bin/activate && python3 -c \"from transformers import AutoModel; AutoModel.from_pretrained('ai4bharat/indic-conformer-600m-multilingual', trust_remote_code=True)\""
+  rm -f "$TOKEN_FILE"; trap - EXIT
   sudo -u vexyl touch "$STT_DIR/.model-ok"
 fi
 cat > "$STT_DIR/.env" <<EOF
@@ -111,10 +124,11 @@ say "Vexyl TTS (github.com/vexyl-ai/vexyl-tts, Apache-2.0)"
 [ -d "$TTS_DIR/.git" ] || sudo -u vexyl -H git clone --depth 1 https://github.com/vexyl-ai/vexyl-tts "$TTS_DIR"
 TTS_KEY=$(key_of "$TTS_DIR/.env" VEXYL_TTS_API_KEY)
 sudo -u vexyl -H bash -c "cd '$TTS_DIR' && [ -d venv ] || python3 -m venv venv"
-sudo -u vexyl -H bash -c "cd '$TTS_DIR' && . venv/bin/activate && pip install --upgrade pip -q && pip install -q torch --index-url '$TORCH_INDEX' && pip install -q git+https://github.com/huggingface/parler-tts.git && pip install -q transformers websockets numpy soundfile"
+sudo -u vexyl -H bash -c "cd '$TTS_DIR' && . venv/bin/activate && pip install --upgrade pip -q && pip install -q torch --index-url '$TORCH_INDEX' && pip install -q git+https://github.com/huggingface/parler-tts.git && pip install -q transformers websockets numpy soundfile huggingface_hub"
 if [ ! -f "$TTS_DIR/.model-ok" ]; then
   say "Downloading the TTS model (about 6 GB with its files)"
-  sudo -u vexyl -H bash -c "cd '$TTS_DIR' && . venv/bin/activate && python3 -c \"from parler_tts import ParlerTTSForConditionalGeneration; from transformers import AutoTokenizer; ParlerTTSForConditionalGeneration.from_pretrained('ai4bharat/indic-parler-tts'); AutoTokenizer.from_pretrained('ai4bharat/indic-parler-tts')\""
+  # the same three downloads as Vexyl's own setup.sh: the model, its tokenizer, and the description tokenizer its config names
+  sudo -u vexyl -H bash -c "cd '$TTS_DIR' && . venv/bin/activate && python3 -c \"from parler_tts import ParlerTTSForConditionalGeneration; from transformers import AutoTokenizer; m = ParlerTTSForConditionalGeneration.from_pretrained('ai4bharat/indic-parler-tts'); AutoTokenizer.from_pretrained('ai4bharat/indic-parler-tts'); AutoTokenizer.from_pretrained(m.config.text_encoder._name_or_path)\""
   sudo -u vexyl touch "$TTS_DIR/.model-ok"
 fi
 cat > "$TTS_DIR/.env" <<EOF
@@ -175,7 +189,7 @@ secret = $AMI_SECRET
 deny = 0.0.0.0/0.0.0.0
 permit = 127.0.0.1/255.255.255.255
 read = system,call,reporting,config,dialplan
-write = originate,system
+write = originate,system,reporting
 EOF
   umask 022
   chown asterisk:asterisk /etc/asterisk/manager.d/teamlink.conf 2>/dev/null || true
@@ -194,6 +208,7 @@ EOF
   asterisk -rx "dialplan reload" >/dev/null 2>&1 || true
   if asterisk -rx "module show like audiosocket" 2>/dev/null | grep -q audiosocket; then echo "   AudioSocket modules: loaded"; else warn "This Asterisk has no AudioSocket module (needs Asterisk 18+ with res_audiosocket / app_audiosocket)."; fi
   [ -n "$SYNWAY_IP" ] || warn "Synway IP not given: edit /etc/asterisk/pjsip_synway.conf (SYNWAY_LAN_IP), then: asterisk -rx 'pjsip reload'"
+  warn "Firewall (NOT changed by this script): SIP listens on UDP 5060 on all interfaces. Allow UDP 5060 and the RTP range (rtp.conf, default 10000-20000) ONLY from the Synway gateway${SYNWAY_IP:+ ($SYNWAY_IP)}, for example:  ufw allow from ${SYNWAY_IP:-<gateway IP>} to any port 5060 proto udp ; ufw allow from ${SYNWAY_IP:-<gateway IP>} to any port 10000:20000 proto udp"
 fi
 
 # ---- 8. TeamLink backend settings --------------------------------------------------------------------------------------
