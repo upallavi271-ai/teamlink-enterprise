@@ -267,6 +267,8 @@ async function onStatusChange(record, user) {
   const t = nowIso();
   if (record.status === 'Approved') {
     await DB.run('UPDATE "AssetComplaint" SET "decision" = ?, "decidedById" = ?, "decidedByName" = ?, "decidedRole" = ?, "decidedAt" = ?, "updatedAt" = ? WHERE "ticketId" = ?', ['Approved', user.id, actor.name, actor.word, t, t, c.ticketId]);
+    // An approved "Replacement" ticket opens the replacement record (Stage C, 2026-10-28): HR then records the new asset.
+    if (c.kind === 'Replacement') { const rx = await require('./assetRepairWork').fromApprovedTicket(c, actor); return { kind: c.kind, repair: null, replacementId: rx.id }; } // eslint-disable-line global-require
     if (c.kind !== 'Repair') return { kind: c.kind, repair: null };
     const fresh = await complaintOf(record.id);
     if (fresh.repairId) { await reopenRepair(fresh, actor); return { kind: c.kind, repairId: fresh.repairId, existed: true }; }

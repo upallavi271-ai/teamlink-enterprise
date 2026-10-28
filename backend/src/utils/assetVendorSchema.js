@@ -137,6 +137,74 @@ const DDL = [
   )`,
   'CREATE UNIQUE INDEX IF NOT EXISTS "VendorImportRun_idem" ON "VendorImportRun"("vendorUserId", "idemKey")',
   'CREATE INDEX IF NOT EXISTS "VendorImportRun_vendor" ON "VendorImportRun"("vendorId", "createdAt")',
+  // 2026-10-28 STAGE C (utils/assetRepairWork.js): the vendor's work on ONE repair (repairId primary key = one row per repair).
+  `CREATE TABLE IF NOT EXISTS "AssetRepairWork" (
+    "repairId" TEXT NOT NULL PRIMARY KEY,
+    "assetId" TEXT NOT NULL,
+    "vendorId" TEXT NOT NULL,
+    "decision" TEXT,
+    "decisionReason" TEXT,
+    "decisionAt" TEXT,
+    "partsCost" REAL,
+    "labourCost" REAL,
+    "startDate" TEXT,
+    "completedDate" TEXT,
+    "outcome" TEXT,
+    "workPerformed" TEXT,
+    "resolutionNotes" TEXT,
+    "lastByName" TEXT,
+    "createdAt" TEXT NOT NULL,
+    "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "AssetRepairWork_vendor" ON "AssetRepairWork"("vendorId")',
+  // Repair proof files and earlier invoice files: one row per file, APPEND-ONLY (triggers below).
+  `CREATE TABLE IF NOT EXISTS "AssetRepairProof" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "repairId" TEXT NOT NULL,
+    "assetId" TEXT NOT NULL,
+    "vendorId" TEXT,
+    "kind" TEXT NOT NULL,
+    "file" TEXT NOT NULL,
+    "name" TEXT,
+    "mime" TEXT,
+    "size" INTEGER,
+    "hash" TEXT,
+    "note" TEXT,
+    "byName" TEXT,
+    "createdAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "AssetRepairProof_repair" ON "AssetRepairProof"("repairId", "createdAt")',
+  // Asset replacements: the original asset is never deleted; at most ONE open (Requested / Approved) replacement per original asset.
+  `CREATE TABLE IF NOT EXISTS "AssetReplacement" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "originalAssetId" TEXT NOT NULL,
+    "repairId" TEXT,
+    "vendorId" TEXT,
+    "source" TEXT NOT NULL,
+    "ticketRef" TEXT,
+    "reason" TEXT,
+    "status" TEXT NOT NULL,
+    "requestedByName" TEXT,
+    "requestedAt" TEXT NOT NULL,
+    "decidedById" TEXT,
+    "decidedByName" TEXT,
+    "decidedAt" TEXT,
+    "decisionNote" TEXT,
+    "approvalRef" TEXT,
+    "replacementAssetId" TEXT,
+    "replacementDate" TEXT,
+    "originalFinalStatus" TEXT,
+    "completedByName" TEXT,
+    "updatedAt" TEXT NOT NULL
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "AssetReplacement_open" ON "AssetReplacement"("originalAssetId") WHERE "status" IN ('Requested','Approved')`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "AssetReplacement_new" ON "AssetReplacement"("replacementAssetId") WHERE "replacementAssetId" IS NOT NULL',
+  'CREATE INDEX IF NOT EXISTS "AssetReplacement_repair" ON "AssetReplacement"("repairId")',
+  `CREATE TRIGGER IF NOT EXISTS "AssetRepairProof_append_only_upd" BEFORE UPDATE ON "AssetRepairProof"
+   BEGIN SELECT RAISE(ABORT, 'AssetRepairProof is append-only: rows cannot be changed'); END`,
+  `CREATE TRIGGER IF NOT EXISTS "AssetRepairProof_append_only_del" BEFORE DELETE ON "AssetRepairProof"
+   WHEN NOT EXISTS (SELECT 1 FROM "AppSetting" WHERE "key" = 'audit.allowPurge' AND "value" = '1')
+   BEGIN SELECT RAISE(ABORT, 'AssetRepairProof is append-only: rows cannot be deleted'); END`,
   `CREATE TRIGGER IF NOT EXISTS "AssetRepairEvent_append_only_upd" BEFORE UPDATE ON "AssetRepairEvent"
    BEGIN SELECT RAISE(ABORT, 'AssetRepairEvent is append-only: rows cannot be changed'); END`,
   `CREATE TRIGGER IF NOT EXISTS "AssetRepairEvent_append_only_del" BEFORE DELETE ON "AssetRepairEvent"

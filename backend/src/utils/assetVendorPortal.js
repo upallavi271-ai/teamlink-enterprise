@@ -41,6 +41,7 @@ const attachments = require('./attachments');
 const PAYS = require('./assetVendorPayments');
 const HS = require('./assetHrmsScope'); // which HRMS assets belong to this vendor (2026-10-19)
 const AC = require('./assetComplaints'); // a repair complaint approved in HRMS -> the repair job (2026-10-19)
+const RW = require('./assetRepairWork'); // Stage C (2026-10-28): accept / reject, parts + labour, real dates, outcome, proof, replacements
 const Mask = require('./vendorAssetMask'); // NO employee names in anything the vendor sees (founder decision 2026-10-19)
 
 // The masker is the same for every vendor (it depends only on the company's asset and employee tables), so it is loaded once per call into a
@@ -497,15 +498,30 @@ async function sendInvoice(v, req, id, body) {
 }
 
 // ---- REPAIRS -----------------------------------------------------------------------------------
+// The tabs of Repairs & HRMS Tickets (Stage C). "Waiting for approval" = a replacement the company has not answered, or a finished repair whose bill is with Accounts.
+const BUCKETS = ['Awaiting your action', 'In progress', 'Waiting for approval', 'Completed', 'Closed'];
+const ACTIVE_BUCKETS = ['Awaiting your action', 'In progress', 'Waiting for approval'];
+const billWaitingOf = (pay, view) => !!(pay && pay.payment && ['Waiting for Accounts', 'Not sent to Accounts'].includes(pay.payment.status) && view.finalTotal > 0);
 const REPAIR_SORTS = { dateReported: (r) => r.dateReported || '', repairNo: (r) => r.repairNo, assetCode: (r) => r.assetCode, stage: (r) => STAGES.indexOf(r.stage), finalCost: (r) => r.finalTotal || 0, estimate: (r) => r.estimateTotal || 0 };
 async function listRepairs(v, q = {}) {
   const loaded = await loadRepairs(v);
   const px = await paymentExtras(v, loaded);
-  const all = loaded.map(({ repair, asset, side }) => repairView(repair, asset, side, px.map.get(repair.id), v));
+  const ids = loaded.map((x) => x.repair.id);
+  const [works, reps] = await Promise.all([RW.workOf(ids), RW.replacementsOf({ repairIds: ids })]);
+  const repOf = new Map(reps.map((r) => [r.repairId, r]));
+  const all = loaded.map(({ repair, asset, side }) => {
+    const w = works.get(repair.id); const mine = w && w.vendorId === v.vendorId ? w : null;
+    const pay = px.map.get(repair.id) || {};
+    const view = repairView(repair, asset, side, { ...pay, ...RW.workView(mine), replacement: RW.replacementView(repOf.get(repair.id) || null, () => MK().code(asset)) }, v);
+    view.bucket = RW.bucketOf(view.stage, mine, repOf.get(repair.id), billWaitingOf(pay, view));
+    return view;
+  });
   const s = str(q.q).toLowerCase();
   const from = VP.YMD.test(str(q.from)) ? str(q.from) : null;
   const to = VP.YMD.test(str(q.to)) ? str(q.to) : null;
-  const keep = (r, skip) => (skip === 'stage' || !str(q.stage) || r.stage === str(q.stage))
+  const bucketQ = str(q.bucket) === 'Active' ? 'Active' : (BUCKETS.includes(str(q.bucket)) ? str(q.bucket) : '');
+  const inBucket = (r) => !bucketQ || (bucketQ === 'Active' ? ACTIVE_BUCKETS.includes(r.bucket) : r.bucket === bucketQ);
+  const keep = (r, skip) => (skip === 'bucket' || inBucket(r)) && (skip === 'stage' || !str(q.stage) || r.stage === str(q.stage))
     && (skip === 'category' || !str(q.category) || r.category === str(q.category))
     && (skip === 'payment' || !str(q.payment) || r.payment.status === str(q.payment))
     && inRange(r.dateReported, from, to)
@@ -515,6 +531,8 @@ async function listRepairs(v, q = {}) {
   return {
     ...paged(rows, q, 'dateReported', REPAIR_SORTS, 'desc'), all: all.length, canEdit: v.canEdit,
     stages: [...STAGES, 'Cancelled'].map((st) => ({ value: st, count: all.filter((r) => r.stage === st).length })),
+    buckets: [{ value: 'Active', count: all.filter((r) => ACTIVE_BUCKETS.includes(r.bucket)).length }, ...BUCKETS.map((b) => ({ value: b, count: all.filter((r) => r.bucket === b).length }))],
+    outcomes: RW.OUTCOMES,
     facets: { stage: facet(all.filter((r) => keep(r, 'stage')), (r) => r.stage), category: facet(all.filter((r) => keep(r, 'category')), (r) => r.category), payment: facet(all.filter((r) => keep(r, 'payment')), (r) => r.payment.status) },
     summary: { count: all.length, open: all.filter((r) => OPEN_STAGES.includes(r.stage)).length, estimateTotal: sum(all, 'estimateTotal'), finalTotal: sum(all, 'finalTotal') },
   };
@@ -528,11 +546,18 @@ async function repairDetail(v, id) {
   const history = await historyFor(v, [m.repair.id]);
   const loadedAll = await loadRepairs(v);
   const px = await paymentExtras(v, loadedAll);
-  const view = repairView(m.repair, m.asset, m.side, { inCompanyBooks: posted, ...px.map.get(m.repair.id) }, v);
+  const w0 = (await RW.workOf([m.repair.id])).get(m.repair.id);
+  const work = w0 && w0.vendorId === v.vendorId ? w0 : null;
+  const reps = await RW.replacementsOf({ assetIds: [m.repair.assetId] });
+  const thisRep = reps.find((r) => r.repairId === m.repair.id) || reps.find((r) => ['Requested', 'Approved'].includes(r.status)) || null;
+  const pay = px.map.get(m.repair.id) || {};
+  const view = repairView(m.repair, m.asset, m.side, { inCompanyBooks: posted, ...pay, ...RW.workView(work), replacement: RW.replacementView(thisRep, () => MK().code(m.asset)) }, v);
+  view.bucket = RW.bucketOf(view.stage, work, thisRep, billWaitingOf(pay, view));
+  const proofs = (await RW.proofsOf([m.repair.id], v.vendorId)).map((p) => ({ id: p.id, kind: p.kind, name: p.name, size: p.size, note: p.note, by: p.byName, at: p.createdAt }));
   // The asset's other repairs (history per asset), newest first.
   const others = loadedAll.filter((x) => x.repair.assetId === m.repair.assetId && x.repair.id !== m.repair.id).map((x) => repairView(x.repair, x.asset, x.side, px.map.get(x.repair.id), v));
   const assetHistory = await historyFor(v, [m.repair.id, ...others.map((o) => o.id)]);
-  return { repair: view, history, assetRepairs: others, assetHistory, canEdit: v.canEdit, stages: STAGES };
+  return { repair: view, history, assetRepairs: others, assetHistory, canEdit: v.canEdit, stages: STAGES, proofs, outcomes: RW.OUTCOMES, replacements: reps.map((r) => RW.replacementView(r, () => MK().code(m.asset))) };
 }
 
 const moneyOf = (raw) => {
@@ -568,7 +593,13 @@ async function writeSide(c, v, m, cols) {
   const cur = await DB.one('SELECT * FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
   const by = `${v.name} (vendor ${v.vendorName})`;
   if (!cur || cur.vendorId !== v.vendorId) {
-    if (cur) await DB.run('DELETE FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
+    if (cur) {
+      // the repair moved to this vendor: the earlier vendor's invoice file and step stay in the history (Stage C)
+      await RW.keepEarlierInvoice(c, m.repair, cur.vendorId, cur, cur.lastByName || 'earlier vendor');
+      await DB.run('INSERT INTO "AssetRepairEvent" ("id","repairId","assetId","vendorId","vendorUserId","kind","field","fromValue","toValue","note","actorKind","actorName","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [newId(), m.repair.id, m.repair.assetId, cur.vendorId, null, 'company change', 'Vendor', cur.lastByName || cur.vendorId, by, `Earlier vendor step: ${cur.stage || '-'}; estimate: ${cur.estimateCost == null ? '-' : cur.estimateCost}`, 'Company', 'System', t], c);
+      await DB.run('DELETE FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
+    }
     const base = { stage: null, estimateCost: null, estimateGst: null, estimateAt: null, expectedDate: null, returnedDate: null, vendorRemarks: null, invoiceFile: null, invoiceName: null, invoiceMime: null, invoiceSize: null, invoiceAt: null, invoiceHash: null, ...cols };
     const keys = Object.keys(base);
     await DB.run(`INSERT INTO "AssetRepairVendor" ("repairId","assetId","vendorId",${keys.map((k) => `"${k}"`).join(',')},"lastByName","createdAt","updatedAt") VALUES (?,?,?,${keys.map(() => '?').join(',')},?,?,?)`,
@@ -614,6 +645,9 @@ async function updateRepair(v, req, id, body, opts = {}) {
   }
   const side = m.side;
   const curStage = stageOf(repair, side);
+  const w0 = (await RW.workOf([repair.id])).get(repair.id);
+  const work = w0 && w0.vendorId === v.vendorId ? w0 : null;
+  if (work && work.decision === 'Rejected' && body.stage !== undefined && str(body.stage) !== curStage) return { status: 409, body: { error: 'You said you cannot take this repair, so its steps cannot move.' } };
   let newStage = curStage;
   if (body.stage !== undefined && str(body.stage) !== curStage) {
     const want = str(body.stage);
@@ -681,7 +715,7 @@ async function updateRepair(v, req, id, body, opts = {}) {
     evs.push({ kind: 'status', field: 'Step', from: curStage, to: newStage, note: remark });
     cols.stage = newStage;
     if (STATUS_OF[newStage] !== repair.status) data.status = STATUS_OF[newStage];
-    if (newStage === 'Completed' && !repair.repairDate) data.repairDate = today();
+    if (newStage === 'Completed' && !repair.repairDate) data.repairDate = (work && work.completedDate) || today(); // the real completion date when the vendor entered it (Stage C)
     if (newStage === 'Returned') cols.returnedDate = today();
   }
   if (estChanged) {
@@ -729,6 +763,11 @@ async function updateRepair(v, req, id, body, opts = {}) {
       }
       await writeSide(tx, v, m, cols);
       await insertEvents(tx, v, m, evs);
+      // "Asset received" is the vendor taking the job: an unanswered job counts as accepted (Stage C)
+      if (stageChanged && curStage === 'Awaiting repair' && !(work && work.decision)) {
+        await DB.run('INSERT OR IGNORE INTO "AssetRepairWork" ("repairId","assetId","vendorId","decision","decisionAt","lastByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?)', [repair.id, repair.assetId, v.vendorId, 'Accepted', nowIso(), by, nowIso(), nowIso()], tx);
+        await DB.run('UPDATE "AssetRepairWork" SET "decision" = ?, "decisionAt" = ?, "vendorId" = ?, "updatedAt" = ? WHERE "repairId" = ? AND ("decision" IS NULL OR "vendorId" <> ?)', ['Accepted', nowIso(), v.vendorId, nowIso(), repair.id, v.vendorId], tx);
+      }
       if (linkedBill) { // the invoice still waiting in Accounts' queue follows the repair (same bill, never a second one)
         const nb = await tx.vendorBillSubmission.updateMany({
           where: { id: linkedBill.id, status: 'PENDING_REVIEW' },
@@ -797,6 +836,7 @@ async function attachInvoice(v, req, id, stored, hash, invoiceNo) {
     await prisma.$transaction(async (tx) => {
       const n = await tx.assetRepair.updateMany({ where: { id: repair.id, updatedAt: repair.updatedAt }, data });
       if (!n.count) throw Object.assign(new Error('stale'), { stale: true });
+      await RW.keepEarlierInvoice(tx, repair, v.vendorId, side, `${v.name} (vendor ${v.vendorName})`); // the earlier file is KEPT (Stage C: history is never lost)
       await writeSide(tx, v, m, { invoiceFile: stored.billFile, invoiceName: stored.billName, invoiceMime: stored.billMime, invoiceSize: stored.billSize, invoiceAt: nowIso(), invoiceHash: hash });
       if (linkedBill) {
         const nb = await tx.vendorBillSubmission.updateMany({
@@ -812,7 +852,7 @@ async function attachInvoice(v, req, id, stored, hash, invoiceNo) {
     if (e && e.stale) return { status: 409, body: { error: 'This repair was changed by someone else just now. Refresh and try again.', stale: true } };
     throw e;
   }
-  if (oursOld) attachments.remove(oursOld);
+  // (the earlier invoice file is no longer deleted: it stays on the repair as "earlier invoice", Stage C)
   const by = `${v.name} (vendor ${v.vendorName})`;
   for (const e of evs) {
     // eslint-disable-next-line no-await-in-loop

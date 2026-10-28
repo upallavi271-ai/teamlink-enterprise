@@ -375,6 +375,20 @@ router.get('/options', async (req, res, next) => {
 // it has), then one of that department's ACTIVE employees. The asset desk may
 // hand an asset to anyone; a scoped login (an STL) only to their own people,
 // the same rule PATCH /:id/assign enforces.
+// ---- REPLACEMENTS (2026-10-28, Assets Vendor Portal Stage C; utils/assetRepairWork.js) ------------------------------------
+// A vendor says an asset cannot be repaired, or an employee's "Replacement" ticket is approved: HR / Admin approves or rejects, then records the
+// NEW asset. The original asset is never deleted and keeps its id. Before /:id so "replacements" is never read as an asset id.
+const RWK = require('../utils/assetRepairWork');
+router.get('/replacements', requirePerm(null, 'hrms', 'Employee Services', 'view'), async (req, res, next) => {
+  try { return res.json({ rows: await RWK.listReplacements({ status: String((req.query || {}).status || '').trim() || undefined }), finalStatuses: RWK.FINAL_STATUSES }); } catch (err) { return next(err); }
+});
+router.post('/replacements/:rid/decide', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res, next) => {
+  try { const r = await RWK.decideReplacement(req.user, req.params.rid, req.body || {}); return res.status(r.status).json(r.body); } catch (err) { return next(err); }
+});
+router.post('/replacements/:rid/complete', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res, next) => {
+  try { const r = await RWK.completeReplacement(req.user, req.params.rid, req.body || {}); return res.status(r.status).json(r.body); } catch (err) { return next(err); }
+});
+
 router.get('/people', requirePerm(null, 'hrms', 'Employee Services', 'edit'), async (req, res, next) => {
   try {
     const scoped = !!assetScope(req.user);
@@ -877,7 +891,20 @@ router.get('/:id/repairs', async (req, res, next) => {
     const rows = await prisma.assetRepair.findMany({ where: { assetId: asset.id }, orderBy: { createdAt: 'desc' } });
     const out = [];
     for (const r of rows) out.push(await repairView(r)); // eslint-disable-line no-await-in-loop
-    return res.json({ repairs: out, types: REPAIR_TYPES, statuses: REPAIR_STATUSES, canEdit: await mayEditAsset(req.user) });
+    // WHAT THE VENDOR WROTE (Stage C, 2026-10-28): accept / reject, estimate, parts + labour, dates, outcome, notes, proof files - HRMS sees it all.
+    const ids = rows.map((r) => r.id);
+    const [works, proofs, reps] = await Promise.all([RWK.workOf(ids), RWK.proofsOf(ids), RWK.replacementsOf({ assetIds: [asset.id] })]);
+    const DBV = require('../utils/vmDb'); // eslint-disable-line global-require
+    const sides = ids.length ? new Map((await DBV.q(`SELECT "repairId","stage","estimateCost","estimateGst","expectedDate","returnedDate","vendorRemarks" FROM "AssetRepairVendor" WHERE "repairId" IN (${ids.map(() => '?').join(',')})`, ids)).map((x) => [x.repairId, x])) : new Map();
+    out.forEach((r) => {
+      const sd = sides.get(r.id) || null; const w = works.get(r.id) || null;
+      r.vendorSide = sd || w ? {
+        stage: sd ? sd.stage : null, estimateCost: sd ? sd.estimateCost : null, estimateGst: sd ? sd.estimateGst : null, expectedDate: sd ? sd.expectedDate : null,
+        returnedDate: sd ? sd.returnedDate : null, remarks: sd ? sd.vendorRemarks : null, ...RWK.workView(w),
+        proofs: proofs.filter((p) => p.repairId === r.id).map((p) => ({ name: p.name, kind: p.kind, note: p.note, at: p.createdAt })),
+      } : null;
+    });
+    return res.json({ repairs: out, types: REPAIR_TYPES, statuses: REPAIR_STATUSES, canEdit: await mayEditAsset(req.user), replacements: reps.map((x) => RWK.replacementView(x, (id) => (id === asset.id ? asset.assetCode : id))) });
   } catch (err) { return next(err); }
 });
 

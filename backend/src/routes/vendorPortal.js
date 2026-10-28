@@ -531,6 +531,10 @@ async function resolveOwnedFile(vendor, kind, id, idx) {
     // the invoice file of a repair in this vendor's own set (Assets Vendor Portal)
     return AVP.ownedRepairInvoice(vendor, id);
   }
+  if (kind === 'repair-proof') {
+    // a proof / earlier invoice file of a repair in this (Assets) vendor's own set - utils/assetRepairWork.js (Stage C)
+    return require('../utils/assetRepairWork').ownedProofFile(vendor.vendorId, await AVP.visibleRepairIds(vendor), id); // eslint-disable-line global-require
+  }
   if (kind === 'bill-upload') {
     // a file of a repair bill this (Assets) vendor uploaded: id = "<uploadId>:<fileId>" - utils/billUploads.js, the vendor's own uploads only
     return require('../utils/billUploads').ownedFile(vendor, id); // eslint-disable-line global-require
@@ -560,7 +564,7 @@ router.post('/download-link', vendorOnly, async (req, res) => {
   const kind = str(b.kind);
   // An asset vendor's files are the repair invoices and the order documents; the finance portal's bill files are not its business.
   const myKind = await KIND.kindOfRow({ ...req.vendor.row, vendorId: req.vendor.vendorId });
-  const KINDS_OF = { assets: ['repair-invoice', 'bill-upload', 'po-challan', 'shared'], idcards: ['po-challan'], telecom: ['airtel-bill'] };
+  const KINDS_OF = { assets: ['repair-invoice', 'repair-proof', 'bill-upload', 'po-challan', 'shared'], idcards: ['po-challan'], telecom: ['airtel-bill'] };
   if (KINDS_OF[myKind] ? !KINDS_OF[myKind].includes(kind) : (kind === 'repair-invoice' || kind === 'airtel-bill' || kind === 'bill-upload')) {
     return res.status(403).json({ error: 'Forbidden. This file is not yours.' });
   }

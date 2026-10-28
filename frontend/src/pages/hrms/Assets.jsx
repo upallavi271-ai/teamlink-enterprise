@@ -17,6 +17,7 @@ import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import AssetComplaintModal from './AssetComplaintModal.jsx';
 import { SendRepairModal, BackRepairModal, RepairHistoryModal, repairEntries } from './AssetRepair.jsx';
+import AssetReplacements from './AssetReplacements.jsx'; // replacement requests from repair vendors / approved tickets (Stage C, 28 Oct 2026)
 // Accounts spec S2: the fields Accounts needs + the repair log.
 import { AccountsFields, DisposalFields, AssetRepairsModal, accountsDefaults, accountsNote } from './AssetAccountsFields.jsx';
 
@@ -418,6 +419,7 @@ export default function Assets({ view, onOpen, onBack }) {
     return (
       <FeatureScreen title="Asset Maintenance & Repair" sub="Send an asset for repair, keep the vendor's slip, and see every repair." onBack={onBack}>
         {repairFlash && <div className="asrep-flash" role="status">{repairFlash}</div>}
+        <AssetReplacements canEdit={isHR} onChanged={load} />
         {(() => {
           const open = repair && assets.find((x) => x.id === repair.id);
           if (!open) return null;

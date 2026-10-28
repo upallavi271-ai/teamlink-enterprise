@@ -153,6 +153,31 @@ function RepairEditor({ asset, repair, onClose, onSaved }) {
   );
 }
 
+// WHAT THE REPAIR VENDOR WROTE in the Vendor Portal (Stage C, 28 Oct 2026): its answer, estimate, parts + labour, dates, outcome, notes, files.
+function VendorSideNote({ s }) {
+  const [open, setOpen] = useState(false);
+  const line = (k, v) => (v == null || v === '' ? null : <div key={k}><b>{k}:</b> {v}</div>);
+  return (
+    <span style={{ position: 'relative' }}>
+      <button type="button" className="btn btn-sm btn-ghost" onClick={() => setOpen((x) => !x)} aria-expanded={open}>{open ? 'Hide vendor work' : 'Vendor work'}</button>
+      {open && (
+        <div className="lb-note" style={{ whiteSpace: 'normal', minWidth: 240, marginTop: 4 }}>
+          {line('Answer', s.decision ? `${s.decision}${s.decisionReason ? ` - ${s.decisionReason}` : ''}` : 'Not answered')}
+          {line('Step', s.stage)}
+          {line('Estimate', s.estimateCost != null ? rupees(Number(s.estimateCost) + Number(s.estimateGst || 0)) : null)}
+          {line('Parts / labour', s.partsCost != null || s.labourCost != null ? `${rupees(s.partsCost || 0)} / ${rupees(s.labourCost || 0)}` : null)}
+          {line('Expected back', s.expectedDate)}
+          {line('Started / finished', s.startDate || s.completedDate ? `${s.startDate || '-'} / ${s.completedDate || '-'}` : null)}
+          {line('Outcome', s.outcome)}
+          {line('Work done', s.workPerformed)}
+          {line('Notes', s.resolutionNotes || s.remarks)}
+          {line('Files', s.proofs && s.proofs.length ? s.proofs.map((p) => p.name).join(', ') : null)}
+        </div>
+      )}
+    </span>
+  );
+}
+
 export function AssetRepairsModal({ asset, canEdit, onClose }) {
   const [data, setData] = useState(null);
   const [editing, setEditing] = useState(null); // null | 'new' | repair
@@ -186,6 +211,7 @@ export function AssetRepairsModal({ asset, canEdit, onClose }) {
                     <td><span className={`lb-badge ${STATUS_CLS[r.status] || 'grey'}`}>{r.status}</span>{r.coveredByWarranty && <div className="lb-note">Covered by warranty</div>}</td>
                     <td>{r.accounts.posted ? <span className="lb-badge green">Posted</span> : <span className="lb-badge grey">Not posted</span>}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>
+                      {r.vendorSide && <VendorSideNote s={r.vendorSide} />}
                       {canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing(r)}>Edit</button>}
                       {canEdit && !r.accounts.posted && <> <button type="button" className="btn btn-sm" onClick={() => remove(r)}>Delete</button></>}
                     </td>
