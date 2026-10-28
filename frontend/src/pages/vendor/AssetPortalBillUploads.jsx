@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shrinkAll } from './shrinkPhoto.js';
+import PhotoPicker from './PhotoPicker.jsx'; // Take a photo / Choose photos / Choose PDF (2026-10-28)
 import BillLineAssets from './BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28) // phone photos made small (JPG) before upload - founder 2026-10-28
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
@@ -136,14 +137,7 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
           </div>
           <div className="bu-drop" style={{ marginTop: 12 }}>
             <div className="vm-row">
-              <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
-                Choose photos or PDF
-                <input type="file" multiple accept="image/*,.heic,.heif,.pdf,application/pdf" style={{ display: 'none' }} onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ''; add(l); }} aria-label="Bill files" />
-              </label>
-              <label className="btn" style={{ cursor: 'pointer' }}>
-                Take a photo
-                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ''; add(l); }} aria-label="Take a photo of the bill" />
-              </label>
+              <PhotoPicker multiple onPick={(l) => add(l)} />
               <span className="cell-muted">Handwritten or printed. Any phone photo or a PDF. Up to {opts.limits.maxFiles} files (pages). Photos are made smaller before sending. One bill with many pages = add every page.</span>
               {preparing && <span className="cell-muted" role="status">Getting the photos ready&hellip;</span>}
             </div>
@@ -433,7 +427,7 @@ function BillDetail({ id, onClose, onChanged, onOpen, onCorrect }) {
             <div className="vm-block">
               <h4>Wrong file? Replace it</h4>
               <div className="vm-row">
-                <input key={replKey} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf" onChange={(e) => { const f0 = e.target.files && e.target.files[0]; if (!f0) { setRepl(null); return; } shrinkAll([f0]).then((s) => { setRepl(s.files[0] || null); if (s.problems.length) setError(s.problems.join(' ')); }); }} aria-label="New file" />
+                <PhotoPicker key={replKey} small onPick={(l, problems) => { setRepl(l[0] || null); if (problems.length) setError(problems.join(' ')); }} />{repl && <span className="cell-muted">{repl.name}</span>}
                 <button type="button" className="btn" disabled={busy || !repl} onClick={replace}>Replace the file</button>
                 <span className="cell-muted">The bill is read again. The old file stays in the history.</span>
               </div>

@@ -194,7 +194,7 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
       check('A', 'status: reversed bank payment = Reversed (not Paid), balance = the whole bill, no payment date, no reference', h.status === 'Reversed' && h.balance === 1000 && h.paymentDate === null && h.reference === null, h);
       for (const st of ['ignored', 'link_only', 'broken']) {
         const x = AP.fromExpense(bill({ bankTxnId: 'L' }), J(st, false, { proof: { line: line() } }), t);
-        check('A', `status: a bank line that is ${st === 'ignored' ? 'set aside' : (st === 'link_only' ? 'only linked, not matched' : 'broken')} is NOT a payment: Pending (never Paid)`, x.status === 'Pending' && x.verified === false && x.reference === null, x);
+        check('A', `status: a bank line that is ${st === 'ignored' ? 'set aside' : (st === 'link_only' ? 'only linked, not matched' : 'broken')} is NOT a payment: Pending (never Paid)`, (x.status === 'Pending' || (st === 'link_only' && x.status === 'Under Review' /* 2026-10-28 Stage E */)) && x.verified === false && x.reference === null, x);
       }
       const m = AP.fromModuleBill({ status: 'Paid', total: 500, paidAmount: 500, paidOn: '2026-10-02', dueDate: '2026-10-10' }, t);
       check('A', 'status: a sent bill Accounts typed "Paid" by hand (no bank statement) is "Paid by Accounts", never "Paid"; a sent bill not yet booked = Waiting for Accounts', m.status === 'Paid by Accounts' && m.verified === false && AP.fromModuleBill({ status: 'Submitted', total: 500, dueDate: '2026-10-01' }, t).status === 'Waiting for Accounts' && AP.fromModuleBill({ status: 'Submitted', total: 500, dueDate: '2026-10-01' }, t).overdue === false, [m.status]);

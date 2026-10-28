@@ -503,7 +503,11 @@ router.get('/invoices', vendorOnly, async (req, res) => {
 
 // ---- documents shared with this vendor ---------------------------------------
 // ---- what the company paid this vendor, from the bank statement (founder 2026-10-28; every kind of vendor) ----
-router.get('/bank-payments', vendorOnly, async (req, res) => res.json(await require('../utils/vendorBankPayments').view(req.vendor.vendorId, req.query || {}))); // eslint-disable-line global-require
+router.get('/bank-payments', vendorOnly, async (req, res) => {
+  const r = await require('../utils/vendorBankPayments').view(req.vendor.vendorId, req.query || {}); // eslint-disable-line global-require
+  // the bank line's own id never leaves the server: the screen gets a row number
+  res.json({ ...r, rows: r.rows.map(({ id, ...x }, i) => ({ key: i + 1, ...x })) });
+});
 
 router.get('/documents', vendorOnly, async (req, res) => {
   const docs = await prisma.vendorSharedDocument.findMany({ where: { vendorId: req.vendor.vendorId, revokedAt: null }, orderBy: { createdAt: 'desc' } });

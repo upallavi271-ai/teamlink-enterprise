@@ -11,7 +11,7 @@ import { UploadBillButton } from './AssetPortalBillUploads.jsx'; // Upload repai
 import useAutoRefresh from './useAutoRefresh.js';
 import { HistoryBody } from './AssetPortalHistory.jsx';
 import './vendorModules.css';
-import { shrinkAll } from './shrinkPhoto.js'; // phone photos made small before upload (2026-10-28)
+import PhotoPicker from './PhotoPicker.jsx'; // Take a photo / Choose photos / Choose PDF (2026-10-28) // phone photos made small before upload (2026-10-28)
 
 // /vendor/asset-portal/repairs - Repairs in the Assets Vendor Portal. These are the company's OWN repair records (the same ones Accounts reads):
 // the vendor never starts a new repair, it moves the company's one step at a time and gives its estimate, final cost, GST, invoice number
@@ -261,9 +261,9 @@ function RepairDetail({ id, onClose, onChanged }) {
               <h4 style={{ marginTop: 16 }}>Invoice file</h4>
               {afterArrival ? (
                 <div className="vm-row">
-                  <input key={fileKey} type="file" accept="image/*,.heic,.heif,.pdf,application/pdf" onChange={(e) => { const f0 = e.target.files && e.target.files[0]; if (!f0) { setFile(null); return; } shrinkAll([f0]).then((s) => { setFile(s.files[0] || null); if (s.problems.length) setError(s.problems.join(' ')); }); }} aria-label="Invoice file" />
+                  <PhotoPicker key={fileKey} small onPick={(l, problems) => { setFile(l[0] || null); if (problems.length) setError(problems.join(' ')); }} />{file && <span className="cell-muted">{file.name}</span>}
                   <button type="button" className="btn" disabled={busy || !file} onClick={upload}>{r.hasInvoice ? 'Replace the invoice' : 'Attach the invoice'}</button>
-                  <span className="cell-muted">PDF, JPG or PNG, up to 5 MB.</span>
+                  <span className="cell-muted">A photo of the invoice or a PDF.</span>
                 </div>
               ) : <p className="cell-muted">You can attach the invoice after the asset has reached you.</p>}
               <div className="vm-row" style={{ marginTop: 8 }}>
@@ -390,7 +390,7 @@ function ProofBox({ url, proofs, onDone, onError }) {
       <h4>Photos and proof of the work ({proofs.length})</h4>
       {proofs.length > 0 && <ProofList proofs={proofs} onError={onError} />}
       <div className="vm-row">
-        <input key={key} type="file" accept="image/*,.heic,.heif,.pdf,application/pdf" onChange={(e) => { const f0 = e.target.files && e.target.files[0]; if (!f0) { setFile(null); return; } shrinkAll([f0]).then((s) => { setFile(s.files[0] || null); if (s.problems.length) onError(s.problems.join(' ')); }); }} aria-label="Proof file" />
+        <PhotoPicker key={key} small onPick={(l, problems) => { setFile(l[0] || null); if (problems.length) onError(problems.join(' ')); }} />{file && <span className="cell-muted">{file.name}</span>}
         <input type="text" maxLength={300} value={note} onChange={(e) => setNote(e.target.value)} placeholder="What is this? (for example: after repair)" aria-label="About this file" />
         <button type="button" className="btn" disabled={busy || !file} onClick={upload}>Add the file</button>
       </div>

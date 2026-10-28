@@ -46,12 +46,12 @@ export default function VendorBankPayments({ title = 'Payments from the bank sta
           <table>
             <thead><tr><th>Paid on</th><th className="num">Amount</th><th>Payment reference</th><th>For</th><th>Status</th></tr></thead>
             <tbody>{rows.map((r) => (
-              <tr key={r.id}>
+              <tr key={r.key}>
                 <td><strong>{day(r.date)}</strong></td>
                 <td className="num"><strong>{rs(r.amount)}</strong></td>
                 <td>{r.reference || '-'}</td>
                 <td style={{ whiteSpace: 'normal' }}>{r.forBills.length ? r.forBills.join(', ') : <span className="cell-muted">Not linked to a bill</span>}</td>
-                <td>{r.status === 'Reversed' ? <span className="vp-tag vp-red">Reversed (money came back)</span> : <span className="vp-tag vp-green">Paid</span>}</td>
+                <td>{r.status === 'Reversed' ? <span className="vp-tag vp-red">Reversed (money came back)</span> : r.status === 'Under Review' ? <span className="vp-tag vp-yellow">Accounts is checking</span> : <span className="vp-tag vp-green">Paid</span>}</td>
               </tr>
             ))}</tbody>
           </table>

@@ -477,7 +477,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     check('E', 'a file over the size limit is refused', r.status === 400, r.status);
     const inv2 = pdf('invoice-2');
     r = await http('POST', `${AP}/asset-portal/repairs/${R1.id}/invoice`, LA.token, undefined, { form: upload(inv2, 'invoice2.pdf', 'application/pdf', { invoiceNo: `ZZINV-${RUN}-1B` }) });
-    check('E', 'a corrected invoice replaces the old one (and its number); the old file is removed from disk', r.status === 201 && r.body.repair.invoiceName === 'invoice2.pdf' && r.body.repair.invoiceNo === `ZZINV-${RUN}-1B` && fs.readdirSync(UPLOADS).length === 1, [r.status, fs.readdirSync(UPLOADS)]);
+    check('E', 'a corrected invoice replaces the old one (and its number); the old file is KEPT as the repair\'s "earlier invoice" (Stage C 2026-10-28: history is never lost)', r.status === 201 && r.body.repair.invoiceName === 'invoice2.pdf' && r.body.repair.invoiceNo === `ZZINV-${RUN}-1B` && fs.readdirSync(UPLOADS).length === 2 && (r.body.proofs || []).some((p) => p.kind === 'earlier invoice'), [r.status, fs.readdirSync(UPLOADS)]);
     r = await http('POST', `${AP}/download-link`, LA.token, { kind: 'repair-invoice', id: R1.id });
     check('E', 'the invoice downloads through the existing signed link', r.status === 200 && /\/api\/vendor-portal\/files\//.test(r.body.url), r.body);
     const dl = await http('GET', r.body.url, null);
@@ -585,7 +585,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R1.id}`, LBt, { remarks: 'ZZTEST intrusion' });
     check('H', 'vendor B changing vendor A\'s repair: 403, nothing written', r.status === 403 && (await raw(`SELECT COUNT(*) AS n FROM "AssetRepairEvent" WHERE "note" = 'ZZTEST intrusion' OR "toValue" = 'ZZTEST intrusion'`))[0].n === 0);
     r = await http('POST', `${AP}/asset-portal/repairs/${R1.id}/invoice`, LBt, undefined, { form: upload(pdf('intruder'), 'evil.pdf', 'application/pdf') });
-    check('H', 'vendor B uploading an invoice to vendor A\'s repair: 403 and no file stored', r.status === 403 && fs.readdirSync(UPLOADS).length === 1, [r.status, fs.readdirSync(UPLOADS).length]);
+    check('H', 'vendor B uploading an invoice to vendor A\'s repair: 403 and no file stored', r.status === 403 && fs.readdirSync(UPLOADS).length === 2 /* the invoice and its kept earlier file (Stage C) */, [r.status, fs.readdirSync(UPLOADS).length]);
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R3.id}`, LA.token, { remarks: 'ZZTEST x' });
     check('H', 'vendor A on vendor B\'s repair: 403', r.status === 403);
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R5.id}`, LA.token, { remarks: 'ZZTEST x' });
@@ -821,7 +821,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     made.expenses.push(linkOnlyBill.id);
     r = await vget('/asset-portal/invoices?pageSize=100', tokA2);
     const lo = r.body.rows.find((x) => x.invoiceNo === `ZZINV-${RUN}-L`);
-    check('J', 'J8 a bill that only POINTS at a bank line (link without a match) is not Paid', lo && lo.payment.status === 'Pending' && lo.payment.paidAmount === 0, lo && lo.payment);
+    check('J', 'J8 a bill that only POINTS at a bank line (link without a match) is not Paid', lo && ['Pending', 'Under Review'].includes(lo.payment.status) && lo.payment.paidAmount === 0 && !(lo.payment.payments || []).length /* Stage E 2026-10-28: 'Under Review' */, lo && lo.payment);
     check('J', 'J8 the status "Paid" appears only for the invoice whose bank line is matched and confirmed (exactly one of the five test invoices)', (await vget('/asset-portal/invoices?payment=Paid&pageSize=100', tokA2)).body.rows.filter((x) => String(x.invoiceNo).includes(RUN)).length === 1);
 
     // J9  another vendor sees nothing of this
@@ -851,7 +851,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     check('J', 'SWEEP no bank account number / bank name / bank line id / narration / reference / running balance / internal field appears in any vendor response of this group', leaks.length === 0, leaks);
     check('J', 'SWEEP the vendor responses name no bank-only field (txn, narration, accNo)', !/"narration"|"accNo"|"txnId"|"bankId"/.test(allText));
     const pureCases = [
-      ['reversed', 'Reversed'], ['part', 'Partially Paid'], ['confirmed', 'Paid'], ['ignored', 'Pending'], ['link_only', 'Pending'], ['broken', 'Pending'], ['no_link', 'Pending'],
+      ['reversed', 'Reversed'], ['part', 'Partially Paid'], ['confirmed', 'Paid'], ['ignored', 'Pending'], ['link_only', 'Under Review'] /* Stage E 2026-10-28: a linked line Accounts has not confirmed = Under Review, never Paid */, ['broken', 'Pending'], ['no_link', 'Pending'],
     ].every(([state, want]) => PAYV.paymentFromJudge({ monthlyAmount: 1000, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2099-01-01' }, { state, bankPaid: 600, balance: 400, proof: { line: { date: '2026-10-10' } }, paid: false }, '2026-10-19').status === want);
     check('J', 'PURE the payment translation: reversed -> Reversed, part -> Partially Paid, confirmed -> Paid, set-aside / link-only / broken / no link -> Pending (never Paid)', pureCases);
     check('J', 'PURE Overdue only when unpaid and the due date has passed (IST day); a paid bill is never Overdue', PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2026-10-18' }, { state: 'no_link', paid: false }, '2026-10-19').status === 'Overdue' && PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2026-10-19' }, { state: 'no_link', paid: false }, '2026-10-19').status === 'Pending' && PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PAID', dueDate: '2020-01-01' }, { state: 'confirmed', paid: true, proof: { line: { date: '2026-10-10' } } }, '2026-10-19').status === 'Paid');
@@ -879,7 +879,8 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
       'backend/src/utils/vendorMail.js': null, 'backend/src/utils/vendorInvite.js': null,
     };
     // (2026-10-19: routes/vendorLogins.js is no longer listed - the vendor SIGN-IN fix (scripts/vendor-signin-test.js) deliberately edited it, after this work.)
-    const untouched = ['backend/src/routes/assetAccounts.js', 'backend/src/utils/assetPosting.js', 'backend/src/routes/assetInventory.js'];
+    // (2026-10-28: routes/assetInventory.js is no longer listed - Stage C deliberately added the replacement routes and the vendor's work on the HRMS repairs list.)
+    const untouched = ['backend/src/routes/assetAccounts.js', 'backend/src/utils/assetPosting.js'];
     check('I', 'staff navigation (Admin / Accounts / HRMS / ATS) and the permission engine are byte-for-byte the files they were before this work', Object.entries(BASE_HASH).filter(([, hsh]) => hsh).every(([f, hsh]) => sha(f) === hsh), Object.entries(BASE_HASH).filter(([f, hsh]) => hsh && sha(f) !== hsh).map(([f]) => f));
     check('I', 'the Accounts repair routes / posting engine, the HRMS asset routes and the Admin vendor-login routes were not edited by this work (all older than the first portal file; the bank routes are owned by another task and are only read)',
       untouched.every((f) => fs.statSync(path.join(BACK, '..', f)).mtimeMs < fs.statSync(path.join(BACK, 'src/utils/assetVendorSchema.js')).mtimeMs), untouched.filter((f) => fs.statSync(path.join(BACK, '..', f)).mtimeMs >= fs.statSync(path.join(BACK, 'src/utils/assetVendorSchema.js')).mtimeMs));

@@ -20,6 +20,8 @@ const prisma = require('../db');
 
 const ROUND = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+// The payment reference is shown MASKED (last 4 characters), the same rule as the Airtel portal: enough to find it in the vendor's own bank.
+const maskRef = (r) => { const s = String(r || '').replace(/s+/g, ''); return s ? `••••${s.slice(-4)}` : null; };
 
 // The vendor's names, and whether each is unique among all vendors.
 async function namesOf(vendorId) {
@@ -73,18 +75,23 @@ async function forVendor(vendorId) {
     if (t.reconStatus === 'Ignored') continue; // set aside by Accounts: not a payment
     let links = [];
     try { links = JSON.parse(t.billLinks || '[]'); } catch { links = []; }
+    // A line is a CONFIRMED payment of a bill only when the line itself says it was filed against that bill (createdBillId / billLinks) -
+    // the same truth table as utils/expensePaymentState.js. A bill that only points at the line (bankTxnId) is "Under Review": not counted.
     const paidBills = new Set();
-    bills.forEach((b) => { if (b.bankTxnId === t.id) paidBills.add(b.id); });
+    const pointedBy = new Set();
+    bills.forEach((b) => { if (b.bankTxnId === t.id) pointedBy.add(b.id); });
     if (t.createdBillId && billById.has(t.createdBillId)) paidBills.add(t.createdBillId);
     (Array.isArray(links) ? links : []).forEach((l) => { if (l && billById.has(l.id)) paidBills.add(l.id); });
+    const byName = nm.has(norm(t.vendor)) || nm.has(norm(t.counterparty));
+    const underReview = !paidBills.size && !byName && pointedBy.size > 0;
     const isReversed = reversed.has(t.id) || t.reconStatus === 'Reversed';
     const row = {
-      id: t.id, date: t.date, amount: ROUND(t.amount), reference: t.reference || t.externalId || null,
-      status: isReversed ? 'Reversed' : 'Paid', forBills: [...paidBills].map((id) => billLabel(billById.get(id))),
+      id: t.id, date: t.date, amount: ROUND(t.amount), reference: maskRef(t.reference || t.externalId),
+      status: isReversed ? 'Reversed' : (underReview ? 'Under Review' : 'Paid'), forBills: [...(underReview ? pointedBy : paidBills)].map((id) => billLabel(billById.get(id))),
       source: 'Bank statement',
     };
     rows.push(row);
-    if (!isReversed) paidBills.forEach((id) => { if (!byBill.has(id)) byBill.set(id, []); byBill.get(id).push({ date: row.date, amount: row.amount, reference: row.reference }); });
+    if (!isReversed && !underReview) paidBills.forEach((id) => { if (!byBill.has(id)) byBill.set(id, []); byBill.get(id).push({ date: row.date, amount: row.amount, reference: row.reference }); });
   }
   rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const counted = rows.filter((r) => r.status === 'Paid');
