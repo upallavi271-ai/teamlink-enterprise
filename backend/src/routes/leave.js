@@ -512,10 +512,18 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   let stopsHere = false;
   let toHrNext = false;
   if (status === 'Approved' && existing.status === 'Pending' && pendingStep && pendingStep.level === 'HR') stopsHere = true;
+  // THE LEAD STEP (founder 2026-10-28: "TL approve chesthe approve ani ravali, Super Admin kosam wait cheyakudadu"): the TL rule is about the
+  // first LEAD level of the chain - TL, or STL when the TL rung is paused / empty - and it holds for whoever acts there as a lead (the
+  // TL named on the step, or another TL / STL who may act on it), not only the one login named on the step. A Super Admin is never
+  // "a TL" here: their decision is the direct one.
+  const LEAD_STEPS = ['TL', 'STL'];
+  const leadRoleOf = (u) => ['TL', 'STL'].includes(u.hrmsRole && u.hrmsRole !== 'NONE' ? u.hrmsRole : u.role);
+  const atLeadStep = !!pendingStep && LEAD_STEPS.includes(pendingStep.level) && !leadRule.isRealSuperAdmin(req.user)
+    && (pendingStep.approverUserId === req.user.id || policy.actingAsTl(req.user, pendingStep) || leadRoleOf(req.user));
   // OVER THE TL LIMIT (founder 2026-10-28, sendPastTl above): the TL neither approves nor rejects it. A request raised before
   // this rule that still waits on the TL is moved to HR now, and the TL is told so.
-  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && pendingStep && pendingStep.level === 'TL'
-    && policy.actingAsTl(req.user, pendingStep) && await overTlLimit(existing, existing.employee)) {
+  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && atLeadStep
+    && await overTlLimit(existing, existing.employee)) {
     const hr = await sendPastTl(existing.id);
     if (hr) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hr.approverUserId }).catch(() => {});
     const rule = await policy.getTlRule();
@@ -524,10 +532,10 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
       overTlLimit: true, sentTo: hr ? 'HR' : null,
     });
   }
-  if (status === 'Approved' && existing.status === 'Pending' && policy.actingAsTl(req.user, pendingStep)) {
+  if (status === 'Approved' && existing.status === 'Pending' && atLeadStep) {
     const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
-    if (verdict.allowed && verdict.rule && verdict.rule.enabled && pendingStep && pendingStep.level === 'TL') stopsHere = true;
-    if (!verdict.allowed && pendingStep && pendingStep.level === 'TL') toHrNext = true;
+    if (verdict.allowed && verdict.rule && verdict.rule.enabled) stopsHere = true;
+    if (!verdict.allowed) toHrNext = true;
     if (!comment && !String(approvalReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a TL approves a leave request.', tlReasonRequired: true });
     }

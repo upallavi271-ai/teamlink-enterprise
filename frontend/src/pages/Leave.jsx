@@ -561,11 +561,9 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                     {!wf && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 3 }}>No approval chain — decided in one step.</div>}
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>
-                    {/* Approve / Reject / Reassign open the request: the reason,
-                        the employee's comments, the TL rule and the reassign
-                        picker are all there. */}
-                    {mayDecide && <button className="btn btn-sm btn-primary" title={direct ? 'Direct Super Admin decision — skips the levels still waiting' : 'Approve, reject or reassign'} onClick={() => setChainFor(r.id)}>{direct ? 'Decide directly' : 'Decide'}</button>}
+                    {/* ONE button (founder 2026-10-28: "Chain and Decide directly are the same - keep one"): it opens the request with
+                        its chain, the reason, the employee's comments, the TL rule, Approve / Reject and the reassign picker. */}
+                    <button className={`btn btn-sm${mayDecide ? ' btn-primary' : ''}`} title={mayDecide ? (direct ? 'Approve or reject now - the levels still waiting are skipped' : 'Approve, reject or reassign') : 'See who approves this request'} onClick={() => setChainFor(r.id)}>{mayDecide ? 'Approve / Reject' : 'View'}</button>
                   </span>
                 </AssignRow>
               );

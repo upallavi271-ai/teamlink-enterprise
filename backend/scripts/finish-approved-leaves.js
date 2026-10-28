@@ -13,6 +13,7 @@
 //   node scripts/finish-approved-leaves.js                                        DRY RUN on prisma/dev.db
 //   node scripts/finish-approved-leaves.js --db <copy.db> --apply                 on a copy
 //   TL_ALLOW_REAL_APPLY=1 node scripts/finish-approved-leaves.js --apply --really-real
+// 2026-10-28: a TL's own leave is skipped - only the Super Admin grants it (utils/leadLeave.js). Live: .push-finish-approved-leaves-to-vps.ps1
 // SAFETY: dry run by default; VACUUM INTO backup first (undo = put it back); only Pending requests are touched; running it twice does nothing.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
@@ -37,15 +38,19 @@ process.chdir(BACK);
 const prisma = require('../src/db');
 const policy = require('../src/utils/leavePolicy');
 const leaveCharge = require('../src/utils/leaveCharge');
+const leadRule = require('../src/utils/leadLeave');
 
 const PRECOUNTED = 'Leave imported — days already counted in PulseHRM availed';
 
 (async () => {
   try {
     const rule = await policy.getTlRule();
-    const pending = await prisma.leaveRequest.findMany({ where: { status: 'Pending' }, include: { employee: { select: { name: true } } } });
+    const pending = await prisma.leaveRequest.findMany({ where: { status: 'Pending' }, include: { employee: true } });
     const todo = [];
+    let leadSkipped = 0;
     for (const lv of pending) {
+      // 2026-10-28: a TL's OWN leave is granted only by the Super Admin (utils/leadLeave.js) - never finished here
+      if (lv.employee && await leadRule.isLeadEmployee(lv.employee)) { leadSkipped += 1; continue; } // eslint-disable-line no-continue
       const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId: lv.id }, orderBy: { seq: 'asc' } });
       const hr = steps.find((s) => s.level === 'HR' && s.status === 'Approved');
       const tl = steps.find((s) => s.level === 'TL' && s.status === 'Approved');
@@ -56,6 +61,7 @@ const PRECOUNTED = 'Leave imported — days already counted in PulseHRM availed'
     }
     console.log(`Database: ${dbArg}${isReal ? '  (REAL)' : ''}`);
     console.log(`Pending leave requests: ${pending.length}. Already granted (TL within the limit, or HR) but still Pending: ${todo.length}`);
+    if (leadSkipped) console.log(`TL leaves left Pending for the Super Admin (not touched): ${leadSkipped}`);
     todo.forEach((t) => console.log(`  ${t.lv.employee ? t.lv.employee.name : t.lv.employeeId} | ${t.lv.type} ${t.lv.fromDate} to ${t.lv.toDate} (${t.lv.days ?? 1} d) | ${t.why}: ${t.by.actedByName || t.by.approverName || ''}`));
     if (!todo.length || !APPLY) { console.log(todo.length ? '\nDRY RUN: nothing was changed.' : '\nNothing to do.'); return; }
 

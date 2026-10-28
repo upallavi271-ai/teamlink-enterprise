@@ -66,6 +66,22 @@ const Z = require('./lib/zzfix')('LCS');
     const s4 = await stepsOf(c.id);
     Z.check('C6 then HR approves it: Approved, the Super Admin shown as Visibility', c2.status === 'Approved' && s4.SUPER_ADMIN === 'Visibility', [r4.status, c2.status, s4]);
 
+    // 3b. the TL rung paused: an STL decides at the first lead step - a 1-day leave the STL approves is Approved at once
+    const stl = await mk('stl', 'STL');
+    const lvS = await prisma.leaveRequest.create({ data: { employeeId: e.id, type: 'Casual', fromDate: '2026-12-07', toDate: '2026-12-07', days: 1, status: 'Pending', reason: 'ZZTEST LCS stl' } });
+    leaveIds.push(lvS.id);
+    await prisma.approvalStep.createMany({ data: [
+      { workflow: 'leave', recordId: lvS.id, level: 'EMPLOYEE', seq: 0, mode: 'applicant', approverUserId: emp.id, approverName: emp.name, status: 'Applied' },
+      { workflow: 'leave', recordId: lvS.id, level: 'TL', seq: 1, mode: 'required', status: 'Skipped' },
+      { workflow: 'leave', recordId: lvS.id, level: 'STL', seq: 2, mode: 'required', approverUserId: stl.id, approverName: stl.name, status: 'Pending', activatedAt: new Date() },
+      { workflow: 'leave', recordId: lvS.id, level: 'HR', seq: 5, mode: 'required', approverUserId: hr.id, approverName: hr.name, status: 'Waiting' },
+      { workflow: 'leave', recordId: lvS.id, level: 'SUPER_ADMIN', seq: 6, mode: 'required', approverUserId: sa.id, approverName: sa.name, status: 'Waiting' },
+    ] });
+    const rS = await Z.call('PATCH', `/api/leave/${lvS.id}/decision`, await Z.mint(stl), { status: 'Approved', comment: 'ZZTEST LCS stl ok' });
+    const lvS1 = await prisma.leaveRequest.findUnique({ where: { id: lvS.id } });
+    const sS = await stepsOf(lvS.id);
+    Z.check('C8 TL rung paused: the STL approves a 1-day leave - Approved at once, HR / Super Admin only Visibility', lvS1.status === 'Approved' && sS.HR === 'Visibility' && sS.SUPER_ADMIN === 'Visibility', [rS.status, rS.text.slice(0, 200), lvS1.status, sS]);
+
     // 4. a NEW 3-day request raised through the app skips the TL from the start (HR decides)
     const r5 = await Z.call('POST', '/api/leave', await Z.mint(emp), { type: 'Casual', fromDate: '2026-12-14', toDate: '2026-12-16', reason: 'ZZTEST LCS new' });
     if (r5.body && r5.body.id) leaveIds.push(r5.body.id);
