@@ -11,7 +11,9 @@ import { Panel, PanelHead, EmptyMini } from '../proto.jsx';
 import { errText, monthLabel } from './payrollUi';
 import './payrollEdit.css';
 
-const inr = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+// Paise are shown when there are any (pay-register months, 2026-10-28).
+const inr = (n) => { const v = Math.round((Number(n) || 0) * 100) / 100; return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
+const STEP = { DRAFT: 'Calculated', PENDING_APPROVAL: 'Pending approval', APPROVED: 'Approved', SYNCED_TO_ACCOUNTS: 'Posted to Accounts', PAID: 'Paid' };
 const when = (t) => (t ? new Date(t).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
 const KIND = { calculated: 'As calculated', edit: 'Edited', recalculated: 'Recalculated from attendance', adjustment: 'Adjustment added' };
 const FIELD_ROWS = [
@@ -41,6 +43,7 @@ export default function PayrollEditHistory({ entryId, onClose }) {
           {!h ? <div className="small-muted">Loading…</div> : (
             <>
               {h.lock && <div className="pe-lock">{h.lock.message}</div>}
+              {h.calculatedAt && <div className="small-muted" style={{ marginBottom: 8 }}>Last calculated {when(h.calculatedAt)}{h.calculatedBy ? ` by ${h.calculatedBy}` : ''}. Now: {STEP[h.status] || h.statusLabel}.</div>}
               {versions.length <= 1 && <div className="small-muted" style={{ marginBottom: 10 }}>Nobody has changed this record since it was calculated.</div>}
               <ul className="pe-tl">
                 {[...versions].reverse().map((v) => (
@@ -58,6 +61,20 @@ export default function PayrollEditHistory({ entryId, onClose }) {
                   </li>
                 ))}
               </ul>
+              {h.transitions && h.transitions.length > 0 && (
+                <>
+                  <h4 style={{ fontSize: 12, textTransform: 'uppercase', color: 'var(--ink-soft)', margin: '16px 0 6px' }}>Approvals and other steps</h4>
+                  <ul className="chg" style={{ paddingLeft: 16, fontSize: 12.5, lineHeight: 1.6 }} data-testid="history-steps">
+                    {[...h.transitions].reverse().map((t, i) => (
+                      <li key={i}>
+                        <b>{String(t.action || '').replace(/^Payroll /, '').replace(/^./, (c) => c.toUpperCase())}</b>
+                        {t.fromValue && t.toValue && STEP[t.fromValue] ? ` (${STEP[t.fromValue]} → ${STEP[t.toValue] || t.toValue})` : ''}
+                        {' — '}{t.actorName || 'System'}, {when(t.createdAt)}
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
               {picked && latest && (
                 <div className="pe-compare" data-testid="as-of">
                   <b>Version {picked.n} compared with now (version {latest.n})</b>

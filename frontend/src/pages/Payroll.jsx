@@ -14,7 +14,6 @@ import DataIoBar from '../components/dataio/DataIoBar.jsx';
 import InsightsPanel from '../components/charts/InsightsPanel.jsx';
 // SPEC B: per-employee payroll records (approval, Accounts sync, mark paid).
 import PayrollRunBoard from '../components/payroll/PayrollRunBoard.jsx';
-import PayrollEditor from '../components/payroll/PayrollEditor.jsx';
 import { STATUS_LABEL as RUN_STATUS } from '../components/payroll/payrollUi';
 import CompliancePanel from '../components/payroll/CompliancePanel.jsx';
 import { ReconciliationPanel } from './accounts/JournalLedger.jsx';
@@ -745,74 +744,23 @@ function StructureTab({ canRun, isAdmin }) {
 
 // ---- Tab 4: Process Payroll (preview, then confirm) -------------------------
 
-const PREVIEW_FIELDS = [
-  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${r.employeeCode || ''} ${r.name || ''}` },
-  { key: 'payMode', label: 'Pay type', allLabel: 'All pay types', get: (r) => r.payMode, primary: true },
-  { key: 'lop', label: 'Loss of pay', allLabel: 'Everyone', options: ['With LOP', 'With late cut'], match: (r, v) => (v === 'With LOP' ? Number(r.lopDays) > 0 : Number(r.lateCut) > 0), primary: true },
-];
-const PREVIEW_SORTS = [
-  { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
-  { key: 'net', label: 'Net (high to low)', cmp: (a, b) => (Number(b.netPay) || 0) - (Number(a.netPay) || 0) },
-  { key: 'lop', label: 'LOP days (most first)', cmp: (a, b) => (Number(b.lopDays) || 0) - (Number(a.lopDays) || 0) },
-];
 const runStatusOf = (r) => (r.perEmployee ? r.status : (r.status === 'Paid' ? 'Paid' : 'Processed'));
 const RUN_FIELDS = [
   { key: 'year', label: 'Year', get: (r) => String(r.month || '').slice(0, 4), primary: true },
   { key: 'status', label: 'Status', get: runStatusOf, primary: true },
 ];
 
+// ONE VIEW (founder 2026-10-28: "run payroll, payroll records ani kakunda clear ga okka tab"): pick the month,
+// press Calculate, and the month's salaries are in ONE table (PayrollRunBoard) with Edit / Details / History on
+// every row and the submit / approve / post / paid / export buttons above it.
 function ProcessTab({ canRun, canSeeRuns }) {
   const [month, setMonth] = useSuggestedMonth();
-  const [department, setDepartment] = useState('');
-  const [departments, setDepartments] = useState([]);
-  const [preview, setPreview] = useState(null);
   const [runs, setRuns] = useState([]);
-  const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [boardKey, setBoardKey] = useState(0);
-  // EDIT FROM THE PREVIEW (founder 2026-10-27: "calculate ayina payroll edit chesela pettu"): a row that already has a saved
-  // payroll record gets Edit (or Adjust once the month is approved / posted / paid) - the same editor as Payroll records below.
-  const [saved, setSaved] = useState({ byEmp: {}, access: {} });
-  const [editId, setEditId] = useState(null);
-  function loadSaved(m = month) {
-    api.get(`/payroll/entries?month=${m}`)
-      .then((r) => setSaved({ byEmp: Object.fromEntries((r.data.entries || []).map((x) => [x.employeeId, x])), access: r.data.access || {} }))
-      .catch(() => setSaved({ byEmp: {}, access: {} }));
-  }
 
-  function loadRuns() { if (canRun) api.get('/payroll/runs').then((res) => setRuns(res.data)); }
-  useEffect(() => {
-    if (!canRun) return;
-    loadRuns();
-    api.get('/admin/departments').then((res) => setDepartments(res.data.map((d) => d.name))).catch(() => setDepartments([]));
-  }, [canRun]);
-
-  async function calculate(e) {
-    e.preventDefault();
-    setError(''); setMessage('');
-    try {
-      const res = await api.get(`/payroll/preview?month=${month}${department ? `&department=${encodeURIComponent(department)}` : ''}`);
-      setPreview(res.data);
-      loadSaved(month);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not calculate the run');
-    }
-  }
-
-  async function confirm() {
-    setError('');
-    try {
-      const res = await api.post('/payroll/run', { month, department: department || undefined });
-      const locked = res.data.locked?.length ? ` ${res.data.locked.length} record(s) already submitted were left as they are.` : '';
-      setMessage(`Payroll for ${res.data.period}: ${res.data.created} new, ${res.data.updated} recalculated — net ${inr(res.data.totals?.net)}.${locked} Submit them for approval below.`);
-      setPreview(null);
-      loadRuns();
-      loadSaved(month);
-      setBoardKey((k) => k + 1);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Could not process the run');
-    }
-  }
+  function loadRuns() { if (canRun) api.get('/payroll/runs').then((res) => setRuns(res.data)).catch(() => setRuns([])); }
+  useEffect(() => { if (canRun) loadRuns(); }, [canRun]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function markPaid(id) {
     setError('');
@@ -820,123 +768,26 @@ function ProcessTab({ canRun, canSeeRuns }) {
     loadRuns();
   }
 
-  // The preview's rows and the run history, each with its own small filter
-  // bar (hooks first: the returns below depend on the role).
-  const previewLf = useListFilters(preview?.rows || [], PREVIEW_FIELDS, { sorts: PREVIEW_SORTS });
-  const previewPage = usePaged(previewLf.rows);
   const runsLf = useListFilters(runs, RUN_FIELDS);
   const runsPage = usePaged(runsLf.rows);
 
   if (!canRun && !canSeeRuns) return <div className="small-muted">Payroll processing isn't included in your role's permissions.</div>;
 
-  // Approvers / Accounts / view-only oversight: the month's records only.
-  if (!canRun) {
-    return (
-      <div>
-        <div className="filter-row" style={{ marginTop: 14 }}>
-          <PayrollMonthSelect value={month} onChange={setMonth} />
-        </div>
-        <PayrollRunBoard month={month} reloadKey={boardKey} />
-      </div>
-    );
-  }
-
   return (
     <div>
       <PanelPad style={{ marginTop: 16 }}>
-        <h3 style={{ fontSize: 14, marginBottom: 10 }}>Run payroll</h3>
-        <form onSubmit={calculate}>
-          <div className="grid-2">
-            <div className="field"><label>Payroll month</label><PayrollMonthSelect value={month} onChange={setMonth} /></div>
-            <div className="field">
-              <label>Department (optional)</label>
-              <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
-                <option value="">All departments</option>
-                {departments.map((d) => <option key={d}>{d}</option>)}
-              </Combo>
-            </div>
-          </div>
-          <button className="btn btn-primary btn-sm" type="submit">Calculate</button>
-        </form>
+        <div className="field" style={{ maxWidth: 320, marginBottom: 0 }}>
+          <label>Payroll month</label>
+          <PayrollMonthSelect value={month} onChange={(m) => { setMonth(m); setBoardKey((k) => k + 1); }} />
+        </div>
         {error && <div className="error-text">{error}</div>}
-        {message && <div className="small-muted" style={{ marginTop: 8 }}>{message}</div>}
-        {/* What to settle BEFORE locking: leaves still waiting, days absent with no leave, LOP summary. */}
-        <PayrollPrecheck month={month} />
-
-        {preview && (
-          <div style={{ marginTop: 16 }}>
-            <SectionLabel>Preview — {preview.cycle ? preview.cycle.heading : preview.period} · {preview.cycle ? preview.cycle.days : preview.workingDays} day(s) in the pay period</SectionLabel>
-            {preview.alreadyProcessed && <div className="error-text">Payroll for {preview.period} was already processed as a month run (before per-employee records); it cannot be run again.</div>}
-            <StatRow cells={[
-              { value: preview.totals.employees, label: 'Employees' },
-              { value: inr(preview.totals.gross), label: 'Total Gross' },
-              { value: inr(preview.totals.net), label: 'Total Net' },
-            ]} />
-            {preview.rows.length > 0 && <div style={{ marginTop: 10 }}><ListFilterBar lf={previewLf} storageKey="payroll-preview" noun="employees" /></div>}
-            <div className="tbl-wrap" style={{ marginTop: 10 }}>
-              <table>
-                <thead><tr><th>Code</th><th>Name</th><th>Pay Type</th><th>Gross</th><th>PF + PT</th><th>LOP Days</th><th>LOP</th><th>Late Days</th><th>Late Cut</th><th>Net</th>{saved.access.edit && <th />}</tr></thead>
-                <tbody>
-                  {previewPage.slice.map((r) => (
-                    <tr key={r.employeeId}>
-                      <td><b>{r.employeeCode}</b></td><td>{r.name}</td>
-                      <td className="cell-muted">{r.payMode}</td>
-                      <td className="cell-muted">{inr(r.gross)}</td>
-                      <td className="cell-muted">{inr(r.deductions)}</td>
-                      <td className="cell-muted">{r.lopDays}</td>
-                      <td className="cell-muted">{inr(r.lopDeduction)}</td>
-                      <td className="cell-muted">{r.lateDays}</td>
-                      <td className="cell-muted">{inr(r.lateCut)}</td>
-                      <td>
-                        <b>{inr(r.netPay)}</b>
-                        {saved.byEmp[r.employeeId] && saved.byEmp[r.employeeId].edit && saved.byEmp[r.employeeId].edit.edited && (
-                          <div className="small-muted" title="Saved record, changed by hand">Saved (edited): {inr(saved.byEmp[r.employeeId].netPay)}</div>
-                        )}
-                      </td>
-                      {saved.access.edit && (
-                        <td>
-                          {saved.byEmp[r.employeeId]
-                            ? <button className={`btn btn-sm${saved.byEmp[r.employeeId].lock ? '' : ' btn-primary'}`} title={saved.byEmp[r.employeeId].lock ? saved.byEmp[r.employeeId].lock.message : 'Change this person\'s pay'} onClick={() => setEditId(saved.byEmp[r.employeeId].id)}>{saved.byEmp[r.employeeId].lock ? 'Adjust' : 'Edit'}</button>
-                            : <span className="cell-muted" title="Press Confirm first - then it can be edited">—</span>}
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                  {preview.rows.length === 0 && <tr><td colSpan={saved.access.edit ? 11 : 10} className="small-muted" style={{ padding: 16 }}>Nobody in this run has a salary structure yet — set a CTC on the Salary Structure tab first.</td></tr>}
-                  {preview.rows.length > 0 && previewLf.rows.length === 0 && <tr><td colSpan={saved.access.edit ? 11 : 10}><ListEmpty lf={previewLf} noun="employees" /></td></tr>}
-                </tbody>
-              </table>
-            </div>
-            {previewPage.total > 0 && <Pager page={previewPage} noun="employees" />}
-            {preview.skipped?.length > 0 && (
-              <div className="notice amber" style={{ marginTop: 10 }}>
-                <span>
-                  <b>{preview.skipped.length} employee(s) will be skipped</b> — no salary structure set:{' '}
-                  {preview.skipped.slice(0, 12).map((s) => `${s.name}${s.employeeCode ? ` (${s.employeeCode})` : ''}`).join(', ')}
-                  {preview.skipped.length > 12 ? ` and ${preview.skipped.length - 12} more` : ''}.
-                </span>
-              </div>
-            )}
-            {preview.locked?.length > 0 && (
-              <div className="small-muted" style={{ marginTop: 8 }}>{preview.locked.length} record(s) are already submitted and will not be recalculated.</div>
-            )}
-            {!preview.alreadyProcessed && preview.rows.length > 0 && (
-              <button className="btn btn-primary btn-sm" style={{ marginTop: 10 }} onClick={confirm}>{preview.hasEntries ? 'Confirm & recalculate payroll' : 'Confirm & calculate payroll'}</button>
-            )}
-          </div>
-        )}
+        {/* What to settle before calculating: leaves still waiting, days absent with no leave, LOP summary. */}
+        {canRun && <PayrollPrecheck month={month} />}
       </PanelPad>
 
-      {editId && (
-        <PayrollEditor
-          entryId={editId} canAdjust={!!saved.access.edit}
-          onClose={() => setEditId(null)}
-          onSaved={(msg, keepOpen) => { setMessage(msg); if (!keepOpen) setEditId(null); loadSaved(month); setBoardKey((k) => k + 1); }}
-        />
-      )}
-      {/* SPEC B — the month's per-employee records: approval, Accounts sync, mark paid. */}
       <PayrollRunBoard month={month} reloadKey={boardKey} onChanged={loadRuns} />
 
+      {canRun && (
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title="Payroll history" />
         {runs.length > 0 && <div style={{ padding: '12px 18px 0' }}><ListFilterBar lf={runsLf} storageKey="payroll-history" noun="runs" /></div>}
@@ -974,6 +825,7 @@ function ProcessTab({ canRun, canSeeRuns }) {
         )}
         {runsPage.total > 0 && <Pager page={runsPage} noun="runs" />}
       </Panel>
+      )}
     </div>
   );
 }

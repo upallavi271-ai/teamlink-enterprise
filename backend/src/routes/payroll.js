@@ -292,6 +292,13 @@ router.put('/structure/:employeeId', requirePerm(null, 'hrms', 'Payroll & Compen
   const version = sameMonth
     ? await prisma.salaryStructureVersion.update({ where: { id: sameMonth.id }, data })
     : await prisma.salaryStructureVersion.create({ data: { employeeId: inScope.id, effectiveFrom, createdBy: req.user.name, ...data } });
+  // Pay register (2026-10-28, utils/payrollRegister.js): a new revision keeps the PF rule (24% / 12% of earned basic, Fixed)
+  // of the version it replaces, so the month's PF stays the register's.
+  if (!sameMonth && base && base.id && payMode === 'Package') {
+    const REG = require('../utils/payrollRegister');
+    const rule = await REG.pfRuleOf(base.id);
+    if (rule) await REG.setPfRule(version.id, rule);
+  }
   const structure = await SV.relink(inScope.id);
   await logAudit({
     userId: req.user.id, action: sameMonth ? 'Salary structure version updated' : 'Salary structure version created',
