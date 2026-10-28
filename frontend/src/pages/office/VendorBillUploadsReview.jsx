@@ -128,11 +128,12 @@ function Viewer({ id, files }) {
   const f = files[page] || files[0];
   const url = f ? urls[f.id] : null;
   const isPdf = f && f.mime === 'application/pdf';
+  const isSheet = f && /spreadsheetml|ms-excel|text\/csv/.test(f.mime || ''); // an Excel / CSV bill (2026-10-28): downloaded, the AI read its cells
   return (
     <div className="bur-viewer">
       <div className="bur-viewer-bar">
         {files.length > 1 && files.map((x, i) => <button type="button" key={x.id} className={`btn btn-sm${i === page ? ' btn-primary' : ''}`} onClick={() => setPage(i)}>Page {i + 1}</button>)}
-        {!isPdf && (
+        {!isPdf && !isSheet && (
           <>
             <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.max(40, z - 20))} aria-label="Zoom out">&minus;</button>
             <span className="cell-muted">{zoom}%</span>
@@ -145,7 +146,7 @@ function Viewer({ id, files }) {
       <div className="bur-viewer-body">
         {err && <div className="notice red"><span>{err}</span></div>}
         {!url && !err && <div className="empty-mini">Loading the bill&hellip;</div>}
-        {url && (isPdf ? <iframe title={`Bill ${f.name}`} src={url} /> : <img src={url} alt={`Bill page ${page + 1}`} style={{ width: `${zoom}%` }} />)}
+        {url && (isSheet ? <div className="empty-mini">This bill is an Excel / CSV file. <a href={url} download={f.name}>Download {f.name}</a> to see it. The details on the right were read from its cells.</div> : isPdf ? <iframe title={`Bill ${f.name}`} src={url} /> : <img src={url} alt={`Bill page ${page + 1}`} style={{ width: `${zoom}%` }} />)}
       </div>
     </div>
   );

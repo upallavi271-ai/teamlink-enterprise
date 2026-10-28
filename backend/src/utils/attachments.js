@@ -49,8 +49,16 @@ const WORD_TYPES = {
   'application/msword': 'doc',
 };
 
+// Spreadsheets: NOT in ALLOWED either. Only a caller that asks (store(..., { allowSheet: true }) - the vendor bill import, founder 2026-10-28:
+// "pdf, excel, photos adhi upload chesina tisukovali") can store one.
+const SHEET_TYPES = {
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-excel': 'xls',
+  'text/csv': 'csv',
+};
+
 // A stored name this module produced, and nothing else.
-const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf|docx|doc)$/;
+const STORED_NAME = /^[a-f0-9]{32}\.(png|jpg|webp|pdf|docx|doc|xlsx|xls|csv)$/;
 
 function uploadDir() {
   const dir = process.env.UPLOAD_DIR
@@ -76,6 +84,12 @@ function sniffAgrees(mime, buf) {
       return buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04; // zip
     case 'application/msword':
       return buf.length >= 8 && buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    case 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
+      return buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04; // zip
+    case 'application/vnd.ms-excel':
+      return buf.length >= 8 && buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+    case 'text/csv':
+      return !buf.slice(0, 4096).includes(0); // plain text: no NUL byte
     default:
       return false;
   }
@@ -181,14 +195,14 @@ async function parseMultipart(req, { maxBytes = MAX_BYTES } = {}) {
 // Throws an Error whose `.code` names the reason, so the route can phrase it.
 // `maxBytes` lets a caller with a larger stated limit (the bank panel's bill,
 // 8 MB) raise the cap for its own upload; everything else keeps MAX_BYTES.
-function store(file, { maxBytes = MAX_BYTES, allowWord = false } = {}) {
+function store(file, { maxBytes = MAX_BYTES, allowWord = false, allowSheet = false } = {}) {
   if (!file || !file.data || !file.data.length) {
     throw Object.assign(new Error('NO_FILE'), { code: 'NO_FILE' });
   }
   if (file.data.length > maxBytes) {
     throw Object.assign(new Error('TOO_LARGE'), { code: 'TOO_LARGE' });
   }
-  const ext = ALLOWED[file.contentType] || (allowWord ? WORD_TYPES[file.contentType] : undefined);
+  const ext = ALLOWED[file.contentType] || (allowWord ? WORD_TYPES[file.contentType] : undefined) || (allowSheet ? SHEET_TYPES[file.contentType] : undefined);
   if (!ext) throw Object.assign(new Error('BAD_TYPE'), { code: 'BAD_TYPE' });
   if (!sniffAgrees(file.contentType, file.data)) {
     throw Object.assign(new Error('CONTENT_MISMATCH'), { code: 'CONTENT_MISMATCH' });
@@ -230,6 +244,6 @@ const MESSAGE = {
 };
 
 module.exports = {
-  MAX_BYTES, ALLOWED, WORD_TYPES, MESSAGE,
+  MAX_BYTES, ALLOWED, WORD_TYPES, SHEET_TYPES, MESSAGE,
   uploadDir, parseMultipart, store, resolveStored, remove, safeDisplayName,
 };

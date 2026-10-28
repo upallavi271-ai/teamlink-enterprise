@@ -41,6 +41,11 @@ async function prepare(files) {
     blocks.push({ type: 'text', text: `File ${n} of ${files.length}:` });
     if (f.mime === 'application/pdf') {
       blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: Buffer.from(f.data).toString('base64') } });
+    } else if (require('../../billUploadFiles').SHEET_MIMES.includes(f.mime)) { // eslint-disable-line global-require
+      // an Excel / CSV bill (2026-10-28): its cells as text - read exactly like a typed bill
+      let text = '';
+      try { text = require('../../billUploadFiles').sheetText(Buffer.from(f.data), f.mime); } catch { throw new OcrError('The Excel / CSV file could not be opened.', 'unreadable', false); } // eslint-disable-line global-require
+      blocks.push({ type: 'text', text: `This file is a spreadsheet (Excel / CSV). Its cells, as CSV text:\n${text}` });
     } else {
       let jpg;
       try {

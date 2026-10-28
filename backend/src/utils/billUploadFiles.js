@@ -14,6 +14,11 @@ const MAX_PAGES = 5;
 const MAX_PIXELS = 60e6;
 const MIN_SIDE = 100;
 const TYPES = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+// EXCEL / CSV (founder 2026-10-28): decided by the bytes AND the file name (browsers send many different types for a CSV, so the declared
+// type is not required to agree for these). The file must open as a spreadsheet; its text is what the AI reads (billOcr/providers).
+const SHEETS = { xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', xls: 'application/vnd.ms-excel', csv: 'text/csv' };
+const SHEET_MIMES = Object.values(SHEETS);
+const MAX_SHEET_ROWS = 5000;
 const EXT_OK = { 'image/jpeg': /\.(jpe?g)$/i, 'image/png': /\.png$/i, 'image/webp': /\.webp$/i, 'application/pdf': /\.pdf$/i };
 
 const MESSAGE = {
@@ -21,7 +26,9 @@ const MESSAGE = {
   NO_FILE: 'Choose a photo or a PDF of the bill.',
   TOO_MANY: `A bill can have up to ${MAX_FILES} files.`,
   TOO_LARGE: 'That file is too big. Please upload a smaller photo or PDF (up to 10 MB each).',
-  BAD_TYPE: 'Only a JPG, PNG, WebP or PDF file can be uploaded.',
+  BAD_TYPE: 'Only a photo (JPG, PNG, WebP), a PDF or an Excel / CSV file can be uploaded.',
+  BAD_SHEET: 'That Excel / CSV file could not be opened. Please save it again, or send a photo or PDF of the bill.',
+  BIG_SHEET: `That Excel file has too many rows (more than ${MAX_SHEET_ROWS}). Send only the bill.`,
   CONTENT_MISMATCH: "That file doesn't look like a real photo or PDF. Please choose the original file.",
   BAD_IMAGE: 'That picture could not be opened. Please take the photo again.',
   IMAGE_TOO_BIG: 'That picture is much too large (more than 60 megapixels). Please take a normal photo.',
@@ -115,9 +122,41 @@ async function pdfPages(buf) {
 }
 
 // -> { mime, ext, pages, width, height, size, sha256 }  or throws an error whose .code is a MESSAGE key
+// An Excel / CSV file -> { mime, rows } or throws BAD_SHEET / BIG_SHEET. No macros: .xlsm is not accepted (the name must be .xlsx / .xls / .csv).
+function sheetOf(file) {
+  const m = /\.(xlsx|xls|csv)$/i.exec(String(file.filename || ''));
+  if (!m) return null;
+  const kind = m[1].toLowerCase();
+  const buf = file.data;
+  const zip = buf[0] === 0x50 && buf[1] === 0x4b && buf[2] === 0x03 && buf[3] === 0x04;
+  const ole = buf.length >= 8 && buf.slice(0, 8).equals(Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]));
+  if ((kind === 'xlsx' && !zip) || (kind === 'xls' && !ole && !zip) || (kind === 'csv' && buf.slice(0, 4096).includes(0))) throw fail('CONTENT_MISMATCH');
+  let wb;
+  try {
+    const XLSX = require('xlsx'); // eslint-disable-line global-require
+    wb = kind === 'csv' ? XLSX.read(buf.toString('utf8').replace(/^\uFEFF/, ''), { type: 'string', raw: true }) : XLSX.read(buf, { type: 'buffer', bookVBA: false });
+    if (kind === 'xlsx' && wb.vbaraw) throw fail('BAD_SHEET');
+    let rows = 0;
+    wb.SheetNames.forEach((n) => { rows += XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, blankrows: false }).length; });
+    if (!rows) throw fail('BAD_SHEET');
+    if (rows > MAX_SHEET_ROWS) throw fail('BIG_SHEET');
+    return { mime: SHEETS[kind === 'xls' && zip ? 'xlsx' : kind], rows };
+  } catch (err) { if (err && err.code) throw err; throw fail('BAD_SHEET'); }
+}
+// The text of a stored Excel / CSV (for the AI reader and the review screen): every sheet as CSV, at most maxChars.
+function sheetText(buf, mime, maxChars = 20000) {
+  const XLSX = require('xlsx'); // eslint-disable-line global-require
+  const wb = mime === 'text/csv' ? XLSX.read(buf.toString('utf8').replace(/^\uFEFF/, ''), { type: 'string', raw: true }) : XLSX.read(buf, { type: 'buffer' });
+  let out = '';
+  for (const n of wb.SheetNames) { out += `Sheet "${n}":\n${XLSX.utils.sheet_to_csv(wb.Sheets[n], { blankrows: false })}\n`; if (out.length > maxChars) break; }
+  return out.slice(0, maxChars);
+}
+
 async function inspect(file, { maxBytes }) {
   if (!file || !file.data || !file.data.length) throw fail('NO_FILE');
   if (file.data.length > maxBytes) throw fail('TOO_LARGE');
+  const sheet = sheetOf(file);
+  if (sheet) return { mime: sheet.mime, ext: Object.keys(SHEETS).find((k) => SHEETS[k] === sheet.mime), pages: 1, width: null, height: null, size: file.data.length, sha256: crypto.createHash('sha256').update(file.data).digest('hex'), rows: sheet.rows };
   const mime = sniff(file.data);
   const dm = declaredMime(file.contentType);
   const extType = Object.keys(EXT_OK).find((k) => EXT_OK[k].test(String(file.filename || '')));
@@ -145,4 +184,4 @@ async function inspect(file, { maxBytes }) {
   return out;
 }
 
-module.exports = { MAX_FILES, MAX_PAGES, MAX_PIXELS, MESSAGE, messageOf, fail, parseMultipartMany, inspect, sniff, TYPES };
+module.exports = { MAX_FILES, MAX_PAGES, MAX_PIXELS, MESSAGE, messageOf, fail, parseMultipartMany, inspect, sniff, TYPES, SHEETS, SHEET_MIMES, sheetText };

@@ -137,15 +137,15 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
           </div>
           <div className="bu-drop" style={{ marginTop: 12 }}>
             <div className="vm-row">
-              <PhotoPicker multiple onPick={(l) => add(l)} />
-              <span className="cell-muted">Handwritten or printed. Any phone photo or a PDF. Up to {opts.limits.maxFiles} files (pages). Photos are made smaller before sending. One bill with many pages = add every page.</span>
+              <PhotoPicker multiple sheets onPick={(l) => add(l)} />
+              <span className="cell-muted">Handwritten or printed. Any phone photo, a PDF or an Excel / CSV file. Up to {opts.limits.maxFiles} files (pages). Photos are made smaller before sending. One bill with many pages = add every page.</span>
               {preparing && <span className="cell-muted" role="status">Getting the photos ready&hellip;</span>}
             </div>
             {files.length > 0 && (
               <div className="bu-thumbs">
                 {files.map((f, i) => (
                   <div className="bu-thumb" key={`${f.name}-${f.size}-${f.lastModified}`}>
-                    {previewOf(f) ? <img src={previewOf(f)} alt={`Page ${i + 1}`} /> : <div className="bu-pdf">PDF</div>}
+                    {previewOf(f) ? <img src={previewOf(f)} alt={`Page ${i + 1}`} /> : <div className="bu-pdf">{/\.(xlsx|xls|csv)$/i.test(f.name) ? 'EXCEL' : 'PDF'}</div>}
                     <div className="bu-name">{i + 1}. {f.name}</div>
                     <button type="button" aria-label={`Remove ${f.name}`} onClick={() => removeAt(i)}>&times;</button>
                   </div>
@@ -427,7 +427,7 @@ function BillDetail({ id, onClose, onChanged, onOpen, onCorrect }) {
             <div className="vm-block">
               <h4>Wrong file? Replace it</h4>
               <div className="vm-row">
-                <PhotoPicker key={replKey} small onPick={(l, problems) => { setRepl(l[0] || null); if (problems.length) setError(problems.join(' ')); }} />{repl && <span className="cell-muted">{repl.name}</span>}
+                <PhotoPicker key={replKey} small sheets onPick={(l, problems) => { setRepl(l[0] || null); if (problems.length) setError(problems.join(' ')); }} />{repl && <span className="cell-muted">{repl.name}</span>}
                 <button type="button" className="btn" disabled={busy || !repl} onClick={replace}>Replace the file</button>
                 <span className="cell-muted">The bill is read again. The old file stays in the history.</span>
               </div>

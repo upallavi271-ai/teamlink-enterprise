@@ -315,7 +315,7 @@ async function storeFiles(rawFiles) {
   const stored = [];
   try {
     rawFiles.forEach((f, i) => {
-      const st = attachments.store({ filename: f.filename, contentType: infos[i].mime, data: f.data }, { maxBytes });
+      const st = attachments.store({ filename: f.filename, contentType: infos[i].mime, data: f.data }, { maxBytes, allowSheet: true }); // Excel / CSV too (2026-10-28)
       stored.push({ id: newId('bf'), file: st.billFile, name: st.billName, mime: infos[i].mime, size: infos[i].size, sha256: infos[i].sha256, pages: infos[i].pages });
     });
   } catch (err) { deleteStored(stored); throw err; }
