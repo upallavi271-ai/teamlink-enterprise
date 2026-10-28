@@ -57,7 +57,7 @@ class Speaker {
     if (f && !this.sock.destroyed) { this.sock.write(A.encode(A.KIND.AUDIO, f)); this.sent += 1; }
     if (!this.queue.length) { clearInterval(this.timer); this.timer = null; const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
   }
-  stop() { this.queue = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.onIdle = null; }
+  stop() { this.queue = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
   whenIdle() { return this.busy || this.timer ? new Promise((r) => { this.onIdle = r; }) : Promise.resolve(); }
 }
 
@@ -75,7 +75,9 @@ async function finish(row, d, why) {
 function handle(sock, engines, opts = {}) {
   const reader = new A.Reader();
   const speaker = new Speaker(sock);
-  let row = null; let d = null; let ended = false; let busy = false; let pending = null; let gen = 0;
+  let row = null; let d = null; let ended = false; let saved = false; let busy = false; let pending = null; let gen = 0;
+  // the result is saved exactly once: at the assistant's own goodbye, or when the line drops (even during that goodbye)
+  const save = (why) => { if (saved || !row || !d) return null; saved = true; return finish(row, d, why).catch((e) => log('finish failed:', e.message)); };
   const hangup = () => { if (!sock.destroyed) { sock.write(A.encode(A.KIND.HANGUP)); sock.end(); } };
 
   async function say(text) {
@@ -110,7 +112,7 @@ function handle(sock, engines, opts = {}) {
       if (out.done) {
         ended = true;
         await speaker.whenIdle();
-        await finish(row, d);
+        await save();
         hangup();
       }
     } finally {
@@ -147,7 +149,7 @@ function handle(sock, engines, opts = {}) {
   });
   sock.on('close', () => {
     speaker.stop();
-    if (row && d && !ended) { ended = true; finish(row, d, 'the person hung up').catch((e) => log('finish failed:', e.message)); }
+    if (!ended) { ended = true; save('the person hung up'); } else save(); // cut during the goodbye: the assistant had finished, keep its result
     if (opts.onClose) opts.onClose();
   });
   sock.on('error', () => {});

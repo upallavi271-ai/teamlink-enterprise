@@ -109,6 +109,15 @@ function detectLanguage(textIn) {
   return null;
 }
 
+// "Hello?" / "చెప్పండి" / "बोलिए" on picking up the phone: not an answer and not a failed try - the question is asked again
+const GREETING = ['hello', 'helo', 'hallo', 'hi', 'hey', 'cheppandi', 'boliye', 'bolo', 'హలో', 'హాయ్', 'చెప్పండి', 'हैलो', 'हेलो', 'हलो', 'बोलिए', 'बोलो'];
+const HELLO_BACK = { English: 'Hello.', Telugu: 'హలో అండి.', Hindi: 'जी, नमस्ते।' };
+const GREET_EXTRA =['ji', 'जी', 'అండి', 'sir', 'madam', 'haan', 'हाँ', 'హా'];
+function isGreeting(t) {
+  const w = t.split(' ').filter(Boolean);
+  return w.length > 0 && w.length <= 3 && w.some((x) => GREETING.includes(x)) && w.every((x) => GREETING.includes(x) || GREET_EXTRA.includes(x));
+}
+
 // Fixed answer from a fixed list. Returns { intent, human }.
 function classify(text) {
   const t = norm(text);
@@ -340,6 +349,7 @@ class Dialogue {
     }
     if (k.intent === 'stop') { st.stop = true; return this.finish(this.speak(this.P.closeStop), 'stop'); }
     const t = norm(text);
+    if (isGreeting(t) && (st.greets || 0) < 3) { st.greets = (st.greets || 0) + 1; return { say: st.step === 'identity' ? this.speak(this.B.identity) : this.again(HELLO_BACK[this.language] || HELLO_BACK.English), done: false }; } // the name question already says hello
     // 2. money / fraud worry: the fixed reassurance, then the same question again (allowed before the name is confirmed: it shares nothing)
     if (has(t, L.scam) && !has(t, L.salary)) return { say: this.again(this.P.noMoney), done: false };
     // 3. upset: apologise, keep it short, offer a recruiter; a second time ends the call politely. Never argue.
