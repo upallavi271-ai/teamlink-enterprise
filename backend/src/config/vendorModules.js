@@ -200,7 +200,8 @@ const PORTAL_HOME = '/vendor/dashboard';
 //   signed in: me, logout, change-password, records/* (the four modules), download-link, module-bills (the existing invoice upload + its file)
 const PORTAL_PUBLIC_PREFIXES = ['/status', '/login', '/preview', '/invite', '/forgot-password', '/email', '/files'];
 // '/vendor-io' (2026-10-19): Export + Import for every kind of vendor; the route itself decides what the vendor's KIND may use.
-const PORTAL_SESSION_PREFIXES = ['/me', '/logout', '/change-password', '/records', '/download-link', '/module-bills', '/vendor-io'];
+// /bank-payments (2026-10-28): every kind of vendor sees what the company paid it, from the bank statement (utils/vendorBankPayments.js).
+const PORTAL_SESSION_PREFIXES = ['/me', '/logout', '/change-password', '/records', '/download-link', '/module-bills', '/vendor-io', '/bank-payments'];
 function portalPathAllowed(p) {
   const path = String(p || '').split('?')[0].replace(/\/+$/, '') || '/';
   return [...PORTAL_PUBLIC_PREFIXES, ...PORTAL_SESSION_PREFIXES].some((x) => path === x || path.startsWith(`${x}/`));

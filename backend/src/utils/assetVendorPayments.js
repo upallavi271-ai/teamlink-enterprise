@@ -27,8 +27,9 @@ const dayOf = (v) => { if (!v) return null; const d = new Date(v); return Number
 
 const STATUS = {
   PENDING: 'Pending', WAITING: 'Waiting for Accounts', PAID: 'Paid', PART: 'Partially Paid', OVERDUE: 'Overdue', REVERSED: 'Reversed', REJECTED: 'Rejected', NOT_SENT: 'Not sent to Accounts',
+  UNDER_REVIEW: 'Under Review', // Stage E (2026-10-28): a possible bank payment Accounts still has to check - never counted as paid
 };
-const TONE = { Pending: 'yellow', 'Waiting for Accounts': 'yellow', Paid: 'green', 'Partially Paid': 'blue', Overdue: 'red', Reversed: 'red', Rejected: 'red', 'Not sent to Accounts': 'grey' };
+const TONE = { Pending: 'yellow', 'Waiting for Accounts': 'yellow', Paid: 'green', 'Partially Paid': 'blue', Overdue: 'red', Reversed: 'red', Rejected: 'red', 'Not sent to Accounts': 'grey', 'Under Review': 'yellow' };
 
 const out = (status, o = {}) => ({
   status, tone: TONE[status], paidAmount: 0, balance: 0, lastPaymentDate: null, basis: null, overdue: false, dueDate: null, paymentMode: null, note: null, ...o,
@@ -58,11 +59,13 @@ function paymentFromJudge(expense, judged, today = ACC.istDay()) {
   }
   if (judged.state === 'no_link' && judged.paid) {
     // Paid in Accounts without a bank statement line (cash, or not yet imported): Accounts' own status, not a bank-verified one.
-    return out(STATUS.PAID, { paidAmount: net, balance: 0, lastPaymentDate: dayOf(expense.paymentDate || expense.paidAt), basis: 'accounts', dueDate: due, paymentMode: mode, note: 'Marked as paid by Accounts.' });
+    return out(STATUS.PAID, { paidAmount: net, balance: 0, lastPaymentDate: dayOf(expense.paymentDate || expense.paidAt), basis: 'accounts', dueDate: due, paymentMode: mode, note: 'Marked as paid by Accounts. Not matched to the bank statement yet.' });
   }
   // Pending: not paid, or the bank line is not trusted (set aside, broken, linked but not matched) - never shown as Paid.
   const check = judged.inconsistent || ['ignored', 'broken', 'link_only'].includes(judged.state);
   const late = isOverdue(due, today);
+  // A bank line is linked but not yet trusted as this bill's payment: Accounts is checking it (Stage E "Under Review").
+  if (check && judged.state === 'link_only') return out(STATUS.UNDER_REVIEW, { balance: net, overdue: late, dueDate: due, paymentMode: mode, note: 'A possible bank payment is waiting for Accounts to check it. It is not counted as paid yet.' });
   return out(late ? STATUS.OVERDUE : STATUS.PENDING, {
     balance: net, overdue: late, dueDate: due, paymentMode: mode,
     note: check ? 'Accounts is checking this payment. It is not counted as paid yet.' : (late ? 'The payment date has passed.' : 'Waiting for payment.'),
@@ -101,6 +104,8 @@ async function invoiceRows(v, today = ACC.istDay()) {
     repairLinks(v.vendorId),
   ]);
   const judged = await PAY.describeMany(prisma, exps);
+  const paidLines = (await require('./vendorBankPayments').forVendor(v.vendorId).catch(() => ({ byBill: new Map() }))).byBill; // eslint-disable-line global-require
+  const withPayments = (p, e) => ({ ...p, payments: (paidLines.get(e.id) || []).slice().sort((a, b) => String(a.date).localeCompare(String(b.date))) });
   const expById = new Map(exps.map((e) => [e.id, e]));
   const subByExp = new Map(subs.filter((s) => s.expenseId).map((s) => [s.expenseId, s]));
   const rows = [];
@@ -112,7 +117,7 @@ async function invoiceRows(v, today = ACC.istDay()) {
       rows.push(base({
         key: `sub:${s.id}`, source: 'Vendor Portal', billCode: s.billCode, invoiceNo: e.billNumber || s.billNumber, billDate: e.expenseDate || s.billDate, dueDate: e.dueDate || null,
         amount: ROUND(Number(e.monthlyAmount) - Number(e.gstAmount)), gst: ROUND(e.gstAmount), tds: ROUND(e.tdsAmount), total: ROUND(e.monthlyAmount), net: PAY.netOf(e),
-        payment: paymentFromJudge(e, judged.get(e.id), today), repairId: links.get(s.id) || null, assetCode: s.assetCode, assetName: s.assetName, hasDocument: !!s.documentFile, submissionId: s.id, expenseKey: e.id,
+        payment: withPayments(paymentFromJudge(e, judged.get(e.id), today), e), repairId: links.get(s.id) || null, assetCode: s.assetCode, assetName: s.assetName, hasDocument: !!s.documentFile, submissionId: s.id, expenseKey: e.id,
       }));
     } else if (s.status !== 'APPROVED') {
       rows.push(base({
@@ -127,7 +132,7 @@ async function invoiceRows(v, today = ACC.istDay()) {
     rows.push(base({
       key: `exp:${e.id}`, source: 'Accounts', billCode: null, invoiceNo: e.billNumber || null, billDate: e.expenseDate || null, dueDate: e.dueDate || null,
       amount: ROUND(Number(e.monthlyAmount) - Number(e.gstAmount)), gst: ROUND(e.gstAmount), tds: ROUND(e.tdsAmount), total: ROUND(e.monthlyAmount), net: PAY.netOf(e),
-      payment: paymentFromJudge(e, judged.get(e.id), today), expenseKey: e.id,
+      payment: withPayments(paymentFromJudge(e, judged.get(e.id), today), e), expenseKey: e.id,
     }));
   }
   return rows.sort((a, b) => String(b.billDate || '').localeCompare(String(a.billDate || '')) || String(b.invoiceNo || '').localeCompare(String(a.invoiceNo || '')));

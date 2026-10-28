@@ -118,7 +118,10 @@ async function staffDetail(row, { raw = false } = {}) {
     };
   }
   const meta = row.meta || {};
+  // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
+  const lineAssets = await require('./billLineAssets').lineAssets(ls, await BU.candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, asset ? asset.id : null).catch(() => []); // eslint-disable-line global-require
   const out = {
+    lineAssets,
     id: row.id, code: row.code, status: row.status, statusLabel: BU.LABEL[row.status], step: BU.STEP_OF[row.status] ?? 0, steps: BU.STEPS, version: row.version,
     correctsCode: row.supersedes ? ((await DB.one('SELECT "code" FROM "VendorBillUpload" WHERE "id" = ?', [row.supersedes])) || {}).code || null : null,
     updatedAt: row.updatedAt, uploadedAt: row.uploadedAt, uploadedByName: row.uploadedByName, remarks: row.remarks,

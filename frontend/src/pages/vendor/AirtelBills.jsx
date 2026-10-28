@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import VendorBankPayments from './VendorBankPayments.jsx'; // payments from the bank statement (founder 2026-10-28)
 import { useSearchParams } from 'react-router-dom';
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
@@ -21,6 +22,7 @@ export default function AirtelBills() {
   return (
     <VendorShell title="Bills" sub="Your Airtel bills, when they are due and whether Accounts has paid them.">
       <Body />
+      <VendorBankPayments />
     </VendorShell>
   );
 }

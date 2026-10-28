@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import VendorBankPayments from './VendorBankPayments.jsx'; // payments from the bank statement (founder 2026-10-28)
 import { Link } from 'react-router-dom';
 import vendorApi, { vendorError } from '../../vendorApi';
 import VendorShell from './VendorShell.jsx';
@@ -13,6 +14,7 @@ export default function IdCardDashboard() {
   return (
     <VendorShell title="Dashboard" sub="Your ID card requests at a glance.">
       <Body />
+      <VendorBankPayments />
     </VendorShell>
   );
 }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import VendorBankPayments from './VendorBankPayments.jsx'; // payments from the bank statement (founder 2026-10-28)
 import { Link } from 'react-router-dom';
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
@@ -19,6 +20,7 @@ export default function VendorPayments() {
   return (
     <VendorShell title="Payments & Outstanding" sub="What the company has paid you, and what is still to be paid.">
       <Body />
+      <VendorBankPayments />
     </VendorShell>
   );
 }

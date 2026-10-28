@@ -172,6 +172,8 @@ async function vendorView(row, links, M, { withHistory = false } = {}) {
     seen: row.vendorSeenStatus === row.status,
   };
   if (withHistory) out.history = await vendorHistory(row.id);
+  // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
+  if (withHistory) out.lineAssets = await require('./billLineAssets').lineAssets(ls, await candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, out.asset ? out.asset.id : null, M).catch(() => []); // eslint-disable-line global-require
   return out;
 }
 

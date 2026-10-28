@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import VendorBankPayments from './VendorBankPayments.jsx'; // payments from the bank statement (founder 2026-10-28)
 import { Link } from 'react-router-dom';
 import vendorApi, { vendorError } from '../../vendorApi';
 import VendorShell, { openVendorFile } from './VendorShell.jsx';
@@ -25,7 +26,7 @@ export default function AssetPortalInvoices() {
 // Two views of the same page: the invoices, and "My bills" (photos / PDFs of bills you uploaded, with where each one is).
 function InvoiceTabs() {
   // INVOICES & PAYMENTS (one of the four modules, 27 Oct 2026): Invoices | My bills | Orders (the old /orders address opens Orders)
-  const [tab, setTab] = useState(() => { const t = new URLSearchParams(window.location.search).get('tab'); return t === 'bills' || t === 'orders' ? t : 'invoices'; });
+  const [tab, setTab] = useState(() => { const t = new URLSearchParams(window.location.search).get('tab'); return t === 'bills' || t === 'orders' || t === 'payments' ? t : 'invoices'; });
   const [unseen, setUnseen] = useState(0);
   const [stamp, setStamp] = useState(0);
   const loadSummary = useCallback(() => { vendorApi.get('/asset-portal/bill-uploads/summary').then((r) => setUnseen(r.data.unseen || 0)).catch(() => {}); }, []);
@@ -36,10 +37,11 @@ function InvoiceTabs() {
       <div className="bu-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'invoices'} className={tab === 'invoices' ? 'on' : ''} onClick={() => pick('invoices')}>Invoices</button>
         <button type="button" role="tab" aria-selected={tab === 'bills'} className={tab === 'bills' ? 'on' : ''} onClick={() => pick('bills')}>My bills{unseen > 0 ? <span className="bu-new">{unseen} new</span> : null}</button>
+        <button type="button" role="tab" aria-selected={tab === 'payments'} className={tab === 'payments' ? 'on' : ''} onClick={() => pick('payments')}>Bank payments</button>
         <button type="button" role="tab" aria-selected={tab === 'orders'} className={tab === 'orders' ? 'on' : ''} onClick={() => pick('orders')}>Orders</button>
         <span style={{ marginLeft: 'auto' }}><UploadBillButton label="Upload repair bill" onDone={() => { pick('bills'); setStamp((x) => x + 1); loadSummary(); }} /></span>
       </div>
-      {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : tab === 'orders' ? <OrdersBody /> : <Body />}
+      {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : tab === 'orders' ? <OrdersBody /> : tab === 'payments' ? <VendorBankPayments /> : <Body />}
     </>
   );
 }

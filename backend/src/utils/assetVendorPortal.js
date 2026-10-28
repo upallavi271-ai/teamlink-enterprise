@@ -923,7 +923,7 @@ async function listInvoices(v, q = {}) {
     ...paged(rowsOut, q, 'billDate', sorts, 'desc'), all: all.length, canEdit: v.canEdit,
     facets: { payment: facet(all.filter((r) => keep(r, 'payment')), (r) => r.payment.status) },
     summary: {
-      count: all.length, paid: n(PAYS.STATUS.PAID), pending: n(PAYS.STATUS.PENDING) + n(PAYS.STATUS.WAITING), partlyPaid: n(PAYS.STATUS.PART), overdue: n(PAYS.STATUS.OVERDUE), reversed: n(PAYS.STATUS.REVERSED), notSent: n(PAYS.STATUS.NOT_SENT),
+      count: all.length, paid: n(PAYS.STATUS.PAID), pending: n(PAYS.STATUS.PENDING) + n(PAYS.STATUS.WAITING) + n(PAYS.STATUS.UNDER_REVIEW), underReview: n(PAYS.STATUS.UNDER_REVIEW), partlyPaid: n(PAYS.STATUS.PART), overdue: n(PAYS.STATUS.OVERDUE), reversed: n(PAYS.STATUS.REVERSED), notSent: n(PAYS.STATUS.NOT_SENT),
       paidTotal: ROUND(live.reduce((t, r) => t + (r.payment.paidAmount || 0), 0)), outstanding: ROUND(live.reduce((t, r) => t + (r.payment.balance || 0), 0)),
     },
   };
