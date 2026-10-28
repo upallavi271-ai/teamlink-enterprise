@@ -1518,7 +1518,7 @@ router.post('/history/import', historyUpload, requirePerm(null, 'hrms', 'Attenda
   const result = await hist.apply(p, { userId: req.user.id });
   await logAudit({
     userId: req.user.id, action: 'Past attendance imported', entity: 'AttendanceHistory', entityId: result.batch,
-    toValue: `${result.historyRows} day row(s), ${result.daysCreated} day(s) created, ${result.daysFilled} filled, ${result.punchesCreated} punch(es), ${result.summaryRows} summary row(s), ${p.unmatched.length} unmatched ID(s)`,
+    toValue: `${result.historyRows} day row(s), ${result.daysCreated} day(s) created, ${result.daysFilled} filled, ${result.daysUpdated} updated from a newer file, ${result.punchesCreated} punch(es), ${result.summaryRows} summary row(s), ${p.unmatched.length} unmatched ID(s)`,
   });
   return res.json({ preview: false, result, ...historyPlanView(p) });
 });
