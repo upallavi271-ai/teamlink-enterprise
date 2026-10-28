@@ -45,7 +45,7 @@ const bcrypt = require(path.join(Z.BACK, 'node_modules/bcryptjs'));
     // 1-2. four modules, old addresses redirect
     const me = await VP('/me');
     const CFG = require(path.join(Z.BACK, 'src/config/vendorModules'));
-    Z.check('B1 exactly four modules: Dashboard, Assets, Repairs & HRMS Tickets, Invoices & Payments (server and /me)', me.body.kind === 'assets' && me.body.nav.map((n) => n.label).join() === 'Dashboard,Assets,Repairs & HRMS Tickets,Invoices & Payments' && CFG.ASSET_PORTAL_NAV.length === 4, me.body.nav);
+    Z.check('B1 five menus (28 Oct 2026): Dashboard, Asset Register, My Bills, Repairs, Invoices & Payments (server and /me)', me.body.kind === 'assets' && me.body.nav.map((n) => n.label).join() === 'Dashboard,Asset Register,My Bills,Repairs,Invoices & Payments' && CFG.ASSET_PORTAL_NAV.length === 5, me.body.nav);
     const app = fs.readFileSync(path.join(Z.BACK, '..', 'frontend/src/App.jsx'), 'utf8');
     Z.check('B2 the old Orders and Repair History addresses redirect to their tab (no 404, no dashboard bounce)', /asset-portal\/orders" element=\{<Navigate to="\/vendor\/asset-portal\/invoices\?tab=orders"/.test(app) && /asset-portal\/history" element=\{<Navigate to="\/vendor\/asset-portal\/repairs\?tab=history"/.test(app));
 

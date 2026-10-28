@@ -30,12 +30,14 @@ export function vendorRouteFor(pathname) {
 // finance ones above. Same rules: one list for the desktop menu and the mobile menu, utilities (Change password, Logout) are not modules.
 // A test keeps this list identical to the server's (backend config/vendorModules.js ASSET_PORTAL_NAV).
 // ---------------------------------------------------------------------------
-// EXACTLY FOUR MODULES (27 Oct 2026): Orders is a tab of Invoices & Payments, Repair History a tab of Repairs & HRMS Tickets (old addresses redirect)
+// FIVE MENUS IN TWO GROUPS (28 Oct 2026, replaces "exactly four"): Dashboard | ASSETS: Asset Register, My Bills, Repairs | ACCOUNTS:
+// Invoices & Payments. Repair History is a tab of Repairs; Payments (with the bank payments) and Orders are tabs of Invoices & Payments.
 export const ASSET_NAV = [
   { key: 'asset_dashboard', label: 'Dashboard', route: '/vendor/asset-portal/dashboard' },
-  { key: 'asset_assets', label: 'Assets', route: '/vendor/asset-portal/assets' },
-  { key: 'asset_repairs', label: 'Repairs & HRMS Tickets', route: '/vendor/asset-portal/repairs' },
-  { key: 'asset_invoices', label: 'Invoices & Payments', route: '/vendor/asset-portal/invoices' },
+  { key: 'asset_assets', label: 'Asset Register', route: '/vendor/asset-portal/assets', group: 'Assets' },
+  { key: 'asset_bills', label: 'My Bills', route: '/vendor/asset-portal/bills', group: 'Assets' },
+  { key: 'asset_repairs', label: 'Repairs', route: '/vendor/asset-portal/repairs', group: 'Assets' },
+  { key: 'asset_invoices', label: 'Invoices & Payments', route: '/vendor/asset-portal/invoices', group: 'Accounts' },
 ];
 export const ASSET_NAV_DESKTOP = ASSET_NAV;
 export const ASSET_NAV_MOBILE = ASSET_NAV;

@@ -244,7 +244,7 @@ async function portalFor(req) {
   // ASSETS VENDOR PORTAL (2026-10-19): an asset vendor's menu is the Assets portal's four pages and nothing of the finance portal.
   const kind = await require('./vendorKind').kindOfRow({ ...req.vendor.row, vendorId: req.vendor.vendorId }); // eslint-disable-line global-require
   if (kind === 'assets') {
-    const nav = CFG.ASSET_PORTAL_NAV.map((n) => ({ key: n.key, label: n.label, route: n.route }));
+    const nav = CFG.ASSET_PORTAL_NAV.map((n) => ({ key: n.key, label: n.label, route: n.route, ...(n.group ? { group: n.group } : {}) }));
     return { kind: 'assets', roleLabel: CFG.ROLE_LABEL.assets, modulesConfigured: true, modules: nav, core: [], nav, canRaise: false };
   }
   if (kind === 'telecom') {

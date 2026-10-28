@@ -19,7 +19,7 @@ const SORTS = [['assetCode', 'Asset ID'], ['name', 'Name'], ['category', 'Catego
 
 export default function AssetPortalAssets() {
   return (
-    <VendorShell title="Assets" sub="The company assets given to you: who has each one, its details and where it stands.">
+    <VendorShell title="Asset Register" sub="The company assets given to you: who has each one, its details and where it stands.">
       <Body />
     </VendorShell>
   );

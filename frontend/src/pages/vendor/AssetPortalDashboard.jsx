@@ -52,7 +52,7 @@ function Body() {
             <Link to="/vendor/asset-portal/repairs?tab=tickets" className="vp-tile"><span>Open HRMS tickets</span><b>{d.more.openTickets}</b></Link>
             <Link to="/vendor/asset-portal/repairs?bucket=Waiting%20for%20approval" className="vp-tile"><span>Waiting for company approval</span><b>{d.more.waitingApproval}</b></Link>
             <Link to="/vendor/asset-portal/repairs?bucket=Waiting%20for%20approval" className="vp-tile"><span>Replacement requests</span><b>{d.more.replacementRequests}</b></Link>
-            <Link to="/vendor/asset-portal/invoices?tab=bills" className="vp-tile"><span>Bills being checked</span><b>{d.more.billsInReview}</b></Link>
+            <Link to="/vendor/asset-portal/bills" className="vp-tile"><span>Bills being checked</span><b>{d.more.billsInReview}</b></Link>
             <Link to="/vendor/asset-portal/invoices" className="vp-tile orange"><span>Invoices not paid yet</span><b>{d.payments.pending || 0}</b></Link>
             <Link to="/vendor/asset-portal/invoices" className="vp-tile"><span>Partly paid invoices</span><b>{d.payments.partlyPaid || 0}</b></Link>
             <Link to="/vendor/asset-portal/invoices" className="vp-tile green"><span>Paid invoices</span><b>{d.payments.paid || 0}</b></Link>

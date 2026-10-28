@@ -99,6 +99,7 @@ import AssetPortalDashboard from './pages/vendor/AssetPortalDashboard.jsx';
 import AssetPortalAssets from './pages/vendor/AssetPortalAssets.jsx';
 import AssetPortalRepairs from './pages/vendor/AssetPortalRepairs.jsx';
 import AssetPortalInvoices from './pages/vendor/AssetPortalInvoices.jsx';
+import AssetPortalBills from './pages/vendor/AssetPortalBills.jsx'; // My Bills: its own menu under Assets (28 Oct 2026)
 import IdCardDashboard from './pages/vendor/IdCardDashboard.jsx';
 import IdCardRequests from './pages/vendor/IdCardRequests.jsx';
 import AirtelBills from './pages/vendor/AirtelBills.jsx';
@@ -149,6 +150,7 @@ export default function App() {
       <Route path="/vendor/asset-portal/repairs" element={<AssetPortalRepairs />} />
       <Route path="/vendor/asset-portal/history" element={<Navigate to="/vendor/asset-portal/repairs?tab=history" replace />} />
       <Route path="/vendor/asset-portal/invoices" element={<AssetPortalInvoices />} />
+      <Route path="/vendor/asset-portal/bills" element={<AssetPortalBills />} />
       {/* The ID Card Vendor Portal (2026-10-19): the Dashboard + the four modules (one screen, four views) in the vendor sidebar. */}
       <Route path="/vendor/idcard-portal/dashboard" element={<IdCardDashboard />} />
       <Route path="/vendor/idcard-portal/requests" element={<IdCardRequests />} />

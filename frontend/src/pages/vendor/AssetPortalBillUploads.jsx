@@ -97,7 +97,7 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
       <Modal title="Bill uploaded" onClose={onClose} footer={<button type="button" className="btn btn-primary" onClick={onClose}>Close</button>}>
         <div className="notice green" style={{ marginBottom: 10 }}><span>{done.message}</span></div>
         <BillSteps status={u.status} />
-        <p className="cell-muted">Bill {u.code}{u.repair ? ` for repair ${u.repair.repairNo}` : ''}. You can see it any time in <strong>Invoices &rarr; My bills</strong>. Until Accounts approves it, you can correct what we read wrongly or replace the file.</p>
+        <p className="cell-muted">Bill {u.code}{u.repair ? ` for repair ${u.repair.repairNo}` : ''}. You can see it any time in <strong>My Bills</strong>. Until Accounts approves it, you can correct what we read wrongly or replace the file.</p>
       </Modal>
     );
   }

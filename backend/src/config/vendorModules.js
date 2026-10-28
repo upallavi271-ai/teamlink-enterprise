@@ -223,12 +223,17 @@ function portalRouteFor(pathname) {
 // An asset vendor sees ONLY these six pages (no Invoices / Payments / Purchase Orders of the finance portal, no HRMS, ATS, Accounts, Admin).
 // Its API is the /asset-portal/* prefix below plus the same account utilities (me, logout, change-password) and its own signed downloads.
 // ---------------------------------------------------------------------------
-// EXACTLY FOUR MODULES (Assets Vendor Portal master prompt, 27 Oct 2026): Orders sits in Invoices & Payments, Repair History in Repairs & HRMS Tickets
+// FIVE MENUS IN TWO GROUPS (founder 28 Oct 2026, replaces the 27 Oct "exactly four"; no duplicate menus):
+//   Dashboard | ASSETS: Asset Register, My Bills, Repairs (tabs All Repairs, Pending / In Progress, Completed, Repair History, HRMS tickets)
+//   | ACCOUNTS: Invoices & Payments (tabs Invoices, Payments - the bank payments are in it -, Orders).
+// Old addresses redirect: /history -> Repairs > Repair History, /orders -> Invoices & Payments > Orders, invoices?tab=bills -> My Bills.
+// Bank & Reconciliation stays the staff module (it matches the statement to vendor bills; the payment status shown here follows it).
 const ASSET_PORTAL_NAV = [
   { key: 'asset_dashboard', label: 'Dashboard', route: '/vendor/asset-portal/dashboard' },
-  { key: 'asset_assets', label: 'Assets', route: '/vendor/asset-portal/assets' },
-  { key: 'asset_repairs', label: 'Repairs & HRMS Tickets', route: '/vendor/asset-portal/repairs' },
-  { key: 'asset_invoices', label: 'Invoices & Payments', route: '/vendor/asset-portal/invoices' },
+  { key: 'asset_assets', label: 'Asset Register', route: '/vendor/asset-portal/assets', group: 'Assets' },
+  { key: 'asset_bills', label: 'My Bills', route: '/vendor/asset-portal/bills', group: 'Assets' },
+  { key: 'asset_repairs', label: 'Repairs', route: '/vendor/asset-portal/repairs', group: 'Assets' },
+  { key: 'asset_invoices', label: 'Invoices & Payments', route: '/vendor/asset-portal/invoices', group: 'Accounts' },
 ];
 // The label under the vendor's name in the sidebar's profile block (one per kind).
 const ROLE_LABEL = { assets: 'Assets Vendor', idcards: 'ID Card Vendor', telecom: 'Airtel Bills Vendor', finance: 'Vendor' };

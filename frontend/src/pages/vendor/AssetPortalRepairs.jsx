@@ -19,28 +19,33 @@ import PhotoPicker from './PhotoPicker.jsx'; // Take a photo / Choose photos / C
 // repair's history (who, when, old to new) and cannot be erased.
 const SORTS = [['dateReported', 'Reported on'], ['repairNo', 'Repair number'], ['assetCode', 'Asset ID'], ['stage', 'Step'], ['estimate', 'Estimate'], ['finalCost', 'Final cost']];
 
-// REPAIRS & HRMS TICKETS (one of the four modules, 27 Oct 2026): Repairs | HRMS tickets | Repair history (the old /history address opens the last tab)
-// Stage C (28 Oct): inside Repairs, the plain tabs Active / Awaiting your action / In progress / Waiting for approval / Completed / Closed.
+// REPAIRS (founder 28 Oct 2026: one Repairs menu under Assets; the separate Repair History menu is gone):
+//   All Repairs | Pending / In Progress | Completed | Repair History | HRMS tickets
+// The first three are the same repair list with its filter set (Pending / In Progress = waiting for you, in progress or waiting for
+// approval); the finer step tabs stay inside the list. Old links: /history and ?tab=history open Repair History, ?tab=repairs opens All.
+const REPAIR_TABS = [['all', 'All Repairs', ''], ['active', 'Pending / In Progress', 'Active'], ['completed', 'Completed', 'Completed'], ['history', 'Repair History'], ['tickets', 'HRMS tickets']];
 export default function AssetPortalRepairs() {
   const [params, setParams] = useSearchParams();
-  const tab = ['history', 'tickets'].includes(params.get('tab')) ? params.get('tab') : 'repairs';
-  const go = (t) => { const n = new URLSearchParams(params); if (t === 'repairs') n.delete('tab'); else n.set('tab', t); n.delete('open'); setParams(n, { replace: true }); };
+  const asked = params.get('tab');
+  const tab = REPAIR_TABS.some(([k]) => k === asked) ? asked : 'all';
+  const go = (t) => { const n = new URLSearchParams(params); if (t === 'all') n.delete('tab'); else n.set('tab', t); n.delete('open'); n.delete('bucket'); n.delete('stage'); setParams(n, { replace: true }); };
+  const list = REPAIR_TABS.find(([k]) => k === tab);
   return (
-    <VendorShell title="Repairs & HRMS Tickets" sub="The repairs the company has given you: update each step, add your estimate, final cost and invoice. Every change is in Repair history.">
-      <div className="vp-seg vio-tabs" role="tablist" aria-label="Repairs or history">
-        <button type="button" role="tab" aria-selected={tab === 'repairs'} className={`vp-chip${tab === 'repairs' ? ' on' : ''}`} onClick={() => go('repairs')}>Repairs</button>
-        <button type="button" role="tab" aria-selected={tab === 'tickets'} className={`vp-chip${tab === 'tickets' ? ' on' : ''}`} onClick={() => go('tickets')}>HRMS tickets</button>
-        <button type="button" role="tab" aria-selected={tab === 'history'} className={`vp-chip${tab === 'history' ? ' on' : ''}`} onClick={() => go('history')}>Repair history</button>
+    <VendorShell title="Repairs" sub="The repairs the company has given you: update each step, add your estimate, final cost and invoice. Every change is in Repair History.">
+      <div className="vp-seg vio-tabs" role="tablist" aria-label="Which repairs">
+        {REPAIR_TABS.map(([k, label]) => (
+          <button key={k} type="button" role="tab" aria-selected={tab === k} className={`vp-chip${tab === k ? ' on' : ''}`} onClick={() => go(k)}>{label}</button>
+        ))}
       </div>
-      {tab === 'history' ? <HistoryBody /> : tab === 'tickets' ? <Tickets /> : <Body />}
+      {tab === 'history' ? <HistoryBody /> : tab === 'tickets' ? <Tickets /> : <Body key={tab} bucket={list[2]} />}
     </VendorShell>
   );
 }
 
-function Body() {
+function Body({ bucket = undefined }) {
   const [params, setParams] = useSearchParams();
   const [data, setData] = useState(null);
-  const [f, setF] = useState({ q: '', bucket: params.get('bucket') || (params.get('stage') ? '' : 'Active'), stage: params.get('stage') || '', category: '', payment: '', from: '', to: '', sort: 'dateReported', dir: 'desc', page: 1 });
+  const [f, setF] = useState({ q: '', bucket: params.get('bucket') || (params.get('stage') ? '' : (bucket !== undefined ? bucket : 'Active')), stage: params.get('stage') || '', category: '', payment: '', from: '', to: '', sort: 'dateReported', dir: 'desc', page: 1 });
   const [qDeb, setQDeb] = useState('');
   const [error, setError] = useState('');
   const [open, setOpen] = useState(params.get('open') || null);
@@ -62,7 +67,7 @@ function Body() {
       {data?.canEdit && (
         <div className="vm-row" style={{ marginBottom: 10 }}>
           <UploadBillButton onDone={load} />
-          <span className="cell-muted">Take a photo of your bill, handwritten or printed. Accounts checks it. Follow it in Invoices, My bills.</span>
+          <span className="cell-muted">Take a photo of your bill, handwritten or printed. Accounts checks it. Follow it in My Bills.</span>
         </div>
       )}
       {s && (
@@ -268,7 +273,7 @@ function RepairDetail({ id, onClose, onChanged }) {
               ) : <p className="cell-muted">You can attach the invoice after the asset has reached you.</p>}
               <div className="vm-row" style={{ marginTop: 8 }}>
                 <UploadBillButton repairId={id} label="Upload bill for this repair" className="btn" onDone={onChanged} />
-                <span className="cell-muted">A photo of a handwritten or printed bill. We read it; Accounts checks it. See it in Invoices, My bills.</span>
+                <span className="cell-muted">A photo of a handwritten or printed bill. We read it; Accounts checks it. See it in My Bills.</span>
               </div>
               {r.canSendInvoice && (
                 <div className="vm-row" style={{ marginTop: 8 }}>

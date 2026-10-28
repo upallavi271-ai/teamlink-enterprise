@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import VendorBankPayments from './VendorBankPayments.jsx'; // payments from the bank statement (founder 2026-10-28)
-import { Link } from 'react-router-dom';
+import { Link, Navigate } from 'react-router-dom';
 import vendorApi, { vendorError } from '../../vendorApi';
 import VendorShell, { openVendorFile } from './VendorShell.jsx';
 import VendorPager from './VendorPager.jsx';
@@ -8,7 +8,6 @@ import { day } from './vendorFormat.js';
 import { rs, PayTag, PayLine } from './assetPortalCommon.jsx';
 import { VendorIoBar } from './VendorIo.jsx';
 import { OrdersBody } from './AssetPortalOrders.jsx';
-import { MyBills, UploadBillButton } from './AssetPortalBillUploads.jsx'; // "My bills": the repair bills this vendor uploaded as photos / PDFs
 import './vendorModules.css';
 import './billUploads.css';
 
@@ -23,25 +22,22 @@ export default function AssetPortalInvoices() {
   );
 }
 
-// Two views of the same page: the invoices, and "My bills" (photos / PDFs of bills you uploaded, with where each one is).
+// INVOICES & PAYMENTS (28 Oct 2026, the one Accounts menu): Invoices | Payments | Orders.
+//   Payments = the payments from the bank statement (what was "Bank payments": date, amount, reference, which bills each one paid).
+//   My Bills is its own menu under Assets now (/vendor/asset-portal/bills): an old ?tab=bills link goes there; /orders opens Orders.
 function InvoiceTabs() {
-  // INVOICES & PAYMENTS (one of the four modules, 27 Oct 2026): Invoices | My bills | Orders (the old /orders address opens Orders)
-  const [tab, setTab] = useState(() => { const t = new URLSearchParams(window.location.search).get('tab'); return t === 'bills' || t === 'orders' || t === 'payments' ? t : 'invoices'; });
-  const [unseen, setUnseen] = useState(0);
-  const [stamp, setStamp] = useState(0);
-  const loadSummary = useCallback(() => { vendorApi.get('/asset-portal/bill-uploads/summary').then((r) => setUnseen(r.data.unseen || 0)).catch(() => {}); }, []);
-  useEffect(() => { loadSummary(); }, [loadSummary, tab]);
+  const first = new URLSearchParams(window.location.search).get('tab');
+  const [tab, setTab] = useState(() => (first === 'orders' || first === 'payments' ? first : 'invoices'));
   const pick = (t) => { setTab(t); try { window.history.replaceState(null, '', t === 'invoices' ? window.location.pathname : `?tab=${t}`); } catch { /* ignore */ } };
+  if (first === 'bills') return <Navigate to="/vendor/asset-portal/bills" replace />;
   return (
     <>
       <div className="bu-tabs" role="tablist">
         <button type="button" role="tab" aria-selected={tab === 'invoices'} className={tab === 'invoices' ? 'on' : ''} onClick={() => pick('invoices')}>Invoices</button>
-        <button type="button" role="tab" aria-selected={tab === 'bills'} className={tab === 'bills' ? 'on' : ''} onClick={() => pick('bills')}>My bills{unseen > 0 ? <span className="bu-new">{unseen} new</span> : null}</button>
-        <button type="button" role="tab" aria-selected={tab === 'payments'} className={tab === 'payments' ? 'on' : ''} onClick={() => pick('payments')}>Bank payments</button>
+        <button type="button" role="tab" aria-selected={tab === 'payments'} className={tab === 'payments' ? 'on' : ''} onClick={() => pick('payments')}>Payments</button>
         <button type="button" role="tab" aria-selected={tab === 'orders'} className={tab === 'orders' ? 'on' : ''} onClick={() => pick('orders')}>Orders</button>
-        <span style={{ marginLeft: 'auto' }}><UploadBillButton label="Import bills (photo or PDF)" onDone={() => { pick('bills'); setStamp((x) => x + 1); loadSummary(); }} /></span>
       </div>
-      {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : tab === 'orders' ? <OrdersBody /> : tab === 'payments' ? <VendorBankPayments /> : <Body />}
+      {tab === 'orders' ? <OrdersBody /> : tab === 'payments' ? <VendorBankPayments /> : <Body />}
     </>
   );
 }
