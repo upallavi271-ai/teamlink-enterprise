@@ -176,6 +176,32 @@ Remove-Item $Archive -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
 
 # ------------------------------------------------------------
+# FILE-NAME CASE CHECK (2026-10-28: a deploy failed with "Cannot find module './routes/followups'" because the file on this
+# PC was named followUps.js. Windows ignores the case, the Linux VPS does not.) Every file git knows under backend / frontend
+# must carry git's exact name on disk; a file that differs only in case is renamed to git's name before it is copied.
+# ------------------------------------------------------------
+$CaseFixed = 0
+Push-Location $LocalRoot
+try {
+    $Tracked = git ls-files backend frontend 2>$null
+    foreach ($Rel in $Tracked) {
+        $Full = Join-Path $LocalRoot ($Rel -replace '/', '\')
+        $Dir = Split-Path -Parent $Full
+        $Want = Split-Path -Leaf $Full
+        if (-not (Test-Path -LiteralPath $Dir)) { continue }
+        $Have = [System.IO.Directory]::GetFiles($Dir) | ForEach-Object { [System.IO.Path]::GetFileName($_) } | Where-Object { $_ -ieq $Want }
+        if ($Have -and ($Have -cne $Want)) {
+            $Tmp = Join-Path $Dir ($Want + '.case-tmp')
+            Move-Item -LiteralPath (Join-Path $Dir $Have) -Destination $Tmp -Force
+            Move-Item -LiteralPath $Tmp -Destination $Full -Force
+            Write-Host "Renamed $Have -> $Want (the VPS is case-sensitive)" -ForegroundColor Yellow
+            $CaseFixed++
+        }
+    }
+} finally { Pop-Location }
+if ($CaseFixed) { Write-Host "$CaseFixed file name(s) put back to git's exact case." -ForegroundColor Yellow }
+
+# ------------------------------------------------------------
 # COPY BACKEND
 # ------------------------------------------------------------
 
