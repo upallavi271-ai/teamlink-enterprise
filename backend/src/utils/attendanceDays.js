@@ -582,7 +582,10 @@ function reasonOf(row, cfg = {}, { leave = null, pendingLeave = null } = {}) {
       return row.note === 'Marked by HR' ? 'Absent — marked by HR' : 'Absent — no check-in, no leave or request, did not inform';
     case 'On Leave': return row.sandwich ? row.note : `On leave — ${lv(leave)} (approved${by(leave)})${row.punches ? ', a punch was also recorded' : ''}`;
     case STATUS.HALF_LEAVE_ABSENT: return `${row.leaveHalf || 'Half-day'} leave (approved${by(leave)}); the other half not worked`;
-    case STATUS.LEAVE_REVIEW: return `Leave (pending) — ${lv(pendingLeave)} waiting for approval${pendingLeave && pendingLeave.waitingFor ? ` from ${pendingLeave.waitingFor}` : ''}`;
+    case STATUS.LEAVE_REVIEW:
+      // part-approved, e.g. a TL's leave HR approved: "Leave (pending) — Planned Leave: HR (T Divya Sri Sivatmika) approved, waiting for the Super Admin"
+      if (pendingLeave && pendingLeave.approvedSoFar) return `Leave (pending) — ${lv(pendingLeave)}: ${pendingLeave.approvedSoFar} approved, waiting for ${pendingLeave.waitingFor || 'the next approver'}`;
+      return `Leave (pending) — ${lv(pendingLeave)} waiting for approval${pendingLeave && pendingLeave.waitingFor ? ` from ${pendingLeave.waitingFor}` : ''}`;
     case STATUS.INFORMED: return 'Informed — asked for an attendance correction (waiting for approval)';
     case 'Missing Check-In': if (row.noRecord) return 'Absent — no check-in, no leave or request (old rule called it "No record")';
       return (co ? `Missing check-in — only a check-out at ${co}` : 'Missing check-in') + (row.leaveHalf ? '; half-day leave (approved) covers the other half' : '');
@@ -766,15 +769,24 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
   // an approved leave names its decider (LeaveRequest.decidedBy), a pending one the approver whose turn it is (its Pending chain step).
   const pendIds = leaves.filter((l) => l.status === 'Pending').map((l) => l.id);
   const waitingFor = new Map();
+  const approvedSoFar = new Map(); // who already approved a still-pending leave, e.g. "HR (T Divya Sri Sivatmika)" (founder 2026-10-28)
   if (pendIds.length) {
-    const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId: { in: pendIds }, status: 'Pending' }, select: { recordId: true, approverName: true } }).catch(() => []);
-    steps.forEach((s) => { if (!s.approverName) return; if (!waitingFor.has(s.recordId)) waitingFor.set(s.recordId, []); waitingFor.get(s.recordId).push(s.approverName); });
+    const LEVEL_WORD = { TL: 'TL', STL: 'STL', HR: 'HR', ASSISTANT_MANAGER: 'Asst Manager', MANAGER: 'Manager', SUPER_ADMIN: 'Super Admin' };
+    const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId: { in: pendIds }, status: { in: ['Pending', 'Approved'] }, level: { not: 'EMPLOYEE' } }, select: { recordId: true, level: true, status: true, approverName: true, actedByName: true }, orderBy: { seq: 'asc' } }).catch(() => []);
+    const push = (m, id, v) => { if (!m.has(id)) m.set(id, []); m.get(id).push(v); };
+    steps.forEach((s) => {
+      if (s.status === 'Approved') { const who = s.actedByName || s.approverName; push(approvedSoFar, s.recordId, `${LEVEL_WORD[s.level] || s.level}${who ? ` (${who})` : ''}`); return; }
+      // a step waiting for the Super Admin (a TL's leave, utils/leadLeave.js) reads "the Super Admin"
+      if (s.level === 'SUPER_ADMIN') { push(waitingFor, s.recordId, 'the Super Admin'); return; }
+      if (s.approverName) push(waitingFor, s.recordId, s.approverName);
+    });
   }
   const leaveRows = leaves.map((l) => ({
     ...l, from: String(l.fromDate).slice(0, 10), to: String(l.toDate).slice(0, 10),
     // Half day = the form's marker OR a single date applied for 0.5 day (leaveText.halfOf).
     half: leaveHalfOf(l), unpaid: unpaidTypes.has(l.type),
     approvedBy: l.status !== 'Pending' ? (l.decidedBy || null) : null, waitingFor: waitingFor.has(l.id) ? waitingFor.get(l.id).join(' / ') : null,
+    approvedSoFar: approvedSoFar.has(l.id) ? approvedSoFar.get(l.id).join(', ') : null,
   }));
   const covering = (id, d, pending) => leaveRows.find((l) => l.employeeId === id && l.from <= d && l.to >= d && (l.status === 'Pending') === pending) || null;
   const leaveOf = (id, d) => covering(id, d, false);
@@ -810,7 +822,7 @@ async function loadDays(prisma, { employees, from: wantFrom, to: wantTo, cfg: ra
       const row = dayStatus({
         date: d, record: recordOf.get(k) || null, punches: ps,
         leave: leave ? { id: leave.id, type: leave.type, half: leave.half, unpaid: leave.unpaid, approvedBy: leave.approvedBy || null } : null,
-        pendingLeave: pend ? { id: pend.id, type: pend.type, half: pend.half, waitingFor: pend.waitingFor || null } : null,
+        pendingLeave: pend ? { id: pend.id, type: pend.type, half: pend.half, waitingFor: pend.waitingFor || null, approvedSoFar: pend.approvedSoFar || null } : null,
         holiday: holidayOf.get(d) || null, joined, cfg, today, offs, now, preview,
         // The latest correction request for the day, when it is still waiting.
         regularization: regRowOf.has(k) && regRowOf.get(k).status === 'Pending' ? regRowOf.get(k) : null,

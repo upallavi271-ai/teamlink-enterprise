@@ -13,6 +13,10 @@
 //   * the balance: days this app's ledger took are given back (the Super Admin's approval takes them again); days the PulseHRM import /
 //     an older approval already counted are marked "already counted", so the Super Admin's approval does not take them twice;
 //   * one audit row per leave ("TL leave back to Pending - waiting for the Super Admin", from: Approved by <who>).
+// "Approved by a Super Admin" (left alone) = a chain step a Super Admin login approved, the final 'Leave approved' audit row by a
+// Super Admin login, or decided by a Super Admin's name (e.g. TL406 approved by Vasu Chitturi stays Approved).
+// PART 2 (rule 1, same founder message): a day marked 'Leave' / 'On Leave' by hand with no leave request behind it gets a Pending
+// leave request (utils/markedLeave.js, no message sent), so it can be approved; until then it reads as pending.
 // Nothing is deleted. Running it twice does nothing (only Approved leaves are picked). Rejected / cancelled leaves are not touched.
 //
 //   node scripts/tl-leaves-to-pending.js                               DRY RUN on the app's database (.env DATABASE_URL)
@@ -44,11 +48,12 @@ const prisma = require('../src/db');
 const workflow = require('../src/utils/approvalWorkflow');
 const leaveCharge = require('../src/utils/leaveCharge');
 const lead = require('../src/utils/leadLeave');
+const markedLeave = require('../src/utils/markedLeave');
 
 const WF = 'leave';
 const PRECOUNTED = 'Leave imported — days already counted in PulseHRM availed'; // the marker routes/leave.js reads
 const ACTION = 'TL leave back to Pending - waiting for the Super Admin';
-const WATCH = ['TL306', 'TL484']; // Renuka.G and D. Leela Usha Sri (founder 2026-10-28)
+const WATCH = ['TL306', 'TL484', 'TL406']; // Renuka.G and D. Leela Usha Sri (founder 2026-10-28); TL406 (approved by the Super Admin) must stay Approved
 const norm = (s) => String(s || '').replace(/\(.*?\)/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase(); // 'Vasudeva Rao Chitturi (Pulse)' = the Super Admin
 
 async function watchList(label) {
@@ -79,16 +84,29 @@ async function watchList(label) {
     for (const lv of approved) {
       if (!lv.employee || !lead.isLeadSync(lv.employee, lv.employee.user)) continue; // eslint-disable-line no-continue
       const steps = await workflow.loadSteps(WF, lv.id);
-      const saStep = steps.find((s) => s.level === 'SUPER_ADMIN' && s.status === 'Approved');
-      const bySa = steps.length ? !!(saStep && saIds.has(saStep.actedByUserId || saStep.approverUserId)) : saNames.has(norm(lv.decidedBy));
+      // approved by a Super Admin = a chain step a Super Admin login approved, OR the final 'Leave approved' audit row by a Super Admin login,
+      // OR decided by a Super Admin's name (e.g. 'Vasu Chitturi', 'Vasudeva Rao Chitturi (Pulse)'). Such a leave stays Approved.
+      const saStep = steps.some((s) => s.status === 'Approved' && saIds.has(s.actedByUserId || (s.level === 'SUPER_ADMIN' ? s.approverUserId : null)));
+      const saAudit = saIds.size ? await prisma.auditLog.findFirst({ where: { entity: 'LeaveRequest', entityId: lv.id, action: 'Leave approved', userId: { in: [...saIds] } }, select: { id: true } }) : null;
+      const bySa = saStep || !!saAudit || saNames.has(norm(lv.decidedBy));
       if (bySa) continue; // eslint-disable-line no-continue
       const lastOk = steps.filter((s) => s.status === 'Approved' && s.level !== 'EMPLOYEE').pop();
       todo.push({ lv, steps, by: lv.decidedBy || (lastOk && (lastOk.actedByName || lastOk.approverName)) || 'someone (not recorded)', source: steps.length ? 'approval chain' : 'no chain (imported / old)' });
     }
+    // PART 2 (rule 1): days marked 'Leave' / 'On Leave' by hand with NO leave request behind them read as pending now (utils/attendanceDays.js);
+    // a Pending leave request is raised for each so it can be approved (no message is sent from this script).
+    const marks = await prisma.attendance.findMany({ where: { status: { in: markedLeave.LEAVE_MARKS }, date: { gte: FROM } }, include: { employee: true }, orderBy: [{ date: 'asc' }] });
+    const markTodo = [];
+    for (const m of marks) {
+      const cover = await prisma.leaveRequest.findFirst({ where: { employeeId: m.employeeId, status: { in: ['Pending', 'Approved', 'Cancellation Requested'] }, fromDate: { lte: m.date }, toDate: { gte: m.date } }, select: { id: true } });
+      if (!cover && m.employee) markTodo.push(m);
+    }
     await watchList('BEFORE');
+    console.log(`\nDays marked Leave by hand with no leave request (a Pending request is raised for each): ${markTodo.length}`);
+    markTodo.forEach((m) => console.log(`  ${m.employee.employeeCode} ${m.employee.name} | ${m.date} | marked ${m.status}`));
     console.log(`\nTL leaves Approved from ${FROM} without the Super Admin: ${todo.length}`);
     todo.forEach((t) => console.log(`  ${t.lv.employee.employeeCode} ${t.lv.employee.name} | ${t.lv.type} ${t.lv.fromDate}${t.lv.toDate !== t.lv.fromDate ? ` to ${t.lv.toDate}` : ''} (${t.lv.days ?? 1} d) | approved by ${t.by} | ${t.source}`));
-    if (!todo.length || !APPLY) { console.log(todo.length ? '\nDRY RUN: nothing was changed. Add --apply to put these back to Pending.' : '\nNothing to do.'); return; }
+    if ((!todo.length && !markTodo.length) || !APPLY) { console.log(todo.length || markTodo.length ? '\nDRY RUN: nothing was changed. Add --apply to put these back to Pending.' : '\nNothing to do.'); return; }
 
     const target = dbArg ? path.resolve(dbArg) : null;
     const bakDir = target ? path.join(path.dirname(target), `tl-leaves-to-pending-${STAMP}`) : path.join(os.homedir(), '.teamlink-backups', `tl-leaves-to-pending-${STAMP}`);
@@ -121,7 +139,13 @@ async function watchList(label) {
       });
       done += 1;
     }
+    let raised = 0;
+    for (const m of markTodo) {
+      const r = await markedLeave.raiseFromMark({ employee: m.employee, date: m.date, user: { id: null, name: 'tl-leaves-to-pending 2026-10-28' }, notify: false });
+      if (r.created) raised += 1; else if (r.skipped) console.log(`  not raised for ${m.employee.employeeCode} ${m.date}: ${r.skipped}`);
+    }
     await watchList('AFTER');
+    console.log(`\nLeave marks: ${raised} Pending leave request(s) raised.`);
     console.log(`\nDONE: ${done} TL leave(s) are Pending now, waiting for the Super Admin.\nBackup (the whole database before this): ${bak}\nTo undo: stop TeamLink, copy the backup over the database file (remove its -wal / -shm), start TeamLink.`);
   } finally { await prisma.$disconnect(); }
 })().catch((e) => { console.error('FAILED:', e.message.slice(0, 500)); process.exit(1); });

@@ -40,7 +40,7 @@ function waitingForOf(steps) {
 
 // Raise the pending leave for a day marked "Leave". Never throws: the mark itself is already saved.
 // Returns { leave, created, waitingFor } or { skipped: '<why>' }.
-async function raiseFromMark({ employee, date, user, leaveType = null }) {
+async function raiseFromMark({ employee, date, user, leaveType = null, notify = true }) {
   try {
     if (!employee || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { skipped: 'no employee / date' };
     const covering = await prisma.leaveRequest.findFirst({
@@ -72,7 +72,7 @@ async function raiseFromMark({ employee, date, user, leaveType = null }) {
     try {
       steps = await workflow.start({ workflow: 'leave', recordId: leave.id, employee, applicantUserId: employee.userId || null, applicantName: employee.name });
     } catch (err) { console.error('[markedLeave] chain start failed', err.message); }
-    require('./hrmsNotify').leaveRaised({ leave, employee }).catch(() => {}); // eslint-disable-line global-require
+    if (notify) require('./hrmsNotify').leaveRaised({ leave, employee }).catch(() => {}); // eslint-disable-line global-require
     return { leave, created: true, waitingFor: waitingForOf(steps) };
   } catch (err) {
     console.error('[markedLeave] could not raise the leave', err.message);

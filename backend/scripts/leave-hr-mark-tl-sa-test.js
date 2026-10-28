@@ -5,7 +5,8 @@
 // superadmin approval estey ne approve, hr echina pending ane ravali". SANDBOX ONLY (a copy of the database).
 //   R1  a day HR marks "Leave" by hand is a PENDING leave (a leave request on the chain) until it is approved
 //   R2  a TL's leave: HR's approval sends it to the Super Admin (still Pending); only the Super Admin's approval grants it
-//   R3  scripts/tl-leaves-to-pending.js puts a TL leave approved by HR back to Pending (Super Admin waiting)
+//   R3  scripts/tl-leaves-to-pending.js puts a TL leave approved by HR back to Pending (Super Admin waiting), leaves a Super Admin
+//       approval alone, raises a Pending request for a hand-marked Leave day
 //   TL_API=http://localhost:<port> TL_TEST_DB=<copy>.db node scripts/leave-hr-mark-tl-sa-test.js
 // ---------------------------------------------------------------------------
 const path = require('path');
@@ -114,23 +115,41 @@ const D = require('../src/utils/attendanceDays');
     const day3 = await dayOf(DAY2);
     Z.check('M7 the marked leave rejected: the Leave mark goes and the day is not leave any more', no.status === 200 && !rec2 && day3.dayStatus !== 'On Leave' && day3.dayStatus !== D.STATUS.LEAVE_REVIEW, [no.status, no.text.slice(0, 120), rec2 && rec2.status, day3.dayStatus]);
 
-    // ---- R3: the data script ----
-    const old = await mkLeave(eTl, tl, '2026-11-20', '2026-11-20', 1);
+    // ---- R3: the data script (founder's live case: Renuka / Leela Usha approved by HR on 27 Oct -> Pending; Durga approved by the Super Admin stays) ----
+    const SDAY = '2026-10-23';
+    const FROMD = '2026-10-21';
+    const old = await mkLeave(eTl, tl, SDAY, SDAY, 1);
     await prisma.approvalStep.updateMany({ where: { recordId: old.id, level: 'HR' }, data: { status: 'Approved', actedByUserId: hr.id, actedByName: hr.name, actedAt: new Date() } });
     await prisma.approvalStep.updateMany({ where: { recordId: old.id, level: 'SUPER_ADMIN' }, data: { status: 'Visibility', note: 'Not needed - approved by HR. Shown for information.' } });
     await prisma.leaveRequest.update({ where: { id: old.id }, data: { status: 'Approved', decidedBy: hr.name, decidedAt: new Date() } });
+    const bySa = await mkLeave(eTl, tl, '2026-10-22', '2026-10-22', 1);
+    await prisma.approvalStep.updateMany({ where: { recordId: bySa.id, level: 'HR' }, data: { status: 'Skipped', note: 'Skipped — decided directly by Super Admin' } });
+    await prisma.approvalStep.updateMany({ where: { recordId: bySa.id, level: 'SUPER_ADMIN' }, data: { status: 'Approved', actedByUserId: sa.id, actedByName: sa.name, actedAt: new Date(), direct: true } });
+    await prisma.leaveRequest.update({ where: { id: bySa.id }, data: { status: 'Approved', decidedBy: sa.name, decidedAt: new Date() } });
+    const handMark = await prisma.attendance.create({ data: { employeeId: eEmp.id, date: '2026-10-21', status: 'On Leave' } });
     const db = process.env.TL_TEST_DB;
-    const dry = execFileSync(process.execPath, [path.join(__dirname, 'tl-leaves-to-pending.js'), '--db', path.join(__dirname, '..', 'prisma', db), '--from', '2026-11-20'], { encoding: 'utf8' });
-    Z.check('S1 dry run lists the TL leave approved by HR, changes nothing', dry.includes(eTl.employeeCode) && /DRY RUN/.test(dry) && (await prisma.leaveRequest.findUnique({ where: { id: old.id } })).status === 'Approved', dry.slice(-400));
-    const app = execFileSync(process.execPath, [path.join(__dirname, 'tl-leaves-to-pending.js'), '--db', path.join(__dirname, '..', 'prisma', db), '--from', '2026-11-20', '--apply'], { encoding: 'utf8' });
+    const run = (...extra) => execFileSync(process.execPath, [path.join(__dirname, 'tl-leaves-to-pending.js'), '--db', path.join(__dirname, '..', 'prisma', db), '--from', FROMD, ...extra], { encoding: 'utf8' });
+    const dry = run();
+    const listed = (txt, date) => txt.split('\n').some((l) => l.includes(eTl.employeeCode) && l.includes(`Casual Leave ${date} (`));
+    Z.check('S1 dry run lists the TL leave approved by HR (not the one the Super Admin approved), changes nothing', listed(dry, SDAY) && !listed(dry, '2026-10-22') && /DRY RUN/.test(dry) && (await prisma.leaveRequest.findUnique({ where: { id: old.id } })).status === 'Approved', dry.slice(-600));
+    Z.check('S1b dry run lists the hand-marked Leave day that has no leave request', dry.split('\n').some((l) => l.includes(eEmp.employeeCode) && l.includes('2026-10-21')), dry.slice(-600));
+    const app = run('--apply');
     const bakLine = /Backup \(the whole database before this\): (.*)/.exec(app);
     if (bakLine) { try { fs.rmSync(path.dirname(bakLine[1].trim()), { recursive: true, force: true }); } catch { /* temp */ } }
     const o1 = await prisma.leaveRequest.findUnique({ where: { id: old.id } });
     const so = await stepsOf(old.id);
     const aud = await prisma.auditLog.findFirst({ where: { entityId: old.id, action: 'TL leave back to Pending - waiting for the Super Admin' } });
     Z.check('S2 --apply: the TL leave is Pending, HR\'s approval kept, the Super Admin step waiting, audited', o1.status === 'Pending' && so.HR === 'Approved' && so.SUPER_ADMIN === 'Pending' && !!aud && /by .*ZZTEST LHM hr/.test(aud.fromValue || ''), [o1.status, so, aud && aud.fromValue]);
-    const again = execFileSync(process.execPath, [path.join(__dirname, 'tl-leaves-to-pending.js'), '--db', path.join(__dirname, '..', 'prisma', db), '--from', '2026-11-20'], { encoding: 'utf8' });
-    Z.check('S3 running it again finds nothing to do (idempotent)', !again.includes(`${eTl.employeeCode} ${eTl.name} | Casual Leave 2026-11-20 (`), again.slice(-200));
+    Z.check('S3 the TL leave the Super Admin approved stays Approved', (await prisma.leaveRequest.findUnique({ where: { id: bySa.id } })).status === 'Approved');
+    const raisedReq = await prisma.leaveRequest.findFirst({ where: { employeeId: eEmp.id, fromDate: '2026-10-21' } });
+    if (raisedReq) leaveIds.push(raisedReq.id);
+    Z.check('S4 the hand-marked Leave day got a Pending leave request', !!raisedReq && raisedReq.status === 'Pending' && !!handMark, raisedReq && raisedReq.status);
+    const rep = await Z.call('GET', `/api/attendance/kpi-report?from=${SDAY}&to=${SDAY}`, T.hr);
+    const findRow = (o) => { if (!o || typeof o !== 'object') return null; if (Array.isArray(o)) { for (const x of o) { const f = findRow(x); if (f) return f; } return null; } if (o.employeeId === eTl.id && o.date === SDAY && o.reason !== undefined) return o; for (const v of Object.values(o)) { const f = findRow(v); if (f) return f; } return null; };
+    const drow = findRow(rep.body);
+    Z.check('S5 the attendance list reads "Leave (pending) - ...: HR (<name>) approved, waiting for the Super Admin"', !!drow && drow.status === D.STATUS.LEAVE_REVIEW && /HR \(ZZTEST LHM hr[^)]*\) approved, waiting for the Super Admin/.test(drow.reason), [rep.status, drow && drow.status, drow && drow.reason]);
+    const again = run();
+    Z.check('S6 running it again finds nothing to do for these (idempotent)', !listed(again, SDAY) && !again.split('\n').some((l) => l.includes(eEmp.employeeCode) && l.includes('2026-10-21')), again.slice(-300));
   } catch (err) { Z.fail += 1; console.log('FAIL  crashed', err && err.stack ? err.stack.slice(0, 900) : err); } finally {
     try {
       const emps = Z.made.emps;
