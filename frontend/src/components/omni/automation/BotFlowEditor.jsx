@@ -105,7 +105,7 @@ export default function BotFlowEditor({ flow, deptNames, isAdmin, focus, onClose
           <div className="wf-step-head">WHO IT IS FOR</div>
           <div className="rcsa-grid">
             <div className="rcsa-f full"><label>Department</label>
-              <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
+              <Combo departments value={department} onChange={(e) => setDepartment(e.target.value)}>
                 <option value="">{isAdmin ? 'All departments' : 'Pick a department'}</option>
                 {deptNames.map((d) => <option key={d} value={d}>{d}</option>)}
               </Combo>

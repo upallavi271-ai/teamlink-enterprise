@@ -80,7 +80,7 @@ function Editor({ acc, seq, kind, tpls, onClose, onSaved }) {
         <label className="field"><span>Name</span><input value={f.name} maxLength={80} onChange={(e) => setF({ ...f, name: e.target.value })} placeholder="Applied: WhatsApp, then SMS, then call" /></label>
         <div className="field"><span>Kind</span><Combo value={f.kind} onChange={(e) => setF({ ...f, kind: e.target.value })}>{KIND_TABS.filter((k) => k[0]).map(([v, l]) => <option key={v} value={v}>{l}</option>)}</Combo></div>
         <div className="field"><span>It starts</span><Combo value={f.trigger} onChange={(e) => setF({ ...f, trigger: e.target.value })}><option value="manual">When I add people to it</option><option value="applied">When a person applies</option></Combo></div>
-        {acc.departments && acc.departments.length > 0 && <div className="field"><span>Department</span><Combo value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })}><option value="">No department</option>{acc.departments.map((d) => <option key={d} value={d}>{d}</option>)}</Combo></div>}
+        {acc.departments && acc.departments.length > 0 && <div className="field"><span>Department</span><Combo departments value={f.department || ''} onChange={(e) => setF({ ...f, department: e.target.value })}><option value="">No department</option>{acc.departments.map((d) => <option key={d} value={d}>{d}</option>)}</Combo></div>}
       </div>
       <h4 style={{ margin: '12px 0 6px' }}>Steps</h4>
       {f.steps.map((s, i) => <StepRow key={i} i={i} s={s} last={i === f.steps.length - 1} tpls={tpls} onChange={(x) => setStep(i, x)} onMove={(d) => move(i, d)} onDelete={() => setF({ ...f, steps: f.steps.filter((_, j) => j !== i) })} />)}

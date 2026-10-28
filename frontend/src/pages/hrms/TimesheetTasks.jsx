@@ -4,6 +4,7 @@ import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
 import { AiAssist } from '../../components/ComposeForm.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
+import { useActiveDepartments, keepActive } from '../../utils/activeDepartments.js';
 import './timesheet-tasks.css';
 
 // ---------------------------------------------------------------------------
@@ -275,6 +276,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
 
   const set = (patch) => { setF((x) => ({ ...x, ...patch })); setErrs((e) => { const n = { ...e }; Object.keys(patch).forEach((k) => delete n[k]); return n; }); };
   const people = options.assignable || [];
+  const liveDepts = useActiveDepartments(); // only switched-on Department & Team names get a chip
 
   // Department and Team chips with counts: each is counted over the people the
   // OTHER choices leave (search included), and a choice with nobody is not shown.
@@ -294,7 +296,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
     base.filter((p) => p.department === dept && okRole(p)).forEach((p) => { const t = teamOf(p); if (t) m.set(t, (m.get(t) || 0) + 1); });
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
   })();
-  const depts = countBy(base.filter((p) => (!team || teamOf(p) === team) && okRole(p)), 'department');
+  const depts = keepActive(liveDepts, countBy(base.filter((p) => (!team || teamOf(p) === team) && okRole(p)), 'department'), ([d]) => d, dept);
   const ROLE_ORDER = ['Super Admin', 'HR', 'STL', 'TL', 'Manager', 'Assistant Manager', 'Employees'];
   const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && p.roleGroup === r).length;
   const shown = base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && okRole(p));

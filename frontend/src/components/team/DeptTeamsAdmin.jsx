@@ -58,7 +58,7 @@ function MoveForm({ person, data, onDone, onCancel }) {
       <div className="fux-dr-bar" style={{ marginBottom: 6 }}>
         <div className="field">
           <label htmlFor={`mv-dept-${person.userId}`}>New department</label>
-          <Combo id={`mv-dept-${person.userId}`} value={dept} onChange={(e) => { setDept(e.target.value); setSeat(''); }}>
+          <Combo departments id={`mv-dept-${person.userId}`} value={dept} onChange={(e) => { setDept(e.target.value); setSeat(''); }}>
             <option value="">Choose…</option>
             {data.departments.filter((d) => d !== person.department).map((d) => <option key={d} value={d}>{d}</option>)}
           </Combo>

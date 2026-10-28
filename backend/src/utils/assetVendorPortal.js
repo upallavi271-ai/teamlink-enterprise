@@ -287,7 +287,9 @@ async function listAssets(v, q = {}) {
     facets: {
       category: facet(all.filter((r) => keep(r, 'category')), (r) => r.category), status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status),
       condition: facet(all.filter((r) => keep(r, 'condition')), (r) => r.condition),
-      department: facet(all.filter((r) => keep(r, 'department')), (r) => r.department), assignment: facet(all.filter((r) => keep(r, 'assignment')), (r) => r.assignment),
+      // Only switched-on Department & Team names are offered (2026-10-28).
+      department: await require('./masters').keepActiveDepartments(facet(all.filter((r) => keep(r, 'department')), (r) => r.department), (o) => o.value, str(q.department)), // eslint-disable-line global-require
+      assignment: facet(all.filter((r) => keep(r, 'assignment')), (r) => r.assignment),
       designation: facet(all.filter((r) => keep(r, 'designation')), (r) => (r.holder ? r.holder.designation : null)),
     },
   };

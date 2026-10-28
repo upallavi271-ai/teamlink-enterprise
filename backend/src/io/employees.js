@@ -348,7 +348,8 @@ async function validate(rows, ctx) {
     // Department (master + scope)
     if (want.department !== undefined && !isNew && io.loose(want.department) === io.loose(cur('department'))) want.department = cur('department');
     if (want.department !== undefined) {
-      const d = io.pick(m.departments, want.department);
+      // An unchanged old value (not in the master any more) is kept as it is.
+      const d = io.pick(m.departments, want.department) || (!isNew && want.department === cur('department') ? want.department : null);
       if (!d) fail('Department', `"${want.department}" is not a department (see the Lists sheet).`);
       else {
         want.department = d;

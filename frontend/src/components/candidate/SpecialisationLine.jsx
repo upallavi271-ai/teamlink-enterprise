@@ -87,7 +87,7 @@ export default function SpecialisationLine({ candidateId, onChanged }) {
         <div style={{ marginTop: 8 }}>
           <label className="field">
             <span>Department</span>
-            <Combo value={form.department} onChange={(e) => setForm({ department: e.target.value, qualificationId: '', specialisationId: '' })}>
+            <Combo departments value={form.department} onChange={(e) => setForm({ department: e.target.value, qualificationId: '', specialisationId: '' })}>
               {depts.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
             </Combo>
           </label>

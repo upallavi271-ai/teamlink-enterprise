@@ -79,7 +79,7 @@ export default function WorkflowEditor({ seq, templates, deptNames, isAdmin, foc
             </Combo>
           </div>
           <div className="field"><label>DEPARTMENT</label>
-            <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
+            <Combo departments value={department} onChange={(e) => setDepartment(e.target.value)}>
               <option value="">{isAdmin ? 'All departments' : 'No department'}</option>
               {deptNames.map((d) => <option key={d} value={d}>{d}</option>)}
             </Combo>

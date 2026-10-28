@@ -502,7 +502,7 @@ export default function ClientForm({
               <small className="cf-hint">Your own department. The BDE team lead or an Admin can move a client.</small>
             </>
           ) : (
-            <Combo creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
+            <Combo departments creatable value={form.ownerDepartment} onChange={(e) => set({ ownerDepartment: e.target.value })}>
               <option value="">— Pick —</option>
               {(mine.depts || deptOptions(user)).filter((x) => !/^(bde|business development)$/i.test(x)).map((x) => <option key={x}>{x}</option>)}
             </Combo>

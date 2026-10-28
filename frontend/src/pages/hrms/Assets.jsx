@@ -119,7 +119,7 @@ function AllocateAssetModal({ asset, people, onClose, onSaved }) {
       {transfer && <div className="small-muted" style={{ marginBottom: 10 }}>Now with {asset.assignedToName}{asset.assignedTo?.department ? ` (${asset.assignedTo.department})` : ''}.</div>}
       {!people && <div className="small-muted">Loading people…</div>}
       <Field label="1. Department" required>
-        <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
+        <Combo departments value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
           <option value="">Pick the department</option>
           {depts.map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.count} ${d.count === 1 ? 'person' : 'people'})`}</option>)}
           {people && people.noDepartment > 0 && <option value={NO_DEPT}>{`No department on file (${people.noDepartment})`}</option>}

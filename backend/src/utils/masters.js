@@ -12,7 +12,8 @@
 //   roles          active roles from Role Catalog (system + custom), not the
 //                  external Client / Candidate kinds
 //   designations   DesignationRole
-//   departments    Department master ∪ Employee.department in use
+//   departments    Department master, switched-on only (2026-10-28: NOT the
+//                  values on employee records — "Recruitment" is not a dept)
 //   teams          Team master (with its department)
 //   branches       office branches in use (∪ the three offices)
 //   locations      work locations in use (∪ the ATS location vocabulary)
@@ -46,6 +47,47 @@ const GENDERS = ['Male', 'Female', 'Other'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
 const ADDRESS_TYPES = ['Current', 'Permanent'];
 const EXPERIENCE = ['Fresher', 'Experienced'];
+
+// ---------------------------------------------------------------------------
+// ONLY THE DEPARTMENTS IN "DEPARTMENT & TEAM" THAT ARE SWITCHED ON (founder,
+// 2026-10-28: "Recruitment is not a department, yet the dropdown shows it").
+// Every department option list is cut to these names. A department written
+// on an old record (Employee.department "Recruitment") or a switched-off one
+// is NOT offered, but the record keeps its value and a filter already set to
+// it still works — this only decides what a dropdown OFFERS.
+// Cached for a few seconds so a busy screen does not re-read the table.
+// ---------------------------------------------------------------------------
+const DEPT_TTL_MS = 5000;
+let deptCache = null;
+let deptCacheAt = 0;
+async function activeDepartmentNames() {
+  if (deptCache && Date.now() - deptCacheAt < DEPT_TTL_MS) return deptCache;
+  const rows = await prisma.department.findMany({ where: activeOnly('Department'), select: { name: true }, orderBy: { name: 'asc' } });
+  deptCache = rows.map((d) => d.name);
+  deptCacheAt = Date.now();
+  return deptCache;
+}
+const deptKey = (v) => String(v == null ? '' : v).trim().toLowerCase();
+async function activeDepartmentSet() {
+  return new Set((await activeDepartmentNames()).map(deptKey));
+}
+// "No department", "__none__", "Not recorded", "—" are not department names:
+// they are the "nobody's department" bucket and stay in a list.
+const NOT_A_DEPT = /^(__\w+__|no department|without department|not recorded|not set|unassigned|none|—|-|\(none\)|\(blank\))$/i;
+// Cut a list to active master departments. `get` reads the name off an
+// item (default: the item itself); `keep` = value(s) that always stay (the
+// one already chosen). Blank / "no department" items stay.
+function filterActiveDepartments(list, set, get = (x) => x, keep = []) {
+  const kept = new Set([].concat(keep).filter(Boolean).map(deptKey));
+  return (list || []).filter((x) => {
+    const n = get(x);
+    const k = deptKey(n);
+    return !k || set.has(k) || kept.has(k) || NOT_A_DEPT.test(String(n).trim());
+  });
+}
+async function keepActiveDepartments(list, get, keep) {
+  return filterActiveDepartments(list, await activeDepartmentSet(), get, keep);
+}
 
 const uniq = (list) => [...new Set(list.map((v) => (v == null ? '' : String(v).trim())).filter(Boolean))];
 const sorted = (list) => uniq(list).sort((a, b) => a.localeCompare(b));
@@ -94,7 +136,10 @@ async function masterLists(opts = {}) {
   const out = {
     roles: roles.filter((r) => !r.external).map((r) => ({ code: r.code, name: r.name, isSystem: r.isSystem, products: r.products })),
     designations: uniq(desig.map((d) => d.designation)),
-    departments: sorted([...depts.map((d) => d.name).filter(inScope).filter((n) => !off.has(n.toLowerCase())), ...col('department')]),
+    // Master only (founder 2026-10-28): a name that is only on employee
+    // records ("Recruitment") is no longer offered. Forms keep a record's own
+    // value with withCurrent(), so editing an old record does not change it.
+    departments: sorted(depts.map((d) => d.name).filter(inScope).filter((n) => !off.has(n.toLowerCase()))),
     teams: teamsIn.map((t) => ({ name: t.name, department: t.department ? t.department.name : null })),
     teamNames: sorted([...teamsIn.map((t) => t.name), ...col('team')]),
     branches: sorted([...DEFAULT_BRANCHES, ...col('branch')]),
@@ -112,5 +157,7 @@ async function masterLists(opts = {}) {
 }
 
 module.exports = {
-  masterLists, activeOnly, hasColumn, EMPLOYMENT_STATUSES, DEFAULT_BRANCHES, GENDERS, BLOOD_GROUPS, ADDRESS_TYPES, EXPERIENCE,
+  masterLists, activeOnly, hasColumn,
+  activeDepartmentNames, activeDepartmentSet, filterActiveDepartments, keepActiveDepartments,
+  EMPLOYMENT_STATUSES, DEFAULT_BRANCHES, GENDERS, BLOOD_GROUPS, ADDRESS_TYPES, EXPERIENCE,
 };

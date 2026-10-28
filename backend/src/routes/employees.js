@@ -1593,9 +1593,11 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     statusFilter: HR_STATUSES,
     // A department-scoped caller is offered only the departments they hold —
     // the same list assertDepartmentAllowed() then enforces on the write.
+    // Only Department & Team departments that are switched on (founder
+    // 2026-10-28) — no longer the names typed on employee records.
     departments: allowed === undefined
-      ? union(masterDepts, inUse('department')).filter((d) => !offDepts.has(d))
-      : allowed,
+      ? masterDepts.filter((d) => !offDepts.has(d))
+      : (departments.length ? departments.map((d) => d.name) : allowed),
     // Departments with their teams, for the Edit Scope checklists.
     departmentTree: departments.map((d) => ({
       id: d.id, name: d.name, teams: (d.teams || []).map((t) => ({ id: t.id, name: t.name })),

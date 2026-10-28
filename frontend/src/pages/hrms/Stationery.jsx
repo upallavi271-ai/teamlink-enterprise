@@ -143,7 +143,7 @@ function GiveModal({ items, people, onClose, onSaved }) {
     <ComposeModal title="Give to employee" onClose={onClose} onSubmit={submit} submitLabel="Give" busy={busy} error={error}>
       {!people && <div className="small-muted">Loading people…</div>}
       <Field label="1. Department" required>
-        <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
+        <Combo departments value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
           <option value="">Pick the department</option>
           {((people && people.departments) || []).map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.count} ${d.count === 1 ? 'person' : 'people'})`}</option>)}
           {people && people.noDepartment > 0 && <option value={NO_DEPT}>{`No department on file (${people.noDepartment})`}</option>}
@@ -234,7 +234,7 @@ function GiveManyModal({ items, people, onClose, onSaved }) {
     <ComposeModal title="Give to many" wide onClose={onClose} onSubmit={submit} submitLabel={ids.length ? `Give to ${ids.length} ${ids.length === 1 ? 'person' : 'people'}` : 'Give'} busy={busy} disabled={!preview || !preview.ok || checking} error={error}>
       <div className="small-muted" style={{ marginBottom: 8 }}>Everyone you tick gets the same. Example: 1 notepad + 2 pens to everyone in Medical.</div>
       <Field label="1. Who gets it — pick a department, then tick people">
-        <Combo value={department} onChange={(e) => setDepartment(e.target.value)}>
+        <Combo departments value={department} onChange={(e) => setDepartment(e.target.value)}>
           <option value="">Pick the department</option>
           {((people && people.departments) || []).map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.count} ${d.count === 1 ? 'person' : 'people'})`}</option>)}
           {people && people.noDepartment > 0 && <option value={NO_DEPT}>{`No department on file (${people.noDepartment})`}</option>}

@@ -18,7 +18,7 @@ const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { requireInternal } = require('../utils/permissions');
 const { scopeDepartments } = require('../utils/scope');
-const { masterLists } = require('../utils/masters');
+const { masterLists, activeDepartmentNames } = require('../utils/masters');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -33,6 +33,21 @@ router.get('/', async (req, res, next) => {
     const inm = String(req.headers['if-none-match'] || '');
     if (inm && inm.split(',').map((s) => s.trim()).includes(etag)) return res.status(304).end();
     return res.json(lists);
+  } catch (err) {
+    return next(err);
+  }
+});
+
+// GET /api/masters/departments — the departments in Department & Team that
+// are switched ON, company-wide (founder 2026-10-28). Every department
+// dropdown in the app (components/Combo.jsx via utils/activeDepartments.js)
+// cuts its options to these names, so a name only written on old records
+// ("Recruitment") or a switched-off department is never offered. It never
+// ADDS an option, so it is not cut to the caller's scope.
+router.get('/departments', async (req, res, next) => {
+  try {
+    res.set('Cache-Control', 'private, no-cache');
+    return res.json({ departments: await activeDepartmentNames() });
   } catch (err) {
     return next(err);
   }
