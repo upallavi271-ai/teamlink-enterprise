@@ -1,6 +1,6 @@
 const express = require('express');
 const prisma = require('../db');
-const { canonicalCategory, categoriesInUse } = require('../utils/assetCategory');
+const { canonicalCategory, categoriesInUse, refreshInUse, variantsOf } = require('../utils/assetCategory');
 const crypto = require('crypto');
 const { scopeOf, hrmsGlobal, employeeWhere } = require('../utils/scope');
 const attachments = require('../utils/attachments');
@@ -57,6 +57,7 @@ function present(a) {
     : null;
   return {
     ...rest,
+    category: rest.category ? canonicalCategory(rest.category) : rest.category, // one name per category (utils/assetCategory.js)
     assignedTo: holder,
     history: parseHistory(a.history).map(publicEntry),
     assignedToName: holder ? holder.name : null,
@@ -194,7 +195,7 @@ function assetWhere(user, q = {}) {
   // department its seat belongs to (location "BDE EDU-1", "HR", "R&D-3"):
   // user, 2026-10-05, "selecting BDE must show all BDE seats' assets".
   if (str(q.department)) and.push(departmentArm(str(q.department)));
-  if (str(q.category)) and.push({ category: str(q.category) });
+  if (str(q.category)) and.push({ category: { in: variantsOf(str(q.category)) } }); // every stored spelling of it
   if (str(q.assetType)) and.push({ assetType: { contains: str(q.assetType) } });
   if (str(q.assetCode)) and.push({ assetCode: { contains: str(q.assetCode) } });
   if (str(q.assetName)) and.push({ name: { contains: str(q.assetName) } });
@@ -322,6 +323,7 @@ router.get('/', async (req, res) => {
   // fact about that employee, so it follows them. Without this a TL read the
   // whole company's asset register.
   // The report filters (assetWhere above) narrow that same scoped set.
+  await refreshInUse(prisma);
   const assets = await prisma.asset.findMany({
     where: assetWhere(req.user, req.query), include: { assignedTo: { select: HOLDER_SELECT } }, orderBy: { createdAt: 'desc' },
   });
@@ -357,7 +359,7 @@ router.get('/options', async (req, res, next) => {
     res.json({
       statuses: STATUSES,
       allocations: ['Allocated', 'Unallocated'],
-      categories: distinct((a) => a.category),
+      categories: distinct((a) => (a.category ? canonicalCategory(a.category) : a.category)),
       assetTypes: distinct((a) => a.assetType),
       locations: distinct((a) => a.location),
       assignedBy: distinct((a) => a.assignedByName),
@@ -423,6 +425,7 @@ router.get('/people', requirePerm(null, 'hrms', 'Employee Services', 'edit'), as
 // Export — exactly the filtered, scoped rows, as Excel or CSV. The `export`
 // action is the permission; the scope is assetWhere()'s, the same as the list.
 async function sendAssetExport(req, res, format) {
+  await refreshInUse(prisma);
   const assets = (await prisma.asset.findMany({
     where: assetWhere(req.user, req.query), include: { assignedTo: { select: HOLDER_SELECT } }, orderBy: { assetCode: 'asc' },
   })).map(present);

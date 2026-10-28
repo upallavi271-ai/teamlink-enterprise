@@ -32,4 +32,15 @@ async function categoriesInUse(prisma) {
   return (await prisma.asset.findMany({ select: { category: true }, distinct: ['category'] })).map((r) => r.category).filter(Boolean);
 }
 
-module.exports = { canonicalCategory, categoriesInUse, categoryKey: key, SAME };
+// READ SIDE (founder 2026-10-28, live "By Category" still showed Mobile and Mobile Phone): until the stored names are merged
+// (scripts/merge-asset-categories.js), every screen shows the one name, and a filter on it finds every stored spelling.
+// The list / export / options handlers refresh this cache (refreshInUse) before they build their query.
+let IN_USE = [];
+async function refreshInUse(prisma) { IN_USE = await categoriesInUse(prisma).catch(() => IN_USE); return IN_USE; }
+// the stored spellings that are this category ("Mobile Phone" -> ["Mobile Phone", "Mobile"])
+function variantsOf(name) {
+  const want = canonicalCategory(name);
+  return [...new Set([String(name || '').trim(), want, ...IN_USE.filter((c) => canonicalCategory(c) === want)])].filter(Boolean);
+}
+
+module.exports = { canonicalCategory, categoriesInUse, refreshInUse, variantsOf, categoryKey: key, SAME };
