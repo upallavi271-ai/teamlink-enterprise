@@ -243,7 +243,17 @@ router.get('/:id/workflow', async (req, res, next) => {
       where: { entity: 'LeaveRequest', entityId: request.id, action: policy.REASSIGNED },
       orderBy: { createdAt: 'asc' },
     })).map((a) => ({ from: a.fromValue, to: a.toValue, by: a.actorName, reason: a.reason, at: a.createdAt }));
+    // THE CHAIN SCREEN (founder 2026-10-28: "chain ani vere screen open avvali, dantlo evaru e dates lo approve chesaru ani detail ga,
+    // leave reason kuda"): every recorded event of this request, oldest first, with who and when.
+    const audit = await prisma.auditLog.findMany({ where: { entity: 'LeaveRequest', entityId: request.id }, orderBy: { createdAt: 'asc' } });
+    const whoIds = [...new Set(audit.filter((a) => !a.actorName && a.userId).map((a) => a.userId))];
+    const whoName = new Map((whoIds.length ? await prisma.user.findMany({ where: { id: { in: whoIds } }, select: { id: true, name: true } }) : []).map((u) => [u.id, u.name]));
+    const history = audit.map((a) => ({
+      at: a.createdAt, action: a.action, by: a.actorName || whoName.get(a.userId) || null,
+      from: a.fromValue || null, to: a.toValue || null, reason: a.reason || null,
+    }));
     return res.json({
+      history,
       leave: {
         id: request.id,
         employee: request.employee ? {

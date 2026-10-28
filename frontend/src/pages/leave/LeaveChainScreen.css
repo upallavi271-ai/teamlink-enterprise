@@ -1,0 +1,20 @@
+/* The leave Chain screen (LeaveChainScreen.jsx). */
+.lch-facts{width:100%;border-collapse:collapse;font-size:13px;margin:4px 0 6px}
+.lch-facts th{width:170px;text-align:left;vertical-align:top;padding:6px 10px 6px 0;font-weight:500;color:var(--ink-soft,#56666E)}
+.lch-facts td{padding:6px 0;vertical-align:top}
+.lch-facts tr + tr th,.lch-facts tr + tr td{border-top:1px solid var(--line,#dde5e2)}
+.lch-reason{white-space:pre-wrap;word-break:break-word}
+.lch-steps td,.lch-steps th{font-size:12.5px;vertical-align:top}
+.lch-steps .lch-note{max-width:280px;white-space:pre-wrap;word-break:break-word}
+.lch-steps tr.lch-approved td:nth-child(4) b{color:var(--green,#15803d)}
+.lch-steps tr.lch-rejected td:nth-child(4) b{color:var(--red,#d03b3b)}
+.lch-steps tr.lch-pending td:nth-child(4) b{color:var(--amber,#b26b00)}
+.lch-steps tr.lch-skipped td,.lch-steps tr.lch-visibility td{color:var(--ink-faint,#64767D)}
+.lch-history{list-style:none;margin:4px 0 0;padding:0;font-size:12.5px}
+.lch-history li{display:grid;grid-template-columns:170px 1fr;gap:10px;padding:7px 0;border-top:1px solid var(--line,#dde5e2)}
+.lch-history li:first-child{border-top:0}
+.lch-when{color:var(--ink-soft,#56666E);font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:600px){
+  .lch-facts th{width:110px}
+  .lch-history li{grid-template-columns:1fr;gap:2px}
+}
