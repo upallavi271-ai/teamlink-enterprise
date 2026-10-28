@@ -133,12 +133,13 @@ async function runAi(id) {
       if (!n) return false;
       if (merged.lines) {
         await DB.run('DELETE FROM "VendorBillUploadLine" WHERE "uploadId" = ?', [id], tx);
+        await DB.run('DELETE FROM "VendorBillLineAsset" WHERE "uploadId" = ?', [id], tx); // a new reading: new lines, links made by hand start again
         let i = 0;
         for (const l of merged.lines) {
           i += 1;
           // eslint-disable-next-line no-await-in-loop
-          await DB.run('INSERT INTO "VendorBillUploadLine" ("id","uploadId","lineNo","description","quantity","rate","amount","confidence","unclear","note","edited","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            [BU.newId('bl'), id, i, l.description, l.quantity, l.rate, l.amount, l.confidence, l.unclear ? 1 : 0, l.note, 0, BU.nowIso()], tx);
+          await DB.run('INSERT INTO "VendorBillUploadLine" ("id","uploadId","lineNo","description","quantity","rate","amount","confidence","unclear","note","edited","createdAt","itemName","brand","model","serialNo") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [BU.newId('bl'), id, i, l.description, l.quantity, l.rate, l.amount, l.confidence, l.unclear ? 1 : 0, l.note, 0, BU.nowIso(), l.itemName || null, l.brand || null, l.model || null, l.serialNo || null], tx);
         }
       }
       return true;

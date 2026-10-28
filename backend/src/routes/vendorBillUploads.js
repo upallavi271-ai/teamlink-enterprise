@@ -89,6 +89,12 @@ router.patch('/:id', wrap(async (req, res) => {
   if (await needEdit(req, res)) return undefined;
   return send(res, await RV.staffEdit(req.user, req.params.id, bodyOf(req)));
 }));
+// Which HRMS asset one line of the bill is: { lineNo, kind: 'linked' | 'new' | 'clear', assetId } (asset detection, 2026-10-28).
+// Only the bill line's link changes - never the asset itself.
+router.post('/:id/line-asset', wrap(async (req, res) => {
+  if (await needEdit(req, res)) return undefined;
+  return send(res, await RV.lineAsset(req.user, req.params.id, bodyOf(req)));
+}));
 router.post('/:id/approve', wrap(async (req, res) => {
   if (await needApprover(req, res)) return undefined;
   return send(res, await RV.approve(req.user, req, req.params.id, bodyOf(req)));

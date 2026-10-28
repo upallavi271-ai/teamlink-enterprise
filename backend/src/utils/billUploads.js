@@ -162,7 +162,7 @@ async function vendorView(row, links, M, { withHistory = false } = {}) {
     asset: asset ? { id: asset.id, code: M.code(asset), name: M.text(asset.name, asset.id) } : null,
     files: filesView(row), remarks: row.remarks || null,
     fields: valuesOf(row),
-    lines: ls.map((l) => ({ lineNo: l.lineNo, description: l.description, quantity: l.quantity, rate: l.rate, amount: l.amount, unclear: !!l.unclear && !l.edited })),
+    lines: ls.map((l) => ({ lineNo: l.lineNo, description: l.description, itemName: l.itemName || null, brand: l.brand || null, model: l.model || null, serialNo: l.serialNo || null, quantity: l.quantity, rate: l.rate, amount: l.amount, unclear: !!l.unclear && !l.edited })),
     unclear: unclearFields(row), notices: vendorNotices(row), reading: readingOf(row),
     sentBackNote: row.status === S.NOT_SENT ? row.sentBackNote || null : null, rejectionReason: row.status === S.REJECTED ? row.rejectionReason || null : null,
     invoiceCode: submission ? submission.billCode : null,
@@ -174,7 +174,10 @@ async function vendorView(row, links, M, { withHistory = false } = {}) {
   if (withHistory) out.history = await vendorHistory(row.id);
   // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
   if (withHistory) out.payment = await paymentOfUpload(row).catch(() => null);
-  if (withHistory) out.lineAssets = await require('./billLineAssets').lineAssets(ls, await candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, out.asset ? out.asset.id : null, M).catch(() => []); // eslint-disable-line global-require
+  if (withHistory) {
+    const BLA = require('./billLineAssets'); // eslint-disable-line global-require
+    out.lineAssets = await BLA.lineAssets(ls, await candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, out.asset ? out.asset.id : null, M, { links: await BLA.linksOf(row.id) }).catch(() => []);
+  }
   return out;
 }
 
@@ -231,8 +234,11 @@ async function listForVendor(v, q = {}) {
   const sorts = {
     uploadedAt: (r) => r.uploadedAt, invoiceDate: (r) => r.invoiceDate || '', total: (r) => r.total || 0, status: (r) => STEP_OF[r.status] ?? 0, invoiceNo: (r) => r.invoiceNo || '', code: (r) => r.code,
   };
+  const page = paged(rows, q, sorts, 'uploadedAt');
+  // the items of each bill on this page: asset name, asset, who has it now, match status (asset detection, 2026-10-28)
+  await itemsOf(page.rows, rows0, M);
   return {
-    ...paged(rows, q, sorts, 'uploadedAt'), all: all.length, canEdit: v.canEdit,
+    ...page, all: all.length, canEdit: v.canEdit,
     facets: { status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status, (k) => LABEL[k]) },
     summary: {
       count: all.length, waiting: all.filter((r) => [S.UPLOADED, S.AI_PROCESSING, S.NEEDS_REVIEW, S.PENDING_APPROVAL].includes(r.status)).length,
@@ -484,7 +490,10 @@ function readEdit(body) {
       const amount = blank(l.amount) ? null : V.parseMoney(l.amount);
       if ((!blank(l.quantity) && quantity == null) || (!blank(l.rate) && rate == null) || (!blank(l.amount) && amount == null)) return { error: { status: 400, body: { error: `Line ${i + 1}: quantity, rate and amount must be numbers.`, field: `line.${i + 1}` } } };
       if (description == null && quantity == null && rate == null && amount == null) continue; // eslint-disable-line no-continue
-      newLines.push({ description, quantity, rate, amount });
+      const item = (k, max) => (blank(l[k]) ? undefined : (V.cleanText(l[k], max) || null)); // undefined = keep what the reading found
+      newLines.push({
+        description, quantity, rate, amount, itemName: item('itemName', 120), brand: item('brand', 60), model: item('model', 80), serialNo: item('serialNo', 80),
+      });
     }
   }
   return { cols, lines: newLines };
@@ -529,13 +538,27 @@ async function applyEdit(row, edit, who, extra = {}) {
       const n = await patch(tx, row.id, data, [row.status]);
       if (!n) throw Object.assign(new Error('stale'), { stale: true });
       if (linesChanged) {
+        // what the reading found about each item (and a person's asset link) stays with a line whose text did not change
+        const old = await lines(row.id, tx);
+        const oldByText = new Map(old.map((l) => [String(l.description || '').trim().toLowerCase(), l]));
         await DB.run('DELETE FROM "VendorBillUploadLine" WHERE "uploadId" = ?', [row.id], tx);
+        const keepLinks = [];
         let i = 0;
         for (const l of edit.lines) {
           i += 1;
+          const was = oldByText.get(String(l.description || '').trim().toLowerCase()) || null;
+          const pick = (k) => (l[k] !== undefined ? l[k] : (was ? was[k] || null : null));
+          if (was) keepLinks.push([was.lineNo, i]);
           // eslint-disable-next-line no-await-in-loop
-          await DB.run('INSERT INTO "VendorBillUploadLine" ("id","uploadId","lineNo","description","quantity","rate","amount","confidence","unclear","note","edited","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-            [newId('bl'), row.id, i, l.description, l.quantity, l.rate, l.amount, 1, 0, null, 1, nowIso()], tx);
+          await DB.run('INSERT INTO "VendorBillUploadLine" ("id","uploadId","lineNo","description","quantity","rate","amount","confidence","unclear","note","edited","createdAt","itemName","brand","model","serialNo") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            [newId('bl'), row.id, i, l.description, l.quantity, l.rate, l.amount, 1, 0, null, 1, nowIso(), pick('itemName'), pick('brand'), pick('model'), pick('serialNo')], tx);
+        }
+        const links = await DB.q('SELECT * FROM "VendorBillLineAsset" WHERE "uploadId" = ?', [row.id], tx);
+        await DB.run('DELETE FROM "VendorBillLineAsset" WHERE "uploadId" = ?', [row.id], tx);
+        for (const k of links) {
+          const to = keepLinks.find(([from]) => from === k.lineNo);
+          // eslint-disable-next-line no-await-in-loop
+          if (to) await DB.run('INSERT INTO "VendorBillLineAsset" ("id","uploadId","lineNo","kind","assetId","byId","byName","at") VALUES (?,?,?,?,?,?,?,?)', [newId('la'), row.id, to[1], k.kind, k.assetId, k.byId, k.byName, k.at], tx);
         }
       }
       for (const e of evs) await event(tx, row, { ...e, actorKind: who.kind, actorName: who.name, actorId: who.id }); // eslint-disable-line no-await-in-loop
@@ -709,6 +732,42 @@ async function computeFlags(row) {
 }
 
 // The vendor's repairs/assets as matching candidates. keysOfAssets: [{id, keys}] ; keysByAsset: Map(assetId -> keys) ; repairs: AssetRepair rows (own set)
+// rows: list rows ({ id }); raws: their parsed VendorBillUpload rows. Adds rows[i].items = billLineAssets.summary(...). One candidates
+// list per vendor, one lines and one links query for the whole page. Never fails the list (items stay null).
+async function itemsOf(rows, raws, M = null) {
+  if (!rows.length) return;
+  try {
+    const BLA = require('./billLineAssets'); // eslint-disable-line global-require
+    const byId = new Map(raws.map((r) => [r.id, r]));
+    const ids = rows.map((r) => r.id);
+    const linesBy = new Map(); const linksBy = new Map();
+    for (let i = 0; i < ids.length; i += 500) { // SQLite: keep each IN list short
+      const part = ids.slice(i, i + 500); const marks = part.map(() => '?').join(',');
+      // eslint-disable-next-line no-await-in-loop
+      (await DB.q(`SELECT * FROM "VendorBillUploadLine" WHERE "uploadId" IN (${marks}) ORDER BY "lineNo" ASC`, part)).forEach((l) => { if (!linesBy.has(l.uploadId)) linesBy.set(l.uploadId, []); linesBy.get(l.uploadId).push(l); });
+      let ks = [];
+      try { ks = await DB.q(`SELECT * FROM "VendorBillLineAsset" WHERE "uploadId" IN (${marks})`, part); } catch { ks = []; } // eslint-disable-line no-await-in-loop
+      ks.forEach((k) => { if (!linksBy.has(k.uploadId)) linksBy.set(k.uploadId, new Map()); linksBy.get(k.uploadId).set(Number(k.lineNo), k); });
+    }
+    const vendorCtx = new Map(); // vendorId -> { cands, full }: the vendor's assets loaded once for every bill of the list
+    for (const r of rows) {
+      const raw = byId.get(r.id);
+      if (!raw) continue; // eslint-disable-line no-continue
+      const ls = linesBy.get(r.id) || [];
+      if (!ls.length) { r.items = { count: 0, needsReview: 0, items: [] }; continue; } // eslint-disable-line no-continue
+      if (!vendorCtx.has(raw.vendorId)) {
+        const cands = await candidatesFor(raw.vendorId); // eslint-disable-line no-await-in-loop
+        vendorCtx.set(raw.vendorId, { cands, full: await BLA.assetsById(cands.assets.map((a) => a.id)) }); // eslint-disable-line no-await-in-loop
+      }
+      const c = vendorCtx.get(raw.vendorId);
+      // eslint-disable-next-line no-await-in-loop
+      r.items = BLA.summary(await BLA.lineAssets(ls, c.cands, raw.invoiceDate || raw.serviceDate, raw.assetId || null, M, { links: linksBy.get(r.id) || new Map(), full: c.full }));
+    }
+  } catch (e) {
+    console.error('[bill-upload] items:', e.message); // eslint-disable-line no-console
+  }
+}
+
 async function candidatesFor(vendorId) {
   const v = { vendorId };
   const M = await AVP().ensureMask();
@@ -833,7 +892,7 @@ function loadFiles(row) {
 
 module.exports = {
   S, LABEL, STEPS, STEP_OF, ALLOWED, canMove, VENDOR_EDITABLE, REVIEW_STATES, DEAD, FIELD_KEYS, FIELD_LABEL, COLS,
-  ensure, getRow, lines, patch, move, event, nextCode, parse, valuesOf, json, nowIso, newId, ROUND,
+  ensure, getRow, lines, patch, itemsOf, move, event, nextCode, parse, valuesOf, json, nowIso, newId, ROUND,
   vendorOf, linkMaps, vendorView, vendorHistory, listForVendor, summaryFor, optionsFor, mine, createUpload, viewOf, detailForVendor,
   readEdit, applyEdit, vendorEdit, vendorSubmit, computeFlags, candidatesFor, findDuplicates, revalidate, notifyReviewers, ownedFile, fileForRepair, loadFiles,
   readingOf, unclearFields, filesView, deleteStored, storeFiles, rateProblem, paymentOfUpload,

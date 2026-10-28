@@ -21,9 +21,10 @@ const fieldSchema = (valueType) => ({
 const lineSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['description', 'quantity', 'rate', 'amount', 'confidence', 'unclear', 'note'],
+  required: ['description', 'item_name', 'brand', 'model', 'serial_number', 'quantity', 'rate', 'amount', 'confidence', 'unclear', 'note'],
   properties: {
-    description: nullable('string'), quantity: nullable('number'), rate: nullable('number'), amount: nullable('number'),
+    description: nullable('string'), item_name: nullable('string'), brand: nullable('string'), model: nullable('string'), serial_number: nullable('string'),
+    quantity: nullable('number'), rate: nullable('number'), amount: nullable('number'),
     confidence: { type: 'number' }, unclear: { type: 'boolean' }, note: nullable('string'),
   },
 };
@@ -50,6 +51,7 @@ const SYSTEM_PROMPT = [
   'HANDWRITING: transcribe digits very carefully. Indian number formats: lakh grouping (1,23,456), a "/-" or "only" after an amount, a rupee sign, "Rs." or "Rs/-" before it. Dates are day first (dd/mm/yy or dd-mm-yyyy); return invoice_date and service_date as YYYY-MM-DD, with 2-digit years meaning 20yy.',
   'The bill may mix English, Telugu and Hindi, including Telugu and Devanagari digits. Return descriptions in English; if you translated, put the original wording in the "note" of that field or line.',
   'ONE LINE PER TABLE ROW: lines[] has exactly one entry per row of the items table (description, quantity, rate, amount as written). Do not merge rows, do not invent rows, do not add a row for the subtotal, GST or total.',
+  'For each line also copy, only when written for that item: item_name (the item or asset in a few words, e.g. "Laptop", "HP Monitor", "Keyboard"), brand (e.g. Dell), model (e.g. Latitude 5420), serial_number (a serial number, service tag, asset tag or IMEI written for that item). null when it is not written; never invent or complete one.',
   'NEVER GUESS. If a value is not on the bill, return null with confidence 0. If it is there but you cannot read it with confidence, return your best reading ONLY if confidence is at least 0.6; otherwise return null, set unclear to true and say why in note. A struck-out, overwritten or smudged value is unclear. Set unclear to true whenever a human should double-check the value.',
   'confidence is your honest 0 to 1 certainty for that value. Do not compute or correct values yourself (do not fill a subtotal, GST or total that is not written, and do not fix arithmetic that looks wrong): copy what is written; other software checks the arithmetic.',
   'asset_reference is an asset ID, asset tag or serial number written on the bill for the item repaired (not a phone number or the invoice number). work_description is the repair or service work described, in English.',
