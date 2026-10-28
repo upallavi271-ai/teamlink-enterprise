@@ -294,6 +294,20 @@ async function buildDashboard(req, period) {
     // onLeave + offDay + noRecord + notYet (+ upcoming) = headcount.
     attendanceOverview: {
       asOf,
+      // THE ONE CHART (founder 2026-10-28: "HRMS dashboard clear ga, okka bar graph"): the same people as the tiles, on the same day,
+      // per department - present / half day / on leave / absent / week off - so each bar adds up to that department's headcount.
+      byDepartment: (() => {
+        const m = new Map();
+        dayRows.forEach(({ employee, day }) => {
+          const name = employee.department || 'No department';
+          const x = m.get(name) || { department: name, present: 0, halfDay: 0, onLeave: 0, absent: 0, offDay: 0, noRecord: 0, notYet: 0, other: 0, total: 0 };
+          const b = D.bucketOf(day);
+          x[['present', 'halfDay', 'onLeave', 'absent', 'offDay', 'noRecord', 'notYet'].includes(b) ? b : 'other'] += 1;
+          x.total += 1;
+          m.set(name, x);
+        });
+        return [...m.values()].sort((a, b) => b.total - a.total || a.department.localeCompare(b.department));
+      })(),
       headcount: dayTally.headcount,
       present: dayTally.present,
       // THE TILES (2026-10-09): Present + Absent + Half day + On leave + Week off / Holiday
