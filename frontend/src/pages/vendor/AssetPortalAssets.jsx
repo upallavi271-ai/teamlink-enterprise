@@ -234,6 +234,17 @@ function AssetDetail({ id, onClose, onChanged }) {
           )}
           <h4 style={{ margin: '14px 0 6px' }}>History of this asset&apos;s repairs</h4>
           <HistoryList rows={d.history} showRepair />
+          {Array.isArray(d.timeline) && d.timeline.length > 0 && (
+            <>
+              <h4 style={{ margin: '14px 0 6px' }}>Full history of this asset (oldest first)</h4>
+              <div className="tbl-wrap vp-scroll"><table>
+                <thead><tr><th>Date</th><th>What</th><th>Details</th></tr></thead>
+                <tbody>{d.timeline.map((e, i) => (
+                  <tr key={`${e.at}-${i}`}><td>{day(String(e.at).slice(0, 10))}</td><td>{e.kind}</td><td style={{ whiteSpace: 'normal' }}>{e.link ? <Link to={e.link}>{e.text}</Link> : e.text}</td></tr>
+                ))}</tbody>
+              </table></div>
+            </>
+          )}
         </div>
       )}
     </Modal>

@@ -39,7 +39,7 @@ function InvoiceTabs() {
         <button type="button" role="tab" aria-selected={tab === 'bills'} className={tab === 'bills' ? 'on' : ''} onClick={() => pick('bills')}>My bills{unseen > 0 ? <span className="bu-new">{unseen} new</span> : null}</button>
         <button type="button" role="tab" aria-selected={tab === 'payments'} className={tab === 'payments' ? 'on' : ''} onClick={() => pick('payments')}>Bank payments</button>
         <button type="button" role="tab" aria-selected={tab === 'orders'} className={tab === 'orders' ? 'on' : ''} onClick={() => pick('orders')}>Orders</button>
-        <span style={{ marginLeft: 'auto' }}><UploadBillButton label="Upload repair bill" onDone={() => { pick('bills'); setStamp((x) => x + 1); loadSummary(); }} /></span>
+        <span style={{ marginLeft: 'auto' }}><UploadBillButton label="Import bills (photo or PDF)" onDone={() => { pick('bills'); setStamp((x) => x + 1); loadSummary(); }} /></span>
       </div>
       {tab === 'bills' ? <MyBills key={stamp} onChanged={loadSummary} showUpload={false} /> : tab === 'orders' ? <OrdersBody /> : tab === 'payments' ? <VendorBankPayments /> : <Body />}
     </>

@@ -44,6 +44,41 @@ function Body() {
         <Link to="/vendor/asset-portal/invoices" className="vp-tile green"><span>Paid to you</span><b>{rs(d.payments.paidTotal)}</b></Link>
         <Link to="/vendor/asset-portal/invoices" className="vp-tile"><span>Invoices overdue</span><b>{d.payments.overdue}</b></Link>
       </div>
+      {d.more && (
+        <>
+          <h3 className="vm-h3">What needs you</h3>
+          <div className="vp-tiles">
+            <Link to="/vendor/asset-portal/repairs?bucket=Awaiting%20your%20action" className="vp-tile orange"><span>Repairs waiting for your answer</span><b>{d.more.awaitingAction}</b></Link>
+            <Link to="/vendor/asset-portal/repairs?tab=tickets" className="vp-tile"><span>Open HRMS tickets</span><b>{d.more.openTickets}</b></Link>
+            <Link to="/vendor/asset-portal/repairs?bucket=Waiting%20for%20approval" className="vp-tile"><span>Waiting for company approval</span><b>{d.more.waitingApproval}</b></Link>
+            <Link to="/vendor/asset-portal/repairs?bucket=Waiting%20for%20approval" className="vp-tile"><span>Replacement requests</span><b>{d.more.replacementRequests}</b></Link>
+            <Link to="/vendor/asset-portal/invoices?tab=bills" className="vp-tile"><span>Bills being checked</span><b>{d.more.billsInReview}</b></Link>
+            <Link to="/vendor/asset-portal/invoices" className="vp-tile orange"><span>Invoices not paid yet</span><b>{d.payments.pending || 0}</b></Link>
+            <Link to="/vendor/asset-portal/invoices" className="vp-tile"><span>Partly paid invoices</span><b>{d.payments.partlyPaid || 0}</b></Link>
+            <Link to="/vendor/asset-portal/invoices" className="vp-tile green"><span>Paid invoices</span><b>{d.payments.paid || 0}</b></Link>
+          </div>
+          <h3 className="vm-h3">Your assets</h3>
+          <div className="vp-tiles">
+            <Link to="/vendor/asset-portal/assets?view=assigned" className="vp-tile"><span>With employees</span><b>{d.more.assigned}</b></Link>
+            <Link to="/vendor/asset-portal/assets" className="vp-tile"><span>Not with anyone</span><b>{d.more.unassigned}</b></Link>
+            <Link to="/vendor/asset-portal/assets?view=available" className="vp-tile green"><span>Available</span><b>{d.more.available}</b></Link>
+            <Link to="/vendor/asset-portal/assets?view=repair" className="vp-tile orange"><span>In repair</span><b>{d.more.assetsInRepair}</b></Link>
+          </div>
+        </>
+      )}
+      {d.activity && d.activity.length > 0 && (
+        <>
+          <h3 className="vm-h3">Recent activity</h3>
+          <ul className="vp-activity" style={{ listStyle: 'none', padding: 0, margin: '0 0 14px' }}>
+            {d.activity.map((x, i) => (
+              <li key={`${x.at}-${i}`} style={{ padding: '6px 0', borderBottom: '1px solid var(--line, #e5e9f0)' }}>
+                <span className="cell-muted" style={{ display: 'inline-block', minWidth: 96 }}>{day(x.at)}</span>
+                {x.link ? <Link to={x.link}>{x.text}</Link> : x.text}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <div className="vp-two-col">
         <section>

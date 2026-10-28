@@ -322,6 +322,34 @@ async function historyFor(v, repairIds) {
   return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
 }
 
+// STAGE F3: the asset's events from every module, oldest first. at = the recorded time of THAT event (never another record's date).
+async function assetTimeline(v, a, views, history) {
+  const M = MK();
+  const ev = [];
+  const push = (at, kind, text, link = null) => { if (at) ev.push({ at: String(at), kind, text, link }); };
+  push(iso(a.createdAt), 'Registered', 'Asset added in HRMS');
+  if (a.purchaseDate) push(a.purchaseDate, 'Purchase', 'Purchase date');
+  assignmentHistory(a).forEach((h) => push(h.at, 'Assignment', h.text));
+  const tickets = await DB.q('SELECT "ticketRef","kind","raisedAt","decision","decidedAt","repairId" FROM "AssetComplaint" WHERE "assetId" = ?', [a.id]).catch(() => []);
+  tickets.forEach((t) => {
+    push(t.raisedAt, 'HRMS ticket', `Ticket ${t.ticketRef} raised: ${t.kind}`);
+    if (t.decidedAt && t.decision) push(t.decidedAt, 'HRMS ticket', `Ticket ${t.ticketRef} ${t.decision.toLowerCase()} by the company`);
+  });
+  views.forEach((r) => {
+    const link = `/vendor/asset-portal/repairs?open=${encodeURIComponent(r.id)}`;
+    push(r.dateReported, 'Repair', `Repair ${r.repairNo} reported${r.issue ? `: ${r.issue}` : ''}`, link);
+    if (r.repairDate) push(r.repairDate, 'Repair', `Repair ${r.repairNo} finished${r.outcome ? ` (${r.outcome})` : ''}`, link);
+    if (r.invoice && r.invoice.billDate) push(r.invoice.billDate, 'Invoice', `Invoice ${r.invoice.invoiceNo || r.invoice.billCode || ''} for repair ${r.repairNo}`, '/vendor/asset-portal/invoices');
+    ((r.payment && r.payment.payments) || []).forEach((p) => push(p.date, 'Payment', `Paid ${p.amount} for repair ${r.repairNo} (bank statement)`, '/vendor/asset-portal/invoices?tab=payments'));
+  });
+  history.forEach((h) => { if (h.field) push(h.at, 'Repair update', `${h.repairNo}: ${h.field}${h.to != null ? ` -> ${h.to}` : ''}`, h.repairId ? `/vendor/asset-portal/repairs?open=${encodeURIComponent(h.repairId)}` : null); });
+  (await RW.replacementsOf({ assetIds: [a.id] })).forEach((x) => {
+    push(x.requestedAt, 'Replacement', `Replacement asked${x.reason ? `: ${M.text(x.reason, a.id)}` : ''}`);
+    if (x.decidedAt) push(x.decidedAt, 'Replacement', `Replacement ${String(x.status).toLowerCase() === 'rejected' ? 'not approved' : 'approved'}`);
+    if (x.replacementDate) push(x.replacementDate, 'Replacement', 'Replaced by a new asset');
+  });
+  return ev.sort((x, y) => x.at.localeCompare(y.at));
+}
 async function assetDetail(v, id) {
   await ensureMask();
   const a = await myAsset(v, id);
@@ -339,6 +367,9 @@ async function assetDetail(v, id) {
     asset: { ...assetView(a, v, info.get(a.id), openOne, boughtHere), warrantyUntil: a.warrantyUntil || null, amcUntil: a.amcUntil || null, updatedAt: iso(a.updatedAt) },
     purchase: purchaseOf(boughtHere ? a : { ...a, invoiceNo: null }, px.rows, v), repairs: views, history, canEdit: v.canEdit && scoped, editNote: scoped ? null : 'This asset is with you for a repair. The company keeps its details.',
     conditions: CONDITIONS,
+    // STAGE F (2026-10-28): ONE chronological history of the asset - registration, hand-overs, tickets, repairs and their updates,
+    // invoices, bank payments, replacements - each with its own recorded date; nothing is made up.
+    timeline: await assetTimeline(v, a, views, history),
     // who holds it now, and every hand-over HRMS wrote down (27 Oct 2026); a missing history is said, never made up
     assignment: (() => { const hist = assignmentHistory(a); return { current: holderOf(a), status: a.assignedToId ? 'Assigned' : 'Unassigned', assignedAt: iso(a.assignedAt), assignedBy: a.assignedByName || null, returnedAt: iso(a.returnedAt), history: hist, note: hist.length ? null : 'HRMS has no earlier hand-over recorded for this asset.' }; })(),
   };
@@ -1012,6 +1043,35 @@ async function updateOrderStatus(v, req, id, body, opts = {}) {
 }
 
 // ---- DASHBOARD ---------------------------------------------------------------------------------
+// STAGE F (2026-10-28): the extra cards (assigned / unassigned / available / under repair, HRMS tickets, awaiting your action, replacements,
+// bills in review, payment counts) and the recent activity, all from real rows of THIS vendor; each card opens its list with the filter.
+async function overviewMore(v, L, views) {
+  const cnt = (where) => (where === HS.NONE ? 0 : prisma.asset.count({ where }));
+  const [held, avail, inRepair, all, buckets, tickets, bills, bank] = await Promise.all([
+    cnt(L.heldWhere), cnt(L.availableWhere), cnt(L.repairWhere), cnt(L.where),
+    listRepairs(v, { pageSize: 5 }).then((r) => r.buckets || []).catch(() => []),
+    RW.vendorTickets(v, L, MK()).catch(() => []),
+    DB.q(`SELECT "id","code","status","uploadedAt","updatedAt" FROM "VendorBillUpload" WHERE "vendorId" = ? ORDER BY "updatedAt" DESC LIMIT 200`, [v.vendorId]).catch(() => []),
+    require('./vendorBankPayments').forVendor(v.vendorId).catch(() => ({ rows: [] })), // eslint-disable-line global-require
+  ]);
+  const b = (k) => (buckets.find((x) => x.value === k) || {}).count || 0;
+  const reps = await RW.replacementsOf({ repairIds: views.map((r) => r.id) });
+  const activity = [];
+  const add = (at, text, link) => { if (at) activity.push({ at: String(at), text, link }); };
+  tickets.slice(0, 20).forEach((t) => add(t.raisedAt, `HRMS ticket ${t.ticketRef} on ${t.assetCode}: ${t.kind}`, '/vendor/asset-portal/repairs?tab=tickets'));
+  (await historyFor(v, views.map((r) => r.id))).slice(0, 30).forEach((h) => add(h.at, `${h.repairNo}: ${h.field || h.kind}${h.to != null ? ` -> ${h.to}` : ''}${h.by === 'Company' ? ' (company)' : ''}`, `/vendor/asset-portal/repairs?open=${encodeURIComponent(h.repairId)}`));
+  bills.slice(0, 20).forEach((u) => add(u.updatedAt || u.uploadedAt, `Bill ${u.code}: ${String(u.status).replace(/_/g, ' ').toLowerCase()}`, '/vendor/asset-portal/invoices?tab=bills'));
+  (bank.rows || []).slice(0, 20).forEach((p) => add(p.date, `Payment received from the company: ${p.amount}`, '/vendor/asset-portal/invoices?tab=payments'));
+  return {
+    more: {
+      assigned: held, unassigned: Math.max(0, all - held), available: avail, assetsInRepair: inRepair,
+      openTickets: tickets.filter((t) => t.state === 'Open').length, awaitingAction: b('Awaiting your action'), waitingApproval: b('Waiting for approval'), completed: b('Completed'),
+      replacementRequests: reps.filter((r) => ['Requested', 'Approved'].includes(r.status)).length,
+      billsInReview: bills.filter((u) => ['UPLOADED', 'AI_PROCESSING', 'NEEDS_REVIEW', 'PENDING_APPROVAL'].includes(u.status)).length,
+    },
+    activity: activity.sort((x, y) => y.at.localeCompare(x.at)).slice(0, 15),
+  };
+}
 async function overview(v) {
   await ensureMask();
   const L = await HS.listing(v);
@@ -1031,6 +1091,7 @@ async function overview(v) {
     repairs: { waiting: views.filter((r) => r.stage === 'Awaiting repair').length, fromCompany: views.filter((r) => r.fromCompany && r.stage === 'Awaiting repair').length, total: views.length, byStage: [...STAGES, 'Cancelled'].map((st) => ({ value: st, count: views.filter((r) => r.stage === st).length })), open: views.filter((r) => OPEN_STAGES.includes(r.stage)).length, estimateTotal: sum('estimateTotal'), finalTotal: sum('finalTotal') },
     payments: invs.summary,
     recentRepairs: views.slice(0, 5),
+    ...(await overviewMore(v, L, views)),
     canEdit: v.canEdit,
   };
 }

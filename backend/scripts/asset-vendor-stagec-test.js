@@ -146,6 +146,13 @@ const check = (name, ok, info) => { if (ok) { pass += 1; console.log(`  PASS ${n
     await prisma.$transaction(async (tx) => { await RW.keepEarlierInvoice(tx, rep, v.vendorId, (await AVP.myRepair(v, rep.id)).side, 'ZZ'); });
     const kept = (await RW.proofsOf([rep.id], v.vendorId)).find((p) => p.kind === 'earlier invoice');
     check('C25 a replaced invoice file is kept as "earlier invoice"', !!kept && kept.name === 'old-invoice.pdf');
+    // STAGE F (2026-10-28): dashboard cards + recent activity, one timeline per asset
+    const ov = await AVP.overview(v);
+    check('F1 dashboard: the extra cards come from real rows (in repair, replacement requests, open tickets)', ov.more && ov.more.assetsInRepair >= 1 && ov.more.replacementRequests >= 0 && typeof ov.more.openTickets === 'number' && typeof ov.more.awaitingAction === 'number', ov.more);
+    check('F2 recent activity lists the repair changes, newest first', Array.isArray(ov.activity) && ov.activity.length > 0 && ov.activity.every((x, i, l) => !i || l[i - 1].at >= x.at), ov.activity && ov.activity.slice(0, 3));
+    const ad = await AVP.assetDetail(v, asset.id);
+    const kinds = new Set((ad.timeline || []).map((e) => e.kind));
+    check('F3 the asset timeline joins registration, repairs, repair updates and the replacement, oldest first', ['Registered', 'Repair', 'Repair update', 'Replacement'].every((k) => kinds.has(k)) && ad.timeline.every((e, i, l) => !i || l[i - 1].at <= e.at), [...kinds]);
   } catch (err) {
     fail += 1; console.log('  ERROR', err && err.stack);
   } finally {
