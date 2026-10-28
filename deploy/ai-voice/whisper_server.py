@@ -11,7 +11,7 @@ Two jobs for the phone gateway (backend/src/calling/voice/engines.js whisperHttp
 Listens on 127.0.0.1 only. When WHISPER_API_KEY is set, every request must send the same value in X-API-Key.
 One model, one request at a time (a lock); the phone gateway sends one sentence at a time per call.
 
-  WHISPER_MODEL    small (default; server) | base (a weak laptop) | a local folder
+  WHISPER_MODEL    base (default: right on phone answers, under 1.6 s on a 4-CPU server) | small (slower) | a folder
   WHISPER_HOST / WHISPER_PORT   127.0.0.1 / 8093
   WHISPER_THREADS  CPU threads (default 2)
 """
@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import numpy as np
 from faster_whisper import WhisperModel
 
-MODEL = os.getenv("WHISPER_MODEL", "small")
+MODEL = os.getenv("WHISPER_MODEL", "base")
 HOST = os.getenv("WHISPER_HOST", "127.0.0.1")
 PORT = int(os.getenv("WHISPER_PORT", "8093"))
 KEY = os.getenv("WHISPER_API_KEY", "")

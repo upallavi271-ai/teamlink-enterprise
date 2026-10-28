@@ -9,6 +9,7 @@
 #                                     SIP port open ONLY to the provider's IPs; manager on 127.0.0.1 only.
 #   bash setup-ai-voice.sh status     what is installed and running
 #   bash setup-ai-voice.sh stop       stop the voice services (nothing is removed)
+#   bash setup-ai-voice.sh enable     start the voice services at every boot (when calls go live)
 #
 # Then add the lines it prints to backend/.env and restart the backend (pm2). AI_VOICE_PHONE_MODE=Test first: only
 # TEST_NUMBERS are called. Safe to run again.
@@ -21,6 +22,7 @@ VEXYL_STT_REPO=https://github.com/vexyl-ai/vexyl-stt.git
 VEXYL_STT_COMMIT=4f674d94d7156a519f582425ffa673c0b2405060
 PIPER_URL=https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_x86_64.tar.gz
 VOICES_URL=https://huggingface.co/rhasspy/piper-voices/resolve/main
+KOKORO_URL=https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0
 VOICES="te/te_IN/padmavathi/medium/te_IN-padmavathi-medium te/te_IN/venkatesh/medium/te_IN-venkatesh-medium en/en_US/ljspeech/medium/en_US-ljspeech-medium"
 
 say() { printf '\n== %s\n' "$*"; }
@@ -28,14 +30,17 @@ need_env() { [ -f "$ENVF" ] || { echo "Missing $ENVF - copy ai-voice.env.example
 key() { [ -f "$ROOT/.key" ] || (umask 077; head -c 32 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40 > "$ROOT/.key"); cat "$ROOT/.key"; }
 
 voices() {
-  need_env
-  [ -n "${HF_TOKEN:-}" ] || { echo "HF_TOKEN is empty in $ENVF (needed once to download IndicConformer)."; exit 1; }
+  [ -f "$ENVF" ] && { set -a; . "$ENVF"; set +a; }
+  local MODEL_DIR=$ROOT/models/indic-conformer # copied here from a PC that already has it = no Hugging Face token on this server
+  if [ ! -f "$MODEL_DIR/config.json" ] && [ -z "${HF_TOKEN:-}" ]; then
+    echo "IndicConformer is not in $MODEL_DIR and HF_TOKEN is empty in $ENVF: copy the model folder here, or set the token."; exit 1
+  fi
   local free; free=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo)
-  say "free memory: ${free} MB (the three engines need about 3 GB together)"
-  [ "$free" -ge 3500 ] || { echo "Not enough free memory now. Stopping so the live site is not slowed."; exit 1; }
+  say "free memory: ${free} MB (the four engines need about 4 GB together)"
+  [ "$free" -ge 5000 ] || { echo "Not enough free memory now. Stopping so the live site is not slowed."; exit 1; }
   apt-get update -qq && apt-get install -y -qq python3-venv python3-pip git curl ffmpeg >/dev/null
   id aivoice >/dev/null 2>&1 || useradd --system --home "$ROOT" --shell /usr/sbin/nologin aivoice
-  mkdir -p "$ROOT/voices" "$ROOT/hf"
+  mkdir -p "$ROOT/voices" "$ROOT/hf" "$ROOT/kokoro"
   K=$(key)
 
   say "Piper (MIT) + voices: Telugu padmavathi / venkatesh (CC-BY-4.0, AI4Bharat IndicVoices-R), English ljspeech (public domain)"
@@ -45,34 +50,45 @@ voices() {
 
   say "VEXYL-STT (Apache-2.0) with IndicConformer 600M (MIT) - Telugu / Hindi"
   [ -d "$ROOT/vexyl-stt/.git" ] || git clone -q "$VEXYL_STT_REPO" "$ROOT/vexyl-stt"
-  git -C "$ROOT/vexyl-stt" checkout -q "$VEXYL_STT_COMMIT"
+  git -C "$ROOT/vexyl-stt" checkout -q -- . && git -C "$ROOT/vexyl-stt" checkout -q "$VEXYL_STT_COMMIT"
+  # one line: the model comes from VEXYL_STT_MODEL (a local folder) instead of always the Hugging Face name
+  sed -i 's|^\(\s*\)"ai4bharat/indic-conformer-600m-multilingual",|\1os.getenv("VEXYL_STT_MODEL", "ai4bharat/indic-conformer-600m-multilingual"),|' "$ROOT/vexyl-stt/vexyl_stt_server.py"
+  grep -q 'os.getenv("VEXYL_STT_MODEL"' "$ROOT/vexyl-stt/vexyl_stt_server.py" || { echo "Could not set the local model in vexyl_stt_server.py"; exit 1; }
   [ -x "$ROOT/venv-stt/bin/python" ] || python3 -m venv "$ROOT/venv-stt"
   "$ROOT/venv-stt/bin/pip" install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
   "$ROOT/venv-stt/bin/pip" install -q -r "$ROOT/vexyl-stt/requirements.txt"
-  cat > "$ROOT/stt.env" <<EOF
-VEXYL_STT_HOST=127.0.0.1
-VEXYL_STT_PORT=8091
-PORT=8091
-VEXYL_STT_API_KEY=$K
-VEXYL_STT_DEVICE=cpu
-VEXYL_STT_MAX_CONN=20
-OMP_NUM_THREADS=2
-HF_HOME=$ROOT/hf
-HF_TOKEN=$HF_TOKEN
-PYTHONUNBUFFERED=1
-EOF
+  {
+    echo "VEXYL_STT_HOST=127.0.0.1"; echo "VEXYL_STT_PORT=8091"; echo "PORT=8091"; echo "VEXYL_STT_API_KEY=$K"
+    echo "VEXYL_STT_DEVICE=cpu"; echo "VEXYL_STT_MAX_CONN=20"; echo "OMP_NUM_THREADS=2"; echo "HF_HOME=$ROOT/hf"; echo "PYTHONUNBUFFERED=1"
+    if [ -f "$MODEL_DIR/config.json" ]; then echo "VEXYL_STT_MODEL=$MODEL_DIR"; echo "HF_HUB_OFFLINE=1"; else echo "HF_TOKEN=$HF_TOKEN"; fi
+  } > "$ROOT/stt.env"
 
   say "Whisper (MIT, faster-whisper) - English + which language"
   [ -x "$ROOT/venv-whisper/bin/python" ] || python3 -m venv "$ROOT/venv-whisper"
   "$ROOT/venv-whisper/bin/pip" install -q faster-whisper
   install -m 644 "$HERE/whisper_server.py" "$ROOT/whisper_server.py"
   cat > "$ROOT/whisper.env" <<EOF
-WHISPER_MODEL=small
+WHISPER_MODEL=base
 WHISPER_HOST=127.0.0.1
 WHISPER_PORT=8093
 WHISPER_API_KEY=$K
 WHISPER_THREADS=2
 HF_HOME=$ROOT/hf
+PYTHONUNBUFFERED=1
+EOF
+
+  say "Kokoro (weights Apache-2.0, kokoro-onnx MIT) - Hindi voice"
+  [ -x "$ROOT/venv-kokoro/bin/python" ] || python3 -m venv "$ROOT/venv-kokoro"
+  "$ROOT/venv-kokoro/bin/pip" install -q kokoro-onnx soundfile
+  for f in kokoro-v1.0.int8.onnx voices-v1.0.bin; do [ -s "$ROOT/kokoro/$f" ] || curl -fsSL -o "$ROOT/kokoro/$f" "$KOKORO_URL/$f"; done
+  install -m 644 "$HERE/kokoro_server.py" "$ROOT/kokoro_server.py"
+  cat > "$ROOT/kokoro.env" <<EOF
+KOKORO_MODEL=$ROOT/kokoro/kokoro-v1.0.int8.onnx
+KOKORO_VOICES=$ROOT/kokoro/voices-v1.0.bin
+KOKORO_HOST=127.0.0.1
+KOKORO_PORT=8094
+KOKORO_API_KEY=$K
+OMP_NUM_THREADS=2
 PYTHONUNBUFFERED=1
 EOF
   chmod 600 "$ROOT"/*.env; chown -R aivoice:aivoice "$ROOT"
@@ -99,9 +115,11 @@ EOF
   }
   unit ai-voice-stt "$ROOT/vexyl-stt" "$ROOT/stt.env" "$ROOT/venv-stt/bin/python vexyl_stt_server.py" 4G
   unit ai-voice-whisper "$ROOT" "$ROOT/whisper.env" "$ROOT/venv-whisper/bin/python whisper_server.py" 2G
+  unit ai-voice-kokoro "$ROOT" "$ROOT/kokoro.env" "$ROOT/venv-kokoro/bin/python kokoro_server.py" 2G
   systemctl daemon-reload
-  systemctl enable --now ai-voice-stt ai-voice-whisper
-  say "started (first start downloads the models: a few minutes). Watch: journalctl -fu ai-voice-stt"
+  # started now, NOT switched on at boot: "bash setup-ai-voice.sh enable" does that once calls go live
+  systemctl start ai-voice-stt ai-voice-whisper ai-voice-kokoro
+  say "started (Whisper downloads its model on the first start). Watch: journalctl -fu ai-voice-stt"
   print_env
 }
 
@@ -271,6 +289,7 @@ AI_VOICE_SPEED=0.75
 AI_VOICE_KEY=$K
 AI_VOICE_STT_URL=ws://127.0.0.1:8091
 AI_VOICE_WHISPER_URL=http://127.0.0.1:8093
+AI_VOICE_KOKORO_URL=http://127.0.0.1:8094
 EOF
   if [ -n "${1:-}" ]; then cat <<EOF
 AI_VOICE_AMI_USER=teamlink
@@ -285,7 +304,7 @@ EOF
 }
 
 status() {
-  for s in ai-voice-stt ai-voice-whisper asterisk; do printf '%-18s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"; done
+  for s in ai-voice-stt ai-voice-whisper ai-voice-kokoro asterisk; do printf '%-18s %s\n' "$s" "$(systemctl is-active "$s" 2>/dev/null || true)"; done
   curl -fsS http://127.0.0.1:8093/health 2>/dev/null && echo || echo "whisper: not answering"
   command -v asterisk >/dev/null && asterisk -rx "pjsip show registrations" 2>/dev/null | tail -n +1 || true
   free -m | head -2
@@ -295,6 +314,7 @@ case "${1:-}" in
   voices) voices ;;
   asterisk) asterisk_setup ;;
   status) status ;;
-  stop) systemctl stop ai-voice-stt ai-voice-whisper ;;
+  stop) systemctl stop ai-voice-stt ai-voice-whisper ai-voice-kokoro ;;
+  enable) systemctl enable --now ai-voice-stt ai-voice-whisper ai-voice-kokoro ;;
   *) sed -n '2,16p' "$0" ;;
 esac
