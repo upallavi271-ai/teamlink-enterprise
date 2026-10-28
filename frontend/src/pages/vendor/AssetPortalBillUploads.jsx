@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { shrinkAll } from './shrinkPhoto.js'; // phone photos made small (JPG) before upload - founder 2026-10-28
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -57,9 +58,14 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
     if (!urls.current.has(f)) urls.current.set(f, URL.createObjectURL(f));
     return urls.current.get(f);
   };
-  const add = (list) => {
-    const r = pickFiles(files, Array.from(list || []), { maxFiles: opts?.limits.maxFiles || LIMITS.maxFiles, maxBytes: (opts?.limits.maxMb || 10) * 1048576 });
-    setFiles(r.files); setError(r.error);
+  const [preparing, setPreparing] = useState(false);
+  const [progress, setProgress] = useState(null);
+  const add = async (list) => {
+    setPreparing(true); setError('');
+    const s = await shrinkAll(Array.from(list || [])); // every photo becomes a small JPG first (big phone photos and HEIC used to be refused)
+    setPreparing(false);
+    const r = pickFiles(files, s.files, { maxFiles: opts?.limits.maxFiles || LIMITS.maxFiles, maxBytes: (opts?.limits.maxMb || 10) * 1048576 });
+    setFiles(r.files); setError([...s.problems, r.error].filter(Boolean).join(' '));
   };
   const removeAt = (i) => setFiles((x) => { const f = x[i]; if (urls.current.has(f)) { URL.revokeObjectURL(urls.current.get(f)); urls.current.delete(f); } return x.filter((_, j) => j !== i); });
   const repairName = (r) => `${r.repairNo} · ${r.assetCode}${r.issue ? ` · ${r.issue.slice(0, 50)}` : ''}${r.open ? '' : ' (finished)'}`;
@@ -74,10 +80,14 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
       if (remarks.trim()) fd.append('remarks', remarks.trim());
       if (!submit) fd.append('submit', 'false');
       const url = correctsId ? `${B}/${encodeURIComponent(correctsId)}/correct` : B;
-      const r = await vendorApi.post(url, fd, { headers: { 'Idempotency-Key': key.current } });
+      setProgress(0);
+      const r = await vendorApi.post(url, fd, { headers: { 'Idempotency-Key': key.current }, timeout: 0, onUploadProgress: (ev) => { if (ev.total) setProgress(Math.round((ev.loaded / ev.total) * 100)); } });
       setDone(r.data);
       if (onDone) onDone(r.data.upload);
-    } catch (e) { setError(vendorError(e, 'Could not upload the bill. Please try again.')); } finally { setBusy(false); }
+    } catch (e) {
+      const st = e && e.response && e.response.status;
+      setError(st === 413 ? 'The files are too big to send together. Send fewer pages at a time.' : vendorError(e, 'Could not upload the bill. Check the internet and try again.'));
+    } finally { setBusy(false); setProgress(null); }
   };
   if (done) {
     const u = done.upload;
@@ -98,7 +108,7 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
           <button type="button" className="btn" disabled={busy || !files.length} onClick={() => send(false)}>Save without sending</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !files.length} onClick={() => send(true)}>{busy ? 'Uploading...' : 'Upload and send'}</button>
+          <button type="button" className="btn btn-primary" disabled={busy || !files.length} onClick={() => send(true)}>{busy ? (progress != null && progress < 100 ? `Uploading ${progress}%` : 'Uploading...') : 'Upload and send'}</button>
         </>
       )}
     >
@@ -127,13 +137,14 @@ export function UploadWindow({ repairId = null, correctsId = null, onClose, onDo
             <div className="vm-row">
               <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
                 Choose photos or PDF
-                <input type="file" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf" style={{ display: 'none' }} onChange={(e) => { add(e.target.files); e.target.value = ''; }} aria-label="Bill files" />
+                <input type="file" multiple accept="image/*,.heic,.heif,.pdf,application/pdf" style={{ display: 'none' }} onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ''; add(l); }} aria-label="Bill files" />
               </label>
               <label className="btn" style={{ cursor: 'pointer' }}>
                 Take a photo
-                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => { add(e.target.files); e.target.value = ''; }} aria-label="Take a photo of the bill" />
+                <input type="file" accept="image/*" capture="environment" style={{ display: 'none' }} onChange={(e) => { const l = Array.from(e.target.files || []); e.target.value = ''; add(l); }} aria-label="Take a photo of the bill" />
               </label>
-              <span className="cell-muted">Handwritten or printed. JPG, PNG, WebP or PDF. Up to {opts.limits.maxFiles} files (pages), {opts.limits.maxMb} MB each. One bill with many pages = add every page.</span>
+              <span className="cell-muted">Handwritten or printed. Any phone photo or a PDF. Up to {opts.limits.maxFiles} files (pages). Photos are made smaller before sending. One bill with many pages = add every page.</span>
+              {preparing && <span className="cell-muted" role="status">Getting the photos ready&hellip;</span>}
             </div>
             {files.length > 0 && (
               <div className="bu-thumbs">
@@ -420,7 +431,7 @@ function BillDetail({ id, onClose, onChanged, onOpen, onCorrect }) {
             <div className="vm-block">
               <h4>Wrong file? Replace it</h4>
               <div className="vm-row">
-                <input key={replKey} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf" onChange={(e) => setRepl(e.target.files && e.target.files[0] ? e.target.files[0] : null)} aria-label="New file" />
+                <input key={replKey} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf,image/*,application/pdf" onChange={(e) => { const f0 = e.target.files && e.target.files[0]; if (!f0) { setRepl(null); return; } shrinkAll([f0]).then((s) => { setRepl(s.files[0] || null); if (s.problems.length) setError(s.problems.join(' ')); }); }} aria-label="New file" />
                 <button type="button" className="btn" disabled={busy || !repl} onClick={replace}>Replace the file</button>
                 <span className="cell-muted">The bill is read again. The old file stays in the history.</span>
               </div>
