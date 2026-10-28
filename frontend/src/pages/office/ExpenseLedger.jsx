@@ -27,6 +27,7 @@ import '../../components/ui/ui.css';
 import ExpenseDrawer from './ExpenseDrawer.jsx';
 import BillPreview from './BillPreview.jsx';
 import AddVendorModal from './AddVendorModal.jsx';
+import VendorListModal from './VendorListModal.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
 import { payChip } from './paymentProof';
 import './payproof.css';
@@ -66,6 +67,7 @@ export default function ExpenseLedger({
   const [more, setMore] = useState(false); // the next page is on its way
   const [moreErr, setMoreErr] = useState(false);
   const [addVendor, setAddVendor] = useState(false);
+  const [vendorList, setVendorList] = useState(false); // Vendors (view + Edit) - Admin and Accountant
   const rowsRef = useRef([]);
   rowsRef.current = rows;
   const lastKey = useRef(null);
@@ -209,6 +211,7 @@ export default function ExpenseLedger({
             </button>
           )}
           {canManage && <button type="button" className="btn btn-sm" onClick={() => setAddVendor(true)}>+ Add Vendor</button>}
+          {acc.editVendors && <button type="button" className="btn btn-sm" onClick={() => setVendorList(true)}>Vendors (edit)</button>}
         </div>
       </div>
 
@@ -346,6 +349,7 @@ export default function ExpenseLedger({
         />
       )}
       {bill && <BillPreview expense={bill} onClose={() => setBill(null)} />}
+      {vendorList && <VendorListModal onClose={() => setVendorList(false)} />}
       {addVendor && (
         <AddVendorModal
           existingNames={(o?.vendors || []).map((v) => v.name)}

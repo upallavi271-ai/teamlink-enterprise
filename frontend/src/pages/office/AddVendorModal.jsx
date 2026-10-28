@@ -2,6 +2,8 @@
 // and from the Vendor field of both expense forms. Saves through
 // POST /office-expenses/vendors (the vendor master, routes/office.js), which
 // refuses a name that already exists in any letter case with a 409.
+// With `vendor` it is "Edit Vendor" (Office & Expenses → Vendors, Admin and Accountant): the same form, filled in,
+// saved through PATCH /office-expenses/vendors/:id (the same vendor master rules and audit as Admin → Vendors).
 //
 // Its own dialog, portalled to <body> so it sits above an open expense modal
 // without being inside that modal's <form>: Esc closes it (and only it), Tab
@@ -25,13 +27,13 @@ const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 const squash = (s) => String(s || '').trim().replace(/\s+/g, ' ');
 
-function validate(v, names) {
+function validate(v, names, ownName = '') {
   const e = {};
   const name = squash(v.name);
   if (!name) e.name = 'Vendor name is required';
   else if (name.length > 120) e.name = 'Keep the vendor name under 120 characters';
   else {
-    const hit = names.find((x) => squash(x).toLowerCase() === name.toLowerCase());
+    const hit = names.find((x) => squash(x).toLowerCase() === name.toLowerCase() && squash(x).toLowerCase() !== squash(ownName).toLowerCase());
     if (hit) e.name = `A vendor named "${hit}" already exists — pick it from the Vendor list`;
   }
   const phone = v.phone.trim();
@@ -41,14 +43,17 @@ function validate(v, names) {
   const g = cleanId(v.gstin);
   if (g) { const c = checkGstin(g); if (!c.ok) e.gstin = c.error; }
   const p = cleanId(v.pan);
-  if (p && !/^[A-Z]{5}d{4}[A-Z]$/.test(p)) e.pan = 'PAN is 10 characters, like ABCDE1234F';
+  if (p && !/^[A-Z]{5}\d{4}[A-Z]$/.test(p)) e.pan = 'PAN is 10 characters, like ABCDE1234F';
   return e;
 }
 
 export default function AddVendorModal({
-  initialName = '', existingNames = [], onClose, onSaved,
+  initialName = '', existingNames = [], onClose, onSaved, vendor = null,
 }) {
-  const [v, setV] = useState(() => ({ ...BLANK, name: squash(initialName) }));
+  const editing = !!vendor;
+  const [v, setV] = useState(() => (editing
+    ? Object.fromEntries(FIELDS.map((k) => [k, vendor[k] == null ? '' : String(vendor[k])]))
+    : { ...BLANK, name: squash(initialName) }));
   const [master, setMaster] = useState([]);
   const [touched, setTouched] = useState({});
   const [tried, setTried] = useState(false);
@@ -71,7 +76,7 @@ export default function AddVendorModal({
   // Only the vendor MASTER blocks a name here. A name that is only typed on old bills may be
   // added: that is how those vendors get into the master (Admin links the old bills afterwards).
   const names = useMemo(() => [...new Set(master.filter(Boolean))], [master]);
-  const errors = useMemo(() => ({ ...validate(v, names), ...serverErr }), [v, names, serverErr]);
+  const errors = useMemo(() => ({ ...validate(v, names, editing ? vendor.name : ''), ...serverErr }), [v, names, serverErr, editing, vendor]);
   const show = (k) => (tried || touched[k]) && errors[k];
 
   // Focus the first field on open; hand focus back on close.
@@ -125,10 +130,17 @@ export default function AddVendorModal({
     };
     setBusy(true);
     try {
-      const r = await api.post('/office-expenses/vendors', body);
-      showToast(`Vendor "${r.data.name}" added`);
-      setBusy(false);
-      onSaved(r.data);
+      if (editing) {
+        const r = await api.patch(`/office-expenses/vendors/${encodeURIComponent(vendor.id)}`, body);
+        showToast(r.data.message === 'Nothing changed.' ? 'Nothing changed' : `Vendor "${r.data.vendor.name}" saved`);
+        setBusy(false);
+        onSaved(r.data.vendor);
+      } else {
+        const r = await api.post('/office-expenses/vendors', body);
+        showToast(`Vendor "${r.data.name}" added`);
+        setBusy(false);
+        onSaved(r.data);
+      }
     } catch (e2) {
       const d = (e2.response && e2.response.data) || {};
       if (e2.response && e2.response.status === 409 && d.warning) {
@@ -161,7 +173,7 @@ export default function AddVendorModal({
     <div className="overlay show oe-vm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}>
       <div className="modal oe-vm" role="dialog" aria-modal="true" aria-labelledby={titleId} ref={dlgRef} onKeyDown={onKeyDown}>
         <div className="modal-head">
-          <h3 id={titleId} style={{ fontSize: 15 }}>Add Vendor</h3>
+          <h3 id={titleId} style={{ fontSize: 15 }}>{editing ? `Edit Vendor${vendor.vendorCode ? ` · ${vendor.vendorCode}` : ''}` : 'Add Vendor'}</h3>
                     <button type="button" className="close-x" onClick={close} aria-label="Close" disabled={busy}>×</button>
         </div>
         <div className="modal-body">
@@ -200,7 +212,7 @@ export default function AddVendorModal({
             </div>
             <div {...fieldProps('pan')}>
               <label htmlFor={`${titleId}-pan`}><span>PAN</span></label>
-              <input {...inputProps('pan')} maxLength={10} placeholder="10 characters, optional" onChange={(e) => set('pan')({ target: { value: e.target.value.toUpperCase().replace(/s+/g, '') } })} />
+              <input {...inputProps('pan')} maxLength={10} placeholder="10 characters, optional" onChange={(e) => set('pan')({ target: { value: e.target.value.toUpperCase().replace(/\s+/g, '') } })} />
               <Err k="pan" />
             </div>
             <div {...fieldProps('category')}>
