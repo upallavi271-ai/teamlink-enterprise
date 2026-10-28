@@ -76,6 +76,12 @@ const brief = (t, why) => ({
   txnId: t.id, date: t.date, amount: t.amount, reference: t.reference || null, narration: String(t.description || '').slice(0, 160), why,
 });
 
+// An Auto-Reconcile suggestion still waiting on a line that is now linked is out of date: it leaves the review queue
+// (approving it was already refused as Stale; this only stops it being listed). No-op where Auto-Reconcile is not installed.
+async function staleSuggestions(txnId) {
+  await prisma.$executeRawUnsafe('UPDATE "ReconProposal" SET "status"=\'Stale\',"updatedAt"=? WHERE "txnId"=? AND "status"=\'Pending\'', new Date().toISOString(), txnId).catch(() => 0);
+}
+
 // After "Record payment": link the receipt to its line when the match is reliable. Never throws (the payment is saved
 // whatever happens here); says what it did.
 async function autoLink(paymentId, req) {
@@ -89,6 +95,7 @@ async function autoLink(paymentId, req) {
     const bank = require('../routes/bank'); // eslint-disable-line global-require
     const out = await bank.linkPayment(s.sure, pay.id, req);
     if (out.error) return { linked: null, why: out.error };
+    await staleSuggestions(s.sure.id);
     return { linked: s.sure.id, why: s.why };
   } catch (e) {
     console.error('[paymentBankLink]', e.message); // eslint-disable-line no-console
@@ -134,5 +141,5 @@ function invoiceRecon({ status, received, pending, rows }) {
 }
 
 module.exports = {
-  searchFor, autoLink, waitingLinesOf, reliableWhy, paymentRecon, invoiceRecon, NEAR_DAYS,
+  searchFor, autoLink, staleSuggestions, waitingLinesOf, reliableWhy, paymentRecon, invoiceRecon, NEAR_DAYS,
 };

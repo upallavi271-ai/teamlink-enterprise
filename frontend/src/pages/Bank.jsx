@@ -284,7 +284,8 @@ export default function Bank() {
         />
       )}
 
-      {canManage && dialog && (
+      {/* write dialogs are for edit logins only; the line window ("Details") opens for every viewer, read-only without edit */}
+      {dialog && (canManage || dialog.kind === 'txn') && (
         <Dialogs
           dialog={dialog} setDialog={setDialog} setNote={setNote} onReview={openReview} {...shared}
         />

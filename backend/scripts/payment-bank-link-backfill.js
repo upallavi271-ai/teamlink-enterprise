@@ -76,7 +76,7 @@ const rs = (n) => `Rs ${R2(n).toLocaleString('en-IN', { minimumFractionDigits: 2
       if (!s.sure || s.sure.id !== c.line.txnId) { report.failed.push({ ...c, why: 'no longer a single reliable match' }); continue; }
       const out = await bank.linkPayment(s.sure, p.id, req);
       if (out.error) report.failed.push({ ...c, why: out.error });
-      else report.linked.push(c);
+      else { await PBL.staleSuggestions(s.sure.id); report.linked.push(c); }
     }
   }
 
