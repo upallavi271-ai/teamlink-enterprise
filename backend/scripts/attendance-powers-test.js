@@ -85,6 +85,9 @@ const Z = require('./lib/zzfix')('APW');
     Z.check('B2 device Check-In / Break-Out / Break-In / Check-Out = In Out In Out', dirs([P('09:00', 'Biometric', 'Out', '0'), P('13:00', 'Biometric', 'In', '2'), P('13:45', 'Biometric', 'Out', '3'), P('18:30', 'Biometric', 'In', '1')]) === 'In Out In Out');
     Z.check('B3 Check-In pressed twice (9:19, 10:10) stays two check-ins — no check-out', dirs([P('09:19', 'Biometric', 'In', '0'), P('10:10', 'Biometric', 'Out', '0')]) === 'In In');
     Z.check('B4 a web punch keeps its own direction; a device punch with no state keeps its own', dirs([P('09:00', 'Web Check-in'), P('18:00', 'Web Check-in', 'Out'), P('18:05', 'Biometric', 'Out')]) === 'In Out Out');
+    // 2026-10-28: a device left in Check-In mode sends 0 for the evening Check-Out press too
+    Z.check('B5 device in Check-In mode: 9:02 + 18:31 (both key 0) = In Out - the last press after 13:30 is the check-out', dirs([P('09:02', 'Biometric', 'In', '0'), P('18:31', 'Biometric', 'In', '0')]) === 'In Out');
+    Z.check('B6 one evening press alone stays a check-in; lunch presses stay In, only the last after 13:30 is Out', dirs([P('18:31', 'Biometric', 'In', '0')]) === 'In' && dirs([P('09:00', 'Biometric', 'In', '0'), P('13:40', 'Biometric', 'In', '0'), P('14:20', 'Biometric', 'In', '0'), P('18:30', 'Biometric', 'In', '0')]) === 'In In In Out');
 
     // a check-out counts whichever way it is done: a lunch device punch (reads Out until they come back) does not block the web check-out
     {
