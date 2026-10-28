@@ -24,22 +24,40 @@
 // stays put, the rows scroll inside their own box, and the pager is always
 // where you left it.
 // ---------------------------------------------------------------------------
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import Combo from './Combo.jsx';
+import { useKeptState } from '../utils/useKeptState.js';
 
 export const PAGE_SIZES = [25, 50, 100, 250];
 
-export function usePaged(rows, initialSize = 25) {
+// keepKey (optional): the page and the rows-per-page survive leaving the
+// screen (utils/useKeptState.js). A kept list does NOT jump back to page one
+// when its rows change — it stays where it was, moved to the last page if the
+// list got shorter. `filterSig` (any string made of the list's search /
+// filters / sort): when the PERSON changes it, the list starts at page one
+// again; a reload of the same rows, or coming back to the screen, does not.
+// Changing the rows per page also starts at page one.
+export function usePaged(rows, initialSize = 25, keepKey = null, filterSig = '') {
   const list = Array.isArray(rows) ? rows : [];
-  const [size, setSize] = useState(initialSize);
-  const [page, setPage] = useState(1);
+  const [size, setSize] = useKeptState(keepKey && `${keepKey}.size`, initialSize);
+  const [page, setPage] = useKeptState(keepKey && `${keepKey}.page`, 1);
   const total = list.length;
   const pages = Math.max(1, Math.ceil(total / size));
 
   // BACK TO PAGE ONE WHEN THE RESULTS CHANGE. Filter 490 rows down to 12 while
   // sitting on page 8 and the table would otherwise show nothing at all, which
   // reads as "no results" rather than "you are past the end".
-  useEffect(() => { setPage(1); }, [total, size]);
+  const prev = useRef({ size, filterSig });
+  useEffect(() => {
+    const changed = prev.current.size !== size || prev.current.filterSig !== filterSig;
+    prev.current = { size, filterSig };
+    if (!keepKey || changed) setPage(1);
+  }, [total, size, filterSig]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A kept page past the end (the list got shorter) moves to the last page. Not
+  // while the list is still loading (0 rows), or a refresh would lose the page.
+  useEffect(() => {
+    if (keepKey && total > 0 && page > pages) setPage(pages);
+  }, [keepKey, total, page, pages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const current = Math.min(page, pages);
   const from = total === 0 ? 0 : (current - 1) * size + 1;

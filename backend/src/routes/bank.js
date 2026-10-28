@@ -3270,6 +3270,78 @@ router.get('/proof', async (req, res) => {
   });
 });
 
+// PAID-WITHOUT-PROOF REVIEW — the bank side (founder's Issue 6, 27 Oct). READ ONLY: nothing here writes, links,
+// posts or changes a status or an amount (it does not even create a default bank account, unlike ensureAccounts).
+// The invoice side of the same review is the Invoices register's own `verify` (utils/invoiceVerify.js), shown on
+// Invoices -> "Payment check"; this answers what the bank statements hold that no receipt explains yet:
+//   possible    an open credit the narration reading (readLine) ties to an invoice or a recorded payment
+//   ambiguous   an open credit that fits several invoices, or that an automatic pass left for a person (reviewReason)
+//   unmatched   an open credit with no invoice found at all
+//   duplicates  lines that look printed twice on one account (same day, type, amount, reference / narration, balance)
+// "Open" = lineOpen below: not matched, reconciled, ignored, excluded, filed as a bill / expense / hand loan.
+router.get('/proof-review', async (req, res) => {
+  const [accounts, transactions, ctx, loanLinks] = await Promise.all([
+    prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' } }),
+    prisma.bankTransaction.findMany({ orderBy: { date: 'asc' } }),
+    matchContext(),
+    prisma.handLoanLink.findMany({ select: { bankTxnId: true } }),
+  ]);
+  const firstId = accounts[0] ? accounts[0].id : null;
+  const accName = new Map(accounts.map((a) => [a.id, `${a.bank}${a.name ? ` · ${a.name}` : ''}`]));
+  const invById = new Map(ctx.invoices.map((i) => [i.id, i]));
+  const loanLinked = new Set(loanLinks.map((x) => x.bankTxnId));
+  const lineOf = (t) => ({
+    id: t.id,
+    date: t.date,
+    amount: ROUND(t.amount),
+    description: String(t.description || '').slice(0, 160),
+    reference: t.reference || null,
+    account: accName.get(t.bankAccountId || firstId) || '—',
+  });
+  const possible = [];
+  const ambiguous = [];
+  const unmatched = [];
+  transactions
+    .filter((t) => t.type === 'Credit' && !t.excluded && txnState(t) === 'Unmatched' && !t.category && !t.categoryKind
+      && !t.createdBillId && !t.billLinks && !loanLinked.has(t.id))
+    .forEach((t) => {
+      const read = readLine(t, ctx);
+      const inv = read.invoiceId ? invById.get(read.invoiceId) : null;
+      const row = {
+        ...lineOf(t),
+        thinks: read.tag,
+        why: t.reviewReason || read.why || '',
+        invoiceId: inv ? inv.id : null,
+        invoiceNumber: inv ? (inv.invoiceNumber || inv.id.slice(-6)) : null,
+        client: read.client || (inv && inv.client ? inv.client.name : null) || null,
+      };
+      if (t.reviewReason || read.kind === 'many') ambiguous.push(row);
+      else if (['already', 'possible', 'sure', 'named', 'amount', 'client'].includes(read.kind)) possible.push(row);
+      else unmatched.push(row);
+    });
+  const duplicates = [];
+  accounts.forEach((a) => {
+    duplicateGroups(onAccount(transactions, a.id, firstId)).forEach((g) => {
+      duplicates.push({
+        ...lineOf(g[0]),
+        type: g[0].type,
+        copies: g.length,
+        ids: g.map((t) => t.id),
+        // how many of the copies are already posted against an invoice (they are the ones to look at first)
+        postedCopies: g.filter((t) => ['Matched', 'Reconciled'].includes(txnState(t))).length,
+      });
+    });
+  });
+  const newest = (a, b) => String(b.date).localeCompare(String(a.date));
+  res.json({
+    accounts: accounts.length,
+    possible: possible.sort(newest),
+    ambiguous: ambiguous.sort(newest),
+    unmatched: unmatched.sort(newest),
+    duplicates: duplicates.sort(newest),
+  });
+});
+
 // The bank's own charges, every account, month by month.
 router.get('/charges', async (req, res) => {
   const txns = await prisma.bankTransaction.findMany();

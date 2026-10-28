@@ -2,6 +2,7 @@ import {
   useCallback, useEffect, useRef, useState,
 } from 'react';
 import api from '../api';
+import { useKeptState } from '../utils/useKeptState.js';
 import AccountsImport from '../components/AccountsImport.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can, productRole } from '../permissions';
@@ -41,7 +42,7 @@ export default function AccountsDashboard() {
   const canAttach = can(user, 'accounts', 'accounts', 'Invoices', 'edit');
   const canOffice = can(user, 'accounts', 'accounts', 'Office & Expenses', 'edit');
 
-  const [f, setF] = useState(BLANK);
+  const [f, setF] = useKeptState('accounts.dashboard.filters', BLANK); // kept when you leave and come back; Clear filters empties it
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');

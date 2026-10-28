@@ -8,6 +8,7 @@
 // the API refuses anything else anyway.
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { Panel, PanelHead, EmptyMini, Modal, SectionLabel } from '../proto.jsx';
 import {
   STATUS_LABEL, STATUS_CLS, SYNC_CLS, money, monthLabel, errText, bulkMessage,
@@ -409,9 +410,10 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   );
 }
 
-export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () => {} }) {
+// keepKey (optional, Accounts -> Journal & Ledger): the filter, search and page are kept when you leave and come back.
+export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () => {}, keepKey = null }) {
   const [logs, setLogs] = useState(null);
-  const [filter, setFilter] = useState('open');
+  const [filter, setFilter] = useKeptState(keepKey && `${keepKey}.filter`, 'open');
   const [msg, setMsg] = useState('');
   function load() {
     const q = new URLSearchParams();
@@ -420,9 +422,9 @@ export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () =>
   }
   useEffect(load, [month, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = (logs || []).filter((l) => (filter === 'open' ? l.status !== 'SUCCESS' : true));
-  const lf = useListFilters(open, LOG_FIELDS);
+  const lf = useListFilters(open, LOG_FIELDS, { keep: keepKey });
   const shown = lf.rows;
-  const page = usePaged(shown);
+  const page = usePaged(shown, 25, keepKey, `${lf.sig}|${filter}`);
   async function retry(id) {
     setMsg('');
     try { await api.post(`/payroll/sync-logs/${id}/retry`); setMsg('Retried — booked.'); } catch (err) { setMsg(errText(err, 'Retry failed; the error is in the log.')); }

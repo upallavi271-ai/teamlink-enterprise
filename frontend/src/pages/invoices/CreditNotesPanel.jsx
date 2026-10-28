@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import { saveBlob } from '../office/officeUtil';
@@ -26,9 +27,10 @@ export default function CreditNotesPanel({
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [said, setSaid] = useState('');
-  const [f, setF] = useState({ kind: '', status: '', client: '' });
-  const [q, setQ] = useState('');
-  const [card, setCard] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js); Clear empties them.
+  const [f, setF] = useKeptState('invoices.notes.filters', { kind: '', status: '', client: '' });
+  const [q, setQ] = useKeptState('invoices.notes.q', '');
+  const [card, setCard] = useKeptState('invoices.notes.card', '');
   const [modal, setModal] = useState(raiseFor ? { kind: 'credit', applicationId: raiseFor } : null);
   const [cancelFor, setCancelFor] = useState(null);
   const [refundFor, setRefundFor] = useState(null);

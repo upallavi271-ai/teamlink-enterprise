@@ -7,6 +7,7 @@ import Modal from '../components/Modal';
 import Combo from '../components/Combo.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import { useKeptState } from '../utils/useKeptState.js';
 import AccountsImport from '../components/AccountsImport.jsx';
 import MatchPanel from './bank/MatchPanel.jsx';
 import HandLoans from './bank/HandLoans.jsx';
@@ -79,10 +80,12 @@ export default function Bank() {
   // overview → every account, side by side
   // account  → one account: all lines, recognised, excluded
   // recon    → the reconciliation table
-  const [view, setView] = useState('overview');
+  // The view, the account, its tab / pill and every search & filter on this
+  // screen are KEPT when you leave and come back (utils/useKeptState.js).
+  const [view, setView] = useKeptState('bank.view', 'overview');
   const [accounts, setAccounts] = useState([]);
   const [cashInHand, setCashInHand] = useState(0);
-  const [accountId, setAccountId] = useState('');
+  const [accountId, setAccountId] = useKeptState('bank.account', '');
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(null);
   const [position, setPosition] = useState(null);
@@ -92,12 +95,12 @@ export default function Bank() {
   const [imports, setImports] = useState([]);
   const [rules, setRules] = useState([]);
 
-  const [state, setState] = useState('All');
-  const [group, setGroup] = useState('month');
+  const [state, setState] = useKeptState('bank.recon.state', 'All');
+  const [group, setGroup] = useKeptState('bank.recon.group', 'month');
   const [openKeys, setOpenKeys] = useState(null); // null = "anything still to match is open"
-  const [clientFilter, setClientFilter] = useState('All');
-  const [tab, setTab] = useState('un');
-  const [pill, setPill] = useState('all');
+  const [clientFilter, setClientFilter] = useKeptState('bank.recon.client', 'All');
+  const [tab, setTab] = useKeptState('bank.tab', 'un');
+  const [pill, setPill] = useKeptState('bank.pill', 'all');
   const [per, setPer] = useState(200);
   const [page, setPage] = useState(0);
 
@@ -301,8 +304,8 @@ export default function Bank() {
 function Overview({
   accounts, cashInHand, setAccountId, setView, setDialog, call, canManage, extras, setTab, setPill,
 }) {
-  const [q, setQ] = useState('');
-  const [chargeMonth, setChargeMonth] = useState('');
+  const [q, setQ] = useKeptState('bank.overview.q', '');
+  const [chargeMonth, setChargeMonth] = useKeptState('bank.overview.chargeMonth', '');
   const totalUn = accounts.reduce((s, a) => s + a.stat.unmatched, 0);
   const totalBank = accounts.reduce((s, a) => s + (a.stat.inBank != null ? a.stat.inBank : a.stat.inBooks), 0);
   const totalBooks = accounts.reduce((s, a) => s + a.stat.inBooks, 0);
@@ -627,8 +630,8 @@ function AccountView({
     else if (pill === 'rev') list = list.filter((t) => t.plan);
     else if (pill === 'nr') list = list.filter((t) => t.needsReview);
   }
-  const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS });
-  const pg = usePaged(lf.rows, 50);
+  const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS, keep: 'bank.lines' });
+  const pg = usePaged(lf.rows, 50, 'bank.lines', `${lf.sig}|${accountId}|${tab}|${pill}`);
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
   const s = account.stat;
 
@@ -859,7 +862,7 @@ function Recon({
   clientNames, groups, marks, markById, imports, setView, setDialog, act, call, busy, picked, setPicked,
   state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter, canManage,
 }) {
-  const lf = useListFilters(transactions, RECON_FIELDS);
+  const lf = useListFilters(transactions, RECON_FIELDS, { keep: 'bank.recon' });
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
   // The State tab, then Search / Type / Date range on top of it.

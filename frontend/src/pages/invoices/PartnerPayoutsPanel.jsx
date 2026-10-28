@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import { FacetSelect } from '../../components/ui/ListPageHeader.jsx';
 import { saveBlob } from '../office/officeUtil';
@@ -21,9 +22,10 @@ export default function PartnerPayoutsPanel({ canExport }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [said, setSaid] = useState('');
-  const [f, setF] = useState({ partnerId: '', status: '', client: '', month: '' });
-  const [q, setQ] = useState('');
-  const [card, setCard] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js); Clear empties them.
+  const [f, setF] = useKeptState('invoices.payouts.filters', { partnerId: '', status: '', client: '', month: '' });
+  const [q, setQ] = useKeptState('invoices.payouts.q', '');
+  const [card, setCard] = useKeptState('invoices.payouts.card', '');
   const [modal, setModal] = useState(null); // { kind: 'pay'|'cancel'|'edit'|'invoice'|'clawback'|'statement', row }
   const [busy, setBusy] = useState('');
 

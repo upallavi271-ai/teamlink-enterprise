@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import Section from './Section.jsx';
 import '../vendor/vendorPortal.css';
@@ -38,13 +39,14 @@ async function download(url, name) {
 
 export default function VendorBillsReview({ onChanged }) {
   const [d, setD] = useState(null);
-  const [status, setStatus] = useState('PENDING_REVIEW');
-  const [vendorId, setVendorId] = useState('');
-  const [q, setQ] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js).
+  const [status, setStatus] = useKeptState('office.vendorBills.status', 'PENDING_REVIEW');
+  const [vendorId, setVendorId] = useKeptState('office.vendorBills.vendor', '');
+  const [q, setQ] = useKeptState('office.vendorBills.q', '');
   const [open, setOpen] = useState(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
-  const [tab, setTab] = useState(''); // '' = decide below | 'sent' | 'uploads'
+  const [tab, setTab] = useKeptState('office.vendorBills.tab', ''); // '' = decide below | 'sent' | 'uploads'
   const [up, setUp] = useState({ waiting: 0, total: 0 });
 
   const loadUp = useCallback(() => { api.get('/vendor-bills/uploads/count').then((r) => setUp(r.data)).catch(() => {}); }, []);

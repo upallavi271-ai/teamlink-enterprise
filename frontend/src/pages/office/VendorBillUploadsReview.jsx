@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
 import BillSteps from '../../components/BillSteps.jsx';
@@ -40,9 +41,10 @@ export function AiLight({ ai }) {
 // ---- the list ---------------------------------------------------------------------------------------------------------------------------
 export default function UploadedBills({ onChanged, onCounts }) {
   const [d, setD] = useState(null);
-  const [status, setStatus] = useState('NEEDS_REVIEW');
-  const [vendorId, setVendorId] = useState('');
-  const [q, setQ] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js).
+  const [status, setStatus] = useKeptState('office.uploadedBills.status', 'NEEDS_REVIEW');
+  const [vendorId, setVendorId] = useKeptState('office.uploadedBills.vendor', '');
+  const [q, setQ] = useKeptState('office.uploadedBills.q', '');
   const [open, setOpen] = useState(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');

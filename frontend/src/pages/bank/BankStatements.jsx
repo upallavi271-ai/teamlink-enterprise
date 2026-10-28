@@ -19,6 +19,7 @@ import {
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import { useKeptParams } from '../../utils/useKeptState.js';
 import PeriodPicker, { ALL_TIME } from '../../components/accounts/PeriodPicker.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import './bank-s6.css';
@@ -68,6 +69,8 @@ function pageList(page, total) {
 
 export default function BankStatements() {
   const [sp, setSp] = useSearchParams();
+  // Coming back to Bank & Reconciliation reopens the same bank, dates, status and page (utils/useKeptState.js).
+  useKeptParams('bank.statements', ['bankId', 'from', 'to', 'status', 'page']);
   const P = readParams(sp);
   const [banks, setBanks] = useState(null);
   const [banksErr, setBanksErr] = useState('');

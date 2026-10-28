@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js'; // filters / view / page kept when you leave and come back
 import { Panel, PanelHead, EmptyMini, Modal } from '../proto.jsx';
 import { money, errText, downloadFile } from '../payroll/payrollUi';
 import PeriodPicker, { ALL_TIME, isAllTime } from './PeriodPicker.jsx';
@@ -39,8 +40,8 @@ function Filters({ facets, values, set, extra = [] }) {
 // ---- Pending from HRMS ----------------------------------------------------------------------
 function PendingView({ canPost }) {
   const [data, setData] = useState(null);
-  const [showAll, setShowAll] = useState(false);
-  const [kind, setKind] = useState('');
+  const [showAll, setShowAll] = useKeptState('journal.assets.pending.all', false);
+  const [kind, setKind] = useKeptState('journal.assets.pending.kind', '');
   const [sel, setSel] = useState({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
@@ -50,7 +51,7 @@ function PendingView({ canPost }) {
   useEffect(load, [showAll]); // eslint-disable-line react-hooks/exhaustive-deps
   const rows = (data?.rows || []).filter((r) => !kind || r.kind === kind);
   const postable = rows.filter((r) => ['Not posted', 'Changed in HRMS'].includes(r.state));
-  const page = usePaged(rows);
+  const page = usePaged(rows, 25, 'journal.assets.pending', `${showAll}|${kind}`);
   const chosen = postable.filter((r) => sel[`${r.kind}:${r.id}`]);
   async function post(items, confirmClosed = false) {
     setBusy(true); setMsg(''); setError('');
@@ -163,8 +164,8 @@ function Timeline({ id, onClose }) {
 
 // ---- Assets (register) -------------------------------------------------------------------------
 function RegisterView({ canPost }) {
-  const [values, setValues] = useState({ category: '', status: '', employee: '' });
-  const [q, setQ] = useState('');
+  const [values, setValues] = useKeptState('journal.assets.register.filters', { category: '', status: '', employee: '' });
+  const [q, setQ] = useKeptState('journal.assets.register.q', '');
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(null);
   const [error, setError] = useState('');
@@ -172,7 +173,7 @@ function RegisterView({ canPost }) {
   const set = (k, v) => setValues((x) => ({ ...x, [k]: v }));
   useEffect(() => { api.get(`/accounts/fixed-assets/register?${qsOf(values)}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the assets.'))); }, [values, tick]);
   const rows = (data?.rows || []).filter((r) => !q.trim() || `${r.assetCode} ${r.name} ${r.holder || ''}`.toLowerCase().includes(q.trim().toLowerCase()));
-  const page = usePaged(rows);
+  const page = usePaged(rows, 25, 'journal.assets.register', `${JSON.stringify(values)}|${q}`);
   return (
     <>
       <div className="lb-filters">
@@ -211,8 +212,8 @@ function RegisterView({ canPost }) {
 
 // ---- Asset summary ------------------------------------------------------------------------------
 function SummaryView({ canPost }) {
-  const [period, setPeriod] = useState(ALL_TIME);
-  const [values, setValues] = useState({ category: '', status: '', employee: '' });
+  const [period, setPeriod] = useKeptState('journal.assets.summary.period', ALL_TIME);
+  const [values, setValues] = useKeptState('journal.assets.summary.filters', { category: '', status: '', employee: '' });
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [tick, setTick] = useState(0);
@@ -254,8 +255,8 @@ function SummaryView({ canPost }) {
 
 // ---- Repair cost ---------------------------------------------------------------------------------
 function RepairCostView({ canEdit, canPost }) {
-  const [period, setPeriod] = useState(ALL_TIME);
-  const [values, setValues] = useState({ category: '', status: '', employee: '', vendor: '' });
+  const [period, setPeriod] = useKeptState('journal.assets.repairs.period', ALL_TIME);
+  const [values, setValues] = useKeptState('journal.assets.repairs.filters', { category: '', status: '', employee: '', vendor: '' });
   const [threshold, setThreshold] = useState('');
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -268,7 +269,7 @@ function RepairCostView({ canEdit, canPost }) {
     setMsg(''); setError('');
     try { await api.put('/accounts/fixed-assets/settings', { replaceThreshold: Number(threshold) }); setMsg(`Saved — "Consider replacing" shows at ${threshold}% of the purchase cost.`); load(); } catch (err) { setError(errText(err, 'Could not save.')); }
   }
-  const page = usePaged(data?.rows || []);
+  const page = usePaged(data?.rows || [], 25, 'journal.assets.repairs', `${JSON.stringify(values)}|${JSON.stringify(period)}`);
   return (
     <>
       <div className="lb-filters">
@@ -312,7 +313,7 @@ function RepairCostView({ canEdit, canPost }) {
 }
 
 export default function FixedAssetsTab({ canPost = false, canEdit = false }) {
-  const [view, setView] = useState('pending');
+  const [view, setView] = useKeptState('journal.assets.view', 'pending');
   const VIEWS = [['pending', 'Pending from HRMS'], ['register', 'Assets'], ['summary', 'Asset summary'], ['repairs', 'Repair cost']];
   return (
     <Panel style={{ marginTop: 16 }}>

@@ -20,6 +20,7 @@
 // filter or sort starts again from page 1.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import '../../components/ui/ui.css';
@@ -81,7 +82,7 @@ export default function ExpenseLedger({
   // Search is typed: wait a moment before asking.
   const [qDeb, setQDeb] = useState(params.q);
   useEffect(() => { const t = setTimeout(() => setQDeb(params.q), 250); return () => clearTimeout(t); }, [params.q]);
-  const [order, setOrder] = useState({ sort: 'date', dir: 'desc' });
+  const [order, setOrder] = useKeptState('office.ledger.order', { sort: 'date', dir: 'desc' }); // kept (utils/useKeptState.js)
   const sent = { ...params, q: qDeb };
   const key = JSON.stringify({ ...sent, ...order });
 

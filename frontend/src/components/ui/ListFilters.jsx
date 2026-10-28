@@ -3,6 +3,7 @@ import Combo from '../Combo.jsx';
 import MoreFilters from './MoreFilters.jsx';
 import FilterChips from '../FilterChips.jsx';
 import EmptyState from './EmptyState.jsx';
+import { useKeptState } from '../../utils/useKeptState.js';
 import './ui.css';
 import './ListFilters.css';
 
@@ -55,6 +56,11 @@ import './ListFilters.css';
 //              the API); the search value is debounced in lf.params.
 //   initial    starting values, e.g. seeded from the URL
 //   sorts / defaultSort   Sort dropdown (first sort is the default)
+//   keep       optional key, e.g. 'bank.recon': the values and the sort
+//              survive leaving the screen (utils/useKeptState.js). A non-empty
+//              `initial` (a link that says what to show) wins over the kept
+//              values. lf.sig changes only when the person changes a filter or
+//              the sort: pass it to usePaged(rows, size, keepKey, lf.sig).
 // ---------------------------------------------------------------------------
 
 const EMPTY = (v) => v === '' || v === null || v === undefined;
@@ -82,9 +88,10 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   const list = Array.isArray(rows) ? rows : [];
   const fields = (fieldsIn || []).filter((f) => f && f.show !== false);
   const blank = useMemo(() => Object.fromEntries(keysOf(fieldsIn || []).map((k) => [k, ''])), [fieldsIn && fieldsIn.map((f) => f && f.key).join('|')]);
-  const [values, setValues] = useState(() => ({ ...blank, ...(opts.initial || {}) }));
+  const linked = Object.values(opts.initial || {}).some((v) => !EMPTY(v));
+  const [values, setValues] = useKeptState(opts.keep && `${opts.keep}.filters`, () => ({ ...blank, ...(opts.initial || {}) }), linked);
   const sorts = opts.sorts || [];
-  const [sort, setSort] = useState(opts.defaultSort || (sorts[0] && sorts[0].key) || '');
+  const [sort, setSort] = useKeptState(opts.keep && `${opts.keep}.sort`, opts.defaultSort || (sorts[0] && sorts[0].key) || '');
 
   // Debounced copy of the values for server-side lists (typing in the search
   // box must not fire a request per keystroke).
@@ -177,7 +184,7 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   });
 
   return {
-    values, setValue, setValues, clear, fields: resolved,
+    values, setValue, setValues, clear, fields: resolved, sig: `${JSON.stringify(values)}|${sort}`,
     rows: sorted, filtered: sorted, total: list.length,
     activeCount, moreActive, chips, params, paramsKey: JSON.stringify(params),
     sorts, sort, setSort,

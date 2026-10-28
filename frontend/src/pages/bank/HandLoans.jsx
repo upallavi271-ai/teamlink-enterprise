@@ -378,7 +378,7 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
     repaid: loan.repaid, pending: loan.pending, repayments: (loan.repayments || []).length,
     accounts: [...new Set((data?.movements || []).filter((mv) => mv.loanId === loan.id).map((mv) => mv.account).filter((a) => a && a !== '—'))],
   });
-  const lf = useListFilters(data?.loans || [], LOAN_FIELDS, { sorts: LOAN_SORTS });
+  const lf = useListFilters(data?.loans || [], LOAN_FIELDS, { sorts: LOAN_SORTS, keep: 'bank.handLoans' });
 
   // Person by person: every hand entry, plus the people money went to with no entry.
   const people = useMemo(() => {
