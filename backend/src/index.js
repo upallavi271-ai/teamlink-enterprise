@@ -563,3 +563,5 @@ const server = app.listen(PORT, () => {
 server.requestTimeout = 30 * 60 * 1000;
 // EXOTEL AI CALLING: accepts Exotel's Voicebot WebSocket (needs the optional `ws` module; audio needs a speech service, see calling/voicebot.js).
 try { require('./calling/voicebot').attachWebSocket(server); } catch (err) { console.error('[ai-calling] websocket:', err.message); }
+// SELF-HOSTED AI CALLING (2026-10-28): Vexyl speech, Ollama, the Asterisk AudioSocket bridge - only what backend/.env switches on (calling/local).
+try { require('./calling/local').start(); } catch (err) { console.error('[ai-calling] self-hosted:', err.message); }

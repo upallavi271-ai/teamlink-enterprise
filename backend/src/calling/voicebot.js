@@ -23,8 +23,12 @@ function setSpeech(p) { SPEECH = p && typeof p.transcribe === 'function' && type
 const speechReady = () => !!SPEECH;
 
 // Optional: when the word lists find nothing, a model may choose ONE word from yes / no / later / unclear. It never writes speech.
-// Off unless AI_CALL_LLM_CLASSIFIER=1 and the Claude key is configured. Candidate words are sent as quoted, untrusted text.
+// 2026-10-28 (zero paid AI APIs): the self-hosted Ollama model first, when AI_CALL_OLLAMA_URL is set (local/ollama.js - the
+// words stay on this server / private network). The Claude path below stays off unless AI_CALL_LLM_CLASSIFIER=1 and the Claude
+// key is configured, and is never used while the local model is set. Candidate words are sent as quoted, untrusted text.
 async function llmClassifier(text) {
+  const local = require('./local/ollama'); // eslint-disable-line global-require
+  if (local.enabled()) return local.classify(text);
   if (!/^(1|true|yes|on)$/i.test(String(process.env.AI_CALL_LLM_CLASSIFIER || ''))) return 'unclear';
   const agent = require('../utils/aiAgent'); // eslint-disable-line global-require
   const cfg = await agent.agentConfig();
