@@ -18,6 +18,10 @@
 //                                           | 91 (919876543210) | e164 (+919876543210)
 //   AI_VOICE_CALLER_ID                      the number the candidate sees (if the provider allows setting it)
 //   AI_VOICE_GATEWAY_PORT                   default 9092
+//
+// AI_VOICE_DIAL_VIA=direct : no Asterisk - TeamLink asks the office SIM gateway itself (calling/voice/sipDirect.js). For a
+//   TeamLink on the SAME network as the gateway (an office PC / localhost). Needs AI_VOICE_SYNWAY_HOST (e.g. 192.168.0.201)
+//   and AI_VOICE_LOCAL_IP (this PC's address on that network, e.g. 192.168.0.103); the AMI / trunk settings are then unused.
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
 const { logAudit } = require('../../utils/audit');
@@ -41,6 +45,9 @@ function config(env = process.env) {
     on: env.AI_VOICE_GATEWAY === '1',
     ami: { host: env.AI_VOICE_AMI_HOST || '127.0.0.1', port: Number(env.AI_VOICE_AMI_PORT) || 5038, user: env.AI_VOICE_AMI_USER || '', secret: env.AI_VOICE_AMI_SECRET || '' },
     trunk: String(env.AI_VOICE_SIP_TRUNK || '').replace(/[^\w.-]/g, ''),
+    via: /^direct$/i.test(env.AI_VOICE_DIAL_VIA || '') ? 'direct' : 'asterisk',
+    synway: { host: String(env.AI_VOICE_SYNWAY_HOST || '').replace(/[^\w.-]/g, ''), port: Number(env.AI_VOICE_SYNWAY_PORT) || 5060 },
+    localIp: String(env.AI_VOICE_LOCAL_IP || '').replace(/[^\d.]/g, ''),
     format: ['10', '0', '91', 'e164'].includes(env.AI_VOICE_DIAL_FORMAT) ? env.AI_VOICE_DIAL_FORMAT : '10',
     callerId: String(env.AI_VOICE_CALLER_ID || '').replace(/[^\d+]/g, ''),
     port: Number(env.AI_VOICE_GATEWAY_PORT) || 9092,
@@ -49,8 +56,13 @@ function config(env = process.env) {
   };
   const problems = [];
   if (!c.on) problems.push('The AI phone line is not switched on on this server (AI_VOICE_GATEWAY=1).');
-  if (!c.ami.user || !c.ami.secret) problems.push('The Asterisk manager login is missing (AI_VOICE_AMI_USER / AI_VOICE_AMI_SECRET).');
-  if (!c.trunk) problems.push('The SIP line is missing (AI_VOICE_SIP_TRUNK).');
+  if (c.via === 'direct') {
+    if (!c.synway.host) problems.push('The SIM gateway address is missing (AI_VOICE_SYNWAY_HOST).');
+    if (!c.localIp) problems.push("This computer's address on the gateway's network is missing (AI_VOICE_LOCAL_IP).");
+  } else {
+    if (!c.ami.user || !c.ami.secret) problems.push('The Asterisk manager login is missing (AI_VOICE_AMI_USER / AI_VOICE_AMI_SECRET).');
+    if (!c.trunk) problems.push('The SIP line is missing (AI_VOICE_SIP_TRUNK).');
+  }
   if (c.mode === 'Off') problems.push('AI phone calls are switched off (AI_VOICE_PHONE_MODE=Off).');
   return { ...c, problems, ready: problems.length === 0 };
 }
@@ -144,8 +156,19 @@ async function place(user, input, deps = {}) {
     } catch (e) { log('prepare failed:', e.message); }
   }
 
+  if (c.via === 'direct') {
+    // no Asterisk: TeamLink rings the gateway itself; the answer (or why not) comes later, the recruiter does not wait
+    const dial = deps.direct || require('./sipDirect').originate; // eslint-disable-line global-require
+    dial({ host: c.synway.host, port: c.synway.port, number: dialNumber(verdict.e164, c.format), uuid, gatewayPort: c.port, localIp: c.localIp, ringSec: RING_SEC })
+      .then(async (r) => {
+        if (r.ok) return;
+        const row = await svc.getCall(id);
+        if (row && row.status === 'calling') await svc.setRow(id, { status: r.status, failReason: String(r.reason).slice(0, 250), providerStatus: `sip:${r.code || r.status}`, endedAt: new Date().toISOString() });
+      })
+      .catch((e) => log('direct dial failed:', e.message));
+  }
   const actionId = `tl-${id}`;
-  try {
+  if (c.via !== 'direct') try { // eslint-disable-line curly
     const a = deps.ami || await ami(c);
     WAIT.set(actionId, id);
     const r = await a.action({
@@ -194,7 +217,8 @@ async function start() {
   if (Number(process.env.AI_CALL_AUDIOSOCKET_PORT) === c.port) { log(`not started: port ${c.port} is AI_CALL_AUDIOSOCKET_PORT (calling/local). Use one of the two.`); return null; }
   const server = await gateway.start({ port: c.port });
   await sweep(Date.now() + STUCK_MS * 100).catch(() => {}); // after a restart nothing is still dialling
-  if (c.ready) ami(c).then(() => log('Asterisk manager connected')).catch((e) => log(e.message));
+  if (c.ready && c.via === 'direct') log(`dialling straight to the SIM gateway ${c.synway.host} from ${c.localIp}`);
+  else if (c.ready) ami(c).then(() => log('Asterisk manager connected')).catch((e) => log(e.message));
   else log('not ready:', c.problems.join(' '));
   return server;
 }
