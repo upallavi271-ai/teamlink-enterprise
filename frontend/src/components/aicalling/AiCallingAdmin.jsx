@@ -106,11 +106,14 @@ export default function AiCallingAdmin() {
     </div>
   );
 
+  // 2026-10-28: Exotel (cloud) or Self-hosted (Synway): our Asterisk dials through the office Synway gateway (Ollama + Vexyl AI).
+  const synway = /synway|self/i.test(v.provider || cfg.provider || '');
+  const who = synway ? 'The Asterisk server' : 'Exotel';
   return (
     <div>
       <div className="panel panel-pad">
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <h3 style={{ margin: 0, fontSize: 15 }}>Exotel AI Calling</h3>
+          <h3 style={{ margin: 0, fontSize: 15 }}>AI Calling · {synway ? 'Self-hosted (Synway)' : 'Exotel'}</h3>
           <span className={`status ${STATE_CLASS[st.state] || 'new'}`}>{st.state}</span>
           <span className="status pending">Switch: {cfg.mode}</span>
         </div>
@@ -120,14 +123,14 @@ export default function AiCallingAdmin() {
         {msg && <div className="notice" style={{ marginTop: 8 }}>{msg}</div>}
         {test && (
           <div className={`notice${test.ok ? '' : ' red'}`} style={{ marginTop: 8, display: 'block' }}>
-            <b>{test.ok ? 'Exotel answered.' : 'Not connected.'}</b> {test.message}
+            <b>{test.ok ? `${who} answered.` : 'Not connected.'}</b> {test.message}
             <ul style={{ margin: '6px 0 0 18px' }}>{(test.checks || []).map((c) => <li key={c.name}>{`${c.name}: ${c.note}`}</li>)}</ul>
           </div>
         )}
         <div className="row-actions" style={{ marginTop: 10 }}>
           <button className="btn btn-primary" disabled={busy} onClick={save}>Save settings</button>
           <button className="btn" disabled={busy} onClick={runTest}>Test connection</button>
-          <span className="small-muted">The test only asks Exotel about your account. It never phones anybody.</span>
+          <span className="small-muted">{synway ? 'The test only logs in to Asterisk and reads its setup (trunk, dialplan, AudioSocket). It never phones anybody.' : 'The test only asks Exotel about your account. It never phones anybody.'}</span>
         </div>
       </div>
 
@@ -137,9 +140,39 @@ export default function AiCallingAdmin() {
           <Combo value={v.mode || 'Off'} onChange={(e) => set('mode', e.target.value)}><option>Off</option><option>Test</option><option>Live</option></Combo>
         </div>
         {field('testNumbers', { hint: 'Phone numbers you own. In Test mode only these can be called.' })}
+        <div className="field" style={{ maxWidth: 320 }}>
+          <label>Calling provider</label>
+          <Combo value={synway ? 'Self-hosted (Synway)' : 'Exotel'} onChange={(e) => set('provider', e.target.value)}><option>Exotel</option><option>Self-hosted (Synway)</option></Combo>
+          <div className="small-muted">Self-hosted: TeamLink&apos;s own Asterisk server dials out through the office Synway SIM gateway; the AI runs on Ollama + Vexyl (no paid AI service). Changing it needs a new connection test before Live.</div>
+        </div>
       </Section>
 
-      <Section title="2. Exotel account" hint="From the Exotel dashboard. Ask Exotel to enable Voicebot and to approve your caller ID.">
+      {synway && (
+        <Section title="2. Self-hosted (Synway)" hint="The Asterisk server and the Synway gateway must be on this server or the office network: call audio never goes over the internet. Set them up with deploy/ai-calling/install.sh.">
+          <div className="grid-2">
+            {field('amiHost')}
+            {field('amiPort')}
+            {field('amiUser', { hint: 'The [teamlink] user in /etc/asterisk/manager.conf.' })}
+            {field('amiSecret')}
+            {field('trunk', { hint: 'The PJSIP endpoint of the gateway (pjsip_synway.conf: [synway]).' })}
+            {field('gatewayIp', { hint: 'Synway admin page > Network. The trunk must point at this address.' })}
+            <div className="field">
+              <label>Number format the gateway dials</label>
+              <Combo value={/^0|zero/i.test(v.dialFormat || '') ? '0 + 10 digits' : (/^\+|^91|e\.?164/i.test(v.dialFormat || '') ? '+91 and the number' : '10 digits')} onChange={(e) => set('dialFormat', e.target.value)}>
+                <option>10 digits</option><option>0 + 10 digits</option><option>+91 and the number</option>
+              </Combo>
+              <div className="small-muted">Most Synway GSM gateways dial the 10-digit mobile number. Check the gateway&apos;s routing rules.</div>
+            </div>
+            {field('dialContext', { hint: 'extensions_teamlink.conf: [teamlink-ai] (it connects answered calls to AudioSocket).' })}
+            {field('ringSeconds')}
+          </div>
+          <div className="small-muted" style={{ marginTop: 6 }}>
+            Ollama (yes / no / later), Vexyl speech to text and text to speech and the AudioSocket bridge port are set in the TeamLink backend .env (AI_CALL_*), not here: install.sh writes them. {cfg.voicebot.speechService ? 'Speech is plugged in on this server.' : 'Speech is NOT plugged in on this server yet (no AI_CALL_STT_URL / AI_CALL_TTS_URL).'}
+          </div>
+        </Section>
+      )}
+
+      {!synway && <Section title="2. Exotel account" hint="From the Exotel dashboard. Ask Exotel to enable Voicebot and to approve your caller ID.">
         <div className="grid-2">
           {field('sid')}
           {field('callerId')}
@@ -154,9 +187,9 @@ export default function AiCallingAdmin() {
           {field('appId', { hint: 'The Exotel Flow that has the Voicebot applet.' })}
           {field('flowUrl')}
         </div>
-      </Section>
+      </Section>}
 
-      <Section title="3. Addresses Exotel calls back" hint="Exotel must reach this TeamLink over the internet with https. Paste these addresses in the Exotel dashboard.">
+      {!synway && <Section title="3. Addresses Exotel calls back" hint="Exotel must reach this TeamLink over the internet with https. Paste these addresses in the Exotel dashboard.">
         <div className="grid-2">
           {field('publicBase')}
           {field('hook', { hint: 'Type any long text. It is added to the call-back address, shown below with dots.' })}
@@ -171,7 +204,7 @@ export default function AiCallingAdmin() {
         <div className="small-muted" style={{ marginTop: 6 }}>
           {cfg.voicebot.speechService ? 'A speech service is plugged in for the Voicebot audio.' : 'The Voicebot audio needs a speech-to-text and text-to-speech service. None is plugged in yet, so real phone audio cannot be handled until one is. The conversation logic itself is ready.'}
         </div>
-      </Section>
+      </Section>}
 
       <Section title="4. Calling hours and limits">
         <div className="grid-2">
@@ -231,7 +264,7 @@ export default function AiCallingAdmin() {
 
       <Section title="First safe test call" hint="Do these in this order.">
         <ol style={{ margin: '0 0 0 18px', fontSize: 13, lineHeight: 1.7 }}>
-          <li>Fill sections 2 and 3, press Save, then Test connection. It must say Connected.</li>
+          <li>{synway ? 'Fill section 2 (Asterisk + Synway), press Save, then Test connection. It must say Connected (trunk, dialplan and AudioSocket all found).' : 'Fill sections 2 and 3, press Save, then Test connection. It must say Connected.'}</li>
           <li>Put the switch on <b>Test</b> and add your own phone number as a test phone number.</li>
           <li>Add a test candidate in the ATS with your own number and a recorded consent, on a test requirement.</li>
           <li>Open AI Calling, pick that requirement, tick only that candidate, press Call, read the script, press Yes, call now.</li>

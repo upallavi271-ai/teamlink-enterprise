@@ -51,10 +51,11 @@ admin.put('/config', requirePerm(null, 'administration', 'Integrations', 'config
     const before = await settingsStore.status();
     // Live is allowed only after a successful connection test of THESE details: a changed account detail needs a new test first.
     const stored = require('../utils/integrationStore').parseValues(await require('../utils/integrationStore').integrationRow(X.CHANNEL_ID));
-    const changed = ['sid', 'key', 'token', 'callerId', 'appId', 'flowUrl'].some((k) => {
+    // (Self-hosted (Synway): the provider, the Asterisk server, its AMI login, the trunk, the gateway and the dial format count too.)
+    const changed = ['sid', 'key', 'token', 'callerId', 'appId', 'flowUrl', 'provider', 'amiHost', 'amiPort', 'amiUser', 'amiSecret', 'trunk', 'gatewayIp', 'dialFormat', 'dialContext'].some((k) => {
       const given = values[X.F[k]];
       if (given == null || String(given).trim() === '') return false; // blank = unchanged (secrets) / not sent
-      return ['key', 'token'].includes(k) ? true : String(given).trim() !== String(stored[X.F[k]] || '').trim();
+      return ['key', 'token', 'amiSecret'].includes(k) ? true : String(given).trim() !== String(stored[X.F[k]] || '').trim();
     });
     if (before.state !== 'Connected' || changed) {
       return res.status(400).json({ error: 'Press "Test connection" and get "Connected" before switching to Live. Use Test mode with your own phone number first.' });
@@ -66,7 +67,7 @@ admin.put('/config', requirePerm(null, 'administration', 'Integrations', 'config
     if (err && err.code === 'NO_SECRET_KEY') return res.status(400).json({ error: NO_KEY_MESSAGE });
     throw err;
   }
-  const secrets = ['key', 'token', 'hook'].filter((k) => values[X.F[k]] != null && String(values[X.F[k]]).trim() !== '').map((k) => X.F[k]);
+  const secrets = ['key', 'token', 'hook', 'amiSecret'].filter((k) => values[X.F[k]] != null && String(values[X.F[k]]).trim() !== '').map((k) => X.F[k]);
   await logAudit({ userId: req.user.id, action: 'AI calling settings saved', entity: 'Integration', entityId: X.CHANNEL_ID, toValue: `Switch: ${wanted}${secrets.length ? ` · secrets changed: ${secrets.join(', ')}` : ''}`.slice(0, 300) });
   res.json(await settingsStore.publicView());
 });
@@ -75,7 +76,11 @@ admin.put('/config', requirePerm(null, 'administration', 'Integrations', 'config
 admin.post('/test-connection', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const s = await settingsStore.load({ fresh: true });
   let r;
-  if (!s.hasRow || !s.sid || !s.key || !s.token) r = { ok: false, message: 'Not configured: fill in the Account SID, API key and API token first.', checks: [] };
+  if (s.provider === 'synway') {
+    // Self-hosted (Synway): log in to Asterisk AMI and read the setup (no Originate, no call) - calling/local/ami.js
+    if (!s.hasRow || !s.amiHost || !s.amiUser || !s.amiSecret) r = { ok: false, message: 'Not configured: fill in the Asterisk server address, AMI user name and AMI secret first.', checks: [] };
+    else r = await require('../calling/local/ami').testConnection(s); // eslint-disable-line global-require
+  } else if (!s.hasRow || !s.sid || !s.key || !s.token) r = { ok: false, message: 'Not configured: fill in the Account SID, API key and API token first.', checks: [] };
   else r = await client.testConnection(s);
   await settingsStore.writeTest({ ok: r.ok, at: new Date().toISOString(), message: clip(r.message, 400), checks: (r.checks || []).slice(0, 8), fingerprint: s.fingerprint }, req.user);
   await logAudit({ userId: req.user.id, action: 'AI calling connection test', entity: 'Integration', entityId: X.CHANNEL_ID, toValue: r.ok ? 'Connected (no call placed)' : 'Failed' });

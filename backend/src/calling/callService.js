@@ -21,6 +21,7 @@ const X = require('./exotelConfig');
 const DB = require('./schema');
 const settingsStore = require('./settings');
 const client = require('./exotelClient');
+const AMI = () => require('./local/ami'); // eslint-disable-line global-require -- Self-hosted (Synway): Asterisk AMI
 const P = require('./policy');
 const S = require('./scripts');
 
@@ -293,16 +294,27 @@ async function dispatch(id, { force = false } = {}) {
   const stamp = iso(t);
   await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', newId('aie'), row.id, `attempt:${row.id}:${n}`, 'attempt', 'attempt', stamp);
   await setRow(row.id, { attempts: n, lastAttemptAt: stamp, status: 'calling', nextAttemptAt: null, waitReason: null, failReason: null, startedAt: stamp, endedAt: null, providerStatus: 'queued' });
-  const cb = s.publicBase ? `${s.publicBase}${X.WEBHOOK.statusPath}?${X.WEBHOOK.keyParam}=${encodeURIComponent(s.hook)}` : null;
-  const r = await client.startCall(s, { to: verdict.e164, statusCallback: cb, custom: await customFor(row.id), record: s.recording });
+  let r;
+  const synway = s.provider === 'synway';
+  if (synway) {
+    // Self-hosted (Synway): OUR id is the call's id. It is saved BEFORE dialling, because the AudioSocket bridge looks the call
+    // up by it the moment the candidate answers (AICALL_UUID = AiCall.callSid). Asterisk's result comes back through onResult.
+    const uuid = crypto.randomUUID();
+    await setRow(row.id, { callSid: uuid });
+    r = await AMI().startCall(s, { to: verdict.e164, uuid, onResult: (ev) => applyLocalEvent(uuid, ev) });
+  } else {
+    const cb = s.publicBase ? `${s.publicBase}${X.WEBHOOK.statusPath}?${X.WEBHOOK.keyParam}=${encodeURIComponent(s.hook)}` : null;
+    r = await client.startCall(s, { to: verdict.e164, statusCallback: cb, custom: await customFor(row.id), record: s.recording });
+  }
   if (r.ok) {
     await setRow(row.id, { callSid: r.callSid, providerStatus: r.status });
-    await logAudit({ userId: row.initiatedById, actorName: row.initiatedById ? undefined : AUDIT_ACTOR, action: 'AI call started', entity: 'Application', entityId: row.applicationId, toValue: `${row.purpose} attempt ${n} (${s.mode})` });
+    await logAudit({ userId: row.initiatedById, actorName: row.initiatedById ? undefined : AUDIT_ACTOR, action: 'AI call started', entity: 'Application', entityId: row.applicationId, toValue: `${row.purpose} attempt ${n} (${s.mode}, ${synway ? 'Self-hosted (Synway)' : 'Exotel'})` });
     return { status: 'calling' };
   }
-  const why = client.clean(r.error, s);
+  const why = (synway ? AMI() : client).clean(r.error, s);
+  if (synway) await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","note","applied","receivedAt") VALUES (?,?,?,?,?,?,1,?)', newId('aie'), row.id, `ami-refused:${row.id}:${n}`, 'asterisk', 'failed', why.slice(0, 500), stamp);
   if (r.transient && n < row.maxAttempts) {
-    await setRow(row.id, { status: 'failed', failReason: why, nextAttemptAt: iso(new Date(t.getTime() + gapFor(s, n))), waitReason: `Exotel had a problem. Trying again (attempt ${n + 1} of ${row.maxAttempts}).` });
+    await setRow(row.id, { status: 'failed', failReason: why, nextAttemptAt: iso(new Date(t.getTime() + gapFor(s, n))), waitReason: `${synway ? 'The phone system (Asterisk)' : 'Exotel'} had a problem. Trying again (attempt ${n + 1} of ${row.maxAttempts}).` });
     return { status: 'failed', note: 'will retry' };
   }
   await setRow(row.id, { status: 'failed', failReason: why, nextAttemptAt: null, endedAt: stamp });
@@ -362,7 +374,35 @@ function parseCallback(body) {
 }
 
 async function applyProviderEvent(body) {
-  const ev = parseCallback(body);
+  return applyEvent(parseCallback(body));
+}
+
+// SELF-HOSTED (SYNWAY): what Asterisk said about a call (calling/local/ami.js OriginateResponse) goes through the SAME rules as an
+// Exotel callback: in order, once, retries for busy / no answer / failed, the outcome at the end. "completed" is written by the
+// AudioSocket bridge when the conversation ends. An answered call whose bridge never starts is not left "calling": the watchdog
+// fails it with the reason (Asterisk AudioSocket / AI_CALL_AUDIOSOCKET_PORT).
+const BRIDGE_WAIT_MS = Number(process.env.AI_CALL_BRIDGE_WAIT_MS) || 45000;
+async function applyLocalEvent(callSid, ev) {
+  const status = X.normalStatus(ev && ev.status);
+  const out = await applyEvent({
+    sid: callSid, statusRaw: ev && ev.status, status, duration: null, recording: null, custom: null,
+    updated: `${Date.now()}`, detail: ev && ev.detail ? String(ev.detail).slice(0, 200) : null, reason: ev && ev.reason != null ? ev.reason : null,
+  });
+  if (status === 'in-progress') {
+    setTimeout(async () => {
+      try {
+        const row = await DB.one('SELECT * FROM "AiCall" WHERE "callSid" = ?', callSid);
+        if (!row || row.status !== 'calling') return;
+        const bridged = await DB.one('SELECT "id" FROM "AiCallEvent" WHERE "callId" = ? AND "kind" = \'audiosocket\' LIMIT 1', row.id);
+        if (bridged) return;
+        await applyEvent({ sid: callSid, statusRaw: 'failed', status: 'failed', duration: null, recording: null, custom: null, updated: `${Date.now()}:watchdog`, detail: 'The candidate answered, but the AI did not join the call: Asterisk did not open AudioSocket to TeamLink (check the [teamlink-ai] dialplan and AI_CALL_AUDIOSOCKET_PORT).' });
+      } catch (err) { console.error('[ai-calling] bridge watchdog:', err.message); } // eslint-disable-line no-console
+    }, BRIDGE_WAIT_MS).unref();
+  }
+  return out;
+}
+
+async function applyEvent(ev) {
   const t = now();
   const eventKey = `prov:${crypto.createHash('sha256').update([ev.sid, ev.status, ev.duration, ev.updated, ev.custom].join('|')).digest('hex').slice(0, 40)}`;
   let callId = ev.custom ? await callIdFromCustom(ev.custom) : null;
@@ -370,9 +410,9 @@ async function applyProviderEvent(body) {
   if (ev.sid) row = await DB.one('SELECT * FROM "AiCall" WHERE "callSid" = ?', ev.sid);
   if (!row && callId) row = await getCall(callId);
   callId = row ? row.id : null;
-  const scrubbed = JSON.stringify({ sid: ev.sid, status: ev.statusRaw, duration: ev.duration, updated: ev.updated, hasRecording: !!ev.recording });
+  const scrubbed = JSON.stringify({ sid: ev.sid, status: ev.statusRaw, duration: ev.duration, updated: ev.updated, hasRecording: !!ev.recording, ...(ev.detail ? { detail: ev.detail } : {}), ...(ev.reason != null ? { reason: ev.reason } : {}) });
   const added = await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","callSid","eventKey","kind","status","payload","applied","receivedAt") VALUES (?,?,?,?,?,?,?,0,?)',
-    newId('aie'), callId, ev.sid, eventKey, 'provider', ev.status || String(ev.statusRaw || '').slice(0, 30), scrubbed, iso(t));
+    newId('aie'), callId, ev.sid, eventKey, ev.detail !== undefined ? 'asterisk' : 'provider', ev.status || String(ev.statusRaw || '').slice(0, 30), scrubbed, iso(t));
   if (!added) return { ok: true, duplicate: true };
   const note = async (n, applied) => { await DB.run('UPDATE "AiCallEvent" SET "note" = ?, "applied" = ? WHERE "eventKey" = ?', n, applied ? 1 : 0, eventKey); };
   if (!ev.status) { await note('unknown status word', false); return { ok: true, ignored: 'unknown status' }; }
@@ -407,7 +447,7 @@ async function applyProviderEvent(body) {
   }
   // busy / no-answer / failed: retry or give up
   const n = row.attempts;
-  const why = final === 'busy' ? 'The candidate\'s phone was busy.' : final === 'no-answer' ? 'The candidate did not answer.' : 'The call failed at the telephone network.';
+  const why = ev.detail || (final === 'busy' ? 'The candidate\'s phone was busy.' : final === 'no-answer' ? 'The candidate did not answer.' : 'The call failed at the telephone network.');
   if (n < row.maxAttempts) {
     const next = new Date(t.getTime() + gapFor(s, n));
     await setRow(row.id, { ...patch, failReason: why, nextAttemptAt: iso(next), waitReason: `Trying again (attempt ${n + 1} of ${row.maxAttempts}).` });
@@ -500,6 +540,6 @@ async function history(user, { candidateId, applicationId }) {
 }
 
 module.exports = {
-  setClock, now, preview, createCalls, dispatch, cancel, retry, applyProviderEvent, parseCallback, list, detail, history, shape, getCall, setRow, loadContext, accessVerdict,
+  setClock, now, preview, createCalls, dispatch, cancel, retry, applyProviderEvent, applyLocalEvent, applyEvent, parseCallback, list, detail, history, shape, getCall, setRow, loadContext, accessVerdict,
   scriptFor, languageFor, languagePref, jobSetting, customFor, callIdFromCustom, botTokenFor, callIdFromBotToken, cancelWith, createOne, newId, safeJson, gapFor, viewOnly, fail, ALLOWED_STATUS,
 };
