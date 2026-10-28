@@ -52,17 +52,25 @@ const Z = require('./lib/zzfix')('LCS');
     Z.check('C3 TL and HR approved: the leave is Approved, not Pending', b1.status === 'Approved', [r2.status, r2.text.slice(0, 200), b1.status]);
     Z.check('C4 the Super Admin is shown in the chain as Visibility', s2.HR === 'Approved' && s2.SUPER_ADMIN === 'Visibility', s2);
 
-    // 3. over the TL limit: the TL approves and it goes straight to HR (still Pending); HR approves -> Approved
+    // 3. over the TL limit (founder 2026-10-28): the TL can neither approve nor reject it - it goes to HR; HR approves -> Approved
     const c = await mkLeave(3, '2026-11-23', '2026-11-25', 'Pending');
     const r3 = await Z.call('PATCH', `/api/leave/${c.id}/decision`, T.tl, { status: 'Approved', comment: 'ZZTEST LCS' });
     const c1 = await prisma.leaveRequest.findUnique({ where: { id: c.id } });
     const s3 = await stepsOf(c.id);
-    Z.check('C5 a 3-day leave: the TL approves, it moves to HR and stays Pending (not granted by the TL)', r3.status === 200 && c1.status === 'Pending' && s3.TL === 'Approved' && s3.HR === 'Pending', [r3.status, r3.text.slice(0, 160), c1.status, s3]);
+    Z.check('C5 a 3-day leave: the TL cannot approve it (409); it is now with HR, still Pending, the TL shown as Visibility', r3.status === 409 && r3.body.overTlLimit === true && c1.status === 'Pending' && s3.TL === 'Visibility' && s3.HR === 'Pending', [r3.status, r3.text.slice(0, 160), c1.status, s3]);
+    const r3b = await Z.call('PATCH', `/api/leave/${c.id}/decision`, T.tl, { status: 'Rejected', rejectReason: 'ZZTEST LCS' });
+    Z.check('C5b ... nor reject it', r3b.status >= 400 && (await prisma.leaveRequest.findUnique({ where: { id: c.id } })).status === 'Pending', [r3b.status, r3b.text.slice(0, 160)]);
     const r4 = await Z.call('PATCH', `/api/leave/${c.id}/decision`, T.hr, { status: 'Approved', comment: 'ZZTEST LCS ok' });
     let c2 = await prisma.leaveRequest.findUnique({ where: { id: c.id } });
     if (r4.status === 400 && r4.body && r4.body.reasons) { await Z.call('PATCH', `/api/leave/${c.id}/decision`, T.hr, { status: 'Approved', comment: 'ZZTEST LCS ok', approvalReason: r4.body.reasons[0] }); c2 = await prisma.leaveRequest.findUnique({ where: { id: c.id } }); }
     const s4 = await stepsOf(c.id);
     Z.check('C6 then HR approves it: Approved, the Super Admin shown as Visibility', c2.status === 'Approved' && s4.SUPER_ADMIN === 'Visibility', [r4.status, c2.status, s4]);
+
+    // 4. a NEW 3-day request raised through the app skips the TL from the start (HR decides)
+    const r5 = await Z.call('POST', '/api/leave', await Z.mint(emp), { type: 'Casual', fromDate: '2026-12-14', toDate: '2026-12-16', reason: 'ZZTEST LCS new' });
+    if (r5.body && r5.body.id) leaveIds.push(r5.body.id);
+    const s5 = r5.body && r5.body.id ? await stepsOf(r5.body.id) : {};
+    Z.check('C7 a new 3-day leave goes straight to HR: HR Pending, the TL shown as Visibility', r5.status === 201 && s5.HR === 'Pending' && (!s5.TL || s5.TL === 'Visibility'), [r5.status, r5.text.slice(0, 200), s5]);
   } catch (err) { Z.fail += 1; console.log('FAIL  crashed', err && err.stack ? err.stack.slice(0, 900) : err); } finally {
     try {
       await prisma.approvalStep.deleteMany({ where: { recordId: { in: leaveIds } } });

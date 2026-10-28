@@ -325,6 +325,28 @@ async function wouldExceedConcurrentCap(employee, fromDate, toDate) {
   return null;
 }
 
+// OVER THE TL LIMIT = NO TL DECISION AT ALL (founder 2026-10-28: "2 days kante ekkuva TL asala approve cheyaledu, HR, Super Admin
+// matram chestaru"). An employee's request longer than the TL limit (HR leave settings, default 2 days) skips the TL: every step
+// before HR is shown as Visibility and HR decides (the Super Admin may decide directly, as always). Returns the HR step or null.
+// A TL's OWN leave keeps its own rule (utils/leadLeave.js: only the Super Admin approves it).
+const PAST_TL_NOTE = 'Not needed - this leave is longer than the TL limit, so HR / the Super Admin decide it. Shown for information.';
+async function sendPastTl(leaveId) {
+  const steps = await prisma.approvalStep.findMany({ where: { workflow: WF, recordId: leaveId }, orderBy: { seq: 'asc' } });
+  const hr = steps.find((s) => s.level === 'HR' && ['Waiting', 'Pending'].includes(s.status));
+  if (!hr) return null;
+  await prisma.approvalStep.updateMany({
+    where: { workflow: WF, recordId: leaveId, seq: { lt: hr.seq }, status: { in: ['Pending', 'Waiting'] } },
+    data: { status: 'Visibility', note: PAST_TL_NOTE },
+  });
+  if (hr.status !== 'Pending') await prisma.approvalStep.update({ where: { id: hr.id }, data: { status: 'Pending', activatedAt: new Date() } });
+  return hr;
+}
+async function overTlLimit(leave, employee) {
+  if (!employee || await leadRule.isLeadEmployee(employee)) return false;
+  const verdict = await policy.evaluateTlRule(await policy.getTlRule(), leave);
+  return !!(verdict.rule && verdict.rule.enabled && !verdict.allowed);
+}
+
 router.post('/', async (req, res, next) => {
   try {
   const { type, fromDate, reason } = req.body;
@@ -425,6 +447,7 @@ router.post('/', async (req, res, next) => {
         applicantUserId: employee.userId || null,
         applicantName: employee.name,
       });
+      if (await overTlLimit(leave, employee)) await sendPastTl(leave.id);
       chain = workflow.summarize(await workflow.loadSteps(WF, leave.id));
     }
   } catch (err) {
@@ -489,6 +512,18 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   let stopsHere = false;
   let toHrNext = false;
   if (status === 'Approved' && existing.status === 'Pending' && pendingStep && pendingStep.level === 'HR') stopsHere = true;
+  // OVER THE TL LIMIT (founder 2026-10-28, sendPastTl above): the TL neither approves nor rejects it. A request raised before
+  // this rule that still waits on the TL is moved to HR now, and the TL is told so.
+  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && pendingStep && pendingStep.level === 'TL'
+    && policy.actingAsTl(req.user, pendingStep) && await overTlLimit(existing, existing.employee)) {
+    const hr = await sendPastTl(existing.id);
+    if (hr) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hr.approverUserId }).catch(() => {});
+    const rule = await policy.getTlRule();
+    return res.status(409).json({
+      error: `This leave is longer than ${rule.limit} day${rule.limit === 1 ? '' : 's'}, so a TL cannot approve or reject it. It is now with HR / the Super Admin.`,
+      overTlLimit: true, sentTo: hr ? 'HR' : null,
+    });
+  }
   if (status === 'Approved' && existing.status === 'Pending' && policy.actingAsTl(req.user, pendingStep)) {
     const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
     if (verdict.allowed && verdict.rule && verdict.rule.enabled && pendingStep && pendingStep.level === 'TL') stopsHere = true;
