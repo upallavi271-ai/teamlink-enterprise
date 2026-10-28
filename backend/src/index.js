@@ -488,6 +488,8 @@ const server = app.listen(PORT, () => {
   require('./utils/greenStartSupervisor').start();
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
+  // Vendors may edit and import bills (founder 2026-10-28): switched on ONCE for the logins that already exist (utils/vendorSwitchOn.js).
+  require('./utils/vendorSwitchOn').runSafe();
   // The email sending worker. A no-op until Administration → Integrations has
   // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
   mailWorker.start();

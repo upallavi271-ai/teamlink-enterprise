@@ -29,7 +29,8 @@ const MODULES = {
     label: 'Assets', icon: '💻', route: '/vendor/assets', screen: 'assets', summary: 'assets', order: 10,
     assetScope: true, // the drawer shows "Which assets can they see?" only for this module
     permissions: [
-      no('canEdit', 'Allow editing', 'Off = view only. On = they may update serial no., warranty date, AMC date, service remarks, upload documents and send bills.'),
+      // ON BY DEFAULT (founder 2026-10-28: "switch on the editing and importing the bills for vendors").
+      yes('canEdit', 'Allow editing', 'On (normal) = they may update serial no., warranty date, AMC date, service remarks, upload documents and import / send bills. Off = view only.'),
       no('canViewCost', 'Show purchase value', 'Off = they never see what the company paid (nor the purchase invoice no.).'),
       yes('download', 'Download lists (Export)', 'On = the Export Excel / Export CSV buttons work on every list. They only ever get the columns they can already see.'),
       no('hideAmounts', 'Hide amounts from this vendor', 'Off (normal) = they see the purchase amount, GST and warranty of the assets shown to them. On = amounts are hidden everywhere, in the lists and in the downloads. (The older "Show purchase value" tick now only controls the purchase invoice reference.)'),
