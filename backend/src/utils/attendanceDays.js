@@ -246,7 +246,10 @@ function newDayStatus({
   const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
   const weeklyOff = (offs || weeklyOffs(cfg)).has(dow);
   const marked = record ? record.status : null;
-  const approved = leave || (onLeave || marked === 'Leave' || marked === 'On Leave' ? { id: null, type: null, half: null, unpaid: false } : null);
+  // A day MARKED 'Leave' / 'On Leave' by hand is a leave WAITING for approval until its leave request is approved (founder 2026-10-28,
+  // utils/markedLeave.js) - never an approved leave by itself.
+  const approved = leave || (onLeave ? { id: null, type: null, half: null, unpaid: false } : null);
+  if (!approved && !pendingLeave && (marked === 'Leave' || marked === 'On Leave')) pendingLeave = { id: null, type: null, half: null, waitingFor: 'HR / Super Admin', marked: true }; // eslint-disable-line no-param-reassign
   const p = policyTimes(cfg);
   const out = (status, extra = {}) => {
     const row = { ...base, status, ...extra };
@@ -389,7 +392,10 @@ function legacyDayStatus({
   const dow = new Date(`${date}T00:00:00Z`).getUTCDay();
   const weeklyOff = (offs || weeklyOffs(cfg)).has(dow);
   const marked = record ? record.status : null;
-  const approved = leave || (onLeave || marked === 'Leave' || marked === 'On Leave' ? { id: null, type: null, half: null, unpaid: false } : null);
+  // A day MARKED 'Leave' / 'On Leave' by hand is a leave WAITING for approval until its leave request is approved (founder 2026-10-28,
+  // utils/markedLeave.js) - never an approved leave by itself.
+  const approved = leave || (onLeave ? { id: null, type: null, half: null, unpaid: false } : null);
+  if (!approved && !pendingLeave && (marked === 'Leave' || marked === 'On Leave')) pendingLeave = { id: null, type: null, half: null, waitingFor: 'HR / Super Admin', marked: true }; // eslint-disable-line no-param-reassign
   const out = (status, extra = {}) => {
     const row = { ...base, status, ...extra };
     row.paid = row.present + row.leave;

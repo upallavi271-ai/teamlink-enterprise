@@ -654,7 +654,8 @@ async function buildList(req, tile, part) {
         chain: list.length ? list.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}: ${STEP_WORD[s.status] || s.status}`.replace(/\s+/g, ' ')).join(' → ') : 'No chain yet (the first decision builds it)',
         waitingFor: now.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}`.trim()).join(' / ') || null,
         // a request with no chain yet: the server builds it on the first decision and decides whether this login may act
-        myTurn: list.length ? now.some((s) => s.approverUserId === req.user.id) : true,
+        // a step waiting for the Super Admin (e.g. a TL's leave, utils/leadLeave.js) is any real Super Admin's turn
+        myTurn: list.length ? now.some((s) => s.approverUserId === req.user.id || (s.level === 'SUPER_ADMIN' && require('../utils/leadLeave').isRealSuperAdmin(req.user))) : true, // eslint-disable-line global-require
       };
     });
   };
