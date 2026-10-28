@@ -200,6 +200,23 @@ async function plan(files) {
     d.punchTimes = String(r['Time Interval'] || '').split('|').map(clock).filter(Boolean).join('|') || null;
   });
 
+  // ---- a day the REPORT does not give a check-in / check-out for: read them from the bio-metric log ----
+  // 2026-10-28 (founder: "check-outs miss avutunnai" with a bio-metric log of 15-26 Oct and no report): a log-only day used to
+  // be stored as "punch times only" and never got its check-out. Now the log's first time is the check-in, and its last
+  // time is the check-out when it is after the half-day split (13:30 by default, Attendance policy) and at least an hour
+  // after the check-in - the same reading as the device's own evening press (utils/biometricDevice.js settledDirections).
+  // A report time always wins over a log time.
+  const cfg = await prisma.hrConfig.findFirst().catch(() => null);
+  const splitSecs = require('./attendanceDays').policyTimes(cfg || {}).split * 60; // eslint-disable-line global-require
+  for (const d of days.values()) {
+    const times = String(d.punchTimes || '').split('|').filter((t) => secsOf(t) != null).sort((a, b) => secsOf(a) - secsOf(b));
+    if (!times.length) continue;
+    const first = times[0];
+    const last = times[times.length - 1];
+    if (!d.firstCheckIn) { d.firstCheckIn = first; d.fromLog = true; }
+    if (!d.lastCheckOut && secsOf(last) >= splitSecs && secsOf(last) - secsOf(d.firstCheckIn) >= 3600) { d.lastCheckOut = last; d.fromLog = true; }
+  }
+
   // ---- what TeamLink already has for those days ----
   const matchedIds = [...new Set([...days.values()].map((d) => byCode.get(d.employeeRef)?.id).filter(Boolean))];
   const [existingDays, existingHistory, existingPunchDays] = await Promise.all([

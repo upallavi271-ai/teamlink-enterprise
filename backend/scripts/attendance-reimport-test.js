@@ -92,6 +92,19 @@ const run = async (rows) => { const p = await H.plan(files(rows)); const r = awa
     check('D2 My Attendance reads 09:12 - 18:17, not Late 09:49', dd.checkIn === '09:12' && dd.checkOut === '18:17' && dd.status !== 'Late', dd);
     x = await run([{ code: A.employeeCode, date: DAY_D, fin: '09:12:33', lout: '18:17:34', log: '09:14:59|18:17:32|18:17:34' }]);
     check('D3 the same file again adds nothing more', x.p.days.byAction.skip === 1 && (await prisma.attendancePunch.count({ where: { employeeId: A.id, date: DAY_D } })) === 3, x.p.days);
+
+    // E: only the bio-metric LOG (no report): the morning export first, then the full-day log
+    await clean();
+    const logOnly = (log) => [{ name: 'logs.csv', text: ['Employee,Attendance Date,Time Interval', `${B.employeeCode} - X,${pulseDate(DAY_B)},${log}`].join('\n') }];
+    let lp = await H.plan(logOnly('09:01:10|09:01:12')); await H.apply(lp, { userId: null });
+    let eAtt = await prisma.attendance.findFirst({ where: { employeeId: B.id, date: DAY_B } });
+    check('E1 a log-only morning day: check-in from the log, no check-out invented', lp.days.byAction.create === 1 && eAtt && eAtt.checkIn === '09:01' && !eAtt.checkOut, [lp.days, eAtt]);
+    lp = await H.plan(logOnly('09:01:10|09:01:12|18:04:11|18:04:14')); await H.apply(lp, { userId: null });
+    eAtt = await prisma.attendance.findFirst({ where: { employeeId: B.id, date: DAY_B } });
+    const eDay = (await D.loadDays(prisma, { employees: [B], from: DAY_B, to: DAY_B, cfg: (await prisma.hrConfig.findFirst()) || {}, preview: true })).days(B)[0];
+    check('E2 the full-day log: the last evening time becomes the check-out, My Attendance shows it', lp.days.updated === 1 && eAtt.checkOut === '18:04' && eDay.checkOut === '18:04', [lp.days, eAtt, eDay.status]);
+    lp = await H.plan([{ name: 'logs.csv', text: ['Employee,Attendance Date,Time Interval', `${C.employeeCode} - X,${pulseDate(DAY_C)},18:03:49|18:03:52`].join('\n') }]);
+    check('E3 an evening-only log (one press) is a check-in, never a check-out', lp.items[0].firstCheckIn === '18:03:49' && !lp.items[0].lastCheckOut, lp.items[0]);
   } finally {
     await clean();
     console.log(`\n${pass} passed, ${fail} failed`);
