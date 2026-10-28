@@ -4,6 +4,19 @@
 const dmy = (d) => (d ? String(d).slice(0, 10).split('-').reverse().join('-') : '-');
 const who = (p) => (p ? `${p.name}${p.employeeCode ? ` (${p.employeeCode})` : ''}${p.department ? ` · ${p.department}` : ''}` : '');
 
+// THE PAYMENT of an approved bill (2026-10-28): its status from Accounts + bank statement and every payment's date and amount.
+export function PaymentBlock({ p }) {
+  if (!p) return null;
+  return (
+    <div style={{ marginTop: 10 }}>
+      <h4 style={{ margin: '0 0 4px' }}>Payment</h4>
+      <div><strong>{p.status}</strong>{p.note ? <span className="cell-muted"> &middot; {p.note}</span> : null}</div>
+      {(p.payments || []).map((x, i) => <div key={`${x.date}-${i}`}>Paid on <strong>{dmy(x.date)}</strong>: &#8377;{Number(x.amount).toLocaleString('en-IN', { maximumFractionDigits: 2 })}{x.reference ? <span className="cell-muted"> (ref {x.reference})</span> : null}</div>)}
+      {p.balance > 0 ? <div className="cell-muted">Still to pay: &#8377;{Number(p.balance).toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div> : null}
+    </div>
+  );
+}
+
 export default function BillLineAssets({ rows }) {
   if (!rows || !rows.length) return null;
   const billDate = rows[0].billDate;

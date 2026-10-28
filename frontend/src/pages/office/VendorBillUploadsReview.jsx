@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import BillLineAssets from '../vendor/BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28)
+import BillLineAssets, { PaymentBlock } from '../vendor/BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28)
 import api from '../../api';
 import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
@@ -362,6 +362,7 @@ function UploadReview({ id, onClose, onDone }) {
                 </table>
               </div>
               <BillLineAssets rows={d.lineAssets} />
+              <PaymentBlock p={d.payment} />
               {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setForm((x) => ({ ...x, lines: [...x.lines, { description: '', quantity: '', rate: '', amount: '', unclear: false }] }))}>Add a line</button>}
               {live && (
                 <div className="bu-live" role="status">

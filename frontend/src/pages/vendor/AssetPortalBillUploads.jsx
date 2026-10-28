@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shrinkAll } from './shrinkPhoto.js';
 import PhotoPicker from './PhotoPicker.jsx'; // Take a photo / Choose photos / Choose PDF (2026-10-28)
-import BillLineAssets from './BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28) // phone photos made small (JPG) before upload - founder 2026-10-28
+import BillLineAssets, { PaymentBlock } from './BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28) // phone photos made small (JPG) before upload - founder 2026-10-28
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -388,6 +388,7 @@ function BillDetail({ id, onClose, onChanged, onOpen, onCorrect }) {
             </table>
           </div>
           <BillLineAssets rows={u.lineAssets} />
+          <PaymentBlock p={u.payment} />
           {can.edit && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setForm((x) => ({ ...x, lines: [...x.lines, { description: '', quantity: '', rate: '', amount: '', unclear: false }] }))}>Add a line</button>}
           {live && (live.linesVsSubtotal || live.totalVsParts || live.lineProblems.length > 0) && (
             <div className="bu-live" role="status">
