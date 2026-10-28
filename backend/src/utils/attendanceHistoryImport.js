@@ -138,16 +138,26 @@ function mergeDay(prev, d) {
 // The punches a re-imported day still needs: its In when no punch has that
 // time; its Out — the earlier import's own Out moved to the later time, or a
 // new Out when no punch has that time.
+//
+// 2026-10-28 (founder: "attendance imported, but employee logins not updated"): a day that already had a punch - e.g. a
+// web / GPS check-in at 09:49 - never got the device's 09:14 check-in from the file, so the employee saw Late 09:49. The
+// device's own first check-in is added when it is EARLIER than every punch TeamLink has for the day, and its last
+// check-out when it is LATER than every one. The day then reads the device's times; nothing else is touched.
 function punchFixOf(ps, it) {
-  const at = (t) => ps.some((p) => (p.clockTime || p.time) === t || p.time === hhmm(t));
-  const addIn = !!(it.firstCheckIn && !at(it.firstCheckIn));
+  // the same punch: within a minute (a device row may carry HH:MM only, the file HH:MM:SS)
+  const at = (t) => ps.some((p) => { const a = secsOf(p.clockTime || p.time); const b = secsOf(t); return a != null && b != null && Math.abs(a - b) < 60; });
+  const times = ps.map((p) => secsOf(p.clockTime || p.time)).filter((x) => x != null);
+  const earliest = times.length ? Math.min(...times) : Infinity;
+  const latest = times.length ? Math.max(...times) : -Infinity;
+  const addIn = !!(it.firstCheckIn && !at(it.firstCheckIn) && secsOf(it.firstCheckIn) < earliest);
   let moveOutId = null; let addOut = false;
   if (it.lastCheckOut && !at(it.lastCheckOut)) {
     const own = ps.find((p) => p.source === SOURCE && p.direction === 'Out' && it.prevOut && (p.clockTime || p.time) === it.prevOut);
-    if (own) moveOutId = own.id; else addOut = true;
+    if (own) moveOutId = own.id; else if (secsOf(it.lastCheckOut) > latest) addOut = true;
   }
   return addIn || moveOutId || addOut ? { addIn, moveOutId, addOut } : null;
 }
+const fixWords = (f, it) => [f.addIn ? `device check-in ${hhmm(it.firstCheckIn)} added` : '', f.moveOutId || f.addOut ? `device check-out ${hhmm(it.lastCheckOut)} added` : ''].filter(Boolean).join(', ');
 
 // Build the whole plan without writing anything.
 async function plan(files) {
@@ -211,7 +221,15 @@ async function plan(files) {
     // a day imported before: merged with what this file adds; nothing new = skipped as before
     const newer = prev && prev.matchStatus === 'Matched' && emp ? mergeDay(prev, d) : null;
     if (newer) { Object.assign(item, newer.day); item.refresh = newer.what; item.prevOut = prev.lastCheckOut || null; }
-    if (prev && (prev.matchStatus === 'Matched' || !emp) && !newer) {
+    // imported before with nothing new: still give the day the device check-in / check-out it is missing (the case above)
+    const again = prev && prev.matchStatus === 'Matched' && emp && !newer && prev.firstCheckIn ? exDay.get(`${emp.id}|${d.date}`) : null;
+    const againFix = again && EDITABLE_STATUSES.has(again.status) && hasPunches.has(`${emp.id}|${d.date}`)
+      ? punchFixOf(punchesOf.get(`${emp.id}|${d.date}`) || [], { firstCheckIn: prev.firstCheckIn, lastCheckOut: prev.lastCheckOut }) : null;
+    if (againFix) {
+      Object.assign(item, { firstCheckIn: prev.firstCheckIn, lastCheckOut: prev.lastCheckOut, punchTimes: prev.punchTimes, totalTimeWorked: prev.totalTimeWorked, totalBreak: prev.totalBreak, totalHours: prev.totalHours, workLocation: prev.workLocation });
+      item.action = 'keep'; item.existing = again; item.punchFix = againFix;
+      item.result = `Already imported — ${fixWords(againFix, item)}`;
+    } else if (prev && (prev.matchStatus === 'Matched' || !emp) && !newer) {
       item.action = 'skip'; item.result = 'Already imported';
     } else if (!emp) {
       item.action = 'unmatched'; item.result = 'Unmatched Employee — nothing created';
@@ -239,8 +257,9 @@ async function plan(files) {
       // of punches TeamLink already has for that day. A day imported before
       // gets only the punches it is missing (its own earlier Out moves).
       item.addPunches = !punchesAlready && ['create', 'fill'].includes(item.action);
-      if (item.refresh && punchesAlready && ['create', 'fill'].includes(item.action)) {
+      if (punchesAlready && ['create', 'fill', 'keep'].includes(item.action)) {
         item.punchFix = punchFixOf(punchesOf.get(`${emp.id}|${d.date}`) || [], item);
+        if (item.punchFix) item.result = `${item.result}; ${fixWords(item.punchFix, item)}`;
       }
     }
     if (item.refresh && item.action !== 'skip') item.result = `Updated from the newer file (${item.refresh}) — ${item.result.charAt(0).toLowerCase()}${item.result.slice(1)}`;

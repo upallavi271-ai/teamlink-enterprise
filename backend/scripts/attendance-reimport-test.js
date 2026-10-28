@@ -79,6 +79,19 @@ const run = async (rows) => { const p = await H.plan(files(rows)); const r = awa
     x = await run([{ code: C.employeeCode, date: DAY_C, fin: '09:10:00', lout: '18:30:00', log: '09:10:00|09:20:00|18:30:00' }]);
     att = await prisma.attendance.findFirst({ where: { employeeId: C.id, date: DAY_C } });
     check('C1 times set by hand stand (the stored day still learns the later time)', att.checkOut === '09:20' && x.p.days.byAction.keep === 1, [att, x.p.days]);
+
+    // D: a web / GPS check-in at 09:49 was the only punch; the device file says 09:12 in, 18:17 out
+    const DAY_D = DAY_A;
+    await clean();
+    await prisma.attendance.create({ data: { employeeId: A.id, date: DAY_D, status: 'Late', checkIn: '09:49' } });
+    await prisma.attendancePunch.create({ data: { employeeId: A.id, date: DAY_D, time: '09:49', direction: 'In', method: 'GPS / Location', source: 'Web' } });
+    x = await run([{ code: A.employeeCode, date: DAY_D, fin: '09:12:33', lout: '18:17:34', log: '09:14:59|18:17:32|18:17:34' }]);
+    const dIn = await prisma.attendancePunch.findMany({ where: { employeeId: A.id, date: DAY_D }, orderBy: { time: 'asc' } });
+    const dd = (await D.loadDays(prisma, { employees: [A], from: DAY_D, to: DAY_D, cfg: (await prisma.hrConfig.findFirst()) || {}, preview: true })).days(A)[0];
+    check('D1 the device check-in earlier than the web one, and the check-out, are added (the web punch stays)', dIn.length === 3 && dIn[0].clockTime === '09:12:33' && dIn[2].clockTime === '18:17:34' && dIn.some((p) => p.source === 'Web'), dIn.map((p) => `${p.time} ${p.direction} ${p.source}`));
+    check('D2 My Attendance reads 09:12 - 18:17, not Late 09:49', dd.checkIn === '09:12' && dd.checkOut === '18:17' && dd.status !== 'Late', dd);
+    x = await run([{ code: A.employeeCode, date: DAY_D, fin: '09:12:33', lout: '18:17:34', log: '09:14:59|18:17:32|18:17:34' }]);
+    check('D3 the same file again adds nothing more', x.p.days.byAction.skip === 1 && (await prisma.attendancePunch.count({ where: { employeeId: A.id, date: DAY_D } })) === 3, x.p.days);
   } finally {
     await clean();
     console.log(`\n${pass} passed, ${fail} failed`);
