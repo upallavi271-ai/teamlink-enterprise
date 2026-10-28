@@ -27,9 +27,10 @@ const DUE_SOON_DAYS = 7; // "approaching due date" = due within the next 7 days 
 
 const STATUS = {
   PENDING: 'Pending', WAITING: 'Waiting for Accounts', PAID: 'Paid', PAID_ACCOUNTS: 'Paid by Accounts', PART: 'Partially Paid', OVERDUE: 'Overdue', REVERSED: 'Reversed', REJECTED: 'Rejected',
+  UNDER_REVIEW: 'Under Review', // 2026-10-28 (Assets portal Stage E): a linked bank line Accounts has not confirmed - never a payment
 };
 const TONE = {
-  Pending: 'yellow', 'Waiting for Accounts': 'yellow', Paid: 'green', 'Paid by Accounts': 'soft', 'Partially Paid': 'blue', Overdue: 'red', Reversed: 'red', Rejected: 'red',
+  Pending: 'yellow', 'Waiting for Accounts': 'yellow', Paid: 'green', 'Paid by Accounts': 'soft', 'Partially Paid': 'blue', Overdue: 'red', Reversed: 'red', Rejected: 'red', 'Under Review': 'yellow',
 };
 // How bad a status is, for rolling several bills of one month into one word (worst first).
 const WORST_FIRST = [STATUS.OVERDUE, STATUS.REVERSED, STATUS.REJECTED, STATUS.PENDING, STATUS.WAITING, STATUS.PART, STATUS.PAID_ACCOUNTS, STATUS.PAID];

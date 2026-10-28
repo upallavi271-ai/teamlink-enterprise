@@ -190,6 +190,8 @@ async function sweep(now = Date.now()) {
 async function start() {
   const c = config();
   if (!c.on) return null;
+  // calling/local (the other self-hosted bridge) may listen for Asterisk too: never both on one port
+  if (Number(process.env.AI_CALL_AUDIOSOCKET_PORT) === c.port) { log(`not started: port ${c.port} is AI_CALL_AUDIOSOCKET_PORT (calling/local). Use one of the two.`); return null; }
   const server = await gateway.start({ port: c.port });
   await sweep(Date.now() + STUCK_MS * 100).catch(() => {}); // after a restart nothing is still dialling
   if (c.ready) ami(c).then(() => log('Asterisk manager connected')).catch((e) => log(e.message));

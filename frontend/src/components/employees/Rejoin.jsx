@@ -104,7 +104,7 @@ export function RejoinDialog({ employee, onClose, onDone }) {
           </label>
           {dateProblem && <div className="error-text">{dateProblem}</div>}
           <label>Department
-            <Combo value={f.department} onChange={(e) => set({ department: e.target.value, seat: '', tlId: '', stlId: '', team: '' })}>
+            <Combo departments value={f.department} onChange={(e) => set({ department: e.target.value, seat: '', tlId: '', stlId: '', team: '' })}>
               {opt.departments.map((d) => <option key={d} value={d}>{d}</option>)}
             </Combo>
           </label>

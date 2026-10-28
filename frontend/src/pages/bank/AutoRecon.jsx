@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Combo from '../../components/Combo.jsx';
 import Modal from '../../components/Modal.jsx';
 import { money2, fmtD } from '../invoices/invFormat';
@@ -28,8 +29,9 @@ const errText = (e, d = 'That did not work. Nothing was changed.') => e?.respons
 const qs = (o) => { const p = new URLSearchParams(); Object.entries(o).forEach(([k, v]) => { if (v !== '' && v != null) p.set(k, v); }); return p.toString(); };
 
 export default function AutoRecon({ accounts = [], canManage, onBack, onChanged }) {
-  const [tab, setTab] = useState('dash');
-  const [filters, setFilters] = useState({});
+  // Tab, filters, page and sort are kept when you leave and come back (utils/useKeptState.js).
+  const [tab, setTab] = useKeptState('bank.auto.tab', 'dash');
+  const [filters, setFilters] = useKeptState('bank.auto.filters', {});
   const [msg, setMsg] = useState({ text: '', bad: false });
   const [opts, setOpts] = useState({ accounts: [], parties: [], categories: [], statements: [] });
   const [settings, setSettings] = useState(null);
@@ -163,8 +165,8 @@ function Dashboard({ accounts, openList }) {
 function Queue({ opts, accounts, filters, setFilters, canManage, say, onChanged }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
-  const [page, setPage] = useState(0);
-  const [sort, setSort] = useState({ key: 'date', dir: 'desc' });
+  const [page, setPage] = useKeptState('bank.auto.page', 0);
+  const [sort, setSort] = useKeptState('bank.auto.sort', { key: 'date', dir: 'desc' });
   const [busy, setBusy] = useState('');
   const [detail, setDetail] = useState(null);
   const [text, setText] = useState(filters.search || '');
@@ -197,6 +199,8 @@ function Queue({ opts, accounts, filters, setFilters, canManage, say, onChanged 
 
   const clear = () => { setText(''); setPage(0); setFilters({}); };
   const pages = data ? Math.max(1, Math.ceil(data.total / data.per)) : 1;
+  // A kept page past the end (the list got shorter) moves to the last page.
+  useEffect(() => { if (data && data.total > 0 && page > pages - 1) setPage(pages - 1); }, [data]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div>
       <div className="ar-filters">

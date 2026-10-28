@@ -110,7 +110,7 @@ const tempExpired = (vu) => !!(vu.mustChangePassword && vu.tempPasswordExpiresAt
 function modulesOfRows(vu, rows) {
   const have = (rows || []).filter((r) => MODCFG.MODULES[r.moduleKey]);
   if (!have.length) {
-    return { configured: false, keys: [...MODCFG.LEGACY_MODULES], perms: { assets: { canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost }, invoices: { ...MODCFG.defaultPermissions('invoices'), raise: false } } };
+    return { configured: false, keys: [...MODCFG.LEGACY_MODULES], perms: { assets: { canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost }, invoices: MODCFG.defaultPermissions('invoices') } };
   }
   const perms = {};
   have.forEach((r) => {

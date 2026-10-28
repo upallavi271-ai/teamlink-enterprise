@@ -14,6 +14,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import TabsPage from '../../components/TabsPage.jsx';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { Panel, PanelHead, EmptyMini, ScopeNote } from '../../components/proto.jsx';
 import { can } from '../../permissions';
 import { SyncLogPanel } from '../../components/payroll/PayrollRunBoard.jsx';
@@ -39,12 +40,13 @@ const RECON_FIELDS = [
   { key: 'flag', label: 'Flag', allLabel: 'All flags', get: (r) => (r.flags || []).map((fl) => FLAG_TEXT[fl] || fl) },
 ];
 
-export function ReconciliationPanel({ initialMonth }) {
-  const [month, setMonth] = useState(initialMonth || thisMonth());
+// keepKey (optional): month, search, filters and page kept when you leave and come back (utils/useKeptState.js).
+export function ReconciliationPanel({ initialMonth, keepKey = null }) {
+  const [month, setMonth] = useKeptState(keepKey && `${keepKey}.month`, initialMonth || thisMonth());
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
-  const lf = useListFilters(data?.rows || [], RECON_FIELDS);
-  const page = usePaged(lf.rows);
+  const lf = useListFilters(data?.rows || [], RECON_FIELDS, { keep: keepKey });
+  const page = usePaged(lf.rows, 25, keepKey, `${lf.sig}|${month}`);
   function load() {
     setError(''); setData(null);
     api.get(`/accounts/reports/payroll-reconciliation?month=${month}`).then((r) => setData(r.data)).catch((err) => setError(errText(err, 'Could not load the reconciliation.')));
@@ -127,7 +129,7 @@ export default function JournalLedger() {
   // 2026-10-14: Journal, Ledger and Employee salary tabs removed; Payroll Mapping opens first.
   // An old deep link (?tab=journal, ?je=...) lands here and is cleaned to the plain page.
   const [params, setParams] = useSearchParams();
-  const [tab, setTab] = useState(() => (TAB_KEYS.includes(params.get('tab')) ? params.get('tab') : 'mapping'));
+  const [tab, setTab] = useKeptState('journal.tab', () => (TAB_KEYS.includes(params.get('tab')) ? params.get('tab') : 'mapping'), TAB_KEYS.includes(params.get('tab')));
   useEffect(() => {
     if (params.get('tab') || params.get('je')) setParams({}, { replace: true });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -147,8 +149,8 @@ export default function JournalLedger() {
         { key: 'reports', label: 'Reports', element: <BooksReportsTab /> },
         { key: 'assets', label: 'Fixed Assets', element: <FixedAssetsTab canPost={canPost} canEdit={canEdit} /> },
         { key: 'mapping', label: 'Payroll Mapping', element: <PayrollMappingTab /> },
-        { key: 'recon', label: 'Payroll Reconciliation', element: <ReconciliationPanel /> },
-        { key: 'sync', label: 'Sync Log', element: <SyncLogPanel canRetry={canPost} /> },
+        { key: 'recon', label: 'Payroll Reconciliation', element: <ReconciliationPanel keepKey="journal.recon" /> },
+        { key: 'sync', label: 'Sync Log', element: <SyncLogPanel canRetry={canPost} keepKey="journal.sync" /> },
       ]}
     />
   );

@@ -102,7 +102,9 @@ async function listRequests(v, perms, q = {}) {
   return {
     rows: rows.map((l) => row(l, perms.download)), total, page, pageSize, pages, sort: sortKey, dir: dir.toLowerCase(), counts,
     facets: {
-      department: await facet('department', 'l."department"'), status: byStatus.map((x) => ({ value: x.value, count: x.count })),
+      // Only switched-on Department & Team names are offered (2026-10-28).
+      department: await require('./masters').keepActiveDepartments(await facet('department', 'l."department"'), (o) => o.value, str(q.department)), // eslint-disable-line global-require
+      status: byStatus.map((x) => ({ value: x.value, count: x.count })),
       printing: mapped(await facet('printing', 'o."status"'), CFG.IDCARD_PRINTING), delivery: mapped(await facet('delivery', 'o."status"'), CFG.IDCARD_DELIVERY),
     },
     canUpdate: perms.updateStatus, canDownload: perms.download, flow: FLOW,

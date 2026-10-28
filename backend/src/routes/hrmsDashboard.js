@@ -15,6 +15,7 @@ const leaveReconcile = require('../utils/leaveReconcile');
 const { halfOf } = require('../utils/leaveText');
 const leaveGenuine = require('../utils/leaveGenuine'); // 2026-10-13: Pending Approvals count only GENUINE pending leave
 const { withoutSystemAccounts } = require('../utils/systemAccounts');
+const { activeDepartmentSet, filterActiveDepartments } = require('../utils/masters');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -42,12 +43,20 @@ const withinNextDays = (dateStr, days, todayStr) => {
   return !!n && n.days >= 0 && n.days <= days;
 };
 
+// RECRUITER IS AN EMPLOYEE (founder 2026-10-27: "recruiter employee veru kaadu, employee matram kanipiste chalu"): for the
+// designation filter a stored "Recruiter" reads as "Employee" — no Recruiter option, counted and matched under Employee.
+// The employee records keep what they hold.
+const dashDesignation = (d) => {
+  const s = String(d || '').trim();
+  return /^recruiter$/i.test(s) ? 'Employee' : s;
+};
+
 // The dashboard's filters (department, location, status, designation, reporting
 // manager, and a name / employee-ID search), all AND'd together.
 function matchesFilters(e, q) {
   if (q.department && e.department !== q.department) return false;
   if (q.location && e.location !== q.location) return false;
-  if (q.designation && (e.designation || '') !== q.designation) return false;
+  if (q.designation && dashDesignation(e.designation) !== dashDesignation(q.designation)) return false;
   if (q.q) {
     const hay = `${e.name || ''} ${e.employeeCode || ''}`.toLowerCase();
     if (!String(q.q).toLowerCase().split(/s+/).filter(Boolean).every((t) => hay.includes(t))) return false;
@@ -214,6 +223,7 @@ async function buildDashboard(req, period) {
   // BIRTHDAYS and WORK ANNIVERSARIES in the next 30 days — all of them, soonest
   // first (it used to stop at 4 of each and say "next 30 days"); the panel
   // scrolls and its heading carries the count.
+  const liveDepts = await activeDepartmentSet();
   const celebrations = celebrationsOf(employees, today).map((c) => ({ name: c.name, kind: c.kind, date: c.date, on: c.on, inDays: c.inDays, years: c.years }));
 
   return {
@@ -242,9 +252,10 @@ async function buildDashboard(req, period) {
       // DESIGNATIONS COUNT THE PEOPLE WORKING NOW (founder 2026-10-27): "Employee 325" counted the 297 who left. With no Status picked the
       // list is the working people only; a Status picked (e.g. Relieved) counts that status, so the left can still be found.
       const forDesig = req.query.status ? without('designation') : without('designation').filter((e) => !LEFT_STATUSES.includes(e.employmentStatus));
-      const desig = keep(tally(forDesig, (e) => e.designation), req.query.designation);
+      const desig = keep(tally(forDesig, (e) => dashDesignation(e.designation)), req.query.designation && dashDesignation(req.query.designation));
       return {
-        departments: [...dept.keys()].sort(),
+        // Only switched-on Department & Team names are offered (2026-10-28).
+        departments: filterActiveDepartments([...dept.keys()], liveDepts, (x) => x, req.query.department).sort(),
         locations: [...loc.keys()].sort(),
         designations: [...desig.keys()].sort(),
         statuses: HR_STATUSES.filter((s) => stat.has(s) || s === req.query.status),
@@ -643,7 +654,8 @@ async function buildList(req, tile, part) {
         chain: list.length ? list.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}: ${STEP_WORD[s.status] || s.status}`.replace(/\s+/g, ' ')).join(' → ') : 'No chain yet (the first decision builds it)',
         waitingFor: now.map((s) => `${LEVEL_WORD[s.level] || s.level} ${s.approverName || ''}`.trim()).join(' / ') || null,
         // a request with no chain yet: the server builds it on the first decision and decides whether this login may act
-        myTurn: list.length ? now.some((s) => s.approverUserId === req.user.id) : true,
+        // a step waiting for the Super Admin (e.g. a TL's leave, utils/leadLeave.js) is any real Super Admin's turn
+        myTurn: list.length ? now.some((s) => s.approverUserId === req.user.id || (s.level === 'SUPER_ADMIN' && require('../utils/leadLeave').isRealSuperAdmin(req.user))) : true, // eslint-disable-line global-require
       };
     });
   };

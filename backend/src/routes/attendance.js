@@ -19,6 +19,7 @@ const {
 const registerSelfAttendance = require('./attendanceSelf');
 const attendancePolicy = require('../utils/attendancePolicy');
 const leaveCharge = require('../utils/leaveCharge');
+const markedLeave = require('../utils/markedLeave');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -308,6 +309,24 @@ router.post('/', async (req, res) => {
       userId: req.user.id, actorName: req.user.name, action: 'Attendance times changed', entity: 'Attendance', entityId: attendance.id,
       fromValue: before ? `${before.checkIn || '—'} - ${before.checkOut || '—'}` : '(none)', toValue: `${checkIn || '—'} - ${checkOut || '—'}`, reason: (req.body && req.body.reason) || undefined,
     });
+  }
+  // A DAY MARKED "LEAVE" BY HAND IS A LEAVE WAITING FOR APPROVAL (founder 2026-10-28, utils/markedLeave.js): a Pending leave request is
+  // raised for the day on the normal approval chain; the day reads "Leave Under Review" until it is approved.
+  if (markedLeave.isLeaveMark(status)) {
+    const emp = await prisma.employee.findUnique({ where: { id: employeeId } });
+    const raised = await markedLeave.raiseFromMark({ employee: emp, date, user: req.user, leaveType: req.body && req.body.leaveType });
+    if (raised.leave) {
+      const st = raised.leave.status;
+      return res.status(201).json({
+        ...attendance,
+        leaveRequest: { id: raised.leave.id, type: raised.leave.type, status: st, created: raised.created },
+        waitingFor: raised.waitingFor || null,
+        message: st === 'Pending'
+          ? `Saved as Leave. Pending - waiting for ${raised.waitingFor || 'HR / Super Admin'} to approve.`
+          : `Saved as Leave. ${raised.leave.type} on this day is already ${st}.`,
+      });
+    }
+    return res.status(201).json({ ...attendance, leaveRequest: null, message: `Saved as Leave. Pending - waiting for HR / Super Admin (no leave request raised: ${raised.skipped}).` });
   }
   res.status(201).json(attendance);
 });
@@ -1499,7 +1518,7 @@ router.post('/history/import', historyUpload, requirePerm(null, 'hrms', 'Attenda
   const result = await hist.apply(p, { userId: req.user.id });
   await logAudit({
     userId: req.user.id, action: 'Past attendance imported', entity: 'AttendanceHistory', entityId: result.batch,
-    toValue: `${result.historyRows} day row(s), ${result.daysCreated} day(s) created, ${result.daysFilled} filled, ${result.punchesCreated} punch(es), ${result.summaryRows} summary row(s), ${p.unmatched.length} unmatched ID(s)`,
+    toValue: `${result.historyRows} day row(s), ${result.daysCreated} day(s) created, ${result.daysFilled} filled, ${result.daysUpdated} updated from a newer file, ${result.punchesCreated} punch(es), ${result.summaryRows} summary row(s), ${p.unmatched.length} unmatched ID(s)`,
   });
   return res.json({ preview: false, result, ...historyPlanView(p) });
 });

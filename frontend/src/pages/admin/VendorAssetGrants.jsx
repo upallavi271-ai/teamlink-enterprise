@@ -3,6 +3,34 @@ import api from '../../api';
 import VendorAssetAuto from './VendorAssetAuto.jsx';
 import './vendorAssetGrants.css';
 
+// THE 227 CHECK (Assets Vendor Portal Stage B, 27 Oct 2026): what HRMS has, what this vendor sees, and every gap - read only.
+function Reconcile({ vendorId }) {
+  const [r, setR] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [err, setErr] = useState('');
+  const load = () => { setErr(''); api.get(`/vendor-logins/asset-grants/${encodeURIComponent(vendorId)}/reconciliation`).then((x) => setR(x.data)).catch((e) => setErr((e.response && e.response.data && e.response.data.error) || 'The check could not be made.')); };
+  useEffect(() => { setR(null); setOpen(false); }, [vendorId]);
+  if (!open) return <button type="button" className="link-btn" style={{ marginTop: 4 }} onClick={() => { setOpen(true); load(); }}>Check all HRMS assets (227) against this vendor</button>;
+  if (err) return <div className="notice red" style={{ marginTop: 6 }}><span>{err}</span></div>;
+  if (!r) return <div className="cell-muted">Checking...</div>;
+  const out = r.records.filter((x) => !x.inPortal);
+  return (
+    <div className="vag-recon" style={{ marginTop: 8, fontSize: 13 }} data-testid="vag-recon">
+      <div><b>HRMS has {r.hrmsTotal} assets</b> (expected {r.expected}{r.differenceFromExpected ? `, ${r.differenceFromExpected > 0 ? '+' : ''}${r.differenceFromExpected}` : ', matches'}): {r.simCards} SIM cards (Airtel Bills portal) + {r.hardware} other assets{r.archived ? ` (${r.archived} archived)` : ''}.</div>
+      <div>This vendor sees <b>{r.vendorVisible}</b>: {r.visible.assigned} with employees, {r.visible.available} in stock, {r.visible.inRepair} under repair. Read live from HRMS (no copy, nothing to sync).</div>
+      {r.gaps.assignedWithoutHolder.length > 0 && <div>Marked Assigned but nobody is named in HRMS: {r.gaps.assignedWithoutHolder.join(', ')}</div>}
+      {r.gaps.holderLeftCompany.length > 0 && <div>Held by people who have left: {r.gaps.holderLeftCompany.length} ({r.gaps.holderLeftCompany.slice(0, 12).join(', ')}{r.gaps.holderLeftCompany.length > 12 ? ' ...' : ''})</div>}
+      {r.gaps.duplicateSerials.length > 0 && <div>Same serial number on two assets: {r.gaps.duplicateSerials.map((d) => d.assets.join(' / ')).join('; ')}</div>}
+      {out.length > 0 && (
+        <details style={{ marginTop: 4 }}>
+          <summary>{out.length} HRMS assets this vendor does not see, and why</summary>
+          <ul>{out.slice(0, 300).map((x) => <li key={x.id}>{x.assetCode} ({x.category}) - {x.reason}</li>)}</ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // "ASSETS THIS VENDOR CAN SEE" (2026-10-19) - inside the Edit vendor login window, for an asset vendor.
 // The assets are the company's own HRMS assets (nothing is copied). Admin sees:
@@ -100,7 +128,9 @@ export default function VendorAssetGrants({ vendorId, vendorName }) {
           <div className="vag-count" aria-live="polite">
             <strong>{vendorName || data.vendor.name} will see {total} asset{total === 1 ? '' : 's'}</strong>
             {dirty && live && <span className="vag-new"> (after you save)</span>}
-            <div className="cell-muted" data-testid="vag-split">{shown && shown.available != null ? `${shown.available} available asset${shown.available === 1 ? '' : 's'} + ${shown.underRepair || 0} under repair (${shown.repairJobs || 0} repair job${shown.repairJobs === 1 ? '' : 's'}). ` : ''}Assets held by an employee are not shown to the vendor unless they have an approved repair job.{shown && shown.hiddenHeld ? ` ${shown.hiddenHeld} more match but are held by employees.` : ''}</div>
+            {/* 27 Oct 2026: the vendor sees the assets employees hold too (with who has them); SIM cards stay in the Airtel Bills portal */}
+            <div className="cell-muted" data-testid="vag-split">{shown && shown.available != null ? `${shown.withEmployees || 0} with employees + ${shown.available} in stock + ${shown.underRepair || 0} under repair (${shown.repairJobs || 0} repair job${shown.repairJobs === 1 ? '' : 's'}). ` : ''}The vendor sees who holds each asset (name, employee ID, designation, department). SIM cards are not here: they are in the Airtel Bills portal.</div>
+            <Reconcile vendorId={vendorId} />
             <div className="cell-muted">
               {by.auto || 0} automatic · {by.admin || 0} chosen by you · {by.supplier || 0} bought from this vendor · {by.repaired || 0} repaired by this vendor · {by.linked || 0} linked to this vendor.
               An asset can have more than one reason, so these may add up to more than {total}.

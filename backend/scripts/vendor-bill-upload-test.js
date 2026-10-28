@@ -299,7 +299,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], uploads: [], exp
     const fileCount0 = fs.readdirSync(UPLOADS).length;
     const txt = Buffer.from('hello this is just a text file\n'.repeat(20));
     r = await upload(LA, txt, {}, { name: 'notes.txt', type: 'text/plain' });
-    check('B', 'a text file is refused (400, plain message)', r.status === 400 && /JPG, PNG, WebP or PDF/.test(r.body.error), r.body);
+    check('B', 'a text file is refused (400, plain message)', r.status === 400 && /JPG, PNG, WebP\), a PDF or an Excel/.test(r.body.error) /* 2026-10-28: Excel / CSV bills too */, r.body);
     r = await upload(LA, Buffer.from('<html><script>alert(1)</script></html>'.repeat(10)), {}, { name: 'x.pdf', type: 'application/pdf' });
     check('B', 'HTML pretending to be a PDF (right name, right type, wrong bytes) is refused', r.status === 400 && r.body.code === 'CONTENT_MISMATCH', r.body);
     r = await upload(LA, await img('png-as-pdf', { fmt: 'png' }), {}, { name: 'x.pdf', type: 'application/pdf' });
@@ -836,7 +836,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], uploads: [], exp
     let pk = LG.pickFiles([], [fileOf('a.jpg', 100), fileOf('b.png', 200, 'image/png'), fileOf('c.pdf', 300, 'application/pdf')]);
     check('J', 'picking files: JPG, PNG and PDF are kept', pk.files.length === 3 && pk.error === '', pk);
     pk = LG.pickFiles([], [fileOf('a.txt', 10, 'text/plain'), fileOf('big.jpg', 11 * 1048576), fileOf('empty.jpg', 0), fileOf('ok.webp', 50, 'image/webp')]);
-    check('J', 'picking files: a text file, a file over 10 MB and an empty file are left out with a plain reason; WebP is fine', pk.files.length === 1 && pk.files[0].name === 'ok.webp' && /only JPG, PNG, WebP or PDF/.test(pk.error) && /bigger than 10 MB/.test(pk.error) && /empty/.test(pk.error), pk);
+    check('J', 'picking files: a text file, a file over 10 MB and an empty file are left out with a plain reason; WebP is fine', pk.files.length === 1 && pk.files[0].name === 'ok.webp' && /only a photo, a PDF or an Excel \/ CSV file/.test(pk.error) /* 2026-10-28 */ && /bigger than 10 MB/.test(pk.error) && /empty/.test(pk.error), pk);
     pk = LG.pickFiles([fileOf('1.jpg', 1), fileOf('2.jpg', 2), fileOf('3.jpg', 3), fileOf('4.jpg', 4)], [fileOf('5.jpg', 5), fileOf('6.jpg', 6), fileOf('5.jpg', 5)]);
     check('J', 'picking files: at most 5 files in one bill, and the same file twice is not added', pk.files.length === 5 && /up to 5 files/.test(pk.error) && /already added/.test(pk.error), pk);
     check('J', 'every upload window gets its own Idempotency-Key (8 to 80 safe characters)', (() => { const a = LG.newIdemKey(); const b = LG.newIdemKey(); return a !== b && /^[A-Za-z0-9_-]{8,80}$/.test(a); })());
@@ -844,10 +844,10 @@ const made = { users: [], vendors: [], assets: [], repairs: [], uploads: [], exp
     check('J', 'the word "Draft" appears in none of the new screens, and no required red asterisk is drawn', srcs.every(([, t]) => !/draft/i.test(t)) && srcs.every(([, t]) => !/<span[^>]*>\s*\*\s*<\/span>|required/.test(t.replace(/disabled=\{[^}]*\}/g, ''))), srcs.filter(([, t]) => /draft/i.test(t)).map(([f]) => f));
     const vSrc = srcs[0][1]; const rSrc = srcs[4][1];
     check('J', 'every choice box on the new screens is the type-to-search Combo (no plain <select>)', !/<select/.test(vSrc) && !/<select/.test(rSrc) && /Combo/.test(vSrc) && /Combo/.test(rSrc));
-    check('J', 'the upload window offers a camera button (capture) and the multi-file picker, and sends an Idempotency-Key', /capture="environment"/.test(vSrc) && /multiple/.test(vSrc) && /Idempotency-Key/.test(vSrc));
+    check('J', 'the upload window offers a camera button (capture) and the multi-file picker, and sends an Idempotency-Key', /<PhotoPicker multiple/.test(vSrc) && /capture: 'environment'/.test(fs.readFileSync(path.join(BACK, '..', 'frontend/src/pages/vendor/PhotoPicker.jsx'), 'utf8')) && /Idempotency-Key/.test(vSrc)); // 2026-10-28: the buttons live in PhotoPicker.jsx
     const repairsSrc = fs.readFileSync(path.join(FE, 'pages/vendor/AssetPortalRepairs.jsx'), 'utf8');
     const invSrc = fs.readFileSync(path.join(FE, 'pages/vendor/AssetPortalInvoices.jsx'), 'utf8');
-    check('J', 'the Upload button is on the Repairs page, inside each repair\'s window ("Upload bill for this repair") and on the Invoices page; the sidebar is untouched (no new menu entry)', /UploadBillButton/.test(repairsSrc) && /Upload bill for this repair/.test(repairsSrc) && /UploadBillButton/.test(invSrc) && /My bills/.test(invSrc) && require(path.join(BACK, 'src/config/vendorModules')).ASSET_PORTAL_NAV.length === 6);
+    check('J', 'the Upload button is on the Repairs page, inside each repair\'s window ("Upload bill for this repair") and on My Bills, its own menu under Assets since 28 Oct 2026 (an old Invoices ?tab=bills link goes there)', /UploadBillButton/.test(repairsSrc) && /Upload bill for this repair/.test(repairsSrc) && /<MyBills \/>/.test(fs.readFileSync(path.join(FE, 'pages/vendor/AssetPortalBills.jsx'), 'utf8')) && /asset-portal\/bills/.test(invSrc) && require(path.join(BACK, 'src/config/vendorModules')).ASSET_PORTAL_NAV.some((n) => n.key === 'asset_bills' && n.group === 'Assets')); // four modules since 27 Oct 2026
     const reviewHost = fs.readFileSync(path.join(FE, 'pages/office/VendorBillsReview.jsx'), 'utf8');
     check('J', 'Accounts\' review is a tab inside the EXISTING "Bills from vendors" section (no new page, no new menu entry)', /UploadedBills/.test(reviewHost) && /Uploaded bills \(AI read\)/.test(reviewHost) && !fs.existsSync(path.join(FE, 'pages/VendorBillUploads.jsx')));
   } catch (err) {

@@ -128,6 +128,18 @@ function classify(txn, ctx, settings, env = {}) {
       out.allocated = pay ? Number(pay.amount) : null;
       out.difference = pay ? (amountP - P(pay.amount)) / 100 : null;
       out.action = { type: 'linkPayment', paymentId: a.paymentId };
+    } else if (a.type === 'evidence') { // the line is the payment behind money already marked received (no money moves)
+      const d = describeInvoices(ctx, a.parts);
+      const allocP = a.parts.reduce((s, p) => s + P(p.amount), 0);
+      out.kind = 'receipt-proof';
+      out.targetType = 'invoice';
+      out.targetIds = a.parts.map((p) => p.invoiceId);
+      out.targetLabel = d.label;
+      out.party = d.party || dec.client || null;
+      out.bookAmount = allocP / 100;
+      out.allocated = allocP / 100;
+      out.difference = (amountP - allocP) / 100;
+      out.action = { type: 'evidence', parts: a.parts.map((p) => ({ invoiceId: p.invoiceId, amount: p.amount })) };
     } else { // settle
       const d = describeInvoices(ctx, a.parts);
       const allocP = a.parts.reduce((s, p) => s + P(p.amount), 0);

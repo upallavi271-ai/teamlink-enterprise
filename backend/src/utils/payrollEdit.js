@@ -30,6 +30,7 @@ const { payrollCalc, payrollCalcProblems, PAYROLL_CALC_AUTO } = require('./payro
 const { PT_SLAB, rulesFrom } = require('./salaryRules');
 const { logAudit } = require('./audit');
 const { monthLabel } = require('./attendanceMath');
+const REG = require('./payrollRegister'); // pay-register months: paise + PF rule (founder 2026-10-28)
 
 const EDITABLE = ['DRAFT', 'PENDING_APPROVAL'];
 const QUICK_REASONS = ['Attendance correction', 'Salary revision / arrears', 'Data entry mistake'];
@@ -53,6 +54,8 @@ class EditError extends E.PayrollError {}
 const stateKey = (id) => `payroll.edit:${id}`;
 const adjKey = (month) => `payroll.adj:${month}`;
 const r0 = (n) => Math.round(Number(n) || 0);
+// Stored amounts are read to the paisa: a whole-rupee record stays whole, a pay-register record keeps its paise.
+const r2 = (n) => REG.r2(n);
 const sumAmt = (list) => (list || []).reduce((n, x) => n + (Number(x.amount) || 0), 0);
 
 function freshState() {
@@ -91,7 +94,9 @@ function lockOf(entry) {
 }
 
 // ---- Rules (what the editor's recalculation uses) ---------------------------------
-function rulesFromVersion(version, policy, payMode) {
+// `reg` = { pfRule } in a pay-register month (utils/payrollRegister.js): the register rules, in paise.
+function rulesFromVersion(version, policy, payMode, reg = null) {
+  if (reg) return REG.rulesOf(version, policy, payMode, reg.pfRule || null);
   const v = version || {};
   const stipend = (payMode || v.payMode) === 'Stipend';
   const r = rulesFrom(policy || {});
@@ -115,11 +120,13 @@ function rulesFromVersion(version, policy, payMode) {
   };
 }
 async function rulesFor(entry) {
-  const [version, policy] = await Promise.all([
+  const [version, policy, regOn] = await Promise.all([
     entry.salaryVersionId ? prisma.salaryStructureVersion.findUnique({ where: { id: entry.salaryVersionId } }) : null,
     E.getPolicy(),
+    REG.isRegisterMonth(entry.month),
   ]);
-  return { rules: rulesFromVersion(version, policy, entry.payMode), version };
+  const reg = regOn ? { pfRule: await REG.pfRuleOf(entry.salaryVersionId) } : null;
+  return { rules: rulesFromVersion(version, policy, entry.payMode, reg), version };
 }
 
 // ---- Components of a stored record -> the calc's input ---------------------------------
@@ -127,18 +134,18 @@ function componentsOf(entry, state) {
   const st = state || freshState();
   const earn = (st.extras && st.extras.earnings) || [];
   const ded = (st.extras && st.extras.deductions) || [];
-  const loan = Math.max(0, r0(st.loan));
-  const stipend = entry.payMode === 'Stipend' ? Math.max(0, r0(entry.grossPay) - r0(entry.incentive) - r0(entry.arrears)) : 0;
+  const loan = Math.max(0, r2(st.loan));
+  const stipend = entry.payMode === 'Stipend' ? Math.max(0, r2(r2(entry.grossPay) - r2(entry.incentive) - r2(entry.arrears))) : 0;
   return {
     workingDays: Number(entry.workingDays) || 0, daysLop: Number(entry.daysLop) || 0, daysPresent: Number(entry.daysPresent) || 0,
-    basic: r0(entry.basic), hra: r0(entry.hra), conveyance: r0(entry.conveyance), specialAllowance: r0(entry.specialAllowance), bonus: r0(entry.bonus),
-    incentive: r0(entry.incentive), stipend,
-    arrears: Math.max(0, r0(entry.arrears) - sumAmt(earn)),
+    basic: r2(entry.basic), hra: r2(entry.hra), conveyance: r2(entry.conveyance), specialAllowance: r2(entry.specialAllowance), bonus: r2(entry.bonus),
+    incentive: r2(entry.incentive), stipend,
+    arrears: Math.max(0, r2(r2(entry.arrears) - sumAmt(earn))),
     extraEarn: earn.map((x) => x.amount),
-    otherDeductions: Math.max(0, r0(entry.otherDeductions) - loan - sumAmt(ded)),
+    otherDeductions: Math.max(0, r2(r2(entry.otherDeductions) - loan - sumAmt(ded))),
     loan, extraDed: ded.map((x) => x.amount),
-    lopDeduction: r0(entry.lopDeduction), pfEmployee: r0(entry.pfEmployee), esiEmployee: r0(entry.esiEmployee), professionalTax: r0(entry.professionalTax),
-    tds: r0(entry.tds), pfEmployer: r0(entry.pfEmployer), esiEmployer: r0(entry.esiEmployer), gratuity: r0(entry.gratuity),
+    lopDeduction: r2(entry.lopDeduction), pfEmployee: r2(entry.pfEmployee), esiEmployee: r2(entry.esiEmployee), professionalTax: r2(entry.professionalTax),
+    tds: r2(entry.tds), pfEmployer: r2(entry.pfEmployer), esiEmployer: r2(entry.esiEmployer), gratuity: r2(entry.gratuity),
     manual: { ...(st.manual || {}) },
   };
 }
@@ -152,13 +159,13 @@ function driftOf(c, rules) {
 }
 
 const totalsOfRow = (x) => ({
-  grossPay: r0(x.grossPay), earnedGross: r0(x.earnedGross), totalDeductions: r0(x.totalDeductions), netPay: r0(x.netPay),
-  ctc: r0(x.earnedGross) + r0(x.pfEmployer) + r0(x.esiEmployer) + r0(x.gratuity),
+  grossPay: r2(x.grossPay), earnedGross: r2(x.earnedGross), totalDeductions: r2(x.totalDeductions), netPay: r2(x.netPay),
+  ctc: r2(r2(x.earnedGross) + r2(x.pfEmployer) + r2(x.esiEmployer) + r2(x.gratuity)),
 });
 const fieldsOfRow = (x, state) => {
   const f = {};
   COLUMN_FIELDS.forEach((k) => { f[k] = Number(x[k]) || 0; });
-  f.loan = Math.max(0, r0(state && state.loan));
+  f.loan = Math.max(0, r2(state && state.loan));
   return f;
 };
 
@@ -219,7 +226,7 @@ function cleanLines(raw, kind) {
     const amount = Number(x.amount);
     if (!label) throw new EditError(400, `Give every added ${kind} a name.`);
     if (!Number.isFinite(amount) || amount < 0) throw new EditError(400, `The amount of "${label}" must be a number from 0 up.`);
-    out.push({ id: String(x.id || `l${Date.now().toString(36)}${out.length}`), label, amount: r0(amount) });
+    out.push({ id: String(x.id || `l${Date.now().toString(36)}${out.length}`), label, amount: r2(amount) });
   });
   if (out.length > 20) throw new EditError(400, 'At most 20 added lines.');
   return out;
@@ -385,7 +392,7 @@ async function saveEdit({ entry, body, actor, ip }) {
   c.extraEarn = lines.earnings.map((x) => x.amount);
   c.extraDed = lines.deductions.map((x) => x.amount);
   if (fields.loan !== undefined && fields.loan !== null && fields.loan !== '') c.loan = Number(fields.loan);
-  const loan = Math.max(0, r0(c.loan));
+  const loan = Math.max(0, r2(c.loan));
   const allowNegative = String((body && body.allowNegativeReason) || '').trim() || null;
   if (body && body.allowNegative && !allowNegative) throw new EditError(400, 'Say why net pay is allowed to go below 0.');
   const res = payrollCalc(c, rules);
@@ -408,7 +415,7 @@ async function saveEdit({ entry, body, actor, ip }) {
   if (!sent || ['grossPay', 'totalDeductions', 'netPay', 'ctc'].some((k) => !Number.isFinite(Number(sent[k])))) {
     throw new EditError(400, 'The totals are missing. Reload the page and try again.');
   }
-  if (['grossPay', 'totalDeductions', 'netPay', 'ctc'].some((k) => Math.round(Number(sent[k])) !== mine[k])) {
+  if (['grossPay', 'totalDeductions', 'netPay', 'ctc'].some((k) => Math.abs(Number(sent[k]) - mine[k]) > 0.005)) {
     throw new EditError(422, 'The totals on your screen do not match the payroll calculation. Nothing was saved. Reload the page and try again.', { code: 'TOTALS_MISMATCH', server: mine });
   }
   // nothing to save?
@@ -524,12 +531,13 @@ async function adjustmentsFor(month) {
   return map;
 }
 // Adds a month's adjustment lines to one engine row (pure; no lines = the row unchanged).
-function applyAdjustments(c, version, policy, adj) {
+// `reg` = { pfRule } in a pay-register month (utils/payrollRegister.js).
+function applyAdjustments(c, version, policy, adj, reg = null) {
   if (!adj || (!adj.earn.length && !adj.ded.length)) return { row: c, lines: { earnings: [], deductions: [] } };
-  const rules = rulesFromVersion(version, policy, c.payMode);
+  const rules = rulesFromVersion(version, policy, c.payMode, reg);
   const comps = {
     workingDays: c.workingDays, daysLop: c.daysLop, basic: c.basic, hra: c.hra, bonus: c.bonus, specialAllowance: c.specialAllowance, conveyance: c.conveyance,
-    incentive: c.incentive, stipend: c.payMode === 'Stipend' ? c.grossPay - c.incentive : 0, arrears: 0, extraEarn: adj.earn.map((x) => x.amount),
+    incentive: c.incentive, stipend: c.payMode === 'Stipend' ? r2(c.grossPay - c.incentive) : 0, arrears: 0, extraEarn: adj.earn.map((x) => x.amount),
     otherDeductions: c.otherDeductions, loan: 0, extraDed: adj.ded.map((x) => x.amount), manual: {},
   };
   const res = payrollCalc(comps, rules);
@@ -632,12 +640,12 @@ function payslipLinesOf(entry, state) {
   const st = state || freshState();
   const earn = (st.extras && st.extras.earnings) || [];
   const ded = (st.extras && st.extras.deductions) || [];
-  const loan = Math.max(0, r0(st.loan));
+  const loan = Math.max(0, r2(st.loan));
   const out = { earnings: [], deductions: [] };
-  const fixedArrears = Math.max(0, r0(entry.arrears) - sumAmt(earn));
+  const fixedArrears = Math.max(0, r2(entry.arrears) - sumAmt(earn));
   if (fixedArrears > 0) out.earnings.push({ label: 'Arrears', amount: fixedArrears });
   earn.forEach((x) => { if (x.amount > 0) out.earnings.push({ label: x.label, amount: x.amount }); });
-  const fixedOther = Math.max(0, r0(entry.otherDeductions) - loan - sumAmt(ded));
+  const fixedOther = Math.max(0, r2(entry.otherDeductions) - loan - sumAmt(ded));
   if (fixedOther > 0) out.deductions.push({ label: 'Other Deductions', amount: fixedOther });
   if (loan > 0) out.deductions.push({ label: 'Loan / Advance', amount: loan });
   ded.forEach((x) => { if (x.amount > 0) out.deductions.push({ label: x.label, amount: x.amount }); });

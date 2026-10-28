@@ -502,6 +502,13 @@ router.get('/invoices', vendorOnly, async (req, res) => {
 });
 
 // ---- documents shared with this vendor ---------------------------------------
+// ---- what the company paid this vendor, from the bank statement (founder 2026-10-28; every kind of vendor) ----
+router.get('/bank-payments', vendorOnly, async (req, res) => {
+  const r = await require('../utils/vendorBankPayments').view(req.vendor.vendorId, req.query || {}); // eslint-disable-line global-require
+  // the bank line's own id never leaves the server: the screen gets a row number
+  res.json({ ...r, rows: r.rows.map(({ id, ...x }, i) => ({ key: i + 1, ...x })) });
+});
+
 router.get('/documents', vendorOnly, async (req, res) => {
   const docs = await prisma.vendorSharedDocument.findMany({ where: { vendorId: req.vendor.vendorId, revokedAt: null }, orderBy: { createdAt: 'desc' } });
   return res.json({ rows: docs.map((d) => ({ id: d.id, title: d.title, docType: d.docType, name: d.name, size: d.size, note: d.note, createdAt: d.createdAt })) });
@@ -530,6 +537,10 @@ async function resolveOwnedFile(vendor, kind, id, idx) {
   if (kind === 'repair-invoice') {
     // the invoice file of a repair in this vendor's own set (Assets Vendor Portal)
     return AVP.ownedRepairInvoice(vendor, id);
+  }
+  if (kind === 'repair-proof') {
+    // a proof / earlier invoice file of a repair in this (Assets) vendor's own set - utils/assetRepairWork.js (Stage C)
+    return require('../utils/assetRepairWork').ownedProofFile(vendor.vendorId, await AVP.visibleRepairIds(vendor), id); // eslint-disable-line global-require
   }
   if (kind === 'bill-upload') {
     // a file of a repair bill this (Assets) vendor uploaded: id = "<uploadId>:<fileId>" - utils/billUploads.js, the vendor's own uploads only
@@ -560,7 +571,7 @@ router.post('/download-link', vendorOnly, async (req, res) => {
   const kind = str(b.kind);
   // An asset vendor's files are the repair invoices and the order documents; the finance portal's bill files are not its business.
   const myKind = await KIND.kindOfRow({ ...req.vendor.row, vendorId: req.vendor.vendorId });
-  const KINDS_OF = { assets: ['repair-invoice', 'bill-upload', 'po-challan', 'shared'], idcards: ['po-challan'], telecom: ['airtel-bill'] };
+  const KINDS_OF = { assets: ['repair-invoice', 'repair-proof', 'bill-upload', 'po-challan', 'shared'], idcards: ['po-challan'], telecom: ['airtel-bill'] };
   if (KINDS_OF[myKind] ? !KINDS_OF[myKind].includes(kind) : (kind === 'repair-invoice' || kind === 'airtel-bill' || kind === 'bill-upload')) {
     return res.status(403).json({ error: 'Forbidden. This file is not yours.' });
   }

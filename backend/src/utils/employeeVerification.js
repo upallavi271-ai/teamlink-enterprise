@@ -36,9 +36,49 @@
 const crypto = require('crypto');
 const prisma = require('../db');
 const { readConfig } = require('./integrationStore');
-// Reused rather than reimplemented: one Verhoeff table in this codebase, not
-// two that can drift apart.
-const { aadhaarShape, maskMobile, esignProvider } = require('./agreementSigning');
+const { maskMobile } = require('./messagingCore');
+
+// 2026-10-28: aadhaarShape / esignProvider / maskMobile used to come from
+// utils/agreementSigning.js. That module stopped exporting them, so "Send the
+// code" crashed ("maskMobile is not a function" -> "Something went wrong").
+// The Verhoeff check lives here now — this is its only user.
+const D_TABLE = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5],
+  [2, 3, 4, 0, 1, 7, 8, 9, 5, 6], [3, 4, 0, 1, 2, 8, 9, 5, 6, 7],
+  [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+  [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3],
+  [8, 7, 6, 5, 9, 3, 2, 1, 0, 4], [9, 8, 7, 6, 5, 4, 3, 2, 1, 0],
+];
+const P_TABLE = [
+  [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4],
+  [5, 8, 0, 3, 7, 9, 6, 1, 4, 2], [8, 9, 1, 6, 0, 4, 3, 5, 2, 7],
+  [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+  [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8],
+];
+function verhoeff(num) {
+  let c = 0;
+  String(num).split('').reverse().forEach((ch, i) => { c = D_TABLE[c][P_TABLE[i % 8][Number(ch)]]; });
+  return c === 0;
+}
+// Twelve digits, never starting 0 or 1, Verhoeff checksum.
+function aadhaarShape(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (d.length !== 12) return { ok: false, error: 'An Aadhaar number is 12 digits.' };
+  if (/^[01]/.test(d)) return { ok: false, error: 'An Aadhaar number does not begin with 0 or 1.' };
+  if (!verhoeff(d)) return { ok: false, error: 'That Aadhaar number fails its checksum — please re-enter it.' };
+  return { ok: true, last4: d.slice(-4) };
+}
+// The licensed eSign provider (Administration → Integrations → eMudhra eSign), or null.
+async function esignProvider() {
+  try {
+    const cfg = await readConfig('esign');
+    if (!cfg || !cfg.enabled || !cfg.connected) return null;
+    const token = String((cfg.values || {})['Auth token'] || '').trim();
+    return token ? { name: 'eMudhra', configured: true } : null;
+  } catch {
+    return null;
+  }
+}
 
 const OTP_TTL_MINUTES = 10;
 const OTP_MAX_ATTEMPTS = 5;
@@ -63,36 +103,67 @@ function mobileShape(raw) {
 }
 
 // ---------------------------------------------------------------------------
-// CAN WE ACTUALLY SEND AN SMS?
+// CAN WE ACTUALLY SEND AN SMS? (fixed 2026-10-28)
 //
-// The SMS channel stores a Provider, a Sender ID, an API key and a DLT
-// template id, but nothing in this codebase transmits over it yet. So this
-// reports the truth in two parts — configured, and deliverable — and no caller
-// has to guess which one it is looking at. Saying "configured" and meaning
-// "sent" is precisely the lie this codebase refuses everywhere else.
+// The answer comes from the SAME place every other SMS in the app uses
+// (channels/index.js: the SMS providers in order — the paid gateway of
+// Administration → Integrations → SMS Gateway, or an Android phone), so a
+// gateway that sends the Test SMS is the gateway the OTP goes through.
+// Before, this read two labels the SMS form never saves ("Provider",
+// "API key"), so it said "No SMS gateway is configured" even when SMS Push
+// Platform was connected — and nothing here ever sent.
+//
+// configured  = an SMS provider is ready;  deliverable = an OTP can go on it
+// (MSG91 and SMS Push Platform deliver only a DLT-approved OTP template).
 // ---------------------------------------------------------------------------
+const GATEWAY_SCREEN = 'Administration → Integrations → SMS Gateway';
 async function smsChannel() {
   try {
-    const cfg = await readConfig('sms');
-    const provider = String((cfg.values || {}).Provider || '').trim();
-    const key = String((cfg.values || {})['API key'] || '').trim();
-    const configured = !!(cfg.enabled && provider && key);
-    return {
-      configured,
-      provider: provider || null,
-      deliverable: false,
-      reason: configured
-        ? `The ${provider} SMS gateway is configured, but no gateway client is implemented yet, so no code can be transmitted.`
-        : 'No SMS gateway is configured — set one up under Administration → Integrations → SMS Gateway.',
-    };
+    const channels = require('../channels'); // eslint-disable-line global-require
+    const st = await channels.status('SMS');
+    if (!st.configured) {
+      return {
+        configured: false, provider: null, deliverable: false,
+        reason: `No SMS gateway is ready to send — ${String(st.reason || 'not set up').replace(/[.s]+$/, '')}. Set it up under ${GATEWAY_SCREEN}.`,
+      };
+    }
+    const provider = st.providerLabel || st.via || null;
+    if (st.provider === 'sms.gateway') {
+      const g = await require('./smsGateway').smsConfig(); // eslint-disable-line global-require
+      if (['SMSGW', 'MSG91'].includes(g.provider) && !g.templates.otp) {
+        const field = g.provider === 'SMSGW' ? '"SMS Push Platform: DLT Template ID — OTP"' : '"DLT template ID — OTP"';
+        return {
+          configured: true, provider, deliverable: false, missing: 'otpTemplate',
+          reason: `${g.providerLabel} is connected, but its OTP DLT Template ID is empty, and Indian operators deliver only an approved template. Add it under ${GATEWAY_SCREEN} (${field}).`,
+        };
+      }
+    }
+    return { configured: true, provider, deliverable: true, reason: null };
   } catch {
-    return {
-      configured: false,
-      provider: null,
-      deliverable: false,
-      reason: 'The SMS channel could not be read.',
-    };
+    return { configured: false, provider: null, deliverable: false, reason: 'The SMS channel could not be read.' };
   }
+}
+
+// ---------------------------------------------------------------------------
+// DELIVER THE CODE through the app's one SMS door (utils/messaging.js, the
+// same send as the agreement-signing OTP). Accepted by the provider is the
+// only success: a refusal, a missing setting or an unreadable answer comes
+// back as { ok: false, error } in the provider's own words.
+// ref = a correlation id for the server log and the screen; the code, the
+// number and every credential stay out of the log.
+// ---------------------------------------------------------------------------
+async function sendCode({ employee, otp, mobile, ttlMinutes, ref }) {
+  const sms = require('./smsGateway'); // eslint-disable-line global-require
+  const messaging = require('./messaging'); // eslint-disable-line global-require
+  const cfg = await sms.smsConfig().catch(() => null);
+  const fallback = `${otp} is your TeamLink verification code. It is valid for ${ttlMinutes} minutes. Do not share it.`;
+  const text = sms.otpText(cfg, otp, ttlMinutes, fallback);
+  const r = await messaging.send('SMS', {
+    to: mobile, kind: 'otp', text, vars: [otp, ttlMinutes],
+    meta: { audience: 'employee', personId: employee.id, personName: employee.name, purpose: 'Mobile verification OTP', module: 'HRMS', masked: true }, // no sender: an OTP never spends a person's message credits
+  });
+  console.info(`[verify-otp ${ref}] provider=${r.provider || '-'} outcome=${r.outcome}${r.providerRef ? ` providerRef=${r.providerRef}` : ''}${r.errorCode ? ` code=${r.errorCode}` : ''}${r.ok ? '' : ` error="${String(r.error || '').slice(0, 200)}"`}`);
+  return r;
 }
 
 // What the screen needs to render the panel. No secrets in it.
@@ -252,7 +323,28 @@ async function confirmVerification(employee, { otp }) {
   };
 }
 
+// Seconds before another code may be sent (one a minute), 0 = now.
+const OTP_RESEND_COOLDOWN_S = 60;
+function resendWait(employee) {
+  if (!employee.verifyOtpExpiresAt || !employee.verifyOtpHash) return 0;
+  const issued = new Date(employee.verifyOtpExpiresAt).getTime() - OTP_TTL_MINUTES * 60000;
+  return Math.max(0, Math.ceil((issued + OTP_RESEND_COOLDOWN_S * 1000 - Date.now()) / 1000));
+}
+
+// A code that did not leave is not outstanding.
+async function clearPending(employeeId) {
+  await prisma.employee.update({
+    where: { id: employeeId },
+    data: { verifyKind: null, verifyTarget: null, verifyLast4: null, verifyOtpHash: null, verifyOtpExpiresAt: null, verifyOtpAttempts: 0 },
+  });
+}
+
 module.exports = {
+  sendCode,
+  resendWait,
+  clearPending,
+  OTP_RESEND_COOLDOWN_S,
+  aadhaarShape,
   OTP_TTL_MINUTES,
   OTP_MAX_ATTEMPTS,
   KINDS,

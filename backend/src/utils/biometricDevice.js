@@ -137,7 +137,7 @@ function optionsReply(device) {
 // punch when check-out was never pressed. Recomputed on every punch, so a
 // batch that arrives out of order still ends up right.
 async function markDay(employeeId, date, cfg) {
-  await settleBiometricDirections(employeeId, date);
+  await settleBiometricDirections(employeeId, date, cfg);
   const punches = await prisma.attendancePunch.findMany({ where: { employeeId, date } });
   const day = daySplit(punches);
   const checkIn = day.checkIn ? day.checkIn.time : null;
@@ -170,21 +170,35 @@ async function markDay(employeeId, date, cfg) {
 // ("intervals"), which turned a second check-in into a check-out.
 // Web / phone / HR punches keep the direction the person pressed; a device
 // punch with no state recorded keeps the direction it has.
-function settledDirections(ps) {
+// A DEVICE THAT SENDS "CHECK-IN" FOR EVERY PRESS (founder 2026-10-28: "biometric device lo check-out button click chesi check-out vesaru,
+// adi update kavadam ledu"): when the device is left in its Check-In mode (state 0), the evening Check-Out press arrives as another check-in
+// and the day reads "Missing Check-Out". So the LAST device punch of the day with state 0, when it comes after the half-day split (13:30 by
+// default) and after an earlier punch that day, is the check-out. Morning presses (Leela's 9:19 + 10:10) stay two check-ins, and a key
+// the person really pressed (1 Check-Out, 2 Break-Out, 3 Break-In, 4/5 OT) still decides.
+const toMin = (t) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '')); return m ? Number(m[1]) * 60 + Number(m[2]) : null; };
+function settledDirections(ps, splitMin = 13 * 60 + 30) {
   const want = new Map();
   for (const p of ps) {
     if (p.method !== 'Biometric') continue; // eslint-disable-line no-continue
     if (p.deviceState == null || String(p.deviceState).trim() === '') continue; // eslint-disable-line no-continue
     want.set(p.id, directionFromState(p.deviceState));
   }
+  const sorted = sortedPunches(ps);
+  const last = sorted[sorted.length - 1];
+  if (last && sorted.length > 1 && last.method === 'Biometric' && String(last.deviceState ?? '').trim() === '0') {
+    const t = toMin(last.clockTime || last.time);
+    if (t != null && t >= splitMin) want.set(last.id, 'Out');
+  }
   return want;
 }
-async function settleBiometricDirections(employeeId, date) {
+async function settleBiometricDirections(employeeId, date, cfg = null) {
   const ps = sortedPunches(await prisma.attendancePunch.findMany({
     where: { employeeId, date }, select: { id: true, time: true, clockTime: true, method: true, direction: true, deviceState: true },
   }));
   if (!ps.length) return;
-  const want = settledDirections(ps);
+  const c = cfg || await prisma.hrConfig.findFirst().catch(() => null);
+  const split = require('./attendanceDays').policyTimes ? require('./attendanceDays').policyTimes(c || {}).split : 13 * 60 + 30; // eslint-disable-line global-require
+  const want = settledDirections(ps, split);
   for (const p of ps) {
     const w = want.get(p.id);
     // eslint-disable-next-line no-await-in-loop

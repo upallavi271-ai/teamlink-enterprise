@@ -147,17 +147,20 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
     const body = { status, comment, reason: comment, rejectReason: status === 'Rejected' ? comment : undefined };
     setActing(r.reqId); setError(''); setSaved('');
     try {
-      try { await api.patch(URL_OF[data.decide](r.reqId), body); } catch (e) {
+      let res = null;
+      try { res = await api.patch(URL_OF[data.decide](r.reqId), body); } catch (e) {
         const d = (e.response && e.response.data) || {};
         // the leave rules may ask for more: a TL's remarks, or one of the approval reasons
         if (e.response && e.response.status === 400 && (d.tlReasonRequired || d.reasons)) {
           const more = d.reasons ? window.prompt(`${d.error}\nType one of: ${d.reasons.join(' / ')}`, d.reasons[0] || '') : window.prompt(d.error, '');
           if (!more || !more.trim()) throw e;
-          await api.patch(URL_OF[data.decide](r.reqId), d.reasons ? { ...body, approvalReason: more.trim() } : { ...body, comment: more.trim() });
+          res = await api.patch(URL_OF[data.decide](r.reqId), d.reasons ? { ...body, approvalReason: more.trim() } : { ...body, comment: more.trim() });
         } else throw e;
       }
-      setDoneIds((m) => ({ ...m, [r.reqId]: status }));
-      setSaved(`${r.name}: ${status === 'Approved' ? 'approved' : 'rejected'}.`);
+      // a TL's leave approved by HR is not granted yet: it waits for the Super Admin (founder 2026-10-28)
+      const sent = !!(res && res.data && res.data.sentToSuperAdmin);
+      setDoneIds((m) => ({ ...m, [r.reqId]: sent ? 'Sent to the Super Admin' : status }));
+      setSaved(sent ? `${r.name}: Sent to the Super Admin for final approval (still Pending).` : `${r.name}: ${status === 'Approved' ? 'approved' : 'rejected'}.`);
     } catch (e) {
       setError(e.response?.data?.error || 'Could not save the decision.');
     } finally { setActing(''); }
@@ -257,7 +260,7 @@ export function DrillPanel({ drill, expected, params, onClose, onSwitch, switche
                     {data.decide && (
                       <td data-label="Action" style={{ whiteSpace: 'nowrap' }}>
                         {doneIds[r.reqId]
-                          ? <span className={`status ${doneIds[r.reqId] === 'Approved' ? 'priority-low' : 'priority-high'}`}>{doneIds[r.reqId]}</span>
+                          ? <span className={`status ${doneIds[r.reqId] === 'Approved' ? 'priority-low' : doneIds[r.reqId] === 'Rejected' ? 'priority-high' : 'priority-medium'}`}>{doneIds[r.reqId]}</span>
                           : r.myTurn === false
                             ? <span className="small-muted" title="The approval goes step by step: it is another approver's turn now.">Waiting for {r.waitingFor || 'the next approver'}</span>
                             : <>

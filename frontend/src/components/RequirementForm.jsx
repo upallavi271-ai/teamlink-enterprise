@@ -29,6 +29,7 @@ import './jobs/postingChoices.css'; // Save & Post: the six sites and what each 
 // docfill_: "Upload the requirement" / "Type it myself" (components/ui/FillFromFile.jsx).
 import { useFillFromFile, FillEntryModal, FillBanner } from './ui/FillFromFile.jsx';
 import { jobFieldsToForm, JOB_FIELD_NAMES } from './ui/fillMaps.js';
+import { useActiveDepartments, keepActive } from '../utils/activeDepartments.js';
 import useClientLabel from './clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
 import {
   DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
@@ -259,11 +260,13 @@ const OWN_SITE_NAMES = ['TeamLink Job Portal', 'TeamLink Website', 'Google Jobs'
 // The first ticked one is the MAIN department (its team lead is suggested first); "Make main" moves another one to the front.
 function DeptChecklist({ options, value, onChange }) {
   const list = Array.isArray(value) ? value : [];
+  // Only switched-on Department & Team names (founder 2026-10-28); a ticked old one stays.
+  const liveDepts = useActiveDepartments();
   const toggle = (v) => onChange(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
   const makeMain = (v) => onChange([v, ...list.filter((x) => x !== v)]);
   return (
     <div className="rf-deptlist" role="group" aria-label="Departments" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', padding: '6px 2px' }}>
-      {options.map((o) => {
+      {keepActive(liveDepts, options, (o) => o.value, list).map((o) => {
         const on = list.includes(o.value);
         return (
           <label key={o.value} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>

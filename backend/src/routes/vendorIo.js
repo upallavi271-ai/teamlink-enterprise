@@ -61,7 +61,7 @@ router.get('/vendor-io/info', vendorOnly, wrap(async (req, res) => {
     import: {
       allowed: c.importAllowed,
       reason: c.importAllowed ? null : `Your login cannot import. Ask the company to switch on "${c.needs}".`,
-      items: IMP.importsOf(c.kind).map((i) => ({ key: i.key, title: i.title, help: i.help, needs: i.needs, columns: IMP.specOf(i).columns.map((x) => ({ label: x.label, required: !!x.required })) })),
+      items: IMP.importsOf(c.kind).map((i) => ({ key: i.key, title: i.title, help: i.help, needs: i.needs, columns: IMP.specOf(i).columns.map((x) => ({ label: x.label, required: !!x.required })), flexible: !!IMP.specOf(i).flexible })),
       assetsNote: ASSETS_NOTE, maxRows: IMP.MAX_ROWS, maxMb: 5,
     },
   });

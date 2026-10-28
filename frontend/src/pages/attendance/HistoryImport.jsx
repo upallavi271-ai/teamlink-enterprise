@@ -111,6 +111,7 @@ function PlanView({ plan }) {
           {Object.entries(plan.days.byAction).map(([k, v]) => (
             <tr key={k}><td>{ACTION_LABEL[k] || k}</td><td style={{ textAlign: 'right' }}><b>{v}</b></td></tr>
           ))}
+          {plan.days.updated > 0 && <tr><td>Imported before — updated with what this file adds (later check-out, more punches)</td><td style={{ textAlign: 'right' }}><b>{plan.days.updated}</b></td></tr>}
           <tr><td className="cell-muted">Check-in / check-out punches added</td><td style={{ textAlign: 'right' }}>{plan.days.punchesToAdd ?? plan.result?.punchesCreated}</td></tr>
           {plan.summaries.total > 0 && Object.entries(plan.summaries.byAction).map(([k, v]) => (
             <tr key={`s-${k}`}><td>Period summaries — {k === 'import' ? 'to import' : k === 'skip' ? 'already imported' : k === 'unmatched' ? 'Unmatched Employee' : k}</td><td style={{ textAlign: 'right' }}><b>{v}</b></td></tr>
@@ -183,7 +184,7 @@ export default function HistoryImport() {
       setPlan(r.data);
       if (!dryRun) {
         const x = r.data.result;
-        setNotice(`Imported: ${x.historyRows} day row(s) stored, ${x.daysCreated} day(s) created, ${x.daysFilled} existing day(s) given their times, ${x.punchesCreated} punch(es), ${x.summaryRows} period summary row(s).`);
+        setNotice(`Imported: ${x.historyRows} day row(s) stored, ${x.daysCreated} day(s) created, ${x.daysFilled} existing day(s) given their times, ${x.daysUpdated || 0} imported day(s) updated from this newer file, ${x.punchesCreated} punch(es), ${x.summaryRows} period summary row(s).`);
         loadHistory();
       }
     } catch (e) {

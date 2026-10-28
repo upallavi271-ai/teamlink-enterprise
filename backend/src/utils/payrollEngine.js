@@ -20,6 +20,13 @@
 //   netPay          grossPay - totalDeductions  (never below 0: TDS and other
 //                   deductions are capped at what is left after statutory)
 //
+// PAY REGISTER RULES (founder 2026-10-28, utils/payrollRegister.js): from the month
+// set in AppSetting 'payroll.registerRules' on, a record is worked out exactly like
+// the team's Excel Pay Register (paise, earned parts, PF by the version's PF rule,
+// ESI rounded up on the earned total, PT slab on the earned total) by the SAME
+// calculation the edit screen uses (utils/payrollCalc.js), so an unedited record
+// recalculates to itself. Earlier months keep the whole-rupee rules below.
+//
 // Status: DRAFT -> PENDING_APPROVAL -> APPROVED -> SYNCED_TO_ACCOUNTS -> PAID.
 // Every move is a conditional update on the CURRENT status (so two people
 // cannot both make it) and writes an AuditLog row with who and when.
@@ -33,6 +40,7 @@ const { logAudit } = require('./audit');
 const { NOT_SYSTEM_EMPLOYEE } = require('./systemAccounts');
 const PC = require('./payrollCycle');
 const ANL = require('./absentNoLeave');
+const REG = require('./payrollRegister');
 
 const STATUSES = ['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SYNCED_TO_ACCOUNTS', 'PAID'];
 const STATUS_LABEL = {
@@ -217,7 +225,9 @@ async function attendanceInputs(employees, month, policy) {
 }
 
 // ---- The arithmetic ----------------------------------------------------------
-function computeEntry({ version, att, policy, incentive = 0 }) {
+// `register` = { pfRule } in a pay-register month (utils/payrollRegister.js), else null.
+function computeEntry({ version, att, policy, incentive = 0, register = null }) {
+  if (register) return computeRegisterEntry({ version, att, policy, incentive, pfRule: register.pfRule || null });
   const workingDays = Number(att.workingDays) || 0;
   const daysLop = Math.max(0, Math.min(workingDays, Number(att.daysLop) || 0));
   const ratio = workingDays > 0 ? (workingDays - daysLop) / workingDays : 1;
@@ -266,6 +276,39 @@ function computeEntry({ version, att, policy, incentive = 0 }) {
   };
 }
 
+// The pay-register month: the shared calculation (utils/payrollCalc.js) on the version, in paise.
+function computeRegisterEntry({ version, att, policy, incentive, pfRule }) {
+  const { payrollCalc } = require('./payrollCalc');
+  const rules = REG.rulesOf(version, policy, version.payMode, pfRule);
+  const stipend = rules.payMode === 'Stipend';
+  const res = payrollCalc({
+    workingDays: Number(att.workingDays) || 0, daysLop: Number(att.daysLop) || 0,
+    basic: version.basic, hra: version.hra, bonus: version.bonus, specialAllowance: version.specialAllowance, conveyance: version.conveyance,
+    stipend: version.stipend, incentive: Math.max(0, REG.r2(incentive)), arrears: 0, extraEarn: [], extraDed: [],
+    otherDeductions: 0, loan: 0, manual: {},
+  }, rules);
+  // the engine's own cap: other deductions never take net pay below 0
+  const room = Math.max(0, REG.r2(res.earnedGross - res.pfEmployee - res.esiEmployee - res.professionalTax - res.tds));
+  const otherDeductions = Math.min(Math.max(0, REG.r2(version.otherDeductions)), room);
+  const totalDeductions = REG.r2(res.totalDeductions + otherDeductions);
+  return {
+    payMode: stipend ? 'Stipend' : 'Package',
+    workingDays: res.workingDays, daysPresent: Number(att.daysPresent) || 0, daysLop: res.daysLop,
+    basic: res.basic, hra: res.hra, bonus: res.bonus, specialAllowance: res.specialAllowance, conveyance: res.conveyance, incentive: res.incentive,
+    grossPay: res.grossPay, lopDeduction: res.lopDeduction, earnedGross: res.earnedGross,
+    pfEmployee: res.pfEmployee, esiEmployee: res.esiEmployee, professionalTax: res.professionalTax, tds: res.tds, otherDeductions,
+    totalDeductions, netPay: REG.r2(res.grossPay - totalDeductions),
+    pfEmployer: res.pfEmployer, esiEmployer: res.esiEmployer, gratuity: res.gratuity,
+  };
+}
+
+// The register switch + PF rules for one month's versions: (version) -> { pfRule } | null.
+async function registerFor(month, versions) {
+  if (!(await REG.isRegisterMonth(month))) return () => null;
+  const rules = await REG.pfRulesFor([...versions].map((v) => v && v.id));
+  return (v) => ({ pfRule: (v && rules.get(v.id)) || null });
+}
+
 // ---- Month-level run (the existing PayrollRun row is the month's container) --
 function monthStatusOf(entries) {
   if (!entries.length) return null;
@@ -277,7 +320,7 @@ async function refreshMonthRun(month, actorName = null) {
   const entries = await prisma.employeePayrollRun.findMany({ where: { month } });
   const run = await prisma.payrollRun.findUnique({ where: { month } });
   if (!entries.length) return run;
-  const sum = (k) => entries.reduce((n, e) => n + (Number(e[k]) || 0), 0);
+  const sum = (k) => REG.r2(entries.reduce((n, e) => n + (Number(e[k]) || 0), 0)); // to the paisa (no float tail)
   const allPaid = entries.every((e) => e.status === 'PAID');
   const data = {
     period: monthLabel(month),
@@ -339,6 +382,20 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
       if (inCycle.length) employees = [...employees, ...inCycle].sort((a, b) => String(a.name).localeCompare(String(b.name)));
     }
   }
+  // Somebody no longer on the payroll statuses (Relieved / Exited / ...) for whom HR entered this month's payroll
+  // days (PayrollAttendance - e.g. the attendance sheet lists the days they worked before leaving) is paid for them.
+  {
+    const have = new Set(employees.map((e) => e.id));
+    const typed = await prisma.payrollAttendance.findMany({ where: { month }, select: { employeeId: true } });
+    const extra = typed.map((t) => t.employeeId).filter((id) => !have.has(id));
+    if (extra.length) {
+      const xw = { AND: [employeeWhere, { id: { in: extra } }, NOT_SYSTEM_EMPLOYEE] };
+      if (department) xw.AND.push({ department });
+      if (Array.isArray(employeeIds)) xw.AND.push({ id: { in: employeeIds } });
+      const more = await prisma.employee.findMany({ where: xw });
+      if (more.length) employees = [...employees, ...more].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    }
+  }
   const ids = employees.map((e) => e.id);
   const [versions, { workingDays, map: inputs }, existing, incentives] = await Promise.all([
     versionsFor(ids, month),
@@ -347,6 +404,7 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     incentivesFor(ids, month),
   ]);
   const existingOf = new Map(existing.map((e) => [e.employeeId, e]));
+  const regOf = await registerFor(month, versions.values());
   const { year, monthNum } = monthParts(month);
   // Payroll edit (utils/payrollEdit.js): a record somebody EDITED is never overwritten by a recalculation
   // (it is reset only by "Recalculate from attendance" on that record); adjustments from earlier months
@@ -362,8 +420,9 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     const v = versions.get(emp.id);
     const base = { employeeId: emp.id, employeeCode: emp.employeeCode, name: emp.name, department: emp.department };
     if (!v) { skipped.push({ ...base, reason: `No salary structure effective in ${monthLabel(month)}` }); return; }
-    const c0 = computeEntry({ version: v, att: inputs.get(emp.id), policy, incentive: incentives.get(emp.id) || 0 });
-    const adjusted = PEdit.applyAdjustments(c0, v, policy, adjMap.get(emp.id));
+    const reg = regOf(v);
+    const c0 = computeEntry({ version: v, att: inputs.get(emp.id), policy, incentive: incentives.get(emp.id) || 0, register: reg });
+    const adjusted = PEdit.applyAdjustments(c0, v, policy, adjMap.get(emp.id), reg);
     const c = adjusted.row;
     if (!(c.grossPay > 0)) { skipped.push({ ...base, reason: v.payMode === 'Stipend' ? 'Stipend is 0' : 'No CTC set' }); return; }
     const prior = existingOf.get(emp.id);
@@ -450,8 +509,9 @@ async function engineRowFor(employeeId, month) {
   ]);
   const v = versions.get(employeeId);
   if (!v) return null;
-  const c0 = computeEntry({ version: v, att: inputs.get(employeeId), policy, incentive: incentives.get(employeeId) || 0 });
-  const adjusted = PEdit.applyAdjustments(c0, v, policy, adjMap.get(employeeId));
+  const reg = (await registerFor(month, [v]))(v);
+  const c0 = computeEntry({ version: v, att: inputs.get(employeeId), policy, incentive: incentives.get(employeeId) || 0, register: reg });
+  const adjusted = PEdit.applyAdjustments(c0, v, policy, adjMap.get(employeeId), reg);
   return { ...adjusted.row, lines: adjusted.lines, salaryVersionId: v.id, attendance: inputs.get(employeeId) };
 }
 
@@ -634,6 +694,6 @@ async function historyOf(entryId) {
 module.exports = {
   STATUSES, STATUS_LABEL, FINAL_STATUSES, PAYABLE_STATUSES, TRANSITIONS, PayrollError,
   getPolicy, isMonth, monthParts, payrollWorkingDays, overlapProblem, readSnapshot,
-  attendanceDefaults, attendanceInputs, computeEntry, calculateMonth, engineRowFor, refreshMonthRun,
+  attendanceDefaults, attendanceInputs, computeEntry, computeRegisterEntry, registerFor, calculateMonth, engineRowFor, refreshMonthRun,
   writePayslip, transition, historyOf, incentivesFor,
 };

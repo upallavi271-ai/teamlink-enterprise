@@ -48,7 +48,8 @@ async function context(force = false) {
     final.set(a.id, code);
     byCode.set(a.assetCode, code);
   });
-  cache = { at: Date.now(), data: { holder, global, final, byCode } };
+  const realCode = new Map(assets.map((a) => [a.id, a.assetCode]));
+  cache = { at: Date.now(), data: { holder, global, final, byCode, realCode } };
   return cache.data;
 }
 const reset = () => { cache = { at: 0, data: null }; };
@@ -84,20 +85,25 @@ function baseCode(a, h, global) {
   return code;
 }
 
+// 27 Oct 2026 (founder, Assets Vendor Portal master prompt): "evari daggara e asset undi" - the vendor now sees the holder's name, employee ID,
+// designation and department, so names are no longer cut out of asset codes and texts. E-mail addresses and phone numbers stay hidden.
+// Set to false to go back to the 19 Oct 2026 rule (no employee names anywhere).
+const NAMES_SHOWN = true;
+
 // A masker bound to the current employee data. Usage: const M = await Mask.load(); M.code(asset) / M.codeOfId(id) / M.codeOfCode('Edu 01-Sneha-L') / M.text(str, assetId)
 async function load(force = false) {
   const c = await context(force);
   const textFor = (s, assetId) => {
     if (s == null) return s;
-    let t = strip(s, c.holder.get(assetId));
+    let t = NAMES_SHOWN ? String(s) : strip(s, c.holder.get(assetId));
     t = t.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '').replace(/\+?\d[\d\s-]{8,}\d/g, '');
     return t.replace(/\s{2,}/g, ' ').replace(/^[\s·|,-]+|[\s·|,-]+$/g, '').trim();
   };
   return {
-    code: (a) => (a && a.id && c.final.get(a.id)) || (a && a.id ? fallback(a.id) : null),
-    codeOfId: (id) => c.final.get(id) || (id ? fallback(id) : null),
+    code: (a) => (NAMES_SHOWN && a && a.assetCode ? a.assetCode : ((a && a.id && c.final.get(a.id)) || (a && a.id ? fallback(a.id) : null))),
+    codeOfId: (id) => (NAMES_SHOWN && c.realCode && c.realCode.get(id)) || c.final.get(id) || (id ? fallback(id) : null),
     // by the company's real code (an invoice that kept the code it was sent with)
-    codeOfCode: (code) => (code == null ? null : (c.byCode.get(code) || (c.global ? stripCodeOnly(code, c.global) : code))),
+    codeOfCode: (code) => (code == null ? null : (NAMES_SHOWN ? code : (c.byCode.get(code) || (c.global ? stripCodeOnly(code, c.global) : code)))),
     text: textFor,
     // a plain string that may hold the real code of an asset: swap the real code for the vendor-facing one
     scrub: (s, assetId) => textFor(s, assetId),
@@ -106,4 +112,4 @@ async function load(force = false) {
 // An unknown code (asset deleted since): the same generic clean-up, with no holder.
 function stripCodeOnly(code, global) { return baseCode({ id: 'unknown000000', assetCode: code }, null, global); }
 
-module.exports = { load, reset, context, partsOf, baseCode, fallback };
+module.exports = { load, reset, context, partsOf, baseCode, fallback, NAMES_SHOWN };

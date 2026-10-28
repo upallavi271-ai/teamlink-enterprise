@@ -17,6 +17,8 @@ const hrmsNotify = require('../utils/hrmsNotify');
 const earlyLogout = require('../utils/earlyLogoutCheck');
 const genuine = require('../utils/leaveGenuine');
 const leaveMeta = require('../utils/leaveMeta');
+const leadRule = require('../utils/leadLeave');
+const markedLeave = require('../utils/markedLeave');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -323,6 +325,28 @@ async function wouldExceedConcurrentCap(employee, fromDate, toDate) {
   return null;
 }
 
+// OVER THE TL LIMIT = NO TL DECISION AT ALL (founder 2026-10-28: "2 days kante ekkuva TL asala approve cheyaledu, HR, Super Admin
+// matram chestaru"). An employee's request longer than the TL limit (HR leave settings, default 2 days) skips the TL: every step
+// before HR is shown as Visibility and HR decides (the Super Admin may decide directly, as always). Returns the HR step or null.
+// A TL's OWN leave keeps its own rule (utils/leadLeave.js: only the Super Admin approves it).
+const PAST_TL_NOTE = 'Not needed - this leave is longer than the TL limit, so HR / the Super Admin decide it. Shown for information.';
+async function sendPastTl(leaveId) {
+  const steps = await prisma.approvalStep.findMany({ where: { workflow: WF, recordId: leaveId }, orderBy: { seq: 'asc' } });
+  const hr = steps.find((s) => s.level === 'HR' && ['Waiting', 'Pending'].includes(s.status));
+  if (!hr) return null;
+  await prisma.approvalStep.updateMany({
+    where: { workflow: WF, recordId: leaveId, seq: { lt: hr.seq }, status: { in: ['Pending', 'Waiting'] } },
+    data: { status: 'Visibility', note: PAST_TL_NOTE },
+  });
+  if (hr.status !== 'Pending') await prisma.approvalStep.update({ where: { id: hr.id }, data: { status: 'Pending', activatedAt: new Date() } });
+  return hr;
+}
+async function overTlLimit(leave, employee) {
+  if (!employee || await leadRule.isLeadEmployee(employee)) return false;
+  const verdict = await policy.evaluateTlRule(await policy.getTlRule(), leave);
+  return !!(verdict.rule && verdict.rule.enabled && !verdict.allowed);
+}
+
 router.post('/', async (req, res, next) => {
   try {
   const { type, fromDate, reason } = req.body;
@@ -423,6 +447,7 @@ router.post('/', async (req, res, next) => {
         applicantUserId: employee.userId || null,
         applicantName: employee.name,
       });
+      if (await overTlLimit(leave, employee)) await sendPastTl(leave.id);
       chain = workflow.summarize(await workflow.loadSteps(WF, leave.id));
     }
   } catch (err) {
@@ -487,12 +512,34 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   let stopsHere = false;
   let toHrNext = false;
   if (status === 'Approved' && existing.status === 'Pending' && pendingStep && pendingStep.level === 'HR') stopsHere = true;
+  // OVER THE TL LIMIT (founder 2026-10-28, sendPastTl above): the TL neither approves nor rejects it. A request raised before
+  // this rule that still waits on the TL is moved to HR now, and the TL is told so.
+  if (['Approved', 'Rejected'].includes(status) && existing.status === 'Pending' && pendingStep && pendingStep.level === 'TL'
+    && policy.actingAsTl(req.user, pendingStep) && await overTlLimit(existing, existing.employee)) {
+    const hr = await sendPastTl(existing.id);
+    if (hr) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: hr.approverUserId }).catch(() => {});
+    const rule = await policy.getTlRule();
+    return res.status(409).json({
+      error: `This leave is longer than ${rule.limit} day${rule.limit === 1 ? '' : 's'}, so a TL cannot approve or reject it. It is now with HR / the Super Admin.`,
+      overTlLimit: true, sentTo: hr ? 'HR' : null,
+    });
+  }
   if (status === 'Approved' && existing.status === 'Pending' && policy.actingAsTl(req.user, pendingStep)) {
     const verdict = await policy.evaluateTlRule(await policy.getTlRule(), existing);
     if (verdict.allowed && verdict.rule && verdict.rule.enabled && pendingStep && pendingStep.level === 'TL') stopsHere = true;
     if (!verdict.allowed && pendingStep && pendingStep.level === 'TL') toHrNext = true;
     if (!comment && !String(approvalReason || '').trim()) {
       return res.status(400).json({ error: 'A reason is required when a TL approves a leave request.', tlReasonRequired: true });
+    }
+  }
+  // A TL'S LEAVE (founder 2026-10-28, utils/leadLeave.js): only the real Super Admin's approval grants it. Anybody else approving
+  // (HR, STL, Internal HR ...) records their approval and sends it to the Super Admin; the request stays Pending.
+  const leadLeave = status === 'Approved' && existing.status === 'Pending' && !!pendingStep && await leadRule.isLeadEmployee(existing.employee);
+  const bySuperAdmin = leadRule.isRealSuperAdmin(req.user);
+  if (leadLeave) {
+    stopsHere = bySuperAdmin; toHrNext = false;
+    if (!bySuperAdmin && pendingStep.level === 'SUPER_ADMIN') {
+      return res.status(409).json({ error: `This TL's leave is already with the Super Admin for final approval. Only the Super Admin can approve it.`, waitingFor: 'Super Admin', sentToSuperAdmin: true });
     }
   }
 
@@ -506,7 +553,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     // the same reason off the same list would be noise, not a control.
     // A Super Admin deciding directly (out of turn) IS the final step.
     const isDirect = workflow.hasDirectPower(req.user, WF, steps) && pendingStep.approverUserId !== req.user.id;
-    const isFinalStep = isDirect || stopsHere || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED);
+    const isFinalStep = leadLeave ? bySuperAdmin : (isDirect || stopsHere || !steps.some((s) => s.seq > pendingStep.seq && s.status === 'Waiting' && s.mode === workflow.MODE_REQUIRED));
     if (status === 'Approved' && isFinalStep) {
       const reasons = (await prisma.leaveReason.findMany()).filter((r) => r.active);
       if (days >= cfg.leaveReasonThresholdDays && reasons.length) {
@@ -514,11 +561,27 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
         if (!reasons.some((r) => r.label === approvalReason)) return res.status(400).json({ error: 'approvalReason must be one of the configured leave approval reasons', reasons: reasons.map((r) => r.label) });
       }
     }
-    const result = await workflow.act(WF, existing.id, req.user, {
-      decision: status,
-      note: status === 'Rejected' ? String(rejectReason).trim() : ([comment, approvalReason].filter(Boolean).join(' — ') || null),
-    });
+    const stepNote = status === 'Rejected' ? String(rejectReason).trim() : ([comment, approvalReason].filter(Boolean).join(' — ') || null);
+    let result;
+    if (leadLeave && !bySuperAdmin && pendingStep.approverUserId !== req.user.id && workflow.hasDirectPower(req.user, WF, steps)) {
+      // Internal HR / an HR-super delegate approving out of turn: their approval is written on the step it sits at
+      // (never as a "Direct Super Admin Approval"), and the request goes on to the Super Admin below.
+      await prisma.approvalStep.update({
+        where: { id: pendingStep.id },
+        data: { status: 'Approved', actedAt: new Date(), actedByUserId: req.user.id, actedByName: req.user.name || req.user.email, note: stepNote || `Approved by ${req.user.name || req.user.email} out of turn` },
+      });
+      result = { complete: false, outcome: 'Pending', level: pendingStep.level, nextLevel: null };
+    } else {
+      result = await workflow.act(WF, existing.id, req.user, { decision: status, note: stepNote });
+    }
     if (result.error) return res.status(result.error.status).json(result.error.body);
+    let sentToSuperAdmin = false;
+    if (leadLeave && !bySuperAdmin) {
+      const saStep = await leadRule.sendToSuperAdmin(WF, existing.id, { by: req.user.name || req.user.email });
+      result.complete = false; result.outcome = 'Pending'; result.nextLevel = 'SUPER_ADMIN';
+      sentToSuperAdmin = true;
+      if (saStep && saStep.approverUserId) hrmsNotify.leaveRaised({ leave: existing, employee: existing.employee, toUserId: saStep.approverUserId }).catch(() => {});
+    }
     if (toHrNext && !result.complete) {
       const hrStep = steps.find((s) => s.level === 'HR' && s.seq > pendingStep.seq && ['Waiting', 'Pending'].includes(s.status));
       if (hrStep) {
@@ -532,7 +595,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
       }
     }
     if (stopsHere && !result.complete) {
-      const who = pendingStep.level === 'HR' ? 'HR' : 'the TL (within the TL leave limit)';
+      const who = leadLeave ? 'the Super Admin' : pendingStep.level === 'HR' ? 'HR' : 'the TL (within the TL leave limit)';
       await prisma.approvalStep.updateMany({
         where: { workflow: WF, recordId: existing.id, status: { in: ['Pending', 'Waiting'] } },
         data: { status: 'Visibility', note: `Not needed - approved by ${who}. Shown for information.` },
@@ -553,7 +616,7 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
     // STILL CLIMBING — the LeaveRequest stays Pending and no balance moves.
     if (!result.complete) {
       const view = await workflow.view(WF, existing.id, req.user, { canAct: false });
-      return res.json({ ...existing, status: 'Pending', workflow: view });
+      return res.json({ ...existing, status: 'Pending', workflow: view, ...(sentToSuperAdmin ? { sentToSuperAdmin: true, waitingFor: 'Super Admin', message: `${leadRule.SENT_MESSAGE}.` } : {}) });
     }
   }
 
@@ -617,6 +680,8 @@ router.patch('/:id/decision', requirePerm(null, 'hrms', 'Leave & Holidays', 'app
   }
 
   await logAudit({ userId: req.user.id, action: 'Leave ' + status.toLowerCase(), entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: status });
+  // A leave HR marked in Daily marking that is rejected / cancelled: the day's "Leave" mark goes too (utils/markedLeave.js).
+  if (status === 'Rejected' || status === 'Cancelled') await markedLeave.clearMarks(existing, req.user, status).catch((e) => console.error('[leave] clearing the leave mark failed', e.message));
   // Item 14: tell the employee (in-app, and email per the Admin setting).
   if (status === 'Approved') require('../utils/attendanceTasks').closeFixedFor(existing.employeeId); // an approved leave fixes the day: its attendance task closes
   if (status === 'Approved' || status === 'Rejected') hrmsNotify.leaveDecided({ leave, employee: existing.employee, by: req.user }).catch((e) => console.error('[leave] notify failed', e.message));

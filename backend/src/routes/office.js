@@ -161,6 +161,8 @@ async function isApprover(user) {
   if (accountsRoleOf(user) !== 'ACCOUNTANT') return false;
   return can(user, 'accounts', 'accounts', 'Office & Expenses', 'approve');
 }
+// Edit a vendor (Office & Expenses → Vendors): Admin / Super Admin and the Accountant (2026-10-28, founder).
+const mayEditVendors = (user) => ['SUPER_ADMIN', 'ADMIN', 'ACCOUNTANT'].includes(accountsRoleOf(user));
 const APPROVER_ONLY = 'Only the Accounts Admin / Approver (Super Admin, Admin, or an Accountant with approve on Office & Expenses) may do this';
 
 function monthsCoveredOf(e) {
@@ -1406,6 +1408,7 @@ router.get('/ledger', async (req, res) => {
       override: isAdminLike(req.user),
       export: await can(req.user, 'accounts', 'accounts', 'Office & Expenses', 'export'),
       edit: await can(req.user, 'accounts', 'accounts', 'Office & Expenses', 'edit'),
+      editVendors: mayEditVendors(req.user) && await can(req.user, 'accounts', 'accounts', 'Office & Expenses', 'edit'),
     },
     definitions: {
       after: 'After GST = Before GST + GST',
@@ -1984,6 +1987,33 @@ router.post('/vendors', async (req, res) => {
     vendorId: row.id, changedById: req.user.id, actorName: actor.name, role: 'Accounts', action: 'Vendor added', newValue: `${row.vendorCode} · ${row.name}`,
   });
   return res.status(201).json(row);
+});
+
+// Edit a vendor from Office & Expenses → Vendors. THE SAME VENDOR MASTER AND RULES AS ADMIN → VENDORS
+// (utils/vendorMaster.js updateVendor: duplicate GSTIN / PAN / email / name refused, near-duplicates confirmed,
+// GSTIN checksum, PAN must match the GSTIN), the same two audit trails. Admin / Super Admin / Accountant only,
+// on top of the router's Office & Expenses edit guard. Switching a vendor off stays with Admin → Vendors.
+router.patch('/vendors/:id', async (req, res) => {
+  if (!mayEditVendors(req.user)) return res.status(403).json({ error: 'Only Admin and the Accountant can edit a vendor.' });
+  const VM = require('../utils/vendorMaster'); // eslint-disable-line global-require
+  const actor = { id: req.user.id, name: req.user.name || req.user.email || null };
+  const { isActive, ...body } = req.body || {}; // eslint-disable-line no-unused-vars
+  const out = await VM.updateVendor(req.params.id, body, { actor });
+  if (!out.row) return res.status(out.status).json(out.body);
+  for (const c of out.changes) {
+    // eslint-disable-next-line no-await-in-loop
+    await require('../utils/vendorPortal').auditReq(req, { // eslint-disable-line global-require
+      vendorId: out.row.id, changedById: req.user.id, actorName: actor.name, role: 'Accounts', action: 'Vendor edited', field: c.field, oldValue: c.from, newValue: c.to,
+    });
+  }
+  if (out.changes.length) {
+    await logAudit({
+      userId: req.user.id, actorName: actor.name, action: 'Vendor edited', entity: 'OfficeVendor', entityId: out.row.id,
+      fromValue: out.changes.map((c) => `${c.label}: ${c.from || '—'}`).join(' · ').slice(0, 500),
+      toValue: out.changes.map((c) => `${c.label}: ${c.to || '—'}`).join(' · ').slice(0, 500),
+    });
+  }
+  return res.json({ vendor: out.row, changed: out.changes.map((c) => c.field), message: out.unchanged ? 'Nothing changed.' : 'Saved.' });
 });
 
 // What this login may do on the approval lifecycle — the screen asks rather

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { BarList, Meter } from '../../components/Chart.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { downloadCsv } from '../../utils/csv.js';
@@ -33,16 +34,16 @@ export default function AccountsReports() {
   // The margin reads the invoice register — only for logins that hold Invoices.
   const canMargin = can(user, 'accounts', 'accounts', 'Invoices', 'view');
   // Two views: this page's receivables, and the Client revenue report (§17).
-  const [view, setView] = useState('ledger');
+  const [view, setView] = useKeptState('accounts.reports.view', 'ledger'); // this view and its filters are kept when you leave and come back
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   // Search + Client narrow the client tables here; the Date range is asked of
   // the API (invoice date / bill date / statement date) and narrows every figure.
-  const [client, setClient] = useState('');
-  const [q, setQ] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
-  const [sort, setSort] = useState('pending');
+  const [client, setClient] = useKeptState('accounts.reports.client', '');
+  const [q, setQ] = useKeptState('accounts.reports.q', '');
+  const [from, setFrom] = useKeptState('accounts.reports.from', '');
+  const [to, setTo] = useKeptState('accounts.reports.to', '');
+  const [sort, setSort] = useKeptState('accounts.reports.sort', 'pending');
   // The list behind a number, opened right under the block it was clicked in.
   const [drill, setDrill] = useState(null);
 

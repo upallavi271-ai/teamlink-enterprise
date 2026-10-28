@@ -17,7 +17,9 @@ import { payrollCalc, payrollCalcProblems } from '../../utils/payrollCalc';
 import PayrollEditHistory from './PayrollEditHistory.jsx';
 import './payrollEdit.css';
 
-const inr = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+// Paise are shown when there are any (pay-register months are worked out to the paisa, 2026-10-28).
+const p2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const inr = (n) => { const v = p2(n); return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
 const num = (v) => (v === '' || v === null || v === undefined ? 0 : Number(v));
 
 const EARN = [
@@ -39,7 +41,7 @@ const LABELS = {
 };
 
 function Delta({ before, after, goodWhenUp = true }) {
-  const d = Math.round(after) - Math.round(before);
+  const d = p2(p2(after) - p2(before));
   if (!d) return <span className="pe-same">no change</span>;
   const good = goodWhenUp ? d > 0 : d < 0;
   return <span className={good ? 'pe-up' : 'pe-down'}>{d > 0 ? '+' : '−'}{inr(Math.abs(d))}</span>;
@@ -138,7 +140,7 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
   const editable = data.canEdit;
   const setV = (k, v) => setVals((s) => ({ ...s, [k]: v }));
   const shown = (k) => (AUTO.includes(k) && !manual[k] ? res[k] : vals[k]);
-  const changedField = (k) => Math.round(num(shown(k))) !== Math.round(num(orig[k]));
+  const changedField = (k) => p2(num(shown(k))) !== p2(num(orig[k]));
 
   function tick(k, on) {
     setManual((m) => ({ ...m, [k]: on }));
@@ -159,7 +161,7 @@ export default function PayrollEditor({ entryId, canAdjust = false, onClose, onS
   [...EARN, ['stipend', 'Stipend'], ...AUTO_DED, ...PLAIN_DED, ...EMPLOYER, ['workingDays', 'Working days'], ['daysLop', 'LOP days']].forEach(([k]) => {
     if (k === 'stipend' && !stipend) return;
     if (['basic', 'hra', 'conveyance', 'specialAllowance', 'bonus'].includes(k) && stipend) return;
-    const a = Math.round(num(orig[k])); const b = Math.round(num(shown(k)));
+    const a = p2(num(orig[k])); const b = p2(num(shown(k)));
     if (a !== b) changes.push({ k, label: LABELS[k], a, b, days: k === 'workingDays' || k === 'daysLop' });
   });
   if (vals.awlDays !== null && Number(vals.awlDays) !== Number(orig.awlDays)) changes.push({ k: 'awlDays', label: LABELS.awlDays, a: orig.awlDays, b: num(vals.awlDays), days: true });

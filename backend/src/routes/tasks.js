@@ -206,10 +206,11 @@ function decorate(t, now = today()) {
     priority: t.priority || 'Medium',
     overdue,
     daysLate: overdue ? daysBetween(t.endDate, now) : 0,
-    displayStatus: overdue ? 'Overdue' : t.status,
+    // founder 2026-10-27: a task the person marked done is COMPLETED only once their TL approved it
+    displayStatus: overdue ? 'Overdue' : (t.status === 'Completed' && t.reviewState === 'Pending Review' ? 'Waiting for TL approval' : t.status),
     // Completion in words, from the stamps the lifecycle already keeps.
     completion: t.status === 'Completed'
-      ? (t.reviewState === 'Approved' ? 'Completed and approved' : t.reviewState === 'Pending Review' ? 'Completed, waiting for review' : 'Completed')
+      ? (t.reviewState === 'Approved' ? 'Completed (TL approved)' : t.reviewState === 'Pending Review' ? 'Done, waiting for TL approval' : 'Completed')
       : t.status === 'Cancelled' ? 'Cancelled' : t.status === 'In Progress' ? 'In progress' : t.status === 'On Hold' ? 'On hold' : 'Not started',
   };
 }
@@ -408,6 +409,85 @@ async function reachable(me, id) {
 
 const VIEW = requirePerm('hrms', 'hrms', 'Employee Services', 'view');
 
+// --- WHO APPROVES A FINISHED TASK (founder 2026-10-27) -------------------------------------------------------------------------
+// "Employee thanu assign chesukunna, TL assign chesina, Super Admin / HR evaru ichina - TL approve cheyali, chestene adi complete."
+// The approver is the person's TL = their reporting manager on the employee record. The Super Admin may always approve. Nobody
+// approves their own task. A person with no reporting manager on file: anyone with the approve right who can reach the task (as before).
+async function tlOfUsers(userIds) {
+  const rows = await prisma.employee.findMany({ where: { userId: { in: [...new Set(userIds.filter(Boolean))] } }, select: { userId: true, reportingManager: { select: { userId: true, name: true } } } });
+  return new Map(rows.map((e) => [e.userId, e.reportingManager && e.reportingManager.userId ? { userId: e.reportingManager.userId, name: e.reportingManager.name } : null]));
+}
+const isSuperAdmin = (me) => [me.role, me.hrmsRole].some((r) => String(r || '').toUpperCase() === 'SUPER_ADMIN');
+async function reviewerOk(me, t, tl, canApprove) {
+  if (t.assigneeId === me.id) return { ok: false, why: 'Your own task is approved by your TL, not by you.' };
+  if (isSuperAdmin(me)) return { ok: true };
+  if (tl) return tl.userId === me.id ? { ok: true } : { ok: false, why: `Only ${tl.name} (${t.assigneeName}'s TL) or the Super Admin can approve this task.` };
+  const may = canApprove !== undefined ? canApprove : await can(me, 'hrms', 'hrms', 'Employee Services', 'approve');
+  return may ? { ok: true } : { ok: false, why: `${t.assigneeName} has no TL on file; only someone who may approve tasks (or the Super Admin) can approve it.` };
+}
+
+// --- END OF DAY: every task's state, for the Super Admin (and a lead, for their own people) -------------------------------------
+// "Superadmin ki end of the day ah task complete inda, partially completed, in progress lo unda anni clear ga teliyali."
+//   completed   approved by the TL that day (or finished before the review step existed)
+//   waiting     marked done - waiting for the TL's approval
+//   sentback    the TL sent it back with changes
+//   partial     worked on (hours logged or an add-on done) but not finished - "Partly done"
+//   inprogress  started, nothing logged yet       onhold   on hold        notstarted   not started
+// Each carries "late" when its due day has passed. Tasks finished on an earlier day and cancelled tasks are left out.
+const DAY_STATES = [
+  ['completed', 'Completed (TL approved)'], ['waiting', 'Done - waiting for TL approval'], ['sentback', 'Sent back by TL'],
+  ['partial', 'Partly done'], ['inprogress', 'In progress'], ['onhold', 'On hold'], ['notstarted', 'Not started'],
+];
+const istDay = (d) => (d ? new Date(d).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) : null);
+async function dayEndReport({ day = today(), userIds = null } = {}) {
+  const where = { status: { not: 'Cancelled' }, OR: [{ startDate: null }, { startDate: { lte: day } }] };
+  if (userIds) where.assigneeId = { in: userIds };
+  const all = await prisma.task.findMany({ where, include: { addOns: { select: { done: true } } }, orderBy: [{ assigneeName: 'asc' }, { endDate: 'asc' }], take: 5000 });
+  const tasks = all.filter((t) => OPEN_STATUSES.includes(t.status) || t.reviewState === 'Pending Review'
+    || istDay(t.completedAt) === day || istDay(t.reviewedAt) === day);
+  const ids = tasks.map((t) => t.id);
+  const [total, todayHrs, tls] = await Promise.all([hoursMap(ids), hoursMap(ids, { from: day, to: day }), tlOfUsers(tasks.map((t) => t.assigneeId))]);
+  const emps = await prisma.employee.findMany({ where: { userId: { in: [...new Set(tasks.map((t) => t.assigneeId))] } }, select: { userId: true, department: true, employeeCode: true } });
+  const empOf = new Map(emps.map((e) => [e.userId, e]));
+  const counts = Object.fromEntries(DAY_STATES.map(([k]) => [k, 0]));
+  let late = 0;
+  const people = new Map();
+  tasks.forEach((t) => {
+    const hrs = total.logged.get(t.id) || 0;
+    const addOnsDone = (t.addOns || []).filter((a) => a.done).length;
+    let state;
+    if (t.status === 'Completed') state = t.reviewState === 'Pending Review' ? 'waiting' : 'completed';
+    else if (t.reviewState === 'Changes Requested') state = 'sentback';
+    else if (hrs > 0 || addOnsDone > 0) state = 'partial';
+    else state = t.status === 'In Progress' ? 'inprogress' : t.status === 'On Hold' ? 'onhold' : 'notstarted';
+    const isLate = isOverdue(t, day);
+    counts[state] += 1;
+    if (isLate) late += 1;
+    const why = state === 'partial' ? [hrs ? `${round2(hrs)} h worked` : null, (t.addOns || []).length ? `${addOnsDone} of ${t.addOns.length} add-ons done` : null].filter(Boolean).join(', ')
+      : state === 'sentback' ? (t.reviewNote || '') : state === 'completed' && t.reviewedByName ? `approved by ${t.reviewedByName}` : '';
+    if (!people.has(t.assigneeId)) {
+      const e = empOf.get(t.assigneeId) || {}; const tl = tls.get(t.assigneeId);
+      people.set(t.assigneeId, { userId: t.assigneeId, name: t.assigneeName, employeeCode: e.employeeCode || null, department: e.department || t.department || null, tl: tl ? tl.name : null, tasks: [] });
+    }
+    people.get(t.assigneeId).tasks.push({
+      id: t.id, name: t.name, state, label: (DAY_STATES.find(([k]) => k === state) || [])[1], why, late: isLate, daysLate: isLate ? daysBetween(t.endDate, day) : 0,
+      due: t.endDate, givenBy: t.assignedById === t.assigneeId ? 'Self' : t.assignedByName, hoursToday: todayHrs.logged.get(t.id) || 0, hoursTotal: round2(hrs),
+    });
+  });
+  return { day, counts, late, total: tasks.length, states: DAY_STATES.map(([key, label]) => ({ key, label })), people: [...people.values()] };
+}
+
+router.get('/day-end', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const day = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.date || '')) ? String(req.query.date) : today();
+    // the Super Admin / HR see everyone; a lead their own people; anyone else only themselves
+    const v = await viewable(me);
+    const userIds = v.global ? null : v.people.map((x) => x.userId).filter(Boolean);
+    return res.json(await dayEndReport({ day, userIds }));
+  } catch (err) { return next(err); }
+});
+
 // --- Options the screen renders --------------------------------------------
 router.get('/options', VIEW, async (req, res, next) => {
   try {
@@ -551,14 +631,22 @@ router.get('/', VIEW, async (req, res, next) => {
     });
     const assigneeOf = Object.fromEntries(assignees.map((e) => [e.userId, e]));
     const now = today();
+    const tlMap = await tlOfUsers(tasks.map((t) => t.assigneeId));
+    const canApproveTasks = await can(req.user, 'hrms', 'hrms', 'Employee Services', 'approve');
+    const reviewable = new Set();
+    for (const t of tasks.filter((x) => x.reviewState === 'Pending Review')) { // eslint-disable-line no-restricted-syntax
+      // eslint-disable-next-line no-await-in-loop
+      if ((await reviewerOk(req.user, t, tlMap.get(t.assigneeId) || null, canApproveTasks)).ok) reviewable.add(t.id);
+    }
     res.json(tasks.map((t) => ({
       ...decorate(t, now),
+      approver: (tlMap.get(t.assigneeId) || {}).name || null,
       commentCount: commentCount[t.id] || 0,
       assignee: assigneeOf[t.assigneeId] || null,
       hoursLogged: hrs.logged.get(t.id) || 0,
       estimatedHours: hrs.estimate.has(t.id) ? hrs.estimate.get(t.id) : null,
       cancelReason: t.status === 'Cancelled' ? (t.reviewNote || null) : null,
-      rights: rightsOf(t),
+      rights: { ...rightsOf(t), review: reviewable.has(t.id) },
     })));
   } catch (err) { next(err); }
 });
@@ -611,7 +699,7 @@ router.get('/reports', VIEW, async (req, res, next) => {
       row.total += 1;
       row.hoursLogged = round2(row.hoursLogged + (hrs.logged.get(t.id) || 0));
       row.estimatedHours = round2(row.estimatedHours + (hrs.estimate.get(t.id) || 0));
-      if (t.status === 'Completed') row.completed += 1;
+      if (t.status === 'Completed' && t.reviewState !== 'Pending Review') row.completed += 1;
       else if (OPEN_STATUSES.includes(t.status)) row.open += 1;
       if (t.endDate && t.endDate < now && OPEN_STATUSES.includes(t.status)) row.overdue += 1;
       if (t.reviewState === 'Pending Review') row.awaitingReview += 1;
@@ -625,7 +713,7 @@ router.get('/reports', VIEW, async (req, res, next) => {
       let row = byDepartment.find((r) => r.department === key);
       if (!row) { row = { department: key, total: 0, completed: 0 }; byDepartment.push(row); }
       row.total += 1;
-      if (t.status === 'Completed') row.completed += 1;
+      if (t.status === 'Completed' && t.reviewState !== 'Pending Review') row.completed += 1;
     });
     byDepartment.sort((a, b) => b.total - a.total);
 
@@ -1520,7 +1608,10 @@ router.delete('/:id/hours/:entryId', VIEW, async (req, res, next) => {
 router.post('/review-batch', VIEW, async (req, res, next) => {
   try {
     const me = req.user;
-    if (!(await can(me, 'hrms', 'hrms', 'Employee Services', 'approve'))) return res.status(403).json(DENIED);
+    const canApprove = await can(me, 'hrms', 'hrms', 'Employee Services', 'approve');
+    // somebody's TL may approve their people's tasks even without the general approve right; nobody else gets in
+    const isTlOfSomeone = !!(me.employeeId && await prisma.employee.count({ where: { reportingManagerId: me.employeeId } }));
+    if (!canApprove && !isSuperAdmin(me) && !isTlOfSomeone) return res.status(403).json(DENIED);
     const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(String))].slice(0, 200);
     if (!ids.length) return res.status(400).json({ error: 'Pick the finished tasks to approve.' });
     const done = [];
@@ -1532,6 +1623,9 @@ router.post('/review-batch', VIEW, async (req, res, next) => {
       const t = found.task;
       if (t.reviewState !== 'Pending Review') { skipped.push({ id, why: 'not waiting for a check' }); continue; }
       if (t.assigneeId === me.id) { skipped.push({ id, why: 'your own task' }); continue; }
+      // eslint-disable-next-line no-await-in-loop
+      const who = await reviewerOk(me, t, (await tlOfUsers([t.assigneeId])).get(t.assigneeId) || null, canApprove);
+      if (!who.ok) { skipped.push({ id, why: 'not your team member (their TL approves it)' }); continue; }
       // eslint-disable-next-line no-await-in-loop
       const task = await prisma.task.update({
         where: { id: t.id },
@@ -1684,7 +1778,10 @@ router.post('/:id/complete', VIEW, async (req, res, next) => {
     });
     // The person who gave the task hears it is done (their bell + daily email).
     await quiet(hrmsNotify.taskDone(task, me));
-    res.json(task);
+    // ...and the TL, who approves it (founder 2026-10-27)
+    const tl = (await tlOfUsers([task.assigneeId])).get(task.assigneeId);
+    if (tl && tl.userId !== task.assignedById && tl.userId !== me.id) await quiet(hrmsNotify.taskChanged(task, me, 'Waiting for your approval', `${me.name} finished "${task.name}". Check it and approve it on the Timesheet - it counts as completed only after you approve.`, tl.userId));
+    res.json({ ...task, approver: tl ? tl.name : null });
   } catch (err) { next(err); }
 });
 
@@ -1697,9 +1794,9 @@ router.post('/:id/review', VIEW, async (req, res, next) => {
     const me = req.user;
     const found = await reachable(me, req.params.id);
     if (found.error) return res.status(found.status).json(found.error);
-    const mayReview = await can(me, 'hrms', 'hrms', 'Employee Services', 'approve');
-    if (!mayReview) return res.status(403).json(DENIED);
     const t = found.task;
+    const who = await reviewerOk(me, t, (await tlOfUsers([t.assigneeId])).get(t.assigneeId) || null);
+    if (!who.ok) return res.status(403).json({ error: who.why });
     if (t.reviewState !== 'Pending Review') {
       return res.status(400).json({ error: 'That task is not waiting for a review.' });
     }
@@ -1774,6 +1871,7 @@ module.exports.PRIORITIES = PRIORITIES;
 module.exports.PRIORITY_RANK = PRIORITY_RANK;
 module.exports.OPEN_STATUSES = OPEN_STATUSES;
 module.exports.isOverdue = isOverdue;
+module.exports.dayEndReport = dayEndReport;
 module.exports.decorate = decorate;
 module.exports.REVIEW_STATES = REVIEW_STATES;
 module.exports.createTask = createTask;

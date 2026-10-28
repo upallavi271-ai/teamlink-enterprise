@@ -5,6 +5,7 @@ import Combo from '../Combo.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import { clearMyWaNumbers } from '../messaging/WaSender.jsx';
 import { chipTone, chipWords, fmtNumber } from '../messaging/waSender.js';
+import { useActiveDepartments, keepActive } from '../../utils/activeDepartments.js';
 import './comm.css';
 
 // ---------------------------------------------------------------------------
@@ -257,6 +258,7 @@ function Actions({ n, busy, setModal, act, data }) {
 
 // ---- Add / Edit ------------------------------------------------------------------------------------------------------------
 function EditModal({ data, n, onClose, onSaved }) {
+  const liveDepts = useActiveDepartments(); // only switched-on Department & Team names (+ ones already ticked)
   const editing = !!n;
   const main = !!(n && n.isMain);
   const [f, setF] = useState(() => (n ? { ...BLANK, label: n.label, displayNumber: n.displayNumber, phoneNumberId: n.phoneNumberId, wabaId: n.wabaId, tokenMode: n.tokenMode || 'own', language: n.language, tplLink: n.tplLink, tplOtp: n.tplOtp, tplBulk: n.tplBulk, departments: n.departments || [] } : { ...BLANK }));
@@ -328,7 +330,7 @@ function EditModal({ data, n, onClose, onSaved }) {
 
       <h4 className="wn-h4">Which departments use it?</h4>
       <div className="dept-checklist wn-depts" role="group" aria-label="Departments">
-        {data.departments.map((d) => (
+        {keepActive(liveDepts, data.departments, (d) => d, f.departments).map((d) => (
           <label key={d}><input type="checkbox" checked={f.departments.includes(d)} onChange={() => toggleDept(d)} /> {d}</label>
         ))}
       </div>
@@ -355,6 +357,7 @@ function EditModal({ data, n, onClose, onSaved }) {
 
 // ---- Assign -----------------------------------------------------------------------------------------------------------------
 function AssignModal({ data, n, onClose, onSaved }) {
+  const liveDepts = useActiveDepartments(); // only switched-on Department & Team names (+ ones already ticked)
   const [tab, setTab] = useState('dept');
   const [sel, setSel] = useState(() => ({ departments: new Set(n.departments || []), userIds: new Set((n.users || []).map((u) => u.id)), roles: new Set((n.roles || []).map((r) => r.code)), everyone: !!n.everyone }));
   const [people, setPeople] = useState(null);
@@ -401,7 +404,7 @@ function AssignModal({ data, n, onClose, onSaved }) {
       </div>
       {tab === 'dept' && (
         <div className="dept-checklist wn-depts wn-tall" role="group" aria-label="Departments">
-          {(counts || data.departments.map((d) => ({ name: d, people: null }))).map((d) => (
+          {keepActive(liveDepts, counts || data.departments.map((d) => ({ name: d, people: null })), (d) => d.name, [...sel.departments]).map((d) => (
             <label key={d.name}><input type="checkbox" checked={sel.departments.has(d.name)} onChange={() => flip('departments', d.name)} /> {d.name}{d.people != null ? <span className="cm-sub"> · {d.people} {d.people === 1 ? 'person' : 'people'}</span> : null}</label>
           ))}
         </div>

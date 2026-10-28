@@ -774,7 +774,7 @@ export default function Employees() {
           <h3>Transfer {transferTarget.name}</h3>
           <div className="grid-2">
             <label className="field"><span>Department</span>
-              <Combo creatable required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
+              <Combo departments creatable required value={transferForm.department} onChange={(e) => setTransferForm({ ...transferForm, department: e.target.value, team: '' })}>
                 <option value="">Select department</option>
                 {deptTree.map((d) => <option key={d.id} value={d.name}>{d.name}</option>)}
               </Combo></label>
@@ -1349,7 +1349,7 @@ export default function Employees() {
               <input value={(options.productAccess[roleTarget.role] || {}).accounts || '—'} disabled /></div>
           </div>
           <div className="field"><label>Primary department</label>
-            <Combo creatable value={roleTarget.atsDepartment || ''} onChange={(e) => setRoleTarget({ ...roleTarget, atsDepartment: e.target.value })}>
+            <Combo departments creatable value={roleTarget.atsDepartment || ''} onChange={(e) => setRoleTarget({ ...roleTarget, atsDepartment: e.target.value })}>
               <option value="">Organization</option>
               {options.departments.map((d) => <option key={d}>{d}</option>)}
             </Combo></div>
@@ -1498,7 +1498,9 @@ export default function Employees() {
 // compound role like "Medical Recruiter" to choose anywhere.
 // Add Employee's department picker: "All departments" plus one box per
 // department. The order ticked is kept — the first is the home department.
-function DepartmentChecklist({ all, value, onChange }) {
+function DepartmentChecklist({ all: master, value, onChange }) {
+  // The switched-on master departments, plus any already ticked (an old name stays visible, never silently dropped).
+  const all = [...master, ...value.filter((d) => d && !master.includes(d))];
   const allOn = all.length > 0 && all.every((d) => value.includes(d));
   const toggle = (d, on) => onChange(on ? [...value.filter((x) => x !== d), d] : value.filter((x) => x !== d));
   return (

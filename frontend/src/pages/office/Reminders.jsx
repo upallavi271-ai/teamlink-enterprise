@@ -87,7 +87,7 @@ export default function Reminders() {
 
   const items = useMemo(() => (data ? buildReminders(data) : []), [data]);
   const overdue = items.filter((x) => x.days < 0).length;
-  const lf = useListFilters(items, REM_FIELDS);
+  const lf = useListFilters(items, REM_FIELDS, { keep: 'office.reminders' });
   const list = lf.rows;
   const shown = all ? list : list.slice(0, SHOW);
 

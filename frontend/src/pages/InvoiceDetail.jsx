@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import RepliesPanel from '../components/omni/RepliesPanel.jsx'; // Omni-Channel: replies matched to this record (same replies as Inbox & Replies)
 import { Link, useLocation, useParams } from 'react-router-dom';
 import api from '../api';
@@ -11,6 +11,7 @@ import Combo from '../components/Combo.jsx';
 import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // P4 — GST & TDS: the invoice summary block and its edit form.
 import TaxEditModal from './invoices/TaxEditModal.jsx';
+import StatementView from './bank/StatementView.jsx';
 import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
 } from './invoices/invTax';
@@ -84,8 +85,10 @@ export default function InvoiceDetail() {
   const canNote = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
   const [openLine, setOpenLine] = useState(null); // payment id whose bank line is open under Proof
+  const [stmtOf, setStmtOf] = useState(null); // bank line whose statement is open (View Statement)
   const [lineData, setLineData] = useState({});
   const [lineErr, setLineErr] = useState({});
+  const lineAsked = useRef('');
   const [noteFor, setNoteFor] = useState(null); // null | { kind } | { draft }
   const [cancelNote, setCancelNote] = useState(null);
   const [refundNote, setRefundNote] = useState(null);
@@ -96,6 +99,8 @@ export default function InvoiceDetail() {
 
   const location = useLocation();
   const load = useCallback(() => {
+    // a reload (after a match / unmatch / payment) or another invoice: no proof from before stays on screen
+    setOpenLine(null); setLineData({}); setLineErr({}); lineAsked.current = '';
     api.get(`/invoices/${id}`).then((res) => setInvoice(res.data))
       .catch((e) => setError(e.response?.data?.error || 'This invoice could not be loaded.'));
     api.get(`/invoices/${id}/document`).then((res) => setDoc(res.data)).catch(() => setDoc(null));
@@ -130,13 +135,17 @@ export default function InvoiceDetail() {
     }
   };
   // "View Transaction": the real bank line behind one payment, opened right under the Proof.
-  const toggleLine = (p, line) => {
-    if (openLine === p.id) { setOpenLine(null); return; }
-    setOpenLine(p.id);
-    if (lineData[p.id]) return;
+  const lineKey = (p, line) => `${p.id}|${line.txnId}`;
+  const toggleLine = (p, line, forceOpen = false) => {
+    const k = lineKey(p, line);
+    if (openLine === k && !forceOpen) { setOpenLine(null); return; }
+    setOpenLine(k);
+    if (lineData[k]) return;
+    setLineErr((m) => { const n = { ...m }; delete n[k]; return n; });
+    lineAsked.current = k;
     api.get(`/invoices/${id}/bank-line/${line.txnId}`)
-      .then((r) => setLineData((m) => ({ ...m, [p.id]: r.data })))
-      .catch((e) => setLineErr((m) => ({ ...m, [p.id]: e.response?.data?.error || 'This bank line could not be opened.' })));
+      .then((r) => { if (lineAsked.current === k) setLineData((m) => ({ ...m, [k]: r.data })); })
+      .catch((e) => { if (lineAsked.current === k) setLineErr((m) => ({ ...m, [k]: e.response?.data?.error || 'This bank line could not be opened.' })); });
   };
   const viewTdsCert = async () => {
     try {
@@ -187,6 +196,10 @@ export default function InvoiceDetail() {
   const modes = [...new Set(payments.map((p) => p.method || '—'))];
   const histById = new Map((invoice.paymentHistory || []).map((h) => [h.id, h]));
   const hOf = (p) => histById.get(p.id) || {};
+  // each payment's bank reconciliation (Matched / review / not matched) and the line whose statement can be opened
+  const reconById = new Map((invoice.paymentRecon || []).map((r) => [r.paymentId, r]));
+  const rOf = (p) => reconById.get(p.id) || null;
+  const TONE = { green: 'priority-low', amber: 'priority-medium', red: 'priority-high' };
   const noProof = payments.filter((p) => !p.reference && !hOf(p).bankTxnId);
   const proofLines = invoice.proofLines || [];
   // Where the invoice stands by what has been matched against it.
@@ -431,6 +444,27 @@ export default function InvoiceDetail() {
           {invoice.firstPaymentDate && <span>First payment <b>{fmtD(invoice.firstPaymentDate)}</b></span>}
           {invoice.lastPaymentDate && invoice.lastPaymentDate !== invoice.firstPaymentDate && <span>Last payment <b>{fmtD(invoice.lastPaymentDate)}</b></span>}
         </div>
+        {invoice.reconSummary && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginBottom: 8, fontSize: 13 }} data-testid="pay-recon">
+            <span>Payment Status <b className={`status ${invoice.reconSummary.paymentStatus === 'Paid' ? 'priority-low' : invoice.reconSummary.paymentStatus === 'Unpaid' ? 'priority-high' : 'priority-medium'}`}>{invoice.reconSummary.paymentStatus}</b></span>
+            <span>Bank Reconciliation Status <b className={`status ${invoice.reconSummary.reconStatus === 'Matched' ? 'priority-low' : invoice.reconSummary.reconStatus === 'Unmatched' ? 'priority-high' : invoice.reconSummary.reconStatus === '—' ? '' : 'priority-medium'}`}>{invoice.reconSummary.reconStatus}</b></span>
+            {invoice.reconSummary.label !== `${invoice.reconSummary.paymentStatus} · ${invoice.reconSummary.reconStatus}` && invoice.reconSummary.reconStatus !== '—' && <b>{invoice.reconSummary.label}</b>}
+          </div>
+        )}
+        {invoice.verify && (
+          <div className={`notice ${invoice.verify.tone === 'green' ? 'green' : invoice.verify.tone === 'red' ? 'red' : invoice.verify.tone === 'amber' ? 'amber' : ''}`} style={{ marginBottom: 10, display: 'block' }} data-testid="pay-verify">
+            <div><b>{invoice.verify.label}</b> - {invoice.verify.reason}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, marginTop: 6, fontSize: 13 }}>
+              <span>Invoice amount <b>{money2(receivable)}</b></span>
+              <span>Payments recorded <b>{invoice.verify.installments}</b>{invoice.verify.installments ? ` (${invoice.verify.verifiedInstallments} matched to the bank)` : ''}</span>
+              <span>Verified by the bank <b>{money2(invoice.verify.verifiedAmount)}</b></span>
+              {invoice.verify.pendingVerification > 0.005 && <span>Waiting for verification <b>{money2(invoice.verify.pendingVerification)}</b></span>}
+              {invoice.verify.missingEvidence > 0.005 && <span>No evidence <b>{money2(invoice.verify.missingEvidence)}</b></span>}
+              <span>Outstanding <b>{money2(invoice.verify.outstanding)}</b></span>
+              {invoice.verify.lastPaymentDate && <span>Last payment <b>{fmtD(invoice.verify.lastPaymentDate)}</b></span>}
+            </div>
+          </div>
+        )}
         {invoice.unitemised > 0.005 && (
           <div className="small-muted" style={{ marginBottom: 8 }}>
             {money2(invoice.unitemised)} of the total came in without a receipt line (older import) — its date is not on file
@@ -441,8 +475,8 @@ export default function InvoiceDetail() {
           <table>
             <thead>
               <tr>
-                <th className="num">#</th><th>Payment date</th><th>Month</th><th className="num">Payment amount</th>
-                <th>Payment mode</th><th>Reference</th><th className="num">Balance after</th><th>Payment proof</th>
+                <th>Payment</th><th>Payment date</th><th>Month</th><th className="num">Payment amount</th><th className="num">Total paid so far</th>
+                <th>Payment mode</th><th>Reference</th><th className="num">Balance after</th><th>Source</th><th>Payment proof</th>
                 <th>Recorded by</th>{canManage && <th />}
               </tr>
             </thead>
@@ -453,17 +487,35 @@ export default function InvoiceDetail() {
                   run2 += Number(p.amount || 0);
                   return (
                     <tr key={p.id}>
-                      <td className="num">{i + 1}</td>
+                      <td>Payment {i + 1}</td>
                       <td>{fmtD(p.date)}</td>
                       <td>{monthOf(p.date)}</td>
                       <td className="num" style={{ fontWeight: 600 }}>{money2(p.amount)}</td>
+                      <td className="num">{money2(run2)}</td>
                       <td>{p.method || '—'}</td>
                       <td>{p.reference || hOf(p).bankLineReference || '—'}</td>
                       <td className="num">{money2(Math.max(0, receivable - run2))}</td>
+                      <td className="small-muted">{hOf(p).source || '—'}</td>
                       <td>
                         {hOf(p).bankTxnId
                           ? <span className="status priority-low" title={`Bank statement line dated ${fmtD(hOf(p).bankLineDate)}`}>bank statement{hOf(p).bankLineReference ? ` · ${hOf(p).bankLineReference}` : ''}</span>
-                          : (p.reference ? <span className="status priority-low">reference on file</span> : <span className="status priority-high">no proof</span>)}
+                          : (p.reference ? <span className="status priority-medium" title="A reference was typed; no bank line is linked yet">reference typed - not verified</span> : <span className="status priority-high">no proof</span>)}
+                        {rOf(p) && <div><span className={`status ${TONE[rOf(p).recon.tone] || ''}`} title={rOf(p).recon.why || undefined}>{rOf(p).recon.label}</span></div>}
+                        {rOf(p) && rOf(p).recon.state === 'review' && canBank && (rOf(p).recon.candidates || []).length > 0 && (
+                          <div className="small-muted">
+                            {rOf(p).recon.why}:{' '}
+                            {rOf(p).recon.candidates.slice(0, 4).map((c, k) => <span key={c.txnId}>{k ? ', ' : ''}<Link to={`/bank?line=${encodeURIComponent(c.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>{fmtD(c.date)} {money2(c.amount)}</Link></span>)}
+                          </div>
+                        )}
+                        <div>
+                          {canBank && rOf(p) && rOf(p).statementTxnId
+                            ? <button type="button" className="link-btn" onClick={() => setStmtOf(rOf(p).statementTxnId)}>View Statement</button>
+                            : (hOf(p).bankTxnId && canBank ? <span className="small-muted">Bank Statement Not Available</span> : null)}
+                          {' · '}
+                          {invoice.proofHasFile
+                            ? <button type="button" className="link-btn" onClick={viewProofFile}>View Payment Proof</button>
+                            : <span className="small-muted">Payment Proof Not Available</span>}
+                        </div>
                       </td>
                       <td>{p.recordedBy || '—'}{hOf(p).recordedAt && <div className="small-muted">recorded {fmtD(hOf(p).recordedAt)}</div>}</td>
                       {canManage && (
@@ -480,7 +532,7 @@ export default function InvoiceDetail() {
                 });
               })()}
               {payments.length === 0 && (
-                <tr><td colSpan={canManage ? 10 : 9} className="small-muted">No payment recorded against this invoice yet.</td></tr>
+                <tr><td colSpan={canManage ? 12 : 11} className="small-muted">No payment recorded against this invoice yet.</td></tr>
               )}
             </tbody>
             {payments.length > 0 && (
@@ -488,8 +540,9 @@ export default function InvoiceDetail() {
                 <tr>
                   <td colSpan="3">TOTAL RECEIVED</td>
                   <td className="num" style={{ fontWeight: 700 }}>{money2(received)}</td>
-                  <td colSpan="2" />
+                  <td colSpan="3" />
                   <td className="num" style={{ fontWeight: 700 }}>{money2(pending)}</td>
+                  <td />
                   <td>{noProof.length ? <span className="status priority-high">{noProof.length} pending</span> : <span className="status priority-low">all attached</span>}</td>
                   <td colSpan={canManage ? 2 : 1} />
                 </tr>
@@ -563,9 +616,10 @@ export default function InvoiceDetail() {
         )}
         {payments.map((p) => {
           const line = p.bankTxnId ? proofLines.find((l) => l.txnId === p.bankTxnId) : null;
-          const opened = openLine === p.id;
+          const opened = !!line && openLine === lineKey(p, line);
+          const lk = line ? lineKey(p, line) : '';
           return (
-            <div className="pf-line" key={p.id}>
+            <div className="pf-line" key={p.id} id={`proof-${p.id}`}>
               <div className="pf-head">
                 <b>Bank Line:</b>
                 {line
@@ -579,8 +633,14 @@ export default function InvoiceDetail() {
                   <span><i>Bank line amount</i> {money2(line.amount)}</span>
                 )}
                 <span><i>Transaction Reference / UTR</i> {(line && line.reference) || p.reference || '—'}</span>
-                {!line && <span className="small-muted">{p.method || 'Recorded by hand'}{p.recordedBy ? ` · ${p.recordedBy}` : ''}</span>}
+                {!line && <span className="small-muted">{hOf(p).source || p.method || 'Recorded by hand'}{p.recordedBy ? ` · ${p.recordedBy}` : ''}</span>}
               </div>
+              {!line && (
+                <div className="small-muted" style={{ marginTop: 4 }}>
+                  Payment proof is not available. This payment has not yet been linked to verifiable supporting evidence.
+                  {canBank && <> <Link to="/bank">Match it on Bank &amp; Reconciliation →</Link></>}
+                </div>
+              )}
               {line && Array.isArray(line.sharedWith) && line.sharedWith.length > 0 && (
                 <div className="small-muted" style={{ marginTop: 4 }}>
                   One bank line of {money2(line.amount)}: {money2(p.amount)} here, the rest paid{' '}
@@ -591,10 +651,10 @@ export default function InvoiceDetail() {
               )}
               {opened && (
                 <div className="pf-drawer" role="region" aria-label="Bank transaction">
-                  {!lineData[p.id] && !lineErr[p.id] && <div className="small-muted">Loading the bank line…</div>}
-                  {lineErr[p.id] && <div className="notice red"><span>{lineErr[p.id]}</span></div>}
-                  {lineData[p.id] && (() => {
-                    const d = lineData[p.id];
+                  {!lineData[lk] && !lineErr[lk] && <div className="small-muted">Loading the bank line…</div>}
+                  {lineErr[lk] && <div className="notice red"><span>{lineErr[lk]}</span></div>}
+                  {lineData[lk] && (() => {
+                    const d = lineData[lk];
                     return (
                       <div className="pf-grid">
                         <div><i>Bank transaction date</i><b>{fmtD(d.transactionDate)}</b></div>
@@ -609,7 +669,13 @@ export default function InvoiceDetail() {
                         <div><i>Difference (received minus allocated)</i><b>{d.difference == null ? '—' : money2(d.difference)}</b></div>
                         {d.otherInvoices && d.otherInvoices.count > 0 && <div className="pf-wide small-muted">The same bank line also paid {d.otherInvoices.count} other invoice(s) ({money2(d.otherInvoices.amount)}).</div>}
                         {d.import && <div className="pf-wide small-muted">From statement file {d.import.file}, imported {fmtD(d.import.importedOn)}.</div>}
-                        {canBank && <div className="pf-wide"><Link className="link-btn" to="/bank">Open in Bank &amp; Reconciliation →</Link></div>}
+                        {/* that exact statement line, opened in its full window on the Bank screen (Back returns here) */}
+                        {canBank && (
+                          <div className="pf-wide">
+                            {rOf(p) && rOf(p).statementTxnId && <><button type="button" className="link-btn" onClick={() => setStmtOf(rOf(p).statementTxnId)}>View Statement</button>{' · '}</>}
+                            <Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>Open in Bank &amp; Reconciliation →</Link>
+                          </div>
+                        )}
                       </div>
                     );
                   })()}
@@ -657,7 +723,6 @@ export default function InvoiceDetail() {
         <h3>Dates &amp; papers</h3>
         <div className="kv"><span className="k">Invoice date</span><span>{fmtD(invoice.invoiceDate)}</span></div>
         <div className="kv"><span className="k">Payment due</span><span>{fmtD(invoice.dueDate)}</span></div>
-        <div className="kv"><span className="k">Payment terms</span><span>{invoice.paymentTerms || '—'}</span></div>
         <div className="kv">
           <span className="k">Sent to client</span>
           <span>
@@ -725,6 +790,8 @@ export default function InvoiceDetail() {
         </div>
       )}
 
+      {/* View Statement: the actual statement the payment's line came from, the line highlighted */}
+      {stmtOf && <StatementView txnId={stmtOf} onClose={() => setStmtOf(null)} />}
       {preview && doc && (
         <div className="overlay show" onClick={() => setPreview(null)}>
           <div className="modal xwide" onClick={(e) => e.stopPropagation()}>

@@ -392,7 +392,8 @@ async function listSims(v, q = {}) {
   const rows = all.filter((r) => keep(r));
   return {
     ...paged(rows.map(publicSim), q, 'simRef', SIM_SORTS, 'asc'), all: all.length,
-    facets: { department: facet(all.filter((r) => keep(r, 'department')), (r) => r.department || 'Not recorded'), status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status) },
+    // Department: only switched-on Department & Team names are offered (2026-10-28).
+    facets: { department: await require('./masters').keepActiveDepartments(facet(all.filter((r) => keep(r, 'department')), (r) => r.department || 'Not recorded'), (o) => o.value, str(q.department)), status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status) }, // eslint-disable-line global-require
     summary: { total: all.length, inUse: all.filter((r) => r.holder === 'Assigned').length, inStock: all.filter((r) => r.holder !== 'Assigned').length },
   };
 }

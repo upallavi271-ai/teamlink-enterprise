@@ -10,6 +10,7 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { Panel, PanelHead, EmptyMini } from '../proto.jsx';
 import { money, monthLabel, errText, downloadFile } from '../payroll/payrollUi';
 import PeriodPicker, { ALL_TIME, isAllTime, periodText } from './PeriodPicker.jsx';
@@ -333,8 +334,9 @@ export function LedgerTab({ canPost = false, onOpenEmployees = null }) {
 
 // ---- Reports: Trial Balance · Profit & Loss · Balance Sheet ---------------------------------
 export function BooksReportsTab() {
-  const [which, setWhich] = useState('tb');
-  const [period, setPeriod] = useState(ALL_TIME);
+  // Kept when you leave and come back (utils/useKeptState.js).
+  const [which, setWhich] = useKeptState('journal.reports.which', 'tb');
+  const [period, setPeriod] = useKeptState('journal.reports.period', ALL_TIME);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const url = which === 'tb' ? `/accounts/reports/trial-balance?${periodQs(period)}`

@@ -344,16 +344,21 @@ async function visibleRepairIds(v, override = null) {
   return ids;
 }
 const OPEN_REPAIR = ['Reported', 'In Repair'];
+// SIM cards live in the Airtel Bills portal only (founder 2026-10-27); "contains" is case-insensitive here (SQLite LIKE)
+const NOT_SIM = { NOT: { category: { contains: 'sim' } } };
 async function listing(v, override = null) {
-  const sc = await scope(v, override);
-  if (sc.where === NONE) return { sc, where: NONE, availableWhere: NONE, repairWhere: NONE, openRepairs: [], openAssetIds: [] };
+  const sc0 = await scope(v, override);
+  if (sc0.where === NONE) return { sc: sc0, where: NONE, availableWhere: NONE, repairWhere: NONE, heldWhere: NONE, openRepairs: [], openAssetIds: [] };
+  const sc = { ...sc0, where: { AND: [sc0.where, NOT_SIM] } };
   const ids = [...await visibleRepairIds(v, override)];
   const openRepairs = ids.length ? await prisma.assetRepair.findMany({ where: { id: { in: ids }, status: { in: OPEN_REPAIR } }, select: { id: true, assetId: true } }) : [];
   const openAssetIds = [...new Set(openRepairs.map((r) => r.assetId))];
   const repairOr = [{ status: 'In Repair' }, ...(openAssetIds.length ? [{ id: { in: openAssetIds } }] : [])];
   const availableWhere = { AND: [sc.where, { status: 'Available', assignedToId: null }, ...(openAssetIds.length ? [{ NOT: { id: { in: openAssetIds } } }] : [])] };
   const repairWhere = { AND: [sc.where, { OR: repairOr }] };
-  return { sc, where: { OR: [availableWhere, repairWhere] }, availableWhere, repairWhere, openRepairs, openAssetIds };
+  // 27 Oct 2026 (Stage B): the assets employees hold are the vendor's to see too - "who has which asset"
+  const heldWhere = { AND: [sc.where, { assignedToId: { not: null } }, { NOT: { status: 'In Repair' } }, ...(openAssetIds.length ? [{ NOT: { id: { in: openAssetIds } } }] : [])] };
+  return { sc, where: sc.where, availableWhere, repairWhere, heldWhere, openRepairs, openAssetIds };
 }
 
 // The reasons for the assets of ONE vendor, newest meaning first - used by the Admin preview and by the detail view.
@@ -376,13 +381,13 @@ async function preview(v, override = null) {
     const set = reasonSet(sc, a);
     const { vendorId: _vendorId, assignedToId: held, ...rest } = a; // eslint-disable-line no-unused-vars
     const underRepair = open.has(a.id) || a.status === 'In Repair';
-    return { ...rest, bucket: underRepair ? 'repair' : 'available', held: !!held, reasons: [...set], reasonText: [...set].map((x) => REASON_TEXT[x]) };
+    return { ...rest, bucket: underRepair ? 'repair' : (held ? 'held' : (a.status === 'Available' ? 'available' : 'gap')), held: !!held, reasons: [...set], reasonText: [...set].map((x) => REASON_TEXT[x]) };
   });
   // how many of the vendor's assets are NOT shown, and why (a held asset with no repair job)
   const members = sc.where === NONE ? 0 : await prisma.asset.count({ where: sc.where });
   return {
     total: rows.length, rows, ambiguous: sc.ambiguous, possible: sc.possible, grants: sc.grants,
-    available: rows.filter((r) => r.bucket === 'available').length, underRepair: rows.filter((r) => r.bucket === 'repair').length, repairJobs: L.openRepairs.length,
+    available: rows.filter((r) => r.bucket === 'available').length, underRepair: rows.filter((r) => r.bucket === 'repair').length, withEmployees: rows.filter((r) => r.bucket === 'held').length, noHolderNamed: rows.filter((r) => r.bucket === 'gap').length, repairJobs: L.openRepairs.length,
     hiddenHeld: Math.max(0, members - rows.length),
     byReason: Object.fromEntries(Object.keys(REASON_TEXT).map((k) => [k, rows.filter((r) => r.reasons.includes(k)).length])),
   };
@@ -463,6 +468,7 @@ async function countFor(v) {
 }
 
 module.exports = {
+  NOT_SIM,
   nameKey, refKey, parseType, deptOfSeat, SEAT_DEPARTMENTS, REASON_TEXT, OWN, NONE,
   load, scope, listing, visibleRepairIds, OPEN_REPAIR, perRequest, withScopeCache, whereFrom, reasonsFor, reasonSet, preview, countFor, grantRows, excludeRows, newGrantId, assetKey, catKey, xAssetKey, xCatKey,
   AUTO_DEFAULTS, MAP_SETTING, autoMap, saveAutoMap, autoHas, autoInfo, autoConflicts, vendorsForAsset, realCategories, catNorm, vendorCatKey,

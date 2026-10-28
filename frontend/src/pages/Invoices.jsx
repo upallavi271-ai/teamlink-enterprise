@@ -8,6 +8,7 @@ import { can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import FilterChips from '../components/FilterChips.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import { useKeptState, useKeptParams } from '../utils/useKeptState.js';
 import ClientGroups, { buildClientGroups } from './invoices/ClientGroups.jsx';
 // One client = one row: the client-invoice rows + panel, the invoice window, the grouping.
 import ClientInvoiceRows, { CI_HEADS, ciHeadClass } from './invoices/ClientInvoiceRows.jsx';
@@ -28,6 +29,7 @@ import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // B2 — the Credit & debit notes tab.
 import CreditNotesPanel from './invoices/CreditNotesPanel.jsx';
 import PartnerPayoutsPanel from './invoices/PartnerPayoutsPanel.jsx'; // B7: agency / freelancer payouts
+import PaymentCheckPanel from './invoices/PaymentCheckPanel.jsx'; // Issue 6: which Paid has proof behind it (read only)
 import {
   money, money2, fmtD,
 } from './invoices/invFormat';
@@ -179,7 +181,7 @@ export default function Invoices() {
   const canCreate = can(user, 'accounts', 'accounts', 'Invoices', 'create');
   const canPay = can(user, 'accounts', 'accounts', 'Payments', 'create');
   const canExport = can(user, 'accounts', 'accounts', 'Invoices', 'export');
-  const canBankView = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view'); // eslint-disable-line no-unused-vars
+  const canBankView = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
   // Who may add a missing date of joining from the panel: the joining editors and Accounts.
   const canJoin = can(user, 'ats', 'interviews', 'Joining', 'edit') || can(user, 'accounts', 'accounts', 'Invoices', 'edit');
 
@@ -192,10 +194,19 @@ export default function Invoices() {
   const [waBulk, setWaBulk] = useState(null);
   const [waTick, setWaTick] = useState(0);
   const waOn = waMayUse(useWaConfig(), 'invoice');
+  // The search, filters, age chip, sort, page and tab are KEPT when you leave
+  // this screen and come back (utils/useKeptState.js) — until you press Clear.
+  // A link that says what to show (?period / ?status / ?client / ?age, below)
+  // starts from a clean slate instead, so it shows exactly what it says.
+  const [linked] = useState(() => {
+    const q = new URLSearchParams(window.location.search);
+    return ['period', 'status', 'clientId', 'client', 'age'].some((k) => q.get(k));
+  });
+  useKeptParams('invoices.tab', ['tab'], linked);
   // { from, to, preset, applyTo } — the shared Accounts calendar (S7.3).
-  const [period, setPeriod] = useState(ALL_PERIOD);
-  const [filters, setFilters] = useState(BLANK_FILTERS);
-  const [age, setAge] = useState('All');
+  const [period, setPeriod] = useKeptState('invoices.period', ALL_PERIOD, linked);
+  const [filters, setFilters] = useKeptState('invoices.filters', BLANK_FILTERS, linked);
+  const [age, setAge] = useKeptState('invoices.age', 'All', linked);
   const [group, setGroup] = useState(loadGroup);
   const [hot, setHot] = useState(null); // the row just paid / picked, briefly highlighted
   const [views, setViews] = useState(loadViews);
@@ -207,7 +218,7 @@ export default function Invoices() {
   const [addClient, setAddClient] = useState(false); // "+ Add client" (a draft client in the central list)
   const [menu, setMenu] = useState(null); // null | 'bell'
   const [exporting, setExporting] = useState(''); // '' | an EXPORTS key
-  const [sort, setSort] = useState('new');
+  const [sort, setSort] = useKeptState('invoices.sort', 'new');
   const [showAll, setShowAllState] = useState(readShowAll);
   const setShowAll = (next) => { setShowAllState(next); writeStore(SHOWALL_KEY, next ? '1' : '0'); };
   // Which client invoices have their detail panel open (several at once). ONE toggle serves the row, the Invoice No and the arrow.
@@ -223,8 +234,9 @@ export default function Invoices() {
   //   ?age=0-30 | 31-60 | 61-90 | 90+ | 60+   ?join=new | <applicationId>
   //   ?pay=1 | <invoiceId>   — read once on arrival.
   const [urlQ, setUrlQ] = useSearchParams();
-  const tab = ['notes', 'payouts'].includes(urlQ.get('tab')) ? urlQ.get('tab') : 'invoices';
-  const setTab = (t) => { const n = new URLSearchParams(urlQ); if (t === 'notes' || t === 'payouts') n.set('tab', t); else n.delete('tab'); n.delete('raise'); setUrlQ(n, { replace: true }); };
+  const TABS = ['notes', 'payouts', 'check'];
+  const tab = TABS.includes(urlQ.get('tab')) ? urlQ.get('tab') : 'invoices';
+  const setTab = (t) => { const n = new URLSearchParams(urlQ); if (TABS.includes(t)) n.set('tab', t); else n.delete('tab'); n.delete('raise'); setUrlQ(n, { replace: true }); };
   useEffect(() => {
     // The desk's period words (M:2026-09, Q2:2026, FY:2026) become the same
     // dates on the calendar, applied to the invoice date.
@@ -404,10 +416,12 @@ export default function Invoices() {
     return invGroups.flatMap((x) => x.members);
   }, [grouped, rows, group, sort, index, invGroups]);
   // Paged 25 / 50 / 100 when the list is flat; grouped, every group shows whole so its subtotals always match the rows under it.
-  const page = usePaged(invGroups);
+  // Kept: coming back (or a reload after a payment) stays on the same page; a new search / filter starts at page one.
+  const listSig = JSON.stringify([filters, period, age, sort, group]);
+  const page = usePaged(invGroups, 25, 'invoices.list', listSig);
   // The client table pages over CLIENTS (a client's invoices are never split across pages).
   const clientGroups = useMemo(() => buildClientGroups(rows, sort, index), [rows, sort, index]);
-  const cpage = usePaged(clientGroups, 25);
+  const cpage = usePaged(clientGroups, 25, 'invoices.clients', listSig);
 
   // "Needs attention" — the bell.
   const notes = useMemo(() => {
@@ -640,8 +654,28 @@ export default function Invoices() {
       </button>
       {/* B7 — what we owe agencies / freelancers for their joinings. */}
       <button type="button" role="tab" aria-selected={tab === 'payouts'} className={`cn-tab${tab === 'payouts' ? ' is-on' : ''}`} onClick={() => setTab('payouts')}>Partner payouts</button>
+      {/* Issue 6 — which Paid has proof behind it: read only. */}
+      <button type="button" role="tab" aria-selected={tab === 'check'} className={`cn-tab${tab === 'check' ? ' is-on' : ''}`} onClick={() => setTab('check')}>Payment check</button>
     </div>
   );
+  if (tab === 'check') {
+    return (
+      <div className="inv-page">
+        <header className="inv-head">
+          <div className="inv-head-main">
+            <nav className="inv-crumbs" aria-label="Breadcrumb">
+              <span>TeamLink Accounts</span><span aria-hidden="true">/</span><span>Invoice</span><span aria-hidden="true">/</span><span aria-current="page">Payment check</span>
+            </nav>
+            <h1>Payment check</h1>
+            <p className="inv-lede">Which paid invoices have proof behind them: matched to a bank statement, typed in by hand, or marked paid with nothing behind it. And the bank money that no invoice explains yet.</p>
+          </div>
+        </header>
+        {tabBar}
+        {error && <div className="notice red"><span>{error}</span></div>}
+        {!data && !error ? <div className="small-muted">Loading invoices…</div> : <PaymentCheckPanel rows={data?.rows || []} canBankView={canBankView} />}
+      </div>
+    );
+  }
   if (tab === 'payouts') {
     return (
       <div className="inv-page">

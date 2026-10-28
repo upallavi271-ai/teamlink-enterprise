@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../api';
+import { useKeptState } from '../utils/useKeptState.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
 import AccountsImport from '../components/AccountsImport.jsx';
@@ -66,14 +67,15 @@ export default function Office() {
   // The page period ({ from, to, preset } — the shared Accounts period picker).
   // All time by default; ?month=YYYY-MM (the Accounts dashboard's outflow card)
   // opens on that month. The API reads it as the selection string `period`.
-  const [pv, setPv] = useState(() => {
+  // The period and the filters are KEPT when you leave and come back (utils/useKeptState.js); a ?month link wins.
+  const [pv, setPv] = useKeptState('office.period', () => {
     const m = /^C:(\d{4}-\d{2}-\d{2}):(\d{4}-\d{2}-\d{2})$/.exec(selOfMonthKey(search.get('month')) || '');
     return m ? { from: m[1], to: m[2], preset: 'custom' } : ALL_TIME;
-  });
+  }, !!search.get('month'));
   const period = isAllTime(pv) ? 'all' : `C:${pv.from}:${pv.to}`;
-  const [lf, setLf] = useState(OFFICE_BLANK);
+  const [lf, setLf] = useKeptState('office.filters', OFFICE_BLANK);
   const params = officeParams(lf, pv);
-  const [qDeb, setQDeb] = useState('');
+  const [qDeb, setQDeb] = useState(lf.q); // a kept search is asked for once, not first empty and then again
   useEffect(() => { const t = setTimeout(() => setQDeb(lf.q), 250); return () => clearTimeout(t); }, [lf.q]);
 
   const [facts, setFacts] = useState(null);

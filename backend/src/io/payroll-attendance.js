@@ -11,6 +11,15 @@
 // never calculates, submits or approves anything — recalculate the drafts on
 // Process Payroll afterwards. A row whose figures equal what is already in
 // force (the attendance default or the current override) changes nothing.
+//
+// THE TEAM'S OWN SHEET (founder 2026-10-28): HR can also upload the monthly
+// attendance sheet as the team makes it ("To pavan sharing sheet
+// Sep16-Oct15.xlsx": tab Attendance with Employee Ref No / Payable days per
+// month / Payable Days / Non Payable Days / Remarks). Payroll days = Payable
+// days per month, Days present = Payable Days, LOP days = Non Payable Days; the
+// month is the OPEN payroll month (the one after the last month already
+// submitted / approved / paid), checked against the month in the file name
+// ("...Oct15" = October) - or a Month column when the sheet has one.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const io = require('../utils/moduleIo');
@@ -18,6 +27,68 @@ const E = require('../utils/payrollEngine');
 const { monthLabel } = require('../utils/attendanceMath');
 const { NOT_SYSTEM_EMPLOYEE } = require('../utils/systemAccounts');
 const salary = require('./payroll-salary');
+
+// ---- the team's own attendance sheet ------------------------------------------------------------
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const hnorm = (h) => String(h == null ? '' : h).replace(/\s+/g, ' ').trim().toLowerCase();
+// "To pavan sharing sheet Sep16-Oct15_update.xlsx" -> 10 (the month the cycle ends in = the payroll month)
+function monthHintOf(fileName) {
+  const f = String(fileName || '').toLowerCase();
+  const m = f.match(/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{1,2}\s*(?:-|–|to|_)\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s*\d{1,2}/);
+  return m ? MONTHS.indexOf(m[2]) + 1 : null;
+}
+function readOtherShape(wb, { fileName, XLSX, str }) {
+  for (const name of wb.SheetNames) {
+    const aoa = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: '', raw: true, blankrows: false });
+    const hi = aoa.findIndex((r) => r.some((c) => str(c) !== ''));
+    if (hi < 0) continue; // eslint-disable-line no-continue
+    const head = aoa[hi].map(hnorm);
+    const col = (label) => head.indexOf(label);
+    const cId = col('employee ref no');
+    const cPay = col('payable days');
+    if (cId < 0 || cPay < 0) continue; // eslint-disable-line no-continue
+    const cDays = col('payable days per month');
+    const cNon = col('non payable days');
+    const cRem = col('remarks');
+    const cMonth = col('month');
+    const cName = col('employee name');
+    const rows = [];
+    for (let i = hi + 1; i < aoa.length; i += 1) {
+      const r = aoa[i];
+      const id = str(r[cId]);
+      if (!/^[A-Za-z]{1,6}[-\s]?\d+$/.test(id)) continue; // eslint-disable-line no-continue
+      const num = (c) => (c >= 0 && str(r[c]) !== '' && Number.isFinite(Number(r[c])) ? Number(r[c]) : null);
+      const days = num(cDays);
+      const pay = num(cPay);
+      const non = num(cNon);
+      const remark = cRem >= 0 ? str(r[cRem]) : '';
+      rows.push({
+        line: i + 1, employeeCode: id, employeeName: cName >= 0 ? str(r[cName]) : '',
+        month: cMonth >= 0 ? str(r[cMonth]) : '',
+        workingDays: days === null ? '' : days,
+        daysPresent: pay === null ? '' : pay,
+        daysLop: non !== null ? non : (days !== null && pay !== null ? Math.max(0, days - pay) : ''),
+        reason: `Attendance sheet "${String(fileName || '').slice(0, 120)}" (${name}, row ${i + 1})${remark ? `: ${remark}` : ''}`.slice(0, 500),
+        fromSheet: true, monthHint: monthHintOf(fileName),
+      });
+    }
+    if (!rows.length) return { error: `The "${name}" tab of that attendance sheet has no Employee Ref No rows.` };
+    return { rows, examples: 0, sheetName: name, ignoredReadOnly: [], ignoredPaused: [], otherShape: 'attendance sheet' };
+  }
+  return null;
+}
+
+// The open payroll month: the one after the last month that is already submitted / approved / synced / paid.
+async function openPayrollMonth() {
+  const [last, run] = await Promise.all([
+    prisma.employeePayrollRun.findFirst({ where: { status: { not: 'DRAFT' } }, orderBy: { month: 'desc' }, select: { month: true } }),
+    prisma.payrollRun.findFirst({ where: { status: { in: ['Paid', 'Processing'] } }, orderBy: { month: 'desc' }, select: { month: true } }),
+  ]);
+  const m = [last && last.month, run && run.month].filter(Boolean).sort().pop();
+  if (!m) return thisMonth();
+  const [y, mo] = m.split('-').map(Number);
+  return mo === 12 ? `${y + 1}-01` : `${y}-${String(mo + 1).padStart(2, '0')}`;
+}
 
 const columns = [
   { key: 'employeeCode', label: 'Employee ID', required: true, example: 'TL101', note: 'Employee ID (or email) of an employee on your payroll register.' },
@@ -108,9 +179,23 @@ module.exports = {
     });
   },
 
+  readOtherShape,
+
   async validate(rows, ctx) {
     const idx = await salary.payrollIndex(ctx.req);
     const policy = await E.getPolicy();
+    // Rows read from the team's own attendance sheet carry no month: the open payroll month, checked against the file name.
+    const sheetErr = new Map();
+    if (rows.some((r) => r.fromSheet && !io.str(r.month))) {
+      const open = await openPayrollMonth();
+      rows.forEach((r) => {
+        if (!r.fromSheet || io.str(r.month)) return;
+        r.month = open;
+        if (r.monthHint && Number(open.slice(5)) !== r.monthHint) {
+          sheetErr.set(r, `This sheet's file name is for ${monthLabel(`${open.slice(0, 4)}-${String(r.monthHint).padStart(2, '0')}`).split(' ')[0]}, but the open payroll month is ${monthLabel(open)}. Add a Month column (YYYY-MM) to the sheet to say which month it is.`);
+        }
+      });
+    }
     const parsed = rows.map((r) => ({ r, hit: idx.resolve(r.employeeCode), month: monthOf(r.month) }));
     // What is in force today, per month, for the employees named.
     const byMonth = new Map();
@@ -135,6 +220,7 @@ module.exports = {
     const seen = new Map();
     return parsed.map(({ r, hit, month }) => {
       const errors = io.requiredErrors(module.exports, r);
+      if (sheetErr.has(r)) errors.push({ field: 'Month', message: sheetErr.get(r) });
       const e = hit.employee;
       const label = e ? `${e.name} (${e.employeeCode})` : io.str(r.employeeCode);
       if (hit.error && io.str(r.employeeCode)) errors.push({ field: 'Employee ID', message: hit.error });
@@ -179,6 +265,9 @@ module.exports = {
       };
     });
   },
+
+  openPayrollMonth,
+  monthHintOf,
 
   async apply(valid, ctx) {
     let created = 0;

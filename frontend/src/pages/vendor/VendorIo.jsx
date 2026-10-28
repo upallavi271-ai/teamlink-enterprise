@@ -123,7 +123,7 @@ function ImportDialog({ item, imp, onClose }) {
     const f = e.target.files && e.target.files[0];
     setError(''); setPrev(null); setRes(null); setStep('pick'); keyRef.current = newKey();
     if (!f) { setFile(null); return; }
-    if (!/\.(xlsx|csv)$/i.test(f.name)) { setFile(null); setError('Choose an Excel file (.xlsx) or a CSV file (.csv). Download the sample file to see how it looks.'); return; }
+    if (!(item.flexible ? /\.(xlsx|xls|csv)$/i : /\.(xlsx|csv)$/i).test(f.name)) { setFile(null); setError(item.flexible ? 'Choose an Excel file (.xlsx or .xls) or a CSV file.' : 'Choose an Excel file (.xlsx) or a CSV file (.csv). Download the sample file to see how it looks.'); return; }
     if (f.size > imp.maxMb * 1024 * 1024) { setFile(null); setError(`That file is bigger than ${imp.maxMb} MB.`); return; }
     setFile(f);
   };
@@ -170,18 +170,18 @@ function ImportDialog({ item, imp, onClose }) {
           <>
             <p>{item.help} Nothing is saved until you press <b>Save</b>, and you see every line first.</p>
             <ol className="vio-steps">
-              <li>Download the <b>sample file</b> and fill it in. Do not change the first row (the column names).
+              <li>{item.flexible ? <>Use <b>your own Excel or CSV file</b> as it is: we find the bill number, dates, amount and GST columns by their names. The sample file only shows an example.</> : <>Download the <b>sample file</b> and fill it in. Do not change the first row (the column names).</>}
                 <div className="vio-row">
                   <button type="button" className="btn btn-sm" onClick={() => sample('xlsx')}>Download sample (Excel)</button>
                   <button type="button" className="btn btn-sm" onClick={() => sample('csv')}>Download sample (CSV)</button>
                 </div>
               </li>
-              <li>Choose your file (Excel .xlsx or CSV, up to {imp.maxMb} MB and {imp.maxRows.toLocaleString('en-IN')} lines).
-                <div className="vio-row"><input ref={input} type="file" accept=".xlsx,.csv" onChange={pickFile} aria-label="Choose the file to import" /></div>
+              <li>Choose your file ({item.flexible ? 'any Excel .xlsx / .xls or CSV' : 'Excel .xlsx or CSV'}, up to {imp.maxMb} MB and {imp.maxRows.toLocaleString('en-IN')} lines).
+                <div className="vio-row"><input ref={input} type="file" accept={item.flexible ? '.xlsx,.xls,.csv' : '.xlsx,.csv'} onChange={pickFile} aria-label="Choose the file to import" /></div>
               </li>
               <li>Press <b>Check the file</b>. You will see what will happen to each line.</li>
             </ol>
-            <div className="cell-muted vio-cols">Columns: {item.columns.map((c) => c.label + (c.required ? ' (needed)' : '')).join(', ')}.</div>
+            <div className="cell-muted vio-cols">{item.flexible ? 'We read: bill / invoice number, billing month, bill date, due date, amount (or total), GST, remarks. Other columns are ignored; a line without an amount is skipped.' : `Columns: ${item.columns.map((c) => c.label + (c.required ? ' (needed)' : '')).join(', ')}.`}</div>
             <div className="cell-muted">You cannot set a payment status here. Accounts pays, and the bank statement confirms it. {imp.assetsNote}</div>
             {step === 'checking' && <div className="vio-wait" aria-busy="true">Checking the file&hellip;</div>}
           </>

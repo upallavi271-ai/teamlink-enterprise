@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import api, { viewAsToken } from '../api';
+import { clearKeptState } from '../utils/useKeptState.js';
 
 const AuthContext = createContext(null);
 
@@ -36,6 +37,7 @@ export function AuthProvider({ children }) {
       return { chooseAccount: true, selectionToken: res.data.selectionToken, accounts: res.data.accounts || [], expiresAt: res.data.expiresAt };
     }
     localStorage.setItem('tl_token', res.data.token);
+    clearKeptState(); // a new sign-in starts every list fresh (also after a forced sign-out, api.js)
     setUser(res.data.user);
     return res.data.user;
   }
@@ -45,6 +47,7 @@ export function AuthProvider({ children }) {
     // A vendor login on the same email was picked: the page signs it in through the vendor sign-in.
     if (res.data.useVendor) return { useVendor: true };
     localStorage.setItem('tl_token', res.data.token);
+    clearKeptState(); // a new sign-in starts every list fresh (also after a forced sign-out, api.js)
     setUser(res.data.user);
     return res.data.user;
   }
@@ -63,6 +66,7 @@ export function AuthProvider({ children }) {
       return;
     }
     localStorage.removeItem('tl_token');
+    clearKeptState(); // the lists' kept search / filters / page (utils/useKeptState.js)
     setUser(null);
   }
 
@@ -72,6 +76,7 @@ export function AuthProvider({ children }) {
     try {
       localStorage.removeItem('tl_token');
       sessionStorage.setItem('tl_login_notice', notice || '');
+      clearKeptState();
     } catch { /* storage blocked: the sign-in page still opens, just without the note */ }
     setUser(null);
   }

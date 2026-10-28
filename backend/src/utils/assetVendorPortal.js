@@ -41,6 +41,7 @@ const attachments = require('./attachments');
 const PAYS = require('./assetVendorPayments');
 const HS = require('./assetHrmsScope'); // which HRMS assets belong to this vendor (2026-10-19)
 const AC = require('./assetComplaints'); // a repair complaint approved in HRMS -> the repair job (2026-10-19)
+const RW = require('./assetRepairWork'); // Stage C (2026-10-28): accept / reject, parts + labour, real dates, outcome, proof, replacements
 const Mask = require('./vendorAssetMask'); // NO employee names in anything the vendor sees (founder decision 2026-10-19)
 
 // The masker is the same for every vendor (it depends only on the company's asset and employee tables), so it is loaded once per call into a
@@ -112,8 +113,21 @@ async function myRepair(v, id) {
   return { repair, asset: repair.asset, side };
 }
 async function myAsset(v, id) {
-  const L = await HS.listing(v); // the same rule as the Assets page: an asset held by an employee with no open repair job is not the vendor's to open
-  return prisma.asset.findFirst({ where: { AND: [{ id: String(id || '') }, L.where] } });
+  const L = await HS.listing(v); // the same rule as the Assets page (since 27 Oct 2026 that includes the assets employees hold; never SIM cards)
+  return prisma.asset.findFirst({ where: { AND: [{ id: String(id || '') }, L.where] }, include: { assignedTo: { select: HOLDER_SELECT } } });
+}
+// THE ASSIGNMENT HISTORY HRMS HOLDS: the asset's own history lines about who held it (assigned / returned / moved / handed over), oldest first.
+// HRMS keeps them as text in Asset.history - there is no separate assignment table - so they are shown as written, with their own dates.
+const ASSIGN_WORDS = /assign|return|handed|hand over|moved|transfer|holder|→|unassign|given to|taken back|seat/i;
+function assignmentHistory(a) {
+  let h = [];
+  try { h = JSON.parse(a.history || '[]'); } catch { h = []; }
+  if (!Array.isArray(h)) h = [];
+  const M = MK();
+  // HRMS writes the newest line FIRST (routes/assetInventory.js pushHistory unshift): reversed, then a stable sort by time keeps same-minute lines in order
+  return [...h].reverse().filter((e) => e && ASSIGN_WORDS.test(String(e.text || '')))
+    .map((e) => ({ at: e.at || null, by: e.by || null, text: M.text(String(e.text || ''), a.id) }))
+    .sort((x, y) => String(x.at || '').localeCompare(String(y.at || '')));
 }
 
 // ---- views -------------------------------------------------------------------------------------
@@ -177,6 +191,14 @@ async function tag(repairs) {
 }
 // What the vendor may know of the department: the department NAME only (the holder's, or the seat's), never who holds the asset.
 const deptOf = (a) => (a.assignedTo && a.assignedTo.department) || HS.deptOfSeat(a.location) || null;
+// WHO HOLDS IT (founder 2026-10-27): name, employee ID, designation and department - nothing else about the person.
+const HOLDER_SELECT = { id: true, name: true, employeeCode: true, designation: true, department: true, employmentStatus: true };
+const LEFT = ['Relieved', 'Exited'];
+function holderOf(a) {
+  const e = a.assignedTo;
+  if (!e) return null;
+  return { name: e.name || null, employeeCode: e.employeeCode || null, designation: e.designation || null, department: e.department || null, left: LEFT.includes(e.employmentStatus) };
+}
 function assetView(a, v, info, openRepair, showInvoice = false) {
   const M = MK();
   const base = VP.vendorAssetView(a, { ...v, canViewCost: false }); // the amount is handled below (amountsOf); the old purchaseCost / invoiceNo fields stay out
@@ -191,6 +213,7 @@ function assetView(a, v, info, openRepair, showInvoice = false) {
     serialNumber: M.text(a.serialNumber, a.id) || t.serial || null,
     brand: (info && info.brand) || t.brand || null, model: (info && info.model) || t.model || null, condition: info ? info.condition || null : null,
     department: deptOf(a), assignedVendor: v.vendorName, repairStage: openRepair ? openRepair.stage : null, repairNo: openRepair ? openRepair.repairNo : null,
+    holder: holderOf(a), assignment: a.assignedToId ? 'Assigned' : 'Unassigned', assignedAt: iso(a.assignedAt), assignedBy: a.assignedByName || null, updatedAt: iso(a.updatedAt),
   };
 }
 const OPEN_STAGES = ['Awaiting repair', 'Sent for repair', 'Under repair'];
@@ -232,13 +255,15 @@ async function listAssets(v, q = {}) {
   await ensureMask();
   const L = await HS.listing(v);
   // view=all (no tab on the page; used by the scope tests) is simply both tabs together: nothing outside what the vendor may see
-  const tab = ['repair', 'all'].includes(str(q.view)) ? str(q.view) : 'available';
-  const where = tab === 'repair' ? L.repairWhere : (tab === 'all' ? L.where : L.availableWhere);
-  const [assets, repairs, nAvail, nRepair] = await Promise.all([
-    where === HS.NONE ? [] : prisma.asset.findMany({ where, include: { assignedTo: { select: { department: true } } }, orderBy: { assetCode: 'asc' }, take: 5000 }),
+  const tab = ['repair', 'available', 'assigned'].includes(str(q.view)) ? str(q.view) : 'all';
+  const where = tab === 'repair' ? L.repairWhere : (tab === 'available' ? L.availableWhere : (tab === 'assigned' ? L.heldWhere : L.where));
+  const [assets, repairs, nAvail, nRepair, nHeld, nAll] = await Promise.all([
+    where === HS.NONE ? [] : prisma.asset.findMany({ where, include: { assignedTo: { select: HOLDER_SELECT } }, orderBy: { assetCode: 'asc' }, take: 5000 }),
     loadRepairs(v),
     L.availableWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.availableWhere }),
     L.repairWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.repairWhere }),
+    L.heldWhere === HS.NONE ? 0 : prisma.asset.count({ where: L.heldWhere }),
+    L.where === HS.NONE ? 0 : prisma.asset.count({ where: L.where }),
   ]);
   const info = await infoRows(assets.map((a) => a.id));
   const open = new Map();
@@ -249,16 +274,23 @@ async function listAssets(v, q = {}) {
   const all = assets.map((a) => assetView(a, v, info.get(a.id), open.get(a.id)));
   const s = str(q.q).toLowerCase();
   const keep = (r, skip) => (!str(q.category) || skip === 'category' || r.category === str(q.category))
+    && (!str(q.department) || skip === 'department' || r.department === str(q.department))
+    && (!str(q.assignment) || skip === 'assignment' || r.assignment === str(q.assignment))
+    && (!str(q.designation) || skip === 'designation' || (r.holder && r.holder.designation) === str(q.designation))
     && (!str(q.status) || skip === 'status' || r.status === str(q.status))
     && (!str(q.condition) || skip === 'condition' || r.condition === str(q.condition))
-    && (!s || [r.assetCode, r.name, r.category, r.brand, r.model, r.serialNumber, r.condition, r.status, r.location, r.department].some((x) => String(x || '').toLowerCase().includes(s)));
+    && (!s || [r.assetCode, r.name, r.category, r.brand, r.model, r.serialNumber, r.condition, r.status, r.location, r.department, r.holder && r.holder.name, r.holder && r.holder.employeeCode, r.holder && r.holder.designation].some((x) => String(x || '').toLowerCase().includes(s)));
   const rows = all.filter((r) => keep(r));
   return {
     ...paged(rows, q, 'assetCode', ASSET_SORTS), assignedTotal: all.length, canEdit: v.canEdit, canViewCost: v.canViewCost, showAmounts: v.showAmounts !== false, conditions: CONDITIONS,
-    view: tab, tabs: { available: nAvail, repair: nRepair }, openRepairJobs: L.openRepairs.length,
+    view: tab, tabs: { all: nAll, assigned: nHeld, available: nAvail, repair: nRepair }, openRepairJobs: L.openRepairs.length, refreshedAt: new Date().toISOString(),
     facets: {
       category: facet(all.filter((r) => keep(r, 'category')), (r) => r.category), status: facet(all.filter((r) => keep(r, 'status')), (r) => r.status),
       condition: facet(all.filter((r) => keep(r, 'condition')), (r) => r.condition),
+      // Only switched-on Department & Team names are offered (2026-10-28).
+      department: await require('./masters').keepActiveDepartments(facet(all.filter((r) => keep(r, 'department')), (r) => r.department), (o) => o.value, str(q.department)), // eslint-disable-line global-require
+      assignment: facet(all.filter((r) => keep(r, 'assignment')), (r) => r.assignment),
+      designation: facet(all.filter((r) => keep(r, 'designation')), (r) => (r.holder ? r.holder.designation : null)),
     },
   };
 }
@@ -292,6 +324,34 @@ async function historyFor(v, repairIds) {
   return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
 }
 
+// STAGE F3: the asset's events from every module, oldest first. at = the recorded time of THAT event (never another record's date).
+async function assetTimeline(v, a, views, history) {
+  const M = MK();
+  const ev = [];
+  const push = (at, kind, text, link = null) => { if (at) ev.push({ at: String(at), kind, text, link }); };
+  push(iso(a.createdAt), 'Registered', 'Asset added in HRMS');
+  if (a.purchaseDate) push(a.purchaseDate, 'Purchase', 'Purchase date');
+  assignmentHistory(a).forEach((h) => push(h.at, 'Assignment', h.text));
+  const tickets = await DB.q('SELECT "ticketRef","kind","raisedAt","decision","decidedAt","repairId" FROM "AssetComplaint" WHERE "assetId" = ?', [a.id]).catch(() => []);
+  tickets.forEach((t) => {
+    push(t.raisedAt, 'HRMS ticket', `Ticket ${t.ticketRef} raised: ${t.kind}`);
+    if (t.decidedAt && t.decision) push(t.decidedAt, 'HRMS ticket', `Ticket ${t.ticketRef} ${t.decision.toLowerCase()} by the company`);
+  });
+  views.forEach((r) => {
+    const link = `/vendor/asset-portal/repairs?open=${encodeURIComponent(r.id)}`;
+    push(r.dateReported, 'Repair', `Repair ${r.repairNo} reported${r.issue ? `: ${r.issue}` : ''}`, link);
+    if (r.repairDate) push(r.repairDate, 'Repair', `Repair ${r.repairNo} finished${r.outcome ? ` (${r.outcome})` : ''}`, link);
+    if (r.invoice && r.invoice.billDate) push(r.invoice.billDate, 'Invoice', `Invoice ${r.invoice.invoiceNo || r.invoice.billCode || ''} for repair ${r.repairNo}`, '/vendor/asset-portal/invoices');
+    ((r.payment && r.payment.payments) || []).forEach((p) => push(p.date, 'Payment', `Paid ${p.amount} for repair ${r.repairNo} (bank statement)`, '/vendor/asset-portal/invoices?tab=payments'));
+  });
+  history.forEach((h) => { if (h.field) push(h.at, 'Repair update', `${h.repairNo}: ${h.field}${h.to != null ? ` -> ${h.to}` : ''}`, h.repairId ? `/vendor/asset-portal/repairs?open=${encodeURIComponent(h.repairId)}` : null); });
+  (await RW.replacementsOf({ assetIds: [a.id] })).forEach((x) => {
+    push(x.requestedAt, 'Replacement', `Replacement asked${x.reason ? `: ${M.text(x.reason, a.id)}` : ''}`);
+    if (x.decidedAt) push(x.decidedAt, 'Replacement', `Replacement ${String(x.status).toLowerCase() === 'rejected' ? 'not approved' : 'approved'}`);
+    if (x.replacementDate) push(x.replacementDate, 'Replacement', 'Replaced by a new asset');
+  });
+  return ev.sort((x, y) => x.at.localeCompare(y.at));
+}
 async function assetDetail(v, id) {
   await ensureMask();
   const a = await myAsset(v, id);
@@ -309,6 +369,11 @@ async function assetDetail(v, id) {
     asset: { ...assetView(a, v, info.get(a.id), openOne, boughtHere), warrantyUntil: a.warrantyUntil || null, amcUntil: a.amcUntil || null, updatedAt: iso(a.updatedAt) },
     purchase: purchaseOf(boughtHere ? a : { ...a, invoiceNo: null }, px.rows, v), repairs: views, history, canEdit: v.canEdit && scoped, editNote: scoped ? null : 'This asset is with you for a repair. The company keeps its details.',
     conditions: CONDITIONS,
+    // STAGE F (2026-10-28): ONE chronological history of the asset - registration, hand-overs, tickets, repairs and their updates,
+    // invoices, bank payments, replacements - each with its own recorded date; nothing is made up.
+    timeline: await assetTimeline(v, a, views, history),
+    // who holds it now, and every hand-over HRMS wrote down (27 Oct 2026); a missing history is said, never made up
+    assignment: (() => { const hist = assignmentHistory(a); return { current: holderOf(a), status: a.assignedToId ? 'Assigned' : 'Unassigned', assignedAt: iso(a.assignedAt), assignedBy: a.assignedByName || null, returnedAt: iso(a.returnedAt), history: hist, note: hist.length ? null : 'HRMS has no earlier hand-over recorded for this asset.' }; })(),
   };
 }
 
@@ -466,15 +531,30 @@ async function sendInvoice(v, req, id, body) {
 }
 
 // ---- REPAIRS -----------------------------------------------------------------------------------
+// The tabs of Repairs & HRMS Tickets (Stage C). "Waiting for approval" = a replacement the company has not answered, or a finished repair whose bill is with Accounts.
+const BUCKETS = ['Awaiting your action', 'In progress', 'Waiting for approval', 'Completed', 'Closed'];
+const ACTIVE_BUCKETS = ['Awaiting your action', 'In progress', 'Waiting for approval'];
+const billWaitingOf = (pay, view) => !!(pay && pay.payment && ['Waiting for Accounts', 'Not sent to Accounts'].includes(pay.payment.status) && view.finalTotal > 0);
 const REPAIR_SORTS = { dateReported: (r) => r.dateReported || '', repairNo: (r) => r.repairNo, assetCode: (r) => r.assetCode, stage: (r) => STAGES.indexOf(r.stage), finalCost: (r) => r.finalTotal || 0, estimate: (r) => r.estimateTotal || 0 };
 async function listRepairs(v, q = {}) {
   const loaded = await loadRepairs(v);
   const px = await paymentExtras(v, loaded);
-  const all = loaded.map(({ repair, asset, side }) => repairView(repair, asset, side, px.map.get(repair.id), v));
+  const ids = loaded.map((x) => x.repair.id);
+  const [works, reps] = await Promise.all([RW.workOf(ids), RW.replacementsOf({ repairIds: ids })]);
+  const repOf = new Map(reps.map((r) => [r.repairId, r]));
+  const all = loaded.map(({ repair, asset, side }) => {
+    const w = works.get(repair.id); const mine = w && w.vendorId === v.vendorId ? w : null;
+    const pay = px.map.get(repair.id) || {};
+    const view = repairView(repair, asset, side, { ...pay, ...RW.workView(mine), replacement: RW.replacementView(repOf.get(repair.id) || null, () => MK().code(asset)) }, v);
+    view.bucket = RW.bucketOf(view.stage, mine, repOf.get(repair.id), billWaitingOf(pay, view));
+    return view;
+  });
   const s = str(q.q).toLowerCase();
   const from = VP.YMD.test(str(q.from)) ? str(q.from) : null;
   const to = VP.YMD.test(str(q.to)) ? str(q.to) : null;
-  const keep = (r, skip) => (skip === 'stage' || !str(q.stage) || r.stage === str(q.stage))
+  const bucketQ = str(q.bucket) === 'Active' ? 'Active' : (BUCKETS.includes(str(q.bucket)) ? str(q.bucket) : '');
+  const inBucket = (r) => !bucketQ || (bucketQ === 'Active' ? ACTIVE_BUCKETS.includes(r.bucket) : r.bucket === bucketQ);
+  const keep = (r, skip) => (skip === 'bucket' || inBucket(r)) && (skip === 'stage' || !str(q.stage) || r.stage === str(q.stage))
     && (skip === 'category' || !str(q.category) || r.category === str(q.category))
     && (skip === 'payment' || !str(q.payment) || r.payment.status === str(q.payment))
     && inRange(r.dateReported, from, to)
@@ -484,6 +564,8 @@ async function listRepairs(v, q = {}) {
   return {
     ...paged(rows, q, 'dateReported', REPAIR_SORTS, 'desc'), all: all.length, canEdit: v.canEdit,
     stages: [...STAGES, 'Cancelled'].map((st) => ({ value: st, count: all.filter((r) => r.stage === st).length })),
+    buckets: [{ value: 'Active', count: all.filter((r) => ACTIVE_BUCKETS.includes(r.bucket)).length }, ...BUCKETS.map((b) => ({ value: b, count: all.filter((r) => r.bucket === b).length }))],
+    outcomes: RW.OUTCOMES,
     facets: { stage: facet(all.filter((r) => keep(r, 'stage')), (r) => r.stage), category: facet(all.filter((r) => keep(r, 'category')), (r) => r.category), payment: facet(all.filter((r) => keep(r, 'payment')), (r) => r.payment.status) },
     summary: { count: all.length, open: all.filter((r) => OPEN_STAGES.includes(r.stage)).length, estimateTotal: sum(all, 'estimateTotal'), finalTotal: sum(all, 'finalTotal') },
   };
@@ -497,11 +579,18 @@ async function repairDetail(v, id) {
   const history = await historyFor(v, [m.repair.id]);
   const loadedAll = await loadRepairs(v);
   const px = await paymentExtras(v, loadedAll);
-  const view = repairView(m.repair, m.asset, m.side, { inCompanyBooks: posted, ...px.map.get(m.repair.id) }, v);
+  const w0 = (await RW.workOf([m.repair.id])).get(m.repair.id);
+  const work = w0 && w0.vendorId === v.vendorId ? w0 : null;
+  const reps = await RW.replacementsOf({ assetIds: [m.repair.assetId] });
+  const thisRep = reps.find((r) => r.repairId === m.repair.id) || reps.find((r) => ['Requested', 'Approved'].includes(r.status)) || null;
+  const pay = px.map.get(m.repair.id) || {};
+  const view = repairView(m.repair, m.asset, m.side, { inCompanyBooks: posted, ...pay, ...RW.workView(work), replacement: RW.replacementView(thisRep, () => MK().code(m.asset)) }, v);
+  view.bucket = RW.bucketOf(view.stage, work, thisRep, billWaitingOf(pay, view));
+  const proofs = (await RW.proofsOf([m.repair.id], v.vendorId)).map((p) => ({ id: p.id, kind: p.kind, name: p.name, size: p.size, note: p.note, by: p.byName, at: p.createdAt }));
   // The asset's other repairs (history per asset), newest first.
   const others = loadedAll.filter((x) => x.repair.assetId === m.repair.assetId && x.repair.id !== m.repair.id).map((x) => repairView(x.repair, x.asset, x.side, px.map.get(x.repair.id), v));
   const assetHistory = await historyFor(v, [m.repair.id, ...others.map((o) => o.id)]);
-  return { repair: view, history, assetRepairs: others, assetHistory, canEdit: v.canEdit, stages: STAGES };
+  return { repair: view, history, assetRepairs: others, assetHistory, canEdit: v.canEdit, stages: STAGES, proofs, outcomes: RW.OUTCOMES, replacements: reps.map((r) => RW.replacementView(r, () => MK().code(m.asset))) };
 }
 
 const moneyOf = (raw) => {
@@ -537,7 +626,13 @@ async function writeSide(c, v, m, cols) {
   const cur = await DB.one('SELECT * FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
   const by = `${v.name} (vendor ${v.vendorName})`;
   if (!cur || cur.vendorId !== v.vendorId) {
-    if (cur) await DB.run('DELETE FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
+    if (cur) {
+      // the repair moved to this vendor: the earlier vendor's invoice file and step stay in the history (Stage C)
+      await RW.keepEarlierInvoice(c, m.repair, cur.vendorId, cur, cur.lastByName || 'earlier vendor');
+      await DB.run('INSERT INTO "AssetRepairEvent" ("id","repairId","assetId","vendorId","vendorUserId","kind","field","fromValue","toValue","note","actorKind","actorName","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        [newId(), m.repair.id, m.repair.assetId, cur.vendorId, null, 'company change', 'Vendor', cur.lastByName || cur.vendorId, by, `Earlier vendor step: ${cur.stage || '-'}; estimate: ${cur.estimateCost == null ? '-' : cur.estimateCost}`, 'Company', 'System', t], c);
+      await DB.run('DELETE FROM "AssetRepairVendor" WHERE "repairId" = ?', [m.repair.id], c);
+    }
     const base = { stage: null, estimateCost: null, estimateGst: null, estimateAt: null, expectedDate: null, returnedDate: null, vendorRemarks: null, invoiceFile: null, invoiceName: null, invoiceMime: null, invoiceSize: null, invoiceAt: null, invoiceHash: null, ...cols };
     const keys = Object.keys(base);
     await DB.run(`INSERT INTO "AssetRepairVendor" ("repairId","assetId","vendorId",${keys.map((k) => `"${k}"`).join(',')},"lastByName","createdAt","updatedAt") VALUES (?,?,?,${keys.map(() => '?').join(',')},?,?,?)`,
@@ -583,6 +678,9 @@ async function updateRepair(v, req, id, body, opts = {}) {
   }
   const side = m.side;
   const curStage = stageOf(repair, side);
+  const w0 = (await RW.workOf([repair.id])).get(repair.id);
+  const work = w0 && w0.vendorId === v.vendorId ? w0 : null;
+  if (work && work.decision === 'Rejected' && body.stage !== undefined && str(body.stage) !== curStage) return { status: 409, body: { error: 'You said you cannot take this repair, so its steps cannot move.' } };
   let newStage = curStage;
   if (body.stage !== undefined && str(body.stage) !== curStage) {
     const want = str(body.stage);
@@ -650,7 +748,7 @@ async function updateRepair(v, req, id, body, opts = {}) {
     evs.push({ kind: 'status', field: 'Step', from: curStage, to: newStage, note: remark });
     cols.stage = newStage;
     if (STATUS_OF[newStage] !== repair.status) data.status = STATUS_OF[newStage];
-    if (newStage === 'Completed' && !repair.repairDate) data.repairDate = today();
+    if (newStage === 'Completed' && !repair.repairDate) data.repairDate = (work && work.completedDate) || today(); // the real completion date when the vendor entered it (Stage C)
     if (newStage === 'Returned') cols.returnedDate = today();
   }
   if (estChanged) {
@@ -698,6 +796,11 @@ async function updateRepair(v, req, id, body, opts = {}) {
       }
       await writeSide(tx, v, m, cols);
       await insertEvents(tx, v, m, evs);
+      // "Asset received" is the vendor taking the job: an unanswered job counts as accepted (Stage C)
+      if (stageChanged && curStage === 'Awaiting repair' && !(work && work.decision)) {
+        await DB.run('INSERT OR IGNORE INTO "AssetRepairWork" ("repairId","assetId","vendorId","decision","decisionAt","lastByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?)', [repair.id, repair.assetId, v.vendorId, 'Accepted', nowIso(), by, nowIso(), nowIso()], tx);
+        await DB.run('UPDATE "AssetRepairWork" SET "decision" = ?, "decisionAt" = ?, "vendorId" = ?, "updatedAt" = ? WHERE "repairId" = ? AND ("decision" IS NULL OR "vendorId" <> ?)', ['Accepted', nowIso(), v.vendorId, nowIso(), repair.id, v.vendorId], tx);
+      }
       if (linkedBill) { // the invoice still waiting in Accounts' queue follows the repair (same bill, never a second one)
         const nb = await tx.vendorBillSubmission.updateMany({
           where: { id: linkedBill.id, status: 'PENDING_REVIEW' },
@@ -766,6 +869,7 @@ async function attachInvoice(v, req, id, stored, hash, invoiceNo) {
     await prisma.$transaction(async (tx) => {
       const n = await tx.assetRepair.updateMany({ where: { id: repair.id, updatedAt: repair.updatedAt }, data });
       if (!n.count) throw Object.assign(new Error('stale'), { stale: true });
+      await RW.keepEarlierInvoice(tx, repair, v.vendorId, side, `${v.name} (vendor ${v.vendorName})`); // the earlier file is KEPT (Stage C: history is never lost)
       await writeSide(tx, v, m, { invoiceFile: stored.billFile, invoiceName: stored.billName, invoiceMime: stored.billMime, invoiceSize: stored.billSize, invoiceAt: nowIso(), invoiceHash: hash });
       if (linkedBill) {
         const nb = await tx.vendorBillSubmission.updateMany({
@@ -781,7 +885,7 @@ async function attachInvoice(v, req, id, stored, hash, invoiceNo) {
     if (e && e.stale) return { status: 409, body: { error: 'This repair was changed by someone else just now. Refresh and try again.', stale: true } };
     throw e;
   }
-  if (oursOld) attachments.remove(oursOld);
+  // (the earlier invoice file is no longer deleted: it stays on the repair as "earlier invoice", Stage C)
   const by = `${v.name} (vendor ${v.vendorName})`;
   for (const e of evs) {
     // eslint-disable-next-line no-await-in-loop
@@ -852,7 +956,7 @@ async function listInvoices(v, q = {}) {
     ...paged(rowsOut, q, 'billDate', sorts, 'desc'), all: all.length, canEdit: v.canEdit,
     facets: { payment: facet(all.filter((r) => keep(r, 'payment')), (r) => r.payment.status) },
     summary: {
-      count: all.length, paid: n(PAYS.STATUS.PAID), pending: n(PAYS.STATUS.PENDING) + n(PAYS.STATUS.WAITING), partlyPaid: n(PAYS.STATUS.PART), overdue: n(PAYS.STATUS.OVERDUE), reversed: n(PAYS.STATUS.REVERSED), notSent: n(PAYS.STATUS.NOT_SENT),
+      count: all.length, paid: n(PAYS.STATUS.PAID), pending: n(PAYS.STATUS.PENDING) + n(PAYS.STATUS.WAITING) + n(PAYS.STATUS.UNDER_REVIEW), underReview: n(PAYS.STATUS.UNDER_REVIEW), partlyPaid: n(PAYS.STATUS.PART), overdue: n(PAYS.STATUS.OVERDUE), reversed: n(PAYS.STATUS.REVERSED), notSent: n(PAYS.STATUS.NOT_SENT),
       paidTotal: ROUND(live.reduce((t, r) => t + (r.payment.paidAmount || 0), 0)), outstanding: ROUND(live.reduce((t, r) => t + (r.payment.balance || 0), 0)),
     },
   };
@@ -941,6 +1045,35 @@ async function updateOrderStatus(v, req, id, body, opts = {}) {
 }
 
 // ---- DASHBOARD ---------------------------------------------------------------------------------
+// STAGE F (2026-10-28): the extra cards (assigned / unassigned / available / under repair, HRMS tickets, awaiting your action, replacements,
+// bills in review, payment counts) and the recent activity, all from real rows of THIS vendor; each card opens its list with the filter.
+async function overviewMore(v, L, views) {
+  const cnt = (where) => (where === HS.NONE ? 0 : prisma.asset.count({ where }));
+  const [held, avail, inRepair, all, buckets, tickets, bills, bank] = await Promise.all([
+    cnt(L.heldWhere), cnt(L.availableWhere), cnt(L.repairWhere), cnt(L.where),
+    listRepairs(v, { pageSize: 5 }).then((r) => r.buckets || []).catch(() => []),
+    RW.vendorTickets(v, L, MK()).catch(() => []),
+    DB.q(`SELECT "id","code","status","uploadedAt","updatedAt" FROM "VendorBillUpload" WHERE "vendorId" = ? ORDER BY "updatedAt" DESC LIMIT 200`, [v.vendorId]).catch(() => []),
+    require('./vendorBankPayments').forVendor(v.vendorId).catch(() => ({ rows: [] })), // eslint-disable-line global-require
+  ]);
+  const b = (k) => (buckets.find((x) => x.value === k) || {}).count || 0;
+  const reps = await RW.replacementsOf({ repairIds: views.map((r) => r.id) });
+  const activity = [];
+  const add = (at, text, link) => { if (at) activity.push({ at: String(at), text, link }); };
+  tickets.slice(0, 20).forEach((t) => add(t.raisedAt, `HRMS ticket ${t.ticketRef} on ${t.assetCode}: ${t.kind}`, '/vendor/asset-portal/repairs?tab=tickets'));
+  (await historyFor(v, views.map((r) => r.id))).slice(0, 30).forEach((h) => add(h.at, `${h.repairNo}: ${h.field || h.kind}${h.to != null ? ` -> ${h.to}` : ''}${h.by === 'Company' ? ' (company)' : ''}`, `/vendor/asset-portal/repairs?open=${encodeURIComponent(h.repairId)}`));
+  bills.slice(0, 20).forEach((u) => add(u.updatedAt || u.uploadedAt, `Bill ${u.code}: ${String(u.status).replace(/_/g, ' ').toLowerCase()}`, '/vendor/asset-portal/invoices?tab=bills'));
+  (bank.rows || []).slice(0, 20).forEach((p) => add(p.date, `Payment received from the company: ${p.amount}`, '/vendor/asset-portal/invoices?tab=payments'));
+  return {
+    more: {
+      assigned: held, unassigned: Math.max(0, all - held), available: avail, assetsInRepair: inRepair,
+      openTickets: tickets.filter((t) => t.state === 'Open').length, awaitingAction: b('Awaiting your action'), waitingApproval: b('Waiting for approval'), completed: b('Completed'),
+      replacementRequests: reps.filter((r) => ['Requested', 'Approved'].includes(r.status)).length,
+      billsInReview: bills.filter((u) => ['UPLOADED', 'AI_PROCESSING', 'NEEDS_REVIEW', 'PENDING_APPROVAL'].includes(u.status)).length,
+    },
+    activity: activity.sort((x, y) => y.at.localeCompare(x.at)).slice(0, 15),
+  };
+}
 async function overview(v) {
   await ensureMask();
   const L = await HS.listing(v);
@@ -960,6 +1093,7 @@ async function overview(v) {
     repairs: { waiting: views.filter((r) => r.stage === 'Awaiting repair').length, fromCompany: views.filter((r) => r.fromCompany && r.stage === 'Awaiting repair').length, total: views.length, byStage: [...STAGES, 'Cancelled'].map((st) => ({ value: st, count: views.filter((r) => r.stage === st).length })), open: views.filter((r) => OPEN_STAGES.includes(r.stage)).length, estimateTotal: sum('estimateTotal'), finalTotal: sum('finalTotal') },
     payments: invs.summary,
     recentRepairs: views.slice(0, 5),
+    ...(await overviewMore(v, L, views)),
     canEdit: v.canEdit,
   };
 }

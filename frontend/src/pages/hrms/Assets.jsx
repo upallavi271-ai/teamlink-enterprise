@@ -17,6 +17,7 @@ import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import AssetComplaintModal from './AssetComplaintModal.jsx';
 import { SendRepairModal, BackRepairModal, RepairHistoryModal, repairEntries } from './AssetRepair.jsx';
+import AssetReplacements from './AssetReplacements.jsx'; // replacement requests from repair vendors / approved tickets (Stage C, 28 Oct 2026)
 // Accounts spec S2: the fields Accounts needs + the repair log.
 import { AccountsFields, DisposalFields, AssetRepairsModal, accountsDefaults, accountsNote } from './AssetAccountsFields.jsx';
 
@@ -118,7 +119,7 @@ function AllocateAssetModal({ asset, people, onClose, onSaved }) {
       {transfer && <div className="small-muted" style={{ marginBottom: 10 }}>Now with {asset.assignedToName}{asset.assignedTo?.department ? ` (${asset.assignedTo.department})` : ''}.</div>}
       {!people && <div className="small-muted">Loading people…</div>}
       <Field label="1. Department" required>
-        <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
+        <Combo departments value={department} onChange={(e) => { setDepartment(e.target.value); setEmployeeId(''); }}>
           <option value="">Pick the department</option>
           {depts.map((d) => <option key={d.name} value={d.name}>{`${d.name} (${d.count} ${d.count === 1 ? 'person' : 'people'})`}</option>)}
           {people && people.noDepartment > 0 && <option value={NO_DEPT}>{`No department on file (${people.noDepartment})`}</option>}
@@ -418,6 +419,7 @@ export default function Assets({ view, onOpen, onBack }) {
     return (
       <FeatureScreen title="Asset Maintenance & Repair" sub="Send an asset for repair, keep the vendor's slip, and see every repair." onBack={onBack}>
         {repairFlash && <div className="asrep-flash" role="status">{repairFlash}</div>}
+        <AssetReplacements canEdit={isHR} onChanged={load} />
         {(() => {
           const open = repair && assets.find((x) => x.id === repair.id);
           if (!open) return null;

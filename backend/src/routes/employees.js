@@ -359,6 +359,17 @@ router.post('/me/verify/start', async (req, res, next) => {
   try {
     const employee = await prisma.employee.findUnique({ where: { userId: req.user.id } });
     if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+    // correlation id: the server log line and the screen carry the same one (never the code or the number)
+    const ref = `V${Date.now().toString(36).toUpperCase()}`;
+
+    // One code a minute: every press is a real SMS now.
+    const wait = empVerify.resendWait(employee);
+    if (wait > 0) return res.status(429).json({ error: `A code was sent a moment ago. Wait ${wait} seconds before asking for another.`, retryAfter: wait });
+
+    // Nothing can deliver it: say exactly what is missing, before a code is made.
+    const channel = await empVerify.smsChannel();
+    console.info(`[verify-otp ${ref}] config sms configured=${channel.configured} deliverable=${channel.deliverable} provider=${channel.provider || '-'}`);
+    if (!channel.deliverable) return res.status(409).json({ error: channel.reason, notConfigured: true, ref });
 
     const started = await empVerify.startVerification(employee, {
       kind: req.body.kind, mobile: req.body.mobile, aadhaar: req.body.aadhaar,
@@ -369,28 +380,39 @@ router.post('/me/verify/start', async (req, res, next) => {
     // holder of the session pass a check that is meant to prove a phone.
     //
     // And it is delivered by SMS or not at all: mailing a code to verify a
-    // MOBILE proves the mailbox, not the number. No SMS client exists yet,
-    // so today this always reports undelivered — and says why, rather than
-    // emailing it and calling the mobile verified.
-    let delivery = null;
-    if (started.sms.deliverable) {
-      delivery = `sent by SMS to ${started.masked}`;
+    // MOBILE proves the mailbox, not the number. Only the provider accepting
+    // the SMS counts as sent; anything else clears the code and says why.
+    const sent = await empVerify.sendCode({
+      employee, otp: started.otp, mobile: started.mobile, ttlMinutes: started.ttlMinutes, ref,
+    });
+    if (!sent.ok) {
+      await empVerify.clearPending(employee.id);
+      await logAudit({
+        userId: req.user.id, action: `Identity verification code not sent (${started.kind})`,
+        entity: 'Employee', entityId: employee.id, reason: `${ref} ${sent.outcome}: ${String(sent.error || '').slice(0, 400)}`,
+      });
+      return res.status(sent.notConfigured ? 409 : 502).json({
+        error: `The code could not be sent: ${sent.error || 'the SMS provider did not accept it'}`,
+        outcome: sent.outcome, notConfigured: !!sent.notConfigured, ref,
+      });
     }
+    const delivery = `sent by SMS to ${started.masked}`;
 
     await logAudit({
       userId: req.user.id,
       action: `Identity verification started (${started.kind})`,
-      entity: 'Employee', entityId: employee.id,
+      entity: 'Employee', entityId: employee.id, toValue: `${ref} ${sent.provider || 'SMS'} ${sent.providerRef || ''}`.trim(),
     });
 
     return res.json({
       kind: started.kind,
       mobile: started.masked,
       ttlMinutes: started.ttlMinutes,
-      delivered: !!delivery,
+      delivered: true,
       delivery,
-      // Said plainly on the screen of the person who just pressed the button.
-      note: delivery ? null : started.sms.reason,
+      ref,
+      // accepted by the provider is not yet delivered to the phone
+      note: 'The SMS provider accepted the message. It usually arrives within a minute.',
       esign: started.esign ? started.esign.name : null,
       esignNote: started.kind === "AADHAAR" && !started.esign
         ? 'No Aadhaar eSign provider is connected, so this can only check the number offline — it will not be a UIDAI-authenticated verification.'
@@ -1593,9 +1615,11 @@ router.get('/management/options', requirePerm(null, 'hrms', 'Employee Management
     statusFilter: HR_STATUSES,
     // A department-scoped caller is offered only the departments they hold —
     // the same list assertDepartmentAllowed() then enforces on the write.
+    // Only Department & Team departments that are switched on (founder
+    // 2026-10-28) — no longer the names typed on employee records.
     departments: allowed === undefined
-      ? union(masterDepts, inUse('department')).filter((d) => !offDepts.has(d))
-      : allowed,
+      ? masterDepts.filter((d) => !offDepts.has(d))
+      : (departments.length ? departments.map((d) => d.name) : allowed),
     // Departments with their teams, for the Edit Scope checklists.
     departmentTree: departments.map((d) => ({
       id: d.id, name: d.name, teams: (d.teams || []).map((t) => ({ id: t.id, name: t.name })),

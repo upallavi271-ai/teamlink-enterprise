@@ -59,7 +59,8 @@ const S = require('../utils/payrollSync');
 // S3 (2026-10-05): ONE journal per payroll month (utils/payrollPosting.js).
 const P = require('../utils/payrollPosting');
 const { compliance } = require('../utils/payrollReports');
-const { toCsv, toXlsx } = require('../utils/tabularExport');
+const { toCsv, toXlsx, toXlsxBook } = require('../utils/tabularExport');
+const REG = require('../utils/payrollRegister'); // pay-register columns of the export (2026-10-28)
 const { notifyDataIo } = require('../utils/dataIoNotify');
 // Payroll edit and recalculate (user spec 2026-10-13, item 5): utils/payrollEdit.js
 const PEdit = require('../utils/payrollEdit');
@@ -91,7 +92,7 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       can(u, 'hrms', 'hrms', 'Payroll & Compensation', 'configure'),
     ]);
     const approve = approveH || approveA;
-    req.payrollAccess = { prepare, approve, post, ledger, edit: !!editH, reopen: !!reopenH, view: prepare || approve || post || exportH || ledger || !!editH };
+    req.payrollAccess = { prepare, approve, post, ledger, edit: !!editH, reopen: !!reopenH, export: !!exportH, view: prepare || approve || post || exportH || ledger || !!editH };
     return req.payrollAccess;
   }
   const need = (flag) => async (req, res, next) => {
@@ -205,6 +206,78 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
     return e;
   }
 
+  // EXPORT THE MONTH'S CALCULATED PAYROLL (founder 2026-10-27: "process payroll lo export option pettu"): every record the
+  // Payroll records table shows (the same scope, optional department), one row per employee, as Excel or CSV. Bank account,
+  // PAN and UAN numbers are left out of the file. Needs the Payroll export right.
+  router.get('/runs/:month/export', need('export'), async (req, res) => {
+    const month = req.params.month;
+    if (!E.isMonth(month)) return res.status(400).json({ error: 'month is required (YYYY-MM)' });
+    const format = String(req.query.format || 'xlsx').toLowerCase() === 'csv' ? 'csv' : 'xlsx';
+    const where = { month, employee: payrollEmployeeWhere(req) };
+    if (req.query.department) where.employee = { AND: [payrollEmployeeWhere(req), { department: String(req.query.department) }] };
+    const entries = await prisma.employeePayrollRun.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeCode: true, department: true, designation: true } } },
+      orderBy: { employee: { name: 'asc' } },
+    });
+    const edited = await PEdit.readStates(entries.map((e) => e.id));
+    // Pay register layout (founder 2026-10-28): payable / non-payable days, the EARNED parts, the PF rule, amounts to the paisa.
+    const pfRules = await REG.pfRulesFor(entries.map((e) => e.salaryVersionId));
+    const n = (v) => REG.r2(v);
+    const headers = ['Employee ID', 'Name', 'Department', 'Designation', 'Pay type', 'Working days', 'Days present', 'LOP days', 'Payable days', 'Non-payable days',
+      'Basic', 'HRA', 'Special allowance', 'Conveyance', 'Bonus', 'Incentive', 'Other earnings', 'Gross', 'LOP amount', 'Earned gross',
+      'Earned basic', 'Earned HRA', 'Earned conveyance', 'Earned special allowance', 'Earned bonus', 'Earned stipend', 'PF rule',
+      'PF (employee)', 'ESI (employee)', 'Professional tax', 'TDS', 'Other deductions', 'Total deductions', 'Net pay',
+      'PF (employer)', 'ESI (employer)', 'Gratuity', 'Status', 'Edited by hand'];
+    const MONEY = ['basic', 'hra', 'specialAllowance', 'conveyance', 'bonus', 'incentive', 'arrears', 'grossPay', 'lopDeduction', 'earnedGross',
+      'eBasic', 'eHra', 'eConveyance', 'eSpecial', 'eBonus', 'eStipend',
+      'pfEmployee', 'esiEmployee', 'professionalTax', 'tds', 'otherDeductions', 'totalDeductions', 'netPay', 'pfEmployer', 'esiEmployer', 'gratuity'];
+    const view = entries.map((e) => {
+      const ep = REG.earnedParts(e);
+      const rule = pfRules.get(e.salaryVersionId);
+      return {
+        e, ep, eBasic: ep.basic, eHra: ep.hra, eConveyance: ep.conveyance, eSpecial: ep.specialAllowance, eBonus: ep.bonus, eStipend: ep.stipend,
+        pfRule: e.payMode === 'Stipend' ? '' : (rule ? (rule.mode === 'FIXED' ? `Fixed ${n(rule.amount).toFixed(2)}` : REG.pfRuleText(rule)) : 'Standard'),
+      };
+    });
+    const val = (v, k) => (Object.prototype.hasOwnProperty.call(v, k) ? v[k] : v.e[k]);
+    const rowOf = (v) => {
+      const { e } = v;
+      return [e.employee.employeeCode || '', e.employee.name, e.employee.department || '', e.employee.designation || '', e.payMode || '',
+        e.workingDays ?? '', e.daysPresent ?? '', e.daysLop ?? '', v.ep.payable, v.ep.nonPayable,
+        n(e.basic), n(e.hra), n(e.specialAllowance), n(e.conveyance), n(e.bonus), n(e.incentive), n(e.arrears), n(e.grossPay), n(e.lopDeduction), n(e.earnedGross),
+        n(v.eBasic), n(v.eHra), n(v.eConveyance), n(v.eSpecial), n(v.eBonus), n(v.eStipend), v.pfRule,
+        n(e.pfEmployee), n(e.esiEmployee), n(e.professionalTax), n(e.tds), n(e.otherDeductions), n(e.totalDeductions), n(e.netPay),
+        n(e.pfEmployer), n(e.esiEmployer), n(e.gratuity), E.STATUS_LABEL[e.status] || e.status, (edited.get(e.id) || {}).edited ? 'Yes' : 'No'];
+    };
+    const totalOf = (list, label) => {
+      const t = (k) => n(list.reduce((sum, v) => sum + n(val(v, k)), 0));
+      const days = (k) => list.reduce((sum, v) => sum + (Number(v.ep[k]) || 0), 0);
+      const T = Object.fromEntries(MONEY.map((k) => [k, t(k)]));
+      return ['', label, '', '', '', '', '', '', days('payable'), days('nonPayable'), T.basic, T.hra, T.specialAllowance, T.conveyance, T.bonus, T.incentive, T.arrears, T.grossPay,
+        T.lopDeduction, T.earnedGross, T.eBasic, T.eHra, T.eConveyance, T.eSpecial, T.eBonus, T.eStipend, '',
+        T.pfEmployee, T.esiEmployee, T.professionalTax, T.tds, T.otherDeductions, T.totalDeductions, T.netPay,
+        T.pfEmployer, T.esiEmployer, T.gratuity, '', ''];
+    };
+    const table = (list, label) => (list.length ? [...list.map(rowOf), totalOf(list, label)] : []);
+    const rows = table(view, 'TOTAL');
+    await logAudit({ userId: req.user.id, action: `Payroll exported (${format.toUpperCase()})`, entity: 'EmployeePayrollRun', toValue: `${month} - ${entries.length} record(s)` });
+    const fileName = `payroll-${month}${req.query.department ? `-${String(req.query.department).replace(/[^A-Za-z0-9]+/g, '-')}` : ''}`;
+    // Excel: the pay register's two groups get their own sheets too (Group A = the packages, Stipend).
+    const pkg = view.filter((v) => v.e.payMode !== 'Stipend');
+    const stp = view.filter((v) => v.e.payMode === 'Stipend');
+    if (format === 'xlsx' && pkg.length && stp.length) {
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}.xlsx"`);
+      return res.send(toXlsxBook([
+        { name: 'Payroll', headers, rows },
+        { name: 'Group A', headers, rows: table(pkg, 'TOTAL Group A') },
+        { name: 'Stipend', headers, rows: table(stp, 'TOTAL Stipend') },
+      ]));
+    }
+    return sendTable(res, format, fileName, headers, rows, 'Payroll');
+  });
+
   router.get('/entries/:id', need('view'), async (req, res) => {
     const e = await scopedEntry(req, res);
     if (!e) return undefined;
@@ -213,9 +286,34 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
       prisma.payrollSyncLog.findMany({ where: { employeePayrollRunId: e.id }, orderBy: { createdAt: 'asc' } }),
       e.salaryVersionId ? prisma.salaryStructureVersion.findUnique({ where: { id: e.salaryVersionId } }) : null,
     ]);
+    // Details (founder 2026-10-28): the month's breakup in plain words - payable days, earned parts, the rules used.
+    const regOn = await REG.isRegisterMonth(e.month);
+    const pfRule = await REG.pfRuleOf(e.salaryVersionId);
+    const ep = REG.earnedParts(e);
+    const breakup = {
+      payableDays: ep.payable, nonPayableDays: ep.nonPayable, workingDays: e.workingDays,
+      earned: { basic: ep.basic, hra: ep.hra, conveyance: ep.conveyance, specialAllowance: ep.specialAllowance, bonus: ep.bonus, stipend: ep.stipend },
+      rules: regOn ? {
+        mode: 'Pay register rules (to the paisa)',
+        earned: 'Each part = full-month amount x payable days / days in the pay period, rounded to the paisa.',
+        pf: e.payMode === 'Stipend' ? 'No PF on a stipend.' : pfRule ? (pfRule.mode === 'FIXED' ? `Fixed PF of ${REG.r2(pfRule.amount)} every month (not cut for LOP).` : `PF = ${pfRule.pct}% of the earned Basic.`) : "PF = the structure's PF x paid days / days in the pay period.",
+        esi: e.payMode === 'Stipend' ? 'No ESI on a stipend.' : '0.75% of the earned pay, rounded up, only when the full-month gross is Rs 21,000 or less.',
+        pt: e.payMode === 'Stipend' ? 'No PT on a stipend.' : 'Telangana PT on the earned pay: above Rs 20,000 = 200, above Rs 15,000 = 150, else 0.',
+        tds: 'TDS = the monthly figure in the salary structure.',
+      } : {
+        mode: 'Standard rules (whole rupees)',
+        earned: 'LOP amount = full gross x LOP days / payroll days, rounded to the rupee.',
+        pf: "PF = the structure's PF x paid days / payroll days.",
+        esi: '0.75% of the earned pay, rounded up, when the full-month gross is up to the ESI limit.',
+        pt: "Telangana PT on the earned pay (never above the structure's PT).",
+        tds: "TDS = the structure's monthly figure, else the policy %.",
+      },
+      attendance: { source: e.attendanceSource === 'OVERRIDE' ? 'Days typed / imported by HR' : 'From the attendance module', daysPresent: e.daysPresent },
+      calculatedAt: e.calculatedAt, calculatedBy: e.calculatedBy,
+    };
     return res.json({
       entry: { ...e, statusLabel: E.STATUS_LABEL[e.status] },
-      version, history, syncLogs: logs,
+      version, history, syncLogs: logs, breakup,
       // This employee's share of the month's one journal entry.
       journalPayload: await P.employeeShare(e),
     });
@@ -254,7 +352,10 @@ module.exports = function registerPayrollRuns(router, { payrollEmployeeWhere }) 
   router.get('/entries/:id/history', need('view'), async (req, res) => {
     const e = await scopedEntry(req, res);
     if (!e) return undefined;
-    return res.json({ ...(await PEdit.historyOf(e)), lock: PEdit.lockOf(e), status: e.status, statusLabel: E.STATUS_LABEL[e.status] });
+    return res.json({
+      ...(await PEdit.historyOf(e)), lock: PEdit.lockOf(e), status: e.status, statusLabel: E.STATUS_LABEL[e.status],
+      calculatedAt: e.calculatedAt, calculatedBy: e.calculatedBy, transitions: await E.historyOf(e.id),
+    });
   });
   router.get('/runs/:month/changes', need('view'), async (req, res) => {
     if (!E.isMonth(req.params.month)) return res.status(400).json({ error: 'month must be YYYY-MM' });

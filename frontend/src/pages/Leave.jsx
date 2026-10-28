@@ -453,7 +453,9 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
       }
     }
     try {
-      await api.patch(`/leave/${request.id}/decision`, body);
+      const res = await api.patch(`/leave/${request.id}/decision`, body);
+      // a TL's leave approved by HR waits for the Super Admin (founder 2026-10-28)
+      if (res && res.data && res.data.sentToSuperAdmin) window.alert(`Sent to the Super Admin for final approval. ${request.employee?.name || 'This'} leave stays Pending until the Super Admin approves.`);
       onReload();
     } catch (err) {
       setError(err.response?.data?.error || 'Could not record the decision');

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../../api';
+import { useKeptState } from '../../../utils/useKeptState.js';
 import DataTable from './DataTable.jsx';
 import AttachProofModal from './AttachProofModal.jsx';
 import PaymentModal from '../../invoices/PaymentModal.jsx';
@@ -19,7 +20,7 @@ const sumOf = (k) => (l) => money(l.reduce((a, r) => a + (Number(r[k]) || 0), 0)
 export default function ClientTable({
   clients, canPay, canAttach, onChanged, flash,
 }) {
-  const [status, setStatus] = useState('');
+  const [status, setStatus] = useKeptState('accounts.dashboard.clientStatus', '');
   const [open, setOpen] = useState(() => new Set());
   const [pay, setPay] = useState(null);
   const [attach, setAttach] = useState(null);

@@ -47,7 +47,7 @@ function Editor({ rule, opts, onClose, onSaved }) {
               <Combo value={f.audience.type} onChange={(e) => setF({ ...f, audience: { type: e.target.value } })}><option value="all">All active staff</option><option value="department">A department</option><option value="group">A staff group</option></Combo>
             </div>
             {f.audience.type === 'department' && <div className="field"><span>Department</span>
-              <Combo value={f.audience.department || ''} onChange={(e) => setF({ ...f, audience: { type: 'department', department: e.target.value } })}><option value="">Pick a department</option>{opts.departments.map((d) => <option key={d} value={d}>{d}</option>)}</Combo></div>}
+              <Combo departments value={f.audience.department || ''} onChange={(e) => setF({ ...f, audience: { type: 'department', department: e.target.value } })}><option value="">Pick a department</option>{opts.departments.map((d) => <option key={d} value={d}>{d}</option>)}</Combo></div>}
             {f.audience.type === 'group' && <div className="field"><span>Staff group</span>
               <Combo value={f.audience.segmentId || ''} onChange={(e) => setF({ ...f, audience: { type: 'group', segmentId: e.target.value } })}><option value="">Pick a group</option>{opts.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}</Combo></div>}
           </div>

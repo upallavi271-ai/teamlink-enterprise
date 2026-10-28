@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { TeamLinkMark } from '../../components/Logo.jsx';
 import { sidebarModeFor, initialsOf } from './vendorNav.js';
@@ -19,6 +19,7 @@ const P = {
   asset_repairs: 'M21 7.5a5 5 0 01-6.6 4.7L7 19.6A2 2 0 014.4 17l7.4-7.4A5 5 0 0116.5 3l-3 3 1 3 3 1 3-3a5 5 0 01.1.5z',
   asset_history: 'M12 3a9 9 0 11-8.5 6H1l3.5-4L8 9H5.6A7 7 0 1112 19a7 7 0 004.9-2l1.4 1.4A9 9 0 0112 3zm1 4v5l4 2.3-.8 1.4L11 13V7h2z',
   asset_invoices: 'M6 2h12v20l-3-2-3 2-3-2-3 2V2zm3 5v2h6V7H9zm0 4v2h6v-2H9z',
+  asset_bills: 'M5 3h10l4 4v14H5V3zm9 1.5V8h3.5L14 4.5zM8 11v2h8v-2H8zm0 4v2h8v-2H8z',
   airtel_bills: 'M6 2h12v20l-3-2-3 2-3-2-3 2V2zm3 5v2h6V7H9zm0 4v2h6v-2H9z',
   airtel_history: 'M12 3a9 9 0 11-8.5 6H1l3.5-4L8 9H5.6A7 7 0 1112 19a7 7 0 004.9-2l1.4 1.4A9 9 0 0112 3zm1 4v5l4 2.3-.8 1.4L11 13V7h2z',
   airtel_sims: 'M7 2h7l4 4v16H7V2zm2 7v3h6V9H9zm0 5v4h6v-4H9z',
@@ -84,12 +85,16 @@ export default function VendorSidebar({ nav, roleLabel, title, me, mode, open, o
           )}
         </div>
         <nav className="vsb-nav" aria-label={`${title} menu`} data-testid="vendor-nav">
-          {nav.map((n) => (
-            <NavLink key={n.key} to={n.route} end className={({ isActive }) => `vsb-link${isActive ? ' active' : ''}`} title={narrow ? n.label : undefined}>
+          {nav.map((n, i) => (
+            <Fragment key={n.key}>
+            {/* a group heading ("Assets", "Accounts") where a group starts; a thin line in the icon-only menu */}
+            {n.group && n.group !== (nav[i - 1] || {}).group && (narrow ? <hr className="vsb-sep" aria-hidden="true" /> : <div className="vsb-group" role="presentation">{n.group}</div>)}
+            <NavLink to={n.route} end className={({ isActive }) => `vsb-link${isActive ? ' active' : ''}`} title={narrow ? n.label : undefined}>
               <NavIcon name={n.key} />
               <span className="vsb-lbl">{n.label}</span>
               {badges && badges[n.key] > 0 && <span className="vsb-badge" title={`${badges[n.key]} new ${badges[n.key] === 1 ? 'job' : 'jobs'} waiting for you`}>{badges[n.key]}<span className="vsb-sr"> new {badges[n.key] === 1 ? 'job' : 'jobs'} waiting</span></span>}
             </NavLink>
+            </Fragment>
           ))}
         </nav>
         <div className="vsb-foot" data-testid="vendor-profile">

@@ -207,9 +207,11 @@ export function LeaveDecidePanel({ data, onDone }) {
       if (kind === 'Reassign') {
         await api.post(`/leave/${data.leave.id}/reassign`, { toUserId: target, reason: remarks.trim() || undefined });
       } else {
-        await api.patch(`/leave/${data.leave.id}/decision`, kind === 'Rejected'
+        const res = await api.patch(`/leave/${data.leave.id}/decision`, kind === 'Rejected'
           ? { status: 'Rejected', rejectReason: remarks.trim() }
           : { status: 'Approved', comment: remarks.trim() || undefined, approvalReason: reasons && reasons.length ? reason : undefined });
+        // a TL's leave approved by HR waits for the Super Admin (founder 2026-10-28)
+        if (res && res.data && res.data.sentToSuperAdmin) window.alert('Sent to the Super Admin for final approval. The leave stays Pending until the Super Admin approves.');
       }
       onDone();
     } catch (err) {

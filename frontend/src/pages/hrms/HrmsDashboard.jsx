@@ -9,7 +9,6 @@ import ProfileStatusBanner from '../../components/ProfileStatusBanner.jsx';
 import Combo from '../../components/Combo.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
 import DateRangePicker, { useDateRange, rangeParams } from '../../components/DateRangePicker.jsx';
-import ChartFromSpec from '../../components/charts/ChartFromSpec.jsx';
 import { Tiles, DrillPanel } from './DashboardDrill.jsx';
 // Recruiter joinings (2026-10-05): Super Admin's month-end popup + a recruiter's own figure.
 import NewItems from '../../components/dashboard/NewItems.jsx'; // the New button (2026-10-13), HRMS lines only (2026-10-24)
@@ -259,17 +258,8 @@ function HrDashboard() {
         <DrillPanel drill={drill} expected={drill.expected} params={params} onClose={() => setDrill(null)} moreTo="/leave" moreLabel="Open Leave Requests" />
       )}
 
-      {/* hrms-24 §9 — built by the server from exactly the figures in the
-          tiles above: same range, same filters, same scope. */}
-      {(data.charts || []).length > 0 && (
-        <>
-          <SectionLabel>{`Charts — ${p.name}`}</SectionLabel>
-          <div className="tlc-grid2 hd-charts">
-            {data.charts.map((c) => <ChartFromSpec key={c.id} spec={c} />)}
-          </div>
-        </>
-      )}
-
+      {/* NO CHART (founder 2026-10-27: "chart remove chey"): the department-wise chart is gone; the cards above carry the numbers.
+          The server still sends data.charts; the dashboard just does not draw it. */}
       <div style={{ marginTop: 16 }}>
         <PanelPad>
           <h3 style={{ marginBottom: 12, fontSize: 14 }}>Pending Tasks &amp; Approvals (now)</h3>

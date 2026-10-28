@@ -15,7 +15,9 @@ if (!fs.existsSync(DB)) { console.error('No prisma/sandbox.db - start the sandbo
 process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
 require('dotenv').config({ path: path.join(BACK, '.env') });
 process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
-const API = 'http://localhost:4011/api';
+// TL_API = another throw-away test server (4011-4099, never 4010)
+const API = `${String(process.env.TL_API || 'http://localhost:4011').replace(/\/+$/, '').replace(/\/api$/, '')}/api`;
+if (/:4010(\/|$)/.test(API)) { console.error('Refusing: 4010 is the real server.'); process.exit(2); }
 const prisma = require('../src/db');
 const jwt = require('jsonwebtoken');
 const { payrollCalc } = require('../src/utils/payrollCalc');
@@ -154,7 +156,11 @@ async function main() {
   b2.totals = (() => { const t = clientTotals(ed.body, { fields: { daysLop: 2, loan: 500, professionalTax: 0 }, manual: { professionalTax: true }, ...rows }); b2.manual = { professionalTax: true }; return { grossPay: t.grossPay, totalDeductions: t.totalDeductions, netPay: t.netPay, ctc: t.ctc }; })();
   const sv2 = await http(S.hr, 'PUT', `/payroll/entries/${e1r.id}/edit`, b2);
   e1r = await ent(S.e1);
-  ok(sv2.status === 200 && e1r.daysLop === 2 && e1r.lopDeduction === Math.round(23319 * 2 / e1r.workingDays) && e1r.arrears === 1500 && e1r.otherDeductions === 800 && e1r.professionalTax === 0 && e1r.grossPay === 23319 + 1500, 'T17 days (LOP 2) recompute the LOP amount with the engine formula; added rows land in Other earnings / Other deductions; typed PT 0 kept', sv2.body && { s: sv2.status, err: sv2.body.error, row: e1r && { lop: e1r.lopDeduction, arr: e1r.arrears, od: e1r.otherDeductions, pt: e1r.professionalTax, g: e1r.grossPay } });
+  // the LOP amount by the rule in force: whole rupees, or (pay-register months, utils/payrollRegister.js) gross - the paise earned parts
+  const regOn = await require('../src/utils/payrollRegister').isRegisterMonth(M_OPEN);
+  const r2 = require('../src/utils/payrollRegister').r2;
+  const lopWant = regOn ? r2(23319 - [10000, 4000, 1000, 8319].reduce((n, x) => n + r2((x * (e1r.workingDays - 2)) / e1r.workingDays), 0)) : Math.round(23319 * 2 / e1r.workingDays);
+  ok(sv2.status === 200 && e1r.daysLop === 2 && e1r.lopDeduction === lopWant && e1r.arrears === 1500 && e1r.otherDeductions === 800 && e1r.professionalTax === 0 && e1r.grossPay === 23319 + 1500, 'T17 days (LOP 2) recompute the LOP amount with the engine formula; added rows land in Other earnings / Other deductions; typed PT 0 kept', sv2.body && { s: sv2.status, err: sv2.body.error, row: e1r && { lop: e1r.lopDeduction, arr: e1r.arrears, od: e1r.otherDeductions, pt: e1r.professionalTax, g: e1r.grossPay } });
   const st = await PEdit.readState(e1r.id);
   ok(st.edited && st.manual.professionalTax && st.loan === 500 && st.extras.earnings.length === 1, 'T18 the edit state keeps the manual flag, loan and rows', st);
   ed = await http(S.hr, 'GET', `/payroll/entries/${e1r.id}/edit`);

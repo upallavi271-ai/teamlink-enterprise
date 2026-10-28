@@ -4,6 +4,7 @@
 // first) with the split the app suggests already ticked; ONE button approves it.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { money2, fmtD } from '../invoices/invFormat';
 import './unallocated.css';
 import Combo from '../../components/Combo.jsx';
@@ -14,8 +15,9 @@ export default function Unallocated({ accountId, canManage, onChanged, onOpen })
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [said, setSaid] = useState('');
-  const [q, setQ] = useState('');
-  const [client, setClient] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js).
+  const [q, setQ] = useKeptState('bank.unallocated.q', '');
+  const [client, setClient] = useKeptState('bank.unallocated.client', '');
   const [pick, setPick] = useState({}); // txnId -> { invoiceId: amountString }
   const [other, setOther] = useState({}); // txnId -> { clientId, rows }
   const [cross, setCross] = useState({});

@@ -307,6 +307,12 @@ function parseFile(spec, buffer, fileName = '') {
   } catch (err) {
     return { error: `That file could not be read as Excel or CSV (${String(err.message || err).slice(0, 80)}).` };
   }
+  // A spec may also read the team's OWN sheet layout (e.g. the founder's monthly attendance sheet):
+  // readOtherShape returns null when the file is not that layout, so the strict sample check below applies.
+  if (typeof spec.readOtherShape === 'function') {
+    const other = spec.readOtherShape(wb, { fileName, XLSX, str });
+    if (other) return other;
+  }
   const want = (spec.sheet || spec.label || '').toLowerCase();
   const sheetName = wb.SheetNames.find((n) => n.toLowerCase() === want)
     || wb.SheetNames.find((n) => !['lists', 'instructions'].includes(n.toLowerCase()))
@@ -327,7 +333,8 @@ function parseFile(spec, buffer, fileName = '') {
   const seen = new Map();
   const dupes = [];
   mapped.forEach((c, i) => { if (!c) return; if (seen.has(c.key)) dupes.push(headers[i]); else seen.set(c.key, i); });
-  const missing = importable(spec).filter((c) => !seen.has(c.key)).map((c) => c.label);
+  // `optionalHeader` columns (added to a spec later) may be left out of an older file.
+  const missing = importable(spec).filter((c) => !c.optionalHeader && !seen.has(c.key)).map((c) => c.label);
   if (unknown.length || missing.length || dupes.length) {
     const bits = [];
     if (missing.length) bits.push(`missing column(s): ${missing.join(', ')}`);

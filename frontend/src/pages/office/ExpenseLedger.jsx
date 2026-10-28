@@ -20,12 +20,14 @@
 // filter or sort starts again from page 1.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import ScrollSync from '../../components/accounts/ScrollSync.jsx';
 import '../../components/ui/ui.css';
 import ExpenseDrawer from './ExpenseDrawer.jsx';
 import BillPreview from './BillPreview.jsx';
 import AddVendorModal from './AddVendorModal.jsx';
+import VendorListModal from './VendorListModal.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
 import { payChip } from './paymentProof';
 import './payproof.css';
@@ -65,6 +67,7 @@ export default function ExpenseLedger({
   const [more, setMore] = useState(false); // the next page is on its way
   const [moreErr, setMoreErr] = useState(false);
   const [addVendor, setAddVendor] = useState(false);
+  const [vendorList, setVendorList] = useState(false); // Vendors (view + Edit) - Admin and Accountant
   const rowsRef = useRef([]);
   rowsRef.current = rows;
   const lastKey = useRef(null);
@@ -81,7 +84,7 @@ export default function ExpenseLedger({
   // Search is typed: wait a moment before asking.
   const [qDeb, setQDeb] = useState(params.q);
   useEffect(() => { const t = setTimeout(() => setQDeb(params.q), 250); return () => clearTimeout(t); }, [params.q]);
-  const [order, setOrder] = useState({ sort: 'date', dir: 'desc' });
+  const [order, setOrder] = useKeptState('office.ledger.order', { sort: 'date', dir: 'desc' }); // kept (utils/useKeptState.js)
   const sent = { ...params, q: qDeb };
   const key = JSON.stringify({ ...sent, ...order });
 
@@ -208,6 +211,7 @@ export default function ExpenseLedger({
             </button>
           )}
           {canManage && <button type="button" className="btn btn-sm" onClick={() => setAddVendor(true)}>+ Add Vendor</button>}
+          {acc.editVendors && <button type="button" className="btn btn-sm" onClick={() => setVendorList(true)}>Vendors (edit)</button>}
         </div>
       </div>
 
@@ -345,6 +349,7 @@ export default function ExpenseLedger({
         />
       )}
       {bill && <BillPreview expense={bill} onClose={() => setBill(null)} />}
+      {vendorList && <VendorListModal onClose={() => setVendorList(false)} />}
       {addVendor && (
         <AddVendorModal
           existingNames={(o?.vendors || []).map((v) => v.name)}

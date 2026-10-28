@@ -125,7 +125,9 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
   useEffect(() => { if (isHR) load(); }, [range.from, range.to, isHR]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function mark(employeeId, status) {
-    await api.post('/attendance', { employeeId, date, status });
+    const res = await api.post('/attendance', { employeeId, date, status });
+    // a Leave mark is a leave WAITING for approval (founder 2026-10-28): the server says who it waits for
+    if (res && res.data && res.data.message) setMarkMsg(res.data.message);
     load();
   }
   // SUPER ADMIN POWERS (founder 2026-10-26): change the in / out times (HR too when the Super Admin allows it) and unlock a day that is

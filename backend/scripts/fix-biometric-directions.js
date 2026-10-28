@@ -46,11 +46,24 @@ const KEY_NAME = { 0: 'Check-In', 1: 'Check-Out', 2: 'Break-Out', 3: 'Break-In',
   console.log(`DEVICE PUNCHES ${FROM ? `from ${FROM}` : '(all)'}: ${punches.length}`);
   [...byKey.entries()].sort().forEach(([k, n]) => console.log(`  key ${k} ${pad(`(${KEY_NAME[k] || 'other'})`, 13)} ${n}`));
 
-  const wrong = punches.filter((p) => String(p.deviceState).trim() !== '' && directionFromState(p.deviceState) !== p.direction);
+  // 2026-10-28: the day is settled as a whole (bio.settledDirections) - the key pressed, and the evening "Check-In" press of a device left
+  // in Check-In mode counts as the check-out. All punches of each person-day are read (a web check-in in the morning counts as "earlier").
+  const cfg = await prisma.hrConfig.findFirst().catch(() => null);
+  const split = require('../src/utils/attendanceDays').policyTimes(cfg || {}).split; // eslint-disable-line global-require
+  const dayKeys = [...new Set(punches.map((p) => `${p.employeeId}|${p.date}`))];
+  const wantOf = new Map();
+  for (const k of dayKeys) {
+    const [employeeId, date] = k.split('|');
+    // eslint-disable-next-line no-await-in-loop
+    const all = await prisma.attendancePunch.findMany({ where: { employeeId, date }, select: { id: true, time: true, clockTime: true, method: true, direction: true, deviceState: true } });
+    bio.settledDirections(all, split).forEach((dir, id) => wantOf.set(id, dir));
+  }
+  punches.forEach((p) => { p.want = wantOf.get(p.id) || directionFromState(p.deviceState); });
+  const wrong = punches.filter((p) => String(p.deviceState).trim() !== '' && p.want !== p.direction);
   console.log(`\nPUNCHES SHOWN THE WRONG WAY (${wrong.length})`);
   console.log('  ' + pad('CODE', 10) + pad('NAME', 26) + pad('DATE', 12) + pad('TIME', 10) + pad('KEY PRESSED', 14) + 'SHOWN -> CORRECT');
   wrong.forEach((p) => console.log('  ' + pad(p.employee && p.employee.employeeCode, 10) + pad(String((p.employee && p.employee.name) || '').slice(0, 24), 26)
-    + pad(p.date, 12) + pad(p.clockTime || p.time, 10) + pad(KEY_NAME[p.deviceState] || p.deviceState, 14) + `${p.direction} -> ${directionFromState(p.deviceState)}`));
+    + pad(p.date, 12) + pad(p.clockTime || p.time, 10) + pad(KEY_NAME[p.deviceState] || p.deviceState, 14) + `${p.direction} -> ${p.want}`));
 
   const days = new Map();
   wrong.forEach((p) => days.set(`${p.employeeId}|${p.date}`, { employeeId: p.employeeId, date: p.date }));
@@ -61,7 +74,7 @@ const KEY_NAME = { 0: 'Check-In', 1: 'Check-Out', 2: 'Break-Out', 3: 'Break-In',
     process.exit(0);
   }
   for (const p of wrong) {
-    const to = directionFromState(p.deviceState);
+    const to = p.want;
     // eslint-disable-next-line no-await-in-loop
     await prisma.attendancePunch.update({ where: { id: p.id }, data: { direction: to } });
     // eslint-disable-next-line no-await-in-loop

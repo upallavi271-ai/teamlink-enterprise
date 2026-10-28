@@ -103,7 +103,8 @@ export default function MyProfile() {
       // component state, or anywhere else on this machine.
       setVf((f) => ({ ...f, aadhaar: '', otp: '' }));
     } catch (err) {
-      setVerr(err.response?.data?.error || 'Could not start the verification.');
+      const d = err.response?.data;
+      setVerr(d?.error ? `${d.error}${d.ref ? ` (ref ${d.ref})` : ''}` : 'Could not start the verification.');
     } finally { setVbusy(''); }
   }
 

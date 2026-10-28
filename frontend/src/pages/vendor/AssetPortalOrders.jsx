@@ -21,6 +21,9 @@ export default function AssetPortalOrders() {
   );
 }
 
+// Also the "Orders" tab of Invoices & Payments (27 Oct 2026)
+export function OrdersBody() { return <Body />; }
+
 function Body() {
   const [data, setData] = useState(null);
   const [f, setF] = useState({ q: '', status: '', from: '', to: '', sort: 'orderDate', dir: 'desc', page: 1 });

@@ -172,6 +172,9 @@ async function vendorView(row, links, M, { withHistory = false } = {}) {
     seen: row.vendorSeenStatus === row.status,
   };
   if (withHistory) out.history = await vendorHistory(row.id);
+  // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
+  if (withHistory) out.payment = await paymentOfUpload(row).catch(() => null);
+  if (withHistory) out.lineAssets = await require('./billLineAssets').lineAssets(ls, await candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, out.asset ? out.asset.id : null, M).catch(() => []); // eslint-disable-line global-require
   return out;
 }
 
@@ -313,7 +316,7 @@ async function storeFiles(rawFiles) {
   const stored = [];
   try {
     rawFiles.forEach((f, i) => {
-      const st = attachments.store({ filename: f.filename, contentType: infos[i].mime, data: f.data }, { maxBytes });
+      const st = attachments.store({ filename: f.filename, contentType: infos[i].mime, data: f.data }, { maxBytes, allowSheet: true }); // Excel / CSV too (2026-10-28)
       stored.push({ id: newId('bf'), file: st.billFile, name: st.billName, mime: infos[i].mime, size: infos[i].size, sha256: infos[i].sha256, pages: infos[i].pages });
     });
   } catch (err) { deleteStored(stored); throw err; }
@@ -412,6 +415,19 @@ async function createUpload(v, req, opts) {
   return { status: 201, body: { upload: await viewOf(v, row), message: submit ? 'Bill uploaded. We are reading it now; you can follow the steps below.' : 'Saved. It is not sent yet. Press Send when you are ready.' } };
 }
 
+// THE PAYMENT OF AN APPROVED BILL (founder 2026-10-28: "payment chesaka ani kuda tisukovali"): read live from Accounts' bill and the bank
+// statement (the same words as Invoices & Payments), with every bank payment's date and amount. null until Accounts has the bill.
+async function paymentOfUpload(row) {
+  if (!row.expenseId) return null;
+  const e = await prisma.officeExpense.findUnique({ where: { id: row.expenseId } });
+  if (!e) return null;
+  const PAY = require('./expensePaymentState'); // eslint-disable-line global-require
+  const PV = require('./assetVendorPayments'); // eslint-disable-line global-require
+  const judged = await PAY.describeMany(prisma, [e]);
+  const p = PV.paymentFromJudge(e, judged.get(e.id));
+  const lines = ((await require('./vendorBankPayments').forVendor(row.vendorId).catch(() => ({ byBill: new Map() }))).byBill.get(e.id) || []); // eslint-disable-line global-require
+  return { status: p.status, tone: p.tone, paidAmount: p.paidAmount, balance: p.balance, dueDate: p.dueDate, note: p.note, payments: lines.slice().sort((a, b) => String(a.date).localeCompare(String(b.date))) };
+}
 async function viewOf(v, row, opts) {
   const M = await AVP().ensureMask();
   const links = await linkMaps([row]);
@@ -624,6 +640,20 @@ async function computeFlags(row) {
   let asset = assetId ? (repair && repair.assetId === assetId ? repair.asset : await prisma.asset.findUnique({ where: { id: assetId } })) : null;
   const ref = row.assetRef ? V.matchRef(row.assetRef, cands.keysOfAssets) : { status: 'none' };
   if (!asset && ref.status === 'matched') { assetId = ref.id; asset = await prisma.asset.findUnique({ where: { id: ref.id } }); add('asset-matched', 'assetRef', 'info', `Matched to asset ${asset ? asset.assetCode : ''} from the bill's asset reference.`, null, { autoAssetId: ref.id }); }
+  // FROM THE ITEMS THE AI READ (founder 2026-10-28: "AI read chesukoni ... adhey suggest cheyali"): when the bill names no asset, a serial
+  // number / asset ID, or the brand + model of exactly ONE of the vendor's assets, written in its lines picks that asset. Never a guess.
+  let lineHits = [];
+  if (!asset && ref.status !== 'ambiguous') {
+    lineHits = await require('./billLineAssets').lineAssets(lineObjs.map((l, i) => ({ lineNo: i + 1, description: l.description })), cands, row.invoiceDate || row.serviceDate, null).catch(() => []); // eslint-disable-line global-require
+    const ids = [...new Set(lineHits.filter((x) => x.asset).map((x) => x.asset.id))];
+    if (ids.length === 1) {
+      assetId = ids[0]; asset = await prisma.asset.findUnique({ where: { id: ids[0] } });
+      const how = (lineHits.find((x) => x.asset) || {}).how || 'the items on the bill';
+      add('asset-matched', 'assetRef', 'info', `Matched to asset ${asset ? asset.assetCode : ''} from the items the AI read (${String(how).toLowerCase()}).`, null, { autoAssetId: ids[0] });
+    } else if (ids.length > 1) {
+      add('asset-several', 'assetRef', 'check', `The items on this bill are for ${ids.length} different assets. Link the bill to one repair, or ask the vendor for one bill per asset.`, 'The items on this bill are for more than one asset. Please choose the asset or repair.');
+    }
+  }
   if (!asset) {
     if (ref.status === 'ambiguous') add('asset-ambiguous', 'assetRef', 'block', `The asset reference "${row.assetRef}" fits more than one of the vendor's assets. Pick the right asset.`, 'The asset on the bill fits more than one of your assets. Please choose the asset.');
     else if (ref.status === 'unmatched') add('asset-unmatched', 'assetRef', 'block', `The asset reference "${row.assetRef}" matches none of the vendor's assets. Pick the asset.`, 'The asset ID or serial number on the bill does not match any of your assets. Please choose the asset.');
@@ -637,6 +667,16 @@ async function computeFlags(row) {
     if (pick) { repair = await prisma.assetRepair.findUnique({ where: { id: pick.id }, include: { asset: true } }); add('repair-matched', 'repairId', 'info', `Matched to repair ${pick.repairNo} (the only repair of this asset).`, null, { autoRepairId: pick.id }); } else {
       add('repair-missing', 'repairId', 'block', mineRepairs.length ? 'More than one repair belongs to this asset. Pick the repair.' : 'There is no repair record for this asset yet. Create the repair in HRMS first (Employee Services > Assets), then check again.', 'Please choose the repair this bill is for.');
     }
+  }
+  // WHO HAS THIS ASSET (founder 2026-10-28): the employee holding it now, and on the bill date, from HRMS - for the reviewer.
+  if (asset) {
+    const BLA = require('./billLineAssets'); // eslint-disable-line global-require
+    const full = await prisma.asset.findUnique({ where: { id: asset.id }, include: { assignedTo: { select: { name: true, employeeCode: true, department: true } } } });
+    const day = String(row.invoiceDate || row.serviceDate || '').slice(0, 10);
+    const on = full ? BLA.holderOn(full, day) : null;
+    const now = full && full.assignedTo ? `${full.assignedTo.name} (${[full.assignedTo.employeeCode, full.assignedTo.department].filter(Boolean).join(', ')})` : 'nobody (in stock)';
+    const then = on ? (on.none ? 'nobody (in stock)' : on.name) : null;
+    add('asset-holder', 'assetRef', 'info', `${full ? full.assetCode : 'This asset'} is with ${now} now${then && day ? `; on the bill date (${day}) it was with ${then}` : ''}.`, null);
   }
   if (repair) {
     if (asset && repair.assetId !== asset.id) add('repair-asset-mismatch', 'repairId', 'block', 'The chosen repair belongs to a different asset.', 'The repair and the asset do not belong together.');
@@ -796,5 +836,5 @@ module.exports = {
   ensure, getRow, lines, patch, move, event, nextCode, parse, valuesOf, json, nowIso, newId, ROUND,
   vendorOf, linkMaps, vendorView, vendorHistory, listForVendor, summaryFor, optionsFor, mine, createUpload, viewOf, detailForVendor,
   readEdit, applyEdit, vendorEdit, vendorSubmit, computeFlags, candidatesFor, findDuplicates, revalidate, notifyReviewers, ownedFile, fileForRepair, loadFiles,
-  readingOf, unclearFields, filesView, deleteStored, storeFiles, rateProblem,
+  readingOf, unclearFields, filesView, deleteStored, storeFiles, rateProblem, paymentOfUpload,
 };

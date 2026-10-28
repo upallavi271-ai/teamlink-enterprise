@@ -17,6 +17,9 @@ export default function AssetPortalHistory() {
   );
 }
 
+// Also the "Repair history" tab of Repairs & HRMS Tickets (27 Oct 2026)
+export function HistoryBody() { return <Body />; }
+
 function Body() {
   const [data, setData] = useState(null);
   const [f, setF] = useState({ q: '', kind: '', from: '', to: '', dir: 'desc', page: 1 });

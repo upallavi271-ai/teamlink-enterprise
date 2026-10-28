@@ -83,14 +83,15 @@ export function liveTotals({ subtotal, gst, total }, lines) {
 
 // ---- the files chosen in the upload window ------------------------------------------------------------------------------------------
 export const LIMITS = { maxFiles: 5, maxBytes: 10 * 1024 * 1024 };
-const TYPE_OK = /\.(jpe?g|png|webp|pdf)$/i;
+const TYPE_OK = /\.(jpe?g|png|webp|pdf|xlsx|xls|csv)$/i; // Excel / CSV too (founder 2026-10-28)
+const SHEET_NAME = /\.(xlsx|xls|csv)$/i;
 // pickFiles(existing, chosen, limits) -> { files, error } ; keeps what is valid, says in plain words what was left out
 export function pickFiles(existing, chosen, limits = LIMITS) {
   const files = [...existing];
   const problems = [];
   for (const f of chosen) {
     const name = f.name || 'file';
-    if (!TYPE_OK.test(name) || (f.type && !/^(image\/(jpeg|png|webp)|application\/pdf)$/i.test(f.type))) { problems.push(`${name}: only JPG, PNG, WebP or PDF.`); continue; } // eslint-disable-line no-continue
+    if (!TYPE_OK.test(name) || (f.type && !SHEET_NAME.test(name) && !/^(image\/(jpeg|png|webp)|application\/pdf)$/i.test(f.type))) { problems.push(`${name}: only a photo, a PDF or an Excel / CSV file.`); continue; } // eslint-disable-line no-continue
     if (f.size > limits.maxBytes) { problems.push(`${name}: bigger than ${Math.round(limits.maxBytes / 1048576)} MB.`); continue; } // eslint-disable-line no-continue
     if (f.size === 0) { problems.push(`${name}: the file is empty.`); continue; } // eslint-disable-line no-continue
     if (files.some((x) => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)) { problems.push(`${name}: already added.`); continue; } // eslint-disable-line no-continue

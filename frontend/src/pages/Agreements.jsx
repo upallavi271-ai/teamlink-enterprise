@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from '../api';
+import { useKeptState } from '../utils/useKeptState.js';
 import Combo from '../components/Combo.jsx';
 import { rowClickProps } from '../utils/rowClick.js';
 import AtsDataTools from '../components/AtsDataTools.jsx';
@@ -79,8 +80,11 @@ export default function Agreements() {
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [showReport, setShowReport] = useState(false);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [search, setSearch] = useState('');
+  // Accounts -> Client Agreements keeps its search / status / page when you leave and come back
+  // (utils/useKeptState.js); the ATS copy of this screen is unchanged (keep = null -> plain state).
+  const keep = v4 ? null : 'accounts.agreements';
+  const [statusFilter, setStatusFilter] = useKeptState(keep && `${keep}.status`, '');
+  const [search, setSearch] = useKeptState(keep && `${keep}.q`, '');
   // The agreement link dialog (SA / Admin): the client row it is for.
   const [linkFor, setLinkFor] = useState(null);
   // Tick agreements -> "Message these N" (the desk only, and only if the server lets this login message clients).
@@ -172,7 +176,7 @@ export default function Agreements() {
     }
     return true;
   }), [clients, statusFilter, search]);
-  const paged = usePaged(rows);
+  const paged = usePaged(rows, 25, keep, `${statusFilter}|${search}`);
   const mayMessage = desk && mayMessageClients;
   const tickedNow = ticked.filter((id) => rows.some((c) => c.id === id)); // ticks that are still in the list
 

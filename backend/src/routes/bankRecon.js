@@ -23,7 +23,7 @@ class Http extends Error {
 module.exports = function makeRecon(H) {
   const {
     prisma, logAudit, actor, ROUND, toIsoDate, deriveInvoiceStatus, invoiceOutstanding, ensureAccounts, onAccount, lineOpen, txnState,
-    linkPayment, applyPlan, fmtMoney, loadTxn,
+    linkPayment, applyPlan, fmtMoney, loadTxn, attachEvidence,
   } = H;
   // Auto-Reconcile layer (routes/bankAuto.js), attached after this module is built.
   const autoApi = () => (H.autoRef && H.autoRef.api) || null;
@@ -175,7 +175,10 @@ module.exports = function makeRecon(H) {
     const inv = await tx.invoice.findUnique({ where: { id: pay.invoiceId } });
     const notes = await tx.creditNote.findMany({ where: { invoiceId: pay.invoiceId, status: 'Issued', refundPaidOn: { not: null }, refundDue: { gt: 0.005 } } }).catch(() => []);
     if (notes.length) throw new Http(409, 'A refund was already paid to the client against this invoice - reverse that refund first.', { code: 'REFUND_PAID' });
-    if (pay.bankLinked) {
+    if (pay.dateSource === 'bank-evidence') {
+      // the line was only the evidence for money already marked received: the row goes, the money stays
+      await tx.invoicePayment.delete({ where: { id: pay.id } });
+    } else if (pay.bankLinked) {
       await tx.invoicePayment.update({ where: { id: pay.id }, data: { bankTxnId: null, bankLinked: false } });
     } else {
       await tx.invoicePayment.delete({ where: { id: pay.id } });
@@ -252,6 +255,7 @@ module.exports = function makeRecon(H) {
       });
       return { record: `receipt on ${dec.invoiceNumber || dec.invoiceId}` };
     }
+    if (a.type === 'evidence') return attachEvidence(txn, a.parts, req);
     if (a.type === 'settle') {
       try {
         const out = await allocateCredit(txn.id, a.parts, req, { how: 'auto', reason: `rule ${dec.rule}: ${(dec.evidence || []).join(' | ')}` });
@@ -662,6 +666,7 @@ module.exports = function makeRecon(H) {
     try { source = txn.sourceRow ? JSON.parse(txn.sourceRow) : null; } catch { source = null; }
     return {
       id: txn.id,
+      bankAccountId: account ? account.id : null, // the account the Bank screen opens when a line is deep-linked (/bank?line=)
       bank: account ? `${account.bank}${account.accNo ? ` - xxxx${String(account.accNo).slice(-4)}` : ''}` : null,
       transactionDate: txn.date,
       valueDate: txn.valueDate || null,

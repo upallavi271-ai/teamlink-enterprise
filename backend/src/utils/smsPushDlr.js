@@ -31,7 +31,12 @@ async function pullOne(rec) {
   if (rec.providerRef) await store.patch(rec.providerRef, { dlrPullCount: tries, dlrPulledAt: new Date().toISOString() }).catch(() => null);
   if (!out.ok) return { asked: true, applied: 0, error: out.error };
   let applied = 0;
+  const DR = require('./smsPushDlrReport'); // eslint-disable-line global-require
   for (const r of out.reports) {
+    // the record asked about is the one matched (a pulled report needs no number check: we asked by its own ackid)
+    // eslint-disable-next-line no-await-in-loop
+    const viaReader = await DR.applyReport({ ok: true, ref: rec.providerRef || r.msgid, status: r.status, word: r.word, msisdn: '', senderId: '', dlrCode: '', deliveredAt: DR.parseProviderTime(r.at), submitAt: null, error: r.status === 'failed' ? `SMS ${r.word.toLowerCase()} (delivery report)` : null }, 'pull').catch(() => null);
+    if (viaReader && ['applied', 'duplicate', 'kept'].includes(viaReader.outcome)) { applied += 1; continue; } // eslint-disable-line no-continue
     // eslint-disable-next-line no-await-in-loop
     const res = await delivery.applyStatus({ channel: 'SMS', providerRef: r.msgid, status: r.status, at: new Date(), error: r.status === 'failed' ? `SMS ${r.word.toLowerCase()} (delivery report)` : null }).catch(() => ({ matched: 0 }));
     // the record may be filed under the ackid (no msgid in the send reply): try that too

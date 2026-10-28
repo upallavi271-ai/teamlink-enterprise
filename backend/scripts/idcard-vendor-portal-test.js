@@ -189,7 +189,7 @@ const made = { users: [], vendors: [], employees: [], orders: [] };
     let r = await http('GET', `${AP}/me`, LA.token);
     check('A', '/me for an ID card vendor: kind idcards, role label "ID Card Vendor", Dashboard + the four modules, landing on the ID card Dashboard', r.body.kind === 'idcards' && r.body.roleLabel === 'ID Card Vendor' && r.body.nav.length === 5 && r.body.modules.length === 4 && r.body.landing === '/vendor/idcard-portal/dashboard' && LA.login.body.landing === '/vendor/idcard-portal/dashboard', r.body);
     r = await http('GET', `${AP}/me`, LAS.token);
-    check('A', 'the Assets vendor keeps its portal (six pages) and the finance vendor its four modules', r.body.kind === 'assets' && r.body.nav.length === 6 && (await http('GET', `${AP}/me`, LFI.token)).body.nav.map((n) => n.label).join() === 'Dashboard,Bills & Invoices,Payments & Outstanding,Services & Agreements');
+    check('A', 'the Assets vendor keeps its portal (four modules since 27 Oct 2026) and the finance vendor its four modules', r.body.kind === 'assets' && r.body.nav.length === 4 && (await http('GET', `${AP}/me`, LFI.token)).body.nav.map((n) => n.label).join() === 'Dashboard,Bills & Invoices,Payments & Outstanding,Services & Agreements');
     const appSrc = fs.readFileSync(path.join(BACK, '..', 'frontend/src/App.jsx'), 'utf8');
     check('A', 'App.jsx registers the five ID card routes before the "/vendor/*" fallback', CFGM.IDCARD_PORTAL_NAV.every((n) => appSrc.includes(`path="${n.route}"`)) && appSrc.indexOf('path="/vendor/idcard-portal/delivered"') < appSrc.indexOf('path="/vendor/*"'));
 

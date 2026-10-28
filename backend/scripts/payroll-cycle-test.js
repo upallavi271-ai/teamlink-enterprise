@@ -17,7 +17,9 @@ if (!fs.existsSync(DB)) { console.error('No prisma/sandbox.db - start the sandbo
 process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
 require('dotenv').config({ path: path.join(BACK, '.env') });
 process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
-const API = 'http://localhost:4011/api';
+// TL_API = another throw-away test server (4011-4099, never 4010)
+const API = `${String(process.env.TL_API || 'http://localhost:4011').replace(/\/+$/, '').replace(/\/api$/, '')}/api`;
+if (/:4010(\/|$)/.test(API)) { console.error('Refusing: 4010 is the real server.'); process.exit(2); }
 const prisma = require('../src/db');
 const jwt = require('jsonwebtoken');
 const PC = require('../src/utils/payrollCycle');

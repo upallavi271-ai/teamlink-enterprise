@@ -118,7 +118,11 @@ async function staffDetail(row, { raw = false } = {}) {
     };
   }
   const meta = row.meta || {};
+  // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
+  const lineAssets = await require('./billLineAssets').lineAssets(ls, await BU.candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, asset ? asset.id : null).catch(() => []); // eslint-disable-line global-require
   const out = {
+    lineAssets,
+    payment: await BU.paymentOfUpload(row).catch(() => null), // the payment once Accounts has the bill (2026-10-28)
     id: row.id, code: row.code, status: row.status, statusLabel: BU.LABEL[row.status], step: BU.STEP_OF[row.status] ?? 0, steps: BU.STEPS, version: row.version,
     correctsCode: row.supersedes ? ((await DB.one('SELECT "code" FROM "VendorBillUpload" WHERE "id" = ?', [row.supersedes])) || {}).code || null : null,
     updatedAt: row.updatedAt, uploadedAt: row.uploadedAt, uploadedByName: row.uploadedByName, remarks: row.remarks,
@@ -363,7 +367,20 @@ async function syncApproved(id, user, req) {
       set(rdata, 'cost', amount, 'Final cost'); set(rdata, 'gstPaid', gst, 'Final GST'); set(rdata, 'invoiceNo', row.invoiceNo, 'Invoice no.');
       if (row.serviceDate) set(rdata, 'repairDate', row.serviceDate, 'Repair date');
       if (!String(repair.vendor || '').trim()) set(rdata, 'vendor', vendor.name, 'Vendor');
-      if (!repair.notes && row.workDescription) set(rdata, 'notes', `Work done (vendor bill ${row.invoiceNo}): ${row.workDescription}`.slice(0, 1000), 'Notes');
+      // WHOSE ASSET WAS REPAIRED (founder 2026-10-28: "aa recruiter di repair chesam ani ravali"): the employee holding it on the bill /
+      // repair date (HRMS history), else the present holder - written on the repair and in the asset's history.
+      const heldBy = await (async () => {
+        const a = await prisma.asset.findUnique({ where: { id: repair.assetId }, include: { assignedTo: { select: { name: true, employeeCode: true, department: true } } } });
+        if (!a) return null;
+        const day = String(row.serviceDate || row.invoiceDate || '').slice(0, 10);
+        const on = require('./billLineAssets').holderOn(a, day); // eslint-disable-line global-require
+        if (on && !on.none) return `${on.name}${a.assignedTo && a.assignedTo.name === on.name ? ` (${[a.assignedTo.employeeCode, a.assignedTo.department].filter(Boolean).join(', ')})` : ''}`;
+        if (on && on.none) return null;
+        return a.assignedTo ? `${a.assignedTo.name} (${[a.assignedTo.employeeCode, a.assignedTo.department].filter(Boolean).join(', ')})` : null;
+      })().catch(() => null);
+      const forWhom = heldBy ? ` - asset with ${heldBy}` : '';
+      if (!repair.notes && row.workDescription) set(rdata, 'notes', `Work done (vendor bill ${row.invoiceNo}): ${row.workDescription}${forWhom}`.slice(0, 1000), 'Notes');
+      else if (heldBy && !String(repair.notes || '').includes(heldBy)) set(rdata, 'notes', `${repair.notes ? `${repair.notes} | ` : ''}Repaired while the asset was with ${heldBy}`.slice(0, 1000), 'Notes');
       let oldSlip = null; try { oldSlip = repair.slip ? JSON.parse(repair.slip) : null; } catch { oldSlip = null; }
       if (!oldSlip || !oldSlip.file) { rdata.slip = JSON.stringify({ file: first.file, name: first.name, mime: first.mime, size: first.size, at: VP.stampNow(), by }); changes.push({ field: 'Invoice file', from: null, to: first.name }); }
       let sub = null;
@@ -376,7 +393,7 @@ async function syncApproved(id, user, req) {
               data: {
                 billCode: code, vendorId: row.vendorId, vendorUserId: row.vendorUserId, assetId: repair.assetId, assetCode: repair.asset.assetCode, assetName: repair.asset.name,
                 billNumber: row.invoiceNo, billNumberKey: VP.billKey(row.invoiceNo), billDate: row.invoiceDate, amount, gst, tds: 0, total: VP.billTotal(amount, gst, 0),
-                remarks: `Repair ${repair.repairNo}${row.workDescription ? ` - ${String(row.workDescription).slice(0, 200)}` : ''} (uploaded bill ${row.code})`,
+                remarks: `Repair ${repair.repairNo}${row.workDescription ? ` - ${String(row.workDescription).slice(0, 200)}` : ''}${forWhom} (uploaded bill ${row.code})`,
                 documentFile: first.file, documentName: first.name, documentMime: first.mime, documentSize: first.size, supportingDocs: JSON.stringify(support),
                 status: 'APPROVED', reviewRemarks: row.reviewNote || null, reviewedById: row.approvedById, reviewedByName: row.approvedByName, reviewedAt: new Date(), submittedByName: row.uploadedByName,
                 source: 'Vendor Portal', idempotencyKey: `bu:${row.id}`, vendorNameSnap: vendor.name, vendorGstinSnap: vendor.gstin || null, vendorAddressSnap: vendor.address || null,
@@ -391,7 +408,7 @@ async function syncApproved(id, user, req) {
               await DB.run('INSERT INTO "AssetRepairEvent" ("id","repairId","assetId","vendorId","vendorUserId","kind","field","fromValue","toValue","note","actorKind","actorName","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
                 [BU.newId('are'), repair.id, repair.assetId, row.vendorId, null, e.kind, e.field, e.from == null ? null : String(e.from).slice(0, 500), e.to == null ? null : String(e.to).slice(0, 500), e.note || null, 'Company', by, t], tx);
             }
-            await tx.asset.update({ where: { id: repair.assetId }, data: { history: VP.pushAssetHistory(repair.asset.history, by, `Repair ${repair.repairNo}: vendor bill ${row.invoiceNo} approved (${b.billCode}); cost Rs ${amount}${gst ? ` + GST Rs ${gst}` : ''}`) } });
+            await tx.asset.update({ where: { id: repair.assetId }, data: { history: VP.pushAssetHistory(repair.asset.history, by, `Repair ${repair.repairNo}: vendor bill ${row.invoiceNo} approved (${b.billCode}); cost Rs ${amount}${gst ? ` + GST Rs ${gst}` : ''}${forWhom}`) } });
             const k = await BU.patch(tx, row.id, { submissionId: b.id }, [S.APPROVED], { submissionId: null });
             if (!k) throw Object.assign(new Error('already linked'), { code: 'LINKED' });
             await BU.event(tx, row, { kind: 'submission-created', actorKind: 'System', actorName: 'TeamLink', note: `Vendor bill ${b.billCode} created.`, visible: false });

@@ -1,4 +1,5 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { can } from '../permissions';
@@ -6,6 +7,7 @@ import Modal from '../components/Modal';
 import Combo from '../components/Combo.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import { useKeptState } from '../utils/useKeptState.js';
 import AccountsImport from '../components/AccountsImport.jsx';
 import MatchPanel from './bank/MatchPanel.jsx';
 import HandLoans from './bank/HandLoans.jsx';
@@ -78,10 +80,12 @@ export default function Bank() {
   // overview → every account, side by side
   // account  → one account: all lines, recognised, excluded
   // recon    → the reconciliation table
-  const [view, setView] = useState('overview');
+  // The view, the account, its tab / pill and every search & filter on this
+  // screen are KEPT when you leave and come back (utils/useKeptState.js).
+  const [view, setView] = useKeptState('bank.view', 'overview');
   const [accounts, setAccounts] = useState([]);
   const [cashInHand, setCashInHand] = useState(0);
-  const [accountId, setAccountId] = useState('');
+  const [accountId, setAccountId] = useKeptState('bank.account', '');
   const [transactions, setTransactions] = useState([]);
   const [summary, setSummary] = useState(null);
   const [position, setPosition] = useState(null);
@@ -91,12 +95,12 @@ export default function Bank() {
   const [imports, setImports] = useState([]);
   const [rules, setRules] = useState([]);
 
-  const [state, setState] = useState('All');
-  const [group, setGroup] = useState('month');
+  const [state, setState] = useKeptState('bank.recon.state', 'All');
+  const [group, setGroup] = useKeptState('bank.recon.group', 'month');
   const [openKeys, setOpenKeys] = useState(null); // null = "anything still to match is open"
-  const [clientFilter, setClientFilter] = useState('All');
-  const [tab, setTab] = useState('un');
-  const [pill, setPill] = useState('all');
+  const [clientFilter, setClientFilter] = useKeptState('bank.recon.client', 'All');
+  const [tab, setTab] = useKeptState('bank.tab', 'un');
+  const [pill, setPill] = useKeptState('bank.pill', 'all');
   const [per, setPer] = useState(200);
   const [page, setPage] = useState(0);
 
@@ -108,14 +112,44 @@ export default function Bank() {
   // S5 / S6: the proof strip, what the bank takes, and the hand-loans pill.
   const [extras, setExtras] = useState({ proof: null, charges: null, loans: null });
   const [loansOpen, setLoansOpen] = useState(false);
+  // /bank?line=<txnId>&invoice=<invoiceId> — an invoice's "Open in Bank & Reconciliation": that exact
+  // statement line opens in its full window (over its own account's lines, Every line tab) for anyone who
+  // may see this screen; only a login with edit gets the write buttons inside it. A line that is gone says
+  // so plainly and nothing else is opened.
+  const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
+  const deepLine = params.get('line') || '';
+  const deepInvoice = params.get('invoice') || '';
+  const deepShown = useRef('');
+  const onDeepLoaded = useCallback((d) => {
+    if (deepShown.current === d.id) return;
+    deepShown.current = d.id;
+    if (d.bankAccountId) setAccountId(d.bankAccountId);
+    setTab('all'); setPage(0); setView('account');
+  }, []);
+  const closeDeep = useCallback(() => {
+    deepShown.current = '';
+    setParams((q) => { const n = new URLSearchParams(q); n.delete('line'); n.delete('invoice'); return n; }, { replace: true });
+  }, [setParams]);
+  // Back to the invoice: one step back when the invoice is what opened this page, else straight to it.
+  const backToInvoice = useCallback(() => {
+    if (window.history.state && window.history.state.idx > 0) navigate(-1);
+    else navigate(`/invoices/${encodeURIComponent(deepInvoice)}#proof`);
+  }, [navigate, deepInvoice]);
 
+  // Only the newest load's answer is used — an older one (say the first account, asked before a deep-linked
+  // line said which account it is on) must not land after it and switch the account back.
+  const loadSeq = useRef(0);
   const load = useCallback(() => {
+    const mine = ++loadSeq.current;
+    const fresh = () => mine === loadSeq.current;
     Promise.all([
       api.get('/bank/proof').then((r) => r.data).catch(() => null),
       api.get('/bank/charges').then((r) => r.data).catch(() => ({ failed: true, months: [] })),
       api.get('/bank/hand-loans').then((r) => r.data.summary).catch(() => null),
     ]).then(([proof, charges, loans]) => setExtras({ proof, charges, loans }));
     api.get('/bank/accounts').then((a) => {
+      if (!fresh()) return;
       setAccounts(a.data.accounts);
       setCashInHand(a.data.cashInHand);
       const id = a.data.accounts.some((x) => x.id === accountId) ? accountId : (a.data.accounts[0]?.id || '');
@@ -132,6 +166,7 @@ export default function Bank() {
         api.get(`/bank/imports${q}`),
         api.get('/bank/rules'),
       ]).then(([t, s, i, p, g, m, im, r]) => {
+        if (!fresh()) return;
         setTransactions(t.data);
         setSummary(s.data);
         setInvoices(i.data);
@@ -238,7 +273,22 @@ export default function Bank() {
         />
       )}
 
-      {canManage && dialog && (
+      {deepLine && (
+        <TxnDetail
+          key={deepLine}
+          txnId={deepLine}
+          transactions={transactions}
+          canManage={canManage}
+          invoiceId={deepInvoice || null}
+          onLoaded={onDeepLoaded}
+          onBack={deepInvoice ? backToInvoice : null}
+          onClose={closeDeep}
+          onChanged={load}
+        />
+      )}
+
+      {/* write dialogs are for edit logins only; the line window ("Details") opens for every viewer, read-only without edit */}
+      {dialog && (canManage || dialog.kind === 'txn') && (
         <Dialogs
           dialog={dialog} setDialog={setDialog} setNote={setNote} onReview={openReview} {...shared}
         />
@@ -254,8 +304,8 @@ export default function Bank() {
 function Overview({
   accounts, cashInHand, setAccountId, setView, setDialog, call, canManage, extras, setTab, setPill,
 }) {
-  const [q, setQ] = useState('');
-  const [chargeMonth, setChargeMonth] = useState('');
+  const [q, setQ] = useKeptState('bank.overview.q', '');
+  const [chargeMonth, setChargeMonth] = useKeptState('bank.overview.chargeMonth', '');
   const totalUn = accounts.reduce((s, a) => s + a.stat.unmatched, 0);
   const totalBank = accounts.reduce((s, a) => s + (a.stat.inBank != null ? a.stat.inBank : a.stat.inBooks), 0);
   const totalBooks = accounts.reduce((s, a) => s + a.stat.inBooks, 0);
@@ -580,8 +630,8 @@ function AccountView({
     else if (pill === 'rev') list = list.filter((t) => t.plan);
     else if (pill === 'nr') list = list.filter((t) => t.needsReview);
   }
-  const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS });
-  const pg = usePaged(lf.rows, 50);
+  const lf = useListFilters(list, LINE_FIELDS, { sorts: LINE_SORTS, keep: 'bank.lines' });
+  const pg = usePaged(lf.rows, 50, 'bank.lines', `${lf.sig}|${accountId}|${tab}|${pill}`);
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
   const s = account.stat;
 
@@ -812,7 +862,7 @@ function Recon({
   clientNames, groups, marks, markById, imports, setView, setDialog, act, call, busy, picked, setPicked,
   state, setState, group, setGroup, openKeys, setOpenKeys, clientFilter, setClientFilter, canManage,
 }) {
-  const lf = useListFilters(transactions, RECON_FIELDS);
+  const lf = useListFilters(transactions, RECON_FIELDS, { keep: 'bank.recon' });
   if (!account) return <div className="card section">Add a bank account to begin.</div>;
 
   // The State tab, then Search / Type / Date range on top of it.

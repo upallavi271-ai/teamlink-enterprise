@@ -45,7 +45,7 @@ class Http extends Error {
 
 module.exports = function makeAuto(H, recon) {
   const {
-    logAudit, ROUND, toIsoDate, lineOpen, txnState, applyPlan, linkPayment, fmtMoney, ensureAccounts,
+    logAudit, ROUND, toIsoDate, lineOpen, txnState, applyPlan, linkPayment, fmtMoney, ensureAccounts, attachEvidence,
   } = H;
 
   const q = async (sql, ...params) => plain(await prisma.$queryRawUnsafe(sql, ...params));
@@ -160,6 +160,7 @@ module.exports = function makeAuto(H, recon) {
         return { record: out.parts.map((p) => p.invoiceNumber || p.invoiceId).join(', '), unallocated: out.unallocated };
       } catch (e) { if (e.http) return { error: e.message }; throw e; }
     }
+    if (action.type === 'evidence') return attachEvidence(txn, action.parts, req);
     if (action.type === 'linkPayment') {
       const out = await linkPayment(txn, action.paymentId, req);
       return out.error ? out : { record: `receipt on ${out.payment && out.payment.invoice ? out.payment.invoice.invoiceNumber : action.paymentId}` };

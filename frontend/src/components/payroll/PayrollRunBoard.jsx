@@ -8,6 +8,7 @@
 // the API refuses anything else anyway.
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import { Panel, PanelHead, EmptyMini, Modal, SectionLabel } from '../proto.jsx';
 import {
   STATUS_LABEL, STATUS_CLS, SYNC_CLS, money, monthLabel, errText, bulkMessage,
@@ -23,7 +24,9 @@ import PayrollEditor from './PayrollEditor.jsx';
 import PayrollEditHistory, { ChangesInRun } from './PayrollEditHistory.jsx';
 import Combo from '../Combo.jsx';
 
-const inr0 = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
+// Paise are shown when there are any (pay-register months are worked out to the paisa, 2026-10-28).
+const inr0 = (n) => { const v = Math.round((Number(n) || 0) * 100) / 100; return `₹${v.toLocaleString('en-IN', { minimumFractionDigits: Number.isInteger(v) ? 0 : 2, maximumFractionDigits: 2 })}`; };
+const groupOf = (e) => (e.payMode === 'Stipend' ? 'Stipend' : 'Group A');
 
 // The list filter standard for the three tables on this board.
 const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${code(r) || ''} ${name(r) || ''}` });
@@ -31,6 +34,7 @@ const empSearch = (code, name) => ({ key: 'q', type: 'search', placeholder: 'Sea
 const syncLabel = (e) => (e.status === 'PAID' ? 'Paid' : e.status === 'SYNCED_TO_ACCOUNTS' ? 'Posted' : 'Not posted');
 const ENTRY_FIELDS = [
   empSearch((e) => e.employee?.employeeCode, (e) => e.employee?.name),
+  { key: 'group', label: 'Group', allLabel: 'Group A and Stipend', options: ['Group A', 'Stipend'], get: groupOf, primary: true },
   { key: 'status', label: 'Status', options: Object.keys(STATUS_LABEL).map((k) => ({ value: k, label: STATUS_LABEL[k] })), get: (e) => e.status, primary: true },
   { key: 'department', label: 'Department', get: (e) => e.employee?.department, primary: true },
   { key: 'sync', label: 'Accounts', allLabel: 'Posted or not', options: ['Posted', 'Paid', 'Not posted'], get: syncLabel },
@@ -187,6 +191,33 @@ function EntryDetail({ id, onClose }) {
             <span>Employer</span><b>PF {inr0(e.pfEmployer)} · ESI {inr0(e.esiEmployer)}</b>
             {e.rejectionReason && <><span>Sent back</span><b>{e.rejectionReason}</b></>}
           </div>
+          {data.breakup && (
+            <>
+              <SectionLabel style={{ margin: '14px 0 6px' }}>How this month's pay was worked out</SectionLabel>
+              <div className="prb-kv">
+                <span>Days</span><b>{data.breakup.payableDays} paid · {data.breakup.nonPayableDays} not paid (LOP) · {data.breakup.workingDays} days in the pay period · {data.breakup.attendance.source}</b>
+                {e.payMode === 'Stipend'
+                  ? <><span>Stipend earned</span><b>{inr0(data.breakup.earned.stipend)} of {inr0(Number(e.grossPay) - Number(e.incentive || 0) - Number(e.arrears || 0))}</b></>
+                  : (
+                    <>
+                      <span>Basic</span><b>{inr0(data.breakup.earned.basic)} of {inr0(e.basic)}</b>
+                      <span>HRA</span><b>{inr0(data.breakup.earned.hra)} of {inr0(e.hra)}</b>
+                      <span>Conveyance</span><b>{inr0(data.breakup.earned.conveyance)} of {inr0(e.conveyance)}</b>
+                      <span>Special allowance</span><b>{inr0(data.breakup.earned.specialAllowance)} of {inr0(e.specialAllowance)}</b>
+                      <span>Bonus</span><b>{inr0(data.breakup.earned.bonus)} of {inr0(e.bonus)}</b>
+                    </>
+                  )}
+                <span>Earned pay</span><b>{inr0(e.earnedGross)}</b>
+                <span>Rules used</span><b>{data.breakup.rules.mode}</b>
+                <span>Earned parts</span><b>{data.breakup.rules.earned}</b>
+                <span>PF</span><b>{data.breakup.rules.pf}</b>
+                <span>ESI</span><b>{data.breakup.rules.esi}</b>
+                <span>PT</span><b>{data.breakup.rules.pt}</b>
+                <span>TDS</span><b>{data.breakup.rules.tds}</b>
+                {data.breakup.calculatedAt && <><span>Calculated</span><b>{new Date(data.breakup.calculatedAt).toLocaleString('en-GB')}{data.breakup.calculatedBy ? ` by ${data.breakup.calculatedBy}` : ''}</b></>}
+              </div>
+            </>
+          )}
           <SectionLabel style={{ margin: '14px 0 6px' }}>This employee's share of the month's journal</SectionLabel>
           <table className="prb-journal">
             <thead><tr><th>Account</th><th>Debit</th><th>Credit</th></tr></thead>
@@ -281,6 +312,25 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
     if (!ids.length) { setError('Select the pending records to send back.'); return; }
     await act('Sent back', '/payroll/entries/reject', { ids, reason });
   }
+  // Export the month's calculated payroll (founder 2026-10-27): the same records as the table, Excel or CSV.
+  async function exportAs(format) {
+    setBusy(format === 'xlsx' ? 'Making Excel' : 'Making CSV'); setError('');
+    try {
+      const res = await api.get(`/payroll/runs/${month}/export`, { params: { format }, responseType: 'blob' });
+      const cd = res.headers['content-disposition'] || '';
+      const m = /filename="?([^";]+)"?/.exec(cd);
+      const href = URL.createObjectURL(res.data);
+      const link = document.createElement('a');
+      link.href = href; link.download = (m && m[1]) || `payroll-${month}.${format}`; document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 2000);
+      setMessage(`${format === 'xlsx' ? 'Excel' : 'CSV'} file is ready.`);
+    } catch (err) {
+      let msg = 'The file could not be made.';
+      const d = err.response && err.response.data;
+      if (d instanceof Blob) { try { msg = JSON.parse(await d.text()).error || msg; } catch { /* keep */ } } else if (d && d.error) msg = d.error;
+      setError(msg);
+    } finally { setBusy(''); }
+  }
   const count = (s) => (data?.byStatus || {})[s] || 0;
   // Filters narrow what is SHOWN; the header checkbox ticks the rows shown.
   // A bulk button with nothing ticked still acts on the whole month, as it
@@ -288,18 +338,28 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   const lf = useListFilters(entries, ENTRY_FIELDS, { sorts: ENTRY_SORTS });
   const page = usePaged(lf.rows);
   const allOn = lf.rows.length > 0 && lf.rows.every((e) => selected[e.id]);
+  const showOther = entries.some((e) => Number(e.otherDeductions) > 0);
 
   return (
     <div className="prb">
       <Panel style={{ marginTop: 16 }}>
-        <PanelHead title={`Payroll records — ${monthHeading(month)}`}>
-          {a.prepare && <button className="btn btn-sm btn-primary" disabled={!!busy} onClick={recalc}>{busy === 'Calculate' ? 'Calculating…' : entries.length ? 'Recalculate payroll' : 'Calculate payroll'}</button>}
+        <PanelHead title={`Salaries — ${monthHeading(month)}`}>
+          {a.prepare && <button className="btn btn-sm btn-primary" disabled={!!busy} title={entries.length ? 'Work out the month again from the salary structures and attendance (records already submitted stay as they are)' : 'Work out every salary for this month'} onClick={recalc}>{busy === 'Calculate' ? 'Calculating…' : 'Calculate'}</button>}
+          {a.export && entries.length > 0 && <button className="btn btn-sm" disabled={!!busy} onClick={() => exportAs('xlsx')}>Export Excel</button>}
+          {a.export && entries.length > 0 && <button className="btn btn-sm" disabled={!!busy} onClick={() => exportAs('csv')}>Export CSV</button>}
         </PanelHead>
         <div className="prb-bar">
           {['DRAFT', 'PENDING_APPROVAL', 'APPROVED', 'SYNCED_TO_ACCOUNTS', 'PAID'].map((s) => (
             <span key={s} className={`prb-chip ${count(s) ? '' : 'zero'}`}><span className={`status ${STATUS_CLS[s]}`}>{STATUS_LABEL[s]}</span> {count(s)}</span>
           ))}
-          {data && <span className="prb-tot">Net {inr0(data.totals.netPay)} · Gross {inr0(data.totals.grossPay)} · Employer PF/ESI {inr0(data.totals.pfEmployer + data.totals.esiEmployer)}</span>}
+          {data && (
+            <span className="prb-tot">
+              Net to pay {inr0(data.totals.netPay)}
+              {entries.some((x) => x.payMode === 'Stipend') && entries.some((x) => x.payMode !== 'Stipend') && (
+                <> · Group A {inr0(entries.filter((x) => x.payMode !== 'Stipend').reduce((n, x) => n + Number(x.netPay || 0), 0))} · Stipend {inr0(entries.filter((x) => x.payMode === 'Stipend').reduce((n, x) => n + Number(x.netPay || 0), 0))}</>
+              )}
+            </span>
+          )}
         </div>
         <PayrollAccountsStrip month={month} reloadKey={reloadKey + stripKey} onChanged={() => { load(); onChanged(); }} />
         <div className="prb-actions">
@@ -328,44 +388,46 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
           </div>
         )}
         {!data ? <EmptyMini>Loading…</EmptyMini> : entries.length === 0 ? (
-          <EmptyMini>No payroll records for {monthLabel(month)} yet{a.prepare ? ' — Calculate payroll to create them.' : '.'}</EmptyMini>
+          <EmptyMini>No salaries worked out for {monthLabel(month)} yet{a.prepare ? ' — press Calculate.' : '.'}</EmptyMini>
         ) : lf.rows.length === 0 ? <ListEmpty lf={lf} noun="payroll records" /> : (
           <div className="tbl-wrap">
             <table className="prb-table">
               <thead>
                 <tr>
                   <th><input type="checkbox" checked={allOn} title="Tick every record the filters show" onChange={(e) => setSelected(e.target.checked ? Object.fromEntries(lf.rows.map((x) => [x.id, true])) : {})} /></th>
-                  <th>Code</th><th>Name</th><th>Status</th><th>Days (LOP)</th><th>Gross</th><th>LOP</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th><th>Other</th><th>Net</th><th>Employer</th><th>Accounts</th><th />
+                  <th>Code</th><th>Name</th><th>Group</th><th title="Days paid in the pay period">Paid days</th><th title="Days not paid (loss of pay)">LOP days</th><th title="Pay for the paid days">Earned</th><th>PF</th><th>ESI</th><th>PT</th><th>TDS</th>{showOther && <th>Other</th>}<th>Net pay</th><th>Status</th><th />
                 </tr>
               </thead>
               <tbody>
-                {page.slice.map((e) => {
-                  return (
-                    <tr key={e.id}>
-                      <td><input type="checkbox" checked={!!selected[e.id]} onChange={(ev) => setSelected((s) => ({ ...s, [e.id]: ev.target.checked }))} /></td>
-                      <td><b>{e.employee.employeeCode}</b></td>
-                      <td>{e.employee.name}</td>
-                      <td><span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>{e.edit && e.edit.edited && <span className="pe-badge" title={`Edited by ${e.edit.lastBy || 'someone'}`}>Edited</span>}{e.rejectionReason && e.status === 'DRAFT' && <div className="prb-note" title={e.rejectionReason}>sent back</div>}</td>
-                      <td className="cell-muted">{e.workingDays - e.daysLop}/{e.workingDays}{e.daysLop ? ` (${e.daysLop})` : ''}{e.attendanceSource === 'OVERRIDE' ? ' *' : ''}</td>
-                      <td className="cell-muted">{inr0(e.grossPay)}</td>
-                      <td className="cell-muted">{inr0(e.lopDeduction)}</td>
-                      <td className="cell-muted">{inr0(e.pfEmployee)}</td>
-                      <td className="cell-muted">{inr0(e.esiEmployee)}</td>
-                      <td className="cell-muted">{inr0(e.professionalTax)}</td>
-                      <td className="cell-muted">{inr0(e.tds)}</td>
-                      <td className="cell-muted">{inr0(e.otherDeductions)}</td>
-                      <td><b>{inr0(e.netPay)}</b></td>
-                      <td className="cell-muted">{inr0(e.pfEmployer + e.esiEmployer)}</td>
-                      <td>{e.status === 'PAID' ? <span className="lb-badge green">Paid</span> : e.status === 'SYNCED_TO_ACCOUNTS' ? <span className="lb-badge green">Posted</span> : <span className="lb-badge grey">Not posted</span>}</td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {a.edit && !e.lock && <button className="btn btn-sm btn-primary" onClick={() => setEditId(e.id)}>Edit</button>}{' '}
-                        {a.edit && e.lock && <button className="btn btn-sm" title={e.lock.message} onClick={() => setEditId(e.id)}>Adjust</button>}{' '}
-                        <button className="btn btn-sm" onClick={() => setDetail(e.id)}>Details</button>
-                        {e.edit && e.edit.versions > 0 && <>{' '}<button className="btn btn-sm" onClick={() => setHistId(e.id)}>History</button></>}
-                      </td>
-                    </tr>
-                  );
-                })}
+                {page.slice.map((e) => (
+                  <tr key={e.id}>
+                    <td><input type="checkbox" checked={!!selected[e.id]} onChange={(ev) => setSelected((s) => ({ ...s, [e.id]: ev.target.checked }))} /></td>
+                    <td><b>{e.employee.employeeCode}</b></td>
+                    <td>{e.employee.name}</td>
+                    <td className="cell-muted">{groupOf(e)}</td>
+                    <td>{e.workingDays - e.daysLop}<span className="cell-muted"> / {e.workingDays}</span>{e.attendanceSource === 'OVERRIDE' ? <span className="cell-muted" title="Days typed or imported by HR"> *</span> : null}</td>
+                    <td className="cell-muted">{e.daysLop || 0}</td>
+                    <td>{inr0(e.earnedGross)}</td>
+                    <td className="cell-muted">{inr0(e.pfEmployee)}</td>
+                    <td className="cell-muted">{inr0(e.esiEmployee)}</td>
+                    <td className="cell-muted">{inr0(e.professionalTax)}</td>
+                    <td className="cell-muted">{inr0(e.tds)}</td>
+                    {showOther && <td className="cell-muted">{inr0(e.otherDeductions)}</td>}
+                    <td><b>{inr0(e.netPay)}</b></td>
+                    <td>
+                      <span className={`status ${STATUS_CLS[e.status]}`}>{STATUS_LABEL[e.status]}</span>
+                      {e.edit && e.edit.edited && <span className="pe-badge" title={`Edited by ${e.edit.lastBy || 'someone'}`}>Edited</span>}
+                      {e.rejectionReason && e.status === 'DRAFT' && <div className="prb-note" title={e.rejectionReason}>sent back</div>}
+                      {(e.status === 'PAID' || e.status === 'SYNCED_TO_ACCOUNTS') && <div className="prb-note">{e.status === 'PAID' ? 'Paid' : 'Posted to Accounts'}</div>}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {a.edit && !e.lock && <button className="btn btn-sm btn-primary" title="Change this person's pay" onClick={() => setEditId(e.id)}>Edit</button>}
+                      {a.edit && e.lock && <button className="btn btn-sm" title={e.lock.message} onClick={() => setEditId(e.id)}>Adjust</button>}{' '}
+                      <button className="btn btn-sm" title="The full breakup of this month's pay" onClick={() => setDetail(e.id)}>Details</button>{' '}
+                      <button className="btn btn-sm" title="Every change to this record: edits, recalculations, approvals" onClick={() => setHistId(e.id)}>History</button>
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
@@ -388,9 +450,10 @@ export default function PayrollRunBoard({ month, reloadKey = 0, onChanged = () =
   );
 }
 
-export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () => {} }) {
+// keepKey (optional, Accounts -> Journal & Ledger): the filter, search and page are kept when you leave and come back.
+export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () => {}, keepKey = null }) {
   const [logs, setLogs] = useState(null);
-  const [filter, setFilter] = useState('open');
+  const [filter, setFilter] = useKeptState(keepKey && `${keepKey}.filter`, 'open');
   const [msg, setMsg] = useState('');
   function load() {
     const q = new URLSearchParams();
@@ -399,9 +462,9 @@ export function SyncLogPanel({ month, canRetry, reloadKey = 0, onChanged = () =>
   }
   useEffect(load, [month, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
   const open = (logs || []).filter((l) => (filter === 'open' ? l.status !== 'SUCCESS' : true));
-  const lf = useListFilters(open, LOG_FIELDS);
+  const lf = useListFilters(open, LOG_FIELDS, { keep: keepKey });
   const shown = lf.rows;
-  const page = usePaged(shown);
+  const page = usePaged(shown, 25, keepKey, `${lf.sig}|${filter}`);
   async function retry(id) {
     setMsg('');
     try { await api.post(`/payroll/sync-logs/${id}/retry`); setMsg('Retried — booked.'); } catch (err) { setMsg(errText(err, 'Retry failed; the error is in the log.')); }

@@ -53,7 +53,7 @@ const {
 } = require('../utils/employeeAdmin');
 const {
   INTEGRATION_CATALOG, INTEGRATION_GROUPS, SYNC_ENTITIES, ORG_STRUCTURE_DEFAULT,
-  COMPANY_POLICIES, COMPANY_DEFAULTS, integrationById, LIVE_CHANNELS, JOB_BOARD_CHANNELS,
+  COMPANY_POLICIES, COMPANY_DEFAULTS, integrationById, LIVE_CHANNELS, JOB_BOARD_CHANNELS, SMS_FIELDS,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
 const { publicValuesFor, writeValues, recordEvent } = require('../utils/integrationStore');
@@ -1970,6 +1970,30 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
   }
   if (!written.filled) return res.status(400).json({ error: 'Enter at least one credential to connect this channel.' });
   await integrationRow(channel.id);
+  // SMS (founder 2026-10-27): the settings are checked here, on the server, and the channel is switched on ONLY when they pass.
+  // With a problem the values stay saved (nothing typed is lost) but the channel stays off and the screen lists what to fix.
+  if (channel.id === 'sms') {
+    // the new values first (the check reads what is stored), then the check
+    const SG = require('../utils/smsGateway'); // eslint-disable-line global-require
+    const before = await SG.smsConfig({ ignoreSwitch: true });
+    await prisma.integration.update({ where: { id: channel.id }, data: { values: JSON.stringify(written.values) } });
+    let now = await SG.smsConfig({ ignoreSwitch: true });
+    if (now.providerInferred && now.provider === 'SMSGW') {
+      // the Provider box still said MSG91 while the SMS Push Platform login was filled in: store what it really is
+      written = await writeValues(channel.id, { [SMS_FIELDS.provider]: 'SMS Push Platform' });
+      await prisma.integration.update({ where: { id: channel.id }, data: { values: JSON.stringify(written.values) } });
+      now = await SG.smsConfig({ ignoreSwitch: true });
+    }
+    const pk = (c) => (c.push ? [c.provider, c.push.url, c.push.user, c.push.pass, c.push.pe, c.sender].join('|') : c.provider);
+    if (pk(before) !== pk(now)) await SG.forgetProof();
+    const problems = now.problems;
+    if (problems.length) {
+      const off = await prisma.integration.update({ where: { id: channel.id }, data: { values: JSON.stringify(written.values), enabled: false, connected: false, state: 'Not Connected', error: problems.join(' ').slice(0, 480) } });
+      await recordEvent(channel.id, { action: 'Saved - not switched on', by: req.user.name, result: problems.join(' ').slice(0, 480) });
+      await logAudit({ userId: req.user.id, action: 'Integration saved (validation failed)', entity: 'Integration', entityId: channel.id, toValue: `${problems.length} problem(s)` });
+      return res.status(422).json({ ...shapeIntegration(channel, off), error: `Saved, but SMS is NOT switched on - fix this first: ${problems.join(' ')}`, problems, saved: true });
+    }
+  }
   const row = await prisma.integration.update({
     where: { id: channel.id },
     data: {
@@ -2148,7 +2172,7 @@ router.post('/integrations/:id/test-message', requirePerm(null, 'administration'
   TEST_MSG_SEEN.set(dupKey, Date.now());
   if (TEST_MSG_SEEN.size > 500) TEST_MSG_SEEN.clear();
   // eslint-disable-next-line global-require
-  const result = await require('../utils/messaging').send(channel, { to, kind: 'bulk', text, vars: [text], meta: { purpose: `Test ${channel}`, module: 'Integrations', senderUserId: req.user.id, senderName: req.user.name, preview: text } });
+  const result = await require('../utils/messaging').send(channel, { to, kind: 'bulk', text, vars: [text], proving: channel === 'SMS', meta: { purpose: `Test ${channel}`, module: 'Integrations', senderUserId: req.user.id, senderName: req.user.name, preview: text } });
   // the words the screen shows: accepted is NOT delivered
   const err = String(result.error || '');
   const word = result.ok ? 'Accepted by Provider — Delivery Pending'
@@ -2162,10 +2186,10 @@ router.post('/integrations/:id/test-message', requirePerm(null, 'administration'
   await recordEvent(req.params.id, { action: 'Test Message', by: req.user.name, result: summary.slice(0, 480) });
   await prisma.integration.update({
     where: { id: req.params.id },
-    data: { lastTest: new Date(), lastTestResult: summary.slice(0, 480), error: result.ok ? null : String(result.error || '').slice(0, 480) },
+    data: { lastTest: new Date(), lastTestResult: summary.slice(0, 480), error: result.ok ? null : String(result.error || '').slice(0, 480), ...(result.ok ? { state: 'Connected', connected: true } : {}) },
   }).catch(() => {});
   await logAudit({ userId: req.user.id, action: `${channel} test message`, entity: 'Integration', entityId: req.params.id, toValue: result.outcome });
-  if (!result.ok) { TEST_MSG_SEEN.delete(dupKey); return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, status: word, notConfigured: !!result.notConfigured }); }
+  if (!result.ok) { TEST_MSG_SEEN.delete(dupKey); return res.status(result.notConfigured ? 409 : 502).json({ error: result.error, outcome: result.outcome, status: word, notConfigured: !!result.notConfigured, providerResponse: result.providerResponse || null }); }
   return res.json({ ok: true, outcome: result.outcome, status: word, providerRef: result.providerRef || null });
 });
 
@@ -2179,6 +2203,10 @@ router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Int
   try { values = row.values ? JSON.parse(row.values) : {}; } catch { values = {}; }
   if (!Object.values(values).filter((v) => String(v).trim()).length) {
     return res.status(400).json({ error: `Add credentials first — open Configure for ${channel.name}.` });
+  }
+  if (channel.id === 'sms') {
+    const problems = await require('../utils/smsGateway').validateSms(); // eslint-disable-line global-require
+    if (problems.length) return res.status(422).json({ error: `SMS cannot be switched on yet: ${problems.join(' ')}`, problems });
   }
   const next = await prisma.integration.update({
     where: { id: channel.id },
@@ -2334,8 +2362,9 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
       where: { id: channel.id },
       data: {
         lastTest: new Date(), lastTestResult: probe.result.slice(0, 480),
-        error: probe.ok ? null : probe.result.slice(0, 480),
-        ...(probe.ok ? {} : { state: 'Reconnect Required' }),
+        error: probe.ok || probe.needsConfirmation ? null : probe.result.slice(0, 480),
+        // SMS Push Platform has no connection-test call: "not proven yet" (send a Test SMS) is not a broken connection
+        ...(probe.ok ? { state: 'Connected' } : probe.needsConfirmation ? {} : { state: 'Reconnect Required' }),
       },
     });
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: probe.result.slice(0, 480) });

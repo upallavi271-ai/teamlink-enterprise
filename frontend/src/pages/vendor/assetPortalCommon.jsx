@@ -28,6 +28,16 @@ export function PayLine({ pay }) {
   if (pay.balance > 0) bits.push(`balance ${rs(pay.balance)}`);
   if (pay.lastPaymentDate) bits.push(`last payment ${day(pay.lastPaymentDate)}`);
   if (pay.dueDate && pay.status !== 'Paid') bits.push(`due ${day(pay.dueDate)}`);
+  // every bank payment of this invoice: "Paid on 26-09-2026: Rs 7,434" (founder 2026-10-28)
+  const list = Array.isArray(pay.payments) ? pay.payments : [];
+  if (list.length) {
+    return (
+      <span className="cell-muted">
+        {list.map((p, i) => <span key={`${p.date}-${i}`} style={{ display: 'block' }}>Paid on <strong>{day(p.date)}</strong>: {rs(p.amount)}{p.reference ? ` (ref ${p.reference})` : ''}</span>)}
+        {pay.balance > 0 ? <span style={{ display: 'block' }}>Balance {rs(pay.balance)}</span> : null}
+      </span>
+    );
+  }
   return <span className="cell-muted">{bits.join(' \u00b7 ') || pay.note || ''}</span>;
 }
 

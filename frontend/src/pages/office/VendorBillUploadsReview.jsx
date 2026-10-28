@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import BillLineAssets, { PaymentBlock } from '../vendor/BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28)
 import api from '../../api';
+import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
 import BillSteps from '../../components/BillSteps.jsx';
@@ -40,9 +42,10 @@ export function AiLight({ ai }) {
 // ---- the list ---------------------------------------------------------------------------------------------------------------------------
 export default function UploadedBills({ onChanged, onCounts }) {
   const [d, setD] = useState(null);
-  const [status, setStatus] = useState('NEEDS_REVIEW');
-  const [vendorId, setVendorId] = useState('');
-  const [q, setQ] = useState('');
+  // Kept when you leave and come back (utils/useKeptState.js).
+  const [status, setStatus] = useKeptState('office.uploadedBills.status', 'NEEDS_REVIEW');
+  const [vendorId, setVendorId] = useKeptState('office.uploadedBills.vendor', '');
+  const [q, setQ] = useKeptState('office.uploadedBills.q', '');
   const [open, setOpen] = useState(null);
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
@@ -125,11 +128,12 @@ function Viewer({ id, files }) {
   const f = files[page] || files[0];
   const url = f ? urls[f.id] : null;
   const isPdf = f && f.mime === 'application/pdf';
+  const isSheet = f && /spreadsheetml|ms-excel|text\/csv/.test(f.mime || ''); // an Excel / CSV bill (2026-10-28): downloaded, the AI read its cells
   return (
     <div className="bur-viewer">
       <div className="bur-viewer-bar">
         {files.length > 1 && files.map((x, i) => <button type="button" key={x.id} className={`btn btn-sm${i === page ? ' btn-primary' : ''}`} onClick={() => setPage(i)}>Page {i + 1}</button>)}
-        {!isPdf && (
+        {!isPdf && !isSheet && (
           <>
             <button type="button" className="btn btn-sm" onClick={() => setZoom((z) => Math.max(40, z - 20))} aria-label="Zoom out">&minus;</button>
             <span className="cell-muted">{zoom}%</span>
@@ -142,7 +146,7 @@ function Viewer({ id, files }) {
       <div className="bur-viewer-body">
         {err && <div className="notice red"><span>{err}</span></div>}
         {!url && !err && <div className="empty-mini">Loading the bill&hellip;</div>}
-        {url && (isPdf ? <iframe title={`Bill ${f.name}`} src={url} /> : <img src={url} alt={`Bill page ${page + 1}`} style={{ width: `${zoom}%` }} />)}
+        {url && (isSheet ? <div className="empty-mini">This bill is an Excel / CSV file. <a href={url} download={f.name}>Download {f.name}</a> to see it. The details on the right were read from its cells.</div> : isPdf ? <iframe title={`Bill ${f.name}`} src={url} /> : <img src={url} alt={`Bill page ${page + 1}`} style={{ width: `${zoom}%` }} />)}
       </div>
     </div>
   );
@@ -357,6 +361,8 @@ function UploadReview({ id, onClose, onDone }) {
                   </tbody>
                 </table>
               </div>
+              <BillLineAssets rows={d.lineAssets} />
+              <PaymentBlock p={d.payment} />
               {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setForm((x) => ({ ...x, lines: [...x.lines, { description: '', quantity: '', rate: '', amount: '', unclear: false }] }))}>Add a line</button>}
               {live && (
                 <div className="bu-live" role="status">

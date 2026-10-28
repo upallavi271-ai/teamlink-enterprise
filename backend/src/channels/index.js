@@ -74,7 +74,7 @@ const adapters = {
       return { configured: !!c.configured, reason: c.reason || '', detail: `${c.providerLabel || ''}${c.testMode ? ' (test server)' : ''}`.trim(), provider: c.providerLabel || null, raw: c };
     },
     async send(m) {
-      const r = await require('../utils/smsGateway').sendSms({ to: m.to, kind: m.kind, text: m.text, vars: m.vars, templateId: m.templateId, senderId: m.senderId }); // eslint-disable-line global-require
+      const r = await require('../utils/smsGateway').sendSms({ to: m.to, kind: m.kind, text: m.text, vars: m.vars, templateId: m.templateId, senderId: m.senderId, proving: !!m.proving }); // eslint-disable-line global-require
       return { ...r, retryable: !!r.transient, unavailable: !!(r.notConfigured || r.transient), status: r.ok ? 'sent' : 'failed' };
     },
     async health() { const t = await require('../utils/smsGateway').testConnection(); return { ok: !!t.ok, message: t.result }; }, // eslint-disable-line global-require

@@ -143,8 +143,8 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
       realMembers = await n1(REAL_SQL);
       check('C', `REAL DATA (copy): the IT vendor "chandra" has ${realMembers} IT-hardware assets by category = the independent SQL count 174 (${realHeld} held by employees, ${realAvail} available/in stock, ${realInRepair} In Repair)`,
         realMembers === 174 && realView.status === 200 && realView.body.auto && realView.body.auto.total === 174, { members: realMembers, auto: realView.body && realView.body.auto && realView.body.auto.total });
-      check('C', `REAL DATA: the admin screen number = what the vendor is shown: ${realAvail + realInRepair} (${realAvail} available + ${realInRepair} under repair); ${realHeld} held ones are NOT shown; no grant, no import`,
-        realView.body.total === realAvail + realInRepair && realView.body.available === realAvail && realView.body.underRepair === realInRepair && realView.body.hiddenHeld === 174 - (realAvail + realInRepair) && realView.body.byReason.auto === realView.body.total && realView.body.byReason.admin === 0, { total: realView.body.total, a: realView.body.available, u: realView.body.underRepair, h: realView.body.hiddenHeld });
+      check('C', `REAL DATA: the admin screen number = what the vendor is shown: all 174 (with employees + ${realAvail} in stock + ${realInRepair} under repair - founder decision 2026-10-27); no grant, no import`,
+        realView.body.total === 174 && realView.body.available === realAvail && realView.body.underRepair === realInRepair && realView.body.available + realView.body.underRepair + realView.body.withEmployees + (realView.body.noHolderNamed || 0) === realView.body.total && realView.body.byReason.auto === realView.body.total && realView.body.byReason.admin === 0, { total: realView.body.total, a: realView.body.available, u: realView.body.underRepair, w: realView.body.withEmployees, held: realHeld });
       check('C', 'REAL DATA: no SIM card is in the IT vendor list, and the automatic map shows the 8 real categories', !realView.body.rows.some((r) => r.category === 'SIM Card') && realView.body.auto.categories.length === 8);
     }
     if (realIt) await raw('UPDATE "OfficeVendor" SET "isActive" = 0 WHERE "id" = ?', realIt.id); // (the copy only) so test vendors are not "peers" of the real one
@@ -346,7 +346,7 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
     const grantsBefore = await n1('SELECT COUNT(*) AS n FROM "VendorAssetGrant"');
     const adminView = await http('GET', `/api/vendor-logins/asset-grants/${V.it.id}`, T.admin);
     const listTabs = await G(L.it, '/asset-portal/assets?view=available&pageSize=5');
-    check('C', 'the Admin screen number equals what the vendor\'s list shows (available + under repair), tab counts included', adminView.body.total === listTabs.body.tabs.available + listTabs.body.tabs.repair && adminView.body.available === listTabs.body.tabs.available && adminView.body.underRepair === listTabs.body.tabs.repair, { admin: [adminView.body.total, adminView.body.available, adminView.body.underRepair], tabs: listTabs.body.tabs });
+    check('C', 'the Admin screen number equals what the vendor\'s list shows (all = with employees + in stock + under repair), tab counts included', adminView.body.total === listTabs.body.tabs.all && adminView.body.available === listTabs.body.tabs.available && adminView.body.underRepair === listTabs.body.tabs.repair && adminView.body.withEmployees === listTabs.body.tabs.assigned, { admin: [adminView.body.total, adminView.body.available, adminView.body.underRepair, adminView.body.withEmployees], tabs: listTabs.body.tabs });
     // a new asset through the REAL HRMS add path
     const aBefore = await avail(L.it);
     const add1 = await http('POST', '/api/asset-inventory', T.hr, { name: `ZZTEST HRMS Laptop ${RUN}`, category: 'Laptop', purchaseCost: 42000, warrantyUntil: cleanDay(300) });
@@ -447,9 +447,10 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
     const codes = await raw('SELECT "id","assetCode" FROM "Asset"');
     const maskedAll = codes.map((a) => [a.assetCode, Mk.code(a)]);
     const leak = maskedAll.filter(([, m]) => sweepText('c', m).hit.length);
-    check('E', `the masker: none of the ${maskedAll.length} vendor-facing IDs contains an employee name (${maskedAll.filter(([a, b]) => a !== b).length} were changed)`, leak.length === 0, leak.slice(0, 5));
+    void leak; // the 19 Oct 2026 no-names rule was replaced on 27 Oct 2026
+    check('E', `27 Oct 2026 (names shown): all ${maskedAll.length} vendor-facing IDs are the company's own asset codes`, maskedAll.every(([a, b]) => a === b), maskedAll.filter(([a, b]) => a !== b).slice(0, 5));
     check('E', 'vendor-facing IDs are UNIQUE across all assets, and stable (a second load gives the same IDs)', new Set(maskedAll.map((x) => x[1].toLowerCase())).size === maskedAll.length && JSON.stringify(codes.map((a) => Mk.code(a))) === JSON.stringify(codes.map((a) => (require(path.join(BACK, 'src/utils/vendorAssetMask')).baseCode ? maskedAll.find(([c]) => c === a.assetCode)[1] : ''))));
-    check('E', 'examples: "Edu 01-Sneha-L" style codes lose the name and keep seat + type letter; a plain code (AST-0001) is unchanged', (() => { const x = maskedAll.find(([a]) => /^Edu 01-Sneha-H$/i.test(a)); const y = maskedAll.find(([a]) => a === 'AST-0001'); return (!x || x[1] === 'Edu 01-H') && y && y[1] === 'AST-0001'; })(), maskedAll.filter(([a, b]) => a !== b).slice(0, 4));
+    check('E', 'examples: "Edu 01-Sneha-H" and AST-0001 are shown exactly as HRMS writes them', (() => { const x = maskedAll.find(([a]) => /^Edu 01-Sneha-H$/i.test(a)); const y = maskedAll.find(([a]) => a === 'AST-0001'); return (!x || x[1] === x[0]) && (!y || y[1] === 'AST-0001'); })(), maskedAll.slice(0, 4));
     // 2. every vendor response / export of the IT vendor
     const hrAssetHold = await http('PATCH', `/api/asset-inventory/${a12.id}/assign`, T.hr, { employeeId: S.emp.e.id }); // a12 held by Zoya
     await raw(`UPDATE "Asset" SET "assignedToId" = NULL, "status" = 'Available' WHERE "id" = ?`, a12.id); // back in stock (its code still holds a former holder's name)
@@ -463,10 +464,13 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
     const rl = await allRows(L.it, '/asset-portal/repairs'); rl.rows.forEach((r) => bodies.push(['repair row', JSON.stringify(r)]));
     for (const r of rl.rows.slice(0, 6)) await grab(L.it, `/asset-portal/repairs/${r.id}`); // eslint-disable-line no-await-in-loop
     for (const l of ['assets', 'repairs', 'history', 'invoices', 'orders']) { const e = await exportOf(L.it, l); bodies.push([`export ${l}`, e.text]); const ex = await exportOf(L.it, l, {}, 'xlsx'); bodies.push([`xlsx ${l}`, JSON.stringify(readXlsx(ex.buf))]); } // eslint-disable-line no-await-in-loop
-    const leaks = bodies.map(([l, t]) => sweepText(l, t)).filter((x) => x.hit.length);
-    check('E', `SWEEP: ${bodies.length} vendor responses and exports (assets both tabs, details, repairs, history, invoices, orders, overview, CSV, Excel) contain NO employee name`, leaks.length === 0, leaks.slice(0, 3));
-    const realCodeHit = bodies.filter(([, t]) => [a8, a9, a11, a12].some((a) => String(t).includes(a.assetCode)));
-    check('E', 'the real HRMS asset codes of the name-bearing ZZ assets (e.g. "…Zoya-L", "…Sneha-L") never appear in what the vendor receives', realCodeHit.length === 0, realCodeHit.map((x) => x[0]));
+    // names are allowed since 27 Oct 2026; e-mail addresses and phone numbers never are
+    const pii = bodies.filter(([, t]) => /[A-Za-z0-9._%+-]+@example\.test|9876543210/.test(String(t))).map(([l]) => l);
+    check('E', `SWEEP: ${bodies.length} vendor responses and exports (assets both tabs, details, repairs, history, invoices, orders, overview, CSV, Excel) contain NO employee e-mail or phone number`, pii.length === 0, pii.slice(0, 5));
+    const codeRows = big1.rows.concat(big2.rows);
+    const realOf = new Map(codes.map((a) => [a.id, a.assetCode]));
+    check('E', 'every asset row carries the company\'s own asset code (27 Oct 2026)', codeRows.every((r) => r.assetCode === realOf.get(r.id)), codeRows.filter((r) => r.assetCode !== realOf.get(r.id)).slice(0, 3).map((r) => [r.assetCode, realOf.get(r.id)]));
+    void sweepText;
     // 3. round trip: the vendor opens and edits a masked asset by its internal id
     const mine = big1.rows.find((r) => r.id === a11.id);
     const det = await G(L.it, `/asset-portal/assets/${a11.id}`);
@@ -514,13 +518,13 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
     const repRow = await prisma.assetRepair.findUnique({ where: { id: ch[0].repairId } });
     check('D', 'the repair row: status Reported, type Repair, linked to the asset and the ticket, problem text sanitised (no employee name, number, e-mail or code)', repRow && repRow.status === 'Reported' && repRow.assetId === a8.id && /ATK-/.test(repRow.notes) && !/Zoya|Kapoorzz|9876543210|zoya@|ZZVIES/i.test(repRow.issue) && /Screen cracked/.test(repRow.issue), repRow && repRow.issue);
     const lvAfter = await allRows(L.it, '/asset-portal/repairs'); const job = lvAfter.rows.find((r) => r.assetId === a8.id);
-    check('D', 'the vendor now sees it in Repairs as "Awaiting repair" with the ticket reference and the issue text; masked asset ID; no employee name, no HR remarks', job && job.stage === 'Awaiting repair' && job.ticketRef === c1.body.ticketRef && /Screen cracked/.test(job.issue) && job.assetCode === Mk.code(a8) && !JSON.stringify(job).match(/Zoya|Kapoorzz|ZZVIES/i) && job.fromCompany === true, job);
+    check('D', 'the vendor now sees it in Repairs as "Awaiting repair" with the ticket reference and the issue text; masked asset ID; no employee name, no HR remarks', job && job.stage === 'Awaiting repair' && job.ticketRef === c1.body.ticketRef && /Screen cracked/.test(job.issue) && job.assetCode === Mk.code(a8) && !JSON.stringify({ ...job, assetCode: null, holder: null }).match(/Kapoorzz|ZZVIES|9876543210/i) && !/Zoya/i.test(job.issue || '') && job.fromCompany === true, job);
     const itRepTab = await avail(L.it, 'repair');
     check('D', 'the HELD laptop is now visible (Under repair tab) because it has an approved repair job; still not in Available', itRepTab.rows.some((r) => r.id === a8.id) && !(await avail(L.it)).rows.some((r) => r.id === a8.id));
     const ovd = await G(L.it, '/asset-portal/overview');
     check('D', 'the Repairs menu badge count (overview.repairs.fromCompany) counts the new job', ovd.body.repairs.fromCompany >= 1);
     const histD = await G(L.it, `/asset-portal/repairs/${job.id}`);
-    check('D', 'repair history has "Repair approved by HR" shown as Company, with the ticket; the detail never shows the thread, employee or remarks', histD.status === 200 && histD.body.history.some((h) => h.by === 'Company' && /approved by HR/.test(h.note || '')) && !histD.text.match(/Zoya|Kapoorzz|ZZVIES|notes/i), histD.body && histD.body.history);
+    check('D', 'repair history has "Repair approved by HR" shown as Company, with the ticket; the detail never shows the thread, employee or remarks', histD.status === 200 && histD.body.history.some((h) => h.by === 'Company' && /approved by HR/.test(h.note || '')) && !histD.text.split(a8.assetCode).join('').match(/Kapoorzz|ZZVIES|"notes"/i), histD.body && histD.body.history);
     const hrAgain = await http('POST', `/api/asset-complaints/${c1.body.id}/decision`, T.hr, { decision: 'Approved' });
     const par = await Promise.all([1, 2, 3].map(() => http('POST', `/api/asset-complaints/${c1.body.id}/decision`, T.hr, { decision: 'Approved' })));
     check('D', 'approving again, a retry and 3 parallel approvals still leave exactly ONE repair for the ticket', hrAgain.status === 200 && par.every((p) => p.status === 200) && (await n1(`SELECT COUNT(*) AS n FROM "AssetRepair" WHERE "notes" LIKE ?`, `%${c1.body.ticketRef}%`)) === 1);
@@ -705,20 +709,20 @@ const made = { users: [], vendors: [], assets: [], emps: [] };
     const billsBefore = await n1('SELECT COUNT(*) AS n FROM "VendorModuleBill"');
     const bfRows = [[`ZZIMP-${RUN}-1`, '2026-10-01', 10000, 1800, 'Service Oct', '2026-10-31'], [`ZZIMP-${RUN}-2`, '2026-10-02', 2500, '', 'Parts', ''], [`ZZINV-1-${RUN}`, '2026-09-11', 1000, 18, 'existing number', ''], [`ZZIMP-${RUN}-4`, '2099-01-01', 100, '', 'future date', ''], [`ZZIMP-${RUN}-5`, '2026-10-05', 0, '', 'zero amount', ''], [`ZZIMP-${RUN}-1`, '2026-10-01', 10000, 1800, 'repeat in file', '']];
     const bfPrev = await prev(L.fin, 'bills', csvOf(BF_HEAD, bfRows), 'b.csv');
-    check('B', 'finance bills preview saves nothing; 2 will be sent, 1 is "already there" (existing number), future date / zero amount / repeat in the file refused with reasons', bfPrev.status === 200 && (await n1('SELECT COUNT(*) AS n FROM "VendorModuleBill"')) === billsBefore && bfPrev.body.willChange === 2 && bfPrev.body.alreadyThere === 1 && bfPrev.body.failed === 3, bfPrev.body.rows);
+    check('B', 'finance bills preview saves nothing; 2 will be sent, 1 is "already there" (existing number), future date / repeat in the file refused with reasons; a zero-amount line is skipped (2026-10-28: any file, no strict rules)', bfPrev.status === 200 && (await n1('SELECT COUNT(*) AS n FROM "VendorModuleBill"')) === billsBefore && bfPrev.body.willChange === 2 && bfPrev.body.alreadyThere === 1 && bfPrev.body.failed === 2 && !bfPrev.body.rows.some((r) => r.label === `ZZIMP-${RUN}-5`), bfPrev.body.rows);
     const bfConf = await conf(L.fin, 'bills', csvOf(BF_HEAD, bfRows), 'b.csv');
     const newBills = await raw(`SELECT * FROM "VendorModuleBill" WHERE "billNumber" LIKE ?`, `ZZIMP-${RUN}-%`);
-    check('B', 'finance bills confirm: 2 bills created through the same engine (status Submitted for Accounts to check, no payment fields, marked "[Excel import]"), 1 already there, 3 failed; honest message', bfConf.status === 200 && bfConf.body.imported === 2 && bfConf.body.alreadyThere === 1 && bfConf.body.failed === 3 && newBills.length === 2 && newBills.every((b) => b.status === 'Submitted' && b.paidOn == null && b.paidAmount == null && /\[Excel import\]/.test(b.remarks) && b.vendorId === V.oth.id), bfConf.body);
+    check('B', 'finance bills confirm: 2 bills created through the same engine (status Submitted for Accounts to check, no payment fields, marked "[Excel import]"), 1 already there, 2 failed (zero amount skipped); honest message', bfConf.status === 200 && bfConf.body.imported === 2 && bfConf.body.alreadyThere === 1 && bfConf.body.failed === 2 && newBills.length === 2 && newBills.every((b) => b.status === 'Submitted' && b.paidOn == null && b.paidAmount == null && /\[Excel import\]/.test(b.remarks) && b.vendorId === V.oth.id), bfConf.body);
     const bfAgain = await conf(L.fin, 'bills', csvOf(BF_HEAD, bfRows), 'b.csv');
     check('B', 'the same bills file again creates nothing (all "already there"), no duplicate bill', bfAgain.body.imported === 0 && bfAgain.body.alreadyThere >= 2 && (await n1(`SELECT COUNT(*) AS n FROM "VendorModuleBill" WHERE "billNumber" LIKE ?`, `ZZIMP-${RUN}-%`)) === 2);
     check('B', 'finance login WITHOUT "Raise invoices": 403 on preview and confirm; nothing created', (await prev(L.finNo, 'bills', csvOf(BF_HEAD, bfRows), 'b.csv')).status === 403 && (await conf(L.finNo, 'bills', csvOf(BF_HEAD, bfRows), 'b.csv')).status === 403);
     const BT_HEAD = ['Bill number ✱', 'Billing month ✱', 'Bill date', 'Due date ✱', 'Amount ✱', 'GST', 'Remarks'];
     const btRows = [[`ZZAIR-${RUN}-1`, '2026-08', '2026-08-05', '2026-08-25', 20000, 3600, ''], [`ZZAIR-${RUN}-2`, '2026-07', '', '2026-07-25', 15000, '', 'no bill date'], [`ZZAIR-${RUN}-3`, '2026-13', '', '2026-07-25', 100, '', 'bad month']];
     const btConf = await conf(L.tel, 'bills', csvOf(BT_HEAD, btRows), 'air.csv');
-    check('B', 'Airtel bills import: 2 monthly bills sent (provider = the vendor), 1 bad month refused; the same file again = already there', btConf.status === 200 && btConf.body.imported === 2 && btConf.body.failed === 1 && (await conf(L.tel, 'bills', csvOf(BT_HEAD, btRows), 'air.csv')).body.alreadyThere === 2 && (await n1(`SELECT COUNT(*) AS n FROM "VendorModuleBill" WHERE "kind" = 'monthly_bill' AND "billNumber" LIKE ?`, `ZZAIR-${RUN}-%`)) === 2, btConf.body);
+    check('B', 'Airtel bills import: 2 monthly bills sent (provider = the vendor); a bad month is taken from the due date (2026-07, already sent = already there, never a 2nd bill); the same file again = already there', btConf.status === 200 && btConf.body.imported === 2 && btConf.body.failed === 0 && btConf.body.alreadyThere === 1 && (await conf(L.tel, 'bills', csvOf(BT_HEAD, btRows), 'air.csv')).body.alreadyThere === 3 && (await n1(`SELECT COUNT(*) AS n FROM "VendorModuleBill" WHERE "kind" = 'monthly_bill' AND "billNumber" LIKE ?`, `ZZAIR-${RUN}-%`)) === 2, btConf.body);
     check('B', 'Airtel login without "Send a bill": 403', (await prev(L.telNo, 'bills', csvOf(BT_HEAD, btRows), 'air.csv')).status === 403);
     const badPay = await prev(L.fin, 'bills', csvOf([...BF_HEAD, 'Status'], [[...bfRows[0], 'Paid']]), 'b.csv');
-    check('B', 'a finance/Airtel bills file with a Status/Paid column is refused', badPay.status === 400 && /payment status/.test(badPay.body.error), badPay.body);
+    check('B', 'a finance/Airtel bills file with a Status/Paid column: the column is IGNORED (any file is taken, 2026-10-28) and nothing is ever marked paid', badPay.status === 200 && (await n1('SELECT COUNT(*) AS n FROM "VendorModuleBill" WHERE "billNumber" LIKE ? AND ("paidOn" IS NOT NULL OR "paidAmount" IS NOT NULL OR "status" = ?)', `ZZIMP-${RUN}-%`, 'Paid')) === 0, badPay.body);
     const sTot = await snap();
     check('B', 'no import ever created an asset, and the repair count only grew by the repairs the complaint flow made', sTot.assets === (await n1('SELECT COUNT(*) AS n FROM "Asset"')) && sTot.repairs >= repairs0 && sTot.repairs - repairs0 <= 12);
     const notices = await n1(`SELECT COUNT(*) AS n FROM "Notification" WHERE "title" LIKE ?`, '%imported from a file%');

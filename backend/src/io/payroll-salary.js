@@ -17,6 +17,14 @@
 // import can never change a past run. Components are always computed from
 // the Standard Package rules (utils/salaryRules.js) — they are read-only in
 // the file. Blank cells keep the current value.
+//
+// PAY REGISTER (founder 2026-10-28, utils/payrollRegister.js): the optional
+// "Full:" columns take the team's own full-month amounts (Basic, HRA,
+// Conveyance, Special, Performance / Monthly Bonus) AS THEY ARE, in paise,
+// instead of rebuilding them from the CTC; "PF rule" (24% of earned basic /
+// 12% of earned basic / Fixed + "PF fixed amount") is kept with the version
+// (blank = the rule in force carries on). Older files without these columns
+// still import exactly as before.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const io = require('../utils/moduleIo');
@@ -24,11 +32,15 @@ const SV = require('../utils/salaryVersions');
 const E = require('../utils/payrollEngine');
 const { structureFromRow } = require('../utils/salaryRules');
 const { withoutSystemAccounts } = require('../utils/systemAccounts');
+const REG = require('../utils/payrollRegister');
 
 const PAY_MODES = ['Package', 'Stipend'];
 const ESI = ['Auto', 'Yes', 'No'];
-const COMPONENT_FIELDS = ['basic', 'hra', 'bonus', 'specialAllowance', 'employerPf', 'employeePf', 'professionalTax', 'gratuity'];
-const INPUT_KEYS = ['effectiveFrom', 'payMode', 'monthlyCtc', 'stipend', 'bonus', 'tds', 'otherDeductions', 'esi', 'note'];
+// conveyance carries over too (the registers' fixed Conveyance earning; 2026-10-28: a later revision used to drop it)
+const COMPONENT_FIELDS = ['basic', 'hra', 'bonus', 'specialAllowance', 'conveyance', 'employerPf', 'employeePf', 'professionalTax', 'gratuity'];
+const FULL_KEYS = ['fullBasic', 'fullHra', 'fullConveyance', 'fullSpecial', 'fullPerfBonus', 'fullMonthlyBonus'];
+const INPUT_KEYS = ['effectiveFrom', 'payMode', 'monthlyCtc', 'stipend', 'bonus', 'tds', 'otherDeductions', 'esi', 'note', ...FULL_KEYS, 'pfRule', 'pfFixed'];
+const PF_RULES = ['24% of earned basic', '12% of earned basic', 'Fixed', 'Default'];
 const pad = (n) => String(n).padStart(2, '0');
 
 const columns = [
@@ -44,6 +56,15 @@ const columns = [
   { key: 'otherDeductions', label: 'Other Deductions (monthly)', type: 'number', example: '', note: 'Blank = keep the current amount.' },
   { key: 'esi', label: 'ESI', list: 'ESI', example: 'Auto', note: 'Auto = by the ESI gross ceiling; Yes / No force it. Blank = keep the current setting.' },
   { key: 'note', label: 'Note', example: 'Annual revision' },
+  // Pay register (2026-10-28): the team's own full-month amounts, kept as they are (optional columns).
+  { key: 'fullBasic', label: 'Full: Basic', type: 'number', optionalHeader: true, example: '', note: 'Optional. Fill the Full: amounts to set the structure EXACTLY as your pay register has it (paise kept). When any Full: amount is filled, a blank Full: amount = 0. Leave all Full: amounts blank to build the structure from the Monthly CTC.' },
+  { key: 'fullHra', label: 'Full: HRA', type: 'number', optionalHeader: true, example: '' },
+  { key: 'fullConveyance', label: 'Full: Conveyance', type: 'number', optionalHeader: true, example: '' },
+  { key: 'fullSpecial', label: 'Full: Special', type: 'number', optionalHeader: true, example: '', note: 'Special allowance for the full month.' },
+  { key: 'fullPerfBonus', label: 'Full: Performance Bonus', type: 'number', optionalHeader: true, example: '' },
+  { key: 'fullMonthlyBonus', label: 'Full: Monthly Bonus', type: 'number', optionalHeader: true, example: '', note: 'Added to the Performance Bonus (one Bonus line).' },
+  { key: 'pfRule', label: 'PF rule', list: 'PF rule', optionalHeader: true, example: '', note: '24% of earned basic, 12% of earned basic, Fixed (the PF fixed amount every month, not cut for LOP) or Default (the standard PF). Blank = the rule in force carries on.' },
+  { key: 'pfFixed', label: 'PF fixed amount', type: 'number', optionalHeader: true, example: '', note: 'Only with the PF rule Fixed.' },
   { key: 'effectiveTo', label: 'Effective To', readOnly: true, example: '' },
   { key: 'basic', label: 'Basic', type: 'number', readOnly: true, example: '' },
   { key: 'hra', label: 'HRA', type: 'number', readOnly: true, example: '' },
@@ -119,12 +140,27 @@ function numberOf(r, key, label, errors) {
 // What a row would save, from the employee's versions (ascending) — the same
 // arithmetic PUT /api/payroll/structure/:id does, with blank cells keeping the
 // current value.
-function plan(versions, x, cfg) {
+// `rules` = Map(versionId -> PF rule) of these versions (utils/payrollRegister.js).
+function plan(versions, x, cfg, rules = new Map()) {
   const eff = x.effectiveFrom;
   const sameMonth = versions.find((v) => v.effectiveFrom === eff) || null;
   const inForce = versions.filter((v) => v.effectiveFrom <= eff).pop() || null;
   const latest = versions[versions.length - 1] || null;
   const base = sameMonth || inForce || latest;
+  // PF rule: as typed, else the rule of the version this one replaces carries on
+  const pfRule = x.pfRule !== undefined ? x.pfRule : ((base && rules.get(base.id)) || null);
+  const before = sameMonth ? (rules.get(sameMonth.id) || null) : null;
+  if (x.direct) {
+    if (x.payMode === 'Stipend') return { error: { field: 'Pay Mode', message: 'The Full: amounts are for a Package. Leave them blank for a stipend.' } };
+    const data = REG.directStructure({
+      full: x.direct, rule: pfRule, monthlyCtc: x.monthlyCtc, baseCtc: base && base.payMode !== 'Stipend' ? base.ctc : null, cfg,
+      esiApplicable: x.esi !== undefined ? x.esi : (base ? base.esiApplicable : null),
+      tds: x.tds !== null ? x.tds : (base ? base.tds : null),
+      otherDeductions: x.otherDeductions !== null ? x.otherDeductions : (base ? base.otherDeductions : 0),
+    });
+    data.note = x.note || (sameMonth ? sameMonth.note : null);
+    return { data, sameMonth, pfRule, before };
+  }
   const payMode = x.payMode || (base && base.payMode) || 'Package';
   // A new CTC or a new bonus recomputes every component from the rules;
   // otherwise the base version's stored components carry over as they are.
@@ -149,26 +185,35 @@ function plan(versions, x, cfg) {
   const data = SV.buildComponents({
     payMode, annualCtc: annual, bonus, overrides, stipend, cfg, esiApplicable, tds, otherDeductions,
   });
+  if (payMode === 'Package' && pfRule) data.employeePf = REG.fullMonthPf(pfRule, data.basic);
+  if (payMode === 'Package' && Number(data.conveyance) > 0) {
+    // Conveyance is part of the gross the ESI eligibility is decided on (as the pay register does)
+    const esi = SV.esiFor(data.basic + data.hra + data.bonus + data.specialAllowance + data.conveyance, cfg, data.esiApplicable);
+    data.esiEmployee = esi.employee; data.esiEmployer = esi.employer;
+  }
   data.note = x.note || (sameMonth ? sameMonth.note : null);
-  return { data, sameMonth };
+  return { data, sameMonth, pfRule: payMode === 'Stipend' ? null : pfRule, before };
 }
 
 const COMPARE = [
   ['payMode', 'Pay Mode'], ['ctc', 'Monthly CTC', (v) => Math.round((Number(v) || 0) / 12)], ['stipend', 'Monthly Stipend'],
-  ['basic', 'Basic'], ['hra', 'HRA'], ['bonus', 'Bonus'], ['specialAllowance', 'Special Allowance'],
+  ['basic', 'Basic'], ['hra', 'HRA'], ['conveyance', 'Conveyance'], ['bonus', 'Bonus'], ['specialAllowance', 'Special Allowance'],
   ['employeePf', 'Employee PF'], ['professionalTax', 'Professional Tax'], ['esiApplicable', 'ESI', (v) => (v === true ? 'Yes' : v === false ? 'No' : 'Auto')],
   ['esiEmployee', 'ESI (employee)'], ['tds', 'TDS', (v) => (v === null || v === undefined ? '' : v)], ['otherDeductions', 'Other Deductions'], ['note', 'Note', (v) => v || ''],
 ];
-function diff(before, after) {
-  return COMPARE.map(([k, label, f]) => {
+const ruleWords = (r) => { const c = REG.cleanRule(r); return c ? (c.mode === 'FIXED' ? `Fixed ${c.amount}` : REG.pfRuleText(c)) : 'Default'; };
+function diff(before, after, ruleBefore = null, ruleAfter = null) {
+  const out = COMPARE.map(([k, label, f]) => {
     const fmt = f || ((v) => (v === null || v === undefined ? '' : v));
     const a = fmt(before ? before[k] : null);
     const b = fmt(after[k]);
     return String(a) === String(b) ? null : { field: label, from: a, to: b };
   }).filter(Boolean);
+  if (ruleWords(ruleBefore) !== ruleWords(ruleAfter)) out.push({ field: 'PF rule', from: before ? ruleWords(ruleBefore) : '', to: ruleWords(ruleAfter) });
+  return out;
 }
 
-function rowOf(e, v) {
+function rowOf(e, v, rule = null) {
   const b = v && v.payMode !== 'Stipend' ? structureFromRow(v) : null;
   const esi = Number(v && v.esiEmployee) || 0;
   return {
@@ -196,6 +241,9 @@ function rowOf(e, v) {
     net: b ? b.net - esi : (v ? (Number(v.stipend) || 0) - esi : ''),
     employerPf: b ? b.employerPf : '',
     gratuity: b ? b.gratuity : '',
+    // Full: amounts are left blank (fill them to set exact amounts); the PF rule in force is shown.
+    pfRule: v && v.payMode !== 'Stipend' ? (REG.cleanRule(rule) ? REG.pfRuleText(rule) : 'Default') : '',
+    pfFixed: rule && rule.mode === 'FIXED' ? rule.amount : '',
   };
 }
 
@@ -215,9 +263,10 @@ module.exports = {
     'One row = one employee\'s salary structure from a month (Effective From, YYYY-MM). Every change is saved as a VERSION, exactly like the Salary Structure screen: the same month edits that version, a new month adds a revision.',
     'A month whose payroll is already submitted, approved, synced or paid is refused — an import never changes a past run. Payroll from that month on must be recalculated afterwards.',
     'Components (Basic, HRA, Special Allowance, PF, PT, ESI …) are computed from the Standard Package rules and are read-only here. Blank cells keep the current value.',
+    'To keep your pay register\'s OWN amounts instead (paise kept), fill the Full: columns (Basic, HRA, Conveyance, Special, Performance Bonus, Monthly Bonus) and the PF rule (24% of earned basic, 12% of earned basic, or Fixed with the PF fixed amount). These columns are optional.',
     'A row with only the Employee ID filled in (the export lists everybody on the register) is skipped.',
   ],
-  lists: async () => ({ 'Pay Mode': PAY_MODES, ESI }),
+  lists: async () => ({ 'Pay Mode': PAY_MODES, ESI, 'PF rule': PF_RULES }),
   payrollIndex,
   exportEmployees,
 
@@ -229,6 +278,7 @@ module.exports = {
     }) : [];
     const byEmp = new Map();
     versions.forEach((v) => { if (!byEmp.has(v.employeeId)) byEmp.set(v.employeeId, []); byEmp.get(v.employeeId).push(v); });
+    const pfRules = await REG.pfRulesFor(versions.map((v) => v.id));
     const currentOnly = String(filters.current || '') === '1';
     const one = !!io.str(filters.employeeId);
     const out = [];
@@ -240,7 +290,7 @@ module.exports = {
         if (one || E.PAYABLE_STATUSES.includes(e.employmentStatus)) out.push(rowOf(e, null));
         return;
       }
-      (currentOnly ? vs.slice(0, 1) : vs).forEach((v) => out.push(rowOf(e, v)));
+      (currentOnly ? vs.slice(0, 1) : vs).forEach((v) => out.push(rowOf(e, v, pfRules.get(v.id) || null)));
     });
     return out;
   },
@@ -255,6 +305,7 @@ module.exports = {
       prisma.employeePayrollRun.findMany({ where: { employeeId: { in: empIds }, status: { not: 'DRAFT' } }, select: { employeeId: true, month: true, status: true } }),
     ]) : [[], []];
     const versionsOf = (id) => versions.filter((v) => v.employeeId === id);
+    const pfRules = await REG.pfRulesFor(versions.map((v) => v.id));
     const lockedOf = new Map();
     runs.forEach((r) => { const cur = lockedOf.get(r.employeeId); if (!cur || r.month > cur.month) lockedOf.set(r.employeeId, r); });
     const seen = new Map();
@@ -289,6 +340,20 @@ module.exports = {
         esi: esiPick === null ? undefined : (esiPick === 'Auto' ? null : esiPick === 'Yes'),
         note: io.str(r.note).slice(0, 300) || null,
       };
+      // Pay register: the full-month amounts as they are (any filled = all of them; a blank one = 0)
+      const full = {};
+      FULL_KEYS.forEach((k) => { full[k] = numberOf(r, k, (columns.find((c) => c.key === k) || {}).label || k, errors); });
+      if (FULL_KEYS.some((k) => full[k] !== null)) {
+        x.direct = {
+          basic: full.fullBasic || 0, hra: full.fullHra || 0, conveyance: full.fullConveyance || 0, specialAllowance: full.fullSpecial || 0,
+          bonus: (full.fullPerfBonus || 0) + (full.fullMonthlyBonus || 0),
+        };
+        if (!(x.direct.basic > 0)) errors.push({ field: 'Full: Basic', message: 'Full: Basic must be more than 0 when the Full: amounts are filled.' });
+      }
+      const pfFixed = numberOf(r, 'pfFixed', 'PF fixed amount', errors);
+      const pr = REG.parsePfRule(io.str(r.pfRule) || (pfFixed !== null ? 'Fixed' : ''), pfFixed);
+      if (pr.error) errors.push({ field: 'PF rule', message: pr.error });
+      else if (!pr.empty) x.pfRule = pr.rule; // null = back to the standard PF
       if (x.monthlyCtc !== null && x.monthlyCtc === 0) errors.push({ field: 'Monthly CTC', message: 'Monthly CTC must be more than 0 (leave it blank to keep the current CTC).' });
       if (e && x.effectiveFrom) {
         const locked = lockedOf.get(e.id);
@@ -300,9 +365,9 @@ module.exports = {
         else seen.set(k, r.line);
       }
       if (errors.length) { out.push({ line: r.line, label, errors, action: 'error' }); return; }
-      const p = plan(versionsOf(e.id), x, cfg);
+      const p = plan(versionsOf(e.id), x, cfg, pfRules);
       if (p.error) { out.push({ line: r.line, label, errors: [p.error], action: 'error' }); return; }
-      const changes = diff(p.sameMonth, p.data);
+      const changes = diff(p.sameMonth, p.data, p.before, p.pfRule);
       if (!p.sameMonth) {
         out.push({
           line: r.line, label, errors: [], action: 'create',
@@ -334,12 +399,13 @@ module.exports = {
           const locked = await SV.lastLockedMonth(e.id, tx);
           if (locked && x.effectiveFrom <= `${locked.month}-01`) throw new Error(`payroll for ${locked.month} is already ${E.STATUS_LABEL[locked.status] || locked.status}`);
           const versions = await tx.salaryStructureVersion.findMany({ where: { employeeId: e.id }, orderBy: { effectiveFrom: 'asc' } });
-          const p = plan(versions, x, cfg);
+          const p = plan(versions, x, cfg, await REG.pfRulesFor(versions.map((y) => y.id), tx));
           if (p.error) throw new Error(p.error.message);
-          if (p.sameMonth && !diff(p.sameMonth, p.data).length) return 'nochange';
+          if (p.sameMonth && !diff(p.sameMonth, p.data, p.before, p.pfRule).length) return 'nochange';
           const version = p.sameMonth
             ? await tx.salaryStructureVersion.update({ where: { id: p.sameMonth.id }, data: p.data })
             : await tx.salaryStructureVersion.create({ data: { employeeId: e.id, effectiveFrom: x.effectiveFrom, createdBy: `${actor} (import)`, ...p.data } });
+          await REG.setPfRule(version.id, p.pfRule, tx);
           const structure = await SV.relink(e.id, tx);
           await tx.auditLog.create({
             data: {
@@ -348,7 +414,7 @@ module.exports = {
               action: p.sameMonth ? 'Salary structure version updated by import' : 'Salary structure version created by import',
               entity: 'SalaryStructure',
               entityId: structure ? structure.id : version.id,
-              toValue: `effective ${x.effectiveFrom.slice(0, 7)} · ${version.payMode === 'Stipend' ? `stipend ${version.stipend}` : `CTC ${Math.round(version.ctc / 12)}/month`}`,
+              toValue: `effective ${x.effectiveFrom.slice(0, 7)} · ${version.payMode === 'Stipend' ? `stipend ${version.stipend}` : `CTC ${Math.round(version.ctc / 12)}/month`}${x.direct ? ' · full-month amounts as given' : ''}${p.pfRule ? ` · PF ${ruleWords(p.pfRule)}` : ''}`,
               reason: `${e.employeeCode} ${e.name}`,
             },
           });

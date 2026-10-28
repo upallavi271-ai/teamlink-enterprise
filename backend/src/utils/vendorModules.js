@@ -23,8 +23,8 @@ async function effectiveModules(vu) {
   rows = rows.filter((r) => CFG.MODULES[r.moduleKey]);
   const map = new Map();
   if (!rows.length) {
-    // A login from before modules keeps exactly what it had: it could VIEW its bills, never send one from the Invoices page.
-    CFG.LEGACY_MODULES.forEach((k) => map.set(k, { permissions: k === 'assets' ? { canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost } : { ...CFG.defaultPermissions(k), raise: false } }));
+    // A login from before modules: Assets + Invoices with the normal ticks - it may send a bill too (founder 2026-10-28: bills import switched on for vendors).
+    CFG.LEGACY_MODULES.forEach((k) => map.set(k, { permissions: k === 'assets' ? { canEdit: !!vu.canEdit, canViewCost: !!vu.canViewCost } : CFG.defaultPermissions(k) }));
     return { configured: false, map };
   }
   rows.forEach((r) => {
@@ -244,7 +244,7 @@ async function portalFor(req) {
   // ASSETS VENDOR PORTAL (2026-10-19): an asset vendor's menu is the Assets portal's four pages and nothing of the finance portal.
   const kind = await require('./vendorKind').kindOfRow({ ...req.vendor.row, vendorId: req.vendor.vendorId }); // eslint-disable-line global-require
   if (kind === 'assets') {
-    const nav = CFG.ASSET_PORTAL_NAV.map((n) => ({ key: n.key, label: n.label, route: n.route }));
+    const nav = CFG.ASSET_PORTAL_NAV.map((n) => ({ key: n.key, label: n.label, route: n.route, ...(n.group ? { group: n.group } : {}) }));
     return { kind: 'assets', roleLabel: CFG.ROLE_LABEL.assets, modulesConfigured: true, modules: nav, core: [], nav, canRaise: false };
   }
   if (kind === 'telecom') {

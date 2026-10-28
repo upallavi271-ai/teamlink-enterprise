@@ -58,6 +58,7 @@ const EVENTS = {
   taskDone: { label: 'A task you gave was finished' },
   taskDue: { label: 'Task due soon' },
   taskLate: { label: 'Tasks not finished on time' },
+  taskDayEnd: { label: 'End-of-day task report (Super Admin): completed, waiting for TL, partly done, in progress' },
   goalNotMet: { label: 'Monthly target not reached' },
 };
 const EVENT_KEYS = Object.keys(EVENTS);
@@ -527,6 +528,23 @@ async function resend(id, { mailer = sendMail, by = null } = {}) {
 // One pass, called by the attendance-alerts sweep (every few minutes on the
 // real server; never in the sandbox, where tests call it themselves).
 let lastReminderDay = null;
+let lastDayEndDay = null;
+async function sendDayEnd({ now = new Date(), settings = null, mailer = sendMail } = {}) {
+  const day = localDate(now);
+  const r = await require('../routes/tasks').dayEndReport({ day }); // eslint-disable-line global-require
+  if (!r.total) return { sent: 0, total: 0 };
+  const c = r.counts;
+  const head = `Completed ${c.completed} · Waiting for TL approval ${c.waiting} · Partly done ${c.partial} · In progress ${c.inprogress + c.onhold} · Not started ${c.notstarted}${c.sentback ? ` · Sent back ${c.sentback}` : ''}${r.late ? ` · Late ${r.late}` : ''}`;
+  const lines = r.people.slice(0, 40).map((p) => `${p.name}${p.tl ? ` (TL ${p.tl})` : ''}: ${p.tasks.map((t) => `${t.name} - ${t.label}${t.late ? ' (late)' : ''}`).join('; ')}`);
+  const admins = await prisma.user.findMany({ where: { status: 'Active', OR: [{ role: 'SUPER_ADMIN' }, { hrmsRole: 'SUPER_ADMIN' }] }, select: { id: true, name: true, email: true } });
+  let sent = 0;
+  for (const u of admins) { // eslint-disable-line no-restricted-syntax
+    // eslint-disable-next-line no-await-in-loop
+    const o = await notify('taskDayEnd', { userId: u.id, name: u.name, email: u.email }, { title: `Tasks today (${day}): ${head}`.slice(0, 190), message: `${lines.join('\n')}${r.people.length > 40 ? `\n... and ${r.people.length - 40} more people` : ''}\nOpen: /employee-services?tab=timesheet (End of day)` }, { now, settings, mailer });
+    if (o.inApp || o.email) sent += 1;
+  }
+  return { sent, total: r.total };
+}
 async function run({ now = new Date(), mailer = sendMail, testMode = false, scope = null, force = false } = {}) {
   const s = await getSettings();
   const nowMin = now.getHours() * 60 + now.getMinutes();
@@ -537,6 +555,11 @@ async function run({ now = new Date(), mailer = sendMail, testMode = false, scop
     if (!testMode) lastReminderDay = day;
   }
   if (force || nowMin >= minutesOf(s.digestTime)) out.digests = await sendDigests({ now, mailer, testMode, scope, settings: s });
+  // END OF DAY (founder 2026-10-27): at the daily-email time, every Super Admin gets the day's task states (once a day - notify() keeps it to one)
+  if (force || (nowMin >= minutesOf(s.digestTime) && lastDayEndDay !== day)) {
+    out.dayEnd = await sendDayEnd({ now, settings: s, mailer }).catch((e) => ({ error: String(e.message).slice(0, 200) }));
+    if (!testMode) lastDayEndDay = day;
+  }
   out.retries = await retryFailed({ now, mailer, testMode, scope, settings: s });
   return out;
 }
@@ -592,5 +615,5 @@ function registerRoutes(router, { requirePerm }) {
 module.exports = {
   STORE_ID, EVENTS, EVENT_KEYS, WAITING, ATTENDANCE_EVENT,
   MODES, ATTENDANCE_MAIL_EVENTS, EMAILS_OFF, NOT_SET_UP, NO_ADDRESS, modeOf, displayStatus, retryFailed, waitingOnes, sendWaiting, resend,
-  getSettings, saveSettings, notify, approvalRaised, leaveRaised, regularizationRaised, dayName, KIND_WORDS, leaveDecided, latePermissionRaised, latePermissionDecided, taskAssigned, taskDone, taskChanged, reminders, sendDigests, run, registerRoutes, whoOfEmployee,
+  getSettings, saveSettings, notify, approvalRaised, leaveRaised, regularizationRaised, dayName, KIND_WORDS, leaveDecided, latePermissionRaised, latePermissionDecided, taskAssigned, taskDone, taskChanged, reminders, sendDigests, run, registerRoutes, whoOfEmployee, sendDayEnd,
 };

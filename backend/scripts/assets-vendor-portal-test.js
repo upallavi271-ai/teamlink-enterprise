@@ -232,11 +232,11 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     const AVP = require(path.join(BACK, 'src/utils/assetVendorPortal'));
     const { pathToFileURL } = require('url');
     const FE = await import(pathToFileURL(path.join(BACK, '..', 'frontend/src/pages/vendor/vendorNav.js')).href);
-    const ANAMES = ['Dashboard', 'Assets', 'Orders', 'Repairs', 'Repair History', 'Invoices'];
+    const ANAMES = ['Dashboard', 'Asset Register', 'My Bills', 'Repairs', 'Invoices & Payments']; // five menus in two groups since 28 Oct 2026
     const FNAMES = ['Dashboard', 'Bills & Invoices', 'Payments & Outstanding', 'Services & Agreements'];
-    check('A', 'asset portal menu config (server): exactly Dashboard, Assets, Orders, Repairs, Repair History, Invoices', CFGM.ASSET_PORTAL_NAV.map((n) => n.label).join() === ANAMES.join(), CFGM.ASSET_PORTAL_NAV);
+    check('A', 'asset portal menu config (server): exactly Dashboard, Asset Register, My Bills, Repairs, Invoices & Payments (groups Assets / Accounts)', CFGM.ASSET_PORTAL_NAV.map((n) => n.label).join() === ANAMES.join() && CFGM.ASSET_PORTAL_NAV.map((n) => n.group || '-').join() === '-,Assets,Assets,Assets,Accounts', CFGM.ASSET_PORTAL_NAV);
     check('A', 'the finance menu config is unchanged: exactly Dashboard, Bills & Invoices, Payments & Outstanding, Services & Agreements', CFGM.PORTAL_NAV.map((n) => n.label).join() === FNAMES.join(), CFGM.PORTAL_NAV);
-    check('A', 'screen menu config (desktop AND mobile) = server config for BOTH kinds', JSON.stringify(FE.ASSET_NAV.map((n) => [n.key, n.label, n.route])) === JSON.stringify(CFGM.ASSET_PORTAL_NAV.map((n) => [n.key, n.label, n.route])) && JSON.stringify(FE.VENDOR_NAV.map((n) => [n.key, n.label, n.route])) === JSON.stringify(CFGM.PORTAL_NAV.map((n) => [n.key, n.label, n.route])) && FE.ASSET_NAV_DESKTOP.length === 6 && FE.ASSET_NAV_MOBILE.length === 6 && FE.VENDOR_NAV_DESKTOP.length === 4);
+    check('A', 'screen menu config (desktop AND mobile) = server config for BOTH kinds', JSON.stringify(FE.ASSET_NAV.map((n) => [n.key, n.label, n.route, n.group || null])) === JSON.stringify(CFGM.ASSET_PORTAL_NAV.map((n) => [n.key, n.label, n.route, n.group || null])) && JSON.stringify(FE.VENDOR_NAV.map((n) => [n.key, n.label, n.route])) === JSON.stringify(CFGM.PORTAL_NAV.map((n) => [n.key, n.label, n.route])) && FE.ASSET_NAV_DESKTOP.length === 5 && FE.ASSET_NAV_MOBILE.length === 5 && FE.VENDOR_NAV_DESKTOP.length === 4);
     check('A', 'route guard (pure logic): an asset vendor\'s unknown addresses go to its Dashboard, a finance vendor\'s to the finance Dashboard', ['/vendor', '/vendor/invoices', '/vendor/assets', '/vendor/m/office'].every((p) => FE.assetRouteFor(p) === '/vendor/asset-portal/dashboard') && FE.assetRouteFor('/vendor/asset-portal/repairs') === '/vendor/asset-portal/repairs' && FE.vendorRouteFor('/vendor/asset-portal/repairs') === '/vendor/dashboard' && FE.vendorRouteFor('/vendor/payments') === '/vendor/payments');
     const pa = ['/asset-portal/assets', '/asset-portal/repairs/x', '/me', '/logout', '/change-password', '/download-link', '/files/abc', '/login'];
     const pf = ['/records/overview', '/records/invoices/x', '/module-bills', '/module-bills/x/document'];
@@ -248,7 +248,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     check('A', 'asset vendor signs in with the real login and lands on the Assets portal Dashboard', LA.login.status === 200 && LA.login.body.landing === '/vendor/asset-portal/dashboard', LA.login.body && LA.login.body.landing);
     check('A', 'finance vendor lands on the finance Dashboard as before', LC.login.status === 200 && LC.login.body.landing === '/vendor/dashboard', LC.login.body && LC.login.body.landing);
     let r = await http('GET', '/api/vendor-portal/me', LA.token);
-    check('A', '/me for an asset vendor: kind assets, menu Dashboard / Assets / Orders / Repairs / Repair History / Invoices, no extra modules, no finance flag', r.status === 200 && r.body.kind === 'assets' && r.body.nav.map((n) => n.label).join() === ANAMES.join() && r.body.modules.length === 6 && (r.body.core || []).length === 0 && r.body.canRaise === false && r.body.landing === '/vendor/asset-portal/dashboard', r.body);
+    check('A', '/me for an asset vendor: kind assets, menu Dashboard / Asset Register / My Bills / Repairs / Invoices & Payments, no extra modules, no finance flag', r.status === 200 && r.body.kind === 'assets' && r.body.nav.map((n) => n.label).join() === ANAMES.join() && r.body.modules.length === 5 && (r.body.core || []).length === 0 && r.body.canRaise === false && r.body.landing === '/vendor/asset-portal/dashboard', r.body);
     r = await http('GET', '/api/vendor-portal/me', LC.token);
     check('A', '/me for a finance vendor: kind finance and EXACTLY the four finance modules', r.status === 200 && r.body.kind === 'finance' && r.body.nav.map((n) => n.label).join() === FNAMES.join() && r.body.modules.length === 4, r.body.nav);
     r = await http('GET', '/api/vendor-portal/me', LD.token);
@@ -477,7 +477,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     check('E', 'a file over the size limit is refused', r.status === 400, r.status);
     const inv2 = pdf('invoice-2');
     r = await http('POST', `${AP}/asset-portal/repairs/${R1.id}/invoice`, LA.token, undefined, { form: upload(inv2, 'invoice2.pdf', 'application/pdf', { invoiceNo: `ZZINV-${RUN}-1B` }) });
-    check('E', 'a corrected invoice replaces the old one (and its number); the old file is removed from disk', r.status === 201 && r.body.repair.invoiceName === 'invoice2.pdf' && r.body.repair.invoiceNo === `ZZINV-${RUN}-1B` && fs.readdirSync(UPLOADS).length === 1, [r.status, fs.readdirSync(UPLOADS)]);
+    check('E', 'a corrected invoice replaces the old one (and its number); the old file is KEPT as the repair\'s "earlier invoice" (Stage C 2026-10-28: history is never lost)', r.status === 201 && r.body.repair.invoiceName === 'invoice2.pdf' && r.body.repair.invoiceNo === `ZZINV-${RUN}-1B` && fs.readdirSync(UPLOADS).length === 2 && (r.body.proofs || []).some((p) => p.kind === 'earlier invoice'), [r.status, fs.readdirSync(UPLOADS)]);
     r = await http('POST', `${AP}/download-link`, LA.token, { kind: 'repair-invoice', id: R1.id });
     check('E', 'the invoice downloads through the existing signed link', r.status === 200 && /\/api\/vendor-portal\/files\//.test(r.body.url), r.body);
     const dl = await http('GET', r.body.url, null);
@@ -585,7 +585,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R1.id}`, LBt, { remarks: 'ZZTEST intrusion' });
     check('H', 'vendor B changing vendor A\'s repair: 403, nothing written', r.status === 403 && (await raw(`SELECT COUNT(*) AS n FROM "AssetRepairEvent" WHERE "note" = 'ZZTEST intrusion' OR "toValue" = 'ZZTEST intrusion'`))[0].n === 0);
     r = await http('POST', `${AP}/asset-portal/repairs/${R1.id}/invoice`, LBt, undefined, { form: upload(pdf('intruder'), 'evil.pdf', 'application/pdf') });
-    check('H', 'vendor B uploading an invoice to vendor A\'s repair: 403 and no file stored', r.status === 403 && fs.readdirSync(UPLOADS).length === 1, [r.status, fs.readdirSync(UPLOADS).length]);
+    check('H', 'vendor B uploading an invoice to vendor A\'s repair: 403 and no file stored', r.status === 403 && fs.readdirSync(UPLOADS).length === 2 /* the invoice and its kept earlier file (Stage C) */, [r.status, fs.readdirSync(UPLOADS).length]);
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R3.id}`, LA.token, { remarks: 'ZZTEST x' });
     check('H', 'vendor A on vendor B\'s repair: 403', r.status === 403);
     r = await http('PATCH', `${AP}/asset-portal/repairs/${R5.id}`, LA.token, { remarks: 'ZZTEST x' });
@@ -617,8 +617,8 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     // =============================================================== N  every sidebar item opens its own working page (bug: "Repair History goes back to the Dashboard")
     const SB = await import(pathToFileURL(path.join(BACK, '..', 'frontend/src/pages/vendor/vendorNav.js')).href);
     const sbSrc = fs.readFileSync(path.join(BACK, '..', 'frontend/src/pages/vendor/VendorSidebar.jsx'), 'utf8');
-    const apiOf = { asset_dashboard: '/asset-portal/overview', asset_assets: '/asset-portal/assets', asset_orders: '/asset-portal/orders', asset_repairs: '/asset-portal/repairs', asset_history: '/asset-portal/history', asset_invoices: '/asset-portal/invoices' };
-    const pageOf = { asset_dashboard: 'AssetPortalDashboard', asset_assets: 'AssetPortalAssets', asset_orders: 'AssetPortalOrders', asset_repairs: 'AssetPortalRepairs', asset_history: 'AssetPortalHistory', asset_invoices: 'AssetPortalInvoices' };
+    const apiOf = { asset_dashboard: '/asset-portal/overview', asset_assets: '/asset-portal/assets', asset_orders: '/asset-portal/orders', asset_repairs: '/asset-portal/repairs', asset_history: '/asset-portal/history', asset_invoices: '/asset-portal/invoices', asset_bills: '/asset-portal/bill-uploads' };
+    const pageOf = { asset_dashboard: 'AssetPortalDashboard', asset_assets: 'AssetPortalAssets', asset_orders: 'AssetPortalOrders', asset_repairs: 'AssetPortalRepairs', asset_history: 'AssetPortalHistory', asset_invoices: 'AssetPortalInvoices', asset_bills: 'AssetPortalBills' };
     const tokNav = (await sign(LA)).token;
     for (const n of CFGM.ASSET_PORTAL_NAV) {
       const m = new RegExp(`<Route path="${n.route}" element=\\{<(\\w+) />\\}`).exec(appSrc);
@@ -635,10 +635,10 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     }
     check('N', 'the same holds for the ID card portal: its 5 routes are registered, each with a page component, and the wall allows /idcard-portal for an ID card vendor only', CFGM.IDCARD_PORTAL_NAV.every((n) => appSrc.includes(`path="${n.route}"`)) && CFGM.portalPathAllowedFor('idcards', '/idcard-portal/requests') && !CFGM.portalPathAllowedFor('assets', '/idcard-portal/requests') && !CFGM.portalPathAllowedFor('finance', '/idcard-portal/requests'));
     check('N', 'the unknown-address redirect goes to the Dashboard only AFTER the specific routes (a registered route is never swallowed by "/vendor/*")', appSrc.indexOf('path="/vendor/asset-portal/history"') < appSrc.indexOf('path="/vendor/*"') && appSrc.indexOf('path="/vendor/idcard-portal/requests"') < appSrc.indexOf('path="/vendor/*"'));
-    check('N', 'a refresh / back / forward on a sidebar URL stays on it: the shell lets a page through when /me lists its route (routeAllowedFor), nothing else redirects', CFGM.ASSET_PORTAL_NAV.every((x) => SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, x.route)) && !SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, '/vendor/invoices') && SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, '/vendor/asset-portal/history/'));
+    check('N', 'a refresh / back / forward on a sidebar URL stays on it: the shell lets a page through when /me lists its route (routeAllowedFor), nothing else redirects', CFGM.ASSET_PORTAL_NAV.every((x) => SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, x.route)) && !SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, '/vendor/invoices') && SB.routeAllowedFor(CFGM.ASSET_PORTAL_NAV, '/vendor/asset-portal/repairs/') && /path="\/vendor\/asset-portal\/history" element=\{<Navigate to="\/vendor\/asset-portal\/repairs\?tab=history"/.test(appSrc) && /path="\/vendor\/asset-portal\/orders" element=\{<Navigate to="\/vendor\/asset-portal\/invoices\?tab=orders"/.test(appSrc));
     // ---- the shared sidebar: pure logic + source
     const KINDS = SB.SIDEBAR_KINDS;
-    check('N', 'sidebar config per kind: Assets Vendor = Dashboard, Assets, Orders, Repairs, Repair History, Invoices; role label "Assets Vendor"', KINDS.assets.nav.map((n) => n.label).join() === 'Dashboard,Assets,Orders,Repairs,Repair History,Invoices' && KINDS.assets.roleLabel === 'Assets Vendor');
+    check('N', 'sidebar config per kind: Assets Vendor = Dashboard, Asset Register, My Bills, Repairs, Invoices & Payments; role label "Assets Vendor"', KINDS.assets.nav.map((n) => n.label).join() === 'Dashboard,Asset Register,My Bills,Repairs,Invoices & Payments' && KINDS.assets.roleLabel === 'Assets Vendor');
     check('N', 'sidebar config per kind: ID Card Vendor = Dashboard + EXACTLY four modules (ID Card Requests, Pending ID Cards, Completed ID Cards, Delivered / Printed); role label "ID Card Vendor"', KINDS.idcards.nav.length === 5 && SB.IDCARD_MODULES.length === 4 && SB.IDCARD_MODULES.map((n) => n.label).join() === 'ID Card Requests,Pending ID Cards,Completed ID Cards,Delivered / Printed' && KINDS.idcards.roleLabel === 'ID Card Vendor');
     check('N', 'server config = screen config for the ID card portal (keys, labels, routes, buckets)', JSON.stringify(SB.IDCARD_MODULES) === JSON.stringify(CFGM.IDCARD_PORTAL_MODULES) && JSON.stringify(SB.IDCARD_NAV) === JSON.stringify(CFGM.IDCARD_PORTAL_NAV));
     const iconKeys = [...sbSrc.matchAll(/^\s{2}(\w+): '/gm)].map((m) => m[1]);
@@ -821,7 +821,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     made.expenses.push(linkOnlyBill.id);
     r = await vget('/asset-portal/invoices?pageSize=100', tokA2);
     const lo = r.body.rows.find((x) => x.invoiceNo === `ZZINV-${RUN}-L`);
-    check('J', 'J8 a bill that only POINTS at a bank line (link without a match) is not Paid', lo && lo.payment.status === 'Pending' && lo.payment.paidAmount === 0, lo && lo.payment);
+    check('J', 'J8 a bill that only POINTS at a bank line (link without a match) is not Paid', lo && ['Pending', 'Under Review'].includes(lo.payment.status) && lo.payment.paidAmount === 0 && !(lo.payment.payments || []).length /* Stage E 2026-10-28: 'Under Review' */, lo && lo.payment);
     check('J', 'J8 the status "Paid" appears only for the invoice whose bank line is matched and confirmed (exactly one of the five test invoices)', (await vget('/asset-portal/invoices?payment=Paid&pageSize=100', tokA2)).body.rows.filter((x) => String(x.invoiceNo).includes(RUN)).length === 1);
 
     // J9  another vendor sees nothing of this
@@ -851,7 +851,7 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
     check('J', 'SWEEP no bank account number / bank name / bank line id / narration / reference / running balance / internal field appears in any vendor response of this group', leaks.length === 0, leaks);
     check('J', 'SWEEP the vendor responses name no bank-only field (txn, narration, accNo)', !/"narration"|"accNo"|"txnId"|"bankId"/.test(allText));
     const pureCases = [
-      ['reversed', 'Reversed'], ['part', 'Partially Paid'], ['confirmed', 'Paid'], ['ignored', 'Pending'], ['link_only', 'Pending'], ['broken', 'Pending'], ['no_link', 'Pending'],
+      ['reversed', 'Reversed'], ['part', 'Partially Paid'], ['confirmed', 'Paid'], ['ignored', 'Pending'], ['link_only', 'Under Review'] /* Stage E 2026-10-28: a linked line Accounts has not confirmed = Under Review, never Paid */, ['broken', 'Pending'], ['no_link', 'Pending'],
     ].every(([state, want]) => PAYV.paymentFromJudge({ monthlyAmount: 1000, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2099-01-01' }, { state, bankPaid: 600, balance: 400, proof: { line: { date: '2026-10-10' } }, paid: false }, '2026-10-19').status === want);
     check('J', 'PURE the payment translation: reversed -> Reversed, part -> Partially Paid, confirmed -> Paid, set-aside / link-only / broken / no link -> Pending (never Paid)', pureCases);
     check('J', 'PURE Overdue only when unpaid and the due date has passed (IST day); a paid bill is never Overdue', PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2026-10-18' }, { state: 'no_link', paid: false }, '2026-10-19').status === 'Overdue' && PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PENDING', dueDate: '2026-10-19' }, { state: 'no_link', paid: false }, '2026-10-19').status === 'Pending' && PAYV.paymentFromJudge({ monthlyAmount: 100, tdsAmount: 0, approvalStatus: 'PAID', dueDate: '2020-01-01' }, { state: 'confirmed', paid: true, proof: { line: { date: '2026-10-10' } } }, '2026-10-19').status === 'Paid');
@@ -879,7 +879,8 @@ const made = { users: [], vendors: [], assets: [], repairs: [], orders: [], docs
       'backend/src/utils/vendorMail.js': null, 'backend/src/utils/vendorInvite.js': null,
     };
     // (2026-10-19: routes/vendorLogins.js is no longer listed - the vendor SIGN-IN fix (scripts/vendor-signin-test.js) deliberately edited it, after this work.)
-    const untouched = ['backend/src/routes/assetAccounts.js', 'backend/src/utils/assetPosting.js', 'backend/src/routes/assetInventory.js'];
+    // (2026-10-28: routes/assetInventory.js is no longer listed - Stage C deliberately added the replacement routes and the vendor's work on the HRMS repairs list.)
+    const untouched = ['backend/src/routes/assetAccounts.js', 'backend/src/utils/assetPosting.js'];
     check('I', 'staff navigation (Admin / Accounts / HRMS / ATS) and the permission engine are byte-for-byte the files they were before this work', Object.entries(BASE_HASH).filter(([, hsh]) => hsh).every(([f, hsh]) => sha(f) === hsh), Object.entries(BASE_HASH).filter(([f, hsh]) => hsh && sha(f) !== hsh).map(([f]) => f));
     check('I', 'the Accounts repair routes / posting engine, the HRMS asset routes and the Admin vendor-login routes were not edited by this work (all older than the first portal file; the bank routes are owned by another task and are only read)',
       untouched.every((f) => fs.statSync(path.join(BACK, '..', f)).mtimeMs < fs.statSync(path.join(BACK, 'src/utils/assetVendorSchema.js')).mtimeMs), untouched.filter((f) => fs.statSync(path.join(BACK, '..', f)).mtimeMs >= fs.statSync(path.join(BACK, 'src/utils/assetVendorSchema.js')).mtimeMs));

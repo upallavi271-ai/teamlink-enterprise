@@ -37,6 +37,7 @@ import './comboCompat.css';
 import './comboCompatHand.css';
 import { cleanCustom, sameOption, resolveCustom, CUSTOM_MAX } from './customValue.js';
 import { matchesText, noMatchText } from './searchMatch.js';
+import { useActiveDepartments, isActiveDepartment } from '../utils/activeDepartments.js';
 
 // The text of an <option>'s children, whatever shape they arrive in
 // ({c.name} ({c.code}) is an array, a number is a number, and so on).
@@ -69,17 +70,41 @@ function collect(children, group, out) {
 
 const BIG_LIST = 20;
 
+// Is this a department dropdown? Its blank row says "All departments" / "Any
+// department", or the control is titled "Department".
+const DEPT_BLANK = /^\s*(all|any|every)\s+departments?\b/i;
+const DEPT_NAME = /^\s*(department|departments|dept)\s*$/i;
+function looksLikeDepartments(options, ...names) {
+  // The "all" row is usually value '' but sometimes 'All' (Invoices).
+  if (options.some((o) => DEPT_BLANK.test(o.label))) return true;
+  return names.some((n) => typeof n === 'string' && DEPT_NAME.test(n));
+}
+
 export default function Combo({
   value, onChange, children, creatable = false, disabled = false, required = false,
   className = '', style, placeholder, title, id, name, autoFocus,
   emptyText = 'No match', onSearch,
   // allowCustom (2026-10-14): type your own value when the list has none. customLabel 'Add' = stored in a shared list.
   allowCustom = false, customLabel = 'Use', validateCustom, onCreateOption, maxCustomLength = CUSTOM_MAX,
+  // departments (2026-10-28): true = this is a department dropdown, false =
+  // it is not. Unset = worked out from the blank option ("All departments",
+  // "Any department") or a title / aria-label of "Department".
+  departments,
   ...rest
 }) {
   const free = creatable || allowCustom;
-  const options = useMemo(() => collect(children, null, []), [children]);
+  const allOptions = useMemo(() => collect(children, null, []), [children]);
   const current = value === null || value === undefined ? '' : String(value);
+  // A DEPARTMENT DROPDOWN OFFERS ONLY THE SWITCHED-ON DEPARTMENTS OF
+  // DEPARTMENT & TEAM (founder 2026-10-28): a name only written on old records
+  // ("Recruitment") or a switched-off department is dropped from the list.
+  // The value already chosen and the blank / "No department" rows stay, and
+  // until the master list has loaded nothing is hidden.
+  const deptMode = departments === undefined ? looksLikeDepartments(allOptions, title, rest['aria-label'], placeholder) : !!departments;
+  const liveDepts = useActiveDepartments(deptMode);
+  const options = useMemo(() => (deptMode && liveDepts
+    ? allOptions.filter((o) => o.value === '' || o.value === current || DEPT_BLANK.test(o.label) || isActiveDepartment(liveDepts, o.value, o.label))
+    : allOptions), [allOptions, deptMode, liveDepts, current]);
   const selected = options.find((o) => o.value === current);
 
   // The first zero-value option ("— Select —", "All departments") doubles as

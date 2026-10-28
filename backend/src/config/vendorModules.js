@@ -29,7 +29,8 @@ const MODULES = {
     label: 'Assets', icon: '💻', route: '/vendor/assets', screen: 'assets', summary: 'assets', order: 10,
     assetScope: true, // the drawer shows "Which assets can they see?" only for this module
     permissions: [
-      no('canEdit', 'Allow editing', 'Off = view only. On = they may update serial no., warranty date, AMC date, service remarks, upload documents and send bills.'),
+      // ON BY DEFAULT (founder 2026-10-28: "switch on the editing and importing the bills for vendors").
+      yes('canEdit', 'Allow editing', 'On (normal) = they may update serial no., warranty date, AMC date, service remarks, upload documents and import / send bills. Off = view only.'),
       no('canViewCost', 'Show purchase value', 'Off = they never see what the company paid (nor the purchase invoice no.).'),
       yes('download', 'Download lists (Export)', 'On = the Export Excel / Export CSV buttons work on every list. They only ever get the columns they can already see.'),
       no('hideAmounts', 'Hide amounts from this vendor', 'Off (normal) = they see the purchase amount, GST and warranty of the assets shown to them. On = amounts are hidden everywhere, in the lists and in the downloads. (The older "Show purchase value" tick now only controls the purchase invoice reference.)'),
@@ -199,7 +200,8 @@ const PORTAL_HOME = '/vendor/dashboard';
 //   signed in: me, logout, change-password, records/* (the four modules), download-link, module-bills (the existing invoice upload + its file)
 const PORTAL_PUBLIC_PREFIXES = ['/status', '/login', '/preview', '/invite', '/forgot-password', '/email', '/files'];
 // '/vendor-io' (2026-10-19): Export + Import for every kind of vendor; the route itself decides what the vendor's KIND may use.
-const PORTAL_SESSION_PREFIXES = ['/me', '/logout', '/change-password', '/records', '/download-link', '/module-bills', '/vendor-io'];
+// /bank-payments (2026-10-28): every kind of vendor sees what the company paid it, from the bank statement (utils/vendorBankPayments.js).
+const PORTAL_SESSION_PREFIXES = ['/me', '/logout', '/change-password', '/records', '/download-link', '/module-bills', '/vendor-io', '/bank-payments'];
 function portalPathAllowed(p) {
   const path = String(p || '').split('?')[0].replace(/\/+$/, '') || '/';
   return [...PORTAL_PUBLIC_PREFIXES, ...PORTAL_SESSION_PREFIXES].some((x) => path === x || path.startsWith(`${x}/`));
@@ -221,13 +223,17 @@ function portalRouteFor(pathname) {
 // An asset vendor sees ONLY these six pages (no Invoices / Payments / Purchase Orders of the finance portal, no HRMS, ATS, Accounts, Admin).
 // Its API is the /asset-portal/* prefix below plus the same account utilities (me, logout, change-password) and its own signed downloads.
 // ---------------------------------------------------------------------------
+// FIVE MENUS IN TWO GROUPS (founder 28 Oct 2026, replaces the 27 Oct "exactly four"; no duplicate menus):
+//   Dashboard | ASSETS: Asset Register, My Bills, Repairs (tabs All Repairs, Pending / In Progress, Completed, Repair History, HRMS tickets)
+//   | ACCOUNTS: Invoices & Payments (tabs Invoices, Payments - the bank payments are in it -, Orders).
+// Old addresses redirect: /history -> Repairs > Repair History, /orders -> Invoices & Payments > Orders, invoices?tab=bills -> My Bills.
+// Bank & Reconciliation stays the staff module (it matches the statement to vendor bills; the payment status shown here follows it).
 const ASSET_PORTAL_NAV = [
   { key: 'asset_dashboard', label: 'Dashboard', route: '/vendor/asset-portal/dashboard' },
-  { key: 'asset_assets', label: 'Assets', route: '/vendor/asset-portal/assets' },
-  { key: 'asset_orders', label: 'Orders', route: '/vendor/asset-portal/orders' },
-  { key: 'asset_repairs', label: 'Repairs', route: '/vendor/asset-portal/repairs' },
-  { key: 'asset_history', label: 'Repair History', route: '/vendor/asset-portal/history' },
-  { key: 'asset_invoices', label: 'Invoices', route: '/vendor/asset-portal/invoices' },
+  { key: 'asset_assets', label: 'Asset Register', route: '/vendor/asset-portal/assets', group: 'Assets' },
+  { key: 'asset_bills', label: 'My Bills', route: '/vendor/asset-portal/bills', group: 'Assets' },
+  { key: 'asset_repairs', label: 'Repairs', route: '/vendor/asset-portal/repairs', group: 'Assets' },
+  { key: 'asset_invoices', label: 'Invoices & Payments', route: '/vendor/asset-portal/invoices', group: 'Accounts' },
 ];
 // The label under the vendor's name in the sidebar's profile block (one per kind).
 const ROLE_LABEL = { assets: 'Assets Vendor', idcards: 'ID Card Vendor', telecom: 'Airtel Bills Vendor', finance: 'Vendor' };

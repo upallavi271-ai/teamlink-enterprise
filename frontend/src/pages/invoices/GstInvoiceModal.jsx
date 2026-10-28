@@ -78,10 +78,9 @@ export default function GstInvoiceModal({ invoiceId, onClose }) {
           <tbody>
             <tr><th>Invoice no.</th><td className="inv-mono">{d.invoiceNumber}</td></tr>
             <tr><th>Invoice date</th><td>{fmtD(d.invoiceDate)}</td></tr>
-            <tr><th>Payment due</th><td>{fmtD(d.dueDate)}{d.terms ? ` · ${d.terms}` : ''}</td></tr>
+            <tr><th>Payment due</th><td>{fmtD(d.dueDate)}</td></tr>
             <tr><th>Place of supply</th><td>{d.placeOfSupply || '—'}</td></tr>
             <tr><th>Supply type</th><td>{d.supplyType}</td></tr>
-            <tr><th>Billing type</th><td>{d.billingType}</td></tr>
             <tr><th>Reverse charge</th><td>No</td></tr>
           </tbody>
         </table>
@@ -182,7 +181,7 @@ export default function GstInvoiceModal({ invoiceId, onClose }) {
         <div className="inv-sh-terms">
           <div className="inv-sh-lbl">Terms</div>
           <ol>
-            <li>Payment due by {fmtD(d.dueDate)}{d.terms ? ` (${d.terms})` : ''}.</li>
+            <li>Payment due by {fmtD(d.dueDate)}.</li>
             <li>Please quote invoice no. {d.invoiceNumber} with your payment.</li>
             {d.totals.tds > 0 && <li>TDS is deductible on the professional fee only, not on GST.</li>}
           </ol>

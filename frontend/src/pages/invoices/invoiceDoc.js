@@ -117,9 +117,7 @@ export function invoiceDocumentHtml(d, mode) {
       <div class="l"><table>
         <tr><td class="k">#</td><td class="v">: ${esc(d.invoiceNumber)}</td></tr>
         <tr><td class="k">Invoice Date</td><td class="v">: ${fmtD(d.invoiceDate)}</td></tr>
-        <tr><td class="k">Terms</td><td class="v">: ${esc(d.terms)}</td></tr>
         <tr><td class="k">Due Date</td><td class="v">: ${fmtD(d.dueDate)}</td></tr>
-        <tr><td class="k">Billing Type</td><td class="v">: ${esc(d.billingType)}</td></tr>
       </table></div>
       <div class="r"><table><tr><td class="k">Place Of Supply</td><td class="v">: ${esc(d.placeOfSupply)}</td></tr></table></div>
     </div>

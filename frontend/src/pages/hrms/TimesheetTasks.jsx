@@ -4,6 +4,7 @@ import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
 import { AiAssist } from '../../components/ComposeForm.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
+import { useActiveDepartments, keepActive } from '../../utils/activeDepartments.js';
 import './timesheet-tasks.css';
 
 // ---------------------------------------------------------------------------
@@ -38,9 +39,11 @@ const plural = (n, w) => `${n} ${w}${n === 1 ? '' : 's'}`;
 export function stateOf(t) {
   if (t.status === 'Cancelled') return { word: 'Cancelled', tone: 'grey' };
   if (t.status === 'Completed') {
-    if (t.reviewState === 'Approved') return { word: 'Done and checked', tone: 'green' };
+    // founder 2026-10-27: done is COMPLETED only after the TL approves it
+    if (t.reviewState === 'Approved') return { word: 'Completed (TL approved)', tone: 'green' };
     if (t.reviewState === 'Changes Requested') return { word: 'Needs changes', tone: 'red' };
-    return { word: 'Done - waiting to be checked', tone: 'orange' };
+    if (t.reviewState === 'Pending Review') return { word: `Done - waiting for ${t.approver ? `${t.approver}'s` : 'TL'} approval`, tone: 'orange' };
+    return { word: 'Completed', tone: 'green' };
   }
   if (t.overdue) return { word: 'Overdue', tone: 'red' };
   if (t.status === 'In Progress') return { word: 'Working on it', tone: 'blue' };
@@ -234,6 +237,14 @@ export function FeedbackSent({ tasks, myId }) {
 // ---------------------------------------------------------------------------
 // The New task / Edit task form
 // ---------------------------------------------------------------------------
+// A team as it is worth showing: 'Team-A' -> 'Team A'; a bare 'Team', '-', 'NA' ... is no team at all.
+const JUNK_TEAM = new Set(['team', '-', '--', 'na', 'n/a', 'none', 'nil', '0', '.']);
+export function teamOf(p) {
+  const t = String((p && p.team) || '').replace(/[-_]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t || JUNK_TEAM.has(t.toLowerCase())) return '';
+  return t.replace(/^team\s+([a-z0-9]+)$/i, (m, x) => `Team ${x.toUpperCase()}`);
+}
+
 export function TaskForm({ options, task, onClose, onSaved }) {
   const editing = !!task;
   const me = options.me || {};
@@ -265,6 +276,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
 
   const set = (patch) => { setF((x) => ({ ...x, ...patch })); setErrs((e) => { const n = { ...e }; Object.keys(patch).forEach((k) => delete n[k]); return n; }); };
   const people = options.assignable || [];
+  const liveDepts = useActiveDepartments(); // only switched-on Department & Team names get a chip
 
   // Department and Team chips with counts: each is counted over the people the
   // OTHER choices leave (search included), and a choice with nobody is not shown.
@@ -276,11 +288,18 @@ export function TaskForm({ options, task, onClose, onSaved }) {
   };
   const base = people.filter(matchQ);
   const okRole = (p) => !role || p.roleGroup === role;
-  const depts = countBy(base.filter((p) => (!team || p.team === team) && okRole(p)), 'department');
-  const teams = countBy(base.filter((p) => (!dept || p.department === dept) && okRole(p)), 'team');
+  // TEAMS (founder 2026-10-27): only once a department is picked, and only real teams - Education's Team A / Team B. A department
+  // with one team (its seats say just "Team") or a placeholder word shows no Team row.
+  const teams = (() => {
+    if (!dept) return [];
+    const m = new Map();
+    base.filter((p) => p.department === dept && okRole(p)).forEach((p) => { const t = teamOf(p); if (t) m.set(t, (m.get(t) || 0) + 1); });
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }));
+  })();
+  const depts = keepActive(liveDepts, countBy(base.filter((p) => (!team || teamOf(p) === team) && okRole(p)), 'department'), ([d]) => d, dept);
   const ROLE_ORDER = ['Super Admin', 'HR', 'STL', 'TL', 'Manager', 'Assistant Manager', 'Employees'];
-  const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && p.roleGroup === r).length;
-  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team) && okRole(p));
+  const roleCount = (r) => base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && p.roleGroup === r).length;
+  const shown = base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team) && okRole(p));
 
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allShownOn = shown.length > 0 && shown.every((p) => picked.has(p.userId));
@@ -353,7 +372,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
             <input type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search anyone by name" aria-label="Search people" style={{ marginBottom: 8 }} />
             {depts.length > 1 && (
               <div className="tt-chips" role="group" aria-label="Department">
-                <button type="button" className={`tt-chip${!dept ? ' on' : ''}`} onClick={() => setDept('')}>All departments <b>{base.filter((p) => !team || p.team === team).length}</b></button>
+                <button type="button" className={`tt-chip${!dept ? ' on' : ''}`} onClick={() => setDept('')}>All departments <b>{base.filter((p) => !team || teamOf(p) === team).length}</b></button>
                 {depts.map(([d, n]) => (
                   <button type="button" key={d} className={`tt-chip${dept === d ? ' on' : ''}`} onClick={() => { setDept(dept === d ? '' : d); setTeam(''); }}>{d} <b>{n}</b></button>
                 ))}
@@ -361,7 +380,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
             )}
             {teams.length > 1 && (
               <div className="tt-chips" role="group" aria-label="Team">
-                <button type="button" className={`tt-chip${!team ? ' on' : ''}`} onClick={() => setTeam('')}>All teams <b>{base.filter((p) => !dept || p.department === dept).length}</b></button>
+                <button type="button" className={`tt-chip${!team ? ' on' : ''}`} onClick={() => setTeam('')}>All of {dept} <b>{base.filter((p) => p.department === dept && okRole(p)).length}</b></button>
                 {teams.map(([t, n]) => (
                   <button type="button" key={t} className={`tt-chip${team === t ? ' on' : ''}`} onClick={() => setTeam(team === t ? '' : t)}>{t} <b>{n}</b></button>
                 ))}
@@ -369,7 +388,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
             )}
             {people.some((p) => p.roleGroup) && (
               <div className="tt-chips" role="group" aria-label="Designation">
-                <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || p.team === team)).length}</b></button>
+                <button type="button" className={`tt-chip${!role ? ' on' : ''}`} onClick={() => setRole('')}>All designations <b>{base.filter((p) => (!dept || p.department === dept) && (!team || teamOf(p) === team)).length}</b></button>
                 {ROLE_ORDER.map((r) => {
                   const n = roleCount(r);
                   return <button type="button" key={r} className={`tt-chip${role === r ? ' on' : ''}`} disabled={!n && role !== r} onClick={() => setRole(role === r ? '' : r)}>{r} <b>{n}</b></button>;
@@ -382,7 +401,7 @@ export function TaskForm({ options, task, onClose, onSaved }) {
                   <input type="checkbox" checked={picked.has(p.userId)} onChange={() => toggle(p.userId)} />
                   <span>
                     <span className="tt-pn">{p.self ? `${p.name} (me)` : p.name}</span>
-                    <span className="tt-ps">{[p.designation, p.department, p.team].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
+                    <span className="tt-ps">{[p.designation, p.department, teamOf(p)].filter(Boolean).join(' · ')}{p.open ? ` · ${plural(p.open, 'open task')}` : ' · free now'}</span>
                   </span>
                 </label>
               ))}
@@ -488,6 +507,64 @@ export function LateStrip({ tasks, me, dlg }) {
   );
 }
 
+// END OF DAY (founder 2026-10-27): every task's state today - completed (TL approved), waiting for TL approval, partly done,
+// in progress, not started, sent back, late - one row per person. The Super Admin / HR see everyone, a lead their own people.
+const DAY_TONE = { completed: 'green', waiting: 'orange', sentback: 'red', partial: 'blue', inprogress: 'blue', onhold: 'orange', notstarted: 'grey' };
+export function DayEndDialog({ onClose, today }) {
+  const [day, setDay] = useState(today || new Date().toISOString().slice(0, 10));
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState('');
+  const [only, setOnly] = useState('');
+  useEffect(() => {
+    let live = true;
+    setData(null); setErr('');
+    api.get('/tasks/day-end', { params: { date: day } }).then((r) => { if (live) setData(r.data); }).catch((e) => { if (live) setErr(apiError(e, 'The end-of-day list could not be opened.')); });
+    return () => { live = false; };
+  }, [day]);
+  const people = data ? data.people.map((p) => ({ ...p, tasks: p.tasks.filter((t) => !only || (only === 'late' ? t.late : t.state === only)) })).filter((p) => p.tasks.length) : [];
+  return (
+    <Modal title="End of day - task status" wide onClose={onClose} foot={<button className="btn" onClick={onClose}>Close</button>}>
+      <label className="small-muted tt-date">Day <input type="date" value={day} onChange={(e) => setDay(e.target.value || day)} /></label>
+      {err && <div className="error-text">{err}</div>}
+      {!data && !err && <div className="small-muted">Loading...</div>}
+      {data && (
+        <>
+          <div className="tt-chips" role="group" aria-label="Show" style={{ margin: '10px 0' }}>
+            <button type="button" className={`tt-chip${!only ? ' on' : ''}`} onClick={() => setOnly('')}>All <b>{data.total}</b></button>
+            {data.states.filter((s) => data.counts[s.key] > 0).map((s) => (
+              <button type="button" key={s.key} className={`tt-chip ${DAY_TONE[s.key]}${only === s.key ? ' on' : ''}`} onClick={() => setOnly(only === s.key ? '' : s.key)}>{s.label} <b>{data.counts[s.key]}</b></button>
+            ))}
+            {data.late > 0 && <button type="button" className={`tt-chip red${only === 'late' ? ' on' : ''}`} onClick={() => setOnly(only === 'late' ? '' : 'late')}>Late <b>{data.late}</b></button>}
+          </div>
+          {!people.length && <div className="empty-mini">No task to show for this day.</div>}
+          {people.map((p) => (
+            <div key={p.userId} style={{ marginBottom: 12 }}>
+              <div className="tt-name">{p.name}<span className="small-muted">{[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ') ? ` · ${[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ')}` : ''}</span></div>
+              <div className="tbl-wrap">
+                <table>
+                  <thead><tr><th>Task</th><th>Status</th><th>Given by</th><th>Due</th><th className="num">Hours today</th><th className="num">Hours in all</th></tr></thead>
+                  <tbody>
+                    {p.tasks.map((t) => (
+                      <tr key={t.id}>
+                        <td>{t.name}</td>
+                        <td><span className={`tt-state ${DAY_TONE[t.state]}`}>{t.label}</span>{t.late && <span className="tt-state red" style={{ marginLeft: 4 }}>{t.daysLate} {t.daysLate === 1 ? 'day' : 'days'} late</span>}{t.why && <div className="small-muted">{t.why}</div>}</td>
+                        <td>{t.givenBy}</td>
+                        <td>{t.due ? dmy(t.due) : '—'}</td>
+                        <td className="num">{hoursText(t.hoursToday)}</td>
+                        <td className="num">{hoursText(t.hoursTotal)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+    </Modal>
+  );
+}
+
 export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
   const st = stateOf(t);
   const due = dueOf(t, today);
@@ -531,7 +608,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         {mine && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>Add hours</button>}
         {mine && open && t.status !== 'In Progress' && <button className="btn btn-sm" onClick={() => dlg.open('done', t)}>Mark as done</button>}
         {!mine && (r.assignee || r.manage) && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>See hours</button>}
-        {r.manage && canReview && waiting && !mine && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it</button>}
+        {r.review && waiting && <button className="btn btn-primary btn-sm" onClick={() => dlg.open('review', t)}>Check it and approve</button>}
         {r.manage && open && !(mine && t.overdue) && <button className="btn btn-sm" onClick={() => dlg.open('extend', t)}>Move date</button>}
         {r.manage && open && <button className="btn btn-sm" onClick={() => dlg.open('reassign', t)}>Give to someone else</button>}
         {r.manage && open && <button className="btn btn-sm" title="Add more work to this task without changing it" onClick={() => dlg.open('addon', t)}>＋ Add-on</button>}
@@ -588,10 +665,11 @@ function DoneDialog({ task, onClose, onDone }) {
   async function go(e) {
     e.preventDefault(); setBusy(true); setErr('');
     try {
-      await api.post(`/tasks/${task.id}/complete`, { note });
+      const done = await api.post(`/tasks/${task.id}/complete`, { note });
+      const approver = done && done.data ? done.data.approver : null;
       const failed = files.length ? await uploadTaskFiles(task.id, files) : [];
       const added = files.length - failed.length;
-      onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. ${task.assignedByName && task.assignedById !== task.assigneeId ? `${task.assignedByName} will check it.` : ''}${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
+      onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. It counts as completed after ${approver ? `${approver} (your TL)` : 'your TL'} approves it.${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
     } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
   }
   return (

@@ -79,7 +79,7 @@ const SPECS = {
     lists: () => ({ Status: AVP.ORDER_FLOW }),
   },
   'bills-finance': {
-    key: 'bills-finance', label: 'Invoices', module: 'Invoices', sheet: 'Invoices',
+    key: 'bills-finance', label: 'Invoices', module: 'Invoices', sheet: 'Invoices', flexible: true, // ANY Excel / CSV (2026-10-28)
     columns: [
       col('billNumber', 'Invoice number', { required: true, note: 'Your own invoice number. An invoice number you already sent is shown as "already there", not sent again.' }),
       col('billDate', 'Invoice date', { required: true, type: 'date', note: 'Not in the future.' }),
@@ -95,7 +95,7 @@ const SPECS = {
     ],
   },
   'bills-telecom': {
-    key: 'bills-telecom', label: 'Airtel bills', module: 'Bills', sheet: 'Bills',
+    key: 'bills-telecom', label: 'Airtel bills', module: 'Bills', sheet: 'Bills', flexible: true, // ANY Excel / CSV (2026-10-28, utils/vendorBillFlexImport.js)
     columns: [
       col('billNumber', 'Bill number', { required: true, note: 'The invoice number printed on the bill.' }),
       col('period', 'Billing month', { required: true, note: 'Like 2026-10 (year-month). One bill for each month.' }),
@@ -166,6 +166,16 @@ function scanFormulas(buffer) {
   if (hits.length) throw new ImportError(400, `This file contains ${hits.length} formula${hits.length === 1 ? '' : 's'} (${hits.slice(0, 5).join(', ')}${hits.length > 5 ? ', ...' : ''}). Formulas are never read. Copy the cells and paste them as values only, then try again.`, { formulas: hits.slice(0, 20) });
 }
 function parse(spec, buffer, fileName) {
+  // BILL IMPORTS READ ANY EXCEL / CSV (founder 2026-10-28: "alanti file upload chesina tisukovali, rules undakudadhu"): the columns are
+  // found by their usual names, the sample file is only a help. utils/vendorBillFlexImport.js
+  if (spec.flexible) {
+    if (!Buffer.isBuffer(buffer) || !buffer.length) throw new ImportError(400, 'Choose the file first. The file is empty.');
+    if (buffer.length > MAX_BYTES) throw new ImportError(413, 'The file is too big. The most allowed is 5 MB.');
+    let got;
+    try { got = require('./vendorBillFlexImport').readAny(buffer, fileName); } catch (err) { throw new ImportError(err.status || 400, err.message); } // eslint-disable-line global-require
+    if (got.rows.length > MAX_ROWS) throw new ImportError(400, `Import at most ${MAX_ROWS} bills at a time (this file has ${got.rows.length}).`);
+    return { rows: got.rows, flexible: true, skipped: got.skipped, header: got.header };
+  }
   const { isCsv } = checkFile(buffer, fileName);
   if (!isCsv) scanFormulas(buffer);
   const lists = spec.lists ? spec.lists() : undefined;
@@ -244,9 +254,11 @@ const HANDLERS = {
         if (/^\d{5}$/.test(period)) { const d = IO.dateFromSerial(Number(period)); period = d ? d.slice(0, 7) : period; } // Excel turned 2026-10 into a date
         period = period.replace(/^(\d{4})[/.](\d{1,2})$/, (m, y, mo) => `${y}-${String(mo).padStart(2, '0')}`);
       }
+      const notes = Array.isArray(row.notes) && row.notes.length ? ` (${row.notes.join('; ')})` : '';
       const fields = {
-        billNumber: str(row.billNumber), billDate: str(row.billDate), dueDate: str(row.dueDate), amount: str(row.amount), gst: str(row.gst), remarks: str(row.remarks),
+        billNumber: str(row.billNumber), billDate: str(row.billDate), dueDate: str(row.dueDate), amount: str(row.amount), gst: str(row.gst), remarks: `${str(row.remarks)}${notes}`.trim(),
         ...(monthly ? { period } : {}),
+        ...(row.notes ? { dueOptional: true } : {}), // a free-format file without a due date is still taken (Accounts sets it)
       };
       const create = require('../routes/vendorModulePortal').saveBill; // eslint-disable-line global-require
       const r = await create(ctx.req, monthly ? 'monthly_bill' : 'invoice', fields, null, {
@@ -272,18 +284,18 @@ async function processRows(ctx, imp, rows, dry) {
     const label = str(row[spec.columns[0].key]);
     const rec = { line: row.line, label, outcome: 'error', message: '', fix: '', field: null, changes: [] };
     out.push(rec);
-    // 1. the file's own rules (required, formula text)
-    const missing = IO.requiredErrors(spec, row);
+    // 1. the file's own rules (required, formula text) - not for a free-format bill file (vendorBillFlexImport already read and cleaned it)
+    const missing = spec.flexible ? [] : IO.requiredErrors(spec, row);
     if (missing.length) { Object.assign(rec, rowErr(missing.map((m) => m.message).join(' '), 'Fill the cell and try again.', missing[0].field)); continue; } // eslint-disable-line no-continue
-    const bad = spec.columns.find((c) => looksLikeFormula(row[c.key]));
+    const bad = spec.flexible ? null : spec.columns.find((c) => looksLikeFormula(row[c.key]));
     if (bad) { Object.assign(rec, rowErr(`${bad.label} starts with = or @, which looks like a formula.`, 'Remove the leading = or @ (a cell that starts like that is treated as a formula and is never accepted).', bad.label)); continue; } // eslint-disable-line no-continue
-    const badNum = spec.columns.find((c) => c.type === 'number' && str(row[c.key]) !== '' && IO.parseNumber(row[c.key]).error);
+    const badNum = spec.flexible ? null : spec.columns.find((c) => c.type === 'number' && str(row[c.key]) !== '' && IO.parseNumber(row[c.key]).error);
     if (badNum) { Object.assign(rec, rowErr(`${badNum.label} must be a number like 1500.`, 'Type the amount in rupees, without text.', badNum.label)); continue; } // eslint-disable-line no-continue
-    const badDate = spec.columns.find((c) => c.type === 'date' && str(row[c.key]) !== '' && (IO.parseDate(row[c.key]).error));
+    const badDate = spec.flexible ? null : spec.columns.find((c) => c.type === 'date' && str(row[c.key]) !== '' && (IO.parseDate(row[c.key]).error));
     if (badDate) { Object.assign(rec, rowErr(`${badDate.label} is not a real date.`, 'Use YYYY-MM-DD, like 2026-11-05.', badDate.label)); continue; } // eslint-disable-line no-continue
     // normalise dates the way the real functions expect (YYYY-MM-DD)
     const r2 = { ...row };
-    spec.columns.filter((c) => c.type === 'date').forEach((c) => { if (str(r2[c.key]) !== '') r2[c.key] = IO.parseDate(r2[c.key]).value; });
+    if (!spec.flexible) spec.columns.filter((c) => c.type === 'date').forEach((c) => { if (str(r2[c.key]) !== '') r2[c.key] = IO.parseDate(r2[c.key]).value; });
     // 2. the same thing twice in one file
     const k = h.key(r2, ctx);
     if (seen.has(k)) { Object.assign(rec, rowErr(`This line repeats line ${seen.get(k)} of the file.`, 'Keep one line for each item and put all its changes on that line.', spec.columns[0].label)); continue; } // eslint-disable-line no-continue
