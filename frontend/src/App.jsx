@@ -74,6 +74,7 @@ import Profile from './pages/admin/Profile.jsx';
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import AgreementSigning from './pages/AgreementSigning.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
+import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free AI link (public)
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
@@ -186,6 +187,7 @@ export default function App() {
       {/* Client-facing agreement signing link — no login, token is the key */}
       <Route path="/agreement/:token" element={<AgreementSigning />} />
       <Route path="/offer/:token" element={<OfferSigning />} />
+      <Route path="/talk/:token" element={<TalkLink />} />
       <Route path="/joining/:token" element={<JoiningLink />} />
       <Route path="/prep/:token" element={<InterviewPrepPage />} />
       <Route path="/forms-public/:token" element={<PublicForm />} />

@@ -49,7 +49,8 @@ function has(text, list) {
 const L = {
   stop: ['do not call', 'dont call', 'don t call', 'stop calling', 'remove my number', 'remove me', 'never call', 'do not disturb', 'unsubscribe', 'call mat', 'phone mat', 'कॉल मत', 'फोन मत', 'कॉल न करें', 'परेशान मत', 'కాల్ చేయకండి', 'కాల్ చేయొద్దు', 'కాల్ వద్దు', 'call cheyakandi', 'call cheyoddu'],
   human: ['human', 'real person', 'a person', 'someone', 'recruiter', 'talk to a', 'speak to a', 'speak with a', 'manager', 'insaan', 'इंसान', 'रिक्रूटर', 'किसी से बात', 'आदमी', 'మనిషి', 'రిక్రూటర్', 'వ్యక్తి', 'మేనేజర్', 'ఎవరైనా'],
-  ai_q: ['robot', 'are you ai', 'are you a bot', 'are you human', 'are you real', 'machine', 'automated', 'bot', 'ai', 'रोबोट', 'मशीन', 'రోబో', 'మెషిన్'],
+  ai_q: ['robot', 'are you ai', 'are you a bot', 'are you human', 'are you a human', 'are you a person', 'are you real', 'is this a human', 'real person or', 'machine', 'automated', 'bot', 'ai',
+    'insaan ho', 'manishaa', 'manishena', 'रोबोट', 'मशीन', 'आप इंसान', 'రోబో', 'మెషిన్', 'మనిషా', 'మనిషేనా', 'మనిషి నా'],
   other: ['other candidate', 'other candidates', 'another candidate', 'someone else', 'other people', 'who else', 'names of', 'list of candidates', 'all candidates'],
   salary: ['salary', 'pay', 'ctc', 'package', 'lpa', 'how much', 'stipend', 'वेतन', 'सैलरी', 'तनख्वाह', 'पैकेज', 'జీతం', 'జీతము', 'వేతనం', 'జీతమెంత'],
   later: ['later', 'call back', 'call me back', 'not now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
@@ -58,8 +59,52 @@ const L = {
   yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం'],
   info: ['what', 'where', 'which', 'who', 'when', 'how', 'why', 'details', 'tell me', 'more info', 'location', 'address', 'company', 'client', 'link', 'kya', 'kahan', 'kaun', 'kab', 'kaise', 'क्या', 'कहाँ', 'कहां', 'कौन', 'कब', 'कैसे', 'क्यों', 'ఏమిటి', 'ఎక్కడ', 'ఎవరు', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'ఏంటి'],
   immediate: ['immediate', 'immediately', 'serving', 'free', 'fresher', 'तुरंत', 'वेंटनहीं', 'వెంటనే', 'ఇప్పుడే'],
+  // the person is upset (user rule 2026-10-28: stay calm, apologise, keep it short, offer a recruiter; never argue)
+  angry: ['irritating', 'irritated', 'annoying', 'annoyed', 'disturbing', 'frustrating', 'frustrated', 'nonsense', 'rubbish', 'stupid', 'idiot', 'useless', 'wasting', 'time waste',
+    'waste of time', 'shut up', 'angry', 'how many times', 'already told', 'again and again', 'bakwas', 'pareshan', 'baar baar', 'kitni baar', 'बकवास', 'परेशान', 'बार बार', 'कितनी बार',
+    'दिमाग खराब', 'chiraku', 'visugu', 'enni sarlu', 'malli malli', 'pichi', 'విసుగు', 'చిరాకు', 'ఎన్ని సార్లు', 'మళ్ళీ మళ్ళీ', 'టైమ్ వేస్ట్', 'చెత్త', 'పిచ్చి'],
+  // money / fraud worries: answered with the fixed "TeamLink never asks for money" sentence
+  scam: ['fraud', 'scam', 'fake', 'cheat', 'cheating', 'fee', 'fees', 'deposit', 'registration fee', 'money', 'otp', 'bank details', 'paisa', 'paise', 'dabbu', 'dabbulu', 'mosam',
+    'फ्रॉड', 'धोखा', 'पैसे', 'फीस', 'ओटीपी', 'ఫ్రాడ్', 'మోసం', 'డబ్బు', 'ఫీజు', 'ఓటీపీ'],
 };
 const NO_BUT_FINE = ['no problem', 'not a problem', 'not bad', 'no issue'];
+
+// --- which language the person is speaking (user rule 2026-10-28: answer in the person's language, switch at once) ---------
+// Script first (Telugu / Devanagari letters), then romanised Telugu / Hindi words, then plain English. One or two English
+// words ("ok", "yes") never switch the call. Returns null (stay) or { lang, only } - only = the person just asked for a language.
+const ROMAN = {
+  Telugu: ['avunu', 'ledu', 'ledhu', 'kaadu', 'kadu', 'cheppandi', 'cheppu', 'naaku', 'naku', 'meeru', 'emi', 'enti', 'ekkada', 'undi', 'undhi', 'vaddu', 'ippudu', 'taruvata',
+    'tarvatha', 'repu', 'nenu', 'matladandi', 'telusu', 'kavali', 'chestanu', 'chesthanu', 'andi', 'garu', 'sare'],
+  Hindi: ['haan', 'nahi', 'nahin', 'kya', 'hai', 'hain', 'mera', 'meri', 'mujhe', 'aap', 'aapka', 'kahan', 'theek', 'thik', 'baad', 'abhi', 'bilkul', 'hoon', 'kaun', 'kyun', 'batao',
+    'bataiye', 'chahiye', 'karunga', 'sakta', 'mein'],
+};
+const LANG_NAMES = [
+  ['Telugu', /\btelugu\b|తెలుగు|तेलुगु/i],
+  ['Hindi', /\bhindi\b|हिंदी|हिन्दी|హిందీ/i],
+  ['English', /\benglish\b|इंग्लिश|अंग्रेज़?ी|ఇంగ్లీష్|ఇంగ్లిష్|ఆంగ్ల/i],
+];
+function detectLanguage(textIn) {
+  const raw = String(textIn == null ? '' : textIn).normalize('NFKC');
+  const t = norm(raw);
+  if (!t) return null;
+  const words = t.split(' ').filter(Boolean);
+  const named = LANG_NAMES.filter(([, re]) => re.test(raw)).map(([l]) => l);
+  if (named.length === 1 && words.length <= 8) {
+    const k = classify(raw).intent;
+    return { lang: named[0], only: words.length <= 5 && ['unclear', 'info_q', 'silence', 'human'].includes(k) };
+  }
+  const te = (raw.match(/[ఀ-౿]/g) || []).length;
+  const hi = (raw.match(/[ऀ-ॿ]/g) || []).length;
+  if (te >= 3 && te >= hi) return { lang: 'Telugu', only: false };
+  if (hi >= 3) return { lang: 'Hindi', only: false };
+  const latin = words.filter((w) => /^[a-z']+$/.test(w));
+  const rt = latin.filter((w) => ROMAN.Telugu.includes(w)).length;
+  const rh = latin.filter((w) => ROMAN.Hindi.includes(w)).length;
+  if (rt > rh) return { lang: 'Telugu', only: false };
+  if (rh > rt) return { lang: 'Hindi', only: false };
+  if (latin.length >= 3 && rt === 0 && rh === 0) return { lang: 'English', only: false };
+  return null;
+}
 
 // Fixed answer from a fixed list. Returns { intent, human }.
 function classify(text) {
@@ -173,20 +218,36 @@ class Dialogue {
   constructor(opts) {
     this.purpose = opts.purpose;
     if (!OUTCOMES[this.purpose]) throw new Error(`Unknown purpose: ${this.purpose}`);
-    this.language = S.LANGS.includes(opts.language) ? opts.language : 'English';
     this.data = opts.data || {};
-    this.P = S.phrases(this.language);
-    this.B = S.blocks(this.purpose, this.language, this.data, opts.fields || {}, { recordingNotice: !!opts.recordingNotice });
+    this.fields = opts.fields || {};
+    this.recordingNotice = !!opts.recordingNotice;
+    this.autoLanguage = opts.autoLanguage !== false; // answer in the language the person speaks (opts.autoLanguage: false keeps the call's language)
     this.classifier = typeof opts.classifier === 'function' ? opts.classifier : null;
     this.maxTurns = opts.maxTurns || 16;
+    this.prefix = '';
     this.st = {
       step: 'identity', turns: 0, tries: 0, done: false, ended: null, identity: false, wrong: false, interest: null, told: false,
       answers: {}, callback: false, callbackWhen: null, human: false, stop: false, attendance: null, preferredTime: null, transcript: [], outcome: null, lastAsk: '',
+      language: null, upset: 0, calmFrom: null,
     };
+    this.setLanguage(S.LANGS.includes(opts.language) ? opts.language : 'English');
+  }
+
+  // Every fixed sentence from here on is in this language (the call's start language, or the one the person switched to).
+  setLanguage(lang) {
+    if (!S.LANGS.includes(lang)) return;
+    this.language = lang;
+    this.P = S.phrases(lang);
+    this.B = S.blocks(this.purpose, lang, this.data, this.fields, { recordingNotice: this.recordingNotice });
+    this.st.language = lang;
   }
 
   snapshot() { return JSON.parse(JSON.stringify(this.st)); }
-  restore(st) { if (st && typeof st === 'object') this.st = { ...this.st, ...st }; return this; }
+  restore(st) {
+    if (st && typeof st === 'object') this.st = { ...this.st, ...st };
+    if (this.st.language && this.st.language !== this.language) this.setLanguage(this.st.language);
+    return this;
+  }
 
   // The static text of a sentence must be free of forbidden words (the slots are database values). A failure here is a
   // programming error, never a candidate's doing: the safe sentence is spoken instead.
@@ -196,6 +257,7 @@ class Dialogue {
     return skeleton;
   }
   speak(...parts) {
+    if (this.prefix) { parts.unshift(this.prefix); this.prefix = ''; } // e.g. "Sure, let us continue in Telugu." once, before the next sentence
     const text = this.guard(parts.filter(Boolean).join(' '));
     this.st.transcript.push({ who: 'assistant', text: text.slice(0, 600) });
     this.st.lastAsk = text;
@@ -215,7 +277,8 @@ class Dialogue {
   // Ask the current question again, shortly.
   again(prefix) {
     const q = {
-      identity: this.P.identityAgain.replace('{name}', S.clean(this.data.name || this.data.firstName)),
+      // after an answer (prefix), simply ask again; "sorry, I did not catch that" only when nothing was understood
+      identity: prefix ? this.B.identity : this.P.identityAgain.replace('{name}', S.clean(this.data.name || this.data.firstName)),
       convenient: this.P.convenient,
       intro: this.P.screenIntro.replace('{job}', S.clean(this.data.jobTitle)),
       interest: this.P.interestQ,
@@ -228,6 +291,7 @@ class Dialogue {
       avail: this.P.ivAvail,
       resched_time: this.P.ivReschedAsk,
       later_when: this.P.laterAsk,
+      calm: this.P.calmOffer,
     }[this.st.step];
     return this.speak(prefix, q);
   }
@@ -250,8 +314,12 @@ class Dialogue {
     this.st.turns += 1;
     this.st.transcript.push({ who: 'candidate', text: S.clean(text, 300) });
     if (this.st.turns > this.maxTurns) return this.close('Unclear', 'too many turns');
-    const k = await this.intentOf(text);
     const st = this.st;
+    // 1. the person's language: from this sentence on, every answer is in it
+    const lg = this.autoLanguage ? detectLanguage(text) : null;
+    if (lg && lg.lang !== this.language) { this.setLanguage(lg.lang); this.prefix = this.P.langSwitched; }
+    if (lg && lg.only) { this.prefix = ''; return { say: this.again(this.P.langSwitched), done: false }; }
+    const k = await this.intentOf(text);
     if (k.human) st.human = true;
 
     if (k.intent === 'silence') {
@@ -260,9 +328,28 @@ class Dialogue {
       return { say: this.again(this.P.repeat), done: false };
     }
     if (k.intent === 'stop') { st.stop = true; return this.finish(this.speak(this.P.closeStop), 'stop'); }
+    const t = norm(text);
+    // 2. money / fraud worry: the fixed reassurance, then the same question again (allowed before the name is confirmed: it shares nothing)
+    if (has(t, L.scam) && !has(t, L.salary)) return { say: this.again(this.P.noMoney), done: false };
+    // 3. upset: apologise, keep it short, offer a recruiter; a second time ends the call politely. Never argue.
+    if (has(t, L.angry)) {
+      st.upset += 1;
+      const notInterested = k.intent === 'no';
+      if (st.upset >= 2 || notInterested) {
+        if (notInterested && st.identity) st.interest = 'no';
+        const out = notInterested && st.identity
+          ? (this.purpose.startsWith('Interview') ? 'Not Available' : 'Not Interested')
+          : (this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear');
+        return this.close(out, 'candidate upset', this.P.calmClose);
+      }
+      if (st.step !== 'calm') st.calmFrom = st.step;
+      st.step = 'calm';
+      return { say: this.speak(this.P.calmSorry, this.P.calmOffer), done: false };
+    }
     if (k.intent === 'ai_q') return { say: this.again(this.P.amAi), done: false };
     if (k.intent === 'other_cand') return { say: this.again(this.P.onlyYou), done: false };
 
+    if (st.step === 'calm') return this.on_calm(k);
     if (st.step === 'identity') return this.onIdentity(k);
     // nothing about the job before the person is confirmed (the step cannot be anything else after identity)
     if (k.intent === 'salary_q') {
@@ -276,6 +363,24 @@ class Dialogue {
       return { say: this.again(this.P.noInfo), done: false };
     }
     return this[`on_${st.step}`](k, text);
+  }
+
+  // After an apology: go on (back to the question that was interrupted), a recruiter call, or a polite goodbye.
+  on_calm(k) {
+    const st = this.st;
+    const back = st.calmFrom || 'identity';
+    if (k.intent === 'yes') {
+      st.tries = 0;
+      if (back === 'convenient') { st.step = 'intro'; return { say: this.speak(this.B.intro), done: false }; } // "go on" already answers "is this a good time"
+      st.step = back;
+      return { say: this.again(), done: false };
+    }
+    if (k.intent === 'human') { st.human = true; return this.close(this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear', 'recruiter call requested', this.P.humanNoted); }
+    if (k.intent === 'later' || k.intent === 'reschedule') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
+    if (k.intent === 'no') return this.close(this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear', 'candidate upset', this.P.calmClose);
+    st.tries += 1;
+    if (st.tries >= 2) return this.close(this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear', 'candidate upset', this.P.calmClose);
+    return { say: this.speak(this.P.calmOffer), done: false };
   }
 
   onIdentity(k) {
@@ -334,9 +439,17 @@ class Dialogue {
     return this.close('Unclear', 'unclear interest');
   }
 
+  // "Later" / "busy" in the middle of the questions: a call-back request (never an answer such as a city called "later")
+  laterInQuestions(k) {
+    if (k.intent !== 'later') return null;
+    this.st.callback = true; this.st.step = 'later_when'; this.st.tries = 0;
+    return { say: this.speak(this.P.laterAsk), done: false };
+  }
+
   on_qExp(k, text) {
     const st = this.st;
     let y = readYears(text);
+    if (y == null) { const l = this.laterInQuestions(k); if (l) return l; }
     if (y == null && k.intent === 'no') y = 0;
     if (y == null) {
       st.tries += 1;
@@ -348,6 +461,7 @@ class Dialogue {
 
   on_qLoc(k, text) {
     const st = this.st;
+    const l = this.laterInQuestions(k); if (l) return l;
     const place = k.intent === 'no' || k.intent === 'yes' ? null : readPlace(text);
     if (!place) {
       st.tries += 1;
@@ -360,6 +474,7 @@ class Dialogue {
   on_qNotice(k, text) {
     const st = this.st;
     const n = readNotice(text);
+    if (n.text == null) { const l = this.laterInQuestions(k); if (l) return l; }
     if (n.text == null) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
@@ -468,6 +583,7 @@ class Dialogue {
     if (st.attendance === 'not_available') bits.push('Cannot attend.');
     if (st.callback) bits.push(`Asked for a call back${st.callbackWhen ? `: ${st.callbackWhen}` : ''}.`);
     if (st.human) bits.push('Asked to speak to a recruiter.');
+    if (st.upset) bits.push(`The person sounded upset${st.ended === 'candidate upset' ? ', so the assistant apologised and ended politely' : '; the assistant apologised and kept it short'}.`);
     if (st.stop) bits.push('Asked not to be called again.');
     return bits.filter(Boolean).join(' ');
   }
@@ -503,4 +619,4 @@ class Dialogue {
   transcript() { return this.st.transcript.slice(); }
 }
 
-module.exports = { Dialogue, classify, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };
+module.exports = { Dialogue, classify, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };

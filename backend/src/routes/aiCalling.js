@@ -219,6 +219,14 @@ staff.post('/preview', async (req, res) => {
   send(res, await svc.preview(req.user, { applicationId: clip(b.applicationId, 60), purpose: b.purpose, language: b.language, fields: b.fields }));
 });
 
+// FREE AI LINK (2026-10-28, calling/webTalk.js): a link + a ready WhatsApp message instead of a phone call. Nothing is sent
+// from the server; the recruiter sends the message from their own WhatsApp.
+staff.post('/web-link', async (req, res) => {
+  const b = req.body || {};
+  const base = require('../utils/offerLink').publicBase(req); // eslint-disable-line global-require
+  send(res, await require('../calling/webTalk').createLink(req.user, { applicationId: clip(b.applicationId, 60), purpose: clip(b.purpose, 40), language: clip(b.language, 20) }, base)); // eslint-disable-line global-require
+});
+
 staff.post('/calls', async (req, res) => {
   const b = req.body || {};
   const r = await svc.createCalls(req.user, {
