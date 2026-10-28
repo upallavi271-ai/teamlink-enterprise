@@ -269,7 +269,10 @@ function billInput(kind, f) {
     out.period = str(f.period);
     if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(out.period)) return { error: 'Pick the month this bill is for.', field: 'period' };
     out.dueDate = str(f.dueDate);
-    if (!VP.isRealDay(out.dueDate)) return { error: 'Pick the due date.', field: 'dueDate' };
+    if (!VP.isRealDay(out.dueDate)) {
+      if (!f.dueOptional) return { error: 'Pick the due date.', field: 'dueDate' };
+      out.dueDate = null; // an Excel import line without a due date (2026-10-28): taken, Accounts sets the date
+    }
     out.billDate = VP.isRealDay(f.billDate) ? str(f.billDate) : today();
   } else {
     out.billDate = str(f.billDate);
