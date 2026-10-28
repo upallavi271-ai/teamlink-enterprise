@@ -139,6 +139,7 @@ async function smsConfig({ ignoreSwitch = false } = {}) {
     templates: isPush
       ? { link: valOf(v, F.pushLinkTpl), otp: valOf(v, F.pushOtpTpl), bulk: valOf(v, F.pushBulkTpl) }
       : { link: valOf(v, F.linkTpl), otp: valOf(v, F.otpTpl), bulk: valOf(v, F.bulkTpl) },
+    otpText: isPush ? valOf(v, F.pushOtpText) : '',
     dlrSecret: String(v[F.dlrSecret] || '').trim(),
     push: {
       url: valOf(v, F.pushUrl) || `${BASES.SMSGW}/smsapi/httpapi.jsp`,
@@ -451,7 +452,15 @@ async function testConnection() {
 // The settings as saved, checked on the server (the on / off switch left out): [] = good to switch on.
 async function validateSms() { return (await smsConfig({ ignoreSwitch: true })).problems; }
 
+// The OTP SMS text (2026-10-28). SMS Push Platform sends the text word for word, so when the approved DLT OTP text is saved it is used,
+// with {code} / {minutes} filled in; otherwise the caller's own sentence.
+function otpText(cfg, code, minutes, fallback) {
+  const t = cfg && cfg.otpText;
+  if (t && /\{code\}/i.test(t)) return t.replace(/\{code\}/gi, code).replace(/\{minutes\}/gi, String(minutes));
+  return fallback;
+}
+
 // New login details = not proven any more: the next Test SMS proves them again.
 async function forgetProof() { const prisma = require('../db'); await prisma.appSetting.deleteMany({ where: { key: { in: [PUSH_KEY, 'smsgw.dlrSeen'] } } }).catch(() => {}); } // eslint-disable-line global-require
 
-module.exports = { smsConfig, validateSms, forgetProof, sendSms, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };
+module.exports = { smsConfig, validateSms, forgetProof, sendSms, otpText, testConnection, providerOf, BASES, pushNames, pushLastAccepted, PUSH_DEFAULT_NAMES, PUSH_DEFAULT_ID, parsePushReply, pullDelivery, pushHostOk, pushDlrUrl, PUSH_HOSTS };

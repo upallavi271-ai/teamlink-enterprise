@@ -44,6 +44,8 @@ const SMS_FIELDS = {
   pushBulkTpl: 'SMS Push Platform: DLT Template ID — Bulk / General',
   pushLinkTpl: 'SMS Push Platform: DLT Template ID — Agreement Link (optional)',
   pushOtpTpl: 'SMS Push Platform: DLT Template ID — OTP (optional)',
+  // 2026-10-28: the OTP text goes to the provider word for word, so it must be the approved DLT OTP template's text ({code}, {minutes})
+  pushOtpText: 'SMS Push Platform: OTP message text (as approved on DLT)',
 };
 
 // The SMS form's second column is a HINT for these fields (shown greyed in the empty box), never a value: before 2026-10-27 the form filled an
@@ -103,11 +105,12 @@ const INTEGRATION_CATALOG = [
       [SMS_FIELDS.pushBulkTpl, 'the approved DLT template id (digits) of the campaign message'],
       [SMS_FIELDS.pushLinkTpl, 'only if agreement-link SMS go through this provider'],
       [SMS_FIELDS.pushOtpTpl, 'only if OTP SMS go through this provider'],
+      [SMS_FIELDS.pushOtpText, 'the approved OTP text word for word; write {code} and {minutes} where the variables go'],
       [SMS_FIELDS.pushNames, 'blank = the documented names (username, password, to, from, text, pe_id, template_id)'],
       [SMS_FIELDS.pushOk, 'blank = the documented reply (ackid / msgid)']],
     // hints (greyed text, never saved as a value), the provider dropdown and which fields each provider shows
     hints: [SMS_FIELDS.sid, SMS_FIELDS.linkTpl, SMS_FIELDS.otpTpl, SMS_FIELDS.bulkTpl, SMS_FIELDS.dlrSecret, SMS_FIELDS.pushUser, SMS_FIELDS.pushPass,
-      SMS_FIELDS.pushSender, SMS_FIELDS.pushPe, SMS_FIELDS.pushBulkTpl, SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
+      SMS_FIELDS.pushSender, SMS_FIELDS.pushPe, SMS_FIELDS.pushBulkTpl, SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushOtpText, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
     choices: { [SMS_FIELDS.provider]: SMS_PROVIDER_CHOICES },
     byProvider: {
       field: SMS_FIELDS.provider,
@@ -117,7 +120,7 @@ const INTEGRATION_CATALOG = [
         Fast2SMS: [SMS_FIELDS.sender, SMS_FIELDS.key, SMS_FIELDS.linkTpl, SMS_FIELDS.otpTpl, SMS_FIELDS.bulkTpl],
         Twilio: [SMS_FIELDS.sender, SMS_FIELDS.key, SMS_FIELDS.sid],
         'SMS Push Platform': [SMS_FIELDS.pushUrl, SMS_FIELDS.pushUser, SMS_FIELDS.pushPass, SMS_FIELDS.pushSender, SMS_FIELDS.pushPe, SMS_FIELDS.pushBulkTpl,
-          SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
+          SMS_FIELDS.pushLinkTpl, SMS_FIELDS.pushOtpTpl, SMS_FIELDS.pushOtpText, SMS_FIELDS.pushNames, SMS_FIELDS.pushOk],
       },
     } },
   // REAL. nodemailer talks to this host — see utils/mailer.js. The last two
