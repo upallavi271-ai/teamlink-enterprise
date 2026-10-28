@@ -159,6 +159,30 @@ const expenseNetP = (e) => toPaise(e.monthlyAmount) - toPaise(e.tdsAmount);
 const dayNum = (s) => Math.floor(new Date(`${String(s).slice(0, 10)}T00:00:00Z`).getTime() / 86400000);
 const daysApart = (a, b) => (a && b ? Math.abs(dayNum(a) - dayNum(b)) : null);
 
+// Money marked received on an invoice with no receipt row behind it (an old import / a Paid mark), in paise.
+function missingEvidenceP(inv, ctx) {
+  if (!ctx._rowsP) {
+    ctx._rowsP = new Map();
+    (ctx.payments || []).forEach((p) => ctx._rowsP.set(p.invoiceId, (ctx._rowsP.get(p.invoiceId) || 0) + toPaise(p.amount)));
+  }
+  return toPaise(inv.receivedAmount) - (ctx._rowsP.get(inv.id) || 0);
+}
+
+// The ONE set of items (at most 12 looked at, 1+ items) whose values add up exactly to target; null when none or more than one.
+function exactSubset(list, valueP, targetP) {
+  const items = list.slice(0, 12).map((x) => ({ x, v: valueP(x) })).filter((o) => o.v > 0);
+  let found = null;
+  let count = 0;
+  const n = items.length;
+  for (let mask = 1; mask < (1 << n) && count < 2; mask += 1) {
+    let sum = 0;
+    for (let k = 0; k < n; k += 1) if (mask & (1 << k)) sum += items[k].v;
+    if (sum === targetP) { count += 1; found = mask; }
+  }
+  if (count !== 1) return null;
+  return items.filter((_, k) => found & (1 << k)).map((o) => o.x);
+}
+
 const oldestDueFirst = (list) => [...list].sort((a, b) => String(a.dueDate || a.invoiceDate || '9999').localeCompare(String(b.dueDate || b.invoiceDate || '9999'))
   || String(a.invoiceDate || '').localeCompare(String(b.invoiceDate || '')) || String(a.invoiceNumber || '').localeCompare(String(b.invoiceNumber || '')));
 
@@ -283,16 +307,39 @@ function decideCredit(txn, ctx) {
     const theirs = ctx.invoices.filter((i) => i.clientId === namedId && isOpen(i));
     const client = ctx.clients.find((c) => c.id === namedId);
     const equal = theirs.filter((i) => outstandingP(i) === amountP);
-    if (equal.length === 1) {
+    // 2026-10-28 (founder: "client name match ayina statement match avvali"): with the client named, the line also
+    // matches when (a) it clears an exact combination of their open invoices (one way only), or (b) it is exactly the
+    // money already marked received on their invoice(s) with no receipt row behind it (an old import / Paid mark) - then
+    // the line becomes that money's evidence and NO money moves. Both possible = a person decides.
+    const openFit = equal.length === 1 ? [equal[0]] : (equal.length ? null : exactSubset(theirs, outstandingP, amountP));
+    const waiting = ctx.invoices.filter((i) => i.clientId === namedId && i.status !== 'Cancelled' && missingEvidenceP(i, ctx) > 50);
+    const evidFit = exactSubset(waiting, (i) => missingEvidenceP(i, ctx), amountP);
+    const said = `client "${client.name}" is named in the narration (${named.via})`;
+    if (openFit && evidFit) {
+      const why = `${client.name} named; ${amountP / 100} fits their open invoice(s) ${openFit.map((i) => i.invoiceNumber).join(', ')} AND money already marked received on ${evidFit.map((i) => i.invoiceNumber).join(', ')} - pick which`;
+      return R.review(why, { rule: 3, kind: 'client', clientId: namedId, client: client.name, conflicts: [why], candidates: { invoiceIds: [...openFit, ...evidFit].map((i) => i.id) } });
+    }
+    if (openFit) {
       return R.auto({
-        rule: 3, kind: 'invoice', action: { type: 'settle', parts: [{ invoiceId: equal[0].id, amount: amountP / 100 }] },
-        invoiceId: equal[0].id, invoiceNumber: equal[0].invoiceNumber, clientId: namedId, client: client.name,
-        evidence: [`client "${client.name}" is named in the narration (${named.via})`, `exactly one of their open invoices (${equal[0].invoiceNumber}) has a balance of ${amountP / 100}`, 'direction: money in'],
+        rule: 3, kind: 'invoice', action: { type: 'settle', parts: openFit.map((i) => ({ invoiceId: i.id, amount: outstandingP(i) / 100 })) },
+        invoiceId: openFit[0].id, invoiceNumber: openFit.map((i) => i.invoiceNumber).join(', '), clientId: namedId, client: client.name,
+        evidence: [said, openFit.length === 1 ? `exactly one of their open invoices (${openFit[0].invoiceNumber}) has a balance of ${amountP / 100}` : `the amount clears exactly their open invoices ${openFit.map((i) => i.invoiceNumber).join(' + ')} (no other combination does)`, 'direction: money in'],
+      });
+    }
+    if (evidFit) {
+      return R.auto({
+        rule: 3, kind: 'receipt-proof', action: { type: 'evidence', parts: evidFit.map((i) => ({ invoiceId: i.id, amount: missingEvidenceP(i, ctx) / 100 })) },
+        invoiceId: evidFit[0].id, invoiceNumber: evidFit.map((i) => i.invoiceNumber).join(', '), clientId: namedId, client: client.name,
+        evidence: [said, `${evidFit.map((i) => i.invoiceNumber).join(' + ')} already show${evidFit.length === 1 ? 's' : ''} exactly ${amountP / 100} received with no payment record behind it - this line is that payment (no money moves)`, 'direction: money in'],
       });
     }
     const split = suggestSplit(theirs, amountP);
     if (equal.length > 1) {
       return R.review(`${client.name} has ${equal.length} open invoices of exactly ${amountP / 100} - pick which one this pays`, { rule: 3, kind: 'client', clientId: namedId, client: client.name, candidates: { invoiceIds: equal.map((i) => i.id) }, suggested: split });
+    }
+    if (!theirs.length && waiting.length) {
+      const sum = waiting.reduce((s, i) => s + missingEvidenceP(i, ctx), 0);
+      return R.review(`${client.name} is named; ${waiting.map((i) => i.invoiceNumber).slice(0, 6).join(', ')}${waiting.length > 6 ? '…' : ''} show ${sum / 100} received with no payment record, but no invoice (or one combination) is exactly ${amountP / 100} - pick which this line is`, { rule: 3, kind: 'client', clientId: namedId, client: client.name, candidates: { invoiceIds: waiting.map((i) => i.id) } });
     }
     if (!theirs.length) {
       return R.review(`${client.name} is named but has nothing outstanding - this would be an extra receipt`, { rule: 3, kind: 'client', clientId: namedId, client: client.name });
@@ -398,5 +445,5 @@ function decide(txn, ctx) {
 
 module.exports = {
   norm, idKey, hasPhrase, toPaise, extractRefs, invoicesNamed, clientNamed, vendorsNamed,
-  outstandingP, isOpen, expenseNetP, suggestSplit, allocationPolicy, oldestDueFirst, daysApart, decide, decideCredit, decideDebit, decideReversal,
+  outstandingP, isOpen, expenseNetP, suggestSplit, missingEvidenceP, exactSubset, allocationPolicy, oldestDueFirst, daysApart, decide, decideCredit, decideDebit, decideReversal,
 };

@@ -19,6 +19,7 @@ const rs = (n) => `₹${Number(n || 0).toLocaleString('en-IN', { minimumFraction
 
 // Where one receipt row came from, in plain words.
 function sourceOf(p) {
+  if (p.bankTxnId && p.dateSource === 'bank-evidence') return 'Bank statement (for money already marked received)';
   if (p.bankTxnId) return p.bankLinked ? 'Recorded by hand, linked to the bank line' : 'Bank statement';
   if (p.method === 'Imported' || p.dateSource === 'sheet' || p.dateSource === 'backfill') return 'Imported from a sheet';
   return 'Recorded by hand';

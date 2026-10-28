@@ -1405,6 +1405,51 @@ async function linkPayment(txn, paymentId, req) {
   return { txn: updated, payment: p };
 }
 
+// The line is the evidence for money ALREADY marked received on the invoice(s) with no receipt row behind it (an old
+// import / a Paid mark; utils/reconMatch.js rung 3). A receipt row is written for exactly that amount, dated the line,
+// pointing at the line - and the invoice's received amount / status are NOT touched (no money moves). Checked again
+// inside the transaction, so a repeat or a second line can never write it twice. Undo (unmatch) removes only that row.
+async function attachEvidence(txn, parts, req) {
+  try {
+    const out = await prisma.$transaction(async (tx) => {
+      const used = await tx.invoicePayment.findMany({ where: { bankTxnId: txn.id }, select: { id: true } });
+      if (used.length) throw new Error('This bank line is already linked.');
+      const totalP = parts.reduce((s, p) => s + Math.round(Number(p.amount) * 100), 0);
+      if (totalP !== Math.round(Number(txn.amount) * 100)) throw new Error('The amounts do not add up to the bank line.');
+      const done = [];
+      for (const part of parts) {
+        const inv = await tx.invoice.findUnique({ where: { id: part.invoiceId }, include: { client: true } });
+        if (!inv || inv.status === 'Cancelled') throw new Error('The invoice is no longer there.');
+        const rows = await tx.invoicePayment.findMany({ where: { invoiceId: inv.id }, select: { amount: true } });
+        const missingP = Math.round(Number(inv.receivedAmount || 0) * 100) - rows.reduce((s, r) => s + Math.round(Number(r.amount || 0) * 100), 0);
+        if (missingP < Math.round(Number(part.amount) * 100)) throw new Error(`${inv.invoiceNumber} no longer shows that much received without a payment record.`);
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: inv.id, date: txn.date, dateSource: 'bank-evidence', amount: ROUND(part.amount), method: 'Bank Transfer', reference: txn.reference || null,
+            notes: `Bank statement · ${txn.description} · the payment behind money already marked received`, bankTxnId: txn.id, bankLinked: true, recordedBy: actor(req),
+          },
+        });
+        done.push(inv);
+      }
+      await tx.bankTransaction.update({
+        where: { id: txn.id },
+        data: {
+          matched: true, matchedInvoiceId: done[0].id, reconStatus: 'Reconciled', matchedBy: actor(req), matchedDate: toIsoDate(new Date()),
+          clientName: done[0].client ? done[0].client.name : null, excess: null,
+        },
+      });
+      return done;
+    }, { timeout: 60000, maxWait: 15000 });
+    await logAudit({
+      userId: req && req.user ? req.user.id : null, action: 'Bank line linked as evidence of money already received', entity: 'BankTransaction', entityId: txn.id,
+      fromValue: `${txn.date} · in ${fmtMoney(txn.amount)} · ${String(txn.description || '').slice(0, 60)}`, toValue: out.map((i) => i.invoiceNumber).join(', '),
+    });
+    return { record: `evidence for ${out.map((i) => i.invoiceNumber).join(', ')}` };
+  } catch (e) {
+    return { error: e && e.message ? e.message : 'The line could not be linked.' };
+  }
+}
+
 // Post every credit whose narration names a client with money still outstanding.
 // clearOnly (the import's automatic pass): only CLEAR matches post by
 // themselves — the invoice named with an amount that fits, the client named
@@ -1603,6 +1648,11 @@ router.post('/:id/unmatch', async (req, res) => {
   if (state === 'Reconciled') {
     const payments = await prisma.invoicePayment.findMany({ where: { bankTxnId: txn.id } });
     for (const p of payments) {
+      // The line was only the evidence for money already marked received: that row goes, the money stays.
+      if (p.dateSource === 'bank-evidence') {
+        await prisma.invoicePayment.delete({ where: { id: p.id } });
+        continue;
+      }
       // A receipt recorded by hand that this line was only linked to as proof
       // keeps its money; only the link goes.
       if (p.bankLinked) {
@@ -2728,7 +2778,7 @@ function linePlan(txn, ctx, loans) {
 // A stable key for a plan, so Accept runs the suggestion the screen showed.
 function planKey(plan) {
   const a = plan.action || {};
-  return [a.type, (a.invoiceIds || []).join('+'), a.paymentId, a.loanId, a.billId, a.category, a.kind, a.party].filter(Boolean).join(':');
+  return [a.type, (a.invoiceIds || (a.parts || []).map((p) => p.invoiceId)).join('+'), a.paymentId, a.loanId, a.billId, a.category, a.kind, a.party].filter(Boolean).join(':');
 }
 
 // Run one plan: write the record in its own module with this line as proof.
@@ -2739,6 +2789,7 @@ async function applyPlan(txn, plan, ctx, loans, req, { accepted = false, noAppro
     const out = await linkPayment(txn, a.paymentId, req);
     return out.error ? out : { record: `receipt on ${out.payment?.invoice?.invoiceNumber || out.payment?.invoiceId || '—'}` };
   }
+  if (a.type === 'evidence') return attachEvidence(txn, a.parts, req);
   if (a.type === 'settle') {
     const invoices = ctx.invoices.filter((i) => a.invoiceIds.includes(i.id) && isOpenInvoice(i));
     if (!invoices.length) return { error: 'The invoice is already settled.' };
@@ -2869,8 +2920,8 @@ async function learnRule(txn, fields) {
 
 function ruleFromPlan(plan, ctx, loans) {
   const a = plan.action;
-  if (a.type === 'settle' || a.type === 'linkPayment') {
-    const inv = a.type === 'settle'
+  if (a.type === 'settle' || a.type === 'linkPayment' || a.type === 'evidence') {
+    const inv = a.type === 'evidence' ? ctx.invoices.find((i) => i.id === a.parts[0].invoiceId) : a.type === 'settle'
       ? ctx.invoices.find((i) => i.id === a.invoiceIds[0])
       : ctx.invoices.find((i) => i.id === (ctx.payments.find((p) => p.id === a.paymentId) || {}).invoiceId);
     return inv?.client?.name ? { kind: 'client', category: inv.client.name } : null;
@@ -3847,7 +3898,7 @@ router.get('/statement-of/:txnId', async (req, res) => {
 const autoRef = { api: null };
 const reconHelpers = {
   prisma, logAudit, actor, ROUND, toIsoDate, deriveInvoiceStatus, invoiceOutstanding, ensureAccounts, onAccount, lineOpen, txnState,
-  linkPayment, applyPlan, fmtMoney, loadTxn, autoLinkLoans, autoFileDebits, autoRef,
+  linkPayment, applyPlan, fmtMoney, loadTxn, autoLinkLoans, autoFileDebits, autoRef, attachEvidence,
 };
 const recon = require('./bankRecon')(reconHelpers);
 recon.install(router);

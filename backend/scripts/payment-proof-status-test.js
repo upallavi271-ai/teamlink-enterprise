@@ -145,7 +145,10 @@ let server;
       const out = {};
       for (const t of UNRELATED) {
         try {
-          const rows = sdb.prepare(`SELECT * FROM "${t}" ORDER BY "id"`).all();
+          // 2026-10-28: an import's "look at waiting lines again" may attach a REAL client-named line of the copy as the
+          // evidence for money already marked received (reconMatch rung 3, dateSource 'bank-evidence') - that never
+          // touches an invoice's money (Invoice stays identical), so those rows are left out here.
+          const rows = sdb.prepare(`SELECT * FROM "${t}"${t === 'InvoicePayment' ? ' WHERE "dateSource" IS NOT \'bank-evidence\'' : ''} ORDER BY "id"`).all();
           out[t] = `${rows.length}:${crypto.createHash('sha1').update(JSON.stringify(rows, (k, v) => (typeof v === 'bigint' ? String(v) : v))).digest('hex')}`;
         } catch { out[t] = 'n/a'; }
       }
@@ -317,7 +320,7 @@ let server;
     const snap = async () => JSON.stringify((await prisma.officeExpense.findMany({ where: { id: { in: made.bills } }, orderBy: { id: 'asc' }, select: { id: true, approvalStatus: true, paidStatus: true, bankTxnId: true, paidAt: true, paymentDate: true, approvedBy: true } })));
     const linesSnap = async () => JSON.stringify((await prisma.bankTransaction.findMany({ where: { id: { in: made.txns } }, orderBy: { id: 'asc' }, select: { id: true, billLinks: true, createdBillId: true, category: true, categoryKind: true, reconStatus: true } })));
     const billsBefore = await snap(); const linesBefore = await linesSnap();
-    const payCountBefore = await prisma.invoicePayment.count(); const billCountBefore = await prisma.officeExpense.count({ where: { vendor: { startsWith: TAG } } });
+    const payCountBefore = await prisma.invoicePayment.count(); const payPlainBefore = await prisma.invoicePayment.count({ where: { OR: [{ dateSource: null }, { dateSource: { not: 'bank-evidence' } }] } }); const billCountBefore = await prisma.officeExpense.count({ where: { vendor: { startsWith: TAG } } });
     const csv = `Date,Description,Debit,Credit,Balance\n2026-10-06,ZZTEST PP IMPORT LINE ${RUN} ONE,123.45,,100000\n2026-10-07,ZZTEST PP IMPORT LINE ${RUN} TWO,67.89,,99932.11\n`;
     const imp1 = await http('POST', '/api/bank/import', admin.t, { csv, bankAccountId: bankB.id, file: `zzpp-${RUN}.csv` });
     const billCountAfterFirst = await prisma.officeExpense.count({ where: { vendor: { startsWith: TAG } } }); // a learnt narration rule may file the new lines as bills on the FIRST import
@@ -329,7 +332,10 @@ let server;
     const parts = {
       imports: imp1.status === 201 && imp2.status === 201, twoLines: imported.length === 2, billsSame: (await snap()) === billsBefore,
       oldLinesSame: lAfter.filter((x) => lBefore.some((y) => y.id === x.id)).every((x) => JSON.stringify(x) === JSON.stringify(lBefore.find((y) => y.id === x.id))),
-      noPaymentRecord: (await prisma.invoicePayment.count()) === payCountBefore && payAfterFirst === payCountBefore, secondImportAddsNoBill: (await prisma.officeExpense.count({ where: { vendor: { startsWith: TAG } } })) === billCountAfterFirst,
+      // no receipt on the imported lines, and the second import adds none (the first may attach real waiting lines as evidence, see U1)
+      noPaymentRecord: (await prisma.invoicePayment.count()) === payAfterFirst && (await prisma.invoicePayment.count({ where: { bankTxnId: { in: imported.map((t) => t.id) } } })) === 0
+        && (await prisma.invoicePayment.count({ where: { OR: [{ dateSource: null }, { dateSource: { not: 'bank-evidence' } }] } })) === payPlainBefore,
+      secondImportAddsNoBill: (await prisma.officeExpense.count({ where: { vendor: { startsWith: TAG } } })) === billCountAfterFirst,
     };
     check('I5 repeated bank import: no duplicate lines (2 lines after two imports), no payment record added, no bill status or link changed', Object.values(parts).every(Boolean), parts);
 
