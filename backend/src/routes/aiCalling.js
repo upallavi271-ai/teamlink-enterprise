@@ -167,6 +167,7 @@ staff.get('/status', async (req, res) => {
     steps: isAdmin ? s.problems : [],
     testMode: s.mode === 'Test',
     recording: s.recording || s.keepTranscripts,
+    phoneAi: (({ ready, mode }) => ({ ready, mode }))(require('../calling/voice/sipCall').readiness()), // eslint-disable-line global-require
   });
 });
 
@@ -217,6 +218,21 @@ staff.get('/candidates', async (req, res) => {
 staff.post('/preview', async (req, res) => {
   const b = req.body || {};
   send(res, await svc.preview(req.user, { applicationId: clip(b.applicationId, 60), purpose: b.purpose, language: b.language, fields: b.fields }));
+});
+
+// FREE AI LINK (2026-10-28, calling/webTalk.js): a link + a ready WhatsApp message instead of a phone call. Nothing is sent
+// from the server; the recruiter sends the message from their own WhatsApp.
+staff.post('/web-link', async (req, res) => {
+  const b = req.body || {};
+  const base = require('../utils/offerLink').publicBase(req); // eslint-disable-line global-require
+  send(res, await require('../calling/webTalk').createLink(req.user, { applicationId: clip(b.applicationId, 60), purpose: clip(b.purpose, 40), language: clip(b.language, 20) }, base)); // eslint-disable-line global-require
+});
+
+// AI PHONE CALL with free voices through our own SIP line (2026-10-28, calling/voice/sipCall.js). Only the SIP minutes cost.
+staff.post('/phone-call', async (req, res) => {
+  const b = req.body || {};
+  if (b.confirm !== true) return res.status(400).json({ error: 'Please confirm the call first. No call is placed without your confirmation.' });
+  send(res, await require('../calling/voice/sipCall').place(req.user, { applicationId: clip(b.applicationId, 60), purpose: clip(b.purpose, 40), language: clip(b.language, 20), fields: b.fields })); // eslint-disable-line global-require
 });
 
 staff.post('/calls', async (req, res) => {

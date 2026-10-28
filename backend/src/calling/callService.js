@@ -338,6 +338,7 @@ async function retry(user, id) {
   const acc = await accessVerdict(user, null, s);
   if (!acc.ok) return acc;
   if (!['failed', 'busy', 'no-answer'].includes(row.status)) return fail(409, 'state', 'Only a call that did not connect (failed, busy or no answer) can be retried.');
+  if (row.initiatedVia === 'sip') return fail(409, 'state', 'This was a call from our own phone line. Press "Call with AI (phone)" on the candidate again for a new call.');
   if (row.attempts >= row.maxAttempts) return fail(409, 'limit', `The most attempts for this call (${row.maxAttempts}) is reached. Call the candidate yourself.`);
   await setRow(row.id, { status: 'queued', nextAttemptAt: iso(now()), failReason: null, waitReason: null });
   await logAudit({ userId: user.id, action: 'AI call retry', entity: 'Application', entityId: row.applicationId, toValue: `${row.purpose} attempt ${row.attempts + 1}` });

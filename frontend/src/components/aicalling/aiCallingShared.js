@@ -11,9 +11,10 @@ export const purposeLabel = (k) => (PURPOSES.find((p) => p.key === k) || { label
 
 export const STATUS_WORDS = {
   queued: 'Waiting', calling: 'On the phone', completed: 'Done', failed: 'Failed', busy: 'Busy', 'no-answer': 'No answer', cancelled: 'Cancelled',
+  link: 'AI link sent', // the free web link (calling/webTalk.js): waiting for the candidate to open it
 };
 export const STATUS_CLASS = {
-  queued: 'pending', calling: 'interview', completed: 'active', failed: 'rejected', busy: 'hold', 'no-answer': 'hold', cancelled: 'new',
+  queued: 'pending', calling: 'interview', completed: 'active', failed: 'rejected', busy: 'hold', 'no-answer': 'hold', cancelled: 'new', link: 'pending',
 };
 export const statusWord = (s) => STATUS_WORDS[s] || s;
 

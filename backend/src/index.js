@@ -435,6 +435,8 @@ app.use('/api/positions', positionRoutes);
 app.use('/api/agreement', agreementSealRoutes);
 // B3 (2026-10-06): the candidate's offer letter link — public, by token (routes/offerLink.js).
 app.use('/api/offer-link', require('./routes/offerLink'));
+// 2026-10-28: the candidate's FREE AI link (web page instead of a phone call) - public, by token (routes/aiTalk.js, calling/webTalk.js).
+app.use('/api/talk', require('./routes/aiTalk'));
 // 2026-10-13 client hiring: the candidate's joining-letter link, public by token (routes/joiningLink.js).
 app.use('/api/joining-link', require('./routes/joiningLink'));
 app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: true }));
@@ -488,6 +490,8 @@ const server = app.listen(PORT, () => {
   require('./utils/greenStartSupervisor').start();
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
+  // AI phone calls through our own SIP line with free voices (calling/voice/sipCall.js): off unless AI_VOICE_GATEWAY=1.
+  require('./calling/voice/sipCall').start().catch((e) => console.error('[ai-phone] start failed:', e.message));
   // The email sending worker. A no-op until Administration → Integrations has
   // an SMTP channel configured; MAIL_WORKER_INTERVAL_MS=0 switches it off.
   mailWorker.start();
