@@ -435,6 +435,8 @@ app.use('/api/positions', positionRoutes);
 app.use('/api/agreement', agreementSealRoutes);
 // B3 (2026-10-06): the candidate's offer letter link — public, by token (routes/offerLink.js).
 app.use('/api/offer-link', require('./routes/offerLink'));
+// 2026-10-28: the candidate's FREE AI link (web page instead of a phone call) - public, by token (routes/aiTalk.js, calling/webTalk.js).
+app.use('/api/talk', require('./routes/aiTalk'));
 // 2026-10-13 client hiring: the candidate's joining-letter link, public by token (routes/joiningLink.js).
 app.use('/api/joining-link', require('./routes/joiningLink'));
 app.use('/api/recognition', employeeRecordRouter('RECOGNITION', { createRoles: true }));

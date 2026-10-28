@@ -170,7 +170,7 @@ function Calls() {
       </div>
       <div className="tbl-wrap">
         <table>
-          <thead><tr><th>Candidate</th><th>Requirement</th><th>For</th><th>State</th><th>Result</th><th>Started by</th><th>When</th><th /></tr></thead>
+          <thead><tr><th>Candidate</th><th>Requirement</th><th>For</th><th>State</th><th>Result</th><th>Talked for</th><th>Started by</th><th>When</th><th /></tr></thead>
           <tbody>
             {(rows || []).map((r) => {
               const waiting = r.status === 'queued' || (['busy', 'no-answer', 'failed'].includes(r.status) && r.nextAttemptAt);
@@ -179,9 +179,10 @@ function Calls() {
                 <tr key={r.id} className="row-link" onClick={() => setOpen(r.id)}>
                   <td style={{ whiteSpace: 'normal', minWidth: 130 }}><b>{r.candidateName}</b>{r.mode === 'test' && <span className="small-muted"> (test)</span>}</td>
                   <td style={{ whiteSpace: 'normal' }}>{r.jobTitle}</td>
-                  <td>{purposeLabel(r.purpose)}</td>
+                  <td>{purposeLabel(r.purpose)}{r.initiatedVia === 'web-link' && <span className="small-muted"> · AI link</span>}</td>
                   <td><span className={`status ${STATUS_CLASS[r.status] || 'new'}`}>{statusWord(r.status)}</span></td>
                   <td style={{ whiteSpace: 'normal' }}>{r.outcome || (r.waitReason ? <span className="small-muted">{r.waitReason}</span> : '')}</td>
+                  <td>{minutes(r.durationSec)}</td>
                   <td>{r.initiatedByName || r.initiatedVia}</td>
                   <td>{when(r.nextAttemptAt && waiting ? r.nextAttemptAt : (r.startedAt || r.createdAt))}</td>
                   <td onClick={(e) => e.stopPropagation()}>
@@ -191,7 +192,7 @@ function Calls() {
                 </tr>
               );
             })}
-            {rows && !rows.length && <tr><td colSpan={8} className="small-muted">No AI calls yet.</td></tr>}
+            {rows && !rows.length && <tr><td colSpan={9} className="small-muted">No AI calls yet.</td></tr>}
           </tbody>
         </table>
       </div>
