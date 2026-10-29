@@ -27,6 +27,7 @@ const clientSearch = require('../utils/clientSearch');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disable-line global-require
 // The whole router belongs to ATS: a login without ATS access, or without
 // view permission on this module, is refused at the door rather than handed
 // an empty list.
@@ -220,7 +221,7 @@ function shapeRecruitmentFull(app) {
       department: app.requirement.department,
       tl: app.requirement.tl,
       client: app.requirement.client ? { id: app.requirement.client.id, name: app.requirement.client.name } : null,
-      recruiter: app.requirement.recruiter ? { id: app.requirement.recruiter.id, name: app.requirement.recruiter.name } : null,
+      recruiter: require('../utils/applicationOwner').ownerRecruiter(app), // this candidate's recruiter = the owner (2026-10-29) // eslint-disable-line global-require
       bde: app.requirement.bde ? { id: app.requirement.bde.id, name: app.requirement.bde.name } : null,
     },
     round: app.interviewRound,

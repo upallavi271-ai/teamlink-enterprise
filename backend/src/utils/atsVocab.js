@@ -247,10 +247,11 @@ function applicationOwner(application, requirement) {
   if (!requirement) return rule.ownerRole || '—';
   // founder 2026-10-29: the recruiter who OWNS this candidate (application.ownerRecruiterName, filled by the caller), not the
   // requirement's main recruiter ("owner Sneha ithey, D Sony ani endhuku vasthundhi")
-  if (rule.ownerRole === 'Recruiter') return application.ownerRecruiterName || (requirement.recruiter && requirement.recruiter.name) || '—';
+  const own = require('./applicationOwner').ownerRecruiter({ ...application, requirement }); // eslint-disable-line global-require
+  if (rule.ownerRole === 'Recruiter') return (own && own.name) || '—';
   if (rule.ownerRole === 'BDE') {
     const bde = requirement.bde && requirement.bde.name;
-    return bde || (requirement.recruiter && requirement.recruiter.name) || '—';
+    return bde || (own && own.name) || '—';
   }
   // The TL named on the requirement, falling back to the recruiter's own
   // line manager name where the requirement carries one.
@@ -263,7 +264,7 @@ function applicationOwner(application, requirement) {
   // named); the client is reported separately as waitingOn.
   if (rule.ownerRole === 'Client') {
     const bde = requirement.bde && requirement.bde.name;
-    return bde || (requirement.recruiter && requirement.recruiter.name) || '—';
+    return bde || (own && own.name) || '—';
   }
   return rule.ownerRole || '—';
 }

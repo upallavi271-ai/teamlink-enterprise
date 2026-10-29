@@ -67,6 +67,7 @@ const clientSearch = require('../utils/clientSearch'); // old client names are s
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disable-line global-require
 // The whole router belongs to ATS: a login without ATS access, or without
 // view permission on this module, is refused at the door rather than handed
 // an empty list.
@@ -1660,7 +1661,7 @@ function slimForList(row) {
         department: a.requirement.department,
         clientId: a.requirement.clientId,
         tl: a.requirement.tl,
-        recruiter: a.requirement.recruiter ? { name: a.requirement.recruiter.name } : null,
+        recruiter: (() => { const o = require('../utils/applicationOwner').ownerRecruiter(a); return o ? { name: o.name } : null; })(), // eslint-disable-line global-require
         bde: a.requirement.bde ? { name: a.requirement.bde.name } : null,
       }
       : null,

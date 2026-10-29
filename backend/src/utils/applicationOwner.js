@@ -30,4 +30,33 @@ async function before(prisma, params) {
   if (owner) data.ownerRecruiterId = owner;
 }
 
-module.exports = { defaultOwnerOf, onJob, before, csv };
+// ---- SHOWING IT (founder 2026-10-29: "owner Sneha ithey, D Sony ani endhuku vasthundhi ... ilaanti issues inka evari
+// dagara repeat avvakudadhu"): wherever ONE candidate's recruiter is shown (profile, interviews, joining, owner columns),
+// it is the application's OWNER, never the requirement's main recruiter. Names come from a small cache of every login
+// (refreshed each minute; the routers that show candidates warm it per request, so the first request is right too).
+let NAMES = new Map();
+let namesAt = 0;
+let loading = null;
+function warmNames(maxAgeMs = 60000) {
+  if (NAMES.size && Date.now() - namesAt < maxAgeMs) return Promise.resolve(NAMES);
+  if (!loading) {
+    loading = require('../db').user.findMany({ select: { id: true, name: true } }) // eslint-disable-line global-require
+      .then((us) => { NAMES = new Map(us.map((u) => [u.id, u.name])); namesAt = Date.now(); return NAMES; })
+      .catch(() => NAMES)
+      .finally(() => { loading = null; });
+  }
+  return loading;
+}
+// Express: warm the names before a router shapes candidate rows (never blocks on an error).
+const warmMiddleware = (req, res, next) => { warmNames().then(() => next(), () => next()); };
+// { id, name } of the recruiter of THIS application: its owner; the requirement's recruiter only when it has no owner.
+function ownerRecruiter(app) {
+  if (!app) return null;
+  const id = app.ownerRecruiterId || null;
+  const name = app.ownerRecruiterName || (id && NAMES.get(id)) || null;
+  if (id && name) return { id, name };
+  const r = app.requirement;
+  return r && r.recruiter && r.recruiter.name ? { id: r.recruiter.id || r.recruiterId || null, name: r.recruiter.name } : null;
+}
+
+module.exports = { defaultOwnerOf, onJob, before, csv, warmNames, warmMiddleware, ownerRecruiter };
