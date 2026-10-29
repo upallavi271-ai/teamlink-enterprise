@@ -37,7 +37,10 @@ import {
   Panel, AttentionRows, ShareBars, RankList,
 } from '../components/clientsreq-v4/JobsOverview.jsx';
 import { CrqHead, MiniPager, FilterCard } from '../components/clientsreq-v4/ListBits.jsx';
-import { agreementIsSigned } from '../atsVocab';
+import { agreementIsSigned, deptLabel } from '../atsVocab';
+// The Manufacturing (Non IT) desk reaches some Medical clients only through its "Non IT Medical" jobs: in that desk's
+// view those clients sit under "Non IT Medical" (2026-10-29). Everyone else sees the client's own department.
+const deptOfClient = (c, mine) => (c.ownerDepartment === 'Medical' && mine && mine.includes('Non IT Medical') && !mine.includes('Medical') ? 'Non IT Medical' : c.ownerDepartment);
 import '../components/clients/ccr.css';
 import { rowClickProps } from '../utils/rowClick.js';
 import PageFilterBar, { usePageFilters, rangeDates } from '../components/ui/PageFilterBar.jsx';
@@ -186,6 +189,7 @@ export default function Clients() {
   const newHelp = blind ? 'We have the client but no requirement yet. Ask the client manager (BDE) for the first requirement.' : NEW_HELP;
   const navigate = useNavigate();
   const allowed = can(user, 'ats', 'clients', 'Client List', 'view');
+  const myDepts = (user && user.scope && user.scope.departments) || null;
   // a recruiting TL sees client NAMES only (2026-10-29): the row does not open a client page
   const openClient = can(user, 'ats', 'clients', 'Client Detail', 'view');
   const { meta, error: metaError } = useClientsMeta(user, allowed);
@@ -266,7 +270,7 @@ export default function Clients() {
       { key: 'industry', get: (c) => c.industry },
       { key: 'owner', get: (c) => c.bdeOwner || c.bdeName, label: (v) => (v ? (clients.find((c) => (c.bdeOwner || c.bdeName) === v)?.bdeLabel || v) : v) },
       { key: 'unassigned', get: (c) => (String(c.bdeOwner || '').trim() ? null : '1') },
-      { key: 'department', get: (c) => c.ownerDepartment || NO_DEPT, label: (v) => (v === NO_DEPT ? 'No department' : v) },
+      { key: 'department', get: (c) => deptOfClient(c, myDepts) || NO_DEPT, label: (v) => (v === NO_DEPT ? 'No department' : deptLabel(v)) },
       { key: 'clientId', get: (c) => c.id, label: (v, c) => clientLabel(c) },
       { key: 'signed', get: (c) => (agreementIsSigned(c.agreementStatus) ? 'yes' : 'no'), label: (v) => SIGNED_LABEL[v] || v },
       // the client's own place AND the places of its requirements (c.locations, from GET /clients): a company with requirements in many places lists them all
@@ -369,7 +373,7 @@ export default function Clients() {
       case 'industry': return <td key={key} className="cell-muted">{c.industry || '—'}</td>;
       case 'location': return <td key={key} className="cell-muted clrel-wrap">{c.location || '—'}{c.state && c.state !== c.location ? <span className="clrel-sub">{c.state}</span> : null}</td>;
       case 'legal': return <td key={key} className="cell-muted">{c.legalName || '—'}</td>;
-      case 'department': return <td key={key} className="cell-muted">{c.ownerDepartment || '—'}</td>;
+      case 'department': return <td key={key} className="cell-muted">{deptLabel(deptOfClient(c, myDepts)) || '—'}</td>;
       case 'tax': return <td key={key} className="cell-muted">{c.gst || '—'}<span className="clrel-sub">{c.pan ? `PAN ${c.pan}` : ''}</span></td>;
       case 'contact':
         return (
@@ -454,7 +458,7 @@ export default function Clients() {
             {c.lastActivityWhat ? <span className="clrel-sub">{c.lastActivityWhat}</span> : null}
           </td>
         );
-      case 'owner': return <td key={key} className="cell-muted clrel-wrap">{c.accountManager || '—'}<span className="clrel-sub">{c.ownerDepartment || ''}</span></td>;
+      case 'owner': return <td key={key} className="cell-muted clrel-wrap">{c.accountManager || '—'}<span className="clrel-sub">{deptLabel(deptOfClient(c, myDepts)) || ''}</span></td>;
       case 'next':
         return (
           <td key={key} className="clrel-next">
