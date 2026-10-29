@@ -19,6 +19,7 @@ import {
   RejectFields, rejectReady, rejectPayload, EMPTY_REJECT, sendWithSameClientCheck,
 } from './rejections/rejectionUi.jsx';
 import StepPopup from './candidate/StepPopups.jsx';
+import DropCandidate, { DROP, dropKind } from './candidate/DropCandidate.jsx'; // "Dropped" in Move step: reason + note
 import AskToBook, { askable, InterviewRequested } from './interviews/AskToBook.jsx'; // only the BDE books: others ask the client manager
 import { ctcAsk, CtcAsk, CtcAskButtons } from './CtcConfirm.jsx';
 import './CandidateDrawer.css';
@@ -572,6 +573,10 @@ export function CandidateActions({
     ? workflowStages(user).filter((s) => s !== stage && !['HOLD', 'REJECTED'].includes(s) && !next.some((f) => f.to === s) && moveStepAllowed(user, stage, s))
     : [];
   const editMaster = can(user, 'ats', 'candidates', 'Candidate Master', 'edit');
+  const dKind = dropKind(app);
+  const joiningEdit = can(user, 'ats', 'interviews', 'Joining', 'edit');
+  const mayDrop = !!dKind && (dKind === 'reject' ? mayReject : (dKind === 'offer' ? joiningEdit : (mayReject || joiningEdit)));
+  const moveList = otherStages.length > 0 || mayDrop;
   // An interview is scheduled from BDE / Client Review, or for a further round
   // after one completed — not for somebody already at Offer or Joining.
   const step = PIPELINE_STEPS[stepIndexOf(stage)];
@@ -579,7 +584,7 @@ export function CandidateActions({
     && !isInternalApp(app) && maySchedule(user) && !next.some((f) => f.kind === 'schedule');
   // A Recruiter / TL cannot book: they ask the client manager (BDE) with one plain button (components/interviews/AskToBook.jsx).
   const mayAsk = !!app && !isInternalApp(app) && askable(user, app.stage, app.interviewStatus);
-  const any = next.length || mayHold || mayReject || otherStages.length || editMaster || mayInterview || mayAsk || !!(app && app.interviewRequest);
+  const any = next.length || mayHold || mayReject || moveList || editMaster || mayInterview || mayAsk || !!(app && app.interviewRequest);
   if (!any) return null;
 
   async function move(toStage, extra = {}) {
@@ -594,7 +599,7 @@ export function CandidateActions({
       setMoveTo('');
       setMoveOpen(false);
       if (onFlash) {
-        onFlash(toStage === 'REJECTED'
+        onFlash(extra.comment === 'Candidate dropped out' ? 'Saved as dropped.' : toStage === 'REJECTED'
           ? (extra.rejectKind === 'do_not_use' ? 'Rejected. "Do not use" sent to the team lead to approve.' : 'Rejected for this requirement. Saved.')
           : `Moved to ${stageLabelFor(toStage, { internal: isInternalApp(app) })}.`);
       }
@@ -673,7 +678,7 @@ export function CandidateActions({
             {`${a.label} →`}
           </button>
         ))}
-        {app && otherStages.length > 0 && (
+        {app && moveList && (
           <button type="button" className={`btn btn-sm${moveOpen ? ' is-on' : ''}`} disabled={busy} aria-expanded={moveOpen} onClick={() => setMoveOpen((x) => !x)}>
             Move step
           </button>
@@ -693,14 +698,23 @@ export function CandidateActions({
       </div>
       <WaOptInToggle entityType="candidate" id={c.id} />
 
-      {moveOpen && app && otherStages.length > 0 && (
+      {moveOpen && app && moveList && (
         <div className="cdw-moveto" style={{ marginTop: 6 }}>
           <Combo value={moveTo} onChange={(e) => setMoveTo(e.target.value)}>
             <option value="">Move to…</option>
             {otherStages.map((s) => <option key={s} value={s}>{stageLabelFor(s, { internal: isInternalApp(app) })}</option>)}
+            {mayDrop && <option value={DROP}>Dropped</option>}
           </Combo>
-          <button type="button" className="btn btn-sm btn-primary" disabled={!moveTo || busy} onClick={() => move(moveTo)}>Move</button>
+          {moveTo !== DROP && <button type="button" className="btn btn-sm btn-primary" disabled={!moveTo || busy} onClick={() => move(moveTo)}>Move</button>}
         </div>
+      )}
+      {moveOpen && app && moveTo === DROP && (
+        <DropCandidate
+          app={app}
+          move={move}
+          onClose={() => setMoveTo('')}
+          onDone={async (said) => { setMoveTo(''); setMoveOpen(false); if (onFlash) onFlash(said); if (onChanged) await onChanged(); }}
+        />
       )}
 
       {noteOpen && (
