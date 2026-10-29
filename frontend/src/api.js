@@ -33,6 +33,12 @@ api.interceptors.response.use(undefined, async (error) => {
   const unreachable = !error.response || [502, 503, 504].includes(status)
     // Vite's dev proxy answers 500 with an empty body when the API is down.
     || (status === 500 && !error.response.data);
+  // A SAVE while the server is restarting (2026-10-29: "Resume client" pressed during a deploy showed only "That did not
+  // work"): never sent twice, but every screen now shows why - the screens read err.response.data.error.
+  if (config && (config.method || 'get').toLowerCase() !== 'get' && error.response && [502, 503, 504].includes(status)) {
+    const d = error.response.data;
+    if (!d || typeof d !== 'object' || !d.error) error.response.data = { error: 'TeamLink is restarting for an update. Nothing was saved. Wait a minute and try again.', code: 'SERVER_RESTARTING' };
+  }
   if (!config || (config.method || 'get').toLowerCase() !== 'get' || !unreachable) throw error;
   config.retryCount = (config.retryCount || 0) + 1;
   if (config.retryCount > RETRY_DELAYS.length) throw error;
