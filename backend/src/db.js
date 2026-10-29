@@ -91,4 +91,15 @@ prisma.$use(async (params, next) => {
   return next(params);
 });
 
+// seat_: a Naukri / Shine mailbox follows its HRMS position at once (founder 2026-10-29: "aa recruiter position kii avaraina ostey
+// automatic gaa aa recruiter kii assign ayii povali"): any write to a seat, a seat tenure or a person's status / joining / email
+// asks utils/mailboxSeats.js to move the mailboxes to the new holder (debounced, in the background). Never throws, never waits.
+prisma.$use(async (params, next) => {
+  const result = await next(params);
+  if (/^(create|createMany|update|updateMany|upsert|delete|deleteMany)$/.test(params.action)) {
+    try { require('./utils/mailboxSeats').afterWrite(params); } catch { /* the hourly run catches up */ } // eslint-disable-line global-require
+  }
+  return result;
+});
+
 module.exports = prisma;

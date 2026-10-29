@@ -10,7 +10,8 @@
 // the portal's own reassign moves the connection to the new holder's portal login - the same connection, its sealed app password
 // and its settings untouched, no second connection. New imports and replies then go to the new holder; candidates imported
 // earlier stay with the recruiter who had them (the portal never moves history). An empty seat leaves the mailbox where it is.
-// Runs before the mailbox screen lists, before "Sync now", and on every Job Portal sync (hourly).
+// Runs RIGHT AFTER any HRMS change of who holds a seat (db.js seat_ hook, afterWrite), before the mailbox screen lists, before
+// "Sync now", and on every Job Portal sync (hourly, which also catches a tenure dated to start or end on a later day).
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 const { logAudit } = require('./audit');
@@ -81,10 +82,42 @@ function reconcileQuietly() {
   return running;
 }
 
+// RIGHT AFTER AN HRMS CHANGE OF WHO HOLDS A SEAT (db.js seat_ hook): a seat tenure added / ended / moved, a seat changed, or a
+// person's employment status (exit, relieving), joining date, team or email changed. Debounced: a burst of writes (an import, a
+// transfer that ends one tenure and starts another) is one run, 1.5 s after the last write. Only when some mailbox is mapped.
+const PERSON_FIELDS = ['employmentStatus', 'dateOfJoining', 'team', 'email', 'userId'];
+let timer = null;
+let mapped = null; // cached "is any mailbox mapped?" (re-read every minute), so ordinary writes cost nothing
+let mappedAt = 0;
+function touchesSeats(params) {
+  if (params.model === 'PositionAssignment' || params.model === 'Position') return true;
+  if (params.model === 'Employee' || params.model === 'User') {
+    const d = (params.args && (params.args.data || params.args.update || params.args.create)) || {};
+    return params.action.startsWith('delete') || params.action === 'create' || PERSON_FIELDS.some((k) => k in d);
+  }
+  return false;
+}
+function afterWrite(params) {
+  if (!params || !touchesSeats(params) || process.env.MAILBOX_SEATS_HOOK === '0') return;
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(async () => {
+    timer = null;
+    try {
+      if (mapped === null || Date.now() - mappedAt > 60000) { mapped = Object.keys(await loadMap()).length > 0; mappedAt = Date.now(); }
+      if (!mapped) return;
+      await require('./jobPortalRecruiters').ensureQuietly(); // eslint-disable-line global-require
+      const moved = (await reconcileQuietly()).filter((r) => r.result === 'moved');
+      if (moved.length) console.log(`[mailboxes] ${moved.length} mailbox(es) moved to their position's new holder`);
+    } catch { /* the hourly run catches up */ }
+  }, 1500);
+  if (timer.unref) timer.unref();
+}
+
 async function setSeat(connectionId, seat, user) {
+  mapped = true; mappedAt = Date.now();
   const map = await loadMap();
   map[String(connectionId)] = { seat: String(seat), setBy: user ? user.name || user.email || user.id : null, setAt: new Date().toISOString() };
   await saveMap(map);
 }
 
-module.exports = { KEY, loadMap, saveMap, setSeat, seatsWithRecruiters, reconcile, reconcileQuietly };
+module.exports = { KEY, loadMap, saveMap, setSeat, seatsWithRecruiters, reconcile, reconcileQuietly, afterWrite, touchesSeats };

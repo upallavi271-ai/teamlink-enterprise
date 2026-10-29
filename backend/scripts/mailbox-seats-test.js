@@ -34,6 +34,7 @@ let holder = { name: 'Old Person', email: 'old@x.invalid' };
 const recs = require.resolve('../src/utils/jobPortalRecruiters');
 require.cache[recs] = { id: recs, filename: recs, loaded: true, exports: {
   seatList: async () => [{ code: 'MFG-9', kind: 'RECRUITER', department: 'Manufacturing', team: null, holder }],
+  ensureQuietly: async () => null,
 } };
 const S = require(path.join('..', 'src', 'utils', 'mailboxSeats'));
 
@@ -60,9 +61,26 @@ const S = require(path.join('..', 'src', 'utils', 'mailboxSeats'));
     holder = { name: 'Someone Without Login', email: 'nologin@x.invalid' };
     r = await S.reconcile({ apply: true });
     ok('holder without a portal login yet: waits, nothing breaks', r[0].result === 'seat-empty' && portal.reassigns.length === 1);
+    // HRMS gives the seat to someone else: the next import goes to them with no wait (the db.js seat_ hook -> afterWrite)
+    holder = { name: 'Old Person', email: 'old@x.invalid' };
+    const n = portal.reassigns.length;
+    S.afterWrite({ model: 'PositionAssignment', action: 'create', args: { data: {} } });
+    await new Promise((res) => { setTimeout(res, 2500); });
+    ok('seat holder changed in HRMS -> the mailbox is on the new holder within seconds (no screen, no hourly wait)',
+      portal.reassigns.length === n + 1 && portal.connections[0].recruiterId === 'r_old', `reassigns ${portal.reassigns.length - n}`);
+    S.afterWrite({ model: 'Employee', action: 'update', args: { data: { phone: '123' } } });
+    await new Promise((res) => { setTimeout(res, 2000); });
+    ok('an unrelated HRMS change (a phone number) moves nothing', portal.reassigns.length === n + 1);
+    ok('exit / relieving, joining and seat writes count as seat changes',
+      S.touchesSeats({ model: 'Employee', action: 'update', args: { data: { employmentStatus: 'Relieved' } } })
+      && S.touchesSeats({ model: 'Employee', action: 'update', args: { data: { dateOfJoining: new Date() } } })
+      && S.touchesSeats({ model: 'PositionAssignment', action: 'update', args: { data: { toDate: '2026-10-29' } } })
+      && !S.touchesSeats({ model: 'Candidate', action: 'update', args: { data: {} } }));
     portal.connections[0].status = 'disconnected'; holder = { name: 'Old Person', email: 'old@x.invalid' };
+    const m = portal.reassigns.length;
+    holder = { name: 'New Person', email: 'new@x.invalid' };
     r = await S.reconcile({ apply: true });
-    ok('a disconnected mailbox is left alone', r.length === 0 && portal.reassigns.length === 1);
+    ok('a disconnected mailbox is left alone', r.length === 0 && portal.reassigns.length === m);
   } finally {
     if (before) await prisma.appSetting.update({ where: { key: S.KEY }, data: { value: before.value } });
     else await prisma.appSetting.delete({ where: { key: S.KEY } }).catch(() => {});
