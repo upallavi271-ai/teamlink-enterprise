@@ -278,6 +278,54 @@ function RemoveDialog({ loan, onClose, onDone }) {
   );
 }
 
+// Remove on a person with NO hand entry (founder 2026-10-29): the only thing there is the hand loan label on the statement
+// lines paid to them. Remove takes that label off each filed line (the same Undo as on the statement); the lines themselves
+// stay, back under Uncategorised. Lines the app only guessed from the narration are not filed, so nothing is done to them.
+function UnfileDialog({ person, onClose, onDone }) {
+  const filed = person.lines.filter((x) => x.filed);
+  const [busy, setBusy] = useState(false);
+  const [fail, setFail] = useState('');
+  const confirm = async () => {
+    if (busy) return;
+    setBusy(true); setFail('');
+    let done = 0;
+    for (const x of filed) {
+      try { await api.post(`/bank/${x.txnId}/uncategorise`); done += 1; } catch (e) { setFail(e.response?.data?.error || 'A line could not be changed.'); }
+    }
+    if (done === filed.length) onDone(`Took the hand loan label off ${done} line${done === 1 ? '' : 's'} paid to ${person.name}. They are back under Uncategorised.`);
+    else setBusy(false);
+  };
+  return (
+    <Sheet
+      title={`Remove ${person.name} from hand loans?`}
+      sub={`${filed.length} statement line${filed.length === 1 ? ' is' : 's are'} filed as a hand loan to ${person.name}.`}
+      label="Remove a person from hand loans"
+      onClose={() => { if (!busy) onClose(); }}
+      footer={(
+        <>
+          <button type="button" className="s6-btn" disabled={busy} onClick={onClose}>Cancel</button>
+          <button type="button" className="hla-btn solid-red" disabled={busy || !filed.length} onClick={confirm}>{busy ? 'Removing…' : 'Confirm Remove'}</button>
+        </>
+      )}
+    >
+      <div className="s6-tbl" style={{ marginBottom: 10 }}>
+        <table style={{ minWidth: 520 }}>
+          <thead><tr><th>Date</th><th>Narration</th><th className="num">Amount</th></tr></thead>
+          <tbody>
+            {filed.map((x) => (
+              <tr key={x.txnId}><td className="s6-mono">{fmtD(x.date)}</td><td className="s6-sub">{String(x.description || '').slice(0, 80)}</td><td className="num s6-mono">{money2(x.amount)}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="s6-dash bkl-note blue" style={{ marginBottom: 0 }}>
+        <span>The lines stay on the statement - only the hand loan label comes off, and they go back under Uncategorised. You can file them again any time.</span>
+      </div>
+      {fail && <div className="s6-dash red" role="alert" style={{ marginTop: 12, marginBottom: 0 }}><span>{fail}</span></div>}
+    </Sheet>
+  );
+}
+
 // Search · Status · Date taken, and a Sort, over the loan cards.
 const LOAN_FIELDS = [
   { key: 'q', type: 'search', placeholder: 'Search loan name, lender or notes…', get: (l) => `${l.name || ''} ${l.lender || ''} ${l.notes || ''}` },
@@ -334,8 +382,9 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [person, setPerson] = useState(''); // "Month by month" on one person
   const [viewLine, setViewLine] = useState(null);
-  const [pick, setPick] = useState(null); // null | 'edit' | 'remove' - the "which entry?" window
+  const [pick, setPick] = useState(null); // null | { mode: 'edit' | 'remove', loans } - the "which entry?" window
   const [removeFor, setRemoveFor] = useState(null); // the entry the Remove window is about
+  const [unfileFor, setUnfileFor] = useState(null); // a person with no entry: the lines filed as hand loan to them
 
   const load = useCallback(() => {
     api.get('/bank/hand-loans').then((r) => setData(r.data)).catch((e) => setError(e.response?.data?.error || 'Hand loans could not be loaded.'));
@@ -344,10 +393,10 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
 
   // Esc closes the popup (unless a form or the line on top of it is open).
   useEffect(() => {
-    const esc = (e) => { if (e.key === 'Escape' && !form && !viewLine && !pick && !removeFor) onClose(); };
+    const esc = (e) => { if (e.key === 'Escape' && !form && !viewLine && !pick && !removeFor && !unfileFor) onClose(); };
     window.addEventListener('keydown', esc);
     return () => window.removeEventListener('keydown', esc);
-  }, [form, viewLine, pick, removeFor, onClose]);
+  }, [form, viewLine, pick, removeFor, unfileFor, onClose]);
 
   async function run(fn, said) {
     setBusy(true); setError(''); setNote('');
@@ -366,13 +415,15 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
   const s = data?.summary;
 
   // Edit / Remove beside the heading: one entry goes straight to its window; several ask which one first.
-  const startFromHead = (mode) => {
-    const loans = data?.loans || [];
+  // The same on each person's row (founder 2026-10-29), over only that person's entries.
+  const startWith = (mode, loans) => {
     if (!loans.length) return;
     if (loans.length === 1) { if (mode === 'edit') setForm({ loan: loans[0] }); else setRemoveFor(loans[0]); return; }
-    setPick(mode);
+    setPick({ mode, loans });
   };
-  const chosen = (loan) => { const mode = pick; setPick(null); if (mode === 'edit') setForm({ loan }); else setRemoveFor(loan); };
+  const startFromHead = (mode) => startWith(mode, data?.loans || []);
+  const startForPerson = (mode, name) => startWith(mode, (data?.loans || []).filter((l) => personOf(l) === name));
+  const chosen = (loan) => { const { mode } = pick; setPick(null); if (mode === 'edit') setForm({ loan }); else setRemoveFor(loan); };
   // What the Edit form shows about the entry (read only): what is paid back and which account the statement lines are on.
   const factsOf = (loan) => ({
     repaid: loan.repaid, pending: loan.pending, repayments: (loan.repayments || []).length,
@@ -401,7 +452,7 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
     });
     (data.unentered || []).forEach((u) => {
       m.set(`~${u.name}`, {
-        name: u.name, entries: 0, taken: 0, cleared: u.out, pending: 0, accounts: new Set(u.account ? u.account.split(', ') : []), last: u.last, noEntry: true,
+        name: u.name, entries: 0, taken: 0, cleared: u.out, pending: 0, accounts: new Set(u.account ? u.account.split(', ') : []), last: u.last, noEntry: true, lines: u.lines || [],
       });
     });
     return [...m.values()].sort((a, b) => (b.noEntry - a.noEntry) || (b.pending - a.pending) || a.name.localeCompare(b.name));
@@ -562,6 +613,26 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
                           )}
                           {' '}
                           {!p.noEntry && <button type="button" className="s6-btn sm" onClick={() => setPerson(p.name)}>Month by month</button>}
+                          {canManage && !p.noEntry && (
+                            <>
+                              {' '}<button type="button" className="s6-btn sm" disabled={busy} title={`Change ${p.name}'s entry`} onClick={() => startForPerson('edit', p.name)}>Edit</button>
+                              {' '}<button type="button" className="s6-btn sm s6-danger" disabled={busy} title={`Remove ${p.name}'s entry`} onClick={() => startForPerson('remove', p.name)}>Remove</button>
+                            </>
+                          )}
+                          {canManage && p.noEntry && (
+                            <>
+                              {' '}
+                              <button
+                                type="button"
+                                className="s6-btn sm s6-danger"
+                                disabled={busy || !p.lines.some((x) => x.filed)}
+                                title={p.lines.some((x) => x.filed) ? `Take the hand loan label off the lines paid to ${p.name}` : 'Nothing is filed - the app only guessed this from the narration'}
+                                onClick={() => setUnfileFor(p)}
+                              >
+                                Remove
+                              </button>
+                            </>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -594,7 +665,10 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
                             <span className="s6-pill green">Bank statement</span>{' '}
                             <button type="button" className="s6-btn sm" onClick={() => setViewLine({ ...mv, person: mv.lender || mv.person })}>View line</button>
                           </td>
-                          <td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
+                            {canManage && data.loans.some((l) => l.id === mv.loanId) && (
+                              <><button type="button" className="s6-btn sm" disabled={busy} title="Change the hand entry this movement belongs to" onClick={() => setForm({ loan: data.loans.find((l) => l.id === mv.loanId) })}>Edit</button>{' '}</>
+                            )}
                             {canManage && (
                               <button type="button" className="s6-btn sm s6-danger" disabled={busy} onClick={() => run(() => api.delete(`/bank/hand-loans/links/${mv.linkId}`), () => 'Removed — the line is back under Uncategorised; the statement itself is untouched.')}>
                                 Remove
@@ -729,7 +803,14 @@ export default function HandLoans({ canManage, onClose, onChanged }) {
         />
       )}
       {viewLine && <ViewLine line={viewLine} onClose={() => setViewLine(null)} />}
-      {pick && <EntryPicker mode={pick} loans={data?.loans || []} onPick={chosen} onClose={() => setPick(null)} />}
+      {pick && <EntryPicker mode={pick.mode} loans={pick.loans} onPick={chosen} onClose={() => setPick(null)} />}
+      {unfileFor && (
+        <UnfileDialog
+          person={unfileFor}
+          onClose={() => setUnfileFor(null)}
+          onDone={(msg) => { setUnfileFor(null); setError(''); setNote(msg); load(); onChanged?.(); }}
+        />
+      )}
       {removeFor && (
         <RemoveDialog
           loan={removeFor}
