@@ -53,6 +53,7 @@ const {
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disable-line global-require
 router.use(requireProduct('ats'));
 
 const FULL_INCLUDE = {
@@ -80,7 +81,8 @@ async function loadScoped(req, res) {
 
 function ownerOf(app) {
   const r = app.requirement || {};
-  return (r.recruiter && r.recruiter.name) || (r.bde && r.bde.name) || r.tl || '—';
+  const own = require('../utils/applicationOwner').ownerRecruiter(app); // eslint-disable-line global-require
+  return (own && own.name) || (r.bde && r.bde.name) || r.tl || '—';
 }
 
 function feedbackOf(app, kind) {
@@ -139,7 +141,7 @@ function shapeRowFull(app) {
       internal: !!req.internal,
       salary: req.salary,
       client: req.client ? { id: req.client.id, name: req.client.name } : null,
-      recruiter: req.recruiter ? { id: req.recruiter.id, name: req.recruiter.name } : null,
+      recruiter: require('../utils/applicationOwner').ownerRecruiter(app), // this candidate's recruiter = the owner (2026-10-29) // eslint-disable-line global-require
       bde: req.bde ? { id: req.bde.id, name: req.bde.name } : null,
     },
     hiringType: hiringTypeOf(app, req),

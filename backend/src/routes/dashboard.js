@@ -29,6 +29,7 @@ const { ensureNextActionContext } = require('../utils/nextAction');
 const CNU = require('../utils/creditNotes');
 router.use((req, res, next) => { ensureNextActionContext().then(() => next(), () => next()); });
 router.use(requireAuth);
+router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disable-line global-require
 
 // A Client and a Candidate are outside this company. Anything company-wide —
 // the audit trail below, internal vocabulary, other people's activity — stops

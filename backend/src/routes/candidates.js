@@ -67,6 +67,7 @@ const clientSearch = require('../utils/clientSearch'); // old client names are s
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../utils/applicationOwner').warmMiddleware); // eslint-disable-line global-require
 // The whole router belongs to ATS: a login without ATS access, or without
 // view permission on this module, is refused at the door rather than handed
 // an empty list.
@@ -317,6 +318,7 @@ function decorate(candidate, { user, sharedIds = null, followUps = null, withApp
     // recruiter who has left has no login to put on the requirement), then
     // whatever the requirement names today.
     recruiterName: (kind === 'internal' && followUps && followUps.get(latest.id)?.ownerName)
+      || latest.ownerRecruiterName
       || (requirement && requirement.recruiter ? requirement.recruiter.name : null),
     positionCode: (kind === 'internal' && followUps && followUps.get(latest.id)?.ownerPositionCode)
       || (requirement ? requirement.positionCode || null : null),
@@ -1042,7 +1044,7 @@ async function buildPipelineRows(user, st, s, snap) {
         joiningPlanned: ['JOINED', 'HIRED'].includes(a.stage) ? null : joinDayShared.typedDay(a.joiningDate || (snap.appDates.get(a.id) || {}).joiningDate),
         followUp: fu,
         followUpNeed: followUpNeed(a),
-        recruiterName: (internalViewer && fu && fu.ownerName) || (r && r.recruiter ? r.recruiter.name : null),
+        recruiterName: (internalViewer && fu && fu.ownerName) || (a.ownerRecruiterId && snap.activeUsers.get(a.ownerRecruiterId)) || (r && r.recruiter ? r.recruiter.name : null),
         positionCode,
         section: sectionOfCode(sections, positionCode),
         tlName: (internalViewer && fu && fu.tlName) || (r ? r.tl || null : null),
@@ -1659,7 +1661,7 @@ function slimForList(row) {
         department: a.requirement.department,
         clientId: a.requirement.clientId,
         tl: a.requirement.tl,
-        recruiter: a.requirement.recruiter ? { name: a.requirement.recruiter.name } : null,
+        recruiter: (() => { const o = require('../utils/applicationOwner').ownerRecruiter(a); return o ? { name: o.name } : null; })(), // eslint-disable-line global-require
         bde: a.requirement.bde ? { name: a.requirement.bde.name } : null,
       }
       : null,
@@ -2216,6 +2218,13 @@ async function loadInScope(req, res) {
     if (keptId) { req.aliasFrom = req.params.id; req.params.id = keptId; return loadInScope(req, res); }
     res.status(404).json({ error: 'Candidate not found' });
     return null;
+  }
+  // each application's own recruiter (who added / works it) by name: the profile says "Recruiter: <owner>", never the
+  // requirement's main recruiter (founder 2026-10-29)
+  {
+    const ownIds = [...new Set((candidate.applications || []).map((a) => a.ownerRecruiterId).filter(Boolean))];
+    const names = ownIds.length ? new Map((await prisma.user.findMany({ where: { id: { in: ownIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name])) : new Map();
+    (candidate.applications || []).forEach((a) => { a.ownerRecruiterName = names.get(a.ownerRecruiterId) || null; });
   }
   const s = scopeOf(req.user);
   const sharedIds = await clientSharedApplicationIds(req.user, [candidate]);
