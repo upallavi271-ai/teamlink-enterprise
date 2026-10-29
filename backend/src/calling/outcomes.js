@@ -99,6 +99,42 @@ async function suppress(row, source) {
   await prisma.appSetting.upsert({ where: { key }, create: { key, value: v }, update: { value: v } }).catch(() => null);
 }
 
+// --- the talk history, turn by turn -----------------------------------------------------------------------------------------------------------------
+// Each candidate turn keeps the EXACT words heard (text), how clearly they were heard (heard: clear | unclear | none),
+// and SEPARATELY how the assistant read them (understood) - the Talk history never shows the reading as the person's words.
+// Only these fields, checked: nothing else from the call state reaches the row.
+const UNDERSTOOD = ['yes', 'no', 'mixed', 'maybe', 'repeat', 'cant_hear', 'later', 'reschedule', 'stop', 'human', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'silence', 'unclear', 'not_clear', 'language'];
+function historyJson(turns) {
+  return JSON.stringify(turns.slice(0, 80).map((x) => {
+    const o = { who: x.who === 'assistant' ? 'assistant' : 'candidate', text: String(x.text || '').slice(0, 400) };
+    if (o.who === 'candidate') {
+      if (['clear', 'unclear', 'none'].includes(x.heard)) o.heard = x.heard;
+      if (UNDERSTOOD.includes(x.understood)) o.understood = x.understood;
+      if (S_LANGS.includes(x.lang)) o.lang = x.lang;
+    }
+    if (typeof x.at === 'string' && /^\d{4}-\d\d-\d\dT/.test(x.at)) o.at = x.at.slice(0, 24);
+    return o;
+  }));
+}
+// DURING a call on our own line, after every turn (2026-10-29): a dropped line or a server restart keeps what was already
+// said. The full, final copy is written again by applyResult. Never throws: a failed write is retried once and logged.
+async function saveTurns(callId, turns) {
+  if (!Array.isArray(turns) || !turns.length) return false;
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      const row = await svc.getCall(callId); // eslint-disable-line no-await-in-loop
+      if (!row || row.deletedAt || !['sip', 'web-link'].includes(row.initiatedVia)) return false;
+      const patch = { transcript: historyJson(turns) };
+      if (!row.purgeAt) { const s = await settingsStore.load(); patch.purgeAt = new Date(Date.now() + s.transcriptDays * 86400000).toISOString(); } // eslint-disable-line no-await-in-loop
+      await svc.setRow(callId, patch); // eslint-disable-line no-await-in-loop
+      return true;
+    } catch (e) {
+      if (i === 1) console.error('[ai-calling] talk history not saved this turn:', e.message); // eslint-disable-line no-console
+    }
+  }
+  return false;
+}
+
 // --- the assistant's result -------------------------------------------------------------------------------------------------------------------------
 async function applyResult(callId, resultIn, turns) {
   const row = await svc.getCall(callId);
@@ -134,7 +170,7 @@ async function applyResult(callId, resultIn, turns) {
   // follow the Admin's "Keep what was said" switch as before.
   const ownLine = ['sip', 'web-link'].includes(row.initiatedVia);
   if ((s.keepTranscripts || ownLine) && Array.isArray(turns) && turns.length && !row.deletedAt) {
-    patch.transcript = JSON.stringify(turns.slice(0, 80).map((x) => ({ who: x.who === 'assistant' ? 'assistant' : 'candidate', text: String(x.text || '').slice(0, 400) })));
+    patch.transcript = historyJson(turns);
     const keep = new Date(t.getTime() + s.transcriptDays * 86400000).toISOString();
     if (!row.purgeAt || keep < row.purgeAt) patch.purgeAt = keep;
   }
@@ -219,4 +255,4 @@ async function notifyCancelled(row, reason) {
   await notifyUsers([row.initiatedById], { title: 'An AI call was cancelled', message: String(reason).slice(0, 300) });
 }
 
-module.exports = { applyResult, afterCompleted, finalizeStale, attemptFailed, notifyCancelled, suppress, writeTimeline, istDay };
+module.exports = { saveTurns, historyJson, applyResult, afterCompleted, finalizeStale, attemptFailed, notifyCancelled, suppress, writeTimeline, istDay };
