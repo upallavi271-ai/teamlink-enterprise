@@ -161,22 +161,24 @@ password=$SIP_PASS
 EOF
   if [ "$MODE" = gateway ]; then
     # the SIM gateway in the office registers HERE (it sits behind the office router, so it calls us, not we it)
+    # The AOR and endpoint carry its login name (teamlink-gw): its REGISTER has to find them by that name.
     cat >> /etc/asterisk/pjsip.conf <<EOF
 
-[provider]
+[$SIP_USER]
 type=aor
 max_contacts=1
 remove_existing=yes
 qualify_frequency=30
 
-[provider]
+[$SIP_USER]
 type=endpoint
 transport=transport-udp
 context=from-provider
 disallow=all
 allow=alaw,ulaw
 auth=provider-auth
-aors=provider
+aors=$SIP_USER
+identify_by=username,auth_username
 direct_media=no
 rtp_symmetric=yes
 force_rport=yes
@@ -273,12 +275,20 @@ EOF
     say "SIP line registration:"
     asterisk -rx "pjsip show registrations"
   fi
-  print_env "$AMI_SECRET"
+  print_env "$AMI_SECRET" "$( [ "$MODE" = gateway ] && echo "$SIP_USER" || echo provider )"
 }
 
+# The backend settings go to a root-only file, never to the screen (they hold the voice key and the AMI secret).
 print_env() {
   local K; K=$(key)
-  say "add these to backend/.env, then:  pm2 restart <teamlink backend> --update-env"
+  local OUT="$ROOT/backend.env"
+  ( umask 077; print_env_lines "$K" "${1:-}" "${2:-provider}" > "$OUT" )
+  say "backend settings written to $OUT (root only, not shown). Add its lines to backend/.env, then: pm2 restart <teamlink backend> --update-env"
+  sed 's/=.*//' "$OUT" | tr '
+' ' '; echo
+}
+print_env_lines() {
+  local K=$1
   cat <<EOF
 AI_VOICE_GATEWAY=1
 AI_VOICE_TTS=piper
@@ -291,10 +301,10 @@ AI_VOICE_STT_URL=ws://127.0.0.1:8091
 AI_VOICE_WHISPER_URL=http://127.0.0.1:8093
 AI_VOICE_KOKORO_URL=http://127.0.0.1:8094
 EOF
-  if [ -n "${1:-}" ]; then cat <<EOF
+  if [ -n "${2:-}" ]; then cat <<EOF
 AI_VOICE_AMI_USER=teamlink
-AI_VOICE_AMI_SECRET=$1
-AI_VOICE_SIP_TRUNK=provider
+AI_VOICE_AMI_SECRET=$2
+AI_VOICE_SIP_TRUNK=$3
 AI_VOICE_DIAL_FORMAT=${DIAL_FORMAT:-10}
 AI_VOICE_CALLER_ID=${CALLER_ID:-}
 AI_VOICE_PHONE_MODE=Test
