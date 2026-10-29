@@ -264,15 +264,10 @@ export function ViewAgreementButton({ clientId, esign, className = 'btn btn-sm',
   );
 }
 
-// "View agreement" where there is no client row (the BDE workspace): ask which client, then show the same window.
-export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
-  const clientLabel = useClientLabel();
-  const show = useCanViewAgreement();
-  const [ask, setAsk] = useState(false);
-  const [id, setId] = useState('');
-  const [view, setView] = useState('');
-  // a client that signed OUTSIDE the ATS (founder 2026-10-29): add it here, then upload its papers in the window
-  const [adding, setAdding] = useState(false);
+// A CLIENT THAT SIGNED OUTSIDE THE ATS (founder 2026-10-29): name, location, department -> it is in Clients at once
+// (POST /agreement/new-client-signed); onAdded(id) then opens the View agreement window for its papers. Used by the
+// View agreement picker (BDE dashboard) and the Clients page button. The server decides who may (BDE team, Admin).
+export function AddSignedClientDialog({ onClose, onAdded, onOpenExisting, onBack }) {
   const [nc, setNc] = useState({ name: '', location: '', department: '' });
   const [ncErr, setNcErr] = useState('');
   const [ncBusy, setNcBusy] = useState(false);
@@ -281,13 +276,68 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
     setNcErr(''); setExisting(''); setNcBusy(true);
     try {
       const r = await api.post('/agreement/new-client-signed', nc);
-      setAll(null); setAdding(false); setAsk(false); setView(r.data.client.id);
+      onAdded(r.data.client.id, r.data);
     } catch (e) {
       setNcErr(e.response?.data?.error || 'Could not add the client. Please try again.');
       if (e.response?.data?.clientId) setExisting(e.response.data.clientId);
     }
     setNcBusy(false);
   }
+  return createPortal(
+    <Modal
+      title="New client — agreement already signed"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onBack || onClose}>{onBack ? 'Back' : 'Cancel'}</button>
+          {existing && onOpenExisting && <button type="button" className="btn" onClick={() => onOpenExisting(existing)}>Open that client</button>}
+          <button type="button" className="btn btn-primary" disabled={ncBusy || nc.name.trim().length < 2 || !nc.location.trim() || !nc.department} onClick={addClient}>{ncBusy ? 'Adding…' : 'Add client, then upload papers'}</button>
+        </>
+      )}
+    >
+      <div className="small-muted" style={{ marginBottom: 8 }}>For a client who signed before they were in the ATS. They show in Clients at once; next you upload the signed papers.</div>
+      <label className="field"><span>Client name (as on the agreement)</span><input value={nc.name} maxLength={160} onChange={(e) => setNc({ ...nc, name: e.target.value })} /></label>
+      <label className="field"><span>Location (city / branch)</span><input value={nc.location} maxLength={120} onChange={(e) => setNc({ ...nc, location: e.target.value })} /></label>
+      <label className="field">
+        <span>Department</span>
+        <Combo value={nc.department} onChange={(e) => setNc({ ...nc, department: e.target.value })}>
+          <option value="">Pick one</option>
+          {CLIENT_DEPTS.map((x) => <option key={x} value={x}>{deptLabel(x)}</option>)}
+        </Combo>
+      </label>
+      {ncErr && <div className="error-text">{ncErr}</div>}
+    </Modal>,
+    document.body,
+  );
+}
+
+// The Clients page button: add the client, then its papers are uploaded in the View agreement window that opens.
+export function AddSignedClientButton({ className = 'btn', onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState('');
+  return (
+    <>
+      <button type="button" className={className} style={{ whiteSpace: 'nowrap' }} title="A client who already signed an agreement but is not in the ATS yet" onClick={() => setOpen(true)}>+ Client with signed agreement</button>
+      {open && (
+        <AddSignedClientDialog
+          onClose={() => setOpen(false)}
+          onAdded={(id) => { setOpen(false); setView(id); if (onAdded) onAdded(id); }}
+          onOpenExisting={(id) => { setOpen(false); setView(id); }}
+        />
+      )}
+      {view && <ViewAgreementWindow clientId={view} onClose={() => setView('')} onChanged={onAdded} />}
+    </>
+  );
+}
+
+// "View agreement" where there is no client row (the BDE workspace): ask which client, then show the same window.
+export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
+  const clientLabel = useClientLabel();
+  const show = useCanViewAgreement();
+  const [ask, setAsk] = useState(false);
+  const [id, setId] = useState('');
+  const [view, setView] = useState('');
+  const [adding, setAdding] = useState(false); // a client that signed OUTSIDE the ATS (AddSignedClientDialog)
   // every client whose agreement this login may open (a BDE: all of them, view only - 2026-10-29), not just the clients
   // the screen happens to list; the screen's own list stays the fallback
   const [all, setAll] = useState(null);
@@ -299,31 +349,14 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
   if (!show) return null;
   return (
     <>
-      <button type="button" className={`${className} vag-btn`} style={{ whiteSpace: 'nowrap' }} onClick={() => { setId(''); setAdding(false); setNcErr(''); setAsk(true); }}>View agreement</button>
+      <button type="button" className={`${className} vag-btn`} style={{ whiteSpace: 'nowrap' }} onClick={() => { setId(''); setAdding(false); setAsk(true); }}>View agreement</button>
       {ask && adding && (
-        <Modal
-          title="New client — agreement already signed"
+        <AddSignedClientDialog
           onClose={() => setAsk(false)}
-          footer={(
-            <>
-              <button type="button" className="btn" onClick={() => setAdding(false)}>Back</button>
-              {existing && <button type="button" className="btn" onClick={() => { setAsk(false); setView(existing); }}>Open that client</button>}
-              <button type="button" className="btn btn-primary" disabled={ncBusy || nc.name.trim().length < 2 || !nc.location.trim() || !nc.department} onClick={addClient}>{ncBusy ? 'Adding…' : 'Add client, then upload papers'}</button>
-            </>
-          )}
-        >
-          <div className="small-muted" style={{ marginBottom: 8 }}>For a client who signed before they were in the ATS. They show in Clients at once; next you upload the signed papers.</div>
-          <label className="field"><span>Client name (as on the agreement)</span><input value={nc.name} maxLength={160} onChange={(e) => setNc({ ...nc, name: e.target.value })} /></label>
-          <label className="field"><span>Location (city / branch)</span><input value={nc.location} maxLength={120} onChange={(e) => setNc({ ...nc, location: e.target.value })} /></label>
-          <label className="field">
-            <span>Department</span>
-            <Combo value={nc.department} onChange={(e) => setNc({ ...nc, department: e.target.value })}>
-              <option value="">Pick one</option>
-              {CLIENT_DEPTS.map((x) => <option key={x} value={x}>{deptLabel(x)}</option>)}
-            </Combo>
-          </label>
-          {ncErr && <div className="error-text">{ncErr}</div>}
-        </Modal>
+          onBack={() => setAdding(false)}
+          onAdded={(newId) => { setAll(null); setAdding(false); setAsk(false); setView(newId); }}
+          onOpenExisting={(oldId) => { setAsk(false); setView(oldId); }}
+        />
       )}
       {ask && !adding && (
         <Modal
@@ -345,7 +378,7 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
           </label>
           <div className="small-muted" style={{ marginTop: 8 }}>
             {'Client signed but not in the ATS yet? '}
-            <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setNc({ name: '', location: '', department: '' }); setNcErr(''); setExisting(''); setAdding(true); }}>+ Add new client from a signed agreement</button>
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAdding(true)}>+ Add new client from a signed agreement</button>
           </div>
         </Modal>
       )}

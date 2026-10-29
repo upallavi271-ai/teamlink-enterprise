@@ -29,6 +29,7 @@ import { FollowUpsPanel } from '../components/clients/ClientBusiness.jsx';
 // Spec 6 — the agreement step badge (Draft → Sent → Viewed → Signed → Active → Expired).
 import { agreementStepLabel, agreementStepOf } from '../components/clients/AgreementStep.jsx';
 import { StageChip } from '../components/agreements/AgreementFlow.jsx';
+import { AddSignedClientButton } from '../components/agreements/SignedAgreementFiles.jsx';
 // Clients & Requirements v4 (2026-10-08) — the reference layout on the ATS kit:
 // KPI icon tiles, by department, needs attention, agreement steps, top
 // clients, the dense list. Every number is counted from the loaded GET /clients.
@@ -545,6 +546,8 @@ export default function Clients() {
             {newCount > 0 || onlyNew ? (
               <button type="button" className={`btn${onlyNew ? ' btn-primary' : ''}`} title="Clients added in the last 7 days, newest first. Click again to see everyone." onClick={() => setOnlyNew((v) => !v)}>{`🆕 New (${newCount})`}</button>
             ) : null}
+            {/* founder 2026-10-29: a client who signed outside the ATS (the BDE team and Admin; the server checks) */}
+            {a.add && ['bde', 'admin'].includes(role) ? <AddSignedClientButton onAdded={load} /> : null}
             {a.add ? (
               <button type="button" className="btn btn-primary" onClick={() => { setFlash(''); setAdding(true); }}>+ Add client</button>
             ) : null}
