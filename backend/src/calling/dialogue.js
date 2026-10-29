@@ -56,8 +56,8 @@ const L = {
   salary: ['salary', 'pay', 'ctc', 'package', 'lpa', 'how much', 'stipend', 'वेतन', 'सैलरी', 'तनख्वाह', 'पैकेज', 'జీతం', 'జీతము', 'వేతనం', 'జీతమెంత'],
   later: ['later', 'call back', 'call me back', 'not now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
   resched: ['reschedule', 'change the time', 'change time', 'another time', 'different time', 'other time', 'postpone', 'can we move', 'move it', 'समय बदल', 'दूसरा समय', 'दूसरे समय', 'సమయం మార్చ', 'టైమ్ మార్చ', 'వేరే సమయం', 'మరో సమయం', 'వాయిదా', 'vere samayam'],
-  no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me'],
-  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం'],
+  no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me', 'నో', 'నొ', 'नो', 'नॉट'],
+  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
   info: ['what', 'where', 'which', 'who', 'when', 'how', 'why', 'details', 'tell me', 'more info', 'location', 'address', 'company', 'client', 'link', 'kya', 'kahan', 'kaun', 'kab', 'kaise', 'क्या', 'कहाँ', 'कहां', 'कौन', 'कब', 'कैसे', 'क्यों', 'ఏమిటి', 'ఎక్కడ', 'ఎవరు', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'ఏంటి'],
   immediate: ['immediate', 'immediately', 'serving', 'free', 'fresher', 'तुरंत', 'वेंटनहीं', 'వెంటనే', 'ఇప్పుడే'],
   // the person is upset (user rule 2026-10-28: stay calm, apologise, keep it short, offer a recruiter; never argue)
@@ -111,7 +111,7 @@ function detectLanguage(textIn) {
 
 // "Hello?" / "చెప్పండి" / "बोलिए" on picking up the phone: not an answer and not a failed try - the question is asked again
 const GREETING = ['hello', 'helo', 'hallo', 'hi', 'hey', 'cheppandi', 'boliye', 'bolo', 'హలో', 'హాయ్', 'చెప్పండి', 'हैलो', 'हेलो', 'हलो', 'बोलिए', 'बोलो'];
-const HELLO_BACK = { English: 'Hello.', Telugu: 'హలో అండి.', Hindi: 'जी, नमस्ते।' };
+const HELLO_BACK = { English: 'Hello.', Telugu: 'హలో.', Hindi: 'जी, नमस्ते।' };
 const GREET_EXTRA =['ji', 'जी', 'అండి', 'sir', 'madam', 'haan', 'हाँ', 'హా'];
 function isGreeting(t) {
   const w = t.split(' ').filter(Boolean);
@@ -185,7 +185,8 @@ function readPlace(text) {
 }
 function readTime(text) {
   const raw = String(text || '').normalize('NFKC').replace(/[^\p{L}\p{M}\p{N}\s:.,/-]/gu, ' ').replace(/\s+/g, ' ').trim();
-  return raw ? raw.slice(0, 120) : null;
+  const t = raw.replace(/[s.,:/-]+$/, ''); // "Tomorrow." -> "Tomorrow" (it is read back inside a sentence)
+  return t ? t.slice(0, 120) : null;
 }
 
 // --- the result, validated -----------------------------------------------------------------------------------------------

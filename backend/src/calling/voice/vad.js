@@ -10,7 +10,8 @@
 // ---------------------------------------------------------------------------
 const FRAME_MS = 20;
 const START_FRAMES = 3; // 60 ms of voice = talking
-const END_MS = 700; // this much quiet = finished
+const STRICT_FRAMES = 15; // while the assistant speaks: 300 ms of clearly louder voice (line echo / noise must not cut it off)
+const END_MS = 550; // this much quiet = finished (700 felt slow on the phone, 2026-10-29)
 const MIN_MS = 250; // shorter than this = a click / a cough
 const MAX_MS = 12000;
 const PRE_MS = 200; // keep a little audio from just before the start (the first sound of the word)
@@ -22,7 +23,9 @@ function rms(frame) {
 }
 
 class Vad {
-  constructor({ onStart, onEnd, minLevel = 400 } = {}) {
+  // strict(): true while the assistant is speaking - only a real, louder voice counts then (barge-in), not its own echo
+  constructor({ onStart, onEnd, minLevel = 400, strict = () => false } = {}) {
+    this.strict = strict;
     this.onStart = onStart || (() => {});
     this.onEnd = onEnd || (() => {});
     this.minLevel = minLevel; // below this a frame is never speech (line hiss)
@@ -40,13 +43,14 @@ class Vad {
   push(frame) {
     if (this.paused) return;
     const e = rms(frame);
-    const voiced = e > this.level();
+    const hard = !this.talking && this.strict();
+    const voiced = e > (hard ? Math.max(this.minLevel * 4, this.noise * 8) : this.level());
     if (!this.talking) {
       if (!voiced) this.noise = this.noise * 0.95 + e * 0.05; // learn the line's background level while quiet
       this.pre.push(frame);
       if (this.pre.length > PRE_MS / FRAME_MS) this.pre.shift();
       this.loud = voiced ? this.loud + 1 : 0;
-      if (this.loud >= START_FRAMES) {
+      if (this.loud >= (hard ? STRICT_FRAMES : START_FRAMES)) {
         this.talking = true; this.quietMs = 0; this.frames = this.pre.slice(); this.pre = [];
         this.onStart();
       }

@@ -24,6 +24,10 @@ const GAP_MS = 80; // a short breath between sentences (kept short: a slow assis
 const cache = new Map(); // `${lang}|${sentence}` -> 8 kHz PCM
 const CACHE_MAX = 3000;
 const log = (...a) => console.log('[ai-voice]', ...a); // eslint-disable-line no-console
+// AI_VOICE_DEBUG_FILE (test PCs only): what was heard / said, one line each, to see why a call went wrong. Holds speech text.
+const DEBUG = process.env.AI_VOICE_DEBUG_FILE || '';
+const debug = (line) => { try { require('fs').appendFileSync(DEBUG, `${new Date().toISOString().slice(11, 19)} ${line}
+`); } catch { /* */ } }; // eslint-disable-line global-require
 
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
 const talkTime = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${sec % 60} s` : `${sec} s`);
@@ -31,7 +35,8 @@ const talkTime = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${sec % 60} 
 async function voiceOf(engines, sentence, lang) {
   const k = `${lang}|${sentence}`;
   if (cache.has(k)) return cache.get(k);
-  const pcm = await engines.tts(sentence, lang);
+  // names / English job words in the voice's own letters (speakScript.js): "Keerthi" -> కీర్తి, "office" -> ఆఫీస్
+  const pcm = await engines.tts(require('./speakScript').native(sentence, lang), lang); // eslint-disable-line global-require
   if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
   cache.set(k, pcm);
   return pcm;
@@ -42,19 +47,36 @@ async function prepare(engines, lines, lang) {
   for (const l of lines) for (const s of sentences(l)) await voiceOf(engines, s, lang); // eslint-disable-line no-await-in-loop
 }
 
+// EVERY sentence this call may need, made while the phone rings (2026-10-29: "chaala slow ga respond avuthundhi"): the
+// job's own lines first (name, intro, brief, questions), then the fixed replies. Kept, so later calls get them free.
+function prepareCall(engines, d) {
+  const own = Object.values(d.B || {}).flat().filter((t) => typeof t === 'string' && t);
+  const fixed = Object.values(d.P || {}).filter((t) => typeof t === 'string' && t && !t.includes('{'));
+  return prepare(engines, [...own, ...fixed], d.language).catch((e) => log('prepare failed:', e.message));
+}
+// The fixed replies of every language, once when the gateway starts (idle time), so the first calls are quick too.
+function prepareFixed(engines, S) {
+  return S.LANGS.reduce((p, lang) => p.then(() => prepare(engines, Object.values(S.phrases(lang)).filter((t) => typeof t === 'string' && t && !t.includes('{')), lang)).catch(() => {}), Promise.resolve());
+}
+
 // Plays PCM to Asterisk at real-time pace (20 ms frames). stop() = silence at once (barge-in).
+// Paced by the clock, not by the timer count: Windows timers fire every ~16 ms, so "one frame per tick" came out uneven
+// and crackled on the line. Every 5 ms it sends exactly the frames that are due since playback began.
 class Speaker {
-  constructor(sock) { this.sock = sock; this.queue = []; this.timer = null; this.onIdle = null; this.sent = 0; }
+  constructor(sock) { this.sock = sock; this.queue = []; this.timer = null; this.onIdle = null; this.sent = 0; this.t0 = 0; this.done = 0; }
   get busy() { return this.queue.length > 0; }
   add(pcm) {
     for (let i = 0; i < pcm.length; i += A.FRAME_BYTES) {
       const f = Buffer.alloc(A.FRAME_BYTES); pcm.copy(f, 0, i, Math.min(pcm.length, i + A.FRAME_BYTES)); this.queue.push(f);
     }
-    if (!this.timer) this.timer = setInterval(() => this.tick(), A.FRAME_MS);
+    if (!this.timer) { this.t0 = Date.now(); this.done = 0; this.timer = setInterval(() => this.tick(), 5); }
   }
   tick() {
-    const f = this.queue.shift();
-    if (f && !this.sock.destroyed) { this.sock.write(A.encode(A.KIND.AUDIO, f)); this.sent += 1; }
+    const due = Math.floor((Date.now() - this.t0) / A.FRAME_MS) + 1 - this.done;
+    for (let k = 0; k < due && this.queue.length; k += 1) {
+      const f = this.queue.shift(); this.done += 1;
+      if (!this.sock.destroyed) { this.sock.write(A.encode(A.KIND.AUDIO, f)); this.sent += 1; }
+    }
     if (!this.queue.length) { clearInterval(this.timer); this.timer = null; const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
   }
   stop() { this.queue = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
@@ -68,6 +90,8 @@ async function finish(row, d, why) {
   if (durationSec != null) result.summary = `${result.summary} Talked for ${talkTime(durationSec)} (AI phone call).`.slice(0, 600);
   await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: true }), status: 'completed', language: d.language, endedAt: t.toISOString(), durationSec, providerStatus: 'audiosocket' });
   await require('../outcomes').applyResult(row.id, result, d.transcript()); // eslint-disable-line global-require
+  // the language they spoke is where the next call starts
+  if (row.candidateId && d.language) await require('../schema').run('INSERT OR REPLACE INTO "AiCallPref" ("candidateId","language","source","updatedAt") VALUES (?,?,?,?)', row.candidateId, d.language, 'call', t.toISOString()).catch(() => {}); // eslint-disable-line global-require
   return result;
 }
 
@@ -82,6 +106,7 @@ function handle(sock, engines, opts = {}) {
 
   async function say(text) {
     const my = ++gen; // a newer reply (or a barge-in) cancels the rest of this one
+    if (DEBUG && row) debug(`${row.id} says [${d.language}]: ${text}`);
     for (const s of sentences(text)) {
       let pcm;
       try { pcm = await voiceOf(engines, s, d.language); } catch (e) { log('tts failed:', e.message); continue; } // eslint-disable-line no-await-in-loop
@@ -100,12 +125,18 @@ function handle(sock, engines, opts = {}) {
       const cur = d.language;
       const listen = (l) => engines.stt(pcm, l).catch((e) => { log('stt failed:', e.message); return ''; });
       const [found, first] = await Promise.all([
-        engines.detect && pcm.length >= A.RATE * 2 * 2 ? engines.detect(pcm).catch((e) => { log('detect failed:', e.message); return null; }) : null,
+        // 1.4 s and up (with the end pause): a language can be told; a short answer must be very clear (0.85) to switch
+        engines.detect && pcm.length >= A.RATE * 2 * 1.4 ? engines.detect(pcm, pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.85).catch((e) => { log('detect failed:', e.message); return null; }) : null,
         listen(cur),
       ]);
-      const lang = found || cur;
+      // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
+      // Whisper guesses badly on a second of sound (heard 'हाँ, ठीक है' as English in the 2026-10-28 test)
+      const shortClip = pcm.length < A.RATE * 2 * 2;
+      const understood = shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent); // eslint-disable-line global-require
+      const lang = (understood ? null : found) || cur;
       const text = lang === cur ? first : await listen(lang);
       if (opts.onHeard) opts.onHeard(text, lang);
+      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s: ${text}`);
       const out = await d.hear(text);
       await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: !!out.done }) });
       await say(out.say);
@@ -122,7 +153,8 @@ function handle(sock, engines, opts = {}) {
   }
 
   const vad = new Vad({
-    onStart: () => { if (speaker.busy) { gen += 1; speaker.stop(); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
+    strict: () => speaker.busy,
+    onStart: () => { if (speaker.busy) { gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
     onEnd: (pcm) => { heard(pcm); },
   });
 
@@ -164,4 +196,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { start, handle, prepare, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };

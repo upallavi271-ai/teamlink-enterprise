@@ -133,7 +133,12 @@ async function place(user, input, deps = {}) {
   const fields = S.cleanFields(input.fields);
   const fe = S.checkFields(fields);
   if (fe) return svc.fail(400, 'script', fe);
-  const lang = svc.languageFor(s, ctx.candidate, await svc.languagePref(ctx.candidate.id), input.language);
+  // The call starts in the language this person spoke last time, else AI_VOICE_START_LANGUAGE (Telugu); from the first
+  // sentence on, the assistant follows whatever language they speak (gateway.js + Whisper) - no choosing needed (user, 2026-10-28).
+  const start = S.LANGS.includes(process.env.AI_VOICE_START_LANGUAGE) ? process.env.AI_VOICE_START_LANGUAGE : 'Telugu';
+  // only a language the person SPOKE on an earlier call counts (source 'call'), not one a recruiter picked in a window
+  const spoke = await DB.one('SELECT "language" FROM "AiCallPref" WHERE "candidateId" = ? AND "source" = ?', ctx.candidate.id, 'call');
+  const lang = S.LANGS.includes(input.language) ? input.language : (spoke && S.LANGS.includes(spoke.language) ? spoke.language : start);
 
   const id = svc.newId('aic');
   const uuid = crypto.randomUUID();
@@ -153,6 +158,7 @@ async function place(user, input, deps = {}) {
     try {
       const d = await require('../webTalk').dialogueFor(await svc.getCall(id)); // eslint-disable-line global-require
       await Promise.race([gateway.prepare(gateway.engines(), [d.start().say], lang), new Promise((r) => { setTimeout(r, 8000); })]);
+      gateway.prepareCall(gateway.engines(), d); // the rest while the phone rings (not awaited)
     } catch (e) { log('prepare failed:', e.message); }
   }
 
@@ -216,6 +222,7 @@ async function start() {
   // calling/local (the other self-hosted bridge) may listen for Asterisk too: never both on one port
   if (Number(process.env.AI_CALL_AUDIOSOCKET_PORT) === c.port) { log(`not started: port ${c.port} is AI_CALL_AUDIOSOCKET_PORT (calling/local). Use one of the two.`); return null; }
   const server = await gateway.start({ port: c.port });
+  setTimeout(() => gateway.prepareFixed(gateway.engines(), S), 20000).unref(); // the fixed replies, once, after start-up
   await sweep(Date.now() + STUCK_MS * 100).catch(() => {}); // after a restart nothing is still dialling
   if (c.ready && c.via === 'direct') log(`dialling straight to the SIM gateway ${c.synway.host} from ${c.localIp}`);
   else if (c.ready) ami(c).then(() => log('Asterisk manager connected')).catch((e) => log(e.message));
