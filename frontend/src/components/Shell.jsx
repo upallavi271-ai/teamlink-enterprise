@@ -21,6 +21,7 @@ import GlobalSearch from './GlobalSearch.jsx';
 import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
 import { hasAtsWork } from '../utils/useAtsAlerts';
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
+import { canOpenJobPortalStaff } from '../pages/JobPortalLaunch.jsx';
 import { useOmniEntry } from './outreach/useOmniChildren.js';
 import OmniTopChips from './omni/OmniTopChips.jsx';
 import './ShellPhone.css';
@@ -223,9 +224,17 @@ export default function Shell() {
               nothing to do with the job portal). */}
           {user?.products?.ats && !isExternalUser(user) && (
             <div className="sb-group">
-              <a className="sb-item" href={`${jobPortalUrl}/`} target="_blank" rel="noreferrer">
-                <Ico char="🌐" />Job Portal (public) ↗
-              </a>
+              {/* 2026-10-29: Admins, Recruiters and TLs open the Job Portal already signed in with this login (no second login);
+                  everyone else gets the public portal. */}
+              {canOpenJobPortalStaff(user) ? (
+                <a className="sb-item" href="/sso/job-portal" target="_blank" rel="noreferrer" title="Opens the Job Portal in a new tab, already signed in">
+                  <Ico char="🌐" />Job Portal ↗
+                </a>
+              ) : (
+                <a className="sb-item" href={`${jobPortalUrl}/`} target="_blank" rel="noreferrer">
+                  <Ico char="🌐" />Job Portal (public) ↗
+                </a>
+              )}
             </div>
           )}
         </nav>

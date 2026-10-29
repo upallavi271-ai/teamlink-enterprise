@@ -65,6 +65,9 @@ export function AuthProvider({ children }) {
       import('../components/ViewAs.jsx').then((m) => m.exitViewAs());
       return;
     }
+    // the Job Portal sessions opened from this sign-in end too (backend/src/utils/jobPortalSso.js); fire and forget
+    const signedIn = localStorage.getItem('tl_token'); // read now: the token is gone before an interceptor would run
+    if (signedIn) api.post('/sso/job-portal/signout', null, { headers: { Authorization: `Bearer ${signedIn}` } }).catch(() => {});
     localStorage.removeItem('tl_token');
     clearKeptState(); // the lists' kept search / filters / page (utils/useKeptState.js)
     setUser(null);

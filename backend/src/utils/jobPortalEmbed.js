@@ -127,11 +127,22 @@ function newestCodeChange() {
   walk(EMBED_DIR, 0);
   return newest;
 }
+// The portal's sign-in settings (2026-10-29): a portal started with other ones (or before they existed) is started again, like new code.
+const SETTINGS_FILE = path.join(RUN_DIR, 'settings.sha');
+function settingsMark() {
+  const e = portalEnv();
+  return crypto.createHash('sha256').update(`${e.HRMS_SSO_SECRET}|${e.HRMS_URL}|${e.HRMS_API_URL}`).digest('hex');
+}
+function settingsChanged() {
+  let was = '';
+  try { was = fs.readFileSync(SETTINGS_FILE, 'utf8').trim(); } catch { /* never written: started before this existed */ }
+  return was !== settingsMark();
+}
 function portalIsStale() {
   const p = readPid();
   const startedAt = p && p.startedAt ? Date.parse(p.startedAt) : NaN;
   if (!Number.isFinite(startedAt)) return false; // unknown start time: never restart on a guess
-  return newestCodeChange() > startedAt + 1000;
+  return newestCodeChange() > startedAt + 1000 || settingsChanged();
 }
 // Ask the old portal to stop (and keep the heartbeat saying so until it is gone), then let check() start the new code.
 async function restartForNewCode() {
@@ -186,6 +197,11 @@ function portalEnv() {
     TEAMLINK_API_URL: `http://127.0.0.1:${process.env.PORT || 4010}`,
     JOB_PORTAL_SYNC_TOKEN: process.env.JOB_PORTAL_SYNC_TOKEN || '',
     JOB_PORTAL_PUSH_SECRET: process.env.JOB_PORTAL_PUSH_SECRET || '',
+    // Sign-in from TeamLink (2026-10-29, utils/jobPortalSso.js): the portal checks TeamLink's tokens with this, and a signed-out
+    // recruiter page goes to <this site>/sso/job-portal. The portal's own "Back to HRMS" also goes to this site.
+    HRMS_SSO_SECRET: env.HRMS_SSO_SECRET || require('./jobPortalSso').secret(), // eslint-disable-line global-require
+    HRMS_URL: env.HRMS_URL || site,
+    HRMS_API_URL: env.HRMS_API_URL || `http://127.0.0.1:${process.env.PORT || 4010}`,
   });
   return env;
 }
@@ -194,6 +210,8 @@ function launch() {
   state.lastStartAt = new Date();
   fs.mkdirSync(RUN_DIR, { recursive: true });
   beat();
+  try { fs.writeFileSync(SETTINGS_FILE, `${settingsMark()}
+`); } catch { /* the next start compares again */ }
   const child = spawn(process.execPath, [path.join(EMBED_DIR, 'launcher.cjs')], {
     cwd: PORTAL_DIR,
     env: portalEnv(),

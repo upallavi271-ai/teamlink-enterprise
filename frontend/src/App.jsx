@@ -72,6 +72,7 @@ import Profile from './pages/admin/Profile.jsx';
 // (backend utils/jobPortalEmbed.js). The morning's built-in /careers pages
 // (pages/careers/) are no longer routed: /careers* forwards to /jobs.
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
+import JobPortalLaunch from './pages/JobPortalLaunch.jsx'; // /sso/job-portal: the Job Portal already signed in with this login (2026-10-29)
 import AgreementSigning from './pages/AgreementSigning.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free AI link (public)
@@ -202,6 +203,8 @@ export default function App() {
       {/* Omni-Channel full page (founder 2026-10-29: "full page open avali ... logins adakunda"): the sidebar Omni-Channel opens this in its own tab -
           Green Start alone over the whole window with its own sidebar, already signed in (no TeamLink sidebar / header around it). */}
       <Route path="/green-start" element={<ProtectedRoute><OmniEntry full /></ProtectedRoute>} />
+      {/* The Job Portal already signed in with the TeamLink login (founder 2026-10-29: recruiters get no separate login). */}
+      <Route path="/sso/job-portal" element={<ProtectedRoute><JobPortalLaunch /></ProtectedRoute>} />
 
       <Route
         path="/"
