@@ -11,10 +11,13 @@
 const FRAME_MS = 20;
 const START_FRAMES = 3; // 60 ms of voice = talking
 const STRICT_FRAMES = 15; // while the assistant speaks: 300 ms of clearly louder voice (line echo / noise must not cut it off)
-const END_MS = 550; // this much quiet = finished (700 felt slow on the phone, 2026-10-29)
+// this much quiet = finished. 550 cut people off while they paused to think ("I think that's not..." ended a call as Not
+// Interested, 2026-10-29); 800 by default, AI_VOICE_END_MS to tune it against real calls (400 - 2000).
+const END_MS = Math.min(2000, Math.max(400, Number(process.env.AI_VOICE_END_MS) || 800));
 const MIN_MS = 250; // shorter than this = a click / a cough
 const MAX_MS = 12000;
 const PRE_MS = 200; // keep a little audio from just before the start (the first sound of the word)
+const BARGE_PRE_FRAMES = 1000 / 20; // over the assistant: a full second before the voice was believed (2026-10-29)
 
 function rms(frame) {
   let sum = 0; const n = Math.floor(frame.length / 2);
@@ -48,10 +51,13 @@ class Vad {
     if (!this.talking) {
       if (!voiced) this.noise = this.noise * 0.95 + e * 0.05; // learn the line's background level while quiet
       this.pre.push(frame);
-      if (this.pre.length > PRE_MS / FRAME_MS) this.pre.shift();
+      // keep up to a second of audio from before the start. With only PRE_MS kept, a person who spoke over the assistant
+      // lost their first words ("तीस दिन का नोटिस है" reached the listener as "नोटिस है", 2026-10-29).
+      if (this.pre.length > BARGE_PRE_FRAMES) this.pre.shift();
       this.loud = voiced ? this.loud + 1 : 0;
       if (this.loud >= (hard ? STRICT_FRAMES : START_FRAMES)) {
-        this.talking = true; this.quietMs = 0; this.frames = this.pre.slice(); this.pre = [];
+        // a normal start keeps PRE_MS; talking OVER the assistant keeps a full second (its quiet first syllables)
+        this.talking = true; this.quietMs = 0; this.frames = hard ? this.pre.slice() : this.pre.slice(-(PRE_MS / FRAME_MS + START_FRAMES)); this.pre = [];
         this.onStart();
       }
       return;

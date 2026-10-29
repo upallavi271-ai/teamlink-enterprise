@@ -6,9 +6,21 @@ import Modal from '../Modal.jsx';
 // TALK HISTORY (founder 2026-10-29: "call ayyaka, timeline lo talk history aney oka button vundali. adhi click cheyyaganey,
 // em matladaro mottham kanipinchali"). The whole conversation of one AI call, line by line - the assistant on the left,
 // the candidate on the right - from GET /ai-calling/calls/:id (the transcript is read only by those who may place calls).
+// A candidate line shows the EXACT words heard, and apart from them, in grey, how the AI read them (2026-10-29): the
+// reading is never shown as if the person said it. Answers that were not heard clearly, or no reply, are marked.
 // ---------------------------------------------------------------------------
 
 const talked = (s) => (s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`);
+const UNDERSTOOD = {
+  yes: 'Yes', no: 'No', mixed: 'Yes and no — asked again', maybe: 'Not sure / maybe', repeat: 'Asked to repeat', cant_hear: "Couldn't hear the AI",
+  later: 'Call later', reschedule: 'Change the time', salary_q: 'Asked about salary', info_q: 'Asked a question', stop: 'Do not call', human: 'Wants a recruiter',
+  ai_q: 'Asked if this is AI', other_cand: 'Asked about others', unclear: 'Not understood', not_clear: 'Not heard clearly (asked again)', silence: 'No reply',
+  language: 'Asked for a language',
+};
+const clock = (at) => {
+  const d = at ? new Date(at) : null;
+  return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
+};
 
 export function TalkHistoryButton({ call }) {
   const [open, setOpen] = useState(false);
@@ -43,16 +55,27 @@ export function TalkHistoryWindow({ id, onClose }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: '60vh', overflow: 'auto' }}>
         {lines.map((t, i) => {
           const ai = t.who === 'assistant';
+          const none = !ai && (t.heard === 'none' || (!t.text && !t.heard));
+          const unclear = !ai && t.heard === 'unclear';
+          const reading = !ai && !none && UNDERSTOOD[t.understood];
+          const at = clock(t.at);
           return (
             <div key={i} style={{ alignSelf: ai ? 'flex-start' : 'flex-end', maxWidth: '82%' }}>
-              <div className="small-muted" style={{ fontSize: 11, textAlign: ai ? 'left' : 'right' }}>{ai ? 'AI assistant' : 'Candidate'}</div>
+              <div className="small-muted" style={{ fontSize: 11, textAlign: ai ? 'left' : 'right' }}>
+                {ai ? 'AI assistant' : 'Candidate'}
+                {!ai && t.lang ? ` · ${t.lang}` : ''}
+                {at ? ` · ${at}` : ''}
+              </div>
               <div style={{
                 background: ai ? 'var(--paper, #f4f6fa)' : '#e8f0fe', border: '1px solid var(--line, #e2e6ee)', borderRadius: 10,
-                padding: '6px 10px', fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap',
+                padding: '6px 10px', fontSize: 14, lineHeight: 1.5, whiteSpace: 'pre-wrap', opacity: none || unclear ? 0.75 : 1,
               }}
               >
-                {t.text || <span className="small-muted">(nothing heard)</span>}
+                {!ai && !none && <div className="small-muted" style={{ fontSize: 11 }}>Heard (exact words)</div>}
+                {none ? <span className="small-muted">No reply heard</span> : (t.text || <span className="small-muted">(no words came through)</span>)}
+                {unclear && <div><span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--line, #e2e6ee)' }}>Not heard clearly — asked again</span></div>}
               </div>
+              {reading && !unclear && <div className="small-muted" style={{ fontSize: 11, textAlign: 'right', marginTop: 2 }}>{`AI understood: ${reading}`}</div>}
             </div>
           );
         })}

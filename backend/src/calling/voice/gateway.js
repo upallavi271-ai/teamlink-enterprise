@@ -29,6 +29,36 @@ const DEBUG = process.env.AI_VOICE_DEBUG_FILE || '';
 const debug = (line) => { try { require('fs').appendFileSync(DEBUG, `${new Date().toISOString().slice(11, 19)} ${line}
 `); } catch { /* */ } }; // eslint-disable-line global-require
 
+// HOW CLEARLY an answer was heard (2026-10-29: "Yes, I have" reached the assistant as "Yes, I can't tell you so much about
+// it", and noise as the Hindi-looking 'आपस्पटोल'). An answer that is not heard reliably is never read as yes / no / a time:
+// the assistant asks again (dialogue.js unheard()). Whisper's own sureness (whisper_server.py conf) decides for English;
+// IndicConformer gives none, so Telugu / Hindi are judged only by empty words and the language-switch check below.
+const num = (v, d) => (Number.isFinite(Number(v)) && String(v).trim() !== '' ? Number(v) : d);
+// calibrated 2026-10-29 on 8 kHz clips with line noise (scratch whisper-calibrate): -1.0 let "I'm not doing this" (for "I have
+// three years") and "Bye." through; -0.7 / 0.5 catch them, and a clean clear answer stays well above (-0.1 to -0.6)
+const MIN_LOGPROB = num(process.env.AI_VOICE_MIN_LOGPROB, -0.7); // below = Whisper was guessing
+const MAX_NO_SPEECH = num(process.env.AI_VOICE_MAX_NO_SPEECH, 0.5); // above (with a weak logprob) = words made up from noise
+const MAX_RATIO = 2.4; // repeated / looping text
+// no voice at all this long after the assistant finished = "are you still there?" (never read as an answer)
+const SILENCE_MS = Math.min(30000, Math.max(4000, num(process.env.AI_VOICE_SILENCE_MS, 8000)));
+function clarityOf(text, conf) {
+  if (!String(text || '').trim()) return 'unclear'; // the line carried speech (the VAD heard it) but no words came out
+  if (conf && typeof conf === 'object') {
+    const lp = Number(conf.logprob); const ns = Number(conf.noSpeech); const ratio = Number(conf.ratio);
+    if (Number.isFinite(lp) && lp < MIN_LOGPROB) return 'unclear';
+    if (Number.isFinite(ns) && ns > MAX_NO_SPEECH && Number.isFinite(lp) && lp < -0.5) return 'unclear';
+    if (Number.isFinite(ratio) && ratio > MAX_RATIO) return 'unclear';
+  }
+  return 'clear';
+}
+// A switch by SOUND alone is believed only when the words heard in the new language make sense: two words or more, or a
+// known answer ("avunu", "हाँ"). One unknown word ('आपस्पटोल') is noise: unclear, and the call stays in its language.
+function believable(text) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return true;
+  return words.length === 1 && !['unclear', 'silence'].includes(require('../dialogue').classify(text).intent); // eslint-disable-line global-require
+}
+
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
 const talkTime = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${sec % 60} s` : `${sec} s`);
 
@@ -63,7 +93,7 @@ function prepareFixed(engines, S) {
 // Paced by the clock, not by the timer count: Windows timers fire every ~16 ms, so "one frame per tick" came out uneven
 // and crackled on the line. Every 5 ms it sends exactly the frames that are due since playback began.
 class Speaker {
-  constructor(sock) { this.sock = sock; this.queue = []; this.timer = null; this.onIdle = null; this.sent = 0; this.t0 = 0; this.done = 0; }
+  constructor(sock) { this.sock = sock; this.queue = []; this.timer = null; this.onIdle = null; this.sent = 0; this.t0 = 0; this.done = 0; this.quietSince = Date.now(); }
   get busy() { return this.queue.length > 0; }
   add(pcm) {
     for (let i = 0; i < pcm.length; i += A.FRAME_BYTES) {
@@ -77,9 +107,9 @@ class Speaker {
       const f = this.queue.shift(); this.done += 1;
       if (!this.sock.destroyed) { this.sock.write(A.encode(A.KIND.AUDIO, f)); this.sent += 1; }
     }
-    if (!this.queue.length) { clearInterval(this.timer); this.timer = null; const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
+    if (!this.queue.length) { clearInterval(this.timer); this.timer = null; this.quietSince = Date.now(); const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
   }
-  stop() { this.queue = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
+  stop() { this.queue = []; if (this.timer) { clearInterval(this.timer); this.timer = null; } this.quietSince = Date.now(); const cb = this.onIdle; this.onIdle = null; if (cb) cb(); }
   whenIdle() { return this.busy || this.timer ? new Promise((r) => { this.onIdle = r; }) : Promise.resolve(); }
 }
 
@@ -100,6 +130,9 @@ function handle(sock, engines, opts = {}) {
   const reader = new A.Reader();
   const speaker = new Speaker(sock);
   let row = null; let d = null; let ended = false; let saved = false; let busy = false; let pending = null; let gen = 0;
+  let lastVoice = Date.now(); let quietTimer = null;
+  // the talk so far, after every turn (a dropped line or a restart keeps it); never blocks or breaks the call
+  const keepTurns = () => (row && d ? require('../outcomes').saveTurns(row.id, d.transcript()).catch(() => false) : Promise.resolve(false)); // eslint-disable-line global-require
   // the result is saved exactly once: at the assistant's own goodbye, or when the line drops (even during that goodbye)
   const save = (why) => { if (saved || !row || !d) return null; saved = true; return finish(row, d, why).catch((e) => log('finish failed:', e.message)); };
   const hangup = () => { if (!sock.destroyed) { sock.write(A.encode(A.KIND.HANGUP)); sock.end(); } };
@@ -117,6 +150,20 @@ function handle(sock, engines, opts = {}) {
     }
   }
 
+  // One answer (or a silence) -> the assistant's reply. A failing engine or database never leaves the line silent.
+  async function reply(text, meta) {
+    const out = await d.hear(text, meta);
+    await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: !!out.done }) }).catch((e) => log('state not saved:', e.message));
+    await keepTurns();
+    await say(out.say);
+    if (out.done) {
+      ended = true;
+      await speaker.whenIdle();
+      await save();
+      hangup();
+    }
+  }
+
   async function heard(pcm) {
     if (ended || !d) return;
     if (busy) { pending = pcm; return; } // keep only the latest sentence said while we were still thinking
@@ -126,8 +173,11 @@ function handle(sock, engines, opts = {}) {
       // (a clip under ~2 s with its end pause - "yes", "haan theek" - is too short to tell a language by sound)
       const t0 = Date.now();
       const cur = d.language;
-      const listen = (l) => engines.stt(pcm, l).catch((e) => { log('stt failed:', e.message); return ''; });
-      let found = null; let first = ''; let byScript = false;
+      // the words AND Whisper's sureness ({ text, conf }); an engine without sttEx gives words only (conf null)
+      const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l) : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
+        .then((r) => ({ text: (r && r.text) || '', conf: (r && r.conf) || null }))
+        .catch((e) => { log('stt failed:', e.message); return { text: '', conf: null }; });
+      let found = null; let first = { text: '', conf: null }; let byScript = false;
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -135,8 +185,8 @@ function handle(sock, engines, opts = {}) {
         const sure = cur === 'English' || pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.75;
         if (cur === 'English' && engines.hear) {
           // one Whisper pass: the language, and the English words only when it is English (2026-10-29: "chaala late")
-          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '' }; });
-          if (h.lang !== 'English') { found = h.lang; byScript = true; } else first = h.text;
+          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '', conf: null }; });
+          if (h.lang !== 'English') { found = h.lang; byScript = true; } else first = { text: h.text || '', conf: h.conf || null };
         } else {
           // Telugu / Hindi mode: the words and Whisper's language check side by side, on EVERY answer of 1.4 s or more. (A
           // skip-when-understood shortcut missed English: the Telugu model writes "Yes, I have ..." as "యెస్ ఐ హావ్ ...",
@@ -147,24 +197,27 @@ function handle(sock, engines, opts = {}) {
           ]);
         }
       }
-      if (byScript) first = ''; // heard again below in the language found
+      if (byScript) first = { text: '', conf: null }; // heard again below in the language found
       // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
       // Whisper guesses badly on a second of sound (heard 'हाँ, ठीक है' as English in the 2026-10-28 test)
       const shortClip = pcm.length < A.RATE * 2 * 2;
-      const understood = !byScript && shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent); // eslint-disable-line global-require
-      const lang = (understood ? null : found) || cur;
-      const text = lang === cur && !byScript ? first : await listen(lang);
-      if (opts.onHeard) opts.onHeard(text, lang);
-      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms: ${text}`);
-      const out = await d.hear(text);
-      await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: !!out.done }) });
-      await say(out.say);
-      if (out.done) {
-        ended = true;
-        await speaker.whenIdle();
-        await save();
-        hangup();
+      const understood = !byScript && shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first.text).intent); // eslint-disable-line global-require
+      let lang = (understood ? null : found) || cur;
+      const r = lang === cur && !byScript ? first : await listen(lang);
+      let heardAs = clarityOf(r.text, r.conf);
+      // a language guessed from the sound whose words make no sense in that language: noise, not a switch
+      if (lang !== cur && !believable(r.text)) {
+        if (DEBUG) debug(`${row.id} not switching to ${lang}: "${r.text}" does not make sense`);
+        lang = cur; heardAs = 'unclear';
       }
+      const { text } = r;
+      if (opts.onHeard) opts.onHeard(text, lang);
+      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms, ${heardAs}: ${text}`);
+      await reply(text, { heard: heardAs, lang });
+    } catch (e) {
+      // the brain / an engine / the database failed on this answer: say a safe line and wait for the next one
+      log('turn failed:', e.message);
+      if (!ended && d && !sock.destroyed) await say(d.P.notClear).catch(() => {});
     } finally {
       busy = false;
       if (pending && !ended) { const p = pending; pending = null; heard(p); }
@@ -173,7 +226,7 @@ function handle(sock, engines, opts = {}) {
 
   const vad = new Vad({
     strict: () => speaker.busy,
-    onStart: () => { if (speaker.busy) { gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
+    onStart: () => { lastVoice = Date.now(); if (speaker.busy) { gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
     onEnd: (pcm) => { heard(pcm); },
   });
 
@@ -187,8 +240,22 @@ function handle(sock, engines, opts = {}) {
     row.startedAt = at;
     const first = d.start();
     await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: false }) });
+    await keepTurns();
     if (opts.onStart) opts.onStart(row);
     await say(first.say);
+    // SILENCE: nothing said for SILENCE_MS after the assistant went quiet -> "are you still there?" (never yes / no / consent)
+    quietTimer = setInterval(() => {
+      if (ended || busy || !d || speaker.busy || speaker.timer || vad.talking) return;
+      const since = Math.max(speaker.quietSince, lastVoice);
+      if (Date.now() - since < SILENCE_MS) return;
+      lastVoice = Date.now(); // one check-in per quiet stretch
+      busy = true;
+      if (DEBUG) debug(`${row.id} no reply for ${Math.round(SILENCE_MS / 1000)} s`);
+      reply('', { heard: 'none' }).catch((e) => log('silence turn failed:', e.message)).finally(() => {
+        busy = false;
+        if (pending && !ended) { const p = pending; pending = null; heard(p); }
+      });
+    }, 500);
   }
 
   sock.on('data', (chunk) => {
@@ -199,6 +266,7 @@ function handle(sock, engines, opts = {}) {
     }
   });
   sock.on('close', () => {
+    if (quietTimer) { clearInterval(quietTimer); quietTimer = null; }
     speaker.stop();
     if (!ended) { ended = true; save('the person hung up'); } else save(); // cut during the goodbye: the assistant had finished, keep its result
     if (opts.onClose) opts.onClose();
@@ -215,4 +283,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };

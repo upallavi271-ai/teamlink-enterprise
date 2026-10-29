@@ -27,7 +27,7 @@ const OUTCOMES = {
   'Interview Notification': ['Confirmed', 'Reschedule Requested', 'Not Available', 'No Response'],
   'Interview Reminder': ['Confirmed', 'Reschedule Requested', 'Not Available', 'No Response'],
 };
-const INTENTS = ['stop', 'human', 'later', 'reschedule', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'no', 'yes', 'silence', 'unclear'];
+const INTENTS = ['stop', 'human', 'later', 'reschedule', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'no', 'yes', 'mixed', 'maybe', 'repeat', 'cant_hear', 'silence', 'unclear'];
 
 // --- reading what the person said --------------------------------------------------------------------------------------
 const DIGITS = { '०': '0', '१': '1', '२': '2', '३': '3', '४': '4', '५': '5', '६': '6', '७': '7', '८': '8', '९': '9', '౦': '0', '౧': '1', '౨': '2', '౩': '3', '౪': '4', '౫': '5', '౬': '6', '౭': '7', '౮': '8', '౯': '9' };
@@ -54,7 +54,7 @@ const L = {
     'insaan ho', 'manishaa', 'manishena', 'रोबोट', 'मशीन', 'आप इंसान', 'రోబో', 'మెషిన్', 'మనిషా', 'మనిషేనా', 'మనిషి నా'],
   other: ['other candidate', 'other candidates', 'another candidate', 'someone else', 'other people', 'who else', 'names of', 'list of candidates', 'all candidates'],
   salary: ['salary', 'pay', 'ctc', 'package', 'lpa', 'how much', 'stipend', 'वेतन', 'सैलरी', 'तनख्वाह', 'पैकेज', 'జీతం', 'జీతము', 'వేతనం', 'జీతమెంత'],
-  later: ['later', 'call back', 'call me back', 'not now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
+  later: ['later', 'call back', 'call me back', 'not now', 'not right now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
   resched: ['reschedule', 'change the time', 'change time', 'another time', 'different time', 'other time', 'postpone', 'can we move', 'move it', 'समय बदल', 'दूसरा समय', 'दूसरे समय', 'సమయం మార్చ', 'టైమ్ మార్చ', 'వేరే సమయం', 'మరో సమయం', 'వాయిదా', 'vere samayam'],
   no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me', 'నో', 'నొ', 'नो', 'नॉट'],
   yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
@@ -69,6 +69,45 @@ const L = {
     'फ्रॉड', 'धोखा', 'पैसे', 'फीस', 'ओटीपी', 'ఫ్రాడ్', 'మోసం', 'డబ్బు', 'ఫీజు', 'ఓటీపీ'],
 };
 const NO_BUT_FINE = ['no problem', 'not a problem', 'not bad', 'no issue'];
+// 2026-10-29 fixes: an answer that is not a plain yes / no is never forced into one
+const L2 = {
+  // "maybe / it depends / I'll check / I don't know": not interested, not uninterested - not confirmed
+  maybe: ['maybe', 'may be', 'not sure', 'depends', 'i will check', 'i ll check', 'ill check', 'let me check', 'will check', 'will see', 'let me see', 'let me think',
+    'i will think', 'i ll think', 'think about it', 'don t know', 'dont know', 'do not know', 'no idea', 'shayad', 'pata nahi', 'dekhta hoon', 'dekhte hain', 'soch ke',
+    'शायद', 'पता नहीं', 'देखता हूँ', 'देखते हैं', 'सोच कर', 'सोचकर', 'emo', 'chustanu', 'chusta', 'chuddam', 'alochistanu', 'teliyadu', 'telidu',
+    'ఏమో', 'చూస్తాను', 'చూస్తా', 'చూద్దాం', 'ఆలోచిస్తాను', 'ఆలోచిస్తా', 'తెలియదు', 'తెలీదు'],
+  // "sorry, can you repeat?": the same question again, not counted as an answer
+  repeat: ['repeat', 'say again', 'say that again', 'come again', 'pardon', 'once more', 'one more time', 'what did you say', 'didn t get', 'didnt get', 'sorry what',
+    'phir se', 'fir se', 'dobara', 'phir bolo', 'फिर से', 'दोबारा', 'क्या बोला', 'क्या कहा', 'malli cheppandi', 'malli chepandi', 'malli cheppu',
+    'మళ్ళీ చెప్పండి', 'మళ్లీ చెప్పండి', 'మళ్ళీ చెప్పు', 'మళ్లీ చెప్పు', 'ఏమన్నారు', 'ఏం అన్నారు'],
+  // the person cannot hear the assistant: stop, check the line, do not go on with the job
+  cantHear: ['can t hear', 'cannot hear', 'cant hear', 'unable to hear', 'not able to hear', 'not audible', 'voice is not clear', 'voice not clear', 'voice is breaking',
+    'voice breaking', 'breaking up', 'hello hello', 'sunai nahi', 'awaaz nahi', 'aawaz nahi', 'awaz nahi', 'सुनाई नहीं', 'आवाज़ नहीं', 'आवाज नहीं',
+    'vinapadatledu', 'vinapadatle', 'vinipinchatledu', 'వినపడటం లేదు', 'వినపడట్లేదు', 'వినిపించడం లేదు', 'వినిపించట్లేదు', 'వినబడటం లేదు', 'వాయిస్ రావట్లేదు'],
+};
+const NOT_NOW = ['not now', 'not right now', 'abhi nahi', 'अभी नहीं', 'ippudu kaadu', 'ఇప్పుడు కాదు'];
+// a one-word "What?" / "Sorry?" is a request to hear the question again
+const REPEAT_ALONE = ['what', 'sorry', 'pardon', 'sorry what', 'what sorry', 'kya', 'enti', 'ఏంటి', 'क्या'];
+// a "yes" word inside a negative is not a yes: "I can't tell you" holds "i can", "not interested" holds "interested"
+const NEGATORS = ['not', 'cannot', 'cant', 'dont', 'wont', 'nahi', 'nahin', 'नहीं'];
+function withoutNegated(t) {
+  const w = t.split(' ');
+  const out = [];
+  for (let i = 0; i < w.length; i += 1) {
+    if (['can', 'don', 'won'].includes(w[i]) && w[i + 1] === 't') { i += 2; continue; } // "can't X": "can" and X both go
+    if (NEGATORS.includes(w[i])) { i += 1; continue; } // "not X": X goes
+    out.push(w[i]);
+  }
+  return out.join(' ');
+}
+// a call-back time must hold a time or a day ("आपस्पटोल" heard from noise was saved as one, 2026-10-29)
+const TIME_WORDS = ['today', 'tomorrow', 'morning', 'afternoon', 'evening', 'night', 'tonight', 'noon', 'lunch', 'weekend', 'week', 'hour', 'hours', 'minute', 'minutes', 'am', 'pm',
+  'oclock', 'o clock', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday', 'aaj', 'kal', 'parso', 'subah', 'dopahar', 'shaam', 'sham', 'raat', 'baje', 'ghante',
+  'repu', 'ellundi', 'podduna', 'sayantram', 'saayantram', 'raatri', 'gantalaku', 'ganta',
+  'आज', 'कल', 'परसों', 'सुबह', 'दोपहर', 'शाम', 'रात', 'बजे', 'घंटे', 'घंटा', 'मिनट', 'सोमवार', 'मंगलवार', 'बुधवार', 'गुरुवार', 'शुक्रवार', 'शनिवार', 'रविवार', 'हफ्ते',
+  'ఈరోజు', 'రేపు', 'ఎల్లుండి', 'ఉదయం', 'పొద్దున', 'మధ్యాహ్నం', 'సాయంత్రం', 'రాత్రి', 'గంటలకు', 'గంట', 'నిమిషాల', 'సోమవారం', 'మంగళవారం', 'బుధవారం',
+  'గురువారం', 'శుక్రవారం', 'శనివారం', 'ఆదివారం', 'వారం'];
+const timeLike = (text) => { const t = norm(text); return /\d/.test(t) || has(t, TIME_WORDS); };
 
 // --- which language the person is speaking (user rule 2026-10-28: answer in the person's language, switch at once) ---------
 // Script first (Telugu / Devanagari letters), then romanised Telugu / Hindi words, then plain English. One or two English
@@ -80,7 +119,7 @@ const ROMAN = {
     'bataiye', 'chahiye', 'karunga', 'sakta', 'mein'],
 };
 // "can we talk in English", "हिंदी में बात करो", "తెలుగులో మాట్లాడండి": a request to switch, not an answer
-const LANG_ASK = /\b(talk|speak|continue|switch|change)\b|\bbaat\b|\bbol|matlad|మాట్లాడ|बात|बोल/i;
+const LANG_ASK = /\b(talk|speak|continue|switch|change|explain|tell)\b|\bbaat\b|\bbol|matlad|మాట్లాడ|बात|बोल/i;
 const LANG_NAMES = [
   ['Telugu', /\btelugu\b|తెలుగు|तेलुगु/i],
   ['Hindi', /\bhindi\b|हिंदी|हिन्दी|హిందీ/i],
@@ -98,8 +137,10 @@ function detectLanguage(textIn) {
   }
   const te = (raw.match(/[ఀ-౿]/g) || []).length;
   const hi = (raw.match(/[ऀ-ॿ]/g) || []).length;
-  if (te >= 3 && te >= hi) return { lang: 'Telugu', only: false };
-  if (hi >= 3) return { lang: 'Hindi', only: false };
+  // one word nobody knows ('आपस्पटोल', heard from noise on 2026-10-29) never switches the call: two words or a known answer
+  const sensible = words.length >= 2 || !['unclear', 'silence'].includes(classify(raw).intent);
+  if (te >= 3 && te >= hi && sensible) return { lang: 'Telugu', only: false };
+  if (hi >= 3 && sensible) return { lang: 'Hindi', only: false };
   const latin = words.filter((w) => /^[a-z']+$/.test(w));
   const rt = latin.filter((w) => ROMAN.Telugu.includes(w)).length;
   const rh = latin.filter((w) => ROMAN.Hindi.includes(w)).length;
@@ -125,14 +166,21 @@ function classify(text) {
   const human = has(t, L.human);
   if (has(t, L.stop)) return { intent: 'stop', human };
   if (has(t, L.other)) return { intent: 'other_cand', human };
+  if (has(t, L2.cantHear)) return { intent: 'cant_hear', human };
+  if (has(t, L2.repeat) || REPEAT_ALONE.includes(t)) return { intent: 'repeat', human };
   if (has(t, L.ai_q) && !has(t, L.yes.filter((x) => x !== 'ai'))) return { intent: 'ai_q', human };
   if (has(t, L.resched)) return { intent: 'reschedule', human };
   if (has(t, L.salary)) return { intent: 'salary_q', human };
+  if (has(t, L2.maybe)) return { intent: 'maybe', human };
   const fine = NO_BUT_FINE.some((p) => t.includes(p));
   const neg = !fine && has(t, L.no);
-  if (has(t, L.later) && !neg) return { intent: 'later', human };
+  // "not now" / "abhi nahi" / "ippudu kaadu" hold a no word but mean "call me later"
+  if (has(t, L.later) && (!neg || has(t, NOT_NOW))) return { intent: 'later', human };
+  const yes = fine || has(withoutNegated(t), L.yes);
+  // "Yes, I can't ..." holds both: never read as a no (or a yes) - the person is asked which they meant
+  if (neg && yes) return { intent: 'mixed', human };
   if (neg) return { intent: 'no', human };
-  if (has(t, L.yes) || fine) return { intent: 'yes', human };
+  if (yes) return { intent: 'yes', human };
   if (has(t, L.info) || t.endsWith('?')) return { intent: 'info_q', human };
   return { intent: human ? 'human' : 'unclear', human };
 }
@@ -244,12 +292,13 @@ class Dialogue {
     this.recordingNotice = !!opts.recordingNotice;
     this.autoLanguage = opts.autoLanguage !== false; // answer in the language the person speaks (opts.autoLanguage: false keeps the call's language)
     this.classifier = typeof opts.classifier === 'function' ? opts.classifier : null;
-    this.maxTurns = opts.maxTurns || 16;
+    this.maxTurns = opts.maxTurns || 20; // room for a few "could you say that again?" turns
     this.prefix = '';
     this.st = {
       step: 'identity', turns: 0, tries: 0, done: false, ended: null, identity: false, wrong: false, interest: null, told: false,
       answers: {}, callback: false, callbackWhen: null, human: false, stop: false, attendance: null, preferredTime: null, transcript: [], outcome: null, lastAsk: '',
       language: null, upset: 0, calmFrom: null,
+      unheard: 0, silent: 0, mixed: 0, repeats: 0, audioFrom: null, audioTries: 0, askedWhy: false, declineReason: null, changedMind: false, whenAsked: false,
     };
     this.setLanguage(S.LANGS.includes(opts.language) ? opts.language : 'English');
   }
@@ -313,6 +362,8 @@ class Dialogue {
       resched_time: this.P.ivReschedAsk,
       later_when: this.P.laterAsk,
       calm: this.P.calmOffer,
+      why_not: this.P.whyNot,
+      audio_check: this.P.canHear,
     }[this.st.step];
     return this.speak(prefix, q);
   }
@@ -329,26 +380,41 @@ class Dialogue {
   }
 
   // What the candidate said. Always returns { say, done }.
-  async hear(textIn) {
+  //   meta.heard  'unclear' = speech was there but not heard reliably (the phone gateway decides: Whisper's sureness, a
+  //               language guess from noise, empty words for real speech). Never read as an answer: asked again.
+  //   meta.lang / meta.conf  kept on the turn for the Talk history (conf only where the engine gives one)
+  // Every candidate turn keeps the EXACT words heard (text), how clearly (heard: clear | unclear | none) and, separately,
+  // how the assistant read them (understood) - the reading is never shown as the person's words.
+  async hear(textIn, meta = {}) {
     if (this.st.done) return { say: '', done: true };
     const text = String(textIn == null ? '' : textIn).slice(0, 600);
+    const heardAs = meta.heard === 'unclear' ? 'unclear' : (text.trim() ? 'clear' : 'none');
     this.st.turns += 1;
-    this.st.transcript.push({ who: 'candidate', text: S.clean(text, 300) });
-    if (this.st.turns > this.maxTurns) return this.close('Unclear', 'too many turns');
+    const turn = { who: 'candidate', text: S.clean(text, 300), heard: heardAs, at: new Date().toISOString() };
+    if (meta.lang) turn.lang = meta.lang;
+    if (meta.conf) turn.conf = meta.conf;
+    this.st.transcript.push(turn);
+    if (this.st.turns > this.maxTurns) return this.close(this.fallback(), 'too many turns');
     const st = this.st;
+    // 0. not heard reliably: never guessed, never a language switch - asked again (2 tries, then a polite end)
+    if (heardAs === 'unclear') { turn.understood = 'not_clear'; return this.unheard(); }
     // 1. the person's language: from this sentence on, every answer is in it
     const lg = this.autoLanguage ? detectLanguage(text) : null;
     if (lg && lg.lang !== this.language) { this.setLanguage(lg.lang); this.prefix = this.P.langSwitched; }
-    if (lg && lg.only) { this.prefix = ''; return { say: this.again(this.P.langSwitched), done: false }; }
+    if (lg && lg.only) { turn.understood = 'language'; this.prefix = ''; return { say: this.again(this.P.langSwitched), done: false }; }
     const k = await this.intentOf(text);
+    turn.understood = k.intent;
     if (k.human) st.human = true;
 
-    if (k.intent === 'silence') {
-      st.tries += 1;
-      if (st.tries >= 2) return this.close('Unclear', 'no answer heard');
-      return { say: this.again(this.P.repeat), done: false };
-    }
+    // silence is never yes, no, interest or consent: "are you still there?", then a polite end
+    if (k.intent === 'silence') return this.silent();
+    st.unheard = 0; st.silent = 0;
     if (k.intent === 'stop') { st.stop = true; return this.finish(this.speak(this.P.closeStop), 'stop'); }
+    // the person cannot hear the assistant: check the line before anything else is said
+    if (k.intent === 'cant_hear' && st.step !== 'audio_check') {
+      st.audioFrom = st.step; st.step = 'audio_check'; st.audioTries = 0;
+      return { say: this.speak(this.P.canHear), done: false };
+    }
     const t = norm(text);
     if (isGreeting(t) && (st.greets || 0) < 3) { st.greets = (st.greets || 0) + 1; return { say: st.step === 'identity' ? this.speak(this.B.identity) : this.again(HELLO_BACK[this.language] || HELLO_BACK.English), done: false }; } // the name question already says hello
     // 2. money / fraud worry: the fixed reassurance, then the same question again (allowed before the name is confirmed: it shares nothing)
@@ -370,21 +436,93 @@ class Dialogue {
     }
     if (k.intent === 'ai_q') return { say: this.again(this.P.amAi), done: false };
     if (k.intent === 'other_cand') return { say: this.again(this.P.onlyYou), done: false };
+    // "can you repeat?": the same question again (a few times; then it is read like any unclear answer)
+    if (k.intent === 'repeat' && st.step !== 'audio_check' && (st.repeats += 1) <= 3) return { say: this.again(this.P.sureRepeat), done: false };
+    // "Yes, I can't ..." on a yes / no question: ask which, neutrally - never pick one
+    if (k.intent === 'mixed' && YES_NO_STEPS.includes(st.step) && st.step !== 'audio_check') {
+      if ((st.mixed += 1) <= 2) return { say: this.speak(this.P.yesOrNo), done: false };
+      return this.close(this.fallback(), 'answer not clear (yes and no)');
+    }
+    if (k.intent === 'maybe') { const m = this.onMaybe(); if (m) return m; }
 
     if (st.step === 'calm') return this.on_calm(k);
     if (st.step === 'identity') return this.onIdentity(k);
+    if (st.step === 'audio_check') return this.on_audio_check(k);
     // nothing about the job before the person is confirmed (the step cannot be anything else after identity)
-    if (k.intent === 'salary_q') {
+    // (at "why not interested?" a salary / location remark IS the reason: it goes to the step)
+    if (k.intent === 'salary_q' && st.step !== 'why_not') {
       const sal = this.data.salary && this.B.brief.includes(this.data.salary);
       return { say: this.again(sal ? this.P.briefSalary.replace('{salary}', S.clean(this.data.salary)) : this.P.noSalary), done: false };
     }
-    if (k.intent === 'info_q' && st.step !== 'resched_time' && st.step !== 'later_when' && !/^q/.test(st.step)) {
+    if (k.intent === 'info_q' && !['resched_time', 'later_when', 'why_not'].includes(st.step) && !/^q/.test(st.step)) {
       const where = has(norm(text), ['where', 'location', 'address', 'kahan', 'कहाँ', 'कहां', 'ఎక్కడ']);
       if (where && this.data.location && this.purpose === 'Screening') return { say: this.again(this.P.briefLoc.replace('{location}', S.clean(this.data.location))), done: false };
       if (where && this.data.interview && this.data.interview.location) return { say: this.again(this.P.ivInPerson.replace('{location}', S.clean(this.data.interview.location))), done: false };
       return { say: this.again(this.P.noInfo), done: false };
     }
     return this[`on_${st.step}`](k, text);
+  }
+
+  fallback() { return this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear'; }
+
+  // Speech that was not heard reliably: ask again; the second time say the line is breaking; the third time end politely.
+  unheard() {
+    const st = this.st;
+    st.unheard += 1;
+    if (st.unheard >= 3) return this.close(this.fallback(), 'could not hear the person clearly', this.P.audioClose);
+    return { say: this.again(st.unheard === 1 ? this.P.notClear : this.P.breaking), done: false };
+  }
+
+  // No reply at all (the gateway's quiet timer, or empty text): "are you still there?" twice, then a polite end.
+  silent() {
+    const st = this.st;
+    st.silent += 1;
+    if (st.silent >= 3) return this.close(this.fallback(), 'no answer heard', this.P.noAnswerClose);
+    return { say: this.again(st.silent === 1 ? this.P.stillThere : this.P.stillThere2), done: false };
+  }
+
+  // "Maybe / it depends / I'll check": never recorded as interested or as not interested.
+  onMaybe() {
+    const st = this.st;
+    if (st.step === 'convenient') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
+    if (st.step === 'intro') { st.step = 'interest'; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; } // hearing about the job commits to nothing
+    if (['interest', 'qProceed', 'proceed'].includes(st.step)) {
+      st.interest = 'unsure'; st.step = 'human_offer'; st.tries = 0;
+      return { say: this.speak(this.P.thatsFine, this.P.interestMore), done: false };
+    }
+    if (st.step === 'avail') { st.step = 'later_when'; return { say: this.speak(this.P.checkFollowUp), done: false }; } // not confirmed
+    return null; // the questions (experience, place, notice ...) read the words themselves
+  }
+
+  // "Can you hear me now?": yes -> the interrupted question again; otherwise once more, then a polite end.
+  on_audio_check(k) {
+    const st = this.st;
+    if (k.intent === 'yes') { st.step = st.audioFrom || 'identity'; st.audioTries = 0; return { say: this.again(this.P.sureRepeat), done: false }; }
+    st.audioTries += 1;
+    if (st.audioTries >= 2) return this.close(this.fallback(), 'the person could not hear the assistant', this.P.audioClose);
+    return { say: this.speak(this.P.canHear), done: false };
+  }
+
+  // Not interested: ONE polite, optional question (is it this job, or not looking now?), then the answer is accepted.
+  notInterested() {
+    const st = this.st;
+    st.interest = 'no';
+    if (st.askedWhy) return this.close('Not Interested', 'not interested');
+    st.askedWhy = true; st.step = 'why_not'; st.tries = 0;
+    return { say: this.speak(this.P.whyNot), done: false };
+  }
+
+  on_why_not(k, text) {
+    const st = this.st;
+    const t = norm(text);
+    // changed their mind: the earlier "no" stays in the history and the summary
+    if (k.intent === 'yes' && has(t, ['interested', 'interest', 'इंटरेस्टेड', 'ఇంట్రెస్ట్', 'ఆసక్తి ఉంది', 'dilchaspi'])) {
+      st.interest = 'yes'; st.changedMind = true; st.tries = 0; st.step = 'qExp';
+      return { say: this.speak(this.P.qExp), done: false };
+    }
+    // their own words, short, as the reason (a bare yes / no says nothing about why: nothing is recorded)
+    if (!['yes', 'no', 'silence'].includes(k.intent)) st.declineReason = S.clean(text, 120) || null;
+    return this.close('Not Interested', 'not interested');
   }
 
   // After an apology: go on (back to the question that was interrupted), a recruiter call, or a polite goodbye.
@@ -439,7 +577,7 @@ class Dialogue {
   on_intro(k) {
     const st = this.st;
     if (k.intent === 'yes') { st.step = 'interest'; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
-    if (k.intent === 'no') { st.interest = 'no'; return this.close('Not Interested', 'not interested'); }
+    if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     return this.retry(k);
   }
@@ -447,7 +585,7 @@ class Dialogue {
   on_interest(k) {
     const st = this.st;
     if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; st.step = 'qExp'; return { say: this.speak(this.P.qExp), done: false }; }
-    if (k.intent === 'no') { st.interest = 'no'; return this.close('Not Interested', 'not interested'); }
+    if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     if (k.intent === 'human') { st.human = true; st.interest = 'unsure'; return this.close('Unclear', 'asked for a recruiter', this.P.humanNoted); }
     st.tries += 1;
@@ -484,7 +622,7 @@ class Dialogue {
   on_qLoc(k, text) {
     const st = this.st;
     const l = this.laterInQuestions(k); if (l) return l;
-    const place = k.intent === 'no' || k.intent === 'yes' ? null : readPlace(text);
+    const place = ['no', 'yes', 'maybe', 'mixed'].includes(k.intent) ? null : readPlace(text);
     if (!place) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
@@ -526,8 +664,10 @@ class Dialogue {
 
   on_later_when(k, text) {
     const st = this.st;
-    if (!['yes', 'no'].includes(k.intent) || /\d/.test(text) || text.trim().split(/\s+/).length > 1) st.callbackWhen = readTime(text);
     st.callback = true;
+    // only a real day / time is noted; anything else is asked once more, then the call ends without a time
+    if (timeLike(text)) st.callbackWhen = readTime(text);
+    else if (!st.whenAsked && k.intent !== 'no') { st.whenAsked = true; return { say: this.speak(this.P.laterWhenAgain), done: false }; }
     const out = this.purpose.startsWith('Interview') ? 'No Response' : 'Call Back Later';
     return this.close(out, 'call back later', st.callbackWhen ? this.P.laterNoted.replace('{when}', st.callbackWhen) : this.P.laterClose);
   }
@@ -536,15 +676,13 @@ class Dialogue {
     const st = this.st;
     if (k.intent === 'yes') { st.attendance = 'confirmed'; return this.close('Confirmed', 'confirmed'); }
     if (k.intent === 'reschedule') {
-      const t = readTime(text);
-      const own = t && !has(norm(text), L.resched) ? t : null;
       st.attendance = 'reschedule';
-      if (own || /\d/.test(text)) { st.preferredTime = readTime(text); return this.close('Reschedule Requested', 'reschedule requested', this.P.ivReschedNoted); }
+      if (timeLike(text)) { st.preferredTime = readTime(text); return this.close('Reschedule Requested', 'reschedule requested', this.P.ivReschedNoted); }
       st.step = 'resched_time';
       return { say: this.speak(this.P.ivReschedAsk), done: false };
     }
     if (k.intent === 'no') { st.attendance = 'not_available'; st.step = 'resched_time'; return { say: this.speak(this.P.ivReschedAsk), done: false }; }
-    if (k.intent === 'later') { st.callback = true; st.callbackWhen = readTime(text); return this.close('No Response', 'asked to call later', this.P.ivNoReply); }
+    if (k.intent === 'later') { st.callback = true; st.callbackWhen = timeLike(text) ? readTime(text) : null; return this.close('No Response', 'asked to call later', this.P.ivNoReply); }
     return this.retry(k);
   }
 
@@ -552,7 +690,7 @@ class Dialogue {
     const st = this.st;
     if (k.intent === 'no') return this.close('Not Available', 'not available', this.P.ivNotAvail);
     st.attendance = 'reschedule';
-    if (k.intent !== 'yes' || /\d/.test(text)) st.preferredTime = readTime(text);
+    if (timeLike(text)) st.preferredTime = readTime(text);
     return this.close('Reschedule Requested', 'reschedule requested', this.P.ivReschedNoted);
   }
 
@@ -607,6 +745,12 @@ class Dialogue {
     if (st.human) bits.push('Asked to speak to a recruiter.');
     if (st.upset) bits.push(`The person sounded upset${st.ended === 'candidate upset' ? ', so the assistant apologised and ended politely' : '; the assistant apologised and kept it short'}.`);
     if (st.stop) bits.push('Asked not to be called again.');
+    if (st.changedMind) bits.push('First said not interested, then said they are interested.');
+    if (st.declineReason) bits.push(`Why not interested (their words): "${st.declineReason}".`);
+    const unclear = st.transcript.filter((x) => x.heard === 'unclear').length;
+    if (unclear) bits.push(`${unclear} answer${unclear === 1 ? ' was' : 's were'} not heard clearly and asked again; nothing was assumed.`);
+    if (st.ended === 'could not hear the person clearly' || st.ended === 'the person could not hear the assistant') bits.push('Ended because of a line / audio problem.');
+    if (st.ended === 'no answer heard') bits.push('No reply was heard, so the call ended.');
     return bits.filter(Boolean).join(' ');
   }
 
@@ -641,4 +785,7 @@ class Dialogue {
   transcript() { return this.st.transcript.slice(); }
 }
 
-module.exports = { Dialogue, classify, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };
+// the steps whose question is a plain yes / no
+const YES_NO_STEPS = ['identity', 'convenient', 'intro', 'interest', 'human_offer', 'qProceed', 'proceed', 'avail', 'calm', 'audio_check'];
+
+module.exports = { Dialogue, timeLike, classify, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };

@@ -4,11 +4,17 @@ TeamLink AI voice - WHISPER server (free, MIT: openai-whisper weights via faster
 Two jobs for the phone gateway (backend/src/calling/voice/engines.js whisperHttp):
   POST /detect      body: 16 kHz 16-bit mono PCM  ->  {"lang": "te"|"hi"|"en", "prob": 0..1}
                     which of OUR three languages the person spoke (others ignored), so the assistant can switch at once
-  POST /transcribe  body: the same, header X-Lang: en|hi|te  ->  {"text": "..."}
-  POST /hear        body: the same, header X-Min-Prob  ->  {"lang", "prob", "text"}: the language, and the English words
+  POST /transcribe  body: the same, header X-Lang: en|hi|te  ->  {"text": "...", "conf": {...}}
+  POST /hear        body: the same, header X-Min-Prob  ->  {"lang", "prob", "text", "conf"}: the language, and the English words
                     only when it is English (one pass for a call that is in English)
                     English words (IndicConformer has no English)
   GET  /health      -> {"ok": true, "model": "..."}
+
+"conf" = how sure Whisper is of the words (2026-10-29: "Yes, I have" came out as "Yes, I can't tell you so much about it"):
+  logprob   the lowest segment avg_logprob (0 = certain; below about -1 = a guess)
+  noSpeech  the highest no_speech_prob (near 1 = it thinks there was no speech: the words may be made up from noise)
+  ratio     the highest compression_ratio (above about 2.4 = repeated / looping text)
+The phone gateway decides from these whether an answer was heard clearly (backend/src/calling/voice/gateway.js).
 
 Listens on 127.0.0.1 only. When WHISPER_API_KEY is set, every request must send the same value in X-API-Key.
 One model, one request at a time (a lock); the phone gateway sends one sentence at a time per call.
@@ -32,6 +38,7 @@ HOST = os.getenv("WHISPER_HOST", "127.0.0.1")
 PORT = int(os.getenv("WHISPER_PORT", "8093"))
 KEY = os.getenv("WHISPER_API_KEY", "")
 THREADS = int(os.getenv("WHISPER_THREADS", "2"))
+BEAM = max(1, int(os.getenv("WHISPER_BEAM", "3")))  # 3 = a little more careful on short phone answers than 1 (greedy)
 OURS = ("te", "hi", "en")
 MAX_BYTES = 16000 * 2 * 30  # 30 s of audio
 
@@ -56,10 +63,16 @@ def detect(audio):
 def transcribe(audio, lang):
     with lock:
         # temperature 0 = no slow retries; max_new_tokens = a phone answer is short (no "fufufu..." loops)
-        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=1, temperature=0.0,
+        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=BEAM, temperature=0.0,
                                        max_new_tokens=60, without_timestamps=True, condition_on_previous_text=False, vad_filter=False)
-        text = " ".join(s.text.strip() for s in segments).strip()
-    return {"text": text}
+        segs = list(segments)
+    text = " ".join(s.text.strip() for s in segs).strip()
+    conf = {
+        "logprob": round(min((s.avg_logprob for s in segs), default=0.0), 3),
+        "noSpeech": round(max((s.no_speech_prob for s in segs), default=1.0), 3),
+        "ratio": round(max((s.compression_ratio for s in segs), default=0.0), 2),
+    }
+    return {"text": text, "conf": conf}
 
 
 def hear(audio, min_prob):
@@ -68,7 +81,8 @@ def hear(audio, min_prob):
     d = detect(audio)
     if d["lang"] != "en" and d["prob"] >= min_prob:
         return {"lang": d["lang"], "prob": d["prob"], "text": ""}
-    return {"lang": "en", "prob": d["prob"], "text": transcribe(audio, "en")["text"]}
+    t = transcribe(audio, "en")
+    return {"lang": "en", "prob": d["prob"], "text": t["text"], "conf": t["conf"]}
 
 
 class Handler(BaseHTTPRequestHandler):

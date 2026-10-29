@@ -33,7 +33,7 @@ Only the SIP minutes cost money. Everything else is free software running on our
    bash setup-ai-voice.sh asterisk
    ```
    It also needs `TEST_NUMBERS`.
-4. Add the lines the script prints to `backend/.env`, then restart the backend with pm2.
+4. Add the lines from `/opt/ai-voice/backend.env` (the script writes them there, root only) to `backend/.env`, then restart the backend with pm2.
 5. Test mode: only `TEST_NUMBERS` can be called. Call your own phone first. When it works, change `AI_VOICE_PHONE_MODE=Live`.
 
 Status and stopping:
@@ -45,6 +45,20 @@ bash setup-ai-voice.sh status
 ```bash
 bash setup-ai-voice.sh stop
 ```
+
+## Hearing settings (optional, `backend/.env`)
+
+The defaults suit phone calls. Change them only after listening to real calls.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `AI_VOICE_END_MS` | 800 | Quiet time (ms) that ends an answer. Lower is faster but cuts off people who pause to think. |
+| `AI_VOICE_SILENCE_MS` | 8000 | No voice this long after the assistant stops: it asks "are you still there?". Two check-ins, then a polite end. |
+| `AI_VOICE_MIN_LOGPROB` | -0.7 | English: Whisper's sureness below this means the answer was not heard clearly, so the assistant asks again. |
+| `AI_VOICE_MAX_NO_SPEECH` | 0.5 | English: with a weak sureness, a "no speech" chance above this means the words came from noise. |
+| `WHISPER_BEAM` | 3 | Whisper server (systemd unit): 1 is fastest, 3 is more careful on short answers. |
+
+An answer that is not heard clearly is never read as yes, no or a time. The Telugu / Hindi listener gives no sureness score, so for those only empty words and the language-switch check apply.
 
 ## Safety
 

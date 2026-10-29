@@ -142,9 +142,12 @@ function whisperHttp({ url, key }) {
     // minProb: how sure Whisper must be before the assistant switches (stricter for short answers)
     detect: async (pcm8k, minProb = 0.7) => { const j = await post('/detect', pcm8k); return j.prob >= minProb ? (FROM_ISO[j.lang] || null) : null; },
     // English mode in one pass: { lang: 'Telugu' | 'Hindi' | 'English', text } - the English words only when it is English
-    hear: async (pcm8k, minProb = 0.6) => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '' }; },
+    // conf: Whisper's own sureness of the words ({ logprob, noSpeech, ratio }, whisper_server.py); null from an older server
+    hear: async (pcm8k, minProb = 0.6) => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '', conf: j.conf || null }; },
     // lang 'auto': Whisper writes what it hears in the language it hears (Telugu / Hindi letters = the person switched)
     stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
+    // the same, with the sureness: { text, conf }
+    sttEx: async (pcm8k, lang) => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2) }); return { text: j.text || '', conf: j.conf || null }; },
   };
 }
 
@@ -222,6 +225,8 @@ function fromEnv(env = process.env) {
     // English goes to Whisper; Telugu / Hindi to VEXYL-STT. Without Whisper, English is heard through the Hindi model
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
     stt: (pcm, lang) => (lang === 'English' && wh ? wh.stt(pcm, 'English') : vstt(pcm, lang === 'English' ? 'Hindi' : lang)),
+    // { text, conf }: conf only from Whisper (English); IndicConformer gives no sureness, so Telugu / Hindi get null - never a made-up number
+    sttEx: async (pcm, lang) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English') : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
     detect: wh ? wh.detect : null,
     sttAny: wh ? (pcm) => wh.stt(pcm, 'auto') : null,
     hear: wh ? wh.hear : null,
