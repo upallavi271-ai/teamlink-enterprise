@@ -659,7 +659,8 @@ function Footer({ onClose, busy, label, form, danger }) {
 
 // SCREENSHOTS (founder 2026-10-29: "mark done avinaka screenshot kuda thisukovali Ctrl+v antey automatic ga paste avali"):
 // Ctrl+V anywhere in the Mark as done box pastes a copied screenshot (Win+Shift+S / PrtScn), and "Take a screenshot" captures a
-// screen or window the person picks. One screenshot or file is needed to mark a task done.
+// screen or window the person picks. The screenshot is NOT required (founder 2026-10-29: "screenshot petadam mondatory em kadhu text
+// ani echina chaluu"): what you did in words, or a screenshot / file, is enough.
 const MAX_FILE = 5 * 1024 * 1024;
 const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
 // A picture as a file under the 5 MB limit: PNG as it is when small enough, else JPEG.
@@ -736,13 +737,13 @@ function DoneDialog({ task, onClose, onDone }) {
   }
   async function go(e) {
     e.preventDefault();
-    if (!files.length) { setErr('Add a screenshot first: press Ctrl+V to paste one, or "Take a screenshot".'); return; }
+    if (!files.length && !note.trim()) { setErr('Write what you did, or add a screenshot (Ctrl+V).'); return; }
     setBusy(true); setErr('');
     try {
-      // the screenshots go up FIRST: a task is not marked done without one
-      const failed = await uploadTaskFiles(task.id, files);
+      // the screenshots go up FIRST: when they were all refused and nothing was written, the task is not marked done yet
+      const failed = files.length ? await uploadTaskFiles(task.id, files) : [];
       const added = files.length - failed.length;
-      if (!added) { setErr(`The screenshot could not be uploaded, so the task is not marked done yet. ${failed.join('; ')}`); setBusy(false); return; }
+      if (files.length && !added && !note.trim()) { setErr(`The screenshot could not be uploaded, so the task is not marked done yet. ${failed.join('; ')}`); setBusy(false); return; }
       const done = await api.post(`/tasks/${task.id}/complete`, { note });
       const approver = done && done.data ? done.data.approver : null;
       onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. It counts as completed after ${approver ? `${approver} (your TL)` : 'your TL'} approves it.${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
@@ -753,10 +754,10 @@ function DoneDialog({ task, onClose, onDone }) {
       <form id="tt-done" onSubmit={go}>
         {err && <div className="error-text">{err}</div>}
         <div className="tt-name" style={{ marginBottom: 8 }}>{task.name}</div>
-        <label className="field"><span>What did you do? (optional)</span>
+        <label className="field"><span>What did you do?</span>
           <textarea rows="3" value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: Called all 20, 6 are interested" />
         </label>
-        <div className="field"><span>Screenshot of the work</span>
+        <div className="field"><span>Screenshot of the work (optional)</span>
           <div className="tt-paste">
             <b>Press Ctrl+V</b> to paste a screenshot (take one with Win+Shift+S), or
             {' '}<button type="button" className="btn btn-sm" onClick={takeShot}>📸 Take a screenshot</button>
