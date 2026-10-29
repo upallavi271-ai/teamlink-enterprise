@@ -10,6 +10,8 @@
 //   GET  /                     connections + recruiters (department, employee id, active) + departments
 //   POST /                     connect { source, department, recruiterId, address, provider, username?, appPassword, host?, port?, takeOver? }
 //   POST /:id/sync | /:id/reconnect { appPassword? } | /:id/disconnect | /:id/reassign { recruiterId, confirm }
+//   POST /:id/position { seat, confirm }   the mailbox belongs to an HRMS position and follows its holder (utils/mailboxSeats.js)
+//   POST / with { seat } instead of { recruiterId }: connect a mailbox to a position
 //   GET  /:id/logs
 //
 // Super Admin and Admin (Integrations: view to read, configure to change). Every change is also in TeamLink's audit log.
@@ -67,8 +69,15 @@ async function currentRecruiters() {
 
 router.get('/', view, wrap(async (req, res) => {
   // a Recruiter / TL placed on a seat in HRMS just now is in the list too; waits at most 15 s, never fails the screen
-  await Promise.race([require('../utils/jobPortalRecruiters').ensureQuietly(), new Promise((r) => { setTimeout(r, 15000); })]); // eslint-disable-line global-require
-  const [conns, cur] = await Promise.all([portalFetch(CONN, { timeoutMs: 20000 }), currentRecruiters()]);
+  // ...and a mailbox mapped to a position follows that position's holder (utils/mailboxSeats.js) before it is shown
+  const S = require('../utils/mailboxSeats'); // eslint-disable-line global-require
+  await Promise.race([
+    require('../utils/jobPortalRecruiters').ensureQuietly().then(() => S.reconcileQuietly()), // eslint-disable-line global-require
+    new Promise((r) => { setTimeout(r, 15000); }),
+  ]);
+  const [conns, cur, map] = await Promise.all([portalFetch(CONN, { timeoutMs: 20000 }), currentRecruiters(), S.loadMap()]);
+  const seats = await S.seatsWithRecruiters(cur.all);
+  const seatBy = new Map(seats.map((x) => [x.code, x]));
   const byId = new Map(cur.all.map((r) => [r.id, r]));
   const listedIds = new Set(cur.listed.map((r) => r.id));
   const recOfEmail = new Map(cur.listed.map((r) => [String(r.email || '').toLowerCase(), r]));
@@ -77,7 +86,14 @@ router.get('/', view, wrap(async (req, res) => {
     const was = byId.get(c.recruiterId);
     const current = listedIds.has(c.recruiterId);
     const row = { ...c, recruiterDepartment: (cur.listed.find((r) => r.id === c.recruiterId) || was || {}).department || undefined };
-    if (!current && c.recruiterId) {
+    const mapped = map[c.id] && seatBy.get(map[c.id].seat);
+    if (map[c.id]) {
+      // MAPPED TO A POSITION: the mailbox is the seat's; its recruiter is whoever holds the seat today
+      row.seat = map[c.id].seat;
+      row.recruiterDepartment = (mapped && mapped.department) || row.recruiterDepartment;
+      if (!mapped || !mapped.holder) row.seatNote = `Nobody holds ${map[c.id].seat} in HRMS today: new imports stay with ${c.recruiterName || 'the last recruiter'} until someone joins`;
+      else if (!mapped.holderRecruiterId) row.seatNote = `${mapped.holder.name} holds ${map[c.id].seat}: their Job Portal login is being made, the mailbox moves to them in a minute`;
+    } else if (!current && c.recruiterId) {
       // eslint-disable-next-line no-await-in-loop
       const next = was ? await cur.R.successorOf(was.email, cur.positions) : null;
       const rec = next && next.holder ? recOfEmail.get(next.holder.email) : null;
@@ -85,12 +101,21 @@ router.get('/', view, wrap(async (req, res) => {
       row.pastHolderNote = next ? `No longer holds ${next.seat} in HRMS` : 'Does not hold a Recruiter / TL seat in HRMS';
       if (rec) row.replacement = { recruiterId: rec.id, name: rec.name, seat: next.seat };
     }
+    if (!map[c.id]) {
+      // NOT MAPPED YET (connected before 2026-10-29): suggest the seat the recruiter holds, or held last
+      const mine = was ? seats.find((x) => x.holder && x.holder.email === String(was.email || '').toLowerCase()) : null;
+      // eslint-disable-next-line no-await-in-loop
+      const last = !mine && was ? await cur.R.successorOf(was.email, cur.positions) : null;
+      row.suggestedSeat = (mine && mine.code) || (last && last.seat) || undefined;
+    }
     connections.push(row);
   }
   res.json({
     connections,
     recruiters: cur.listed,
     names: Object.fromEntries(cur.all.map((r) => [r.id, r.name])), // past holders too, for the mailbox history (View logs)
+    // the positions a mailbox can belong to: department (seat code), team, today's holder
+    seats: seats.map((x) => ({ code: x.code, kind: x.kind, department: x.department, team: x.team, holderName: x.holder ? x.holder.name : null, holderRecruiterId: x.holderRecruiterId })),
     departments: [...new Set(cur.listed.map((r) => String(r.department || '').trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y)),
     providers: conns.providers || [],
     canStoreCredentials: conns.canStoreCredentials,
@@ -106,9 +131,20 @@ async function refuseNonHolder(res, recruiterId) {
   return true;
 }
 
+const seatRefused = (res, message) => res.status(422).json({ error: { code: 'VALIDATION_FAILED', message, details: { seat: message } } });
+
 router.post('/', change, wrap(async (req, res) => {
-  const b = req.body || {};
-  if (await refuseNonHolder(res, b.recruiterId)) return;
+  const b = { ...(req.body || {}) };
+  const S = require('../utils/mailboxSeats'); // eslint-disable-line global-require
+  // CONNECTED TO A POSITION (2026-10-29): the seat is chosen; its holder today is the recruiter the portal gets
+  if (b.seat) {
+    await require('../utils/jobPortalRecruiters').ensureQuietly(); // eslint-disable-line global-require
+    const seat = (await S.seatsWithRecruiters()).find((x) => x.code === String(b.seat));
+    if (!seat) return seatRefused(res, 'That position is not an active Recruiter / TL seat in HRMS.');
+    if (!seat.holderRecruiterId) return seatRefused(res, `Nobody holds ${seat.code} in HRMS today. A mailbox needs the position's recruiter to start with.`);
+    b.recruiterId = seat.holderRecruiterId;
+    b.department = seat.department || b.department;
+  } else if (await refuseNonHolder(res, b.recruiterId)) return undefined;
   const body = {
     source: b.source, department: b.department || undefined, recruiterId: b.recruiterId, address: b.address, provider: b.provider,
     username: b.username || undefined, appPassword: b.appPassword, host: b.host || undefined, port: b.port || undefined,
@@ -116,12 +152,38 @@ router.post('/', change, wrap(async (req, res) => {
   };
   // the mail server is asked to log in before anything is saved: allow it its own wait (60 s) and a little more
   const out = await portalFetch(CONN, { method: 'POST', body, timeoutMs: 75000 });
-  await audit(req, `${BOARD[b.source] || 'Portal'} mailbox connected`, out.connection && out.connection.id,
-    `${b.address} -> ${(out.connection && out.connection.recruiterName) || b.recruiterId}`);
-  res.status(201).json(out);
+  if (b.seat && out.connection && out.connection.id) await S.setSeat(out.connection.id, b.seat, req.user);
+  const who = (out.connection && out.connection.recruiterName) || b.recruiterId;
+  await audit(req, `${BOARD[b.source] || 'Portal'} mailbox connected`, out.connection && out.connection.id, `${b.address} -> ${b.seat ? `position ${b.seat} (${who})` : who}`);
+  return res.status(201).json(out);
+}));
+
+// MAP A MAILBOX TO A POSITION (or move it to another): the same connection and app password; it goes to that seat's holder now and
+// to every later holder by itself. { seat, confirm: true }
+router.post('/:id/position', change, wrap(async (req, res) => {
+  const b = req.body || {};
+  if (b.confirm !== true) return seatRefused(res, 'Tick the box to confirm.');
+  const S = require('../utils/mailboxSeats'); // eslint-disable-line global-require
+  await require('../utils/jobPortalRecruiters').ensureQuietly(); // eslint-disable-line global-require
+  const seat = (await S.seatsWithRecruiters()).find((x) => x.code === String(b.seat || ''));
+  if (!seat) return seatRefused(res, 'Choose an active Recruiter / TL position from HRMS.');
+  const conns = await portalFetch(CONN, { timeoutMs: 20000 });
+  const c = (conns.connections || []).find((x) => x.id === req.params.id);
+  if (!c) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'That mailbox connection could not be found.' } });
+  const before = await S.loadMap();
+  await S.setSeat(c.id, seat.code, req.user);
+  await audit(req, `${c.sourceLabel || 'Portal'} mailbox mapped to position ${seat.code}`, c.id, `${before[c.id] ? before[c.id].seat : (c.recruiterName || '-')} -> ${seat.code}`);
+  const moved = (await S.reconcile({ apply: true, actor: req.user, onlyId: c.id }))[0];
+  let message;
+  if (moved && moved.result === 'moved') message = `${c.address} now belongs to ${seat.code}. New imports go to ${moved.toName}; when someone else takes ${seat.code}, it moves to them by itself. Candidates imported earlier stay with their recruiter.`;
+  else if (seat.holder) message = `${c.address} now belongs to ${seat.code} (${seat.holder.name}). When someone else takes ${seat.code}, it moves to them by itself.`;
+  else message = `${c.address} now belongs to ${seat.code}. Nobody holds it today: imports stay with ${c.recruiterName || 'the last recruiter'} until someone joins.`;
+  if (moved && moved.result === 'failed') message = `${c.address} now belongs to ${seat.code}, but moving it to ${moved.toName} did not work yet (${moved.error}). It is tried again on the next refresh.`;
+  return res.json({ ok: true, message, seat: seat.code });
 }));
 
 router.post('/:id/sync', change, wrap(async (req, res) => {
+  await require('../utils/mailboxSeats').reconcile({ apply: true, actor: req.user, onlyId: req.params.id }).catch(() => []); // eslint-disable-line global-require
   res.json(await portalFetch(`${idPath(req.params.id)}/sync`, { method: 'POST', body: {}, timeoutMs: 180000 }));
 }));
 
@@ -140,10 +202,12 @@ router.post('/:id/disconnect', change, wrap(async (req, res) => {
 
 router.post('/:id/reassign', change, wrap(async (req, res) => {
   const b = req.body || {};
-  if (await refuseNonHolder(res, b.recruiterId)) return;
+  const map = await require('../utils/mailboxSeats').loadMap(); // eslint-disable-line global-require
+  if (map[req.params.id]) return seatRefused(res, `This mailbox belongs to position ${map[req.params.id].seat}: its recruiter is whoever holds that seat. Use Change position instead.`);
+  if (await refuseNonHolder(res, b.recruiterId)) return undefined;
   const out = await portalFetch(`${idPath(req.params.id)}/reassign`, { method: 'POST', body: { recruiterId: b.recruiterId, confirm: b.confirm === true } });
   await audit(req, 'Portal mailbox reassigned', req.params.id, String(b.recruiterId || ''));
-  res.json(out);
+  return res.json(out);
 }));
 
 router.get('/:id/logs', view, wrap(async (req, res) => {

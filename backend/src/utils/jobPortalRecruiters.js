@@ -84,6 +84,17 @@ async function successorOf(email, positions = null) {
   return { seat: last.p.code, department: deptOf(last.p) || null, holder: e && !LEFT.includes(e.employmentStatus) && emailOf(e) ? { name: e.name, email: emailOf(e) } : null };
 }
 
+// Every active Recruiter / TL / STL seat with its department (seat code), team and today's holder (null = empty seat).
+async function seatList(positions = null) {
+  const day = today();
+  return (positions || await seatData()).filter((p) => p.active).map((p) => {
+    const now = p.assignments.filter((a) => holdsOn(a, day));
+    const e = now.length === 1 ? now[0].employee : null;
+    const ok = e && !LEFT.includes(e.employmentStatus) && emailOf(e);
+    return { code: p.code, kind: p.kind, department: deptOf(p) || null, team: p.team || null, holder: ok ? { name: e.name, email: emailOf(e), employeeId: e.employeeCode || null } : null };
+  });
+}
+
 // apply=false: only says who would get a login. Returns { dryRun, results: [{ email, name, atsRole, result, reason? }] }.
 async function ensure({ apply = false } = {}) {
   const list = await people();
@@ -113,4 +124,4 @@ function ensureQuietly() {
   return running;
 }
 
-module.exports = { people, seatData, successorOf, ensure, ensureQuietly, ROLES };
+module.exports = { people, seatData, seatList, successorOf, ensure, ensureQuietly, ROLES };

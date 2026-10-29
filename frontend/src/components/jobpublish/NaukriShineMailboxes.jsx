@@ -21,7 +21,7 @@ const PROVIDERS = [['gmail', 'Gmail'], ['outlook', 'Outlook / Microsoft 365'], [
 const FIXED = { gmail: { host: 'imap.gmail.com', port: 993 }, outlook: { host: 'outlook.office365.com', port: 993 } };
 const PROVIDER_LABEL = { gmail: 'Gmail', outlook: 'Outlook / Microsoft 365', other: 'IMAP' };
 const NO_DEPT = '__none';
-const EMPTY = { department: '', team: '', recruiterId: '', address: '', provider: 'gmail', username: '', appPassword: '', host: '', port: '' };
+const EMPTY = { department: '', team: '', seat: '', address: '', provider: 'gmail', username: '', appPassword: '', host: '', port: '' };
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const TONE = { connected: 'ok', processing: 'run', disconnected: 'off', error: 'bad' };
 const MAIL_TONE = { processed: 'ok', duplicate: 'off', needs_review: 'warn', needs_mapping: 'warn', failed: 'bad', new: 'run', ignored: 'off' };
@@ -54,13 +54,16 @@ function MailboxCard({ src, data, onConnected }) {
   const [show, setShow] = useState(false);
   const going = useRef(false);
   const id = (k) => `nsm-${src}-${k}`;
-  const set = (k) => (e) => { const v = e.target.value; setF((o) => ({ ...o, [k]: v, ...(k === 'department' ? { team: '', recruiterId: '' } : {}), ...(k === 'team' ? { recruiterId: '' } : {}) })); setErrs((o) => ({ ...o, [k]: '' })); };
-  const inDeptRecs = (data.recruiters || []).filter((r) => r.active && f.department && inDept(r, f.department));
-  // TEAMS (founder 2026-10-29: "education lo TeamA and TeamB undhi alaga separate avali recruiters"): a department with two or more
-  // real HRMS teams asks for the team first, then lists only that team's seat holders; any other department goes straight on.
-  const teams = [...new Set(inDeptRecs.map(teamOf).filter(Boolean))].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  const set = (k) => (e) => { const v = e.target.value; setF((o) => ({ ...o, [k]: v, ...(k === 'department' ? { team: '', seat: '' } : {}), ...(k === 'team' ? { seat: '' } : {}) })); setErrs((o) => ({ ...o, [k]: '' })); };
+  // A MAILBOX BELONGS TO A POSITION (founder 2026-10-29: "permanently mapped to the ... department/position, not to an individual
+  // recruiter"): Department -> Team (only when it has two or more real HRMS teams) -> Position; the position's holder today gets the
+  // imports, and whoever takes the position later gets them by itself (backend utils/mailboxSeats.js).
+  const inDeptSeats = (data.seats || []).filter((x) => f.department && inDept(x, f.department));
+  const teams = [...new Set(inDeptSeats.map(teamOf).filter(Boolean))].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
   const needTeam = teams.length >= 2;
-  const recs = needTeam ? inDeptRecs.filter((r) => f.team && teamOf(r) === f.team) : inDeptRecs;
+  const teamSeats = needTeam ? inDeptSeats.filter((x) => f.team && teamOf(x) === f.team) : inDeptSeats;
+  const seatsOk = teamSeats.filter((x) => x.holderRecruiterId);
+  const emptySeats = teamSeats.length - seatsOk.length;
   const hasNoDept = (data.recruiters || []).some((r) => r.active && !String(r.department || '').trim());
   const fixed = FIXED[f.provider];
   const mine = (data.connections || []).filter((c) => c.source === src);
@@ -71,8 +74,8 @@ function MailboxCard({ src, data, onConnected }) {
     const e = {};
     if (!f.department) e.department = 'Select a department.';
     if (needTeam && !f.team) e.team = 'Select a team.';
-    if (!f.recruiterId) e.recruiterId = 'Select a recruiter.';
-    else if (!recs.some((r) => r.id === f.recruiterId)) e.recruiterId = 'Choose an active recruiter from the selected department and team.';
+    if (!f.seat) e.seat = 'Select a position.';
+    else if (!seatsOk.some((x) => x.code === f.seat)) e.seat = 'Choose a position of the selected department and team that has a recruiter today.';
     if (!EMAIL.test(f.address.trim())) e.address = 'Enter a valid email address.';
     if (!f.appPassword) e.appPassword = 'Enter the app password.';
     if (f.provider === 'other' && !f.host.trim()) e.host = 'Enter the incoming mail server.';
@@ -82,7 +85,7 @@ function MailboxCard({ src, data, onConnected }) {
     going.current = true; setBusy(true);
     try {
       const body = {
-        source: src, recruiterId: f.recruiterId, address: f.address.trim(), provider: f.provider, appPassword: f.appPassword,
+        source: src, seat: f.seat, address: f.address.trim(), provider: f.provider, appPassword: f.appPassword,
         department: f.department !== NO_DEPT ? f.department : undefined, username: f.username.trim() || undefined,
         ...(f.provider === 'other' ? { host: f.host.trim(), port: f.port ? Number(f.port) : undefined } : {}),
         ...(takeOver ? { takeOver: true } : {}),
@@ -129,10 +132,11 @@ function MailboxCard({ src, data, onConnected }) {
             </Combo>
           </Field>
         )}
-        <Field id={id('recruiterId')} label="Select Recruiter" req err={errs.recruiterId} hint={!f.department ? 'Choose the department first.' : (needTeam && !f.team ? 'Choose the team first.' : 'Type a name, employee ID or email.')}>
-          <Combo id={id('recruiterId')} value={f.recruiterId} onChange={set('recruiterId')} disabled={!f.department || (needTeam && !f.team)} placeholder={!f.department ? 'Select a department first' : (needTeam && !f.team ? 'Select a team first' : 'Search recruiter')} emptyText="No active recruiter matches" {...aria('recruiterId')}>
-            <option value="">Select recruiter</option>
-            {recs.map((r) => <option key={r.id} value={r.id}>{r.name}{r.employeeId ? ` · ${r.employeeId}` : ''}{r.email ? ` · ${r.email}` : ''}</option>)}
+        <Field id={id('seat')} label="Select Position" req err={errs.seat}
+          hint={!f.department ? 'Choose the department first.' : (needTeam && !f.team ? 'Choose the team first.' : `The mailbox stays with this position: whoever holds it gets the imports.${emptySeats ? ` ${emptySeats} empty position${emptySeats === 1 ? ' is' : 's are'} not listed.` : ''}`)}>
+          <Combo id={id('seat')} value={f.seat} onChange={set('seat')} disabled={!f.department || (needTeam && !f.team)} placeholder={!f.department ? 'Select a department first' : (needTeam && !f.team ? 'Select a team first' : 'Search position or recruiter')} emptyText="No position with a recruiter today" {...aria('seat')}>
+            <option value="">Select position</option>
+            {seatsOk.map((x) => <option key={x.code} value={x.code}>{x.code} · {x.holderName}</option>)}
           </Combo>
         </Field>
         <Field id={id('address')} label={`${BOARD[src]} Mailbox Email`} req err={errs.address}>
@@ -225,7 +229,7 @@ export default function NaukriShineMailboxes() {
       {!rows.length ? <div className="nsm-empty">No Naukri or Shine mailbox is connected yet. Use the cards above.</div> : (
         <div className="nsm-tablewrap">
           <table className="nsm-table">
-            <thead><tr>{['Source', 'Department', 'Recruiter', 'Mailbox Email', 'Provider', 'Connection Status', 'Last Successful Sync', 'Emails Processed', 'Imported', 'Duplicates', 'Pending Review', 'Failed', 'Actions'].map((t) => <th key={t} scope="col">{t}</th>)}</tr></thead>
+            <thead><tr>{['Source', 'Department', 'Position', 'Recruiter', 'Mailbox Email', 'Provider', 'Connection Status', 'Last Successful Sync', 'Emails Processed', 'Imported', 'Duplicates', 'Pending Review', 'Failed', 'Actions'].map((t) => <th key={t} scope="col">{t}</th>)}</tr></thead>
             <tbody>
               {rows.map((c) => {
                 const b = !!busy[c.id]; const off = c.status === 'disconnected';
@@ -233,13 +237,15 @@ export default function NaukriShineMailboxes() {
                   <tr key={c.id}>
                     <td><span className={`nsm-src ${c.source}`}>{c.sourceLabel}</span></td>
                     <td>{c.recruiterDepartment || '—'}</td>
+                    <td>{c.seat ? <b>{c.seat}</b> : <span className="nsm-past">Not linked to a position</span>}</td>
                     <td>
                       <b>{c.recruiterName || '—'}</b>
                       {/* HRMS decides (2026-10-29): the recruiter left or moved off the seat - say so, and offer the seat's new holder */}
-                      {c.pastHolder && <div className="nsm-past" role="note">{c.pastHolderNote}</div>}
-                      {c.pastHolder && c.replacement && (
-                        <button type="button" className="btn btn-primary btn-sm nsm-past-btn" disabled={b} onClick={() => setModal({ kind: 'reassign', c, recruiterId: c.replacement.recruiterId, ok: false })}>
-                          Reassign to {c.replacement.name}
+                      {c.seatNote && <div className="nsm-past" role="note">{c.seatNote}</div>}
+                      {!c.seat && c.pastHolder && <div className="nsm-past" role="note">{c.pastHolderNote}</div>}
+                      {!c.seat && (
+                        <button type="button" className="btn btn-primary btn-sm nsm-past-btn" disabled={b} onClick={() => setModal(positionModal(c, data, c.suggestedSeat))}>
+                          Link to a position
                         </button>
                       )}
                     </td>
@@ -257,7 +263,7 @@ export default function NaukriShineMailboxes() {
                         <button type="button" className="btn btn-primary btn-sm" disabled={b || off || c.status === 'processing'} onClick={() => act(c, 'sync')}>{b ? 'Syncing…' : 'Sync now'}</button>
                         <button type="button" className="btn btn-sm" disabled={b} onClick={() => setModal({ kind: 'reconnect', c, pw: '' })}>Reconnect</button>
                         <button type="button" className="btn btn-sm" onClick={() => openLogs(c)}>View logs</button>
-                        <button type="button" className="btn btn-sm" disabled={b} onClick={() => setModal({ kind: 'reassign', c, recruiterId: '', ok: false })}>Reassign</button>
+                        <button type="button" className="btn btn-sm" disabled={b} onClick={() => setModal(positionModal(c, data, c.seat))}>Change position</button>
                         <button type="button" className="btn btn-sm nsm-danger" disabled={b || off} onClick={() => act(c, 'disconnect')}>Disconnect</button>
                       </div>
                     </td>
@@ -268,10 +274,16 @@ export default function NaukriShineMailboxes() {
           </table>
         </div>
       )}
-      <p className="jp-note">Each mailbox reads only its own job board&apos;s emails, and only for the recruiter chosen for it. Emails that cannot be matched safely are kept for review instead of being guessed. Syncing again never imports the same email twice.</p>
+      <p className="jp-note">Each mailbox reads only its own job board&apos;s emails and belongs to one HRMS position: its imports go to whoever holds that position today, and move to the next person by themselves. Emails that cannot be matched safely are kept for review instead of being guessed. Syncing again never imports the same email twice.</p>
       {modal && <MailboxDialog modal={modal} setModal={setModal} data={data} recName={recName} done={(text) => { setModal(null); setFlash({ ok: true, text }); load(); }} />}
     </div>
   );
+}
+
+// The position dialog, opened on the given seat (the mailbox's own, or the one suggested for an unlinked mailbox).
+function positionModal(c, data, seatCode) {
+  const seat = ((data && data.seats) || []).find((x) => x.code === seatCode);
+  return { kind: 'position', c, department: seat ? seat.department || '' : (c.recruiterDepartment || ''), team: seat ? teamOf(seat) : '', seat: seat ? seat.code : '', ok: false };
 }
 
 function MailboxDialog({ modal, setModal, data, recName, done }) {
@@ -283,11 +295,11 @@ function MailboxDialog({ modal, setModal, data, recName, done }) {
     patch({ busy: true, err: '' });
     try { const { data: r } = await api.post(`/portal-mailboxes/${encodeURIComponent(c.id)}/reconnect`, m.pw ? { appPassword: m.pw } : {}); done(r.message || 'Reconnected.'); } catch (e) { patch({ busy: false, pw: '', err: errOf(e).message }); }
   }
-  async function reassign() {
-    if (!m.recruiterId) { patch({ err: 'Select the new recruiter.' }); return; }
-    if (!m.ok) { patch({ err: 'Tick the box to confirm the reassignment.' }); return; }
+  async function position() {
+    if (!m.seat) { patch({ err: 'Select the position.' }); return; }
+    if (!m.ok) { patch({ err: 'Tick the box to confirm.' }); return; }
     patch({ busy: true, err: '' });
-    try { const { data: r } = await api.post(`/portal-mailboxes/${encodeURIComponent(c.id)}/reassign`, { recruiterId: m.recruiterId, confirm: true }); done(r.message || 'Reassigned.'); } catch (e) { patch({ busy: false, err: errOf(e).message }); }
+    try { const { data: r } = await api.post(`/portal-mailboxes/${encodeURIComponent(c.id)}/position`, { seat: m.seat, confirm: true }); done(r.message || 'Saved.'); } catch (e) { patch({ busy: false, err: errOf(e).message }); }
   }
   if (m.kind === 'reconnect') {
     return (
@@ -298,19 +310,40 @@ function MailboxDialog({ modal, setModal, data, recName, done }) {
       </JpModal>
     );
   }
-  if (m.kind === 'reassign') {
-    const recs = (data.recruiters || []).filter((r) => r.active && r.id !== c.recruiterId);
+  if (m.kind === 'position') {
+    const all = data.seats || [];
+    const depts = [...new Set(all.map((x) => x.department).filter(Boolean))].sort((x, y) => x.localeCompare(y));
+    const inD = all.filter((x) => m.department && x.department === m.department);
+    const teams = [...new Set(inD.map(teamOf).filter(Boolean))].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+    const needTeam = teams.length >= 2;
+    const list = needTeam ? inD.filter((x) => m.team && teamOf(x) === m.team) : inD;
+    const pick = all.find((x) => x.code === m.seat);
     return (
-      <JpModal title={`Reassign ${c.sourceLabel} mailbox`} onClose={close} foot={<><button type="button" className="btn" onClick={close}>Cancel</button><button type="button" className="btn btn-primary" disabled={m.busy} onClick={reassign}>Reassign</button></>}>
+      <JpModal title={`${c.seat ? 'Change position of' : 'Link to a position:'} ${c.sourceLabel} mailbox`} onClose={close} foot={<><button type="button" className="btn" onClick={close}>Cancel</button><button type="button" className="btn btn-primary" disabled={m.busy} onClick={position}>Save</button></>}>
         {m.err && <div className="jp-err" role="alert">{m.err}</div>}
-        <p className="jp-note"><b>{c.address}</b> is connected to <b>{c.recruiterName || '—'}</b>. New emails from now on go to the recruiter you choose. Candidates already imported stay with {c.recruiterName || 'their recruiter'}: nothing is moved.</p>
-        <label className="jp-field" htmlFor="nsm-re-rec">New recruiter
-          <Combo id="nsm-re-rec" value={m.recruiterId} onChange={(e) => patch({ recruiterId: e.target.value })} placeholder="Search recruiter">
-            <option value="">Select recruiter</option>
-            {recs.map((r) => <option key={r.id} value={r.id}>{r.name}{r.department ? ` · ${r.department}` : ''}{teamOf(r) ? ` · ${teamOf(r)}` : ''}{r.employeeId ? ` · ${r.employeeId}` : ''}</option>)}
+        <p className="jp-note"><b>{c.address}</b> stays connected with its saved app password. It belongs to the position you choose: whoever holds that position in HRMS gets its new imports, now and after every change of person. Candidates already imported stay with {c.recruiterName || 'their recruiter'}.</p>
+        <label className="jp-field" htmlFor="nsm-pos-dept">Department
+          <Combo id="nsm-pos-dept" value={m.department} onChange={(e) => patch({ department: e.target.value, team: '', seat: '' })} departments={false} placeholder="Select department">
+            <option value="">Select department</option>
+            {depts.map((d) => <option key={d} value={d}>{d}</option>)}
           </Combo>
         </label>
-        <label className="nsm-check"><input type="checkbox" checked={!!m.ok} onChange={(e) => patch({ ok: e.target.checked })} /> I understand: only new imports go to the new recruiter. This change is recorded in the audit log.</label>
+        {needTeam && (
+          <label className="jp-field" htmlFor="nsm-pos-team">Team
+            <Combo id="nsm-pos-team" value={m.team} onChange={(e) => patch({ team: e.target.value, seat: '' })} placeholder="Select team">
+              <option value="">Select team</option>
+              {teams.map((t) => <option key={t} value={t}>{t}</option>)}
+            </Combo>
+          </label>
+        )}
+        <label className="jp-field" htmlFor="nsm-pos-seat">Position
+          <Combo id="nsm-pos-seat" value={m.seat} onChange={(e) => patch({ seat: e.target.value })} disabled={!m.department || (needTeam && !m.team)} placeholder="Search position or recruiter">
+            <option value="">Select position</option>
+            {list.map((x) => <option key={x.code} value={x.code}>{x.code} · {x.holderName || 'empty today'}</option>)}
+          </Combo>
+        </label>
+        {pick && !pick.holderName && <p className="jp-note">Nobody holds {pick.code} today: the mailbox stays with {c.recruiterName || 'its recruiter'} until someone joins, then moves to them by itself.</p>}
+        <label className="nsm-check"><input type="checkbox" checked={!!m.ok} onChange={(e) => patch({ ok: e.target.checked })} /> I understand: new imports go to the person holding this position. This change is recorded in the audit log.</label>
       </JpModal>
     );
   }
