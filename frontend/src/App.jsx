@@ -199,6 +199,10 @@ export default function App() {
       {/* Candidate "Invite to portal" link — email confirmed by a code first (spec B2) */}
       <Route path="/portal-invite/:token" element={<PortalInvite />} />
 
+      {/* Omni-Channel full page (founder 2026-10-29: "full page open avali ... logins adakunda"): the sidebar Omni-Channel opens this in its own tab -
+          Green Start alone over the whole window with its own sidebar, already signed in (no TeamLink sidebar / header around it). */}
+      <Route path="/green-start" element={<ProtectedRoute><OmniEntry full /></ProtectedRoute>} />
+
       <Route
         path="/"
         element={

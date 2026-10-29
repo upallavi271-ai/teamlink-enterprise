@@ -13,7 +13,8 @@ import { OMNI_BASE } from '../omni/omniPages.js';
 // - the native pages themselves live on at /omni-channel-native/... (type the address), nothing was deleted.
 // To switch the native pages back as the main entry: in App.jsx point the routes "omni" and "omni-channel" at <OmniApp /> again.
 // ---------------------------------------------------------------------------
-export default function OmniEntry() {
+// full: the /green-start page (its own tab, Green Start over the whole window, no TeamLink sidebar).
+export default function OmniEntry({ full = false }) {
   const { user } = useAuth();
   const { kids, greenStart } = useOmniEntry(user);
   const { search } = useLocation();
@@ -21,7 +22,7 @@ export default function OmniEntry() {
   if (kids === null) return <div className="gs-wrap"><div className="oc-note">Loading…</div></div>;
   if (!kids.length) return <div className="gs-wrap"><div className="oc-note" role="status">There is nothing for your login in Omni-Channel yet.</div></div>;
   if (!greenStart) return <Navigate to={`${OMNI_BASE}${search}`} replace />;
-  return <GreenStart />;
+  return <GreenStart full={full} />;
 }
 
 // Old addresses (/omni-channel/<page>[/<tab>]) keep working: they open the same page in the native Omni-Channel.

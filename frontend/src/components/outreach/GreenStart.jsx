@@ -261,7 +261,10 @@ function Controls({ st, onAction, onLog }) {
   );
 }
 
-export default function GreenStart() {
+// full (founder 2026-10-29: "full page open avali pakkana side bar full page open avali logins adakunda"): the /green-start page in its own tab,
+// Green Start alone over the whole window (its own sidebar, no TeamLink sidebar or header), already signed in. Until it can open, the usual
+// status / controls show instead.
+export default function GreenStart({ full = false }) {
   const [st, setSt] = useState(null); // status from /api/omni-gs/status
   const [err, setErr] = useState('');
   const [ready, setReady] = useState(false); // session cookie set, safe to open the frame
@@ -345,6 +348,15 @@ export default function GreenStart() {
   }, [ready]); // eslint-disable-line react-hooks/exhaustive-deps
   const loginUrl = `${gsOrigin(st && st.port)}/login`; // the product signs you in here (and goes on to its dashboard if you already are)
   const src = sso || loginUrl;
+  useEffect(() => {
+    if (!full) return undefined;
+    const was = document.title;
+    document.title = 'Green Start';
+    return () => { document.title = was; };
+  }, [full]);
+  if (full && ready && sso !== undefined) {
+    return <iframe title="Green Start" src={src} className="gs-frame-full" allow="clipboard-write; microphone; autoplay" />;
+  }
   const frameSlot = ready && sso !== undefined ? (
     <iframe
       ref={frame}

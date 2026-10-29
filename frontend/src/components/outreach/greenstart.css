@@ -44,3 +44,5 @@
 .gs-help { background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 10px 16px; max-width: 760px; margin-bottom: 8px; }
 .gs-help dl { margin: 0; } .gs-help dt { font-weight: 700; margin-top: 6px; } .gs-help dd { margin: 0 0 2px; }
 @media (max-width: 600px) { .gs-actions .gs-btn, .gs-actions select { flex: 1 1 100%; } .gs-links { margin-left: 0; } }
+/* 2026-10-29: /green-start - Green Start alone over the whole window (its own sidebar), opened in its own tab from the sidebar Omni-Channel */
+.gs-frame-full { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; border: 0; display: block; background: #fff; }

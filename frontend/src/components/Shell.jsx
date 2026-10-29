@@ -22,22 +22,13 @@ import { loadClientAliases, forgetClientAliases } from './clientAliases.js';
 import { hasAtsWork } from '../utils/useAtsAlerts';
 import { useJobPortalUrl } from '../pages/JobPortalRedirect.jsx';
 import { useOmniEntry } from './outreach/useOmniChildren.js';
-import { resolveGreenStartUrl } from './outreach/greenStartLink.js';
 import OmniTopChips from './omni/OmniTopChips.jsx';
 import './ShellPhone.css';
 import AiCallOfferHost from './aicalling/AiCallOfferHost.jsx'; // "Tell them with the AI assistant?" after a Shortlisted move / an interview booking
 import './MobileNav.css';
 
-// Where the sidebar Omni-Channel opens Green Start (components/outreach/greenStartLink.js decides):
-//   on the PC (localhost) and anywhere VITE_GREENSTART_URL=local: the in-page frame at /omni-channel, as before;
-//   on the live site (any *.teamlinks.in address): a NEW TAB at TeamLink's own /omni page, which shows Green Start inside it (like /jobs for the Job Portal);
-//     Green Start also opens on its own at https://greenstart.teamlinks.in whenever wanted;
-//   VITE_GREENSTART_URL=<address> (set when building) overrides both.
-// The /omni page asks TeamLink for the door pass (POST /api/omni-gs/session) by itself (components/outreach/GreenStart.jsx).
-const GREENSTART_PUBLIC_URL = resolveGreenStartUrl({
-  envUrl: import.meta.env && import.meta.env.VITE_GREENSTART_URL,
-  hostname: typeof window !== 'undefined' ? window.location.hostname : '',
-});
+// The sidebar Omni-Channel opens TeamLink's own /green-start page in a NEW TAB (2026-10-29): Green Start over the whole window, already signed in.
+// That page asks TeamLink for the door pass (POST /api/omni-gs/session) and the sign-in ticket by itself (components/outreach/GreenStart.jsx).
 import useMobileDrawer, { useMediaQuery, PHONE_MQ } from './useMobileDrawer.js';
 
 // The sidebar renders the tree in ../nav.js. Which groups, which sections and
@@ -219,21 +210,13 @@ export default function Shell() {
           ))}
           {omniKids && omniKids.length > 0 && omniGreenStart && (
             <div className="sb-group">
-              {/* Founder, 2026-10-21: clicking Omni-Channel opens the Green Start product on its own address (https://greenstart.teamlinks.in) in a separate tab,
-                  with all its features and its own login. VITE_GREENSTART_URL changes the address; VITE_GREENSTART_URL=local keeps the in-page frame (/omni-channel). */}
-              {GREENSTART_PUBLIC_URL ? (
-                <a className="sb-item" href="/omni" target="_blank" rel="noopener noreferrer" title="Opens Green Start inside TeamLink in a new tab (it also opens on its own at greenstart.teamlinks.in)">
-                  <Ico char="📣" />Omni-Channel ↗
-                </a>
-              ) : (
-                <div
-                  className={'sb-item' + (section === 'omni' ? ' top-active' : '')}
-                  {...press(() => navTo('/omni-channel'), 'link')}
-                  aria-current={section === 'omni' ? 'page' : undefined}
-                >
-                  <Ico char="📣" />Omni-Channel
-                </div>
-              )}
+              {/* Founder, 2026-10-21: Omni-Channel opens the Green Start product in a separate tab. */}
+              {/* 2026-10-29 (founder: "full page open avali pakkana side bar full page open avali logins adakunda"): live AND on the PC it opens
+                  /green-start in a new tab - Green Start alone over the whole window, with its own sidebar, already signed in. The TeamLink page with
+                  Manage / Help (start, stop, backup, logs) is still at /omni-channel. */}
+              <a className="sb-item" href="/green-start" target="_blank" rel="noopener noreferrer" title="Opens Green Start full page in a new tab, already signed in">
+                <Ico char="📣" />Omni-Channel ↗
+              </a>
             </div>
           )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have
