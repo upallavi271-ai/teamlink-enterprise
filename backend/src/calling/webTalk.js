@@ -135,7 +135,7 @@ async function dialogueFor(row) {
   if (!ctx) return null;
   const { fields } = webOf(row);
   const sc = await svc.scriptFor(ctx, row.purpose, row.language || 'English', fields, s);
-  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts });
+  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts }); // own line / link calls keep the talk history WITHOUT saying it (founder 2026-10-29: 'ilaa cheppakudadhu')
   const snap = svc.safeJson(row.botStateJson);
   if (snap && snap.step) d.restore(snap);
   return d;
@@ -200,4 +200,4 @@ async function turn(token, body) {
   return { ok: true, say: out.say, done: false, language: d.language };
 }
 
-module.exports = { createLink, open, turn, LINK_DAYS, VIA };
+module.exports = { createLink, open, turn, dialogueFor, LINK_DAYS, VIA };

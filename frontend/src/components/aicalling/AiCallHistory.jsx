@@ -3,6 +3,7 @@ import api from '../../api';
 import Combo from '../Combo.jsx';
 import AiCallDialog from './AiCallDialog.jsx';
 import AiCallDetail from './AiCallDetail.jsx';
+import { TalkHistoryButton } from './TalkHistory.jsx'; // the whole conversation of a call (2026-10-29)
 import {
   PURPOSES, purposeLabel, statusWord, STATUS_CLASS, when, minutes,
 } from './aiCallingShared.js';
@@ -62,8 +63,10 @@ export default function AiCallHistory({ candidate, refreshKey = 0 }) {
             <span className={`status ${STATUS_CLASS[r.status] || 'new'}`}>{statusWord(r.status)}</span>
             <b>{purposeLabel(r.purpose)}</b>
             {r.initiatedVia === 'web-link' && <span className="small-muted">· AI link</span>}
+            {r.initiatedVia === 'sip' && <span className="small-muted">· AI phone (own line)</span>}
             {r.outcome && <span>{`· ${r.outcome}`}</span>}
             {r.durationSec != null && <span className="small-muted">{`· talked ${minutes(r.durationSec)}`}</span>}
+            <span style={{ marginLeft: 'auto' }}><TalkHistoryButton call={r} /></span>
           </div>
           <div className="small-muted">{`${when(r.createdAt)} · ${r.jobTitle || ''} · started by ${r.initiatedByName || r.initiatedVia}${r.attempts > 1 ? ` · ${r.attempts} tries` : ''}`}</div>
           {r.summary && <div className="small-muted" style={{ marginTop: 2 }}>{r.summary}</div>}

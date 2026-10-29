@@ -179,7 +179,7 @@ function Calls() {
                 <tr key={r.id} className="row-link" onClick={() => setOpen(r.id)}>
                   <td style={{ whiteSpace: 'normal', minWidth: 130 }}><b>{r.candidateName}</b>{r.mode === 'test' && <span className="small-muted"> (test)</span>}</td>
                   <td style={{ whiteSpace: 'normal' }}>{r.jobTitle}</td>
-                  <td>{purposeLabel(r.purpose)}{r.initiatedVia === 'web-link' && <span className="small-muted"> · AI link</span>}</td>
+                  <td>{purposeLabel(r.purpose)}{r.initiatedVia === 'web-link' && <span className="small-muted"> · AI link</span>}{r.initiatedVia === 'sip' && <span className="small-muted"> · AI phone</span>}</td>
                   <td><span className={`status ${STATUS_CLASS[r.status] || 'new'}`}>{statusWord(r.status)}</span></td>
                   <td style={{ whiteSpace: 'normal' }}>{r.outcome || (r.waitReason ? <span className="small-muted">{r.waitReason}</span> : '')}</td>
                   <td>{minutes(r.durationSec)}</td>

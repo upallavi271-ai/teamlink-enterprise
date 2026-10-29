@@ -36,12 +36,13 @@ function norm(text) {
     .replace(/[\u0000-\u001f]/g, ' ').replace(/[.,!?;:।"'`()[\]{}\-_/\\|]+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 const ascii = (w) => /^[\x00-\x7f]+$/.test(w);
-// one entry matches when: a multi-word entry is inside the text; a word equals a token; a long non-Latin word starts a token (Telugu / Hindi endings)
+// one entry matches when: a multi-word entry is inside the text (a Telugu / Hindi one may carry an ending on its last word, but
+// must START at a word: "बाद में" is not inside "हैदराबाद में"); a word equals a token; a long non-Latin word starts a token (endings)
 function has(text, list) {
   const tokens = text.split(' ');
   const padded = ` ${text} `;
   return list.some((e) => {
-    if (e.includes(' ')) return padded.includes(` ${e} `) || (!ascii(e) && text.includes(e));
+    if (e.includes(' ')) return padded.includes(` ${e} `) || (!ascii(e) && padded.includes(` ${e}`));
     if (tokens.includes(e)) return true;
     return !ascii(e) && e.length >= 3 && tokens.some((t) => t.startsWith(e));
   });
@@ -55,8 +56,8 @@ const L = {
   salary: ['salary', 'pay', 'ctc', 'package', 'lpa', 'how much', 'stipend', 'वेतन', 'सैलरी', 'तनख्वाह', 'पैकेज', 'జీతం', 'జీతము', 'వేతనం', 'జీతమెంత'],
   later: ['later', 'call back', 'call me back', 'not now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
   resched: ['reschedule', 'change the time', 'change time', 'another time', 'different time', 'other time', 'postpone', 'can we move', 'move it', 'समय बदल', 'दूसरा समय', 'दूसरे समय', 'సమయం మార్చ', 'టైమ్ మార్చ', 'వేరే సమయం', 'మరో సమయం', 'వాయిదా', 'vere samayam'],
-  no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me'],
-  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం'],
+  no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me', 'నో', 'నొ', 'नो', 'नॉट'],
+  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
   info: ['what', 'where', 'which', 'who', 'when', 'how', 'why', 'details', 'tell me', 'more info', 'location', 'address', 'company', 'client', 'link', 'kya', 'kahan', 'kaun', 'kab', 'kaise', 'क्या', 'कहाँ', 'कहां', 'कौन', 'कब', 'कैसे', 'क्यों', 'ఏమిటి', 'ఎక్కడ', 'ఎవరు', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'ఏంటి'],
   immediate: ['immediate', 'immediately', 'serving', 'free', 'fresher', 'तुरंत', 'वेंटनहीं', 'వెంటనే', 'ఇప్పుడే'],
   // the person is upset (user rule 2026-10-28: stay calm, apologise, keep it short, offer a recruiter; never argue)
@@ -78,6 +79,8 @@ const ROMAN = {
   Hindi: ['haan', 'nahi', 'nahin', 'kya', 'hai', 'hain', 'mera', 'meri', 'mujhe', 'aap', 'aapka', 'kahan', 'theek', 'thik', 'baad', 'abhi', 'bilkul', 'hoon', 'kaun', 'kyun', 'batao',
     'bataiye', 'chahiye', 'karunga', 'sakta', 'mein'],
 };
+// "can we talk in English", "हिंदी में बात करो", "తెలుగులో మాట్లాడండి": a request to switch, not an answer
+const LANG_ASK = /\b(talk|speak|continue|switch|change)\b|\bbaat\b|\bbol|matlad|మాట్లాడ|बात|बोल/i;
 const LANG_NAMES = [
   ['Telugu', /\btelugu\b|తెలుగు|तेलुगु/i],
   ['Hindi', /\bhindi\b|हिंदी|हिन्दी|హిందీ/i],
@@ -91,7 +94,7 @@ function detectLanguage(textIn) {
   const named = LANG_NAMES.filter(([, re]) => re.test(raw)).map(([l]) => l);
   if (named.length === 1 && words.length <= 8) {
     const k = classify(raw).intent;
-    return { lang: named[0], only: words.length <= 5 && ['unclear', 'info_q', 'silence', 'human'].includes(k) };
+    return { lang: named[0], only: (words.length <= 5 && ['unclear', 'info_q', 'silence', 'human'].includes(k)) || (LANG_ASK.test(raw) && !['stop', 'later', 'reschedule'].includes(k)) };
   }
   const te = (raw.match(/[ఀ-౿]/g) || []).length;
   const hi = (raw.match(/[ऀ-ॿ]/g) || []).length;
@@ -104,6 +107,15 @@ function detectLanguage(textIn) {
   if (rh > rt) return { lang: 'Hindi', only: false };
   if (latin.length >= 3 && rt === 0 && rh === 0) return { lang: 'English', only: false };
   return null;
+}
+
+// "Hello?" / "చెప్పండి" / "बोलिए" on picking up the phone: not an answer and not a failed try - the question is asked again
+const GREETING = ['hello', 'helo', 'hallo', 'hi', 'hey', 'cheppandi', 'boliye', 'bolo', 'హలో', 'హాయ్', 'చెప్పండి', 'हैलो', 'हेलो', 'हलो', 'बोलिए', 'बोलो'];
+const HELLO_BACK = { English: 'Hello.', Telugu: 'హలో.', Hindi: 'जी, नमस्ते।' };
+const GREET_EXTRA =['ji', 'जी', 'అండి', 'sir', 'madam', 'haan', 'हाँ', 'హా'];
+function isGreeting(t) {
+  const w = t.split(' ').filter(Boolean);
+  return w.length > 0 && w.length <= 3 && w.some((x) => GREETING.includes(x)) && w.every((x) => GREETING.includes(x) || GREET_EXTRA.includes(x));
 }
 
 // Fixed answer from a fixed list. Returns { intent, human }.
@@ -131,6 +143,10 @@ const NUM_WORDS = {
   okati: 1, rendu: 2, moodu: 3, nalugu: 4, aidu: 5, aaru: 6, edu: 7, enimidi: 8, tommidi: 9, padi: 10,
   एक: 1, दो: 2, तीन: 3, चार: 4, पाँच: 5, पांच: 5, छह: 6, सात: 7, आठ: 8, नौ: 9, दस: 10,
   ఒకటి: 1, రెండు: 2, మూడు: 3, నాలుగు: 4, ఐదు: 5, ఆరు: 6, ఏడు: 7, ఎనిమిది: 8, తొమ్మిది: 9, పది: 10,
+  // phone calls: speech-to-text writes numbers as words (notice periods are mostly 15 / 30 / 45 / 60 / 90 days)
+  forty: 40, 'forty-five': 45, fortyfive: 45, pandra: 15, pandrah: 15, bees: 20, tees: 30, saath: 60, nabbe: 90, padihenu: 15, iravai: 20, muppai: 30, aravai: 60, tombhai: 90,
+  पंद्रह: 15, बीस: 20, तीस: 30, पैंतालीस: 45, साठ: 60, नब्बे: 90,
+  పదిహేను: 15, ఇరవై: 20, ముప్పై: 30, నలభై: 40, నలభైఐదు: 45, అరవై: 60, తొంభై: 90,
 };
 function firstNumber(t) {
   const m = /(\d{1,3}(?:\.\d)?)/.exec(t);
@@ -156,16 +172,21 @@ function readNotice(text) {
   return { days: null, text: `${n}` };
 }
 // a place: letters and spaces only, short
+// the words around a city name in an answer ("मैं हैदराबाद में रहता हूँ", "నేను హైదరాబాద్‌లో ఉంటాను"): dropped, the city kept
+const PLACE_FILLER = new Set(['i', 'am', 'live', 'living', 'stay', 'staying', 'currently', 'now', 'right', 'my', 'city', 'is', 'mai', 'main', 'mein', 'rehta', 'rehti', 'hoon', 'hu', 'hai',
+  'मैं', 'में', 'मे', 'रहता', 'रहती', 'रहते', 'हूँ', 'हूं', 'हैं', 'है', 'अभी', 'मेरा', 'शहर', 'से', 'నేను', 'లో', 'ఉంటాను', 'ఉన్నాను', 'ఉంటున్నాను', 'ప్రస్తుతం', 'ఇప్పుడు', 'మా', 'ఊరు', 'nenu', 'lo', 'untanu', 'unnanu']);
 function readPlace(text) {
   const raw = String(text || '').normalize('NFKC').replace(/[^\p{L}\p{M}\s.-]/gu, ' ').replace(/\s+/g, ' ').trim();
   if (!raw) return null;
   const m = /\b(?:in|at|from|near|live in|staying in|based in)\s+(.{2,40})$/i.exec(raw);
-  const pick = (m ? m[1] : raw).split(' ').slice(0, 4).join(' ').trim();
+  const words = (m ? m[1] : raw).split(' ').map((w) => w.replace(/‌?లో$/, '')).filter((w) => w && !PLACE_FILLER.has(w.toLowerCase()));
+  const pick = words.slice(0, 4).join(' ').trim();
   return pick.length >= 2 && pick.length <= 40 ? pick : null;
 }
 function readTime(text) {
   const raw = String(text || '').normalize('NFKC').replace(/[^\p{L}\p{M}\p{N}\s:.,/-]/gu, ' ').replace(/\s+/g, ' ').trim();
-  return raw ? raw.slice(0, 120) : null;
+  const t = raw.replace(/[s.,:/-]+$/, ''); // "Tomorrow." -> "Tomorrow" (it is read back inside a sentence)
+  return t ? t.slice(0, 120) : null;
 }
 
 // --- the result, validated -----------------------------------------------------------------------------------------------
@@ -329,6 +350,7 @@ class Dialogue {
     }
     if (k.intent === 'stop') { st.stop = true; return this.finish(this.speak(this.P.closeStop), 'stop'); }
     const t = norm(text);
+    if (isGreeting(t) && (st.greets || 0) < 3) { st.greets = (st.greets || 0) + 1; return { say: st.step === 'identity' ? this.speak(this.B.identity) : this.again(HELLO_BACK[this.language] || HELLO_BACK.English), done: false }; } // the name question already says hello
     // 2. money / fraud worry: the fixed reassurance, then the same question again (allowed before the name is confirmed: it shares nothing)
     if (has(t, L.scam) && !has(t, L.salary)) return { say: this.again(this.P.noMoney), done: false };
     // 3. upset: apologise, keep it short, offer a recruiter; a second time ends the call politely. Never argue.

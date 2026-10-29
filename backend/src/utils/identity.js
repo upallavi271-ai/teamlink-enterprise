@@ -384,8 +384,9 @@ async function resolveIdentity(userId, preloaded = null) {
       ]);
       atsBdeDeskDepartments = owners.map((o) => o.ownerDepartment)
         .filter((d) => desks.includes(canonicalDepartment(d)));
+      // Non IT Medical is the Non IT MFG team's Medical work (2026-10-29): it belongs to the MFG desk, not the Medical one.
       atsBdeDeskRequirementDepartments = reqDepts.map((o) => o.department)
-        .filter((d) => desks.includes(canonicalDepartment(d)));
+        .filter((d) => desks.includes(/non[\s-]*it\s*medical/i.test(d) ? 'Manufacturing' : canonicalDepartment(d)));
       if (atsBdeDeskDepartments.length) {
         atsBdeUnownedClientIds = (await prisma.client.findMany({
           where: {

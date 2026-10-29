@@ -29,7 +29,14 @@ export default function AiCallDialog({
   const [linkRes, setLinkRes] = useState(null); // the free AI link (calling/webTalk.js)
   const [copied, setCopied] = useState(false);
   const [campaign, setCampaign] = useState('');
+  const [phoneAi, setPhoneAi] = useState(null); // our own SIP line + free voices (calling/voice/sipCall.js)
   const fieldKey = JSON.stringify(fields);
+
+  useEffect(() => {
+    let live = true;
+    api.get('/ai-calling/status').then((r) => { if (live) setPhoneAi(r.data.phoneAi || null); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -63,6 +70,19 @@ export default function AiCallDialog({
     } finally { setBusy(false); }
   }
 
+  // AI PHONE CALL through our own SIP line, free voices: only the SIP minutes cost.
+  async function phoneCall() {
+    setBusy(true); setErr('');
+    try {
+      // no language: the call starts in Telugu (or the language they spoke last time) and follows whatever the candidate speaks
+      await api.post('/ai-calling/phone-call', { applicationId: ids[0], purpose, fields, confirm: true });
+      setSent({ one: true, status: 'calling', note: 'own SIP line, free AI voice', phone: true });
+      if (onDone) onDone();
+    } catch (e) {
+      setErr(errorOf(e, 'The call could not be placed.'));
+    } finally { setBusy(false); }
+  }
+
   // FREE AI LINK: the same assistant on a web page; the recruiter sends the link from their own WhatsApp (₹0, no Exotel).
   async function makeLink() {
     setBusy(true); setErr('');
@@ -81,6 +101,8 @@ export default function AiCallDialog({
   const allowed = pv && pv.allowed && !pv.fieldError;
   // the phone-call switches (Off / Test numbers / DND) do not stop a link: no call is placed
   const linkAllowed = !many && pv && !pv.fieldError && (pv.verdict.ok || ['off', 'test_number', 'dnd'].includes(pv.verdict.code));
+  // the Exotel switches (Off / not set up) do not stop our own line; the server checks its own switch and every rule again
+  const phoneAllowed = !many && phoneAi && phoneAi.ready && pv && !pv.fieldError && (pv.verdict.ok || ['off', 'test_number'].includes(pv.verdict.code));
   const title = many ? `Call ${ids.length} candidates with the AI assistant` : 'Call with the AI assistant';
   return (
     <Modal
@@ -93,6 +115,11 @@ export default function AiCallDialog({
           {!many && (
             <button className="btn" disabled={busy || !linkAllowed} onClick={makeLink} title="Free: the candidate talks to the AI assistant on a web page. You send the link from your WhatsApp.">
               {busy ? 'Please wait…' : 'Send free AI link (WhatsApp)'}
+            </button>
+          )}
+          {!many && phoneAi && phoneAi.ready && (
+            <button className="btn btn-primary" disabled={busy || !phoneAllowed} onClick={phoneCall} title="A real phone call from our own line. It starts in Telugu and switches by itself to the language the candidate speaks. The AI voice is free; only the call minutes cost.">
+              {busy ? 'Please wait…' : `Call with AI (phone)${phoneAi.mode === 'Test' ? ' - test' : ''}`}
             </button>
           )}
           <button className="btn btn-primary" disabled={busy || (!many && !allowed)} onClick={confirm}>
@@ -122,7 +149,7 @@ export default function AiCallDialog({
               : `The call is ${sent.status === 'calling' ? 'being placed now' : 'waiting for its turn'}${sent.note ? ` (${sent.note})` : ''}.`}
           </div>
           {sent.many && sent.results.filter((r) => !r.ok).map((r) => <div key={r.applicationId} className="small-muted">Not placed: {r.error}</div>)}
-          <div className="small-muted">The result will appear on the candidate&apos;s history and on the AI Calling page. It says <b>Done</b> only after Exotel confirms the call ended.</div>
+          <div className="small-muted">The result will appear on the candidate&apos;s history and on the AI Calling page. {sent.phone ? 'It says Done when the conversation ends.' : <>It says <b>Done</b> only after Exotel confirms the call ended.</>}</div>
         </div>
       ) : (
         <div>
