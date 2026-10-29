@@ -411,7 +411,8 @@ router.get('/:clientId', requireAuth, async (req, res, next) => {
     // the lifecycle (they send it); never to BDE-view / Accounts.
     // eslint-disable-next-line global-require
     const { can } = require('../utils/permissions');
-    const lifecycleUser = access.as !== 'client' && await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'create');
+    // 'bde-view' (a BDE reading another BDE's client, 2026-10-29) reads the agreement, never its signing link
+    const lifecycleUser = !['client', 'bde-view'].includes(access.as) && await can(req.user, 'ats', 'clients', 'Agreement Lifecycle', 'create');
     const link = signing.linkState(client);
     return res.json({
       client: { id: client.id, name: client.name, legalName: client.legalName || null, clientCode: client.clientCode || null },

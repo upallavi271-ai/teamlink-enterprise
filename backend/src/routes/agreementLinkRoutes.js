@@ -96,7 +96,9 @@ module.exports = function mountAgreementLink(router, { loadForView }) {
   async function loadForLink(req, res) {
     const loaded = await loadForView(req, res);
     if (!loaded) return null;
-    if (loaded.access.as === 'client') {
+    // 'bde-view' = a BDE reading ANOTHER BDE's client (view only, 2026-10-29): the signing link is a secret and making
+    // it is work on that client - both stay with the client's own BDE, the BDE TL and the Admin.
+    if (loaded.access.as === 'client' || loaded.access.as === 'bde-view') {
       res.status(403).json({ error: "Only a Super Admin, an Admin or the client's own BDE can make or share the agreement link." });
       return null;
     }
