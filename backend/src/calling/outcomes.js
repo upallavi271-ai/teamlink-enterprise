@@ -129,7 +129,11 @@ async function applyResult(callId, resultIn, turns) {
     rescheduleWish: wish, humanFollowUp: res.humanFollowUpRequested ? 1 : 0, nextAction, followUpDate: due,
     botStateJson: JSON.stringify({ turns: res.turns, done: true }),
   };
-  if (s.keepTranscripts && Array.isArray(turns) && turns.length && !row.deletedAt) {
+  // TALK HISTORY (founder 2026-10-29: "call ayyaka timeline lo talk history ... em matladaro mottham kanipinchali"): a call on
+  // our own phone line or the free AI link always keeps what was said (the assistant says so at the start); Exotel calls
+  // follow the Admin's "Keep what was said" switch as before.
+  const ownLine = ['sip', 'web-link'].includes(row.initiatedVia);
+  if ((s.keepTranscripts || ownLine) && Array.isArray(turns) && turns.length && !row.deletedAt) {
     patch.transcript = JSON.stringify(turns.slice(0, 80).map((x) => ({ who: x.who === 'assistant' ? 'assistant' : 'candidate', text: String(x.text || '').slice(0, 400) })));
     const keep = new Date(t.getTime() + s.transcriptDays * 86400000).toISOString();
     if (!row.purgeAt || keep < row.purgeAt) patch.purgeAt = keep;
