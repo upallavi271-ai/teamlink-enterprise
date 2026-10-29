@@ -134,6 +134,28 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
   // locked after the person's check-out. The server decides; these flags only show the buttons.
   const [perm, setPerm] = useState(null);
   const [markMsg, setMarkMsg] = useState('');
+  // BULK MARKING, FROM A DATE TO A DATE (founder 2026-10-29): tick people, pick From / To, one button marks every day of the range
+  // (POST /attendance/bulk - Sundays and holidays left alone unless ticked; a Leave raises one pending request per person).
+  const [sel, setSel] = useState(() => new Set());
+  const [bulk, setBulk] = useState({ from: '', to: '', offDays: false });
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const bulkFrom = bulk.from || date;
+  const bulkTo = bulk.to || date;
+  async function bulkMark(status, label) {
+    const ids = [...sel];
+    if (!ids.length) { setMarkMsg('Tick the employees to mark first.'); return; }
+    if (bulkTo < bulkFrom) { setMarkMsg('The From date is after the To date.'); return; }
+    // eslint-disable-next-line no-alert
+    if (!window.confirm(`Mark ${ids.length} employee(s) as ${label} on every day from ${fmtDay(bulkFrom)} to ${fmtDay(bulkTo)}${bulk.offDays ? ' (Sundays and holidays too)' : ' (Sundays and holidays left alone)'}?`)) return;
+    setBulkBusy(true);
+    try {
+      const res = await api.post('/attendance/bulk', { employeeIds: ids, from: bulkFrom, to: bulkTo, status, includeOffDays: bulk.offDays });
+      setMarkMsg(res.data.message || 'Marked.');
+      setSel(new Set());
+      load();
+    } catch (e) { setMarkMsg(errOf(e, 'Could not mark these days.')); } finally { setBulkBusy(false); }
+  }
+  const toggleSel = (id) => setSel((cur) => { const n = new Set(cur); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   useEffect(() => { if (isHR) api.get('/attendance/time-edit-setting').then((r) => setPerm(r.data)).catch(() => setPerm(null)); }, [isHR]);
   const errOf = (e, f) => (e && e.response && e.response.data && e.response.data.error) || f;
   async function editTimes(r) {
@@ -264,13 +286,26 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
               </label>
             )}
           </PeopleFilterBar>
+          {canMark && (
+            <div className="att-bulk">
+              <b>Mark many days at once</b>
+              <label>From <input type="date" value={bulkFrom} onChange={(e) => setBulk((x) => ({ ...x, from: e.target.value }))} /></label>
+              <label>To <input type="date" value={bulkTo} min={bulkFrom} onChange={(e) => setBulk((x) => ({ ...x, to: e.target.value }))} /></label>
+              <label className="small-muted"><input type="checkbox" checked={bulk.offDays} onChange={(e) => setBulk((x) => ({ ...x, offDays: e.target.checked }))} /> Include Sundays / holidays</label>
+              <span className="small-muted">{sel.size} ticked</span>
+              {[['Present', 'Present'], ['Absent', 'Absent'], ['Half Day', 'Half Day'], ['On Leave', 'Leave']].map(([s, label]) => (
+                <button key={s} className="btn btn-sm btn-primary" disabled={bulkBusy || !sel.size} onClick={() => bulkMark(s, label)}>{label}</button>
+              ))}
+            </div>
+          )}
           {markMsg && <div className="small-muted" role="status" style={{ margin: '0 18px 8px' }}>{markMsg}</div>}
           <ScrollTable>
             <table>
-              <thead><tr><th>Code</th><th>Name</th><th>Department</th><th title="From punches, marks, leave, holidays">Day status</th><th title="What HR marked (the Mark buttons change this)">Marked</th><th>In</th><th>Out</th><th>Location</th><th style={{ textAlign: 'right' }}>Mark</th></tr></thead>
+              <thead><tr>{canMark && <th style={{ width: 30 }}><input type="checkbox" aria-label="Tick everyone on this page" checked={markPage.slice.length > 0 && markPage.slice.every((r) => sel.has(r.employeeId))} onChange={(e) => setSel((cur) => { const n = new Set(cur); markPage.slice.forEach((r) => (e.target.checked ? n.add(r.employeeId) : n.delete(r.employeeId))); return n; })} /></th>}<th>Code</th><th>Name</th><th>Department</th><th title="From punches, marks, leave, holidays">Day status</th><th title="What HR marked (the Mark buttons change this)">Marked</th><th>In</th><th>Out</th><th>Location</th><th style={{ textAlign: 'right' }}>Mark</th></tr></thead>
               <tbody>
                 {markPage.slice.map((r) => (
                   <tr key={r.employeeId}>
+                    {canMark && <td><input type="checkbox" aria-label={`Tick ${r.name}`} checked={sel.has(r.employeeId)} onChange={() => toggleSel(r.employeeId)} /></td>}
                     <td><b>{r.employeeCode}</b></td>
                     <td>{r.name}</td>
                     <td className="cell-muted">{r.department || '—'}</td>
@@ -288,7 +323,7 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
                     </td>
                   </tr>
                 ))}
-                {marking.length === 0 && <tr><td colSpan="9"><ListEmpty lf={{ activeCount: Object.values(mf).some(Boolean) || kpi ? 1 : 0, clear: () => { setMf(EMPTY_MARK); setKpi(''); } }} noun="employees" title="No employees on the rolls on this date." /></td></tr>}
+                {marking.length === 0 && <tr><td colSpan={canMark ? 10 : 9}><ListEmpty lf={{ activeCount: Object.values(mf).some(Boolean) || kpi ? 1 : 0, clear: () => { setMf(EMPTY_MARK); setKpi(''); } }} noun="employees" title="No employees on the rolls on this date." /></td></tr>}
               </tbody>
             </table>
           </ScrollTable>

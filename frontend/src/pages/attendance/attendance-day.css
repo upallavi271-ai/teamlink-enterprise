@@ -42,3 +42,8 @@
 .att-samples-head{font-weight:700;font-size:13px;margin-bottom:8px}
 .att-samples-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
 .att-sample code{font-size:11px;background:var(--paper-raised);padding:0 3px;border-radius:3px}
+
+/* Bulk marking, from a date to a date (Attendance.jsx, founder 2026-10-29). */
+.att-bulk{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin:0 18px 10px;padding:10px 12px;border:1px solid var(--line,#dde5e2);border-radius:8px;background:var(--paper,#f7f9f8);font-size:13px}
+.att-bulk label{display:inline-flex;align-items:center;gap:6px}
+.att-bulk input[type="date"]{padding:4px 6px;border:1px solid var(--line,#dde5e2);border-radius:6px;font:inherit;background:var(--paper-raised,#fff);color:inherit}

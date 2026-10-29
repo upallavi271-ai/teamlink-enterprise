@@ -280,7 +280,30 @@ function decisionInfo(request, wfSummary) {
   };
 }
 
+// OVER THE TL LIMIT = NO TL DECISION AT ALL (founder 2026-10-28: "2 days kante ekkuva TL asala approve cheyaledu, HR, Super Admin
+// matram chestaru"). An employee's request longer than the TL limit skips the TL: every step before HR is shown as Visibility and HR
+// decides (the Super Admin may decide directly, as always). A TL's OWN leave keeps its own rule (utils/leadLeave.js).
+// Used by routes/leave.js (a new request, a TL trying to decide) and utils/markedLeave.js (a Leave marked in attendance, bulk too).
+const PAST_TL_NOTE = 'Not needed - this leave is longer than the TL limit, so HR / the Super Admin decide it. Shown for information.';
+async function routePastTl(leaveId) {
+  const steps = await prisma.approvalStep.findMany({ where: { workflow: 'leave', recordId: leaveId }, orderBy: { seq: 'asc' } });
+  const hr = steps.find((s) => s.level === 'HR' && ['Waiting', 'Pending'].includes(s.status));
+  if (!hr) return null;
+  await prisma.approvalStep.updateMany({
+    where: { workflow: 'leave', recordId: leaveId, seq: { lt: hr.seq }, status: { in: ['Pending', 'Waiting'] } },
+    data: { status: 'Visibility', note: PAST_TL_NOTE },
+  });
+  if (hr.status !== 'Pending') await prisma.approvalStep.update({ where: { id: hr.id }, data: { status: 'Pending', activatedAt: new Date() } });
+  return hr;
+}
+async function isOverTlLimit(leave, employee) {
+  if (!employee || await require('./leadLeave').isLeadEmployee(employee)) return false; // eslint-disable-line global-require
+  const verdict = await evaluateTlRule(await getTlRule(), leave);
+  return !!(verdict.rule && verdict.rule.enabled && !verdict.allowed);
+}
+
 module.exports = {
+  routePastTl, isOverTlLimit,
   getTlRule, setTlRule, actingAsTl, evaluateTlRule, TL_RULE_DEFAULT,
   reassignTargets, performReassign, REASSIGNED, PRECOUNTED,
   monthlyFor, allocate, decisionInfo, monthLabel, isTempAccount,

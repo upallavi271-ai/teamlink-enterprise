@@ -40,11 +40,13 @@ function waitingForOf(steps) {
 
 // Raise the pending leave for a day marked "Leave". Never throws: the mark itself is already saved.
 // Returns { leave, created, waitingFor } or { skipped: '<why>' }.
-async function raiseFromMark({ employee, date, user, leaveType = null, notify = true }) {
+// toDate (2026-10-29, bulk marking from a date to a date): ONE request for the whole range instead of one per day.
+async function raiseFromMark({ employee, date, toDate = null, user, leaveType = null, notify = true }) {
   try {
     if (!employee || !/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) return { skipped: 'no employee / date' };
+    const until = /^\d{4}-\d{2}-\d{2}$/.test(String(toDate || '')) && toDate > date ? toDate : date;
     const covering = await prisma.leaveRequest.findFirst({
-      where: { employeeId: employee.id, status: { in: LIVE }, fromDate: { lte: date }, toDate: { gte: date } },
+      where: { employeeId: employee.id, status: { in: LIVE }, fromDate: { lte: until }, toDate: { gte: date } },
       orderBy: { createdAt: 'desc' },
     });
     if (covering) {
@@ -53,9 +55,11 @@ async function raiseFromMark({ employee, date, user, leaveType = null, notify = 
     }
     const sys = await require('./systemAccounts').systemRequesterError(employee, 'leave'); // eslint-disable-line global-require
     if (sys) return { skipped: sys };
+    let counted = 1;
     try {
-      const c = await require('./leaveDays').countFor(date, date); // eslint-disable-line global-require
+      const c = await require('./leaveDays').countFor(date, until); // eslint-disable-line global-require
       if (c && c.calendarDays > 0 && c.countedDays === 0) return { skipped: 'Sunday or company holiday - no leave needed' };
+      if (c && c.countedDays) counted = c.countedDays;
     } catch { /* count is a nicety */ }
     const type = await pickType(leaveType);
     if (!type) return { skipped: 'no active leave type' };
@@ -63,7 +67,7 @@ async function raiseFromMark({ employee, date, user, leaveType = null, notify = 
     const own = user && employee.userId && employee.userId === user.id;
     const leave = await prisma.leaveRequest.create({
       data: {
-        employeeId: employee.id, type: type.name, fromDate: date, toDate: date, days: 1,
+        employeeId: employee.id, type: type.name, fromDate: date, toDate: until, days: counted,
         reason: leaveText.compose({ reason: own ? 'Marked as Leave in attendance' : `Marked as Leave in attendance by ${by} - waiting for approval` }),
       },
     });
@@ -72,6 +76,11 @@ async function raiseFromMark({ employee, date, user, leaveType = null, notify = 
     try {
       steps = await workflow.start({ workflow: 'leave', recordId: leave.id, employee, applicantUserId: employee.userId || null, applicantName: employee.name });
     } catch (err) { console.error('[markedLeave] chain start failed', err.message); }
+    // longer than the TL limit (a bulk Leave over several days): HR / the Super Admin decide it, not the TL (utils/leavePolicy.js)
+    try {
+      const policy = require('./leavePolicy'); // eslint-disable-line global-require
+      if (await policy.isOverTlLimit(leave, employee)) { await policy.routePastTl(leave.id); steps = await workflow.loadSteps('leave', leave.id); }
+    } catch (err) { console.error('[markedLeave] TL limit routing failed', err.message); }
     if (notify) require('./hrmsNotify').leaveRaised({ leave, employee }).catch(() => {}); // eslint-disable-line global-require
     return { leave, created: true, waitingFor: waitingForOf(steps) };
   } catch (err) {
