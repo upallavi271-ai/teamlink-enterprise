@@ -107,11 +107,13 @@ function handle(sock, engines, opts = {}) {
   async function say(text) {
     const my = ++gen; // a newer reply (or a barge-in) cancels the rest of this one
     if (DEBUG && row) debug(`${row.id} says [${d.language}]: ${text}`);
+    const t0 = Date.now(); let firstOut = true;
     for (const s of sentences(text)) {
       let pcm;
       try { pcm = await voiceOf(engines, s, d.language); } catch (e) { log('tts failed:', e.message); continue; } // eslint-disable-line no-await-in-loop
       if (my !== gen || sock.destroyed) return;
       speaker.add(pcm); speaker.add(E.silence(GAP_MS));
+      if (DEBUG && row && firstOut) { firstOut = false; debug(`${row.id} voice ready in ${Date.now() - t0} ms`); }
     }
   }
 
@@ -122,21 +124,36 @@ function handle(sock, engines, opts = {}) {
     try {
       // which language + the words, at the same time; only when the person really switched is it heard again in the new one
       // (a clip under ~2 s with its end pause - "yes", "haan theek" - is too short to tell a language by sound)
+      const t0 = Date.now();
       const cur = d.language;
       const listen = (l) => engines.stt(pcm, l).catch((e) => { log('stt failed:', e.message); return ''; });
-      const [found, first] = await Promise.all([
-        // 1.4 s and up (with the end pause): a language can be told; a short answer must be very clear (0.85) to switch
-        engines.detect && pcm.length >= A.RATE * 2 * 1.4 ? engines.detect(pcm, pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.85).catch((e) => { log('detect failed:', e.message); return null; }) : null,
-        listen(cur),
-      ]);
+      let found = null; let first = ''; let byScript = false;
+      {
+        // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
+        // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
+        // (Whisper's own any-language writing was tried and wrote Telugu as Tamil / Arabic letters on phone audio: not used.)
+        const sure = cur === 'English' || pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.75;
+        if (cur === 'English' && engines.hear) {
+          // one Whisper pass: the language, and the English words only when it is English (2026-10-29: "chaala late")
+          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '' }; });
+          if (h.lang !== 'English') { found = h.lang; byScript = true; } else first = h.text;
+        } else {
+          // Telugu / Hindi mode: the fast model first; Whisper's language check (seconds on a small PC) only when the answer
+          // did not make sense in this language - a switch, or a name / place (2026-10-29: "chaala late ga answer isthundhi")
+          first = await listen(cur);
+          const made = !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent) || /\d/.test(first); // eslint-disable-line global-require
+          if (!made && engines.detect && pcm.length >= A.RATE * 2 * 1.4) found = await engines.detect(pcm, sure).catch((e) => { log('detect failed:', e.message); return null; });
+        }
+      }
+      if (byScript) first = ''; // heard again below in the language found
       // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
       // Whisper guesses badly on a second of sound (heard 'हाँ, ठीक है' as English in the 2026-10-28 test)
       const shortClip = pcm.length < A.RATE * 2 * 2;
-      const understood = shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent); // eslint-disable-line global-require
+      const understood = !byScript && shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent); // eslint-disable-line global-require
       const lang = (understood ? null : found) || cur;
-      const text = lang === cur ? first : await listen(lang);
+      const text = lang === cur && !byScript ? first : await listen(lang);
       if (opts.onHeard) opts.onHeard(text, lang);
-      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s: ${text}`);
+      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms: ${text}`);
       const out = await d.hear(text);
       await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: !!out.done }) });
       await say(out.say);

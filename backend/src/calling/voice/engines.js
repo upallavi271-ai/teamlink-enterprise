@@ -31,10 +31,28 @@ function wavToPcm(buf) {
   return { pcm: Buffer.alloc(0), rate };
 }
 // 16-bit mono PCM, linear resampling (enough for speech on a phone line)
+// Going DOWN (Piper 22 kHz / Kokoro 24 kHz -> 8 kHz phone) needs a low-pass first, or the high sounds fold back as a
+// harsh hiss on the line (heard on the first real calls, 2026-10-28): windowed-sinc filter at ~3.6 kHz. Going up: linear.
 function resample(pcm, from, to) {
   if (from === to) return pcm;
   const n = Math.floor(pcm.length / 2); const m = Math.max(1, Math.floor((n * to) / from));
   const out = Buffer.alloc(m * 2);
+  if (from > to) {
+    const ratio = from / to; const fc = (0.45 * to) / from; const half = Math.ceil(8 * ratio);
+    const x = new Float32Array(n); for (let i = 0; i < n; i += 1) x[i] = pcm.readInt16LE(i * 2);
+    for (let i = 0; i < m; i += 1) {
+      const c = i * ratio; const c0 = Math.floor(c); let acc = 0; let wsum = 0;
+      for (let k = c0 - half + 1; k <= c0 + half; k += 1) {
+        if (k >= 0 && k < n) {
+          const d = k - c; const t = 2 * fc * d;
+          const w = (t === 0 ? 1 : Math.sin(Math.PI * t) / (Math.PI * t)) * (0.5 + 0.5 * Math.cos((Math.PI * d) / (half + 1)));
+          acc += x[k] * w; wsum += w;
+        }
+      }
+      out.writeInt16LE(Math.max(-32768, Math.min(32767, Math.round(wsum ? acc / wsum : 0))), i * 2);
+    }
+    return out;
+  }
   for (let i = 0; i < m; i += 1) {
     const x = (i * from) / to; const a = Math.floor(x); const b = Math.min(n - 1, a + 1); const f = x - a;
     const s = (1 - f) * pcm.readInt16LE(Math.min(n - 1, a) * 2) + f * pcm.readInt16LE(b * 2);
@@ -121,8 +139,12 @@ function whisperHttp({ url, key }) {
     return r.json();
   };
   return {
-    detect: async (pcm8k) => { const j = await post('/detect', pcm8k); return j.prob >= 0.7 ? (FROM_ISO[j.lang] || null) : null; },
-    stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
+    // minProb: how sure Whisper must be before the assistant switches (stricter for short answers)
+    detect: async (pcm8k, minProb = 0.7) => { const j = await post('/detect', pcm8k); return j.prob >= minProb ? (FROM_ISO[j.lang] || null) : null; },
+    // English mode in one pass: { lang: 'Telugu' | 'Hindi' | 'English', text } - the English words only when it is English
+    hear: async (pcm8k, minProb = 0.6) => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '' }; },
+    // lang 'auto': Whisper writes what it hears in the language it hears (Telugu / Hindi letters = the person switched)
+    stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
   };
 }
 
@@ -201,6 +223,8 @@ function fromEnv(env = process.env) {
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
     stt: (pcm, lang) => (lang === 'English' && wh ? wh.stt(pcm, 'English') : vstt(pcm, lang === 'English' ? 'Hindi' : lang)),
     detect: wh ? wh.detect : null,
+    sttAny: wh ? (pcm) => wh.stt(pcm, 'auto') : null,
+    hear: wh ? wh.hear : null,
     warmup: () => vstt(silence(500), 'Telugu'), // load the speech model before the first caller
   };
 }

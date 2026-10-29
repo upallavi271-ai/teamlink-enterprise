@@ -136,9 +136,9 @@ async function place(user, input, deps = {}) {
   // The call starts in the language this person spoke last time, else AI_VOICE_START_LANGUAGE (Telugu); from the first
   // sentence on, the assistant follows whatever language they speak (gateway.js + Whisper) - no choosing needed (user, 2026-10-28).
   const start = S.LANGS.includes(process.env.AI_VOICE_START_LANGUAGE) ? process.env.AI_VOICE_START_LANGUAGE : 'Telugu';
-  // only a language the person SPOKE on an earlier call counts (source 'call'), not one a recruiter picked in a window
-  const spoke = await DB.one('SELECT "language" FROM "AiCallPref" WHERE "candidateId" = ? AND "source" = ?', ctx.candidate.id, 'call');
-  const lang = S.LANGS.includes(input.language) ? input.language : (spoke && S.LANGS.includes(spoke.language) ? spoke.language : start);
+  // Every call opens in Telugu (2026-10-29: a call that opened in English from an earlier test confused the person); from the
+  // first answer on it follows the language they speak.
+  const lang = S.LANGS.includes(input.language) ? input.language : start;
 
   const id = svc.newId('aic');
   const uuid = crypto.randomUUID();

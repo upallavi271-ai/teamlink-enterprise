@@ -5,6 +5,8 @@ Two jobs for the phone gateway (backend/src/calling/voice/engines.js whisperHttp
   POST /detect      body: 16 kHz 16-bit mono PCM  ->  {"lang": "te"|"hi"|"en", "prob": 0..1}
                     which of OUR three languages the person spoke (others ignored), so the assistant can switch at once
   POST /transcribe  body: the same, header X-Lang: en|hi|te  ->  {"text": "..."}
+  POST /hear        body: the same, header X-Min-Prob  ->  {"lang", "prob", "text"}: the language, and the English words
+                    only when it is English (one pass for a call that is in English)
                     English words (IndicConformer has no English)
   GET  /health      -> {"ok": true, "model": "..."}
 
@@ -53,10 +55,20 @@ def detect(audio):
 
 def transcribe(audio, lang):
     with lock:
-        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=1,
-                                       without_timestamps=True, condition_on_previous_text=False, vad_filter=False)
+        # temperature 0 = no slow retries; max_new_tokens = a phone answer is short (no "fufufu..." loops)
+        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=1, temperature=0.0,
+                                       max_new_tokens=60, without_timestamps=True, condition_on_previous_text=False, vad_filter=False)
         text = " ".join(s.text.strip() for s in segments).strip()
     return {"text": text}
+
+
+def hear(audio, min_prob):
+    # ONE pass for an English-mode call: which of our languages; the English words only when it IS English (a Telugu /
+    # Hindi answer is heard by IndicConformer instead, so Whisper does not spend time writing it as English)
+    d = detect(audio)
+    if d["lang"] != "en" and d["prob"] >= min_prob:
+        return {"lang": d["lang"], "prob": d["prob"], "text": ""}
+    return {"lang": "en", "prob": d["prob"], "text": transcribe(audio, "en")["text"]}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -87,6 +99,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/detect":
                 out = detect(audio)
+            elif self.path == "/hear":
+                out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6))
             elif self.path == "/transcribe":
                 out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower())
             else:
