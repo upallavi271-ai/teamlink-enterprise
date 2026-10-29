@@ -413,6 +413,32 @@ Write-Host "Upload successful" -ForegroundColor Green
 # VPS BACKUP
 # ------------------------------------------------------------
 
+# ------------------------------------------------------------
+# PAUSE THE VPS AUTO-SYNC (2026-10-29: "database is locked" at the migrations).
+# The VPS runs its own deploy from GitHub every 2 minutes (deploy/vps/teamlink-sync.sh, teamlink-sync.timer). When it ran at the same
+# time as this script, both worked on the same database and folders. So: pause it, wait until a run in progress has finished, and
+# resume it at the end (success or rollback). A pause the founder set by hand is left as it is.
+# ------------------------------------------------------------
+$SyncPauseCmd = @'
+S=/opt/teamlink-sync
+if [ -d $S ]; then
+  if [ -f $S/PAUSE ] && ! grep -q deploy-local-to-vps $S/PAUSE; then echo "VPS auto-sync was already paused by hand (left as it is)"; else echo deploy-local-to-vps > $S/PAUSE; echo "VPS auto-sync paused for this deploy"; fi
+  if command -v flock >/dev/null; then
+    echo "waiting for an auto-sync run in progress to finish (if any)..."
+    flock -w 900 $S/lock true && echo "no auto-sync is running now" || { echo "an auto-sync run is still busy after 15 minutes"; exit 1; }
+  fi
+fi
+exit 0
+'@
+$SyncResumeCmd = 'S=/opt/teamlink-sync; if [ -f $S/PAUSE ] && grep -q deploy-local-to-vps $S/PAUSE; then rm -f $S/PAUSE && echo VPS auto-sync resumed; fi; exit 0'
+Write-Host ""
+Write-Host "Pausing the VPS auto-sync while this deploy runs..." -ForegroundColor Cyan
+($SyncPauseCmd.Replace("`r", "") + "`n") | ssh $VpsHost 'bash -s'
+if ($LASTEXITCODE -ne 0) {
+    ssh $VpsHost $SyncResumeCmd
+    throw "The VPS auto-sync is busy deploying right now. Nothing was changed. Run this again in a few minutes."
+}
+
 Write-Host ""
 Write-Host "[5/10] Creating VPS backup..." -ForegroundColor Cyan
 
@@ -599,7 +625,23 @@ Write-Host ""
 Write-Host "[9/10] Applying Prisma migrations..." -ForegroundColor Cyan
 $DeployStep = "applying Prisma migrations"
 
-ssh $VpsHost "cd '$VpsRoot/backend' && npx prisma migrate deploy"
+# "database is locked" (2026-10-29): something else still had the database open. Try again for 2 minutes, and show who has it open.
+$MigrateCmd = @'
+cd '__BACKEND__' || exit 1
+for i in 1 2 3 4 5 6; do
+  out=$(npx prisma migrate deploy 2>&1); rc=$?
+  echo "$out"
+  [ $rc -eq 0 ] && exit 0
+  echo "$out" | grep -q 'database is locked' || exit $rc
+  echo "--- the database is locked; what has it open right now:"
+  (command -v fuser >/dev/null && fuser -v prisma/dev.db prisma/dev.db-wal 2>&1) || true
+  ps -eo pid,etime,args | grep -E 'node|prisma|sqlite' | grep -v grep | cut -c1-160 | head -15
+  echo "--- waiting 20 s, then trying again ($i of 6)"
+  sleep 20
+done
+exit 1
+'@
+($MigrateCmd.Replace("`r", "").Replace('__BACKEND__', "$VpsRoot/backend") + "`n") | ssh $VpsHost 'bash -s'
 
 if ($LASTEXITCODE -ne 0) {
     throw "Prisma migration failed."
@@ -745,8 +787,10 @@ if ($LASTEXITCODE -ne 0) {
         Write-Host "  .\deploy-local-to-vps.ps1 -RollbackTo $Date" -ForegroundColor Red
     }
     Write-Host "Database backup taken before this deploy: $RemoteBackup" -ForegroundColor Yellow
+    ssh $VpsHost $SyncResumeCmd
     throw "Deploy failed ($DeployStep): $Failure"
 }
+ssh $VpsHost $SyncResumeCmd
 
 # ------------------------------------------------------------
 # SUCCESS
