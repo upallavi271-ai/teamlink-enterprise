@@ -35,6 +35,7 @@ import {
   DEPTS, deptOptions, LOCS, PRIORITIES, REQUIREMENT_TYPES, EDUCATION_LEVELS, EMPLOYMENT_TYPES, WORK_MODES,
   JOINING_TIMELINES, NOTICE_PERIODS_MAX, JOB_PREFERENCES, SALARY_TYPES, CURRENCIES,
   agreementStatusLabel, agreementIsActive,
+  deptLabel,
 } from '../atsVocab';
 
 // ---------------------------------------------------------------------------
@@ -744,7 +745,7 @@ export default function RequirementForm({
                 <div className={`field${ff('department')}${miss('department')}`}>
                   <span>Departments{ft('department')}<Help text="Pick every department that can work on this requirement. The first one is the main one; its team lead is suggested first. Any department's team lead can still take the requirement." /></span>
                   <DeptChecklist
-                    options={departments.map((d) => ({ value: d, label: d }))}
+                    options={departments.map((d) => ({ value: d, label: deptLabel(d) }))}
                     value={form.departments || []}
                     onChange={(list) => {
                       deptTouched.current = true;

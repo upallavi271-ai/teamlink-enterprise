@@ -247,7 +247,7 @@ async function buildHierarchy(user) {
       return {
         id: d.id,
         // §38: purely a display label. The data value (id) stays "Manufacturing".
-        label: /^manufacturing$/i.test(d.id) ? 'Manufacturing (Non-IT)' : d.label,
+        label: /^manufacturing$/i.test(d.id) ? 'Non IT MFG' : d.label, // founder 2026-10-29: 'non it mfg'
         sections: secs.map((sec) => {
           const tls = [...sec.tls.values()].map(personOut).sort(byName);
           const recs = [...sec.recruiters.values()].map(personOut).sort(byName);

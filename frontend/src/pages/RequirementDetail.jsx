@@ -67,6 +67,7 @@ import {
   PORTAL_SYNC_STATUSES, protoDate,
   REJECTION_REASON_CATEGORIES, HOLD_REASON_CATEGORIES,
   REJECTED_BY_OPTIONS, REJECTION_REASONS_BY_SIDE,
+  deptLabel,
 } from '../atsVocab';
 
 // ---------------------------------------------------------------------------
@@ -618,7 +619,7 @@ export default function RequirementDetail() {
                 <Row k="Requirement ID">{r.reqCode || r.id}</Row>
                 <Row k="Requirement">{r.title}</Row>
                 <Row k="Client">{clientName}</Row>
-                <Row k="Departments">{(Array.isArray(r.departments) && r.departments.length ? r.departments : [r.department]).filter(Boolean).join(', ')}</Row>
+                <Row k="Departments">{(Array.isArray(r.departments) && r.departments.length ? r.departments : [r.department]).filter(Boolean).map(deptLabel).join(', ')}</Row>
                 <Row k="Location">{r.location}</Row>
                 <Row k="Preferred locations">{r.preferredLocation && r.preferredLocation !== 'Any' ? r.preferredLocation : 'Any location'}</Row>
                 <Row k="Work Mode">{r.workMode}</Row>
@@ -651,7 +652,7 @@ export default function RequirementDetail() {
               ("MED-5 · Medical Team"). */}
           <div className="card section">
             <h3 style={{ fontSize: 13, marginBottom: 8 }}>Team</h3>
-            <Row k="Department">{[r.department, r.section].filter(Boolean).join(' · ')}</Row>
+            <Row k="Department">{[deptLabel(r.department), r.section].filter(Boolean).join(' · ')}</Row>
             <Row k="Team lead">{[r.tlName || r.tl, seatText(r.seats?.tl)].filter(Boolean).join(' · ')}</Row>
             {(r.extraTlNames || []).length > 0 && <Row k="Also assigned">{r.extraTlNames.join(', ')}</Row>}
             <Row k="Recruiter">{[r.recruiter?.name || r.workedBy, seatText(r.seats?.recruiter) || r.workedByPosition].filter(Boolean).join(' · ')}</Row>
@@ -1111,7 +1112,7 @@ export default function RequirementDetail() {
               ? <span className="rr-org-internal">TeamLink (internal)</span>
               : (r.clientLink ? <Link className="rr-client-link" to={`/clients/${r.clientId}`} title="Open client">{clientName}</Link> : <span>{clientName}</span>)}
             {!r.internal && <ClientPausedBadge lifecycle={r.client?.lifecycle} />}
-            <span>{[r.department, r.location].filter(Boolean).join(' · ')}</span>
+            <span>{[deptLabel(r.department), r.location].filter(Boolean).join(' · ')}</span>
             {requirementIsLive(r.status) && (!r.tlId || (!r.recruiterId && !(r.coRecruiters || []).length)) && <span className="rr-unassigned">{!r.tlId ? 'Needs a team lead' : 'Needs a recruiter'}</span>}
             {r.daysOpen !== null && r.daysOpen !== undefined && <span className={`rr-days${r.daysOpen >= 15 ? ' overdue' : ''}`}>{`Open ${r.daysOpen} days`}</span>}
           </div>
@@ -1179,7 +1180,7 @@ export default function RequirementDetail() {
         const recruiters = [r.recruiter?.name || r.workedBy, ...(r.coRecruiters || []).map((x) => x.name)].filter(Boolean);
         const items = [
           ['Client', clientName],
-          ['Department', r.department || '—'],
+          ['Department', deptLabel(r.department) || '—'],
           ['Openings', `${nf(r.openings)}${r.filled ? ` · ${nf(r.filled)} filled` : ''} · ${nf(r.remaining ?? r.openings)} left`],
           ['Budget', r.salary ? `${r.salary}${r.salaryType ? ` (${r.salaryType})` : ''}` : 'Not set'],
           ['Location', r.location || '—'],

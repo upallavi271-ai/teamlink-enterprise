@@ -511,7 +511,7 @@ function agreementStatusLabel(code) {
 
 // --- Option lists used by the Add/Edit forms -------------------------------
 // Every list below is the prototype's <option> set, in the prototype's order.
-const DEPTS = ['IT', 'Medical', 'Manufacturing', 'Education', 'BDE', 'HR', 'Accounts', 'R&D'];
+const DEPTS = ['IT', 'Medical', 'Manufacturing', 'Non IT Medical', 'Education', 'BDE', 'HR', 'Accounts', 'R&D'];
 const LOCS = ['Hyderabad', 'Bengaluru', 'Pune'];
 
 const REQUIREMENT_TYPES = ['Client Requirement', 'Internal Requirement'];

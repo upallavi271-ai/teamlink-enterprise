@@ -49,11 +49,16 @@ function csv(value) {
 // match against.
 const named = (v) => (v && v !== 'NONE' ? v : null);
 
+// NON IT (founder 2026-10-29): the Manufacturing desk ("Non IT MFG") also works the Medical jobs filed "Non IT Medical";
+// the Medical (MED) desk never sees those, and the Manufacturing desk no longer sees MED's.
+const DEPT_FAMILY = { manufacturing: ['Non IT Medical'] };
+const withFamily = (list) => [...new Set(list.flatMap((d) => [d, ...(DEPT_FAMILY[String(d).toLowerCase()] || [])]))];
+
 function scopeOf(user) {
   const u = user || {};
-  const departments = csv(u.atsScopeDepartments).length
+  const departments = withFamily(csv(u.atsScopeDepartments).length
     ? csv(u.atsScopeDepartments)
-    : (u.department ? [u.department] : []);
+    : (u.department ? [u.department] : []));
   const teams = csv(u.atsScopeTeams).length ? csv(u.atsScopeTeams) : (u.team ? [u.team] : []);
   // The three product roles, each falling back to the account-level role for
   // a login that predates them — the same value this file read before.
@@ -254,14 +259,12 @@ function seatApplicationWhere(s) {
 // medical, mfg"). A job of another department reaches a TL only where their department also works that one (Manufacturing's
 // team also works Medical - "bhavna vaallu medical meedha kuda work chesthunnaru") AND it is on their team's chain; never
 // the rest (an Education job a Manufacturing TL was once named on). The BDE TL, STLs and everyone else: unchanged.
-const TL_ALSO_WORKS = { manufacturing: ['Medical'] };
+// Manufacturing's Medical work is filed "Non IT Medical" (2026-10-29), which scopeOf() already adds to their departments.
 function deptTlLimit(user) {
   const s = atsScopeOf(user);
   if (s.global || s.atsRole !== 'TL' || isBdeTl(user)) return null;
-  const own = [...new Set([...(s.departments || []), ...((s.positions && s.positions.departments) || [])])].filter(Boolean);
-  if (!own.length) return null;
-  const extra = own.flatMap((d) => TL_ALSO_WORKS[String(d).toLowerCase()] || []);
-  return RD.deptArm([...new Set([...own, ...extra])]);
+  const own = withFamily([...(s.departments || []), ...((s.positions && s.positions.departments) || [])].filter(Boolean));
+  return own.length ? RD.deptArm(own) : null;
 }
 function requirementWhere(user, opts = {}) {
   const base = requirementWhereBase(user, opts);

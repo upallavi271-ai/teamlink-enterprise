@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { deptLabel } from '../../atsVocab'; // Manufacturing shows as Non IT MFG (2026-10-29)
 
 // ---------------------------------------------------------------------------
 // Small pieces of the Jobs list (Clients & Requirements -> Jobs): the same
@@ -39,7 +40,7 @@ const tagFor = (name) => {
 export function DeptTag({ name }) {
   if (!name) return null;
   const [bg, fg] = tagFor(name);
-  return <span className="jl-dept" style={{ background: bg, color: fg }} title={`Department: ${name}`}>{name}</span>;
+  return <span className="jl-dept" style={{ background: bg, color: fg }} title={`Department: ${deptLabel(name)}`}>{deptLabel(name)}</span>;
 }
 
 // A person's name as plain text; when nobody is named: "Not assigned" in a

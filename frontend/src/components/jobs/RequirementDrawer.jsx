@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import api from '../../api';
-import { requirementStatusLabel } from '../../atsVocab';
+import { requirementStatusLabel, deptLabel } from '../../atsVocab';
 import { jobNoteOf } from './reqStatus.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
 import {
@@ -107,7 +107,7 @@ export default function RequirementDrawer({ row: r, onClose, onAssign, actions, 
             {!r.internal && kv('Client', (sum ? sum.clientLink : r.clientLink) && r.clientId
               ? <Link to={`/clients/${r.clientId}`}>{r.client?.name}</Link>
               : r.client?.name)}
-            {kv('Department', [r.department, r.section].filter(Boolean).join(' · '))}
+            {kv('Department', [deptLabel(r.department), r.section].filter(Boolean).join(' · '))}
             {kv('Location', r.location)}
             {kv('Openings', `${nf(r.openings || 1)}${r.filled ? ` · ${nf(r.filled)} filled` : ''}${r.remaining !== undefined ? ` · ${nf(r.remaining)} left` : ''}`)}
             {kv('Days open', r.ageDays === null || r.ageDays === undefined ? null : nf(r.ageDays))}
