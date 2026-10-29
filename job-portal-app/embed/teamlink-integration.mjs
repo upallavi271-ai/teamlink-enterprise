@@ -402,9 +402,10 @@ export function teamlinkFrontRouter({ root, express }) {
    * kanipinchadamledhu"). TeamLink sends its active Recruiters / TLs / STLs (backend/src/utils/jobPortalRecruiters.js);
    * one without a portal login of the same email gets one through the portal's own staff_recruiter_create (0035, the
    * same as Recruiters -> Add), so they appear in the portal, its mailbox list and sign in from TeamLink (HRMS SSO).
+   * An existing one gets the department / employee id of its HRMS seat (HRMS decides); nothing else of it changes.
    * The password is random and never shown: they never type it. Nothing that exists is changed or removed.
    *   POST /api/integrations/teamlink/recruiters/ensure  { people: [{ name, email, employeeId, mobile, department,
-   *        designation }], dryRun }  ->  { results: [{ email, result: exists | created | would-create | clash, ... }] }
+   *        designation }], dryRun }  ->  { results: [{ email, result: exists | created | would-create | updated | would-update | clash, ... }] }
    */
   r.post('/api/integrations/teamlink/recruiters/ensure', wrap(async (req, res) => {
     const people = Array.isArray(req.body && req.body.people) ? req.body.people.slice(0, 1000) : [];
@@ -420,16 +421,26 @@ export function teamlinkFrontRouter({ root, express }) {
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !name || name.length < 2) { results.push({ email, result: 'skipped', reason: 'no name or email' }); continue; } // eslint-disable-line no-continue
       // eslint-disable-next-line no-await-in-loop
       const out = await withUser(SYSTEM, async (c) => {
-        const u = (await c.query(`select u.role, u.status, r.id as recruiter_id from users u left join recruiters r on r.user_id = u.id
-                                   where lower(u.email) = lower($1) limit 1`, [email])).rows[0];
-        if (u && u.recruiter_id) return { email, result: 'exists', active: u.status === 'active' };
+        const u = (await c.query(`select u.role, u.status, r.id as recruiter_id, r.department, r.employee_id from users u
+                                     left join recruiters r on r.user_id = u.id where lower(u.email) = lower($1) limit 1`, [email])).rows[0];
+        if (u && u.recruiter_id) {
+          // HRMS decides the department and employee id (the seat's): the mailbox list and its department check read them
+          const dept = txt(p.department, 80);
+          const code = txt(p.employeeId, 40);
+          const change = (dept && dept !== (u.department || '')) || (code && code !== (u.employee_id || ''));
+          if (!change) return { email, result: 'exists', id: u.recruiter_id, active: u.status === 'active' };
+          if (dryRun) return { email, result: 'would-update', id: u.recruiter_id, from: u.department || null, to: dept || u.department || null };
+          await c.query(`update recruiters set department = coalesce($2, department), employee_id = coalesce($3, employee_id), updated_at = now()
+                          where id = $1`, [u.recruiter_id, dept, code]);
+          return { email, result: 'updated', id: u.recruiter_id, from: u.department || null, to: dept || u.department || null, active: u.status === 'active' };
+        }
         if (u) return { email, result: 'clash', reason: `this email already signs in to the portal as ${u.role}` };
         if (dryRun) return { email, result: 'would-create' };
         const co = (await c.query('select id from companies where id = $1', [companyId()])).rows[0];
         const made = (await c.query('select staff_recruiter_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as out', [
           name, email.toLowerCase(), await hashPassword(randomBytes(24).toString('base64url')), txt(p.designation, 120) || 'Recruiter',
           co ? co.id : null, txt(p.employeeId, 40), txt(p.mobile, 32), txt(p.department, 80), null, null, 'active'])).rows[0].out;
-        return { email, result: 'created', id: made && made.id };
+        return { email, result: 'created', id: made && made.id, active: true };
       });
       results.push(out);
     }

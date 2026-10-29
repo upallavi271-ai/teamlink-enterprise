@@ -175,7 +175,7 @@ export default function NaukriShineMailboxes() {
   const syncing = !!(data && (data.connections || []).some((c) => c.status === 'processing'));
   useVisiblePoll(load, syncing, 2500);
 
-  const recName = (rid) => { const r = ((data && data.recruiters) || []).find((x) => x.id === rid); return r ? r.name : rid; };
+  const recName = (rid) => { const r = ((data && data.recruiters) || []).find((x) => x.id === rid); return r ? r.name : ((data && data.names && data.names[rid]) || rid); };
   async function act(c, kind) {
     if (kind === 'disconnect' && !window.confirm(`Disconnect the ${c.sourceLabel} mailbox ${c.address}?\n\nThe saved app password is erased and no more email is read. Candidates already imported stay with their recruiter.`)) return;
     setBusy((b) => ({ ...b, [c.id]: true })); setFlash(null);
@@ -218,7 +218,16 @@ export default function NaukriShineMailboxes() {
                   <tr key={c.id}>
                     <td><span className={`nsm-src ${c.source}`}>{c.sourceLabel}</span></td>
                     <td>{c.recruiterDepartment || '—'}</td>
-                    <td><b>{c.recruiterName || '—'}</b></td>
+                    <td>
+                      <b>{c.recruiterName || '—'}</b>
+                      {/* HRMS decides (2026-10-29): the recruiter left or moved off the seat - say so, and offer the seat's new holder */}
+                      {c.pastHolder && <div className="nsm-past" role="note">{c.pastHolderNote}</div>}
+                      {c.pastHolder && c.replacement && (
+                        <button type="button" className="btn btn-primary btn-sm nsm-past-btn" disabled={b} onClick={() => setModal({ kind: 'reassign', c, recruiterId: c.replacement.recruiterId, ok: false })}>
+                          Reassign to {c.replacement.name}
+                        </button>
+                      )}
+                    </td>
                     <td>{c.address}</td>
                     <td>{PROVIDER_LABEL[c.provider] || c.provider || '—'}{c.host && <div className="nsm-sub">{c.host}{c.port ? `:${c.port}` : ''}</div>}</td>
                     <td><Chip c={c} />{c.lastError && <div className="nsm-rowerr" title={c.lastError}>{c.lastError.length > 90 ? `${c.lastError.slice(0, 90)}…` : c.lastError}</div>}</td>

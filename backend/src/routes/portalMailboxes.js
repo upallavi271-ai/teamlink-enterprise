@@ -43,22 +43,72 @@ const audit = (req, action, entityId, toValue) => logAudit({
   userId: req.user.id, action, entity: 'PortalMailbox', entityId: entityId ? String(entityId) : undefined, toValue,
 });
 
+// HRMS DECIDES WHO IS LISTED (founder 2026-10-29: "exist ina employee chupichakudadhu valla positions lo new employee automatic ga
+// ravali"): the recruiters offered are the CURRENT holders of HRMS Recruiter / TL / STL seats (utils/jobPortalRecruiters.js), each
+// with a portal recruiter login made / linked by email and the seat's department. Someone who left or was moved off the seat is not
+// offered; a mailbox still connected to them is flagged (pastHolder) with the seat's new holder for a one-click Reassign. Nothing is
+// moved by itself, nothing is deleted: candidates already imported stay where they are.
+async function holderList() {
+  const R = require('../utils/jobPortalRecruiters'); // eslint-disable-line global-require
+  const positions = await R.seatData();
+  const holders = await R.people(positions);
+  return { R, positions, holders, byEmail: new Map(holders.map((h) => [h.email, h])) };
+}
+async function currentRecruiters() {
+  const recs = await portalFetch(`${BASE}/recruiters`, { timeoutMs: 20000 });
+  const h = await holderList();
+  const all = recs.recruiters || [];
+  const listed = all.filter((r) => h.byEmail.has(String(r.email || '').toLowerCase())).map((r) => {
+    const p = h.byEmail.get(String(r.email || '').toLowerCase());
+    return { ...r, name: p.name || r.name, department: p.department || r.department, employeeId: p.employeeId || r.employeeId, seat: p.seats.join(', ') };
+  });
+  return { ...h, all, listed };
+}
+
 router.get('/', view, wrap(async (req, res) => {
-  // a Recruiter / TL added in HRMS just now is in the list too (utils/jobPortalRecruiters.js); waits at most 15 s, never fails the screen
+  // a Recruiter / TL placed on a seat in HRMS just now is in the list too; waits at most 15 s, never fails the screen
   await Promise.race([require('../utils/jobPortalRecruiters').ensureQuietly(), new Promise((r) => { setTimeout(r, 15000); })]); // eslint-disable-line global-require
-  const [conns, recs] = await Promise.all([portalFetch(CONN, { timeoutMs: 20000 }), portalFetch(`${BASE}/recruiters`, { timeoutMs: 20000 })]);
-  const dept = new Map((recs.recruiters || []).map((r) => [r.id, r.department]));
+  const [conns, cur] = await Promise.all([portalFetch(CONN, { timeoutMs: 20000 }), currentRecruiters()]);
+  const byId = new Map(cur.all.map((r) => [r.id, r]));
+  const listedIds = new Set(cur.listed.map((r) => r.id));
+  const recOfEmail = new Map(cur.listed.map((r) => [String(r.email || '').toLowerCase(), r]));
+  const connections = [];
+  for (const c of conns.connections || []) {
+    const was = byId.get(c.recruiterId);
+    const current = listedIds.has(c.recruiterId);
+    const row = { ...c, recruiterDepartment: (cur.listed.find((r) => r.id === c.recruiterId) || was || {}).department || undefined };
+    if (!current && c.recruiterId) {
+      // eslint-disable-next-line no-await-in-loop
+      const next = was ? await cur.R.successorOf(was.email, cur.positions) : null;
+      const rec = next && next.holder ? recOfEmail.get(next.holder.email) : null;
+      row.pastHolder = true;
+      row.pastHolderNote = next ? `No longer holds ${next.seat} in HRMS` : 'Does not hold a Recruiter / TL seat in HRMS';
+      if (rec) row.replacement = { recruiterId: rec.id, name: rec.name, seat: next.seat };
+    }
+    connections.push(row);
+  }
   res.json({
-    connections: (conns.connections || []).map((c) => ({ ...c, recruiterDepartment: dept.get(c.recruiterId) || undefined })),
-    recruiters: recs.recruiters || [],
-    departments: recs.departments || [],
+    connections,
+    recruiters: cur.listed,
+    names: Object.fromEntries(cur.all.map((r) => [r.id, r.name])), // past holders too, for the mailbox history (View logs)
+    departments: [...new Set(cur.listed.map((r) => String(r.department || '').trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y)),
     providers: conns.providers || [],
     canStoreCredentials: conns.canStoreCredentials,
   });
 }));
 
+// connect / reassign only to a current seat holder (the screen offers only them; this is the server's own check)
+async function refuseNonHolder(res, recruiterId) {
+  const cur = await currentRecruiters();
+  if (cur.listed.some((r) => r.id === recruiterId)) return false;
+  const message = 'Choose a recruiter who holds a Recruiter / TL seat in HRMS now. Someone who left or moved off the seat cannot get a mailbox.';
+  res.status(422).json({ error: { code: 'VALIDATION_FAILED', message, details: { recruiterId: message } } });
+  return true;
+}
+
 router.post('/', change, wrap(async (req, res) => {
   const b = req.body || {};
+  if (await refuseNonHolder(res, b.recruiterId)) return;
   const body = {
     source: b.source, department: b.department || undefined, recruiterId: b.recruiterId, address: b.address, provider: b.provider,
     username: b.username || undefined, appPassword: b.appPassword, host: b.host || undefined, port: b.port || undefined,
@@ -90,6 +140,7 @@ router.post('/:id/disconnect', change, wrap(async (req, res) => {
 
 router.post('/:id/reassign', change, wrap(async (req, res) => {
   const b = req.body || {};
+  if (await refuseNonHolder(res, b.recruiterId)) return;
   const out = await portalFetch(`${idPath(req.params.id)}/reassign`, { method: 'POST', body: { recruiterId: b.recruiterId, confirm: b.confirm === true } });
   await audit(req, 'Portal mailbox reassigned', req.params.id, String(b.recruiterId || ''));
   res.json(out);

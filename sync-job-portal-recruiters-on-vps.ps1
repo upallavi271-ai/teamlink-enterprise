@@ -4,8 +4,8 @@
 #
 #   .\sync-job-portal-recruiters-on-vps.ps1        (after .\deploy-local-to-vps.ps1)
 #
-# Shows first who would get a Job Portal recruiter login (an active HRMS Recruiter / TL / STL with no portal login of the same
-# email), then makes them only when you type YES. They then appear in Integrations -> Naukri & Shine mailboxes and open the Job
+# Shows first who would get a Job Portal recruiter login (a CURRENT holder of an HRMS Recruiter / TL / STL seat with no portal login of the same
+# email; an existing one gets its HRMS seat department), then does it only when you type YES. They then appear in Integrations -> Naukri & Shine mailboxes and open the Job
 # Portal from TeamLink without a password. Nothing that exists is changed or removed. After the deploy the server also does this
 # by itself (every Job Portal sync, and when the mailbox screen opens), so this is the "do it now and show me" button.
 # ---------------------------------------------------------------------------
