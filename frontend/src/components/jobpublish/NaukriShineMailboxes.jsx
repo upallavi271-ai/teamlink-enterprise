@@ -63,6 +63,8 @@ function MailboxCard({ src, data, onConnected }) {
   const needTeam = teams.length >= 2;
   const teamSeats = needTeam ? inDeptSeats.filter((x) => f.team && teamOf(x) === f.team) : inDeptSeats;
   const seatsOk = teamSeats.filter((x) => x.holderRecruiterId);
+  // the address is already connected for this board: it is MOVED to the chosen position (same connection), the password is optional
+  const already = (data.connections || []).find((c) => c.source === src && String(c.address || '').trim().toLowerCase() === f.address.trim().toLowerCase() && f.address.trim());
   const emptySeats = teamSeats.length - seatsOk.length;
   const hasNoDept = (data.recruiters || []).some((r) => r.active && !String(r.department || '').trim());
   const fixed = FIXED[f.provider];
@@ -77,7 +79,7 @@ function MailboxCard({ src, data, onConnected }) {
     if (!f.seat) e.seat = 'Select a position.';
     else if (!seatsOk.some((x) => x.code === f.seat)) e.seat = 'Choose a position of the selected department and team that has a recruiter today.';
     if (!EMAIL.test(f.address.trim())) e.address = 'Enter a valid email address.';
-    if (!f.appPassword) e.appPassword = 'Enter the app password.';
+    if (!f.appPassword && !(already && already.status !== 'disconnected')) e.appPassword = 'Enter the app password.';
     if (f.provider === 'other' && !f.host.trim()) e.host = 'Enter the incoming mail server.';
     if (f.provider === 'other' && f.port && !(Number(f.port) >= 1 && Number(f.port) <= 65535)) e.port = 'Enter a port between 1 and 65535.';
     setErrs(e); setMsg(null);
@@ -141,6 +143,7 @@ function MailboxCard({ src, data, onConnected }) {
         </Field>
         <Field id={id('address')} label={`${BOARD[src]} Mailbox Email`} req err={errs.address}>
           <input id={id('address')} type="email" autoComplete="off" placeholder="responses@company.com" value={f.address} onChange={set('address')} {...aria('address')} />
+          {already && <div className="nsm-past" role="note">Already connected{already.recruiterName ? ` with ${already.recruiterName}` : ''}{already.seat ? ` (${already.seat})` : ''}: it moves to the position you choose, the same connection. {already.status === 'disconnected' ? 'It was disconnected, so enter the app password.' : 'Leave the password empty to keep the saved one.'}</div>}
         </Field>
         <Field id={id('provider')} label="Email Provider">
           <Combo id={id('provider')} value={f.provider} onChange={(e) => { setF((o) => ({ ...o, provider: e.target.value || 'gmail' })); setErrs({}); }}>
@@ -150,7 +153,7 @@ function MailboxCard({ src, data, onConnected }) {
         <Field id={id('username')} label="Username" hint="Leave empty to sign in with the mailbox email.">
           <input id={id('username')} autoComplete="off" placeholder={f.address || 'Same as the mailbox email'} value={f.username} onChange={set('username')} />
         </Field>
-        <Field id={id('appPassword')} label="App Password" req err={errs.appPassword}
+        <Field id={id('appPassword')} label="App Password" req={!(already && already.status !== 'disconnected')} err={errs.appPassword}
           hint={f.provider === 'gmail' ? 'Gmail: Google Account → Security → 2-Step Verification → App passwords (IMAP on).' : 'Use an app password if the account has two-step sign-in.'}>
           <div className="nsm-pw">
             <input id={id('appPassword')} type={show ? 'text' : 'password'} autoComplete="new-password" spellCheck={false}

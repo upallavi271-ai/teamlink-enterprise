@@ -145,6 +145,37 @@ router.post('/', change, wrap(async (req, res) => {
     b.recruiterId = seat.holderRecruiterId;
     b.department = seat.department || b.department;
   } else if (await refuseNonHolder(res, b.recruiterId)) return undefined;
+
+  // THE MAILBOX IS ALREADY CONNECTED (founder 2026-10-29: "mail already unna kudaa shine and naukri maill vere person kii add chestey
+  // tisukovaliii already connected to another mail anii ravodhuu"): the SAME connection is moved to the chosen position / recruiter -
+  // no second connection. A new app password typed here is tested and saved on it first (nothing moves if the login fails); without
+  // one the saved password stays. The old recruiter / position is no longer linked; candidates it already imported stay with them.
+  const addr = String(b.address || '').trim().toLowerCase();
+  const had = addr ? ((await portalFetch(CONN, { timeoutMs: 20000 })).connections || []).find((x) => String(x.address || '').trim().toLowerCase() === addr && x.source === b.source) : null;
+  if (had) {
+    const wasName = had.recruiterName || 'its recruiter';
+    const wasSeat = (await S.loadMap())[had.id];
+    if (b.appPassword) {
+      await portalFetch(`${idPath(had.id)}/reconnect`, { method: 'POST', body: { appPassword: b.appPassword, ...(b.username ? { username: b.username } : {}) }, timeoutMs: 75000 });
+    } else if (had.status === 'disconnected') {
+      return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: `${had.address} was disconnected, so its saved password was erased. Enter the app password.`, details: { appPassword: 'Enter the app password.' } } });
+    }
+    let out = { connection: had };
+    if (had.recruiterId !== b.recruiterId) out = await portalFetch(`${idPath(had.id)}/reassign`, { method: 'POST', body: { recruiterId: b.recruiterId, confirm: true } });
+    if (b.seat) await S.setSeat(had.id, b.seat, req.user);
+    else if (wasSeat) { const m = await S.loadMap(); delete m[had.id]; await S.saveMap(m); }
+    const nowName = (out.connection && out.connection.recruiterName) || b.recruiterId;
+    const from = `${wasName}${wasSeat ? ` (${wasSeat.seat})` : ''}`;
+    const to = `${nowName}${b.seat ? ` (${b.seat})` : ''}`;
+    await audit(req, `${BOARD[b.source] || 'Portal'} mailbox moved (it was already connected)`, had.id, `${had.address}: ${from} -> ${to}${b.appPassword ? ', new app password' : ''}`);
+    return res.status(200).json({
+      ...out,
+      moved: true,
+      message: from === to
+        ? `${had.address} was already connected to ${to}.${b.appPassword ? ' Its app password was updated.' : ''}`
+        : `This mailbox was with ${from} - it is now with ${to}. ${b.appPassword ? 'The new app password was saved. ' : 'The saved app password was kept. '}New imports go to ${nowName}; candidates imported earlier stay with ${wasName}.`,
+    });
+  }
   const body = {
     source: b.source, department: b.department || undefined, recruiterId: b.recruiterId, address: b.address, provider: b.provider,
     username: b.username || undefined, appPassword: b.appPassword, host: b.host || undefined, port: b.port || undefined,
