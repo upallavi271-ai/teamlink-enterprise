@@ -33,9 +33,9 @@ ssh $VpsHost "cd $Backend && node scripts/payroll-import-register-as-is.js --reg
 if ($LASTEXITCODE -ne 0) { throw 'Stopped (see the lines above). Nothing was changed. Did you deploy first?' }
 
 $ok = Read-Host "`nType YES to put exactly these figures into the live $Month payroll"
-if ($ok -cne 'YES') { Write-Host 'Not changed.' -ForegroundColor Yellow; ssh $VpsHost 'rm -f /root/pay-register-as-is.xlsx'; exit 0 }
+if ($ok.Trim() -ne 'YES') { Write-Host 'Not changed.' -ForegroundColor Yellow; ssh $VpsHost 'rm -f /root/pay-register-as-is.xlsx'; exit 0 }
 
 Write-Host "[3/3] Writing it (backup first)..." -ForegroundColor Cyan
 ssh $VpsHost "cd $Backend && node scripts/payroll-import-register-as-is.js --register /root/pay-register-as-is.xlsx --month $Month$Drop --apply; rc=`$?; rm -f /root/pay-register-as-is.xlsx; exit `$rc"
 if ($LASTEXITCODE -ne 0) { throw 'It did not finish (see the lines above).' }
-Write-Host "`nDone. Open Payroll -> $Month: the figures are the register's." -ForegroundColor Green
+Write-Host "`nDone. Open Payroll -> ${Month}: the figures are the register's." -ForegroundColor Green
