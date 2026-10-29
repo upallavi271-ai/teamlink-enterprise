@@ -186,6 +186,8 @@ export default function Clients() {
   const newHelp = blind ? 'We have the client but no requirement yet. Ask the client manager (BDE) for the first requirement.' : NEW_HELP;
   const navigate = useNavigate();
   const allowed = can(user, 'ats', 'clients', 'Client List', 'view');
+  // a recruiting TL sees client NAMES only (2026-10-29): the row does not open a client page
+  const openClient = can(user, 'ats', 'clients', 'Client Detail', 'view');
   const { meta, error: metaError } = useClientsMeta(user, allowed);
   const role = meta?.role || null;
   const [clients, setClients] = useState([]);
@@ -710,7 +712,7 @@ export default function Clients() {
           </thead>
           <tbody>
             {paged.slice.map((c) => (
-              <tr key={c.id} {...rowClickProps(() => navigate(`/clients/${c.id}`), { href: `/clients/${c.id}` })}>
+              <tr key={c.id} {...(openClient ? rowClickProps(() => navigate(`/clients/${c.id}`), { href: `/clients/${c.id}` }) : {})}>
                 {mayMessage && (
                   <td onClick={(e) => e.stopPropagation()}>
                     <input

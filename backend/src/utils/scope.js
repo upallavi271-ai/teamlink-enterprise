@@ -250,7 +250,25 @@ function seatApplicationWhere(s) {
 // can never disagree.
 // `opts.pool === false` leaves out a TL's department-unassigned arm — the
 // "my team's requirements" reading (teamRequirementWhere below).
+// A DEPARTMENT TL SEES THEIR DEPARTMENT'S JOBS ONLY (founder 2026-10-29: "education tl ki edu req ey kanipinchali ... same
+// medical, mfg"). A job of another department reaches a TL only where their department also works that one (Manufacturing's
+// team also works Medical - "bhavna vaallu medical meedha kuda work chesthunnaru") AND it is on their team's chain; never
+// the rest (an Education job a Manufacturing TL was once named on). The BDE TL, STLs and everyone else: unchanged.
+const TL_ALSO_WORKS = { manufacturing: ['Medical'] };
+function deptTlLimit(user) {
+  const s = atsScopeOf(user);
+  if (s.global || s.atsRole !== 'TL' || isBdeTl(user)) return null;
+  const own = [...new Set([...(s.departments || []), ...((s.positions && s.positions.departments) || [])])].filter(Boolean);
+  if (!own.length) return null;
+  const extra = own.flatMap((d) => TL_ALSO_WORKS[String(d).toLowerCase()] || []);
+  return RD.deptArm([...new Set([...own, ...extra])]);
+}
 function requirementWhere(user, opts = {}) {
+  const base = requirementWhereBase(user, opts);
+  const limit = deptTlLimit(user);
+  return limit ? { AND: [base, limit] } : base;
+}
+function requirementWhereBase(user, opts = {}) {
   const withPool = !(opts && opts.pool === false);
   const s = atsScopeOf(user);
   if (s.global) return {};
@@ -512,7 +530,9 @@ function ownOnlyArm(s) {
 function applicationWhere(user) {
   const base = applicationWhereBase(user);
   const own = ownOnlyArm(atsScopeOf(user));
-  return own ? { AND: [base, own] } : base;
+  const limit = deptTlLimit(user); // a department TL's candidates: their department's jobs only (2026-10-29)
+  const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : [])];
+  return arms.length === 1 ? base : { AND: arms };
 }
 function applicationWhereBase(user) {
   const s = atsScopeOf(user);
