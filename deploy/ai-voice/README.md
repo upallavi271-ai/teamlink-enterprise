@@ -56,7 +56,7 @@ The defaults suit phone calls. Change them only after listening to real calls.
 | `AI_VOICE_SILENCE_MS` | 8000 | No voice this long after the assistant stops: it asks "are you still there?". Two check-ins, then a polite end. |
 | `AI_VOICE_MIN_LOGPROB` | -0.7 | English: Whisper's sureness below this means the answer was not heard clearly, so the assistant asks again. |
 | `AI_VOICE_MAX_NO_SPEECH` | 0.5 | English: with a weak sureness, a "no speech" chance above this means the words came from noise. |
-| `WHISPER_BEAM` | 3 | Whisper server (systemd unit): 1 is fastest, 3 is more careful on short answers. |
+| `WHISPER_BEAM` | 1 | Whisper server (`/opt/ai-voice/whisper.env`): 1 is fastest. 3 took 2.5 s instead of 1.7 s per answer on the server, for no better words. |
 
 An answer that is not heard clearly is never read as yes, no or a time. The Telugu / Hindi listener gives no sureness score, so for those only empty words and the language-switch check apply.
 

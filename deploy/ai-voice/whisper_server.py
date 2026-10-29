@@ -38,7 +38,7 @@ HOST = os.getenv("WHISPER_HOST", "127.0.0.1")
 PORT = int(os.getenv("WHISPER_PORT", "8093"))
 KEY = os.getenv("WHISPER_API_KEY", "")
 THREADS = int(os.getenv("WHISPER_THREADS", "2"))
-BEAM = max(1, int(os.getenv("WHISPER_BEAM", "3")))  # 3 = a little more careful on short phone answers than 1 (greedy)
+BEAM = max(1, int(os.getenv("WHISPER_BEAM", "1")))  # 1 (greedy): 3 was no more right on phone clips but 0.8 s slower per answer on the 2-thread server (2026-10-29)
 OURS = ("te", "hi", "en")
 MAX_BYTES = 16000 * 2 * 30  # 30 s of audio
 
