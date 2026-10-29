@@ -97,8 +97,9 @@ const ticket = () => {
 })();
 JS
 '@
-# the trailing newline matters: without it bash does not see the last "JS" line as the end of the check
-$script = $script.Replace('__EMAIL__', $Email.ToLower()).Replace("`r", '') + "`n"
+# PowerShell adds "\r\n" after what it pipes to ssh: end on a comment line so that "\r" lands on a comment, not on the last "JS"
+# (which bash then does not see as the end of the check) and not on an empty command ("$'\r': command not found").
+$script = $script.Replace('__EMAIL__', $Email.ToLower()).Replace("`r", '') + "`n# end"
 $script | ssh $VpsHost 'bash -s'
 if ($LASTEXITCODE -ne 0) { throw 'It did not finish on the VPS (see the lines above).' }
 Write-Host "`nDone. Open TeamLink -> Omni-Channel: Green Start opens already signed in (no login page)." -ForegroundColor Green
