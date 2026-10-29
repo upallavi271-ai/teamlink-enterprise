@@ -130,7 +130,7 @@ function MailboxCard({ src, data, onConnected }) {
           <Field id={id('team')} label="Select Team" req err={errs.team}>
             <Combo id={id('team')} value={f.team} onChange={set('team')} placeholder="Select team" {...aria('team')}>
               <option value="">Select team</option>
-              {teams.map((t) => <option key={t} value={t}>{t} ({inDeptRecs.filter((r) => teamOf(r) === t).length})</option>)}
+              {teams.map((t) => <option key={t} value={t}>{t} ({inDeptSeats.filter((x) => x.holderRecruiterId && teamOf(x) === t).length})</option>)}
             </Combo>
           </Field>
         )}
