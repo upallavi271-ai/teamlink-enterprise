@@ -92,6 +92,43 @@ async function countFor(clientId) {
   try { return (await filesOf(clientId)).length; } catch { return 0; }
 }
 
+// THE AGREEMENT STATUS FROM THE PAPERS (founder 2026-10-29: "signed agreement upload chesaka kuda, unsigned ani vasthundhi"):
+//   Signed agreement + Vasu sir confirmation on file -> ACTIVE (signed and approved: requirements can open)
+//   Signed agreement alone                           -> SIGNED (an Admin activates it)
+// Only moves forward: a client already Signed / Active is not touched (Signed -> Active when the confirmation comes later).
+// Returns the new status, or null when nothing changed. Never throws.
+const SIGNED_NOW = ['SIGNED', 'ACTIVE'];
+async function statusFromPapers(clientId, user) {
+  try {
+    const files = await filesOf(clientId);
+    const has = (label) => files.some((f) => f.label === label || f.kind === label);
+    if (!has(UPLOAD_TYPES.agreement)) return null;
+    const target = has(UPLOAD_TYPES.vasu) ? 'ACTIVE' : 'SIGNED';
+    const c = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, agreementSignedAt: true, agreementActivatedAt: true } });
+    const now = String(c && c.agreementStatus || '').toUpperCase();
+    if (!c || now === target || (now === 'ACTIVE') || (now === 'SIGNED' && target === 'SIGNED')) return null;
+    const at = new Date();
+    await prisma.client.update({
+      where: { id: clientId },
+      data: {
+        agreementStatus: target,
+        agreementSignedAt: c.agreementSignedAt || at,
+        ...(target === 'ACTIVE' ? { agreementActivatedAt: c.agreementActivatedAt || at } : {}),
+        agreementSource: 'Uploaded (signed outside the ATS)',
+      },
+    });
+    await logAudit({
+      userId: user ? user.id : null, actorName: user ? user.name || null : 'TeamLink', action: target === 'ACTIVE' ? 'Agreement active (signed papers uploaded)' : 'Agreement signed (signed copy uploaded)',
+      entity: 'Client', entityId: clientId, field: 'agreementStatus', fieldLabel: 'Agreement', fromValue: now || 'DRAFT', toValue: target,
+      reason: target === 'ACTIVE' ? 'Signed agreement and Vasu sir confirmation are on file' : 'Signed agreement on file; Vasu sir confirmation not yet - an Admin activates it',
+    });
+    return target;
+  } catch (e) {
+    console.error('[agreement papers] status not updated:', e.message); // eslint-disable-line no-console
+    return null;
+  }
+}
+
 // who adds signed papers: the whole BDE team (BDE + BDE TL) and Admin / Super Admin
 function mayAdd(user, access) {
   if (access && access.edit) return true;
@@ -169,7 +206,9 @@ function mountView(router, { requireAuth, loadForView }) {
       });
       await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null }) } });
       await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}`.slice(0, 300) });
-      return res.status(201).json({ ok: true, message: `${label} uploaded.`, files: await filesOf(loaded.client.id) });
+      const status = await statusFromPapers(loaded.client.id, req.user);
+      const said = status === 'ACTIVE' ? ' The agreement is now Active.' : status === 'SIGNED' ? ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).' : '';
+      return res.status(201).json({ ok: true, message: `${label} uploaded.${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
     } catch (err) { return next(err); }
   });
 
@@ -285,4 +324,4 @@ function mountView(router, { requireAuth, loadForView }) {
   });
 }
 
-module.exports = { mountView, filesOf, countFor, KIND, PREFIX };
+module.exports = { mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };
