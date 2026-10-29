@@ -74,7 +74,8 @@ export default function AiCallDialog({
   async function phoneCall() {
     setBusy(true); setErr('');
     try {
-      await api.post('/ai-calling/phone-call', { applicationId: ids[0], purpose, language, fields, confirm: true });
+      // no language: the call starts in Telugu (or the language they spoke last time) and follows whatever the candidate speaks
+      await api.post('/ai-calling/phone-call', { applicationId: ids[0], purpose, fields, confirm: true });
       setSent({ one: true, status: 'calling', note: 'own SIP line, free AI voice', phone: true });
       if (onDone) onDone();
     } catch (e) {
@@ -117,7 +118,7 @@ export default function AiCallDialog({
             </button>
           )}
           {!many && phoneAi && phoneAi.ready && (
-            <button className="btn btn-primary" disabled={busy || !phoneAllowed} onClick={phoneCall} title="A real phone call from our own SIP line. The AI voice is free; only the call minutes cost.">
+            <button className="btn btn-primary" disabled={busy || !phoneAllowed} onClick={phoneCall} title="A real phone call from our own line. It starts in Telugu and switches by itself to the language the candidate speaks. The AI voice is free; only the call minutes cost.">
               {busy ? 'Please wait…' : `Call with AI (phone)${phoneAi.mode === 'Test' ? ' - test' : ''}`}
             </button>
           )}

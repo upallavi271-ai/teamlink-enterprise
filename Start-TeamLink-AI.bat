@@ -13,6 +13,14 @@ set VOICE=C:\Users\Administrator\voice-ai
 netstat -ano | findstr /R /C:":4010 .*LISTENING" >nul || start "TeamLink backend" /D "%~dp0backend" cmd /k npm run dev
 netstat -ano | findstr /R /C:":5183 .*LISTENING" >nul || start "TeamLink frontend" /D "%~dp0frontend" cmd /k npm run dev
 
+rem DEFAULT (2026-10-29): the AI listening and the Hindi voice run on the SERVER (fast); this PC reaches them through an
+rem encrypted tunnel (127.0.0.1:18091 / 18093 / 18094 in backend\.env). To run every model on this PC instead, create
+rem %VOICE%\use-local-voices.txt and point backend\.env AI_VOICE_*_URL back to 8091 / 8093 / 8094.
+if not exist "%VOICE%\use-local-voices.txt" (
+  netstat -ano | findstr /R /C:"127.0.0.1:18093 .*LISTENING" >nul || start "AI voice - server link" /D "%~dp0deploy\ai-voice" cmd /c ai-voice-server-link.bat
+  goto open
+)
+
 if not exist "%VOICE%\.voice-key" (
   echo The AI voices are not installed on this computer ^(%VOICE%^). TeamLink still runs.
   goto open
