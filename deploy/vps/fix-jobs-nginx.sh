@@ -39,7 +39,13 @@ diag() {   # what the backend and the portal really answer, so the cause is on t
   rm -f /tmp/jobs-b.html /tmp/jobs-p.html
 }
 
-n=$(curl -s -m 20 "$BACKEND/jobs/" | grep -c "$MARK")
+n=0
+for i in $(seq 1 36); do   # up to 3 minutes: the backend may still be starting the portal again
+  n=$(curl -s -m 20 "$BACKEND/jobs/" | grep -c "$MARK")
+  [ "$n" -ge 1 ] && break
+  [ "$i" = 1 ] && echo 'waiting for the Job Portal to answer (up to 3 minutes)...'
+  sleep 5
+done
 echo "TeamLink backend /jobs/ (the real portal): $([ "$n" -ge 1 ] && echo 'NEW version' || echo 'not the new page')"
 [ "$n" -ge 1 ] || { diag; echo 'STOPPED: the backend itself does not serve the new portal page - nothing changed.'; exit 3; }
 
