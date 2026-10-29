@@ -266,10 +266,22 @@ function deptTlLimit(user) {
   const own = withFamily([...(s.departments || []), ...((s.positions && s.positions.departments) || [])].filter(Boolean));
   return own.length ? RD.deptArm(own) : null;
 }
+// MEDICAL vs NON IT MEDICAL, both ways (founder 2026-10-29: "non it medical related yevi - medical ki kanipinchakudadhu
+// (req, profiles); medical related yevi - non it ki kanipinchakudadhu"): a TL or recruiter of the MED desk never reaches a
+// "Non IT Medical" job, nor its candidates - even when named on one - and the Manufacturing (Non IT) desk never reaches a
+// "Medical" one. A job with no department is not touched.
+function nonItSplit(user) {
+  const s = atsScopeOf(user);
+  if (s.global || isBdeTl(user) || !['TL', 'RECRUITER'].includes(s.atsRole)) return null;
+  const d = new Set((s.departments || []).map((x) => String(x).toLowerCase()));
+  const hide = d.has('medical') && !d.has('non it medical') ? 'Non IT Medical'
+    : (d.has('non it medical') && !d.has('medical') ? 'Medical' : null);
+  return hide ? { OR: [{ department: null }, { department: { notIn: [hide] } }] } : null;
+}
 function requirementWhere(user, opts = {}) {
   const base = requirementWhereBase(user, opts);
-  const limit = deptTlLimit(user);
-  return limit ? { AND: [base, limit] } : base;
+  const arms = [base, deptTlLimit(user), nonItSplit(user)].filter(Boolean);
+  return arms.length === 1 ? base : { AND: arms };
 }
 function requirementWhereBase(user, opts = {}) {
   const withPool = !(opts && opts.pool === false);
@@ -534,7 +546,8 @@ function applicationWhere(user) {
   const base = applicationWhereBase(user);
   const own = ownOnlyArm(atsScopeOf(user));
   const limit = deptTlLimit(user); // a department TL's candidates: their department's jobs only (2026-10-29)
-  const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : [])];
+  const split = nonItSplit(user); // Medical vs Non IT Medical, both ways (2026-10-29)
+  const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : []), ...(split ? [{ requirement: split }] : [])];
   return arms.length === 1 ? base : { AND: arms };
 }
 function applicationWhereBase(user) {
@@ -670,6 +683,8 @@ function applicationInScope(user, application) {
   if (s.atsRole === 'RECRUITER' && application.ownerRecruiterId && application.ownerRecruiterId !== s.userId) return false;
   if (s.atsRole === 'CANDIDATE') return application.candidateId === s.candidateId;
   const r = application.requirement;
+  // one application on a profile page: the same department rules as the lists (2026-10-29)
+  for (const rule of [deptTlLimit(user), nonItSplit(user)]) if (rule && !(r && matches(r, rule))) return false;
   if (s.atsRole === 'BDE' || ctx.bdeTl) {
     // (the HOLD-after-sharing arm needs the stage history: not known here)
     if (!ctx.teamWhere) ctx.teamWhere = teamRequirementWhere(user);
