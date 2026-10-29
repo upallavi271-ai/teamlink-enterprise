@@ -95,7 +95,7 @@ async function portalSignIn(token) {
   const list = r.ok ? (await r.json()).recruiters || [] : null;
   if (!list) { console.log(`\nportal recruiter list: not readable (${r.status})`); } else {
     const portal = new Map(list.map((x) => [String(x.email || '').toLowerCase(), x]));
-    const users = await prisma.user.findMany({ where: { atsRole: { in: ['RECRUITER', 'TL', 'STL'] }, status: 'Active' }, select: { email: true, name: true, atsRole: true } });
+    const users = await require('../src/utils/jobPortalRecruiters').people(); // active, not left (the same list the portal logins are made for)
     const missing = users.filter((x) => x.email && !portal.has(x.email.toLowerCase()));
     const inactive = users.filter((x) => x.email && portal.has(x.email.toLowerCase()) && !portal.get(x.email.toLowerCase()).active);
     console.log(`\nTeamLink Recruiters / TLs / STLs (active): ${users.length}; with a portal recruiter of the same email: ${users.length - missing.length}`);

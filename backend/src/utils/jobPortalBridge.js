@@ -458,6 +458,8 @@ let lastRun = null;
 async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system' } = {}) {
   const started = new Date();
   const out = { ok: true, jobs: 0, closed: 0, pruned: 0, failed: 0, pulled: 0, created: 0, stageUpdates: 0, errors: [], error: null };
+  // every HRMS Recruiter / TL has a portal recruiter login with the same email (utils/jobPortalRecruiters.js); never stops the sync
+  require('./jobPortalRecruiters').ensureQuietly(); // eslint-disable-line global-require
   try {
     const where = { portalPublished: true, status: { in: REQUIREMENT_LIVE_STATUSES } };
     // Unticked "Job Portal" on the job = not offered there (closeOthers closes it).

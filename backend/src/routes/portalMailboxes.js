@@ -44,6 +44,8 @@ const audit = (req, action, entityId, toValue) => logAudit({
 });
 
 router.get('/', view, wrap(async (req, res) => {
+  // a Recruiter / TL added in HRMS just now is in the list too (utils/jobPortalRecruiters.js); waits at most 15 s, never fails the screen
+  await Promise.race([require('../utils/jobPortalRecruiters').ensureQuietly(), new Promise((r) => { setTimeout(r, 15000); })]); // eslint-disable-line global-require
   const [conns, recs] = await Promise.all([portalFetch(CONN, { timeoutMs: 20000 }), portalFetch(`${BASE}/recruiters`, { timeoutMs: 20000 })]);
   const dept = new Map((recs.recruiters || []).map((r) => [r.id, r.department]));
   res.json({

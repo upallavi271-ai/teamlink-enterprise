@@ -398,6 +398,47 @@ export function teamlinkFrontRouter({ root, express }) {
   r.get('/api/integrations/teamlink/ping', (_req, res) => res.json({ ok: true, host: 'teamlink-embed', pid: process.pid }));
 
   /*
+   * EVERY HRMS RECRUITER / TL IS A PORTAL RECRUITER (founder 2026-10-29: "ahh positions lo new ga add ina employee
+   * kanipinchadamledhu"). TeamLink sends its active Recruiters / TLs / STLs (backend/src/utils/jobPortalRecruiters.js);
+   * one without a portal login of the same email gets one through the portal's own staff_recruiter_create (0035, the
+   * same as Recruiters -> Add), so they appear in the portal, its mailbox list and sign in from TeamLink (HRMS SSO).
+   * The password is random and never shown: they never type it. Nothing that exists is changed or removed.
+   *   POST /api/integrations/teamlink/recruiters/ensure  { people: [{ name, email, employeeId, mobile, department,
+   *        designation }], dryRun }  ->  { results: [{ email, result: exists | created | would-create | clash, ... }] }
+   */
+  r.post('/api/integrations/teamlink/recruiters/ensure', wrap(async (req, res) => {
+    const people = Array.isArray(req.body && req.body.people) ? req.body.people.slice(0, 1000) : [];
+    const dryRun = !(req.body && req.body.dryRun === false);
+    const { withUser } = await portal();
+    const { hashPassword } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    const { randomBytes } = await import('node:crypto');
+    const txt = (v, max) => { const s = String(v == null ? '' : v).trim(); return s ? s.slice(0, max) : null; };
+    const results = [];
+    for (const p of people) {
+      const email = txt(p && p.email, 160);
+      const name = txt(p && p.name, 120);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !name || name.length < 2) { results.push({ email, result: 'skipped', reason: 'no name or email' }); continue; } // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      const out = await withUser(SYSTEM, async (c) => {
+        const u = (await c.query(`select u.role, u.status, r.id as recruiter_id from users u left join recruiters r on r.user_id = u.id
+                                   where lower(u.email) = lower($1) limit 1`, [email])).rows[0];
+        if (u && u.recruiter_id) return { email, result: 'exists', active: u.status === 'active' };
+        if (u) return { email, result: 'clash', reason: `this email already signs in to the portal as ${u.role}` };
+        if (dryRun) return { email, result: 'would-create' };
+        const co = (await c.query('select id from companies where id = $1', [companyId()])).rows[0];
+        const made = (await c.query('select staff_recruiter_create($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as out', [
+          name, email.toLowerCase(), await hashPassword(randomBytes(24).toString('base64url')), txt(p.designation, 120) || 'Recruiter',
+          co ? co.id : null, txt(p.employeeId, 40), txt(p.mobile, 32), txt(p.department, 80), null, null, 'active'])).rows[0].out;
+        return { email, result: 'created', id: made && made.id };
+      });
+      results.push(out);
+    }
+    const created = results.filter((x) => x.result === 'created').length;
+    if (created) log(`recruiters: ${created} portal login(s) made for TeamLink Recruiters / TLs`);
+    res.json({ dryRun, results });
+  }));
+
+  /*
    * NAUKRI & SHINE MAILBOXES, managed from TeamLink Administration -> Integrations (2026-10-29, founder).
    *
    * The mailbox engine stays the portal's own (api/src/routes/source-mailboxes.js, 0135): the real IMAP login
