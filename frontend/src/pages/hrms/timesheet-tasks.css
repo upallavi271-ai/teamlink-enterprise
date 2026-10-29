@@ -108,3 +108,10 @@
   .tt-late { background: #3a1d1d; border-color: #7a3434; color: #f6c9c9; }
   .tt-late.wait { background: #3a2f17; border-color: #7a6024; color: #f3dfb0; }
 }
+/* Mark as done: paste / take a screenshot (2026-10-29) */
+.tt-paste { border: 2px dashed var(--line, #c9d3de); border-radius: 8px; padding: 12px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.tt-shots { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.tt-shot { width: 120px; border: 1px solid var(--line, #d7dee6); border-radius: 6px; padding: 4px; font-size: 11px; display: flex; flex-direction: column; gap: 2px; position: relative; }
+.tt-shot img, .tt-shot-doc { width: 100%; height: 72px; object-fit: cover; border-radius: 4px; background: #f3f5f8; display: flex; align-items: center; justify-content: center; font-size: 28px; }
+.tt-shot span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tt-shot button { position: absolute; top: 2px; right: 2px; padding: 0 6px; background: rgba(255,255,255,.9); }

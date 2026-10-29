@@ -657,18 +657,94 @@ function Footer({ onClose, busy, label, form, danger }) {
   );
 }
 
+// SCREENSHOTS (founder 2026-10-29: "mark done avinaka screenshot kuda thisukovali Ctrl+v antey automatic ga paste avali"):
+// Ctrl+V anywhere in the Mark as done box pastes a copied screenshot (Win+Shift+S / PrtScn), and "Take a screenshot" captures a
+// screen or window the person picks. One screenshot or file is needed to mark a task done.
+const MAX_FILE = 5 * 1024 * 1024;
+const stamp = () => { const d = new Date(); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+// A picture as a file under the 5 MB limit: PNG as it is when small enough, else JPEG.
+function canvasToFile(canvas, base) {
+  return new Promise((resolve) => {
+    canvas.toBlob((png) => {
+      if (png && png.size <= MAX_FILE) { resolve(new File([png], `${base}.png`, { type: 'image/png' })); return; }
+      canvas.toBlob((jpg) => resolve(jpg ? new File([jpg], `${base}.jpg`, { type: 'image/jpeg' }) : null), 'image/jpeg', 0.82);
+    }, 'image/png');
+  });
+}
+async function shrinkIfBig(file, base) {
+  if (file.size <= MAX_FILE) return new File([file], `${base}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: file.type });
+  const img = await createImageBitmap(file);
+  const c = document.createElement('canvas');
+  c.width = img.width; c.height = img.height;
+  c.getContext('2d').drawImage(img, 0, 0);
+  return canvasToFile(c, base);
+}
+async function captureScreen() {
+  const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+  try {
+    const video = document.createElement('video');
+    video.srcObject = stream; video.muted = true;
+    await video.play();
+    await new Promise((r) => { setTimeout(r, 300); }); // let the first real frame arrive
+    const c = document.createElement('canvas');
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext('2d').drawImage(video, 0, 0);
+    return canvasToFile(c, `screenshot-${stamp()}`);
+  } finally { stream.getTracks().forEach((t) => t.stop()); }
+}
+function Thumbs({ files, onRemove }) {
+  const urls = useMemo(() => files.map((f) => (f.type.startsWith('image/') ? URL.createObjectURL(f) : '')), [files]);
+  useEffect(() => () => urls.forEach((u) => u && URL.revokeObjectURL(u)), [urls]);
+  if (!files.length) return null;
+  return (
+    <div className="tt-shots">
+      {files.map((f, i) => (
+        <div className="tt-shot" key={`${f.name}-${i}`}>
+          {urls[i] ? <img src={urls[i]} alt={f.name} /> : <div className="tt-shot-doc">📄</div>}
+          <span title={f.name}>{f.name}</span>
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onRemove(i)} aria-label={`Remove ${f.name}`}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DoneDialog({ task, onClose, onDone }) {
   const [note, setNote] = useState('');
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [shotMsg, setShotMsg] = useState('');
+  const addFiles = (list) => setFiles((was) => [...was, ...list.filter(Boolean)].slice(0, 10));
+  // Ctrl+V: a copied screenshot (or picture file) goes straight in; pasted text in the note box stays text.
+  useEffect(() => {
+    const onPaste = async (e) => {
+      const items = [...((e.clipboardData && e.clipboardData.items) || [])].filter((it) => it.kind === 'file' && it.type.startsWith('image/'));
+      if (!items.length) return;
+      e.preventDefault();
+      const made = await Promise.all(items.map((it, i) => shrinkIfBig(it.getAsFile(), `screenshot-${stamp()}${items.length > 1 ? `-${i + 1}` : ''}`).catch(() => null)));
+      addFiles(made);
+      setShotMsg(`Screenshot pasted (${made.filter(Boolean).length}).`); setErr('');
+    };
+    document.addEventListener('paste', onPaste);
+    return () => document.removeEventListener('paste', onPaste);
+  }, []);
+  async function takeShot() {
+    setShotMsg('');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) { setShotMsg('This browser cannot take a screenshot. Press Win+Shift+S, then Ctrl+V here.'); return; }
+    try { const f = await captureScreen(); if (f) { addFiles([f]); setShotMsg('Screenshot added.'); setErr(''); } } catch { setShotMsg('No screenshot taken. You can also press Win+Shift+S, then Ctrl+V here.'); }
+  }
   async function go(e) {
-    e.preventDefault(); setBusy(true); setErr('');
+    e.preventDefault();
+    if (!files.length) { setErr('Add a screenshot first: press Ctrl+V to paste one, or "Take a screenshot".'); return; }
+    setBusy(true); setErr('');
     try {
+      // the screenshots go up FIRST: a task is not marked done without one
+      const failed = await uploadTaskFiles(task.id, files);
+      const added = files.length - failed.length;
+      if (!added) { setErr(`The screenshot could not be uploaded, so the task is not marked done yet. ${failed.join('; ')}`); setBusy(false); return; }
       const done = await api.post(`/tasks/${task.id}/complete`, { note });
       const approver = done && done.data ? done.data.approver : null;
-      const failed = files.length ? await uploadTaskFiles(task.id, files) : [];
-      const added = files.length - failed.length;
       onDone(`"${task.name}" is marked as done${added ? ` with ${added} file${added === 1 ? '' : 's'}` : ''}. It counts as completed after ${approver ? `${approver} (your TL)` : 'your TL'} approves it.${failed.length ? ` Not uploaded: ${failed.join('; ')}` : ''}`);
     } catch (er) { setErr(apiError(er, 'That could not be saved.')); setBusy(false); }
   }
@@ -680,10 +756,18 @@ function DoneDialog({ task, onClose, onDone }) {
         <label className="field"><span>What did you do? (optional)</span>
           <textarea rows="3" value={note} onChange={(e) => setNote(e.target.value)} placeholder="For example: Called all 20, 6 are interested" />
         </label>
-        <label className="field"><span>Photos or documents (optional)</span>
-          <input type="file" multiple accept={FILE_ACCEPT} onChange={(e) => setFiles([...e.target.files].slice(0, 10))} />
+        <div className="field"><span>Screenshot of the work</span>
+          <div className="tt-paste">
+            <b>Press Ctrl+V</b> to paste a screenshot (take one with Win+Shift+S), or
+            {' '}<button type="button" className="btn btn-sm" onClick={takeShot}>📸 Take a screenshot</button>
+          </div>
+        </div>
+        <Thumbs files={files} onRemove={(i) => setFiles((was) => was.filter((_, j) => j !== i))} />
+        {shotMsg && <div className="small-muted" role="status">{shotMsg}</div>}
+        <label className="field"><span>Or add photos / documents</span>
+          <input type="file" multiple accept={FILE_ACCEPT} onChange={(e) => { addFiles([...e.target.files]); e.target.value = ''; }} />
         </label>
-        {files.length > 0 && <div className="small-muted" style={{ marginBottom: 8 }}>{files.map((x) => x.name).join(', ')} - photos (PNG, JPEG, WebP), PDF or Word, 5 MB each</div>}
+        <div className="small-muted" style={{ marginBottom: 8 }}>Photos (PNG, JPEG, WebP), PDF or Word, 5 MB each, up to 10.</div>
         <div className="small-muted">Add your hours first with "Add hours" so your lead can see the time you spent.</div>
       </form>
     </Modal>
