@@ -57,6 +57,10 @@ const RUN_DIR = path.resolve(process.env.JOB_PORTAL_RUN_DIR || path.join(PORTAL_
 const HEARTBEAT = path.join(RUN_DIR, 'heartbeat');
 const PIDFILE = path.join(RUN_DIR, 'portal.pid.json');
 const LOGFILE = path.join(RUN_DIR, 'portal.log');
+// MAINTENANCE (2026-10-29): while this file exists (job-portal-app/embed/load-portal-data.mjs loading another PC's data) the portal is
+// asked to stop and is NOT started again; deleting the file lets the supervisor start it within ~10 s.
+const MAINT = path.join(RUN_DIR, 'maintenance');
+const inMaintenance = () => { try { return fs.existsSync(MAINT); } catch { return false; } };
 const port = () => parseInt(process.env.JOB_PORTAL_PORT, 10) || 4323;
 const internalUrl = () => `http://127.0.0.1:${port()}`;
 const appBase = () => trimSlash(process.env.APP_BASE_URL || 'http://localhost:5183');
@@ -149,6 +153,7 @@ async function restartForNewCode() {
 
 function beat() {
   if (restarting) return; // the old portal is being asked to stop: do not overwrite "stop" with "alive"
+  if (inMaintenance()) { requestStop(); return; } // data being loaded: the portal stays stopped
   try { fs.mkdirSync(RUN_DIR, { recursive: true }); fs.writeFileSync(HEARTBEAT, `alive ${process.pid} ${new Date().toISOString()}\n`); } catch { /* next beat */ }
 }
 function requestStop() {
@@ -205,7 +210,7 @@ let timer = null;
 let beatTimer = null;
 let checking = false;
 async function check() {
-  if (checking || restarting) return; // a stale portal is being stopped: it is started again right after
+  if (checking || restarting || inMaintenance()) return; // a stale portal is being stopped: it is started again right after
   checking = true;
   try {
     if (await health()) {
@@ -449,5 +454,5 @@ function proxy() {
 module.exports = {
   start, status, proxy, enabled, requestStop, internalUrl, health,
   // for tests
-  _inject: inject, _portalEnv: portalEnv, _portalIsStale: portalIsStale, _newestCodeChange: newestCodeChange, BASE, RUN_DIR, PIDFILE, HEARTBEAT, LOGFILE,
+  _inject: inject, _portalEnv: portalEnv, _portalIsStale: portalIsStale, _newestCodeChange: newestCodeChange, BASE, RUN_DIR, PIDFILE, HEARTBEAT, LOGFILE, MAINT,
 };
