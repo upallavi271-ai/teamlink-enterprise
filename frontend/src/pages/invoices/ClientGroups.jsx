@@ -9,11 +9,12 @@
 //
 // Every figure is added from the same invoice rows exactly once, so the group totals
 // and the grand total always equal the sum of the rows under them.
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo } from 'react';
 import { money2 } from './invFormat';
 import ClientInvoiceRows, { CI_HEADS, CI_NUM } from './ClientInvoiceRows.jsx';
 import { buildClientInvoices } from './clientInvoice';
 import './clientGroups.css';
+import { useKeptState } from '../../utils/useKeptState.js';
 
 const sum = (list, f) => Math.round(list.reduce((s, r) => s + (Number(f(r)) || 0), 0) * 100) / 100;
 const STATUS_TONE = {
@@ -58,8 +59,11 @@ export function buildClientGroups(rows, sortKey, index) {
 export default function ClientGroups({
   groups, allRows, rowProps,
 }) {
-  const [open, setOpen] = useState(() => new Set());
-  const toggle = (k) => setOpen((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; });
+  // Which clients are open - kept (2026-10-29), so Back from an invoice or the bank shows the same client open.
+  const [openList, setOpenList] = useKeptState('invoices.openClients', []);
+  const open = useMemo(() => new Set(openList), [openList]);
+  const setOpen = (set) => setOpenList([...set].slice(-200));
+  const toggle = (k) => setOpenList((o) => (o.includes(k) ? o.filter((x) => x !== k) : [...o, k].slice(-200)));
   const shownOpen = (k) => open.has(k);
   const live = useMemo(() => allRows.filter((r) => r.status !== 'Cancelled'), [allRows]);
   // The TOTAL row counts every client invoice the filters leave (not only this page's clients).
