@@ -92,6 +92,17 @@ function mountView(router, { requireAuth, loadForView }) {
     } catch (err) { return next(err); }
   });
 
+  // THE CLIENTS WHOSE AGREEMENT THIS LOGIN MAY OPEN - names only, for the "View agreement -> which client?" picker
+  // (founder 2026-10-29: every BDE views every agreement; the BDE workspace list holds only their own clients).
+  router.get('/viewable-clients', requireAuth, async (req, res, next) => {
+    try {
+      const where = await signing.visibleClientWhere(req.user);
+      if (!where) return res.status(403).json({ error: 'Agreements are visible to the client, their BDE, Accounts, Admin and Super Admin.' });
+      const rows = await prisma.client.findMany({ where, select: { id: true, name: true, location: true, clientCode: true }, orderBy: { name: 'asc' }, take: 5000 });
+      return res.json({ rows });
+    } catch (err) { return next(err); }
+  });
+
   // CLIENTS WITH NO AGREEMENT AT ALL (founder, 2026-10-23: "View agreement" says "No signed agreement uploaded yet" for some clients - list them).
   // A client is listed when none of these exists: a made / e-sign agreement text, a signed file, the client's own uploaded file, an active Drive link.
   // Same reach as GET /list (the server refuses a login that may not read agreements). Stopped / inactive clients are listed last and marked.
