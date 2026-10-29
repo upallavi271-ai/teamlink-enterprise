@@ -105,6 +105,9 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   ok(!r.done && r.say === S.phrases(d.language).laterWhenAgain && !d.st.callbackWhen, 'T  noise is never saved as the call-back time: asked once more', [r.say, d.st.callbackWhen]);
   r = await d.hear('tomorrow 5 pm');
   ok(r.done && d.outcome().callbackWhen === 'tomorrow 5 pm' && d.outcome().outcome === 'Call Back Later', 'T2 ... "tomorrow 5 pm" is noted', d.outcome());
+  d = mk(); await to(d, 'convenient', ['yes speaking']); await d.hear('No');
+  r = await d.hear('First November');
+  ok(r.done && d.outcome().callbackWhen === 'First November', 'T3 a date by month ("First November", real call 2026-10-29) is noted, not asked again', d.outcome());
 
   // ---- unclear audio (the gateway marks it): never an answer, 3 tries --------------------------------------------------
   d = mk(); await to(d, 'interest', ['yes speaking', 'yes', 'yes']);
@@ -148,6 +151,7 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   ok(G.clarityOf("Yes, I can't tell you so much about it.", { logprob: -1.3, noSpeech: 0.2, ratio: 1.2 }) === 'unclear', 'W2 a guess (logprob -1.3) is unclear');
   ok(G.clarityOf('Thank you.', { logprob: -0.8, noSpeech: 0.85, ratio: 1 }) === 'unclear', 'W3 words made up from noise (no-speech 0.85) are unclear');
   ok(G.clarityOf('', null) === 'unclear' && G.clarityOf('avunu', null) === 'clear', 'W4 no words for real speech = unclear; Telugu / Hindi (no sureness) = clear when there are words');
+  ok(!G.nativeAnswer('ఫస్ట్ నవంబర్', 'Telugu') && !G.nativeAnswer('यस आई हैव', 'Hindi') && G.nativeAnswer('అవును', 'Telugu') && G.nativeAnswer('हाँ ठीक है', 'Hindi'), 'W6 English words written in Telugu / Hindi letters ("First November" -> ఫస్ట్ నవంబర్) never switch an English call; real Telugu / Hindi words do');
   ok(!G.believable('आपस्पटोल') && G.believable('అవును') && G.believable('मैं हैदराबाद में रहता हूँ'), 'W5 a language switch by sound needs words that make sense');
 
   // ---- a whole SILENT call through the gateway (copy of dev.db) ----------------------------------------------------------

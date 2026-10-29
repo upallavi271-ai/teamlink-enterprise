@@ -59,17 +59,25 @@ function believable(text) {
   return words.length === 1 && !['unclear', 'silence'].includes(require('../dialogue').classify(text).intent); // eslint-disable-line global-require
 }
 
-// A Telugu / Hindi answer the English listener could not place: the Indian-language listener's words count only when they
-// are clearly that language - two words or more, or one real answer word. (Its English-sounding spellings such as
-// "యెస్" for "yes" are NOT taken: an unclear English "yes" must not switch the call to Telugu.)
-const NATIVE_ONE = ['అవును', 'అవునండి', 'అవునా', 'లేదు', 'లేదండి', 'సరే', 'కాదు', 'వద్దు', 'చెప్పండి', 'హా', 'हाँ', 'हां', 'जी', 'नहीं', 'ठीक', 'बोलिए'];
+// A Telugu / Hindi answer the English listener could not place: the Indian-language listener's words count only when at
+// least one is a REAL Telugu / Hindi word. That listener writes English speech in its own letters ("First November" came
+// out as "ఫస్ట్ నవంబర్" and switched an English call to Telugu, 2026-10-29), so script and word count prove nothing.
+const NATIVE = {
+  Telugu: ['అవును', 'అవునండి', 'అవునా', 'లేదు', 'లేదండి', 'సరే', 'కాదు', 'వద్దు', 'చెప్పండి', 'చెప్పు', 'హా', 'నేను', 'నేనే', 'నాకు', 'నా', 'మీరు', 'మీకు',
+    'మీ', 'ఉంది', 'ఉన్నాను', 'ఉంటాను', 'ఉంటున్నాను', 'లో', 'ఇప్పుడు', 'తర్వాత', 'తరువాత', 'రేపు', 'ఎల్లుండి', 'సంవత్సరాలు', 'సంవత్సర', 'ఏళ్ళు', 'రోజులు', 'రోజు',
+    'నెలలు', 'నెల', 'ఆసక్తి', 'ఇష్టం', 'మాట్లాడ', 'తెలుగు', 'ఏంటి', 'ఎక్కడ', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'కావాలి', 'వస్తాను', 'చేస్తాను', 'పని', 'ఊరు', 'సాయంత్రం', 'ఉదయం',
+    'మధ్యాహ్నం', 'అలాగే', 'పర్లేదు', 'కూడా', 'ఇంకా', 'మళ్ళీ', 'గారు', 'అండి'],
+  Hindi: ['हाँ', 'हां', 'जी', 'नहीं', 'नही', 'ठीक', 'बोलिए', 'बोलो', 'मैं', 'मुझे', 'मेरा', 'मेरी', 'आप', 'आपका', 'है', 'हैं', 'हूँ', 'हूं', 'में', 'का', 'की', 'के',
+    'को', 'से', 'साल', 'दिन', 'महीने', 'कल', 'परसों', 'अभी', 'बाद', 'रहता', 'रहती', 'करता', 'करती', 'बात', 'हिंदी', 'क्या', 'कहाँ', 'कब', 'कैसे', 'क्यों', 'चाहिए',
+    'शाम', 'सुबह', 'दोपहर', 'बिल्कुल', 'अच्छा', 'भी', 'और'],
+};
 function nativeAnswer(text, lang) {
   const t = String(text || '').trim();
   const script = lang === 'Telugu' ? /[ఀ-౿]/g : /[ऀ-ॿ]/g;
   if ((t.match(script) || []).length < 3) return false;
-  const words = t.split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return true;
-  return NATIVE_ONE.some((w) => words[0].startsWith(w));
+  const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
+  const list = NATIVE[lang] || [];
+  return words.some((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n))));
 }
 
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
@@ -229,7 +237,8 @@ function handle(sock, engines, opts = {}) {
       // (a Telugu sentence came out as "I'm going to get ready to cool", 41% English) or the words were a guess. Before asking
       // again, the Telugu and Hindi listeners try the same audio; clearly Telugu / Hindi words switch the call.
       let r2 = r;
-      if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.75))) {
+      // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
+      if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.5))) {
         const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => engines.stt(pcm, l).catch(() => '')));
         const pick = nativeAnswer(te, 'Telugu') ? ['Telugu', te] : nativeAnswer(hi, 'Hindi') ? ['Hindi', hi] : null;
         if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs}): Telugu "${te}" / Hindi "${hi}"${pick ? ` -> ${pick[0]}` : ''}`);
