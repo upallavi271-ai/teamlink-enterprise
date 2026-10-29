@@ -10,6 +10,8 @@
 
 .jp-back{position:fixed;inset:0;z-index:1150;background:rgba(18,28,52,.45);display:flex;align-items:center;justify-content:center;padding:20px}
 .jp-back.is-top{z-index:1250;background:rgba(10,14,26,.8)}
+/* a searchable dropdown (Combo, portalled to <body> at z-index 400) opened inside one of these dialogs must be above it */
+body:has(.jp-back) .combo-pop{z-index:1300}
 .jp-modal{background:#fff;border-radius:14px;box-shadow:0 18px 50px rgba(10,20,40,.35);width:100%;max-width:640px;max-height:min(92vh,900px);display:flex;flex-direction:column;overflow:hidden;outline:none}
 .jp-modal.is-wide{max-width:900px}
 .jp-modal.is-small{max-width:460px}

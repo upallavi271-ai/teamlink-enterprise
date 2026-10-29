@@ -11,6 +11,7 @@
 .nsm-f{display:flex;flex-direction:column;gap:4px;margin-bottom:8px;min-width:0}
 .nsm-f>label,.nsm-label{font-size:12.5px;font-weight:600;color:#3a4860}
 .nsm-f input{width:100%;box-sizing:border-box;min-height:38px}
+.nsm-f input[type=checkbox],.nsm-f input[type=radio],.ps-q input[type=checkbox],.ps-check input[type=checkbox]{width:auto;min-height:0;flex:none;margin:0}
 .nsm-f input[readonly]{background:#f5f7fb;color:#41506a}
 .nsm-f.bad input{border-color:#d4342c}
 .nsm-req{color:#d4342c}

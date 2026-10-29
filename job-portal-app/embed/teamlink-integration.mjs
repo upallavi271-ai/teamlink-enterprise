@@ -444,6 +444,26 @@ export function teamlinkFrontRouter({ root, express }) {
     mailboxes().then((mr) => mr(req, res, next), next);
   });
 
+  /*
+   * The rest of the portal's Administration -> Integrations module, managed from TeamLink the same way (2026-10-29):
+   *   .../job-sites   routes/job-publishing.js        /admin/integrations...         Naukri / Shine / Indeed by API or feed
+   *   .../channels    routes/integration-channels.js  /admin/integration-channels... the portal's Email (SMTP), SMS, WhatsApp
+   *   .../screening   routes/screening.js             /screening/settings            AI Settings: the screening questions
+   * Each is the portal's own router, unchanged, run as the portal administrator. TeamLink's backend calls only the
+   * administrator endpoints of each (backend/src/routes/portalAdmin.js).
+   */
+  for (const [name, file] of [['job-sites', 'job-publishing.js'], ['channels', 'integration-channels.js'], ['screening', 'screening.js']]) {
+    let made = null;
+    const router = async () => {
+      if (!made) made = (await import(pathToFileURL(join(ROOT, 'api', 'src', 'routes', file)).href)).default();
+      return made;
+    };
+    r.use(`/api/integrations/teamlink/${name}`, (req, res, next) => {
+      req.session = { ...SYSTEM, profileId: null };
+      router().then((pr) => pr(req, res, next), next);
+    });
+  }
+
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();
     const out = await withUser(SYSTEM, (c) => upsertJob(c, req.params.requirementId, req.body));
