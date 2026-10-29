@@ -11,8 +11,10 @@
 //   PAYMENT      = derived LIVE by utils/airtelBillPayments.js from utils/expensePaymentState.js (Accounts + bank statement). Never stored, never
 //                  set by a vendor.
 //   PRIVACY      = the FULL 10-digit SIM number is shown (founder 2026-10-29: these are the operator's own SIMs, the number is how a bill and a
-//                  SIM are found - "display the complete 10-digit Airtel SIM number everywhere"); a SIM's holder is still never named (department
-//                  only), no bank account / line id / narration / balance / full reference, no other vendor's or unrelated company expense.
+//                  SIM are found - "display the complete 10-digit Airtel SIM number everywhere"); WHO uses the SIM now is shown too (founder
+//                  2026-10-29: "avaru aa sim use chestunnaru present ani kuda raavali"): the employee's name, employee ID and department from
+//                  HRMS's current assignment - never their phone, email, salary or other personal data; no bank account / line id / narration /
+//                  balance / full reference, no other vendor's or unrelated company expense.
 //   SIM COUNT    = unique SIM numbers (two asset rows with the same number are one SIM), never bill rows or a page of the list.
 //   NOT RECORDED = a field the data model does not hold is null (the screen prints "Not recorded"); nothing is invented.
 // ---------------------------------------------------------------------------
@@ -199,7 +201,7 @@ async function simRows(v, billRowsIn) {
   const master = await vendorMaster(v);
   const key = providerKey(master && master.name);
   const assets = await prisma.asset.findMany({
-    where: { category: 'SIM Card', NOT: { status: { in: VA.ARCHIVED } } }, include: { assignedTo: { select: { department: true } } }, orderBy: { assetCode: 'asc' }, take: 5000,
+    where: { category: 'SIM Card', NOT: { status: { in: VA.ARCHIVED } } }, include: { assignedTo: { select: { department: true, name: true, employeeCode: true } } }, orderBy: { assetCode: 'asc' }, take: 5000,
   });
   const mine = assets.filter((a) => a.vendorId === v.vendorId || (key && providerOfAsset(a) === key));
   const conns = (await DB.ready()) && mine.length ? await DB.q(`SELECT "assetId","status","mobileNumber" FROM "SimConnection" WHERE "assetId" IN (${mine.map(() => '?').join(',')})`, mine.map((a) => a.id)) : [];
@@ -223,7 +225,9 @@ async function simRows(v, billRowsIn) {
     const dept = (a.assignedTo && a.assignedTo.department) || deptOfSeat(a.location) || null;
     return {
       id: a.id, simRef: a.assetCode, provider: providerLabel(master && master.name), number: raw, iccid: iccid ? `••••${iccid.slice(-5)}` : null,
-      department: dept, holder: a.assignedToId ? 'Assigned' : 'In stock', status: c ? c.status : (a.status === 'Assigned' ? 'In use' : (a.status === 'Available' ? 'In stock' : a.status)),
+      department: dept, holder: a.assignedToId ? 'Assigned' : 'In stock',
+      // who uses it NOW (HRMS's current assignment): name + employee ID only
+      usedBy: a.assignedToId && a.assignedTo ? { name: a.assignedTo.name || null, employeeCode: a.assignedTo.employeeCode || null } : null, status: c ? c.status : (a.status === 'Assigned' ? 'In use' : (a.status === 'Available' ? 'In stock' : a.status)),
       lastBill: last ? { key: last.key, invoiceNo: last.invoiceNo, periodLabel: last.periodLabel || (last.billMonth ? monthLabel(last.billMonth) : null), payment: last.payment.status } : null,
       numberRaw: raw,
     };
@@ -393,7 +397,7 @@ async function simUsageOf(v, q, all) {
   const sim = sims.find((s) => s.numberRaw && s.numberRaw === num) || null;
   const base = {
     month, monthLabel: monthLabel(month),
-    sim: sim ? { simRef: sim.simRef, number: sim.number, department: sim.department, status: sim.status } : (num ? { simRef: null, number: num, department: null, status: null } : null),
+    sim: sim ? { simRef: sim.simRef, number: sim.number, department: sim.department, status: sim.status, usedBy: sim.usedBy } : (num ? { simRef: null, number: num, department: null, status: null, usedBy: null } : null),
   };
   if (!num) return { ...base, available: false, message: `"${str(q.sim)}" is not a SIM ID or a 10-digit SIM number of this account.` };
   const bills = all.filter((r) => r.billMonth === month && r.payment.status !== AP.STATUS.REJECTED);
@@ -447,14 +451,14 @@ async function listHistory(v, q = {}) {
 }
 
 // ---- SIMs page ------------------------------------------------------------------------------------------
-const SIM_SORTS = { simRef: (r) => r.simRef, number: (r) => r.number || '', department: (r) => r.department || '', status: (r) => r.status };
+const SIM_SORTS = { simRef: (r) => r.simRef, number: (r) => r.number || '', department: (r) => r.department || '', status: (r) => r.status, usedBy: (r) => (r.usedBy && r.usedBy.name) || '~' };
 async function listSims(v, q = {}) {
   const bills = await billRows(v);
   const all = await simRows(v, bills);
   const s = str(q.q).toLowerCase();
   const keep = (r, skip) => (skip === 'department' || !str(q.department) || (str(q.department) === 'Not recorded' ? !r.department : r.department === str(q.department)))
     && (skip === 'status' || !str(q.status) || r.status === str(q.status))
-    && (!s || [r.simRef, r.number, r.iccid, r.department].some((x) => String(x || '').toLowerCase().includes(s)) || (!!digitsOf(q.q) && !!r.numberRaw && r.numberRaw.includes(digitsOf(q.q))));
+    && (!s || [r.simRef, r.number, r.iccid, r.department, r.usedBy && r.usedBy.name, r.usedBy && r.usedBy.employeeCode].some((x) => String(x || '').toLowerCase().includes(s)) || (!!digitsOf(q.q) && !!r.numberRaw && r.numberRaw.includes(digitsOf(q.q))));
   const rows = all.filter((r) => keep(r));
   return {
     ...paged(rows.map(publicSim), q, 'simRef', SIM_SORTS, 'asc'), all: all.length,

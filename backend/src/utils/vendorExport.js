@@ -126,9 +126,9 @@ const LISTS = {
     },
     sims: {
       label: 'SIMs', file: 'sims', sheet: 'SIMs',
-      headers: ['SIM ID', 'Mobile number', 'SIM card', 'Department', 'Status', 'Last bill'],
+      headers: ['SIM ID', 'Mobile number', 'Used by (now)', 'Employee ID', 'SIM card', 'Department', 'Status', 'Last bill'],
       fetch: (v, q) => ATB.listSims(v, withAll(q)),
-      map: (r) => [r.simRef, r.number || '', r.iccid || '', r.department || '', r.status, r.lastBill ? `${r.lastBill.invoiceNo || ''} ${r.lastBill.periodLabel || ''}`.trim() : ''],
+      map: (r) => [r.simRef, r.number || '', r.usedBy ? r.usedBy.name || '' : 'Nobody (in stock)', r.usedBy ? r.usedBy.employeeCode || '' : '', r.iccid || '', r.department || '', r.status, r.lastBill ? `${r.lastBill.invoiceNo || ''} ${r.lastBill.periodLabel || ''}`.trim() : ''],
     },
   },
 };

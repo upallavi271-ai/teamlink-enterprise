@@ -113,7 +113,11 @@ function SimUsage({ u }) {
   const who = u.sim ? `${u.sim.number || ''}${u.sim.simRef ? ` (${u.sim.simRef})` : ''}` : '';
   return (
     <div className={`notice ${u.available ? 'green' : 'amber'}`} style={{ display: 'block', marginBottom: 10 }} role="status">
-      <div><strong>{who || 'This SIM'} · {u.monthLabel}</strong>{u.sim && u.sim.department ? <span className="cell-muted"> · {u.sim.department}</span> : null}</div>
+      <div>
+        <strong>{who || 'This SIM'} · {u.monthLabel}</strong>
+        {u.sim && u.sim.usedBy ? <span> · used by <strong>{u.sim.usedBy.name}</strong>{u.sim.usedBy.employeeCode ? ` (${u.sim.usedBy.employeeCode})` : ''}</span> : (u.sim && u.sim.simRef ? <span className="cell-muted"> · nobody now (in stock)</span> : null)}
+        {u.sim && u.sim.department ? <span className="cell-muted"> · {u.sim.department}</span> : null}
+      </div>
       {u.available ? (
         <>
           <div style={{ marginTop: 4 }}>Usage charges of this SIM: <strong>{rs(u.usageTotal)}</strong> · Total bill amount: <strong>{rs(u.billTotal)}</strong></div>

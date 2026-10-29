@@ -8,7 +8,8 @@ import { VendorIoBar } from './VendorIo.jsx';
 import './vendorModules.css';
 
 // /vendor/airtel-portal/sims - SIMs: the company's Airtel SIMs, READ ONLY. They are the company's own asset records (nothing is copied here, so a
-// SIM can never appear twice). The full 10-digit number is shown (2026-10-29); only the department is shown, never the person who holds the SIM.
+// SIM can never appear twice). The full 10-digit number is shown (2026-10-29), and who uses it now: the employee's name + employee ID and
+// department from HRMS's current assignment (founder 2026-10-29) - no phone, email or other personal data.
 // The count is the number of unique SIM numbers; the list shows up to 100 per page (it used to show 25, which read like "25 SIMs").
 export default function AirtelSims() {
   return (
@@ -46,10 +47,10 @@ function Body() {
       )}
       <VendorIoBar list="sims" params={{ ...f, q: qDeb }} />
       <div className="vp-filters" role="search">
-        <input className="vp-search" type="search" placeholder="Search SIM ID or the full number (9963418222)" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
+        <input className="vp-search" type="search" placeholder="Search SIM ID, full number or employee" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
         <select aria-label="Department" value={f.department} onChange={(e) => set({ department: e.target.value })}><option value="">Any department</option>{opt(data?.facets.department)}</select>
         <select aria-label="Status" value={f.status} onChange={(e) => set({ status: e.target.value })}><option value="">Any status</option>{opt(data?.facets.status)}</select>
-        <select aria-label="Sort by" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>{[['simRef', 'SIM ID'], ['number', 'Number'], ['department', 'Department'], ['status', 'Status']].map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}</select>
+        <select aria-label="Sort by" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>{[['simRef', 'SIM ID'], ['number', 'Number'], ['usedBy', 'Used by'], ['department', 'Department'], ['status', 'Status']].map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}</select>
         <button type="button" className="btn btn-sm" onClick={() => set({ dir: f.dir === 'asc' ? 'desc' : 'asc' })}>{f.dir === 'asc' ? 'A to Z' : 'Z to A'}</button>
         {filtered && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ q: '', department: '', status: '', sort: 'simRef', dir: 'asc', page: 1 })}>Clear</button>}
       </div>
@@ -59,14 +60,15 @@ function Body() {
         <>
           <div className="tbl-wrap vp-scroll">
             <table>
-              <thead><tr><th>SIM ID</th><th>Mobile number</th><th>SIM card</th><th>Department</th><th>Status</th><th>Last bill</th></tr></thead>
+              <thead><tr><th>SIM ID</th><th>Mobile number</th><th>Used by (now)</th><th>Department</th><th>SIM card</th><th>Status</th><th>Last bill</th></tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id}>
                     <td className="abp-nowrap"><strong>{r.simRef}</strong><div className="cell-muted">{r.provider}</div></td>
                     <td>{r.number || <NotRecorded />}</td>
-                    <td>{r.iccid || <NotRecorded />}</td>
+                    <td>{r.usedBy ? <><strong>{r.usedBy.name}</strong>{r.usedBy.employeeCode ? <div className="cell-muted">{r.usedBy.employeeCode}</div> : null}</> : <span className="cell-muted">Nobody (in stock)</span>}</td>
                     <td>{r.department || <NotRecorded />}</td>
+                    <td>{r.iccid || <NotRecorded />}</td>
                     <td><span className={`vp-tag ${r.status === 'In use' || r.status === 'Active' ? 'vp-green' : (r.status === 'Suspended' || r.status === 'Disconnected' ? 'vp-red' : 'vp-grey')}`}>{r.status}</span></td>
                     <td className="abp-wrap-cell">{r.lastBill
                       ? <><Link to={`/vendor/airtel-portal/bills?q=${encodeURIComponent(r.lastBill.invoiceNo || '')}`}>{r.lastBill.invoiceNo || r.lastBill.periodLabel || 'Open'}</Link> <AirTag pay={{ status: r.lastBill.payment, tone: null }} /></>
