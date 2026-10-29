@@ -37,6 +37,8 @@ import {
 } from '../rejections/rejectionUi.jsx';
 import StillFits, { forgetStillFits } from '../rejections/StillFits.jsx';
 import { ctcAsk, CtcAsk, CtcAskButtons } from '../CtcConfirm.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { mayEditProfile } from './EditCandidateProfile.jsx'; // adding a salary is an edit: Recruiter / Super Admin (2026-10-29)
 import { SalaryFitBox, AddSalaryDialog } from '../SalaryFit.jsx'; // Salary fit + "Add salary" before the person goes to the client
 import './StepPopups.css';
 
@@ -96,6 +98,7 @@ const CHECKS = [
   ['documents', 'Resume and documents on file', () => ''],
 ];
 function VerifyDialog({ app, onClose, onDone }) {
+  const { user } = useAuth();
   const [ticks, setTicks] = useState({});
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -133,7 +136,7 @@ function VerifyDialog({ app, onClose, onDone }) {
       )}
     >
       <div className="small-muted" style={{ marginBottom: 8 }}>Tick what you checked with the person. The team lead sees this list.</div>
-      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' ? () => setAddSalary(true) : undefined} /></div>}
+      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' && mayEditProfile(user) ? () => setAddSalary(true) : undefined} /></div>}
       {addSalary && (
         <AddSalaryDialog
           candidateId={app.candidateId}
@@ -169,6 +172,7 @@ function VerifyDialog({ app, onClose, onDone }) {
 function ReviewDialog({
   app, onClose, onDone, who,
 }) {
+  const { user } = useAuth();
   const tl = who === 'tl';
   const [pick, setPick] = useState('approve');
   const [reason, setReason] = useState('');
@@ -214,7 +218,7 @@ function ReviewDialog({
         </>
       )}
     >
-      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' ? () => setAddSalary(true) : undefined} /></div>}
+      {app.salaryFit && <div style={{ marginBottom: 10 }}><SalaryFitBox fit={app.salaryFit} onAdd={app.salaryFit.prompt === 'Add salary' && mayEditProfile(user) ? () => setAddSalary(true) : undefined} /></div>}
       {addSalary && (
         <AddSalaryDialog
           candidateId={app.candidateId}

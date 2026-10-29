@@ -4,6 +4,8 @@ import { initials } from '../../atsVocab';
 import { productRole } from '../../permissions';
 import Modal from '../Modal.jsx';
 import StatusChip from '../ui/StatusChip.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { mayEditProfile } from './EditCandidateProfile.jsx'; // adding a salary is an edit: Recruiter / Super Admin (2026-10-29)
 import { SalaryFitChips, AddSalaryDialog } from '../SalaryFit.jsx'; // Salary fit chips + the gentle "Add salary"
 import FitBreakdown, { useFitBreakdown } from '../match/FitBreakdown.jsx'; // Fit = Resume · AI · Location · Salary
 import { ContactButtons } from './ProfileSlots.jsx';
@@ -77,7 +79,8 @@ export default function ProfileTop({
   const stage = app ? (app.stageLabel || app.stageGroupLabel) : null;
   // Salary fit for THIS job (server-shaped for the viewer). Old record without salary: "Add salary" (not for the BDE team).
   const fit = app && app.salaryFit ? app.salaryFit : null;
-  const mayAdd = !!c.salaryMissing && (!fit || fit.prompt === 'Add salary');
+  const { user } = useAuth();
+  const mayAdd = !!c.salaryMissing && (!fit || fit.prompt === 'Add salary') && mayEditProfile(user);
   return (
     <div className="cpt">
       <span className="cpt-ini" aria-hidden="true">{initials(c.name)}</span>

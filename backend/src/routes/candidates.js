@@ -3657,6 +3657,13 @@ router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), as
 });
 
 router.put('/:id', requirePerm('ats', 'candidates', 'Candidate Master', 'edit'), async (req, res) => {
+  // EDITING A PROFILE: a Recruiter (the people in their own scope) and a Super Admin - the Developer Team login is one -
+  // only (founder 2026-10-29: "the edit access is only for recruiter & super admin, developer"). Notes / documents keep
+  // their own rights.
+  const roles = [req.user.role, req.user.atsRole];
+  if (!roles.includes('SUPER_ADMIN') && req.user.atsRole !== 'RECRUITER') {
+    return res.status(403).json({ error: 'Only a recruiter or a Super Admin can edit a candidate profile.' });
+  }
   // SCOPE, as on every other write here: a record outside this login's reach
   // is refused, not edited by id.
   const loaded = await loadInScope(req, res);
