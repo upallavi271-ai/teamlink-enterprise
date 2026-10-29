@@ -255,7 +255,7 @@ function classify(txn, ctx, settings, env = {}) {
     // bank charges / interest, salary.
     const narr = `${txn.description || ''} ${txn.reference || ''}`;
     const narrNorm = RM.norm(narr);
-    const named = txn.type === 'Credit' ? RM.clientNamed(narrNorm, ctx) : null;
+    const named = txn.type === 'Credit' ? RM.clientNamed(narrNorm, ctx, txn.description) : null;
     if (txn.type === 'Credit' && named && !named.ambiguous) {
       // client named, amount a little short of ONE open invoice: rounding / bank fee / TDS
       const theirs = ctx.invoices.filter((i) => i.clientId === named.clientId && RM.isOpen(i));

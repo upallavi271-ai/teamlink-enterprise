@@ -496,7 +496,7 @@ module.exports = function makeRecon(H) {
         const unP = P(t.amount) - allocP;
         if (unP <= 0) continue;
         const narr = RM.norm(`${t.description || ''} ${t.reference || ''}`);
-        const named = RM.clientNamed(narr, ctx);
+        const named = RM.clientNamed(narr, ctx, t.description);
         const clientId = named && !named.ambiguous ? named.clientId : (t.clientName ? (ctx.clients.find((c) => c.name === t.clientName) || (ctx.clientAliases || []).map((a) => (a.alias === t.clientName ? ctx.clients.find((c) => c.id === a.clientId) : null)).find(Boolean) || {}).id : null) || null;
         const client = clientId ? ctx.clients.find((c) => c.id === clientId) : null;
         const open = clientId ? ctx.invoices.filter((i) => i.clientId === clientId && RM.isOpen(i)) : [];
