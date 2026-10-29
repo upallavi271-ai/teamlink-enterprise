@@ -20,6 +20,10 @@ const WORD = { RECRUITER: 'Recruiter', TL: 'Team Lead', STL: 'Senior Team Lead' 
 const today = () => new Date().toISOString().slice(0, 10);
 const realTenure = (a) => !(a.toDate && a.toDate <= a.fromDate); // the same rule as utils/invoiceHierarchy.js
 const holdsOn = (a, day) => realTenure(a) && a.fromDate <= day && (!a.toDate || a.toDate >= day);
+// The seat code's first word decides the department (EDU-5, MED TL, MFG-2 - the seat-code rule); the position's own department
+// field only when the code says nothing (founder 2026-10-29: "shravya is education" - the portal's stored department is not used).
+const CODE_DEPT = { MED: 'Medical', EDU: 'Education', MFG: 'Manufacturing' };
+const deptOf = (p) => CODE_DEPT[String(p.code || '').trim().split(/[\s-]+/)[0].toUpperCase()] || p.department || undefined;
 const emailOf = (e) => String((e && ((e.user && e.user.email) || e.email)) || '').trim().toLowerCase();
 
 // HRMS IS THE SOURCE (founder 2026-10-29: "hrms lo employee bati jobportal kanni ats kanni ominichannel work avuthundhi exist ina
@@ -50,7 +54,7 @@ async function people(positions = null) {
     if (had) { had.seats.push(p.code); continue; } // eslint-disable-line no-continue
     byEmail.set(email, {
       name: e.name, email, employeeId: e.employeeCode || undefined, mobile: e.phone || undefined,
-      department: p.department || undefined, designation: e.designation || WORD[p.kind] || 'Recruiter',
+      department: deptOf(p), designation: e.designation || WORD[p.kind] || 'Recruiter',
       atsRole: p.kind, seats: [p.code], employeeDbId: e.id,
     });
   }
@@ -74,7 +78,7 @@ async function successorOf(email, positions = null) {
   if (!last) return null;
   const now = last.p.assignments.filter((a) => holdsOn(a, day));
   const e = now.length === 1 ? now[0].employee : null;
-  return { seat: last.p.code, department: last.p.department || null, holder: e && !LEFT.includes(e.employmentStatus) && emailOf(e) ? { name: e.name, email: emailOf(e) } : null };
+  return { seat: last.p.code, department: deptOf(last.p) || null, holder: e && !LEFT.includes(e.employmentStatus) && emailOf(e) ? { name: e.name, email: emailOf(e) } : null };
 }
 
 // apply=false: only says who would get a login. Returns { dryRun, results: [{ email, name, atsRole, result, reason? }] }.
