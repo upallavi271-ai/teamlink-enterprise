@@ -11,6 +11,8 @@ import './vendorModules.css';
 // /vendor/airtel-portal/history - Monthly History: one row for every month from the first Airtel bill to this month. Bill amount, due date, paid,
 // still to pay, status, invoice numbers and the (masked) payment reference. A month with no bill says so ("No bill recorded"): it is never shown as
 // zero rupees. Money is added up only for bills Accounts holds; a bill you only sent is counted separately. Read only.
+// SIM-WISE USAGE (2026-10-29): a SIM (full number or SIM ID) + a month shows that SIM's charges from the imported bill of that month and the
+// bill total - exactly what the bill holds; when the bill has no per-SIM lines the screen says so (nothing is estimated).
 const SORTS = [['month', 'Month'], ['billAmount', 'Bill amount'], ['outstanding', 'Still to pay'], ['status', 'Status']];
 
 export default function AirtelHistory() {
@@ -53,10 +55,9 @@ function Body() {
       <VendorIoBar list="history" params={{ ...f, q: qDeb, sim: simDeb }} />
       <div className="vp-filters" role="search">
         <input className="vp-search" type="search" placeholder="Search a month or an invoice number" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
-        <select aria-label="Bill month" value={f.period} onChange={(e) => set({ period: e.target.value })}>
-          <option value="">Any month</option>
-          {(data?.facets.month || []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
+        <label className="abp-month">Month
+          <input type="month" aria-label="Month and year" value={f.period} onChange={(e) => set({ period: e.target.value })} />
+        </label>
         <select aria-label="Payment status" value={f.status} onChange={(e) => set({ status: e.target.value })}>
           <option value="">Any payment status</option>
           {(data?.facets.status || []).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
@@ -66,11 +67,13 @@ function Body() {
           <span className="vp-to">to</span>
           <input type="month" aria-label="To month" value={f.to} min={f.from || undefined} onChange={(e) => set({ to: e.target.value })} />
         </div>
-        <input type="search" placeholder="One SIM (AST-0146)" value={f.sim} onChange={(e) => set({ sim: e.target.value })} aria-label="One SIM" style={{ maxWidth: 170 }} />
+        <input type="search" inputMode="tel" placeholder="SIM number (9963418222) or SIM ID" value={f.sim} onChange={(e) => set({ sim: e.target.value })} aria-label="SIM number or SIM ID" style={{ maxWidth: 240 }} />
         <select aria-label="Sort by" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>{SORTS.map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}</select>
         <button type="button" className="btn btn-sm" onClick={() => set({ dir: f.dir === 'asc' ? 'desc' : 'asc' })}>{f.dir === 'asc' ? 'Oldest first' : 'Newest first'}</button>
         {filtered && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ q: '', status: '', period: '', from: '', to: '', sim: '', sort: 'month', dir: 'desc', page: 1 })}>Clear</button>}
       </div>
+      {f.sim && !f.period && <p className="abp-note">Pick a month to see this SIM&apos;s usage for that month.</p>}
+      <SimUsage u={data?.simUsage} />
       {data?.simFilterNote && <p className="abp-note">{data.simFilterNote}</p>}
       {!data ? <div className="empty-mini">Loading&hellip;</div> : !rows.length ? (
         <div className="vp-empty">{data.all ? <><h3>No month matches</h3><p>Clear the search to see all months.</p></> : <><h3>No history yet</h3><p>When Accounts records your Airtel bill, its month shows here.</p></>}</div>
@@ -101,5 +104,29 @@ function Body() {
         </>
       )}
     </>
+  );
+}
+
+// One SIM in one month, from the imported bill(s) of that month (server: utils/airtelBillsPortal.js simUsageOf).
+function SimUsage({ u }) {
+  if (!u) return null;
+  const who = u.sim ? `${u.sim.number || ''}${u.sim.simRef ? ` (${u.sim.simRef})` : ''}` : '';
+  return (
+    <div className={`notice ${u.available ? 'green' : 'amber'}`} style={{ display: 'block', marginBottom: 10 }} role="status">
+      <div><strong>{who || 'This SIM'} · {u.monthLabel}</strong>{u.sim && u.sim.department ? <span className="cell-muted"> · {u.sim.department}</span> : null}</div>
+      {u.available ? (
+        <>
+          <div style={{ marginTop: 4 }}>Usage charges of this SIM: <strong>{rs(u.usageTotal)}</strong> · Total bill amount: <strong>{rs(u.billTotal)}</strong></div>
+          {(u.bills || []).filter((b) => b.lines.length).map((b) => (
+            <div key={b.key} style={{ marginTop: 6 }}>
+              <div className="cell-muted">Bill {b.invoiceNo || 'without number'} (total {rs(b.billTotal)})</div>
+              <ul style={{ margin: '2px 0 0 18px' }}>{b.lines.map((l, i) => <li key={i}>{l.description || 'Charge'}: {money(l.amount)}</li>)}</ul>
+            </div>
+          ))}
+        </>
+      ) : (
+        <div style={{ marginTop: 4 }}>{u.message}{u.billTotal != null ? <> Total bill amount: <strong>{rs(u.billTotal)}</strong>.</> : null}</div>
+      )}
+    </div>
   );
 }

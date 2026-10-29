@@ -68,7 +68,7 @@ function Body() {
       )}
       <VendorIoBar list="bills" params={{ ...f, q: qDeb, sim: simDeb }} importKey="bills" onImported={load} />
       <div className="vp-filters" role="search">
-        <input className="vp-search" type="search" placeholder="Search invoice number or Accounts reference" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
+        <input className="vp-search" type="search" placeholder="Search invoice number, Accounts reference or SIM number" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
         <select aria-label="Payment status" value={f.status} onChange={(e) => set({ status: e.target.value })}>
           <option value="">Any payment status</option>
           {(data?.facets.status || []).map((o) => <option key={o.value} value={o.value}>{o.value} ({o.count})</option>)}
@@ -77,13 +77,14 @@ function Body() {
           <option value="">Any bill month</option>
           {(data?.facets.month || []).map((o) => <option key={o.value} value={o.value}>{o.label} ({o.count})</option>)}
         </select>
-        <input type="search" placeholder="One SIM (AST-0146)" value={f.sim} onChange={(e) => set({ sim: e.target.value })} aria-label="One SIM" style={{ maxWidth: 170 }} />
+        <input type="search" placeholder="One SIM: number or SIM ID" value={f.sim} onChange={(e) => set({ sim: e.target.value })} aria-label="One SIM (10-digit number or SIM ID)" style={{ maxWidth: 210 }} />
         <select aria-label="Sort by" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>{SORTS.map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}</select>
         <button type="button" className="btn btn-sm" onClick={() => set({ dir: f.dir === 'asc' ? 'desc' : 'asc' })}>{f.dir === 'asc' ? 'Oldest first' : 'Newest first'}</button>
         {filtered && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setF({ q: '', status: '', period: '', sim: '', sort: 'billDate', dir: 'desc', page: 1 })}>Clear</button>}
         {data?.canSend && !me?.preview && <button type="button" className="btn btn-primary btn-sm" onClick={() => setSending(true)}>Send a bill</button>}
       </div>
       {data?.simFilterNote && <p className="abp-note">{data.simFilterNote}</p>}
+      {data?.numberNote && <p className="abp-note" role="status">{data.numberNote}</p>}
       {!data ? <div className="empty-mini">Loading&hellip;</div> : !rows.length ? (
         <div className="vp-empty">{data.all ? <><h3>No bill matches</h3><p>Clear the search to see all {data.all}.</p></> : <><h3>No bills yet</h3><p>When Accounts records your Airtel bill, it shows here.</p></>}</div>
       ) : (

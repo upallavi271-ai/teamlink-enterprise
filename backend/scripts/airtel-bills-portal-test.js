@@ -321,17 +321,19 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
     check('S', `the SIM list is the company's SIM assets: same count as the database (${simsDb.length} Airtel SIM assets)`, sl.status === 200 && sl.body.total === simsDb.length && sl.body.all === simsDb.length && simsDb.length >= 50, [sl.status, sl.body && sl.body.total, simsDb.length]);
     const digits = (n) => (/(\d{10})/.exec(n) || [])[1];
     const simByRef = new Map((sl.body.rows || []).map((r) => [r.simRef, r]));
-    check('S', 'every SIM shows its asset reference (AST-xxxx) and the MASKED number (98xxxxxx21); the same asset appears once (no duplicates)', simsDb.every((d) => { const r = simByRef.get(d.assetCode); return r && r.number === ATB.maskNumber(digits(d.name)); }) && simByRef.size === simsDb.length, simsDb.slice(0, 2).map((d) => [d.assetCode, simByRef.get(d.assetCode)]));
+    // 2026-10-29 (founder): the FULL 10-digit number is shown (it was masked 98xxxxxx21 before); the holder is still never named.
+    check('S', 'every SIM shows its asset reference (AST-xxxx) and its FULL 10-digit number; the same asset appears once (no duplicates)', simsDb.every((d) => { const r = simByRef.get(d.assetCode); return r && r.number === digits(d.name); }) && simByRef.size === simsDb.length, simsDb.slice(0, 2).map((d) => [d.assetCode, simByRef.get(d.assetCode)]));
     const deptWant = (d) => d.dept || ATB.deptOfSeat(d.location) || null;
     check('S', "department only (the holder's department, else the seat's): equals an independent reading; the holder's name and id are NOT in the answer", simsDb.every((d) => (simByRef.get(d.assetCode) || {}).department === deptWant(d)) && !/assignedTo|employeeName|holderName|"employee"/i.test(sl.text), simsDb.filter((d) => (simByRef.get(d.assetCode) || {}).department !== deptWant(d)).slice(0, 3));
     check('S', 'in use / in stock follows the asset (Assigned = in use, Available = in stock)', simsDb.every((d) => (simByRef.get(d.assetCode) || {}).status === (d.status === 'Assigned' ? 'In use' : 'In stock')) && sl.body.summary.inUse === simsDb.filter((d) => d.assignedToId).length, sl.body.summary);
     const dep = (sl.body.facets.department || [])[0];
     const sf = await vh(LR, 'GET', `${A}/sims?department=${encodeURIComponent(dep.value)}&pageSize=100`);
     check('S', `department filter: the rows are exactly that department's SIMs (${dep.value} ${dep.count})`, sf.status === 200 && sf.body.total === simsDb.filter((d) => (deptWant(d) || 'Not recorded') === dep.value).length && sf.body.rows.every((r) => (r.department || 'Not recorded') === dep.value));
-    const q1 = simsDb[0]; const masked1 = ATB.maskNumber(digits(q1.name)); const hidden1 = digits(q1.name).slice(3, 8);
-    const sq = await vh(LR, 'GET', `${A}/sims?q=${masked1}`);
-    check('S', 'search by the masked number or by the SIM reference finds the SIM', sq.body.rows.some((r) => r.simRef === q1.assetCode) && (await vh(LR, 'GET', `${A}/sims?q=${q1.assetCode}`)).body.rows.length === 1);
-    check('S', 'the hidden digits cannot be probed: typing the middle digits of a real number finds nothing', (await vh(LR, 'GET', `${A}/sims?q=${hidden1}`)).body.rows.length === 0);
+    const q1 = simsDb[0]; const full1 = digits(q1.name);
+    const sq = await vh(LR, 'GET', `${A}/sims?q=${full1}`);
+    const spaced = `+91 ${full1.slice(0, 5)} ${full1.slice(5)}`;
+    check('S', 'search by the FULL number (also typed as "+91 99634 18222") or by the SIM reference finds exactly that SIM', sq.body.rows.length === 1 && sq.body.rows[0].simRef === q1.assetCode && (await vh(LR, 'GET', `${A}/sims?q=${encodeURIComponent(spaced)}`)).body.rows.some((r) => r.simRef === q1.assetCode) && (await vh(LR, 'GET', `${A}/sims?q=${q1.assetCode}`)).body.rows.length === 1, [sq.body.rows.map((r) => r.simRef)]);
+    check('S', 'the SIM count is the number of UNIQUE SIM numbers (not bill rows, not a page): summary total = distinct numbers of the Airtel SIM assets', sl.body.summary.total === new Set(simsDb.map((d) => digits(d.name)).filter(Boolean)).size, [sl.body.summary.total]);
     const writes = await Promise.all([['POST', '/sims', { number: '9000000001' }], ['PATCH', `/sims/${q1.id}`, { status: 'Active' }], ['PUT', `/sims/${q1.id}`, {}], ['DELETE', `/sims/${q1.id}`, undefined]].map(([m, p, b]) => vh(LR, m, A + p, b)));
     check('S', 'the SIM list is read only: POST / PATCH / PUT / DELETE on /sims are refused (403)', writes.every((r) => r.status === 403), writes.map((r) => r.status));
     check('S', 'no SIM record was created or changed: the Asset and SimConnection tables have the same number of rows after all these calls', (await raw('SELECT COUNT(*) AS n FROM "Asset"'))[0].n === assetsBefore && (await raw('SELECT COUNT(*) AS n FROM "SimConnection"'))[0].n === connBefore);
@@ -588,7 +590,8 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
       const fd = upload(opt.file || pdf('airtel'), opt.name || 'airtel-bill.pdf', opt.type || 'application/pdf', f);
       return vh(L, 'POST', `${A}/bills`, undefined, { form: fd, headers: opt.headers });
     };
-    const fields = (o = {}) => ({ billNumber: `ZZABPSEND${RUN}A`, period: curYm, dueDate: D(15), billDate: D(-1), amount: '8000', gst: '1440', remarks: 'ref 9963418222 call me', ...o });
+    const usageNum = (/(\d{10})/.exec(simsDb[0].name) || [])[1]; // a real SIM of the copy: its own charge line on the sent bill (SIM-wise usage, 2026-10-29)
+    const fields = (o = {}) => ({ billNumber: `ZZABPSEND${RUN}A`, period: curYm, dueDate: D(15), billDate: D(-1), amount: '8000', gst: '1440', remarks: 'ref 9963418222 call me', lines: JSON.stringify([{ number: usageNum, amount: 450 }]), ...o });
     const listBefore = (await vh(L1, 'GET', `${A}/bills?pageSize=100`)).body;
     const ovBefore = (await vh(L1, 'GET', `${A}/overview`)).body;
     const expBefore = await expCount(); const modBefore = await modCount();
@@ -602,7 +605,7 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
     check('X', 'a vendor cannot set a status or a payment while sending: status / paidOn / paymentRef / vendorId are refused (400 with the refused field names); nothing is saved', x3.status === 400 && x3.body.refusedFields.includes('status') && x3b.status === 400 && x3b.body.refusedFields.includes('paidOn') && x3c.status === 400 && x3c.body.refusedFields.includes('vendorId') && (await modCount()) === modBefore, [x3.status, x3b.status, x3c.status]);
     const idemKey = `abp-${RUN}-key-0001`;
     const x4 = await send(L1, fields(), { headers: { 'Idempotency-Key': idemKey } });
-    check('X', 'a valid bill is sent (201): the answer holds only the bill\'s own fields, the number in the remark is masked, the status is "Waiting for Accounts"', x4.status === 201 && x4.body.bill.billNumber === `ZZABPSEND${RUN}A` && x4.body.bill.total === 9440 && x4.body.bill.status === 'Waiting for Accounts' && x4.body.bill.remarks === 'ref 99xxxxxx22 call me' && !x4.text.includes('9963418222') && !/vendorId|vendorUserId|reviewed|idempotency/i.test(x4.text), x4.body);
+    check('X', 'a valid bill is sent (201): the answer holds only the bill\'s own fields, the remark as typed (full number since 2026-10-29), the status is "Waiting for Accounts"', x4.status === 201 && x4.body.bill.billNumber === `ZZABPSEND${RUN}A` && x4.body.bill.total === 9440 && x4.body.bill.status === 'Waiting for Accounts' && x4.body.bill.remarks === 'ref 9963418222 call me' && !/vendorId|vendorUserId|reviewed|idempotency/i.test(x4.text), x4.body);
     if (x4.body && x4.body.bill) made.modbills.push(x4.body.bill.billCode);
     const x4r = await send(L1, fields(), { headers: { 'Idempotency-Key': idemKey } });
     check('X', 'the same click sent again (same Idempotency-Key) saves nothing new', x4r.status === 201 && x4r.body.duplicateRequest === true && (await modCount()) === modBefore + 1, [x4r.status, x4r.body && x4r.body.duplicateRequest]);
@@ -612,7 +615,21 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
     check('X', 'sending creates NO Accounts expense (Accounts books the payable itself): OfficeExpense has the same number of rows', (await expCount()) === expBefore);
     const afterSend = (await vh(L1, 'GET', `${A}/bills?pageSize=100`)).body;
     const sentRow = afterSend.rows.find((r) => r.source === 'Sent by you');
-    check('X', 'the sent bill is listed once as "Sent by you": Waiting for Accounts, billing period and due date as the vendor typed them, masked remark, NOT counted in the money totals (Accounts does not hold it yet)', afterSend.total === listBefore.total + 1 && !!sentRow && sentRow.payment.status === 'Waiting for Accounts' && sentRow.linked === false && sentRow.period === curYm && sentRow.dueDate === D(15) && sentRow.total === 9440 && sentRow.remarks === 'ref 99xxxxxx22 call me' && JSON.stringify(afterSend.summary) === JSON.stringify(listBefore.summary), [sentRow, afterSend.summary, listBefore.summary]);
+    // ---- SIM-wise monthly usage + full-number search (2026-10-29), from what the bills really hold
+    const uOk = (await vh(L1, 'GET', `${A}/history?sim=${usageNum}&period=${curYm}`)).body.simUsage;
+    // the month's total bill amount, read independently from the bill list: every bill of that month (a bill Accounts holds twice counts once)
+    const monthTotal = (ym) => Math.round(afterSend.rows.filter((r) => r.billMonth === ym && r.payment.status !== 'Rejected' && (r.linked ? r.counted : true)).reduce((t, r) => t + r.total, 0) * 100) / 100;
+    check('U', 'SIM-wise usage: the SIM + this month shows ITS charge line from the bill (450), the month\'s total bill amount (an independent sum of that month\'s bills), nothing estimated', !!uOk && uOk.available === true && uOk.usageTotal === 450 && uOk.billTotal === monthTotal(curYm) && uOk.sim && uOk.sim.number === usageNum && uOk.bills.some((b) => b.lines.length === 1 && b.lines[0].amount === 450 && b.billTotal === 9440), [uOk && uOk.usageTotal, uOk && uOk.billTotal, monthTotal(curYm)]);
+    const totalOnly = afterSend.rows.find((r) => r.source === 'Accounts' && !(r.lines || []).length && r.billMonth && r.billMonth !== curYm);
+    if (totalOnly) {
+      const uNo = (await vh(L1, 'GET', `${A}/history?sim=${usageNum}&period=${totalOnly.billMonth}`)).body.simUsage;
+      check('U', 'a month whose bill has no per-SIM lines: usage NOT available, a clear message naming that bill and its total; no number made up', !!uNo && uNo.available === false && /total only/.test(uNo.message) && uNo.usageTotal === undefined && uNo.billTotal === monthTotal(totalOnly.billMonth) && uNo.message.includes(String(totalOnly.invoiceNo || 'bill')), [uNo && uNo.message, uNo && uNo.billTotal, monthTotal(totalOnly.billMonth)]);
+    }
+    const uNone = (await vh(L1, 'GET', `${A}/history?sim=${usageNum}&period=2019-01`)).body.simUsage;
+    check('U', 'a month with no bill at all: "There is no Airtel bill for ..."', !!uNone && uNone.available === false && /no Airtel bill/.test(uNone.message), uNone);
+    const byNum = (await vh(L1, 'GET', `${A}/bills?q=${encodeURIComponent(`+91 ${usageNum}`)}`)).body;
+    check('U', 'the Bills search box finds a bill by the FULL SIM number (typed with +91), and the bill shows that number in full', byNum.rows.length === 1 && byNum.rows[0].source === 'Sent by you' && byNum.rows[0].lines.some((l) => l.number === usageNum), byNum.rows.map((r) => [r.invoiceNo, r.lines]));
+    check('X', 'the sent bill is listed once as "Sent by you": Waiting for Accounts, billing period and due date as the vendor typed them, the remark as typed, NOT counted in the money totals (Accounts does not hold it yet)', afterSend.total === listBefore.total + 1 && !!sentRow && sentRow.payment.status === 'Waiting for Accounts' && sentRow.linked === false && sentRow.period === curYm && sentRow.dueDate === D(15) && sentRow.total === 9440 && sentRow.remarks === 'ref 9963418222 call me' && JSON.stringify(afterSend.summary) === JSON.stringify(listBefore.summary), [sentRow, afterSend.summary, listBefore.summary]);
     const ovAfter = (await vh(L1, 'GET', `${A}/overview`)).body;
     check('X', 'the overview money (billed / paid / outstanding) is unchanged by a bill that is only sent; the count of bills not yet in Accounts is 1', JSON.stringify(ovAfter.money) === JSON.stringify(ovBefore.money) && ovAfter.bills.notInAccounts === 1 && ovAfter.bills.waiting === 1, [ovAfter.money, ovAfter.bills]);
     const acct = await http('GET', '/api/vendor-module-bills', T.admin);
@@ -685,10 +702,11 @@ const made = { users: [], vendors: [], vusers: [], expenses: [], banks: [], asse
     const allTxt2 = swept.map((x) => x.text).join('\n');
     const bankLineIds = (await prisma.bankTransaction.findMany({ where: { bankAccountId: bankA.id }, select: { id: true } })).map((t) => t.id);
     const leaks = [];
-    simNumbers.filter((n) => allTxt2.includes(n)).forEach((n) => leaks.push(`SIM number ${n}`));
-    [[BANK_ACC_NO, 'bank account number'], ['ZZTEST ABP Bank', 'bank name'], ['9963418222', 'typed mobile number'], ['SOMEBODY ELSE', 'a narration'], ['UPI-BANK-RETURN', 'a narration'], ['NEFT-', 'a narration'], [`HDFC${RUN}`, 'a bank reference'], ['487312', 'a bank balance'], [`ZZABPUNREL${RUN}`, 'an unrelated expense'], ['77777', 'an unrelated amount'], ['ZZTEST ABP Unrelated', 'an unrelated vendor'], ['ZZTEST ABP admin', 'a staff name'], [V1.id, 'a vendor id'], [L1.u.id, 'a login id'], ['"bankTxnId"', 'bankTxnId'], ['"narration"', 'narration'], ['"accNo"', 'accNo'], ['"bankAccountId"', 'bankAccountId'], ['"vendorId":', 'vendorId'], ['"vendorUserId":', 'vendorUserId'], ['"passwordHash":', 'passwordHash']].forEach(([t, why]) => { if (allTxt2.includes(t)) leaks.push(`${why} (${t})`); });
+    // 2026-10-29: full SIM numbers are SHOWN on purpose (founder) - so they are no longer a leak; everything else below still is.
+    check('Z', 'the full SIM numbers are shown (the portal\'s own SIMs, 2026-10-29)', simNumbers.some((n) => allTxt2.includes(n)), simNumbers.length);
+    [[BANK_ACC_NO, 'bank account number'], ['ZZTEST ABP Bank', 'bank name'], ['SOMEBODY ELSE', 'a narration'], ['UPI-BANK-RETURN', 'a narration'], ['NEFT-', 'a narration'], [`HDFC${RUN}`, 'a bank reference'], ['487312', 'a bank balance'], [`ZZABPUNREL${RUN}`, 'an unrelated expense'], ['77777', 'an unrelated amount'], ['ZZTEST ABP Unrelated', 'an unrelated vendor'], ['ZZTEST ABP admin', 'a staff name'], [V1.id, 'a vendor id'], [L1.u.id, 'a login id'], ['"bankTxnId"', 'bankTxnId'], ['"narration"', 'narration'], ['"accNo"', 'accNo'], ['"bankAccountId"', 'bankAccountId'], ['"vendorId":', 'vendorId'], ['"vendorUserId":', 'vendorUserId'], ['"passwordHash":', 'passwordHash']].forEach(([t, why]) => { if (allTxt2.includes(t)) leaks.push(`${why} (${t})`); });
     bankLineIds.filter((id) => allTxt2.includes(id)).forEach((id) => leaks.push(`bank line id ${id}`));
-    check('Z', `PRIVACY SWEEP over ${swept.length} vendor responses: no full SIM number (${simNumbers.length} numbers checked), no bank account number or bank name, no statement narration / reference / balance / line id (${bankLineIds.length} ids checked), no unrelated company expense, no staff name, no internal id`, leaks.length === 0, leaks);
+    check('Z', `PRIVACY SWEEP over ${swept.length} vendor responses: no bank account number or bank name, no statement narration / reference / balance / line id (${bankLineIds.length} ids checked), no unrelated company expense, no staff name, no internal id`, leaks.length === 0, leaks);
     const others = [[L1, V1], [L2, V2], [L3, V3], [L4, V4]];
     const cross = [];
     for (const [L, V] of others) {

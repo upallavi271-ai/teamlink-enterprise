@@ -6,7 +6,7 @@
 //   * The vendor comes from the SESSION. A vendorId in the query is never read.
 //   * The rows come from the SAME function the list page calls, with the SAME search / filters / sort, only without paging (utils/exportAll.js).
 //     So an export holds exactly the rows the list shows under those filters - nothing more, nothing the page does not show.
-//   * Only the columns the portal itself shows: masked SIM numbers (98xxxxxx21), no bank account, narration, UTR, bank line id, bank balance,
+//   * Only the columns the portal itself shows: full SIM numbers (shown in full since 2026-10-29), no bank account, narration, UTR, bank line id, bank balance,
 //     no employee personal data (department only), no purchase cost unless the login may see it. The ID-card lists carry the ID-card fields
 //     the vendor needs to print the card (that is what the old CSV already held).
 //   * CSV: UTF-8 with a byte-order mark (Excel shows it right) and the formula guard (a cell starting with = + - @ gets a leading apostrophe).

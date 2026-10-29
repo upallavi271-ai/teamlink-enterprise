@@ -8,7 +8,8 @@ import { VendorIoBar } from './VendorIo.jsx';
 import './vendorModules.css';
 
 // /vendor/airtel-portal/sims - SIMs: the company's Airtel SIMs, READ ONLY. They are the company's own asset records (nothing is copied here, so a
-// SIM can never appear twice). The number is masked (98xxxxxx21); only the department is shown, never the person who holds the SIM.
+// SIM can never appear twice). The full 10-digit number is shown (2026-10-29); only the department is shown, never the person who holds the SIM.
+// The count is the number of unique SIM numbers; the list shows up to 100 per page (it used to show 25, which read like "25 SIMs").
 export default function AirtelSims() {
   return (
     <VendorShell title="SIMs" sub="The company's Airtel SIMs. You can look at them here; the company keeps them up to date.">
@@ -24,7 +25,7 @@ function Body() {
   const [error, setError] = useState('');
   useEffect(() => { const t = setTimeout(() => setQDeb(f.q), 250); return () => clearTimeout(t); }, [f.q]);
   const load = useCallback(() => {
-    vendorApi.get('/airtel-portal/sims', { params: { q: qDeb || undefined, department: f.department || undefined, status: f.status || undefined, sort: f.sort, dir: f.dir, page: f.page } })
+    vendorApi.get('/airtel-portal/sims', { params: { q: qDeb || undefined, department: f.department || undefined, status: f.status || undefined, sort: f.sort, dir: f.dir, page: f.page, pageSize: 100 } })
       .then((r) => { setData(r.data); setError(''); }).catch((e) => setError(vendorError(e, 'Could not load the SIMs.')));
   }, [qDeb, f.department, f.status, f.sort, f.dir, f.page]);
   useEffect(() => { load(); }, [load]);
@@ -38,14 +39,14 @@ function Body() {
       {error && <div className="notice red" style={{ marginBottom: 10 }}><span>{error} <button type="button" className="link-btn" onClick={load}>Try again</button></span></div>}
       {s && (
         <div className="vp-tiles">
-          <div className="vp-tile"><span>SIMs</span><b>{s.total}</b></div>
+          <div className="vp-tile"><span>SIMs (unique numbers)</span><b>{s.total}</b></div>
           <div className="vp-tile green"><span>In use</span><b>{s.inUse}</b></div>
           <div className="vp-tile"><span>In stock</span><b>{s.inStock}</b></div>
         </div>
       )}
       <VendorIoBar list="sims" params={{ ...f, q: qDeb }} />
       <div className="vp-filters" role="search">
-        <input className="vp-search" type="search" placeholder="Search SIM ID or number (98xxxxxx21)" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
+        <input className="vp-search" type="search" placeholder="Search SIM ID or the full number (9963418222)" value={f.q} onChange={(e) => set({ q: e.target.value })} aria-label="Search" />
         <select aria-label="Department" value={f.department} onChange={(e) => set({ department: e.target.value })}><option value="">Any department</option>{opt(data?.facets.department)}</select>
         <select aria-label="Status" value={f.status} onChange={(e) => set({ status: e.target.value })}><option value="">Any status</option>{opt(data?.facets.status)}</select>
         <select aria-label="Sort by" value={f.sort} onChange={(e) => set({ sort: e.target.value })}>{[['simRef', 'SIM ID'], ['number', 'Number'], ['department', 'Department'], ['status', 'Status']].map(([k, l]) => <option key={k} value={k}>Sort: {l}</option>)}</select>
