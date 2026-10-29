@@ -7,6 +7,7 @@ import Combo from '../Combo.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { agreementBlind } from '../../utils/agreementPrivacy.js';
 import useClientLabel from '../clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
+import { DEPTS, deptLabel } from '../../atsVocab';
 import './signedAgreementFiles.css';
 
 // ---------------------------------------------------------------------------
@@ -37,6 +38,9 @@ export function metaLine(f) {
 }
 const NONE_WORDS = 'No signed agreement uploaded for this client yet';
 const UPLOAD_ACCEPT = '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp';
+// the three papers the BDE team uploads (founder 2026-10-29); the server checks who may (routes/agreementSignedFiles.js)
+const PAPERS = [['vasu', 'Vasu sir confirmation'], ['client', 'Client confirmation'], ['agreement', 'Signed agreement']];
+const CLIENT_DEPTS = DEPTS.filter((x) => !['BDE', 'HR', 'Accounts'].includes(x));
 
 // Who is shown the button: everyone the agreement screens are not hidden from, plus the client's own login.
 export function useCanViewAgreement() {
@@ -101,7 +105,7 @@ async function loadAgreement(clientId, esignHint) {
     key: f.id, label: f.label, meta: metaLine(f), tag: f.kind && f.kind !== 'Signed agreement' ? f.kind : '',
     path: `/agreement/${clientId}/signed-files/${f.id}`, mime: f.mime, canShow: f.canShow, fileName: f.fileName,
   }));
-  return { items, esign: es, esignWaiting: !!es && !(ex && ex.pdfAvailable), canUpload: !!(sf && sf.canRemove), denied: !!(sf && sf.denied && !items.length) };
+  return { items, esign: es, esignWaiting: !!es && !(ex && ex.pdfAvailable), canUpload: !!(sf && sf.canRemove), canAdd: !!(sf && sf.canAdd), denied: !!(sf && sf.denied && !items.length) };
 }
 
 // The window (and the "one file opens at once" rule). Mount it to use it; onClose when it is done.
@@ -111,6 +115,9 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
   const fileInput = useRef(null);
+  const paperInput = useRef(null);
+  const paperType = useRef('');
+  const [note, setNote] = useState('');
   const first = useRef(true);
 
   const load = useCallback(async () => {
@@ -124,7 +131,8 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
       const data = await load();
       if (!live) return;
       first.current = false;
-      if (!data.denied && data.items.length === 1 && (!data.esign || data.items[0].key === 'esign')) {
+      // one file opens at once - not for the BDE team / Admin, who also add papers here
+      if (!data.denied && !data.canAdd && data.items.length === 1 && (!data.esign || data.items[0].key === 'esign')) {
         try { await openAgreementFile(data.items[0], false); onClose(); return; } catch { setErr('Could not open the file. Please try again.'); }
       }
       setD(data);
@@ -150,6 +158,23 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
     setBusy('');
     if (fileInput.current) fileInput.current.value = '';
   }
+  // Vasu sir confirmation / Client confirmation / Signed agreement: one more signed file each time
+  async function addPaper(file) {
+    const type = paperType.current;
+    if (!file || !type) return;
+    setErr(''); setNote(''); setBusy(`paper-${type}`);
+    try {
+      const f = new FormData();
+      f.append('file', file);
+      const r = await api.post(`/agreement/${clientId}/signed-files?type=${type}`, f);
+      setNote(r.data?.message || 'Uploaded.');
+      setD(await load());
+      if (onChanged) onChanged();
+    } catch (e) { setErr(e.response?.data?.error || 'The file could not be uploaded. Please try again.'); }
+    setBusy('');
+    if (paperInput.current) paperInput.current.value = '';
+  }
+  const hasPaper = (label) => !!(d && d.items.some((it) => it.label === label));
 
   if (!d) return null;
   const none = !d.items.length;
@@ -192,6 +217,27 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
             ))}
           </ul>
         )}
+        {!d.denied && d.canAdd && (
+          <div className="vag-up" style={{ marginTop: 12 }}>
+            <div className="saf-label" style={{ marginBottom: 6 }}>Upload papers</div>
+            <input ref={paperInput} type="file" accept={UPLOAD_ACCEPT} style={{ display: 'none' }} onChange={(e) => addPaper(e.target.files && e.target.files[0])} />
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {PAPERS.map(([type, label]) => (
+                <button
+                  key={type}
+                  type="button"
+                  className="btn btn-sm"
+                  disabled={!!busy}
+                  onClick={() => { paperType.current = type; if (paperInput.current) paperInput.current.click(); }}
+                >
+                  {busy === `paper-${type}` ? 'Uploading…' : `${hasPaper(label) ? '✓ ' : ''}${label}`}
+                </button>
+              ))}
+            </div>
+            <div className="small-muted" style={{ fontSize: 12, marginTop: 6 }}>PDF, Word or picture, up to 10 MB. Each upload is kept; nothing is replaced.</div>
+            {note && <div className="small-muted" style={{ marginTop: 4, color: 'var(--green, #15803d)' }}>{note}</div>}
+          </div>
+        )}
         {d.esign && (
           <div className="vag-esign">
             <button type="button" className="btn" onClick={() => { onClose(); navigate(`/agreements/${clientId}`); }}>Open e-sign agreement</button>
@@ -218,6 +264,72 @@ export function ViewAgreementButton({ clientId, esign, className = 'btn btn-sm',
   );
 }
 
+// A CLIENT THAT SIGNED OUTSIDE THE ATS (founder 2026-10-29): name, location, department -> it is in Clients at once
+// (POST /agreement/new-client-signed); onAdded(id) then opens the View agreement window for its papers. Used by the
+// View agreement picker (BDE dashboard) and the Clients page button. The server decides who may (BDE team, Admin).
+export function AddSignedClientDialog({ onClose, onAdded, onOpenExisting, onBack }) {
+  const [nc, setNc] = useState({ name: '', location: '', department: '' });
+  const [ncErr, setNcErr] = useState('');
+  const [ncBusy, setNcBusy] = useState(false);
+  const [existing, setExisting] = useState('');
+  async function addClient() {
+    setNcErr(''); setExisting(''); setNcBusy(true);
+    try {
+      const r = await api.post('/agreement/new-client-signed', nc);
+      onAdded(r.data.client.id, r.data);
+    } catch (e) {
+      setNcErr(e.response?.data?.error || 'Could not add the client. Please try again.');
+      if (e.response?.data?.clientId) setExisting(e.response.data.clientId);
+    }
+    setNcBusy(false);
+  }
+  return createPortal(
+    <Modal
+      title="New client — agreement already signed"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onBack || onClose}>{onBack ? 'Back' : 'Cancel'}</button>
+          {existing && onOpenExisting && <button type="button" className="btn" onClick={() => onOpenExisting(existing)}>Open that client</button>}
+          <button type="button" className="btn btn-primary" disabled={ncBusy || nc.name.trim().length < 2 || !nc.location.trim() || !nc.department} onClick={addClient}>{ncBusy ? 'Adding…' : 'Add client, then upload papers'}</button>
+        </>
+      )}
+    >
+      <div className="small-muted" style={{ marginBottom: 8 }}>For a client who signed before they were in the ATS. They show in Clients at once; next you upload the signed papers.</div>
+      <label className="field"><span>Client name (as on the agreement)</span><input value={nc.name} maxLength={160} onChange={(e) => setNc({ ...nc, name: e.target.value })} /></label>
+      <label className="field"><span>Location (city / branch)</span><input value={nc.location} maxLength={120} onChange={(e) => setNc({ ...nc, location: e.target.value })} /></label>
+      <label className="field">
+        <span>Department</span>
+        <Combo value={nc.department} onChange={(e) => setNc({ ...nc, department: e.target.value })}>
+          <option value="">Pick one</option>
+          {CLIENT_DEPTS.map((x) => <option key={x} value={x}>{deptLabel(x)}</option>)}
+        </Combo>
+      </label>
+      {ncErr && <div className="error-text">{ncErr}</div>}
+    </Modal>,
+    document.body,
+  );
+}
+
+// The Clients page button: add the client, then its papers are uploaded in the View agreement window that opens.
+export function AddSignedClientButton({ className = 'btn', onAdded }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState('');
+  return (
+    <>
+      <button type="button" className={className} style={{ whiteSpace: 'nowrap' }} title="A client who already signed an agreement but is not in the ATS yet" onClick={() => setOpen(true)}>+ Client with signed agreement</button>
+      {open && (
+        <AddSignedClientDialog
+          onClose={() => setOpen(false)}
+          onAdded={(id) => { setOpen(false); setView(id); if (onAdded) onAdded(id); }}
+          onOpenExisting={(id) => { setOpen(false); setView(id); }}
+        />
+      )}
+      {view && <ViewAgreementWindow clientId={view} onClose={() => setView('')} onChanged={onAdded} />}
+    </>
+  );
+}
+
 // "View agreement" where there is no client row (the BDE workspace): ask which client, then show the same window.
 export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
   const clientLabel = useClientLabel();
@@ -225,6 +337,7 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
   const [ask, setAsk] = useState(false);
   const [id, setId] = useState('');
   const [view, setView] = useState('');
+  const [adding, setAdding] = useState(false); // a client that signed OUTSIDE the ATS (AddSignedClientDialog)
   // every client whose agreement this login may open (a BDE: all of them, view only - 2026-10-29), not just the clients
   // the screen happens to list; the screen's own list stays the fallback
   const [all, setAll] = useState(null);
@@ -236,8 +349,16 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
   if (!show) return null;
   return (
     <>
-      <button type="button" className={`${className} vag-btn`} style={{ whiteSpace: 'nowrap' }} onClick={() => { setId(''); setAsk(true); }}>View agreement</button>
-      {ask && (
+      <button type="button" className={`${className} vag-btn`} style={{ whiteSpace: 'nowrap' }} onClick={() => { setId(''); setAdding(false); setAsk(true); }}>View agreement</button>
+      {ask && adding && (
+        <AddSignedClientDialog
+          onClose={() => setAsk(false)}
+          onBack={() => setAdding(false)}
+          onAdded={(newId) => { setAll(null); setAdding(false); setAsk(false); setView(newId); }}
+          onOpenExisting={(oldId) => { setAsk(false); setView(oldId); }}
+        />
+      )}
+      {ask && !adding && (
         <Modal
           title="View agreement"
           onClose={() => setAsk(false)}
@@ -255,6 +376,10 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
               {list.map((c) => <option key={c.id} value={c.id}>{clientLabel(c)}</option>)}
             </Combo>
           </label>
+          <div className="small-muted" style={{ marginTop: 8 }}>
+            {'Client signed but not in the ATS yet? '}
+            <button type="button" className="btn btn-sm btn-ghost" onClick={() => setAdding(true)}>+ Add new client from a signed agreement</button>
+          </div>
         </Modal>
       )}
       {view && <ViewAgreementWindow clientId={view} onClose={() => setView('')} />}

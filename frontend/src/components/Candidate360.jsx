@@ -140,9 +140,12 @@ export function nextActionsFor(user, stage, app = null) {
   } else if (stage === 'TL_REVIEW') {
     // v3: one TL check window — Approve (→ BDE) / Send back (reason).
     if (is('tl') && (canMoveToStage(user, 'WITH_BDE') || mayReturn(user))) out.push({ id: 'tl_check', label: 'TL check', kind: 'popup', popup: 'tl', to: 'WITH_BDE' });
-  } else if (['WITH_BDE', 'BDE_APPROVED'].includes(stage)) {
-    // v3: BDE Review — Approve (→ Shared with client) / Send back (reason).
-    if (is('bde') && canMoveToStage(user, 'SHARED_WITH_CLIENT')) out.push({ id: 'bde_review', label: 'BDE review', kind: 'popup', popup: 'bde', to: 'SHARED_WITH_CLIENT' });
+  } else if (stage === 'WITH_BDE') {
+    // v3: BDE Review — Approve (→ the BDE TL, 2026-10-29) / Send back (reason).
+    if (is('bde') && canMoveToStage(user, 'BDE_APPROVED')) out.push({ id: 'bde_review', label: 'BDE review', kind: 'popup', popup: 'bde', to: 'BDE_APPROVED' });
+  } else if (stage === 'BDE_APPROVED') {
+    // the BDE TL check (founder 2026-10-29): Approve (→ Shared with client) / Send back to the BDE (reason)
+    if ((role === 'all' || (user.workflow && user.workflow.bdeTl)) && canMoveToStage(user, 'SHARED_WITH_CLIENT')) out.push({ id: 'bdetl_review', label: 'BDE TL check', kind: 'popup', popup: 'bdetl', to: 'SHARED_WITH_CLIENT' });
   } else if (['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'].includes(stage)) {
     // e2e gap 10: two plain buttons for the client's answer (BDE, TL, Admin).
     // Yes → Client shortlisted; No → the shared Reject window, side = Client.

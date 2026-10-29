@@ -5,6 +5,15 @@
 //   GET    /api/agreement/:clientId/signed-files        { has, count, files: [...], canRemove }
 //   GET    /api/agreement/:clientId/signed-files/:docId the file itself (?download=1 saves it, otherwise a PDF / picture opens in the browser)
 //   DELETE /api/agreement/:clientId/signed-files/:docId Admin / Super Admin only: takes the file off the client (the file stays on disk)
+//   POST   /api/agreement/:clientId/signed-files?type=vasu|client|agreement   (multipart: file) the BDE team + Admin add a paper
+//   POST   /api/agreement/new-client-signed                 { name, location, department } a client signed OUTSIDE the ATS
+//
+// UPLOADS (founder 2026-10-29): "bde dept mottham ni, view agreement client click chesaka, upload option raavali. total 3 -
+// vasu sir confirmation, client confirmation, agreement". Every BDE and the BDE TL (any client: every BDE views every
+// agreement) and Admin / Super Admin add files of three kinds; each is one more signed file (nothing is replaced, nothing
+// changes the agreement's status). A client that signed before it was in the ATS is added from the same window (name,
+// location, department) and its papers uploaded next: it shows in the Clients list at once; an Admin still turns its
+// agreement Active (the agreement gate for requirements is unchanged).
 //
 // STORAGE (no schema change): each signed file = one ClientDocument row, kind 'AGREEMENT_SIGNED'
 // (fileStored = the name made by utils/attachments.js). The extras (agreement date, department, branch,
@@ -24,6 +33,9 @@ const signing = require('../utils/agreementSigning');
 const { logAudit } = require('../utils/audit');
 
 const KIND = 'AGREEMENT_SIGNED';
+// the three papers a BDE uploads (?type=)
+const UPLOAD_TYPES = { vasu: 'Vasu sir confirmation', client: 'Client confirmation', agreement: 'Signed agreement' };
+const MAX_UPLOAD = 10 * 1024 * 1024;
 const PREFIX = 'agrsigned.';
 const EXT_MIME = {
   pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
@@ -80,7 +92,88 @@ async function countFor(clientId) {
   try { return (await filesOf(clientId)).length; } catch { return 0; }
 }
 
+// who adds signed papers: the whole BDE team (BDE + BDE TL) and Admin / Super Admin
+function mayAdd(user, access) {
+  if (access && access.edit) return true;
+  return require('../utils/clientLifecycle').isBdeTeam(user); // eslint-disable-line global-require
+}
+
 function mountView(router, { requireAuth, loadForView }) {
+  // A CLIENT THAT SIGNED OUTSIDE THE ATS: add it (then its papers are uploaded through POST /:clientId/signed-files).
+  router.post('/new-client-signed', requireAuth, async (req, res, next) => {
+    try {
+      if (!mayAdd(req.user, { edit: !!require('../utils/scope').scopeOf(req.user).global })) { // eslint-disable-line global-require
+        return res.status(403).json({ error: 'Adding a client from a signed agreement is for the BDE team and Admin.' });
+      }
+      const b = req.body || {};
+      const clean = (v, n) => String(v || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n);
+      const name = clean(b.name, 160);
+      const location = clean(b.location, 120);
+      const department = clean(b.department, 60);
+      if (name.length < 2) return res.status(400).json({ error: 'Type the client\'s name as it is on the agreement.' });
+      if (!location) return res.status(400).json({ error: 'Type the location (city / branch) of this client.' });
+      if (!department) return res.status(400).json({ error: 'Pick the department.' });
+      // the same client at the same place is already here: upload to it instead (another location is a new client)
+      const { findClientDuplicates } = require('../utils/clientDuplicates'); // eslint-disable-line global-require
+      const CLOC = require('../utils/clientLocations'); // eslint-disable-line global-require
+      const dup = await findClientDuplicates({ name, location });
+      const question = await CLOC.buildQuestion(dup, { name, location });
+      if (question) {
+        const m = question.matches && question.matches[0];
+        return res.status(409).json({ code: 'CLIENT_EXISTS', error: `${m ? `${m.name}${m.location ? ` (${m.location})` : ''}` : 'This client'} is already in the ATS. Open it in View agreement and upload the papers there.`, clientId: m ? m.id : null });
+      }
+      const me = require('../utils/scope').scopeOf(req.user); // eslint-disable-line global-require
+      const client = await prisma.client.create({
+        data: {
+          name, legalName: name, location, ownerDepartment: department, status: 'Active', clientType: 'Direct',
+          bdeOwner: me.atsRole === 'BDE' ? (req.user.name || null) : null,
+          internalNotes: `Added from a signed agreement (signed outside the ATS) by ${req.user.name || 'the BDE team'} on ${new Date().toISOString().slice(0, 10)}.`,
+        },
+      });
+      try { CLOC.forgetLabels(); } catch { /* the label cache refills by itself */ }
+      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Client added from a signed agreement', entity: 'Client', entityId: client.id, toValue: `${name} (${location}) · ${department}` });
+      return res.status(201).json({ ok: true, client: { id: client.id, name: client.name, location: client.location }, message: `${name} is added to Clients. Now upload its papers.` });
+    } catch (err) { return next(err); }
+  });
+
+  // ADD A SIGNED PAPER: Vasu sir confirmation / Client confirmation / Signed agreement
+  router.post('/:clientId/signed-files', requireAuth, async (req, res, next) => {
+    try {
+      const loaded = await loadForView(req, res);
+      if (!loaded) return undefined;
+      if (!mayAdd(req.user, loaded.access)) return res.status(403).json({ error: 'Uploading agreement papers is for the BDE team and Admin.' });
+      if (!profile.docsAvailable()) return res.status(503).json({ error: 'Files cannot be saved on this server yet.' });
+      const type = String(req.query.type || '');
+      const label = UPLOAD_TYPES[type];
+      if (!label) return res.status(400).json({ error: 'Say which paper this is: Vasu sir confirmation, Client confirmation or Agreement.' });
+      let parsed;
+      try { parsed = await attachments.parseMultipart(req, { maxBytes: MAX_UPLOAD }); } catch (err) {
+        if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
+        return res.status(400).json({ error: 'Choose a file to upload.' });
+      }
+      const file = parsed.file;
+      if (!file || !file.data || !file.data.length) return res.status(400).json({ error: 'Choose a file to upload.' });
+      const mime = EXT_MIME[extOf(file.filename)];
+      if (!mime) return res.status(400).json({ error: 'Upload a PDF, Word file or a picture (JPG / PNG).' });
+      let stored;
+      try { stored = attachments.store({ ...file, contentType: mime }, { maxBytes: MAX_UPLOAD, allowWord: true }); } catch (err) {
+        if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
+        return res.status(400).json({ error: 'That file could not be read as a PDF, Word file or picture. Please pick it again.' });
+      }
+      const row = await prisma.clientDocument.create({
+        data: {
+          clientId: loaded.client.id, kind: KIND, name: label,
+          fileStored: stored.billFile, fileName: stored.billName, fileMime: stored.billMime, fileSize: stored.billSize,
+          uploadedById: req.user.id, uploadedByName: req.user.name || null,
+        },
+      });
+      await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null }) } });
+      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}`.slice(0, 300) });
+      return res.status(201).json({ ok: true, message: `${label} uploaded.`, files: await filesOf(loaded.client.id) });
+    } catch (err) { return next(err); }
+  });
+
+
   // Which of MY clients have signed files (one call for a whole list). Same refusal as GET /list.
   router.get('/signed-files-summary', requireAuth, async (req, res, next) => {
     try {
@@ -147,7 +240,7 @@ function mountView(router, { requireAuth, loadForView }) {
       const loaded = await loadForView(req, res);
       if (!loaded) return undefined;
       const files = await filesOf(loaded.client.id);
-      return res.json({ has: files.length > 0, count: files.length, files, canRemove: !!loaded.access.edit });
+      return res.json({ has: files.length > 0, count: files.length, files, canRemove: !!loaded.access.edit, canAdd: mayAdd(req.user, loaded.access), types: UPLOAD_TYPES });
     } catch (err) { return next(err); }
   });
 

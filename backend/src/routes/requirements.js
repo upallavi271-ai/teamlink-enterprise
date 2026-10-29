@@ -3054,11 +3054,20 @@ async function notifyAssignment(requirement, actorId, verb = 'assigned to you') 
   // requirement does not name them as its TL.
   const seatLeads = await teamLeadUserIdsFor([requirement.recruiterId, ...csv(requirement.recruiterIds)]).catch(() => []);
   seatLeads.forEach((id) => { if (!ids.includes(id)) ids.push(id); });
-  await notifyUsers(ids, {
+  // the TL with no recruiter on it yet hears what to do next (founder 2026-10-29): post it, and pick who gets the responses
+  const tlTodo = requirement.tlId && !requirement.recruiterId && !csv(requirement.recruiterIds).length;
+  await notifyUsers(ids.filter((id) => !(tlTodo && id === requirement.tlId)), {
     title: `Requirement ${requirement.reqCode || requirement.title} ${verb}`,
     message: `${requirement.title} — ${requirement.department || 'no department'}.`,
     exceptUserId: actorId,
   });
+  if (tlTodo) {
+    await notifyUsers([requirement.tlId], {
+      title: `You got a new requirement: ${requirement.reqCode || requirement.title}`,
+      message: `${requirement.title} — post it anywhere you want. While posting, pick the recruiter who gets all its responses.`,
+      exceptUserId: actorId,
+    });
+  }
 }
 
 // AN INTERNAL REQUIREMENT HAS NO CLIENT — BUT THE ROW MUST NAME ONE.

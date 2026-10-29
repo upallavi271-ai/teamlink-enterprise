@@ -174,7 +174,8 @@ const MORE = ['foundit', 'google', 'telegram', 'facebook', 'whatsapp']; // "More
 const MORE_NAME = {};
 const SAVED_ONLY = 'Saved. Nothing was posted yet: open the requirement and press Post when you are ready.';
 
-export default function PostStep({ job, initial = [], onDone, onBack = null, onAnother = null, startTargets = null }) {
+// stay: the caller shows its own "posted" screen (PostStepDialog: "now all the responses will come to ..."), so no page change
+export default function PostStep({ job, initial = [], onDone, onBack = null, onAnother = null, startTargets = null, stay = false }) {
   const navigate = useNavigate();
   const [picked, setPicked] = useState(() => initial.filter((x) => MORE.includes(x) && !MANUAL.includes(x))); // the "More places" ticks (never pre-ticks the worker for Naukri / Shine)
   const [portals, setPortals] = useState(null); // answer of /job-publish/portals
@@ -481,7 +482,7 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
   };
   const useTemplate = () => { setText(buildLayout(job)); setScreenErr(''); };
   const useWritten = written && written.jobPost ? () => { setText(fillTemplate(written.jobPost, job)); setScreenErr(''); } : null;
-  const goPosted = () => { onDone(finish()); navigate('/requirements?tab=posting'); };
+  const goPosted = () => { onDone(finish()); if (!stay) navigate('/requirements?tab=posting'); };
 
   const waitingFor = tickedAuto.filter((k) => needsPanel(k));
   const where = namesOf(targets);

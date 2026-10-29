@@ -174,6 +174,7 @@ function ReviewDialog({
 }) {
   const { user } = useAuth();
   const tl = who === 'tl';
+  const bdeTl = who === 'bdetl'; // the BDE TL check (2026-10-29): the BDE's approval comes here, the BDE TL sends to the client
   const [pick, setPick] = useState('approve');
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
@@ -182,13 +183,19 @@ function ReviewDialog({
   async function go() {
     setBusy(true); setError('');
     try {
-      if (pick === 'approve') {
-        const out = await boardMove(app.id, tl ? 'bde' : 'shared', { comment: tl ? 'Approved at TL check' : 'Approved at BDE Review — shared with the client' });
+      if (pick === 'approve' && who === 'bde') {
+        await api.patch(`/applications/${app.id}/stage`, { stage: 'BDE_APPROVED', comment: 'Approved at BDE Review — sent to the BDE TL' });
+        onDone({ text: `Approved. ${app.name} is now with the BDE TL, who sends it to the client.`, undo: { id: app.id, stage: app.stage, name: app.name } });
+      } else if (pick === 'approve') {
+        const out = await boardMove(app.id, tl ? 'bde' : 'shared', { comment: tl ? 'Approved at TL check' : 'Approved by the BDE TL — shared with the client' });
         if (!out) { setBusy(false); return; }
         onDone({
           text: tl ? `Approved. ${app.name} is now with the BDE.` : `Approved. ${app.name} is shared with the client.`,
           undo: { id: app.id, stage: app.stage, name: app.name },
         });
+      } else if (bdeTl) {
+        await api.patch(`/applications/${app.id}/stage`, { stage: 'WITH_BDE', comment: `Sent back by the BDE TL: ${reason}` });
+        onDone({ text: 'Sent back to the BDE, with your reason.' });
       } else {
         await api.post(tl ? `/candidates/applications/${app.id}/return` : `/candidates/applications/${app.id}/bde-return`, { reason });
         onDone({ text: tl ? `Sent back to the recruiter, with your reason.` : `Sent back to the team lead, with your reason.` });
@@ -202,7 +209,7 @@ function ReviewDialog({
   }
   return (
     <Modal
-      title={`${tl ? 'TL check' : 'BDE Review'} — ${app.name}`}
+      title={`${tl ? 'TL check' : bdeTl ? 'BDE TL check' : 'BDE Review'} — ${app.name}`}
       onClose={onClose}
       footer={(
         <>
@@ -213,7 +220,7 @@ function ReviewDialog({
             disabled={busy || (pick === 'back' && reason.trim().length < 3)}
             onClick={go}
           >
-            {busy ? 'Saving…' : pick === 'approve' ? (tl ? 'Approve — send to BDE' : 'Approve — send to client') : 'Send back'}
+            {busy ? 'Saving…' : pick === 'approve' ? (tl ? 'Approve — send to BDE' : who === 'bde' ? 'Approve — send to BDE TL' : 'Approve — send to client') : 'Send back'}
           </button>
         </>
       )}
@@ -231,8 +238,8 @@ function ReviewDialog({
         />
       )}
       <div className="stp-choices">
-        <Choice on={pick === 'approve'} onClick={() => setPick('approve')} tone="green" title="Approve" text={tl ? 'Good profile. It goes to the client manager (BDE).' : 'Good profile. It is shared with the client now.'} />
-        <Choice on={pick === 'back'} onClick={() => setPick('back')} tone="red" title="Send back" text={tl ? 'Back to the recruiter, with your reason.' : 'Back to the team lead, with your reason.'} />
+        <Choice on={pick === 'approve'} onClick={() => setPick('approve')} tone="green" title="Approve" text={tl ? 'Good profile. It goes to the client manager (BDE).' : who === 'bde' ? 'Good profile. It goes to the BDE TL, who sends it to the client.' : 'Good profile. It is shared with the client now.'} />
+        <Choice on={pick === 'back'} onClick={() => setPick('back')} tone="red" title="Send back" text={tl ? 'Back to the recruiter, with your reason.' : bdeTl ? 'Back to the BDE, with your reason.' : 'Back to the team lead, with your reason.'} />
       </div>
       {pick === 'back' && (
         <label className="field" style={{ marginTop: 8 }}>
@@ -488,6 +495,7 @@ export default function StepPopup({
   if (k === 'verify') return <VerifyDialog app={app} onClose={onClose} onDone={done} />;
   if (k === 'tl') return <ReviewDialog who="tl" app={app} onClose={onClose} onDone={done} />;
   if (k === 'bde') return <ReviewDialog who="bde" app={app} onClose={onClose} onDone={done} />;
+  if (k === 'bdetl') return <ReviewDialog who="bdetl" app={app} onClose={onClose} onDone={done} />;
   if (k === 'client') return <ClientDialog app={app} onClose={onClose} onDone={done} onReject={() => { setBy('Client'); setK('reject'); }} />;
   if (k === 'reject') return <RejectDialog app={app} onClose={onClose} onDone={done} presetBy={by} />;
   if (k === 'joined') return <JoinedDialog app={app} onClose={onClose} onDone={done} />;
