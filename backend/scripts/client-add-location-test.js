@@ -48,16 +48,23 @@ const CLOC = require('../src/utils/clientLocations');
     const before = await snap(a.body.id);
     const aliasesBefore = await prisma.clientAlias.count({ where: { clientId: a.body.id } });
 
-    // ===== 3. same name, different location, NOT confirmed -> a QUESTION (409), never a bare string =====
-    const q1 = await post({ name: NAME, location: 'Guntur', state: 'Andhra Pradesh' });
+    // ===== 3. same name, DIFFERENT location: added at once, no question (founder 2026-10-29: "same client, different
+    //            locations - add chesthuntey already exists ani raakudadhu") - the audit row still links the two =====
+    const q0 = await post({ name: NAME, location: 'Guntur', state: 'Andhra Pradesh' });
+    check('B0 same name at another location -> 201 at once, no "already exists"', q0.status === 201, [q0.status, q0.body && q0.body.error]);
+    const q0a = q0.body && q0.body.id ? (await audits(q0.body.id)).find((x) => /^Added as another location of /.test(x.action)) : null;
+    check('B0b ... and its audit row says which client it is another location of', !!q0a && q0a.fromValue === a.body.id, q0a);
+    if (q0.body && q0.body.id) { await prisma.auditLog.deleteMany({ where: { entityId: q0.body.id } }); await prisma.client.delete({ where: { id: q0.body.id } }); }
+    // with NO location typed it is still a QUESTION (409), never a bare string
+    const q1 = await post({ name: NAME });
     const Q = q1.body && q1.body.question;
-    check('B1 same name without confirm -> 409', q1.status === 409, [q1.status, q1.body]);
+    check('B1 same name, no location -> 409', q1.status === 409, [q1.status, q1.body]);
     check('B2 the body is structured: question with level sameName + matches[]', !!Q && Q.level === 'sameName' && Array.isArray(Q.matches) && Q.matches.length === 1, Q);
     const m0 = Q && Q.matches[0];
     check('B3 the match card has id, name, location, agreement status, requirements count and the reasons', !!m0 && m0.id === a.body.id && m0.name === NAME && m0.location === 'Narasaraopet' && !!m0.agreementStatus && m0.requirementsCount === 0 && Array.isArray(m0.reasons) && m0.reasons.some((r) => r.label === 'Same name'), m0);
     check('B4 the text asks plainly: "This client already exists (name, location) ... add another one (another location / branch)?"', /This client already exists \(.*Narasaraopet\)\. Do you still want to add another one/.test(Q.text) && /^This client already exists \(.*Narasaraopet\)\. Do you still want to add another one \(another location \/ branch\)\?$/.test(q1.body.error), [Q && Q.text, q1.body.error]);
     check('B5 buttons + footer line are the plain ones; no "Possible duplicate" / "blocked"', Q.yesLabel === 'Yes, add another location' && Q.noLabel === 'No, open the existing client' && Q.hint === 'A client with this name already exists. Choose Yes to add another location.' && !/Possible duplicate|blocked/i.test(JSON.stringify(Q)), Q);
-    check('B6 a location was typed, so the question does not ask for one', Q.needsLocation === false && Q.needsReason === false, Q);
+    check('B6 no location was typed, so the question asks for one', Q.needsLocation === true && Q.needsReason === false, Q);
     check('B7 the older "duplicates" list is still in the body (old callers)', Array.isArray(q1.body.duplicates) && q1.body.duplicates.length >= 1 && q1.body.blocking === true, null);
     check('B8 nothing was created by the refused save', (await prisma.client.count({ where: { name: NAME } })) === 1, null);
     // with no location typed
@@ -92,7 +99,7 @@ const CLOC = require('../src/utils/clientLocations');
     check('E1 the older allowDuplicate flag also confirms (201)', c.status === 201, [c.status, c.body && c.body.error]);
     Z.made.clients.push(c.body.id);
     // three same-name now: the question lists every one
-    const q3 = await post({ name: NAME, location: 'Ongole' });
+    const q3 = await post({ name: NAME });
     check('E2 three clients with that name exist: the question lists all of them', q3.status === 409 && q3.body.question.matches.length === 3 && /and 1 more/.test(q3.body.question.text), q3.body && q3.body.question && q3.body.question.text);
 
     // ===== 7. same name + same location (+ same phone) -> the stronger question =====
@@ -127,9 +134,9 @@ const CLOC = require('../src/utils/clientLocations');
 
     // ===== 8b. "Save & create agreement" works with the confirm too =====
     const full = { mode: 'create', createAgreement: true, ownerDepartment: 'Education', industry: 'Healthcare', contactName: 'ZZ Contact', contactEmail: `zz-cl-${RUN}@example.test`, contactPhone: '9812345678', bdeOwner: sa.name, agreementFeePercent: '8.33', paymentTerms: 'Invoice 6 days after joining; payment due within 6 days of invoice', guaranteePeriod: '30 Days' };
-    const f1 = await call('POST', '/api/clients', T.sa, { ...full, name: NAME, location: 'Macherla' });
-    check('G5 "Save & create agreement" without confirm is also the friendly question (409), nothing saved', f1.status === 409 && !!f1.body.question, [f1.status, f1.body && f1.body.error]);
-    const f2 = await call('POST', '/api/clients', T.sa, { ...full, name: NAME, location: 'Macherla', confirmSeparate: true });
+    const f1 = await call('POST', '/api/clients', T.sa, { ...full, name: NAME });
+    check('G5 "Save & create agreement" with no location is also the friendly question (409), nothing saved', f1.status === 409 && !!f1.body.question, [f1.status, f1.body && f1.body.error]);
+    const f2 = await call('POST', '/api/clients', T.sa, { ...full, name: NAME, location: 'Macherla' });
     check('G6 ... and with the confirm it saves AND makes the agreement for that location', f2.status === 201 && !!f2.body.agreementId && f2.body.location === 'Macherla', [f2.status, f2.body && (f2.body.error || f2.body.agreementId)]);
     if (f2.body && f2.body.id) Z.made.clients.push(f2.body.id);
 
@@ -144,7 +151,8 @@ const CLOC = require('../src/utils/clientLocations');
     check('I2 an accountant still cannot add a client (403)', (await post({ name: NAME, location: 'Hyderabad' }, T.acc)).status === 403, null);
     check('I3 ... and cannot run the check', (await call('POST', '/api/clients/check-duplicate', T.rec, { name: NAME })).status === 403, null);
     const bq = await post({ name: NAME, location: 'Eluru' }, T.bde);
-    check('I4 a BDE adding the same name gets the same question (or the older desk rule), never a bare error', bq.status === 409 ? !!bq.body.question : bq.status === 403 || bq.status === 400, [bq.status, bq.body]);
+    check('I4 a BDE adding the same name at another location: added at once, or the older desk rule - never a bare error', bq.status === 201 || bq.status === 403 || bq.status === 400, [bq.status, bq.body]);
+    if (bq.status === 201 && bq.body.id) Z.made.clients.push(bq.body.id);
 
     // ===== 11. edits: another location of the same company never blocks the save =====
     const put2 = await call('PUT', `/api/clients/${b.body.id}`, T.sa, { contactPhone: PHONE });

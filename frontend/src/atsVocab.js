@@ -48,7 +48,7 @@ export const STAGE_LABELS = {
   RECRUITER_APPROVED: 'Approved by recruiter',
   TL_REVIEW: 'Check by team lead',
   WITH_BDE: 'Check by client manager',
-  BDE_APPROVED: 'Ready to send to client',
+  BDE_APPROVED: 'With BDE TL (to send to client)',
   SHARED_WITH_CLIENT: 'Sent to client',
   CLIENT_REVIEW: 'Client checking',
   CLIENT_SHORTLISTED: 'Client shortlisted',

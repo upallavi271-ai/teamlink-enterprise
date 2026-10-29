@@ -1874,6 +1874,22 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
 
   const client = await prisma.client.create({ data: { ...data, agreementStatus: 'DRAFT' } });
   CLOC.forgetLabels();
+  // the same name at another location is added without a question (utils/clientLocations.js buildQuestion): the audit log
+  // still says which client it is another location of
+  const otherPlaces = !question ? (dup.matches || []).filter((m) => m.blocking && m.sameName) : [];
+  if (otherPlaces.length) {
+    const main = otherPlaces[0];
+    await logAudit({
+      userId: req.user.id,
+      actorName: req.user.name || null,
+      action: `Added as another location of ${main.displayCode || main.name}`,
+      entity: 'Client',
+      entityId: client.id,
+      fromValue: main.id,
+      toValue: `${main.name}${main.location ? ` (${main.location})` : ''} - /clients/${main.id}${otherPlaces.length > 1 ? `; also: ${otherPlaces.slice(1).map((m) => `/clients/${m.id}`).join(', ')}` : ''}`.slice(0, 1000),
+      reason: `New location: ${data.location || ''}`,
+    });
+  }
   if (override && question && question.level !== 'sameId') {
     // Another location of a client we already have: say which one, who added it, when (the audit row has both) and why.
     const mates = question.matches.filter((m) => m.sameName);
@@ -1888,7 +1904,7 @@ router.post('/', requirePerm('ats', 'clients', 'Add Client', 'create'), async (r
       toValue: `${main.name}${main.location ? ` (${main.location})` : ''} ${main.displayCode} - /clients/${main.id}${mates.length > 1 ? `; also: ${mates.slice(1).map((m) => `${m.displayCode} /clients/${m.id}`).join(', ')}` : ''}`.slice(0, 1000),
       reason: CLOC.reasonOf(req.body) || (question.level === 'likelySame' ? 'Added as a separate client' : `New location: ${data.location || ''}`),
     });
-  } else if (override && dup.total > 0) {
+  } else if (override && dup.total > 0 && !otherPlaces.length) {
     const note = String(req.body.duplicateNote || req.body.separateReason || '').trim().slice(0, 500);
     await logAudit({
       userId: req.user.id,

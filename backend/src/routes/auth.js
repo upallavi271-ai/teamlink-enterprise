@@ -59,7 +59,7 @@ async function sessionPayload(identity) {
     ...identity,
     access,
     passwordStatus,
-    workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS },
+    workflow: { allowedStages, stageActions: STAGE_WORKFLOW_ACTIONS, bdeTl: require('../utils/scope').isBdeTl(identity) }, // eslint-disable-line global-require
     // WHAT THIS LOGIN MAY FILTER BY, computed by utils/scope.js — the same
     // helper that decides what the lists actually return.
     //

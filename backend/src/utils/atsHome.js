@@ -1679,7 +1679,32 @@ async function leadHome(c, b, k) {
       { id: 'my-review', label: 'waiting for your check', value: review.length, drill: 'my-review', tone: 'amber' },
     ]);
     const second = { id: 'review', type: 'review', size: 'full', title: 'Waiting for my check', total: review.length, drill: 'my-review', rows: review.slice(0, 5).map(workRow), empty: 'Nothing is waiting for your check.' };
-    b.widgets = [kpis(b.top), ...(chainW ? [chainW] : []), second, workload, ...sectionsOf(c, b, k, null, { today: false }), ...moreOf([weekW, fun])];
+    // NEW REQUIREMENTS TO POST (founder 2026-10-29): the BDE raises the requirement and assigns this TL; the TL posts it
+    // anywhere and, while posting, picks the recruiter who gets every response (PostStepDialog). Gone once it is posted on
+    // a job site (our own Job Portal / Website get it by themselves, so they do not count).
+    let postW = null;
+    try {
+      const fresh = await prisma.requirement.findMany({
+        where: {
+          tlId: c.user.id, status: { in: V.REQUIREMENT_LIVE_STATUSES }, createdAt: { gte: new Date(Date.now() - 30 * 86400000) },
+          NOT: { postings: { some: { source: { notIn: ['jobportal', 'website'] }, status: { in: ['Posted', 'Submitted to feed'] } } } },
+        },
+        select: { id: true, title: true, client: { select: { name: true } }, recruiter: { select: { name: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      });
+      if (fresh.length) {
+        postW = {
+          id: 'new-reqs', type: 'chain', size: 'full', title: 'New requirements — post them', total: fresh.length, mine: fresh.length, team: 0,
+          rows: fresh.slice(0, 8).map((r) => ({
+            id: r.id, kind: 'post', mine: true, to: `/requirements/${r.id}`,
+            text: `You got a new requirement: ${r.title}${r.client ? ` (${r.client.name})` : ''}. Post it anywhere you want${r.recruiter ? ` — responses go to ${r.recruiter.name}` : ', and pick the recruiter who gets the responses'}.`,
+          })),
+          more: Math.max(0, fresh.length - 8),
+        };
+      }
+    } catch (err) { console.error('[atsHome] new requirements to post failed:', err.message); } // eslint-disable-line no-console
+    b.widgets = [kpis(b.top), ...(postW ? [postW] : []), ...(chainW ? [chainW] : []), second, workload, ...sectionsOf(c, b, k, null, { today: false }), ...moreOf([weekW, fun])];
     return;
   }
   // Manager / Asst Manager / STL: the same short first screen as the Super Admin.

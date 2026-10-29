@@ -1228,7 +1228,9 @@ const REPORT_FEATURE_PRODUCT = {
 // 'billing'). No ATS dashboard, jobs, candidates or interviews, and nothing to write.
 // What the BDE TL may do on top of the TL matrix (see can(), step 3): the BDE
 // client desk's own rights, for ANY client (utils/scope.js gives them all).
-const BDE_TL_HIDDEN_MODULES = ['candidates', 'interviews'];
+// 2026-10-29: candidates are back for the BDE TL (the BDE TL check before a profile goes to the client); scope.js still
+// shows them only from the BDE step on (bdeStageWhere), never the recruiters' and TLs' own steps.
+const BDE_TL_HIDDEN_MODULES = ['interviews'];
 const BDE_TL_RIGHTS = {
   'clients|Add Client|create': true,
   'clients|Client Detail|edit': true,
@@ -1563,8 +1565,14 @@ const STAGE_WORKFLOW_ACTIONS = {
     { id: 'hold', label: 'Hold', to: 'HOLD' },
     { id: 'reject', label: 'Reject', to: 'REJECTED' },
   ],
+  // 2026-10-29: the BDE's Approve goes to the BDE TL (Ready to send); the BDE TL sends it to the client
   WITH_BDE: [
-    { id: 'share_with_client', label: 'Share with Client', to: 'SHARED_WITH_CLIENT' },
+    { id: 'bde_approve', label: 'Approve (to BDE TL)', to: 'BDE_APPROVED' },
+    { id: 'hold', label: 'Hold', to: 'HOLD' },
+    { id: 'reject', label: 'Reject', to: 'REJECTED' },
+  ],
+  BDE_APPROVED: [
+    { id: 'share_with_client', label: 'Send to client', to: 'SHARED_WITH_CLIENT' },
     { id: 'hold', label: 'Hold', to: 'HOLD' },
     { id: 'reject', label: 'Reject', to: 'REJECTED' },
   ],

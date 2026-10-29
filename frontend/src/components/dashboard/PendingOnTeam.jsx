@@ -9,7 +9,7 @@ import '../team/pendingWork.css';
 // Orange under a day (and 1 day), red from 2 days.
 // ---------------------------------------------------------------------------
 
-const KIND_WORD = { approval: 'Approval', offer: 'Offer', followup: 'Follow-up' };
+const KIND_WORD = { approval: 'Approval', offer: 'Offer', followup: 'Follow-up', post: 'New requirement' };
 
 // red when the wait is 2 days or more, orange otherwise.
 export function waitTone(waited) {

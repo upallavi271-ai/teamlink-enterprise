@@ -68,7 +68,7 @@ const STAGE_LABELS = {
   // §31 one terminology: the stage a BDE acts on reads "BDE Review" on every
   // screen (the code stays WITH_BDE in the database).
   WITH_BDE: 'Check by client manager',
-  BDE_APPROVED: 'Ready to send to client',
+  BDE_APPROVED: 'With BDE TL (to send to client)',
   SHARED_WITH_CLIENT: 'Sent to client',
   CLIENT_REVIEW: 'Client checking',
   CLIENT_SHORTLISTED: 'Client shortlisted',

@@ -686,6 +686,23 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
       body: { error: `Held at Agreement Check — the service agreement with ${existing.requirement.client.name} is ${label}, not Active. Profiles can be shared once it is Active.` },
     };
   }
+  // THE BDE TL CHECK (founder 2026-10-29: "bde review chesaka, bde tl kuda review cheyyali. tl review chesaka, client ki send
+  // chestharu"): a profile goes to the client only from "BDE approved" (the BDE's own check) and only the BDE team lead sends it
+  // (an Admin may too). A profile that was already in front of the client once (back from hold, a re-share) is not asked again.
+  // TeamLink's own openings have no client and no BDE.
+  if (stage === 'SHARED_WITH_CLIENT' && existing.stage !== 'SHARED_WITH_CLIENT' && existing.requirement && !existing.requirement.internal
+    && !(existing.requirement.client && existing.requirement.client.clientType === 'Internal')
+    && !require('../utils/scope').scopeOf(user).global) { // eslint-disable-line global-require
+    const sharedBefore = await prisma.applicationStageEvent.count({ where: { applicationId: existing.id, toStage: { in: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'] } } });
+    if (!sharedBefore) {
+      if (existing.stage !== 'BDE_APPROVED') {
+        return { status: 409, body: { code: 'BDE_TL_CHECK', error: 'Every profile is checked by the BDE TL before it goes to the client. Approve it in BDE review: it goes to the BDE TL, who sends it to the client.' } };
+      }
+      if (!require('../utils/scope').isBdeTl(user)) { // eslint-disable-line global-require
+        return { status: 403, body: { code: 'BDE_TL_CHECK', error: 'Waiting for the BDE TL: only the BDE team lead (or an Admin) sends this profile to the client.' } };
+      }
+    }
+  }
   // A PAUSED / ARCHIVED CLIENT takes no NEW submission (spec 2026-10-03 §A):
   // a profile not yet in front of the client cannot be shared now. Profiles
   // already shared keep moving (feedback, interviews, joining) untouched.
@@ -1008,6 +1025,14 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
       select: { id: true },
     });
     audience.push(...clientUsers.map((u) => u.id));
+  }
+  // approved by the BDE: the BDE team lead checks it next (and sends it to the client)
+  if (stage === 'BDE_APPROVED') {
+    const bdeTls = await prisma.user.findMany({
+      where: { status: { not: 'Inactive' }, atsRole: 'TL', OR: [{ atsDepartment: 'BDE' }, { atsScopeDepartments: { contains: 'BDE' } }] },
+      select: { id: true },
+    }).catch(() => []);
+    audience.push(...bdeTls.map((u) => u.id));
   }
   // opts.skipNotice: the caller sends its own, fuller notice to the same
   // people (the interview booking — utils/interviewNotices.js), so they are

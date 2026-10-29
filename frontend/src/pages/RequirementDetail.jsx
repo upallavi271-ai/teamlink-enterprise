@@ -718,7 +718,7 @@ export default function RequirementDetail() {
       )}
 
       <JobPostingCard jobId={r.id} title={r.title} canPost={can(user, 'ats', 'requirements', 'Job Posting', 'edit')} onChanged={load} onPost={() => setPostStepOpen(true)} />
-      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} onClose={() => setPostStepOpen(false)} onChanged={load} />}
+      {postStepOpen && <PostStepDialog job={{ id: r.id, title: r.title, reqCode: r.reqCode, tlId: r.tlId, recruiterId: r.recruiterId, recruiter: r.recruiter, department: r.department }} sources={String(r.postingSources || '').split(',').map((x) => x.trim()).filter(Boolean)} onClose={() => setPostStepOpen(false)} onChanged={load} />}
 
       <div className="card section" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div style={{ flex: '1 1 420px' }}>

@@ -140,6 +140,10 @@ async function buildQuestion(dup, input = {}, { db = prisma } = {}) {
   const sameNames = hard.filter((m) => m.sameName);
   const likely = sameNames.filter((m) => m.sameLocation);
   const level = likely.length ? 'likelySame' : (sameNames.length ? 'sameName' : 'sameId');
+  // Founder 2026-10-29: "same client, different locations, different agreements - add chesthuntey already exists ani raakudadhu".
+  // The same name at ANOTHER location (a location is given and none of the same-name clients is there) is simply another
+  // branch: no question. The create route still writes "Added as another location of ..." in the audit log.
+  if (level === 'sameName' && clean(input.location)) return null;
   const shown = (level === 'sameId' ? hard : [...likely, ...sameNames.filter((m) => !m.sameLocation), ...hard.filter((m) => !m.sameName)]).slice(0, 6);
   // how many requirements each one has (the card says it)
   const counts = new Map();
