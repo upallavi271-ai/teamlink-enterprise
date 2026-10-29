@@ -298,6 +298,8 @@ app.use('/api/public/feeds', require('./routes/jobFeeds'));
 app.use('/api/public/interview-prep', require('./routes/interviewPrep').publicRouter);
 // What TeamLink can really do with Naukri (methods, setup steps, applicant counts) — routes/naukri.js.
 app.use('/api/naukri', require('./routes/naukri'));
+// Naukri & Shine mailboxes (Administration -> Integrations), run by the Job Portal's import engine — routes/portalMailboxes.js.
+app.use('/api/portal-mailboxes', require('./routes/portalMailboxes'));
 app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).

@@ -397,6 +397,53 @@ export function teamlinkFrontRouter({ root, express }) {
 
   r.get('/api/integrations/teamlink/ping', (_req, res) => res.json({ ok: true, host: 'teamlink-embed', pid: process.pid }));
 
+  /*
+   * NAUKRI & SHINE MAILBOXES, managed from TeamLink Administration -> Integrations (2026-10-29, founder).
+   *
+   * The mailbox engine stays the portal's own (api/src/routes/source-mailboxes.js, 0135): the real IMAP login
+   * before anything is saved, the sealed app password that is never sent back, sync / reconnect / disconnect /
+   * reassign / logs. Its router is mounted here unchanged under .../mailboxes, run as the portal administrator
+   * (SYSTEM): TeamLink checked the person's own permission before calling. Two things are added on this side:
+   *   GET  .../mailboxes/recruiters   the portal recruiters with department, employee id and an active login
+   *   POST .../mailboxes/intake/source-connections   refused (422, before any login) for a recruiter whose
+   *        login is not active, or who is not in the department chosen on the screen
+   */
+  const MAILBOXES = '/api/integrations/teamlink/mailboxes';
+  let mailboxRouter = null;
+  const mailboxes = async () => {
+    if (!mailboxRouter) mailboxRouter = (await import(pathToFileURL(join(ROOT, 'api', 'src', 'routes', 'source-mailboxes.js')).href)).default();
+    return mailboxRouter;
+  };
+  const RECRUITERS_SQL = `select r.id, r.name, r.email, r.employee_id, r.department, r.designation, coalesce(u.status, 'active') as login_status
+                            from recruiters r left join users u on u.id = r.user_id`;
+  r.get(`${MAILBOXES}/recruiters`, wrap(async (_req, res) => {
+    const { withUser } = await portal();
+    const rows = await withUser(SYSTEM, async (c) => (await c.query(`${RECRUITERS_SQL} order by r.name`)).rows);
+    res.json({
+      recruiters: rows.map((x) => ({
+        id: x.id, name: x.name, email: x.email, employeeId: x.employee_id || undefined, department: x.department || undefined,
+        designation: x.designation || undefined, active: x.login_status === 'active',
+      })),
+      departments: [...new Set(rows.map((x) => String(x.department || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b)),
+    });
+  }));
+  r.post(`${MAILBOXES}/intake/source-connections`, wrap(async (req, _res, next) => {
+    const b = req.body || {};
+    if (!b.recruiterId) return next();                 // the portal's own validation answers that one
+    const { withUser } = await portal();
+    const rec = await withUser(SYSTEM, async (c) => (await c.query(`${RECRUITERS_SQL} where r.id = $1`, [String(b.recruiterId)])).rows[0]);
+    if (!rec) return next();
+    const refuse = (message) => Object.assign(new HttpError(422, 'VALIDATION_FAILED', message), { details: { recruiterId: message } });
+    if (rec.login_status !== 'active') throw refuse(`${rec.name}'s login is not active, so a mailbox cannot be connected to them.`);
+    const dept = String(b.department || '').trim();
+    if (dept && String(rec.department || '').trim().toLowerCase() !== dept.toLowerCase()) throw refuse(`${rec.name} is not in the ${dept} department.`);
+    return next();
+  }));
+  r.use(MAILBOXES, (req, res, next) => {
+    req.session = { ...SYSTEM, profileId: null };
+    mailboxes().then((mr) => mr(req, res, next), next);
+  });
+
   r.put('/api/integrations/teamlink/jobs/:requirementId', wrap(async (req, res) => {
     const { withUser } = await portal();
     const out = await withUser(SYSTEM, (c) => upsertJob(c, req.params.requirementId, req.body));
@@ -536,7 +583,11 @@ export function teamlinkFrontRouter({ root, express }) {
   r.use('/api/integrations/teamlink', (err, _req, res, _next) => {
     const status = err.status || (err.statusCode) || 500;
     if (status >= 500) log('route error:', err.message);
-    res.status(status).json({ error: { code: err.code || 'INTERNAL', message: status >= 500 ? 'The job portal could not do that.' : err.message } });
+    res.status(status).json({ error: {
+      code: err.code || 'INTERNAL',
+      message: status >= 500 ? 'The job portal could not do that.' : err.message,
+      details: status < 500 && err.details ? err.details : undefined, // the field a mailbox form error belongs to
+    } });
   });
 
   // The sweep: anything the instant push missed (TeamLink was restarting, ...).
