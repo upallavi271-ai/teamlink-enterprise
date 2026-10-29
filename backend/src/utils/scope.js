@@ -575,7 +575,8 @@ function applicationWhereBase(user) {
   // own clients' jobs. Recruiter review, TL review and the AI interview steps are
   // the recruiters' business.
   if (s.atsRole === 'BDE' || isBdeTl(user)) {
-    return { AND: [{ requirement: teamRequirementWhere(user) }, bdeStageWhere()] };
+    const desk = bdeDeskShareWhere(user, s);
+    return { AND: [desk ? { OR: [{ requirement: teamRequirementWhere(user) }, desk] } : { requirement: teamRequirementWhere(user) }, bdeStageWhere()] };
   }
   // teamRequirementWhere: a TL's department pool of UNASSIGNED requirements
   // widens their requirement list only — never their candidates.
@@ -589,6 +590,15 @@ const BDE_CANDIDATE_STAGES = [
   'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED',
   'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED', 'REJECTED',
 ];
+// TL-SHARED PROFILES (founder 2026-10-29): whatever a TL of any department passes to the
+// BDE check reaches EVERY BDE of that department's desk (BDE-EDU <- Education, BDE-MFG <-
+// Non IT MFG + Non IT Medical, BDE-MED <- Medical), not only the BDE named on the client.
+// The stage rule (bdeStageWhere) still applies: with the BDE or later, never before.
+function bdeDeskShareWhere(user, s) {
+  if (s.atsRole !== 'BDE' || isBdeTl(user)) return null;
+  const depts = s.bdeDeskRequirementDepartments || [];
+  return depts.length ? { requirement: { department: { in: depts } } } : null;
+}
 function bdeStageWhere() {
   return {
     OR: [
@@ -695,7 +705,8 @@ function applicationInScope(user, application) {
   if (s.atsRole === 'BDE' || ctx.bdeTl) {
     // (the HOLD-after-sharing arm needs the stage history: not known here)
     if (!ctx.teamWhere) ctx.teamWhere = teamRequirementWhere(user);
-    return !!r && matches(r, ctx.teamWhere) && BDE_CANDIDATE_STAGES.includes(application.stage);
+    const desk = bdeDeskShareWhere(user, s);
+    return !!r && (matches(r, ctx.teamWhere) || (!!desk && matches(r, desk.requirement))) && BDE_CANDIDATE_STAGES.includes(application.stage);
   }
   if (s.atsRole === 'MANAGER') return true;
   if (!s.positions) {
