@@ -135,7 +135,7 @@ async function place(user, input, deps = {}) {
   if (fe) return svc.fail(400, 'script', fe);
   // The call starts in the language this person spoke last time, else AI_VOICE_START_LANGUAGE (Telugu); from the first
   // sentence on, the assistant follows whatever language they speak (gateway.js + Whisper) - no choosing needed (user, 2026-10-28).
-  const start = S.LANGS.includes(process.env.AI_VOICE_START_LANGUAGE) ? process.env.AI_VOICE_START_LANGUAGE : 'Telugu';
+  const start = S.LANGS.includes(process.env.AI_VOICE_START_LANGUAGE) ? process.env.AI_VOICE_START_LANGUAGE : 'English'; // founder 2026-10-29: 'starting english lo matladali'
   // Every call opens in Telugu (2026-10-29: a call that opened in English from an earlier test confused the person); from the
   // first answer on it follows the language they speak.
   const lang = S.LANGS.includes(input.language) ? input.language : start;

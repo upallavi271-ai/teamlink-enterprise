@@ -138,11 +138,13 @@ function handle(sock, engines, opts = {}) {
           const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '' }; });
           if (h.lang !== 'English') { found = h.lang; byScript = true; } else first = h.text;
         } else {
-          // Telugu / Hindi mode: the fast model first; Whisper's language check (seconds on a small PC) only when the answer
-          // did not make sense in this language - a switch, or a name / place (2026-10-29: "chaala late ga answer isthundhi")
-          first = await listen(cur);
-          const made = !['unclear', 'silence'].includes(require('../dialogue').classify(first).intent) || /\d/.test(first); // eslint-disable-line global-require
-          if (!made && engines.detect && pcm.length >= A.RATE * 2 * 1.4) found = await engines.detect(pcm, sure).catch((e) => { log('detect failed:', e.message); return null; });
+          // Telugu / Hindi mode: the words and Whisper's language check side by side, on EVERY answer of 1.4 s or more. (A
+          // skip-when-understood shortcut missed English: the Telugu model writes "Yes, I have ..." as "యెస్ ఐ హావ్ ...",
+          // which reads as a yes - founder 2026-10-29: "madhyalo english matladthunte kuda telugu lo ney matladthundhi".)
+          [found, first] = await Promise.all([
+            engines.detect && pcm.length >= A.RATE * 2 * 1.4 ? engines.detect(pcm, sure).catch((e) => { log('detect failed:', e.message); return null; }) : null,
+            listen(cur),
+          ]);
         }
       }
       if (byScript) first = ''; // heard again below in the language found
