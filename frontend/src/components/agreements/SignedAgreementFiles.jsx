@@ -225,6 +225,14 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
   const [ask, setAsk] = useState(false);
   const [id, setId] = useState('');
   const [view, setView] = useState('');
+  // every client whose agreement this login may open (a BDE: all of them, view only - 2026-10-29), not just the clients
+  // the screen happens to list; the screen's own list stays the fallback
+  const [all, setAll] = useState(null);
+  useEffect(() => {
+    if (!ask || all) return;
+    api.get('/agreement/viewable-clients').then((r) => setAll(r.data.rows || [])).catch(() => setAll([]));
+  }, [ask, all]);
+  const list = all && all.length ? all : clients;
   if (!show) return null;
   return (
     <>
@@ -244,7 +252,7 @@ export function ViewAgreementPicker({ clients = [], className = 'btn' }) {
             <span>Which client?</span>
             <Combo value={id} onChange={(e) => setId(e.target.value)}>
               <option value="">Pick a client</option>
-              {clients.map((c) => <option key={c.id} value={c.id}>{clientLabel(c)}</option>)}
+              {list.map((c) => <option key={c.id} value={c.id}>{clientLabel(c)}</option>)}
             </Combo>
           </label>
         </Modal>

@@ -248,7 +248,7 @@ async function checkOtp(client, otp) {
 //   Super Admin / Admin (any product role)   view + EDIT
 //   Manager / Assistant Manager              view (they see everything, view-only)
 //   Accountant / Accounts roles              view
-//   BDE                                      view — only for THEIR clients
+//   BDE                                      view — EVERY client (2026-10-29); make / send the link only for THEIR clients
 //                                            (assigned, holding a requirement,
 //                                            or named as BDE owner)
 //   Client login                             view — only their own company
@@ -292,7 +292,10 @@ async function agreementAccess(user, client) {
   if (s.atsRole === 'BDE') {
     const byName = client.bdeOwner && user.name && String(client.bdeOwner).trim().toLowerCase() === String(user.name).trim().toLowerCase();
     const inScope = byName || !!(await prisma.client.findFirst({ where: { AND: [{ id: client.id }, scope.clientWhere(user)] }, select: { id: true } }));
-    return { view: inScope, edit: false, as: inScope ? 'bde' : null };
+    // Founder 2026-10-29: "View agreement - BDE team andhariki, just view option matramey." Every BDE READS every
+    // client's agreement. 'bde' (their own clients) keeps making / sending the link (agreementLifecycle.bdeMayLink);
+    // 'bde-view' (everyone else's) is reading only.
+    return { view: true, edit: false, as: inScope ? 'bde' : 'bde-view' };
   }
   return { view: false, edit: false, as: null };
 }
@@ -309,7 +312,7 @@ async function visibleClientWhere(user) {
   if (s.atsRole === 'ASSISTANT_MANAGER') return scope.clientWhere(user);
   const held = [user.role, s.atsRole, s.accountsRole].filter(Boolean);
   if (held.includes('ACCOUNTANT')) return {};
-  if (s.atsRole === 'BDE') return { OR: [scope.clientWhere(user), ...(user.name ? [{ bdeOwner: user.name }] : [])] };
+  if (s.atsRole === 'BDE') return {}; // every BDE reads every agreement (view only, 2026-10-29; see agreementAccess)
   if (['TL', 'STL'].includes(s.atsRole)) return scope.isBdeTl(user) ? scope.clientWhere(user) : null; // 2026-10-12: not for a recruiting TL / STL
   return null;
 }
