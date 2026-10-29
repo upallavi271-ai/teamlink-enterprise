@@ -142,10 +142,26 @@ const DDL = [
 ];
 
 let done = null;
+// 2026-10-28 (Accounts: automatic asset detection from imported bills): what the reading found on each line about the item,
+// and a person's link of a line to an HRMS asset. Added to an existing database without touching its rows.
+const LINE_COLUMNS = [['itemName', 'TEXT'], ['brand', 'TEXT'], ['model', 'TEXT'], ['serialNo', 'TEXT']];
+DDL.push(`CREATE TABLE IF NOT EXISTS "VendorBillLineAsset" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "uploadId" TEXT NOT NULL,
+    "lineNo" INTEGER NOT NULL,
+    "kind" TEXT NOT NULL,
+    "assetId" TEXT,
+    "byId" TEXT,
+    "byName" TEXT,
+    "at" TEXT NOT NULL
+  )`, 'CREATE UNIQUE INDEX IF NOT EXISTS "VendorBillLineAsset_line" ON "VendorBillLineAsset"("uploadId", "lineNo")');
+
 function ensure() {
   if (done) return done;
   done = (async () => {
     for (const sql of DDL) await prisma.$executeRawUnsafe(sql); // eslint-disable-line no-await-in-loop
+    const have = new Set((await prisma.$queryRawUnsafe('PRAGMA table_info("VendorBillUploadLine")')).map((c) => c.name));
+    for (const [c, t] of LINE_COLUMNS) if (!have.has(c)) await prisma.$executeRawUnsafe(`ALTER TABLE "VendorBillUploadLine" ADD COLUMN "${c}" ${t}`); // eslint-disable-line no-await-in-loop
     return true;
   })().catch((err) => { done = null; console.error('[vendor-bill-upload] schema:', err.message); return false; }); // eslint-disable-line no-console
   return done;

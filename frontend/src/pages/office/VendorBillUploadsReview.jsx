@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import BillLineAssets, { PaymentBlock } from '../vendor/BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28)
+import BillLineAssets, { PaymentBlock, ItemCells } from '../vendor/BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28)
 import api from '../../api';
 import { useKeptState } from '../../utils/useKeptState.js';
 import Modal from '../../components/Modal.jsx';
@@ -81,7 +81,7 @@ export default function UploadedBills({ onChanged, onCounts }) {
       ) : (
         <div className="tbl-wrap vb-table">
           <table className="bu-table">
-            <thead><tr><th>Bill</th><th>Vendor</th><th>Repair / asset</th><th>Invoice no.</th><th>Invoice date</th><th className="num">Total</th><th>Checks</th><th>Status</th><th /></tr></thead>
+            <thead><tr><th>Bill</th><th>Vendor</th><th>Asset name</th><th>Assigned to</th><th>Asset match</th><th>Repair / asset</th><th>Invoice no.</th><th>Invoice date</th><th className="num">Total</th><th>Checks</th><th>Status</th><th /></tr></thead>
             <tbody>
               {d.rows.map((b) => (
                 <tr key={b.id}>
@@ -89,6 +89,7 @@ export default function UploadedBills({ onChanged, onCounts }) {
                     <div className="cell-muted">{day(String(b.uploadedAt).slice(0, 10))} &middot; {b.fileCount} file{b.fileCount === 1 ? '' : 's'}</div>
                     {b.aiBadge && <span className="vb-src">{b.aiBadge}</span>}</td>
                   <td className="bu-name-wrap">{b.vendorName}</td>
+                  <ItemCells items={b.items} />
                   <td className="bu-name-wrap">{b.repairNo || '—'}<div className="cell-muted">{b.assetCode ? `${b.assetCode} · ${b.assetName || ''}` : 'asset not chosen'}</div></td>
                   <td>{b.invoiceNo || '—'}</td>
                   <td>{day(b.invoiceDate)}</td>
@@ -361,7 +362,17 @@ function UploadReview({ id, onClose, onDone }) {
                   </tbody>
                 </table>
               </div>
-              <BillLineAssets rows={d.lineAssets} />
+              {/* which HRMS asset each line is, who has it; Accounts can link a line, mark it a new asset, or clear it (2026-10-28) */}
+              <BillLineAssets
+                rows={d.lineAssets}
+                busy={busy}
+                assetOptions={access.canEdit ? d.assetOptions : null}
+                onLink={access.canEdit ? async (lineNo, kind, assetId) => {
+                  if (dirty) { setError('Save your changes to the bill first, then link the asset.'); return; }
+                  setBusy(true); setError(''); setMsg('');
+                  try { const r = await api.post(`${U}/${id}/line-asset`, { lineNo, kind, assetId }); fill(r.data.upload); setMsg(r.data.message || 'Saved.'); } catch (e) { setError(errText(e, 'Could not save the asset of this line.')); } finally { setBusy(false); }
+                } : null}
+              />
               <PaymentBlock p={d.payment} />
               {canEdit && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setForm((x) => ({ ...x, lines: [...x.lines, { description: '', quantity: '', rate: '', amount: '', unclear: false }] }))}>Add a line</button>}
               {live && (

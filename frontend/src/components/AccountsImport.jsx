@@ -47,6 +47,9 @@ export default function AccountsImport({
   const [stmt, setStmt] = useState(null);
   const [listKey, setListKey] = useState(0);
   const [createClients, setCreateClients] = useState(false);
+  // 2026-10-29: the bank the file itself says it is (ICICI / HDFC columns) against the chosen account; a mismatch needs a yes
+  const [bankCheck, setBankCheck] = useState(null);
+  const [otherBankOk, setOtherBankOk] = useState(false);
 
   function form(f, choice) {
     const fd = new FormData();
@@ -63,8 +66,10 @@ export default function AccountsImport({
     setErr(''); setBusy(true);
     try {
       const res = await api.post('/accounts-import/preview', form(f, { kind, ...choice }));
-      setPreview(res.data);
+      const wrong = res.data.summary?.bankCheck?.ok === false ? res.data.summary.bankCheck.message : null; // shown once, in the red box by the account
+      setPreview(wrong ? { ...res.data, problems: (res.data.problems || []).filter((p) => p !== wrong) } : res.data);
       setKind(res.data.kind);
+      setBankCheck(res.data.kind === 'bank' ? (res.data.summary.bankCheck || null) : null); setOtherBankOk(false);
       if (res.data.kind === 'bank' && res.data.summary.stmt) {
         setStmt(res.data.summary.stmt);
         setListKey((k) => k + 1);
@@ -111,6 +116,8 @@ export default function AccountsImport({
     try {
       const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/check`, { bankAccountId: id });
       setStmt({ ...stmt, accountId: id, counts: res.data.counts });
+      setBankCheck(res.data.bankCheck || null); setOtherBankOk(false);
+      setPreview((pv) => pv && ({ ...pv, problems: (pv.problems || []).filter((p) => !/ statement, but it is being imported into /.test(p)) })); // the red box above says it now
       setListKey((k) => k + 1);
     } catch (e) {
       setErr(e.response?.data?.error || 'The file could not be checked against that account.');
@@ -121,7 +128,7 @@ export default function AccountsImport({
   async function runStatement(mode) {
     setErr(''); setBusy(true);
     try {
-      const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/${mode === 'retry' ? 'retry' : 'import'}`, { bankAccountId: account || stmt.accountId, autoPost });
+      const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/${mode === 'retry' ? 'retry' : 'import'}`, { bankAccountId: account || stmt.accountId, autoPost, confirmOtherBank: otherBankOk });
       setResult(res.data);
       setStmt((cur) => (cur ? { ...cur, counts: res.data.stmt } : cur));
       setListKey((k) => k + 1);
@@ -140,6 +147,7 @@ export default function AccountsImport({
       if (preview.kind === 'bank') {
         if (account) fd.append('bankAccountId', account);
         fd.append('autoPost', autoPost ? 'true' : 'false');
+        if (otherBankOk) fd.append('confirmOtherBank', 'true');
       }
       if (preview.kind === 'invoices') fd.append('createClients', createClients ? 'true' : 'false');
       const res = await api.post('/accounts-import/commit', fd);
@@ -252,6 +260,7 @@ export default function AccountsImport({
   const importable = preview && preview.permitted && s.rows > 0;
   const checking = preview?.kind === 'bank' && !!stmt;
   const plan = importPlan(stmt?.counts);
+  const wrongBank = !!(bankCheck && !bankCheck.ok && !otherBankOk); // wait for "Use ICICI" or the yes
 
   return (
     <Modal
@@ -262,7 +271,7 @@ export default function AccountsImport({
         <>
           <button className="btn" onClick={onClose}>Cancel</button>
           {checking ? (
-            <ImportButtons counts={stmt.counts} busy={busy || !preview.permitted} onImport={commit} showImport />
+            <ImportButtons counts={stmt.counts} busy={busy || !preview.permitted || wrongBank} onImport={commit} showImport />
           ) : (
             <button className="btn btn-primary" disabled={busy || !importable} onClick={commit}>
               {busy ? 'Working…' : importable ? `Import ${s.rows} line${s.rows === 1 ? '' : 's'}` : 'Import'}
@@ -325,7 +334,7 @@ export default function AccountsImport({
           {checking && (
             <>
               <StatementCheck batchId={stmt.batchId} counts={stmt.counts} onCounts={(c) => setStmt((cur) => (cur ? { ...cur, counts: c } : cur))} refreshKey={listKey} canDecide={preview.permitted} />
-              <div className={`notice${plan.canImport ? '' : ' amber'}`} style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ flex: '1 1 260px' }}>{plan.note} Nothing is saved until you press <b>Import New Transactions</b>.</span>{preview.permitted && <ImportButtons counts={stmt.counts} busy={busy} onImport={commit} showImport />}</div>
+              <div className={`notice${plan.canImport ? '' : ' amber'}`} style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}><span style={{ flex: '1 1 260px' }}>{plan.note} Nothing is saved until you press <b>Import New Transactions</b>.</span>{preview.permitted && <ImportButtons counts={stmt.counts} busy={busy || wrongBank} onImport={commit} showImport />}</div>
             </>
           )}
           <div className="notice" style={{ marginBottom: 8 }}>
@@ -381,6 +390,15 @@ export default function AccountsImport({
                       ))}
                     </Combo>
                   </label>
+                )}
+                {bankCheck && !bankCheck.ok && (
+                  <div className="notice red" style={{ flexBasis: '100%', display: 'block' }} role="alert">
+                    <b>Wrong bank account?</b> {bankCheck.message}
+                    <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+                      {bankCheck.suggest && <button type="button" className="btn btn-primary btn-sm" disabled={busy} onClick={() => changeAccount(bankCheck.suggest.id)}>Use {bankCheck.suggest.label}</button>}
+                      <label style={CHECK}><input type="checkbox" style={BOX} checked={otherBankOk} onChange={(e) => setOtherBankOk(e.target.checked)} /> No, it really belongs to {bankCheck.chosen}</label>
+                    </div>
+                  </div>
                 )}
                 <label style={CHECK}><input type="checkbox" style={BOX} checked={autoPost} onChange={(e) => setAutoPost(e.target.checked)} /> Post credits that name a client straight to their invoices</label>
               </>

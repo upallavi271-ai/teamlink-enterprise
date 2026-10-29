@@ -14,6 +14,7 @@ const prisma = require('../db');
 const store = require('../utils/integrationStore');
 const core = require('../utils/messagingCore');
 const X = require('./exotelConfig');
+const LOCAL = require('./local/config'); // private-network check for the Asterisk server, the Vexyl / bridge settings
 
 const { F } = X;
 const TEST_KEY = 'ai-calling.test';
@@ -53,8 +54,24 @@ function normalise(values) {
   const from = hm(v[F.hoursFrom], D.hoursFrom);
   const to = hm(v[F.hoursTo], D.hoursTo);
   const publicBase = String(v[F.publicBase] || process.env.APP_BASE_URL || '').trim().replace(/\/+$/, '');
+  // 2026-10-28: the provider and the self-hosted (Synway) line. The AMI secret is encrypted by integrationStore ("secret" label).
+  const provider = /synway|self/i.test(String(v[F.provider] || '')) ? 'synway' : 'exotel';
+  const amiHost = cleanHost(v[F.amiHost]).replace(/:\d+$/, '');
+  const dialWord = String(v[F.dialFormat] || '').trim().toLowerCase();
+  const gw = String(v[F.gatewayIp] || '').trim();
   return {
     mode,
+    provider,
+    amiHost,
+    amiHostPrivate: !!amiHost && LOCAL.privateHost(amiHost),
+    amiPort: intIn(v[F.amiPort], 1, 65535, 5038),
+    amiUser: String(v[F.amiUser] || '').trim().slice(0, 80),
+    amiSecret: String(v[F.amiSecret] || '').trim(),
+    trunk: String(v[F.trunk] || '').trim().replace(/[^\w.-]/g, '').slice(0, 60) || 'synway',
+    gatewayIp: /^\d{1,3}(\.\d{1,3}){3}$/.test(gw) ? gw : '',
+    dialFormat: /^0|zero/.test(dialWord) ? 'zero' : (/^\+|^91|e\.?164/.test(dialWord) ? 'e164' : 'ten'), // "0 + 10 digits" | "+91" | "10 digits"
+    dialContext: String(v[F.dialContext] || '').trim().replace(/[^\w-]/g, '').slice(0, 60) || 'teamlink-ai',
+    ringSeconds: intIn(v[F.ringSeconds], 15, 120, 40),
     sid: String(v[F.sid] || '').trim(),
     key: String(v[F.key] || '').trim(),
     token: String(v[F.token] || '').trim(),
@@ -94,12 +111,27 @@ function normalise(values) {
   };
 }
 
-const fingerprintOf = (s) => crypto.createHash('sha256').update([s.sid, s.key, s.token, s.host, s.callerId, s.appId, s.flowUrl].join('\u0001')).digest('hex').slice(0, 24);
+// A change to any detail the test checked means "test again" before Live (per provider).
+const fingerprintOf = (s) => crypto.createHash('sha256').update((s.provider === 'synway'
+  ? ['synway', s.amiHost, s.amiPort, s.amiUser, s.amiSecret, s.trunk, s.gatewayIp, s.dialFormat, s.dialContext]
+  : [s.sid, s.key, s.token, s.host, s.callerId, s.appId, s.flowUrl]).join('\u0001')).digest('hex').slice(0, 24);
 
 // What is still missing before a real call can be placed, in plain words (empty = ready to place calls).
 function problemsOf(s, { row, missingKey }) {
   const p = [];
-  if (!row) { p.push('Nothing is saved yet. Fill in the Exotel details below and press Save.'); return p; }
+  if (!row) { p.push(`Nothing is saved yet. Fill in the ${s.provider === 'synway' ? 'Self-hosted (Synway)' : 'Exotel'} details below and press Save.`); return p; }
+  if (s.provider === 'synway') {
+    if (missingKey) p.push('The saved Asterisk AMI secret could not be read (INTEGRATION_SECRET_KEY is missing or has changed). Enter it again.');
+    if (!s.amiHost) p.push('Asterisk server address is missing (the private IP or LAN name of the Asterisk machine).');
+    else if (!s.amiHostPrivate) p.push(`${s.amiHost} is not a private address. The Asterisk server must be this server or on the office network: call audio never goes over the internet.`);
+    if (!s.amiUser || !s.amiSecret) p.push('Asterisk AMI user name and secret are missing (the [teamlink] user in /etc/asterisk/manager.conf).');
+    if (!s.gatewayIp) p.push('Synway gateway LAN IP is missing (Synway admin page > Network).');
+    const L = LOCAL.cfg();
+    if (!L.audioSocket.port) p.push('The AI bridge is off on this TeamLink: set AI_CALL_AUDIOSOCKET_PORT=9092 in the backend .env and restart it.');
+    if (!L.stt.ok) p.push(`Vexyl speech to text is not set: AI_CALL_STT_URL ${L.stt.error}.`);
+    if (!L.tts.ok) p.push(`Vexyl text to speech is not set: AI_CALL_TTS_URL ${L.tts.error}.`);
+    return p;
+  }
   if (missingKey) p.push('A saved key could not be read (INTEGRATION_SECRET_KEY is missing or has changed). Enter the API key, API token and webhook secret again.');
   if (!s.sid) p.push('Account SID is missing (Exotel dashboard > Settings > API Settings).');
   if (!s.key || !s.token) p.push('API key and API token are missing (Exotel dashboard > Settings > API Settings).');
@@ -156,14 +188,16 @@ function apiBase(s) {
 async function status(s0) {
   const s = s0 || await load();
   const test = await readTest();
-  if (!s.hasRow || (!s.sid && !s.key && !s.token && !s.callerId && !s.appId && !s.flowUrl && !s.hook)) {
-    return { state: 'Not configured', detail: 'Exotel AI Calling is not set up yet.', steps: s.problems };
+  const synway = s.provider === 'synway';
+  const empty = synway ? (!s.amiHost && !s.amiUser && !s.amiSecret && !s.gatewayIp) : (!s.sid && !s.key && !s.token && !s.callerId && !s.appId && !s.flowUrl && !s.hook);
+  if (!s.hasRow || empty) {
+    return { state: 'Not configured', detail: synway ? 'Self-hosted (Synway) AI Calling is not set up yet.' : 'Exotel AI Calling is not set up yet.', steps: s.problems };
   }
   if (!s.configured) return { state: 'Configuration required', detail: s.problems[0], steps: s.problems };
   const fresh = test && test.fingerprint === s.fingerprint;
-  if (!fresh) return { state: 'Configuration required', detail: 'Details are saved. Press "Test connection" to check them with Exotel (no call is placed).', steps: ['Press "Test connection".'] };
+  if (!fresh) return { state: 'Configuration required', detail: `Details are saved. Press "Test connection" to check them with ${synway ? 'the Asterisk server' : 'Exotel'} (no call is placed).`, steps: ['Press "Test connection".'] };
   if (!test.ok) return { state: 'Error', detail: test.message || 'The last connection test failed.', steps: [], lastTest: { at: test.at, message: test.message, checks: test.checks } };
-  return { state: 'Connected', detail: test.message || 'Exotel accepted the account details.', steps: [], lastTest: { at: test.at, message: test.message, checks: test.checks } };
+  return { state: 'Connected', detail: test.message || (synway ? 'The Asterisk server answered and the Synway trunk is set up.' : 'Exotel accepted the account details.'), steps: [], lastTest: { at: test.at, message: test.message, checks: test.checks } };
 }
 
 // What the browser may see. No secret value, no Exotel key, only whether each secret is set.
@@ -176,11 +210,12 @@ async function publicView() {
   return {
     id: X.CHANNEL_ID,
     mode: s.mode,
+    provider: s.provider,
     status: st,
     fields: channel.fields.map(([label, placeholder]) => ({
       k: Object.keys(F).find((n) => F[n] === label), label, placeholder, secret: pv.secretFields.includes(label), hint: pv.secretHints[label] || '', value: pv.secretFields.includes(label) ? '' : (pv.values[label] || ''),
     })),
-    secretSet: { key: !!s.key, token: !!s.token, hook: !!s.hook },
+    secretSet: { key: !!s.key, token: !!s.token, hook: !!s.hook, amiSecret: !!s.amiSecret },
     ready: { configured: s.configured, problems: s.problems },
     urls: webhookUrls(s, { masked: true }),
     live: s.mode === 'Live',

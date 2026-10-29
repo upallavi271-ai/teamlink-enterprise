@@ -1,3 +1,6 @@
 # The TeamLink Job Portal is shipped byte-for-byte as the customer supplied
 # it. Never let Git rewrite its line endings.
 frontend/public/job-portal/index.html -text
+
+# Shell scripts run on Linux servers (deploy/ai-calling/install.sh): always LF, even in a Windows checkout.
+*.sh text eol=lf

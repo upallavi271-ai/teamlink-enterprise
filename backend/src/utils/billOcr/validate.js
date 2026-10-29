@@ -136,7 +136,11 @@ function normaliseModelOutput(raw) {
     const wrote = (x) => x != null && String(x).trim() !== '';
     if ((wrote(r.quantity) && quantity == null) || (wrote(r.rate) && rate == null) || (wrote(r.amount) && amount == null)) { unclear = true; confidence = Math.min(confidence == null ? 0.3 : confidence, 0.3); }
     if (confidence != null && confidence < UNCLEAR_BELOW) unclear = true;
-    lines.push({ description, quantity, rate, amount, confidence, unclear, note: r.note ? cleanText(r.note, 200) : null });
+    lines.push({
+      description, quantity, rate, amount, confidence, unclear, note: r.note ? cleanText(r.note, 200) : null,
+      // what the line says about the item (asset detection, 2026-10-28) - copied only, never completed
+      itemName: cleanText(r.item_name, 120) || null, brand: cleanText(r.brand, 60) || null, model: cleanText(r.model, 80) || null, serialNo: cleanText(r.serial_number, 80) || null,
+    });
   });
   const dt = String(o.document_type || '').toLowerCase();
   return {

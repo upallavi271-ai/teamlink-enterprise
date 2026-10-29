@@ -12,6 +12,7 @@ import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // P4 — GST & TDS: the invoice summary block and its edit form.
 import TaxEditModal from './invoices/TaxEditModal.jsx';
 import StatementView from './bank/StatementView.jsx';
+import { placeOf, keepNote, takeNote, scrollBack } from '../utils/keptPlace.js';
 import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
 } from './invoices/invTax';
@@ -109,8 +110,18 @@ export default function InvoiceDetail() {
   // /invoices/:id#proof and #tds (the register's Proof and TDS Cert links)
   // land on their own section once the invoice has loaded.
   const loaded = !!invoice;
+  // Back from Bank & Reconciliation (2026-10-29): the same bank line open again and the same spot on the page, not the top.
+  const cameBack = useRef(false);
   useEffect(() => {
-    if (!loaded || !location.hash) return;
+    if (!loaded) return undefined;
+    const n = takeNote(`invoice.${id}`);
+    if (!n) return undefined;
+    cameBack.current = true;
+    if (n.txn) toggleLine({ id: n.pay }, { txnId: n.txn }, true);
+    return scrollBack(n.y);
+  }, [loaded, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!loaded || !location.hash || cameBack.current) return;
     const el = document.getElementById(location.hash.slice(1));
     if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   }, [loaded, location.hash]);
@@ -178,7 +189,7 @@ export default function InvoiceDetail() {
 
   if (!invoice) {
     return error
-      ? <div><Link className="small-muted" to="/invoices">← Back to invoices</Link><div className="notice red" style={{ marginTop: 10 }}><span>{error}</span></div></div>
+      ? <div><Link className="small-muted" to={placeOf('invoices', '/invoices')}>← Back to invoices</Link><div className="notice red" style={{ marginTop: 10 }}><span>{error}</span></div></div>
       : <div className="small-muted">Loading…</div>;
   }
 
@@ -226,7 +237,7 @@ export default function InvoiceDetail() {
 
   return (
     <div>
-      <Link className="small-muted" to="/invoices">← Back to invoices</Link>
+      <Link className="small-muted" to={placeOf('invoices', '/invoices')}>← Back to invoices</Link>
       <div className="page-head" style={{ marginTop: 10 }}>
         <div>
           <h1>Invoice {invoice.invoiceNumber || invoice.id.slice(-6)}</h1>
@@ -504,7 +515,7 @@ export default function InvoiceDetail() {
                         {rOf(p) && rOf(p).recon.state === 'review' && canBank && (rOf(p).recon.candidates || []).length > 0 && (
                           <div className="small-muted">
                             {rOf(p).recon.why}:{' '}
-                            {rOf(p).recon.candidates.slice(0, 4).map((c, k) => <span key={c.txnId}>{k ? ', ' : ''}<Link to={`/bank?line=${encodeURIComponent(c.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>{fmtD(c.date)} {money2(c.amount)}</Link></span>)}
+                            {rOf(p).recon.candidates.slice(0, 4).map((c, k) => <span key={c.txnId}>{k ? ', ' : ''}<Link to={`/bank?line=${encodeURIComponent(c.txnId)}&invoice=${encodeURIComponent(invoice.id)}`} onClick={() => keepNote(`invoice.${invoice.id}`, { pay: p.id, y: window.scrollY })}>{fmtD(c.date)} {money2(c.amount)}</Link></span>)}
                           </div>
                         )}
                         <div>
@@ -673,7 +684,7 @@ export default function InvoiceDetail() {
                         {canBank && (
                           <div className="pf-wide">
                             {rOf(p) && rOf(p).statementTxnId && <><button type="button" className="link-btn" onClick={() => setStmtOf(rOf(p).statementTxnId)}>View Statement</button>{' · '}</>}
-                            <Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`}>Open in Bank &amp; Reconciliation →</Link>
+                            <Link className="link-btn" to={`/bank?line=${encodeURIComponent(line.txnId)}&invoice=${encodeURIComponent(invoice.id)}`} onClick={() => keepNote(`invoice.${invoice.id}`, { pay: p.id, txn: line.txnId, y: window.scrollY })}>Open in Bank &amp; Reconciliation →</Link>
                           </div>
                         )}
                       </div>

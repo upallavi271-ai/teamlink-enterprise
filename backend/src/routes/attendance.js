@@ -331,6 +331,66 @@ router.post('/', async (req, res) => {
   res.status(201).json(attendance);
 });
 
+// ---- BULK MARKING, FROM A DATE TO A DATE (founder 2026-10-29: "bulk lo dates lo marked attendance pettadaniki ivvu, mark attendance
+// lo filters from date to to date pettu") --------------------------------------------------------------------------------------------
+// body: { employeeIds: [...], from, to, status: Present | Absent | Half Day | On Leave, includeOffDays?: false }
+// Every chosen person gets the status on every day of the range - Sundays and company holidays are left alone unless includeOffDays,
+// and days before a person joined are never marked. The same rules as one mark: HR / managers only, each person inside the
+// caller's scope; times set by the Super Admin / HR are kept (only the status is written). A Leave mark raises ONE pending leave
+// request per person for the whole range (utils/markedLeave.js), not one per day. One audit row per person.
+const BULK_STATUSES = ['Present', 'Absent', 'Half Day', 'On Leave'];
+const BULK_MAX_DAYS = 62;
+const BULK_MAX_CELLS = 5000;
+router.post('/bulk', async (req, res, next) => {
+  try {
+    if (req.user.caps.hrmsSelfOnly || !req.user.caps.hrmsManage) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+    const b = req.body || {};
+    const ids = [...new Set((Array.isArray(b.employeeIds) ? b.employeeIds : []).map(String).filter(Boolean))];
+    const { from, to, status } = b;
+    if (!ids.length) return res.status(400).json({ error: 'Tick at least one employee.' });
+    if (!BULK_STATUSES.includes(status)) return res.status(400).json({ error: `Status must be one of: ${BULK_STATUSES.join(', ')}.` });
+    if (!isDate(from) || !isDate(to)) return res.status(400).json({ error: 'Pick the From and To dates.' });
+    if (from > to) return res.status(400).json({ error: 'The From date is after the To date.' });
+    const all = eachDay(from, to);
+    if (all.length > BULK_MAX_DAYS) return res.status(400).json({ error: `Pick at most ${BULK_MAX_DAYS} days at a time.` });
+    const { countRange, load } = require('../utils/leaveDays'); // eslint-disable-line global-require
+    const off = new Map(countRange(from, to, await load(from, to)).skipped.map((s) => [s.date, s.reason]));
+    const days = b.includeOffDays ? all : all.filter((d) => !off.has(d));
+    if (!days.length) return res.status(400).json({ error: 'Every day in this range is a Sunday or a company holiday. Tick "Include Sundays / holidays" to mark them.' });
+    if (ids.length * days.length > BULK_MAX_CELLS) return res.status(400).json({ error: `That is ${ids.length * days.length} marks; mark at most ${BULK_MAX_CELLS} at a time (fewer people or days).` });
+
+    const employees = await prisma.employee.findMany({ where: { id: { in: ids } } });
+    const outOfScope = employees.filter((e) => !employeeInScope(req.user, e)).map((e) => e.name);
+    const people = employees.filter((e) => employeeInScope(req.user, e));
+    const joined = (e) => (e.dateOfJoining ? new Date(e.dateOfJoining).toISOString().slice(0, 10) : null);
+    let marked = 0; let beforeJoining = 0;
+    const leaves = [];
+    for (const e of people) {
+      const mine = days.filter((d) => { const j = joined(e); if (j && d < j) { beforeJoining += 1; return false; } return true; });
+      for (const date of mine) {
+        // eslint-disable-next-line no-await-in-loop
+        await prisma.attendance.upsert({ where: { employeeId_date: { employeeId: e.id, date } }, update: { status }, create: { employeeId: e.id, date, status } });
+        marked += 1;
+      }
+      if (!mine.length) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      await logAudit({ userId: req.user.id, action: 'Attendance marked (bulk)', entity: 'Employee', entityId: e.id, toValue: `${status} on ${mine.length} day(s), ${mine[0]} to ${mine[mine.length - 1]}` });
+      if (markedLeave.isLeaveMark(status)) {
+        // eslint-disable-next-line no-await-in-loop
+        const raised = await markedLeave.raiseFromMark({ employee: e, date: mine[0], toDate: mine[mine.length - 1], user: req.user, leaveType: b.leaveType });
+        leaves.push({ name: e.name, status: raised.leave ? raised.leave.status : null, days: raised.leave ? raised.leave.days : 0, created: !!raised.created, waitingFor: raised.waitingFor || null, skipped: raised.skipped || null });
+      }
+    }
+    const offSkipped = b.includeOffDays ? 0 : (all.length - days.length) * people.length;
+    const parts = [`${status} marked on ${marked} day(s) for ${people.length} employee(s), ${from} to ${to}.`];
+    if (offSkipped) parts.push(`${all.length - days.length} Sunday / holiday date(s) left alone.`);
+    if (beforeJoining) parts.push(`${beforeJoining} day(s) before someone's joining date left alone.`);
+    if (outOfScope.length) parts.push(`Not in your scope, not marked: ${outOfScope.join(', ')}.`);
+    if (leaves.length) parts.push(`Leave: ${leaves.filter((l) => l.created).length} request(s) raised, Pending until approved.`);
+    return res.status(201).json({ marked, people: people.length, days: days.length, offSkipped, beforeJoining, outOfScope, leaves, message: parts.join(' ') });
+  } catch (err) { return next(err); }
+});
+
 // ---- Regularization requests (correcting a missed/incorrect punch after the fact) ----
 //
 // §9 — A REGULARIZATION CLIMBS THE SAME LADDER AS A LEAVE. Correcting your

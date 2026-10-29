@@ -79,8 +79,10 @@ async function staffList(q = {}) {
     return [...m.values()];
   };
   const counts = {}; all.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const shown = all.filter((r) => pass(r));
+  await BU.itemsOf(shown, all0); // each bill's items: asset name, asset, who has it now, match status (2026-10-28)
   return {
-    rows: all.filter((r) => pass(r)), counts, waiting: all.filter((r) => BU.REVIEW_STATES.includes(r.status)).length,
+    rows: shown, counts, waiting: all.filter((r) => BU.REVIEW_STATES.includes(r.status)).length,
     facets: { status: count(all.filter((r) => pass(r, 'status')), (r) => r.status, (r) => r.statusLabel), vendor: count(all.filter((r) => pass(r, 'vendor')), (r) => r.vendorId, (r) => r.vendorName) },
     ai: await OCR.status(),
   };
@@ -119,9 +121,15 @@ async function staffDetail(row, { raw = false } = {}) {
   }
   const meta = row.meta || {};
   // each line of the bill -> the asset, who had it on the bill date, who has it now (founder 2026-10-28; utils/billLineAssets.js)
-  const lineAssets = await require('./billLineAssets').lineAssets(ls, await BU.candidatesFor(row.vendorId), row.invoiceDate || row.serviceDate, asset ? asset.id : null).catch(() => []); // eslint-disable-line global-require
+  // + a person's links, and the vendor's assets to link a line to (Accounts: "Link to an asset", automatic asset detection 2026-10-28)
+  const BLA = require('./billLineAssets'); // eslint-disable-line global-require
+  const vc = await BU.candidatesFor(row.vendorId);
+  const lineAssets = await BLA.lineAssets(ls, vc, row.invoiceDate || row.serviceDate, asset ? asset.id : null, null, { links: await BLA.linksOf(row.id) }).catch(() => []);
+  const optFull = await BLA.assetsById(vc.assets.map((a) => a.id));
+  const assetOptions = [...optFull.values()].map((a) => ({ id: a.id, assetCode: a.assetCode, name: a.name, serialNumber: a.serialNumber || null, status: a.status, holder: a.assignedTo ? a.assignedTo.name : null, employeeCode: a.assignedTo ? a.assignedTo.employeeCode || null : null }))
+    .sort((x, y) => String(x.assetCode).localeCompare(String(y.assetCode)));
   const out = {
-    lineAssets,
+    lineAssets, assetOptions,
     payment: await BU.paymentOfUpload(row).catch(() => null), // the payment once Accounts has the bill (2026-10-28)
     id: row.id, code: row.code, status: row.status, statusLabel: BU.LABEL[row.status], step: BU.STEP_OF[row.status] ?? 0, steps: BU.STEPS, version: row.version,
     correctsCode: row.supersedes ? ((await DB.one('SELECT "code" FROM "VendorBillUpload" WHERE "id" = ?', [row.supersedes])) || {}).code || null : null,
@@ -131,7 +139,7 @@ async function staffDetail(row, { raw = false } = {}) {
     asset: asset ? { id: asset.id, assetCode: asset.assetCode, name: asset.name, serialNumber: asset.serialNumber } : null,
     files: BU.filesView(row), fields: BU.valuesOf(row),
     fieldMeta: Object.fromEntries(BU.FIELD_KEYS.map((k) => [k, { confidence: meta[k] ? meta[k].confidence ?? null : null, unclear: !!(meta[k] && meta[k].unclear && !meta[k].edited), edited: !!(meta[k] && meta[k].edited), by: meta[k] ? meta[k].by || null : null, note: meta[k] ? meta[k].note || null : null, aiValue: meta[k] && meta[k].aiValue !== undefined ? meta[k].aiValue : undefined, derived: !!(meta[k] && meta[k].derived) }])),
-    lines: ls.map((l) => ({ lineNo: l.lineNo, description: l.description, quantity: l.quantity, rate: l.rate, amount: l.amount, confidence: l.confidence, unclear: !!l.unclear && !l.edited, edited: !!l.edited, note: l.note })),
+    lines: ls.map((l) => ({ lineNo: l.lineNo, description: l.description, itemName: l.itemName || null, brand: l.brand || null, model: l.model || null, serialNo: l.serialNo || null, quantity: l.quantity, rate: l.rate, amount: l.amount, confidence: l.confidence, unclear: !!l.unclear && !l.edited, edited: !!l.edited, note: l.note })),
     flags: (row.flags || []).map((f) => ({ code: f.code, field: f.field, level: f.level, message: f.message, key: flagKey(f), sig: f.sig || null, acked: (row.acks || []).some((a) => a.key === flagKey(f) && (!f.sig || a.sig === f.sig)), duplicates: f.duplicates || undefined })),
     unresolved: unresolved(row),
     ai: { state: meta.ai || null, provider: row.aiProvider, model: row.aiModel, error: row.aiError, notes: row.aiNotes, attempts: row.aiAttempts, reads: row.aiReads, docType: row.docType, finishedAt: row.aiFinishedAt, usage: BU.json(row.aiUsageJson, null) },
@@ -145,6 +153,45 @@ async function staffDetail(row, { raw = false } = {}) {
   };
   if (raw) out.rawAi = BU.json(row.rawJson, null);
   return out;
+}
+
+// LINK ONE LINE OF A BILL TO AN HRMS ASSET (automatic asset detection, 2026-10-28). body: { lineNo, kind, assetId }
+//   kind 'linked' -> this line is that asset ("Linked by hand"), 'new' -> a newly bought asset, pending verification (no asset is
+//   created: it is registered in HRMS Assets the usual way), 'clear' -> back to the automatic reading.
+// Changes NOTHING on the asset (no assignment, repair or return): only which asset the bill line is. History + audit.
+async function lineAsset(user, id, body = {}) {
+  const row = await BU.getRow(id);
+  if (!row) return { status: 404, body: { error: 'Bill not found.' } };
+  if (row.status === S.SUPERSEDED) return { status: 409, body: { error: 'This file was replaced by a newer one. Open the newer bill.' } };
+  const lineNo = Number(body.lineNo);
+  const kind = ['linked', 'new', 'clear'].includes(body.kind) ? body.kind : null;
+  if (!kind) return { status: 400, body: { error: 'Say what this line is: an asset, a new asset, or clear.', field: 'kind' } };
+  const ls = await BU.lines(row.id);
+  const line = ls.find((l) => Number(l.lineNo) === lineNo);
+  if (!line) return { status: 404, body: { error: 'That line is not on this bill.', field: 'lineNo' } };
+  let asset = null;
+  if (kind === 'linked') {
+    asset = body.assetId ? await prisma.asset.findUnique({ where: { id: String(body.assetId) } }) : null;
+    if (!asset) return { status: 400, body: { error: 'Choose an asset from the list.', field: 'assetId' } };
+  }
+  const BLA = require('./billLineAssets'); // eslint-disable-line global-require
+  const before = (await BLA.linksOf(row.id)).get(lineNo) || null;
+  const beforeAsset = before && before.assetId ? await prisma.asset.findUnique({ where: { id: before.assetId }, select: { assetCode: true } }) : null;
+  const was = before ? (before.kind === 'new' ? 'New asset - pending verification' : (beforeAsset ? beforeAsset.assetCode : 'an asset')) : 'automatic';
+  const to = kind === 'clear' ? 'automatic' : (kind === 'new' ? 'New asset - pending verification' : asset.assetCode);
+  const who = actorOf(user);
+  await DB.run('DELETE FROM "VendorBillLineAsset" WHERE "uploadId" = ? AND "lineNo" = ?', [row.id, lineNo]);
+  if (kind !== 'clear') {
+    await DB.run('INSERT INTO "VendorBillLineAsset" ("id","uploadId","lineNo","kind","assetId","byId","byName","at") VALUES (?,?,?,?,?,?,?,?)',
+      [BU.newId('la'), row.id, lineNo, kind, asset ? asset.id : null, who.id, who.name, BU.nowIso()]);
+  }
+  const item = line.itemName || line.description || `line ${lineNo}`;
+  await BU.event(undefined, row, {
+    kind: 'edit', field: 'line asset', from: `line ${lineNo} (${item}): ${was}`, to: `line ${lineNo} (${item}): ${to}`, actorKind: 'Company', actorName: who.name, actorId: who.id,
+    note: kind === 'clear' ? `${who.name} cleared the asset of line ${lineNo}.` : `${who.name} set line ${lineNo} to ${to}.`,
+  });
+  await logAudit({ userId: user.id, actorName: who.name, action: 'Vendor bill line asset set', entity: 'VendorBillUpload', entityId: row.id, fromValue: `${row.code} line ${lineNo}: ${was}`, toValue: `${row.code} line ${lineNo}: ${to}` });
+  return { status: 200, body: { message: kind === 'clear' ? 'Back to the automatic reading.' : 'Saved.', upload: await staffDetail(await BU.getRow(row.id)) } };
 }
 
 async function defaultCategoryName() {
@@ -491,4 +538,4 @@ async function retrySync(user, req, id) {
   return { status: r.ok ? 200 : 409, body: { ...(r.ok ? { message: 'Synced.' } : { error: r.error }), sync: r, upload: await staffDetail(await BU.getRow(id)) } };
 }
 
-module.exports = { unresolved, flagKey, staffList, waitingCount, totalCount, staffDetail, staffEdit, approve, reject, sendBack, reread, syncApproved, retrySync, defaultCategoryName, MODES, tellVendor, actorOf };
+module.exports = { unresolved, flagKey, staffList, waitingCount, totalCount, staffDetail, staffEdit, lineAsset, approve, reject, sendBack, reread, syncApproved, retrySync, defaultCategoryName, MODES, tellVendor, actorOf };

@@ -57,6 +57,10 @@ const RUN_DIR = path.resolve(process.env.JOB_PORTAL_RUN_DIR || path.join(PORTAL_
 const HEARTBEAT = path.join(RUN_DIR, 'heartbeat');
 const PIDFILE = path.join(RUN_DIR, 'portal.pid.json');
 const LOGFILE = path.join(RUN_DIR, 'portal.log');
+// MAINTENANCE (2026-10-29): while this file exists (job-portal-app/embed/load-portal-data.mjs loading another PC's data) the portal is
+// asked to stop and is NOT started again; deleting the file lets the supervisor start it within ~10 s.
+const MAINT = path.join(RUN_DIR, 'maintenance');
+const inMaintenance = () => { try { return fs.existsSync(MAINT); } catch { return false; } };
 const port = () => parseInt(process.env.JOB_PORTAL_PORT, 10) || 4323;
 const internalUrl = () => `http://127.0.0.1:${port()}`;
 const appBase = () => trimSlash(process.env.APP_BASE_URL || 'http://localhost:5183');
@@ -96,7 +100,60 @@ function alive(pid) {
   try { process.kill(pid, 0); return true; } catch (err) { return err.code === 'EPERM'; }
 }
 
+// THE PORTAL'S CODE IS NEWER THAN THE RUNNING PORTAL (founder 2026-10-29: "Job Portal localhost lo unnavi server ki push avvatledu").
+// A deploy replaces the portal's files, then restarts this backend. The old backend writes "stop" into the heartbeat, but the new one
+// starts within a second or two and overwrites it with "alive" before the portal (which looks every 5 s) has read it - so the new
+// backend found the OLD portal still answering, adopted it, and the deployed portal code never ran. Now, on start, the running
+// portal's start time is compared with the newest change time of its code (mtime or ctime: a tar extract gives files their old mtime
+// but a fresh ctime); code newer than the portal = stop it cleanly and start the new code.
+let restarting = false;
+function newestCodeChange() {
+  let newest = 0;
+  const skip = new Set(['node_modules', 'var', 'run', '.git']);
+  const walk = (dir, depth) => {
+    if (depth > 8) return;
+    let list = [];
+    try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of list) {
+      if (skip.has(e.name)) continue; // eslint-disable-line no-continue
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else {
+        try { const s = fs.statSync(p); newest = Math.max(newest, s.mtimeMs, s.ctimeMs); } catch { /* gone */ }
+      }
+    }
+  };
+  walk(PORTAL_DIR, 0);
+  walk(EMBED_DIR, 0);
+  return newest;
+}
+function portalIsStale() {
+  const p = readPid();
+  const startedAt = p && p.startedAt ? Date.parse(p.startedAt) : NaN;
+  if (!Number.isFinite(startedAt)) return false; // unknown start time: never restart on a guess
+  return newestCodeChange() > startedAt + 1000;
+}
+// Ask the old portal to stop (and keep the heartbeat saying so until it is gone), then let check() start the new code.
+async function restartForNewCode() {
+  restarting = true;
+  requestStop();
+  const until = Date.now() + 90000;
+  while (Date.now() < until) {
+    // eslint-disable-next-line no-await-in-loop
+    await new Promise((r) => { setTimeout(r, 2000); });
+    requestStop();
+    // eslint-disable-next-line no-await-in-loop
+    if (!(await health(1500))) break;
+  }
+  restarting = false;
+  beat();
+  state.adopted = false;
+  check();
+}
+
 function beat() {
+  if (restarting) return; // the old portal is being asked to stop: do not overwrite "stop" with "alive"
+  if (inMaintenance()) { requestStop(); return; } // data being loaded: the portal stays stopped
   try { fs.mkdirSync(RUN_DIR, { recursive: true }); fs.writeFileSync(HEARTBEAT, `alive ${process.pid} ${new Date().toISOString()}\n`); } catch { /* next beat */ }
 }
 function requestStop() {
@@ -153,7 +210,7 @@ let timer = null;
 let beatTimer = null;
 let checking = false;
 async function check() {
-  if (checking) return;
+  if (checking || restarting || inMaintenance()) return; // a stale portal is being stopped: it is started again right after
   checking = true;
   try {
     if (await health()) {
@@ -200,7 +257,10 @@ function start() {
   beatTimer = setInterval(beat, 5000);
   beatTimer.unref();
   health().then((up) => {
-    if (up) {
+    if (up && portalIsStale()) {
+      console.log('[job-portal] the running Job Portal is older than its code on disk (a deploy or an update) — stopping it cleanly and starting the new code.');
+      restartForNewCode().catch((err) => { restarting = false; state.lastError = err.message; });
+    } else if (up) {
       state.adopted = true;
       state.lastHealthyAt = new Date();
       const p = readPid();
@@ -394,5 +454,5 @@ function proxy() {
 module.exports = {
   start, status, proxy, enabled, requestStop, internalUrl, health,
   // for tests
-  _inject: inject, _portalEnv: portalEnv, BASE, RUN_DIR, PIDFILE, HEARTBEAT, LOGFILE,
+  _inject: inject, _portalEnv: portalEnv, _portalIsStale: portalIsStale, _newestCodeChange: newestCodeChange, BASE, RUN_DIR, PIDFILE, HEARTBEAT, LOGFILE, MAINT,
 };

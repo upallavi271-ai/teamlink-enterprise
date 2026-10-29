@@ -21,6 +21,9 @@ import SmsPlatform from '../../components/comm/SmsPlatform.jsx';
 import AiCallingAdmin from '../../components/aicalling/AiCallingAdmin.jsx';
 // Job portals (Naukri / Foundit / Shine logins, switches, words) for the job publishing engine: Super Admin and Admin only.
 import JobPortalsAdmin from '../../components/jobpublish/JobPortalsAdmin.jsx';
+// Job Portal settings (the portal admin's Integrations module, run from here: job sites, Naukri & Shine mailboxes,
+// Email/SMS/WhatsApp, AI screening): Super Admin and Admin only.
+import JobPortalSettings from '../../components/jobpublish/JobPortalSettings.jsx';
 import { useAuth } from '../../context/AuthContext';
 import Combo from '../../components/Combo.jsx';
 
@@ -105,7 +108,7 @@ export default function Integrations() {
   // Health opens first: what is broken and how to fix it (?tab=health|connections|jobportal).
   const [tab, setTab] = useState(() => (
     searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal'
-      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : searchParams.get('tab') === 'jobportals' ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : 'health'));
+      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : ['jobportals', 'portal', 'mailboxes'].includes(searchParams.get('tab')) ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : 'health'));
   const { user: me } = useAuth();
   const mayJobPortals = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || ['SUPER_ADMIN', 'ADMIN'].includes(me.atsRole));
   const [data, setData] = useState(null);
@@ -212,7 +215,7 @@ export default function Integrations() {
     <div>
       <div className="page-head">
         <div><h1>Integrations</h1>
-          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'jobportals' ? 'Logins, switches and limits for posting jobs to Naukri, Foundit and Shine.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
+          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'jobportals' ? 'Naukri and Shine: the response mailboxes and their recruiters, job sites, email, SMS and WhatsApp of the Job Portal, and AI screening.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
             ? 'Every outside channel the platform talks to — messaging, email, calling, scheduling, job boards, storage, finance and developer access.'
             : 'Synchronisation between the TeamLink Job Portal and this ATS — status, controls and the record of every sync.'}</div></div>
       </div>
@@ -248,7 +251,7 @@ export default function Integrations() {
       {tab === 'messaging' && <CommCenter />}
       {tab === 'sms' && mayJobPortals && <SmsPlatform onOpenSettings={() => setTab('connections')} />}
       {tab === 'aicalling' && <AiCallingAdmin />}
-      {tab === 'jobportals' && mayJobPortals && <JobPortalsAdmin />}
+      {tab === 'jobportals' && mayJobPortals && <JobPortalSettings initial={searchParams.get('tab') === 'mailboxes' ? 'mailboxes' : searchParams.get('sub') || 'mailboxes'} legacy={<JobPortalsAdmin />} />}
 
       {tab !== 'health' && tab !== 'messaging' && tab !== 'jobportals' && tab !== 'aicalling' && tab !== 'sms' && <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
         {tab === 'jobportal'

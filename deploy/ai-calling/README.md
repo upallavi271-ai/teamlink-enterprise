@@ -64,11 +64,34 @@ cd backend && node scripts/ai-calling-local-check.js
 
 This places no call. It lists the Ollama models, opens an empty STT session and renders the word "Hello".
 
-## 4. Not built yet (Phase 3–4, after the server exists)
+## 4. One-shot install (instead of steps 1-3 by hand)
 
-- Placing the outbound call: an Asterisk AMI originate that sets `AICALL_UUID` and stores it as the call's `callSid`.
-  Asterisk then connects to the bridge, which already handles the whole conversation and saves the result.
-- "Self-hosted (Synway)" as a calling provider next to Exotel in Administration.
+```
+sudo ./install.sh --teamlink-env /opt/teamlink-enterprise/backend/.env --synway-ip <gateway LAN IP>
+```
+
+It installs everything above plus the Asterisk AMI user `[teamlink]` (`/etc/asterisk/manager.d/teamlink.conf`, random secret,
+127.0.0.1 only, rights: read system/call/reporting/config/dialplan, write originate/system). It asks for the Hugging Face read
+token without echo, keeps every service on 127.0.0.1, writes the `AI_CALL_*` lines into TeamLink's `.env` (backup kept) and
+the AMI secret into `/root/teamlink-ai-calling.env` (mode 600) for the Admin screen. Re-running it is safe.
+
+## 5. Placing calls (built 2026-10-28)
+
+- Administration > Integrations > AI Calling > **Calling provider: Self-hosted (Synway)**: Asterisk server address (private only),
+  AMI port 5038, AMI user `teamlink`, AMI secret (stored encrypted, never shown again), trunk `synway`, gateway LAN IP, number
+  format (10 digits / 0 + 10 / +91), context `teamlink-ai`, ring time.
+- **Test connection** is read only (`backend/src/calling/local/ami.js`): AMI login, Ping, version, `res_audiosocket` +
+  `app_audiosocket`, the trunk points at the gateway IP, `[teamlink-ai]` has AudioSocket. It never sends an Originate.
+  Live is refused until this test passed for the current details. From a shell: `node scripts/ai-calling-ami-check.js`.
+- A call: TeamLink saves a new UUID as the call's `callSid`, then `Originate Channel=PJSIP/<number>@synway Context=teamlink-ai
+  Exten=s Variable=AICALL_UUID=<uuid> Async=true`. Asterisk's OriginateResponse sets the status: answered -> in progress (the
+  bridge talks and saves Completed), Reason 5 busy, 1/3 no answer, 0/8 failed - with the same retries as Exotel. An answered
+  call whose AudioSocket never connects is failed after 45 s with the reason. Every step is in the call's event log.
+- Tested against an AMI simulator only (`scripts/ai-calling-ami-test.js`, 22 checks). That is not a real call.
+
+## 6. Still open
+
 - English speech: Vexyl STT has no English model. English and Tenglish calls are heard with the Telugu model. If English
   accuracy is poor, add a faster-whisper server (MIT licence).
-- The first real test call goes only to the founder's own number, and only with his approval.
+- The first real test call goes only to the founder's own number, and only with his approval (switch on Test, his number as
+  the only test number).

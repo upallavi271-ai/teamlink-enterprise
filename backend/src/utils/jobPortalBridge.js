@@ -148,7 +148,8 @@ async function portalFetch(path, {
     try { data = text ? JSON.parse(text) : null; } catch { data = null; }
     if (!res.ok) {
       const msg = (data && data.error && (data.error.message || data.error)) || text.slice(0, 200);
-      throw new Error(`job portal answered ${res.status}: ${msg}`);
+      // status + the portal's own error body kept, so a screen can show the portal's words (routes/portalMailboxes.js)
+      throw Object.assign(new Error(`job portal answered ${res.status}: ${msg}`), { status: res.status, portalError: data && data.error });
     }
     return data;
   } catch (err) {
@@ -592,5 +593,5 @@ async function ping() {
 
 module.exports = {
   portalUrl, portalJobId, jobUrl, secretMatches, pushRequirement, ingestApplication, fullSync,
-  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi,
+  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi, portalFetch,
 };

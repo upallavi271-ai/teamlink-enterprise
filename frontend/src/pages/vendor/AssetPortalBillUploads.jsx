@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { shrinkAll } from './shrinkPhoto.js';
 import PhotoPicker from './PhotoPicker.jsx'; // Take a photo / Choose photos / Choose PDF (2026-10-28)
-import BillLineAssets, { PaymentBlock } from './BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28) // phone photos made small (JPG) before upload - founder 2026-10-28
+import BillLineAssets, { PaymentBlock, ItemCells } from './BillLineAssets.jsx'; // each item -> asset -> who had it on the bill date / now (2026-10-28) // phone photos made small (JPG) before upload - founder 2026-10-28
 import vendorApi, { vendorError } from '../../vendorApi';
 import Modal from '../../components/Modal.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -225,12 +225,13 @@ export function MyBills({ onChanged, showUpload = true }) {
         <>
           <div className="tbl-wrap vp-scroll">
             <table className="bu-table">
-              <thead><tr><th>Bill</th><th>Uploaded</th><th>Repair</th><th>Asset</th><th>Invoice number</th><th>Invoice date</th><th className="num">Total</th><th>Status</th><th>Note</th><th /></tr></thead>
+              <thead><tr><th>Bill</th><th>Uploaded</th><th>Asset name</th><th>Assigned to</th><th>Asset match</th><th>Repair</th><th>Asset</th><th>Invoice number</th><th>Invoice date</th><th className="num">Total</th><th>Status</th><th>Note</th><th /></tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.id} className="vp-row-click" onClick={() => setOpen(r.id)}>
                     <td className={r.isNew ? 'bu-row-new' : undefined}><strong>{r.code}</strong>{r.version > 1 ? <span className="cell-muted"> v{r.version}</span> : null}{r.isNew ? <span className="bu-new">New</span> : null}<div className="cell-muted">{r.fileCount} file{r.fileCount === 1 ? '' : 's'}</div></td>
                     <td>{day(String(r.uploadedAt).slice(0, 10))}</td>
+                    <ItemCells items={r.items} />
                     <td>{r.repairNo || '-'}</td>
                     <td className="bu-name-wrap">{r.assetCode ? `${r.assetCode} · ${r.assetName || ''}` : '-'}</td>
                     <td>{r.invoiceNo || '-'}</td>

@@ -172,14 +172,15 @@ const FOUR = ['Dashboard', 'Bills & Invoices', 'Payments & Outstanding', 'Servic
     // The files of the Assets and ID Card vendor portals. Fingerprints (first 16 hex of sha256) taken on 2026-10-23 and re-taken on 2026-10-27 after the Assets Vendor Portal master prompt (Stage B) changed them on purpose, before this change was
     // finished: none of these files was opened for editing (their modified times are all older than that day). A later, deliberate change to one
     // of them must update the fingerprint here on purpose.
+    // Re-taken 2026-10-28 on purpose: the Assets portal stages C-G and the menu consolidation (Assets: Asset Register, My Bills, Repairs | Accounts: Invoices & Payments) changed these files.
     const crypto = require('crypto');
     const PROTECTED = {
-      'backend/src/utils/assetVendorPortal.js': 'cbb4e109bf963202', 'backend/src/utils/assetVendorSchema.js': '36885129121f5a71', 'backend/src/utils/assetVendorPayments.js': 'f6dcf91f4837e22b',
-      'backend/src/routes/assetVendorPortal.js': '44f18812895e6ea4', 'backend/src/utils/idCardVendorPortal.js': '2de6eaeaa555740e', 'backend/src/utils/idCardVendorSchema.js': '2360fa92de971bc9',
-      'backend/src/routes/idCardVendorPortal.js': '78ef0b2a86059b29', 'frontend/src/pages/vendor/AssetPortalDashboard.jsx': 'c95042b12d3b76d6', 'frontend/src/pages/vendor/AssetPortalAssets.jsx': '6bb9b24fb4ef5bf5',
-      'frontend/src/pages/vendor/AssetPortalOrders.jsx': 'b9c15f82fd994d08', 'frontend/src/pages/vendor/AssetPortalRepairs.jsx': 'b7be964e04367c76', 'frontend/src/pages/vendor/AssetPortalHistory.jsx': 'b1cd8fe92f31e849',
-      'frontend/src/pages/vendor/AssetPortalInvoices.jsx': '2e317fa913fec19d', 'frontend/src/pages/vendor/IdCardDashboard.jsx': '25ed6866b9ca93f2', 'frontend/src/pages/vendor/IdCardRequests.jsx': '22aa6a87f326d520',
-      'frontend/src/pages/vendor/idCardCommon.jsx': '856a1e8b8684bfe5', 'frontend/src/pages/vendor/assetPortalCommon.jsx': 'ccf2b13a8a5ec0c8',
+      'backend/src/utils/assetVendorPortal.js': '03f062fc304361bc', 'backend/src/utils/assetVendorSchema.js': 'ebb948833e9c6369', 'backend/src/utils/assetVendorPayments.js': '1acb6be27ba3a8cd',
+      'backend/src/routes/assetVendorPortal.js': 'a709894e0d528ec3', 'backend/src/utils/idCardVendorPortal.js': 'd530e6f895fad497', 'backend/src/utils/idCardVendorSchema.js': '2360fa92de971bc9',
+      'backend/src/routes/idCardVendorPortal.js': '78ef0b2a86059b29', 'frontend/src/pages/vendor/AssetPortalDashboard.jsx': '65db20678c10cf95', 'frontend/src/pages/vendor/AssetPortalAssets.jsx': 'c84ac5597f8bbb3b',
+      'frontend/src/pages/vendor/AssetPortalOrders.jsx': 'b9c15f82fd994d08', 'frontend/src/pages/vendor/AssetPortalRepairs.jsx': 'f6590b9fe1dfb9c1', 'frontend/src/pages/vendor/AssetPortalHistory.jsx': 'b1cd8fe92f31e849',
+      'frontend/src/pages/vendor/AssetPortalInvoices.jsx': 'cfc23a275f7b414b', 'frontend/src/pages/vendor/IdCardDashboard.jsx': '1323d1a2cbccc4d7', 'frontend/src/pages/vendor/IdCardRequests.jsx': '22aa6a87f326d520',
+      'frontend/src/pages/vendor/idCardCommon.jsx': '856a1e8b8684bfe5', 'frontend/src/pages/vendor/assetPortalCommon.jsx': '0b7cce0d6a60e6c9',
     };
     const moved = Object.entries(PROTECTED).filter(([rel, want]) => crypto.createHash('sha256').update(fs.readFileSync(path.join(BACK, '..', rel))).digest('hex').slice(0, 16) !== want).map(([rel]) => rel);
     check('X1 the Assets and ID Card portal files (17 files, backend + frontend) are exactly as they were', moved.length === 0, moved);

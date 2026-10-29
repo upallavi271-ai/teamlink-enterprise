@@ -30,7 +30,8 @@
 const toPaise = (n) => Math.round((Number(n) || 0) * 100);
 
 const SUFFIX = /\b(PVT|PRIVATE|LTD|LIMITED|LLP|INC|CO|COMPANY|CORP|CORPORATION|THE|INDIA|OPC)\b/g;
-const norm = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
+// an apostrophe joins its word (St. Peter's = ST PETERS, as banks print it) instead of splitting it
+const norm = (s) => String(s || '').toUpperCase().replace(/['’`]/g, '').replace(/[^A-Z0-9]+/g, ' ').replace(/\s+/g, ' ').trim();
 // "ABC Technologies Pvt. Ltd." -> "ABC TECHNOLOGIES"
 const idKey = (s) => norm(s).replace(SUFFIX, ' ').replace(/\s+/g, ' ').trim();
 const squash = (s) => norm(s).replace(/ /g, '');
@@ -110,8 +111,105 @@ function clientKeys(ctx) {
   return keys;
 }
 
+// ---- the client's name as banks actually print it (founder 2026-10-29: "client name narration lo unte automatic ga match avvadam ledu")
+// Only when the exact name is NOT found, three careful readings are tried - each still needs ONE client, and the amount
+// rules of rung 3 stay as they are (a name alone never settles anything):
+//   spelling   the same words with the usual spelling variants: TH/T, SH/S, BH/B, double letters (MAMATA = MAMATHA,
+//              SRI = SHRI), "and"/"&" left out, and short forms banks use (ENGG, EDUCATL, INST, HOSP, CLG, UNIV)
+//   cut short  the bank cut the payer's name at its field limit: "LORDS INSTITUTE OF ENGINEERING T-" is the start of
+//              "Lords Institute of Engineering & Technology". It must be the START of the name, at least 3 words and 15
+//              letters, end exactly where the bank's field ends (a '-' or '/' or the end), and fit no other client.
+//   part       one part of a joined name: "Sanjivani Group of Institutes, Maharashtra & Sanjivani University" ->
+//              "SANJIVANI UNIVERSITY" - a part counts only when it carries the client's own word (SANJIVANI), never a
+//              generic part such as "Management Sciences".
+// Our own company's name (TeamLink, the beneficiary on every receipt) is never read this way.
+const ABBR = {
+  ENGG: 'ENGINEERING', ENGINEER: 'ENGINEERING', EDUCATL: 'EDUCATIONAL', EDNL: 'EDUCATIONAL', INST: 'INSTITUTE', INSTT: 'INSTITUTE',
+  HOSP: 'HOSPITAL', CLG: 'COLLEGE', COLL: 'COLLEGE', UNIV: 'UNIVERSITY', SCI: 'SCIENCES', ACAD: 'ACADEMY',
+};
+const GENERIC = new Set(['COLLEGE', 'COLLEGES', 'INSTITUTE', 'INSTITUTES', 'INSTITUTIONS', 'INSTITUTION', 'UNIVERSITY', 'GROUP', 'ENGINEERING', 'MEDICAL', 'SCIENCES', 'SCIENCE',
+  'TECHNOLOGY', 'MANAGEMENT', 'HOSPITAL', 'HOSPITALS', 'EDUCATION', 'EDUCATIONAL', 'SOCIETY', 'TRUST', 'ACADEMY', 'SCHOOL', 'WOMEN', 'RESEARCH', 'CENTRE', 'CENTER',
+  'FOUNDATION', 'SRI', 'SHRI', 'DEGREE', 'JUNIOR', 'PHARMACY', 'NURSING', 'HEALTH', 'CARE', 'HEALTHCARE', 'SUPER', 'SPECIALITY', 'MULTI', 'INDUSTRIES', 'SERVICES', 'OF', 'FOR', 'AND']);
+const OWN = /\bTEAM ?LINK/;
+const sound = (w) => w.replace(/([BCDGKPST])H/g, '$1').replace(/(.)\1+/g, '$1');
+const looseWord = (w) => sound(ABBR[w] || w);
+// normalised words -> loose words ("and" dropped)
+const looseWords = (textNorm) => textNorm.split(' ').filter((w) => w && w !== 'AND').map(looseWord);
+
+function looseKeys(ctx) {
+  if (ctx._looseKeys) return ctx._looseKeys;
+  const out = [];
+  ctx.clients.forEach((c) => {
+    [c.name, c.legalName].filter(Boolean).forEach((text) => {
+      if (OWN.test(norm(text))) return;
+      const whole = looseWords(idKey(text));
+      if (whole.length >= 2) out.push({ clientId: c.id, words: whole, via: 'name, spelt differently' });
+      const parts = String(text).split(/[&,/()]|\band\b/i).map((p) => looseWords(idKey(p))).filter((p) => p.length >= 2);
+      if (parts.length > 1) {
+        const own = (p) => p.filter((w) => w.length >= 3 && !GENERIC.has(w));
+        parts.forEach((p, i) => {
+          const others = new Set(parts.filter((_, j) => j !== i).flatMap(own));
+          if (own(p).some((w) => others.has(w)) && p.join(' ') !== whole.join(' ')) out.push({ clientId: c.id, words: p, via: 'part of the name' });
+        });
+      }
+    });
+  });
+  ctx._looseKeys = out;
+  return out;
+}
+
+// the narration as loose words, each knowing whether the bank's field ends right after it
+function narrWords(narrRaw) {
+  const toks = String(narrRaw || '').toUpperCase().replace(/['’`]/g, '').match(/[A-Z0-9]+|[-/|]/g) || [];
+  const out = [];
+  toks.forEach((t, i) => {
+    if (/^[-/|]$/.test(t) || t === 'AND') return;
+    out.push({ w: looseWord(t), ends: i === toks.length - 1 || /^[-/|]$/.test(toks[i + 1]) });
+  });
+  return out;
+}
+
+function looseClient(narrNorm, narrRaw, ctx) {
+  const text = looseWords(narrNorm);
+  const textJoined = ` ${text.join(' ')} `;
+  const words = narrRaw != null ? narrWords(narrRaw) : null;
+  const whole = new Map(); // clientId -> { phrase, via }   the name (or a part of it) is there, spelt differently
+  const cut = new Map(); // clientId -> letters             the start of the name, cut where the bank's field ends
+  looseKeys(ctx).forEach((k) => {
+    const phrase = k.words.join(' ');
+    if (phrase.length >= 8 && textJoined.includes(` ${phrase} `)) {
+      const p = whole.get(k.clientId);
+      if (!p || phrase.length > p.phrase.length) whole.set(k.clientId, { phrase, via: k.via });
+      return;
+    }
+    if (!words || k.via !== 'name, spelt differently' || k.words.length < 3) return;
+    for (let i = 0; i < words.length; i += 1) {
+      if (words[i].w !== k.words[0]) continue; // eslint-disable-line no-continue
+      let j = 0;
+      while (j < k.words.length && i + j < words.length && words[i + j].w === k.words[j]) j += 1;
+      if (j >= k.words.length) continue; // eslint-disable-line no-continue -- the whole name: caught above
+      let used = j; let letters = k.words.slice(0, j).join(' ').length;
+      const next = words[i + j];
+      if (next && k.words[j].startsWith(next.w) && next.ends) { used = j + 1; letters += next.w.length + 1; } // last word cut
+      else if (!(j > 0 && words[i + j - 1].ends)) continue; // eslint-disable-line no-continue -- not where the field ends
+      if (used >= 3 && letters >= 15) cut.set(k.clientId, Math.max(cut.get(k.clientId) || 0, letters));
+    }
+  });
+  if (whole.size) {
+    // as with exact names: one inside another (SANJIVANI UNIVERSITY inside a longer name) - the longest is the one named
+    const list = [...whole.entries()];
+    const top = list.filter(([, a]) => !list.some(([, b]) => b !== a && b.phrase.length > a.phrase.length && ` ${b.phrase} `.includes(` ${a.phrase} `)));
+    if (top.length === 1) return { clientId: top[0][0], key: null, via: top[0][1].via };
+    return { ambiguous: top.map((x) => x[0]) };
+  }
+  if (!cut.size) return null;
+  if (cut.size === 1) { const [id] = [...cut.keys()]; return { clientId: id, key: null, via: 'name cut short by the bank' }; }
+  return { ambiguous: [...cut.keys()] }; // the start fits more than one client - a person decides
+}
+
 // The ONE client named in the narration, or { ambiguous: [...] }, or null.
-function clientNamed(narrNorm, ctx) {
+// narrRaw (optional): the narration as printed, so a name the bank cut short at its field limit can be recognised.
+function clientNamed(narrNorm, ctx, narrRaw) {
   const hits = new Map();
   clientKeys(ctx).forEach((k) => {
     // a mapping key is matched against the plain narration; a name key against the narration with suffix words removed too
@@ -120,7 +218,7 @@ function clientNamed(narrNorm, ctx) {
       if (!prev || k.key.length > prev.key.length) hits.set(k.clientId, k);
     }
   });
-  if (!hits.size) return null;
+  if (!hits.size) return looseClient(narrNorm, narrRaw, ctx);
   const list = [...hits.values()];
   // one name inside another (SAI inside SAI ESTATES): the longest phrase is the one named
   const longest = list.filter((a) => !list.some((b) => b !== a && b.key.length > a.key.length && hasPhrase(b.key, a.key)));
@@ -259,7 +357,7 @@ function decideCredit(txn, ctx) {
   }
 
   // who is named (used by rungs 2 and 3, and to detect conflicts)
-  const named = clientNamed(narrNorm, ctx);
+  const named = clientNamed(narrNorm, ctx, txn.description);
   const namedId = named && !named.ambiguous ? named.clientId : null;
 
   // RUNG 2 - an invoice number written in the narration (or a UTR typed on the invoice's proof).

@@ -22,10 +22,11 @@
 //     notification, no email, no asset REQUEST (EmployeeRecord ASSET) is made.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
+const { canonicalCategory } = require('../utils/assetCategory');
 const io = require('../utils/moduleIo');
 
 const STATUSES = ['Available', 'Assigned', 'In Repair', 'Retired'];
-const DEFAULT_CATEGORIES = ['Laptop', 'Desktop', 'Monitor', 'Mobile', 'Headset', 'ID Card', 'Other'];
+const DEFAULT_CATEGORIES = ['Laptop', 'Laptop Charger', 'Monitor', 'Mouse', 'Keyboard', 'Mobile Phone', 'Phone Charger', 'SIM Card', 'Headset', 'ID Card', 'Other'];
 
 const columns = [
   { key: 'assetCode', label: 'Asset ID', example: 'AST-0101', note: 'Blank = a new asset, numbered automatically. An existing Asset ID updates that asset; a new one creates an asset with that ID.' },
@@ -151,7 +152,7 @@ module.exports = {
       if (errors.length) return { line: r.line, label, errors, action: 'error' };
       const want = {
         name: io.str(r.name).slice(0, 200),
-        category: io.str(r.category).slice(0, 80) || null,
+        category: canonicalCategory(io.str(r.category).slice(0, 80)) || null, // one name per category (utils/assetCategory.js)
         assetType: io.str(r.assetType).slice(0, 200) || null,
         location: io.str(r.location).slice(0, 200) || null,
         purchaseDate: dates.purchaseDate,

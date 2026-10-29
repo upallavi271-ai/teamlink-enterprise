@@ -10,8 +10,12 @@
 //                  (the HRMS "SIM & connections" copy), when one exists for an asset, only supplies the Active / Suspended / Disconnected word.
 //   PAYMENT      = derived LIVE by utils/airtelBillPayments.js from utils/expensePaymentState.js (Accounts + bank statement). Never stored, never
 //                  set by a vendor.
-//   PRIVACY      = mobile numbers masked (98xxxxxx21), a SIM's holder is never named (department only), no bank account / line id / narration /
+//   PRIVACY      = the FULL 10-digit SIM number is shown (founder 2026-10-29: these are the operator's own SIMs, the number is how a bill and a
+//                  SIM are found - "display the complete 10-digit Airtel SIM number everywhere"); WHO uses the SIM now is shown too (founder
+//                  2026-10-29: "avaru aa sim use chestunnaru present ani kuda raavali"): the employee's name, employee ID and department from
+//                  HRMS's current assignment - never their phone, email, salary or other personal data; no bank account / line id / narration /
 //                  balance / full reference, no other vendor's or unrelated company expense.
+//   SIM COUNT    = unique SIM numbers (two asset rows with the same number are one SIM), never bill rows or a page of the list.
 //   NOT RECORDED = a field the data model does not hold is null (the screen prints "Not recorded"); nothing is invented.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
@@ -33,7 +37,12 @@ const monthLabel = (ym) => { const m = /^(\d{4})-(\d{2})$/.exec(ym || ''); retur
 const dmy = (iso) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || '')); return m ? `${m[3]}-${m[2]}-${m[1]}` : String(iso || ''); }; // 20-08-2026, the portal's date style
 const dayOf = (v) => { if (!v) return null; const s = String(v); if (YMD.test(s.slice(0, 10))) return s.slice(0, 10); const d = new Date(v); return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); };
 
-// ---- masking --------------------------------------------------------------------------------------
+// ---- numbers --------------------------------------------------------------------------------------
+// The SIM number as shown: its last 10 digits (+91 / 0 dropped), in full. null when there are fewer than 10 digits.
+const fullNumber = (n) => { const d = String(n == null ? '' : n).replace(/\D/g, '').slice(-10); return d.length === 10 ? d : null; };
+// The digits of a search text (a number typed as "+91 99634 18222" finds 9963418222). '' when it holds fewer than 4 digits.
+const digitsOf = (s) => { const d = String(s == null ? '' : s).replace(/\D/g, ''); return d.length >= 4 ? (d.length > 10 ? d.slice(-10) : d) : ''; };
+// Kept for callers / tests that still import it; the portal itself no longer masks numbers (2026-10-29).
 // 9963418222 -> 99xxxxxx22 (first two and last two digits). Anything shorter than 6 digits is hidden completely.
 function maskNumber(n) {
   const d = String(n == null ? '' : n).replace(/\D/g, '');
@@ -105,7 +114,7 @@ async function myModuleBills(v) {
   return DB.q('SELECT * FROM "VendorModuleBill" WHERE "vendorId" = ? AND "kind" = \'monthly_bill\' ORDER BY "createdAt" DESC', [v.vendorId]);
 }
 const parseLines = (raw) => { try { const x = JSON.parse(raw || '[]'); return Array.isArray(x) ? x : []; } catch { return []; } };
-const linesOf = (mod) => (mod ? parseLines(mod.lines).map((l) => ({ number: l.number ? maskNumber(l.number) : null, numberRaw: String(l.number || '').replace(/\D/g, '').slice(-10), description: maskText(l.description) || null, amount: l.amount == null ? null : ROUND(l.amount) })) : []);
+const linesOf = (mod) => (mod ? parseLines(mod.lines).map((l) => ({ number: l.number ? (fullNumber(l.number) || String(l.number).trim()) : null, numberRaw: String(l.number || '').replace(/\D/g, '').slice(-10), description: l.description ? String(l.description) : null, amount: l.amount == null ? null : ROUND(l.amount) })) : []);
 
 // ---- BILL ROWS ------------------------------------------------------------------------------------------
 // Everything a bill row carries. `Not recorded` fields are null. numberRaw (a full number) is used inside the server to match a SIM and is
@@ -163,7 +172,7 @@ async function billRows(v, today = ACC.istDay()) {
       billDate, period, periodLabel: period ? monthLabel(period) : null, billMonth: period || (billDate ? billDate.slice(0, 7) : null), billMonthFrom: period ? 'billing period' : 'bill date',
       dueDate: dayOf(m.dueDate), amount: ROUND(m.amount), tax: ROUND(m.gst), tds: 0, additionalCharges: null, total, payable: total,
       payment: pay, hasDocument: !!m.documentFile, lines: linesOf(m), sentByYou: true, duplicateOf: null, counted: false, rejectionReason: m.status === 'Rejected' ? m.rejectionReason || null : null,
-      remarks: maskText(m.remarks) || null,
+      remarks: m.remarks || null,
     });
   }
   return rows.sort((a, b) => String(b.billDate || '').localeCompare(String(a.billDate || '')) || String(b.invoiceNo || '').localeCompare(String(a.invoiceNo || '')));
@@ -192,21 +201,33 @@ async function simRows(v, billRowsIn) {
   const master = await vendorMaster(v);
   const key = providerKey(master && master.name);
   const assets = await prisma.asset.findMany({
-    where: { category: 'SIM Card', NOT: { status: { in: VA.ARCHIVED } } }, include: { assignedTo: { select: { department: true } } }, orderBy: { assetCode: 'asc' }, take: 5000,
+    where: { category: 'SIM Card', NOT: { status: { in: VA.ARCHIVED } } }, include: { assignedTo: { select: { department: true, name: true, employeeCode: true } } }, orderBy: { assetCode: 'asc' }, take: 5000,
   });
   const mine = assets.filter((a) => a.vendorId === v.vendorId || (key && providerOfAsset(a) === key));
   const conns = (await DB.ready()) && mine.length ? await DB.q(`SELECT "assetId","status","mobileNumber" FROM "SimConnection" WHERE "assetId" IN (${mine.map(() => '?').join(',')})`, mine.map((a) => a.id)) : [];
   const connOf = new Map(conns.map((c) => [c.assetId, c]));
   const bills = billRowsIn || [];
-  return mine.map((a) => {
+  // ONE row per SIM number: a second asset row with the same number (a re-entered SIM) is the same SIM and is not counted again.
+  const seenNumbers = new Set();
+  const unique = mine.filter((a) => {
     const c = connOf.get(a.id);
-    const raw = numberOfAsset(a) || (c && String(c.mobileNumber || '').replace(/\D/g, '').slice(-10)) || null;
+    const raw = numberOfAsset(a) || fullNumber(c && c.mobileNumber);
+    if (!raw) return true; // no number recorded: kept (it cannot be matched to another row)
+    if (seenNumbers.has(raw)) return false;
+    seenNumbers.add(raw);
+    return true;
+  });
+  return unique.map((a) => {
+    const c = connOf.get(a.id);
+    const raw = numberOfAsset(a) || fullNumber(c && c.mobileNumber) || null;
     const iccid = iccidOfAsset(a);
     const last = raw ? bills.find((b) => (b.lines || []).some((l) => l.numberRaw === raw)) : null;
     const dept = (a.assignedTo && a.assignedTo.department) || deptOfSeat(a.location) || null;
     return {
-      id: a.id, simRef: a.assetCode, provider: providerLabel(master && master.name), number: raw ? maskNumber(raw) : null, iccid: iccid ? `••••${iccid.slice(-5)}` : null,
-      department: dept, holder: a.assignedToId ? 'Assigned' : 'In stock', status: c ? c.status : (a.status === 'Assigned' ? 'In use' : (a.status === 'Available' ? 'In stock' : a.status)),
+      id: a.id, simRef: a.assetCode, provider: providerLabel(master && master.name), number: raw, iccid: iccid ? `••••${iccid.slice(-5)}` : null,
+      department: dept, holder: a.assignedToId ? 'Assigned' : 'In stock',
+      // who uses it NOW (HRMS's current assignment): name + employee ID only
+      usedBy: a.assignedToId && a.assignedTo ? { name: a.assignedTo.name || null, employeeCode: a.assignedTo.employeeCode || null } : null, status: c ? c.status : (a.status === 'Assigned' ? 'In use' : (a.status === 'Available' ? 'In stock' : a.status)),
       lastBill: last ? { key: last.key, invoiceNo: last.invoiceNo, periodLabel: last.periodLabel || (last.billMonth ? monthLabel(last.billMonth) : null), payment: last.payment.status } : null,
       numberRaw: raw,
     };
@@ -219,11 +240,17 @@ async function simNumberOf(v, ref, simsIn) {
   const sims = simsIn || await simRows(v, []);
   const q = str(ref).toLowerCase();
   if (!q) return null;
-  const hit = sims.find((s) => s.simRef.toLowerCase() === q || (s.number && s.number.toLowerCase() === q));
-  return hit ? hit.numberRaw : '';
+  const d = digitsOf(ref);
+  // the SIM ID (AST-0146), or the full number however it is typed (+91 99634 18222)
+  const hit = sims.find((s) => s.simRef.toLowerCase() === q || (d.length === 10 && s.numberRaw === d));
+  if (hit) return hit.numberRaw;
+  return d.length === 10 ? d : ''; // a full number that is not on the asset list still finds the bills that list it
 }
+// Does a bill list this (part of a) number? d = digits only.
+const billHasNumber = (r, d) => !!d && (r.lines || []).some((l) => l.numberRaw && l.numberRaw.includes(d));
 function keepBill(r, q, simNum) {
   const s = str(q.q).toLowerCase();
+  const sd = digitsOf(q.q);
   const period = str(q.period);
   const from = YM.test(str(q.from)) ? str(q.from) : null;
   const to = YM.test(str(q.to)) ? str(q.to) : null;
@@ -232,7 +259,8 @@ function keepBill(r, q, simNum) {
   if (from && (r.billMonth || '') < from) return false;
   if (to && (r.billMonth || '') > to) return false;
   if (simNum !== null && simNum !== undefined) { if (!simNum || !(r.lines || []).some((l) => l.numberRaw === simNum)) return false; }
-  if (s && ![r.invoiceNo, r.billCode, r.accountsRef, r.periodLabel, r.billMonth, monthLabel(r.billMonth), r.payment.status].some((x) => String(x || '').toLowerCase().includes(s))) return false;
+  // the search box: invoice number, references, month, status - or a SIM number (full or part) listed on the bill
+  if (s && ![r.invoiceNo, r.billCode, r.accountsRef, r.periodLabel, r.billMonth, monthLabel(r.billMonth), r.payment.status].some((x) => String(x || '').toLowerCase().includes(s)) && !billHasNumber(r, sd)) return false;
   return true;
 }
 
@@ -250,6 +278,10 @@ async function listBills(v, q = {}) {
     summary: totalsOf(all), shown: totalsOf(rows),
     facets: { status: facet(sweep, (r) => r.payment.status), month: facet(all, (r) => r.billMonth).map((o) => ({ ...o, label: monthLabel(o.value) })).sort((a, b) => b.value.localeCompare(a.value)) },
     simFilterNote: str(q.sim) ? 'Only bills that list this number are shown. A bill without a per-number list cannot be linked to one SIM.' : null,
+    // a number searched (box or SIM filter) that no imported bill lists: say why, instead of an empty list with no reason
+    numberNote: !rows.length && (digitsOf(q.q).length >= 10 || (simNum && simNum.length === 10))
+      ? `No imported bill lists ${simNum || digitsOf(q.q)}. ${all.some((r) => (r.lines || []).length) ? 'The other bills do not name this number.' : 'The Airtel bills in Accounts were imported with the monthly total only (no per-SIM lines), so a bill cannot be found by a SIM number yet.'}`
+      : null,
     today,
   };
 }
@@ -280,7 +312,7 @@ async function historyOf(row, exp, mod) {
   }
   if (mod) {
     out.push({ at: DB.toDate(mod.createdAt), what: `You sent this bill (${mod.billCode}).`, by: 'You', derived: false });
-    if (mod.reviewedAt && mod.status !== 'Submitted') out.push({ at: DB.toDate(mod.reviewedAt), what: mod.status === 'Rejected' ? `Accounts rejected it${mod.rejectionReason ? `: ${maskText(mod.rejectionReason)}` : '.'}` : `Accounts ${mod.status === 'Paid' ? 'approved it and marked it paid' : 'approved it'}.`, by: 'Accounts', derived: false });
+    if (mod.reviewedAt && mod.status !== 'Submitted') out.push({ at: DB.toDate(mod.reviewedAt), what: mod.status === 'Rejected' ? `Accounts rejected it${mod.rejectionReason ? `: ${mod.rejectionReason}` : '.'}` : `Accounts ${mod.status === 'Paid' ? 'approved it and marked it paid' : 'approved it'}.`, by: 'Accounts', derived: false });
   }
   return out.sort((a, b) => new Date(a.at) - new Date(b.at)).map((h) => ({ ...h, at: h.at instanceof Date ? h.at.toISOString() : h.at }));
 }
@@ -354,6 +386,43 @@ function historyRows(all, today) {
     };
   });
 }
+// SIM-WISE MONTHLY USAGE (founder 2026-10-29): one SIM (number or SIM ID) + one month -> what the IMPORTED bills of that month say about
+// that number: its own charge lines (usage / rental / whatever the bill wrote, word for word) and the total of each bill. Nothing is
+// estimated: a bill that has no per-number lines says so, and so does a month with no bill.
+async function simUsageOf(v, q, all) {
+  if (!str(q.sim) || !YM.test(str(q.period))) return null;
+  const sims = await simRows(v, all);
+  const num = await simNumberOf(v, q.sim, sims);
+  const month = str(q.period);
+  const sim = sims.find((s) => s.numberRaw && s.numberRaw === num) || null;
+  const base = {
+    month, monthLabel: monthLabel(month),
+    sim: sim ? { simRef: sim.simRef, number: sim.number, department: sim.department, status: sim.status, usedBy: sim.usedBy } : (num ? { simRef: null, number: num, department: null, status: null, usedBy: null } : null),
+  };
+  if (!num) return { ...base, available: false, message: `"${str(q.sim)}" is not a SIM ID or a 10-digit SIM number of this account.` };
+  const bills = all.filter((r) => r.billMonth === month && r.payment.status !== AP.STATUS.REJECTED);
+  if (!bills.length) return { ...base, available: false, message: `There is no Airtel bill for ${monthLabel(month)}.` };
+  const per = bills.map((r) => {
+    const mine = (r.lines || []).filter((l) => l.numberRaw === num);
+    return {
+      key: r.key, invoiceNo: r.invoiceNo, source: r.source, billTotal: r.total, hasLines: (r.lines || []).length > 0,
+      lines: mine.map((l) => ({ description: l.description, amount: l.amount })), simTotal: mine.length ? sumOf(mine, (l) => l.amount) : null,
+    };
+  });
+  const found = per.filter((b) => b.lines.length);
+  const billTotal = sumOf(bills.filter((r) => r.linked ? r.counted : true), (r) => r.total);
+  if (!found.length) {
+    const noLines = per.every((b) => !b.hasLines);
+    return {
+      ...base, available: false, billTotal, bills: per,
+      message: noLines
+        ? `Usage for this SIM is not in the imported bill for ${monthLabel(month)}: that bill was imported with its total only (${per.map((b) => `${b.invoiceNo || 'bill'} ₹${Number(b.billTotal).toLocaleString('en-IN')}`).join(', ')}), not with per-SIM charges.`
+        : `The ${monthLabel(month)} bill does not list ${num}.`,
+    };
+  }
+  return { ...base, available: true, billTotal, usageTotal: sumOf(found, (b) => b.simTotal), bills: per };
+}
+
 async function listHistory(v, q = {}) {
   const today = ACC.istDay();
   const all = await billRows(v, today);
@@ -372,6 +441,7 @@ async function listHistory(v, q = {}) {
   const withBills = rows.filter((r) => !r.noBill);
   const linkedRows = rows.filter((r) => r.linked);
   return {
+    simUsage: await simUsageOf(v, q, all),
     ...paged(rows, q, 'month', sorts, 'desc'), all: historyRows(all, today).length,
     totals: { months: withBills.length, billed: sumOf(linkedRows, (r) => r.billAmount), paid: sumOf(linkedRows, (r) => r.paidAmount), outstanding: sumOf(linkedRows, (r) => r.outstanding), notInAccounts: rows.reduce((t, r) => t + r.notLinked, 0) },
     facets: { status: facet(scoped, (r) => r.payment.status), month: facet(scoped, (r) => r.billMonth).map((o) => ({ ...o, label: monthLabel(o.value) })).sort((a, b) => b.value.localeCompare(a.value)) },
@@ -381,14 +451,14 @@ async function listHistory(v, q = {}) {
 }
 
 // ---- SIMs page ------------------------------------------------------------------------------------------
-const SIM_SORTS = { simRef: (r) => r.simRef, number: (r) => r.number || '', department: (r) => r.department || '', status: (r) => r.status };
+const SIM_SORTS = { simRef: (r) => r.simRef, number: (r) => r.number || '', department: (r) => r.department || '', status: (r) => r.status, usedBy: (r) => (r.usedBy && r.usedBy.name) || '~' };
 async function listSims(v, q = {}) {
   const bills = await billRows(v);
   const all = await simRows(v, bills);
   const s = str(q.q).toLowerCase();
   const keep = (r, skip) => (skip === 'department' || !str(q.department) || (str(q.department) === 'Not recorded' ? !r.department : r.department === str(q.department)))
     && (skip === 'status' || !str(q.status) || r.status === str(q.status))
-    && (!s || [r.simRef, r.number, r.iccid, r.department].some((x) => String(x || '').toLowerCase().includes(s)));
+    && (!s || [r.simRef, r.number, r.iccid, r.department, r.usedBy && r.usedBy.name, r.usedBy && r.usedBy.employeeCode].some((x) => String(x || '').toLowerCase().includes(s)) || (!!digitsOf(q.q) && !!r.numberRaw && r.numberRaw.includes(digitsOf(q.q))));
   const rows = all.filter((r) => keep(r));
   return {
     ...paged(rows.map(publicSim), q, 'simRef', SIM_SORTS, 'asc'), all: all.length,
@@ -459,8 +529,8 @@ function sendAnswer(b) {
     ...b,
     bill: {
       billCode: x.billCode, billNumber: x.billNumber, billDate: x.billDate, period: x.period, periodLabel: x.periodLabel, dueDate: x.dueDate, amount: x.amount, gst: x.gst, total: x.total,
-      status: 'Waiting for Accounts', remarks: maskText(x.remarks) || null,
-      lines: (x.lines || []).map((l) => ({ number: l && l.number ? maskNumber(l.number) : null, description: maskText(l && l.description) || null, amount: l && l.amount != null ? l.amount : null })),
+      status: 'Waiting for Accounts', remarks: x.remarks || null,
+      lines: (x.lines || []).map((l) => ({ number: l && l.number ? (fullNumber(l.number) || String(l.number).trim()) : null, description: (l && l.description) || null, amount: l && l.amount != null ? l.amount : null })),
       createdAt: x.createdAt,
     },
   };

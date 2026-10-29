@@ -22,6 +22,7 @@ import LeaveBalancesTab from './leave/LeaveBalancesTab.jsx';
 import HolidayCalendar from './leave/HolidaysTab.jsx';
 import LeaveKpiCards from './leave/LeaveKpiCards.jsx';
 import PulseSyncTab from './leave/PulseSyncTab.jsx';
+import { ChainButton } from './leave/LeaveChainScreen.jsx'; // the Chain screen: who approved, when, the reason (2026-10-28)
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -561,11 +562,10 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                     {!wf && <div className="cell-muted" style={{ fontSize: 11.5, marginTop: 3 }}>No approval chain — decided in one step.</div>}
                   </span>
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <button className="btn btn-sm" onClick={() => setChainFor(r.id)}>Chain</button>
-                    {/* Approve / Reject / Reassign open the request: the reason,
-                        the employee's comments, the TL rule and the reassign
-                        picker are all there. */}
-                    {mayDecide && <button className="btn btn-sm btn-primary" title={direct ? 'Direct Super Admin decision — skips the levels still waiting' : 'Approve, reject or reassign'} onClick={() => setChainFor(r.id)}>{direct ? 'Decide directly' : 'Decide'}</button>}
+                    {/* ONE button (founder 2026-10-28: "Chain and Decide directly are the same - keep one"): it opens the request with
+                        its chain, the reason, the employee's comments, the TL rule, Approve / Reject and the reassign picker. */}
+                    <ChainButton requestId={r.id} />
+                    <button className={`btn btn-sm${mayDecide ? ' btn-primary' : ''}`} title={mayDecide ? (direct ? 'Approve or reject now - the levels still waiting are skipped' : 'Approve, reject or reassign') : 'See who approves this request'} onClick={() => setChainFor(r.id)}>{mayDecide ? 'Approve / Reject' : 'View'}</button>
                   </span>
                 </AssignRow>
               );
@@ -679,6 +679,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
           limit={10}
           renderActions={(r) => (
             <>
+              <ChainButton requestId={r.id} />
               {/* Confirming a cancellation is a DECISION, so it needs the
                   approve permission. */}
               {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
@@ -743,6 +744,7 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
           onOpen={setOpenId}
           renderActions={(r) => (
             <>
+              <ChainButton requestId={r.id} />
               {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => confirmCancel(r)}>Confirm Cancel</button>}
               {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
             </>

@@ -9,6 +9,7 @@ import Combo from '../components/Combo.jsx';
 import FilterChips from '../components/FilterChips.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
 import { useKeptState, useKeptParams } from '../utils/useKeptState.js';
+import { rememberPlace, useKeptScroll } from '../utils/keptPlace.js';
 import ClientGroups, { buildClientGroups } from './invoices/ClientGroups.jsx';
 // One client = one row: the client-invoice rows + panel, the invoice window, the grouping.
 import ClientInvoiceRows, { CI_HEADS, ciHeadClass } from './invoices/ClientInvoiceRows.jsx';
@@ -222,8 +223,10 @@ export default function Invoices() {
   const [showAll, setShowAllState] = useState(readShowAll);
   const setShowAll = (next) => { setShowAllState(next); writeStore(SHOWALL_KEY, next ? '1' : '0'); };
   // Which client invoices have their detail panel open (several at once). ONE toggle serves the row, the Invoice No and the arrow.
-  const [openInv, setOpenInv] = useState(() => new Set());
-  const toggleInv = useCallback((k) => setOpenInv((o) => { const n = new Set(o); if (n.has(k)) n.delete(k); else n.add(k); return n; }), []);
+  // Kept too (2026-10-29): back from an invoice or the bank, the same rows are still open.
+  const [openList, setOpenList] = useKeptState('invoices.openInv', []);
+  const openInv = useMemo(() => new Set(openList), [openList]);
+  const toggleInv = useCallback((k) => setOpenList((o) => (o.includes(k) ? o.filter((x) => x !== k) : [...o, k].slice(-50))), [setOpenList]);
   const [viewFor, setViewFor] = useState(null); // null | a client invoice (the invoice window)
   const bellRef = useRef(null);
   const noticeRef = useRef(null);
@@ -237,6 +240,9 @@ export default function Invoices() {
   const TABS = ['notes', 'payouts', 'check'];
   const tab = TABS.includes(urlQ.get('tab')) ? urlQ.get('tab') : 'invoices';
   const setTab = (t) => { const n = new URLSearchParams(urlQ); if (TABS.includes(t)) n.set('tab', t); else n.delete('tab'); n.delete('raise'); setUrlQ(n, { replace: true }); };
+  // this screen's own address (with its tab) for the invoice page's Back link, and the spot on the page (utils/keptPlace.js)
+  useEffect(() => { const q = urlQ.toString(); rememberPlace('invoices', `/invoices${q ? `?${q}` : ''}`); }, [urlQ]);
+  useKeptScroll('invoices', !!data);
   useEffect(() => {
     // The desk's period words (M:2026-09, Q2:2026, FY:2026) become the same
     // dates on the calendar, applied to the invoice date.

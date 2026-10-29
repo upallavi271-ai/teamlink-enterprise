@@ -8,6 +8,21 @@ const { ROUND, normName, dueDateFor, deriveInvoiceStatus } = require('../utils/a
 const bankRoutes = require('./bank');
 const BIC = require('../utils/bankImportCore');
 const SD = require('../utils/bankStatementDedupe');
+const BF = require('../utils/bankFormat'); // which bank a statement file belongs to (2026-10-29)
+
+// The bank a stored upload (batch) belongs to, read from its first row's own columns.
+async function batchBank(batchId) {
+  // a readable row keeps the bank's columns in "raw", an unreadable one in "row"
+  const r = (await prisma.$queryRawUnsafe('SELECT "rowJson" FROM "BankStmtRow" WHERE "batchId" = ? AND ("rowJson" LIKE \'%"raw":{%\' OR "rowJson" LIKE \'%"row":{%\') LIMIT 1', batchId).catch(() => []))[0];
+  let row = null;
+  try { row = r ? JSON.parse(r.rowJson) : null; } catch { row = null; }
+  return BF.bankOfColumns(Object.keys((row && (row.raw || row.row)) || {}));
+}
+async function bankVerdict(fileBank, accountId) {
+  const accounts = await prisma.bankAccount.findMany({ select: { id: true, name: true, bank: true, accNo: true }, orderBy: { createdAt: 'asc' } });
+  const account = accounts.find((a) => a.id === accountId) || accounts[0];
+  return BF.checkAccount(fileBank, account, accounts);
+}
 const invoiceRoutes = require('./invoices');
 
 // ---------------------------------------------------------------------------
@@ -568,6 +583,9 @@ router.post('/preview', async (req, res) => {
         rows: p.rows, bankAccountId: p.fields.bankAccountId || null, file: p.file.filename, failedRows: p.failed || [], stated: p.stated || {}, sourceHash: BIC.sha256(p.file.data), sheet: p.sheet,
       });
       summary.stmt = { batchId: prep.batchId, accountId: prep.account.id, counts: prep.counts };
+      // 2026-10-29: whose statement is it? An ICICI file going into the HDFC account (or the reverse) is said before anything is saved
+      summary.bankCheck = BF.checkAccount(BF.bankOfColumns(p.heads), accounts.find((a) => a.id === prep.account.id) || prep.account, accounts);
+      if (!summary.bankCheck.ok) problems.push(summary.bankCheck.message);
     } else {
       // a login that may not import still sees what the file contains (counts only, nothing stored)
       const accounts = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'asc' }, select: { id: true } });
@@ -706,7 +724,7 @@ router.post('/bank-batch/:id/check', needBank, batchGuard(async (req, res) => {
   if (!accounts.some((a) => a.id === accountId)) return res.status(400).json({ error: 'Choose a bank account from the list.' });
   const out = await SD.recheck(b.id, { accountId, firstId });
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
-  return res.json({ counts: out.counts });
+  return res.json({ counts: out.counts, bankCheck: await bankVerdict(await batchBank(b.id), accountId) });
 }));
 
 router.post('/bank-batch/:id/plan', needBank, batchGuard(async (req, res) => {
@@ -718,6 +736,12 @@ router.post('/bank-batch/:id/plan', needBank, batchGuard(async (req, res) => {
 }));
 
 const runBatchRoute = (mode) => batchGuard(async (req, res) => {
+  // 2026-10-29: a statement of one bank is not saved into another bank's account unless the person confirmed it
+  if (!(req.body && req.body.confirmOtherBank === true)) {
+    const b = await SD.getBatch(req.params.id);
+    const v = b ? await bankVerdict(await batchBank(b.id), req.body?.bankAccountId || b.bankAccountId) : { ok: true };
+    if (!v.ok) return res.status(409).json({ error: v.message, code: 'BANK_MISMATCH', bankCheck: v });
+  }
   const out = await bankRoutes.importBatch(req, {
     batchId: req.params.id, mode, bankAccountId: req.body?.bankAccountId || null, autoPost: req.body?.autoPost !== false && req.body?.autoPost !== 'false',
   });
@@ -746,6 +770,10 @@ router.post('/commit', async (req, res) => {
   const fileName = String(p.file.filename || 'upload').slice(0, 200);
 
   if (p.kind === 'bank') {
+    if (!opt('confirmOtherBank')) { // 2026-10-29: not into another bank's account without a yes
+      const v = await bankVerdict(BF.bankOfColumns(p.heads), p.fields.bankAccountId || null);
+      if (!v.ok) return res.status(409).json({ error: v.message, code: 'BANK_MISMATCH', bankCheck: v });
+    }
     // One step: classify (against every line on the account), then save ONLY the "Not Imported" rows.
     // A row that is a repeat or "Needs Review" is saved only when its row number is listed in "decisions" with 'import'.
     let decisions = null;

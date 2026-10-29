@@ -99,6 +99,7 @@ class CallBridge {
     if (!row) { this.hangup(); return; }
     this.row = row;
     this.startedAt = Date.now();
+    await note(row.id, 'bridge-start', 'in-progress', 'AudioSocket connected: the AI joined the call'); // also tells the answer watchdog (callService) the bridge ran
     this.token = await svc().botTokenFor(row.id);
     this.stt = new SttStream({ lang: sttLang(row.language), sessionId: row.id });
     this.stt.on('final', (text) => this.turn({ text }));

@@ -855,12 +855,14 @@ export default function Resignation() {
   return (
     <div>
       <div className="tabbar" style={{ marginBottom: 10 }}>
-        <button className={'tab-btn' + (view === 'list' ? ' active' : '')} onClick={() => setView('list')}>Resignations</button>
-        <button className={'tab-btn' + (view === 'exits' ? ' active' : '')} onClick={() => setView('exits')}>
+        <button className={'tab-btn' + (view === 'list' ? ' active' : '')} onClick={() => { setView('list'); openRecord(null); }}>Resignations</button>
+        <button className={'tab-btn' + (view === 'exits' ? ' active' : '')} onClick={() => { setView('exits'); openRecord(null); }}>
           Exit approvals{waiting ? ` (${waiting} waiting)` : ''}
         </button>
       </div>
-      {view === 'list' && <ResignationList onOpenExit={(id) => { setView('exits'); setOpenExit(id); }} />}
+      {/* Opening an exit from the Resignations list keeps you on that tab (founder 2026-10-29: "tab open chesi close chesthe aa tab
+          lone undali"): the exit record opens over the list and closing it lands back on the list, not on Exit approvals. */}
+      {view === 'list' && <ResignationList onOpenExit={(id) => setOpenExit(id)} />}
       {view === 'exits' && <ExitApprovals openId={openExit} onOpen={openRecord} isDesk={isDesk} />}
       {view === 'list' && openExit && <ExitRecordModal id={openExit} onClose={() => openRecord(null)} onChanged={() => {}} />}
     </div>
