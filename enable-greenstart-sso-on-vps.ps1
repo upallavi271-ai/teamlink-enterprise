@@ -64,8 +64,41 @@ fi
 sed -i '/^GREENSTART_SSO_EMAIL=/d' "$TL"; printf 'GREENSTART_SSO_EMAIL=%s\n' "$EMAIL" >> "$TL"
 pm2 restart teamlink-enterprise --update-env >/dev/null && echo "TeamLink restarted."
 systemctl restart green-start-api && echo "Green Start API restarted."
+# CHECK: sign in once the way Omni-Channel will (a real single-use ticket to Green Start's API on this server); nothing secret is printed.
+echo "Checking the sign-in with Green Start..."
+TL_ENV="$TL" GS_ENV="$GS" SSO_EMAIL="$EMAIL" node - <<'JS'
+const fs = require('fs');
+const crypto = require('crypto');
+const val = (file, key, dflt) => { const l = fs.readFileSync(file, 'utf8').split(/\r?\n/).find((x) => x.startsWith(`${key}=`)); return l ? l.slice(key.length + 1).trim().replace(/^["']|["']$/g, '') : dflt; };
+const secret = val(process.env.TL_ENV, 'GREENSTART_SSO_SECRET', '');
+const port = val(process.env.GS_ENV, 'PORT', '4020');
+const prefix = val(process.env.GS_ENV, 'API_PREFIX', 'api');
+const ticket = () => {
+  const now = Math.floor(Date.now() / 1000);
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const h = b64({ alg: 'HS256', typ: 'JWT' });
+  const p = b64({ iss: 'teamlink', aud: 'greenstart', email: process.env.SSO_EMAIL, name: 'TeamLink', externalUserId: 'setup-check', iat: now, exp: now + 60, jti: crypto.randomUUID() });
+  return `${h}.${p}.${crypto.createHmac('sha256', secret).update(`${h}.${p}`).digest('base64url')}`;
+};
+(async () => {
+  for (let i = 0; i < 20; i += 1) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/${prefix}/v1/auth/teamlink`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ticket: ticket() }) });
+      const j = await r.json().catch(() => ({}));
+      const d = j.data || j;
+      if (r.ok && d && d.twoFactorRequired) { console.log('CHECK: the company account asks for a two-factor code on every sign-in. Turn two-factor off for it in Green Start, or pick another account with -Email.'); process.exit(2); }
+      if (r.ok) { console.log(`CHECK OK: Green Start accepted the sign-in for ${process.env.SSO_EMAIL}.`); return; }
+      if (r.status === 404) throw new Error('not on yet');
+      const e = j.error || {};
+      console.log(`CHECK FAILED (${r.status}): ${e.code || ''} ${e.message || ''}`.trim()); process.exit(2);
+    } catch { await new Promise((ok) => setTimeout(ok, 3000)); }
+  }
+  console.log('CHECK FAILED: Green Start API did not answer the sign-in in 60 s (systemctl status green-start-api).'); process.exit(2);
+})();
+JS
 '@
-$script = $script.Replace('__EMAIL__', $Email.ToLower()).Replace("`r", '')
+# the trailing newline matters: without it bash does not see the last "JS" line as the end of the check
+$script = $script.Replace('__EMAIL__', $Email.ToLower()).Replace("`r", '') + "`n"
 $script | ssh $VpsHost 'bash -s'
 if ($LASTEXITCODE -ne 0) { throw 'It did not finish on the VPS (see the lines above).' }
 Write-Host "`nDone. Open TeamLink -> Omni-Channel: Green Start opens already signed in (no login page)." -ForegroundColor Green
