@@ -541,28 +541,42 @@ function BiometricTab({ preset = null, goSummary = null }) {
   );
 }
 
-// ---- Tab 3: Punch Log — the old "Bio-Metric Logs" screen --------------------
-// Employee · Department · Designation · Attendance Date · Time Interval: every
-// punch time of the day joined with "|" (device punches and the imported
-// bio-metric log merged by time, each once — server: timeIntervalOf()).
-// Employee by employee, dates ascending; the Employee / Department /
-// Designation cells are shown on an employee's first row (and again at the top
-// of a page) and left blank on the following dates. No KPI cards here.
+// ---- Tab 3: Punch log — every punch, and how many times each day ------------
+// Founder 2026-10-29: "enni sarlu vesina employee ahh recoreds chupinchali enni
+// sarlu veseru ani punch log ane tab lo". One row per person per day: Employee
+// · Department · Date · Punches (how many times) · every punch time with where
+// it came from (Device / Web / Import / HR) · First in · Last out. Everyone
+// sees this tab; the server keeps each login to the people it may see in
+// Attendance (an employee: only their own punches). Department narrows the
+// Employee list. Pages come from the server; the export has every row.
 
 const PUNCH_STATUS_CHOICES = [
   { value: 'Checked In', label: 'Still checked in (no check-out)' },
   { value: 'Checked Out', label: 'Checked out' },
 ];
 
-// Search · Department · Punch status · Day status | More: Role · Method · Source.
+// The short word on each punch time: where the punch came from.
+const PUNCH_FROM = { web: 'Web', biometric: 'Device', bioimport: 'Import', pulse: 'Import', hr: 'HR' };
+const hhmm = (t) => (t ? String(t).slice(0, 5) : '—');
+
+// Search · Department · Employee | More: Punch status · Day status · Role · Method.
 // All sent to GET /attendance/punch-log, so the rows and the exports follow them.
-const punchFields = (seen, roles) => [
-  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…' },
-  { key: 'department', label: 'Department', primary: true, options: seen.departments || [], show: (seen.departments || []).length > 1 },
-  { key: 'punchStatus', label: 'Punch status', allLabel: 'Checked In & Checked Out', primary: true, options: PUNCH_STATUS_CHOICES },
-  { key: 'dayStatus', label: 'Day status', allLabel: 'All day statuses', primary: true, options: seen.dayStatuses || [] },
-  { key: 'role', label: 'Role', options: roles },
-  { key: 'method', label: 'Check-in method', allLabel: 'Any method', primary: true, options: seen.methods || [] },
+const punchFields = (facets, seesOthers, seen, roles) => [
+  { key: 'q', type: 'search', placeholder: 'Search employee name or ID…', show: seesOthers },
+  {
+    key: 'department', label: 'Department', allLabel: 'All departments', primary: true,
+    options: (facets.department || []).map((o) => ({ value: o.value, label: `${o.label} (${o.count})` })),
+    show: seesOthers && (facets.department || []).length > 1,
+  },
+  {
+    key: 'employeeId', label: 'Employee', allLabel: 'All employees', primary: true,
+    options: (facets.employeeId || []).map((o) => ({ value: o.value, label: `${o.label} (${o.count} ${o.count === 1 ? 'day' : 'days'})` })),
+    show: seesOthers,
+  },
+  { key: 'punchStatus', label: 'Punch status', allLabel: 'Checked In & Checked Out', options: PUNCH_STATUS_CHOICES, show: seesOthers },
+  { key: 'dayStatus', label: 'Day status', allLabel: 'All day statuses', options: seen.dayStatuses || [], show: seesOthers },
+  { key: 'role', label: 'Role', options: roles, show: seesOthers },
+  { key: 'method', label: 'Check-in method', allLabel: 'Any method', options: seen.methods || [], show: seesOthers },
 ];
 
 // Check-in / check-out tries refused for being outside the office area, with how far away they were.
@@ -586,108 +600,141 @@ function RefusedAttempts({ from, to }) {
   );
 }
 
-function PunchLogTab() {
+function PunchLogTab({ isHR = false }) {
   const [range, setRange] = useState({ from: today(), to: today() });
   const [absentees, setAbsentees] = useState(false);
   const [src, setSrc] = useState(''); // Source filter: '' | web | biometric | pulse | hr
   const [openRow, setOpenRow] = useState(null);
   const [data, setData] = useState(null);
+  const [facets, setFacets] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
-  const roles = useRoles(true);
-  const seen = useSeen(data, (d) => ({ departments: (d.rows || []).map((r) => r.department), ...(d.facets || {}) }));
-  const lf = useListFilters([], punchFields(seen, roles), { server: true });
+  const [pageNo, setPageNo] = useState(1);
+  const [pageSize, setPageSize] = useState(100);
+  const roles = useRoles(isHR);
+  const seen = useSeen(data, (d) => ({ ...(d.facets || {}), department: [], employeeId: [] }));
+  // Until the first answer, assume the wider view for HR (the filters then do not jump in).
+  const seesOthers = data ? !!data.seesOthers : isHR;
+  const lf = useListFilters([], punchFields(facets, seesOthers, seen, roles), { server: true });
   const punchStatus = lf.params.punchStatus || '';
 
+  // A new Department empties the Employee pick (that person may not be in it).
+  const dept = lf.values.department || '';
+  const firstDept = useRef(true);
+  useEffect(() => {
+    if (firstDept.current) { firstDept.current = false; return; }
+    if (lf.values.employeeId) lf.setValue('employeeId', '');
+  }, [dept]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const query = { ...range, ...lf.params, ...(absentees ? { absentees: '1' } : {}), ...(src ? { punchSource: src } : {}) };
+  const qKey = JSON.stringify(query);
+  useEffect(() => { setPageNo(1); }, [qKey, pageSize]);
   useEffect(() => {
     let alive = true;
     setError('');
-    api.get(`/attendance/punch-log?${filterQuery(query)}`)
-      .then((res) => { if (alive) setData(res.data); })
-      .catch((e) => { if (alive) { setData(null); setError(e.response?.data?.error || 'Could not load punch log.'); } });
+    api.get(`/attendance/punch-log?${filterQuery({ ...query, page: String(pageNo), pageSize: String(pageSize) })}`)
+      .then((res) => { if (alive) { setData(res.data); setFacets(res.data.facets || {}); } })
+      .catch((e) => { if (alive) { setData(null); setError(e.response?.data?.error || 'Could not load the punch log.'); } });
     return () => { alive = false; };
-  }, [JSON.stringify(query)]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [qKey, pageNo, pageSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const rows = data?.rows || [];
-  const page = usePaged(rows, 100);
+  const totals = data?.totals || { rows: 0, employees: 0, punches: 0 };
+  const pg = data?.page || { page: 1, pages: 1, total: rows.length, pageSize };
+  // The shared Pager, driven by the server's page.
+  const page = {
+    total: pg.total, pages: pg.pages, size: pageSize, setSize: setPageSize, page: pg.page, setPage: setPageNo,
+    from: pg.total ? (pg.page - 1) * pageSize + 1 : 0, to: Math.min(pg.page * pageSize, pg.total),
+  };
   const oneDay = range.from === range.to;
 
   async function exportAs(format) {
     setBusy(true);
     try {
-      await downloadFrom('/attendance/punch-log', { ...query, format }, `bio-metric-logs-${range.from}_to_${range.to}.${format}`);
+      await downloadFrom('/attendance/punch-log', { ...query, format }, `punch-log-${range.from}_to_${range.to}.${format}`);
     } catch { setError('Could not export the punch log.'); } finally { setBusy(false); }
   }
 
   return (
     <Panel className="att-day">
-      <PanelHead title={`Bio-Metric Logs — ${oneDay ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`}`}>
+      <PanelHead title={`Punch log — ${oneDay ? fmtDay(range.from) : `${fmtDay(range.from)} → ${fmtDay(range.to)}`}`}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-sm" onClick={() => exportAs('csv')} disabled={!data || busy} title="The rows matching these filters, with the same 5 columns">Export CSV</button>
-          <button type="button" className="btn btn-sm btn-primary" onClick={() => exportAs('xlsx')} disabled={!data || busy} title="The rows matching these filters, with the same 5 columns">Export Excel</button>
+          <button type="button" className="btn btn-sm" onClick={() => exportAs('csv')} disabled={!data || busy} title="Every row matching these filters">Export CSV</button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => exportAs('xlsx')} disabled={!data || busy} title="Every row matching these filters">Export Excel</button>
         </div>
       </PanelHead>
       <div style={{ padding: '12px 18px 0' }}>
         <RangeBar from={range.from} to={range.to} onChange={(from, to) => setRange({ from, to })} latest={data?.latestDataDate} today={data?.today} />
-        <ListFilterBar lf={lf} storageKey="att-punch">
-          <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, margin: 0 }} title="Also list the people on the rolls with no punch that day (their Time Interval is empty)">
-            <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={absentees && !punchStatus} disabled={!!punchStatus} onChange={(e) => setAbsentees(e.target.checked)} />
-            Show people without punches
-          </label>
-        </ListFilterBar>
-        <SourceFilter value={src} onChange={setSrc} totals={data?.sourceTotals} />
+        {seesOthers && (
+          <ListFilterBar lf={lf} storageKey="att-punch">
+            <label className="small-muted" style={{ display: 'inline-flex', alignItems: 'center', gap: 5, margin: 0 }} title="Also list the people on the rolls with no punch that day">
+              <input type="checkbox" style={{ width: 15, height: 15, minHeight: 0, minWidth: 0 }} checked={absentees && !punchStatus} disabled={!!punchStatus} onChange={(e) => setAbsentees(e.target.checked)} />
+              Show people without punches
+            </label>
+          </ListFilterBar>
+        )}
+        {seesOthers && <SourceFilter value={src} onChange={setSrc} totals={data?.sourceTotals} />}
         <NoDataNotice data={data} to={range.to} />
         <div className="small-muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
-          Time Interval = every punch of the day, earliest first — web check-ins, the biometric device and the imported old-HRMS log. Tap "All punches" on a row to see each punch with its source.
+          <b>Punches</b> = how many times the person punched that day. Each time says where it came from:
+          <b> Device</b> (biometric machine), <b>Web</b> (web / mobile check-in), <b>Import</b> (old HRMS file) or <b>HR</b> (typed by HR).
         </div>
+        {data && totals.rows > 0 && (
+          <div style={{ margin: '0 0 8px', fontSize: 13 }}>
+            <b>{totals.punches.toLocaleString()}</b> punches · <b>{totals.employees.toLocaleString()}</b> {totals.employees === 1 ? 'person' : 'people'} · <b>{totals.rows.toLocaleString()}</b> {totals.rows === 1 ? 'day' : 'days'}
+          </div>
+        )}
       </div>
       {error && <div className="notice red" style={{ margin: '0 18px 10px' }}>{error}</div>}
-      <RefusedAttempts from={range.from} to={range.to} />
-      <FaceReview />
+      {isHR && <RefusedAttempts from={range.from} to={range.to} />}
+      {isHR && <FaceReview />}
       <ScrollTable>
         <table>
           <thead>
-            <tr><th>Employee</th><th>Department</th><th>Designation</th><th>Attendance Date</th><th>Time Interval</th><th>Punches by source</th></tr>
+            <tr><th>Employee</th><th>Department</th><th>Date</th><th style={{ textAlign: 'center' }}>Punches</th><th>Punch times</th><th>First in</th><th>Last out</th></tr>
           </thead>
           <tbody>
-            {page.slice.map((r, i) => {
-              // The employee's cells on their first row (and at the top of a page).
-              const first = i === 0 || page.slice[i - 1].employeeId !== r.employeeId;
+            {rows.map((r) => {
               const rk = `${r.employeeId}-${r.date}`;
+              const list = r.punchList || [];
               return [
-                <tr key={rk} className={first && i > 0 ? 'att-emp-first' : undefined}
-                  title={r.dayStatus ? `${r.dateLabel}: ${r.dayStatus}` : undefined}>
-                  <td style={{ whiteSpace: 'nowrap' }}>{first ? <b>{r.employeeLabel}</b> : ''}</td>
-                  <td className="cell-muted">{first ? (r.department || '') : ''}</td>
-                  <td className="cell-muted">{first ? (r.designation || '') : ''}</td>
+                <tr key={rk} title={r.dayStatus ? `${r.dateLabel}: ${r.dayStatus}` : undefined}>
+                  <td style={{ whiteSpace: 'nowrap' }}><b>{r.employeeCode}</b> {r.name}</td>
+                  <td className="cell-muted">{r.department || ''}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.dateLabel}</td>
-                  <td style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', fontSize: 12.5 }}>
-                    {r.timeInterval || <span className="cell-muted">{r.dayStatus || 'No punch'}</span>}
-                  </td>
+                  <td style={{ textAlign: 'center', fontSize: 15 }}><b>{r.punchCount || 0}</b></td>
                   <td>
-                    <SourceChips counts={r.sourceCounts} />
+                    {list.length
+                      ? (
+                        <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
+                          {list.map((p, i) => (
+                            <span key={`${p.time}-${i}`} className={`psc-chip psc-${p.source}`} title={`${p.time} · ${p.direction === 'Out' ? 'Out' : 'In'} · ${p.from}`}>
+                              {hhmm(p.time)} <span style={{ fontWeight: 400 }}>{PUNCH_FROM[p.source] || p.from}</span>
+                            </span>
+                          ))}
+                        </span>
+                      )
+                      : <span className="cell-muted">{r.dayStatus || 'No punch'}</span>}
                     {(r.rawPunches || []).length > 0 && <div><PunchToggle open={openRow === rk} count={r.rawPunches.length} onClick={() => setOpenRow(openRow === rk ? null : rk)} /></div>}
                   </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{hhmm(r.firstInTime)}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{r.lastOutTime ? hhmm(r.lastOutTime) : <span className="cell-muted">{list.length ? 'No check-out' : '—'}</span>}</td>
                 </tr>,
-                openRow === rk && <tr key={`${rk}-d`}><td colSpan="6"><PunchDetails list={r.rawPunches} /></td></tr>,
+                openRow === rk && <tr key={`${rk}-d`}><td colSpan="7"><PunchDetails list={r.rawPunches} /></td></tr>,
               ];
             })}
             {data && rows.length === 0 && (
               lf.activeCount > 0
-                ? <tr><td colSpan="6"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
-                : <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>No punches in this period.</td></tr>
+                ? <tr><td colSpan="7"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
+                : <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No punches in these dates.</td></tr>
             )}
-            {!data && !error && <tr><td colSpan="6" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>
       <div style={{ padding: '4px 18px 10px' }}>
-        {rows.length > 0 && <Pager page={page} noun="rows" />}
-        <div className="small-muted" style={{ fontSize: 12 }}>
-          {data ? `${rows.length} row(s) · ${new Set(rows.map((r) => r.employeeId)).size} employee(s)${absentees && !punchStatus ? ' — people without punches included' : ''}` : ''}
-          {data && rows.length > page.size ? ' · the export has every matching row' : ''}
-        </div>
+        {pg.total > 0 && <Pager page={page} noun="rows" />}
+        {data && pg.pages > 1 && <div className="small-muted" style={{ fontSize: 12 }}>The export has every matching row.</div>}
       </div>
     </Panel>
   );
@@ -1116,7 +1163,10 @@ export default function Attendance() {
         ...(isHR && !user?.systemAccount ? [{ key: 'mine', label: 'My Attendance', element: <MyAttendance /> }] : []),
         ...(isHR ? [
           { key: 'biometric', label: 'Biometric Attendance List', element: <BiometricTab preset={bioPreset} goSummary={(from, to) => { setSummaryPreset({ from, to, n: Date.now() }); setTab('summary'); }} /> },
-          { key: 'punchlog', label: 'Punch Log (Detailed)', element: <PunchLogTab /> },
+        ] : []),
+        // PUNCH LOG FOR EVERYONE (founder 2026-10-29): an employee sees their own punches, a TL their team, HR everyone (server scope).
+        { key: 'punchlog', label: 'Punch log', element: <PunchLogTab isHR={isHR} /> },
+        ...(isHR ? [
           // HRMS-24 §11 — the monthly summary, in scope. It now carries the old
           // "Reports (Monthly)" figures too; "Team Attendance" is gone — the
           // Biometric list above is the date-wise, in-scope view of every person.

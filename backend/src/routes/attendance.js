@@ -1339,13 +1339,40 @@ const roleLabelOf = (e) => {
   return (code && code !== 'NONE' && HRMS_ROLE_LABEL[code]) || (e && e.designation) || '—';
 };
 
+// How many times a person punched on a day: every punch PSRC.rawPunchList()
+// lists (device, web / mobile, the imported old-HRMS log, typed by HR), each
+// with its time and where it came from, plus the first in / last out the day
+// engine used. The imported log's times count as punches; a day the import
+// knew only a first-in / last-out of has just those. Nothing is made up.
+function punchCountOf(raw, fin, lout, h) {
+  const list = (raw || []).map((p) => ({ time: p.time, direction: p.direction, from: p.sourceLabel, source: p.source, group: p.group }));
+  return {
+    punchCount: list.length,
+    punchList: list,
+    firstInTime: (fin ? clockOf(fin) : null) || (h && h.firstCheckIn) || (list[0] ? list[0].time : null),
+    lastOutTime: (lout ? clockOf(lout) : null) || (h && h.lastCheckOut) || null,
+  };
+}
+const hhmmOf = (t) => (t ? String(t).slice(0, 5) : '');
+const punchTimesText = (list) => (list || []).map((p) => `${hhmmOf(p.time)} (${p.from})`).join(', ');
+
 // DATE-WISE: default one day (today); a From–To range of up to 62 days is
 // grouped by date, each date with its own totals from dayReport() — the same
 // figures the Dashboard and the Biometric list show for that day. Rows are the
 // people with punches (device, web / mobile, or the imported CSVs) and — with
 // ?absentees=1, the default — everyone else on the rolls that day too (absent,
 // no record, on leave, week-off…), so the list and the day's counts agree.
-router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'), async (req, res) => {
+//
+// PUNCH LOG FOR EVERYONE (founder 2026-10-29: "enni sarlu vesina employee ahh
+// recoreds chupinchali enni sarlu veseru ani"): each row also says HOW MANY
+// times the person punched that day, every punch time with where it came from,
+// and the first in / last out. VIEW is enough — the rows are employeeWhere()'s
+// (an employee: their own; a TL: their team; HR / Admin: everyone) and a login
+// without Attendance export is held to its own employee record on top of that.
+// ?employeeId narrows to one person; facets.department / facets.employeeId are
+// the cascading filter's options (Department narrows the Employee list).
+// ?page / ?pageSize page the rows on the server; the export has every row.
+router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'view'), async (req, res) => {
   const r = rangeOfQuery(req.query);
   if (r.error) return res.status(400).json({ error: r.error });
   const { from, to } = r;
@@ -1354,7 +1381,12 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   // Like the old Bio-Metric Logs screen: only person-days with punches, unless
   // ?absentees=1 asks for everyone on the rolls (their Time Interval is empty).
   const withAbsentees = req.query.absentees === '1' && !statusFilter;
+  const seesOthers = await can(req.user, null, 'hrms', 'Attendance & Time', 'export');
+  const mine = seesOthers ? null : await ownEmployee(req);
+  const onlyMine = (list) => (seesOthers ? list : list.filter((e) => mine && e.id === mine.id));
   const rep = await dayReport(req, req.query, from, to);
+  rep.all = onlyMine(rep.all);
+  rep.employees = onlyMine(rep.employees);
   const cfg = rep.cfg;
   // Every punch of anyone in scope is listed (it is a log); the day status
   // says how that person's day counted.
@@ -1374,6 +1406,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
     const h = facts.history.get(key) || null;
     const day = daySplit(ps0);
     const disp = displayPunches(ps0, h);
+    const srcs = withPunchSources(ps0, h);
     const ps = day.punches;
     const fin = day.checkIn;
     const lout = day.checkOut;
@@ -1416,7 +1449,8 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
       hours: mins != null ? Number((mins / 60).toFixed(1)) : null,
       method: ps.length ? (dayKpi.methodOfPunch(fin || ps[0]) || methodLabel(fin || ps[0])) : dayKpi.HOW.IMPORTED,
       source: sourceOf(ps, null, h),
-      ...withPunchSources(ps0, h),
+      ...srcs,
+      ...punchCountOf(srcs.rawPunches, fin, lout, h),
       location: (fin && fin.location) || '—',
       // HRMS-24 §5 — how the first check-in was verified, and where it was.
       verification: fin ? (fin.verificationStatus || (fin.method === 'Biometric' ? 'Device' : 'Not verified')) : '—',
@@ -1442,6 +1476,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
           note: d.note || '', late: false, checkIn: d.checkIn || null, checkOut: d.checkOut || null,
           notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
           punches: 0, punchRows: 0, imported: false, rawPunches: [], sourceCounts: { web: 0, biometric: 0, pulse: 0, hr: 0 },
+          punchCount: 0, punchList: [], firstInTime: null, lastOutTime: null,
           checkInTimes: d.checkIn ? [d.checkIn] : [], checkOutTimes: d.checkOut ? [d.checkOut] : [], importedTimes: null,
           firstIn: '—', lastOut: '—', firstInClock: null, lastOutClock: null, workedSpan: null, hours: null,
           method: d.how || '—', methodOut: d.howOut || '', methodText: d.howText || '—', _day: bucket === 'halfDay' ? d : null,
@@ -1456,7 +1491,20 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
   const base = rows.filter((x) => !statusFilter || x.status === statusFilter);
   const facetOf = (fn) => [...new Set(base.map(fn).filter((v) => v && v !== '—'))].sort();
   const facets = { dayStatuses: facetOf((x) => x.dayStatus), methods: facetOf((x) => x.method), sources: facetOf((x) => x.source) };
+  // CASCADING Department -> Employee. The Department list is every department
+  // in scope (not cut by the department picked); the Employee list is the
+  // people of the picked department, each with the days they have in the list.
+  const inScope = onlyMine(await scopedEmployees(req, {}));
+  const deptCount = new Map();
+  inScope.forEach((e) => { if (e.department) deptCount.set(e.department, (deptCount.get(e.department) || 0) + 1); });
+  facets.department = [...deptCount.entries()].map(([v, n]) => ({ value: v, label: v, count: n })).sort((a, b) => a.label.localeCompare(b.label));
+  const daysOf = new Map();
+  base.forEach((x) => daysOf.set(x.employeeId, (daysOf.get(x.employeeId) || 0) + 1));
+  facets.employeeId = employees.map((e) => ({ value: e.id, label: `${e.employeeCode} - ${e.name}`, count: daysOf.get(e.id) || 0 }))
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
+  const empQ = req.query.employeeId ? String(req.query.employeeId) : '';
   const shown = base
+    .filter((x) => !empQ || x.employeeId === empQ)
     .filter((x) => !req.query.dayStatus || x.dayStatus === String(req.query.dayStatus))
     .filter((x) => !req.query.method || x.method === String(req.query.method))
     .filter((x) => !req.query.source || x.source === String(req.query.source))
@@ -1483,14 +1531,29 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
     return sendTabular(res, format, `attendance-date-wise-${from}_to_${to}`, headers, data, 'Date-wise totals');
   }
   if (format === 'csv' || format === 'xlsx') {
-    // Exactly the old Bio-Metric Logs columns (every row filled in, for Excel).
-    const headers = ['Employee', 'Department', 'Designation', 'Attendance Date', 'Time Interval', 'Punches by source'];
-    const data = shown.map((x) => [x.employeeLabel, x.department || '', x.designation || '', x.dateLabel, x.timeInterval, sourceCountsText(x.sourceCounts)]);
-    return sendTabular(res, format, `bio-metric-logs-${from}_to_${to}`, headers, data, 'Bio-Metric Logs');
+    // The punch log's columns, every row filled in, for Excel. Employee /
+    // Attendance Date / Time Interval keep the old Bio-Metric Logs names, so
+    // the file still reads back through Import History.
+    const headers = ['Employee', 'Department', 'Designation', 'Attendance Date', 'Number of punches', 'Punch times (where from)', 'First in', 'Last out',
+      'Time Interval', 'Punches by source'];
+    const data = shown.map((x) => [x.employeeLabel, x.department || '', x.designation || '', x.dateLabel, x.punchCount, punchTimesText(x.punchList),
+      hhmmOf(x.firstInTime), hhmmOf(x.lastOutTime), x.timeInterval, sourceCountsText(x.sourceCounts)]);
+    return sendTabular(res, format, `punch-log-${from}_to_${to}`, headers, data, 'Punch log');
   }
 
   const sourceTotals = sourceTotalsOf(base.filter((x) => x.inLog));
-  res.json({ from, to, today: rep.today, latestDataDate: latest, absentees: withAbsentees, days, rows: shown, facets, sourceTotals });
+  const totals = { rows: shown.length, employees: new Set(shown.map((x) => x.employeeId)).size, punches: shown.reduce((n, x) => n + (x.punchCount || 0), 0) };
+  // ?page=N (1-based) pages the rows here; without it every row comes back.
+  let page = null;
+  let list = shown;
+  if (req.query.page) {
+    const size = Math.min(500, Math.max(10, Number(req.query.pageSize) || 100));
+    const pages = Math.max(1, Math.ceil(shown.length / size));
+    const n = Math.min(pages, Math.max(1, Math.floor(Number(req.query.page)) || 1));
+    page = { page: n, pageSize: size, pages, total: shown.length };
+    list = shown.slice((n - 1) * size, n * size);
+  }
+  res.json({ from, to, today: rep.today, latestDataDate: latest, absentees: withAbsentees, days, rows: list, page, totals, facets, sourceTotals, seesOthers });
 });
 
 // ---- Past attendance import (old HRMS CSV exports) — utils/attendanceHistoryImport.js ----
