@@ -440,6 +440,13 @@ function isBdeTl(user) {
   return !s.global && s.atsRole === 'TL' && isBdeDepartment(s.departments);
 }
 
+// A department that lives in JOBS, not clients ("Non IT Medical": the Manufacturing desk's jobs at Medical clients, 2026-10-29):
+// the clients holding such a job are theirs too - names only for a TL, like the rest of the list.
+function withJobDepartments(s, own) {
+  const jobOnly = (s.departments || []).filter((d) => !(s.deptClientDepartments || []).includes(d) && /^non it medical$/i.test(d));
+  return jobOnly.length ? { OR: [own, { requirements: { some: { department: { in: jobOnly } } } }] } : own;
+}
+
 function clientWhere(user) {
   const s = atsScopeOf(user);
   if (s.global) return {};
@@ -476,12 +483,12 @@ function clientWhere(user) {
   // is unknown keeps the old arm (the clients their work is for).
   if (s.atsRole === 'TL') {
     return s.deptClientDepartments.length
-      ? { ownerDepartment: { in: s.deptClientDepartments } }
+      ? withJobDepartments(s, { ownerDepartment: { in: s.deptClientDepartments } })
       : { requirements: { some: teamRequirementWhere(user) } };
   }
   if (s.atsRole === 'STL') {
     return s.deptClientDepartments.length
-      ? { ownerDepartment: { in: s.deptClientDepartments } }
+      ? withJobDepartments(s, { ownerDepartment: { in: s.deptClientDepartments } })
       : { requirements: { some: requirementWhere(user) } };
   }
   if (s.atsRole === 'CLIENT') return { id: s.clientId || '__none__' };
