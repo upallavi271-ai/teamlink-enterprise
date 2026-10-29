@@ -49,22 +49,41 @@ done
 echo "TeamLink backend /jobs/ (the real portal): $([ "$n" -ge 1 ] && echo 'NEW version' || echo 'not the new page')"
 [ "$n" -ge 1 ] || { diag; echo 'STOPPED: the backend itself does not serve the new portal page - nothing changed.'; exit 3; }
 
-if grep -qE 'location[^{]*/jobs' "$F"; then
-  echo 'nginx already has a /jobs rule:'
-  grep -nE 'location[^{]*/jobs' -A6 "$F"
+# Where the rule goes. The live site (seen 2026-10-29) ALREADY had a hand-made static rule:
+#   location /jobs/ { alias /opt/teamlink-enterprise/frontend/dist/job-portal/; ... }   <- the old prototype copy
+# That block is REPLACED by the proxy block; with no /jobs/ block at all, the proxy block goes next to the /api rule.
+S0=$(grep -nE '^[[:space:]]*location[[:space:]]+(\^~[[:space:]]+)?/jobs/?[[:space:]]*\{' "$F" | head -1 | cut -d: -f1)
+HAS_REDIRECT=$(grep -cE '^[[:space:]]*location[[:space:]]*=[[:space:]]*/jobs[[:space:]]*\{' "$F")
+MODE=''; L=''; E0=''
+if [ -n "$S0" ]; then
+  if sed -n "${S0}p" "$F" | grep -q '}'; then E0=$S0; else
+    E0=$(awk -v s="$S0" 'NR>s && /^[[:space:]]*}[[:space:]]*$/ { print NR; exit }' "$F"); fi
+  [ -n "$E0" ] || { echo "STOPPED: could not find the end of the /jobs rule at line $S0 - nothing changed"; exit 4; }
+  echo "nginx /jobs rule now (lines $S0-$E0):"; sed -n "${S0},${E0}p" "$F"
+  if sed -n "${S0},${E0}p" "$F" | grep -q 'proxy_pass'; then
+    echo 'it already sends /jobs to a backend - left as it is'
+  else
+    MODE=replace
+  fi
 else
   L=$(grep -nE '^[[:space:]]*location[[:space:]]+(\^~[[:space:]]+)?/api' "$F" | head -1 | cut -d: -f1)
   if [ -z "$L" ]; then
     echo "STOPPED: no /api rule in $F to put the /jobs rule next to - nothing changed. Its rules:"
-    grep -nE 'server_name|listen|root |location|proxy_pass|try_files' "$F"
+    grep -nE 'server_name|listen|root |alias |location|proxy_pass|try_files' "$F"
     exit 4
   fi
+  MODE=insert
+fi
+
+if [ -n "$MODE" ]; then
   S=$(date +%Y%m%d-%H%M%S)
   B=/root/nginx-site-before-jobs-$S.conf
   cp -a "$F" "$B" && echo "nginx site backed up: $B"
-  awk -v L="$L" -v BE="$BACKEND" 'NR==L {
-    print "    # TeamLink Job Portal (2026-10-29): /jobs is the real portal, served by the TeamLink backend (not an old static copy)"
-    print "    location = /jobs { return 301 /jobs/; }"
+  awk -v MODE="$MODE" -v S0="$S0" -v E0="$E0" -v L="$L" -v BE="$BACKEND" -v REDIR="$HAS_REDIRECT" '
+  function blk() {
+    print "    # TeamLink Job Portal (2026-10-29): /jobs is the real portal, served by the TeamLink backend (it was an old static copy:"
+    print "    # alias .../frontend/dist/job-portal/ - backup of the old file in /root/nginx-site-before-jobs-*.conf)"
+    if (REDIR == 0) print "    location = /jobs { return 301 /jobs/; }"
     print "    location ^~ /jobs/ {"
     print "        proxy_pass " BE ";"
     print "        proxy_http_version 1.1;"
@@ -75,10 +94,13 @@ else
     print "        client_max_body_size 50m;"
     print "        proxy_read_timeout 300s;"
     print "    }"
-    print ""
-  } { print }' "$B" > "$F"
+  }
+  MODE == "replace" && NR == S0 { blk(); next }
+  MODE == "replace" && NR > S0 && NR <= E0 { next }
+  MODE == "insert" && NR == L { blk(); print "" }
+  { print }' "$B" > "$F"
   if nginx -t 2>&1; then
-    systemctl reload nginx && echo 'NGINX /jobs RULE ADDED'
+    systemctl reload nginx && echo "NGINX /jobs RULE $( [ "$MODE" = replace ] && echo REPLACED || echo ADDED )"
   else
     cp -a "$B" "$F"
     echo 'STOPPED: nginx did not accept the new rule - the old site file is back, nothing changed.'
