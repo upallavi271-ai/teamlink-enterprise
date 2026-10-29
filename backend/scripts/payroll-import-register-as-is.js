@@ -233,6 +233,8 @@ function recordOf(e) {
       await prisma.appSetting.deleteMany({ where: { key: { in: drop.map((id) => `payroll.edit:${id}`) } } });
     }
   }
+  // the month's run row (Payroll history: employees, gross, net, status) from the records just written
+  await require('../src/utils/payrollEngine').refreshMonthRun(MONTH, WHO); // eslint-disable-line global-require
   try {
     const { logAudit } = require('../src/utils/audit'); // eslint-disable-line global-require
     await logAudit({ userId: null, actorName: WHO, action: `Payroll ${MONTH} imported from "${fileName}" as it is`, entity: 'PayrollRun', entityId: run.id, toValue: `${created} new, ${replaced} replaced, ${dropped} removed; total net ${amt(all)}` });
