@@ -19,7 +19,7 @@ import './portalSettings.css';
 // Credentials go to the server once and never come back: a saved one shows only "saved" and its last characters.
 // ---------------------------------------------------------------------------
 const SUBTABS = [
-  ['sites', 'Job sites'], ['mailboxes', 'Naukri & Shine mailboxes'], ['notify', 'Notifications (Email · SMS · WhatsApp)'], ['screening', 'AI screening'],
+  ['mailboxes', 'Naukri & Shine mailboxes'], ['sites', 'Job sites'], ['notify', 'Notifications (Email · SMS · WhatsApp)'], ['screening', 'AI screening'],
 ];
 const errOf = (e) => {
   const x = e && e.response && e.response.data && e.response.data.error;
@@ -410,17 +410,20 @@ function Screening() {
   );
 }
 
-export default function JobPortalSettings({ initial = 'sites' }) {
-  const [sub, setSub] = useState(SUBTABS.some(([k]) => k === initial) ? initial : 'sites');
+// `legacy` (optional): the older screen kept as the last sub-tab, e.g. the login-based posting form ("Login posting").
+export default function JobPortalSettings({ initial = 'mailboxes', legacy = null, legacyLabel = 'Login posting (old)' }) {
+  const tabs = legacy ? [...SUBTABS, ['legacy', legacyLabel]] : SUBTABS;
+  const [sub, setSub] = useState(tabs.some(([k]) => k === initial) ? initial : 'mailboxes');
   return (
     <div className="nsm-wrap">
-      <div className="jp-tabsub" role="tablist" aria-label="Job Portal settings">
-        {SUBTABS.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={sub === k} className={sub === k ? 'is-on' : ''} onClick={() => setSub(k)}>{l}</button>)}
+      <div className="jp-tabsub" role="tablist" aria-label="Job portals: Naukri and Shine">
+        {tabs.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={sub === k} className={sub === k ? 'is-on' : ''} onClick={() => setSub(k)}>{l}</button>)}
       </div>
       {sub === 'sites' && <JobSites />}
       {sub === 'mailboxes' && <NaukriShineMailboxes />}
       {sub === 'notify' && <Channels />}
       {sub === 'screening' && <Screening />}
+      {sub === 'legacy' && legacy}
     </div>
   );
 }
