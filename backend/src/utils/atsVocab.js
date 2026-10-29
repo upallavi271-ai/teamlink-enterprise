@@ -245,7 +245,9 @@ const STAGE_OWNER_ACTION = {
 function applicationOwner(application, requirement) {
   const rule = STAGE_OWNER_ACTION[application.stage] || {};
   if (!requirement) return rule.ownerRole || '—';
-  if (rule.ownerRole === 'Recruiter') return (requirement.recruiter && requirement.recruiter.name) || '—';
+  // founder 2026-10-29: the recruiter who OWNS this candidate (application.ownerRecruiterName, filled by the caller), not the
+  // requirement's main recruiter ("owner Sneha ithey, D Sony ani endhuku vasthundhi")
+  if (rule.ownerRole === 'Recruiter') return application.ownerRecruiterName || (requirement.recruiter && requirement.recruiter.name) || '—';
   if (rule.ownerRole === 'BDE') {
     const bde = requirement.bde && requirement.bde.name;
     return bde || (requirement.recruiter && requirement.recruiter.name) || '—';
