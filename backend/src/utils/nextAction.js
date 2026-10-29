@@ -494,7 +494,8 @@ const ISO_DAY = /^(\d{4}-\d{2}-\d{2})/;
 // WHO OWNS THE STEP, in order (each a person with a login):
 //   1. the open follow-up's owner (who was actually handed it)
 //   2. the person the requirement names for the stage's role — Recruiter /
-//      HR: recruiterId (or the first of recruiterIds); TL / Dept Head: tlId;
+//      HR: the application's OWN recruiter (Application.ownerRecruiterId - who added the person; founder 2026-10-29:
+//      "ey login vallu upload chesthey, vallaladhey raavali"), else recruiterId (or the first of recruiterIds); TL / Dept Head: tlId;
 //      BDE: bdeId, else the CLIENT's Owner BDE (Client.bdeOwner, resolved by
 //      name to an active login), else the requirement's recruiter
 //   3. the person the work is ATTRIBUTED to for that role (ctx.attributed =
@@ -519,9 +520,12 @@ function bdeOnly(r, snap) {
   const co = clientOwnerId(r, snap);
   return co ? { id: co, name: r.client.bdeOwner, source: 'client owner' } : { id: null, name: null, source: null };
 }
-function namedOwner(role, r, snap) {
+function namedOwner(role, r, snap, app) {
   if (!r) return { id: null, name: null, source: null };
-  const rec = { id: r.recruiterId || String(r.recruiterIds || '').split(',').filter(Boolean)[0] || null, name: (r.recruiter && r.recruiter.name) || null };
+  const own = app && app.ownerRecruiterId && snap.activeUsers.has(app.ownerRecruiterId) ? app.ownerRecruiterId : null;
+  const rec = own
+    ? { id: own, name: snap.activeUsers.get(own) || null }
+    : { id: r.recruiterId || String(r.recruiterIds || '').split(',').filter(Boolean)[0] || null, name: (r.recruiter && r.recruiter.name) || null };
   if (role === 'Recruiter' || role === 'HR') return rec.id ? { ...rec, source: 'assigned' } : { id: null, name: null, source: null };
   if (role === 'TL' || role === 'Dept Head / TL') {
     return r.tlId ? { id: r.tlId, name: (r.tl && typeof r.tl === 'object' ? r.tl.name : r.tl) || snap.activeUsers.get(r.tlId) || null, source: 'assigned' } : { id: null, name: null, source: null };
@@ -640,7 +644,7 @@ function nextActionFor(app, ctx = {}) {
     if (openFu && openFu.ownerUserId) {
       ownerUserId = openFu.ownerUserId; ownerName = openFu.ownerName || snap.activeUsers.get(openFu.ownerUserId) || null; ownerSource = 'follow-up';
     } else {
-      const named = ov && ownerRole === 'BDE' ? bdeOnly(r, snap) : namedOwner(ownerRole, r, snap);
+      const named = ov && ownerRole === 'BDE' ? bdeOnly(r, snap) : namedOwner(ownerRole, r, snap, app);
       if (named.id) { ownerUserId = named.id; ownerName = named.name || snap.activeUsers.get(named.id) || null; ownerSource = named.source; } else {
         const attributed = ctx.attributed || (ctx.workedBy ? { recruiter: ctx.workedBy } : null);
         const who = attributed && attributed[ROLE_KEY[ownerRole]];

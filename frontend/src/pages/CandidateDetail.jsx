@@ -12,6 +12,7 @@ import { STAGE_GROUPS, groupContents, groupBadgeClass, groupIndexById } from '..
 import { can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import Modal from '../components/Modal.jsx';
+import { EditProfileButton } from '../components/candidate/EditCandidateProfile.jsx'; // Recruiter / Super Admin only (2026-10-29)
 import {
   PipelineSteps, pausedFrom, CandidateActions, CurrentApplication, FeedbackSplit, ActivityList,
   AiInterviewSection, ClientFeedbackSection, aiHeadline, aiCompletedAt,
@@ -354,7 +355,12 @@ export default function CandidateDetail() {
           app={primary}
           internal={internal}
           onChanged={() => { setRefreshKey((n) => n + 1); load(); }}
-          extra={internal ? <PortalInviteButton kind="candidate" id={c.id} /> : null}
+          extra={internal ? (
+            <>
+              <EditProfileButton c={c} user={user} onSaved={() => { setRefreshKey((n) => n + 1); load(); }} />
+              <PortalInviteButton kind="candidate" id={c.id} />
+            </>
+          ) : null}
         />
       </div>
       {c.profileStatus === 'Archived' && (
