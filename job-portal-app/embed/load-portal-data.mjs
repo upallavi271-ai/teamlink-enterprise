@@ -131,9 +131,17 @@ try {
   // ---- 4. uploads
   if (APPLY && UP) {
     say('4. replacing the uploads (resumes, documents)');
+    // unpack into a side folder first; the old uploads are replaced only once the new ones are complete. On Windows the system tar
+    // (C:\Windows\System32\tar.exe) - Git's GNU tar reads "D:\..." as a remote host.
+    const TAR = process.platform === 'win32' && existsSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe'))
+      ? join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+    const side = join(PORTAL, 'var', `uploads-incoming-${Date.now()}`);
+    mkdirSync(side, { recursive: true });
+    execFileSync(TAR, ['-xzf', UP, '-C', side]);
+    if (!existsSync(join(side, 'uploads'))) throw new Error('the uploads file has no "uploads" folder inside - the old uploads are kept');
     rmSync(UPLOADS, { recursive: true, force: true });
-    mkdirSync(join(PORTAL, 'var'), { recursive: true });
-    execFileSync('tar', ['-xzf', UP, '-C', join(PORTAL, 'var')]);
+    cpSync(join(side, 'uploads'), UPLOADS, { recursive: true });
+    rmSync(side, { recursive: true, force: true });
     console.log('uploads replaced');
   }
   say(APPLY ? 'DONE: the data is replaced. The backend starts the portal again within ~10 seconds.' : 'DRY RUN DONE: nothing was changed. Run again with --apply to replace the data.');
