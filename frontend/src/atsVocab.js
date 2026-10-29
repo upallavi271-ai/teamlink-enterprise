@@ -364,7 +364,10 @@ export function interviewStatusClass(code) {
 }
 
 // --- Option lists used by the Add/Edit forms -------------------------------
-export const DEPTS = ['IT', 'Medical', 'Manufacturing', 'Education', 'BDE', 'HR', 'Accounts', 'R&D'];
+// What a department is CALLED on screen (founder 2026-10-29: "manufacturing ki, non it mfg ani cheyyu"); the stored name stays.
+export const DEPT_LABELS = { Manufacturing: 'Non IT MFG' };
+export const deptLabel = (d) => DEPT_LABELS[d] || d;
+export const DEPTS = ['IT', 'Medical', 'Manufacturing', 'Non IT Medical', 'Education', 'BDE', 'HR', 'Accounts', 'R&D'];
 export const LOCS = ['Hyderabad', 'Bengaluru', 'Pune'];
 
 export const REQUIREMENT_TYPES = ['Client Requirement', 'Internal Requirement'];
