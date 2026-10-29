@@ -427,6 +427,9 @@ async function calculateMonth({ month, employeeWhere = {}, department = null, em
     if (!(c.grossPay > 0)) { skipped.push({ ...base, reason: v.payMode === 'Stipend' ? 'Stipend is 0' : 'No CTC set' }); return; }
     const prior = existingOf.get(emp.id);
     if (prior && prior.status !== 'DRAFT') { locked.push({ ...base, id: prior.id, status: prior.status }); return; }
+    // a record IMPORTED from the pay register as it is (scripts/payroll-import-register-as-is.js, founder 2026-10-29: "deni em change kuda
+    // upload chey ... evvi correct calculation ne") keeps the register's figures: never recalculated
+    if (prior && (prior.importNote || prior.importedBreakup)) { locked.push({ ...base, id: prior.id, status: 'IMPORTED' }); return; }
     if (prior && editedSet.has(prior.id)) { edited.push({ ...base, id: prior.id }); return; }
     rows.push({
       ...base, ...c, adjLines: adjusted.lines, salaryVersionId: v.id, effectiveFrom: v.effectiveFrom,
@@ -621,7 +624,9 @@ async function transition(entryId, action, actor, { reason = null, data = {} } =
     const block = await require('./payrollEdit').makerCheckerBlock(entry, actor && actor.id);
     if (block) throw new PayrollError(403, `${entry.employee.name}: ${block}`, { status: entry.status });
   }
-  if (action === 'submit') {
+  // A record imported from the pay register as it is carries the register's own figures: nothing to compare with a fresh run.
+  const imported = !!(entry.importNote || entry.importedBreakup);
+  if (action === 'submit' && !imported) {
     // A draft computed from a structure that has since been revised must be
     // recalculated first, or the approver would approve the old figures.
     const v = await versionFor(entry.employeeId, entry.month);

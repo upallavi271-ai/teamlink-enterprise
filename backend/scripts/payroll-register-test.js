@@ -189,6 +189,11 @@ async function part2() {
   console.log(`--- PART 2: on a copy of the database (${copy})`);
   if (!fs.existsSync(REG_FILE) || !fs.existsSync(ATT_FILE)) { console.log(`SKIP part 2: ${!fs.existsSync(REG_FILE) ? REG_FILE : ATT_FILE} not found`); return; }
   const prisma = require('../src/db');
+  // 2026-10-29: October 2026 on the real database is the founder's final register imported AS IT IS
+  // (scripts/payroll-import-register-as-is.js: read-only, never recalculated). This part tests the register RULES, so on
+  // the throw-away copy those imported drafts are taken away first.
+  const asIs = await prisma.employeePayrollRun.deleteMany({ where: { month: '2026-10', status: 'DRAFT', importNote: { contains: 'not recalculated' } } });
+  if (asIs.count) console.log(`(on the copy: ${asIs.count} October 2026 records imported as is were taken away first)`);
   const io = require('../src/utils/moduleIo');
   const attSpec = require('../src/io/payroll-attendance');
   const salSpec = require('../src/io/payroll-salary');
