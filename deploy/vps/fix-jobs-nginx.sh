@@ -19,9 +19,29 @@ F=$(grep -lsE 'server_name[^;]*teamlink\.teamlinks\.in' ${SITES:-/etc/nginx/site
 F=$(readlink -f "$F")
 echo "nginx site file: $F"
 
-n=$(curl -s -m 15 "$BACKEND/jobs/" | grep -c "$MARK")
+# the backend address = where this site's /api rule already sends requests (not a guess)
+API=$(grep -A6 -E '^[[:space:]]*location[[:space:]]+(\^~[[:space:]]+)?/api' "$F" | grep -oE 'proxy_pass[[:space:]]+https?://[^;/[:space:]]+' | head -1 | awk '{print $2}')
+[ -n "$API" ] && BACKEND=$API
+echo "TeamLink backend (from the /api rule): $BACKEND"
+
+diag() {   # what the backend and the portal really answer, so the cause is on the screen
+  echo '---- what the server answers ----'
+  echo "backend $BACKEND/jobs/ : $(curl -s -m 20 -o /tmp/jobs-b.html -w 'HTTP %{http_code}, %{size_download} bytes' "$BACKEND/jobs/"), new-page line: $(grep -c "$MARK" /tmp/jobs-b.html 2>/dev/null)"
+  head -c 300 /tmp/jobs-b.html 2>/dev/null | tr '\n' ' '; echo
+  R=/opt/teamlink-enterprise
+  P=$(sed -n 's/^JOB_PORTAL_PORT=//p' $R/backend/.env 2>/dev/null | tail -1 | tr -d '\042\047\r'); P=${P:-4323}
+  echo "portal itself 127.0.0.1:$P/ : $(curl -s -m 20 -o /tmp/jobs-p.html -w 'HTTP %{http_code}, %{size_download} bytes' "http://127.0.0.1:$P/"), new-page line: $(grep -c "$MARK" /tmp/jobs-p.html 2>/dev/null)"
+  W=$R/job-portal-app/job_portal-main/web/index.html
+  echo "portal file on disk: $(stat -c '%s bytes %y' $W 2>/dev/null), new-page line: $(grep -c "$MARK" $W 2>/dev/null)"
+  echo "backend .env: $(grep -E '^(PORT|JOB_PORTAL_[A-Z_]*(EMBED|PORT|DIR|URL))=' $R/backend/.env 2>/dev/null | tr '\n' ' ')"
+  echo "listening: $(ss -ltnp 2>/dev/null | grep -E ":(4010|4323|$P)\b" | awk '{print $4, $6}' | tr '\n' ' ')"
+  echo '---- portal log (last 15 lines) ----'; tail -n 15 $R/job-portal-app/run/portal.log 2>/dev/null
+  rm -f /tmp/jobs-b.html /tmp/jobs-p.html
+}
+
+n=$(curl -s -m 20 "$BACKEND/jobs/" | grep -c "$MARK")
 echo "TeamLink backend /jobs/ (the real portal): $([ "$n" -ge 1 ] && echo 'NEW version' || echo 'not the new page')"
-[ "$n" -ge 1 ] || { echo 'STOPPED: the backend itself does not serve the new portal page - nothing changed. Run push-everything-to-vps.ps1 first.'; exit 3; }
+[ "$n" -ge 1 ] || { diag; echo 'STOPPED: the backend itself does not serve the new portal page - nothing changed.'; exit 3; }
 
 if grep -qE 'location[^{]*/jobs' "$F"; then
   echo 'nginx already has a /jobs rule:'
@@ -36,11 +56,11 @@ else
   S=$(date +%Y%m%d-%H%M%S)
   B=/root/nginx-site-before-jobs-$S.conf
   cp -a "$F" "$B" && echo "nginx site backed up: $B"
-  awk -v L="$L" 'NR==L {
+  awk -v L="$L" -v BE="$BACKEND" 'NR==L {
     print "    # TeamLink Job Portal (2026-10-29): /jobs is the real portal, served by the TeamLink backend (not an old static copy)"
     print "    location = /jobs { return 301 /jobs/; }"
     print "    location ^~ /jobs/ {"
-    print "        proxy_pass http://127.0.0.1:4010;"
+    print "        proxy_pass " BE ";"
     print "        proxy_http_version 1.1;"
     print "        proxy_set_header Host $host;"
     print "        proxy_set_header X-Real-IP $remote_addr;"
@@ -62,4 +82,4 @@ fi
 
 sleep 2
 p=$(curl -s -m 20 https://teamlink.teamlinks.in/jobs/ | grep -c "$MARK")
-if [ "$p" -ge 1 ]; then echo 'PUBLIC /jobs/ = NEW PORTAL'; else echo 'PUBLIC /jobs/ still answers the old page'; exit 6; fi
+if [ "$p" -ge 1 ]; then echo 'PUBLIC /jobs/ = NEW PORTAL'; else echo 'PUBLIC /jobs/ still answers the old page'; diag; exit 6; fi
