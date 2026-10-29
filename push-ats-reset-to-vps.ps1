@@ -17,6 +17,7 @@
 # ---------------------------------------------------------------------------
 param(
   [switch]$Apply,
+  [switch]$Force,
   [string]$Downloads = (Join-Path $env:USERPROFILE 'Downloads')
 )
 $ErrorActionPreference = 'Stop'
@@ -30,12 +31,20 @@ $files = @{
   'joinings/Education-Team Joinings-2022-2025.xlsx'      = 'Education-Team Joinings-2022-2025.xlsx'
   'joinings/Manufacturing-Joing sheet (1).xlsx'          = 'Manufacturing-Joing sheet (3).xlsx'
 }
+# ONE TIME ONLY (2026-10-29): this EMPTIES the live ATS and imports the sheets. After it succeeded once, the VPS keeps a marker and every
+# later run (push-everything-to-vps.ps1 runs this on each deploy) SKIPS it, so recruiters' later work is never wiped. -Force runs it again.
+$Marker = '/root/.teamlink-ats-reset-2026-10-27.done'
+if (-not $Force) {
+  ssh $VpsHost "test -f $Marker"
+  if ($LASTEXITCODE -eq 0) { Write-Host "The ATS reset was already done on the live site ($Marker) - skipped. Use -Force only to empty the live ATS again." -ForegroundColor Yellow; return }
+}
 foreach ($k in $files.Keys) { $p = Join-Path $Downloads $files[$k]; if (-not (Test-Path $p)) { throw "The sheet is not here: $p" } }
 
 Write-Host "[upload] the requirement and joinings sheets..." -ForegroundColor Cyan
 ssh $VpsHost "mkdir -p /root/joinings"
 foreach ($k in $files.Keys) {
-  scp (Join-Path $Downloads $files[$k]) "${VpsHost}:'/root/$k'"
+  # no quotes around the remote path: Windows' scp (SFTP mode) keeps them as part of the name
+  scp (Join-Path $Downloads $files[$k]) "${VpsHost}:/root/$k"
   if ($LASTEXITCODE -ne 0) { throw "Upload failed: $($files[$k])" }
 }
 
@@ -60,4 +69,5 @@ Run 4 'Colleges with joinings back as Inactive' "${real}node scripts/restore-joi
 Run 5 'Joinings from the sheets' "${real}node scripts/import-joinings-2026-10-17.js --only joinings --downloads /root/joinings --out /root/teamlink-backups/import-joinings-reset$go"
 Run 6 'Joinings list = the sheets' "${real}node scripts/sync-joinings-list-to-sheets.js$go"
 Run 7 'Clients made twice folded; new non-zip clients Inactive' "${real}node scripts/finish-ats-reset-clients.js --since $start$go"
-Write-Host "`nDone. The live ATS now holds only the sheets' requirements and joinings (and what Accounts invoices point at)." -ForegroundColor Green
+ssh $VpsHost "date -u > $Marker"
+Write-Host "`nDone. The live ATS now holds only the sheets' requirements and joinings (and what Accounts invoices point at). Later deploys skip this step." -ForegroundColor Green
