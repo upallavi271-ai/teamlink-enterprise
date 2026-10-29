@@ -35,7 +35,10 @@ router.use(requireProduct('ats'));
 // feedback (routes/interviewsJoining.js guards it with 'Client Feedback' — the
 // "Give feedback" tick, 2026-10-09). Every other path still needs Calendar View.
 const calendarGuard = requirePerm('ats', 'interviews', 'Calendar View', 'view');
-router.use((req, res, next) => (req.method === 'POST' && /^\/interviews\/[^/]+\/client-feedback$/.test(req.path) ? next() : calendarGuard(req, res, next)));
+// The Team pages (/team...) have their own door (teamGate: Recruiter & BDE - Team View): the BDE TL, who has no
+// interviews any more (BDE work only, 2026-10-29), still leads her team there.
+const teamPath = (p) => p === '/team' || p.startsWith('/team/');
+router.use((req, res, next) => ((req.method === 'POST' && /^\/interviews\/[^/]+\/client-feedback$/.test(req.path)) || teamPath(req.path) ? next() : calendarGuard(req, res, next)));
 
 // RECRUITER & BDE (the user's spec 2026-09-29) — People & Workload,
 // Assignments, Pending Actions, the 360s and the list behind every number.

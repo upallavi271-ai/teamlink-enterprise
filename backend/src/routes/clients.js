@@ -125,6 +125,10 @@ router.param('id', async (req, res, next, id) => {
     select: { id: true },
   });
   if (!inScope) return res.status(403).json(OUT_OF_SCOPE);
+  // A recruiting TL sees client names only (2026-10-29): no client page, nothing on it. Not the BDE TL (a BDE reader).
+  if (scopeOf(req.user).atsRole === 'TL' && !(await can(req.user, 'ats', 'clients', 'Client Detail', 'view'))) {
+    return res.status(403).json({ error: 'Client details are for the BDE team. Your requirements show the client name.', code: 'names_only' });
+  }
   req.client = client;
   return next();
 });

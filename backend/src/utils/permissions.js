@@ -455,7 +455,10 @@ const DEFAULT_RULES = [
   // Spec 6 (2026-10-03): the agreement is VIEWED by the BDE (own), Accounts,
   // Admin, Super Admin, the Manager AND the Assistant Manager.
   { module: 'clients', features: ['Agreement Lifecycle', 'Commercial Terms'], actions: ['view'], roles: ['ASSISTANT_MANAGER'] },
-  { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements'], actions: ['view'], roles: ['TL', 'STL'] },
+  // A recruiting TL sees client NAMES only - the list and the name on a job, no client page (founder 2026-10-29: "client
+  // names matarey kanipinchali inka em kanipinchakudadhu"). The BDE TL reads the whole book as a BDE (can() / effectiveMatrix).
+  { module: 'clients', features: ['Client List'], actions: ['view'], roles: ['TL', 'STL'] },
+  { module: 'clients', features: ['Client Detail', 'Client Requirements'], actions: ['view'], roles: ['STL'] },
   { module: 'clients', features: ['Client List', 'Client Detail', 'Client Requirements', 'Agreement Lifecycle', 'Commercial Terms'], actions: ['view'], roles: ['ACCOUNTANT'] },
   // A BDE has FULL access to their OWN clients (scope keeps it to them).
   { module: 'clients', features: ['Add Client'], actions: ['create'], roles: [...SET.ADMIN, 'BDE'] },
@@ -1225,6 +1228,7 @@ const REPORT_FEATURE_PRODUCT = {
 // 'billing'). No ATS dashboard, jobs, candidates or interviews, and nothing to write.
 // What the BDE TL may do on top of the TL matrix (see can(), step 3): the BDE
 // client desk's own rights, for ANY client (utils/scope.js gives them all).
+const BDE_TL_HIDDEN_MODULES = ['candidates', 'interviews'];
 const BDE_TL_RIGHTS = {
   'clients|Add Client|create': true,
   'clients|Client Detail|edit': true,
@@ -1418,6 +1422,9 @@ async function can(user, product, moduleId, feature, action, record = undefined)
   //    login's HRMS or ATS role is.
   const roles = rolesFor(user, isProduct ? owningProduct : null);
   if (!roles.length) return false;
+  // THE BDE TL SEES BDE WORK ONLY (founder 2026-10-29: "bde tl ki, bde related kanipinchali" - clients and BDE work;
+  // no candidates, no interviews: the recruiters' pipeline). effectiveMatrix draws the same.
+  if (BDE_TL_HIDDEN_MODULES.includes(moduleId) && require('./scope').isBdeTl(user)) return false; // eslint-disable-line global-require
   // THE BDE TL (user, 2026-10-08) READS the client book — clients and their
   // agreements — as a BDE does; utils/scope.js clientWhere() gives them all of
   // it. Viewing only: adding, editing and the agreement actions stay as set.
@@ -1897,6 +1904,12 @@ async function effectiveMatrix(user) {
         const f = k.split('|')[1];
         if (out[m.id].features[f]) out[m.id].features[f] = { ...out[m.id].features[f], delete: true };
       });
+    }
+    // The BDE TL: no candidates / interviews at all (BDE work only, 2026-10-29) - the same refusal can() makes.
+    if (BDE_TL_HIDDEN_MODULES.includes(m.id) && require('./scope').isBdeTl(user) && out[m.id]) { // eslint-disable-line global-require
+      const features = {};
+      Object.entries(out[m.id].features || {}).forEach(([f, actions]) => { features[f] = {}; Object.keys(actions).forEach((a) => { features[f][a] = false; }); });
+      out[m.id] = { ...out[m.id], moduleEnabled: false, features };
     }
     // The BDE TL's candidate contact + pay is cut by role: draw the switch OFF.
     if (m.id === 'candidates' && require('./scope').isBdeTl(user) // eslint-disable-line global-require
