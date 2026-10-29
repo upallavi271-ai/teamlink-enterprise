@@ -34,8 +34,8 @@ async function seatData() {
   return prisma.position.findMany({
     where: { kind: { in: ROLES } },
     select: {
-      id: true, code: true, kind: true, department: true, active: true,
-      assignments: { select: { fromDate: true, toDate: true, employee: { select: { id: true, name: true, email: true, employeeCode: true, phone: true, designation: true, employmentStatus: true, user: { select: { email: true } } } } } },
+      id: true, code: true, kind: true, department: true, team: true, active: true,
+      assignments: { select: { fromDate: true, toDate: true, employee: { select: { id: true, name: true, email: true, employeeCode: true, phone: true, designation: true, team: true, employmentStatus: true, user: { select: { email: true } } } } } },
     },
     orderBy: { code: 'asc' },
   });
@@ -55,6 +55,9 @@ async function people(positions = null) {
     byEmail.set(email, {
       name: e.name, email, employeeId: e.employeeCode || undefined, mobile: e.phone || undefined,
       department: deptOf(p), designation: e.designation || WORD[p.kind] || 'Recruiter',
+      // the team as HRMS has it (founder 2026-10-29: Education's Team A / Team B): the seat's, else the employee's; the screen shows
+      // a Team choice only when a department has two or more real teams (the Timesheet rule, TimesheetTasks.jsx teamOf)
+      team: p.team || e.team || undefined,
       atsRole: p.kind, seats: [p.code], employeeDbId: e.id,
     });
   }
@@ -86,7 +89,7 @@ async function ensure({ apply = false } = {}) {
   const list = await people();
   const { portalFetch } = require('./jobPortalBridge'); // eslint-disable-line global-require
   const res = await portalFetch('/integrations/teamlink/recruiters/ensure', {
-    method: 'POST', timeoutMs: 60000, body: { people: list.map(({ atsRole, seats, employeeDbId, ...p }) => p), dryRun: !apply },
+    method: 'POST', timeoutMs: 60000, body: { people: list.map(({ atsRole, seats, employeeDbId, team, ...p }) => p), dryRun: !apply },
   });
   const by = new Map(list.map((p) => [p.email, p]));
   return {

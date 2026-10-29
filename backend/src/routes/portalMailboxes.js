@@ -60,7 +60,7 @@ async function currentRecruiters() {
   const all = recs.recruiters || [];
   const listed = all.filter((r) => h.byEmail.has(String(r.email || '').toLowerCase())).map((r) => {
     const p = h.byEmail.get(String(r.email || '').toLowerCase());
-    return { ...r, name: p.name || r.name, department: p.department || r.department, employeeId: p.employeeId || r.employeeId, seat: p.seats.join(', ') };
+    return { ...r, name: p.name || r.name, department: p.department || r.department, team: p.team || undefined, employeeId: p.employeeId || r.employeeId, seat: p.seats.join(', ') };
   });
   return { ...h, all, listed };
 }

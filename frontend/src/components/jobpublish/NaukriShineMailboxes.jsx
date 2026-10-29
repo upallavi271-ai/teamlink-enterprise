@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
 import JpModal from './JpModal.jsx';
+import { teamOf } from '../../pages/hrms/TimesheetTasks.jsx'; // the one team rule (Team-A -> Team A; a bare 'Team' is no team)
 import { useVisiblePoll, when } from './jpKit.js';
 import './jobpublish.css';
 import './naukriShineMailboxes.css';
@@ -20,7 +21,7 @@ const PROVIDERS = [['gmail', 'Gmail'], ['outlook', 'Outlook / Microsoft 365'], [
 const FIXED = { gmail: { host: 'imap.gmail.com', port: 993 }, outlook: { host: 'outlook.office365.com', port: 993 } };
 const PROVIDER_LABEL = { gmail: 'Gmail', outlook: 'Outlook / Microsoft 365', other: 'IMAP' };
 const NO_DEPT = '__none';
-const EMPTY = { department: '', recruiterId: '', address: '', provider: 'gmail', username: '', appPassword: '', host: '', port: '' };
+const EMPTY = { department: '', team: '', recruiterId: '', address: '', provider: 'gmail', username: '', appPassword: '', host: '', port: '' };
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const TONE = { connected: 'ok', processing: 'run', disconnected: 'off', error: 'bad' };
 const MAIL_TONE = { processed: 'ok', duplicate: 'off', needs_review: 'warn', needs_mapping: 'warn', failed: 'bad', new: 'run', ignored: 'off' };
@@ -53,8 +54,13 @@ function MailboxCard({ src, data, onConnected }) {
   const [show, setShow] = useState(false);
   const going = useRef(false);
   const id = (k) => `nsm-${src}-${k}`;
-  const set = (k) => (e) => { const v = e.target.value; setF((o) => ({ ...o, [k]: v, ...(k === 'department' ? { recruiterId: '' } : {}) })); setErrs((o) => ({ ...o, [k]: '' })); };
-  const recs = (data.recruiters || []).filter((r) => r.active && f.department && inDept(r, f.department));
+  const set = (k) => (e) => { const v = e.target.value; setF((o) => ({ ...o, [k]: v, ...(k === 'department' ? { team: '', recruiterId: '' } : {}), ...(k === 'team' ? { recruiterId: '' } : {}) })); setErrs((o) => ({ ...o, [k]: '' })); };
+  const inDeptRecs = (data.recruiters || []).filter((r) => r.active && f.department && inDept(r, f.department));
+  // TEAMS (founder 2026-10-29: "education lo TeamA and TeamB undhi alaga separate avali recruiters"): a department with two or more
+  // real HRMS teams asks for the team first, then lists only that team's seat holders; any other department goes straight on.
+  const teams = [...new Set(inDeptRecs.map(teamOf).filter(Boolean))].sort((x, y) => x.localeCompare(y, undefined, { numeric: true }));
+  const needTeam = teams.length >= 2;
+  const recs = needTeam ? inDeptRecs.filter((r) => f.team && teamOf(r) === f.team) : inDeptRecs;
   const hasNoDept = (data.recruiters || []).some((r) => r.active && !String(r.department || '').trim());
   const fixed = FIXED[f.provider];
   const mine = (data.connections || []).filter((c) => c.source === src);
@@ -64,8 +70,9 @@ function MailboxCard({ src, data, onConnected }) {
     if (going.current) return; // one click = one login attempt
     const e = {};
     if (!f.department) e.department = 'Select a department.';
+    if (needTeam && !f.team) e.team = 'Select a team.';
     if (!f.recruiterId) e.recruiterId = 'Select a recruiter.';
-    else if (!recs.some((r) => r.id === f.recruiterId)) e.recruiterId = 'Choose an active recruiter from the selected department.';
+    else if (!recs.some((r) => r.id === f.recruiterId)) e.recruiterId = 'Choose an active recruiter from the selected department and team.';
     if (!EMAIL.test(f.address.trim())) e.address = 'Enter a valid email address.';
     if (!f.appPassword) e.appPassword = 'Enter the app password.';
     if (f.provider === 'other' && !f.host.trim()) e.host = 'Enter the incoming mail server.';
@@ -114,8 +121,16 @@ function MailboxCard({ src, data, onConnected }) {
             {hasNoDept && <option value={NO_DEPT}>No department set</option>}
           </Combo>
         </Field>
-        <Field id={id('recruiterId')} label="Select Recruiter" req err={errs.recruiterId} hint={f.department ? 'Type a name, employee ID or email.' : 'Choose the department first.'}>
-          <Combo id={id('recruiterId')} value={f.recruiterId} onChange={set('recruiterId')} disabled={!f.department} placeholder={f.department ? 'Search recruiter' : 'Select a department first'} emptyText="No active recruiter matches" {...aria('recruiterId')}>
+        {needTeam && (
+          <Field id={id('team')} label="Select Team" req err={errs.team}>
+            <Combo id={id('team')} value={f.team} onChange={set('team')} placeholder="Select team" {...aria('team')}>
+              <option value="">Select team</option>
+              {teams.map((t) => <option key={t} value={t}>{t} ({inDeptRecs.filter((r) => teamOf(r) === t).length})</option>)}
+            </Combo>
+          </Field>
+        )}
+        <Field id={id('recruiterId')} label="Select Recruiter" req err={errs.recruiterId} hint={!f.department ? 'Choose the department first.' : (needTeam && !f.team ? 'Choose the team first.' : 'Type a name, employee ID or email.')}>
+          <Combo id={id('recruiterId')} value={f.recruiterId} onChange={set('recruiterId')} disabled={!f.department || (needTeam && !f.team)} placeholder={!f.department ? 'Select a department first' : (needTeam && !f.team ? 'Select a team first' : 'Search recruiter')} emptyText="No active recruiter matches" {...aria('recruiterId')}>
             <option value="">Select recruiter</option>
             {recs.map((r) => <option key={r.id} value={r.id}>{r.name}{r.employeeId ? ` · ${r.employeeId}` : ''}{r.email ? ` · ${r.email}` : ''}</option>)}
           </Combo>
@@ -292,7 +307,7 @@ function MailboxDialog({ modal, setModal, data, recName, done }) {
         <label className="jp-field" htmlFor="nsm-re-rec">New recruiter
           <Combo id="nsm-re-rec" value={m.recruiterId} onChange={(e) => patch({ recruiterId: e.target.value })} placeholder="Search recruiter">
             <option value="">Select recruiter</option>
-            {recs.map((r) => <option key={r.id} value={r.id}>{r.name}{r.department ? ` · ${r.department}` : ''}{r.employeeId ? ` · ${r.employeeId}` : ''}</option>)}
+            {recs.map((r) => <option key={r.id} value={r.id}>{r.name}{r.department ? ` · ${r.department}` : ''}{teamOf(r) ? ` · ${teamOf(r)}` : ''}{r.employeeId ? ` · ${r.employeeId}` : ''}</option>)}
           </Combo>
         </label>
         <label className="nsm-check"><input type="checkbox" checked={!!m.ok} onChange={(e) => patch({ ok: e.target.checked })} /> I understand: only new imports go to the new recruiter. This change is recorded in the audit log.</label>
