@@ -5,6 +5,8 @@ Two jobs for the phone gateway (backend/src/calling/voice/engines.js whisperHttp
   POST /detect      body: 16 kHz 16-bit mono PCM  ->  {"lang": "te"|"hi"|"en", "prob": 0..1}
                     which of OUR three languages the person spoke (others ignored), so the assistant can switch at once
   POST /transcribe  body: the same, header X-Lang: en|hi|te  ->  {"text": "...", "conf": {...}}
+  (both take an optional header X-Prompt: the question the assistant just asked, URL-encoded, English only. Whisper
+   hears a short answer far better when it knows the question - a real phone "Yes." was heard as "You" / "here".)
   POST /hear        body: the same, header X-Min-Prob  ->  {"lang", "prob", "text", "conf"}: the language, and the English words
                     only when it is English (one pass for a call that is in English)
                     English words (IndicConformer has no English)
@@ -60,10 +62,17 @@ def detect(audio):
     return {"lang": best, "prob": round(p.get(best, 0.0) / total, 3)}
 
 
-def transcribe(audio, lang):
+def prompt_of(headers):
+    from urllib.parse import unquote
+    p = unquote(headers.get("X-Prompt", "") or "").strip()
+    p = "".join(ch for ch in p if 32 <= ord(ch) < 127)[:200]  # plain English text only
+    return p or None
+
+
+def transcribe(audio, lang, prompt=None):
     with lock:
         # temperature 0 = no slow retries; max_new_tokens = a phone answer is short (no "fufufu..." loops)
-        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=BEAM, temperature=0.0,
+        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=BEAM, temperature=0.0, initial_prompt=prompt,
                                        max_new_tokens=60, without_timestamps=True, condition_on_previous_text=False, vad_filter=False)
         segs = list(segments)
     text = " ".join(s.text.strip() for s in segs).strip()
@@ -75,13 +84,13 @@ def transcribe(audio, lang):
     return {"text": text, "conf": conf}
 
 
-def hear(audio, min_prob):
+def hear(audio, min_prob, prompt=None):
     # ONE pass for an English-mode call: which of our languages; the English words only when it IS English (a Telugu /
     # Hindi answer is heard by IndicConformer instead, so Whisper does not spend time writing it as English)
     d = detect(audio)
     if d["lang"] != "en" and d["prob"] >= min_prob:
         return {"lang": d["lang"], "prob": d["prob"], "text": ""}
-    t = transcribe(audio, "en")
+    t = transcribe(audio, "en", prompt)
     return {"lang": "en", "prob": d["prob"], "text": t["text"], "conf": t["conf"]}
 
 
@@ -114,9 +123,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/detect":
                 out = detect(audio)
             elif self.path == "/hear":
-                out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6))
+                out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6), prompt_of(self.headers))
             elif self.path == "/transcribe":
-                out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower())
+                out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower(), prompt_of(self.headers))
             else:
                 return self.send(404, {"error": "not found"})
         except Exception as e:  # noqa: BLE001 - one bad clip must not stop the server

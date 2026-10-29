@@ -34,10 +34,10 @@ const debug = (line) => { try { require('fs').appendFileSync(DEBUG, `${new Date(
 // the assistant asks again (dialogue.js unheard()). Whisper's own sureness (whisper_server.py conf) decides for English;
 // IndicConformer gives none, so Telugu / Hindi are judged only by empty words and the language-switch check below.
 const num = (v, d) => (Number.isFinite(Number(v)) && String(v).trim() !== '' ? Number(v) : d);
-// calibrated 2026-10-29 on 8 kHz clips with line noise (scratch whisper-calibrate): -1.0 let "I'm not doing this" (for "I have
-// three years") and "Bye." through; -0.7 / 0.5 catch them, and a clean clear answer stays well above (-0.1 to -0.6)
-const MIN_LOGPROB = num(process.env.AI_VOICE_MIN_LOGPROB, -0.7); // below = Whisper was guessing
-const MAX_NO_SPEECH = num(process.env.AI_VOICE_MAX_NO_SPEECH, 0.5); // above (with a weak logprob) = words made up from noise
+// from REAL phone calls (2026-10-29): a real "Yes." scores -0.4 to -1.1, "Yeah." -0.5 / -0.9; garbage ("You", "here", "I'm going
+// to get ready to cool") -1.15 and below. -0.7 (tuned on computer voices) turned real yeses into "couldn't hear you clearly".
+const MIN_LOGPROB = num(process.env.AI_VOICE_MIN_LOGPROB, -1.0); // below = Whisper was guessing
+const MAX_NO_SPEECH = num(process.env.AI_VOICE_MAX_NO_SPEECH, 0.6); // above (with a weak logprob) = words made up from noise
 const MAX_RATIO = 2.4; // repeated / looping text
 // no voice at all this long after the assistant finished = "are you still there?" (never read as an answer)
 const SILENCE_MS = Math.min(30000, Math.max(4000, num(process.env.AI_VOICE_SILENCE_MS, 8000)));
@@ -46,7 +46,7 @@ function clarityOf(text, conf) {
   if (conf && typeof conf === 'object') {
     const lp = Number(conf.logprob); const ns = Number(conf.noSpeech); const ratio = Number(conf.ratio);
     if (Number.isFinite(lp) && lp < MIN_LOGPROB) return 'unclear';
-    if (Number.isFinite(ns) && ns > MAX_NO_SPEECH && Number.isFinite(lp) && lp < -0.5) return 'unclear';
+    if (Number.isFinite(ns) && ns > MAX_NO_SPEECH && Number.isFinite(lp) && lp < -0.7) return 'unclear';
     if (Number.isFinite(ratio) && ratio > MAX_RATIO) return 'unclear';
   }
   return 'clear';
@@ -57,6 +57,19 @@ function believable(text) {
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   if (words.length >= 2) return true;
   return words.length === 1 && !['unclear', 'silence'].includes(require('../dialogue').classify(text).intent); // eslint-disable-line global-require
+}
+
+// A Telugu / Hindi answer the English listener could not place: the Indian-language listener's words count only when they
+// are clearly that language - two words or more, or one real answer word. (Its English-sounding spellings such as
+// "యెస్" for "yes" are NOT taken: an unclear English "yes" must not switch the call to Telugu.)
+const NATIVE_ONE = ['అవును', 'అవునండి', 'అవునా', 'లేదు', 'లేదండి', 'సరే', 'కాదు', 'వద్దు', 'చెప్పండి', 'హా', 'हाँ', 'हां', 'जी', 'नहीं', 'ठीक', 'बोलिए'];
+function nativeAnswer(text, lang) {
+  const t = String(text || '').trim();
+  const script = lang === 'Telugu' ? /[ఀ-౿]/g : /[ऀ-ॿ]/g;
+  if ((t.match(script) || []).length < 3) return false;
+  const words = t.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) return true;
+  return NATIVE_ONE.some((w) => words[0].startsWith(w));
 }
 
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
@@ -174,10 +187,12 @@ function handle(sock, engines, opts = {}) {
       const t0 = Date.now();
       const cur = d.language;
       // the words AND Whisper's sureness ({ text, conf }); an engine without sttEx gives words only (conf null)
-      const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l) : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
+      // the question just asked, for Whisper's prompt (English calls): a short "yes" is heard far better knowing it (2026-10-29)
+      const ask = cur === 'English' ? String(d.st.lastAsk || '') : '';
+      const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l, l === 'English' ? ask : '') : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
         .then((r) => ({ text: (r && r.text) || '', conf: (r && r.conf) || null }))
         .catch((e) => { log('stt failed:', e.message); return { text: '', conf: null }; });
-      let found = null; let first = { text: '', conf: null }; let byScript = false;
+      let found = null; let first = { text: '', conf: null }; let byScript = false; let enProb = null;
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -185,8 +200,8 @@ function handle(sock, engines, opts = {}) {
         const sure = cur === 'English' || pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.75;
         if (cur === 'English' && engines.hear) {
           // one Whisper pass: the language, and the English words only when it is English (2026-10-29: "chaala late")
-          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '', conf: null }; });
-          if (h.lang !== 'English') { found = h.lang; byScript = true; } else first = { text: h.text || '', conf: h.conf || null };
+          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75, ask).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '', conf: null }; });
+          if (h.lang !== 'English') { found = h.lang; byScript = true; } else { first = { text: h.text || '', conf: h.conf || null }; enProb = typeof h.prob === 'number' ? h.prob : null; }
         } else {
           // Telugu / Hindi mode: the words and Whisper's language check side by side, on EVERY answer of 1.4 s or more. (A
           // skip-when-understood shortcut missed English: the Telugu model writes "Yes, I have ..." as "యెస్ ఐ హావ్ ...",
@@ -210,7 +225,17 @@ function handle(sock, engines, opts = {}) {
         if (DEBUG) debug(`${row.id} not switching to ${lang}: "${r.text}" does not make sense`);
         lang = cur; heardAs = 'unclear';
       }
-      const { text } = r;
+      // ENGLISH CALL, ANSWER NOT CLEARLY ENGLISH (2026-10-29: "language switch avvatledhu"): Whisper was unsure it was English
+      // (a Telugu sentence came out as "I'm going to get ready to cool", 41% English) or the words were a guess. Before asking
+      // again, the Telugu and Hindi listeners try the same audio; clearly Telugu / Hindi words switch the call.
+      let r2 = r;
+      if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.75))) {
+        const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => engines.stt(pcm, l).catch(() => '')));
+        const pick = nativeAnswer(te, 'Telugu') ? ['Telugu', te] : nativeAnswer(hi, 'Hindi') ? ['Hindi', hi] : null;
+        if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs}): Telugu "${te}" / Hindi "${hi}"${pick ? ` -> ${pick[0]}` : ''}`);
+        if (pick) { lang = pick[0]; r2 = { text: pick[1], conf: null }; heardAs = 'clear'; found = pick[0]; }
+      }
+      const { text } = r2;
       if (opts.onHeard) opts.onHeard(text, lang);
       if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms, ${heardAs}: ${text}`);
       await reply(text, { heard: heardAs, lang });
@@ -283,4 +308,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { nativeAnswer, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
