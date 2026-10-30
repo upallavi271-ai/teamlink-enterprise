@@ -329,7 +329,22 @@ function handle(sock, engines, opts = {}) {
           if (DEBUG && th.lang !== found) debug(`${row.id} sound said ${found}, the words say ${th.lang} (Telugu ${th.sT} / Hindi ${th.sH})`);
           found = th.lang; pre = { text: th.text, conf: null };
           if (found === cur) { first = pre; byScript = false; }
+        } else {
+          // NO PROOF, NO SWITCH (real calls 2026-10-30: "ल मक", "कि अ" moved Telugu / English calls to Hindi): neither listener
+          // heard a real Telugu / Hindi word, so the call stays in its language and the answer is heard in it
+          if (DEBUG) debug(`${row.id} sound said ${found}, but no real Telugu / Hindi words: staying in ${cur}`);
+          found = null;
+          if (byScript) { byScript = false; first = await listen(cur); }
         }
+      }
+      // ...and a Telugu / Hindi call does not go to English on English-looking words that make no sense ("My God, Adam."
+      // was Telugu speech): English must be understood, or a real sentence
+      if (found === 'English' && cur !== 'English') {
+        const en = await listen('English');
+        const words = en.text.trim().split(/\s+/).filter(Boolean).length;
+        const understoodEn = !['unclear', 'silence'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
+        if (understoodEn || (words >= 4 && clarityOf(en.text, en.conf) === 'clear')) pre = en;
+        else { if (DEBUG) debug(`${row.id} sound said English, but "${en.text}" makes no sense: staying in ${cur}`); found = null; }
       }
       // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
       // Whisper guesses badly on a second of sound (heard 'हाँ, ठीक है' as English in the 2026-10-28 test)

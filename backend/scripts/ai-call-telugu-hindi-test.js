@@ -65,6 +65,37 @@ const ears = (te, hi) => { const asked = []; return { asked, stt: async (_pcm, l
   const r2 = await d.hear('हाँ');
   ok(!/Gujjula/.test(r2.say.split('।')[0]), 'G3 the greeting does not guess a first name ("Hello Gujjula" was the family name)', r2.say);
 
+  // ---- the real Telugu call of 11:16 replayed: "చెప్పు" / "మాట్లాడు" mean "go on" -----------------------------------------
+  const data = S.buildData({ candidate: { name: 'Gujjula Velangini Keerthi' }, requirement: { title: 'Faculty', location: 'Kakinada' }, app: {} });
+  let t = new Dialogue({ purpose: 'Screening', language: 'English', data });
+  t.start();
+  await t.hear('Yes.');
+  let r3 = await t.hear('సరే చెప్పు');
+  ok(t.language === 'Telugu' && t.st.step === 'intro', 'C1 "సరే చెప్పు" -> yes, in Telugu', [t.language, t.st.step, r3.say]);
+  r3 = await t.hear('చెప్పు');
+  ok(t.st.step === 'interest' && /Kakinada/.test(r3.say), 'C2 "చెప్పు" to "shall I tell you about it?" -> the job is told (was: asked again, then the call ended)', r3.say);
+  r3 = await t.hear('చెప్పండి');
+  ok(t.st.step === 'interest' && /Kakinada/.test(r3.say) && !r3.done, 'C3 "చెప్పండి" after the job = tell me more: the job once more, then the question', r3.say);
+  t = new Dialogue({ purpose: 'Screening', language: 'Telugu', data });
+  t.start(); await t.hear('అవును');
+  r3 = await t.hear('మాట్లాడు');
+  ok(t.st.step === 'intro', 'C4 "మాట్లాడు" to "can we talk for two minutes?" -> yes', [t.st.step, r3.say]);
+  t = new Dialogue({ purpose: 'Screening', language: 'Hindi', data });
+  t.start(); await t.hear('हाँ');
+  r3 = await t.hear('बोलिए');
+  ok(t.st.step === 'intro', 'C5 "बोलिए" -> yes', [t.st.step, r3.say]);
+  // "చెప్పండి" when the phone is picked up is still a hello (the name is asked)
+  t = new Dialogue({ purpose: 'Screening', language: 'Telugu', data });
+  t.start(); r3 = await t.hear('చెప్పండి');
+  ok(t.st.step === 'identity' && !r3.done, 'C6 "చెప్పండి" on picking up -> the name question again (a hello)', r3.say);
+  // three unclear answers before giving up, the second asked another way
+  t = new Dialogue({ purpose: 'Screening', language: 'Telugu', data });
+  t.start(); await t.hear('అవును');
+  const u1 = await t.hear('గడబడ'); const u2 = await t.hear('గడబడ');
+  ok(!u1.done && !u2.done && u2.say.startsWith(S.phrases('Telugu').yesOrNo), 'C7 two unclear answers: still talking, the second time "అవునా కాదా?"', [u1.say, u2.say]);
+  const u3 = await t.hear('గడబడ');
+  ok(u3.done, 'C8 the third unclear answer ends politely', u3.say);
+
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

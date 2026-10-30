@@ -72,6 +72,13 @@ const L = {
     'फ्रॉड', 'धोखा', 'पैसे', 'फीस', 'ओटीपी', 'ఫ్రాడ్', 'మోసం', 'డబ్బు', 'ఫీజు', 'ఓటీపీ'],
 };
 const NO_BUT_FINE = ['no problem', 'not a problem', 'not bad', 'no issue'];
+// "GO AHEAD / TELL ME / SPEAK" (real calls 2026-10-30: "చెప్పు", "మాట్లాడు" were asked again and again until the call ended):
+// to "can I tell you about it?" / "do you have two minutes?" these mean yes. Daily speech in all three languages.
+const GO_AHEAD = ['go ahead', 'go on', 'tell me', 'please tell', 'tell', 'carry on', 'continue', 'proceed', 'listening', 'i am listening', 'im listening', 'say it', 'shoot',
+  'చెప్పు', 'చెప్పండి', 'చెప్పండీ', 'చెప్పవే', 'చెప్పరా', 'చెప్పమ్మా', 'చెప్పయ్యా', 'మాట్లాడు', 'మాట్లాడండి', 'మాట్లాడొచ్చు', 'మాట్లాడవచ్చు', 'వింటున్నా', 'వింటున్నాను',
+  'కానివ్వండి', 'కానివ్వు', 'కానీయండి', 'ఫ్రీగా ఉన్నా', 'ఫ్రీ ఉన్నా', 'టైమ్ ఉంది', 'cheppu', 'cheppandi', 'chepandi', 'chepu', 'matladu', 'matladandi', 'vintunna',
+  'बोलो', 'बोलिए', 'बोलिये', 'बोलें', 'बताओ', 'बताइए', 'बताइये', 'बताएं', 'बताइ', 'कहिए', 'कहो', 'सुनाइए', 'सुन रहा', 'सुन रही', 'चलो', 'चलिए', 'टाइम है', 'फ्री हूँ',
+  'bolo', 'boliye', 'batao', 'bataiye', 'bataye', 'kahiye', 'chalo'];
 // 2026-10-29 fixes: an answer that is not a plain yes / no is never forced into one
 const L2 = {
   // "maybe / it depends / I'll check / I don't know": not interested, not uninterested - not confirmed
@@ -162,6 +169,7 @@ function detectLanguage(textIn) {
 // "Hello?" / "చెప్పండి" / "बोलिए" on picking up the phone: not an answer and not a failed try - the question is asked again
 const GREETING = ['hello', 'helo', 'hallo', 'hi', 'hey', 'cheppandi', 'boliye', 'bolo', 'హలో', 'హాయ్', 'చెప్పండి', 'हैलो', 'हेलो', 'हलो', 'बोलिए', 'बोलो'];
 const HELLO_BACK = { English: 'Hello.', Telugu: 'హలో.', Hindi: 'जी, नमस्ते।' };
+const PLAIN_HELLO = ['hello', 'helo', 'hallo', 'hi', 'hey', 'హలో', 'హాయ్', 'हैलो', 'हेलो', 'हलो'];
 const GREET_EXTRA =['ji', 'जी', 'అండి', 'sir', 'madam', 'haan', 'हाँ', 'హా'];
 function isGreeting(t) {
   const w = t.split(' ').filter(Boolean);
@@ -189,7 +197,10 @@ function classify(text) {
   // "Yes, I can't ..." holds both: never read as a no (or a yes) - the person is asked which they meant
   if (neg && yes) return { intent: 'mixed', human };
   if (neg) return { intent: 'no', human };
-  if (yes) return { intent: 'yes', human };
+  // "tell me" / "చెప్పు" / "बोलिए" = go on (unless they also ask something: "tell me the location" is a question)
+  const goAhead = has(t, GO_AHEAD) && !has(t, L.info.filter((x) => x !== 'tell me')) && !has(t, ['more', 'ఇంకా', 'और', 'ज़्यादा', 'zyada', 'inka']); // "tell me more" asks for more
+  if (yes) return { intent: 'yes', human, goAhead: goAhead && !has(t, L.yes) };
+  if (goAhead) return { intent: 'yes', human, goAhead: true };
   if (has(t, L.info) || t.endsWith('?')) return { intent: 'info_q', human };
   return { intent: human ? 'human' : 'unclear', human };
 }
@@ -466,7 +477,7 @@ class Dialogue {
       return { say: this.speak(this.P.canHear), done: false };
     }
     const t = norm(text);
-    if (isGreeting(t) && (st.greets || 0) < 3) { st.greets = (st.greets || 0) + 1; return { say: st.step === 'identity' ? this.speak(this.B.identity) : this.again(HELLO_BACK[this.language] || HELLO_BACK.English), done: false }; } // the name question already says hello
+    if (isGreeting(t) && (st.step === 'identity' || t.split(' ').every((w) => PLAIN_HELLO.includes(w) || GREET_EXTRA.includes(w))) && (st.greets || 0) < 3) { st.greets = (st.greets || 0) + 1; return { say: st.step === 'identity' ? this.speak(this.B.identity) : this.again(HELLO_BACK[this.language] || HELLO_BACK.English), done: false }; } // the name question already says hello
     // 2. money / fraud worry: the fixed reassurance, then the same question again (allowed before the name is confirmed: it shares nothing)
     if (has(t, L.scam) && !has(t, L.salary)) return { say: this.again(this.P.noMoney), done: false };
     // 3. upset: apologise, keep it short, offer a recruiter; a second time ends the call politely. Never argue.
@@ -676,8 +687,8 @@ class Dialogue {
     }
     if (k.intent === 'info_q' || k.intent === 'salary_q') return { say: this.speak(this.P.identityNeeded.replace('{name}', S.clean(this.data.name)), this.B.identity), done: false };
     st.tries += 1;
-    if (st.tries >= 2) return this.close('Unclear', 'identity not confirmed');
-    return { say: this.again(), done: false };
+    if (st.tries >= 3) return this.close('Unclear', 'identity not confirmed');
+    return { say: this.again(st.tries === 2 ? this.P.yesOrNo : undefined), done: false };
   }
 
   on_convenient(k) {
@@ -697,13 +708,14 @@ class Dialogue {
 
   on_interest(k) {
     const st = this.st;
+    if (k.intent === 'yes' && k.goAhead && !st.rebriefed) { st.rebriefed = true; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
     if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; this.ack('ackInterest'); return this.ask('qExp'); }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     if (k.intent === 'human') { st.human = true; st.interest = 'unsure'; return this.close('Unclear', 'asked for a recruiter', this.P.humanNoted); }
     st.tries += 1;
-    if (st.tries >= 2) { st.interest = 'unsure'; st.step = 'human_offer'; st.tries = 0; return { say: this.speak(this.P.interestMore), done: false }; }
-    return { say: this.again(this.P.repeat), done: false };
+    if (st.tries >= 3) { st.interest = 'unsure'; st.step = 'human_offer'; st.tries = 0; return { say: this.speak(this.P.interestMore), done: false }; }
+    return { say: this.again(st.tries === 2 ? this.P.yesOrNo : this.P.repeat), done: false };
   }
 
   on_human_offer(k) {
@@ -820,10 +832,11 @@ class Dialogue {
   retry(k) {
     const st = this.st;
     st.tries += 1;
-    if (st.tries >= 2) {
+    if (st.tries >= 3) {
       return this.close(this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear', 'unclear answer');
     }
-    return { say: this.again(this.P.repeat), done: false };
+    // the second time, asked another way ("was that a yes or a no?" + the question), like a person would
+    return { say: this.again(st.tries === 2 && YES_NO_STEPS.includes(st.step) ? this.P.yesOrNo : this.P.repeat), done: false };
   }
 
   // End the call with an outcome and the closing sentence for it.
