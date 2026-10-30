@@ -30,6 +30,12 @@ const errOf = (e) => {
   const x = e && e.response && e.response.data && e.response.data.error;
   return { code: x && x.code, message: (x && x.message) || (e && e.message) || 'That did not work. Please try again.', details: (x && x.details) || {} };
 };
+// Naukri / Shine responses -> ATS Applications (backend utils/mailImports.js): what the last run did, in one line.
+const atsText = (m) => {
+  if (!m) return '';
+  if (m.error) return ` ATS Applications could not be updated just now (${m.error}); it is tried again within the hour.`;
+  return ` ATS Applications: ${m.added} added${m.already ? `, ${m.already} already there` : ''}${m.waiting ? `, ${m.waiting} waiting for a requirement with the same job title` : ''}.`;
+};
 const inDept = (r, dept) => (dept === NO_DEPT ? !String(r.department || '').trim() : String(r.department || '').trim().toLowerCase() === String(dept).toLowerCase());
 
 function Chip({ c }) {
@@ -204,7 +210,7 @@ export default function NaukriShineMailboxes() {
     try {
       const { data: r } = await api.post(`/portal-mailboxes/${encodeURIComponent(c.id)}/${kind}`, {});
       setFlash({ ok: !r.error, text: kind === 'sync'
-        ? (r.error ? `Sync failed: ${r.error}` : `Sync done: ${r.emailsRead || 0} read, ${r.imported || 0} imported, ${r.duplicates || 0} duplicates skipped, ${r.pendingReview || 0} for review${r.failed ? `, ${r.failed} failed` : ''}.`)
+        ? (r.error ? `Sync failed: ${r.error}` : `Sync done: ${r.emailsRead || 0} read, ${r.imported || 0} imported, ${r.duplicates || 0} duplicates skipped, ${r.pendingReview || 0} for review${r.failed ? `, ${r.failed} failed` : ''}.${atsText(r.atsImport)}`)
         : (r.message || 'Disconnected.') });
     } catch (e) { setFlash({ ok: false, text: errOf(e).message }); }
     setBusy((b) => ({ ...b, [c.id]: false }));
@@ -277,6 +283,9 @@ export default function NaukriShineMailboxes() {
           </table>
         </div>
       )}
+      {data && data.atsImport && data.atsImport.waitingTitles && data.atsImport.waitingTitles.length > 0 && (
+        <WaitingTitles imp={data.atsImport} requirements={data.requirements || []} done={(text) => { setFlash({ ok: true, text }); load(); }} />
+      )}
       <p className="jp-note">Each mailbox reads only its own job board&apos;s emails and belongs to one HRMS position: its imports go to whoever holds that position today, and move to the next person by themselves. Emails that cannot be matched safely are kept for review instead of being guessed. Syncing again never imports the same email twice.</p>
       {modal && <MailboxDialog modal={modal} setModal={setModal} data={data} recName={recName} done={(text) => { setModal(null); setFlash({ ok: true, text }); load(); }} />}
     </div>
@@ -287,6 +296,46 @@ export default function NaukriShineMailboxes() {
 function positionModal(c, data, seatCode) {
   const seat = ((data && data.seats) || []).find((x) => x.code === seatCode);
   return { kind: 'position', c, department: seat ? seat.department || '' : (c.recruiterDepartment || ''), team: seat ? teamOf(seat) : '', seat: seat ? seat.code : '', ok: false };
+}
+
+// Naukri / Shine responses whose job title matches no ATS requirement, or several: pick the requirement once per title and every
+// response with that title goes there (now and on every later sync). Backend: POST /api/portal-mailboxes/ats-title.
+function WaitingTitles({ imp, requirements, done }) {
+  const [pick, setPick] = useState({});
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  async function link(title) {
+    if (!pick[title]) { setErr('Choose the requirement first.'); return; }
+    setBusy(title); setErr('');
+    try { const { data: r } = await api.post('/portal-mailboxes/ats-title', { title, requirementId: pick[title] }); done(r.message || 'Linked.'); } catch (e) { setErr(errOf(e).message); }
+    setBusy('');
+  }
+  return (
+    <div className="jp-note" role="note">
+      <b>Waiting to go into ATS Applications ({imp.waiting}).</b> For each job title, choose the requirement these responses belong to.
+      After that, every response with this title goes there by itself.
+      {err && <div className="jp-err" role="alert">{err}</div>}
+      <table className="nsm-table" style={{ marginTop: 8 }}>
+        <thead><tr><th scope="col">Job title in the mail</th><th scope="col">Responses</th><th scope="col">Why waiting</th><th scope="col">Requirement</th><th scope="col" /></tr></thead>
+        <tbody>
+          {imp.waitingTitles.map((x) => (
+            <tr key={x.title}>
+              <td>{x.title}</td>
+              <td className="num">{x.count}</td>
+              <td>{x.why === 'several requirements have this title' ? 'Several requirements have this title' : 'No requirement has this title'}</td>
+              <td style={{ minWidth: 260 }}>
+                <Combo value={pick[x.title] || ''} onChange={(e) => setPick((o) => ({ ...o, [x.title]: e.target.value }))} placeholder="Search requirement">
+                  <option value="">Select requirement</option>
+                  {requirements.map((r) => <option key={r.id} value={r.id}>{r.title}{r.client && r.client.name ? ` · ${r.client.name}` : ''}{r.department ? ` · ${r.department}` : ''}{r.status ? ` (${r.status})` : ''}</option>)}
+                </Combo>
+              </td>
+              <td><button type="button" className="btn btn-primary btn-sm" disabled={busy === x.title} onClick={() => link(x.title)}>{busy === x.title ? 'Adding…' : 'Link'}</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 function MailboxDialog({ modal, setModal, data, recName, done }) {

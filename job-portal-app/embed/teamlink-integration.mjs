@@ -678,6 +678,49 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json({ applications: rows });
   }));
 
+  /*
+   * NAUKRI / SHINE MAIL IMPORTS -> THE ATS (founder 2026-10-30: "shine nad nauki responses oche mail sync ani click chesakkaa
+   * read anii no of candiates chpistunaii kaniii applications loo kanipiyadam ledhuu"). The mailbox import puts each response on
+   * a portal job matched by the mail's title - usually a job of its own ("Urgent | Hiring For ..."), not a TeamLink requirement
+   * (tl_*), so the pull above never carried them. These are listed here with the job title and the mailbox recruiter's email;
+   * TeamLink matches the title to a requirement and owns the matching (backend/src/utils/mailImports.js).
+   */
+  r.get('/api/integrations/teamlink/mail-applications', wrap(async (req, res) => {
+    const { withUser } = await portal();
+    const since = req.query.since ? new Date(String(req.query.since)) : null;
+    const limit = Math.min(parseInt(req.query.limit, 10) || 1000, 5000);
+    const rows = await withUser(SYSTEM, async (c) => {
+      const params = [];
+      let sql = `select a.*, j.title as job_title, rec.email as recruiter_email, rec.name as recruiter_name
+                   from applications a join jobs j on j.id = a.job_id left join recruiters rec on rec.id = a.recruiter_id
+                  where a.import_method = 'recruiter_email' and a.job_id not like 'tl\\_%'`;
+      if (since && !Number.isNaN(since.getTime())) { params.push(since.toISOString()); sql += ` and a.applied_at >= $${params.length}`; }
+      params.push(limit);
+      sql += ` order by a.applied_at desc limit $${params.length}`;
+      const shaped = [];
+      for (const row of (await c.query(sql, params)).rows) {
+        const s = await shapeApplication(c, row);
+        if (!s) continue; // eslint-disable-line no-continue
+        s.event = 'application.mail';
+        s.application.recruiterEmail = row.recruiter_email || null;
+        s.application.recruiterName = row.recruiter_name || null;
+        if (s.application.resume) s.application.resume.path = `/api/integrations/teamlink/mail-applications/${encodeURIComponent(row.id)}/resume`;
+        shaped.push(s);
+      }
+      return shaped;
+    });
+    res.json({ applications: rows });
+  }));
+  r.get('/api/integrations/teamlink/mail-applications/:id/resume', wrap(async (req, res) => {
+    const { withUser, getStorage } = await portal();
+    const row = await withUser(SYSTEM, async (c) => (await c.query(
+      `select a.resume_path, c.resume_storage_path, c.resume_file, c.resume_mime
+         from applications a join candidates c on c.id = a.candidate_id
+        where a.id=$1 and a.import_method = 'recruiter_email'`, [req.params.id])).rows[0]);
+    if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No such mail-imported application.' } });
+    return sendResumeRow(res, row, getStorage);
+  }));
+
   /** The resume a TeamLink application was made with (or the candidate's current one). */
   r.get('/api/integrations/teamlink/applications/:id/resume', wrap(async (req, res) => {
     const { withUser, getStorage } = await portal();
@@ -686,6 +729,11 @@ export function teamlinkFrontRouter({ root, express }) {
          from applications a join candidates c on c.id = a.candidate_id
         where a.id=$1 and a.job_id like 'tl\\_%'`, [req.params.id])).rows[0]);
     if (!row) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No such TeamLink application.' } });
+    return sendResumeRow(res, row, getStorage);
+  }));
+
+  // The resume file of an application row (a TeamLink one, or a Naukri / Shine mail import) - the same answer for both routes.
+  async function sendResumeRow(res, row, getStorage) {
     const key = row.resume_path || row.resume_storage_path;
     if (!key) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'No resume on this application.' } });
     const buf = await getStorage().get(key);
@@ -694,7 +742,7 @@ export function teamlinkFrontRouter({ root, express }) {
     res.setHeader('content-disposition', `attachment; filename="${name}"`);
     res.setHeader('x-file-name', encodeURIComponent(name));
     return res.end(buf);
-  }));
+  }
 
   // Errors from these routes only (anything else falls through to the portal).
   // eslint-disable-next-line no-unused-vars

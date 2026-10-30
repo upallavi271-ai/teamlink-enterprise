@@ -118,6 +118,10 @@ router.get('/', view, wrap(async (req, res) => {
     seats: seats.map((x) => ({ code: x.code, kind: x.kind, department: x.department, team: x.team, holderName: x.holder ? x.holder.name : null, holderRecruiterId: x.holderRecruiterId })),
     departments: [...new Set(cur.listed.map((r) => String(r.department || '').trim()).filter(Boolean))].sort((x, y) => x.localeCompare(y)),
     providers: conns.providers || [],
+    // the last Naukri / Shine -> ATS Applications run: added, already there, waiting for a requirement (with the job titles)
+    atsImport: require('../utils/mailImports').lastRun(), // eslint-disable-line global-require
+    // the requirements a waiting title can be linked to by hand (open first)
+    requirements: await require('../db').requirement.findMany({ select: { id: true, title: true, department: true, status: true, client: { select: { name: true } } }, orderBy: [{ status: 'desc' }, { createdAt: 'desc' }], take: 1500 }).catch(() => []), // eslint-disable-line global-require
     canStoreCredentials: conns.canStoreCredentials,
   });
 }));
@@ -215,7 +219,13 @@ router.post('/:id/position', change, wrap(async (req, res) => {
 
 router.post('/:id/sync', change, wrap(async (req, res) => {
   await require('../utils/mailboxSeats').reconcile({ apply: true, actor: req.user, onlyId: req.params.id }).catch(() => []); // eslint-disable-line global-require
-  res.json(await portalFetch(`${idPath(req.params.id)}/sync`, { method: 'POST', body: {}, timeoutMs: 180000 }));
+  const out = await portalFetch(`${idPath(req.params.id)}/sync`, { method: 'POST', body: {}, timeoutMs: 180000 });
+  // the responses just read go straight into the ATS Applications (utils/mailImports.js), not only into the portal
+  const mail = await require('../utils/mailImports').pullQuietly({ sinceDays: 14 }); // eslint-disable-line global-require
+  const ats = mail && !mail.error
+    ? ` ATS Applications: ${mail.added} added${mail.already ? `, ${mail.already} already there` : ''}${mail.waiting ? `, ${mail.waiting} waiting for a requirement with the same job title (${mail.waitingTitles.slice(0, 3).map((x) => `"${x.title}"`).join(', ')}${mail.waitingTitles.length > 3 ? ', ...' : ''})` : ''}.`
+    : ` The ATS could not be updated just now (${(mail && mail.error) || 'no answer'}); it is tried again within the hour.`;
+  res.json({ ...out, atsImport: mail, message: `${out.message || 'Synced.'}${ats}` });
 }));
 
 router.post('/:id/reconnect', change, wrap(async (req, res) => {
@@ -239,6 +249,23 @@ router.post('/:id/reassign', change, wrap(async (req, res) => {
   const out = await portalFetch(`${idPath(req.params.id)}/reassign`, { method: 'POST', body: { recruiterId: b.recruiterId, confirm: b.confirm === true } });
   await audit(req, 'Portal mailbox reassigned', req.params.id, String(b.recruiterId || ''));
   return res.json(out);
+}));
+
+// A Naukri / Shine job title that matches no ATS requirement (or several): the requirement its responses go to, picked by hand.
+// { title, requirementId } (requirementId empty = forget it). Then the waiting responses are added at once.
+router.post('/ats-title', change, wrap(async (req, res) => {
+  const b = req.body || {};
+  const M = require('../utils/mailImports'); // eslint-disable-line global-require
+  const prisma = require('../db'); // eslint-disable-line global-require
+  if (b.requirementId) {
+    const r = await prisma.requirement.findUnique({ where: { id: String(b.requirementId) }, select: { id: true, title: true } });
+    if (!r) return res.status(404).json({ error: { code: 'NOT_FOUND', message: 'That requirement could not be found.' } });
+  }
+  const key = await M.linkTitle(b.title, b.requirementId || null);
+  if (!key) return res.status(400).json({ error: { code: 'VALIDATION_FAILED', message: 'Which job title?' } });
+  await audit(req, 'Naukri / Shine job title linked to a requirement', b.requirementId || null, `${String(b.title).slice(0, 120)} -> ${b.requirementId || '(unlinked)'}`);
+  const out = await M.pullQuietly({ sinceDays: 120 });
+  return res.json({ ok: true, atsImport: out, message: out && !out.error ? `Linked. ATS Applications: ${out.added} added.` : 'Linked. The responses are added on the next sync.' });
 }));
 
 router.get('/:id/logs', view, wrap(async (req, res) => {

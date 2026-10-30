@@ -325,7 +325,8 @@ async function ingestOne(payload) {
         name,
         email,
         phone,
-        source: 'Job Portal',
+        // a Naukri / Shine response read from a recruiter's mailbox (utils/mailImports.js) came from that board, not the portal
+        source: p.viaMail && board ? board : 'Job Portal',
         firstSource: board || PORTAL_APPLICATION_SOURCE,
         externalRef: ref,
         location: c.location || null,
@@ -370,8 +371,11 @@ async function ingestOne(payload) {
       stage: 'NEW',
       source: PORTAL_APPLICATION_SOURCE,
       firstSource: board || PORTAL_APPLICATION_SOURCE,
-      applicationMethod: 'Auto-Apply',
+      applicationMethod: p.viaMail ? 'Email Response' : 'Auto-Apply',
       matchScore: Number.isFinite(score) && app.matchScore !== null ? Math.round(score) : null,
+      // a mailbox response belongs to the recruiter whose mailbox it came to (utils/mailImports.js); otherwise the requirement's
+      // own recruiter (db.js owner_ hook, utils/applicationOwner.js)
+      ...(p.ownerUserId ? { ownerRecruiterId: p.ownerUserId } : {}),
     },
   });
   const resume = await attachResume(app, candidate, requirement);
@@ -562,6 +566,9 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
         out.errors.push(`status updates not sent to the portal: ${err.message}`);
       }
     }
+    // Naukri / Shine responses read from the recruiters' mailboxes (portal jobs of their own) -> ATS applications (utils/mailImports.js)
+    const mail = await require('./mailImports').pullQuietly({ sinceDays: pullDays }); // eslint-disable-line global-require
+    if (mail && !mail.error) { out.mailAdded = mail.added; out.mailWaiting = mail.waiting; out.created += mail.added; }
   } catch (err) {
     out.ok = false;
     out.error = err.message;
