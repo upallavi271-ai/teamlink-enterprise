@@ -358,7 +358,8 @@ function handle(sock, engines, opts = {}) {
       // this call, else Telugu (Hyderabad) - on a different server, so nothing queues; a switch then has its words at once
       // (the real call 2026-10-30 waited 3.8 s for them after Whisper).
       const spec = {};
-      if (engines.stt && cur === 'English' && !exact && pcm.length >= A.RATE * 2 * 0.6) { // (not on an open answer: the exact English model needs the CPU then) const l = spoken || 'Telugu'; spec[l] = engines.stt(pcm, l).catch(() => ''); }
+      // (not on an open answer: the exact English model needs the CPU then)
+      if (engines.stt && cur === 'English' && !exact && pcm.length >= A.RATE * 2 * 0.6) { const l = spoken || 'Telugu'; spec[l] = engines.stt(pcm, l).catch(() => ''); }
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
