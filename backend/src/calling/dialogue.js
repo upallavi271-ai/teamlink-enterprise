@@ -343,7 +343,7 @@ class Dialogue {
     return skeleton;
   }
   speak(...parts) {
-    if (this.prefix) { parts.unshift(this.prefix); this.prefix = ''; } // e.g. "Sure, let us continue in Telugu." once, before the next sentence
+    if (this.prefix) { parts.unshift(this.prefix); this.prefix = ''; } // e.g. the brain's short lead-in, once, before the next sentence
     const text = this.guard(parts.filter(Boolean).join(' '));
     this.st.transcript.push({ who: 'assistant', text: text.slice(0, 600) });
     this.st.lastAsk = text;
@@ -361,10 +361,11 @@ class Dialogue {
   }
 
   // Ask the current question again, shortly.
+  // prefix '' = understood, nothing to say before the question (e.g. a language switch); undefined = not understood
   again(prefix) {
     const q = {
       // after an answer (prefix), simply ask again; "sorry, I did not catch that" only when nothing was understood
-      identity: prefix ? this.B.identity : this.P.identityAgain.replace('{name}', S.clean(this.data.name || this.data.firstName)),
+      identity: prefix != null ? this.B.identity : this.P.identityAgain.replace('{name}', S.clean(this.data.name || this.data.firstName)),
       convenient: this.P.convenient,
       intro: this.P.screenIntro.replace('{job}', S.clean(this.data.jobTitle)),
       interest: this.P.interestQ,
@@ -416,8 +417,10 @@ class Dialogue {
     if (heardAs === 'unclear') { turn.understood = 'not_clear'; return this.unheard(); }
     // 1. the person's language: from this sentence on, every answer is in it
     const lg = this.autoLanguage ? detectLanguage(text) : null;
-    if (lg && lg.lang !== this.language) { this.setLanguage(lg.lang); this.prefix = this.P.langSwitched; }
-    if (lg && lg.only) { turn.understood = 'language'; this.prefix = ''; return { say: this.again(this.P.langSwitched), done: false }; }
+    // A LANGUAGE SWITCH IS NOT ANNOUNCED (founder 2026-10-30: "sare telugu lo matladkundham ani cheppakunda, direct
+    // conversation"): the next sentence is simply in their language, like a person who speaks both would do.
+    if (lg && lg.lang !== this.language) this.setLanguage(lg.lang);
+    if (lg && lg.only) { turn.understood = 'language'; this.prefix = ''; return { say: this.again(''), done: false }; }
     // 1b. THE BRAIN (brain.js): what they meant in the context of the last question, the facts in it, and a short natural
     // lead-in in their language. The word lists below are the fallback - and the only reader when the brain is off / slow.
     let b = null;
@@ -427,7 +430,7 @@ class Dialogue {
         turn.brain = { intent: b.intent, ms: b.ms };
         // a switch the word check missed (a Teluglish / Hinglish sentence): the brain read the language from the words
         if (this.autoLanguage && b.language && b.language !== this.language && !lg && text.trim().split(/\s+/).length >= 3) {
-          this.setLanguage(b.language); this.prefix = this.P.langSwitched;
+          this.setLanguage(b.language);
         }
       }
     }

@@ -184,7 +184,7 @@ async function turn(token, body) {
     // the person pressed a language button: everything from now on in that language (asked again, nothing else changes)
     if (!st.transcript.length || !pick) return { ok: false, status: 409, error: 'Please press Start first.' };
     d.setLanguage(pick);
-    out = { say: d.again(d.P.langSwitched), done: false };
+    out = { say: d.again(''), done: false }; // not announced: the question again, in the new language
   } else if (b.event === 'start') {
     if (st.transcript.length) out = { say: st.lastAsk, done: false }; // the page was reloaded: repeat the last question
     else {
