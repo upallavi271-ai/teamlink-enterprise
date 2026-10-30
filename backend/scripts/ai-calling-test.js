@@ -281,7 +281,7 @@ const COPY_URL = `file:${COPY.split(path.sep).join('/')}`;
       ['interested', ['yes', 'yes sure', 'yes interested', 'yes', '3 years', 'I live in Hyderabad', '30 days', 'yes'], 'Interested'],
       ['notint', ['yes', 'yes', 'no thanks not interested', 'not looking for a change right now'], 'Not Interested'], // 2026-10-29: one polite why-question, then accepted
       ['later', ['yes', 'not now, I am busy', 'tomorrow evening'], 'Call Back Later'],
-      ['unclear', ['yes', 'yes', 'hmm', 'banana'], 'Unclear'],
+      ['unclear', ['yes', 'yes', 'hmm', 'banana', 'mango'], 'Unclear'], // 2026-10-30: three unclear answers (the second asked another way)
     ]) {
       const x = await mk(`scr-${k}`);
       scr[k] = x;
