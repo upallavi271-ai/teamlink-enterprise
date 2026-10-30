@@ -51,6 +51,8 @@ const MAX_RATIO = 2.4; // repeated / looping text
 // no voice at all this long after the assistant finished = "are you still there?" (never read as an answer)
 const SILENCE_MS = Math.min(30000, Math.max(4000, num(process.env.AI_VOICE_SILENCE_MS, 8000)));
 const NOISE_MS = Math.max(0, num(process.env.AI_VOICE_NOISE_MS, 150)); // less real speech than this in a clip = noise
+// "Bangalore" was heard as "Bang the law" (2026-10-30 test): at "which city?" Whisper is told the usual answers
+const CITY_HINT = ' Hyderabad, Secunderabad, Bangalore, Chennai, Vijayawada, Visakhapatnam, Warangal, Guntur, Kakinada, Tirupati, Nellore, Karimnagar, Pune, Mumbai, Delhi, Kolkata.';
 const END_YESNO_MS = Math.min(2000, Math.max(400, num(process.env.AI_VOICE_END_YESNO_MS, 750)));
 const END_OPEN_MS = Math.min(2500, Math.max(600, num(process.env.AI_VOICE_END_OPEN_MS, 1150)));
 const OPEN_STEPS = ['qExp', 'qLoc', 'qNotice', 'later_when', 'resched_time', 'why_not'];
@@ -60,6 +62,8 @@ const MADE_UP = /^(thank you( (so much|very much|for watching|for listening))?|t
 const MAX_WORDS_PER_SEC = 5; // faster than anyone speaks = text made up, not heard
 function clarityOf(text, conf, seconds) {
   if (!String(text || '').trim()) return 'unclear'; // the line carried speech (the VAD heard it) but no words came out
+  // "ా", "అ", "म": a sound, not a word (real call 2026-10-30) - but a known short answer ("हाँ", "హా", "ఆ") is one
+  if (String(text).replace(/[\p{M}\p{P}\s]/gu, '').length < 2 && ['unclear', 'silence'].includes(require('../dialogue').classify(text).intent)) return 'unclear'; // eslint-disable-line global-require
   const words = String(text).trim().split(/\s+/).length;
   if (seconds > 0 && words / seconds > MAX_WORDS_PER_SEC && words > 4) return 'unclear';
   if (conf && typeof conf === 'object' && MADE_UP.test(String(text).trim()) && !(Number(conf.logprob) > -0.35)) return 'unclear';
@@ -88,7 +92,8 @@ const NATIVE = {
     'నెలలు', 'నెల', 'ఆసక్తి', 'ఇష్టం', 'మాట్లాడ', 'తెలుగు', 'ఏంటి', 'ఎక్కడ', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'కావాలి', 'వస్తాను', 'చేస్తాను', 'పని', 'ఊరు', 'సాయంత్రం', 'ఉదయం',
     'మధ్యాహ్నం', 'అలాగే', 'పర్లేదు', 'కూడా', 'ఇంకా', 'మళ్ళీ', 'గారు', 'అండి', 'చెప్పండి', 'చెప్పాలి', 'చెప్పన', 'ఏమి', 'ఏం', 'లేదా', 'ఉన్నారు',
     'ఉన్నా', 'ఉంటా', 'చేస్తున్నా', 'చేశాను', 'చేసాను', 'చేస్తా', 'వచ్చు', 'అయితే', 'కదా', 'బాగుంది', 'బాగా', 'ఇక్కడ', 'అక్కడ', 'వెళ్ళ', 'రెండు', 'మూడు',
-    'నాలుగు', 'ఐదు', 'ఒక', 'వర్క్ చేస్తున్నా', 'చూస్తా', 'ఆలోచిస్తా', 'వద్దండి', 'ఓకేనా'],
+    'నాలుగు', 'ఐదు', 'ఒక', 'వర్క్ చేస్తున్నా', 'చూస్తా', 'ఆలోచిస్తా', 'వద్దండి', 'ఓకేనా', 'ఎంత', 'ఎన్ని', 'ఉంటుంది', 'ఉంటుందా', 'ఉందా',
+    'ఇస్తారా', 'ఇస్తారు', 'కావాలా', 'చేయాలి', 'చేయాలా', 'వెళ్ళాలి', 'ఎవరు', 'ఏమిటి', 'మంచిది'],
   Hindi: ['हाँ', 'हां', 'जी', 'नहीं', 'नही', 'ठीक', 'बोलिए', 'बोलो', 'मैं', 'मुझे', 'मेरा', 'मेरी', 'आप', 'आपका', 'है', 'हैं', 'हूँ', 'हूं', 'में', 'का', 'की', 'के',
     'को', 'से', 'साल', 'दिन', 'महीने', 'कल', 'परसों', 'अभी', 'बाद', 'रहता', 'रहती', 'करता', 'करती', 'बात', 'हिंदी', 'क्या', 'कहाँ', 'कब', 'कैसे', 'क्यों', 'चाहिए',
     'शाम', 'सुबह', 'दोपहर', 'बिल्कुल', 'अच्छा', 'भी', 'और', 'बताइए', 'बताओ', 'सकते', 'सकता', 'सकती', 'रहा', 'रही', 'रहे', 'था', 'थी', 'गया',
@@ -103,6 +108,13 @@ function nativeAnswer(text, lang) {
   return words.some((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n))));
 }
 
+// "I'm listening" sounds - not answers when they come in the middle of the assistant's sentence
+const BACKCHANNEL = ['ఆ', 'హా', 'హ', 'ఊ', 'హ్మ్', 'ఓకే', 'సరే', 'అవును', 'ఓ', 'ok', 'okay', 'hmm', 'hm', 'yes', 'yeah', 'aa', 'haa', 'haan', 'achha', 'हाँ', 'हां', 'जी', 'हम्म', 'अच्छा', 'ठीक', 'ओके', 'आ'];
+function isBackchannel(text) {
+  const w = String(text || '').toLowerCase().replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
+  return w.length > 0 && w.length <= 2 && w.every((x) => BACKCHANNEL.includes(x) || x.replace(/[\p{M}]/gu, '').length <= 1);
+}
+
 // HOW MANY real everyday words of that language are in the words heard (0 = no proof it is that language)
 function nativeScore(text, lang) {
   const t = String(text || '').trim();
@@ -110,7 +122,10 @@ function nativeScore(text, lang) {
   if ((t.match(script) || []).length < 3) return 0;
   const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
   const list = NATIVE[lang] || [];
-  return words.filter((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n)))).length;
+  // a 1-2 letter word ("లో", "నా", "मे") turns up in noise written in that script: it counts half - alone it is no proof
+  // (an English "Bangalore. Immediately." was written "టకు లో మీది ఎతుయి" and switched the call to Telugu, 2026-10-30 test)
+  return words.filter((w) => list.some((n) => w === n || (n.length >= 4 && w.startsWith(n))))
+    .reduce((sum, w) => sum + (w.length >= 3 ? 1 : 0.5), 0);
 }
 // TELUGU OR HINDI? (founder 2026-10-30: "telugu matladithey, hindi lo theeskuntundhi"). On phone audio Whisper's language
 // guess often calls Telugu "Hindi"; the Hindi listener then writes the Telugu sound in Hindi letters ("ఓకే చెప్పండి" came
@@ -121,10 +136,11 @@ function nativeScore(text, lang) {
 async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
   const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => (known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''))));
   const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
-  if (!sT && !sH) return null;
+  if (sT < 1 && sH < 1) return null; // no real word in either
   const tie = ['Telugu', 'Hindi'].includes(prefer) ? prefer : (guess === 'Hindi' ? 'Hindi' : 'Telugu');
   // eslint-disable-next-line no-nested-ternary
-  const lang = sT > sH ? 'Telugu' : sH > sT ? 'Hindi' : tie;
+  let lang = sT > sH ? 'Telugu' : sH > sT ? 'Hindi' : tie;
+  if (['Telugu', 'Hindi'].includes(prefer) && lang !== prefer && Math.abs(sT - sH) < 2) lang = prefer;
   return { lang, text: lang === 'Telugu' ? te : hi, sT, sH };
 }
 
@@ -265,8 +281,12 @@ function handle(sock, engines, opts = {}) {
   const save = (why) => { if (saved || !row || !d) return null; saved = true; return finish(row, d, why).catch((e) => log('finish failed:', e.message)); };
   const hangup = () => { if (!sock.destroyed) { sock.write(A.encode(A.KIND.HANGUP)); sock.end(); } };
 
+  // what the assistant is saying now, sentence by sentence, and the line frame where each sentence ends
+  let current = null; // { parts: [sentence], ends: [frame] }
+  let interrupted = null; // { rest: 'the sentences not said yet', at: ms } - set when the person talks over the assistant
   async function say(text) {
     const my = ++gen; // a newer reply (or a barge-in) cancels the rest of this one
+    current = { parts: [], ends: [] }; interrupted = null;
     if (DEBUG && row) debug(`${row.id} says [${d.language}]: ${text}`);
     const t0 = Date.now(); let firstOut = true;
     // every sentence of the reply is made AT ONCE and played in order: the second is ready while the first plays (made one
@@ -278,6 +298,7 @@ function handle(sock, engines, opts = {}) {
       if (!pcm) continue;
       if (my !== gen || sock.destroyed) return;
       speaker.add(pcm); speaker.add(E.silence(GAP_MS));
+      current.parts.push(sentences(text)[jobs.indexOf(job)]); current.ends.push(speaker.sent + speaker.queue.length);
       if (DEBUG && row && firstOut) { firstOut = false; debug(`${row.id} voice ready in ${Date.now() - t0} ms`); }
     }
   }
@@ -310,13 +331,16 @@ function handle(sock, engines, opts = {}) {
       const cur = d.language;
       // the words AND Whisper's sureness ({ text, conf }); an engine without sttEx gives words only (conf null)
       // the question just asked, for Whisper's prompt (English calls): a short "yes" is heard far better knowing it (2026-10-29)
-      const ask = cur === 'English' ? String(d.st.lastAsk || '') : '';
+      const ask = cur === 'English' ? `${String(d.st.lastAsk || '')}${d.st.step === 'qLoc' ? CITY_HINT : ''}` : '';
       const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l, l === 'English' ? ask : '') : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
         .then((r) => ({ text: (r && r.text) || '', conf: (r && r.conf) || null }))
         .catch((e) => { log('stt failed:', e.message); return { text: '', conf: null }; });
       let found = null; let first = { text: '', conf: null }; let byScript = false; let enProb = null;
       // how much real speech (Silero VAD, server) - asked at the same time as the words, so it costs no time
       const speechP = engines.speech ? engines.speech(pcm) : Promise.resolve(null);
+      // (Starting the other listeners on every turn "just in case" was tried: it loaded the speech server and made EVERY reply
+      // about 1 s slower. They run only when a switch is suspected - both at once, never one after the other.)
+      const spec = {};
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -345,7 +369,7 @@ function handle(sock, engines, opts = {}) {
       if (byScript) first = { text: '', conf: null }; // heard again below in the language found
       let pre = null; // the words already heard in the language decided by teluguOrHindi
       if (found && found !== cur && ['Telugu', 'Hindi'].includes(found) && engines.stt) {
-        const known = ['Telugu', 'Hindi'].includes(cur) ? { [cur]: first.text } : {};
+        const known = ['Telugu', 'Hindi'].includes(cur) ? { ...spec, [cur]: first.text } : { ...spec };
         const th = await teluguOrHindi(engines, pcm, found, known, spoken);
         if (th) {
           if (DEBUG && th.lang !== found) debug(`${row.id} sound said ${found}, the words say ${th.lang} (Telugu ${th.sT} / Hindi ${th.sH})`);
@@ -364,7 +388,8 @@ function handle(sock, engines, opts = {}) {
       if (found === 'English' && cur !== 'English') {
         const en = await listen('English');
         const words = en.text.trim().split(/\s+/).filter(Boolean).length;
-        const understoodEn = !['unclear', 'silence'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
+        // a "question" word alone is no proof ("हाँ, इंटरेस्ट है" was written "How interesting!" and read as a question)
+        const understoodEn = !['unclear', 'silence', 'info_q'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
         if (understoodEn || (words >= 4 && clarityOf(en.text, en.conf) === 'clear')) pre = en;
         else { if (DEBUG) debug(`${row.id} sound said English, but "${en.text}" makes no sense: staying in ${cur}`); found = null; }
       }
@@ -388,7 +413,7 @@ function handle(sock, engines, opts = {}) {
       if (['Telugu', 'Hindi'].includes(cur) && lang === cur && engines.stt && !nativeScore(r.text, cur)
         && ['unclear', 'silence'].includes(require('../dialogue').classify(r.text).intent)) { // eslint-disable-line global-require
         const other = cur === 'Telugu' ? 'Hindi' : 'Telugu';
-        const th = await teluguOrHindi(engines, pcm, cur, { [cur]: r.text }, spoken);
+        const th = await teluguOrHindi(engines, pcm, cur, { ...spec, [cur]: r.text }, spoken);
         if (th && th.lang === other) {
           if (DEBUG) debug(`${row.id} "${r.text}" is not ${cur}; the ${other} words make sense: back to ${other}`);
           lang = other; r2 = { text: th.text, conf: null }; heardAs = 'clear'; found = other;
@@ -396,12 +421,22 @@ function handle(sock, engines, opts = {}) {
       }
       // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
       if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.5))) {
-        const th = await teluguOrHindi(engines, pcm, null, {}, spoken);
+        const th = await teluguOrHindi(engines, pcm, null, { ...spec }, spoken);
         const pick = th ? [th.lang, th.text] : null;
         if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs})${th ? `: Telugu ${th.sT} / Hindi ${th.sH} words -> ${th.lang}: ${th.text}` : ': no Telugu / Hindi words'}`);
         if (pick) { lang = pick[0]; r2 = { text: pick[1], conf: null }; heardAs = 'clear'; found = pick[0]; }
       }
       const { text } = r2;
+      // A LISTENING NOISE OVER THE ASSISTANT (founder 2026-10-30: "matladuthu matladuthu agi pothundhi"): "ఆ", "హా", "ok",
+      // "हाँ", a cough - said while the assistant was still explaining - is not an answer. The assistant goes on with the rest of
+      // what it was saying. (Over the LAST sentence - the question - a "yes" is the answer and is read as one.)
+      const cut = interrupted && Date.now() - interrupted.at < 15000 ? interrupted : null;
+      interrupted = null;
+      if (cut && cut.rest.length > 1 && (heardAs !== 'clear' || isBackchannel(text))) {
+        if (DEBUG) debug(`${row.id} "${text}" over the assistant: going on with what it was saying`);
+        await say(cut.rest.join(' '));
+        return;
+      }
       // the Telugu / Hindi the person speaks in this call (it wins a later tie)
       if (['Telugu', 'Hindi'].includes(lang) && heardAs === 'clear' && nativeScore(text, lang)) spoken = lang;
       if (opts.onHeard) opts.onHeard(text, lang);
@@ -421,7 +456,10 @@ function handle(sock, engines, opts = {}) {
     strict: () => speaker.busy,
     // a yes / no question: a short pause ends the answer; "how many years / which city / when": people think aloud, wait longer
     endMs: () => (d && OPEN_STEPS.includes(d.st.step) ? END_OPEN_MS : END_YESNO_MS),
-    onStart: () => { lastVoice = Date.now(); if (speaker.busy) { gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
+    onStart: () => { lastVoice = Date.now(); if (speaker.busy) {
+      // what was not said yet (the sentence cut and the ones after it): said again if this turns out to be only "ఆ" / "ok"
+      if (current) { const played = speaker.sent; const i = current.ends.findIndex((e) => e > played); interrupted = i >= 0 ? { rest: current.parts.slice(i), at: Date.now() } : null; }
+      gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
     onEnd: (pcm) => { heard(pcm); },
   });
 
@@ -478,4 +516,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { polish, nativeAnswer, nativeScore, teluguOrHindi, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { polish, nativeAnswer, nativeScore, teluguOrHindi, isBackchannel, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };

@@ -61,7 +61,7 @@ const L = {
   later: ['later', 'call back', 'call me back', 'not now', 'not right now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
   resched: ['reschedule', 'change the time', 'change time', 'another time', 'different time', 'other time', 'postpone', 'can we move', 'move it', 'समय बदल', 'दूसरा समय', 'दूसरे समय', 'సమయం మార్చ', 'టైమ్ మార్చ', 'వేరే సమయం', 'మరో సమయం', 'వాయిదా', 'vere samayam'],
   no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me', 'నో', 'నొ', 'नो', 'नॉट'],
-  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
+  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'హా', 'హాఁ', 'ఆ', 'ఆఁ', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
   info: ['what', 'where', 'which', 'who', 'when', 'how', 'why', 'details', 'tell me', 'more info', 'location', 'address', 'company', 'client', 'link', 'kya', 'kahan', 'kaun', 'kab', 'kaise', 'क्या', 'कहाँ', 'कहां', 'कौन', 'कब', 'कैसे', 'क्यों', 'ఏమిటి', 'ఎక్కడ', 'ఎవరు', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'ఏంటి'],
   immediate: ['immediate', 'immediately', 'serving', 'free', 'fresher', 'तुरंत', 'वेंटनहीं', 'వెంటనే', 'ఇప్పుడే'],
   // the person is upset (user rule 2026-10-28: stay calm, apologise, keep it short, offer a recruiter; never argue)
@@ -77,7 +77,7 @@ const NO_BUT_FINE = ['no problem', 'not a problem', 'not bad', 'no issue'];
 // to "can I tell you about it?" / "do you have two minutes?" these mean yes. Daily speech in all three languages.
 const GO_AHEAD = ['go ahead', 'go on', 'tell me', 'please tell', 'tell', 'carry on', 'continue', 'proceed', 'listening', 'i am listening', 'im listening', 'say it', 'shoot',
   'చెప్పు', 'చెప్పండి', 'చెప్పండీ', 'చెప్పవే', 'చెప్పరా', 'చెప్పమ్మా', 'చెప్పయ్యా', 'మాట్లాడు', 'మాట్లాడండి', 'మాట్లాడొచ్చు', 'మాట్లాడవచ్చు', 'వింటున్నా', 'వింటున్నాను',
-  'కానివ్వండి', 'కానివ్వు', 'కానీయండి', 'ఫ్రీగా ఉన్నా', 'ఫ్రీ ఉన్నా', 'టైమ్ ఉంది', 'cheppu', 'cheppandi', 'chepandi', 'chepu', 'matladu', 'matladandi', 'vintunna',
+  'చెపో', 'చెప్పో', 'చెప్పవా', 'cheppo', 'కానివ్వండి', 'కానివ్వు', 'కానీయండి', 'ఫ్రీగా ఉన్నా', 'ఫ్రీ ఉన్నా', 'టైమ్ ఉంది', 'cheppu', 'cheppandi', 'chepandi', 'chepu', 'matladu', 'matladandi', 'vintunna',
   'बोलो', 'बोलिए', 'बोलिये', 'बोलें', 'बताओ', 'बताइए', 'बताइये', 'बताएं', 'बताइ', 'कहिए', 'कहो', 'सुनाइए', 'सुन रहा', 'सुन रही', 'चलो', 'चलिए', 'टाइम है', 'फ्री हूँ',
   'bolo', 'boliye', 'batao', 'bataiye', 'bataye', 'kahiye', 'chalo'];
 // 2026-10-29 fixes: an answer that is not a plain yes / no is never forced into one
@@ -124,7 +124,8 @@ const TIME_WORDS = ['today', 'tomorrow', 'morning', 'afternoon', 'evening', 'nig
   'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'fifteenth', 'twentieth', 'thirtieth',
   'జనవరి', 'ఫిబ్రవరి', 'మార్చి', 'ఏప్రిల్', 'జూన్', 'జూలై', 'ఆగస్టు', 'ఆగస్ట్', 'సెప్టెంబర్', 'అక్టోబర్', 'నవంబర్', 'డిసెంబర్', 'ఫస్ట్', 'సెకండ్', 'తేదీ',
   'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर', 'फर्स्ट', 'तारीख'];
-const timeLike = (text) => { const t = norm(text); return /\d/.test(t) || has(t, TIME_WORDS); };
+// ("am" / "pm" alone is not a time: "I am busy")
+const timeLike = (text) => { const t = norm(text); return /\d/.test(t) || has(t, TIME_WORDS.filter((w) => w !== 'am' && w !== 'pm')); };
 
 // --- which language the person is speaking (user rule 2026-10-28: answer in the person's language, switch at once) ---------
 // Script first (Telugu / Devanagari letters), then romanised Telugu / Hindi words, then plain English. One or two English
@@ -177,6 +178,42 @@ function isGreeting(t) {
   return w.length > 0 && w.length <= 3 && w.some((x) => GREETING.includes(x)) && w.every((x) => GREETING.includes(x) || GREET_EXTRA.includes(x));
 }
 
+// a place the assistant may say back: one of the known Indian cities / localities (utils/locationMatch.js), or words in Telugu /
+// Hindi letters (the Indian-language listener writes real words); English words it does not know are not repeated
+let PLACES = null;
+function knownPlace(p) {
+  const t = String(p || '').trim();
+  if (!t) return false;
+  if (/[\u0900-\u097F\u0C00-\u0C7F]/.test(t)) return knownIndicPlace(t);
+  if (!PLACES) {
+    PLACES = new Set();
+    Object.entries(require('../utils/locationMatch').CITY_ALIASES).forEach(([c, al]) => { PLACES.add(c.toLowerCase().replace(/[^a-z]/g, '')); al.forEach((a) => PLACES.add(a)); }); // eslint-disable-line global-require
+  }
+  return t.split(/[\s,]+/).some((w) => PLACES.has(w.toLowerCase().replace(/[^a-z]/g, '')));
+}
+
+const EXPLAIN = ['explain', 'once more', 'one more time', 'again tell', 'tell again', 'details', 'full details', 'job details', 'more details',
+  'మళ్ళీ చెప్పండి', 'మళ్ళీ చెప్పు', 'ఇంకోసారి', 'ఇంకొకసారి', 'డీటెయిల్స్', 'వివరంగా', 'ఎక్స్‌ప్లెయిన్', 'అర్థం కాలేదు', 'జాబ్ గురించి',
+  'फिर से बताइए', 'फिर से बताओ', 'एक बार और', 'डिटेल्स', 'समझाइए', 'समझाओ', 'जॉब के बारे में', 'phir se', 'malli cheppandi', 'inkosari'];
+
+// a place in Telugu / Hindi letters is said back only when it is close to a known city written the same way ("వరంగల్" yes,
+// "వరంగవ అ" - a mis-hearing - no)
+let INDIC_PLACES = null;
+function knownIndicPlace(t) {
+  if (!INDIC_PLACES) {
+    const V = require('./voice/speakScript'); // eslint-disable-line global-require
+    INDIC_PLACES = new Set();
+    Object.keys(require('../utils/locationMatch').CITY_ALIASES).forEach((c) => { // eslint-disable-line global-require
+      ['Telugu', 'Hindi'].forEach((l) => INDIC_PLACES.add(skeleton(V.native(c, l))));
+    });
+    Object.values(V.WORDS).forEach(([te, hi]) => { INDIC_PLACES.add(skeleton(te)); INDIC_PLACES.add(skeleton(hi)); });
+  }
+  return String(t).split(/[\s,]+/).filter((w) => w.replace(/[\p{M}]/gu, '').length > 1).every((w) => {
+    const k = skeleton(w.replace(/లో$|में$/, ''));
+    return k.length >= 2 && [...INDIC_PLACES].some((p) => p.length >= 2 && editDistance(k, p) <= (p.length >= 5 ? 1 : 0));
+  });
+}
+
 // MIS-HEARD SHORT REPLIES (research 2026-10-30): the listener writes "చెప్పండి" as "చపండి", or Telugu sound in Hindi letters
 // ("चपंडी"). Hindi letters are moved to the Telugu block (the Indic blocks share one layout), vowel signs and the virama are
 // dropped, and what is left is compared with the known go-ahead / yes words - one letter of difference allowed.
@@ -193,7 +230,7 @@ function fuzzyGoAhead(text) {
   if (!fuzzyKeys) fuzzyKeys = [...GO_AHEAD, ...L.yes].filter((e) => !ascii(e) && !e.includes(' ')).map(skeleton).filter((k) => k.length >= 3);
   const words = String(text || '').normalize('NFC').replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
   if (!words.length || words.length > 3) return false;
-  return words.some((w) => { const k = skeleton(w); return k.length >= 3 && fuzzyKeys.some((f) => editDistance(k, f) <= (f.length >= 6 ? 2 : 1)); });
+  return words.some((w) => { const k = skeleton(w); return k.length >= 2 && fuzzyKeys.some((f) => (k.length >= 3 || f.length <= 3) && editDistance(k, f) <= (f.length >= 6 ? 2 : 1)); });
 }
 
 // Fixed answer from a fixed list. Returns { intent, human }.
@@ -274,7 +311,13 @@ function readPlace(text) {
 function readTime(text) {
   const raw = String(text || '').normalize('NFKC').replace(/[^\p{L}\p{M}\p{N}\s:.,/-]/gu, ' ').replace(/\s+/g, ' ').trim();
   const t = raw.replace(/[s.,:/-]+$/, ''); // "Tomorrow." -> "Tomorrow" (it is read back inside a sentence)
-  return t ? t.slice(0, 120) : null;
+  if (!t) return null;
+  // only the WHEN of a longer sentence is said back ("busy now, call me tomorrow 6 pm" -> "tomorrow 6 pm"): the time words,
+  // numbers and "o'clock" words, in the order said; the whole sentence only when nothing like a time is in it
+  const words = t.split(/[\s,]+/);
+  const isTime = (w) => { const x = norm(w); return /\d/.test(x) || TIME_WORDS.some((tw) => !tw.includes(' ') && (x === tw || (!ascii(tw) && tw.length >= 3 && x.startsWith(tw)))) || Object.prototype.hasOwnProperty.call(NUM_WORDS, x) || /^(గంట|గంటల|बजे|baje|o'?clock|ganta)/.test(x); };
+  const keep = words.filter((w, i) => isTime(w) && !(/^(am|pm)$/i.test(w) && !/\d/.test(words[i - 1] || ''))); // "I am busy": not a time
+  return (keep.length && keep.length < words.length ? keep.join(' ') : t).slice(0, 120);
 }
 
 // --- the result, validated -----------------------------------------------------------------------------------------------
@@ -538,6 +581,11 @@ class Dialogue {
     if (k.intent === 'maybe') { const m = this.onMaybe(); if (m) return m; }
 
     if (st.step === 'calm') return this.on_calm(k);
+    // "explain once more / details cheppandi / फिर से समझाइए": the job again (any number of times), then the open question
+    if (st.step !== 'identity' && S.screenLike(this.purpose) && has(norm(text), EXPLAIN) && !['later_when', 'resched_time'].includes(st.step)) {
+      turn.understood = 'explain again';
+      return { say: this.again(this.B.brief), done: false };
+    }
     // "who is this? / where are you calling from?" before the name: who we are (it shares nothing), then the name again
     if (st.step === 'identity' && A.topicOf(text).includes('who')) { turn.understood = 'question'; return { say: this.speak(A.answer(this, text).say, this.B.identity), done: false }; }
     if (st.step === 'identity') return this.onIdentity(k);
@@ -727,10 +775,14 @@ class Dialogue {
     return { say: this.again(st.tries === 2 ? this.P.yesOrNo : undefined), done: false };
   }
 
-  on_convenient(k) {
+  on_convenient(k, text) {
     const st = this.st;
     if (k.intent === 'yes') { st.step = 'intro'; this.ack('ackTime'); return { say: this.speak(this.B.intro), done: false }; }
-    if (k.intent === 'no' || k.intent === 'later' || k.intent === 'reschedule') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
+    if (k.intent === 'no' || k.intent === 'later' || k.intent === 'reschedule') {
+      st.callback = true; st.step = 'later_when';
+      if (k.intent !== 'no' && timeLike(text)) return this.on_later_when(k, text); // the time is already in the sentence
+      return { say: this.speak(this.P.laterAsk), done: false };
+    }
     return this.retry(k);
   }
 
@@ -739,12 +791,17 @@ class Dialogue {
     if (k.intent === 'yes') { st.step = 'interest'; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
+    // still not clear the second time: the person is on the line and talking - tell them about the job (it commits to
+    // nothing) instead of ending the call (a real call ended here, 2026-10-30)
+    if (st.tries >= 1) { st.tries = 0; st.step = 'interest'; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
     return this.retry(k);
   }
 
   on_interest(k) {
     const st = this.st;
-    if (k.intent === 'yes' && k.goAhead && !st.rebriefed) { st.rebriefed = true; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
+    // "చెప్పండి" / "tell me" after the job = tell me (again): as many times as they ask
+    if (k.intent === 'yes' && k.goAhead) return { say: this.speak(this.B.brief, this.P.interestQ), done: false };
+    if (k.intent === 'repeat') return { say: this.speak(this.B.brief, this.P.interestQ), done: false };
     if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; this.ack('ackInterest'); return this.ask('qExp'); }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
@@ -754,9 +811,12 @@ class Dialogue {
     return { say: this.again(st.tries === 2 ? this.P.yesOrNo : this.P.repeat), done: false };
   }
 
+  // "shall I tell you about the job once more?" - the assistant explains it again itself (no hand-off to a recruiter)
   on_human_offer(k) {
     const st = this.st;
-    if (k.intent === 'yes' || k.intent === 'human') { st.human = true; return this.close('Unclear', 'recruiter call requested', this.P.humanNoted); }
+    if (k.intent === 'human') { st.human = true; return this.close('Unclear', 'recruiter call requested', this.P.humanNoted); }
+    if (k.intent === 'yes' || k.goAhead) { st.step = 'interest'; st.tries = 0; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
+    if (k.intent === 'no') return this.notInterested();
     return this.close('Unclear', 'unclear interest');
   }
 
@@ -792,8 +852,9 @@ class Dialogue {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
     } else {
-      st.answers.currentLocation = place;
-      if (!S.looksGarbled(place)) this.ack('ackLoc', { place: S.clean(place, 40) });
+      st.answers.currentLocation = String(place).split(/\s+/).filter((w) => w.replace(/[\p{M}\p{P}]/gu, '').length > 1).join(' ') || place;
+      const spokenPlace = S.clean(String(st.answers.currentLocation).replace(/[.,!?।]+$/g, ''), 40);
+      if (!S.looksGarbled(place) && knownPlace(spokenPlace)) this.ack('ackLoc', { place: spokenPlace }); else this.ack('ackNoted');
     }
     st.tries = 0;
     return this.ask('qNotice');

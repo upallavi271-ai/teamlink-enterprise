@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 const FRAME_MS = 20;
 const START_FRAMES = 3; // 60 ms of voice = talking
-const STRICT_FRAMES = 15; // while the assistant speaks: 300 ms of clearly louder voice (line echo / noise must not cut it off)
+const STRICT_FRAMES = 25; // while the assistant speaks: 500 ms of clearly louder voice (line echo, a cough or "ఆ" must not cut it off)
 // this much quiet = finished. 550 cut people off while they paused to think ("I think that's not..." ended a call as Not
 // Interested, 2026-10-29); 800 by default, AI_VOICE_END_MS to tune it against real calls (400 - 2000).
 const END_MS = Math.min(2000, Math.max(400, Number(process.env.AI_VOICE_END_MS) || 800));

@@ -15,8 +15,9 @@ const UNDERSTOOD = {
   yes: 'Yes', no: 'No', mixed: 'Yes and no — asked again', maybe: 'Not sure / maybe', repeat: 'Asked to repeat', cant_hear: "Couldn't hear the AI",
   later: 'Call later', reschedule: 'Change the time', salary_q: 'Asked about salary', info_q: 'Asked a question', stop: 'Do not call', human: 'Wants a recruiter',
   ai_q: 'Asked if this is AI', other_cand: 'Asked about others', unclear: 'Not understood', not_clear: 'Not heard clearly (asked again)', silence: 'No reply',
-  language: 'Asked for a language',
+  language: 'Asked for a language', question: 'Asked a question', 'explain again': 'Asked to explain the job again',
 };
+const ANSWERED = { 'from the ATS': 'answered from the ATS', 'recruiter answer': "answered with the recruiter's answer", 'to confirm': 'not in the ATS - kept for the recruiter (AI Calling > Questions)' };
 const clock = (at) => {
   const d = at ? new Date(at) : null;
   return d && !Number.isNaN(d.getTime()) ? d.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', second: '2-digit', timeZone: 'Asia/Kolkata' }) : '';
@@ -75,7 +76,7 @@ export function TalkHistoryWindow({ id, onClose }) {
                 {none ? <span className="small-muted">No reply heard</span> : (t.text || <span className="small-muted">(no words came through)</span>)}
                 {unclear && <div><span style={{ fontSize: 11, padding: '1px 6px', borderRadius: 8, background: 'var(--line, #e2e6ee)' }}>Not heard clearly — asked again</span></div>}
               </div>
-              {reading && !unclear && <div className="small-muted" style={{ fontSize: 11, textAlign: 'right', marginTop: 2 }}>{`AI understood: ${reading}`}</div>}
+              {reading && !unclear && <div className="small-muted" style={{ fontSize: 11, textAlign: 'right', marginTop: 2 }}>{`AI understood: ${reading}${ANSWERED[t.answered] ? ` · ${ANSWERED[t.answered]}` : ''}`}</div>}
             </div>
           );
         })}

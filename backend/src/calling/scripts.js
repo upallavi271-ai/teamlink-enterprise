@@ -51,8 +51,8 @@ const PH = {
     laterAsk: 'No problem. When should we call you back?',
     laterClose: "Okay, we'll call you later. Bye.",
     laterNoted: "Okay, {when}, got it. We'll call you then. Bye.",
-    screenIntro: 'We have a {job} job open. Can I tell you a bit about it?',
-    matchIntro: "You had applied with TeamLink earlier. Your profile matches another opening, a {job} job. Can I tell you a bit about it?", // Job Match (Job Portal calling, 2026-10-30)
+    screenIntro: 'We have an opening for {job}. Can I tell you a bit about it?',
+    matchIntro: "You had applied with TeamLink earlier. Your profile matches another opening, for {job}. Can I tell you a bit about it?", // Job Match (Job Portal calling, 2026-10-30)
     briefLoc: 'The job is in {location}.',
     briefNeeds: "They need: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'Work mode is {workMode}.',
@@ -61,31 +61,31 @@ const PH = {
     briefSkills: 'Main skills: {skills}.',
     briefResp: 'The work includes: {responsibilities}.',
     briefSalary: 'Salary range is {salary}.',
-    briefNone: "I don't have more details right now. The recruiter can tell you.",
+    briefNone: "I'll share the full details on the next call.",
     interestQ: 'Are you interested in this job?',
-    interestMore: 'Want a recruiter to call you with more details?',
+    interestMore: "Shall I tell you about the job once more?",
     qExp: 'How many years of experience do you have in this?',
     qLoc: 'Which city are you in right now?',
     qNotice: "What's your notice period, in days?",
     qProceed: 'Are you okay to go ahead with the next steps?',
-    closeInterested: 'Thanks. A recruiter from TeamLink will call you with the next steps. Nothing is final from this call. Bye.',
+    closeInterested: "Thanks. I've noted everything. We'll send you the next details soon. Nothing is final from this call. Bye.",
     closeNotInterested: 'Okay, thanks for your time. Bye.',
     closeStop: "Okay, we won't call you again. Bye.",
-    closeUnclear: 'Thanks for your time. A recruiter may call you. Bye.',
+    closeUnclear: "Okay, the line doesn't seem clear. I'll call you back. Thanks.",
     humanNoted: "Okay, I've noted you want to talk to a recruiter. Someone from the team will call you.",
     amAi: "I'm an AI assistant of TeamLink Consultants, not a person.",
-    noSalary: "I don't have that detail. The recruiter can tell you.",
-    noInfo: "I don't have that detail. The recruiter will tell you.",
+    noSalary: "Let me confirm that with the team and get back to you.",
+    noInfo: "Let me confirm that with the team and get back to you.",
     onlyYou: 'I can only talk about your own application.',
     repeat: "Sorry, I didn't catch that. Let me ask again.",
     resumeLine: "We spoke earlier about the {job} job.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "Sorry, I couldn't hear you clearly.",
     breaking: "Sorry, your voice is breaking up.",
-    audioClose: "Sorry, the line isn't clear, so I'll stop here. A recruiter may call you later. Bye.",
+    audioClose: "Sorry, the line isn't clear, so I'll stop here and call you back a little later. Bye.",
     stillThere: "Hello, are you still there?",
     stillThere2: "Hello, can you hear me?",
-    noAnswerClose: "I can't hear a reply, so I'll end the call now. A recruiter may call you later. Bye.",
+    noAnswerClose: "I can't hear you, so I'll call you back a little later. Bye.",
     yesOrNo: "Sorry, was that a yes or a no?",
     sureRepeat: "Sure, let me say that again.",
     canHear: "Sorry about that. Can you hear me now?",
@@ -114,7 +114,7 @@ const PH = {
     shortIv: 'Your interview is on {date} at {time}.',
     shortNoIv: "The interview isn't fixed yet. The team will share the details later.",
     shortProceed: 'Are you okay to go to the next step?',
-    shortYes: 'Thanks. The recruiter will call you with the next steps. Being shortlisted is just one step, not a final decision. Bye.',
+    shortYes: "Thanks. We'll send you the next details soon. Being shortlisted is one step, not a final decision. Bye.",
     // AI interview pending (Job Portal calling, 2026-10-30)
     aiNews: "You applied for the {job} job on the TeamLink jobs website. Your AI interview for it is still pending.",
     aiDue: "Please finish it by {date}.",
@@ -158,31 +158,31 @@ const PH = {
     briefSkills: "मेन स्किल्स {skills} हैं।",
     briefResp: "काम ये है: {responsibilities}।",
     briefSalary: "सैलरी {salary} तक है।",
-    briefNone: "अभी इससे ज़्यादा डिटेल्स मेरे पास नहीं हैं, रिक्रूटर बता देंगे।",
+    briefNone: "पूरी डिटेल्स अगली कॉल में बताऊँगा।",
     interestQ: "इस जॉब में इंटरेस्ट है?",
-    interestMore: "ज़्यादा डिटेल्स के लिए रिक्रूटर आपको कॉल करें?",
+    interestMore: "जॉब के बारे में एक बार और बताऊँ?",
     qExp: "आपका कितने साल का एक्सपीरियंस है?",
     qLoc: "अभी आप कहाँ रहते हैं?",
     qNotice: "नोटिस पीरियड कितने दिन का है?",
     qProceed: "ओके, आगे बढ़ें?",
-    closeInterested: "थैंक्यू। टीमलिंक के रिक्रूटर आपको कॉल करके नेक्स्ट स्टेप्स बताएँगे। इस कॉल से अभी कुछ फ़ाइनल नहीं है। बाय।",
+    closeInterested: "थैंक्यू। सब नोट कर लिया। आगे क्या करना है, जल्दी बताएँगे। इस कॉल से अभी कुछ फ़ाइनल नहीं है। बाय।",
     closeNotInterested: "ओके, कोई बात नहीं। टाइम देने के लिए थैंक्यू। बाय।",
     closeStop: "ओके, अब कॉल नहीं करेंगे। बाय।",
-    closeUnclear: "टाइम देने के लिए थैंक्यू। रिक्रूटर आपको कॉल कर सकते हैं। बाय।",
+    closeUnclear: "ठीक है, लाइन साफ़ नहीं लग रही। मैं फिर से कॉल करूँगा। थैंक्यू।",
     humanNoted: "ओके, नोट कर लिया कि आप रिक्रूटर से बात करना चाहते हैं। टीम से कोई कॉल करेगा।",
     amAi: "मैं टीमलिंक का AI असिस्टेंट हूँ, कोई इंसान नहीं।",
-    noSalary: "सैलरी की डिटेल मेरे पास नहीं है, रिक्रूटर बता देंगे।",
-    noInfo: "ये डिटेल मेरे पास नहीं है, रिक्रूटर बता देंगे।",
+    noSalary: "वो मैं टीम से कन्फर्म करके आपको बताता हूँ।",
+    noInfo: "वो मैं टीम से कन्फर्म करके आपको बताता हूँ।",
     onlyYou: "मैं सिर्फ़ आपकी एप्लिकेशन के बारे में बात कर सकता हूँ।",
     repeat: "सॉरी, ठीक से सुनाई नहीं दिया।",
     resumeLine: "हमने पहले {job} जॉब के बारे में बात की थी ना।", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "सॉरी, आपकी आवाज़ ठीक से नहीं आई।",
     breaking: "सॉरी, आपकी आवाज़ कट रही है।",
-    audioClose: "सॉरी, लाइन क्लियर नहीं है, यहीं रोकता हूँ। रिक्रूटर बाद में कॉल कर सकते हैं। बाय।",
+    audioClose: "सॉरी, लाइन क्लियर नहीं है। थोड़ी देर बाद फिर कॉल करता हूँ। बाय।",
     stillThere: "हैलो, लाइन पर हैं?",
     stillThere2: "हैलो, आवाज़ आ रही है?",
-    noAnswerClose: "आपकी आवाज़ नहीं आ रही, कॉल यहीं रोकता हूँ। रिक्रूटर बाद में कॉल कर सकते हैं। बाय।",
+    noAnswerClose: "आपकी आवाज़ नहीं आ रही, थोड़ी देर बाद फिर कॉल करता हूँ। बाय।",
     yesOrNo: "सॉरी, हाँ बोला या ना?",
     sureRepeat: "ओके, फिर से बताता हूँ।",
     canHear: "सॉरी। अब आवाज़ आ रही है?",
@@ -211,7 +211,7 @@ const PH = {
     shortIv: "आपका इंटरव्यू {date} को {time} बजे है।",
     shortNoIv: "इंटरव्यू अभी फिक्स नहीं हुआ, टीम बाद में बताएगी।",
     shortProceed: "नेक्स्ट स्टेप के लिए चलें?",
-    shortYes: "थैंक्यू। रिक्रूटर कॉल करके नेक्स्ट स्टेप्स बताएँगे। शॉर्टलिस्ट मतलब बस एक स्टेप, फ़ाइनल डिसीजन नहीं। बाय।",
+    shortYes: "थैंक्यू। आगे क्या करना है, जल्दी बताएँगे। शॉर्टलिस्ट मतलब बस एक स्टेप, फ़ाइनल डिसीजन नहीं। बाय।",
     // AI interview pending (Job Portal calling, 2026-10-30)
     aiNews: "आपने टीमलिंक जॉब्स वेबसाइट पर {job} जॉब के लिए अप्लाई किया था ना। उसका AI इंटरव्यू अभी पेंडिंग है।",
     aiDue: "{date} तक कंप्लीट कर दीजिए।",
@@ -255,31 +255,31 @@ const PH = {
     briefSkills: "మెయిన్‌గా {skills} రావాలి.",
     briefResp: "వర్క్ ఏంటంటే: {responsibilities}.",
     briefSalary: "సాలరీ {salary} వరకు ఉంటుంది.",
-    briefNone: "ఇంకా డీటెయిల్స్ ఇప్పుడు నా దగ్గర లేవు, రిక్రూటర్ చెప్తారు.",
+    briefNone: "పూర్తి డీటెయిల్స్ ఇంకోసారి కాల్ చేసినప్పుడు చెప్తా.",
     interestQ: "ఈ జాబ్ మీకు ఇంట్రెస్ట్ ఉందా?",
-    interestMore: "ఇంకా డీటెయిల్స్ కోసం రిక్రూటర్ మీకు కాల్ చేయాలా?",
+    interestMore: "జాబ్ గురించి ఇంకోసారి చెప్పనా?",
     qExp: "ఈ ఫీల్డ్‌లో మీకు ఎన్నేళ్ళ ఎక్స్‌పీరియన్స్ ఉంది?",
     qLoc: "ఇప్పుడు మీరు ఎక్కడ ఉంటున్నారు?",
     qNotice: "మీ నోటీస్ పీరియడ్ ఎన్ని రోజులు?",
     qProceed: "ఓకే, ముందుకు వెళ్దామా?",
-    closeInterested: "థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.",
+    closeInterested: "థాంక్యూ. అన్నీ నోట్ చేసుకున్నా. తర్వాత ఏం చేయాలో త్వరలో మీకు తెలియజేస్తాం. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.",
     closeNotInterested: "ఓకే, పర్లేదు. టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
     closeStop: "ఓకే, ఇంకెప్పుడూ కాల్ చేయం. బై.",
-    closeUnclear: "టైమ్ ఇచ్చినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేయొచ్చు. బై.",
+    closeUnclear: "సరే, లైన్ సరిగ్గా లేనట్టుంది. మళ్ళీ కాల్ చేస్తా. థాంక్స్.",
     humanNoted: "ఓకే, మీరు రిక్రూటర్‌తో మాట్లాడాలనుకుంటున్నారని నోట్ చేసుకున్నా. టీమ్ నుంచి ఎవరైనా కాల్ చేస్తారు.",
     amAi: "నేను టీమ్‌లింక్ వాళ్ళ AI అసిస్టెంట్‌ని, మనిషిని కాదు.",
-    noSalary: "సాలరీ డీటెయిల్ నా దగ్గర లేదు, రిక్రూటర్ చెప్తారు.",
-    noInfo: "ఆ డీటెయిల్ నా దగ్గర లేదు, రిక్రూటర్ చెప్తారు.",
+    noSalary: "అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.",
+    noInfo: "అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.",
     onlyYou: "నేను మీ అప్లికేషన్ గురించి మాత్రమే మాట్లాడగలను.",
     repeat: "సారీ, సరిగ్గా వినపడలేదు.",
     resumeLine: "ఇంతకుముందు మనం {job} జాబ్ గురించి మాట్లాడుకున్నాం కదా.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "సారీ, మీ మాట సరిగ్గా వినపడలేదు.",
     breaking: "సారీ, మీ వాయిస్ కట్ అవుతుంది.",
-    audioClose: "సారీ, లైన్ క్లియర్‌గా లేదు, ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత కాల్ చేయొచ్చు. బై.",
+    audioClose: "సారీ, లైన్ క్లియర్‌గా లేదు. కాసేపాగి మళ్ళీ కాల్ చేస్తా. బై.",
     stillThere: "హలో, లైన్‌లో ఉన్నారా?",
     stillThere2: "హలో, వినపడుతుందా?",
-    noAnswerClose: "మీ మాట వినపడట్లేదు, ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత కాల్ చేయొచ్చు. బై.",
+    noAnswerClose: "మీ మాట వినపడట్లేదు, కాసేపాగి మళ్ళీ కాల్ చేస్తా. బై.",
     yesOrNo: "సారీ, అవునా కాదా?",
     sureRepeat: "ఓకే, మళ్ళీ చెప్తా.",
     canHear: "సారీ. ఇప్పుడు వినపడుతుందా?",
@@ -308,7 +308,7 @@ const PH = {
     shortIv: "మీ ఇంటర్వ్యూ {date} న {time} కి.",
     shortNoIv: "ఇంటర్వ్యూ ఇంకా ఫిక్స్ కాలేదు, టీమ్ తర్వాత చెప్తుంది.",
     shortProceed: "ముందుకు వెళ్దామా?",
-    shortYes: "థాంక్స్. రిక్రూటర్ కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. షార్ట్‌లిస్ట్ అంటే ఒక స్టెప్ అంతే, ఫైనల్ డెసిషన్ కాదు. బై.",
+    shortYes: "థాంక్యూ. తర్వాత ఏం చేయాలో త్వరలో మీకు తెలియజేస్తాం. షార్ట్‌లిస్ట్ అంటే ఒక స్టెప్ అంతే, ఫైనల్ డెసిషన్ కాదు. బై.",
     // AI interview pending (Job Portal calling, 2026-10-30)
     aiNews: "మీరు టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో {job} జాబ్‌కి అప్లై చేశారు కదా. దాని AI ఇంటర్వ్యూ ఇంకా పెండింగ్‌లో ఉంది.",
     aiDue: "{date} లోపు కంప్లీట్ చేయండి.",
@@ -350,8 +350,8 @@ const VARIANTS = {
       "Okay, when would be a better time to call?"
     ],
     "screenIntro": [
-      "So, there's a {job} job open with us. Shall I tell you a little about it?",
-      "We have an opening for a {job} job. Can I quickly tell you about it?"
+      "So, there's an opening for {job} with us. Shall I tell you a little about it?",
+      "There's a job for {job} with us. Can I quickly tell you about it?"
     ],
     "interestQ": [
       "Does this sound interesting to you?",
@@ -374,7 +374,7 @@ const VARIANTS = {
       "Are you okay if we take this forward?"
     ],
     "closeInterested": [
-      "Great, thanks! A recruiter from TeamLink will call you with the next steps. Just so you know, nothing is final from this call. Bye."
+      "Great, thanks! I've noted everything and we'll send you the next details soon. Just so you know, nothing is final from this call. Bye."
     ],
     "closeNotInterested": [
       "No problem at all, thanks for your time. Bye.",
@@ -448,7 +448,7 @@ const VARIANTS = {
       "దీన్ని ముందుకు తీసుకెళ్దామా?"
     ],
     "closeInterested": [
-      "సూపర్, థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. ఈ కాల్‌తో ఏదీ ఫైనల్ కాదు. బై."
+      "సూపర్, థాంక్స్. అన్నీ నోట్ చేసుకున్నా, తర్వాత ఏం చేయాలో త్వరలో చెప్తాం. ఈ కాల్‌తో ఏదీ ఫైనల్ కాదు. బై."
     ],
     "closeNotInterested": [
       "పర్లేదు, టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
@@ -522,7 +522,7 @@ const VARIANTS = {
       "इसे आगे ले चलें?"
     ],
     "closeInterested": [
-      "बढ़िया, थैंक्यू। टीमलिंक के रिक्रूटर आपको कॉल करके आगे के स्टेप्स बताएँगे। इस कॉल से कुछ भी फ़ाइनल नहीं है। बाय।"
+      "बढ़िया, थैंक्यू। सब नोट कर लिया, आगे क्या करना है जल्दी बताएँगे। इस कॉल से कुछ भी फ़ाइनल नहीं है। बाय।"
     ],
     "closeNotInterested": [
       "कोई बात नहीं, टाइम देने के लिए थैंक्यू। बाय।",
@@ -667,17 +667,20 @@ function descriptionFacts(desc) {
   const items = [];
   lines.forEach((l) => {
     if (NOISE_LINE.test(l) || /^location\s*[:\-]/i.test(l) || /\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/.test(l)) return;
+    // a heading ("Package:") or a rule / benefit line (hours, age limit, accommodation, bed capacity) is not what they need
+    if (/:\s*$/.test(l) || /working hours|age limit|as per nmc|accom+od|bed capacity|timing|days a week|qualification|package/i.test(l)) return;
     if (/\b\d+\s*k\b|lpa|₹|salary|ctc|experience|fresher|eligible|who have|require/i.test(l)) return;
     l.replace(/^\d+[.)]\s*/, '').split(',').forEach((part) => {
       const v = part.replace(/\b\d+\s*(members?|persons?|people|posts?|nos?|vacanc(y|ies))\b/ig, '').replace(/^\d+\s+/, '').replace(/\s+/g, ' ').trim();
-      if (v && v.length <= 40 && /[a-z]/i.test(v) && !items.some((x) => x.toLowerCase() === v.toLowerCase())) items.push(v);
+      const junk = (v.length < 4 && !/^[A-Z][A-Za-z.]{1,3}$/.test(v)) || /^(years?|yrs?|experience|exp|male|female|any|nil|na|n\/a)\.?$/i.test(v) || /\b(female|male|gender|mandatory|language|preferred|age|years? of)\b/i.test(v);
+      if (v && !junk && v.length <= 40 && /[a-z]/i.test(v) && !items.some((x) => x.toLowerCase() === v.toLowerCase())) items.push(v);
     });
   });
   out.needs = clean(items.slice(0, 5).join(', '), 160);
   return out;
 }
 // "Faculty requirement" is said as "Faculty" ("We have a Faculty job open")
-const spokenTitle = (t) => clean(String(t || '').replace(/\s*[-–(]?\s*\b(requirements?|vacanc(y|ies)|openings?|positions?)\b\)?\s*$/i, ''), 100) || clean(t, 100);
+const spokenTitle = (t) => clean(String(t || '').replace(/\s*[-–(]?\s*\b(requirements?|vacanc(y|ies)|openings?|positions?)\b\)?\s*$/i, '').replace(/\s+[—–]\s+/g, ', '), 100) || clean(t, 100);
 
 // requirement + application + candidate -> the facts. NOTHING that is not stored is added.
 function buildData({ candidate, app, requirement, link }) {

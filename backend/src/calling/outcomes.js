@@ -103,7 +103,8 @@ async function suppress(row, source) {
 // Each candidate turn keeps the EXACT words heard (text), how clearly they were heard (heard: clear | unclear | none),
 // and SEPARATELY how the assistant read them (understood) - the Talk history never shows the reading as the person's words.
 // Only these fields, checked: nothing else from the call state reaches the row.
-const UNDERSTOOD = ['yes', 'no', 'mixed', 'maybe', 'repeat', 'cant_hear', 'later', 'reschedule', 'stop', 'human', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'silence', 'unclear', 'not_clear', 'language'];
+const UNDERSTOOD = ['yes', 'no', 'mixed', 'maybe', 'repeat', 'cant_hear', 'later', 'reschedule', 'stop', 'human', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'silence', 'unclear', 'not_clear', 'language', 'question', 'explain again'];
+const ANSWERED = ['from the ATS', 'recruiter answer', 'to confirm'];
 function historyJson(turns) {
   return JSON.stringify(turns.slice(0, 80).map((x) => {
     const o = { who: x.who === 'assistant' ? 'assistant' : 'candidate', text: String(x.text || '').slice(0, 400) };
@@ -111,6 +112,7 @@ function historyJson(turns) {
       if (['clear', 'unclear', 'none'].includes(x.heard)) o.heard = x.heard;
       if (UNDERSTOOD.includes(x.understood)) o.understood = x.understood;
       if (S_LANGS.includes(x.lang)) o.lang = x.lang;
+      if (ANSWERED.includes(x.answered)) o.answered = x.answered;
     }
     if (typeof x.at === 'string' && /^\d{4}-\d\d-\d\dT/.test(x.at)) o.at = x.at.slice(0, 24);
     return o;

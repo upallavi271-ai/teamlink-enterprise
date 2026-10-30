@@ -32,7 +32,7 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   // ---- A. "Do you have two minutes?" - "Yes, I have." ---------------------------------------------------------------
   let d = mk(); await to(d, 'convenient', ['yes speaking']);
   let r = await d.hear('Yes, I have.');
-  ok(d.st.step === 'intro' && /job open/i.test(r.say), 'A  "Yes, I have." to "two minutes?" -> the job is explained', r.say);
+  ok(d.st.step === 'intro' && /job open|opening for/i.test(r.say), 'A  "Yes, I have." to "two minutes?" -> the job is explained', r.say);
 
   // ---- K. the real misheard answer: "Yes, I can't tell you so much about it." -------------------------------------
   d = mk(); await to(d, 'convenient', ['yes speaking']);

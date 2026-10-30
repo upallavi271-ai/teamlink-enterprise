@@ -58,7 +58,7 @@ function salaryOf(d, r) {
 // what the person asked about: [topic, ...]; the first that the ATS can answer wins
 const TOPICS = [
   { key: 'who', words: ['who are you', 'who is this', 'where are you calling from', 'which company are you', 'ఎవరు మీరు', 'మీరు ఎవరు', 'ఎక్కడి నుంచి', 'ఎవరండి', 'కౌన్', 'आप कौन', 'कौन बोल', 'कहाँ से', 'कहां से'], anytime: true },
-  { key: 'salary', words: ['salary', 'pay', 'package', 'ctc', 'stipend', 'per month', 'how much', 'సాలరీ', 'జీతం', 'ప్యాకేజ్', 'ఎంత ఇస్తారు', 'పేమెంట్', 'सैलरी', 'पैकेज', 'वेतन', 'तनख्वाह', 'कितना देंगे', 'पेमेंट', 'jeetham', 'salary entha'] },
+  { key: 'salary', words: ['salary', 'pay', 'package', 'ctc', 'stipend', 'per month', 'how much', 'సాలరీ', 'శాలరీ', 'సేలరీ', 'సాలరి', 'సాలెరీ', 'శాలరి', 'జీతం', 'सेलरी', 'सैलेरी', 'सालरी', 'सेलेरी', 'शैलरी', 'ప్యాకేజ్', 'ఎంత ఇస్తారు', 'పేమెంట్', 'सैलरी', 'पैकेज', 'वेतन', 'तनख्वाह', 'कितना देंगे', 'पेमेंट', 'jeetham', 'salary entha'] },
   { key: 'timings', words: ['timing', 'timings', 'hours', 'shift', 'duty', 'working time', 'days a week', 'టైమింగ్', 'టైమింగ్స్', 'షిఫ్ట్', 'డ్యూటీ', 'వర్కింగ్ టైమ్', 'ఎన్ని గంటలు', 'टाइमिंग', 'शिफ्ट', 'ड्यूटी', 'कितने घंटे', 'kitne ghante', 'timings enti'] },
   { key: 'accommodation', words: ['accommodation', 'hostel', 'room', 'stay', 'quarters', 'అకామడేషన్', 'రూమ్', 'హాస్టల్', 'క్వార్టర్స్', 'ఉండడానికి', 'रहने', 'रूम', 'हॉस्टल', 'क्वार्टर'] },
   { key: 'food', words: ['food', 'meals', 'lunch', 'canteen', 'ఫుడ్', 'భోజనం', 'క్యాంటీన్', 'खाना', 'कैंटीन'] },
