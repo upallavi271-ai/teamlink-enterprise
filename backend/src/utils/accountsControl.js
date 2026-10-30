@@ -270,7 +270,7 @@ async function buildControl(user, q = {}) {
   const pass = (r, skip) => (skip === 'client' || !want.client || (clientByName ? r.client === want.client : r.clientId === want.client))
     && (skip === 'dept' || !want.dept || r.department === want.dept)
     && (skip === 'section' || !want.section || r.sectionKey === want.section)
-    && (skip === 'role' || !want.role || r.role === want.role)
+    && (skip === 'role' || !want.role || r.seat === want.role || r.tlSeat === want.role)
     && (skip === 'emp' || !want.emp || r.employees.includes(want.emp));
   const facet = (skip, keysOf, labelOf) => {
     const m = new Map();
@@ -280,12 +280,39 @@ async function buildControl(user, q = {}) {
     return [...m.entries()].map(([value, count]) => ({ value, label: labelOf(value), count }))
       .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
+  // SECTION / ROLE / EMPLOYEE come from the team structure (founder 2026-10-30: "role select chestunte positions ravali
+  // EDU 1..10; section A select cheste dantlo unna valle ravali"): Role = the positions (seats) of the department /
+  // section in view - its TL seat first, then EDU-1, EDU-2 ... - and Employee = only the people who sit (or sat) there.
+  // Every one is listed, with the number of invoices behind it (0 too), so the whole team shows, not only who has invoices.
+  const structured = (skip, opts, keysOf) => {
+    const m = new Map();
+    inPeriod.filter((r) => pass(r, skip)).forEach((r) => {
+      [...new Set(keysOf(r).filter((k) => k && k !== '—'))].forEach((k) => m.set(k, (m.get(k) || 0) + 1));
+    });
+    return opts.map((o) => ({ ...o, count: m.get(o.value) || 0 }));
+  };
+  const deps = hier.departments.filter((d) => !want.dept || d.name === want.dept);
+  const secs = deps.flatMap((d) => d.sections.filter((s) => !want.section || s.key === want.section).map((s) => ({ d, s })));
+  const seatOpts = [];
+  secs.forEach(({ d, s }) => (s.seats || []).forEach((code) => {
+    if (seatOpts.some((o) => o.value === code)) return;
+    const tl = code === s.tlSeat;
+    seatOpts.push({ value: code, label: tl ? `${code} (TL${d.sections.length > 1 ? ` · ${s.label}` : ''})` : code, tl });
+  }));
+  seatOpts.sort((a, b) => (b.tl - a.tl) || a.value.localeCompare(b.value, 'en', { numeric: true }));
+  const inPlace = (e) => (!want.dept || e.department === want.dept) && (!want.section || e.sectionKey === want.section) && (!want.role || e.seat === want.role);
+  const placed = hier.people.filter((p) => !p.unplaced && (p.entries || []).some(inPlace));
+  const nowThere = (p) => (p.entries || []).some((e) => inPlace(e) && e.current);
+  const empOpts = [...placed.filter(nowThere), ...placed.filter((p) => !nowThere(p))].map((p) => {
+    const e = (p.entries || []).filter(inPlace).sort((a, b) => String(b.from || '').localeCompare(String(a.from || '')))[0];
+    return { value: p.key, label: [p.name, e && e.seat, nowThere(p) ? '' : 'former'].filter(Boolean).join(' · ') };
+  });
   const facets = {
     client: facet('client', (r) => [r.clientId], clientLabel),
     dept: facet('dept', (r) => [r.department], (v) => deptLabel.get(v) || v),
-    section: facet('section', (r) => [r.sectionKey], (v) => secLabel.get(v) || v),
-    role: facet('role', (r) => [r.role], (v) => v),
-    emp: facet('emp', (r) => r.employees, (v) => personName.get(v) || v),
+    section: structured('section', deps.flatMap((d) => d.sections.map((s) => ({ value: s.key, label: secLabel.get(s.key) || s.label }))), (r) => [r.sectionKey]),
+    role: structured('role', seatOpts, (r) => [r.seat, r.tlSeat]),
+    emp: structured('emp', empOpts, (r) => r.employees),
   };
   // The picked client stays in its list (with its name) even when the other filters leave it no invoice.
   if (want.client && !clientByName && !facets.client.some((o) => o.value === want.client)) {

@@ -348,13 +348,15 @@ export default function Invoices() {
   }, [fc, filters.recs, hier]);
   const deptList = deptOpts.map((o) => ({ ...o, count: fc.dept.get(o.value) || 0 })).filter((o) => keep(o.count, filters.dept === o.value));
   const secOpts = useMemo(() => sectionOptions(hier, filters.dept), [hier, filters.dept]);
-  const secList = secOpts.map((o) => ({ ...o, count: fc.section.get(o.value) || 0 })).filter((o) => keep(o.count, filters.section === o.value));
+  // Section / Role / Employee are the team structure itself (2026-10-30): every section, position (EDU-1 ... EDU-10) and person
+  // of the department / section in view is listed, with its invoice count (0 too) - not only the ones with invoices.
+  const secList = secOpts.map((o) => ({ ...o, count: fc.section.get(o.value) || 0 }));
   // Role = the department's seats (EDU-1…, TL) and Employee = whoever held the chosen seat, current or former.
   const empOpts = useMemo(() => employeeOptions(hier, filters.dept, filters.section, filters.role), [hier, filters.dept, filters.section, filters.role]);
   // Current holders always show; former holders only when they have invoices in view.
-  const empList = empOpts.map((o) => ({ ...o, count: fc.rec.get(o.value) || 0 })).filter((o) => keep(o.count, filters.rec === o.value || o.current));
+  const empList = empOpts.map((o) => ({ ...o, count: fc.rec.get(o.value) || 0 }));
   const roleOpts = useMemo(() => roleOptions(hier, filters.dept, filters.section), [hier, filters.dept, filters.section]);
-  const roleList = roleOpts.map((o) => ({ ...o, count: fc.role.get(o.value) || 0 })).filter((o) => keep(o.count, filters.role === o.value));
+  const roleList = roleOpts.map((o) => ({ ...o, count: fc.role.get(o.value) || 0 }));
   const empInfo = filters.rec !== ALL ? describeEmployee(hier, filters.rec, filters.dept, filters.section, filters.role) : null;
   // P4 — GST / TDS lists, counted over what the OTHER filters leave; a value
   // with nothing behind it is hidden unless it is the one picked.
