@@ -75,7 +75,7 @@ const L = {
 const NO_BUT_FINE = ['no problem', 'not a problem', 'not bad', 'no issue'];
 // "GO AHEAD / TELL ME / SPEAK" (real calls 2026-10-30: "చెప్పు", "మాట్లాడు" were asked again and again until the call ended):
 // to "can I tell you about it?" / "do you have two minutes?" these mean yes. Daily speech in all three languages.
-const GO_AHEAD = ['go ahead', 'go on', 'tell me', 'please tell', 'tell', 'carry on', 'continue', 'proceed', 'listening', 'i am listening', 'im listening', 'say it', 'shoot',
+const GO_AHEAD = ['go ahead', 'go on', "let's go", 'let s go', 'lets go', 'please', 'you can', 'yes you can', 'tell me', 'please tell', 'tell', 'carry on', 'continue', 'proceed', 'listening', 'i am listening', 'im listening', 'say it', 'shoot',
   'చెప్పు', 'చెప్పండి', 'చెప్పండీ', 'చెప్పవే', 'చెప్పరా', 'చెప్పమ్మా', 'చెప్పయ్యా', 'మాట్లాడు', 'మాట్లాడండి', 'మాట్లాడొచ్చు', 'మాట్లాడవచ్చు', 'వింటున్నా', 'వింటున్నాను',
   'చెపో', 'చెప్పో', 'చెప్పవా', 'cheppo', 'కానివ్వండి', 'కానివ్వు', 'కానీయండి', 'ఫ్రీగా ఉన్నా', 'ఫ్రీ ఉన్నా', 'టైమ్ ఉంది', 'cheppu', 'cheppandi', 'chepandi', 'chepu', 'matladu', 'matladandi', 'vintunna',
   'बोलो', 'बोलिए', 'बोलिये', 'बोलें', 'बताओ', 'बताइए', 'बताइये', 'बताएं', 'बताइ', 'कहिए', 'कहो', 'सुनाइए', 'सुन रहा', 'सुन रही', 'चलो', 'चलिए', 'टाइम है', 'फ्री हूँ',
@@ -612,7 +612,7 @@ class Dialogue {
     const qStep = /^q/.test(st.step);
     const asks = !['resched_time', 'later_when', 'why_not'].includes(st.step) && (qStep
       ? topics.some((x) => x !== OWN[st.step]) && A.looksQuestion(text)
-      : (k.intent === 'salary_q' || k.intent === 'info_q' || (topics.length > 0 && k.intent !== 'no' && (A.looksQuestion(text) || String(text).trim().split(/\s+/).length <= 3))));
+      : (k.intent === 'salary_q' || k.intent === 'info_q' || (topics.length > 0 && k.intent !== 'no' && (A.looksQuestion(text) || k.intent === 'unclear' || String(text).trim().split(/\s+/).length <= 3))));
     if (asks) {
       const qa = A.answer(this, text);
       if (qa && (st.step !== 'identity' || qa.topic === 'who')) {
@@ -870,7 +870,7 @@ class Dialogue {
     if (k.intent === 'human') { st.human = true; return this.close('Unclear', 'recruiter call requested', this.P.humanNoted); }
     if (k.intent === 'yes' || k.goAhead) { st.step = 'interest'; st.tries = 0; return { say: this.speak(this.B.brief, this.P.interestQ), done: false }; }
     if (k.intent === 'no') return this.notInterested();
-    return this.close('Unclear', 'unclear interest');
+    return this.retry(k);
   }
 
   // "Later" / "busy" in the middle of the questions: a call-back request (never an answer such as a city called "later")
@@ -900,7 +900,9 @@ class Dialogue {
   on_qLoc(k, text) {
     const st = this.st;
     const l = this.laterInQuestions(k); if (l) return l;
-    const place = (st.heardFacts && st.heardFacts.location) || (['no', 'yes', 'maybe', 'mixed'].includes(k.intent) ? null : readPlace(text));
+    let place = (st.heardFacts && st.heardFacts.location) || (['no', 'yes', 'maybe', 'mixed'].includes(k.intent) ? null : readPlace(text));
+    // words that are no known place ("In your deep, deep, like, in." - real call 2026-10-30): asked once more before taking them
+    if (place && !(st.heardFacts && st.heardFacts.location) && !knownPlace(S.clean(String(place).replace(/[.,!?।]+$/g, ''), 40)) && st.tries < 1) place = null;
     if (!place) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };

@@ -342,6 +342,7 @@ function handle(sock, engines, opts = {}) {
       // which language + the words, at the same time; only when the person really switched is it heard again in the new one
       // (a clip under ~2 s with its end pause - "yes", "haan theek" - is too short to tell a language by sound)
       const t0 = Date.now();
+      const marks = []; const mark = (what) => marks.push(`${what} ${Date.now() - t0}`);
       const cur = d.language;
       // the words AND Whisper's sureness ({ text, conf }); an engine without sttEx gives words only (conf null)
       // the question just asked, for Whisper's prompt (English calls): a short "yes" is heard far better knowing it (2026-10-29)
@@ -381,12 +382,13 @@ function handle(sock, engines, opts = {}) {
         }
       }
       // a click, a cough, a line noise (under NOISE_MS of real speech): not an answer - nothing is said back, nothing switches
-      const sp = await speechP;
+      mark('first'); const sp = await speechP; mark('speech');
       if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < NOISE_MS) {
         if (DEBUG) debug(`${row.id} ignored ${(pcm.length / 16000).toFixed(1)}s of sound: only ${sp.speechMs} ms of speech`);
         return;
       }
       if (byScript) first = { text: '', conf: null }; // heard again below in the language found
+      mark('decided');
       let pre = null; // the words already heard in the language decided by teluguOrHindi
       if (found && found !== cur && ['Telugu', 'Hindi'].includes(found) && engines.stt) {
         const known = ['Telugu', 'Hindi'].includes(cur) ? { ...spec, [cur]: first.text } : { ...spec };
@@ -477,7 +479,7 @@ function handle(sock, engines, opts = {}) {
       // the Telugu / Hindi the person speaks in this call (it wins a later tie)
       if (['Telugu', 'Hindi'].includes(lang) && heardAs === 'clear' && nativeScore(text, lang)) spoken = lang;
       if (opts.onHeard) opts.onHeard(text, lang);
-      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms, ${heardAs}: ${text}`);
+      if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms (${marks.join(', ')}), ${heardAs}: ${text}`);
       await reply(text, { heard: heardAs, lang });
     } catch (e) {
       // the brain / an engine / the database failed on this answer: say a safe line and wait for the next one
