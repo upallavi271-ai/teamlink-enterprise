@@ -35,6 +35,8 @@ const hasForbidden = (t) => FORBIDDEN.some((re) => re.test(String(t || '')));
 // Everyday spoken words, the way people talk on the phone (user, 2026-10-28: "normal daily language, like humans"; no
 // "అండి"). English job words that people say anyway (జాబ్, ఎక్స్‌పీరియన్స్) are written in Telugu / Hindi letters so the voice
 // says them right. The rules above still hold: AI first, never selected / hired / offered, no promise.
+// DAILY SPEECH, NOT OFFICIAL (founder 2026-10-30: "official telugu & official hindi avasaram ledhu"): Hyderabad Teluglish and
+// everyday Hinglish - ఓకే, సాలరీ, ఇప్పుడు, ఏళ్ళు (not సంవత్సరం / జీతం / ప్రస్తుతం); सैलरी, सिटी, डायरेक्ट (not भारतीय समय / आमने-सामने).
 const PH = {
   English: {
     ai: "Hi, this is TeamLink Consultants' AI recruitment assistant.",
@@ -90,6 +92,18 @@ const PH = {
     laterWhenAgain: "Sorry, which day or time suits you?",
     thatsFine: "That's fine.",
     langSwitched: "Sure, let's continue in English.",
+    // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
+    ackName: "Hi {first}.",
+    ackTime: "Thanks.",
+    ackInterest: "Good.",
+    ackExp: "Okay, {yrs}.",
+    ackFresher: "Okay, a fresher.",
+    ackLoc: "Okay, {place}.",
+    ackNotice: "Okay, {days} days.",
+    ackNoticeNow: "Okay, so you can join right away.",
+    ackNoted: "Okay, noted.",
+    briefWhere: "It's in {location}",
+    briefExpSkills: "They want around {experience} of experience, mainly in {skills}.",
     calmSorry: "Sorry if this is a bad time. I'll keep it really short.",
     calmOffer: 'Shall I go on, or should a recruiter call you at a better time?',
     calmClose: "Got it, sorry for the trouble. I won't take more of your time now. Thanks.",
@@ -122,178 +136,446 @@ const PH = {
     tz: 'IST',
   },
   Hindi: {
-    ai: 'हाय, मैं टीमलिंक कंसल्टेंट्स से AI रिक्रूटमेंट असिस्टेंट बोल रहा हूँ।',
-    noticeRec: 'ये कॉल रिकॉर्ड हो सकती है और लिखकर भी रखी जा सकती है।',
-    identity: 'क्या {name} जी बात कर रहे हैं?',
-    identityAgain: 'सॉरी, ठीक से सुनाई नहीं दिया। क्या {name} जी बात कर रहे हैं?',
-    identityNeeded: 'पहले मुझे पक्का करना है कि {name} जी से ही बात हो रही है, उसके बाद डिटेल्स बता पाऊँगा।',
-    wrong: 'ओह, सॉरी, डिस्टर्ब किया। थैंक्यू, बाय।',
-    convenient: 'अभी दो मिनट बात हो सकती है?',
-    laterAsk: 'कोई बात नहीं। फिर कब कॉल करें?',
-    laterClose: 'ठीक है, बाद में फिर कॉल करेंगे। बाय।',
-    laterNoted: 'ठीक है, {when}, नोट कर लिया। तब कॉल करेंगे। बाय।',
-    screenIntro: 'हमारे पास {job} की एक जॉब है। उसके बारे में थोड़ा बताऊँ?',
-    matchIntro: "आपने पहले टीमलिंक में अप्लाई किया था। आपकी प्रोफ़ाइल से मिलती एक और जॉब है, {job}। उसके बारे में थोड़ा बताऊँ?", // Job Match (Job Portal calling, 2026-10-30)
-    briefLoc: 'जॉब {location} में है।',
-    briefNeeds: "इन्हें चाहिए: {needs}।", // what the requirement asks for, from the ATS description (2026-10-30)
-    briefMode: 'वर्क मोड {workMode} है।',
-    briefType: 'ये {employmentType} जॉब है।',
-    briefExp: 'करीब {experience} का एक्सपीरियंस चाहिए।',
-    briefSkills: 'मेन स्किल्स: {skills}।',
-    briefResp: 'काम में ये सब है: {responsibilities}।',
-    briefSalary: 'सैलरी रेंज {salary} है।',
-    briefNone: 'अभी इससे ज़्यादा डिटेल्स मेरे पास नहीं हैं। रिक्रूटर बता देंगे।',
-    interestQ: 'इस जॉब में इंटरेस्ट है?',
-    interestMore: 'ज़्यादा डिटेल्स के लिए रिक्रूटर आपको कॉल करें?',
-    qExp: 'आपका एक्सपीरियंस कितने साल का है?',
-    qLoc: 'अभी कौन से शहर में रहते हैं?',
-    qNotice: 'नोटिस पीरियड कितने दिन का है?',
-    qProceed: 'आगे के स्टेप्स के लिए तैयार हैं?',
-    closeInterested: 'थैंक्यू। टीमलिंक के रिक्रूटर आपको कॉल करके आगे के स्टेप्स बताएँगे। इस कॉल से अभी कुछ फ़ाइनल नहीं होता। बाय।',
-    closeNotInterested: 'ठीक है, टाइम देने के लिए थैंक्यू। बाय।',
-    closeStop: 'ठीक है, अब कॉल नहीं करेंगे। बाय।',
-    closeUnclear: 'टाइम देने के लिए थैंक्यू। रिक्रूटर आपको कॉल कर सकते हैं। बाय।',
-    humanNoted: 'ठीक है, नोट कर लिया कि आप रिक्रूटर से बात करना चाहते हैं। टीम से कोई कॉल करेगा।',
-    amAi: 'मैं टीमलिंक कंसल्टेंट्स का AI असिस्टेंट हूँ, कोई इंसान नहीं।',
-    noSalary: 'ये मेरे पास नहीं है। रिक्रूटर बता देंगे।',
-    noInfo: 'ये डिटेल मेरे पास नहीं है। रिक्रूटर बता देंगे।',
-    onlyYou: 'मैं सिर्फ़ आपकी एप्लिकेशन के बारे में बात कर सकता हूँ।',
-    repeat: 'सॉरी, ठीक से सुनाई नहीं दिया। फिर से पूछता हूँ।',
-    resumeLine: "हमने पहले {job} जॉब के बारे में बात की थी।", // a call-back call (memory, 2026-10-30)
+    ai: "हैलो, मैं टीमलिंक कंसल्टेंट्स से कॉल कर रहा हूँ, मैं उनका AI असिस्टेंट हूँ।",
+    noticeRec: "ये कॉल रिकॉर्ड हो सकती है, नोट्स भी लिखे जाएँगे।",
+    identity: "{name} जी बोल रहे हैं?",
+    identityAgain: "सॉरी, ठीक से सुनाई नहीं दिया। {name} जी बोल रहे हैं?",
+    identityNeeded: "पहले ये कन्फर्म करना है कि {name} जी से ही बात हो रही है, फिर डिटेल्स बताता हूँ।",
+    wrong: "अरे, सॉरी, शायद रॉन्ग नंबर लग गया। बाय।",
+    convenient: "अभी दो मिनट बात कर सकते हैं?",
+    laterAsk: "कोई बात नहीं। कब कॉल करूँ?",
+    laterClose: "ओके, बाद में कॉल करता हूँ। बाय।",
+    laterNoted: "ओके, {when}, नोट कर लिया। तभी कॉल करूँगा। बाय।",
+    screenIntro: "हमारे पास एक {job} की जॉब है। थोड़ा बताऊँ उसके बारे में?",
+    matchIntro: "आपने पहले टीमलिंक में अप्लाई किया था ना। आपकी प्रोफ़ाइल से मैच होती एक और जॉब है, {job}। थोड़ा बताऊँ उसके बारे में?", // Job Match (Job Portal calling, 2026-10-30)
+    briefLoc: "जॉब {location} में है।",
+    briefNeeds: "उन्हें चाहिए: {needs}।", // what the requirement asks for, from the ATS description (2026-10-30)
+    briefMode: "{workMode} है।",
+    briefType: "{employmentType} जॉब है।",
+    briefExp: "{experience} का एक्सपीरियंस चाहिए।",
+    briefSkills: "मेन स्किल्स {skills} हैं।",
+    briefResp: "काम ये है: {responsibilities}।",
+    briefSalary: "सैलरी {salary} तक है।",
+    briefNone: "अभी इससे ज़्यादा डिटेल्स मेरे पास नहीं हैं, रिक्रूटर बता देंगे।",
+    interestQ: "इस जॉब में इंटरेस्ट है?",
+    interestMore: "ज़्यादा डिटेल्स के लिए रिक्रूटर आपको कॉल करें?",
+    qExp: "आपका कितने साल का एक्सपीरियंस है?",
+    qLoc: "अभी आप कहाँ रहते हैं?",
+    qNotice: "नोटिस पीरियड कितने दिन का है?",
+    qProceed: "ओके, आगे बढ़ें?",
+    closeInterested: "थैंक्यू। टीमलिंक के रिक्रूटर आपको कॉल करके नेक्स्ट स्टेप्स बताएँगे। इस कॉल से अभी कुछ फ़ाइनल नहीं है। बाय।",
+    closeNotInterested: "ओके, कोई बात नहीं। टाइम देने के लिए थैंक्यू। बाय।",
+    closeStop: "ओके, अब कॉल नहीं करेंगे। बाय।",
+    closeUnclear: "टाइम देने के लिए थैंक्यू। रिक्रूटर आपको कॉल कर सकते हैं। बाय।",
+    humanNoted: "ओके, नोट कर लिया कि आप रिक्रूटर से बात करना चाहते हैं। टीम से कोई कॉल करेगा।",
+    amAi: "मैं टीमलिंक का AI असिस्टेंट हूँ, कोई इंसान नहीं।",
+    noSalary: "सैलरी की डिटेल मेरे पास नहीं है, रिक्रूटर बता देंगे।",
+    noInfo: "ये डिटेल मेरे पास नहीं है, रिक्रूटर बता देंगे।",
+    onlyYou: "मैं सिर्फ़ आपकी एप्लिकेशन के बारे में बात कर सकता हूँ।",
+    repeat: "सॉरी, ठीक से सुनाई नहीं दिया।",
+    resumeLine: "हमने पहले {job} जॉब के बारे में बात की थी ना।", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
-    notClear: "सॉरी, आपकी आवाज़ ठीक से सुनाई नहीं दी।",
+    notClear: "सॉरी, आपकी आवाज़ ठीक से नहीं आई।",
     breaking: "सॉरी, आपकी आवाज़ कट रही है।",
-    audioClose: "सॉरी, लाइन साफ़ नहीं है, इसलिए यहीं रोकता हूँ। रिक्रूटर बाद में आपको कॉल कर सकते हैं। बाय।",
-    stillThere: "हैलो, आप लाइन पर हैं?",
-    stillThere2: "हैलो, मेरी आवाज़ आ रही है?",
-    noAnswerClose: "आपका जवाब सुनाई नहीं दे रहा, इसलिए कॉल यहीं खत्म करता हूँ। रिक्रूटर बाद में कॉल कर सकते हैं। बाय।",
-    yesOrNo: "सॉरी, आपने हाँ कहा या ना?",
-    sureRepeat: "ज़रूर, फिर से बताता हूँ।",
-    canHear: "सॉरी। अब मेरी आवाज़ आ रही है?",
-    whyNot: "ठीक है। एक बात पूछूँ, ये जॉब पसंद नहीं आई, या अभी जॉब बदलने का सोच नहीं रहे?",
-    checkFollowUp: "ज़रूर, चेक कर लीजिए। फिर कब कॉल करें?",
-    laterWhenAgain: "सॉरी, कौन सा दिन या टाइम ठीक रहेगा?",
+    audioClose: "सॉरी, लाइन क्लियर नहीं है, यहीं रोकता हूँ। रिक्रूटर बाद में कॉल कर सकते हैं। बाय।",
+    stillThere: "हैलो, लाइन पर हैं?",
+    stillThere2: "हैलो, आवाज़ आ रही है?",
+    noAnswerClose: "आपकी आवाज़ नहीं आ रही, कॉल यहीं रोकता हूँ। रिक्रूटर बाद में कॉल कर सकते हैं। बाय।",
+    yesOrNo: "सॉरी, हाँ बोला या ना?",
+    sureRepeat: "ओके, फिर से बताता हूँ।",
+    canHear: "सॉरी। अब आवाज़ आ रही है?",
+    whyNot: "ओके। एक बात पूछूँ, ये जॉब पसंद नहीं आई, या अभी जॉब चेंज करने का सोच नहीं रहे?",
+    checkFollowUp: "ओके, चेक कर लीजिए। फिर कब कॉल करूँ?",
+    laterWhenAgain: "सॉरी, कौन सा दिन, कौन सा टाइम ठीक रहेगा?",
     thatsFine: "कोई बात नहीं।",
     langSwitched: 'ठीक है, हिंदी में बात करते हैं।',
-    calmSorry: 'सॉरी, शायद गलत टाइम पर कॉल किया। जल्दी खत्म करता हूँ।',
-    calmOffer: 'आगे बात करूँ, या रिक्रूटर आपको किसी और टाइम पर कॉल करें?',
-    calmClose: 'समझ गया, परेशानी के लिए सॉरी। अभी और टाइम नहीं लूँगा। थैंक्यू।',
-    noMoney: 'टीमलिंक कभी कोई पैसा या फीस नहीं माँगता, OTP या बैंक डिटेल्स भी नहीं। ये सिर्फ़ आपकी जॉब एप्लिकेशन के बारे में है।',
-    shortNews: 'आपको {job} पोस्ट के लिए शॉर्टलिस्ट किया गया है, यही बताने के लिए कॉल किया।',
-    shortIv: 'आपका इंटरव्यू {date} को {time} पर है।',
-    shortNoIv: 'इंटरव्यू अभी फ़िक्स नहीं हुआ। टीम बाद में बताएगी।',
-    shortProceed: 'आगे के स्टेप के लिए चलें?',
-    shortYes: 'थैंक्यू। रिक्रूटर कॉल करके आगे के स्टेप्स बताएँगे। शॉर्टलिस्ट होना बस एक स्टेप है, फ़ाइनल फ़ैसला नहीं। बाय।',
+    // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
+    ackName: "हाय {first} जी।",
+    ackTime: "थैंक्यू।",
+    ackInterest: "बढ़िया।",
+    ackExp: "ओके, {yrs}।",
+    ackFresher: "अच्छा, आप फ्रेशर हैं।",
+    ackLoc: "अच्छा, {place}।",
+    ackNotice: "ओके, {days} दिन।",
+    ackNoticeNow: "अच्छा, तुरंत जॉइन कर सकते हैं।",
+    ackNoted: "ओके, नोट कर लिया।",
+    briefWhere: "जॉब {location} में है",
+    briefExpSkills: "{experience} का एक्सपीरियंस चाहिए, मेनली {skills}।",
+    calmSorry: "सॉरी, शायद बिज़ी टाइम पर कॉल कर दिया। जल्दी खत्म करता हूँ।",
+    calmOffer: "आगे बात करूँ, या जब फ्री हों तब रिक्रूटर कॉल करें?",
+    calmClose: "समझ गया, सॉरी डिस्टर्ब किया। अभी और टाइम नहीं लूँगा। थैंक्यू।",
+    noMoney: "टीमलिंक कभी कोई पैसा या फीस नहीं माँगता, OTP या बैंक डिटेल्स भी नहीं। ये सिर्फ़ आपकी जॉब एप्लिकेशन के बारे में है।",
+    shortNews: "आप {job} पोस्ट के लिए शॉर्टलिस्ट हुए हैं, यही बताने के लिए कॉल किया।",
+    shortIv: "आपका इंटरव्यू {date} को {time} बजे है।",
+    shortNoIv: "इंटरव्यू अभी फिक्स नहीं हुआ, टीम बाद में बताएगी।",
+    shortProceed: "नेक्स्ट स्टेप के लिए चलें?",
+    shortYes: "थैंक्यू। रिक्रूटर कॉल करके नेक्स्ट स्टेप्स बताएँगे। शॉर्टलिस्ट मतलब बस एक स्टेप, फ़ाइनल डिसीजन नहीं। बाय।",
     // AI interview pending (Job Portal calling, 2026-10-30)
-    aiNews: "आपने टीमलिंक जॉब्स वेबसाइट पर {job} जॉब के लिए अप्लाई किया था। उसका आपका AI इंटरव्यू अभी पेंडिंग है।",
-    aiDue: "{date} तक पूरा कर दीजिए।",
-    aiHow: "अपने रजिस्टर्ड मोबाइल नंबर या ईमेल से टीमलिंक जॉब्स वेबसाइट पर लॉगिन कीजिए, माय एप्लिकेशन्स खोलिए, और वहाँ AI इंटरव्यू शुरू कीजिए।",
-    aiProceed: "क्या आप इसे पूरा कर पाएँगे?",
-    aiYes: "थैंक्यू। डेडलाइन से पहले पूरा कर दीजिए, ताकि रिक्रूटर आपकी एप्लिकेशन देख सकें। बाय।",
-    ivIntro: '{job} पोस्ट के लिए आपका इंटरव्यू {date} को {time} पर फ़िक्स है।',
-    ivRemind: 'बस याद दिलाने के लिए कॉल किया: {job} पोस्ट का आपका इंटरव्यू {date} को {time} पर है।',
-    ivOnline: 'इंटरव्यू ऑनलाइन है। मीटिंग लिंक मैसेज में भेज देंगे।',
-    ivOnlineNoLink: 'इंटरव्यू ऑनलाइन है। रिक्रूटर लिंक भेज देंगे।',
-    ivInPerson: 'इंटरव्यू {location} में आमने-सामने है।',
-    ivInPersonNoLoc: 'इंटरव्यू आमने-सामने है। पता रिक्रूटर बता देंगे।',
-    ivPhone: 'इंटरव्यू फ़ोन पर ही है।',
-    ivInstr: 'एक बात ध्यान रखें: {instructions}',
-    ivAvail: 'आप आ पाएँगे?',
-    ivConfirmed: 'बढ़िया, थैंक्यू। टाइम पर तैयार रहिए। बाय।',
-    ivReschedAsk: 'आपके लिए कौन सा टाइम ठीक रहेगा?',
-    ivReschedNoted: 'ठीक है, रिक्रूटर को बता दूँगा। जब तक वो कन्फ़र्म न करें, इंटरव्यू पुराने टाइम पर ही रहेगा। बाय।',
-    ivNotAvail: 'बताने के लिए थैंक्यू। रिक्रूटर आपको कॉल करेंगे। बाय।',
-    ivNoReply: 'ठीक है, कन्फ़र्म करने के लिए रिक्रूटर कॉल करेंगे। बाय।',
-    tz: 'भारतीय समय',
+    aiNews: "आपने टीमलिंक जॉब्स वेबसाइट पर {job} जॉब के लिए अप्लाई किया था ना। उसका AI इंटरव्यू अभी पेंडिंग है।",
+    aiDue: "{date} तक कंप्लीट कर दीजिए।",
+    aiHow: "अपने मोबाइल नंबर या ईमेल से टीमलिंक जॉब्स वेबसाइट पर लॉगिन करके माय एप्लिकेशन्स खोलिए, वहीं AI इंटरव्यू मिलेगा।",
+    aiProceed: "कंप्लीट कर पाएँगे?",
+    aiYes: "थैंक्यू। डेडलाइन से पहले कंप्लीट कर दीजिए, फिर रिक्रूटर आपकी एप्लिकेशन देखेंगे। बाय।",
+    ivIntro: "{job} पोस्ट के लिए आपका इंटरव्यू {date} को {time} बजे फिक्स हुआ है।",
+    ivRemind: "बस याद दिलाने के लिए कॉल किया, {job} पोस्ट का आपका इंटरव्यू {date} को {time} बजे है।",
+    ivOnline: "इंटरव्यू ऑनलाइन है। मीटिंग लिंक मैसेज में भेज देंगे।",
+    ivOnlineNoLink: "इंटरव्यू ऑनलाइन है। लिंक रिक्रूटर भेज देंगे।",
+    ivInPerson: "इंटरव्यू {location} में डायरेक्ट है।",
+    ivInPersonNoLoc: "इंटरव्यू डायरेक्ट है। एड्रेस रिक्रूटर बता देंगे।",
+    ivPhone: "इंटरव्यू फ़ोन पर ही है।",
+    ivInstr: "एक बात याद रखिए: {instructions}",
+    ivAvail: "आप आ पाएँगे?",
+    ivConfirmed: "बढ़िया, थैंक्यू। टाइम पर रेडी रहिए। बाय।",
+    ivReschedAsk: "आपके लिए कौन सा टाइम ठीक रहेगा?",
+    ivReschedNoted: "ओके, रिक्रूटर को बता दूँगा। जब तक वो कन्फर्म न करें, इंटरव्यू पुराने टाइम पर ही रहेगा। बाय।",
+    ivNotAvail: "बताने के लिए थैंक्यू। रिक्रूटर आपको कॉल करेंगे। बाय।",
+    ivNoReply: "ओके, कन्फर्म करने के लिए रिक्रूटर कॉल करेंगे। बाय।",
+    tz: "इंडिया टाइम",
   },
   Telugu: {
-    ai: 'హాయ్, నేను టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి AI రిక్రూట్‌మెంట్ అసిస్టెంట్‌ని.',
-    noticeRec: 'ఈ కాల్ రికార్డ్ అవ్వొచ్చు, రాసి కూడా పెట్టుకుంటాం.',
-    identity: 'నేను {name} గారితోనే మాట్లాడుతున్నానా?',
-    identityAgain: 'సారీ, సరిగ్గా వినపడలేదు. నేను {name} గారితోనే మాట్లాడుతున్నానా?',
-    identityNeeded: 'ముందు {name} గారితోనే మాట్లాడుతున్నానని కన్ఫర్మ్ చేసుకోవాలి, తర్వాతే డీటెయిల్స్ చెప్పగలను.',
-    wrong: 'ఓహ్, సారీ, డిస్టర్బ్ చేశాను. థాంక్స్, బై.',
-    convenient: 'ఇప్పుడు ఒక రెండు నిమిషాలు మాట్లాడొచ్చా?',
-    laterAsk: 'పర్లేదు. మళ్ళీ ఎప్పుడు కాల్ చేయమంటారు?',
-    laterClose: 'సరే, తర్వాత మళ్ళీ కాల్ చేస్తాం. బై.',
-    laterNoted: 'సరే, {when}, నోట్ చేసుకున్నా. అప్పుడు కాల్ చేస్తాం. బై.',
-    screenIntro: 'మా దగ్గర {job} జాబ్ ఒకటి ఉంది. దాని గురించి కొంచెం చెప్పనా?',
-    matchIntro: "మీరు ఇంతకుముందు టీమ్‌లింక్‌లో అప్లై చేశారు. మీ ప్రొఫైల్‌కి సరిపోయే ఇంకో జాబ్ ఉంది, {job}. దాని గురించి కొంచెం చెప్పనా?", // Job Match (Job Portal calling, 2026-10-30)
-    briefLoc: 'జాబ్ {location} లో.',
+    ai: "హలో, టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి కాల్ చేస్తున్నా, నేను వాళ్ళ AI అసిస్టెంట్‌ని.",
+    noticeRec: "ఈ కాల్ రికార్డ్ అవ్వొచ్చు, నోట్స్ కూడా రాసుకుంటాం.",
+    identity: "{name} గారేనా మాట్లాడేది?",
+    identityAgain: "సారీ, సరిగ్గా వినపడలేదు. {name} గారేనా మాట్లాడేది?",
+    identityNeeded: "ముందు {name} గారితోనే మాట్లాడుతున్నానా అని కన్ఫర్మ్ చేసుకోవాలి, తర్వాత డీటెయిల్స్ చెప్తా.",
+    wrong: "అయ్యో, సారీ, రాంగ్ నంబర్ అనుకుంటా. బై.",
+    convenient: "ఇప్పుడు ఒక రెండు నిమిషాలు మాట్లాడొచ్చా?",
+    laterAsk: "పర్లేదు. మళ్ళీ ఎప్పుడు కాల్ చేయమంటారు?",
+    laterClose: "ఓకే, తర్వాత మళ్ళీ కాల్ చేస్తా. బై.",
+    laterNoted: "ఓకే, {when}, నోట్ చేసుకున్నా. అప్పుడే కాల్ చేస్తా. బై.",
+    screenIntro: "మా దగ్గర ఒక {job} జాబ్ ఉంది. దాని గురించి కొంచెం చెప్పనా?",
+    matchIntro: "మీరు ఇంతకుముందు టీమ్‌లింక్‌లో అప్లై చేశారు కదా. మీ ప్రొఫైల్‌కి మ్యాచ్ అయ్యే ఇంకో జాబ్ ఉంది, {job}. దాని గురించి కొంచెం చెప్పనా?", // Job Match (Job Portal calling, 2026-10-30)
+    briefLoc: "జాబ్ {location} లో.",
     briefNeeds: "వాళ్ళకి కావాల్సింది: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
-    briefMode: 'వర్క్ మోడ్ {workMode}.',
-    briefType: 'ఇది {employmentType} జాబ్.',
-    briefExp: 'దాదాపు {experience} ఎక్స్‌పీరియన్స్ కావాలి.',
-    briefSkills: 'ముఖ్యంగా కావాల్సిన స్కిల్స్: {skills}.',
-    briefResp: 'పనిలో ఉండేవి: {responsibilities}.',
-    briefSalary: 'జీతం రేంజ్ {salary}.',
-    briefNone: 'ఇంకా డీటెయిల్స్ ఇప్పుడు నా దగ్గర లేవు. రిక్రూటర్ చెప్తారు.',
-    interestQ: 'ఈ జాబ్ మీకు ఇంట్రెస్ట్ ఉందా?',
-    interestMore: 'ఇంకా డీటెయిల్స్ కోసం రిక్రూటర్ మీకు కాల్ చేయాలా?',
-    qExp: 'ఈ ఫీల్డ్‌లో మీకు ఎన్నేళ్ళ ఎక్స్‌పీరియన్స్ ఉంది?',
-    qLoc: 'ఇప్పుడు ఏ ఊర్లో ఉంటున్నారు?',
-    qNotice: 'మీ నోటీస్ పీరియడ్ ఎన్ని రోజులు?',
-    qProceed: 'నెక్స్ట్ స్టెప్స్‌కి వెళ్దామా?',
-    closeInterested: 'థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.',
-    closeNotInterested: 'సరే, టైమ్ ఇచ్చినందుకు థాంక్స్. బై.',
-    closeStop: 'సరే, ఇంకెప్పుడూ కాల్ చేయం. బై.',
-    closeUnclear: 'టైమ్ ఇచ్చినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేయొచ్చు. బై.',
-    humanNoted: 'సరే, మీరు రిక్రూటర్‌తో మాట్లాడాలని నోట్ చేసుకున్నా. టీమ్ నుంచి ఎవరైనా కాల్ చేస్తారు.',
-    amAi: 'నేను టీమ్‌లింక్ కన్సల్టెంట్స్ AI అసిస్టెంట్‌ని, మనిషిని కాదు.',
-    noSalary: 'అది నా దగ్గర లేదు. రిక్రూటర్ చెప్తారు.',
-    noInfo: 'ఆ డీటెయిల్ నా దగ్గర లేదు. రిక్రూటర్ చెప్తారు.',
-    onlyYou: 'నేను మీ అప్లికేషన్ గురించి మాత్రమే మాట్లాడగలను.',
-    repeat: 'సారీ, సరిగ్గా వినపడలేదు. మళ్ళీ అడుగుతా.',
-    resumeLine: "మనం ఇంతకుముందు {job} జాబ్ గురించి మాట్లాడుకున్నాం.", // a call-back call (memory, 2026-10-30)
+    briefMode: "{workMode}.",
+    briefType: "{employmentType} జాబ్.",
+    briefExp: "{experience} ఎక్స్‌పీరియన్స్ కావాలి.",
+    briefSkills: "మెయిన్‌గా {skills} రావాలి.",
+    briefResp: "వర్క్ ఏంటంటే: {responsibilities}.",
+    briefSalary: "సాలరీ {salary} వరకు ఉంటుంది.",
+    briefNone: "ఇంకా డీటెయిల్స్ ఇప్పుడు నా దగ్గర లేవు, రిక్రూటర్ చెప్తారు.",
+    interestQ: "ఈ జాబ్ మీకు ఇంట్రెస్ట్ ఉందా?",
+    interestMore: "ఇంకా డీటెయిల్స్ కోసం రిక్రూటర్ మీకు కాల్ చేయాలా?",
+    qExp: "ఈ ఫీల్డ్‌లో మీకు ఎన్నేళ్ళ ఎక్స్‌పీరియన్స్ ఉంది?",
+    qLoc: "ఇప్పుడు మీరు ఎక్కడ ఉంటున్నారు?",
+    qNotice: "మీ నోటీస్ పీరియడ్ ఎన్ని రోజులు?",
+    qProceed: "ఓకే, నెక్స్ట్ స్టెప్స్‌కి వెళ్దామా?",
+    closeInterested: "థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.",
+    closeNotInterested: "ఓకే, పర్లేదు. టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
+    closeStop: "ఓకే, ఇంకెప్పుడూ కాల్ చేయం. బై.",
+    closeUnclear: "టైమ్ ఇచ్చినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేయొచ్చు. బై.",
+    humanNoted: "ఓకే, మీరు రిక్రూటర్‌తో మాట్లాడాలనుకుంటున్నారని నోట్ చేసుకున్నా. టీమ్ నుంచి ఎవరైనా కాల్ చేస్తారు.",
+    amAi: "నేను టీమ్‌లింక్ వాళ్ళ AI అసిస్టెంట్‌ని, మనిషిని కాదు.",
+    noSalary: "సాలరీ డీటెయిల్ నా దగ్గర లేదు, రిక్రూటర్ చెప్తారు.",
+    noInfo: "ఆ డీటెయిల్ నా దగ్గర లేదు, రిక్రూటర్ చెప్తారు.",
+    onlyYou: "నేను మీ అప్లికేషన్ గురించి మాత్రమే మాట్లాడగలను.",
+    repeat: "సారీ, సరిగ్గా వినపడలేదు.",
+    resumeLine: "ఇంతకుముందు మనం {job} జాబ్ గురించి మాట్లాడుకున్నాం కదా.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "సారీ, మీ మాట సరిగ్గా వినపడలేదు.",
     breaking: "సారీ, మీ వాయిస్ కట్ అవుతుంది.",
-    audioClose: "సారీ, లైన్ క్లియర్‌గా లేదు, ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత మీకు కాల్ చేయొచ్చు. బై.",
+    audioClose: "సారీ, లైన్ క్లియర్‌గా లేదు, ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత కాల్ చేయొచ్చు. బై.",
     stillThere: "హలో, లైన్‌లో ఉన్నారా?",
-    stillThere2: "హలో, నా మాట వినపడుతుందా?",
-    noAnswerClose: "మీ రిప్లై వినపడట్లేదు, కాల్ ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత కాల్ చేయొచ్చు. బై.",
-    yesOrNo: "సారీ, మీరు అవును అన్నారా, కాదు అన్నారా?",
-    sureRepeat: "సరే, మళ్ళీ చెప్తా.",
-    canHear: "సారీ. ఇప్పుడు నా మాట వినపడుతుందా?",
-    whyNot: "సరే. ఒక్కటి అడగొచ్చా, ఈ జాబ్ నచ్చలేదా, లేక ఇప్పుడు జాబ్ మారే ఆలోచన లేదా?",
-    checkFollowUp: "సరే, చెక్ చేసుకోండి. మళ్ళీ ఎప్పుడు కాల్ చేయమంటారు?",
-    laterWhenAgain: "సారీ, ఏ రోజు, ఏ టైమ్ అయితే మీకు వీలు?",
+    stillThere2: "హలో, వినపడుతుందా?",
+    noAnswerClose: "మీ మాట వినపడట్లేదు, ఇక్కడితో ఆపేస్తున్నా. రిక్రూటర్ తర్వాత కాల్ చేయొచ్చు. బై.",
+    yesOrNo: "సారీ, అవునా కాదా?",
+    sureRepeat: "ఓకే, మళ్ళీ చెప్తా.",
+    canHear: "సారీ. ఇప్పుడు వినపడుతుందా?",
+    whyNot: "ఓకే. ఒక్కటి అడగొచ్చా, ఈ జాబ్ నచ్చలేదా, లేక ఇప్పుడు జాబ్ మారే ఆలోచన లేదా?",
+    checkFollowUp: "ఓకే, చెక్ చేసుకోండి. మళ్ళీ ఎప్పుడు కాల్ చేయమంటారు?",
+    laterWhenAgain: "సారీ, ఏ రోజు, ఏ టైమ్‌కి కాల్ చేయమంటారు?",
     thatsFine: "పర్లేదు.",
     langSwitched: 'సరే, తెలుగులో మాట్లాడుకుందాం.',
-    calmSorry: 'సారీ, టైమ్ కాని టైమ్‌లో కాల్ చేసినట్టున్నా. త్వరగా ముగిస్తా.',
-    calmOffer: 'కంటిన్యూ చేయనా, లేక మీకు వీలున్నప్పుడు రిక్రూటర్ కాల్ చేయాలా?',
-    calmClose: 'అర్థమైంది, ఇబ్బంది పెట్టినందుకు సారీ. ఇప్పుడు ఇంక టైమ్ తీసుకోను. థాంక్స్.',
-    noMoney: 'టీమ్‌లింక్ ఎప్పుడూ డబ్బులు గానీ ఫీజు గానీ అడగదు. OTP, బ్యాంక్ డీటెయిల్స్ కూడా అడగదు. ఇది మీ జాబ్ అప్లికేషన్ గురించి మాత్రమే.',
-    shortNews: '{job} పోస్ట్‌కి మిమ్మల్ని షార్ట్‌లిస్ట్ చేశారు, అది చెప్పడానికే కాల్ చేశా.',
-    shortIv: 'మీ ఇంటర్వ్యూ {date} న {time} కి ఉంది.',
-    shortNoIv: 'ఇంటర్వ్యూ ఇంకా ఫిక్స్ కాలేదు. టీమ్ తర్వాత చెప్తుంది.',
-    shortProceed: 'నెక్స్ట్ స్టెప్‌కి వెళ్దామా?',
-    shortYes: 'థాంక్స్. రిక్రూటర్ కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. షార్ట్‌లిస్ట్ అనేది ఒక స్టెప్ మాత్రమే, ఫైనల్ డెసిషన్ కాదు. బై.',
+    // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
+    ackName: "హాయ్ {first} గారు.",
+    ackTime: "థాంక్స్.",
+    ackInterest: "మంచిది.",
+    ackExp: "ఓకే, {yrs}.",
+    ackFresher: "ఓకే, ఫ్రెషర్ అన్నమాట.",
+    ackLoc: "ఓకే, {place}.",
+    ackNotice: "ఓకే, {days} రోజులు.",
+    ackNoticeNow: "ఓకే, వెంటనే జాయిన్ అవ్వొచ్చన్నమాట.",
+    ackNoted: "ఓకే, నోట్ చేసుకున్నా.",
+    briefWhere: "జాబ్ {location} లో",
+    briefExpSkills: "{experience} ఎక్స్‌పీరియన్స్ ఉండాలి, మెయిన్‌గా {skills}.",
+    calmSorry: "సారీ, బిజీగా ఉన్నప్పుడు కాల్ చేసినట్టున్నా. త్వరగా అయిపోతుంది.",
+    calmOffer: "కంటిన్యూ చేయనా, లేక మీకు ఫ్రీగా ఉన్నప్పుడు రిక్రూటర్ కాల్ చేయాలా?",
+    calmClose: "అర్థమైంది, ఇబ్బంది పెట్టినందుకు సారీ. ఇంక టైమ్ తీసుకోను. థాంక్స్.",
+    noMoney: "టీమ్‌లింక్ ఎప్పుడూ డబ్బులు, ఫీజు ఏమీ అడగదు. OTP, బ్యాంక్ డీటెయిల్స్ కూడా అడగదు. ఇది మీ జాబ్ అప్లికేషన్ గురించి మాత్రమే.",
+    shortNews: "{job} పోస్ట్‌కి మీరు షార్ట్‌లిస్ట్ అయ్యారు, అది చెప్పడానికే కాల్ చేశా.",
+    shortIv: "మీ ఇంటర్వ్యూ {date} న {time} కి.",
+    shortNoIv: "ఇంటర్వ్యూ ఇంకా ఫిక్స్ కాలేదు, టీమ్ తర్వాత చెప్తుంది.",
+    shortProceed: "నెక్స్ట్ స్టెప్‌కి వెళ్దామా?",
+    shortYes: "థాంక్స్. రిక్రూటర్ కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. షార్ట్‌లిస్ట్ అంటే ఒక స్టెప్ అంతే, ఫైనల్ డెసిషన్ కాదు. బై.",
     // AI interview pending (Job Portal calling, 2026-10-30)
-    aiNews: "మీరు టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో {job} జాబ్‌కి అప్లై చేశారు. దానికి మీ AI ఇంటర్వ్యూ ఇంకా పెండింగ్‌లో ఉంది.",
-    aiDue: "{date} లోపు పూర్తి చేయండి.",
-    aiHow: "మీ రిజిస్టర్డ్ మొబైల్ నంబర్ లేదా ఈమెయిల్‌తో టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో లాగిన్ అయ్యి, మై అప్లికేషన్స్ ఓపెన్ చేసి, అక్కడ AI ఇంటర్వ్యూ స్టార్ట్ చేయండి.",
-    aiProceed: "మీరు అది పూర్తి చేయగలరా?",
-    aiYes: "థాంక్స్. డెడ్‌లైన్ లోపు పూర్తి చేయండి, అప్పుడు రిక్రూటర్ మీ అప్లికేషన్ చూస్తారు. బై.",
-    ivIntro: '{job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఫిక్స్ అయింది.',
-    ivRemind: 'జస్ట్ గుర్తు చేయడానికి కాల్ చేశా: {job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఉంది.',
-    ivOnline: 'ఇంటర్వ్యూ ఆన్‌లైన్‌లో. మీటింగ్ లింక్ మెసేజ్‌లో పంపిస్తాం.',
-    ivOnlineNoLink: 'ఇంటర్వ్యూ ఆన్‌లైన్‌లో. రిక్రూటర్ లింక్ పంపిస్తారు.',
-    ivInPerson: 'ఇంటర్వ్యూ డైరెక్ట్‌గా {location} లో.',
-    ivInPersonNoLoc: 'ఇంటర్వ్యూ డైరెక్ట్‌గా ఉంటుంది. అడ్రస్ రిక్రూటర్ చెప్తారు.',
-    ivPhone: 'ఇంటర్వ్యూ ఫోన్‌లోనే.',
-    ivInstr: 'ఒక్క విషయం: {instructions}',
-    ivAvail: 'మీరు రాగలరా?',
-    ivConfirmed: 'సూపర్, థాంక్స్. టైమ్‌కి రెడీగా ఉండండి. బై.',
-    ivReschedAsk: 'మీకు ఏ టైమ్ అయితే బాగుంటుంది?',
-    ivReschedNoted: 'సరే, రిక్రూటర్‌కి చెప్తా. వాళ్ళు కన్ఫర్మ్ చేసే వరకు ఇంటర్వ్యూ పాత టైమ్‌కే ఉంటుంది. బై.',
-    ivNotAvail: 'చెప్పినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేస్తారు. బై.',
-    ivNoReply: 'సరే, కన్ఫర్మ్ చేయడానికి రిక్రూటర్ కాల్ చేస్తారు. బై.',
+    aiNews: "మీరు టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో {job} జాబ్‌కి అప్లై చేశారు కదా. దాని AI ఇంటర్వ్యూ ఇంకా పెండింగ్‌లో ఉంది.",
+    aiDue: "{date} లోపు కంప్లీట్ చేయండి.",
+    aiHow: "మీ మొబైల్ నంబర్ లేదా ఈమెయిల్‌తో టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో లాగిన్ అయ్యి, మై అప్లికేషన్స్ ఓపెన్ చేస్తే, అక్కడ AI ఇంటర్వ్యూ ఉంటుంది.",
+    aiProceed: "అది కంప్లీట్ చేయగలరా?",
+    aiYes: "థాంక్స్. డెడ్‌లైన్ లోపు కంప్లీట్ చేయండి, అప్పుడు రిక్రూటర్ మీ అప్లికేషన్ చూస్తారు. బై.",
+    ivIntro: "{job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఫిక్స్ అయింది.",
+    ivRemind: "జస్ట్ గుర్తు చేయడానికి కాల్ చేశా, {job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఉంది.",
+    ivOnline: "ఇంటర్వ్యూ ఆన్‌లైన్‌లో. మీటింగ్ లింక్ మెసేజ్‌లో పంపిస్తాం.",
+    ivOnlineNoLink: "ఇంటర్వ్యూ ఆన్‌లైన్‌లో. లింక్ రిక్రూటర్ పంపిస్తారు.",
+    ivInPerson: "ఇంటర్వ్యూ డైరెక్ట్‌గా {location} లో.",
+    ivInPersonNoLoc: "ఇంటర్వ్యూ డైరెక్ట్‌గా. అడ్రస్ రిక్రూటర్ చెప్తారు.",
+    ivPhone: "ఇంటర్వ్యూ ఫోన్‌లోనే.",
+    ivInstr: "ఒక్క విషయం: {instructions}",
+    ivAvail: "మీరు వస్తారా?",
+    ivConfirmed: "సూపర్, థాంక్స్. టైమ్‌కి రెడీగా ఉండండి. బై.",
+    ivReschedAsk: "మీకు ఏ టైమ్ అయితే ఓకే?",
+    ivReschedNoted: "ఓకే, రిక్రూటర్‌కి చెప్తా. వాళ్ళు కన్ఫర్మ్ చేసే వరకు ఇంటర్వ్యూ పాత టైమ్‌కే ఉంటుంది. బై.",
+    ivNotAvail: "చెప్పినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేస్తారు. బై.",
+    ivNoReply: "ఓకే, కన్ఫర్మ్ చేయడానికి రిక్రూటర్ కాల్ చేస్తారు. బై.",
     tz: 'ఇండియా టైమ్',
   },
 };
 
-const phrases = (language) => PH[LANGS.includes(language) ? language : 'English'];
+// OTHER WAYS OF SAYING THE SAME LINE (founder 2026-10-30: "manam humans yela matladthunnamo, same alaagey ai kuda matladali"):
+// one call picks one wording per line (seeded by the call id, so it stays the same within the call and differs between
+// calls); without a seed the first wording is used (previews, tests). Every variant passes the same forbidden-word check.
+const VARIANTS = {
+  "English": {
+    "ai": [
+      "Hello, I'm calling from TeamLink Consultants. I'm their AI recruitment assistant."
+    ],
+    "convenient": [
+      "Is this a good time to talk for two minutes?",
+      "Can we talk for two minutes now?"
+    ],
+    "laterAsk": [
+      "Sure, no problem. When can we call you back?",
+      "Okay, when would be a better time to call?"
+    ],
+    "screenIntro": [
+      "So, there's a {job} job open with us. Shall I tell you a little about it?",
+      "We have an opening for a {job} job. Can I quickly tell you about it?"
+    ],
+    "interestQ": [
+      "Does this sound interesting to you?",
+      "So, would you be interested in this?"
+    ],
+    "qExp": [
+      "How much experience do you have in this line?",
+      "And how many years have you worked in this field?"
+    ],
+    "qLoc": [
+      "Where are you staying right now, which city?",
+      "Which city are you based in now?"
+    ],
+    "qNotice": [
+      "And what is your notice period, roughly how many days?",
+      "How soon could you join? I mean, your notice period."
+    ],
+    "qProceed": [
+      "Shall we go ahead with the next steps?",
+      "Are you okay if we take this forward?"
+    ],
+    "closeInterested": [
+      "Great, thanks! A recruiter from TeamLink will call you with the next steps. Just so you know, nothing is final from this call. Bye."
+    ],
+    "closeNotInterested": [
+      "No problem at all, thanks for your time. Bye.",
+      "Okay, no worries. Thanks for talking. Bye."
+    ],
+    "repeat": [
+      "Sorry, I missed that.",
+      "Sorry, I didn't get that."
+    ],
+    "notClear": [
+      "Sorry, I couldn't hear you properly."
+    ],
+    "ackName": [
+      "Hello {first}.",
+      "Hi {first}, thanks for picking up."
+    ],
+    "ackTime": [
+      "Okay, thank you.",
+      "Thanks a lot."
+    ],
+    "ackInterest": [
+      "Great.",
+      "Nice."
+    ],
+    "ackExp": [
+      "Got it, {yrs}.",
+      "{yrs}, okay."
+    ],
+    "ackLoc": [
+      "{place}, okay.",
+      "Oh, {place}."
+    ],
+    "ackNotice": [
+      "Got it, {days} days notice.",
+      "{days} days, okay."
+    ],
+    "ackNoted": [
+      "Got it."
+    ]
+  },
+  "Telugu": {
+    "convenient": [
+      "ఇప్పుడు రెండు నిమిషాలు టైమ్ ఉందా?",
+      "ఒక రెండు నిమిషాలు మాట్లాడదామా?"
+    ],
+    "laterAsk": [
+      "సరే, నో ప్రాబ్లమ్. ఎప్పుడు కాల్ చేస్తే బాగుంటుంది?",
+      "పర్లేదు. మీకు ఎప్పుడు వీలవుతుంది?"
+    ],
+    "screenIntro": [
+      "మా దగ్గర ఒక {job} జాబ్ ఓపెనింగ్ ఉంది. దాని గురించి కొంచెం చెప్పనా?",
+      "ఒక {job} జాబ్ ఉంది. కొంచెం డీటెయిల్స్ చెప్పనా?"
+    ],
+    "interestQ": [
+      "ఎలా అనిపిస్తుంది, ఈ జాబ్ మీకు ఇంట్రెస్ట్ ఉందా?",
+      "మీకు ఈ జాబ్ చేయాలని ఉందా?"
+    ],
+    "qExp": [
+      "ఈ ఫీల్డ్‌లో మీకు ఎంత ఎక్స్‌పీరియన్స్ ఉంది?",
+      "మీరు ఈ లైన్‌లో ఎన్నేళ్ళుగా వర్క్ చేస్తున్నారు?"
+    ],
+    "qLoc": [
+      "మీరు ఇప్పుడు ఎక్కడ స్టే చేస్తున్నారు?",
+      "మీరు ఇప్పుడు ఏ సిటీలో ఉన్నారు?"
+    ],
+    "qNotice": [
+      "మీ నోటీస్ పీరియడ్ ఎంత?",
+      "జాయిన్ అవ్వడానికి ఎన్ని రోజులు పడుతుంది, అంటే మీ నోటీస్ పీరియడ్?"
+    ],
+    "qProceed": [
+      "సరే, నెక్స్ట్ స్టెప్‌కి వెళ్దామా?",
+      "దీన్ని ముందుకు తీసుకెళ్దామా?"
+    ],
+    "closeInterested": [
+      "సూపర్, థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. ఈ కాల్‌తో ఏదీ ఫైనల్ కాదు. బై."
+    ],
+    "closeNotInterested": [
+      "పర్లేదు, టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
+      "ఓకే, నో ప్రాబ్లమ్. థాంక్స్, బై."
+    ],
+    "repeat": [
+      "సారీ, సరిగ్గా వినపడలేదు.",
+      "సారీ, మిస్ అయ్యాను."
+    ],
+    "notClear": [
+      "సారీ, మీ మాట క్లియర్‌గా వినపడలేదు."
+    ],
+    "ackName": [
+      "హలో {first} గారు.",
+      "హాయ్ {first} గారు, కాల్ లిఫ్ట్ చేసినందుకు థాంక్స్."
+    ],
+    "ackTime": [
+      "సరే, థాంక్యూ.",
+      "థాంక్యూ."
+    ],
+    "ackInterest": [
+      "సూపర్.",
+      "గుడ్."
+    ],
+    "ackExp": [
+      "ఓకే, {yrs} ఎక్స్‌పీరియన్స్.",
+      "{yrs}, గుడ్."
+    ],
+    "ackLoc": [
+      "ఓహ్, {place}.",
+      "{place}, సరే."
+    ],
+    "ackNotice": [
+      "ఓకే, {days} రోజుల నోటీస్.",
+      "{days} రోజులు, సరే."
+    ],
+    "ackNoted": [
+      "ఓకే."
+    ]
+  },
+  "Hindi": {
+    "convenient": [
+      "क्या अभी दो मिनट का टाइम है?",
+      "दो मिनट बात कर सकते हैं?"
+    ],
+    "laterAsk": [
+      "ठीक है, कोई बात नहीं। कब कॉल करें?",
+      "कोई बात नहीं। आपको कब ठीक रहेगा?"
+    ],
+    "screenIntro": [
+      "हमारे पास एक {job} की ओपनिंग है। उसके बारे में थोड़ा बताऊँ?",
+      "एक {job} की जॉब है। जल्दी से डिटेल्स बताऊँ?"
+    ],
+    "interestQ": [
+      "कैसा लगा, आपको इस जॉब में इंटरेस्ट है?",
+      "क्या आप ये जॉब करना चाहेंगे?"
+    ],
+    "qExp": [
+      "इस फील्ड में आपका कितना एक्सपीरियंस है?",
+      "आप कितने साल से इस लाइन में काम कर रहे हैं?"
+    ],
+    "qLoc": [
+      "अभी आप कहाँ रहते हैं?",
+      "अभी आप कौन सी सिटी में हैं?"
+    ],
+    "qNotice": [
+      "आपका नोटिस पीरियड कितना है?",
+      "जॉइन करने में कितने दिन लगेंगे, मतलब आपका नोटिस पीरियड?"
+    ],
+    "qProceed": [
+      "तो आगे बढ़ें?",
+      "इसे आगे ले चलें?"
+    ],
+    "closeInterested": [
+      "बढ़िया, थैंक्यू। टीमलिंक के रिक्रूटर आपको कॉल करके आगे के स्टेप्स बताएँगे। इस कॉल से कुछ भी फ़ाइनल नहीं है। बाय।"
+    ],
+    "closeNotInterested": [
+      "कोई बात नहीं, टाइम देने के लिए थैंक्यू। बाय।",
+      "ठीक है, नो प्रॉब्लम। थैंक्यू, बाय।"
+    ],
+    "repeat": [
+      "सॉरी, ठीक से सुनाई नहीं दिया।",
+      "सॉरी, मैं समझ नहीं पाया।"
+    ],
+    "notClear": [
+      "सॉरी, आपकी आवाज़ साफ़ नहीं आई।"
+    ],
+    "ackName": [
+      "हाय {first} जी।",
+      "नमस्ते {first} जी, कॉल उठाने के लिए थैंक्यू।"
+    ],
+    "ackTime": [
+      "ठीक है, थैंक्यू।",
+      "थैंक्यू जी।"
+    ],
+    "ackInterest": [
+      "अच्छा है।",
+      "बहुत बढ़िया।"
+    ],
+    "ackExp": [
+      "अच्छा, {yrs} का एक्सपीरियंस।",
+      "{yrs}, बढ़िया।"
+    ],
+    "ackLoc": [
+      "ठीक है, {place}।",
+      "ओह, {place}।"
+    ],
+    "ackNotice": [
+      "अच्छा, {days} दिन का नोटिस।",
+      "{days} दिन, ठीक है।"
+    ],
+    "ackNoted": [
+      "अच्छा।"
+    ]
+  }
+};
+const seedHash = (str) => { let h = 2166136261; for (let i = 0; i < str.length; i += 1) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; };
+const plainCache = {};
+function phrases(language, seed) {
+  const lang = LANGS.includes(language) ? language : 'English';
+  if (seed == null || seed === '') return plainCache[lang] || (plainCache[lang] = { ...PH[lang] });
+  const out = { ...PH[lang] };
+  for (const [k, alts] of Object.entries(VARIANTS[lang] || {})) {
+    const all = [out[k], ...alts].filter((x) => typeof x === 'string' && x);
+    out[k] = all[seedHash(`${seed}|${k}`) % all.length];
+  }
+  return out;
+}
 
 // A value from the database is made safe to speak: control characters and braces out, one line, short.
 function clean(v, max = 120) {
@@ -459,7 +741,7 @@ function checkFields(fields) {
 // The named blocks of speech for one call. The live conversation (dialogue.js) and the preview below use THESE, so what the
 // recruiter reads before confirming is what the assistant says.
 function blocks(purpose, language, data, fieldsIn, opts = {}) {
-  const P = phrases(language);
+  const P = phrases(language, opts.seed);
   const f = cleanFields(fieldsIn);
   const name = data.name || data.firstName;
   const iv = data.interview;
@@ -468,13 +750,18 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
   B.identity = fill(P.identity, { name });
   B.convenient = P.convenient;
   B.intro = fill(purpose === 'Job Match' ? P.matchIntro : P.screenIntro, { job: data.jobTitle });
+  // the job told the way a person says it: "It's in Hyderabad, work from office, full time. They want around 2 to 5 years
+  // of experience, mainly in Nursing and ICU." (not a list of separate one-fact sentences)
+  const where = data.location
+    ? `${[fill(P.briefWhere, { location: data.location }), clean(data.workMode, 40), clean(data.employmentType, 40)].filter(Boolean).join(', ')}${language === 'Hindi' ? '।' : '.'}`
+    : [fill(P.briefMode, { workMode: data.workMode }), fill(P.briefType, { employmentType: data.employmentType })].filter(Boolean).join(' ');
+  const expSkills = data.experience && data.skills
+    ? fill(P.briefExpSkills, { experience: data.experience, skills: data.skills })
+    : [fill(P.briefExp, { experience: data.experience }), fill(P.briefSkills, { skills: data.skills })].filter(Boolean).join(' ');
   const brief = [
-    fill(P.briefLoc, { location: data.location }),
+    where,
     data.skills ? '' : fill(P.briefNeeds, { needs: data.needs }),
-    fill(P.briefMode, { workMode: data.workMode }),
-    fill(P.briefType, { employmentType: data.employmentType }),
-    fill(P.briefExp, { experience: data.experience }),
-    fill(P.briefSkills, { skills: data.skills }),
+    expSkills,
     f.includeResponsibilities ? fill(P.briefResp, { responsibilities: data.responsibilities }) : '',
     f.includeSalary ? fill(P.briefSalary, { salary: data.salary }) : '',
     f.extraNote,
@@ -546,6 +833,7 @@ function checkTemplates() {
   const bad = [];
   for (const lang of LANGS) {
     for (const [k, v] of Object.entries(PH[lang])) if (hasForbidden(v)) bad.push(`${lang}.${k}`);
+    for (const [k, alts] of Object.entries(VARIANTS[lang] || {})) alts.forEach((v, i) => { if (hasForbidden(v)) bad.push(`${lang}.${k}#${i + 1}`); });
   }
   return bad;
 }

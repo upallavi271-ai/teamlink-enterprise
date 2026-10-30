@@ -309,6 +309,8 @@ class Dialogue {
     // verified answers for this requirement ([{ q, a }]) the brain may use (pending clarifications answered by recruiters)
     this.knowledge = Array.isArray(opts.knowledge) ? opts.knowledge : [];
     this.maxTurns = opts.maxTurns || 20; // room for a few "could you say that again?" turns
+    // which wording of each line this call uses (scripts.phrases); the call id, so every turn of one call sounds the same
+    this.seed = opts.seed == null ? null : String(opts.seed);
     this.prefix = '';
     this.st = {
       step: 'identity', turns: 0, tries: 0, done: false, ended: null, identity: false, wrong: false, interest: null, told: false,
@@ -324,8 +326,8 @@ class Dialogue {
   setLanguage(lang) {
     if (!S.LANGS.includes(lang)) return;
     this.language = lang;
-    this.P = S.phrases(lang);
-    this.B = S.blocks(this.purpose, lang, this.data, this.fields, { recordingNotice: this.recordingNotice });
+    this.P = S.phrases(lang, this.seed);
+    this.B = S.blocks(this.purpose, lang, this.data, this.fields, { recordingNotice: this.recordingNotice, seed: this.seed });
     this.st.language = lang;
   }
 
@@ -343,6 +345,20 @@ class Dialogue {
     if (S.hasForbidden(skeleton.replace(this.data.jobTitle || '\u0000', '').replace(this.data.name || '\u0000', ''))) return this.P.noInfo;
     return skeleton;
   }
+  // A SHORT HUMAN ACKNOWLEDGEMENT of what the person just said ("Okay, three years." / "సరే, హైదరాబాద్."), said before the next
+  // line - only when the brain has not already given its own lead-in for this turn.
+  ack(key, vals = {}) {
+    if (this.prefix || !this.P[key]) return;
+    if (Object.values(vals).some((v) => v === '' || v == null)) return;
+    this.prefix = S.fill(this.P[key], vals);
+  }
+  yearsWords(y) {
+    const n = Math.round(y * 10) / 10;
+    if (this.language === 'Telugu') return n === 1 ? 'ఒక సంవత్సరం' : `${n} ఏళ్ళు`;
+    if (this.language === 'Hindi') return n === 1 ? 'एक साल' : `${n} साल`;
+    return n === 1 ? 'one year' : `${n} years`;
+  }
+
   speak(...parts) {
     if (this.prefix) { parts.unshift(this.prefix); this.prefix = ''; } // e.g. the brain's short lead-in, once, before the next sentence
     const text = this.guard(parts.filter(Boolean).join(' '));
@@ -638,6 +654,7 @@ class Dialogue {
     const st = this.st;
     if (k.intent === 'yes') {
       st.identity = true; st.tries = 0;
+      this.ack('ackName', { first: S.clean(this.data.firstName, 30) });
       // a call-back: "we spoke earlier about the ... job" before "is this a good time?" (memory, 2026-10-30)
       if (S.screenLike(this.purpose)) { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
       if (this.purpose === 'AI Interview Pending') {
@@ -665,7 +682,7 @@ class Dialogue {
 
   on_convenient(k) {
     const st = this.st;
-    if (k.intent === 'yes') { st.step = 'intro'; return { say: this.speak(this.B.intro), done: false }; }
+    if (k.intent === 'yes') { st.step = 'intro'; this.ack('ackTime'); return { say: this.speak(this.B.intro), done: false }; }
     if (k.intent === 'no' || k.intent === 'later' || k.intent === 'reschedule') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     return this.retry(k);
   }
@@ -680,7 +697,7 @@ class Dialogue {
 
   on_interest(k) {
     const st = this.st;
-    if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; return this.ask('qExp'); }
+    if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; this.ack('ackInterest'); return this.ask('qExp'); }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     if (k.intent === 'human') { st.human = true; st.interest = 'unsure'; return this.close('Unclear', 'asked for a recruiter', this.P.humanNoted); }
@@ -711,7 +728,10 @@ class Dialogue {
     if (y == null) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
-    } else st.answers.experienceYears = y;
+    } else {
+      st.answers.experienceYears = y;
+      if (y === 0) this.ack('ackFresher'); else this.ack('ackExp', { yrs: this.yearsWords(y) });
+    }
     st.tries = 0;
     return this.ask('qLoc');
   }
@@ -723,7 +743,10 @@ class Dialogue {
     if (!place) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
-    } else st.answers.currentLocation = place;
+    } else {
+      st.answers.currentLocation = place;
+      this.ack('ackLoc', { place: S.clean(place, 40) });
+    }
     st.tries = 0;
     return this.ask('qNotice');
   }
@@ -739,6 +762,7 @@ class Dialogue {
     } else {
       if (n.days != null) st.answers.noticePeriodDays = n.days;
       st.answers.noticePeriodText = n.text;
+      if (n.days === 0) this.ack('ackNoticeNow'); else if (n.days > 0) this.ack('ackNotice', { days: n.days }); else this.ack('ackNoted');
     }
     st.tries = 0;
     return this.ask('qProceed');

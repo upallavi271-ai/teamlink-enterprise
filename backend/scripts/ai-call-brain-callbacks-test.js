@@ -148,7 +148,7 @@ const ok = (c, m, d) => { if (c) { pass += 1; console.log('PASS', m); } else { f
     // ---- memory on a call-back ----------------------------------------------------------------------------------------
     d = mk().remember({ answers: { experienceYears: 4, currentLocation: 'Guntur', noticePeriodDays: 30, noticePeriodText: '30 days' } });
     d.start(); r = await d.hear('yes speaking');
-    ok(r.say.startsWith(S.fill(P.resumeLine, { job: data.jobTitle })), 'M1 a call-back starts with "we spoke earlier about the Faculty job"', r.say);
+    ok(r.say.replace(S.fill(P.ackName, { first: data.firstName }), '').trim().startsWith(S.fill(P.resumeLine, { job: data.jobTitle })), 'M1 a call-back starts with "(Hi Ravi.) we spoke earlier about the Faculty job"', r.say);
     await d.hear('yes'); await d.hear('yes');
     r = await d.hear('yes');
     ok(d.st.step === 'qProceed' && r.say.includes(P.qProceed), 'M2 experience, city and notice period told before are NOT asked again', [d.st.step, r.say]);
