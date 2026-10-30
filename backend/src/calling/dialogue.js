@@ -61,7 +61,7 @@ const L = {
   later: ['later', 'call back', 'call me back', 'not now', 'not right now', 'busy', 'driving', 'in a meeting', 'meeting', 'tomorrow', 'another time', 'some other time', 'after some time', 'evening', 'next week', 'baad mein', 'baad me', 'abhi nahi', 'kal', 'बाद में', 'अभी नहीं', 'व्यस्त', 'कल', 'शाम', 'తర్వాత', 'తరువాత', 'ఇప్పుడు కాదు', 'బిజీ', 'రేపు', 'సాయంత్రం', 'taruvata', 'taruvaata', 'ippudu kaadu', 'repu'],
   resched: ['reschedule', 'change the time', 'change time', 'another time', 'different time', 'other time', 'postpone', 'can we move', 'move it', 'समय बदल', 'दूसरा समय', 'दूसरे समय', 'సమయం మార్చ', 'టైమ్ మార్చ', 'వేరే సమయం', 'మరో సమయం', 'వాయిదా', 'vere samayam'],
   no: ['no', 'nope', 'nah', 'not', 'cannot', 'cant', 'can t', 'wont', 'dont', 'wrong', 'nahi', 'nahin', 'nhi', 'नहीं', 'नही', 'కాదు', 'లేదు', 'లేద', 'వద్దు', 'kaadu', 'ledu', 'vaddu', 'not interested', 'not me', 'నో', 'నొ', 'नो', 'नॉट'],
-  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'హా', 'హాఁ', 'ఆ', 'ఆఁ', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
+  yes: ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'correct', 'right', 'speaking', 'sounds good', 'go ahead', 'interested', 'available', 'i can', 'of course', 'definitely', 'absolutely', 'haan', 'han', 'haa', 'ji', 'theek', 'bilkul', 'avunu', 'sare', 'sari', 'हाँ', 'हां', 'जी', 'ठीक', 'बिल्कुल', 'सही', 'అవున', 'సరే', 'సరి', 'అలాగే', 'ఓకే', 'హా', 'హాఁ', 'ఆ', 'ఆఁ', 'ఉన్నాను', 'ఆసక్తి ఉంది', 'ఇంట్రెస్ట్ ఉంది', 'ఇంట్రెస్ట్ ఉందండి', 'ఇంట్రెస్ట్ ఉంటుంది', 'ఇంట్రెస్టే', 'ఇంట్రెస్టెడ్', 'इंटरेस्ट है', 'इंटरेस्टेड', 'interest undi', 'interest undhi', 'interest hai', 'ఇష్టం', 'ఎస్', 'యెస్', 'యస్', 'యా', 'ఓకే', 'ఓకె', 'కరెక్ట్', 'స్పీకింగ్', 'యస', 'यस', 'येस', 'यस्', 'एस', 'ओके', 'ओक', 'करेक्ट', 'स्पीकिंग', 'या'],
   info: ['what', 'where', 'which', 'who', 'when', 'how', 'why', 'details', 'tell me', 'more info', 'location', 'address', 'company', 'client', 'link', 'kya', 'kahan', 'kaun', 'kab', 'kaise', 'क्या', 'कहाँ', 'कहां', 'कौन', 'कब', 'कैसे', 'क्यों', 'ఏమిటి', 'ఎక్కడ', 'ఎవరు', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'ఏంటి'],
   immediate: ['immediate', 'immediately', 'serving', 'free', 'fresher', 'तुरंत', 'वेंटनहीं', 'వెంటనే', 'ఇప్పుడే'],
   // the person is upset (user rule 2026-10-28: stay calm, apologise, keep it short, offer a recruiter; never argue)
@@ -569,6 +569,12 @@ class Dialogue {
     if (k.intent === 'ai_q') return { say: this.again(this.P.amAi), done: false };
     if (k.intent === 'other_cand') return { say: this.again(this.P.onlyYou), done: false };
     // "can you repeat?": the same question again (a few times; then it is read like any unclear answer)
+    // ...but "జాబ్ గురించి మళ్ళీ చెప్పు" at "is this job interesting?" is the JOB again, in full, not only the question
+    // (test call 2026-10-30: "ఓకే, మళ్ళీ చెప్తా" and then just the question)
+    if (k.intent === 'repeat' && ['interest', 'human_offer'].includes(st.step) && S.screenLike(this.purpose)) {
+      turn.understood = 'explain again'; st.step = 'interest'; st.tries = 0;
+      return { say: this.speak(this.P.sureRepeat, this.B.briefFull || this.B.brief, this.P.interestQ), done: false };
+    }
     if (k.intent === 'repeat' && st.step !== 'audio_check' && (st.repeats += 1) <= 3) return { say: this.again(this.P.sureRepeat), done: false };
     // "Yes, I can't ..." on a yes / no question: ask which, neutrally - never pick one
     if (k.intent === 'mixed' && YES_NO_STEPS.includes(st.step) && st.step !== 'audio_check') {
@@ -588,7 +594,7 @@ class Dialogue {
     // "explain once more / details cheppandi / फिर से समझाइए": the job again (any number of times), then the open question
     if (st.step !== 'identity' && S.screenLike(this.purpose) && has(norm(text), EXPLAIN) && !['later_when', 'resched_time'].includes(st.step)) {
       turn.understood = 'explain again';
-      return { say: this.again(this.B.brief), done: false };
+      return { say: this.again(this.B.briefFull || this.B.brief), done: false };
     }
     // "who is this? / where are you calling from?" before the name: who we are (it shares nothing), then the name again
     if (st.step === 'identity' && A.topicOf(text).includes('who')) { turn.understood = 'question'; return { say: this.speak(A.answer(this, text).say, this.B.identity), done: false }; }
@@ -854,8 +860,8 @@ class Dialogue {
   on_interest(k) {
     const st = this.st;
     // "చెప్పండి" / "tell me" after the job = tell me (again): as many times as they ask
-    if (k.intent === 'yes' && k.goAhead) return { say: this.speak(this.B.brief, this.P.interestQ), done: false };
-    if (k.intent === 'repeat') return { say: this.speak(this.B.brief, this.P.interestQ), done: false };
+    if (k.intent === 'yes' && k.goAhead) return { say: this.speak(this.B.briefFull || this.B.brief, this.P.interestQ), done: false };
+    if (k.intent === 'repeat') return { say: this.speak(this.B.briefFull || this.B.brief, this.P.interestQ), done: false };
     if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; this.ack('ackInterest'); return this.ask('qExp'); }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
