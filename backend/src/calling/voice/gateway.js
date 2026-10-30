@@ -172,7 +172,22 @@ async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
   return { lang, text: lang === 'Telugu' ? te : hi, sT, sH };
 }
 
-const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
+// The reply is voiced sentence by sentence. A one- or two-word sentence ("థాంక్స్.", "సరే.", "బై.") voiced ALONE came out
+// stretched ("thaaaanks", "sareeeee" - founder 2026-10-30): it is joined to the sentence next to it ("ఓకే, థాంక్స్, ఇప్పుడు
+// ఒక రెండు నిమిషాలు మాట్లాడొచ్చా?") and voiced as one.
+const wordsIn = (s) => s.split(/\s+/).filter(Boolean).length;
+function sentences(text) {
+  const parts = String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    const prev = out[out.length - 1];
+    if (prev && wordsIn(prev) <= 2 && /[.।]$/.test(prev)) out[out.length - 1] = `${prev.replace(/[.।]$/, ',')} ${p}`; // short one before: into this one
+    else out.push(p);
+  }
+  // a short last one ("బై."): onto the one before it
+  if (out.length > 1 && wordsIn(out[out.length - 1]) <= 2) { const last = out.pop(); out[out.length - 1] = `${out[out.length - 1].replace(/[.।!]$/, ',')} ${last}`; }
+  return out;
+}
 const talkTime = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${sec % 60} s` : `${sec} s`);
 
 // CLEAR ON THE PHONE (2026-10-30: "voice clearity ga vundeylaaga, gaps lekunda"). Measured on our voices: English hit the

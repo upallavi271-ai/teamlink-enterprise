@@ -14,6 +14,8 @@
 
 // [Telugu, Hindi]
 const WORDS = {
+  // common surnames the letter rules got wrong ("Rao" was read రఒ)
+  rao: ['రావు', 'राव'], reddy: ['రెడ్డి', 'रेड्डी'], naidu: ['నాయుడు', 'नायडू'],
   work: ['వర్క్', 'वर्क'], from: ['ఫ్రమ్', 'फ्रॉम'], office: ['ఆఫీస్', 'ऑफिस'], home: ['హోమ్', 'होम'], hybrid: ['హైబ్రిడ్', 'हाइब्रिड'],
   remote: ['రిమోట్', 'रिमोट'], onsite: ['ఆన్‌సైట్', 'ऑनसाइट'], full: ['ఫుల్', 'फुल'], part: ['పార్ట్', 'पार्ट'], time: ['టైమ్', 'टाइम'],
   contract: ['కాంట్రాక్ట్', 'कॉन्ट्रैक्ट'], permanent: ['పర్మనెంట్', 'परमानेंट'], temporary: ['టెంపరరీ', 'टेम्परेरी'], shift: ['షిఫ్ట్', 'शिफ्ट'],
@@ -174,6 +176,9 @@ function native(text, lang) {
   });
   t = t.replace(/\bwithin\s+(\d+)\s*days?\b/gi, col === 0 ? '$1 రోజుల్లో' : '$1 दिन में');
   SPANS.forEach(([re, te, hi]) => { t = t.replace(re, col === 0 ? te : hi); });
+  // the Telugu voice cannot say "కన్సల్టెంట్స్" (it comes out "కన్సల్టెంటా / కన్సల్టెంటో", every spelling tried 2026-10-30):
+  // in Telugu speech the company is just "టీమ్‌లింక్" (the written line keeps the full name)
+  if (col === 0) t = t.replace(/టీమ్‌లింక్\s+కన్సల్టెంట్స్/g, 'టీమ్‌లింక్').replace(/TeamLink\s+Consultants/gi, 'TeamLink');
   DEGREES.forEach(([re, words]) => { t = t.replace(re, words[col]); });
   return t
     .replace(/\b(Dr|Mr|Mrs|Ms)\.\s*/gi, '$1 ') // Dr. Karthik: said in full, no stop in the middle of a name
