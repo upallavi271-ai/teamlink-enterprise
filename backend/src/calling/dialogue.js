@@ -271,6 +271,9 @@ function validateOutcome(raw, purpose) {
     },
     callbackRequested: bool(o.callbackRequested),
     callbackWhen: str(o.callbackWhen, 120),
+    callbackAt: /^\d{4}-\d\d-\d\dT\d\d:\d\d$/.test(String(o.callbackAt || '')) ? o.callbackAt : undefined, // India time
+    pendingQuestions: Array.isArray(o.pendingQuestions) ? o.pendingQuestions.map((q) => str(q, 200)).filter(Boolean).slice(0, 5) : [],
+    declineReason: str(o.declineReason, 120),
     humanFollowUpRequested: bool(o.humanFollowUpRequested),
     doNotCallRequested: bool(o.doNotCallRequested),
     shortlistTold: bool(o.shortlistTold),
@@ -298,12 +301,17 @@ class Dialogue {
     this.recordingNotice = !!opts.recordingNotice;
     this.autoLanguage = opts.autoLanguage !== false; // answer in the language the person speaks (opts.autoLanguage: false keeps the call's language)
     this.classifier = typeof opts.classifier === 'function' ? opts.classifier : null;
+    // the AI brain (brain.js think(d, text)): understanding + a natural lead-in; null = the word lists only
+    this.brain = typeof opts.brain === 'function' ? opts.brain : null;
+    // verified answers for this requirement ([{ q, a }]) the brain may use (pending clarifications answered by recruiters)
+    this.knowledge = Array.isArray(opts.knowledge) ? opts.knowledge : [];
     this.maxTurns = opts.maxTurns || 20; // room for a few "could you say that again?" turns
     this.prefix = '';
     this.st = {
       step: 'identity', turns: 0, tries: 0, done: false, ended: null, identity: false, wrong: false, interest: null, told: false,
       answers: {}, callback: false, callbackWhen: null, human: false, stop: false, attendance: null, preferredTime: null, transcript: [], outcome: null, lastAsk: '',
       language: null, upset: 0, calmFrom: null,
+      pending: [], callbackAt: null, heardFacts: null,
       unheard: 0, silent: 0, mixed: 0, repeats: 0, audioFrom: null, audioTries: 0, askedWhy: false, declineReason: null, changedMind: false, whenAsked: false,
     };
     this.setLanguage(S.LANGS.includes(opts.language) ? opts.language : 'English');
@@ -408,7 +416,21 @@ class Dialogue {
     const lg = this.autoLanguage ? detectLanguage(text) : null;
     if (lg && lg.lang !== this.language) { this.setLanguage(lg.lang); this.prefix = this.P.langSwitched; }
     if (lg && lg.only) { turn.understood = 'language'; this.prefix = ''; return { say: this.again(this.P.langSwitched), done: false }; }
-    const k = await this.intentOf(text);
+    // 1b. THE BRAIN (brain.js): what they meant in the context of the last question, the facts in it, and a short natural
+    // lead-in in their language. The word lists below are the fallback - and the only reader when the brain is off / slow.
+    let b = null;
+    if (this.brain) {
+      try { b = await this.brain(this, text); } catch { b = null; }
+      if (b) {
+        turn.brain = { intent: b.intent, ms: b.ms };
+        // a switch the word check missed (a Teluglish / Hinglish sentence): the brain read the language from the words
+        if (this.autoLanguage && b.language && b.language !== this.language && !lg && text.trim().split(/\s+/).length >= 3) {
+          this.setLanguage(b.language); this.prefix = this.P.langSwitched;
+        }
+      }
+    }
+    st.heardFacts = b;
+    const k = b ? this.fromBrain(b, text) : await this.intentOf(text);
     turn.understood = k.intent;
     if (k.human) st.human = true;
 
@@ -449,11 +471,25 @@ class Dialogue {
       if ((st.mixed += 1) <= 2) return { say: this.speak(this.P.yesOrNo), done: false };
       return this.close(this.fallback(), 'answer not clear (yes and no)');
     }
+    // the brain's lead-in ("Okay, three years, noted.") goes before whatever the step says next
+    if (b && b.leadIn && LEAD_OK.includes(b.intent)) this.prefix = [this.prefix, b.leadIn].filter(Boolean).join(' ');
+    // "call me tomorrow at 5": the day and time are already said - noted at once, not asked again
+    if (k.intent === 'later' && b && b.callbackAt && st.step !== 'identity') {
+      st.callback = true; st.callbackAt = b.callbackAt; st.callbackWhen = b.callbackText || readTime(text);
+      return this.close(this.purpose.startsWith('Interview') ? 'No Response' : 'Call Back Later', 'call back later', this.P.laterNoted.replace('{when}', st.callbackWhen));
+    }
     if (k.intent === 'maybe') { const m = this.onMaybe(); if (m) return m; }
 
     if (st.step === 'calm') return this.on_calm(k);
     if (st.step === 'identity') return this.onIdentity(k);
     if (st.step === 'audio_check') return this.on_audio_check(k);
+    // a QUESTION, answered by the brain from the verified facts only - or "I don't have confirmed information, the team
+    // will check" and the question is kept for the recruiter (pending clarification). Then the same question again.
+    if (b && b.intent === 'question' && st.step !== 'why_not') {
+      if (b.question && !b.answeredFromFacts && st.pending.length < 5 && !st.pending.includes(b.question)) st.pending.push(b.question);
+      this.prefix = '';
+      return { say: this.again(b.leadIn || this.P.noInfo), done: false };
+    }
     // nothing about the job before the person is confirmed (the step cannot be anything else after identity)
     // (at "why not interested?" a salary / location remark IS the reason: it goes to the step)
     if (k.intent === 'salary_q' && st.step !== 'why_not') {
@@ -470,6 +506,46 @@ class Dialogue {
   }
 
   fallback() { return this.purpose.startsWith('Interview') ? 'No Response' : 'Unclear'; }
+
+  // MEMORY ACROSS CALLS (2026-10-30): what the person already told on an earlier call about THIS application is not asked
+  // again. Only the plain answers are carried over (years, city, notice period) - never an interest or an outcome.
+  remember(prev) {
+    if (!prev) return this;
+    this.memory = { at: prev.at || null };
+    const a = prev.answers || {};
+    if (Number.isFinite(a.experienceYears)) this.st.answers.experienceYears = a.experienceYears;
+    if (a.currentLocation) this.st.answers.currentLocation = S.clean(a.currentLocation, 40);
+    if (a.noticePeriodText) { this.st.answers.noticePeriodText = S.clean(a.noticePeriodText, 30); if (Number.isFinite(a.noticePeriodDays)) this.st.answers.noticePeriodDays = a.noticePeriodDays; }
+    this.st.remembered = true;
+    return this;
+  }
+  // the next question that is still open, from this step on (a remembered answer is skipped)
+  ask(step) {
+    const order = ['qExp', 'qLoc', 'qNotice', 'qProceed'];
+    const a = this.st.answers;
+    const known = { qExp: a.experienceYears != null, qLoc: !!a.currentLocation, qNotice: !!a.noticePeriodText };
+    let i = Math.max(0, order.indexOf(step));
+    while (i < order.length - 1 && known[order[i]]) i += 1;
+    this.st.step = order[i];
+    return { say: this.speak(this.P[order[i]]), done: false };
+  }
+
+  // The brain's reading -> the intent the steps understand. A stop is believed only when the words hold a no / stop too:
+  // a stop ends every future call, so it is never taken from a guess.
+  fromBrain(b, text) {
+    const words = classify(text);
+    const human = b.intent === 'human' || words.human;
+    switch (b.intent) {
+      case 'stop': return { intent: ['stop', 'no'].includes(words.intent) ? 'stop' : 'no', human };
+      case 'question': return { intent: words.intent === 'salary_q' ? 'salary_q' : 'info_q', human };
+      case 'already_employed':
+        if (!this.st.declineReason) this.st.declineReason = b.declineReason || 'Already employed';
+        return { intent: 'no', human };
+      case 'wrong_person': return { intent: this.st.step === 'identity' ? 'no' : 'unclear', human };
+      case 'answer': case 'greeting': return { intent: words.intent === 'silence' ? 'unclear' : words.intent, human };
+      default: return { intent: b.intent, human };
+    }
+  }
 
   // Speech that was not heard reliably: ask again; the second time say the line is breaking; the third time end politely.
   unheard() {
@@ -513,7 +589,9 @@ class Dialogue {
   notInterested() {
     const st = this.st;
     st.interest = 'no';
-    if (st.askedWhy) return this.close('Not Interested', 'not interested');
+    const told = st.heardFacts && st.heardFacts.declineReason;
+    if (told && !st.declineReason) st.declineReason = told;
+    if (st.askedWhy || st.declineReason) return this.close('Not Interested', 'not interested');
     st.askedWhy = true; st.step = 'why_not'; st.tries = 0;
     return { say: this.speak(this.P.whyNot), done: false };
   }
@@ -523,11 +601,12 @@ class Dialogue {
     const t = norm(text);
     // changed their mind: the earlier "no" stays in the history and the summary
     if (k.intent === 'yes' && has(t, ['interested', 'interest', 'इंटरेस्टेड', 'ఇంట్రెస్ట్', 'ఆసక్తి ఉంది', 'dilchaspi'])) {
-      st.interest = 'yes'; st.changedMind = true; st.tries = 0; st.step = 'qExp';
-      return { say: this.speak(this.P.qExp), done: false };
+      st.interest = 'yes'; st.changedMind = true; st.tries = 0;
+      return this.ask('qExp');
     }
     // their own words, short, as the reason (a bare yes / no says nothing about why: nothing is recorded)
-    if (!['yes', 'no', 'silence'].includes(k.intent)) st.declineReason = S.clean(text, 120) || null;
+    if (st.heardFacts && st.heardFacts.declineReason) st.declineReason = st.heardFacts.declineReason;
+    else if (!['yes', 'no', 'silence'].includes(k.intent)) st.declineReason = S.clean(text, 120) || null;
     return this.close('Not Interested', 'not interested');
   }
 
@@ -553,7 +632,8 @@ class Dialogue {
     const st = this.st;
     if (k.intent === 'yes') {
       st.identity = true; st.tries = 0;
-      if (this.purpose === 'Screening') { st.step = 'convenient'; return { say: this.speak(this.B.convenient), done: false }; }
+      // a call-back: "we spoke earlier about the ... job" before "is this a good time?" (memory, 2026-10-30)
+      if (this.purpose === 'Screening') { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
       if (this.purpose === 'Shortlist Notification') {
         st.step = 'proceed'; st.told = true;
         return { say: this.speak(this.B.news, this.B.shortIv, this.B.note, this.P.shortProceed), done: false };
@@ -590,7 +670,7 @@ class Dialogue {
 
   on_interest(k) {
     const st = this.st;
-    if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; st.step = 'qExp'; return { say: this.speak(this.P.qExp), done: false }; }
+    if (k.intent === 'yes') { st.interest = 'yes'; st.tries = 0; return this.ask('qExp'); }
     if (k.intent === 'no') return this.notInterested();
     if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
     if (k.intent === 'human') { st.human = true; st.interest = 'unsure'; return this.close('Unclear', 'asked for a recruiter', this.P.humanNoted); }
@@ -615,31 +695,33 @@ class Dialogue {
   on_qExp(k, text) {
     const st = this.st;
     let y = readYears(text);
+    if (y == null && st.heardFacts && st.heardFacts.experienceYears != null) y = st.heardFacts.experienceYears;
     if (y == null) { const l = this.laterInQuestions(k); if (l) return l; }
     if (y == null && k.intent === 'no') y = 0;
     if (y == null) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
     } else st.answers.experienceYears = y;
-    st.tries = 0; st.step = 'qLoc';
-    return { say: this.speak(this.P.qLoc), done: false };
+    st.tries = 0;
+    return this.ask('qLoc');
   }
 
   on_qLoc(k, text) {
     const st = this.st;
     const l = this.laterInQuestions(k); if (l) return l;
-    const place = ['no', 'yes', 'maybe', 'mixed'].includes(k.intent) ? null : readPlace(text);
+    const place = (st.heardFacts && st.heardFacts.location) || (['no', 'yes', 'maybe', 'mixed'].includes(k.intent) ? null : readPlace(text));
     if (!place) {
       st.tries += 1;
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
     } else st.answers.currentLocation = place;
-    st.tries = 0; st.step = 'qNotice';
-    return { say: this.speak(this.P.qNotice), done: false };
+    st.tries = 0;
+    return this.ask('qNotice');
   }
 
   on_qNotice(k, text) {
     const st = this.st;
-    const n = readNotice(text);
+    let n = readNotice(text);
+    if (n.text == null && st.heardFacts && st.heardFacts.noticeDays != null) n = { days: st.heardFacts.noticeDays, text: st.heardFacts.noticeText || (st.heardFacts.noticeDays === 0 ? 'immediate' : `${st.heardFacts.noticeDays} days`) };
     if (n.text == null) { const l = this.laterInQuestions(k); if (l) return l; }
     if (n.text == null) {
       st.tries += 1;
@@ -648,8 +730,8 @@ class Dialogue {
       if (n.days != null) st.answers.noticePeriodDays = n.days;
       st.answers.noticePeriodText = n.text;
     }
-    st.tries = 0; st.step = 'qProceed';
-    return { say: this.speak(this.P.qProceed), done: false };
+    st.tries = 0;
+    return this.ask('qProceed');
   }
 
   on_qProceed(k) {
@@ -672,6 +754,7 @@ class Dialogue {
     const st = this.st;
     st.callback = true;
     // only a real day / time is noted; anything else is asked once more, then the call ends without a time
+    if (st.heardFacts && st.heardFacts.callbackAt) { st.callbackAt = st.heardFacts.callbackAt; st.callbackWhen = st.heardFacts.callbackText || readTime(text); } else
     if (timeLike(text)) st.callbackWhen = readTime(text);
     else if (!st.whenAsked && k.intent !== 'no') { st.whenAsked = true; return { say: this.speak(this.P.laterWhenAgain), done: false }; }
     const out = this.purpose.startsWith('Interview') ? 'No Response' : 'Call Back Later';
@@ -753,6 +836,8 @@ class Dialogue {
     if (st.stop) bits.push('Asked not to be called again.');
     if (st.changedMind) bits.push('First said not interested, then said they are interested.');
     if (st.declineReason) bits.push(`Why not interested (their words): "${st.declineReason}".`);
+    if (st.callbackAt) bits.push(`Call back at: ${st.callbackAt.replace('T', ' ')} (India time).`);
+    if (st.pending && st.pending.length) bits.push(`Asked (the team must answer): ${st.pending.join(' | ')}.`);
     const unclear = st.transcript.filter((x) => x.heard === 'unclear').length;
     if (unclear) bits.push(`${unclear} answer${unclear === 1 ? ' was' : 's were'} not heard clearly and asked again; nothing was assumed.`);
     if (st.ended === 'could not hear the person clearly' || st.ended === 'the person could not hear the assistant') bits.push('Ended because of a line / audio problem.');
@@ -774,6 +859,9 @@ class Dialogue {
       answers: st.answers,
       callbackRequested: st.callback,
       callbackWhen: st.callbackWhen || undefined,
+      callbackAt: st.callbackAt || undefined,
+      pendingQuestions: st.pending || [],
+      declineReason: st.declineReason || undefined,
       humanFollowUpRequested: st.human,
       doNotCallRequested: st.stop,
       shortlistTold: st.told && st.identity,
@@ -791,6 +879,8 @@ class Dialogue {
   transcript() { return this.st.transcript.slice(); }
 }
 
+// the brain intents whose lead-in is spoken before the next question
+const LEAD_OK = ['answer', 'yes', 'no', 'maybe', 'later', 'reschedule', 'already_employed', 'human'];
 // the steps whose question is a plain yes / no
 const YES_NO_STEPS = ['identity', 'convenient', 'intro', 'interest', 'human_offer', 'qProceed', 'proceed', 'avail', 'calm', 'audio_check'];
 

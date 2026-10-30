@@ -206,6 +206,10 @@ async function applyResult(callId, resultIn, turns) {
     await mark(callId, 'written');
   }
   await mark(callId, 'result');
+  // 2026-10-30: "call me back at ..." -> a call-back reminder (callbacks.js); questions the AI could not answer -> kept for the
+  // recruiter (knowledge.js). Never fatal: the result above is already saved.
+  try { await require('./callbacks').fromResult(fresh, res, ctx, s); } catch (err) { console.error('[ai-calling] call-back not kept:', err.message); } // eslint-disable-line global-require, no-console
+  try { if (res.pendingQuestions && res.pendingQuestions.length) await require('./knowledge').recordPending(fresh, res.pendingQuestions); } catch (err) { console.error('[ai-calling] question not kept:', err.message); } // eslint-disable-line global-require, no-console
   return { ok: true, outcome: res.outcome };
 }
 const S_LANGS = ['English', 'Telugu', 'Hindi'];

@@ -264,6 +264,28 @@ staff.get('/offers', async (req, res) => send(res, await hooks.listOffers(req.us
 staff.post('/offers/:id/accept', async (req, res) => send(res, await hooks.decide(req.user, req.params.id, true, req.body || {})));
 staff.post('/offers/:id/dismiss', async (req, res) => send(res, await hooks.decide(req.user, req.params.id, false, req.body || {})));
 staff.get('/dashboard', async (req, res) => send(res, await stats.dashboard(req.user, req.query)));
+// CALL-BACK REMINDERS (calling/callbacks.js) - the applications in the login's scope only
+const CB = require('../calling/callbacks');
+const KB = require('../calling/knowledge');
+staff.get('/callbacks', async (req, res) => res.json({ ok: true, rows: await CB.list(req.user, { status: clip(req.query.status || 'open', 20) }) }));
+staff.get('/callbacks/for-application/:id', async (req, res) => {
+  const r = await CB.forApplication(clip(req.params.id, 60));
+  const rows = r ? (await CB.list(req.user, { status: 'open' })).filter((x) => x.id === r.id) : [];
+  res.json({ ok: true, row: rows[0] || null });
+});
+// Call back: AI (the same AI calling, the same checks: consent, Do-not-call, test numbers, hours) or "I called by hand"
+staff.post('/callbacks/:id/call', async (req, res) => send(res, await CB.callNow(req.user, req.params.id)));
+staff.post('/callbacks/:id/done', async (req, res) => send(res, await CB.setStatus(req.user, req.params.id, 'done', { how: clip((req.body || {}).how, 60) || 'Called by hand' })));
+staff.post('/callbacks/:id/cancel', async (req, res) => send(res, await CB.setStatus(req.user, req.params.id, 'cancelled', { how: 'Cancelled' })));
+staff.post('/callbacks/:id/move', async (req, res) => send(res, await CB.setStatus(req.user, req.params.id, 'move', { dueAtIst: clip((req.body || {}).dueAt, 20) })));
+// QUESTIONS THE AI COULD NOT ANSWER (calling/knowledge.js) - answered ones are used on the next calls of that requirement
+staff.get('/questions', async (req, res) => res.json({ ok: true, rows: await KB.list(req.user, { status: clip(req.query.status || 'pending', 20), requirementId: clip(req.query.requirementId, 60) || undefined }) }));
+staff.post('/questions/:id/answer', async (req, res) => {
+  const r = await KB.answer(req.user, clip(req.params.id, 60), { answer: (req.body || {}).answer, dismiss: !!(req.body || {}).dismiss });
+  if (!r) return res.status(404).json({ error: 'That question was not found.' });
+  if (r.error) return res.status(400).json({ error: r.error });
+  return res.json({ ok: true, row: r });
+});
 staff.get('/campaigns', async (req, res) => {
   const rows = await DB.all('SELECT * FROM "AiCallCampaign" ORDER BY "createdAt" DESC LIMIT 100');
   res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, purpose: r.purpose, requirementId: r.requirementId, total: r.total, createdByName: r.createdByName, createdAt: r.createdAt })) });

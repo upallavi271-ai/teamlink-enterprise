@@ -135,9 +135,18 @@ async function dialogueFor(row) {
   if (!ctx) return null;
   const { fields } = webOf(row);
   const sc = await svc.scriptFor(ctx, row.purpose, row.language || 'English', fields, s);
-  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts }); // own line / link calls keep the talk history WITHOUT saying it (founder 2026-10-29: 'ilaa cheppakudadhu')
+  // the AI brain (brain.js, the existing Claude channel) when it is set up and has credits; otherwise the script alone
+  const Brain = require('./brain'); // eslint-disable-line global-require
+  const brain = (await Brain.available()) ? Brain.think : null;
+  const knowledge = await require('./knowledge').forRequirement(row.requirementId).catch(() => []); // eslint-disable-line global-require
+  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts, brain, knowledge }); // own line / link calls keep the talk history WITHOUT saying it (founder 2026-10-29: 'ilaa cheppakudadhu')
   const snap = svc.safeJson(row.botStateJson);
   if (snap && snap.step) d.restore(snap);
+  else {
+    // a NEW call about an application that was already called: remember the answers given then (memory, 2026-10-30)
+    const prev = await DB.one('SELECT "answersJson", "endedAt" FROM "AiCall" WHERE "applicationId" = ? AND "id" <> ? AND "status" = ? AND "outcome" IS NOT NULL ORDER BY "createdAt" DESC LIMIT 1', row.applicationId, row.id, 'completed').catch(() => null);
+    if (prev) d.remember({ answers: svc.safeJson(prev.answersJson) || {}, at: prev.endedAt });
+  }
   return d;
 }
 

@@ -66,6 +66,7 @@ const PH = {
     noInfo: "I don't have that detail. The recruiter will tell you.",
     onlyYou: 'I can only talk about your own application.',
     repeat: "Sorry, I didn't catch that. Let me ask again.",
+    resumeLine: "We spoke earlier about the {job} job.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "Sorry, I couldn't hear you clearly.",
     breaking: "Sorry, your voice is breaking up.",
@@ -143,6 +144,7 @@ const PH = {
     noInfo: 'ये डिटेल मेरे पास नहीं है। रिक्रूटर बता देंगे।',
     onlyYou: 'मैं सिर्फ़ आपकी एप्लिकेशन के बारे में बात कर सकता हूँ।',
     repeat: 'सॉरी, ठीक से सुनाई नहीं दिया। फिर से पूछता हूँ।',
+    resumeLine: "हमने पहले {job} जॉब के बारे में बात की थी।", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "सॉरी, आपकी आवाज़ ठीक से सुनाई नहीं दी।",
     breaking: "सॉरी, आपकी आवाज़ कट रही है।",
@@ -220,6 +222,7 @@ const PH = {
     noInfo: 'ఆ డీటెయిల్ నా దగ్గర లేదు. రిక్రూటర్ చెప్తారు.',
     onlyYou: 'నేను మీ అప్లికేషన్ గురించి మాత్రమే మాట్లాడగలను.',
     repeat: 'సారీ, సరిగ్గా వినపడలేదు. మళ్ళీ అడుగుతా.',
+    resumeLine: "మనం ఇంతకుముందు {job} జాబ్ గురించి మాట్లాడుకున్నాం.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "సారీ, మీ మాట సరిగ్గా వినపడలేదు.",
     breaking: "సారీ, మీ వాయిస్ కట్ అవుతుంది.",
