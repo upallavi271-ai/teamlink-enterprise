@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { DupBanner } from '../components/duplicates/DupChip.jsx'; // dup_
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import NextStepBlock from '../components/NextStepBlock.jsx';
@@ -154,9 +154,16 @@ export default function CandidateDetail() {
   useEffect(load, [id]);
   const wantedApp = searchParams.get('application');
   useEffect(() => { if (wantedApp) { setSelectedAppId(wantedApp); setTabRaw('applications'); } }, [wantedApp, id]);
-  // ?tab=conversation: opened from "Open this conversation" after a WhatsApp / SMS / mail is sent - the profile's own tab
+  // ?tab=conversation: opened from "Open this conversation" after a WhatsApp / SMS / mail is sent - the profile's own tab.
+  // Every click counts (location.key), also when the link is the page's own address, and the tabs are brought into view.
   const wantedTab = searchParams.get('tab');
-  useEffect(() => { if (wantedTab) setTab(wantedTab); }, [wantedTab, id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const location = useLocation();
+  useEffect(() => {
+    if (!wantedTab) return undefined;
+    setTab(wantedTab);
+    const t = setTimeout(() => { const el = document.querySelector('.pfl-tabs-top'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 80);
+    return () => clearTimeout(t);
+  }, [wantedTab, id, location.key]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (tab !== 'history') return;
     api.get(`/candidates/${id}/followup-log`)

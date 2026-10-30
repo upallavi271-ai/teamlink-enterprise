@@ -61,6 +61,10 @@ const PH = {
     briefSkills: 'Main skills: {skills}.',
     briefResp: 'The work includes: {responsibilities}.',
     briefSalary: 'Salary range is {salary}.',
+    briefAt: 'It is a job at {place}.',
+    briefEduAny: 'Any degree is okay.',
+    briefEdu: 'They need {education}.',
+    briefJoin: 'You need to join {joining}.',
     briefNone: "I'll share the full details on the next call.",
     interestQ: 'Are you interested in this job?',
     interestMore: "Shall I tell you about the job once more?",
@@ -171,6 +175,10 @@ const PH = {
     briefSkills: "मेन स्किल्स {skills} हैं।",
     briefResp: "काम ये है: {responsibilities}।",
     briefSalary: "सैलरी {salary} तक है।",
+    briefAt: "ये एक {place} में जॉब है।",
+    briefEduAny: "कोई भी डिग्री चलेगी।",
+    briefEdu: "{education} चाहिए।",
+    briefJoin: "{joining} जॉइन करना है।",
     briefNone: "पूरी डिटेल्स अगली कॉल में बताऊँगा।",
     interestQ: "इस जॉब में इंटरेस्ट है?",
     interestMore: "जॉब के बारे में एक बार और बताऊँ?",
@@ -281,6 +289,10 @@ const PH = {
     briefSkills: "మెయిన్‌గా {skills} రావాలి.",
     briefResp: "వర్క్ ఏంటంటే: {responsibilities}.",
     briefSalary: "సాలరీ {salary} వరకు ఉంటుంది.",
+    briefAt: "ఇది ఒక {place} లో జాబ్.",
+    briefEduAny: "ఏ డిగ్రీ ఉన్నా పర్లేదు.",
+    briefEdu: "{education} ఉండాలి.",
+    briefJoin: "{joining} జాయిన్ అవ్వాలి.",
     briefNone: "పూర్తి డీటెయిల్స్ ఇంకోసారి కాల్ చేసినప్పుడు చెప్తా.",
     interestQ: "ఈ జాబ్ మీకు ఇంట్రెస్ట్ ఉందా?",
     interestMore: "జాబ్ గురించి ఇంకోసారి చెప్పనా?",
@@ -721,6 +733,14 @@ function descriptionFacts(desc) {
 // "Faculty requirement" is said as "Faculty" ("We have a Faculty job open")
 const spokenTitle = (t) => clean(String(t || '').replace(/\s*[-–(]?\s*\b(requirements?|vacanc(y|ies)|openings?|positions?)\b\)?\s*$/i, '').replace(/\s+[—–]\s+/g, ', '), 100) || clean(t, 100);
 
+const PLACE_KINDS = [
+  [/engineering college|institute of engineering|college of engineering/i, 'engineering college'],
+  [/medical college|institute of medical/i, 'medical college'], [/pharmacy college|college of pharmacy/i, 'pharmacy college'],
+  [/nursing college|college of nursing/i, 'nursing college'], [/degree college|junior college|\bcollege\b/i, 'college'],
+  [/universit/i, 'university'], [/hospital/i, 'hospital'], [/school/i, 'school'],
+];
+const placeKindOf = (name) => { const hit = PLACE_KINDS.find(([re]) => re.test(String(name || ''))); return hit ? hit[1] : ''; };
+
 // requirement + application + candidate -> the facts. NOTHING that is not stored is added.
 function buildData({ candidate, app, requirement, link }) {
   const c = candidate || {};
@@ -744,6 +764,12 @@ function buildData({ candidate, app, requirement, link }) {
     responsibilities: firstItems(r.responsibilities, 3, 220),
     // the pay of THIS role from a "Package:" list in the description ("Assistant professor -1.2L"), when the field is empty
     salary: clean(r.salary, 60) || fromDesc.salary || require('./answers').salaryOf({ data: {} }, r), // eslint-disable-line global-require
+    // what kind of place it is, from the client's name - never the name itself ("ARMIET ... Engineering College" -> "engineering
+    // college"), the qualification and how soon they join (test call 2026-10-30: a requirement with only "full time, work from
+    // office" was told as just that, five times over)
+    placeKind: r.internal ? '' : placeKindOf(r.client && r.client.name),
+    education: clean(r.education, 60),
+    joining: /^(within \d{1,3} days?|immediate(ly)?)$/i.test(String(r.joiningTimeline || '').trim()) ? String(r.joiningTimeline).trim().toLowerCase().replace(/^immediate$/, 'immediately') : '',
     interview: a.interviewAt ? {
       at: new Date(a.interviewAt).toISOString(),
       mode: kind,
@@ -808,7 +834,16 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
     f.includeSalary && !String(data.salary || '').includes(',') ? fill(P.briefSalary, { salary: data.salary }) : '', // a list of pays: told when asked
     f.extraNote,
   ].filter(Boolean);
-  B.brief = brief.length ? brief.join(' ') : P.briefNone;
+  // the other stored facts: told when the job has little else, and always when they ask to hear the job again
+  const extras = [
+    fill(P.briefAt, { place: data.placeKind && language === 'English' ? `${/^[aeiou]/i.test(data.placeKind) ? 'an' : 'a'} ${data.placeKind}` : data.placeKind }),
+    data.education ? (/^any\b/i.test(data.education) ? P.briefEduAny : fill(P.briefEdu, { education: data.education })) : '',
+    fill(P.briefJoin, { joining: data.joining }),
+  ].filter(Boolean);
+  const thin = !data.location && !data.needs && !data.experience && !data.skills && !(data.salary && !String(data.salary).includes(','));
+  const told = thin ? [extras[0], ...brief, ...extras.slice(1)].filter(Boolean) : brief;
+  B.brief = told.length ? told.join(' ') : P.briefNone;
+  B.briefFull = thin ? B.brief : [B.brief, ...extras].join(' ');
   B.news = fill(P.shortNews, { job: data.jobTitle });
   B.shortIv = iv ? fill(P.shortIv, { date: dateWords(iv.at, language), time: timeWords(iv.at, language) }) : P.shortNoIv;
   B.aiNews = fill(P.aiNews, { job: data.jobTitle });

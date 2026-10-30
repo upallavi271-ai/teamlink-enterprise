@@ -79,6 +79,18 @@ const talk = async (r, lang = 'Telugu', knowledge = []) => {
   r = await d2.hear('మీరు ఎవరు?');
   ok(/టీమ్‌లింక్/.test(r.say) && d2.st.step === 'identity', 'Q4 ...but "who is calling?" is answered, then the name is asked', r.say);
 
+  // ---- 4b. a job with few facts; "interest undi"; "tell the job again" (test call 2026-10-30) ---------------------------------
+  const thin = { title: 'Faculty requirement', description: 'Created for the Education interview tracker (local import 2026-10-27).', education: 'Any Degree', employmentType: 'Full Time', workMode: 'Work From Office', joiningTimeline: 'Within 15 Days', openings: 1, internal: false, client: { name: 'ARMIET - Alamuri Ratnamala Institute of Engineering & Technology, Engineering College Shahapur' } };
+  d = await talk(thin);
+  ok(d.B.brief.includes('engineering college') && d.B.brief.includes('ఏ డిగ్రీ') && d.B.brief.includes('within 15 days') && !/ARMIET|Alamuri/.test(d.B.brief), 'T1 a job with few facts: the kind of place (not its name), the degree and the joining time are told', d.B.brief);
+  r = await d.hear('జాబ్ గురించి మళ్ళీ చెప్పు');
+  ok(r.say.includes('engineering college') && r.say.endsWith(S.phrases('Telugu').interestQ), 'T2 "జాబ్ గురించి మళ్ళీ చెప్పు" -> the job again in full, then the question (not only "ఓకే, మళ్ళీ చెప్తా" + the question)', r.say);
+  await d.hear('నాకు ఇంట్రెస్ట్ ఉంది నువ్ చెప్తే నేను వింటా');
+  ok(d.st.interest === 'yes' && d.st.step === 'qExp', 'T3 "నాకు ఇంట్రెస్ట్ ఉంది ..." is a yes (was not understood)', [d.st.interest, d.st.step]);
+  const { classify } = require(path.join(B, 'src/calling/dialogue'));
+  ok(['ఇంట్రెస్ట్ ఉంది', 'इंटरेस्ट है', 'interest undi'].every((t) => classify(t).intent === 'yes') && ['ఇంట్రెస్ట్ లేదు', 'इंटरेस्ट नहीं है', 'not interested'].every((t) => classify(t).intent === 'no'), 'T4 "interest undi / है" = yes, "interest ledu / नहीं है" = no');
+  ok(!(await talk(req('Assistant Professor — Anatomy'))).B.brief.includes('ఏ డిగ్రీ'), 'T5 a job with its own facts keeps the short brief (the extra facts only when asked again)');
+
   // ---- 5. the voice's text --------------------------------------------------------------------------------------------------
   const v = (t) => V.native(t, 'Telugu');
   ok(v('ఒక Faculty జాబ్ ఉంది. థాంక్స్.') === 'ఒక ఫ్యాకల్టీ జాబ్ ఉంది. థాంక్స్.', 'V1 no added "u" ("jobuuuu, thankuuuu" - founder 2026-10-30): the plain spelling', v('ఒక Faculty జాబ్ ఉంది. థాంక్స్.'));
