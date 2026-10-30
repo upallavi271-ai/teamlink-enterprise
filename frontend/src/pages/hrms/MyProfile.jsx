@@ -76,8 +76,9 @@ export default function MyProfile() {
         const f = formFromEmployee(res.data, SELF_FIELDS);
         // Awaiting review, the form shows what they SUBMITTED, not the record
         // as it stood before — that is the form they are being asked about.
-        (res.data.pendingChanges || []).forEach((c) => {
-          if (Object.prototype.hasOwnProperty.call(f, c.field)) f[c.field] = c.to ?? '';
+        // Sent back by HR, it opens with what they TYPED in that submission (not the old record), to correct and send again.
+        (res.data.pendingChanges || res.data.sentBack || []).forEach((c) => {
+          if (Object.prototype.hasOwnProperty.call(f, c.field)) f[c.field] = c.field === 'dateOfBirth' ? String(c.to ?? '').slice(0, 10) : (c.to ?? '');
         });
         setForm(f);
       })
@@ -221,9 +222,50 @@ export default function MyProfile() {
           <div className="kv"><span className="k">Reason</span><span>{employee.reviewNote || '—'}</span></div>
           <div className="kv"><span className="k">Reviewed by</span>
             <span>{employee.reviewedByName || 'HR'}{employee.reviewedAt ? ` · ${new Date(employee.reviewedAt).toLocaleString('en-GB')}` : ''}</span></div>
+          {employee.sentBack && employee.sentBack.length > 0 && (
+            <>
+              <div className="small-muted" style={{ marginTop: 8 }}>What you sent (it is already filled in below):</div>
+              {employee.sentBack.map((c) => (
+                <div className="kv" key={c.field}><span className="k">{c.label}</span><span>{c.to || '—'}</span></div>
+              ))}
+            </>
+          )}
           <div className="small-muted" style={{ marginTop: 6 }}>Correct the details below and submit again.</div>
         </div>
       )}
+
+      {/* WHAT YOU FILLED, WHAT IS STILL EMPTY - at every stage (founder 2026-10-30): before submitting, while HR reviews it,
+          after approval and after a send-back. The values themselves are in the form below. */}
+      {Array.isArray(employee.fillSummary) && employee.fillSummary.length > 0 && (() => {
+        const filled = employee.fillSummary.filter((x) => x.filled);
+        const empty = employee.fillSummary.filter((x) => !x.filled);
+        const mustFill = empty.filter((x) => x.required);
+        return (
+          <div className="card section">
+            <h3>Your details: {filled.length} of {employee.fillSummary.length} filled</h3>
+            {empty.length === 0
+              ? <div className="small-muted">Every detail is filled in. You can see each value in the form below.</div>
+              : (
+                <>
+                  <div className="small-muted" style={{ marginBottom: 6 }}>
+                    Not filled yet{mustFill.length ? ` (${mustFill.length} needed by HR, marked ✱)` : ''}:
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {empty.map((x) => <span key={x.field} className={`status ${x.required ? 'priority-high' : 'pending'}`}>{x.required ? '✱ ' : ''}{x.label}</span>)}
+                  </div>
+                </>
+              )}
+            {filled.length > 0 && (
+              <details style={{ marginTop: 8 }}>
+                <summary className="small-muted" style={{ cursor: 'pointer' }}>Filled ({filled.length})</summary>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                  {filled.map((x) => <span key={x.field} className="status approved">✓ {x.label}</span>)}
+                </div>
+              </details>
+            )}
+          </div>
+        );
+      })()}
       {!awaitingReview && employee.reviewDecision === 'Approved' && employee.isLocked && employee.reviewNote && (
         <div className="notice" style={{ marginBottom: 12 }}>HR&apos;s note: {employee.reviewNote}</div>
       )}

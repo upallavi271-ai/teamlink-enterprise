@@ -338,8 +338,39 @@ router.get('/me', async (req, res) => {
     where: { employeeId: employee.id, toDate: null },
     include: { position: true },
   });
+  // WHAT THEY FILLED, AND WHAT THEY DID NOT (founder 2026-10-30: "submit chesaka malli vallaki chupinchatledhu - em fill
+  // chesaro, em fill cheyaledho teliyadhu"). sentBack: HR sent the last submission back - the values the employee typed are
+  // read back from that submission's per-field audit rows, so the form opens with THEM (it used to open with the old record
+  // and everything had to be typed again). fillSummary: every field they may fill, filled or not, with HR's label.
+  let sentBack = null;
+  if (!employee.pendingChanges && employee.reviewDecision === 'Rejected') {
+    const rows = await prisma.auditLog.findMany({
+      where: { entity: 'Employee', entityId: employee.id, action: 'Profile field submitted', approvalStatus: 'Rejected' },
+      orderBy: { createdAt: 'desc' }, take: 80, select: { field: true, fieldLabel: true, fromValue: true, toValue: true, createdAt: true },
+    }).catch(() => []);
+    if (rows.length) {
+      const newest = new Date(rows[0].createdAt).getTime();
+      const seen = new Set();
+      sentBack = rows.filter((r) => r.field && newest - new Date(r.createdAt).getTime() <= 120000 && !seen.has(r.field) && seen.add(r.field) && SELF_SERVICE_FIELDS[r.field])
+        .map((r) => ({ field: r.field, label: r.fieldLabel || SELF_SERVICE_FIELDS[r.field], from: r.fromValue || '', to: r.toValue || '' }));
+    }
+  }
+  await fieldDefs.refresh();
+  const pausedNow = fieldDefs.pausedCols();
+  const requiredNow = fieldDefs.requiredCols();
+  const shown = {};
+  (employee.pendingChanges ? JSON.parse(employee.pendingChanges) : (sentBack || [])).forEach((c) => { shown[c.field] = c.to; });
+  const fillSummary = Object.entries(SELF_SERVICE_FIELDS)
+    .filter(([field]) => field !== 'aadhaarNumber' && !pausedNow.has(field)) // Aadhaar goes through the verification panel, never the form
+    .map(([field, label]) => {
+      const v = Object.prototype.hasOwnProperty.call(shown, field) ? shown[field] : employee[field];
+      const st = fieldDefs.stateOf(field);
+      return { field, label: (st && st.label) || label, filled: v !== null && v !== undefined && String(v).trim() !== '', required: requiredNow.has(field) };
+    });
   res.json({
     ...withComputed(employee),
+    sentBack,
+    fillSummary,
     position: seat ? seat.position.code : '',
     verification: empVerify.verificationState(employee),
     emailVerification: await emailVerify.emailState(employee),
