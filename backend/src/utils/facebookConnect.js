@@ -35,15 +35,28 @@ const graphBase = () => String(process.env.TL_FACEBOOK_GRAPH_BASE || 'https://gr
 const dialogBase = () => String(process.env.TL_FACEBOOK_DIALOG_BASE || 'https://www.facebook.com/v19.0/dialog/oauth');
 const jwtSecret = () => process.env.JWT_SECRET;
 
+// The address the Admin really has open comes first (the browser's Origin, or the Referer of a plain GET): a stale APP_BASE_URL (for
+// example a copied http://localhost:5183) must not decide where Facebook sends the browser back (2026-10-30). Then APP_BASE_URL, then Host.
+function browserSite(req) {
+  const h = (req && req.headers) || {};
+  if (h.origin && /^https?:\/\//.test(h.origin)) return String(h.origin).replace(/\/+$/, '');
+  try { if (h.referer) return new URL(h.referer).origin; } catch { /* not an address */ }
+  return null;
+}
 function siteBase(req) {
+  const seen = browserSite(req);
+  if (seen) return seen;
   if (process.env.APP_BASE_URL) return String(process.env.APP_BASE_URL).replace(/\/+$/, '');
-  const origin = req && req.headers && req.headers.origin;
-  if (origin) return String(origin).replace(/\/+$/, '');
   const host = req && req.get && req.get('host');
   if (host) return `${req.headers['x-forwarded-proto'] || req.protocol}://${host}`.replace(':4010', ':5183');
   return 'http://localhost:5183';
 }
 const redirectUri = (req) => `${siteBase(req)}/api/public/facebook-connect/callback`;
+// 2026-10-30 (founder: "prathi sari ahh page loki redirect avvaledhu"): when Facebook sends the browser back, the request has no Origin and,
+// behind nginx, its Host can be the inner 127.0.0.1:4010 - so the address worked out THEN was not the one Facebook was given at the start
+// (the token exchange failed and the browser was sent to an address it cannot open). The site address of the start is now carried in the
+// signed state and used for both.
+const baseOk = (b) => /^https?:\/\/[A-Za-z0-9.:-]+$/.test(String(b || ''));
 
 async function appCreds() {
   let id = String(process.env.FACEBOOK_APP_ID || '').trim();
@@ -83,7 +96,7 @@ async function start(user, req) {
   if (a.missingKey) return { error: 'The secret key of this server is missing, so nothing can be stored encrypted.', status: 400 };
   if (!a.id) return { error: 'Type the Meta App ID on this card first (Meta for Developers, your app, Settings, Basic), then press Connect with Facebook.', status: 400 };
   if (!a.secret) return { error: 'Type the Meta App secret on this card first (the same page as the App ID), then press Connect with Facebook.', status: 400 };
-  const state = jwt.sign({ k: 'fbconnect', u: user.id, n: crypto.randomBytes(8).toString('hex') }, jwtSecret(), { expiresIn: '15m' });
+  const state = jwt.sign({ k: 'fbconnect', u: user.id, b: siteBase(req), n: crypto.randomBytes(8).toString('hex') }, jwtSecret(), { expiresIn: '15m' });
   const q = new URLSearchParams({ client_id: a.id, redirect_uri: redirectUri(req), state, scope: SCOPES, response_type: 'code' });
   return { ok: true, url: `${dialogBase()}?${q.toString()}`, redirectUri: redirectUri(req) };
 }
@@ -136,10 +149,10 @@ async function select(user, k, pageId) {
 }
 
 // ---- 2. Facebook sends the browser back here ----------------------------------------------------------------------------------
-async function exchange(req, code) {
+async function exchange(req, code, base = null) {
   const a = await appCreds();
   if (!a.id || !a.secret) throw new Error('The Meta App ID / App secret are missing on this server.');
-  const short = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ client_id: a.id, client_secret: a.secret, redirect_uri: redirectUri(req), code })}`);
+  const short = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ client_id: a.id, client_secret: a.secret, redirect_uri: base ? `${base}/api/public/facebook-connect/callback` : redirectUri(req), code })}`);
   if (!short.access_token) throw new Error('Facebook gave no token for this sign-in.');
   let longTok = short.access_token;
   try {
@@ -152,15 +165,17 @@ async function exchange(req, code) {
 
 const router = express.Router();
 router.get('/callback', async (req, res) => {
-  const back = (qs) => res.redirect(302, `${siteBase(req)}/admin/integrations?tab=connections&${qs}`);
   let st;
   try { st = jwt.verify(String(req.query.state || ''), jwtSecret()); } catch { return res.status(400).type('text/plain').send('This Facebook sign-in link has expired or is not valid. Close this page and press Connect with Facebook again in TeamLink.'); }
   if (!st || st.k !== 'fbconnect') return res.status(400).type('text/plain').send('Not a valid Facebook sign-in link.');
+  const base = baseOk(st.b) ? String(st.b).replace(/\/+$/, '') : siteBase(req);
+  // back to Administration > Integrations > Facebook (the step-by-step tab), where the Page is picked
+  const back = (qs) => res.redirect(302, `${base}/admin/integrations?tab=facebook&${qs}`);
   if (req.query.error) return back('facebook=denied');
   try {
     const user = await prisma.user.findUnique({ where: { id: st.u } });
     if (!user) return back(`facebook=failed&why=${encodeURIComponent('The Admin who started this is no longer in TeamLink.')}`);
-    const pages = await exchange(req, String(req.query.code || ''));
+    const pages = await exchange(req, String(req.query.code || ''), base);
     if (!pages.length) return back('facebook=nopages');
     sweepPending().catch(() => {});
     const k = await putPending(user.id, pages);
