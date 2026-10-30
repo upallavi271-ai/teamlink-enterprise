@@ -10,7 +10,13 @@
 // ---------------------------------------------------------------------------
 const FRAME_MS = 20;
 const START_FRAMES = 3; // 60 ms of voice = talking
-const STRICT_FRAMES = 25; // while the assistant speaks: 500 ms of clearly louder voice (line echo, a cough or "ఆ" must not cut it off)
+const STRICT_FRAMES = 25; // (kept for reference; the barge-in now uses the window below)
+// TALKING OVER THE ASSISTANT (founder 2026-10-30: "candidate madhyalo matladithey ai vinali ... ai chances eyadam ledhu"):
+// 500 ms of voice in a row never came - speech has small gaps between syllables, and the count started again at every one,
+// so the assistant talked on for 38 s. Now: in any 500 ms window, 280 ms of voice (gaps allowed) = the person is talking.
+// A short "ఆ" / "ok" or a cough that gets through is handled by the gateway: the assistant goes on with what it was saying.
+const BARGE_WINDOW = 25; // 500 ms
+const BARGE_NEED = 14; // 280 ms of voice inside it
 // this much quiet = finished. 550 cut people off while they paused to think ("I think that's not..." ended a call as Not
 // Interested, 2026-10-29); 800 by default, AI_VOICE_END_MS to tune it against real calls (400 - 2000).
 const END_MS = Math.min(2000, Math.max(400, Number(process.env.AI_VOICE_END_MS) || 800));
@@ -41,6 +47,7 @@ class Vad {
     this.frames = [];
     this.pre = [];
     this.paused = false;
+    this.win = []; // the last frames while the assistant speaks: voice or not (barge-in window)
   }
 
   level() { return Math.max(this.minLevel, this.noise * 3); }
@@ -49,7 +56,8 @@ class Vad {
     if (this.paused) return;
     const e = rms(frame);
     const hard = !this.talking && this.strict();
-    const voiced = e > (hard ? Math.max(this.minLevel * 4, this.noise * 8) : this.level());
+    // over the assistant a voice must be clearly above the line's own level (its echo comes back on a SIM line)
+    const voiced = e > (hard ? Math.max(this.minLevel * 2.5, this.noise * 5) : this.level());
     if (!this.talking) {
       if (!voiced) this.noise = this.noise * 0.95 + e * 0.05; // learn the line's background level while quiet
       this.pre.push(frame);
@@ -57,7 +65,10 @@ class Vad {
       // lost their first words ("तीस दिन का नोटिस है" reached the listener as "नोटिस है", 2026-10-29).
       if (this.pre.length > BARGE_PRE_FRAMES) this.pre.shift();
       this.loud = voiced ? this.loud + 1 : 0;
-      if (this.loud >= (hard ? STRICT_FRAMES : START_FRAMES)) {
+      if (hard) { this.win.push(voiced); if (this.win.length > BARGE_WINDOW) this.win.shift(); } else this.win = [];
+      const barge = hard && this.win.filter(Boolean).length >= BARGE_NEED;
+      if (barge || (!hard && this.loud >= START_FRAMES)) {
+        this.win = [];
         // a normal start keeps PRE_MS; talking OVER the assistant keeps a full second (its quiet first syllables)
         this.talking = true; this.quietMs = 0; this.frames = hard ? this.pre.slice() : this.pre.slice(-(PRE_MS / FRAME_MS + START_FRAMES)); this.pre = [];
         this.onStart();

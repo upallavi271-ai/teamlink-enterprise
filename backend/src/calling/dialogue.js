@@ -609,7 +609,7 @@ class Dialogue {
     const qStep = /^q/.test(st.step);
     const asks = !['resched_time', 'later_when', 'why_not'].includes(st.step) && (qStep
       ? topics.some((x) => x !== OWN[st.step]) && A.looksQuestion(text)
-      : (k.intent === 'salary_q' || k.intent === 'info_q' || (A.looksQuestion(text) && topics.length > 0)));
+      : (k.intent === 'salary_q' || k.intent === 'info_q' || (topics.length > 0 && (A.looksQuestion(text) || String(text).trim().split(/\s+/).length <= 3))));
     if (asks) {
       const qa = A.answer(this, text);
       if (qa && (st.step !== 'identity' || qa.topic === 'who')) {

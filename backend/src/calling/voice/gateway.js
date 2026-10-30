@@ -110,6 +110,12 @@ function nativeAnswer(text, lang) {
 
 // "I'm listening" sounds - not answers when they come in the middle of the assistant's sentence
 const BACKCHANNEL = ['ఆ', 'హా', 'హ', 'ఊ', 'హ్మ్', 'ఓకే', 'సరే', 'అవును', 'ఓ', 'ok', 'okay', 'hmm', 'hm', 'yes', 'yeah', 'aa', 'haa', 'haan', 'achha', 'हाँ', 'हां', 'जी', 'हम्म', 'अच्छा', 'ठीक', 'ओके', 'आ'];
+// the assistant's own sentence heard back (a SIM line echoes): most of the words heard are words it was saying
+function isEcho(heard, said) {
+  const w = (t) => String(t || '').toLowerCase().replace(/[.,!?।:;]/g, ' ').split(/\s+/).filter((x) => x.length > 1);
+  const h = w(heard); const s = new Set(w(said));
+  return h.length >= 2 && h.filter((x) => s.has(x)).length / h.length >= 0.6;
+}
 function isBackchannel(text) {
   const w = String(text || '').toLowerCase().replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
   return w.length > 0 && w.length <= 2 && w.every((x) => BACKCHANNEL.includes(x) || x.replace(/[\p{M}]/gu, '').length <= 1);
@@ -134,6 +140,13 @@ function nativeScore(text, lang) {
 // known: { Telugu?: text, Hindi?: text } already heard, not asked again.
 // prefer: the Telugu / Hindi the person already spoke in this call - it wins a tie (a person rarely changes language)
 async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
+  // already heard and clearly that language (2+ everyday words) and the sound did not say the other: no second listener
+  for (const l of ['Telugu', 'Hindi']) {
+    if (known[l] == null || guess === (l === 'Telugu' ? 'Hindi' : 'Telugu')) continue;
+    const t = await known[l]; // eslint-disable-line no-await-in-loop
+    known[l] = t; // eslint-disable-line no-param-reassign
+    if (nativeScore(t, l) >= 2) return { lang: l, text: t, sT: l === 'Telugu' ? nativeScore(t, l) : 0, sH: l === 'Hindi' ? nativeScore(t, l) : 0 };
+  }
   const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => (known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''))));
   const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
   if (sT < 1 && sH < 1) return null; // no real word in either
@@ -340,9 +353,12 @@ function handle(sock, engines, opts = {}) {
       let found = null; let first = { text: '', conf: null }; let byScript = false; let enProb = null;
       // how much real speech (Silero VAD, server) - asked at the same time as the words, so it costs no time
       const speechP = engines.speech ? engines.speech(pcm) : Promise.resolve(null);
-      // (Starting the other listeners on every turn "just in case" was tried: it loaded the speech server and made EVERY reply
-      // about 1 s slower. They run only when a switch is suspected - both at once, never one after the other.)
+      // (Starting BOTH other listeners on every turn was tried: it loaded the speech server and made every reply ~1 s slower.)
+      // An ENGLISH call starts ONE Indian listener at the same time as Whisper - the language the person already spoke in
+      // this call, else Telugu (Hyderabad) - on a different server, so nothing queues; a switch then has its words at once
+      // (the real call 2026-10-30 waited 3.8 s for them after Whisper).
       const spec = {};
+      if (engines.stt && cur === 'English' && !exact && pcm.length >= A.RATE * 2 * 0.6) { // (not on an open answer: the exact English model needs the CPU then) const l = spoken || 'Telugu'; spec[l] = engines.stt(pcm, l).catch(() => ''); }
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -387,6 +403,10 @@ function handle(sock, engines, opts = {}) {
       }
       // ...and a Telugu / Hindi call does not go to English on English-looking words that make no sense ("My God, Adam."
       // was Telugu speech): English must be understood, or a real sentence
+      if (found === 'English' && cur !== 'English' && nativeScore(first.text, cur) >= 1) {
+        if (DEBUG) debug(`${row.id} sound said English, but "${first.text}" is real ${cur}: staying in ${cur}`);
+        found = null;
+      }
       if (found === 'English' && cur !== 'English') {
         const en = await listen('English');
         const words = en.text.trim().split(/\s+/).filter(Boolean).length;
@@ -422,7 +442,17 @@ function handle(sock, engines, opts = {}) {
         }
       }
       // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
-      if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.5))) {
+      const unsureEn = heardAs === 'unclear' || (enProb != null && enProb < 0.5);
+      if (cur === 'English' && lang === 'English' && !unsureEn && spoken && spec[spoken]) {
+        // sure-looking English from a person who spoke Telugu / Hindi before ("I'm going to call the police" was Telugu):
+        // their own language's words, already heard at the same time, decide - no extra wait
+        const own = await spec[spoken];
+        if (nativeScore(own, spoken) >= 2) {
+          if (DEBUG) debug(`${row.id} "${r2.text}" was really ${spoken}: ${own}`);
+          lang = spoken; r2 = { text: own, conf: null }; heardAs = 'clear'; found = spoken;
+        }
+      }
+      if (cur === 'English' && lang === 'English' && engines.stt && unsureEn) {
         const th = await teluguOrHindi(engines, pcm, null, { ...spec }, spoken);
         const pick = th ? [th.lang, th.text] : null;
         if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs})${th ? `: Telugu ${th.sT} / Hindi ${th.sH} words -> ${th.lang}: ${th.text}` : ': no Telugu / Hindi words'}`);
@@ -434,7 +464,7 @@ function handle(sock, engines, opts = {}) {
       // what it was saying. (Over the LAST sentence - the question - a "yes" is the answer and is read as one.)
       const cut = interrupted && Date.now() - interrupted.at < 15000 ? interrupted : null;
       interrupted = null;
-      if (cut && cut.rest.length > 1 && (heardAs !== 'clear' || isBackchannel(text))) {
+      if (cut && cut.rest.length > 1 && (heardAs !== 'clear' || isBackchannel(text) || isEcho(text, cut.rest.join(' ')))) {
         if (DEBUG) debug(`${row.id} "${text}" over the assistant: going on with what it was saying`);
         await say(cut.rest.join(' '));
         return;

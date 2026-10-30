@@ -763,10 +763,10 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
     : [fill(P.briefExp, { experience: data.experience }), fill(P.briefSkills, { skills: data.skills })].filter(Boolean).join(' ');
   const brief = [
     where,
-    data.skills ? '' : fill(P.briefNeeds, { needs: data.needs }),
+    data.skills ? '' : fill(P.briefNeeds, { needs: String(data.needs || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3).join(', ') }),
     expSkills,
     f.includeResponsibilities ? fill(P.briefResp, { responsibilities: data.responsibilities }) : '',
-    f.includeSalary ? fill(P.briefSalary, { salary: data.salary }) : '',
+    f.includeSalary && !String(data.salary || '').includes(',') ? fill(P.briefSalary, { salary: data.salary }) : '', // a list of pays: told when asked
     f.extraNote,
   ].filter(Boolean);
   B.brief = brief.length ? brief.join(' ') : P.briefNone;
