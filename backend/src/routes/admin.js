@@ -1600,6 +1600,27 @@ async function jobPortalStats() {
   return { candidates, applications, requirements, needsMapping, failed: failedRecords.size, portalError };
 }
 
+// ONE SET OF INTEGRATIONS (founder 2026-10-30: "both application is same"): Omni-Channel (Green Start) uses TeamLink's Email / SMS / WhatsApp
+// (utils/greenStartIntegrations.js). Every save, connect or disconnect of those three channels here is passed on to Omni-Channel a few seconds later.
+const GSI = require('../utils/greenStartIntegrations');
+router.use('/integrations/:id', (req, res, next) => {
+  if (req.method !== 'GET' && ['email', 'sms', 'whatsapp'].includes(req.params.id)) {
+    res.on('finish', () => { if (res.statusCode < 300) GSI.schedule(`${req.params.id} changed`); });
+  }
+  next();
+});
+// Administration > Integrations > Omni-Channel: what Omni-Channel got from TeamLink last, and everything Omni-Channel has connected itself.
+router.get('/integrations-omni-channel', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  const want = await GSI.teamlinkChannels();
+  const teamlink = Object.fromEntries(Object.entries(want).map(([k, v]) => [k, v.body ? { ready: true } : { ready: false, words: v.none }]));
+  let connections = null; let connectionsError = null;
+  try { connections = await GSI.connections(); } catch (err) { connectionsError = err.message; }
+  res.json({ teamlink, last: await GSI.lastResult(), connections, connectionsError });
+});
+router.post('/integrations-omni-channel/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  res.json(await GSI.sync({ force: true, why: 'Send to Omni-Channel now', by: req.user.name }));
+});
+
 router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const rows = await prisma.integration.findMany();
   const channels = INTEGRATION_CATALOG.map((c) => shapeIntegration(c, rows.find((r) => r.id === c.id)));

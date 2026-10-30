@@ -494,6 +494,8 @@ const server = app.listen(PORT, () => {
   // GREEN START (Omni-Channel): this backend starts it and keeps it running (database, Redis, server, worker, entrance), like the Job Portal below.
   // Memory guard, back-off, no start without Redis. GREENSTART_ENABLED / GREENSTART_AUTOSTART switch it off. In the test sandbox it only runs with a test settings file.
   require('./utils/greenStartSupervisor').start();
+  // One set of integrations (2026-10-30): TeamLink's Email / SMS / WhatsApp go to Omni-Channel (Green Start) too, hourly and after every save.
+  require('./utils/greenStartIntegrations').start();
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // AI phone calls through our own SIP line with free voices (calling/voice/sipCall.js): off unless AI_VOICE_GATEWAY=1.

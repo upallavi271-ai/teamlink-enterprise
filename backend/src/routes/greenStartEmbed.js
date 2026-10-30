@@ -65,27 +65,8 @@ router.get('/log', adminOnly, limited, (req, res) => {
 // 60-second ticket for the company's Green Start account. Needs GREENSTART_SSO_SECRET here (the same value as Green Start's
 // TEAMLINK_SSO_SECRET) and the company account's email (Admin sets it below; GREENSTART_SSO_EMAIL as the default). Missing either
 // = the frame shows Green Start's own login page, exactly as before. Every open is an audit row with who opened it.
-const crypto = require('crypto');
 const prisma = require('../db');
-
-const SSO_EMAIL_KEY = 'omni.gs.ssoEmail';
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-async function ssoEmail() {
-  try {
-    const row = await prisma.appSetting.findUnique({ where: { key: SSO_EMAIL_KEY } });
-    const v = row ? String(JSON.parse(row.value) || '').trim() : '';
-    if (v) return v;
-  } catch { /* fall back to the env */ }
-  return String(process.env.GREENSTART_SSO_EMAIL || '').trim();
-}
-function greenStartTicket({ email, name, externalUserId }) {
-  const now = Math.floor(Date.now() / 1000);
-  const b64 = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
-  const header = b64({ alg: 'HS256', typ: 'JWT' });
-  const payload = b64({ iss: 'teamlink', aud: 'greenstart', email, name, ...(externalUserId ? { externalUserId: String(externalUserId) } : {}), iat: now, exp: now + 60, jti: crypto.randomUUID() });
-  const signature = crypto.createHmac('sha256', process.env.GREENSTART_SSO_SECRET).update(`${header}.${payload}`).digest('base64url');
-  return `${header}.${payload}.${signature}`;
-}
+const { SSO_EMAIL_KEY, EMAIL_RE, ssoEmail, greenStartTicket } = require('../utils/greenStartSso');
 
 router.post('/sso-ticket', async (req, res) => {
   res.set('Cache-Control', 'no-store');
