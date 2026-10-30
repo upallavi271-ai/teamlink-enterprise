@@ -228,11 +228,14 @@ function fromEnv(env = process.env) {
       lengthScale: {
         English: Number(env.AI_VOICE_SPEED_ENGLISH) > 0 ? Number(env.AI_VOICE_SPEED_ENGLISH) : 1,
         Telugu: Number(env.AI_VOICE_SPEED_TELUGU) > 0 ? Number(env.AI_VOICE_SPEED_TELUGU) : 0.9,
-        Hindi: Number(env.AI_VOICE_SPEED_TELUGU) > 0 ? Number(env.AI_VOICE_SPEED_TELUGU) : 0.9,
+        Hindi: Number(env.AI_VOICE_SPEED_HINDI) > 0 ? Number(env.AI_VOICE_SPEED_HINDI) : 1,
       },
     })
     : vexylTts({ url: env.AI_VOICE_TTS_URL || 'ws://127.0.0.1:8092', key, style: env.AI_VOICE_STYLE });
-  const hindi = env.AI_VOICE_KOKORO_URL ? kokoroHttp({ url: env.AI_VOICE_KOKORO_URL, key, voice: env.AI_VOICE_KOKORO_VOICE || undefined, speed: Number(env.AI_VOICE_SPEED_HINDI) > 0 ? Number(env.AI_VOICE_SPEED_HINDI) : 1 }) : null;
+  // HINDI VOICE (2026-10-30: "gaps lekunda"): the Piper Hindi voice (AI_VOICE_PIPER_HINDI) runs faster than real time on the
+  // CPU; Kokoro took 2-3 s a sentence and left gaps. Piper is used when its voice is set; AI_VOICE_HINDI=kokoro goes back.
+  const piperHindi = usePiper && env.AI_VOICE_PIPER_HINDI && env.AI_VOICE_HINDI !== 'kokoro';
+  const hindi = env.AI_VOICE_KOKORO_URL && !piperHindi ? kokoroHttp({ url: env.AI_VOICE_KOKORO_URL, key, voice: env.AI_VOICE_KOKORO_VOICE || undefined, speed: Number(env.AI_VOICE_SPEED_HINDI) > 0 ? Number(env.AI_VOICE_SPEED_HINDI) : 1 }) : null;
   const vstt = vexylStt({ url: env.AI_VOICE_STT_URL || 'ws://127.0.0.1:8091', key });
   const wh = env.AI_VOICE_WHISPER_URL ? whisperHttp({ url: env.AI_VOICE_WHISPER_URL, key }) : null;
   return {

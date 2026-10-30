@@ -270,7 +270,7 @@ const NUM_WORDS = {
   ఒకటి: 1, రెండు: 2, మూడు: 3, నాలుగు: 4, ఐదు: 5, ఆరు: 6, ఏడు: 7, ఎనిమిది: 8, తొమ్మిది: 9, పది: 10,
   // phone calls: speech-to-text writes numbers as words (notice periods are mostly 15 / 30 / 45 / 60 / 90 days)
   forty: 40, 'forty-five': 45, fortyfive: 45, pandra: 15, pandrah: 15, bees: 20, tees: 30, saath: 60, nabbe: 90, padihenu: 15, iravai: 20, muppai: 30, aravai: 60, tombhai: 90,
-  पंद्रह: 15, बीस: 20, तीस: 30, पैंतालीस: 45, साठ: 60, नब्बे: 90,
+  पंद्रह: 15, पन्द्रह: 15, पंद्रा: 15, पदह: 15, बीस: 20, तीस: 30, पैंतालीस: 45, साठ: 60, नब्बे: 90, // + the listener's spellings
   పదిహేను: 15, ఇరవై: 20, ముప్పై: 30, నలభై: 40, నలభైఐదు: 45, అరవై: 60, తొంభై: 90,
 };
 function firstNumber(t) {
