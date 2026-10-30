@@ -17,6 +17,16 @@ const crypto = require('crypto');
 const A = require('./audioSocket');
 
 const log = (...a) => console.log('[ai-sip]', ...a); // eslint-disable-line no-console
+// THE LINE'S AUDIO, per call (2026-10-30: two calls heard NOTHING from the person): how many voice packets came in, from
+// where, how loud - and how many went out. Written to the console and the voice debug file (test PCs), so "one-way audio"
+// (nothing arrives) and "too quiet for the voice detector" (arrives, very low) can be told apart.
+const DEBUG_FILE = process.env.AI_VOICE_DEBUG_FILE || '';
+function lineReport(text) {
+  log(text);
+  if (DEBUG_FILE) { try { require('fs').appendFileSync(DEBUG_FILE, `${new Date().toISOString().slice(11, 19)} ${text}
+`); } catch { /* never breaks a call */ } } // eslint-disable-line global-require
+}
+const rmsOf = (pcm) => { let sum = 0; const n = Math.floor(pcm.length / 2); for (let i = 0; i < n; i += 1) { const v = pcm.readInt16LE(i * 2); sum += v * v; } return n ? Math.sqrt(sum / n) : 0; };
 const rnd = (n = 8) => crypto.randomBytes(n).toString('hex');
 
 // --- G.711 ------------------------------------------------------------------------------------------------------------------------
@@ -80,9 +90,11 @@ function originate({
     const via = (b) => `Via: SIP/2.0/UDP ${localIp}:${sip.address().port};branch=${b};rport`;
     const from = `From: <sip:teamlink@${localIp}>;tag=${fromTag}`;
 
+    const rx = { n: 0, early: 0, loud: 0, max: 0, sum: 0, from: '' }; let tx = 0;
     function finish(why) {
       if (state === 'ended') return;
       state = 'ended'; clear();
+      if (media) lineReport(`${uuid} line audio: ${rx.n} packets in${rx.from ? ` from ${rx.from}` : ' (NONE - one-way audio: the gateway sent no voice)'}${rx.early ? ` (+${rx.early} before the answer)` : ''}, loudest ${Math.round(rx.max)}, average ${rx.n ? Math.round(rx.sum / rx.n) : 0}, ${rx.loud} packets loud enough for the voice detector (over 400); ${tx} packets out to ${media.ip}:${media.port}`);
       if (as && !as.destroyed) { as.write(A.encode(A.KIND.HANGUP)); as.end(); }
       setTimeout(() => { try { sip.close(); } catch { /* */ } try { rtp.close(); } catch { /* */ } }, 300);
       log('ended:', why);
@@ -107,19 +119,22 @@ function originate({
             const hdr = Buffer.alloc(12); hdr[0] = 0x80; hdr[1] = media.pt;
             media.seq = (media.seq + 1) & 0xffff; media.ts = (media.ts + pay.length) >>> 0;
             hdr.writeUInt16BE(media.seq, 2); hdr.writeUInt32BE(media.ts, 4); hdr.writeUInt32BE(media.ssrc, 8);
-            rtp.send(Buffer.concat([hdr, pay]), media.port, media.ip);
+            rtp.send(Buffer.concat([hdr, pay]), media.port, media.ip); tx += 1;
           } else if (m.kind === A.KIND.HANGUP && state === 'up') bye();
         }
       });
       as.on('close', () => { if (state === 'up') bye(); });
       as.on('error', (e) => { log('AI gateway:', e.message); if (state === 'up') bye(); });
     }
-    rtp.on('message', (msg) => {
-      if (!media || !as || as.destroyed || msg.length < 12) return;
+    rtp.on('message', (msg, rinfo) => {
+      if (msg.length < 12) return;
+      if (!media || !as || as.destroyed) { rx.early += 1; return; }
       const pt = msg[1] & 0x7f; if (!CODECS[pt]) return; // telephone-event etc.
       let off = 12 + (msg[0] & 0x0f) * 4;
       if (msg[0] & 0x10) off += 4 + msg.readUInt16BE(off + 2) * 4;
       const pcm = decode(pt, msg.subarray(off));
+      const level = rmsOf(pcm); rx.n += 1; rx.sum += level; if (level > rx.max) rx.max = level; if (level > 400) rx.loud += 1;
+      if (!rx.from && rinfo) rx.from = `${rinfo.address}:${rinfo.port}`;
       for (let i = 0; i + A.FRAME_BYTES <= pcm.length; i += A.FRAME_BYTES) as.write(A.encode(A.KIND.AUDIO, pcm.subarray(i, i + A.FRAME_BYTES)));
     });
 
