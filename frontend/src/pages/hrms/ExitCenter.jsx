@@ -227,6 +227,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
   const [panel, setPanel] = useState('');
   const [text, setText] = useState('');
   const [status, setStatus] = useState('Relieved');
+  const [why, setWhy] = useState('');
 
   function load() {
     setLoadError('');
@@ -251,6 +252,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
             <div>
               <div className="exc-name">{v.employee.name} <span className="exc-sub">{[v.employee.employeeCode, v.employee.department, v.employee.designation].filter(Boolean).join(' · ')}</span></div>
               <div className="exc-sub">Reason: {v.reason || '—'}{v.initiatedBy ? ` · started by ${v.initiatedBy}` : ''}{v.initiatedAt ? ` · ${fmtDateTime(v.initiatedAt)}` : ''}</div>
+              {v.comments && <div className="exc-sub">Why: {v.comments}</div>}
             </div>
             <span className={`status ${STAGE_CLS[v.stage] || 'applied'}`}>{v.stageLabel}</span>
           </div>
@@ -280,6 +282,7 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
 
           <div className="exc-actions">
             {a.canEditDate && <button className="btn btn-sm" onClick={() => setEditDate(true)}>Edit dates</button>}
+            {a.canEditReason && <button className="btn btn-sm" onClick={() => { if (panel === 'reason') { setPanel(''); return; } setWhy(String(v.reason || '').replace(/^Other: /, '')); setText(v.comments || ''); setPanel('reason'); }}>Reason for leaving</button>}
             {a.canFinalize && <button className="btn btn-sm btn-primary" disabled={busy} onClick={() => { if (window.confirm(`Finish ${v.employee.name}'s exit now? They become ${status}.`)) run(() => api.post(`${base}/finalize`, { status })); }}>Finish exit</button>}
             {a.canFinalize && (
               <Combo value={status} onChange={(e) => setStatus(e.target.value)} title="Final status"><option>Relieved</option><option>Exited</option></Combo>
@@ -291,6 +294,22 @@ export function ExitRecordModal({ id, onClose, onChanged, autoEdit = false }) {
             {a.canSettings && <span className="exc-grow" />}
           </div>
           {a.finalizeBlocked && <div className="exc-info">{a.finalizeBlocked}</div>}
+          {/* WHY THEY ARE LEAVING - HR writes or corrects it (founder 2026-10-30) */}
+          {panel === 'reason' && (
+            <div className="exc-card">
+              <div className="exc-card-title">Reason for leaving</div>
+              <Combo creatable value={why} onChange={(e) => setWhy(e.target.value)} placeholder="Pick or type the reason">
+                <option value="">Pick or type the reason</option>
+                {(a.reasonList || []).map((r) => <option key={r} value={r}>{r}</option>)}
+              </Combo>
+              <textarea rows={3} style={{ marginTop: 8 }} value={text} onChange={(e) => setText(e.target.value)} placeholder="Why are they leaving? For example: got a higher salary at another company, moving to Chennai with family" />
+              <div className="exc-three">
+                <button className="btn btn-primary" disabled={busy || why.trim().length < 3} onClick={() => run(() => api.put(`${base}/reason`, { reason: why, details: text }))}>Save the reason</button>
+                <button className="btn" onClick={() => setPanel('')}>Cancel</button>
+              </div>
+              <div className="exc-hint">Shown on the exit record and in its history, with who wrote it and when.</div>
+            </div>
+          )}
           {panel === 'early' && (
             <div className="exc-card">
               <div className="exc-card-title">Release early</div>

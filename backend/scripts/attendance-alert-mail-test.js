@@ -82,7 +82,7 @@ const D = require(path.join(Z.BACK, 'src/utils/attendanceDays'));
     const s0 = await HN.getSettings();
     check('D1 default: attendance alert emails are "Send at once"', s0.mailMode === 'now' && HN.modeOf(s0, 'missingCheckIn') === 'now' && HN.modeOf(s0, 'lateLogin') === 'now' && HN.modeOf(s0, 'missingCheckOut') === 'now', s0.mailMode);
     check('D2 default: the master switch "Notification emails" is OFF (nothing ships ON)', s0.emailsOn === false && s0.emailsOnAt === null, s0);
-    check('D3 leave decisions share the pipeline and stay "at once"; tasks stay daily', HN.modeOf(s0, 'leaveDecision') === 'now' && HN.modeOf(s0, 'latePermission') === 'now' && HN.modeOf(s0, 'taskDue') === 'daily', null);
+    check('D3 leave decisions share the pipeline and stay "at once"; task notes go at once too (founder 2026-10-30); the Super Admin day-end report stays daily', HN.modeOf(s0, 'leaveDecision') === 'now' && HN.modeOf(s0, 'latePermission') === 'now' && HN.modeOf(s0, 'taskDue') === 'now' && HN.modeOf(s0, 'taskAssigned') === 'now' && HN.modeOf(s0, 'taskDayEnd') === 'daily', null);
 
     // ---- O master OFF ---------------------------------------------------------------------------------
     await reset();

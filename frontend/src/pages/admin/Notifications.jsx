@@ -25,6 +25,7 @@ export default function Notifications() {
   const [notifications, setNotifications] = useState([]);
   const [total, setTotal] = useState(0);
   const [channels, setChannels] = useState([]);
+  const [mail, setMail] = useState(null);
   const [loaded, setLoaded] = useState(false);
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(PAGE_SIZES[0]);
@@ -49,6 +50,7 @@ export default function Notifications() {
       setNotifications(res.data.rows || []);
       setTotal(res.data.total || 0);
       if (res.data.channels) setChannels(res.data.channels);
+      if (res.data.mail !== undefined) setMail(res.data.mail);
       setLoaded(true);
       // Opening the central log marks everything read, as the prototype does
       // — once per visit, not on every filter change.
@@ -74,9 +76,18 @@ export default function Notifications() {
           <div className="page-sub">Central event log across Email / WhatsApp / SMS / In-App</div></div>
       </div>
 
-      <div className="notice amber">
-        Demo / Simulated — no real messages are sent through Email, WhatsApp or SMS providers in this build.
-      </div>
+      {/* What really happens to email (was a fixed "Demo / Simulated" line, 2026-10-30) */}
+      {mail && mail.emailsOn && mail.configured && (
+        <div className="notice">Notification emails are ON: each note in the Email channel is sent to the person&apos;s email.</div>
+      )}
+      {mail && !mail.configured && (
+        <div className="notice red">Mail is not set up, so no email can go out. <Link to="/admin/integrations">Set up Email in Integrations</Link>.</div>
+      )}
+      {mail && mail.configured && !mail.emailsOn && (
+        <div className="notice amber">
+          Notification emails are OFF, so the Email lines below say &quot;Not sent&quot;. Turn them on in <Link to="/attendance">Attendance</Link> → Who gets told, and how → Turn notification emails ON.
+        </div>
+      )}
 
       <ListFilterBar lf={lf} storageKey="admin-notifications" />
 

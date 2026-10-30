@@ -419,7 +419,9 @@ async function exitApprovalsLine(user, today) {
   try {
     const exitDate = require('../utils/exitDate'); // eslint-disable-line global-require
     if (!exitDate.isHrDesk(user)) return null;
-    const waiting = await prisma.approvalStep.count({ where: { workflow: 'resignation', status: 'Pending' } });
+    // exits waiting for a decision - not those of people who have already left (founder 2026-10-30)
+    const pendingIds = (await prisma.approvalStep.findMany({ where: { workflow: 'resignation', status: 'Pending' }, select: { recordId: true } })).map((s) => s.recordId);
+    const waiting = pendingIds.length ? await prisma.employeeRecord.count({ where: { id: { in: [...new Set(pendingIds)] }, employee: { employmentStatus: { notIn: ['Relieved', 'Exited', 'Terminated'] } } } }) : 0;
     const month = today.slice(0, 7);
     const gone = await prisma.employee.findMany({ where: withoutSystemAccounts({ employmentStatus: { in: ['Notice Period', 'Exit Process', 'Relieved', 'Exited', 'Terminated'] } }), select: { id: true } });
     const dates = await exitDate.exitDatesFor(gone.map((g) => g.id));

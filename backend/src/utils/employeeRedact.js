@@ -121,15 +121,18 @@ function redactChangeRow(o, level) {
 }
 
 // Walk any JSON-able value and redact employee-like objects. Cycles are not expected (JSON).
-function redactDeep(value, viewer, level = levelFor(viewer), depth = 0) {
+// `ownCtx`: inside the viewer's OWN employee record - its change rows (what they submitted: pendingChanges, sentBack) are
+// theirs too and stay readable (founder 2026-10-30: after Submit an employee saw "(hidden)" for their own phone, bank,
+// address ... and could not tell what they had filled)
+function redactDeep(value, viewer, level = levelFor(viewer), depth = 0, ownCtx = false) {
   if (level === FULL || value == null || typeof value !== 'object' || depth > 12) return value;
   if (value instanceof Date) return value;
-  if (Array.isArray(value)) return value.map((v) => redactDeep(v, viewer, level, depth + 1));
+  if (Array.isArray(value)) return value.map((v) => redactDeep(v, viewer, level, depth + 1, ownCtx));
   let obj = value;
-  if (looksLikeEmployee(obj)) obj = redactRow(obj, level, { own: isOwn(obj, viewer) });
-  else if (typeof obj.field === 'string') obj = redactChangeRow(obj, level);
+  let own = ownCtx;
+  if (looksLikeEmployee(obj)) { own = isOwn(obj, viewer); obj = redactRow(obj, level, { own }); } else if (typeof obj.field === 'string' && !ownCtx) obj = redactChangeRow(obj, level);
   const out = {};
-  Object.keys(obj).forEach((k) => { out[k] = redactDeep(obj[k], viewer, level, depth + 1); });
+  Object.keys(obj).forEach((k) => { out[k] = redactDeep(obj[k], viewer, level, depth + 1, own); });
   return out;
 }
 

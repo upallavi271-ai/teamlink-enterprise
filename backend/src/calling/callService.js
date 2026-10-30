@@ -66,7 +66,7 @@ async function callIdFromBotToken(token) {
 async function loadContext(applicationId) {
   const app = await prisma.application.findUnique({
     where: { id: String(applicationId || '') },
-    include: { candidate: true, requirement: { include: { client: { select: { id: true, name: true } } } } },
+    include: { candidate: true, requirement: { include: { client: { select: { id: true, name: true, location: true } } } } },
   });
   if (!app) return null;
   return { app, candidate: app.candidate, requirement: app.requirement };

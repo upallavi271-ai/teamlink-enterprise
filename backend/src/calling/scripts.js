@@ -61,6 +61,7 @@ const PH = {
     briefSkills: 'Main skills: {skills}.',
     briefResp: 'The work includes: {responsibilities}.',
     briefSalary: 'Salary range is {salary}.',
+    briefSalaryFrom: 'The salary starts from {salary}.',
     briefAt: 'It is a job at {place}.',
     briefEduAny: 'Any degree is okay.',
     briefEdu: 'They need {education}.',
@@ -76,10 +77,10 @@ const PH = {
     closeNotInterested: 'Okay, thanks for your time. Bye.',
     closeStop: "Okay, we won't call you again. Bye.",
     closeUnclear: "The line is not clear. I will call you again. Thank you.",
-    humanNoted: "Okay, I noted that you want to talk to a recruiter. Someone from our team will call you.",
+    humanNoted: "Okay, I have noted it. Our team will contact you.",
     amAi: "I'm an AI assistant of TeamLink Consultants, not a person.",
-    noSalary: "I will check with the team and tell you.",
-    noInfo: "I will check with the team and tell you.",
+    noSalary: "Our team will contact you about that.",
+    noInfo: "Our team will contact you about that.",
     onlyYou: 'I can only talk about your own application.',
     repeat: "Sorry, I didn't catch that. Let me ask again.",
     resumeLine: "We spoke earlier about the {job} job.", // a call-back call (memory, 2026-10-30)
@@ -137,21 +138,21 @@ const PH = {
     aiDue: "Please finish it by {date}.",
     aiHow: "Please log in on the TeamLink jobs website with your mobile number or email. Open My Applications and start the AI interview there.",
     aiProceed: "Will you be able to complete it?",
-    aiYes: "Thank you. Please finish it before the last date, so the recruiter can check your application. Bye.",
+    aiYes: "Thank you. Please finish it before the last date, so our team can check your application. Bye.",
     ivIntro: 'Your interview for the {job} position is fixed for {date} at {time}.',
     ivRemind: 'Just a reminder, your interview for the {job} position is on {date} at {time}.',
     ivOnline: "It is an online interview. The meeting link is in our message.",
-    ivOnlineNoLink: "It's an online interview. The recruiter will send you the link.",
+    ivOnlineNoLink: "It's an online interview. Our team will send you the link.",
     ivInPerson: "It's an in-person interview at {location}.",
-    ivInPersonNoLoc: "It's an in-person interview. The recruiter will share the address.",
+    ivInPersonNoLoc: "It's an in-person interview. Our team will share the address.",
     ivPhone: "It's a phone interview.",
     ivInstr: 'One thing to note: {instructions}',
     ivAvail: 'Can you make it?',
     ivConfirmed: 'Great, thanks. Please be ready on time. Bye.',
     ivReschedAsk: 'What time works better for you?',
-    ivReschedNoted: "Okay, I will tell the recruiter. Until they confirm, the interview stays at the same time. Bye.",
-    ivNotAvail: 'Thanks for letting us know. The recruiter will call you. Bye.',
-    ivNoReply: 'Okay, the recruiter will call you to confirm. Bye.',
+    ivReschedNoted: "Okay, I will tell our team. Until they confirm, the interview stays at the same time. Bye.",
+    ivNotAvail: 'Thanks for letting us know. Our team will contact you. Bye.',
+    ivNoReply: 'Okay, our team will contact you to confirm. Bye.',
     tz: 'IST',
   },
   Hindi: {
@@ -175,6 +176,7 @@ const PH = {
     briefSkills: "मेन स्किल्स {skills} हैं।",
     briefResp: "काम ये है: {responsibilities}।",
     briefSalary: "सैलरी {salary} तक है।",
+    briefSalaryFrom: "सैलरी {salary} से शुरू है।",
     briefAt: "ये एक {place} में जॉब है।",
     briefEduAny: "कोई भी डिग्री चलेगी।",
     briefEdu: "{education} चाहिए।",
@@ -190,10 +192,10 @@ const PH = {
     closeNotInterested: "ओके, कोई बात नहीं। टाइम देने के लिए थैंक्यू। बाय।",
     closeStop: "ओके, अब कॉल नहीं करेंगे। बाय।",
     closeUnclear: "ठीक है, लाइन साफ़ नहीं लग रही। मैं फिर से कॉल करूँगा। थैंक्यू।",
-    humanNoted: "ओके, नोट कर लिया कि आप रिक्रूटर से बात करना चाहते हैं। टीम से कोई कॉल करेगा।",
+    humanNoted: "ओके, नोट कर लिया। हमारी टीम आपसे कॉन्टैक्ट करेगी।",
     amAi: "मैं टीमलिंक का AI असिस्टेंट हूँ, कोई इंसान नहीं।",
-    noSalary: "वो मैं टीम से कन्फर्म करके आपको बताता हूँ।",
-    noInfo: "वो मैं टीम से कन्फर्म करके आपको बताता हूँ।",
+    noSalary: "उसके बारे में हमारी टीम आपसे कॉन्टैक्ट करेगी।",
+    noInfo: "उसके बारे में हमारी टीम आपसे कॉन्टैक्ट करेगी।",
     onlyYou: "मैं सिर्फ़ आपकी एप्लिकेशन के बारे में बात कर सकता हूँ।",
     repeat: "सॉरी, ठीक से सुनाई नहीं दिया।",
     resumeLine: "हमने पहले {job} जॉब के बारे में बात की थी ना।", // a call-back call (memory, 2026-10-30)
@@ -238,7 +240,7 @@ const PH = {
     briefWhere: "जॉब {location} में है",
     briefExpSkills: "{experience} का एक्सपीरियंस चाहिए, मेनली {skills}।",
     calmSorry: "सॉरी, शायद बिज़ी टाइम पर कॉल कर दिया। जल्दी खत्म करता हूँ।",
-    calmOffer: "आगे बात करूँ, या जब फ्री हों तब रिक्रूटर कॉल करें?",
+    calmOffer: "आगे बात करूँ, या जब फ्री हों तब हमारी टीम कॉल करे?",
     calmClose: "समझ गया, सॉरी डिस्टर्ब किया। अभी और टाइम नहीं लूँगा। थैंक्यू।",
     noMoney: "टीमलिंक कभी कोई पैसा या फीस नहीं माँगता, OTP या बैंक डिटेल्स भी नहीं। ये सिर्फ़ आपकी जॉब एप्लिकेशन के बारे में है।",
     shortNews: "आप {job} पोस्ट के लिए शॉर्टलिस्ट हुए हैं, यही बताने के लिए कॉल किया।",
@@ -251,21 +253,21 @@ const PH = {
     aiDue: "{date} तक कंप्लीट कर दीजिए।",
     aiHow: "अपने मोबाइल नंबर या ईमेल से टीमलिंक जॉब्स वेबसाइट पर लॉगिन करके माय एप्लिकेशन्स खोलिए, वहीं AI इंटरव्यू मिलेगा।",
     aiProceed: "कंप्लीट कर पाएँगे?",
-    aiYes: "थैंक्यू। डेडलाइन से पहले कंप्लीट कर दीजिए, फिर रिक्रूटर आपकी एप्लिकेशन देखेंगे। बाय।",
+    aiYes: "थैंक्यू। डेडलाइन से पहले कंप्लीट कर दीजिए, फिर हमारी टीम आपकी एप्लिकेशन देखेगी। बाय।",
     ivIntro: "{job} पोस्ट के लिए आपका इंटरव्यू {date} को {time} बजे फिक्स हुआ है।",
     ivRemind: "बस याद दिलाने के लिए कॉल किया, {job} पोस्ट का आपका इंटरव्यू {date} को {time} बजे है।",
     ivOnline: "इंटरव्यू ऑनलाइन है। मीटिंग लिंक मैसेज में भेज देंगे।",
-    ivOnlineNoLink: "इंटरव्यू ऑनलाइन है। लिंक रिक्रूटर भेज देंगे।",
+    ivOnlineNoLink: "इंटरव्यू ऑनलाइन है। लिंक हमारी टीम भेज देगी।",
     ivInPerson: "इंटरव्यू {location} में डायरेक्ट है।",
-    ivInPersonNoLoc: "इंटरव्यू डायरेक्ट है। एड्रेस रिक्रूटर बता देंगे।",
+    ivInPersonNoLoc: "इंटरव्यू डायरेक्ट है। एड्रेस हमारी टीम बता देगी।",
     ivPhone: "इंटरव्यू फ़ोन पर ही है।",
     ivInstr: "एक बात याद रखिए: {instructions}",
     ivAvail: "आप आ पाएँगे?",
     ivConfirmed: "बढ़िया, थैंक्यू। टाइम पर रेडी रहिए। बाय।",
     ivReschedAsk: "आपके लिए कौन सा टाइम ठीक रहेगा?",
-    ivReschedNoted: "ओके, रिक्रूटर को बता दूँगा। जब तक वो कन्फर्म न करें, इंटरव्यू पुराने टाइम पर ही रहेगा। बाय।",
-    ivNotAvail: "बताने के लिए थैंक्यू। रिक्रूटर आपको कॉल करेंगे। बाय।",
-    ivNoReply: "ओके, कन्फर्म करने के लिए रिक्रूटर कॉल करेंगे। बाय।",
+    ivReschedNoted: "ओके, हमारी टीम को बता दूँगा। जब तक वो कन्फर्म न करें, इंटरव्यू पुराने टाइम पर ही रहेगा। बाय।",
+    ivNotAvail: "बताने के लिए थैंक्यू। हमारी टीम आपसे कॉन्टैक्ट करेगी। बाय।",
+    ivNoReply: "ओके, कन्फर्म करने के लिए हमारी टीम आपसे कॉन्टैक्ट करेगी। बाय।",
     tz: "इंडिया टाइम",
   },
   Telugu: {
@@ -289,6 +291,7 @@ const PH = {
     briefSkills: "మెయిన్‌గా {skills} రావాలి.",
     briefResp: "వర్క్ ఏంటంటే: {responsibilities}.",
     briefSalary: "సాలరీ {salary} వరకు ఉంటుంది.",
+    briefSalaryFrom: "సాలరీ {salary} నుంచి మొదలవుతుంది.",
     briefAt: "ఇది ఒక {place} లో జాబ్.",
     briefEduAny: "ఏ డిగ్రీ ఉన్నా పర్లేదు.",
     briefEdu: "{education} ఉండాలి.",
@@ -306,8 +309,8 @@ const PH = {
     closeUnclear: "సరే, లైన్ సరిగ్గా లేనట్టుంది. మళ్ళీ కాల్ చేస్తా. థాంక్స్.",
     humanNoted: "ఓకే, మీరు రిక్రూటర్‌తో మాట్లాడాలనుకుంటున్నారని నోట్ చేసుకున్నా. టీమ్ నుంచి ఎవరైనా కాల్ చేస్తారు.",
     amAi: "నేను టీమ్‌లింక్ వాళ్ళ AI అసిస్టెంట్‌ని, మనిషిని కాదు.",
-    noSalary: "అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.",
-    noInfo: "అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.",
+    noSalary: "దాని గురించి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు.",
+    noInfo: "దాని గురించి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు.",
     onlyYou: "నేను మీ అప్లికేషన్ గురించి మాత్రమే మాట్లాడగలను.",
     repeat: "సారీ, సరిగ్గా వినపడలేదు.",
     resumeLine: "ఇంతకుముందు మనం {job} జాబ్ గురించి మాట్లాడుకున్నాం కదా.", // a call-back call (memory, 2026-10-30)
@@ -352,7 +355,7 @@ const PH = {
     briefWhere: "జాబ్ {location} లో",
     briefExpSkills: "{experience} ఎక్స్‌పీరియన్స్ ఉండాలి, మెయిన్‌గా {skills}.",
     calmSorry: "సారీ, బిజీగా ఉన్నప్పుడు కాల్ చేసినట్టున్నా. త్వరగా అయిపోతుంది.",
-    calmOffer: "కంటిన్యూ చేయనా, లేక మీకు ఫ్రీగా ఉన్నప్పుడు రిక్రూటర్ కాల్ చేయాలా?",
+    calmOffer: "కంటిన్యూ చేయనా, లేక మీకు ఫ్రీగా ఉన్నప్పుడు మా టీమ్ కాల్ చేయాలా?",
     calmClose: "అర్థమైంది, ఇబ్బంది పెట్టినందుకు సారీ. ఇంక టైమ్ తీసుకోను. థాంక్స్.",
     noMoney: "టీమ్‌లింక్ ఎప్పుడూ డబ్బులు, ఫీజు ఏమీ అడగదు. OTP, బ్యాంక్ డీటెయిల్స్ కూడా అడగదు. ఇది మీ జాబ్ అప్లికేషన్ గురించి మాత్రమే.",
     shortNews: "{job} పోస్ట్‌కి మీరు షార్ట్‌లిస్ట్ అయ్యారు, అది చెప్పడానికే కాల్ చేశా.",
@@ -365,21 +368,21 @@ const PH = {
     aiDue: "{date} లోపు కంప్లీట్ చేయండి.",
     aiHow: "మీ మొబైల్ నంబర్ లేదా ఈమెయిల్‌తో టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో లాగిన్ అయ్యి, మై అప్లికేషన్స్ ఓపెన్ చేస్తే, అక్కడ AI ఇంటర్వ్యూ ఉంటుంది.",
     aiProceed: "అది కంప్లీట్ చేయగలరా?",
-    aiYes: "థాంక్స్. డెడ్‌లైన్ లోపు కంప్లీట్ చేయండి, అప్పుడు రిక్రూటర్ మీ అప్లికేషన్ చూస్తారు. బై.",
+    aiYes: "థాంక్స్. డెడ్‌లైన్ లోపు కంప్లీట్ చేయండి, అప్పుడు మా టీమ్ మీ అప్లికేషన్ చూస్తారు. బై.",
     ivIntro: "{job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఫిక్స్ అయింది.",
     ivRemind: "జస్ట్ గుర్తు చేయడానికి కాల్ చేశా, {job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఉంది.",
     ivOnline: "ఇంటర్వ్యూ ఆన్‌లైన్‌లో. మీటింగ్ లింక్ మెసేజ్‌లో పంపిస్తాం.",
-    ivOnlineNoLink: "ఇంటర్వ్యూ ఆన్‌లైన్‌లో. లింక్ రిక్రూటర్ పంపిస్తారు.",
+    ivOnlineNoLink: "ఇంటర్వ్యూ ఆన్‌లైన్‌లో. లింక్ మా టీమ్ పంపిస్తారు.",
     ivInPerson: "ఇంటర్వ్యూ డైరెక్ట్‌గా {location} లో.",
-    ivInPersonNoLoc: "ఇంటర్వ్యూ డైరెక్ట్‌గా. అడ్రస్ రిక్రూటర్ చెప్తారు.",
+    ivInPersonNoLoc: "ఇంటర్వ్యూ డైరెక్ట్‌గా. అడ్రస్ మా టీమ్ చెప్తారు.",
     ivPhone: "ఇంటర్వ్యూ ఫోన్‌లోనే.",
     ivInstr: "ఒక్క విషయం: {instructions}",
     ivAvail: "మీరు వస్తారా?",
     ivConfirmed: "సూపర్, థాంక్స్. టైమ్‌కి రెడీగా ఉండండి. బై.",
     ivReschedAsk: "మీకు ఏ టైమ్ అయితే ఓకే?",
-    ivReschedNoted: "ఓకే, రిక్రూటర్‌కి చెప్తా. వాళ్ళు కన్ఫర్మ్ చేసే వరకు ఇంటర్వ్యూ పాత టైమ్‌కే ఉంటుంది. బై.",
-    ivNotAvail: "చెప్పినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేస్తారు. బై.",
-    ivNoReply: "ఓకే, కన్ఫర్మ్ చేయడానికి రిక్రూటర్ కాల్ చేస్తారు. బై.",
+    ivReschedNoted: "ఓకే, మా టీమ్‌కి చెప్తా. వాళ్ళు కన్ఫర్మ్ చేసే వరకు ఇంటర్వ్యూ పాత టైమ్‌కే ఉంటుంది. బై.",
+    ivNotAvail: "చెప్పినందుకు థాంక్స్. మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు. బై.",
+    ivNoReply: "ఓకే, కన్ఫర్మ్ చేయడానికి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు. బై.",
     tz: 'ఇండియా టైమ్',
   },
 };
@@ -709,8 +712,9 @@ function descriptionFacts(desc) {
     const lpa = /^(.*?)[\s:\-–]*(\d{1,2}(?:\.\d)?)\s*(?:-|to|–)?\s*(\d{1,2}(?:\.\d)?)?\s*lpa\b/i.exec(l);
     const m = k || lpa;
     if (!m) return;
-    const who = clean(m[1].replace(/[\s:\-–]+$/, ''), 30);
-    const amt = `${m[2]}${m[3] ? ` to ${m[3]}` : ''} ${k ? 'thousand' : 'lakh per year'}`;
+    // the role the pay is for ("CSE - 40k" -> CSE); a heading or years are not a role ("Package: 3 Years 25k onwards" -> 25k onwards)
+    const who = clean(m[1].replace(/\b(package|salary|ctc|stipend|pay)\b\s*[:\-–]?/ig, '').replace(/\d{1,2}\s*\+?\s*(-|to)?\s*\d{0,2}\s*(years?|yrs?)\b/ig, '').replace(/[\s:\-–]+$/, '').replace(/^[\s:\-–]+/, ''), 30);
+    const amt = `${m[2]}${m[3] ? ` to ${m[3]}` : ''} ${k ? 'thousand' : 'lakh per year'}${/^\s*onwards\b/i.test(l.slice(m.index + m[0].length)) ? ' onwards' : ''}`;
     pay.push(who ? `${who} ${amt}` : amt);
   });
   out.salary = clean(pay.slice(0, 3).join(', '), 120);
@@ -740,6 +744,23 @@ const PLACE_KINDS = [
   [/universit/i, 'university'], [/hospital/i, 'hospital'], [/school/i, 'school'],
 ];
 const placeKindOf = (name) => { const hit = PLACE_KINDS.find(([re]) => re.test(String(name || ''))); return hit ? hit[1] : ''; };
+// a client address said the short way: its last two parts ("..., Lalbagh Road, Krishnappa Layout, Bengaluru Urban" ->
+// "Krishnappa Layout, Bengaluru Urban")
+const shortAddress = (a) => {
+  // "KRISHNAPPA LAYOUT" -> "Krishnappa Layout"
+  const parts = String(a || '').split(',').map((x) => x.trim()).filter(Boolean).map((x) => (/[a-z]/.test(x) ? x : titleCase(x)));
+  const two = parts.slice(-2).join(', ');
+  return clean(two.length <= 45 ? two : parts[parts.length - 1] || '', 45);
+};
+// the town at the end of the client's name, only when it is a KNOWN place ("Trr Medical College, Hyderabad" -> Hyderabad,
+// "Prathima Hospitals, Kachiguda" -> Kachiguda; "..., Asangaon" is not on the list -> nothing said)
+function placeOfClientName(name) {
+  const part = String(name || '').split(',').slice(1).pop();
+  if (!part || !part.trim()) return '';
+  const LM = require('../utils/locationMatch'); // eslint-disable-line global-require
+  const known = Object.keys(LM.CITY_ALIASES).map((k) => k.toLowerCase().replace(/[^a-z]/g, ''));
+  return LM.citiesOf(part).some((c) => known.includes(c.key)) ? clean(part.trim(), 60) : '';
+}
 
 // requirement + application + candidate -> the facts. NOTHING that is not stored is added.
 function buildData({ candidate, app, requirement, link }) {
@@ -755,7 +776,9 @@ function buildData({ candidate, app, requirement, link }) {
     name: clean(c.name, 80),
     firstName: first,
     jobTitle: spokenTitle(r.title),
-    location: clean(r.location, 80) || fromDesc.location,
+    // where: the requirement's field, its "Location:" line, then the client's own address or the town in its name (founder
+    // 2026-10-30: "location, salary antha requirement nunchi tisukovali, candidate adigithe cheppali")
+    location: clean(r.location, 80) || fromDesc.location || (r.internal ? '' : (shortAddress(r.client && r.client.location) || placeOfClientName(r.client && r.client.name))),
     workMode: WORK_MODE[String(r.workMode || '').toLowerCase()] || '',
     employmentType: clean(r.employmentType, 40).toLowerCase(),
     experience: experienceWords(r.experience) || experienceWords(r.relevantExperience) || fromDesc.experience,
@@ -831,7 +854,8 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
     data.skills ? '' : fill(P.briefNeeds, { needs: String(data.needs || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 3).join(', ') }),
     expSkills,
     f.includeResponsibilities ? fill(P.briefResp, { responsibilities: data.responsibilities }) : '',
-    f.includeSalary && !String(data.salary || '').includes(',') ? fill(P.briefSalary, { salary: data.salary }) : '', // a list of pays: told when asked
+    f.includeSalary && !String(data.salary || '').includes(',') // a list of pays: told when asked; "25k onwards" = FROM 25 thousand
+      ? (/\bonwards$/i.test(data.salary || '') ? fill(P.briefSalaryFrom, { salary: data.salary.replace(/\s*onwards$/i, '') }) : fill(P.briefSalary, { salary: data.salary })) : '',
     f.extraNote,
   ].filter(Boolean);
   // the other stored facts: told when the job has little else, and always when they ask to hear the job again
