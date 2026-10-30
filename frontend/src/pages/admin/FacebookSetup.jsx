@@ -6,6 +6,7 @@ import api from '../../api';
 // GET /admin/integrations (the Social Media channel), GET/POST /admin/integrations/social/facebook/* (utils/facebookConnect.js: Facebook's
 // own login, then the Page to use) and GET /admin/integrations-omni-channel (did Omni-Channel get the Page). No password or token is shown.
 const META_APPS = 'https://developers.facebook.com/apps/';
+const siteOf = (u) => { try { return new URL(u); } catch { return { host: window.location.host, origin: window.location.origin }; } };
 
 function Step({ n, done, title, children }) {
   return (
@@ -98,10 +99,18 @@ export default function FacebookSetup() {
         </ol>
       </Step>
 
-      <Step n={2} done={false} title="Tell Facebook where to send you back (one time)">
-        In the app: <b>Facebook Login for Business → Settings → Valid OAuth Redirect URIs</b>. Paste this address exactly, then press <b>Save changes</b>:
+      <Step n={2} done={false} title="Tell Facebook about this site (one time)">
+        {/* founder 2026-10-30: Facebook answered "Can't load URL - the domain of this URL isn't included in the app's domains" */}
+        <b>a.</b> In the app: <b>App settings → Basic</b>. In <b>App Domains</b> type:
+        {uri ? <CopyBox text={siteOf(uri.redirectUri).host} /> : null}
+        Lower on the same page press <b>+ Add platform → Website</b> and put this in <b>Site URL</b>, then <b>Save changes</b>:
+        {uri ? <CopyBox text={`${siteOf(uri.redirectUri).origin}/`} /> : null}
+        <b>b.</b> In the app: <b>Facebook Login for Business → Settings</b>. Switch <b>Client OAuth login</b> and <b>Web OAuth login</b> to <b>Yes</b>, paste this in <b>Valid OAuth Redirect URIs</b> exactly, then <b>Save changes</b>:
         {uri ? <CopyBox text={uri.redirectUri} /> : <div className="small-muted">The address could not be read.</div>}
-        <div className="small-muted" style={{ fontSize: 12 }}>This step has no tick: TeamLink cannot see your Meta app. If Facebook later says &quot;URL blocked&quot;, this address is missing or different.</div>
+        <div className="small-muted" style={{ fontSize: 12 }}>
+          This step has no tick: TeamLink cannot see your Meta app. Facebook says &quot;Can&apos;t load URL&quot; when <b>a</b> is missing, and &quot;URL blocked&quot; when the address in <b>b</b> is missing or different.
+          Do it from the address you use every day (the live site), not from localhost.
+        </div>
       </Step>
 
       <Step n={3} done={hasApp} title="Copy the App ID and App secret here">
