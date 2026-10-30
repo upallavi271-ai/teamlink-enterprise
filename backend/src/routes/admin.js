@@ -1684,6 +1684,38 @@ router.post('/integrations/social/facebook/start', requirePerm(null, 'administra
   await logAudit({ userId: req.user.id, action: 'Connect with Facebook started', entity: 'Integration', entityId: 'social', toValue: 'Facebook login opened' });
   return res.json({ url: out.url, redirectUri: out.redirectUri });
 });
+// THREADS (founder 2026-10-30): a Threads access token (Meta app > Use cases > Access the Threads API > User Token Generator) is checked with
+// Threads, saved encrypted on the Social Media channel and handed to Omni-Channel (utils/greenStartIntegrations.js). remove = take it away.
+router.post('/integrations/social/threads', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const t = String((req.body && req.body.token) || '').trim();
+  if (t.length < 20 || /\s/.test(t)) return res.status(400).json({ error: 'That does not look like a Threads access token. Copy the whole token.' });
+  let me = null;
+  try {
+    const r = await fetch(`https://graph.threads.net/v1.0/me?${new URLSearchParams({ fields: 'id,username', access_token: t })}`, { signal: AbortSignal.timeout(30000) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || j.error) return res.status(422).json({ error: `Threads did not accept the token: ${String((j.error && j.error.message) || r.status).replace(/access_token=[^&\s"]+/gi, 'access_token=...').slice(0, 200)}` });
+    me = j;
+  } catch (err) { return res.status(502).json({ error: 'Threads could not be reached from this server. Try again in a minute.' }); }
+  try {
+    await integrationRow('social');
+    const w = await writeValues('social', { 'Threads access token': t, 'Threads profile': me.username ? `@${me.username}` : String(me.id || '') });
+    await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+  } catch (err) {
+    if (err && err.code === 'NO_SECRET_KEY') return res.status(400).json({ error: NO_KEY_MESSAGE });
+    throw err;
+  }
+  await logAudit({ userId: req.user.id, action: 'Threads connected', entity: 'Integration', entityId: 'social', toValue: me.username ? `@${me.username}` : 'profile' });
+  GSI.schedule('threads connected');
+  return res.json({ ok: true, profile: me.username ? `@${me.username}` : me.id, message: `Threads ${me.username ? `@${me.username} ` : ''}connected. Omni-Channel gets it in a few seconds.` });
+});
+router.post('/integrations/social/threads/remove', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  await integrationRow('social');
+  const w = await writeValues('social', { 'Threads access token': '-', 'Threads profile': '' });
+  await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+  await logAudit({ userId: req.user.id, action: 'Threads removed', entity: 'Integration', entityId: 'social', toValue: 'removed' });
+  GSI.schedule('threads removed');
+  res.json({ ok: true });
+});
 // the backup way (Graph API Explorer token): the same Page pick follows (?facebook=pick&k=...)
 router.post('/integrations/social/facebook/token', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   if (!(await saveFacebookApp(req, res))) return undefined;

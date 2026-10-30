@@ -44,6 +44,9 @@ export default function FacebookSetup() {
   const [secret, setSecret] = useState('');
   const [configId, setConfigId] = useState('');
   const [pasted, setPasted] = useState('');
+  const [thToken, setThToken] = useState('');
+  const [thBusy, setThBusy] = useState(false);
+  const [thMsg, setThMsg] = useState('');
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -87,6 +90,18 @@ export default function FacebookSetup() {
     } catch (e) { setErr(e.response?.data?.error || 'Facebook did not accept the token.'); setReading(false); }
   }
 
+  // THREADS (2026-10-30): its own token -> checked with Threads -> saved -> Omni-Channel gets it
+  async function connectThreads() {
+    setThMsg(''); setErr('');
+    if (thToken.trim().length < 20) { setErr('Paste the whole Threads access token first (step 6).'); return; }
+    setThBusy(true);
+    try { const r = await api.post('/admin/integrations/social/threads', { token: thToken.trim() }); setThMsg(r.data.message); setThToken(''); load(); } catch (e) { setErr(e.response?.data?.error || 'Threads did not connect.'); } finally { setThBusy(false); }
+  }
+  async function removeThreads() {
+    setThBusy(true);
+    try { await api.post('/admin/integrations/social/threads/remove'); setThMsg('Threads removed (also from Omni-Channel in a few seconds).'); load(); } catch (e) { setErr(e.response?.data?.error || 'Could not remove Threads.'); } finally { setThBusy(false); }
+  }
+
   if (!social) return <div className="small-muted">{err || 'Loading…'}</div>;
   const v = social.values || {};
   const pageId = String(v['Facebook Page ID'] || '').trim();
@@ -100,6 +115,8 @@ export default function FacebookSetup() {
   const lastFb = omni && omni.last && omni.last.workspaces ? omni.last.workspaces.map((w) => w.channels && w.channels.facebook).filter(Boolean) : [];
   const inOmni = gsFb.some((x) => x.status === 'CONNECTED') || lastFb.some((c) => c.state === 'sent' || c.state === 'same');
   const omniWhy = lastFb.find((c) => c.state === 'failed' || c.state === 'skipped');
+  const thProfile = String(v['Threads profile'] || '').trim();
+  const lastTh = omni && omni.last && omni.last.workspaces && omni.last.workspaces[0] && omni.last.workspaces[0].channels ? omni.last.workspaces[0].channels.threads : null;
 
   return (
     <div style={{ maxWidth: 860 }}>
@@ -186,6 +203,13 @@ export default function FacebookSetup() {
         </details>
       </Step>
 
+      {/* INSTAGRAM (2026-10-30): no extra step in TeamLink - the Instagram account linked to the Page comes with the Page */}
+      <div className="card" style={{ padding: 14, marginBottom: 12, background: '#fdf4fb', border: '1px solid #f0d4ea' }}>
+        <b>Instagram</b> comes with the Page: link your Instagram <b>professional</b> account to the Facebook Page once
+        (Facebook Page → <b>Settings → Linked accounts → Instagram → Connect</b>), then press <b>Connect with Facebook</b> again and allow the Instagram access Facebook asks for.
+        Omni-Channel then posts to Instagram with the same Page.
+      </div>
+
       <Step n={5} done={inOmni} title="Omni-Channel gets the same Page (automatic)">
         {inOmni
           ? <>Omni-Channel uses the same Page{gsFb.some((x) => x.status === 'CONNECTED') ? `: ${gsFb.filter((x) => x.status === 'CONNECTED').map((x) => `${x.account || 'Facebook'} (${x.ws})`).join(', ')}` : ''}.</>
@@ -197,8 +221,28 @@ export default function FacebookSetup() {
         <div style={{ marginTop: 8 }}><button type="button" className="btn btn-sm" onClick={load}>↻ Check again</button></div>
       </Step>
 
+
+      <Step n={6} done={!!thProfile} title={thProfile ? `Threads is connected (${thProfile})` : 'Threads (its own token)'}>
+        Threads is not part of the Facebook sign-in; it takes its own token, made in the same Meta app:
+        <ol style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+          <li>In the app: <b>App roles → Roles → Threads testers → Add</b> your Threads account. On Threads (threads.net): <b>Settings → Account → Website permissions → Invites → Accept</b>.</li>
+          <li>In the app: <b>Use cases → Access the Threads API → Customize</b>: add <b>threads_basic</b> and <b>threads_content_publish</b>; in its <b>Settings</b> put this redirect address and save:
+            {uri ? <CopyBox text={uri.redirectUri} /> : null}
+          </li>
+          <li>Same use case: <b>User Token Generator → Generate Access Token</b> for your Threads account, and copy the token.</li>
+          <li>Paste it here and press <b>Connect Threads</b>. TeamLink checks it with Threads, saves it encrypted and gives it to Omni-Channel.</li>
+        </ol>
+        <textarea rows={2} value={thToken} onChange={(e) => setThToken(e.target.value.replace(/\s/g, ''))} placeholder="Paste the Threads access token here" style={{ width: '100%', marginTop: 8, fontFamily: 'monospace', fontSize: 12 }} />
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-primary btn-sm" onClick={connectThreads} disabled={thBusy}>{thBusy ? 'Checking with Threads…' : thProfile ? 'Replace the Threads token' : 'Connect Threads'}</button>
+          {thProfile && <button type="button" className="btn btn-sm" onClick={removeThreads} disabled={thBusy}>Remove Threads</button>}
+        </div>
+        {thMsg && <div className="small-muted" role="status" style={{ marginTop: 6 }}>{thMsg}</div>}
+        {lastTh && lastTh.state !== 'same' && lastTh.state !== 'sent' && thProfile && <div className="small-muted" style={{ fontSize: 12 }}>Omni-Channel: {lastTh.words}</div>}
+      </Step>
+
       <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
-        Posting jobs to the Page stays <b>OFF</b> until an Admin switches it on (Postings). Instagram and Threads use the same Meta app later.
+        Posting jobs to the Page stays <b>OFF</b> until an Admin switches it on (Postings).
       </div>
     </div>
   );

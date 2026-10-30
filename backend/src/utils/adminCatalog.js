@@ -187,7 +187,9 @@ const INTEGRATION_CATALOG = [
     // fills the Page ID and token. The Page ID + token can also be typed by hand. A blank App secret uses the WhatsApp card's.
     fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', ''], ['Meta App ID', 'Meta for Developers > your app > Settings > Basic'], ['Meta App secret', ''],
       // only for an app on Facebook Login for Business (utils/facebookConnect.js CONFIG_LABEL)
-      ['Meta login configuration ID', 'Only if Facebook says "Invalid Scopes"']],
+      ['Meta login configuration ID', 'Only if Facebook says "Invalid Scopes"'],
+      // Threads (2026-10-30): its own token (Threads API), handed to Omni-Channel; the profile name is what Threads said it belongs to
+      ['Threads access token', ''], ['Threads profile', 'Filled in by itself']],
     hints: ['Facebook Page ID', 'Meta App ID', 'Meta login configuration ID'] },
   { id: 'storage', name: 'Document Storage', group: 'Storage', glyph: '\u{1F5C2}️',
     desc: 'Where resumes, offer letters and employee documents are stored.',

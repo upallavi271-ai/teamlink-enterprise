@@ -25,7 +25,9 @@ const prisma = require('../db');
 const { encryptSecret, decryptSecret } = require('./secrets');
 const { readConfig, writeValues } = require('./integrationStore');
 
-const SCOPES = 'pages_show_list,pages_read_engagement,pages_manage_posts';
+// + Instagram (founder 2026-10-30: "diniki unna Instagram and threads ni kuda connect chey"): the Instagram professional account linked to the Page
+// is posted to with the same Page token; Omni-Channel reads which Instagram account belongs to the Page by itself.
+const SCOPES = 'pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,business_management';
 const APP_ID_LABEL = 'Meta App ID';
 const APP_SECRET_LABEL = 'Meta App secret';
 // A Meta app on "Facebook Login for Business" refuses the plain permission list ("Invalid Scopes: pages_show_list, ...", founder 2026-10-30):

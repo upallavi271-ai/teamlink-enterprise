@@ -114,12 +114,19 @@ async function teamlinkChannels() {
     else if (!c.connected) out.facebook = { none: 'The Facebook Page is saved in TeamLink but Facebook has not accepted it yet, so it is not given to Omni-Channel.' };
     else out.facebook = { body: { accessToken: token } };
   } catch (err) { out.facebook = { none: `Facebook could not be read: ${err.message}` }; }
+  try {
+    const c = await require('./integrationStore').readConfig('social'); // eslint-disable-line global-require
+    const token = String((c.values || {})['Threads access token'] || '').trim();
+    if (c.missingKey) out.threads = { none: 'The Threads token cannot be read on this server (secret key missing).' };
+    else if (!token) out.threads = { none: 'Threads is not connected in TeamLink (Administration > Integrations > Facebook, Threads step).' };
+    else out.threads = { body: { accessToken: token } };
+  } catch (err) { out.threads = { none: `Threads could not be read: ${err.message}` }; }
   return out;
 }
 
 // ---- one channel into one workspace -----------------------------------------------
-const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', facebook: 'Facebook' };
-const ONE_ROW = ['whatsapp', 'facebook']; // channels that are one row in Green Start's integration list (removed by that row's id)
+const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', facebook: 'Facebook', threads: 'Threads' };
+const ONE_ROW = ['whatsapp', 'facebook', 'threads']; // channels that are one row in Green Start's integration list (removed by that row's id)
 const GONE = ['NOT_CONNECTED', 'DISCONNECTED'];
 async function pushOne(token, ws, channel, want, prev, force) {
   if (want.none) {
@@ -149,6 +156,17 @@ async function pushOne(token, ws, channel, want, prev, force) {
       if (out && out.kind === 'user') return { state: 'failed', words: 'Facebook answered with a list of Pages: that is a person token, not a Page access token. Use the Page access token.', fp: prev };
       return { state: 'sent', words: 'Same Facebook Page as TeamLink now', fp };
     }
+    if (channel === 'threads') {
+      // the same rule as Facebook: a Threads connection made inside Omni-Channel itself is never replaced
+      if (!prev) {
+        const list = await call('GET', '/integrations', { token, ws: ws.id });
+        if ((list || []).some((x) => x.provider === 'threads' && x.status && !GONE.includes(x.status))) {
+          return { state: 'skipped', words: 'Omni-Channel already has its own Threads connection, so TeamLink left it as it is.' };
+        }
+      }
+      await call('POST', '/social/threads/connect-token', { token, ws: ws.id, body: { accessToken: want.body.accessToken } });
+      return { state: 'sent', words: 'Same Threads profile as TeamLink now', fp };
+    }
     if (channel === 'email') await call('PUT', '/integrations/email', { token, ws: ws.id, body: want.body });
     else if (channel === 'sms') await call('PUT', '/integrations/sms', { token, ws: ws.id, body: want.body });
     else await call('POST', '/integrations/whatsapp/credentials', { token, ws: ws.id, body: want.body });
@@ -173,10 +191,11 @@ async function sync({ force = false, why = 'manual', by = null } = {}) {
       result.account = email;
       for (const [i, ws] of wss.entries()) {
         const one = { id: ws.id, name: ws.name, main: i === 0, channels: {} };
-        for (const ch of ['email', 'sms', 'whatsapp', 'facebook']) {
+        for (const ch of ['email', 'sms', 'whatsapp', 'facebook', 'threads']) {
           const k = `${ws.id}:${ch}`;
           let r;
           if (ch === 'whatsapp' && i > 0) r = { state: 'skipped', words: `One WhatsApp number can belong to one workspace only: it is in "${wss[0].name}".` };
+          else if (ch === 'threads' && i > 0) r = { state: 'skipped', words: `Threads is given to the main workspace only: "${wss[0].name}".` };
           else if (ch === 'facebook' && i > 0) r = { state: 'skipped', words: `The Facebook Page is given to the main workspace only: "${wss[0].name}".` };
           else r = await pushOne(token, ws, ch, want[ch], fps[k] || null, force); // eslint-disable-line no-await-in-loop
           if (r.fp) fps[k] = r.fp; else if (r.fp === null) delete fps[k];
