@@ -57,7 +57,7 @@ const talk = async (r, lang = 'Telugu', knowledge = []) => {
 
   // ---- 2. not in the ATS: confirm with the team, kept for the recruiter ---------------------------------------------------
   r = await d.hear('బస్ ఉంటుందా?');
-  ok(r.say.startsWith('అది టీమ్‌తో కన్ఫర్మ్') && d.st.pending.includes('బస్ ఉంటుందా?') && !/తెలియదు|లేదు/.test(r.say.split('.')[0]), 'N1 bus (not in the ATS) -> "I\'ll confirm with the team", kept for the recruiter, never "I don\'t know"', [r.say, d.st.pending]);
+  ok(r.say.startsWith('దాని గురించి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు') && d.st.pending.includes('బస్ ఉంటుందా?') && !/తెలియదు|లేదు/.test(r.say.split('.')[0]), 'N1 bus (not in the ATS) -> "I\'ll confirm with the team", kept for the recruiter, never "I don\'t know"', [r.say, d.st.pending]);
   ok(d.outcome().pendingQuestions && d.outcome().pendingQuestions.includes('బస్ ఉంటుందా?'), 'N2 the question reaches the call result (-> AI Calling > Questions)', d.outcome().pendingQuestions);
 
   // ---- 3. the recruiter's own answer ----------------------------------------------------------------------------------------
@@ -90,6 +90,18 @@ const talk = async (r, lang = 'Telugu', knowledge = []) => {
   const { classify } = require(path.join(B, 'src/calling/dialogue'));
   ok(['ఇంట్రెస్ట్ ఉంది', 'इंटरेस्ट है', 'interest undi'].every((t) => classify(t).intent === 'yes') && ['ఇంట్రెస్ట్ లేదు', 'इंटरेस्ट नहीं है', 'not interested'].every((t) => classify(t).intent === 'no'), 'T4 "interest undi / है" = yes, "interest ledu / नहीं है" = no');
   ok(!(await talk(req('Assistant Professor — Anatomy'))).B.brief.includes('ఏ డిగ్రీ'), 'T5 a job with its own facts keeps the short brief (the extra facts only when asked again)');
+
+  // ---- 4c. never "the recruiter will tell / I'll ask and tell"; salary and location from the requirement (founder 2026-10-30) ----
+  const allSaid = S.LANGS.map((l) => Object.values(S.phrases(l)).join(' ')).join(' ') + Object.values(A.SAY || {}).map((x) => Object.values(x).join(' ')).join(' ');
+  ok(!/recruiter will|the recruiter|రిక్రూటర్ (చెప్తారు|కాల్|పంపిస్తారు)|రిక్రూటర్‌కి|रिक्रूटर (बताएँगे|कॉल|भेज)|रिक्रूटर को|check with the team|టీమ్‌తో కన్ఫర్మ్|टीम से कन्फर्म/i.test(allSaid), 'R1 no spoken line says "the recruiter will ..." or "I\'ll check with the team and tell you": "our team will contact you"');
+  const ask = (rq, q, lang = 'English') => A.answer(new Dialogue({ purpose: 'Screening', language: lang, data: S.buildData({ candidate: { name: 'K' }, requirement: rq, app: {} }), requirement: rq }), q).say;
+  const nurse = { title: 'Staff Nurse', employmentType: 'Full Time', internal: false };
+  ok(ask({ ...nurse, description: 'Package: 3 Years 25k onwards (depends on the interview performance the salary will be decided)' }, 'what is the salary?') === 'The salary starts from 25 thousand.', 'R2 "25k onwards" -> "starts from 25 thousand" (never "up to", never "Package: 3 Years")');
+  ok(ask({ ...nurse, description: 'Package: Qualification and Experience as Per NMC Norms Salary NMC' }, 'what is the salary?') === 'The salary is as per NMC norms.', 'R3 "Salary NMC" -> "as per NMC norms" (from the requirement, not "the team will contact")');
+  ok(/after the interview, based on your experience/.test(ask({ ...nurse, description: 'Package: 4- 5 year depends upon experience.And After Interview salary will be decided' }, 'what is the salary?')), 'R4 "depends upon experience, after interview salary decided" -> said so (the "4-5 year" is not the pay)');
+  ok(ask({ ...nurse, description: 'x', client: { name: 'Trr Medical College, Hyderabad' } }, 'where is the location?') === "It's in Hyderabad.", 'R5 no location on the job: the town in the client\'s name (a known place)');
+  ok(ask({ ...nurse, description: 'x', client: { name: 'Z', location: 'JINDAL STEELS 110/7, LALBAGH ROAD, KRISHNAPPA LAYOUT, Bengaluru Urban' } }, 'where is the location?') === "It's in Krishnappa Layout, Bengaluru Urban.", 'R6 ...or the client\'s address, said short');
+  ok(/team will contact you/.test(ask({ ...nurse, description: 'x', client: { name: 'ARMIET, Engineering College Shahapur, Asangaon' } }, 'where is the location?')), 'R7 nothing on file (an unknown town in the name is not guessed) -> "our team will contact you about that"');
 
   // ---- 5. the voice's text --------------------------------------------------------------------------------------------------
   const v = (t) => V.native(t, 'Telugu');

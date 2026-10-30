@@ -742,7 +742,9 @@ class Dialogue {
     const money = has(t, [...L.salary, 'money', 'low', 'less', 'తక్కువ', 'कम']);
     const far = has(t, ['far', 'distance', 'location', 'travel', 'దూరం', 'లొకేషన్', 'दूर', 'लोकेशन']);
     const kind = [x.employmentType, x.workMode].filter(Boolean).join(', ');
-    const pay = x.salary && !String(x.salary).includes(',') ? S.clean(x.salary, 60) : '';
+    // "25 thousand onwards" is told as "from 25 thousand", never "up to"
+    const from = x.salary && /\bonwards$/i.test(x.salary) ? S.fill(this.P.briefSalaryFrom, { salary: S.clean(x.salary.replace(/\s*onwards$/i, ''), 60) }) : '';
+    const pay = !from && x.salary && !String(x.salary).includes(',') ? S.clean(x.salary, 60) : '';
     const place = x.location ? S.clean(x.location, 60) : '';
     const notNow = has(t, ['not looking', 'no change', 'not changing', 'happy', 'working', 'job undi', 'మారే ఆలోచన', 'మారను', 'వర్క్ చేస్తున్నా', 'జాబ్ ఉంది', 'बदलने', 'काम कर रहा', 'जॉब है']);
     const parts = [];
@@ -753,6 +755,7 @@ class Dialogue {
     const job = place && kind ? S.fill(this.P.pitchJob, { location: place, kind }) : (kind ? S.fill(this.P.convinceGeneral, { kind }).replace(/^[^.।]*[.।]\s*/, '') : '');
     if (job && !(far && place)) parts.push(job);
     if (pay && !money) parts.push(S.fill(this.P.pitchPay, { salary: pay }));
+    if (from) parts.splice(money ? 0 : parts.length, money ? 1 : 0, ...(money ? [this.P.pitchAck, from] : [from]));
     parts.push(this.P.pitchNoLoss);
     return { say: this.speak(...parts, this.P.convinceQ), done: false };
   }

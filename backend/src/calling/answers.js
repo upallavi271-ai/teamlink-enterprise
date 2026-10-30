@@ -52,7 +52,20 @@ function salaryOf(d, r) {
   if (mine) return spoken(mine.replace(/^[^\d₹]*?(?=[-–:]?\s*[\d₹])/, '').replace(/^[-–:\s]+/, ''));
   // pay listed per role but none is this role: never another role's pay (the team confirms instead)
   if (lines.filter((l) => labelOf(l).length >= 3).length > 1) return '';
-  return spoken(lines[0]);
+  // one pay line: the amount in it, not the whole line ("Package: 3 Years 25k onwards (depends ...)" -> "25k onwards")
+  const amt = /(?:₹\s*)?\d+(?:\.\d+)?\s*(?:k|l|lpa|lakhs?|thousand)\b(?:\s*(?:to|-|–)\s*(?:₹\s*)?\d+(?:\.\d+)?\s*(?:k|l|lpa|lakhs?|thousand)?\b)?(?:\s*(?:per month|p\.?m\.?|per annum|onwards))?/i.exec(lines[0]);
+  return spoken(amt ? amt[0] : lines[0]);
+}
+
+// how the pay is set, when the requirement gives no figure: the sentence that says it
+function payRule(r, P) {
+  const all = descLines(r).join(' ');
+  if (/\bsalary\s*:?\s*(as per\s*)?nmc\b|package\s*:?.{0,60}as per nmc/i.test(all)) return P.payNmc;
+  const byExp = /(package|salary|ctc)[^.]{0,40}depends?\s*(up)?on\s*(the\s*)?experience/i.test(all);
+  if (/salary[^.]{0,30}\b(decided|fixed|finali[sz]ed)\b|after (the )?interview[^.]{0,30}salary|interview performance/i.test(all)) return byExp ? P.payAfterIvExp : P.payAfterIv;
+  if (byExp) return P.payByExp;
+  if (/(salary|package|ctc)[^.]{0,30}negotiable/i.test(all)) return P.payNegotiable;
+  return '';
 }
 
 // what the person asked about: [topic, ...]; the first that the ATS can answer wins
@@ -97,9 +110,11 @@ const SAY = {
     salary: 'The salary is {v}.', timings: 'The timings are: {v}.', line: '{v}.', location: "It's in {v}.", workMode: "It's {v}.",
     jobType: "It's a {v} job.", qualification: 'The qualification needed is {v}.', experienceNeeded: 'They want {v} of experience.',
     openings: 'There are {v} openings.', oneOpening: 'There is one opening.', joining: 'Joining is {v}.', companyInternal: "It's a job with TeamLink itself.",
-    companyLater: 'The recruiter will tell you the company name and full details when the interview is fixed.', role: 'The work is mainly {v}.',
-    interviewNone: 'If you are interested, the recruiter will fix the interview and tell you the details.',
-    willCheck: 'I will check with the team and tell you.',
+    companyLater: 'When the interview is fixed, our team will contact you with the company name and full details.', role: 'The work is mainly {v}.',
+    interviewNone: 'If you are interested, our team will contact you to fix the interview.',
+    willCheck: 'Our team will contact you about that.',
+    payFrom: 'The salary starts from {v}.', payNmc: 'The salary is as per NMC norms.', payAfterIv: 'The salary is decided after the interview.',
+    payAfterIvExp: 'The salary is decided after the interview, based on your experience.', payByExp: 'The salary depends on your experience.', payNegotiable: 'The salary is negotiable.',
     eligibility: 'For this job they need {v}. We will check your profile.', expWord: 'of experience',
   },
   Telugu: {
@@ -107,9 +122,11 @@ const SAY = {
     salary: 'సాలరీ {v} వరకు ఉంటుంది.', timings: 'టైమింగ్స్: {v}.', line: '{v}.', location: 'జాబ్ {v} లో.', workMode: '{v}.',
     jobType: '{v} జాబ్.', qualification: 'క్వాలిఫికేషన్ {v} ఉండాలి.', experienceNeeded: '{v} ఎక్స్‌పీరియన్స్ కావాలి.',
     openings: 'మొత్తం {v} పోస్ట్‌లు ఉన్నాయి.', oneOpening: 'ఒక్క పోస్ట్ ఉంది.', joining: 'జాయినింగ్ {v}.', companyInternal: 'ఇది టీమ్‌లింక్‌లోనే జాబ్.',
-    companyLater: 'కంపెనీ పేరు, పూర్తి డీటెయిల్స్ ఇంటర్వ్యూ ఫిక్స్ అయినప్పుడు రిక్రూటర్ చెప్తారు.', role: 'పని మెయిన్‌గా {v}.',
-    interviewNone: 'మీకు ఇంట్రెస్ట్ ఉంటే, రిక్రూటర్ ఇంటర్వ్యూ ఫిక్స్ చేసి డీటెయిల్స్ చెప్తారు.',
-    willCheck: 'అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.',
+    companyLater: 'ఇంటర్వ్యూ ఫిక్స్ అయినప్పుడు, కంపెనీ పేరు, పూర్తి డీటెయిల్స్ తో మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు.', role: 'పని మెయిన్‌గా {v}.',
+    interviewNone: 'మీకు ఇంట్రెస్ట్ ఉంటే, ఇంటర్వ్యూ ఫిక్స్ చేయడానికి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు.',
+    willCheck: 'దాని గురించి మా టీమ్ మిమ్మల్ని కాంటాక్ట్ చేస్తారు.',
+    payFrom: 'సాలరీ {v} నుంచి మొదలవుతుంది.', payNmc: 'సాలరీ NMC నార్మ్స్ ప్రకారం ఉంటుంది.', payAfterIv: 'సాలరీ ఇంటర్వ్యూ తర్వాత డిసైడ్ చేస్తారు.',
+    payAfterIvExp: 'సాలరీ మీ ఎక్స్‌పీరియన్స్ బట్టి, ఇంటర్వ్యూ తర్వాత డిసైడ్ చేస్తారు.', payByExp: 'సాలరీ మీ ఎక్స్‌పీరియన్స్ బట్టి ఉంటుంది.', payNegotiable: 'సాలరీ మాట్లాడుకోవచ్చు.',
     eligibility: 'ఈ జాబ్‌కి {v} కావాలి. మీ ప్రొఫైల్ దానితో చెక్ చేస్తాం.', expWord: 'ఎక్స్‌పీరియన్స్',
   },
   Hindi: {
@@ -117,9 +134,11 @@ const SAY = {
     salary: 'सैलरी {v} तक है।', timings: 'टाइमिंग्स: {v}।', line: '{v}।', location: 'जॉब {v} में है।', workMode: '{v} है।',
     jobType: '{v} जॉब है।', qualification: 'क्वालिफिकेशन {v} चाहिए।', experienceNeeded: '{v} का एक्सपीरियंस चाहिए।',
     openings: 'कुल {v} पोस्ट हैं।', oneOpening: 'एक ही पोस्ट है।', joining: 'जॉइनिंग {v} है।', companyInternal: 'ये टीमलिंक में ही जॉब है।',
-    companyLater: 'कंपनी का नाम और पूरी डिटेल्स इंटरव्यू फिक्स होने पर रिक्रूटर बताएँगे।', role: 'काम मेनली {v} है।',
-    interviewNone: 'अगर इंटरेस्ट है, तो रिक्रूटर इंटरव्यू फिक्स करके डिटेल्स बताएँगे।',
-    willCheck: 'वो मैं टीम से कन्फर्म करके आपको बताता हूँ।',
+    companyLater: 'इंटरव्यू फिक्स होने पर कंपनी का नाम और पूरी डिटेल्स के साथ हमारी टीम आपसे कॉन्टैक्ट करेगी।', role: 'काम मेनली {v} है।',
+    interviewNone: 'अगर इंटरेस्ट है, तो इंटरव्यू फिक्स करने के लिए हमारी टीम आपसे कॉन्टैक्ट करेगी।',
+    willCheck: 'उसके बारे में हमारी टीम आपसे कॉन्टैक्ट करेगी।',
+    payFrom: 'सैलरी {v} से शुरू है।', payNmc: 'सैलरी NMC नॉर्म्स के हिसाब से है।', payAfterIv: 'सैलरी इंटरव्यू के बाद तय होगी।',
+    payAfterIvExp: 'सैलरी आपके एक्सपीरियंस के हिसाब से, इंटरव्यू के बाद तय होगी।', payByExp: 'सैलरी आपके एक्सपीरियंस के हिसाब से है।', payNegotiable: 'सैलरी पर बात हो सकती है।',
     eligibility: 'इस जॉब के लिए {v} चाहिए। आपकी प्रोफ़ाइल उसके हिसाब से देखी जाएगी।', expWord: 'एक्सपीरियंस',
   },
 };
@@ -153,7 +172,15 @@ function answer(d, text, { requirement } = {}) {
     let v = '';
     switch (t) {
       case 'who': return { say: P.who, topic: t };
-      case 'salary': v = d.fields && d.fields.includeSalary === false ? '' : salaryOf(d, r); if (v) return { say: fill('salary', v), topic: t }; break;
+      case 'salary':
+        if (d.fields && d.fields.includeSalary === false) break;
+        v = salaryOf(d, r);
+        // "25k onwards" is FROM 25 thousand, not up to it
+        if (v && /\bonwards$/i.test(v)) return { say: S.fill(P.payFrom, { v: S.clean(v.replace(/\s*onwards$/i, ''), 80) }), topic: t };
+        if (v) return { say: fill('salary', v), topic: t };
+        // no figure, but the requirement says how pay is set ("Salary NMC", "after the interview salary will be decided")
+        v = payRule(r, P); if (v) return { say: v, topic: t };
+        break;
       case 'timings': v = findLines(r, /timing|shift|working hours|duty hours|\bdays? a week\b|\d{1,2}[:.]?\d{0,2}\s*(am|pm)?\s*(to|-|–)\s*\d{1,2}[:.]?\d{0,2}\s*(am|pm)?/i); if (v) return { say: fill('timings', v), topic: t }; break;
       case 'accommodation': v = findLines(r, /accommodat|hostel|quarters|\broom\b|stay/i, 1); if (v) return { say: fill('line', v), topic: t }; break;
       case 'food': v = findLines(r, /food|meal|lunch|canteen/i, 1); if (v) return { say: fill('line', v), topic: t }; break;
@@ -185,4 +212,4 @@ function answer(d, text, { requirement } = {}) {
   return { say: P.willCheck, topic: topics[0], unknown: true };
 }
 
-module.exports = { answer, topicOf, looksQuestion, salaryOf, spoken, TOPICS };
+module.exports = { answer, topicOf, looksQuestion, salaryOf, spoken, TOPICS, SAY };
