@@ -1652,6 +1652,47 @@ async function applySocial(user, { how = 'Saved', save = true } = {}) {
   return { ok: r.ok, status: r.ok ? 200 : 422, words, row };
 }
 
+const FBC = require('../utils/facebookConnect');
+FBC.setFinisher((user, opts) => applySocial(user, opts));
+// "Connect with Facebook" (utils/facebookConnect.js). start: the typed Meta App ID / secret are saved first, then Facebook's login address is returned.
+router.post('/integrations/social/facebook/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const v = (req.body && req.body.values) || {};
+  const incoming = {};
+  [FBC.APP_ID_LABEL, FBC.APP_SECRET_LABEL].forEach((l) => { if (v[l] !== undefined) incoming[l] = v[l]; });
+  if (Object.keys(incoming).length) {
+    try {
+      await integrationRow('social');
+      const w = await writeValues('social', incoming);
+      await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+    } catch (err) {
+      if (err && err.code === 'NO_SECRET_KEY') return res.status(400).json({ error: NO_KEY_MESSAGE });
+      throw err;
+    }
+  }
+  const out = await FBC.start(req.user, req);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: 'Connect with Facebook started', entity: 'Integration', entityId: 'social', toValue: 'Facebook login opened' });
+  return res.json({ url: out.url, redirectUri: out.redirectUri });
+});
+router.get('/integrations/social/facebook/redirect-uri', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  const a = await FBC.appCreds();
+  res.json({ redirectUri: FBC.redirectUri(req), hasApp: !!(a && a.id && a.secret) });
+});
+router.get('/integrations/social/facebook/pending', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const out = await FBC.pending(req.user, req.query.k);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  return res.json({ pages: out.pages });
+});
+router.post('/integrations/social/facebook/select', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const out = await FBC.select(req.user, req.body && req.body.k, req.body && req.body.pageId);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  const r = out.result;
+  const channel = integrationById('social');
+  const row = r.row || await integrationRow('social');
+  if (!r.ok) return res.status(r.status || 422).json({ ...shapeIntegration(channel, row), error: `Facebook is NOT connected: ${r.words}` });
+  return res.json({ ...shapeIntegration(channel, row), message: 'Facebook Page connected. Omni-Channel gets the same Page in a few seconds. Posting jobs to the Page stays OFF until an Admin switches it on (Postings).' });
+});
+
 router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const rows = await prisma.integration.findMany();
   const channels = INTEGRATION_CATALOG.map((c) => shapeIntegration(c, rows.find((r) => r.id === c.id)));
@@ -2025,6 +2066,11 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
   if (channel.id === 'social') {
     // keep what was typed (nothing typed is lost), then ask Facebook; Connected only if Facebook says yes
     await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(written.values) } });
+    const now = await readConfig('social');
+    if (!String((now.values || {})['Facebook Page ID'] || '').trim() && !String((now.values || {})['Facebook Page access token'] || '').trim()) {
+      // only the Meta app details were typed: saved; the next step is the Connect with Facebook button
+      return res.json({ ...shapeIntegration(channel, await integrationRow('social')), message: 'Meta app details saved. Now press "Connect with Facebook" on this card.' });
+    }
     const r = await applySocial(req.user);
     const row = r.row || await integrationRow('social');
     if (!r.ok) return res.status(r.status).json({ ...shapeIntegration(channel, row), error: `Saved, but Facebook is NOT connected: ${r.words}`, saved: true });

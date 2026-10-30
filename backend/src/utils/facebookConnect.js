@@ -1,0 +1,173 @@
+// ---------------------------------------------------------------------------
+// "CONNECT WITH FACEBOOK" (founder 2026-10-30): an Admin presses one button on Administration > Integrations > Social Media, signs in on
+// Facebook's OWN page (the password is typed there, never in TeamLink), picks the Page, and TeamLink gets the Page access token by itself.
+//
+//   1  start()     builds Facebook's login address (the official OAuth dialog) with a signed, 15-minute "state" naming the Admin.
+//   2  callback    Facebook sends the browser back to  <site>/api/public/facebook-connect/callback?code=..&state=..  (public route, the state proves it).
+//                  The code is exchanged for a token, the token for a long-lived one, and /me/accounts lists the Pages with their own tokens
+//                  (a Page token made from a long-lived person token does not expire).
+//   3  one Page -> saved at once; several -> the Admin picks one on the Integrations screen (pending(), select()).
+//   4  "saved" = the same path as typing the details by hand (routes/admin.js applySocial): copied to the job-posting connection, checked with
+//                Facebook (read-only), handed to Omni-Channel. Connected only if Facebook accepts it.
+//
+// The Meta app: App ID + App secret on the Social Media card ("Meta App ID", "Meta App secret"), or FACEBOOK_APP_ID / FACEBOOK_APP_SECRET in the
+// environment; a blank App secret falls back to the WhatsApp card's App secret (the same Meta app). The exact redirect address to register in
+// the Meta app (Facebook Login > Settings > Valid OAuth Redirect URIs) is shown on the card (redirectUri()).
+// Permissions asked: pages_show_list, pages_read_engagement, pages_manage_posts. Until the Meta app is reviewed ("Live"), Facebook lets only the
+// app's own admins / testers use it: said in words when Facebook refuses.
+// Test hooks: TL_FACEBOOK_GRAPH_BASE, TL_FACEBOOK_DIALOG_BASE (a local fake Facebook).
+// No token is ever put in an address, a log, an audit row or an answer to the browser.
+// ---------------------------------------------------------------------------
+const crypto = require('crypto');
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const prisma = require('../db');
+const { encryptSecret, decryptSecret } = require('./secrets');
+const { readConfig, writeValues } = require('./integrationStore');
+
+const SCOPES = 'pages_show_list,pages_read_engagement,pages_manage_posts';
+const APP_ID_LABEL = 'Meta App ID';
+const APP_SECRET_LABEL = 'Meta App secret';
+const PENDING_PREFIX = 'fb.pending.';
+const PENDING_MS = 15 * 60 * 1000;
+
+const graphBase = () => String(process.env.TL_FACEBOOK_GRAPH_BASE || 'https://graph.facebook.com/v19.0').replace(/\/+$/, '');
+const dialogBase = () => String(process.env.TL_FACEBOOK_DIALOG_BASE || 'https://www.facebook.com/v19.0/dialog/oauth');
+const jwtSecret = () => process.env.JWT_SECRET;
+
+function siteBase(req) {
+  if (process.env.APP_BASE_URL) return String(process.env.APP_BASE_URL).replace(/\/+$/, '');
+  const origin = req && req.headers && req.headers.origin;
+  if (origin) return String(origin).replace(/\/+$/, '');
+  const host = req && req.get && req.get('host');
+  if (host) return `${req.headers['x-forwarded-proto'] || req.protocol}://${host}`.replace(':4010', ':5183');
+  return 'http://localhost:5183';
+}
+const redirectUri = (req) => `${siteBase(req)}/api/public/facebook-connect/callback`;
+
+async function appCreds() {
+  let id = String(process.env.FACEBOOK_APP_ID || '').trim();
+  let secret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
+  if (!id || !secret) {
+    const c = await readConfig('social');
+    if (c.missingKey) return { missingKey: true };
+    id = id || String((c.values || {})[APP_ID_LABEL] || '').trim();
+    secret = secret || String((c.values || {})[APP_SECRET_LABEL] || '').trim();
+  }
+  if (id && !secret) { // the WhatsApp card's App secret belongs to the same Meta app
+    try {
+      const w = await readConfig('whatsapp');
+      const key = Object.keys(w.values || {}).find((k) => /^app secret/i.test(k));
+      if (key) secret = String(w.values[key] || '').trim();
+    } catch { /* none */ }
+  }
+  return { id, secret };
+}
+
+async function readJson(url, init) {
+  let res;
+  try { res = await fetch(url, { ...(init || {}), signal: AbortSignal.timeout(30000) }); } catch { throw new Error('Facebook could not be reached from this server.'); }
+  const text = await res.text();
+  let j = null; try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
+  if (!res.ok || (j && j.error)) {
+    const e = (j && j.error) || {};
+    const say = String(e.message || `Facebook answered ${res.status}`).replace(/access_token=[^&\s"]+/gi, 'access_token=…').slice(0, 220);
+    throw new Error(say);
+  }
+  return j;
+}
+
+// ---- 1. the login address -----------------------------------------------------------------------------------------------
+async function start(user, req) {
+  const a = await appCreds();
+  if (a.missingKey) return { error: 'The secret key of this server is missing, so nothing can be stored encrypted.', status: 400 };
+  if (!a.id) return { error: 'Type the Meta App ID on this card first (Meta for Developers, your app, Settings, Basic), then press Connect with Facebook.', status: 400 };
+  if (!a.secret) return { error: 'Type the Meta App secret on this card first (the same page as the App ID), then press Connect with Facebook.', status: 400 };
+  const state = jwt.sign({ k: 'fbconnect', u: user.id, n: crypto.randomBytes(8).toString('hex') }, jwtSecret(), { expiresIn: '15m' });
+  const q = new URLSearchParams({ client_id: a.id, redirect_uri: redirectUri(req), state, scope: SCOPES, response_type: 'code' });
+  return { ok: true, url: `${dialogBase()}?${q.toString()}`, redirectUri: redirectUri(req) };
+}
+
+// ---- 3. waiting list of Pages ---------------------------------------------------------------------------------------------
+async function putPending(userId, pages) {
+  const n = crypto.randomBytes(12).toString('hex');
+  const value = JSON.stringify({ userId, at: Date.now(), pages: pages.map((p) => ({ id: String(p.id), name: String(p.name || p.id), tokenEnc: encryptSecret(p.access_token) })) });
+  await prisma.appSetting.upsert({ where: { key: PENDING_PREFIX + n }, update: { value }, create: { key: PENDING_PREFIX + n, value } });
+  return n;
+}
+async function getPending(k, userId) {
+  if (!/^[a-f0-9]{24}$/.test(String(k || ''))) return null;
+  const row = await prisma.appSetting.findUnique({ where: { key: PENDING_PREFIX + k } });
+  if (!row) return null;
+  let p = null; try { p = JSON.parse(row.value); } catch { p = null; }
+  if (!p || p.userId !== userId || Date.now() - p.at > PENDING_MS) { await prisma.appSetting.delete({ where: { key: PENDING_PREFIX + k } }).catch(() => {}); return null; }
+  return p;
+}
+async function dropPending(k) { await prisma.appSetting.delete({ where: { key: PENDING_PREFIX + k } }).catch(() => {}); }
+async function sweepPending() {
+  const rows = await prisma.appSetting.findMany({ where: { key: { startsWith: PENDING_PREFIX } } }).catch(() => []);
+  for (const r of rows) { let p = null; try { p = JSON.parse(r.value); } catch { p = null; } if (!p || Date.now() - p.at > PENDING_MS) await prisma.appSetting.delete({ where: { key: r.key } }).catch(() => {}); } // eslint-disable-line no-await-in-loop
+}
+
+async function pending(user, k) {
+  const p = await getPending(k, user.id);
+  if (!p) return { error: 'This list of Pages has expired. Press Connect with Facebook again.', status: 410 };
+  return { ok: true, pages: p.pages.map((x) => ({ id: x.id, name: x.name })) };
+}
+
+// the finisher is routes/admin.js applySocial (it lives there next to the card); set once at start-up
+let finisher = null;
+function setFinisher(fn) { finisher = fn; }
+async function save(user, page) { // page { id, access_token } -> { ok, words, status }
+  const w = await writeValues('social', { 'Facebook Page ID': String(page.id), 'Facebook Page access token': String(page.access_token) });
+  await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+  return finisher(user, { how: 'Connected with Facebook' });
+}
+
+async function select(user, k, pageId) {
+  const p = await getPending(k, user.id);
+  if (!p) return { error: 'This list of Pages has expired. Press Connect with Facebook again.', status: 410 };
+  const page = p.pages.find((x) => x.id === String(pageId));
+  if (!page) return { error: 'That Page is not in the list.', status: 400 };
+  const token = decryptSecret(page.tokenEnc);
+  if (!token) return { error: 'The secret key of this server changed; press Connect with Facebook again.', status: 400 };
+  await dropPending(k);
+  return { ok: true, result: await save(user, { id: page.id, access_token: token }) };
+}
+
+// ---- 2. Facebook sends the browser back here ----------------------------------------------------------------------------------
+async function exchange(req, code) {
+  const a = await appCreds();
+  if (!a.id || !a.secret) throw new Error('The Meta App ID / App secret are missing on this server.');
+  const short = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ client_id: a.id, client_secret: a.secret, redirect_uri: redirectUri(req), code })}`);
+  if (!short.access_token) throw new Error('Facebook gave no token for this sign-in.');
+  let longTok = short.access_token;
+  try {
+    const l = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: a.id, client_secret: a.secret, fb_exchange_token: short.access_token })}`);
+    if (l.access_token) longTok = l.access_token;
+  } catch { /* the short one still lists the Pages; its Page tokens are then short too, the check below says so */ }
+  const accounts = await readJson(`${graphBase()}/me/accounts?${new URLSearchParams({ fields: 'id,name,access_token', limit: '100', access_token: longTok })}`);
+  return (accounts.data || []).filter((p) => p && p.id && p.access_token);
+}
+
+const router = express.Router();
+router.get('/callback', async (req, res) => {
+  const back = (qs) => res.redirect(302, `${siteBase(req)}/admin/integrations?tab=connections&${qs}`);
+  let st;
+  try { st = jwt.verify(String(req.query.state || ''), jwtSecret()); } catch { return res.status(400).type('text/plain').send('This Facebook sign-in link has expired or is not valid. Close this page and press Connect with Facebook again in TeamLink.'); }
+  if (!st || st.k !== 'fbconnect') return res.status(400).type('text/plain').send('Not a valid Facebook sign-in link.');
+  if (req.query.error) return back('facebook=denied');
+  try {
+    const user = await prisma.user.findUnique({ where: { id: st.u } });
+    if (!user) return back(`facebook=failed&why=${encodeURIComponent('The Admin who started this is no longer in TeamLink.')}`);
+    const pages = await exchange(req, String(req.query.code || ''));
+    if (!pages.length) return back('facebook=nopages');
+    sweepPending().catch(() => {});
+    const k = await putPending(user.id, pages);
+    return back(`facebook=pick&k=${k}`);
+  } catch (err) {
+    return back(`facebook=failed&why=${encodeURIComponent(String(err.message || 'Facebook did not accept the sign-in.').slice(0, 220))}`);
+  }
+});
+
+module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, APP_ID_LABEL, APP_SECRET_LABEL, SCOPES };

@@ -119,6 +119,7 @@ app.use(require('./utils/webSecurity').securityHeaders);
 // EXOTEL AI CALLING (2026-10-22): Exotel's status callback + the Voicebot text turn. Own proof (secret key / signature / IP list), own body parser. Ahead of the general webhooks router. calling/webhook.js
 app.use('/api/webhooks/exotel-ai', require('./calling/webhook'));
 app.use('/api/webhooks', require('./routes/webhooks'));
+app.use('/api/public/facebook-connect', require('./utils/facebookConnect').router); // Facebook sends the browser back here after "Connect with Facebook" (the signed state proves it)
 // Omni-Channel email delivery events (bounce / complaint / delivered): signed, raw body, so it sits before the JSON parser (routes/outreachWebhook.js).
 app.use('/api/public/outreach/webhook', require('./routes/outreachWebhook'));
 // CORS: open only for the public paths third parties use; everything else = CORS_ORIGINS / this site / localhost in dev.

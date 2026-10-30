@@ -122,6 +122,9 @@ export default function Integrations() {
   const [mail, setMail] = useState(null); // GET /admin/integrations/email/status
   const [testTo, setTestTo] = useState('');
   const [sending, setSending] = useState(false);
+  // "Connect with Facebook" (Social Media card): the address to register in the Meta app, and the Pages to pick after Facebook's login
+  const [fbUri, setFbUri] = useState(null);
+  const [fbPick, setFbPick] = useState(null); // { k, pages }
 
   function load() {
     api.get('/admin/integrations').then((res) => setData(res.data)).catch(() => setError('Could not load the integration catalogue.'));
@@ -129,6 +132,37 @@ export default function Integrations() {
     api.get('/admin/integrations/email/status').then((res) => setMail(res.data)).catch(() => setMail(null));
   }
   useEffect(load, []);
+
+  // Facebook sends the browser back here (?facebook=pick&k=... | denied | nopages | failed&why=...): say what happened, then clean the address
+  useEffect(() => {
+    const fb = searchParams.get('facebook');
+    if (!fb) return;
+    const k = searchParams.get('k');
+    const why = searchParams.get('why');
+    try { window.history.replaceState({}, '', window.location.pathname); } catch { /* address bar only */ }
+    if (fb === 'pick' && k) {
+      api.get('/admin/integrations/social/facebook/pending', { params: { k } })
+        .then((r) => setFbPick({ k, pages: r.data.pages || [] }))
+        .catch((err) => setError(err.response?.data?.error || 'Could not read the Pages from Facebook.'));
+    } else if (fb === 'denied') setError('Facebook sign-in was cancelled. Nothing was connected.');
+    else if (fb === 'nopages') setError('Facebook did not list any Page for this login. Sign in with the Facebook account that manages the Page, and tick the Page when Facebook asks.');
+    else setError(`Facebook did not connect: ${why || 'the sign-in did not finish.'}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function connectFacebook() {
+    setError(''); setNotice('');
+    try {
+      const v = configuring ? configuring.values : {};
+      const r = await api.post('/admin/integrations/social/facebook/start', { values: { 'Meta App ID': v['Meta App ID'], 'Meta App secret': v['Meta App secret'] } });
+      window.location.href = r.data.url; // Facebook's own login page
+    } catch (err) { setError(err.response?.data?.error || 'Could not start the Facebook sign-in.'); }
+  }
+  async function pickFacebookPage(page) {
+    const k = fbPick.k;
+    setFbPick(null);
+    await run(() => api.post('/admin/integrations/social/facebook/select', { k, pageId: page.id }), (r) => (r.data && r.data.message) || `${page.name} connected.`);
+  }
 
   // Send test email — the proof that the SMTP configuration works. On failure
   // it shows the PROVIDER's own error, not a generic one.
@@ -163,6 +197,7 @@ export default function Integrations() {
   // A secret field opens EMPTY — the server never sends the value, only a
   // masked hint, and blank means "keep what is stored".
   function openConfigure(c) {
+    if (c.id === 'social') api.get('/admin/integrations/social/facebook/redirect-uri').then((r) => setFbUri(r.data)).catch(() => setFbUri(null));
     setConfiguring({
       channel: c,
       // a HINT (c.hints) is only greyed text, never a value; a stored value equal to its hint was a mistake of the old form and opens empty
@@ -372,6 +407,23 @@ export default function Integrations() {
           </>}
         >
           <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>{configuring.channel.desc}</div>
+          {configuring.channel.id === 'social' && (
+            <div style={{ border: '1px solid #cfe0ff', background: '#f5f9ff', borderRadius: 8, padding: 12, marginBottom: 12 }}>
+              <b>Easy way: Connect with Facebook</b>
+              <div className="small-muted" style={{ margin: '4px 0 8px' }}>
+                Type the Meta App ID and App secret below (Meta for Developers, your app, Settings, Basic; a blank App secret uses the WhatsApp card&apos;s), press the button,
+                sign in on Facebook&apos;s own page and tick your Page. TeamLink never sees your Facebook password. The Page ID and token boxes fill themselves.
+              </div>
+              <button type="button" className="btn btn-primary" onClick={connectFacebook}>Connect with Facebook</button>
+              {fbUri && (
+                <div className="small-muted" style={{ marginTop: 8, fontSize: 11.5 }}>
+                  One-time step in your Meta app: Facebook Login, Settings, &quot;Valid OAuth Redirect URIs&quot;, add exactly:<br />
+                  <code style={{ userSelect: 'all', wordBreak: 'break-all' }}>{fbUri.redirectUri}</code>
+                </div>
+              )}
+              <div className="small-muted" style={{ marginTop: 6, fontSize: 11.5 }}>Or type the Page ID and Page access token by hand (the two boxes below) and press Save &amp; Connect.</div>
+            </div>
+          )}
           {visibleFields(configuring.channel, configuring.values).map(([label, placeholder]) => {
             const secret = (configuring.channel.secretFields || []).includes(label);
             const opts = (configuring.channel.choices || {})[label];
@@ -433,6 +485,18 @@ export default function Integrations() {
               ? 'Credentials are encrypted on the server before they are stored and are never sent back to this page. This channel really contacts the provider once it is connected.'
               : 'Configuration only — this channel is Demo / Simulated and never contacts the provider.'}
           </div>
+        </Modal>
+      )}
+
+      {fbPick && (
+        <Modal title="Which Facebook Page?" onClose={() => setFbPick(null)} foot={<button className="btn" onClick={() => setFbPick(null)}>Cancel</button>}>
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>Facebook signed you in. Pick the Page TeamLink and Omni-Channel should use.</div>
+          {fbPick.pages.map((p) => (
+            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee' }}>
+              <span><b>{p.name}</b> <span className="small-muted">· {p.id}</span></span>
+              <button className="btn btn-sm btn-primary" onClick={() => pickFacebookPage(p)}>Use this Page</button>
+            </div>
+          ))}
         </Modal>
       )}
 

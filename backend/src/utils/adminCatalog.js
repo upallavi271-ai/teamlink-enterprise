@@ -183,8 +183,10 @@ const INTEGRATION_CATALOG = [
     // 2026-10-30 (founder): Facebook is connected HERE once. The same Page is used for job posts (Postings > Facebook page) and is handed to
     // Omni-Channel (Green Start) by utils/greenStartIntegrations.js. Saving checks it with Facebook at once (read-only: nothing is posted).
     desc: 'Connect your Facebook Page once: job posts use it and Omni-Channel gets the same Page. (Job posting stays OFF until an Admin switches it on.)',
-    fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', '']],
-    hints: ['Facebook Page ID'] },
+    // The easy way: type the Meta App ID + App secret, press "Connect with Facebook" (utils/facebookConnect.js): Facebook asks for the login itself and
+    // fills the Page ID and token. The Page ID + token can also be typed by hand. A blank App secret uses the WhatsApp card's.
+    fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', ''], ['Meta App ID', 'Meta for Developers > your app > Settings > Basic'], ['Meta App secret', '']],
+    hints: ['Facebook Page ID', 'Meta App ID'] },
   { id: 'storage', name: 'Document Storage', group: 'Storage', glyph: '\u{1F5C2}️',
     desc: 'Where resumes, offer letters and employee documents are stored.',
     fields: [['Provider (S3 / Drive)', ''], ['Bucket / folder', ''], ['Access key', ''], ['Secret key', '']] },
