@@ -5,8 +5,10 @@
 // Omni-Channel is Green Start (green-start-app/, its source is never edited): its own server, its own database, its own Integrations
 // screen. Until now nothing was shared, so Email, SMS and WhatsApp had to be connected twice. Now:
 //
-//   TeamLink -> Omni-Channel   Administration > Integrations is the ONE place where Email (SMTP), SMS (SMS Push Platform / MSG91) and
-//                              WhatsApp Business (Meta Cloud) are typed. This module puts those same settings into Green Start through
+//   TeamLink -> Omni-Channel   Administration > Integrations is the ONE place where Email (SMTP), SMS (SMS Push Platform / MSG91),
+//                              WhatsApp Business (Meta Cloud) and - since 2026-10-30 - the Facebook Page (Social Media card: Page ID + Page access
+//                              token, sent to Green Start's POST /social/facebook/connect-token, main workspace only, and never over a Facebook
+//                              connection Omni-Channel has made itself) are typed. This module puts those same settings into Green Start through
 //                              Green Start's OWN API (PUT /integrations/email, PUT /integrations/sms, POST /integrations/whatsapp/credentials),
 //                              signed in as the company Green Start account with the one-click ticket (utils/greenStartSso.js), so Green
 //                              Start checks and encrypts them itself. Email and SMS go to every workspace of the company account; WhatsApp to
@@ -104,19 +106,29 @@ async function teamlinkChannels() {
     else if (c.testMode) out.whatsapp = { none: 'TeamLink\'s WhatsApp is on a test server address; it is not given to Omni-Channel.' };
     else out.whatsapp = { body: { accessToken: c.token, phoneNumberId: c.phoneId, ...(c.wabaId ? { wabaId: c.wabaId } : {}), label: LABEL } };
   } catch (err) { out.whatsapp = { none: `WhatsApp could not be read: ${err.message}` }; }
+  try {
+    const c = await require('./integrationStore').readConfig('social'); // eslint-disable-line global-require
+    const token = String((c.values || {})['Facebook Page access token'] || '').trim();
+    if (c.missingKey) out.facebook = { none: 'The Facebook token cannot be read on this server (secret key missing).' };
+    else if (!c.row || !token) out.facebook = { none: 'The Facebook Page is not connected in TeamLink (Administration > Integrations > Social Media).' };
+    else if (!c.connected) out.facebook = { none: 'The Facebook Page is saved in TeamLink but Facebook has not accepted it yet, so it is not given to Omni-Channel.' };
+    else out.facebook = { body: { accessToken: token } };
+  } catch (err) { out.facebook = { none: `Facebook could not be read: ${err.message}` }; }
   return out;
 }
 
 // ---- one channel into one workspace -----------------------------------------------
-const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
+const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', facebook: 'Facebook' };
+const ONE_ROW = ['whatsapp', 'facebook']; // channels that are one row in Green Start's integration list (removed by that row's id)
+const GONE = ['NOT_CONNECTED', 'DISCONNECTED'];
 async function pushOne(token, ws, channel, want, prev, force) {
   if (want.none) {
     if (!prev) return { state: 'skipped', words: want.none };
     // TeamLink had put it there: take it away again (both apps are the same)
     try {
-      if (channel === 'whatsapp') {
+      if (ONE_ROW.includes(channel)) {
         const list = await call('GET', '/integrations', { token, ws: ws.id });
-        const row = (list || []).find((x) => x.provider === 'whatsapp' && x.id && x.status !== 'DISCONNECTED' && x.status !== 'NOT_CONNECTED');
+        const row = (list || []).find((x) => x.provider === channel && x.id && !GONE.includes(x.status));
         if (row) await call('DELETE', `/integrations/${row.id}`, { token, ws: ws.id });
       } else await call('DELETE', `/integrations/${channel}`, { token, ws: ws.id });
       return { state: 'removed', words: `Disconnected in Omni-Channel too (TeamLink: ${want.none})`, fp: null };
@@ -125,6 +137,18 @@ async function pushOne(token, ws, channel, want, prev, force) {
   const fp = sha(want.body);
   if (!force && prev === fp) return { state: 'same', words: 'Already the same as TeamLink', fp };
   try {
+    if (channel === 'facebook') {
+      // never replace a Facebook connection somebody made inside Omni-Channel itself (only one TeamLink put there may be updated)
+      if (!prev) {
+        const list = await call('GET', '/integrations', { token, ws: ws.id });
+        if ((list || []).some((x) => x.provider === 'facebook' && x.status && !GONE.includes(x.status))) {
+          return { state: 'skipped', words: 'Omni-Channel already has its own Facebook connection, so TeamLink left it as it is. Disconnect it in Omni-Channel first if the TeamLink Page should be used there.' };
+        }
+      }
+      const out = await call('POST', '/social/facebook/connect-token', { token, ws: ws.id, body: { accessToken: want.body.accessToken } });
+      if (out && out.kind === 'user') return { state: 'failed', words: 'Facebook answered with a list of Pages: that is a person token, not a Page access token. Use the Page access token.', fp: prev };
+      return { state: 'sent', words: 'Same Facebook Page as TeamLink now', fp };
+    }
     if (channel === 'email') await call('PUT', '/integrations/email', { token, ws: ws.id, body: want.body });
     else if (channel === 'sms') await call('PUT', '/integrations/sms', { token, ws: ws.id, body: want.body });
     else await call('POST', '/integrations/whatsapp/credentials', { token, ws: ws.id, body: want.body });
@@ -149,10 +173,11 @@ async function sync({ force = false, why = 'manual', by = null } = {}) {
       result.account = email;
       for (const [i, ws] of wss.entries()) {
         const one = { id: ws.id, name: ws.name, main: i === 0, channels: {} };
-        for (const ch of ['email', 'sms', 'whatsapp']) {
+        for (const ch of ['email', 'sms', 'whatsapp', 'facebook']) {
           const k = `${ws.id}:${ch}`;
           let r;
           if (ch === 'whatsapp' && i > 0) r = { state: 'skipped', words: `One WhatsApp number can belong to one workspace only: it is in "${wss[0].name}".` };
+          else if (ch === 'facebook' && i > 0) r = { state: 'skipped', words: `The Facebook Page is given to the main workspace only: "${wss[0].name}".` };
           else r = await pushOne(token, ws, ch, want[ch], fps[k] || null, force); // eslint-disable-line no-await-in-loop
           if (r.fp) fps[k] = r.fp; else if (r.fp === null) delete fps[k];
           one.channels[ch] = { state: r.state, words: r.words };
@@ -161,7 +186,7 @@ async function sync({ force = false, why = 'manual', by = null } = {}) {
       }
       const bad = result.workspaces.flatMap((w) => Object.entries(w.channels).filter(([, c]) => c.state === 'failed').map(([ch, c]) => `${w.name} ${NAME[ch]}: ${c.words}`));
       result.ok = !bad.length;
-      result.words = bad.length ? `Not everything reached Omni-Channel: ${bad.join(' | ')}` : 'Omni-Channel uses the same Email, SMS and WhatsApp as TeamLink.';
+      result.words = bad.length ? `Not everything reached Omni-Channel: ${bad.join(' | ')}` : 'Omni-Channel uses the same Email, SMS, WhatsApp and Facebook as TeamLink.';
     } catch (err) {
       result.words = err.message;
       result.down = !!err.down;

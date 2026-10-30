@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 
 // Administration > Integrations > Omni-Channel (founder 2026-10-30: "both application is same").
-// TeamLink and Omni-Channel use ONE set of connections: Email, SMS and WhatsApp are typed here in TeamLink and Omni-Channel gets the
+// TeamLink and Omni-Channel use ONE set of connections: Email, SMS, WhatsApp and the Facebook Page (Social Media card) are typed here in TeamLink and Omni-Channel gets the
 // same ones by itself (backend utils/greenStartIntegrations.js). What Omni-Channel connected itself (Facebook, Instagram, Shopify ...)
 // is listed below. Status only: no password, key or token ever comes to this screen.
-const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp' };
+const NAME = { email: 'Email', sms: 'SMS', whatsapp: 'WhatsApp', facebook: 'Facebook Page' };
 const STATE = {
   sent: ['Same as TeamLink', 'live'], same: ['Same as TeamLink', 'live'], removed: ['Disconnected (TeamLink has none)', 'draft'],
   skipped: ['Not given', 'draft'], failed: ['Did not work', 'red'],
@@ -58,7 +58,7 @@ export default function OmniChannelIntegrations({ canConfigure }) {
         </div>
         <div className="tbl-wrap"><table>
           <thead><tr><th>Connection</th><th>In TeamLink</th>{(last?.workspaces || []).map((w) => <th key={w.id}>Omni-Channel: {w.name}</th>)}</tr></thead>
-          <tbody>{['email', 'sms', 'whatsapp'].map((ch) => (
+          <tbody>{['email', 'sms', 'whatsapp', 'facebook'].map((ch) => (
             <tr key={ch}>
               <td><b>{NAME[ch]}</b></td>
               <td>{data.teamlink[ch]?.ready ? <Chip tone="live">Set up</Chip> : <span className="small-muted">{data.teamlink[ch]?.words || 'Not set up'}</span>}</td>

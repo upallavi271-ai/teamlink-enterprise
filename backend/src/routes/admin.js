@@ -56,7 +56,7 @@ const {
   COMPANY_POLICIES, COMPANY_DEFAULTS, integrationById, LIVE_CHANNELS, JOB_BOARD_CHANNELS, SMS_FIELDS,
 } = require('../utils/adminCatalog');
 const { DEPTS, LOCS, REQUIREMENT_LIVE_STATUSES, requirementIsLive } = require('../utils/atsVocab');
-const { publicValuesFor, writeValues, recordEvent } = require('../utils/integrationStore');
+const { publicValuesFor, writeValues, recordEvent, readConfig } = require('../utils/integrationStore');
 const bio = require('../utils/biometricDevice');
 const { secretsConfigured, ENV_VAR: SECRET_ENV_VAR, NO_KEY_MESSAGE } = require('../utils/secrets');
 const mailer = require('../utils/mailer');
@@ -1604,7 +1604,7 @@ async function jobPortalStats() {
 // (utils/greenStartIntegrations.js). Every save, connect or disconnect of those three channels here is passed on to Omni-Channel a few seconds later.
 const GSI = require('../utils/greenStartIntegrations');
 router.use('/integrations/:id', (req, res, next) => {
-  if (req.method !== 'GET' && ['email', 'sms', 'whatsapp'].includes(req.params.id)) {
+  if (req.method !== 'GET' && ['email', 'sms', 'whatsapp', 'social'].includes(req.params.id)) {
     res.on('finish', () => { if (res.statusCode < 300) GSI.schedule(`${req.params.id} changed`); });
   }
   next();
@@ -1620,6 +1620,37 @@ router.get('/integrations-omni-channel', requirePerm(null, 'administration', 'In
 router.post('/integrations-omni-channel/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   res.json(await GSI.sync({ force: true, why: 'Send to Omni-Channel now', by: req.user.name }));
 });
+
+// SOCIAL MEDIA = FACEBOOK PAGE (founder 2026-10-30). The Page ID + Page access token typed on the Social Media card are copied into the job-posting
+// connection (jobPublish/credentials: portal "facebook"), checked with Facebook at once (read-only, nothing is posted) and - through
+// utils/greenStartIntegrations.js - handed to Omni-Channel. The card says Connected ONLY when Facebook accepted the token.
+async function applySocial(user, { how = 'Saved', save = true } = {}) {
+  const CR = require('../jobPublish/credentials'); // eslint-disable-line global-require
+  const cfg = await readConfig('social');
+  if (cfg.missingKey) return { ok: false, status: 400, words: NO_KEY_MESSAGE };
+  const pageId = String(cfg.values['Facebook Page ID'] || '').trim();
+  const token = String(cfg.values['Facebook Page access token'] || '').trim();
+  if (!pageId || !token) return { ok: false, status: 400, words: 'Type both the Facebook Page ID and the Page access token, then Save.' };
+  // a plain Test does not re-save (that would rewrite the job-posting login and its audit row each time) unless the job-posting copy is missing or different
+  const have = save ? { ok: false } : await CR.read('facebook');
+  if (save || !have.ok || have.username !== pageId || have.password !== token) {
+    const saved = await CR.save('facebook', { username: pageId, password: token }, user);
+    if (saved.error) return { ok: false, status: saved.status || 400, words: saved.error };
+  }
+  const checked = await CR.requestVerify('facebook', user); // an API portal: answered at once (read-only call, nothing posted)
+  if (checked.error) return { ok: false, status: checked.status || 400, words: checked.error };
+  const r = checked.result;
+  const words = r.ok ? (r.summary || 'Facebook accepted the Page and the token.') : (r.summary || 'Facebook did not accept it.');
+  const row = await prisma.integration.update({
+    where: { id: 'social' },
+    data: r.ok
+      ? { state: 'Connected', connected: true, enabled: true, connectedAt: new Date(), error: null, lastTest: new Date(), lastTestResult: words.slice(0, 480) }
+      : { state: 'Not Connected', connected: false, error: words.slice(0, 480), lastTest: new Date(), lastTestResult: words.slice(0, 480) },
+  });
+  await recordEvent('social', { action: r.ok ? how : `${how} - not accepted by Facebook`, by: user.name, result: words.slice(0, 480) });
+  await logAudit({ userId: user.id, action: 'Facebook Page connection checked', entity: 'Integration', entityId: 'social', toValue: r.ok ? 'Connected' : 'Not connected' });
+  return { ok: r.ok, status: r.ok ? 200 : 422, words, row };
+}
 
 router.get('/integrations', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const rows = await prisma.integration.findMany();
@@ -1991,6 +2022,14 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
   }
   if (!written.filled) return res.status(400).json({ error: 'Enter at least one credential to connect this channel.' });
   await integrationRow(channel.id);
+  if (channel.id === 'social') {
+    // keep what was typed (nothing typed is lost), then ask Facebook; Connected only if Facebook says yes
+    await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(written.values) } });
+    const r = await applySocial(req.user);
+    const row = r.row || await integrationRow('social');
+    if (!r.ok) return res.status(r.status).json({ ...shapeIntegration(channel, row), error: `Saved, but Facebook is NOT connected: ${r.words}`, saved: true });
+    return res.json({ ...shapeIntegration(channel, row), message: 'Facebook Page connected. Omni-Channel gets the same Page in a few seconds. Posting jobs to the Page stays OFF until an Admin switches it on (Postings).' });
+  }
   // SMS (founder 2026-10-27): the settings are checked here, on the server, and the channel is switched on ONLY when they pass.
   // With a problem the values stay saved (nothing typed is lost) but the channel stays off and the screen lists what to fix.
   if (channel.id === 'sms') {
@@ -2225,6 +2264,12 @@ router.post('/integrations/:id/connect',requirePerm(null, 'administration', 'Int
   if (!Object.values(values).filter((v) => String(v).trim()).length) {
     return res.status(400).json({ error: `Add credentials first — open Configure for ${channel.name}.` });
   }
+  if (channel.id === 'social') {
+    const r = await applySocial(req.user, { how: 'Connected' });
+    const row2 = r.row || await integrationRow('social');
+    if (!r.ok) return res.status(r.status).json({ ...shapeIntegration(channel, row2), error: `Facebook is NOT connected: ${r.words}` });
+    return res.json(shapeIntegration(channel, row2));
+  }
   if (channel.id === 'sms') {
     const problems = await require('../utils/smsGateway').validateSms(); // eslint-disable-line global-require
     if (problems.length) return res.status(422).json({ error: `SMS cannot be switched on yet: ${problems.join(' ')}`, problems });
@@ -2243,6 +2288,10 @@ router.post('/integrations/:id/disconnect', requirePerm(null, 'administration', 
   if (!channel) return res.status(404).json({ error: 'Unknown channel' });
   if (channel.id === 'biometric') return setBiometricStatus(req, res, channel, 'Inactive');
   const row = await integrationRow(channel.id);
+  if (channel.id === 'social') {
+    // the saved Page login for job posting goes too (posting switched OFF); Omni-Channel is told a few seconds later
+    await require('../jobPublish/credentials').remove('facebook', req.user); // eslint-disable-line global-require
+  }
   const next = await prisma.integration.update({ where: { id: channel.id }, data: { state: 'Not Connected', connected: false } });
   // A live channel really stops: the cached connection is dropped and anything
   // queued goes back to "recorded, not transmitted", which is true again.
@@ -2291,6 +2340,12 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     const nextRow = await prisma.integration.update({ where: { id: channel.id }, data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), connected: st.connected, state: st.state } });
     await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
     return res.json({ ...shapeIntegration(channel, nextRow), state: st.state, result, device: shapeDevice(device) });
+  }
+  // SOCIAL MEDIA (Facebook Page): a real, read-only check with Facebook. Nothing is posted.
+  if (channel.id === 'social') {
+    const r = await applySocial(req.user, { how: 'Test Connection', save: false });
+    const row2 = r.row || await integrationRow('social');
+    return res.json({ ...shapeIntegration(channel, row2), result: r.words, ok: r.ok });
   }
   // JOB BOARDS (Save & Post, utils/jobConnectors.js): the test says honestly
   // whether the connector has what it needs. Nothing is sent to the board.

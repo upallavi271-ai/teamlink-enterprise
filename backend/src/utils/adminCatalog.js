@@ -180,8 +180,11 @@ const INTEGRATION_CATALOG = [
     desc: 'Publish openings to the careers page on tmlink.in.',
     fields: [['Careers page URL', ''], ['Publish token', '']] },
   { id: 'social', name: 'Social Media', group: 'Job Boards', glyph: '\u{1F4E3}',
-    desc: 'Share openings to LinkedIn, X and Facebook pages.',
-    fields: [['Page / handle', ''], ['Access token', '']] },
+    // 2026-10-30 (founder): Facebook is connected HERE once. The same Page is used for job posts (Postings > Facebook page) and is handed to
+    // Omni-Channel (Green Start) by utils/greenStartIntegrations.js. Saving checks it with Facebook at once (read-only: nothing is posted).
+    desc: 'Connect your Facebook Page once: job posts use it and Omni-Channel gets the same Page. (Job posting stays OFF until an Admin switches it on.)',
+    fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', '']],
+    hints: ['Facebook Page ID'] },
   { id: 'storage', name: 'Document Storage', group: 'Storage', glyph: '\u{1F5C2}️',
     desc: 'Where resumes, offer letters and employee documents are stored.',
     fields: [['Provider (S3 / Drive)', ''], ['Bucket / folder', ''], ['Access key', ''], ['Secret key', '']] },
@@ -252,7 +255,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 
