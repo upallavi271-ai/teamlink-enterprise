@@ -139,7 +139,7 @@ async function dialogueFor(row) {
   const Brain = require('./brain'); // eslint-disable-line global-require
   const brain = (await Brain.available()) ? Brain.think : null;
   const knowledge = await require('./knowledge').forRequirement(row.requirementId).catch(() => []); // eslint-disable-line global-require
-  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts, brain, knowledge, seed: row.id }); // own line / link calls keep the talk history WITHOUT saying it (founder 2026-10-29: 'ilaa cheppakudadhu')
+  const d = new D.Dialogue({ purpose: row.purpose, language: row.language || 'English', data: sc.data, fields: sc.fields, recordingNotice: s.recording || s.keepTranscripts, brain, knowledge, seed: row.id, requirement: ctx.requirement }); // own line / link calls keep the talk history WITHOUT saying it (founder 2026-10-29: 'ilaa cheppakudadhu')
   const snap = svc.safeJson(row.botStateJson);
   if (snap && snap.step) d.restore(snap);
   else {

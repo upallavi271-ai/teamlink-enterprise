@@ -20,6 +20,7 @@
 //   * a call can only END with one of the allowed outcomes for its purpose; the result is validated before it is saved
 // ---------------------------------------------------------------------------
 const S = require('./scripts');
+const A = require('./answers');
 
 const OUTCOMES = {
   Screening: ['Interested', 'Not Interested', 'Call Back Later', 'Unclear'],
@@ -176,6 +177,25 @@ function isGreeting(t) {
   return w.length > 0 && w.length <= 3 && w.some((x) => GREETING.includes(x)) && w.every((x) => GREETING.includes(x) || GREET_EXTRA.includes(x));
 }
 
+// MIS-HEARD SHORT REPLIES (research 2026-10-30): the listener writes "చెప్పండి" as "చపండి", or Telugu sound in Hindi letters
+// ("चपंडी"). Hindi letters are moved to the Telugu block (the Indic blocks share one layout), vowel signs and the virama are
+// dropped, and what is left is compared with the known go-ahead / yes words - one letter of difference allowed.
+const toTeluguBlock = (s) => String(s || '').replace(/[\u0900-\u097F]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 0x300));
+const skeleton = (w) => toTeluguBlock(w).replace(/[\u0C3E-\u0C4D\u0C55\u0C56\u0C01\u0C03\u0C3C]/g, '');
+function editDistance(a, b) {
+  const m = a.length; const n = b.length; const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...new Array(n).fill(0)]);
+  for (let j = 1; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) for (let j = 1; j <= n; j += 1) dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return dp[m][n];
+}
+let fuzzyKeys = null;
+function fuzzyGoAhead(text) {
+  if (!fuzzyKeys) fuzzyKeys = [...GO_AHEAD, ...L.yes].filter((e) => !ascii(e) && !e.includes(' ')).map(skeleton).filter((k) => k.length >= 3);
+  const words = String(text || '').normalize('NFC').replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length || words.length > 3) return false;
+  return words.some((w) => { const k = skeleton(w); return k.length >= 3 && fuzzyKeys.some((f) => editDistance(k, f) <= (f.length >= 6 ? 2 : 1)); });
+}
+
 // Fixed answer from a fixed list. Returns { intent, human }.
 function classify(text) {
   const t = norm(text);
@@ -319,6 +339,8 @@ class Dialogue {
     this.brain = typeof opts.brain === 'function' ? opts.brain : null;
     // verified answers for this requirement ([{ q, a }]) the brain may use (pending clarifications answered by recruiters)
     this.knowledge = Array.isArray(opts.knowledge) ? opts.knowledge : [];
+    // the requirement row from the ATS (its description holds timings, pay per role, accommodation ...): answers.js reads it
+    this.requirement = opts.requirement || null;
     this.maxTurns = opts.maxTurns || 20; // room for a few "could you say that again?" turns
     // which wording of each line this call uses (scripts.phrases); the call id, so every turn of one call sounds the same
     this.seed = opts.seed == null ? null : String(opts.seed);
@@ -463,7 +485,9 @@ class Dialogue {
       }
     }
     st.heardFacts = b;
-    const k = b ? this.fromBrain(b, text) : await this.intentOf(text);
+    let k = b ? this.fromBrain(b, text) : await this.intentOf(text);
+    // a mis-heard "చెప్పండి" / "ఓకే" to "can we talk? / shall I tell you about it?": go on (only where a yes just means "go on")
+    if (k.intent === 'unclear' && ['convenient', 'intro', 'audio_check', 'calm'].includes(st.step) && fuzzyGoAhead(text)) k = { intent: 'yes', human: k.human, goAhead: true, fuzzy: true };
     turn.understood = k.intent;
     if (k.human) st.human = true;
 
@@ -514,6 +538,8 @@ class Dialogue {
     if (k.intent === 'maybe') { const m = this.onMaybe(); if (m) return m; }
 
     if (st.step === 'calm') return this.on_calm(k);
+    // "who is this? / where are you calling from?" before the name: who we are (it shares nothing), then the name again
+    if (st.step === 'identity' && A.topicOf(text).includes('who')) { turn.understood = 'question'; return { say: this.speak(A.answer(this, text).say, this.B.identity), done: false }; }
     if (st.step === 'identity') return this.onIdentity(k);
     if (st.step === 'audio_check') return this.on_audio_check(k);
     // a QUESTION, answered by the brain from the verified facts only - or "I don't have confirmed information, the team
@@ -525,15 +551,25 @@ class Dialogue {
     }
     // nothing about the job before the person is confirmed (the step cannot be anything else after identity)
     // (at "why not interested?" a salary / location remark IS the reason: it goes to the step)
-    if (k.intent === 'salary_q' && st.step !== 'why_not') {
-      const sal = this.data.salary && this.B.brief.includes(this.data.salary);
-      return { say: this.again(sal ? this.P.briefSalary.replace('{salary}', S.clean(this.data.salary)) : this.P.noSalary), done: false };
-    }
-    if (k.intent === 'info_q' && !['resched_time', 'later_when', 'why_not'].includes(st.step) && !/^q/.test(st.step)) {
-      const where = has(norm(text), ['where', 'location', 'address', 'kahan', 'कहाँ', 'कहां', 'ఎక్కడ']);
-      if (where && this.data.location && S.screenLike(this.purpose)) return { say: this.again(this.P.briefLoc.replace('{location}', S.clean(this.data.location))), done: false };
-      if (where && this.data.interview && this.data.interview.location) return { say: this.again(this.P.ivInPerson.replace('{location}', S.clean(this.data.interview.location))), done: false };
-      return { say: this.again(this.P.noInfo), done: false };
+    // A QUESTION ABOUT THE JOB, answered from the ATS (answers.js: the requirement's fields and description, the recruiters'
+    // answers). Never "I don't know": what the ATS does not hold is "I'll confirm with the team" and goes to the recruiter.
+    // Then the same question again. (Before the name is confirmed only "who is calling?" is answered.)
+    // At "how many years / which city / notice period?" an answer often holds question words ("ఎన్ని రోజులు అంటే 30 రోజులు"):
+    // there only a real question about ANOTHER thing ("salary entha?") is answered; the step reads the rest.
+    const OWN = { qExp: 'experienceNeeded', qLoc: 'location', qNotice: 'joining' };
+    const topics = A.topicOf(text);
+    const qStep = /^q/.test(st.step);
+    const asks = !['resched_time', 'later_when', 'why_not'].includes(st.step) && (qStep
+      ? topics.some((x) => x !== OWN[st.step]) && A.looksQuestion(text)
+      : (k.intent === 'salary_q' || k.intent === 'info_q' || (A.looksQuestion(text) && topics.length > 0)));
+    if (asks) {
+      const qa = A.answer(this, text);
+      if (qa && (st.step !== 'identity' || qa.topic === 'who')) {
+        turn.understood = 'question';
+        turn.answered = qa.unknown ? 'to confirm' : (qa.fromRecruiter ? 'recruiter answer' : 'from the ATS');
+        if (qa.unknown && st.pending.length < 5) { const q = S.clean(text, 200); if (q && !st.pending.includes(q)) st.pending.push(q); }
+        return { say: this.again(qa.say), done: false };
+      }
     }
     return this[`on_${st.step}`](k, text);
   }
@@ -935,4 +971,4 @@ const LEAD_OK = ['answer', 'yes', 'no', 'maybe', 'later', 'reschedule', 'already
 // the steps whose question is a plain yes / no
 const YES_NO_STEPS = ['identity', 'convenient', 'intro', 'interest', 'human_offer', 'qProceed', 'proceed', 'avail', 'calm', 'audio_check'];
 
-module.exports = { Dialogue, timeLike, classify, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };
+module.exports = { Dialogue, timeLike, classify, fuzzyGoAhead, skeleton, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };

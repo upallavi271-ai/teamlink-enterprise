@@ -27,8 +27,10 @@ function rms(frame) {
 
 class Vad {
   // strict(): true while the assistant is speaking - only a real, louder voice counts then (barge-in), not its own echo
-  constructor({ onStart, onEnd, minLevel = 400, strict = () => false } = {}) {
+  // endMs(): the pause that ends this answer (the gateway: shorter after a yes / no question); default END_MS
+  constructor({ onStart, onEnd, minLevel = 400, strict = () => false, endMs = null } = {}) {
     this.strict = strict;
+    this.endMs = typeof endMs === 'function' ? endMs : () => END_MS;
     this.onStart = onStart || (() => {});
     this.onEnd = onEnd || (() => {});
     this.minLevel = minLevel; // below this a frame is never speech (line hiss)
@@ -65,7 +67,7 @@ class Vad {
     this.frames.push(frame);
     this.quietMs = voiced ? 0 : this.quietMs + FRAME_MS;
     const ms = this.frames.length * FRAME_MS;
-    if (this.quietMs >= END_MS || ms >= MAX_MS) {
+    if (this.quietMs >= this.endMs() || ms >= MAX_MS) {
       const speechMs = ms - this.quietMs;
       const pcm = Buffer.concat(this.frames);
       this.talking = false; this.loud = 0; this.frames = []; this.quietMs = 0;

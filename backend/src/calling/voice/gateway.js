@@ -50,8 +50,19 @@ const MAX_NO_SPEECH = num(process.env.AI_VOICE_MAX_NO_SPEECH, 0.6); // above (wi
 const MAX_RATIO = 2.4; // repeated / looping text
 // no voice at all this long after the assistant finished = "are you still there?" (never read as an answer)
 const SILENCE_MS = Math.min(30000, Math.max(4000, num(process.env.AI_VOICE_SILENCE_MS, 8000)));
-function clarityOf(text, conf) {
+const NOISE_MS = Math.max(0, num(process.env.AI_VOICE_NOISE_MS, 150)); // less real speech than this in a clip = noise
+const END_YESNO_MS = Math.min(2000, Math.max(400, num(process.env.AI_VOICE_END_YESNO_MS, 750)));
+const END_OPEN_MS = Math.min(2500, Math.max(600, num(process.env.AI_VOICE_END_OPEN_MS, 1150)));
+const OPEN_STEPS = ['qExp', 'qLoc', 'qNotice', 'later_when', 'resched_time', 'why_not'];
+// Whisper's known made-up lines on noise / non-English sound (Bag of Hallucinations, arXiv 2501.11378, + our own calls): believed
+// only when Whisper was really sure (a real "Thank you." is said with a high logprob)
+const MADE_UP = /^(thank you( (so much|very much|for watching|for listening))?|thanks for watching|please subscribe|subscribe|bye( bye)?|you|my god[ ,a-z]*|oh my god|i'm sorry|so|okay so|music|applause|silence|the end|amen|hmm+|uh+|um+)[.!? ]*$/i;
+const MAX_WORDS_PER_SEC = 5; // faster than anyone speaks = text made up, not heard
+function clarityOf(text, conf, seconds) {
   if (!String(text || '').trim()) return 'unclear'; // the line carried speech (the VAD heard it) but no words came out
+  const words = String(text).trim().split(/\s+/).length;
+  if (seconds > 0 && words / seconds > MAX_WORDS_PER_SEC && words > 4) return 'unclear';
+  if (conf && typeof conf === 'object' && MADE_UP.test(String(text).trim()) && !(Number(conf.logprob) > -0.35)) return 'unclear';
   if (conf && typeof conf === 'object') {
     const lp = Number(conf.logprob); const ns = Number(conf.noSpeech); const ratio = Number(conf.ratio);
     if (Number.isFinite(lp) && lp < MIN_LOGPROB) return 'unclear';
@@ -106,12 +117,14 @@ function nativeScore(text, lang) {
 // out as "ओके चपंडी ह") and the call went over to Hindi. So BOTH listeners hear the answer and the language whose words
 // are real everyday words wins; Whisper's guess only breaks a tie. No real words in either = no proof (null).
 // known: { Telugu?: text, Hindi?: text } already heard, not asked again.
-async function teluguOrHindi(engines, pcm, guess, known = {}) {
+// prefer: the Telugu / Hindi the person already spoke in this call - it wins a tie (a person rarely changes language)
+async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
   const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => (known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''))));
   const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
   if (!sT && !sH) return null;
+  const tie = ['Telugu', 'Hindi'].includes(prefer) ? prefer : (guess === 'Hindi' ? 'Hindi' : 'Telugu');
   // eslint-disable-next-line no-nested-ternary
-  const lang = sT > sH ? 'Telugu' : sH > sT ? 'Hindi' : (guess === 'Hindi' ? 'Hindi' : 'Telugu');
+  const lang = sT > sH ? 'Telugu' : sH > sT ? 'Hindi' : tie;
   return { lang, text: lang === 'Telugu' ? te : hi, sT, sH };
 }
 
@@ -245,6 +258,7 @@ function handle(sock, engines, opts = {}) {
   const speaker = new Speaker(sock);
   let row = null; let d = null; let ended = false; let saved = false; let busy = false; let pending = null; let gen = 0;
   let lastVoice = Date.now(); let quietTimer = null;
+  let spoken = null; // the Telugu / Hindi this person has spoken in this call
   // the talk so far, after every turn (a dropped line or a restart keeps it); never blocks or breaks the call
   const keepTurns = () => (row && d ? require('../outcomes').saveTurns(row.id, d.transcript()).catch(() => false) : Promise.resolve(false)); // eslint-disable-line global-require
   // the result is saved exactly once: at the assistant's own goodbye, or when the line drops (even during that goodbye)
@@ -301,6 +315,8 @@ function handle(sock, engines, opts = {}) {
         .then((r) => ({ text: (r && r.text) || '', conf: (r && r.conf) || null }))
         .catch((e) => { log('stt failed:', e.message); return { text: '', conf: null }; });
       let found = null; let first = { text: '', conf: null }; let byScript = false; let enProb = null;
+      // how much real speech (Silero VAD, server) - asked at the same time as the words, so it costs no time
+      const speechP = engines.speech ? engines.speech(pcm) : Promise.resolve(null);
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -320,11 +336,17 @@ function handle(sock, engines, opts = {}) {
           ]);
         }
       }
+      // a click, a cough, a line noise (under NOISE_MS of real speech): not an answer - nothing is said back, nothing switches
+      const sp = await speechP;
+      if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < NOISE_MS) {
+        if (DEBUG) debug(`${row.id} ignored ${(pcm.length / 16000).toFixed(1)}s of sound: only ${sp.speechMs} ms of speech`);
+        return;
+      }
       if (byScript) first = { text: '', conf: null }; // heard again below in the language found
       let pre = null; // the words already heard in the language decided by teluguOrHindi
       if (found && found !== cur && ['Telugu', 'Hindi'].includes(found) && engines.stt) {
         const known = ['Telugu', 'Hindi'].includes(cur) ? { [cur]: first.text } : {};
-        const th = await teluguOrHindi(engines, pcm, found, known);
+        const th = await teluguOrHindi(engines, pcm, found, known, spoken);
         if (th) {
           if (DEBUG && th.lang !== found) debug(`${row.id} sound said ${found}, the words say ${th.lang} (Telugu ${th.sT} / Hindi ${th.sH})`);
           found = th.lang; pre = { text: th.text, conf: null };
@@ -353,7 +375,7 @@ function handle(sock, engines, opts = {}) {
       let lang = (understood ? null : found) || cur;
       // eslint-disable-next-line no-nested-ternary
       const r = lang === cur && !byScript ? first : (pre && lang === found ? pre : await listen(lang));
-      let heardAs = clarityOf(r.text, r.conf);
+      let heardAs = clarityOf(r.text, r.conf, pcm.length / 16000);
       // a language guessed from the sound whose words make no sense in that language: noise, not a switch
       if (lang !== cur && !believable(r.text)) {
         if (DEBUG) debug(`${row.id} not switching to ${lang}: "${r.text}" does not make sense`);
@@ -366,7 +388,7 @@ function handle(sock, engines, opts = {}) {
       if (['Telugu', 'Hindi'].includes(cur) && lang === cur && engines.stt && !nativeScore(r.text, cur)
         && ['unclear', 'silence'].includes(require('../dialogue').classify(r.text).intent)) { // eslint-disable-line global-require
         const other = cur === 'Telugu' ? 'Hindi' : 'Telugu';
-        const th = await teluguOrHindi(engines, pcm, cur, { [cur]: r.text });
+        const th = await teluguOrHindi(engines, pcm, cur, { [cur]: r.text }, spoken);
         if (th && th.lang === other) {
           if (DEBUG) debug(`${row.id} "${r.text}" is not ${cur}; the ${other} words make sense: back to ${other}`);
           lang = other; r2 = { text: th.text, conf: null }; heardAs = 'clear'; found = other;
@@ -374,12 +396,14 @@ function handle(sock, engines, opts = {}) {
       }
       // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
       if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.5))) {
-        const th = await teluguOrHindi(engines, pcm, null);
+        const th = await teluguOrHindi(engines, pcm, null, {}, spoken);
         const pick = th ? [th.lang, th.text] : null;
         if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs})${th ? `: Telugu ${th.sT} / Hindi ${th.sH} words -> ${th.lang}: ${th.text}` : ': no Telugu / Hindi words'}`);
         if (pick) { lang = pick[0]; r2 = { text: pick[1], conf: null }; heardAs = 'clear'; found = pick[0]; }
       }
       const { text } = r2;
+      // the Telugu / Hindi the person speaks in this call (it wins a later tie)
+      if (['Telugu', 'Hindi'].includes(lang) && heardAs === 'clear' && nativeScore(text, lang)) spoken = lang;
       if (opts.onHeard) opts.onHeard(text, lang);
       if (DEBUG) debug(`${row.id} heard [${lang}${found ? ' by sound' : ''}] ${(pcm.length / 16000).toFixed(1)}s in ${Date.now() - t0} ms, ${heardAs}: ${text}`);
       await reply(text, { heard: heardAs, lang });
@@ -395,6 +419,8 @@ function handle(sock, engines, opts = {}) {
 
   const vad = new Vad({
     strict: () => speaker.busy,
+    // a yes / no question: a short pause ends the answer; "how many years / which city / when": people think aloud, wait longer
+    endMs: () => (d && OPEN_STEPS.includes(d.st.step) ? END_OPEN_MS : END_YESNO_MS),
     onStart: () => { lastVoice = Date.now(); if (speaker.busy) { gen += 1; speaker.stop(); if (DEBUG && row) debug(`${row.id} interrupted by the caller`); if (opts.onBargeIn) opts.onBargeIn(); } }, // the person talks: the assistant stops at once
     onEnd: (pcm) => { heard(pcm); },
   });

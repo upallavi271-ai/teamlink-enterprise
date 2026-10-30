@@ -51,7 +51,7 @@ async function build(row) {
   const fields = (svc.safeJson(row.scriptJson) || {}).fields || {};
   const sc = await svc.scriptFor(ctx, row.purpose, row.language || 'English', fields, s);
   const d = new D.Dialogue({
-    purpose: row.purpose, language: row.language || 'English', data: sc.data, fields, recordingNotice: s.recording || s.keepTranscripts, classifier: llmClassifier, seed: row.id,
+    purpose: row.purpose, language: row.language || 'English', data: sc.data, fields, recordingNotice: s.recording || s.keepTranscripts, classifier: llmClassifier, seed: row.id, requirement: ctx.requirement,
   });
   const snap = svc.safeJson(row.botStateJson);
   if (snap && snap.step) d.restore(snap);

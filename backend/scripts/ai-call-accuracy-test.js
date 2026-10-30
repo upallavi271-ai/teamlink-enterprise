@@ -59,7 +59,7 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   // ---- C. conditional: "It depends on the salary" -----------------------------------------------------------------------
   d = mk(); await to(d, 'interest', ['yes speaking', 'yes', 'yes']);
   r = await d.hear('It depends on the salary');
-  ok(/don't have that detail/i.test(r.say) && d.st.interest === null && !r.done, 'C  "depends on the salary": answered honestly (no salary on file), interest NOT recorded either way', [r.say, d.st.interest]);
+  ok(/don't have that detail|confirm that with the team/i.test(r.say) && d.st.interest === null && !r.done, 'C  "depends on the salary": answered honestly (no salary on file), interest NOT recorded either way', [r.say, d.st.interest]);
   r = await d.hear('maybe');
   ok(d.st.interest === 'unsure' && d.st.step === 'human_offer', 'C2 "maybe" = unsure, offered a recruiter (never Interested / Not Interested)', d.st);
 
