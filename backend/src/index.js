@@ -576,3 +576,18 @@ server.requestTimeout = 30 * 60 * 1000;
 try { require('./calling/voicebot').attachWebSocket(server); } catch (err) { console.error('[ai-calling] websocket:', err.message); }
 // SELF-HOSTED AI CALLING (2026-10-28): Vexyl speech, Ollama, the Asterisk AudioSocket bridge - only what backend/.env switches on (calling/local).
 try { require('./calling/local').start(); } catch (err) { console.error('[ai-calling] self-hosted:', err.message); }
+// A STOP (pm2 stop / restart during an update) lets the requests already being handled FINISH before the process ends (founder 2026-10-30:
+// "edit chesi ok click chestunappudu ... server restart avuthuntey vallu edit chesindhii antha pothundhii"). New connections are refused at
+// once, so the web server answers 502 and the screen keeps the change and sends it again when TeamLink is back (frontend/src/api.js).
+// At most 8 seconds; pm2 may end it sooner.
+let stopping = false;
+function stopGently(sig) {
+  if (stopping) return;
+  stopping = true;
+  console.log(`[shutdown] ${sig}: finishing the requests in progress, then stopping`);
+  server.close(() => process.exit(0));
+  try { server.closeIdleConnections(); } catch { /* older Node */ }
+  setTimeout(() => process.exit(0), 8000).unref();
+}
+process.on('SIGINT', () => stopGently('SIGINT'));
+process.on('SIGTERM', () => stopGently('SIGTERM'));

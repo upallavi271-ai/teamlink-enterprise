@@ -24,22 +24,60 @@ api.interceptors.request.use((config) => {
 // A READ THAT MEETS A RESTARTING SERVER TRIES AGAIN. While the backend
 // reloads (a deploy, a dev-server restart) it answers nothing for a few
 // seconds, and a screen that loaded in that window used to show its empty
-// state — "No recruiters in your scope" — as if that were the truth. GETs
-// only: they are safe to repeat; a save is never sent twice.
+// state — "No recruiters in your scope" — as if that were the truth.
 const RETRY_DELAYS = [700, 1200, 1800, 2500];
+// A SAVE THAT MEETS A RESTARTING SERVER IS KEPT AND SENT AGAIN (founder 2026-10-30: "employees edit chesi ok click chestunappudu ...
+// server restart avuthuntey vallu edit chesindhii antha pothundhii"). Only when the web server says the TeamLink server could not be
+// REACHED at all (502 / 503, or the dev proxy's empty 500): then the save never arrived, so sending it again cannot save it twice.
+// A timeout (504) or no answer at all may have arrived, so those are still never repeated. While it waits a small bar says so; the
+// screen keeps everything that was typed and gets the server's answer as if nothing had happened. It gives up after about 3 minutes.
+const SAVE_WAIT_MS = [2000, 3000, 4000, 5000, 6000, 8000, 10000, 10000, 10000, 15000, 15000, 15000, 15000, 15000, 15000, 15000, 15000];
+let waitingSaves = 0;
+function savingBar(on) {
+  if (typeof document === 'undefined') return;
+  let el = document.getElementById('tl-save-wait');
+  if (!on) { if (el) el.remove(); return; }
+  if (el) return;
+  el = document.createElement('div');
+  el.id = 'tl-save-wait';
+  el.setAttribute('role', 'status');
+  el.textContent = 'TeamLink is updating for a few seconds. Your change is kept and will be saved by itself - do not close this page.';
+  el.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99999;background:#1f3a5f;color:#fff;padding:10px 16px;border-radius:8px;font-size:13.5px;box-shadow:0 4px 14px rgba(0,0,0,.25);max-width:92vw;text-align:center';
+  document.body.appendChild(el);
+}
 api.interceptors.response.use(undefined, async (error) => {
   const config = error.config;
   const status = error.response?.status;
+  const isGet = (config?.method || 'get').toLowerCase() === 'get';
   const unreachable = !error.response || [502, 503, 504].includes(status)
     // Vite's dev proxy answers 500 with an empty body when the API is down.
     || (status === 500 && !error.response.data);
-  // A SAVE while the server is restarting (2026-10-29: "Resume client" pressed during a deploy showed only "That did not
-  // work"): never sent twice, but every screen now shows why - the screens read err.response.data.error.
-  if (config && (config.method || 'get').toLowerCase() !== 'get' && error.response && [502, 503, 504].includes(status)) {
-    const d = error.response.data;
-    if (!d || typeof d !== 'object' || !d.error) error.response.data = { error: 'TeamLink is restarting for an update. Nothing was saved. Wait a minute and try again.', code: 'SERVER_RESTARTING' };
+  if (config && !isGet) {
+    const neverArrived = error.response && ([502, 503].includes(status) || (status === 500 && !error.response.data));
+    if (neverArrived) {
+      config.saveRetry = (config.saveRetry || 0) + 1;
+      if (config.saveRetry <= SAVE_WAIT_MS.length) {
+        // config is shared with the resent call below, so "is this the first wait" is noted here, before it changes
+        const first = config.saveRetry === 1;
+        if (first) { waitingSaves += 1; savingBar(true); }
+        await new Promise((resolve) => { setTimeout(resolve, SAVE_WAIT_MS[config.saveRetry - 1]); });
+        try {
+          const res = await api(config);
+          return res;
+        } finally {
+          // the nested call above finishes its own waits first; only the outermost one counts this save as done
+          if (first) { waitingSaves = Math.max(0, waitingSaves - 1); if (!waitingSaves) savingBar(false); }
+        }
+      }
+    }
+    // gave up (or a timeout): every screen shows why - the screens read err.response.data.error
+    if (error.response && [502, 503, 504].includes(status)) {
+      const d = error.response.data;
+      if (!d || typeof d !== 'object' || !d.error) error.response.data = { error: status === 504 ? 'TeamLink took too long to answer. Check whether it was saved before trying again.' : 'TeamLink is restarting for an update and did not come back in time. Nothing was saved. Try again in a minute.', code: 'SERVER_RESTARTING' };
+    }
+    throw error;
   }
-  if (!config || (config.method || 'get').toLowerCase() !== 'get' || !unreachable) throw error;
+  if (!config || !unreachable) throw error;
   config.retryCount = (config.retryCount || 0) + 1;
   if (config.retryCount > RETRY_DELAYS.length) throw error;
   await new Promise((resolve) => { setTimeout(resolve, RETRY_DELAYS[config.retryCount - 1]); });

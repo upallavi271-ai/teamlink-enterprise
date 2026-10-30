@@ -351,7 +351,91 @@ keep_live_migration_bytes() {   # package_migrations_dir  live_migrations_dir
   return 0
 }
 
-deploy_teamlink() {   # new commit
+# ---- TeamLink deploy WITHOUT a long stop (founder 2026-10-30: "update ledha server restart avuthuntey vallu edit chesindhii antha pothundhii ...
+# akkada ayiteyy updates chestunamoo aa okate restart avalii kanii motham entire application restart avodhuuu") --------------------------------
+# Before: TeamLink was STOPPED first and stayed down for the install, the migrations and the screen build (1-3 minutes on every push), so a
+# save pressed in that window was lost. Now the new release is made READY next to the live one while TeamLink keeps running:
+#   only the screens changed  ->  the new screens are built aside and swapped in; the server is NOT stopped at all
+#   the server changed        ->  built aside (packages, Prisma client); TeamLink stops only for the switch, the migrations and the start (seconds)
+# A Job Portal change (it runs inside TeamLink's process, with its own database) and a first deploy keep the full path in deploy_teamlink.
+deploy_teamlink_fast() {   # commit  be(0/1)  fe(0/1)  backupdir
+  local c=$1 be=$2 fe=$3 BK=$4 PKG="$STATE/pkg"
+  local NEWB="$LIVE/backend-new-$STAMP" NEWF="$LIVE/frontend-new-$STAMP" OLDB="$LIVE/backend-old-$STAMP" OLDF="$LIVE/frontend-old-$STAMP"
+  local what; what="$([ "$be" = 1 ] && echo 'server ')$([ "$fe" = 1 ] && echo 'screens')"
+  log "TeamLink deploy of ${c:0:8} starting (${what}; backup $BK): made ready while TeamLink keeps running"
+  rm -f "$STATE/switched"
+  (
+    set -e
+    S() { echo "$1" > "$STATE/laststep"; }
+    rm -rf "$NEWB" "$NEWF"
+    if [ "$fe" = 1 ]; then
+      S "building the screens (TeamLink still running)"
+      cp -a "$PKG/frontend" "$NEWF"; cd "$NEWF"
+      # the same packages: hard links of the live ones (instant); the build cache is removed first so nothing is written into a live file
+      if cmp -s "$LIVE/frontend/package-lock.json" package-lock.json && [ -d "$LIVE/frontend/node_modules" ]; then cp -al "$LIVE/frontend/node_modules" node_modules; rm -rf node_modules/.vite node_modules/.cache; else npm install --no-audit --no-fund; fi
+      npm run build
+      [ -f dist/index.html ] || { echo "the screen build made no dist/index.html"; exit 1; }
+    fi
+    if [ "$be" = 1 ]; then
+      S "preparing the server (TeamLink still running)"
+      cp -a "$PKG/backend" "$NEWB"; cd "$NEWB"
+      # hard links of the live packages; the generated Prisma client is removed from the NEW copy first, so "prisma generate" writes new files
+      # and never into the files the running server uses
+      if cmp -s "$LIVE/backend/package-lock.json" package-lock.json && [ -d "$LIVE/backend/node_modules" ]; then cp -al "$LIVE/backend/node_modules" node_modules; rm -rf node_modules/.prisma; else npm install --no-audit --no-fund; fi
+      npx prisma generate
+      S "switching the server (TeamLink stops for a few seconds)"
+      echo 1 > "$STATE/switched"
+      pm2 stop "$PM2_NAME"
+      mv "$LIVE/backend" "$OLDB"; mv "$NEWB" "$LIVE/backend"
+      cp "$OLDB/.env" "$LIVE/backend/.env"
+      # the live database is KEPT, with its WAL files (see deploy_teamlink); TeamLink is stopped here, so they are consistent
+      rm -f "$LIVE/backend/prisma/dev.db-wal" "$LIVE/backend/prisma/dev.db-shm"
+      cp "$OLDB/prisma/dev.db" "$LIVE/backend/prisma/dev.db"
+      for f in dev.db-wal dev.db-shm; do if [ -f "$OLDB/prisma/$f" ]; then cp "$OLDB/prisma/$f" "$LIVE/backend/prisma/$f"; fi; done
+      rsync -a --ignore-existing --exclude=node_modules --exclude=/src --exclude=/scripts --exclude=/test-fixtures --exclude=/prisma/migrations --exclude='*.db-wal' --exclude='*.db-shm' --exclude='*.db-journal' "$OLDB/" "$LIVE/backend/"
+      S "database migrations"; cd "$LIVE/backend" && npx prisma migrate deploy
+      if [ "$fe" = 1 ]; then mv "$LIVE/frontend" "$OLDF"; mv "$NEWF" "$LIVE/frontend"; fi
+      S restarting; pm2 restart "$PM2_NAME" --update-env && pm2 save
+      sleep 3
+    else
+      S "switching the screens (the server keeps running)"
+      echo 1 > "$STATE/switched"
+      mv "$LIVE/frontend" "$OLDF"; mv "$NEWF" "$LIVE/frontend"
+    fi
+  ) >>"$LOG" 2>&1
+  local rc=$? switched=0 healthy=0
+  [ -f "$STATE/switched" ] && switched=1
+  if [ $rc -eq 0 ]; then
+    if [ "$be" = 1 ]; then health_teamlink && healthy=1; else [ -f "$LIVE/frontend/dist/index.html" ] && healthy=1; fi
+  fi
+  if [ $healthy = 1 ]; then
+    log "TeamLink is healthy on ${c:0:8} ($([ "$be" = 1 ] && echo 'server restarted once, for seconds' || echo 'screens only: the server was not restarted'))"
+    if [ "$be" = 1 ]; then rsync -ac --delete --exclude-from="$STATE/exclude-backend.txt" "$LIVE/backend/" "$STATE/base/teamlink-backend/"; fi
+    if [ "$fe" = 1 ]; then rsync -ac --delete --exclude-from="$STATE/exclude-frontend.txt" "$PKG/frontend/" "$STATE/base/teamlink-frontend/"; fi
+    rm -rf "$NEWB" "$NEWF"
+    ls -dt "$LIVE"/backend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
+    ls -dt /root/teamlink-backups/*-before-auto-deploy 2>/dev/null | tail -n +11 | xargs -r rm -rf
+    ls -dt "$LIVE"/frontend-old-* 2>/dev/null | tail -n +4 | xargs -r rm -rf
+    return 0
+  fi
+  local step; step=$(cat "$STATE/laststep" 2>/dev/null || echo "the health check")
+  if [ $switched = 0 ]; then
+    # nothing live was touched: the running TeamLink is the old release, as it was
+    rm -rf "$NEWB" "$NEWF"
+    alert "TeamLink deploy of ${c:0:8} FAILED while $step. Nothing was switched: the live site kept running the previous release."
+    return 1
+  fi
+  alert "TeamLink deploy of ${c:0:8} FAILED (step: $step). Rolling back to the previous release."
+  if [ "$be" = 0 ]; then
+    if ( cd "$LIVE" && [ -d "$OLDF" ] && { if [ -d frontend ]; then mv frontend "frontend-failed-$STAMP"; fi; mv "$OLDF" frontend; } ) >>"$LOG" 2>&1; then
+      log "the previous screens are back (the server was never stopped)"
+    else alert "AUTOMATIC ROLLBACK DID NOT COMPLETE: put frontend-old-$STAMP back by hand"; fi
+  elif rollback_teamlink "$STAMP"; then log "rolled back to the previous release (failed release kept as backend-failed-$STAMP)"
+  else alert "AUTOMATIC ROLLBACK DID NOT COMPLETE: run the rollback by hand (backend-old-$STAMP)"; fi
+  return 1
+}
+
+deploy_teamlink() {   # new commit  [changed areas]
   local PKG="$STATE/pkg" BK="/root/teamlink-backups/$STAMP-before-auto-deploy" step="packaging"
   rm -rf "$PKG"; mkdir -p "$PKG/backend" "$PKG/frontend"
   rsync -a --exclude-from="$STATE/exclude-backend.txt"  "$SRC/backend/"  "$PKG/backend/"
@@ -372,6 +456,13 @@ deploy_teamlink() {   # new commit
   mkdir -p "$BK" && cp "$LIVE/backend/prisma/dev.db" "$BK/dev.db" && for f in dev.db-wal dev.db-shm; do if [ -f "$LIVE/backend/prisma/$f" ]; then cp "$LIVE/backend/prisma/$f" "$BK/$f"; fi; done && cp "$LIVE/backend/.env" "$BK/.env" || { alert "backup failed: deploy stopped"; return 1; }
   local UPL; UPL=$(sed -n 's/^UPLOAD_DIR=//p' "$LIVE/backend/.env" | tail -1 | tr -d '\042\047\r'); UPL=${UPL:-$HOME/.teamlink-uploads}
   [ -d "$UPL/resumes" ] && tar -czf "$BK/resumes.tar.gz" -C "$UPL" resumes
+  # no Job Portal change and a live release to build next to: the deploy without a long stop (deploy_teamlink_fast above)
+  local areas=" ${2:-backend frontend job-portal-app} " be=0 fe=0
+  [[ $areas == *" backend "* ]] && be=1
+  [[ $areas == *" frontend "* ]] && fe=1
+  if [[ $areas != *" job-portal-app "* ]] && [ $((be + fe)) -gt 0 ] && [ -d "$LIVE/backend/node_modules" ] && [ -d "$LIVE/frontend" ]; then
+    deploy_teamlink_fast "$1" "$be" "$fe" "$BK"; return $?
+  fi
   log "TeamLink deploy of ${1:0:8} starting (backup $BK)"
   (
     set -e
@@ -502,7 +593,7 @@ deploy_if_new() {
   log "new commit ${new:0:8} on $BRANCH (was ${old:0:8}); changed areas: ${paths:-none}"
   local ok=1
   # NOT "func || ok=0": inside an || list bash switches set -e off for the whole function, and a failed build would go unnoticed
-  if echo " $paths " | grep -Eq ' (backend|frontend|job-portal-app) '; then deploy_teamlink "$new"; [ $? -eq 0 ] || ok=0; fi
+  if echo " $paths " | grep -Eq ' (backend|frontend|job-portal-app) '; then deploy_teamlink "$new" "$paths"; [ $? -eq 0 ] || ok=0; fi
   if [ $ok = 1 ] && sub_used green-start-app && echo " $paths " | grep -Eq ' (green-start-app|green-start-helpers) '; then deploy_greenstart "$new" "$old"; [ $? -eq 0 ] || ok=0; fi
   if [ "$DRY" = 1 ]; then return 0; fi
   if [ $ok = 1 ]; then echo "$new" > "$STATE/deployed-commit"; rm -f "$STATE/failed-commit" "$STATE/ALERT"; status "deployed ${new:0:8}"; log "DONE: ${new:0:8} is live"

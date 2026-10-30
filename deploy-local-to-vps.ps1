@@ -39,7 +39,7 @@ $Archive = "$env:TEMP\teamlink-deploy.tar.gz"
 $Date = Get-Date -Format "yyyy-MM-dd-HHmmss"
 
 $RemotePackage = "/root/teamlink-deploy.tar.gz"
-$RemoteDeployNew = "/root/teamlink-deploy-new"
+$RemoteDeployNew = "$VpsRoot/release-new"   # next to the live folders (same disk): the switch is a rename and the packages can be hard links
 $RemoteBackup = "/root/teamlink-backups/$Date-before-local-deploy"
 
 $OldBackend = "$VpsRoot/backend-old-$Date"
@@ -467,18 +467,49 @@ Write-Host "VPS backup successful" -ForegroundColor Green
 Write-Host "Backup: $RemoteBackup" -ForegroundColor Yellow
 
 # ------------------------------------------------------------
-# From here on the live site is DOWN until it is restarted, so any failure rolls
-# back to the previous release automatically (see Invoke-VpsRollback above).
+# 2026-10-30 (founder: "update ledha server restart avuthuntey vallu edit chesindhii antha pothundhii ... motham entire application
+# restart avodhuuu"): the new release is made READY next to the live one FIRST - unpacked, its packages, its Prisma client and the
+# screens built - while TeamLink keeps running. TeamLink is stopped only for the switch, the migrations and the start (seconds, not
+# minutes). A failure while preparing changes nothing live: the site keeps running the previous release.
+# After the stop, any failure rolls back to the previous release automatically (see Invoke-VpsRollback above).
 # ------------------------------------------------------------
-$DeployStep = "stopping TeamLink"
+$DeployStep = "preparing the new release (TeamLink still running)"
+$Switched = $false
 try {
+
+Write-Host ""
+Write-Host "[6/10] Preparing the new release next to the live one (TeamLink keeps running)..." -ForegroundColor Cyan
+$PrepCmd = @'
+set -e
+NEW=__NEW__
+LIVE=__VPSROOT__
+rm -rf $NEW && mkdir -p $NEW && tar -xzf __PKG__ -C $NEW
+cd $NEW/backend
+# the same packages as live: hard links (instant); the generated Prisma client is removed from the NEW copy first, so "prisma generate"
+# writes new files and never into the files the running server uses
+if cmp -s $LIVE/backend/package-lock.json package-lock.json && [ -d $LIVE/backend/node_modules ]; then { cp -al $LIVE/backend/node_modules node_modules 2>/dev/null || { rm -rf node_modules; cp -a $LIVE/backend/node_modules node_modules; }; }; rm -rf node_modules/.prisma; echo "backend packages: same as live"; else npm install --no-audit --no-fund; fi
+npx prisma generate
+cd $NEW/frontend
+if cmp -s $LIVE/frontend/package-lock.json package-lock.json && [ -d $LIVE/frontend/node_modules ]; then { cp -al $LIVE/frontend/node_modules node_modules 2>/dev/null || { rm -rf node_modules; cp -a $LIVE/frontend/node_modules node_modules; }; }; rm -rf node_modules/.vite node_modules/.cache; echo "screen packages: same as live"; else npm install --no-audit --no-fund; fi
+npm run build
+[ -f dist/index.html ] || { echo "the screen build made no dist/index.html"; exit 1; }
+echo NEW RELEASE READY
+'@
+($PrepCmd.Replace("`r", "").Replace('__NEW__', $RemoteDeployNew).Replace('__VPSROOT__', $VpsRoot).Replace('__PKG__', $RemotePackage) + "`n") | ssh $VpsHost 'bash -s'
+if ($LASTEXITCODE -ne 0) {
+    throw "The new release could not be prepared (see the lines above)."
+}
+Write-Host "New release ready (packages, Prisma client, screens built) - the live site was not stopped" -ForegroundColor Green
+
+$DeployStep = "stopping TeamLink"
+$Switched = $true
 
 # ------------------------------------------------------------
 # STOP TEAMLINK ONLY
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[6/10] Stopping TeamLink..." -ForegroundColor Cyan
+Write-Host "[7/10] Stopping TeamLink (only for the switch: seconds)..." -ForegroundColor Cyan
 
 ssh $VpsHost "pm2 stop teamlink-enterprise"
 
@@ -494,10 +525,10 @@ Write-Host "HRMS was NOT stopped" -ForegroundColor Green
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[7/10] Deploying new code..." -ForegroundColor Cyan
+Write-Host "Switching to the new release..." -ForegroundColor Cyan
 $DeployStep = "deploying the new code"
 
-$DeployCommand = "rm -rf '$RemoteDeployNew' && mkdir -p '$RemoteDeployNew' && tar -xzf '$RemotePackage' -C '$RemoteDeployNew' && mv '$VpsRoot/backend' '$OldBackend' && mv '$VpsRoot/frontend' '$OldFrontend' && mv '$RemoteDeployNew/backend' '$VpsRoot/backend' && mv '$RemoteDeployNew/frontend' '$VpsRoot/frontend' && cp '$OldBackend/.env' '$VpsRoot/backend/.env' && rm -f '$VpsRoot/backend/prisma/dev.db-wal' '$VpsRoot/backend/prisma/dev.db-shm' && echo 'LOCAL CODE DEPLOYED'"
+$DeployCommand = "mv '$VpsRoot/backend' '$OldBackend' && mv '$VpsRoot/frontend' '$OldFrontend' && mv '$RemoteDeployNew/backend' '$VpsRoot/backend' && mv '$RemoteDeployNew/frontend' '$VpsRoot/frontend' && cp '$OldBackend/.env' '$VpsRoot/backend/.env' && rm -f '$VpsRoot/backend/prisma/dev.db-wal' '$VpsRoot/backend/prisma/dev.db-shm' && echo 'LOCAL CODE DEPLOYED'"
 
 ssh $VpsHost $DeployCommand
 
@@ -576,6 +607,8 @@ set -e
 R=__VPSROOT__
 mkdir -p $R/job-portal-app
 if [ -d $R/job-portal-app/job_portal-main ]; then tar -czf __BACKUP__/job-portal-code.tar.gz -C $R/job-portal-app --exclude=node_modules --exclude=var --exclude=run . && echo OLD PORTAL CODE BACKED UP; fi
+# 2026-10-30: the same portal code as live = nothing to install while TeamLink is stopped
+if [ -d $R/job-portal-app/job_portal-main ] && diff -rq --exclude=node_modules --exclude=var --exclude=run --exclude='*.log' __NEW__/job-portal-app $R/job-portal-app >/dev/null 2>&1; then echo JOB PORTAL CODE UNCHANGED - nothing to install; exit 0; fi
 cd __NEW__/job-portal-app && tar cf - . | (cd $R/job-portal-app && tar xf -)
 # 2026-10-22: the portal's own runtime (tools/dev-server.mjs: the embedded database @electric-sql/pglite, pg, js-yaml, smtp-server) is listed under
 # devDependencies in its package.json, so this root install MUST include them or the portal stops with "Cannot find package '@electric-sql/pglite'".
@@ -601,28 +634,14 @@ echo JOB PORTAL CODE UPDATED
     Write-Host "Job Portal code updated (its own database was not touched)" -ForegroundColor Green
 }
 
-# ------------------------------------------------------------
-# INSTALL BACKEND
-# ------------------------------------------------------------
-
-Write-Host ""
-Write-Host "[8/10] Installing backend dependencies..." -ForegroundColor Cyan
-$DeployStep = "installing backend dependencies"
-
-ssh $VpsHost "cd '$VpsRoot/backend' && npm install"
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Backend npm install failed."
-}
-
-Write-Host "Backend dependencies installed" -ForegroundColor Green
+# (the backend packages were installed while preparing, before the stop)
 
 # ------------------------------------------------------------
 # PRISMA MIGRATION
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[9/10] Applying Prisma migrations..." -ForegroundColor Cyan
+Write-Host "[8/10] Applying Prisma migrations..." -ForegroundColor Cyan
 $DeployStep = "applying Prisma migrations"
 
 # "database is locked" (2026-10-29): something else still had the database open. Try again for 2 minutes, and show who has it open.
@@ -649,58 +668,14 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "DATABASE MIGRATIONS SUCCESSFUL" -ForegroundColor Green
 
-# ------------------------------------------------------------
-# PRISMA GENERATE + FRONTEND BUILD
-# ------------------------------------------------------------
-
-Write-Host ""
-Write-Host "Generating Prisma client..." -ForegroundColor Yellow
-
-ssh $VpsHost "cd '$VpsRoot/backend' && npx prisma generate"
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Prisma generate failed."
-}
-
-Write-Host "Prisma client generated" -ForegroundColor Green
-
-Write-Host "Installing frontend dependencies..." -ForegroundColor Yellow
-
-ssh $VpsHost "cd '$VpsRoot/frontend' && npm install"
-
-if ($LASTEXITCODE -ne 0) {
-    throw "Frontend npm install failed."
-}
-
-Write-Host "Frontend dependencies installed" -ForegroundColor Green
-
-Write-Host "Building frontend..." -ForegroundColor Yellow
-$DeployStep = "building the frontend"
-
-ssh $VpsHost "cd '$VpsRoot/frontend' && npm run build"
-
-if ($LASTEXITCODE -ne 0) {
-
-    Write-Host ""
-    Write-Host "============================================================" -ForegroundColor Red
-    Write-Host "FRONTEND BUILD FAILED" -ForegroundColor Red
-    Write-Host "============================================================" -ForegroundColor Red
-    Write-Host ""
-
-    Write-Host "VPS BACKUP: $RemoteBackup" -ForegroundColor Yellow
-    Write-Host "The previous version will be put back automatically." -ForegroundColor Yellow
-
-    throw "Frontend build failed."
-}
-
-Write-Host "FRONTEND BUILD SUCCESSFUL" -ForegroundColor Green
+# (the Prisma client and the screens were built while preparing, before the stop)
 
 # ------------------------------------------------------------
 # RESTART TEAMLINK
 # ------------------------------------------------------------
 
 Write-Host ""
-Write-Host "[10/10] Restarting TeamLink..." -ForegroundColor Cyan
+Write-Host "[9/10] Starting TeamLink on the new release..." -ForegroundColor Cyan
 $DeployStep = "restarting TeamLink"
 
 ssh $VpsHost "cd '$VpsRoot/backend' && pm2 restart teamlink-enterprise --update-env && pm2 save"
@@ -774,6 +749,13 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "DEPLOY FAILED while: $DeployStep" -ForegroundColor Red
     Write-Host $Failure -ForegroundColor Red
     Write-Host "============================================================" -ForegroundColor Red
+    if (-not $Switched) {
+        # failed while preparing: nothing live was touched, TeamLink was never stopped
+        ssh $VpsHost "rm -rf '$RemoteDeployNew'"
+        Write-Host "Nothing was switched: the live site kept running the previous version (it was never stopped)." -ForegroundColor Green
+        ssh $VpsHost $SyncResumeCmd
+        throw "Deploy failed ($DeployStep): $Failure"
+    }
     Write-Host "Putting the PREVIOUS version back..." -ForegroundColor Yellow
 
     $RolledBack = $false
@@ -789,6 +771,19 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host "Database backup taken before this deploy: $RemoteBackup" -ForegroundColor Yellow
     ssh $VpsHost $SyncResumeCmd
     throw "Deploy failed ($DeployStep): $Failure"
+}
+ssh $VpsHost "rm -rf '$RemoteDeployNew'"
+# The VPS auto-sync gets this repo's deploy script too (2026-10-30: it builds the next release next to the live one and stops TeamLink
+# only for seconds; a change of the screens alone never stops it). Only when the auto-sync is installed; LF line endings for bash.
+$SyncScript = Join-Path $LocalRoot "deploy/vps/teamlink-sync.sh"
+if (Test-Path $SyncScript) {
+    $SyncTmp = Join-Path $env:TEMP "teamlink-sync.sh"
+    [System.IO.File]::WriteAllText($SyncTmp, ((Get-Content -Raw $SyncScript) -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
+    scp $SyncTmp "${VpsHost}:/root/teamlink-sync.sh.new" | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        ssh $VpsHost "if [ -d /opt/teamlink-sync ] && bash -n /root/teamlink-sync.sh.new; then install -m 755 /root/teamlink-sync.sh.new /opt/teamlink-sync/teamlink-sync.sh && echo 'VPS auto-sync script updated'; fi; rm -f /root/teamlink-sync.sh.new"
+    }
+    Remove-Item $SyncTmp -Force -ErrorAction SilentlyContinue
 }
 ssh $VpsHost $SyncResumeCmd
 
