@@ -40,11 +40,16 @@ export default function AiCallHistory({ candidate, refreshKey = 0 }) {
         </div>
       ))}
       <div className="row-actions" style={{ marginBottom: 8, alignItems: 'flex-end' }}>
-        {apps.length > 1 && (
-          <div style={{ minWidth: 200 }}>
-            <label className="small-muted">Requirement</label>
+        {apps.length > 0 && (
+          <div style={{ minWidth: 260 }}>
+            <label className="small-muted">{apps.length > 1 ? `Requirement (${apps.length} applications)` : 'Requirement'}</label>
+            {/* code · title · client: the same title at two clients must not look the same (2026-10-30) */}
             <Combo value={appId} onChange={(e) => setAppId(e.target.value)}>
-              {apps.map((a) => <option key={a.id} value={a.id}>{(a.requirement && a.requirement.title) || a.id}</option>)}
+              {apps.map((a) => {
+                const r = a.requirement || {};
+                const client = r.internal ? 'TeamLink' : (r.client && r.client.name);
+                return <option key={a.id} value={a.id}>{[r.reqCode, r.title, client].filter(Boolean).join(' · ') || a.id}</option>;
+              })}
             </Combo>
           </div>
         )}

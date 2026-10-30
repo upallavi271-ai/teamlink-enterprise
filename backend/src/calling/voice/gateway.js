@@ -20,9 +20,18 @@ const E = require('./engines');
 const svc = require('../callService');
 
 const VIA = 'sip';
-const GAP_MS = 80; // a short breath between sentences (kept short: a slow assistant sounds unnatural)
+// a short, EVEN breath between sentences. Each sentence's own silence at the start / end is trimmed first (Piper left up to
+// 280 ms at the end, so the pause between sentences used to swing from 100 to 360 ms - 2026-10-30 "gaps lekunda").
+const GAP_MS = 150;
 const cache = new Map(); // `${lang}|${sentence}` -> 8 kHz PCM
 const CACHE_MAX = 3000;
+// DISK COPY (2026-10-30): a sentence made once is kept on disk, so after a restart / deploy it is ready at once and the
+// shared Hindi voice server is not asked again. Keyed by language + text + the engine's name (a new voice = new files).
+// AI_VOICE_CACHE_DIR (default: <tmp>/teamlink-voice-cache). Never required: a disk problem just means "make it again".
+const DISK = process.env.AI_VOICE_CACHE_DIR || require('path').join(require('os').tmpdir(), 'teamlink-voice-cache'); // eslint-disable-line global-require
+const diskName = (engines, key) => require('path').join(DISK, `${require('crypto').createHash('sha1').update(`${engines.name || ''}|v2|${key}`).digest('hex')}.pcm`); // eslint-disable-line global-require
+function diskGet(engines, key) { try { return require('fs').readFileSync(diskName(engines, key)); } catch { return null; } } // eslint-disable-line global-require
+function diskPut(engines, key, pcm) { try { const fs = require('fs'); fs.mkdirSync(DISK, { recursive: true }); fs.writeFileSync(diskName(engines, key), pcm); } catch { /* optional */ } } // eslint-disable-line global-require
 const log = (...a) => console.log('[ai-voice]', ...a); // eslint-disable-line no-console
 // AI_VOICE_DEBUG_FILE (test PCs only): what was heard / said, one line each, to see why a call went wrong. Holds speech text.
 const DEBUG = process.env.AI_VOICE_DEBUG_FILE || '';
@@ -83,26 +92,84 @@ function nativeAnswer(text, lang) {
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
 const talkTime = (sec) => (sec >= 60 ? `${Math.floor(sec / 60)} min ${sec % 60} s` : `${sec} s`);
 
-async function voiceOf(engines, sentence, lang) {
-  const k = `${lang}|${sentence}`;
-  if (cache.has(k)) return cache.get(k);
-  // names / English job words in the voice's own letters (speakScript.js): "Keerthi" -> కీర్తి, "office" -> ఆఫీస్
-  const pcm = await engines.tts(require('./speakScript').native(sentence, lang), lang); // eslint-disable-line global-require
-  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value);
-  cache.set(k, pcm);
-  return pcm;
+// CLEAR ON THE PHONE (2026-10-30: "voice clearity ga vundeylaaga, gaps lekunda"). Measured on our voices: English hit the
+// top of the scale (32767, it crackles on the line) and the three voices differed in loudness (English ~4000, Telugu up to
+// ~7100, Hindi ~6000). Every sentence is: trimmed of its own silence at both ends (40 ms kept), brought to one loudness, and
+// kept under a ceiling so nothing clips. Text and timing are unchanged.
+const TARGET_RMS = 5000; // the same loudness for every voice / language
+const CEILING = 26000; // never louder than this (the line distorts near 32767)
+function polish(pcm) {
+  const n = Math.floor(pcm.length / 2);
+  if (n < 160) return pcm;
+  const F = 160; // 20 ms frames at 8 kHz
+  const frames = [];
+  for (let i = 0; i + F <= n; i += F) { let sq = 0; for (let k = 0; k < F; k += 1) { const v = pcm.readInt16LE((i + k) * 2); sq += v * v; } frames.push(Math.sqrt(sq / F)); }
+  const loud = Math.max(...frames);
+  if (!loud) return pcm;
+  const th = Math.max(150, loud * 0.05);
+  let first = frames.findIndex((x) => x > th); if (first < 0) return pcm;
+  let last = frames.length - 1; while (last > first && frames[last] <= th) last -= 1;
+  first = Math.max(0, first - 2); last = Math.min(frames.length - 1, last + 2); // keep 40 ms of the soft start / end
+  const from = first * F; const to = Math.min(n, (last + 1) * F);
+  const voiced = frames.slice(first, last + 1);
+  const rms = Math.sqrt(voiced.reduce((a, x) => a + x * x, 0) / voiced.length) || 1;
+  let peak = 1; for (let i = from; i < to; i += 1) peak = Math.max(peak, Math.abs(pcm.readInt16LE(i * 2)));
+  const gain = Math.min(TARGET_RMS / rms, CEILING / peak, 4); // louder only up to 4x, never past the ceiling
+  const out = Buffer.alloc((to - from) * 2);
+  for (let i = from; i < to; i += 1) out.writeInt16LE(Math.max(-CEILING, Math.min(CEILING, Math.round(pcm.readInt16LE(i * 2) * gain))), (i - from) * 2);
+  return out;
+}
+
+// ONE QUEUE PER VOICE, the live call first (2026-10-30): the Hindi voice (Kokoro, on the server) makes one sentence at a
+// time. Sentences sent all at once were made in any order - the FIRST sentence of a goodbye waited 12 s behind the others -
+// and the background "prepare" work could hold up a live reply. Now each language's voice works through its own queue:
+// live sentences (high) in the order they are said, background preparing (low) only when nothing live is waiting.
+const lanes = new Map(); // lang -> { busy, high: [], low: [] }
+const pending = new Map(); // `${lang}|${sentence}` -> job (asked twice = made once; a live ask lifts a waiting low job)
+function pump(lang) {
+  const lane = lanes.get(lang);
+  if (!lane || lane.busy) return;
+  const job = lane.high.shift() || lane.low.shift();
+  if (!job) return;
+  lane.busy = true;
+  job.started = true;
+  Promise.resolve().then(() => job.engines.tts(require('./speakScript').native(job.sentence, lang), lang)) // eslint-disable-line global-require
+    .then((pcm) => { const out = polish(pcm); if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value); cache.set(job.key, out); diskPut(job.engines, job.key, out); job.resolve(out); })
+    .catch((e) => job.reject(e))
+    .finally(() => { pending.delete(job.key); lane.busy = false; pump(lang); });
+}
+function voiceOf(engines, sentence, lang, high = true) {
+  const key = `${lang}|${sentence}`;
+  if (cache.has(key)) return Promise.resolve(cache.get(key));
+  const saved = diskGet(engines, key);
+  if (saved && saved.length) { if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value); cache.set(key, saved); return Promise.resolve(saved); }
+  if (!lanes.has(lang)) lanes.set(lang, { busy: false, high: [], low: [] });
+  const lane = lanes.get(lang);
+  const had = pending.get(key);
+  if (had) {
+    if (high && !had.high && !had.started) { lane.low = lane.low.filter((j) => j !== had); had.high = true; lane.high.push(had); }
+    return had.promise;
+  }
+  const job = { key, sentence, engines, high, started: false };
+  job.promise = new Promise((resolve, reject) => { job.resolve = resolve; job.reject = reject; });
+  pending.set(key, job);
+  (high ? lane.high : lane.low).push(job);
+  pump(lang);
+  return job.promise;
 }
 
 // Make every sentence of one call before it is dialled (we know the name, job, date): no waiting during the call.
+// background work: low priority, never ahead of a live sentence
 async function prepare(engines, lines, lang) {
-  for (const l of lines) for (const s of sentences(l)) await voiceOf(engines, s, lang); // eslint-disable-line no-await-in-loop
+  for (const l of lines) for (const s of sentences(l)) await voiceOf(engines, s, lang, false); // eslint-disable-line no-await-in-loop
 }
 
 // EVERY sentence this call may need, made while the phone rings (2026-10-29: "chaala slow ga respond avuthundhi"): the
 // job's own lines first (name, intro, brief, questions), then the fixed replies. Kept, so later calls get them free.
-function prepareCall(engines, d) {
+// ownOnly: just this job's own lines (after a language switch - the fixed replies are made at start-up and kept on disk)
+function prepareCall(engines, d, { ownOnly = false } = {}) {
   const own = Object.values(d.B || {}).flat().filter((t) => typeof t === 'string' && t);
-  const fixed = Object.values(d.P || {}).filter((t) => typeof t === 'string' && t && !t.includes('{'));
+  const fixed = ownOnly ? [] : Object.values(d.P || {}).filter((t) => typeof t === 'string' && t && !t.includes('{'));
   return prepare(engines, [...own, ...fixed], d.language).catch((e) => log('prepare failed:', e.message));
 }
 // The fixed replies of every language, once when the gateway starts (idle time), so the first calls are quick too.
@@ -162,9 +229,13 @@ function handle(sock, engines, opts = {}) {
     const my = ++gen; // a newer reply (or a barge-in) cancels the rest of this one
     if (DEBUG && row) debug(`${row.id} says [${d.language}]: ${text}`);
     const t0 = Date.now(); let firstOut = true;
-    for (const s of sentences(text)) {
-      let pcm;
-      try { pcm = await voiceOf(engines, s, d.language); } catch (e) { log('tts failed:', e.message); continue; } // eslint-disable-line no-await-in-loop
+    // every sentence of the reply is made AT ONCE and played in order: the second is ready while the first plays (made one
+    // after another, a Hindi sentence took 2.4-3.3 s and left a hole in the middle of the reply - 2026-10-30)
+    const lang = d.language;
+    const jobs = sentences(text).map((s) => voiceOf(engines, s, lang).catch((e) => { log('tts failed:', e.message); return null; }));
+    for (const job of jobs) {
+      const pcm = await job; // eslint-disable-line no-await-in-loop
+      if (!pcm) continue;
       if (my !== gen || sock.destroyed) return;
       speaker.add(pcm); speaker.add(E.silence(GAP_MS));
       if (DEBUG && row && firstOut) { firstOut = false; debug(`${row.id} voice ready in ${Date.now() - t0} ms`); }
@@ -173,7 +244,10 @@ function handle(sock, engines, opts = {}) {
 
   // One answer (or a silence) -> the assistant's reply. A failing engine or database never leaves the line silent.
   async function reply(text, meta) {
+    const before = d.language;
     const out = await d.hear(text, meta);
+    // switched language: this job's lines in the new language are made in the background now, so the next replies are ready
+    if (d.language !== before && !out.done) prepareCall(engines, d, { ownOnly: true });
     await svc.setRow(row.id, { botStateJson: JSON.stringify({ ...d.snapshot(), done: !!out.done }) }).catch((e) => log('state not saved:', e.message));
     await keepTurns();
     await say(out.say);
@@ -317,4 +391,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { nativeAnswer, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { polish, nativeAnswer, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };

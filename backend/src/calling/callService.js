@@ -146,6 +146,7 @@ async function preview(user, { applicationId, purpose, language, fields }) {
     fields: script.fields,
     fieldError: script.error,
     candidate: { name: ctx.candidate.name, phoneMask: core.maskMobile(ctx.candidate.phone), stage: ctx.app.stage, job: ctx.requirement.title },
+    requirement: { code: ctx.requirement.reqCode || null, title: ctx.requirement.title, client: ctx.requirement.internal ? 'TeamLink' : ((ctx.requirement.client && ctx.requirement.client.name) || null) },
     scheduleVersion: version,
   };
 }

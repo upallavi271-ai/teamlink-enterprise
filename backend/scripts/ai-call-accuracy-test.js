@@ -145,6 +145,25 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   const wrong = cases.filter(([t, w]) => classify(t).intent !== w).map(([t, w]) => `${t}: ${classify(t).intent} (want ${w})`);
   ok(!wrong.length, `Y  ${cases.length} short answers read right (${cases.length - wrong.length}/${cases.length})`, wrong);
 
+  // ---- the requirement as written in the ATS (2026-10-30): facts read from the description, nothing guessed ----------
+  const descA = ['Requirements:', 'M.Tech CSE 4 members', 'PhD CSE 1 person', 'MCA 12 members', '13-08-2026', 'CSE - 40k', 'Physics - 20 -  25k',
+    'Fresher & 1 to 2 Experience Candidates Only Eligible', '', 'Location: Located on the way LB NAGAR TO MEHADIPANAM ROAD. BUS ROUTE NO 300', '',
+    'From the Edu - 2 requirement sheet (row 17).'].join('\n');
+  const rd = S.buildData({ candidate: { name: 'Ravi Kumar' }, requirement: { title: 'Faculty requirement', description: descA }, app: {} });
+  ok(rd.jobTitle === 'Faculty' && rd.location === 'LB Nagar to Mehadipanam Road' && rd.experience === '1 to 2 years', 'R1 title, place and experience are read from the description', rd);
+  ok(rd.needs === 'M.Tech CSE, PhD CSE, MCA' && rd.salary === 'CSE 40 thousand, Physics 20 to 25 thousand', 'R2 the subjects and the pay lines are read word for word (dates, counts, sheet notes left out)', [rd.needs, rd.salary]);
+  const rs = S.buildData({ candidate: { name: 'Ravi Kumar' }, requirement: { title: 'Nurse', location: 'Guntur', salary: '3 LPA', description: 'Location: Vizag\nPay 20k' }, app: {} });
+  ok(rs.location === 'Guntur' && rs.salary === '3 LPA', 'R3 a filled field always wins over the description', rs);
+  const rn = S.buildData({ candidate: { name: 'Ravi Kumar' }, requirement: { title: 'Staff Nurse' }, app: {} });
+  ok(!rn.location && !rn.needs && !rn.salary && !rn.experience, 'R4 no description, no fields: nothing is made up', rn);
+  const NS = require(path.join(B, 'src/calling/voice/speakScript'));
+  const said = NS.native('జాబ్ LB Nagar to Mehadipanam Road లో. M.Tech CSE, PhD. AI & ML.', 'Telugu');
+  ok(!/[A-Za-z]/.test(said) && /ఎల్ బీ/.test(said) && /ఎం టెక్/.test(said) && /సీ ఎస్ ఈ/.test(said) && /పీహెచ్‌డీ/.test(said), 'R5 Telugu voice gets letter names / degrees / places, not letter-by-letter guesses', said);
+  const P0 = require(path.join(B, 'src/calling/voice/gateway')).polish;
+  const tone = Buffer.alloc(16000); for (let i = 0; i < 8000; i += 1) tone.writeInt16LE(i < 1600 || i > 6400 ? 0 : Math.round(32767 * Math.sin(i / 3)), i * 2);
+  const pol = P0(tone); let pk = 0; for (let i = 0; i < pol.length / 2; i += 1) pk = Math.max(pk, Math.abs(pol.readInt16LE(i * 2)));
+  ok(pk <= 26000 && pol.length < tone.length * 0.75, 'R6 the voice is trimmed of its silent ends and never clips (peak <= 26000)', { pk, len: pol.length });
+
   // ---- the gateway's hearing rules -------------------------------------------------------------------------------------
   const G = require(path.join(B, 'src/calling/voice/gateway'));
   ok(G.clarityOf('Yes, I have', { logprob: -0.25, noSpeech: 0.05, ratio: 1.1 }) === 'clear', 'W1 a sure Whisper answer is clear');
