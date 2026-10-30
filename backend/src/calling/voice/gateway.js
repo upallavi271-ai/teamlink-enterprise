@@ -29,7 +29,7 @@ const CACHE_MAX = 3000;
 // shared Hindi voice server is not asked again. Keyed by language + text + the engine's name (a new voice = new files).
 // AI_VOICE_CACHE_DIR (default: <tmp>/teamlink-voice-cache). Never required: a disk problem just means "make it again".
 const DISK = process.env.AI_VOICE_CACHE_DIR || require('path').join(require('os').tmpdir(), 'teamlink-voice-cache'); // eslint-disable-line global-require
-const diskName = (engines, key) => require('path').join(DISK, `${require('crypto').createHash('sha1').update(`${engines.name || ''}|v2|${key}`).digest('hex')}.pcm`); // eslint-disable-line global-require
+const diskName = (engines, key) => require('path').join(DISK, `${require('crypto').createHash('sha1').update(`${engines.name || ''}|${engines.voiceId || ''}|v2|${key}`).digest('hex')}.pcm`); // eslint-disable-line global-require
 function diskGet(engines, key) { try { return require('fs').readFileSync(diskName(engines, key)); } catch { return null; } } // eslint-disable-line global-require
 function diskPut(engines, key, pcm) { try { const fs = require('fs'); fs.mkdirSync(DISK, { recursive: true }); fs.writeFileSync(diskName(engines, key), pcm); } catch { /* optional */ } } // eslint-disable-line global-require
 const log = (...a) => console.log('[ai-voice]', ...a); // eslint-disable-line no-console
