@@ -285,17 +285,25 @@ async function enforceEditWindow(employee) {
   return { allowed: true };
 }
 
+// COMPLETE = what the employee's form asks for is there (founder 2026-10-30: "employees entha complete chesina, HR ki
+// incomplete ani chupisthundhi; HR manual ga enter chesthe complete avuthundhi"). Two things kept it below 100% whatever the
+// employee did: the full Aadhaar number (NOT on their form - the law keeps it off; it was empty for every employee) and the
+// reporting manager (HR sets it). Neither is counted now; a submission waiting for HR's review counts as filled in.
 function completionPct(e) {
   const fields = [
-    'name', 'department', 'designation', 'reportingManagerId', 'location', 'phone', 'email', 'dateOfJoining',
+    'name', 'department', 'designation', 'location', 'phone', 'email', 'dateOfJoining',
     'dateOfBirth', 'gender', 'bloodGroup', 'addressLine1', 'city', 'state', 'postalCode',
     'emergencyContactName', 'emergencyContactPhone', 'branch', 'bankName', 'bankAccountNumber', 'ifscCode',
-    'panNumber', 'aadhaarNumber', 'educationDetails', 'skills',
+    'panNumber', 'educationDetails', 'skills',
   ];
   // A field HR has paused is not on the form, so it is not counted either.
   const paused = fieldDefs.pausedCols();
-  const counted = fields.filter((f) => !paused.has(f === 'aadhaarNumber' ? 'aadhaarNumber' : f));
-  const filled = counted.filter((f) => e[f]).length;
+  const counted = fields.filter((f) => !paused.has(f));
+  let sent = [];
+  try { sent = e.pendingChanges ? (typeof e.pendingChanges === 'string' ? JSON.parse(e.pendingChanges) : e.pendingChanges) : []; } catch { sent = []; }
+  const v = { ...e };
+  (Array.isArray(sent) ? sent : []).forEach((c) => { if (c && c.field) v[c.field] = c.to; });
+  const filled = counted.filter((f) => v[f] !== null && v[f] !== undefined && String(v[f]).trim() !== '').length;
   return counted.length ? Math.round((filled / counted.length) * 100) : 100;
 }
 
@@ -595,9 +603,11 @@ router.post('/me/unlock-request', async (req, res) => {
 router.get('/review-queue', requirePerm(null, 'hrms', 'Employee Management', 'view'), async (req, res) => {
   const where = departmentWhere(req);
 
+  // a person who has already left is not waiting for a profile review any more (founder 2026-10-30)
+  const stillHere = { employmentStatus: { notIn: ['Relieved', 'Exited', 'Terminated'] } };
   const [submitted, unlocks] = await Promise.all([
-    prisma.employee.findMany({ where: { ...where, pendingChanges: { not: null } }, orderBy: { updatedAt: 'asc' } }),
-    prisma.employee.findMany({ where: { ...where, unlockRequestStatus: 'Pending' }, orderBy: { updatedAt: 'asc' } }),
+    prisma.employee.findMany({ where: { AND: [where, stillHere, { pendingChanges: { not: null } }] }, orderBy: { updatedAt: 'asc' } }),
+    prisma.employee.findMany({ where: { AND: [where, stillHere, { unlockRequestStatus: 'Pending' }] }, orderBy: { updatedAt: 'asc' } }),
   ]);
   res.json({
     scope: scopeLabel(req),

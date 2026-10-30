@@ -56,6 +56,9 @@ function stageOf(record, employee, steps, day = today(), lwd = null) {
   if (s === 'Rejected') return { key: 'rejected', label: STAGES.rejected };
   if (s === 'Withdrawn') return { key: 'withdrawn', label: STAGES.withdrawn };
   if (s === 'Relieved') return { key: 'relieved', label: employee && employee.employmentStatus === 'Exited' ? 'Exited' : 'Relieved' };
+  // the person has ALREADY LEFT (status Exited / Relieved / Terminated, set by HR or by the exit itself): that is where the
+  // exit stays - never "Waiting for HR review" again because an approval step on the record was never closed (founder 2026-10-30)
+  if (employee && exitFlow.FINAL_STATUSES.includes(employee.employmentStatus)) return { key: 'relieved', label: employee.employmentStatus };
   if (s === PENDING) {
     const cur = (steps || []).find((x) => x.status === 'Pending');
     return { key: 'waiting', label: cur ? `Waiting for ${workflow.labelFor(cur.level).label}` : STAGES.waiting };
@@ -86,7 +89,8 @@ async function listRows(req) {
   const scoped = employeeRecordWhere(user);
   const mine = await workflow.recordIdsForParticipant(WF, user.id);
   const where = { type: 'RESIGNATION' };
-  if (req.query.include !== 'all') where.status = { in: OPEN };
+  // open exits only - and not of people who have already left (their exit is done, whatever the record still says)
+  if (req.query.include !== 'all') { where.status = { in: OPEN }; where.employee = { employmentStatus: { notIn: exitFlow.FINAL_STATUSES } }; }
   if (Object.keys(scoped).length) where.OR = mine.length ? [scoped, { id: { in: mine } }] : [scoped];
   const records = await prisma.employeeRecord.findMany({ where, include: { employee: true }, orderBy: { createdAt: 'desc' }, take: 2000 });
   if (!records.length) return [];
@@ -448,7 +452,7 @@ async function timelineOf({ record, employee, detail, steps, day, simple }) {
 }
 
 function eventsOf(audits) {
-  const WANT = /^(Exit date changed|Exit dates edited|Exit early release|Exit finalized WITHOUT|Exit sent back|Exit approval finished|Resignation (approved|rejected)|Direct Super Admin)/;
+  const WANT = /^(Reason for leaving recorded|Exit date changed|Exit dates edited|Exit early release|Exit finalized WITHOUT|Exit sent back|Exit approval finished|Resignation (approved|rejected)|Direct Super Admin)/;
   return audits.filter((a) => WANT.test(a.action)).map((a) => ({
     id: a.id, action: a.action, by: a.actorName || 'System', at: a.createdAt, from: a.fromValue, to: a.toValue, reason: a.reason || null,
   })).reverse();
@@ -522,6 +526,8 @@ async function buildView(req, ctx) {
   const actions = {
     canApprove: mayDecide, canReject: mayDecide, canSendBack: mayDecide, direct: canDirect && !canAct,
     canEditDate: desk(user) && !['Rejected', 'Withdrawn'].includes(record.status),
+    canEditReason: desk(user), // why they resigned / are leaving - HR writes or corrects it (founder 2026-10-30)
+    reasonList: desk(user) ? (((await require('./resignations').formConfig()).reasons) || []).filter((r) => r !== 'Other') : undefined, // eslint-disable-line global-require
     canFinalize: desk(user) && !!verdict && verdict.ok,
     finalizeBlocked: desk(user) && verdict && !verdict.ok ? verdict.message : null,
     canEarlyRelease: desk(user) && SERVING.includes(record.status) && !!lwd && lwd > day,
@@ -698,6 +704,43 @@ router.put('/:id/date', async (req, res, next) => {
 //   lastWorkingDate   the exit date                                  (through utils/exitDate.js setExitDate: attendance, leave, payroll, seat, F&F follow)
 // recalculate:true (and no explicit lastWorkingDate) moves the exit date to resignation date + notice days. A reason is always needed, every
 // field that moved gets its own audit row (old -> new, who, why), the people around the exit are told.
+// ---- WHY THEY ARE LEAVING (founder 2026-10-30: "endhuku resign chesaro, endhuku resign chesthunnaro, reason mention chese
+// option HR ki undali") ----------------------------------------------------------------------------------------------------
+// HR writes or corrects the reason (one of the configured reasons, or their own words) and the detail ("got a higher salary
+// at X", "moving to Chennai"). Any exit, any stage. The old and the new value are written to the history with who and when.
+// An exit with no resignation form (started by status or Relieve now) keeps it on the exit record itself - no resignation
+// date is made up.
+router.put('/:id/reason', async (req, res, next) => {
+  try {
+    if (!desk(req.user)) return plain(res, 403, 'Only HR or the Super Admin can write the reason for leaving.');
+    const ctx = await loadExit(req.params.id);
+    if (!ctx) return plain(res, 404, 'Exit not found');
+    const b = req.body || {};
+    const reason = clean(b.reason, 120);
+    const details = b.details === undefined ? undefined : (clean(b.details, 1000) || null);
+    if (!reason || reason.length < 3) return plain(res, 400, 'Pick or write the reason for leaving.');
+    const { record, detail } = ctx;
+    const listed = (((await require('./resignations').formConfig()).reasons) || []).filter((r) => r !== 'Other').includes(reason); // eslint-disable-line global-require
+    const before = detail ? (detail.reason === 'Other' && detail.reasonOther ? detail.reasonOther : detail.reason) : record.title;
+    if (detail) {
+      await prisma.resignationDetail.update({
+        where: { id: detail.id },
+        data: { reason: listed ? reason : 'Other', reasonOther: listed ? null : reason, ...(details !== undefined ? { comments: details } : {}) },
+      });
+    } else {
+      await prisma.employeeRecord.update({ where: { id: record.id }, data: { title: reason, ...(details !== undefined ? { detail: details } : {}) } });
+    }
+    const by = req.user;
+    await logAudit({
+      userId: by.id, actorName: by.name || by.email, action: 'Reason for leaving recorded', entity: 'EmployeeRecord', entityId: record.id,
+      field: 'reason', fieldLabel: 'Reason for leaving', fromValue: before || '(none)', toValue: reason,
+      // the history line reads "Reason for leaving recorded: Moving to Chennai - spouse transferred (was: Personal reasons)"
+      reason: `${reason}${details ? ` - ${details}` : ''}${before && before !== reason ? ` (was: ${before})` : ''}`.slice(0, 500),
+    });
+    res.json(await buildView(req, await loadExit(req.params.id)));
+  } catch (err) { next(err); }
+});
+
 router.put('/:id/dates', async (req, res, next) => {
   try {
     if (!desk(req.user)) return plain(res, 403, 'Only HR or the Super Admin can change these dates.');
