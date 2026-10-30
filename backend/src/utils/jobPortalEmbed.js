@@ -316,6 +316,7 @@ function status() {
 
 const CONFIG_TAG = `<script>window.TL_API_BASE=${JSON.stringify(`${BASE}/api`)};</script>`;
 const INTEGRATION_TAG = '<script src="teamlink-integration.js"></script>';
+const ADDON_TAG = `<script src="${BASE}/tl-addon/interview.js" defer></script>`;
 const CHARSET = '<meta charset="UTF-8">';
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 
@@ -323,6 +324,11 @@ function inject(html, kind) {
   let out = html;
   const at = out.indexOf(INTEGRATION_TAG);
   if (at >= 0) out = `${out.slice(0, at)}${CONFIG_TAG}\n${out.slice(at)}`;
+  // THE AI INTERVIEW ADD-ON (2026-10-30, job-portal-app/embed/interview-addon.js): steadier live capture, a background-voice check
+  // while the candidate answers, and the score + coaching screen at the end. Added to the portal's own pages, last in <body>;
+  // the portal's code is not changed.
+  const end = out.lastIndexOf('</body>');
+  if (kind === 'page' && at >= 0 && end >= 0) out = `${out.slice(0, end)}${ADDON_TAG}\n${out.slice(end)}`;
   const head = out.indexOf(CHARSET);
   if (kind === 'reset' && head >= 0) {
     const cut = head + CHARSET.length;

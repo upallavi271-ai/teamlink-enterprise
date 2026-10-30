@@ -398,6 +398,31 @@ export function teamlinkFrontRouter({ root, express }) {
   r.get('/api/integrations/teamlink/ping', (_req, res) => res.json({ ok: true, host: 'teamlink-embed', pid: process.pid }));
 
   /*
+   * THE AI INTERVIEW ADD-ON (founder 2026-10-30: "score candidate kii kuda kanipinchaliii thanuu akkada m mistake chestunaroo
+   * vallakii teluvalli and ekkada ee changes chesukondii anii kuda ai suuggest chyaliii inetrview complete ayinakaa").
+   *   GET /tl-addon/interview.js            the browser add-on (embed/interview-addon.js), added to the portal's pages by the TeamLink
+   *                                         proxy (backend/src/utils/jobPortalEmbed.js): steadier live capture, a background-voice
+   *                                         check while the candidate answers, and the score + coaching screen at the end.
+   *   GET /api/tl-interview/:id/coach       the candidate's OWN completed interview (their portal session; the database's row
+   *                                         rules decide what they may read): the score, and per question what was missing and
+   *                                         what to change - written by the portal's AI model when it has one (AI_API_KEY), by
+   *                                         plain rules otherwise. Cached per interview (job-portal-app/run/coach-cache.json).
+   * The portal's own code is not changed.
+   */
+  r.get('/tl-addon/interview.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'interview-addon.js'));
+  });
+  r.get('/api/tl-interview/:id/coach', wrap(async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const coach = await import(pathToFileURL(join(import.meta.dirname, 'interview-coach.mjs')).href);
+    const { withUser } = await portal();
+    const out = await coach.coachFor({ root: ROOT, req, withUser, interviewId: String(req.params.id) });
+    res.status(out.status || 200).json(out.body);
+  }));
+
+  /*
    * EVERY HRMS RECRUITER / TL IS A PORTAL RECRUITER (founder 2026-10-29: "ahh positions lo new ga add ina employee
    * kanipinchadamledhu"). TeamLink sends its active Recruiters / TLs / STLs (backend/src/utils/jobPortalRecruiters.js);
    * one without a portal login of the same email gets one through the portal's own staff_recruiter_create (0035, the
