@@ -194,7 +194,7 @@ export default function AiCallDialog({
           </div>
           <div className="small-muted" style={{ marginTop: 6 }}>These are facts from our records. The assistant says it is an AI, never says selected, hired or offered, and never promises anything.</div>
           <div className="section-label" style={{ margin: '12px 0 6px' }}>You may change</div>
-          {purpose === 'Screening' && (
+          {(purpose === 'Screening' || purpose === 'Job Match') && (
             <>
               <label className="small-muted" style={{ display: 'block', marginBottom: 4 }}>
                 <input type="checkbox" checked={fields.includeSalary} onChange={(e) => setFields({ ...fields, includeSalary: e.target.checked })} /> Tell the salary range (only if it is saved on the requirement)

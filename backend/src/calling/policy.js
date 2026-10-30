@@ -94,6 +94,14 @@ function aiInterviewOwed(app, now = new Date()) {
   return { ok: true, deadline: /^\d{4}-\d\d-\d\d$/.test(due) ? due : null };
 }
 
+// JOB MATCH (Job Portal calling): the person has (had) an application from the Job Portal / HR sourcing screening
+const PORTAL_PERSON_SOURCES = ['TeamLink Job Portal', 'Job Portal', 'HR Sourcing'];
+async function isPortalPerson(candidateId) {
+  if (!candidateId) return false;
+  const r = await DB.one(`SELECT COUNT(*) AS n FROM "Application" WHERE "candidateId" = ? AND "source" IN (${PORTAL_PERSON_SOURCES.map(() => '?').join(',')})`, candidateId, ...PORTAL_PERSON_SOURCES);
+  return !!(r && r.n);
+}
+
 // --- the person -----------------------------------------------------------------------------------------------------------------
 // ctx: { candidate, app, requirement, purpose, s (settings), now, jobSetting }
 async function personVerdict(ctx) {
@@ -126,9 +134,12 @@ async function personVerdict(ctx) {
   }
   if (ctx.jobSetting && ctx.jobSetting.enabled === 0) return refuse('job_off', 'AI calling is switched off for this requirement.');
   if (!app) return refuse('no_application', 'The candidate is not on this requirement.');
-  if (r && String(r.status || '') === 'CLOSED' && (purpose === 'Screening' || purpose === 'AI Interview Pending')) return refuse('job_closed', 'This requirement is closed.');
+  if (r && String(r.status || '') === 'CLOSED' && (S.screenLike(purpose) || purpose === 'AI Interview Pending')) return refuse('job_closed', 'This requirement is closed.');
   const stage = String(app.stage || '');
-  if (purpose === 'Screening') {
+  if (purpose === 'Job Match' && !(await isPortalPerson(c && c.id))) {
+    return refuse('not_portal', 'The job-match call is for people who applied through the TeamLink Job Portal.');
+  }
+  if (S.screenLike(purpose)) {
     if (CLOSED_STAGES.includes(stage)) return refuse('stage', 'This application is already closed.');
   } else if (purpose === 'AI Interview Pending') {
     const o = aiInterviewOwed(app, now);
@@ -179,6 +190,6 @@ function scheduleVersionOf(app) {
 }
 
 module.exports = {
-  aiInterviewOwed,
+  aiInterviewOwed, isPortalPerson,
   LIVE_INTERVIEW, CLOSED_STAGES, istParts, startOfIstDay, inWindow, nextWindowStart, windowVerdict, roleOf, roleAllows, phoneKey, personVerdict, limitVerdict, attemptsToday, dedupeKey, scheduleVersionOf, refuse,
 };

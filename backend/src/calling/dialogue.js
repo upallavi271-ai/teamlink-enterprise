@@ -28,6 +28,7 @@ const OUTCOMES = {
   'Interview Reminder': ['Confirmed', 'Reschedule Requested', 'Not Available', 'No Response'],
   // Interested = "I will take the AI interview"
   'AI Interview Pending': ['Interested', 'Not Interested', 'Call Back Later', 'Unclear'],
+  'Job Match': ['Interested', 'Not Interested', 'Call Back Later', 'Unclear'],
 };
 const INTENTS = ['stop', 'human', 'later', 'reschedule', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'no', 'yes', 'mixed', 'maybe', 'repeat', 'cant_hear', 'silence', 'unclear'];
 
@@ -367,7 +368,7 @@ class Dialogue {
       // after an answer (prefix), simply ask again; "sorry, I did not catch that" only when nothing was understood
       identity: prefix != null ? this.B.identity : this.P.identityAgain.replace('{name}', S.clean(this.data.name || this.data.firstName)),
       convenient: this.P.convenient,
-      intro: this.P.screenIntro.replace('{job}', S.clean(this.data.jobTitle)),
+      intro: this.B.intro,
       interest: this.P.interestQ,
       human_offer: this.P.interestMore,
       qExp: this.P.qExp,
@@ -503,7 +504,7 @@ class Dialogue {
     }
     if (k.intent === 'info_q' && !['resched_time', 'later_when', 'why_not'].includes(st.step) && !/^q/.test(st.step)) {
       const where = has(norm(text), ['where', 'location', 'address', 'kahan', 'कहाँ', 'कहां', 'ఎక్కడ']);
-      if (where && this.data.location && this.purpose === 'Screening') return { say: this.again(this.P.briefLoc.replace('{location}', S.clean(this.data.location))), done: false };
+      if (where && this.data.location && S.screenLike(this.purpose)) return { say: this.again(this.P.briefLoc.replace('{location}', S.clean(this.data.location))), done: false };
       if (where && this.data.interview && this.data.interview.location) return { say: this.again(this.P.ivInPerson.replace('{location}', S.clean(this.data.interview.location))), done: false };
       return { say: this.again(this.P.noInfo), done: false };
     }
@@ -638,7 +639,7 @@ class Dialogue {
     if (k.intent === 'yes') {
       st.identity = true; st.tries = 0;
       // a call-back: "we spoke earlier about the ... job" before "is this a good time?" (memory, 2026-10-30)
-      if (this.purpose === 'Screening') { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
+      if (S.screenLike(this.purpose)) { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
       if (this.purpose === 'AI Interview Pending') {
         st.step = 'proceed'; st.told = true;
         return { say: this.speak(this.B.aiNews, this.B.aiDue, this.P.aiHow, this.B.note, this.P.aiProceed), done: false };
@@ -807,7 +808,7 @@ class Dialogue {
     st.outcome = outcome;
     let line = sentence;
     if (!line) {
-      if (this.purpose === 'Screening') line = outcome === 'Interested' ? this.P.closeInterested : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
+      if (S.screenLike(this.purpose)) line = outcome === 'Interested' ? this.P.closeInterested : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
       else if (this.purpose === 'AI Interview Pending') line = outcome === 'Interested' ? this.P.aiYes : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
       else if (this.purpose === 'Shortlist Notification') line = outcome === 'Interested' ? this.P.shortYes : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
       else line = outcome === 'Confirmed' ? this.P.ivConfirmed : outcome === 'Not Available' ? this.P.ivNotAvail : this.P.ivNoReply;

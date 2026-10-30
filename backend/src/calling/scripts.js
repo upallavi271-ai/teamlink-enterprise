@@ -15,8 +15,12 @@
 const LANGS = ['English', 'Telugu', 'Hindi'];
 // 'AI Interview Pending' is a JOB PORTAL call (founder 2026-10-30: "job portal ai calling separate, ats ai calling separate"):
 // it is started from Candidates > New from job portal, never offered on the ATS AI Calling screens.
-const PURPOSES = ['Screening', 'Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending'];
-const PORTAL_PURPOSES = ['AI Interview Pending'];
+// 'Job Match' (Job Portal calling too): a Job Portal applicant is told about ANOTHER live requirement their profile fits; the
+// talk is the screening talk with its own opening line, and it needs consent like a screening call (not a service call).
+const PURPOSES = ['Screening', 'Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending', 'Job Match'];
+const PORTAL_PURPOSES = ['AI Interview Pending', 'Job Match'];
+// the purposes that run the screening talk (interest, years, city, notice, go ahead)
+const screenLike = (purpose) => purpose === 'Screening' || purpose === 'Job Match';
 const TRANSACTIONAL = new Set(['Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending']);
 const TZ = 'Asia/Kolkata';
 
@@ -44,6 +48,7 @@ const PH = {
     laterClose: "Okay, we'll call you later. Bye.",
     laterNoted: "Okay, {when}, got it. We'll call you then. Bye.",
     screenIntro: 'We have a {job} job open. Can I tell you a bit about it?',
+    matchIntro: "You had applied with TeamLink earlier. Your profile matches another opening, a {job} job. Can I tell you a bit about it?", // Job Match (Job Portal calling, 2026-10-30)
     briefLoc: 'The job is in {location}.',
     briefNeeds: "They need: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'Work mode is {workMode}.',
@@ -128,6 +133,7 @@ const PH = {
     laterClose: 'ठीक है, बाद में फिर कॉल करेंगे। बाय।',
     laterNoted: 'ठीक है, {when}, नोट कर लिया। तब कॉल करेंगे। बाय।',
     screenIntro: 'हमारे पास {job} की एक जॉब है। उसके बारे में थोड़ा बताऊँ?',
+    matchIntro: "आपने पहले टीमलिंक में अप्लाई किया था। आपकी प्रोफ़ाइल से मिलती एक और जॉब है, {job}। उसके बारे में थोड़ा बताऊँ?", // Job Match (Job Portal calling, 2026-10-30)
     briefLoc: 'जॉब {location} में है।',
     briefNeeds: "इन्हें चाहिए: {needs}।", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'वर्क मोड {workMode} है।',
@@ -212,6 +218,7 @@ const PH = {
     laterClose: 'సరే, తర్వాత మళ్ళీ కాల్ చేస్తాం. బై.',
     laterNoted: 'సరే, {when}, నోట్ చేసుకున్నా. అప్పుడు కాల్ చేస్తాం. బై.',
     screenIntro: 'మా దగ్గర {job} జాబ్ ఒకటి ఉంది. దాని గురించి కొంచెం చెప్పనా?',
+    matchIntro: "మీరు ఇంతకుముందు టీమ్‌లింక్‌లో అప్లై చేశారు. మీ ప్రొఫైల్‌కి సరిపోయే ఇంకో జాబ్ ఉంది, {job}. దాని గురించి కొంచెం చెప్పనా?", // Job Match (Job Portal calling, 2026-10-30)
     briefLoc: 'జాబ్ {location} లో.',
     briefNeeds: "వాళ్ళకి కావాల్సింది: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'వర్క్ మోడ్ {workMode}.',
@@ -460,7 +467,7 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
   B.ai = `${P.ai}${opts.recordingNotice ? ` ${P.noticeRec}` : ''}`;
   B.identity = fill(P.identity, { name });
   B.convenient = P.convenient;
-  B.intro = fill(P.screenIntro, { job: data.jobTitle });
+  B.intro = fill(purpose === 'Job Match' ? P.matchIntro : P.screenIntro, { job: data.jobTitle });
   const brief = [
     fill(P.briefLoc, { location: data.location }),
     data.skills ? '' : fill(P.briefNeeds, { needs: data.needs }),
@@ -498,7 +505,7 @@ function preview(purpose, language, data, fieldsIn, opts = {}) {
   const add = (key, text) => { if (text) lines.push({ key, text }); };
   add('ai', B.ai);
   add('identity', B.identity);
-  if (purpose === 'Screening') {
+  if (screenLike(purpose)) {
     add('convenient', B.convenient);
     add('intro', B.intro);
     add('brief', B.brief);
@@ -544,5 +551,5 @@ function checkTemplates() {
 }
 
 module.exports = {
-  LANGS, PURPOSES, PORTAL_PURPOSES, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
+  LANGS, PURPOSES, PORTAL_PURPOSES, screenLike, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
 };

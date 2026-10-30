@@ -10,6 +10,7 @@ export const PURPOSES = [
 // JOB PORTAL AI calling is separate from the ATS one (founder 2026-10-30): started only from Candidates > New from job portal.
 export const PORTAL_PURPOSES = [
   { key: 'AI Interview Pending', label: 'AI interview pending', hint: 'Reminds a Job Portal applicant to take the AI interview on the portal' },
+  { key: 'Job Match', label: 'Another matching job', hint: 'Tells a Job Portal applicant about another requirement their profile fits' },
 ];
 export const purposeLabel = (k) => ([...PURPOSES, ...PORTAL_PURPOSES].find((p) => p.key === k) || { label: k }).label;
 

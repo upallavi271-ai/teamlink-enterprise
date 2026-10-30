@@ -671,6 +671,41 @@ router.post('/applications/:id/ai-interview', perm(APPLICATIONS, 'create'), wrap
   return res.status(400).json({ error: "action must be 'send', 'result' or 'manual'" });
 }));
 
+// JOB MATCH (Job Portal AI calling, 2026-10-30): for one live requirement, the Job Portal applicants in this login's list
+// who are not on it yet and fit it (the ATS scorer, 50%+), best first. The screen adds the ticked people to the requirement
+// (POST /applications, with all its own rules) and then the AI calls them about it (purpose 'Job Match').
+router.get('/job-match', perm(APPLICATIONS, 'view'), wrap(async (req, res) => {
+  const requirementId = String(req.query.requirementId || '');
+  const requirement = await prisma.requirement.findFirst({
+    where: { AND: [{ id: requirementId }, { status: { in: REQUIREMENT_LIVE_STATUSES } }, requirementWhere(req.user)] },
+    include: { client: { select: { name: true } } },
+  });
+  if (!requirement) return res.status(404).json({ error: 'Pick a live requirement you work on.' });
+  const apps = await prisma.application.findMany({
+    where: { AND: [PORTAL_APPLICATION_FILTER, applicationWhere(req.user)] },
+    include: { candidate: true, requirement: { select: { title: true, reqCode: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const onIt = new Set((await prisma.application.findMany({ where: { requirementId }, select: { candidateId: true } })).map((a) => a.candidateId));
+  const seen = new Set();
+  const rows = [];
+  for (const a of apps) {
+    if (seen.has(a.candidateId) || onIt.has(a.candidateId)) continue;
+    seen.add(a.candidateId);
+    const fit = computeMatch(a.candidate, requirement).overall;
+    if (fit < 50) continue;
+    rows.push({
+      candidateId: a.candidateId, name: a.candidate.name, location: a.candidate.location || null,
+      experienceYears: a.candidate.experienceYears ?? null, appliedFor: [a.requirement.reqCode, a.requirement.title].filter(Boolean).join(' · '), fit,
+    });
+  }
+  rows.sort((x, y) => y.fit - x.fit);
+  return res.json({
+    requirement: { id: requirement.id, reqCode: requirement.reqCode, title: requirement.title, client: requirement.internal ? 'TeamLink Internal' : (requirement.client && requirement.client.name) || null, location: requirement.location },
+    rows: rows.slice(0, 100), total: rows.length,
+  });
+}));
+
 // AI Interview Score -> Recruiter Review (still before the ATS).
 router.post('/applications/:id/review', perm(APPLICATIONS, 'create'), wrap(async (req, res) => {
   const application = await loadScreenable(req, res);

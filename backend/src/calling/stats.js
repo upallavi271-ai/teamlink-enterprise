@@ -3,6 +3,7 @@
 // Counts are over the calls the signed-in person may see (their own scope), with the filters date / requirement / recruiter /
 // campaign / purpose / status. Test calls and live calls are kept apart (mode filter, default: live).
 // ---------------------------------------------------------------------------
+const S = require('./scripts');
 const DB = require('./schema');
 const svc = require('./callService');
 
@@ -39,8 +40,8 @@ async function dashboard(user, q = {}) {
       queued: count((x) => x.status === 'queued'),
       calling: count((x) => x.status === 'calling'),
       cancelled: count((x) => x.status === 'cancelled'),
-      interested: count((x) => x.purpose === 'Screening' && x.outcome === 'Interested'),
-      notInterested: count((x) => x.purpose === 'Screening' && x.outcome === 'Not Interested'),
+      interested: count((x) => S.screenLike(x.purpose) && x.outcome === 'Interested'),
+      notInterested: count((x) => S.screenLike(x.purpose) && x.outcome === 'Not Interested'),
       callbackRequests: count((x) => x.outcome === 'Call Back Later' || /call the candidate back/i.test(x.nextAction || '')),
       shortlistCalls: count((x) => x.purpose === 'Shortlist Notification'),
       shortlistInterested: count((x) => x.purpose === 'Shortlist Notification' && x.outcome === 'Interested'),
