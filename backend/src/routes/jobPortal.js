@@ -52,6 +52,7 @@ const {
 } = require('../utils/atsVocab');
 const { screenEvents, screeningOf, findDuplicates } = require('../utils/preAtsScreening');
 const { computeMatch } = require('../utils/matching');
+const { aiInterviewOwed } = require('../calling/policy'); // Job Portal AI calling (AI interview pending)
 const { hiringTypeOf } = require('../utils/joining');
 const { applyStageMove } = require('./applications');
 const { canMoveToStage } = require('../utils/permissions');
@@ -466,6 +467,10 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
       appliedAt: a.createdAt,
       imported: !!a.portalImportedAt,
       importedAt: a.portalImportedAt,
+      // JOB PORTAL AI CALLING (2026-10-30): may the AI remind them to take the AI interview? (calling/policy.js; the call
+      // itself checks consent, Do-not-call, test numbers and calling hours again)
+      aiCall: aiInterviewOwed(a),
+      aiInterviewDeadline: a.aiInterviewDeadline || null,
       // The screening before the ATS, and whether this login may work it.
       hiring: hiringTypeOf(a, a.requirement) === 'TeamLink Internal Hire' ? 'Internal' : 'Client',
       stageLabelWorkflow: stageLabelFor(a.stage, { internal: hiringTypeOf(a, a.requirement) === 'TeamLink Internal Hire' }),
@@ -664,6 +669,41 @@ router.post('/applications/:id/ai-interview', perm(APPLICATIONS, 'create'), wrap
     return res.json(await screeningReply(application.id));
   }
   return res.status(400).json({ error: "action must be 'send', 'result' or 'manual'" });
+}));
+
+// JOB MATCH (Job Portal AI calling, 2026-10-30): for one live requirement, the Job Portal applicants in this login's list
+// who are not on it yet and fit it (the ATS scorer, 50%+), best first. The screen adds the ticked people to the requirement
+// (POST /applications, with all its own rules) and then the AI calls them about it (purpose 'Job Match').
+router.get('/job-match', perm(APPLICATIONS, 'view'), wrap(async (req, res) => {
+  const requirementId = String(req.query.requirementId || '');
+  const requirement = await prisma.requirement.findFirst({
+    where: { AND: [{ id: requirementId }, { status: { in: REQUIREMENT_LIVE_STATUSES } }, requirementWhere(req.user)] },
+    include: { client: { select: { name: true } } },
+  });
+  if (!requirement) return res.status(404).json({ error: 'Pick a live requirement you work on.' });
+  const apps = await prisma.application.findMany({
+    where: { AND: [PORTAL_APPLICATION_FILTER, applicationWhere(req.user)] },
+    include: { candidate: true, requirement: { select: { title: true, reqCode: true } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const onIt = new Set((await prisma.application.findMany({ where: { requirementId }, select: { candidateId: true } })).map((a) => a.candidateId));
+  const seen = new Set();
+  const rows = [];
+  for (const a of apps) {
+    if (seen.has(a.candidateId) || onIt.has(a.candidateId)) continue;
+    seen.add(a.candidateId);
+    const fit = computeMatch(a.candidate, requirement).overall;
+    if (fit < 50) continue;
+    rows.push({
+      candidateId: a.candidateId, name: a.candidate.name, location: a.candidate.location || null,
+      experienceYears: a.candidate.experienceYears ?? null, appliedFor: [a.requirement.reqCode, a.requirement.title].filter(Boolean).join(' · '), fit,
+    });
+  }
+  rows.sort((x, y) => y.fit - x.fit);
+  return res.json({
+    requirement: { id: requirement.id, reqCode: requirement.reqCode, title: requirement.title, client: requirement.internal ? 'TeamLink Internal' : (requirement.client && requirement.client.name) || null, location: requirement.location },
+    rows: rows.slice(0, 100), total: rows.length,
+  });
 }));
 
 // AI Interview Score -> Recruiter Review (still before the ATS).

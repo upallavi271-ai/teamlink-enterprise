@@ -4,6 +4,7 @@ import api from '../../api';
 import Combo from '../Combo.jsx';
 import AiCallDialog from './AiCallDialog.jsx';
 import AiCallDetail from './AiCallDetail.jsx';
+import { CallbacksTab, QuestionsTab } from './AiCallbacks.jsx'; // 2026-10-30
 import {
   PURPOSES, purposeLabel, statusWord, STATUS_CLASS, when, minutes, errorOf,
 } from './aiCallingShared.js';
@@ -21,7 +22,7 @@ export default function AiCallingPage() {
   useEffect(() => {
     api.get('/ai-calling/status').then((r) => setStatus(r.data)).catch((e) => setErr(errorOf(e, 'AI calling is not available to this login.')));
   }, []);
-  const tabs = [['new', 'Call candidates'], ['calls', 'Calls'], ['offers', 'Offers'], ['numbers', 'Numbers']];
+  const tabs = [['new', 'Call candidates'], ['calls', 'Calls'], ['callbacks', 'Call-backs'], ['questions', 'Questions'], ['offers', 'Offers'], ['numbers', 'Numbers']];
   return (
     <div>
       <div className="page-head">
@@ -45,6 +46,8 @@ export default function AiCallingPage() {
       </div>
       {tab === 'new' && <NewCalls status={status} />}
       {tab === 'calls' && <Calls />}
+      {tab === 'callbacks' && <CallbacksTab />}
+      {tab === 'questions' && <QuestionsTab />}
       {tab === 'offers' && <Offers />}
       {tab === 'numbers' && <Numbers />}
     </div>

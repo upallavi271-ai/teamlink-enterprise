@@ -78,6 +78,30 @@ async function callOptOut(e164) {
   } catch { return false; }
 }
 
+// AI INTERVIEW PENDING (Job Portal calling, 2026-10-30): who still owes the Job Portal's AI interview. Only a Job Portal
+// applicant (they take it on the portal), before the AI interview step is over, with no result yet and the deadline not
+// past. The same answer feeds the Job Portal list's "AI call" button (routes/jobPortal.js).
+const PORTAL_SOURCE = 'TeamLink Job Portal';
+const AI_OWED_STAGES = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED'];
+function aiInterviewOwed(app, now = new Date()) {
+  if (!app) return { ok: false, why: 'The candidate is not on this requirement.' };
+  if (app.source !== PORTAL_SOURCE) return { ok: false, why: 'Only people who applied on the TeamLink Job Portal take the AI interview there.' };
+  if (!AI_OWED_STAGES.includes(String(app.stage || ''))) return { ok: false, why: 'The application is past the AI interview step.' };
+  if (app.aiInterviewScore != null || ['Completed', 'Manual Review Requested', 'Expired'].includes(app.aiInterviewStatus)) return { ok: false, why: 'The AI interview is already done.' };
+  const due = String(app.aiInterviewDeadline || '').slice(0, 10);
+  const today = new Date(now.getTime() + 330 * 60000).toISOString().slice(0, 10);
+  if (/^\d{4}-\d\d-\d\d$/.test(due) && due < today) return { ok: false, why: 'The AI interview deadline has passed. Extend it first.' };
+  return { ok: true, deadline: /^\d{4}-\d\d-\d\d$/.test(due) ? due : null };
+}
+
+// JOB MATCH (Job Portal calling): the person has (had) an application from the Job Portal / HR sourcing screening
+const PORTAL_PERSON_SOURCES = ['TeamLink Job Portal', 'Job Portal', 'HR Sourcing'];
+async function isPortalPerson(candidateId) {
+  if (!candidateId) return false;
+  const r = await DB.one(`SELECT COUNT(*) AS n FROM "Application" WHERE "candidateId" = ? AND "source" IN (${PORTAL_PERSON_SOURCES.map(() => '?').join(',')})`, candidateId, ...PORTAL_PERSON_SOURCES);
+  return !!(r && r.n);
+}
+
 // --- the person -----------------------------------------------------------------------------------------------------------------
 // ctx: { candidate, app, requirement, purpose, s (settings), now, jobSetting }
 async function personVerdict(ctx) {
@@ -110,10 +134,16 @@ async function personVerdict(ctx) {
   }
   if (ctx.jobSetting && ctx.jobSetting.enabled === 0) return refuse('job_off', 'AI calling is switched off for this requirement.');
   if (!app) return refuse('no_application', 'The candidate is not on this requirement.');
-  if (r && String(r.status || '') === 'CLOSED' && purpose === 'Screening') return refuse('job_closed', 'This requirement is closed.');
+  if (r && String(r.status || '') === 'CLOSED' && (S.screenLike(purpose) || purpose === 'AI Interview Pending')) return refuse('job_closed', 'This requirement is closed.');
   const stage = String(app.stage || '');
-  if (purpose === 'Screening') {
+  if (purpose === 'Job Match' && !(await isPortalPerson(c && c.id))) {
+    return refuse('not_portal', 'The job-match call is for people who applied through the TeamLink Job Portal.');
+  }
+  if (S.screenLike(purpose)) {
     if (CLOSED_STAGES.includes(stage)) return refuse('stage', 'This application is already closed.');
+  } else if (purpose === 'AI Interview Pending') {
+    const o = aiInterviewOwed(app, now);
+    if (!o.ok) return refuse('ai_interview', o.why);
   } else if (purpose === 'Shortlist Notification') {
     if (!s.shortlistStages.includes(stage)) return refuse('stage', 'The candidate is not at the shortlisted step, so the shortlist call is not allowed.');
   } else {
@@ -160,5 +190,6 @@ function scheduleVersionOf(app) {
 }
 
 module.exports = {
+  aiInterviewOwed, isPortalPerson,
   LIVE_INTERVIEW, CLOSED_STAGES, istParts, startOfIstDay, inWindow, nextWindowStart, windowVerdict, roleOf, roleAllows, phoneKey, personVerdict, limitVerdict, attemptsToday, dedupeKey, scheduleVersionOf, refuse,
 };

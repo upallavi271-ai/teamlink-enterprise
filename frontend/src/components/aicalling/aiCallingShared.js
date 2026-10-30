@@ -7,7 +7,12 @@ export const PURPOSES = [
   { key: 'Interview Notification', label: 'Tell them the interview time', hint: 'Uses the real booked interview' },
   { key: 'Interview Reminder', label: 'Interview reminder', hint: 'Reminds them of the booked interview' },
 ];
-export const purposeLabel = (k) => (PURPOSES.find((p) => p.key === k) || { label: k }).label;
+// JOB PORTAL AI calling is separate from the ATS one (founder 2026-10-30): started only from Candidates > New from job portal.
+export const PORTAL_PURPOSES = [
+  { key: 'AI Interview Pending', label: 'AI interview pending', hint: 'Reminds a Job Portal applicant to take the AI interview on the portal' },
+  { key: 'Job Match', label: 'Another matching job', hint: 'Tells a Job Portal applicant about another requirement their profile fits' },
+];
+export const purposeLabel = (k) => ([...PURPOSES, ...PORTAL_PURPOSES].find((p) => p.key === k) || { label: k }).label;
 
 export const STATUS_WORDS = {
   queued: 'Waiting', calling: 'On the phone', completed: 'Done', failed: 'Failed', busy: 'Busy', 'no-answer': 'No answer', cancelled: 'Cancelled',

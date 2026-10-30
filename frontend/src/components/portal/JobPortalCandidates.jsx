@@ -9,6 +9,8 @@ import AtsDataTools from '../AtsDataTools.jsx';
 import AppOmniPanel from '../omni/AppOmniPanel.jsx'; // the shared template library + applicant campaigns of the Job Portal (inside this screen, no sidebar entry)
 import SendManyDialog from '../messaging/SendMessage.jsx';
 import { DupChip, AlreadyInAtsChip } from '../duplicates/DupChip.jsx';
+import AiCallDialog from '../aicalling/AiCallDialog.jsx'; // JOB PORTAL AI calling (separate from the ATS one): AI interview pending
+import JobMatchDialog from './JobMatchDialog.jsx'; // JOB PORTAL AI calling: another matching job
 
 // ---------------------------------------------------------------------------
 // JOB PORTAL — the pre-ATS view of Candidates & Pipeline
@@ -76,6 +78,8 @@ export default function JobPortalCandidates({ onSentToAts }) {
   const [busy, setBusy] = useState('');
   const [tab, setTab] = useState('all');
   const [msgApplicants, setMsgApplicants] = useState(false);
+  const [aiCallIds, setAiCallIds] = useState(null); // application ids for the AI "AI interview pending" call
+  const [jobMatch, setJobMatch] = useState(null); // {} = pick a requirement first; { candidateId, name } = this person's matching jobs
   // ?source=Naukri (the Naukri card's "New from Naukri" link) opens this list already narrowed to that board.
   const [filters, setFilters] = useState(() => {
     try { return { ...EMPTY_FILTERS, origin: new URLSearchParams(window.location.search).get('source') || '' }; } catch { return EMPTY_FILTERS; }
@@ -152,6 +156,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
   }, [narrowed]);
   const filtered = useMemo(() => (tab === 'all' ? narrowed : narrowed.filter((a) => a.portalTab === tab)), [narrowed, tab]);
   const paged = usePaged(filtered);
+  const aiOwed = useMemo(() => filtered.filter((a) => a.aiCall && a.aiCall.ok), [filtered]);
   const filtersOn = JSON.stringify(filters) !== JSON.stringify(EMPTY_FILTERS);
 
   // Typing the URL is not access: an Accountant has no Job Portal at all.
@@ -202,6 +207,10 @@ export default function JobPortalCandidates({ onSentToAts }) {
         <button type="button" className="btn btn-sm" disabled={!filtersOn} onClick={() => setFilters(EMPTY_FILTERS)}>Clear filters</button>
         <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
           <AppOmniPanel app="Job Portal" />
+          {aiOwed.length > 0 && <button type="button" className="btn btn-sm" onClick={() => setAiCallIds(aiOwed.map((a) => a.id))} title="The AI assistant calls them and tells them how to take the AI interview on the Job Portal">{`📞 AI call: AI interview pending (${aiOwed.length})`}</button>}
+          {aiCallIds && <AiCallDialog applicationIds={aiCallIds} purpose="AI Interview Pending" onClose={() => setAiCallIds(null)} onDone={load} />}
+          {applications.length > 0 && <button type="button" className="btn btn-sm" onClick={() => setJobMatch({})} title="Pick a requirement, see who from this list fits it, add them and let the AI assistant call them">📞 Job match</button>}
+          {jobMatch && <JobMatchDialog person={jobMatch.candidateId ? jobMatch : null} onClose={() => setJobMatch(null)} onDone={load} />}
           {filtered.length > 0 && filtered.length <= 500 && <button type="button" className="btn btn-sm" onClick={() => setMsgApplicants(true)} title="Email, SMS or WhatsApp to the applicants shown below, or make it a campaign">Message these {filtered.length}</button>}
           {msgApplicants && <SendManyDialog app="Job Portal" audience="candidates" ids={[...new Set(filtered.map((a) => a.candidateId).filter(Boolean))]} note="Only people you may contact can be reached. You see who is left out, and why, before anything is sent." onClose={() => setMsgApplicants(false)} />}
           <AtsDataTools
@@ -242,6 +251,10 @@ export default function JobPortalCandidates({ onSentToAts }) {
                   {a.aiScore != null ? <b>{pct(a.aiScore)}</b> : <span className="small-muted">{a.screening?.aiInterviewStatus === 'Manual Review Requested' ? 'Recruiter will check' : (a.stage === 'AI_INTERVIEW_SCHEDULED' ? 'Sent' : '—')}</span>}
                 </td>
                 <td style={{ whiteSpace: 'nowrap' }}>
+                  {a.aiCall && a.aiCall.ok && (
+                    <button type="button" className="btn btn-sm btn-ghost" style={{ marginRight: 4 }} onClick={() => setAiCallIds([a.id])} title={`AI interview not taken yet${a.aiCall.deadline ? ` · last day ${a.aiCall.deadline}` : ''}. The AI assistant reminds them.`}>📞 AI call</button>
+                  )}
+                  <button type="button" className="btn btn-sm btn-ghost" style={{ marginRight: 4 }} onClick={() => setJobMatch({ candidateId: a.candidateId, name: a.candidate })} title="Other live requirements this person fits: add them to one and let the AI assistant call them">Other jobs</button>
                   {(() => {
                     if (a.portalTab === 'sent') return <Link className="small-muted" to={`/candidates/${a.candidateId}`}>{`On the requirement${a.importedAt ? ` · ${fmt(a.importedAt)}` : ''}`}</Link>;
                     if (!canImport || !a.mayScreen) return <span className="small-muted">{`${a.stageLabelWorkflow || a.stageLabel} · view only`}</span>;

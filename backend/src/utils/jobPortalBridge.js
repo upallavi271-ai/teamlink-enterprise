@@ -455,9 +455,44 @@ let lastRun = null;
 // TeamLink job on the portal is closed (closeOthers). Then applications made
 // on the portal in the last `pullDays` days are pulled and ingested — the
 // catch-up for anything the portal's push could not deliver.
+// THE PORTAL'S AI INTERVIEW ON THE ATS APPLICATION (2026-10-30). The candidate takes the AI interview on the Job Portal;
+// the portal sends its status with every pulled application (embed/teamlink-integration.mjs shapeApplication).
+//   completed   -> Completed + the score (unless a recruiter already put a result / asked for manual review)
+//   in_progress -> Started   (only from Required / Scheduled: never moves a result back)
+//   abandoned / not_started -> no status change; the portal deadline is copied so reminder calls know it
+// Returns true when something changed. Never fatal for the sync.
+const AI_FINAL = ['Completed', 'Manual Review Requested', 'Expired'];
+async function syncAiInterview(applicationId, iv) {
+  if (!iv || typeof iv !== 'object') return false;
+  const app = await prisma.application.findUnique({ where: { id: applicationId }, select: { id: true, aiInterviewStatus: true, aiInterviewScore: true, aiInterviewDeadline: true } });
+  if (!app) return false;
+  const data = {};
+  // the ATS keeps the deadline as an India-time day (YYYY-MM-DD), as Extend deadline writes it
+  const due = iv.dueAt && !Number.isNaN(new Date(iv.dueAt).getTime()) ? new Date(new Date(iv.dueAt).getTime() + 330 * 60000).toISOString().slice(0, 10) : null;
+  if (due && !app.aiInterviewDeadline) data.aiInterviewDeadline = due;
+  const score = Number.isFinite(Number(iv.score)) && iv.score !== null ? Math.max(0, Math.min(100, Math.round(Number(iv.score)))) : null;
+  if (iv.status === 'completed' && !AI_FINAL.includes(app.aiInterviewStatus) && app.aiInterviewScore == null) {
+    data.aiInterviewStatus = 'Completed';
+    if (score != null) data.aiInterviewScore = score;
+  } else if (iv.status === 'in_progress' && ['Required', 'Scheduled', null, undefined].includes(app.aiInterviewStatus)) {
+    data.aiInterviewStatus = 'Started';
+  }
+  if (!Object.keys(data).length) return false;
+  await prisma.application.update({ where: { id: app.id }, data });
+  if (data.aiInterviewStatus) {
+    await prisma.auditLog.create({
+      data: {
+        entity: 'Application', entityId: app.id, action: 'AI interview (Job Portal)', fromValue: app.aiInterviewStatus || 'Required',
+        toValue: data.aiInterviewScore != null ? `${data.aiInterviewStatus} (${data.aiInterviewScore}%)` : data.aiInterviewStatus,
+      },
+    }).catch(() => {});
+  }
+  return true;
+}
+
 async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system' } = {}) {
   const started = new Date();
-  const out = { ok: true, jobs: 0, closed: 0, pruned: 0, failed: 0, pulled: 0, created: 0, stageUpdates: 0, errors: [], error: null };
+  const out = { ok: true, jobs: 0, closed: 0, pruned: 0, failed: 0, pulled: 0, created: 0, stageUpdates: 0, aiInterviews: 0, errors: [], error: null };
   // every HRMS Recruiter / TL has a portal recruiter login with the same email (utils/jobPortalRecruiters.js); never stops the sync
   // ...and a mailbox mapped to a position follows that position's holder (utils/mailboxSeats.js)
   require('./jobPortalRecruiters').ensureQuietly().then(() => require('./mailboxSeats').reconcileQuietly()); // eslint-disable-line global-require
@@ -504,6 +539,9 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
         out.errors.push(`portal application ${(a.application && (a.application.reference || a.application.id)) || '?'}: ${r.body && r.body.error}`);
         continue;
       }
+      // the portal's AI interview -> the ATS application (who still has to take it / who already did)
+      // eslint-disable-next-line no-await-in-loop
+      if (r.body && r.body.applicationId && await syncAiInterview(r.body.applicationId, a.application && a.application.aiInterview).catch(() => false)) out.aiInterviews += 1;
       // STATUS BACK TO THE PORTAL: the applicant sees on the portal where
       // their application stands in the ATS.
       const atsStage = r.body && r.body.stage;
@@ -535,7 +573,7 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
   // always logged.
   const logStatus = out.ok && !out.failed && !out.errors.length ? 'Success' : 'Failed';
   const counts = `${out.jobs} requirement(s) live, ${out.closed} closed, ${out.pruned} removed (requirement deleted), ${out.failed} failed; `
-    + `${out.pulled} portal application(s) checked, ${out.created} new in the ATS, ${out.stageUpdates} status update(s) sent back.`;
+    + `${out.pulled} portal application(s) checked, ${out.created} new in the ATS, ${out.stageUpdates} status update(s) sent back, ${out.aiInterviews} AI interview update(s) received.`;
   const reason = out.ok
     ? `Job Portal sync (${actor}): ${counts}${out.errors.length ? ` ${out.errors.length} problem(s): ${out.errors.slice(0, 3).join('; ')}` : ''}`
     : `Job Portal sync (${actor}) failed: ${out.error}`;
@@ -595,6 +633,6 @@ async function ping() {
 }
 
 module.exports = {
-  portalUrl, portalJobId, jobUrl, secretMatches, pushRequirement, ingestApplication, fullSync,
+  portalUrl, portalJobId, jobUrl, secretMatches, pushRequirement, ingestApplication, fullSync, syncAiInterview,
   startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi, portalFetch,
 };

@@ -3,7 +3,8 @@ import api from '../../api';
 import Combo from '../Combo.jsx';
 import AiCallDialog from './AiCallDialog.jsx';
 import AiCallDetail from './AiCallDetail.jsx';
-import { TalkHistoryButton } from './TalkHistory.jsx'; // the whole conversation of a call (2026-10-29)
+import { TalkHistoryButton } from './TalkHistory.jsx';
+import { CallbackCard } from './AiCallbacks.jsx'; // the candidate's open call-back (2026-10-30) // the whole conversation of a call (2026-10-29)
 import {
   PURPOSES, purposeLabel, statusWord, STATUS_CLASS, when, minutes,
 } from './aiCallingShared.js';
@@ -32,6 +33,7 @@ export default function AiCallHistory({ candidate, refreshKey = 0 }) {
   return (
     <section className="cdw-card" style={{ marginBottom: 12 }}>
       <div className="cdw-label">Calls by the AI assistant</div>
+      {apps.map((a) => <CallbackCard key={a.id} applicationId={a.id} refreshKey={refreshKey} />)}
       {offers.map((o) => (
         <div key={o.id} className="notice amber" style={{ marginBottom: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ flex: 1, minWidth: 180 }}>{o.kind === 'shortlist' ? 'Shortlisted: tell them with the AI assistant?' : 'Interview booked or changed: tell them with the AI assistant?'} <b>{o.jobTitle}</b></span>

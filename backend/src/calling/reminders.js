@@ -90,6 +90,8 @@ async function tick({ now: at } = {}) {
   const t = at || svc.now();
   const summary = { at: t.toISOString(), reminders: 0, reminderDuplicates: 0, reminderSkipped: 0, started: 0, waiting: 0, timedOut: 0, resultsFilled: 0, purged: 0 };
   try {
+    // call-back reminders to recruiters go out even when the AI calling switch is Off (they are the recruiter's own work)
+    try { summary.callbacks = await require('./callbacks').tick(t); } catch (err) { console.error('[ai-calling] call-back sweep:', err.message); } // eslint-disable-line global-require, no-console
     const s = await settingsStore.load({ fresh: true });
     if (s.mode === 'Off') return { ...summary, skipped: 'AI calling is off' };
     const steps = [

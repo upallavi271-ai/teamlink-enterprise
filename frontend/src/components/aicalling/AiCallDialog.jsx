@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
-import { PURPOSES, purposeLabel, errorOf, statusWord } from './aiCallingShared.js';
+import { PURPOSES, PORTAL_PURPOSES, purposeLabel, errorOf, statusWord } from './aiCallingShared.js';
 
 // The confirm window for AI calls. NOTHING is called until the person presses the big button here.
 //
@@ -172,7 +172,7 @@ export default function AiCallDialog({
             <div className="field">
               <label>What is the call for</label>
               <Combo value={purpose} onChange={(e) => setPurpose(e.target.value)} disabled={!!offerId}>
-                {PURPOSES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                {(PORTAL_PURPOSES.some((p) => p.key === purposeIn) ? PORTAL_PURPOSES : PURPOSES).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
               </Combo>
             </div>
             <div className="field">
@@ -194,7 +194,7 @@ export default function AiCallDialog({
           </div>
           <div className="small-muted" style={{ marginTop: 6 }}>These are facts from our records. The assistant says it is an AI, never says selected, hired or offered, and never promises anything.</div>
           <div className="section-label" style={{ margin: '12px 0 6px' }}>You may change</div>
-          {purpose === 'Screening' && (
+          {(purpose === 'Screening' || purpose === 'Job Match') && (
             <>
               <label className="small-muted" style={{ display: 'block', marginBottom: 4 }}>
                 <input type="checkbox" checked={fields.includeSalary} onChange={(e) => setFields({ ...fields, includeSalary: e.target.checked })} /> Tell the salary range (only if it is saved on the requirement)

@@ -13,6 +13,10 @@
 //   AiCallSuppression  numbers never to be called by AI (opt-out / DND)
 //   AiCallCampaign     a bulk run (name, purpose, job, who)
 //   AiCallPref         the candidate's saved language for calls
+//   AiCallQuestion     a question the AI could not answer from verified facts (per requirement), and the answer a
+//                      recruiter gave - the AI uses answered ones on later calls (2026-10-30)
+//   AiCallCallback     "call me back at ...": one open reminder per application, with its India-time moment, who owns it
+//                      and the notices sent (before / at the time / overdue) (2026-10-30)
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 
@@ -143,6 +147,52 @@ const DDL = [
     "source" TEXT,
     "updatedAt" TEXT NOT NULL
   )`,
+  `CREATE TABLE IF NOT EXISTS "AiCallQuestion" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "requirementId" TEXT NOT NULL,
+    "questionKey" TEXT NOT NULL,
+    "question" TEXT NOT NULL,
+    "answer" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "askedCount" INTEGER NOT NULL DEFAULT 1,
+    "lastCallId" TEXT,
+    "lastCandidateId" TEXT,
+    "lastAskedAt" TEXT,
+    "answeredById" TEXT,
+    "answeredByName" TEXT,
+    "answeredAt" TEXT,
+    "createdAt" TEXT NOT NULL,
+    "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "AiCallQuestion_one" ON "AiCallQuestion"("requirementId", "questionKey")',
+  `CREATE TABLE IF NOT EXISTS "AiCallCallback" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "applicationId" TEXT NOT NULL,
+    "candidateId" TEXT NOT NULL,
+    "requirementId" TEXT NOT NULL,
+    "callId" TEXT,
+    "purpose" TEXT,
+    "ownerUserId" TEXT,
+    "dueAt" TEXT NOT NULL,
+    "whenText" TEXT,
+    "timeGiven" INTEGER NOT NULL DEFAULT 1,
+    "status" TEXT NOT NULL DEFAULT 'pending',
+    "language" TEXT,
+    "summary" TEXT,
+    "interest" TEXT,
+    "notifiedBeforeAt" TEXT,
+    "notifiedDueAt" TEXT,
+    "notifiedOverdueAt" TEXT,
+    "doneAt" TEXT,
+    "doneById" TEXT,
+    "doneByName" TEXT,
+    "doneHow" TEXT,
+    "nextCallId" TEXT,
+    "createdAt" TEXT NOT NULL,
+    "updatedAt" TEXT NOT NULL
+  )`,
+  'CREATE INDEX IF NOT EXISTS "AiCallCallback_status" ON "AiCallCallback"("status", "dueAt")',
+  'CREATE INDEX IF NOT EXISTS "AiCallCallback_app" ON "AiCallCallback"("applicationId", "status")',
 ];
 
 let done = null;

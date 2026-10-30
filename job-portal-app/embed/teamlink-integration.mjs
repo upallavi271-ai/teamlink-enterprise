@@ -268,6 +268,26 @@ async function shapeApplication(c, row) {
     try { await c.query('rollback to savepoint tl_consent'); } catch { /* no transaction */ }
     consent = null;
   }
+  // The portal's own AI interview for this application (0005 ai_interviews, 0015 ai_interview_due_at), so TeamLink
+  // knows who still has to take it (AI reminder calls) and who already did. Same savepoint rule as consent.
+  let aiInterview = null;
+  try {
+    await c.query('savepoint tl_ai');
+    const iv = (await c.query(
+      `select status, overall_percentage, completed_at, started_at from ai_interviews
+        where application_id=$1 order by (status='completed') desc, coalesce(completed_at, started_at, created_at) desc limit 1`, [row.id])).rows[0];
+    const due = row.ai_interview_due_at ? new Date(row.ai_interview_due_at).toISOString() : null;
+    aiInterview = (iv || due) ? {
+      status: iv ? iv.status : 'not_started',
+      score: iv && iv.status === 'completed' && iv.overall_percentage != null ? Math.round(Number(iv.overall_percentage)) : null,
+      completedAt: iv && iv.status === 'completed' && iv.completed_at ? new Date(iv.completed_at).toISOString() : null,
+      dueAt: due,
+    } : null;
+    await c.query('release savepoint tl_ai');
+  } catch {
+    try { await c.query('rollback to savepoint tl_ai'); } catch { /* no transaction */ }
+    aiInterview = null;
+  }
   return {
     event: 'application.created',
     requirementId: requirementIdOf(row.job_id),
@@ -282,6 +302,7 @@ async function shapeApplication(c, row) {
       source: row.source || null,
       matchScore: row.match_score == null ? null : Number(row.match_score),
       appliedAt: row.applied_at ? new Date(row.applied_at).toISOString() : null,
+      aiInterview,
       // Fetched by TeamLink from GET .../applications/:id/resume (token).
       resume: hasResume ? { fileName: k.resumeFile || cand.resume_file || 'resume', path: `/api/integrations/teamlink/applications/${encodeURIComponent(row.id)}/resume` } : null,
     },

@@ -130,7 +130,7 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   // ---- language -----------------------------------------------------------------------------------------------------------
   d = mk(); await to(d, 'convenient', ['yes speaking']);
   r = await d.hear('Telugu lo cheppandi');
-  ok(d.language === 'Telugu' && r.say.startsWith(S.phrases('Telugu').langSwitched), 'D  "Telugu lo cheppandi": switches to Telugu at once', [d.language, r.say]);
+  ok(d.language === 'Telugu' && !r.say.includes(S.phrases('Telugu').langSwitched) && /[ఀ-౿]/.test(r.say), 'D  "Telugu lo cheppandi": switches to Telugu at once, without announcing it', [d.language, r.say]);
   r = await d.hear('can you explain in English?');
   ok(d.language === 'English', 'D2 "can you explain in English?": back to English', d.language);
   d = mk(); await to(d, 'convenient', ['yes speaking']);
