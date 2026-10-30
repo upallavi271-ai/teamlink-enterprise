@@ -27,6 +27,9 @@ One model, one request at a time (a lock); the phone gateway sends one sentence 
   WHISPER_MODEL    base (default: right on phone answers, under 1.6 s on a 4-CPU server) | small (slower) | a folder
   WHISPER_HOST / WHISPER_PORT   127.0.0.1 / 8093
   WHISPER_THREADS  CPU threads (default 2)
+  WHISPER_MODEL_OPEN  a second, more exact model (e.g. small) for OPEN answers - a city, years, a notice period - asked
+                   for with the header X-Model: open. Measured 2026-10-30 on this server: base ~0.9 s but "Warangal" ->
+                   "Warainful"; small ~2.1 s and right. Yes / no answers stay on the quick model.
 """
 import hmac
 import json
@@ -49,6 +52,9 @@ OURS = ("te", "hi", "en")
 MAX_BYTES = 16000 * 2 * 30  # 30 s of audio
 
 model = WhisperModel(MODEL, device="cpu", compute_type="int8", cpu_threads=THREADS)
+MODEL_OPEN = os.getenv("WHISPER_MODEL_OPEN", "")
+model_open = WhisperModel(MODEL_OPEN, device="cpu", compute_type="int8", cpu_threads=THREADS) if MODEL_OPEN else None
+lock_open = threading.Lock()
 lock = threading.Lock()
 print(f"[whisper] model {MODEL} loaded, listening on {HOST}:{PORT}", flush=True)
 
@@ -85,13 +91,22 @@ def prompt_of(headers):
     return p or None
 
 
-def transcribe(audio, lang, prompt=None):
-    with lock:
+def _plain(t):
+    return " ".join("".join(ch.lower() if ch.isalnum() else " " for ch in str(t)).split())
+
+
+def transcribe(audio, lang, prompt=None, exact=False):
+    use, use_lock = (model_open, lock_open) if exact and model_open else (model, lock)
+    with use_lock:
         # temperature 0 = no slow retries; max_new_tokens = a phone answer is short (no "fufufu..." loops)
-        segments, _ = model.transcribe(audio, language=lang if lang in OURS else None, beam_size=BEAM, temperature=0.0, initial_prompt=prompt,
+        segments, _ = use.transcribe(audio, language=lang if lang in OURS else None, beam_size=BEAM, temperature=0.0, initial_prompt=prompt,
                                        max_new_tokens=60, without_timestamps=True, condition_on_previous_text=False, vad_filter=False)
         segs = list(segments)
     text = " ".join(s.text.strip() for s in segs).strip()
+    # THE QUESTION WRITTEN BACK (measured 2026-10-30: "Three years." came out as "How many years of experience?"): when the
+    # words are just the prompt again, they are heard once more WITHOUT the prompt
+    if prompt and text and _plain(text) and _plain(text) in _plain(prompt):
+        return transcribe(audio, lang, None, exact)
     conf = {
         "logprob": round(min((s.avg_logprob for s in segs), default=0.0), 3),
         "noSpeech": round(max((s.no_speech_prob for s in segs), default=1.0), 3),
@@ -100,13 +115,13 @@ def transcribe(audio, lang, prompt=None):
     return {"text": text, "conf": conf}
 
 
-def hear(audio, min_prob, prompt=None):
+def hear(audio, min_prob, prompt=None, exact=False):
     # ONE pass for an English-mode call: which of our languages; the English words only when it IS English (a Telugu /
     # Hindi answer is heard by IndicConformer instead, so Whisper does not spend time writing it as English)
     d = detect(audio)
     if d["lang"] != "en" and d["prob"] >= min_prob:
         return {"lang": d["lang"], "prob": d["prob"], "text": ""}
-    t = transcribe(audio, "en", prompt)
+    t = transcribe(audio, "en", prompt, exact)
     return {"lang": "en", "prob": d["prob"], "text": t["text"], "conf": t["conf"]}
 
 
@@ -124,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/health":
-            return self.send(200, {"ok": True, "model": MODEL})
+            return self.send(200, {"ok": True, "model": MODEL, "open": MODEL_OPEN or None})
         return self.send(404, {"error": "not found"})
 
     def do_POST(self):
@@ -134,16 +149,17 @@ class Handler(BaseHTTPRequestHandler):
         if n <= 0 or n > MAX_BYTES:
             return self.send(400, {"error": "send 0.1 - 30 s of 16 kHz 16-bit mono PCM"})
         audio = audio_of(self.rfile.read(n))
+        exact = (self.headers.get("X-Model", "") or "").lower() == "open"
         t = time.time()
         try:
             if self.path == "/detect":
                 out = detect(audio)
             elif self.path == "/hear":
-                out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6), prompt_of(self.headers))
+                out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6), prompt_of(self.headers), exact)
             elif self.path == "/speech":
                 out = speech(audio)
             elif self.path == "/transcribe":
-                out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower(), prompt_of(self.headers))
+                out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower(), prompt_of(self.headers), exact)
             else:
                 return self.send(404, {"error": "not found"})
         except Exception as e:  # noqa: BLE001 - one bad clip must not stop the server

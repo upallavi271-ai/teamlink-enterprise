@@ -332,7 +332,9 @@ function handle(sock, engines, opts = {}) {
       // the words AND Whisper's sureness ({ text, conf }); an engine without sttEx gives words only (conf null)
       // the question just asked, for Whisper's prompt (English calls): a short "yes" is heard far better knowing it (2026-10-29)
       const ask = cur === 'English' ? `${String(d.st.lastAsk || '')}${d.st.step === 'qLoc' ? CITY_HINT : ''}` : '';
-      const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l, l === 'English' ? ask : '') : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
+      // an OPEN answer (which city, how many years, notice period, when to call) is heard by the more exact English model
+      const exact = OPEN_STEPS.includes(d.st.step);
+      const listen = (l) => (engines.sttEx ? engines.sttEx(pcm, l, l === 'English' ? ask : '', l === 'English' && exact) : engines.stt(pcm, l).then((t) => ({ text: t, conf: null })))
         .then((r) => ({ text: (r && r.text) || '', conf: (r && r.conf) || null }))
         .catch((e) => { log('stt failed:', e.message); return { text: '', conf: null }; });
       let found = null; let first = { text: '', conf: null }; let byScript = false; let enProb = null;
@@ -348,7 +350,7 @@ function handle(sock, engines, opts = {}) {
         const sure = cur === 'English' || pcm.length >= A.RATE * 2 * 2 ? 0.6 : 0.75;
         if (cur === 'English' && engines.hear) {
           // one Whisper pass: the language, and the English words only when it is English (2026-10-29: "chaala late")
-          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75, ask).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '', conf: null }; });
+          const h = await engines.hear(pcm, pcm.length >= A.RATE * 2 * 1.4 ? sure : 0.75, ask, exact).catch((e) => { log('hear failed:', e.message); return { lang: 'English', text: '', conf: null }; });
           if (h.lang !== 'English') { found = h.lang; byScript = true; } else { first = { text: h.text || '', conf: h.conf || null }; enProb = typeof h.prob === 'number' ? h.prob : null; }
         } else {
           // Telugu / Hindi mode: the words and Whisper's language check side by side, on EVERY answer of 1.4 s or more. (A
