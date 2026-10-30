@@ -1658,7 +1658,7 @@ FBC.setFinisher((user, opts) => applySocial(user, opts));
 router.post('/integrations/social/facebook/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const v = (req.body && req.body.values) || {};
   const incoming = {};
-  [FBC.APP_ID_LABEL, FBC.APP_SECRET_LABEL].forEach((l) => { if (v[l] !== undefined) incoming[l] = v[l]; });
+  [FBC.APP_ID_LABEL, FBC.APP_SECRET_LABEL, FBC.CONFIG_LABEL].forEach((l) => { if (v[l] !== undefined) incoming[l] = v[l]; });
   if (Object.keys(incoming).length) {
     try {
       await integrationRow('social');

@@ -185,8 +185,10 @@ const INTEGRATION_CATALOG = [
     desc: 'Connect your Facebook Page once: job posts use it and Omni-Channel gets the same Page. (Job posting stays OFF until an Admin switches it on.)',
     // The easy way: type the Meta App ID + App secret, press "Connect with Facebook" (utils/facebookConnect.js): Facebook asks for the login itself and
     // fills the Page ID and token. The Page ID + token can also be typed by hand. A blank App secret uses the WhatsApp card's.
-    fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', ''], ['Meta App ID', 'Meta for Developers > your app > Settings > Basic'], ['Meta App secret', '']],
-    hints: ['Facebook Page ID', 'Meta App ID'] },
+    fields: [['Facebook Page ID', 'Digits only, from Page > About'], ['Facebook Page access token', ''], ['Meta App ID', 'Meta for Developers > your app > Settings > Basic'], ['Meta App secret', ''],
+      // only for an app on Facebook Login for Business (utils/facebookConnect.js CONFIG_LABEL)
+      ['Meta login configuration ID', 'Only if Facebook says "Invalid Scopes"']],
+    hints: ['Facebook Page ID', 'Meta App ID', 'Meta login configuration ID'] },
   { id: 'storage', name: 'Document Storage', group: 'Storage', glyph: '\u{1F5C2}️',
     desc: 'Where resumes, offer letters and employee documents are stored.',
     fields: [['Provider (S3 / Drive)', ''], ['Bucket / folder', ''], ['Access key', ''], ['Secret key', '']] },

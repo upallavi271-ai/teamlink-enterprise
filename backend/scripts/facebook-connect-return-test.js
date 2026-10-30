@@ -35,5 +35,11 @@ const fb = http.createServer((req, res) => { seen.push(req.url); res.setHeader('
   const bad = jwt.sign({ k: 'fbconnect', u: u.id, b: 'javascript:alert(1)' }, process.env.JWT_SECRET, { expiresIn: '5m' });
   const r3 = await fetch(`http://127.0.0.1:48902/api/public/facebook-connect/callback?error=x&state=${encodeURIComponent(bad)}`, { redirect: 'manual', headers: { host: 'teamlink.teamlinks.in' } });
   ok('a strange address in the state is not followed', !(r3.headers.get('location') || '').startsWith('javascript'));
+  // an app on Facebook Login for Business: the login asks by its configuration, not by the permission list
+  process.env.FACEBOOK_LOGIN_CONFIG_ID = '4455';
+  const st2 = await FBC.start(u, { headers: { origin: 'https://teamlink.teamlinks.in' } });
+  const q2 = new URL(st2.url).searchParams;
+  ok('with a configuration ID: config_id is sent and no scope', q2.get('config_id') === '4455' && !q2.get('scope'));
+  delete process.env.FACEBOOK_LOGIN_CONFIG_ID;
   console.log(`SUMMARY pass=${pass} fail=${fail}`); srv.close(); fb.close(); await prisma.$disconnect(); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

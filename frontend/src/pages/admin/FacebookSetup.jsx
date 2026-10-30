@@ -6,6 +6,8 @@ import api from '../../api';
 // GET /admin/integrations (the Social Media channel), GET/POST /admin/integrations/social/facebook/* (utils/facebookConnect.js: Facebook's
 // own login, then the Page to use) and GET /admin/integrations-omni-channel (did Omni-Channel get the Page). No password or token is shown.
 const META_APPS = 'https://developers.facebook.com/apps/';
+const CONFIG = 'Meta login configuration ID';
+const PERMS = ['pages_show_list', 'pages_read_engagement', 'pages_manage_posts'];
 const siteOf = (u) => { try { return new URL(u); } catch { return { host: window.location.host, origin: window.location.origin }; } };
 
 function Step({ n, done, title, children }) {
@@ -40,6 +42,7 @@ export default function FacebookSetup() {
   const [omni, setOmni] = useState(null);
   const [appId, setAppId] = useState('');
   const [secret, setSecret] = useState('');
+  const [configId, setConfigId] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -48,6 +51,7 @@ export default function FacebookSetup() {
       const s = (r.data.channels || []).find((c) => c.id === 'social');
       setSocial(s || {});
       if (s && s.values && s.values['Meta App ID'] && !appId) setAppId(s.values['Meta App ID']);
+      if (s && s.values && s.values[CONFIG] && !configId) setConfigId(s.values[CONFIG]);
     }).catch(() => setErr('Could not load the Facebook connection.'));
     api.get('/admin/integrations/social/facebook/redirect-uri').then((r) => setUri(r.data)).catch(() => setUri(null));
     api.get('/admin/integrations-omni-channel').then((r) => setOmni(r.data)).catch(() => setOmni(null));
@@ -61,6 +65,7 @@ export default function FacebookSetup() {
     try {
       const values = { 'Meta App ID': appId.trim() };
       if (secret.trim()) values['Meta App secret'] = secret.trim();
+      values[CONFIG] = configId.trim(); // empty = ask with the permission list
       const r = await api.post('/admin/integrations/social/facebook/start', { values });
       window.location.href = r.data.url; // Facebook's own login page; it comes back to Integrations and asks which Page
     } catch (e) { setErr(e.response?.data?.error || 'Could not open the Facebook sign-in.'); setBusy(false); }
@@ -124,6 +129,21 @@ export default function FacebookSetup() {
           </label>
         </div>
         <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>Same app as WhatsApp? The secret can stay empty: the WhatsApp one is used. The secret is saved encrypted and never shown again.</div>
+
+        {/* founder 2026-10-30: Facebook answered "Invalid Scopes: pages_show_list, pages_read_engagement, pages_manage_posts" */}
+        <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fff8ec', border: '1px solid #f3dcae' }}>
+          <b>Facebook says &quot;Invalid Scopes&quot;?</b> Your app does not have the Page permissions yet. Do <b>one</b> of these:
+          <ol style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+            <li>In the app: <b>Use cases → + Add use case → &quot;Manage everything on your Page&quot;</b>, then <b>Customize</b> and add these three permissions. Leave the box below empty.
+              {PERMS.map((x) => <CopyBox key={x} text={x} />)}
+            </li>
+            <li>Your app uses <b>Facebook Login for Business</b>: there go to <b>Configurations → + Create configuration</b>, pick your Pages and the same three permissions, and paste the <b>Configuration ID</b> here:
+              <label className="field" style={{ maxWidth: 320, margin: '6px 0 0' }}><span>Configuration ID</span>
+                <input value={configId} inputMode="numeric" placeholder="Digits; empty = not used" onChange={(e) => setConfigId(e.target.value.replace(/\D/g, ''))} />
+              </label>
+            </li>
+          </ol>
+        </div>
       </Step>
 
       <Step n={4} done={connected} title="Sign in with Facebook and pick your Page">

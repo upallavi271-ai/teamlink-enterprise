@@ -28,6 +28,9 @@ const { readConfig, writeValues } = require('./integrationStore');
 const SCOPES = 'pages_show_list,pages_read_engagement,pages_manage_posts';
 const APP_ID_LABEL = 'Meta App ID';
 const APP_SECRET_LABEL = 'Meta App secret';
+// A Meta app on "Facebook Login for Business" refuses the plain permission list ("Invalid Scopes: pages_show_list, ...", founder 2026-10-30):
+// it takes a login CONFIGURATION made in the app (Facebook Login for Business > Configurations). With its ID set, the login asks by config_id.
+const CONFIG_LABEL = 'Meta login configuration ID';
 const PENDING_PREFIX = 'fb.pending.';
 const PENDING_MS = 15 * 60 * 1000;
 
@@ -61,12 +64,14 @@ const baseOk = (b) => /^https?:\/\/[A-Za-z0-9.:-]+$/.test(String(b || ''));
 async function appCreds() {
   let id = String(process.env.FACEBOOK_APP_ID || '').trim();
   let secret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
+  let configId = String(process.env.FACEBOOK_LOGIN_CONFIG_ID || '').trim();
+  const c = await readConfig('social');
   if (!id || !secret) {
-    const c = await readConfig('social');
     if (c.missingKey) return { missingKey: true };
     id = id || String((c.values || {})[APP_ID_LABEL] || '').trim();
     secret = secret || String((c.values || {})[APP_SECRET_LABEL] || '').trim();
   }
+  configId = configId || String((c.values || {})[CONFIG_LABEL] || '').replace(/\D/g, '');
   if (id && !secret) { // the WhatsApp card's App secret belongs to the same Meta app
     try {
       const w = await readConfig('whatsapp');
@@ -74,7 +79,7 @@ async function appCreds() {
       if (key) secret = String(w.values[key] || '').trim();
     } catch { /* none */ }
   }
-  return { id, secret };
+  return { id, secret, configId };
 }
 
 async function readJson(url, init) {
@@ -97,7 +102,9 @@ async function start(user, req) {
   if (!a.id) return { error: 'Type the Meta App ID on this card first (Meta for Developers, your app, Settings, Basic), then press Connect with Facebook.', status: 400 };
   if (!a.secret) return { error: 'Type the Meta App secret on this card first (the same page as the App ID), then press Connect with Facebook.', status: 400 };
   const state = jwt.sign({ k: 'fbconnect', u: user.id, b: siteBase(req), n: crypto.randomBytes(8).toString('hex') }, jwtSecret(), { expiresIn: '15m' });
-  const q = new URLSearchParams({ client_id: a.id, redirect_uri: redirectUri(req), state, scope: SCOPES, response_type: 'code' });
+  const q = new URLSearchParams(a.configId
+    ? { client_id: a.id, redirect_uri: redirectUri(req), state, config_id: a.configId, response_type: 'code', override_default_response_type: 'true' }
+    : { client_id: a.id, redirect_uri: redirectUri(req), state, scope: SCOPES, response_type: 'code' });
   return { ok: true, url: `${dialogBase()}?${q.toString()}`, redirectUri: redirectUri(req) };
 }
 
@@ -185,4 +192,4 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, APP_ID_LABEL, APP_SECRET_LABEL, SCOPES };
+module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };
