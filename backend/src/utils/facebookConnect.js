@@ -82,9 +82,28 @@ async function appCreds() {
   return { id, secret, configId };
 }
 
+// 2026-10-30 (live: "Facebook could not be reached from this server" right after a good sign-in): a call that never got an answer is tried
+// again (3 times, a short pause between) and the words say why (the network's own code). Servers often have a broken IPv6 route to
+// graph.facebook.com, so IPv4 is asked first (dns ipv4first, for this process).
+try { require('dns').setDefaultResultOrder('ipv4first'); } catch { /* older Node */ }
+const NET_WAIT_MS = [0, 1500, 4000];
 async function readJson(url, init) {
   let res;
-  try { res = await fetch(url, { ...(init || {}), signal: AbortSignal.timeout(30000) }); } catch { throw new Error('Facebook could not be reached from this server.'); }
+  let why = '';
+  for (const wait of NET_WAIT_MS) {
+    // eslint-disable-next-line no-await-in-loop
+    if (wait) await new Promise((r) => { setTimeout(r, wait); });
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      res = await fetch(url, { ...(init || {}), signal: AbortSignal.timeout(30000) });
+      break;
+    } catch (err) {
+      const c = err && (err.cause || err);
+      const inner = c && Array.isArray(c.errors) && c.errors[0];
+      why = String((c && c.code) || (inner && inner.code) || (err && err.name === 'TimeoutError' ? 'no answer in 30 s' : '') || (c && c.message) || 'no answer').slice(0, 80);
+    }
+  }
+  if (!res) throw new Error(`Facebook could not be reached from this server (${why}, tried 3 times). Press Connect with Facebook again in a minute.`);
   const text = await res.text();
   let j = null; try { j = text ? JSON.parse(text) : {}; } catch { j = {}; }
   if (!res.ok || (j && j.error)) {
