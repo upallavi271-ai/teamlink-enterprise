@@ -261,8 +261,8 @@ const PH = {
     qExp: "ఈ ఫీల్డ్‌లో మీకు ఎన్నేళ్ళ ఎక్స్‌పీరియన్స్ ఉంది?",
     qLoc: "ఇప్పుడు మీరు ఎక్కడ ఉంటున్నారు?",
     qNotice: "మీ నోటీస్ పీరియడ్ ఎన్ని రోజులు?",
-    qProceed: "ఓకే, నెక్స్ట్ స్టెప్స్‌కి వెళ్దామా?",
-    closeInterested: "థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.",
+    qProceed: "ఓకే, ముందుకు వెళ్దామా?",
+    closeInterested: "థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. ఈ కాల్‌తోనే ఏదీ ఫైనల్ కాదు. బై.",
     closeNotInterested: "ఓకే, పర్లేదు. టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
     closeStop: "ఓకే, ఇంకెప్పుడూ కాల్ చేయం. బై.",
     closeUnclear: "టైమ్ ఇచ్చినందుకు థాంక్స్. రిక్రూటర్ మీకు కాల్ చేయొచ్చు. బై.",
@@ -307,8 +307,8 @@ const PH = {
     shortNews: "{job} పోస్ట్‌కి మీరు షార్ట్‌లిస్ట్ అయ్యారు, అది చెప్పడానికే కాల్ చేశా.",
     shortIv: "మీ ఇంటర్వ్యూ {date} న {time} కి.",
     shortNoIv: "ఇంటర్వ్యూ ఇంకా ఫిక్స్ కాలేదు, టీమ్ తర్వాత చెప్తుంది.",
-    shortProceed: "నెక్స్ట్ స్టెప్‌కి వెళ్దామా?",
-    shortYes: "థాంక్స్. రిక్రూటర్ కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. షార్ట్‌లిస్ట్ అంటే ఒక స్టెప్ అంతే, ఫైనల్ డెసిషన్ కాదు. బై.",
+    shortProceed: "ముందుకు వెళ్దామా?",
+    shortYes: "థాంక్స్. రిక్రూటర్ కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. షార్ట్‌లిస్ట్ అంటే ఒక స్టెప్ అంతే, ఫైనల్ డెసిషన్ కాదు. బై.",
     // AI interview pending (Job Portal calling, 2026-10-30)
     aiNews: "మీరు టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో {job} జాబ్‌కి అప్లై చేశారు కదా. దాని AI ఇంటర్వ్యూ ఇంకా పెండింగ్‌లో ఉంది.",
     aiDue: "{date} లోపు కంప్లీట్ చేయండి.",
@@ -444,11 +444,11 @@ const VARIANTS = {
       "జాయిన్ అవ్వడానికి ఎన్ని రోజులు పడుతుంది, అంటే మీ నోటీస్ పీరియడ్?"
     ],
     "qProceed": [
-      "సరే, నెక్స్ట్ స్టెప్‌కి వెళ్దామా?",
+      "సరే, ముందుకు వెళ్దామా?",
       "దీన్ని ముందుకు తీసుకెళ్దామా?"
     ],
     "closeInterested": [
-      "సూపర్, థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. ఈ కాల్‌తో ఏదీ ఫైనల్ కాదు. బై."
+      "సూపర్, థాంక్స్. టీమ్‌లింక్ రిక్రూటర్ మీకు కాల్ చేసి తర్వాత ఏం చేయాలో చెప్తారు. ఈ కాల్‌తో ఏదీ ఫైనల్ కాదు. బై."
     ],
     "closeNotInterested": [
       "పర్లేదు, టైమ్ ఇచ్చినందుకు థాంక్స్. బై.",
@@ -700,7 +700,8 @@ function buildData({ candidate, app, requirement, link }) {
     needs: fromDesc.needs,
     skills: firstItems(r.skills, 6, 160),
     responsibilities: firstItems(r.responsibilities, 3, 220),
-    salary: clean(r.salary, 60) || fromDesc.salary,
+    // the pay of THIS role from a "Package:" list in the description ("Assistant professor -1.2L"), when the field is empty
+    salary: clean(r.salary, 60) || fromDesc.salary || require('./answers').salaryOf({ data: {} }, r), // eslint-disable-line global-require
     interview: a.interviewAt ? {
       at: new Date(a.interviewAt).toISOString(),
       mode: kind,

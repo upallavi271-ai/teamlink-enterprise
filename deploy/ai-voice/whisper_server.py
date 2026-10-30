@@ -10,6 +10,9 @@ Two jobs for the phone gateway (backend/src/calling/voice/engines.js whisperHttp
   POST /hear        body: the same, header X-Min-Prob  ->  {"lang", "prob", "text", "conf"}: the language, and the English words
                     only when it is English (one pass for a call that is in English)
                     English words (IndicConformer has no English)
+  POST /speech      body: the same  ->  {"speechMs": n, "parts": k}: how much REAL speech the clip holds (Silero VAD, MIT,
+                    bundled with faster-whisper). A click, a cough or line noise is near 0 - the gateway then ignores the clip
+                    instead of hearing words in it (research 2026-10-30: noise was written as words and switched the language)
   GET  /health      -> {"ok": true, "model": "..."}
 
 "conf" = how sure Whisper is of the words (2026-10-29: "Yes, I have" came out as "Yes, I can't tell you so much about it"):
@@ -34,6 +37,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 from faster_whisper import WhisperModel
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 MODEL = os.getenv("WHISPER_MODEL", "base")
 HOST = os.getenv("WHISPER_HOST", "127.0.0.1")
@@ -60,6 +64,18 @@ def detect(audio):
     total = sum(p.values()) or 1.0
     best = max(OURS, key=lambda k: p.get(k, 0.0))
     return {"lang": best, "prob": round(p.get(best, 0.0) / total, 3)}
+
+
+# phone settings (research 2026-10-30): short words count, short pauses split parts, little padding (we measure, not cut)
+VAD_OPTS = VadOptions(threshold=0.5, min_speech_duration_ms=90, min_silence_duration_ms=150, speech_pad_ms=20)
+vad_lock = threading.Lock()  # the VAD model is separate from Whisper: it never waits for a transcription
+
+
+def speech(audio):
+    with vad_lock:
+        parts = get_speech_timestamps(audio, vad_options=VAD_OPTS)
+    samples = sum(int(p["end"]) - int(p["start"]) for p in parts)
+    return {"speechMs": int(samples * 1000 / 16000), "parts": len(parts)}
 
 
 def prompt_of(headers):
@@ -124,6 +140,8 @@ class Handler(BaseHTTPRequestHandler):
                 out = detect(audio)
             elif self.path == "/hear":
                 out = hear(audio, float(self.headers.get("X-Min-Prob", "0.6") or 0.6), prompt_of(self.headers))
+            elif self.path == "/speech":
+                out = speech(audio)
             elif self.path == "/transcribe":
                 out = transcribe(audio, (self.headers.get("X-Lang", "en") or "en")[:2].lower(), prompt_of(self.headers))
             else:

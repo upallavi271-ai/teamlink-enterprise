@@ -152,6 +152,8 @@ function whisperHttp({ url, key }) {
     hear: async (pcm8k, minProb = 0.6, prompt = '') => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb), ...promptHeader(prompt) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '', conf: j.conf || null, prob: typeof j.prob === 'number' ? j.prob : null }; },
     // lang 'auto': Whisper writes what it hears in the language it hears (Telugu / Hindi letters = the person switched)
     stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
+    // how much real speech the clip holds (Silero VAD on the server): { speechMs, parts }; an older server has no /speech -> null
+    speech: async (pcm8k) => { try { return await post('/speech', pcm8k); } catch { return null; } },
     // the same, with the sureness: { text, conf }
     sttEx: async (pcm8k, lang, prompt = '') => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}) }); return { text: j.text || '', conf: j.conf || null }; },
   };
@@ -242,6 +244,7 @@ function fromEnv(env = process.env) {
     // { text, conf }: conf only from Whisper (English); IndicConformer gives no sureness, so Telugu / Hindi get null - never a made-up number
     sttEx: async (pcm, lang, prompt) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English', prompt) : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
     detect: wh ? wh.detect : null,
+    speech: wh ? wh.speech : null,
     sttAny: wh ? (pcm) => wh.stt(pcm, 'auto') : null,
     hear: wh ? wh.hear : null,
     warmup: () => vstt(silence(500), 'Telugu'), // load the speech model before the first caller

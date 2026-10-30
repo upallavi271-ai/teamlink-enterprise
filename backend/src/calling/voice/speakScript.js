@@ -37,8 +37,8 @@ const WORDS = {
 // MORE WORDS (2026-10-30: requirements read from the ATS description - subjects, degrees, places, numbers - came out as
 // letter-by-letter guesses: "years" -> యెఅర్స్, "road" -> రొఅద్). How people in India say them, in each voice's letters.
 Object.assign(WORDS, {
-  years: ['సంవత్సరాలు', 'साल'], year: ['సంవత్సరం', 'साल'], yrs: ['సంవత్సరాలు', 'साल'], months: ['నెలలు', 'महीने'], month: ['నెల', 'महीना'],
-  thousand: ['వేలు', 'हज़ार'], lakh: ['లక్షలు', 'लाख'], lakhs: ['లక్షలు', 'लाख'], per: ['పర్', 'पर'], to: ['టు', 'टू'], with: ['విత్', 'विद'],
+  years: ['ఏళ్ళు', 'साल'], year: ['ఏడాది', 'साल'], yrs: ['ఏళ్ళు', 'साल'], // daily speech, not సంవత్సరాలు months: ['నెలలు', 'महीने'], month: ['నెల', 'महीना'],
+  thousand: ['వేలు', 'हज़ार'], days: ['రోజులు', 'दिन'], weeks: ['వారాలు', 'हफ्ते'], lakh: ['లక్షలు', 'लाख'], lakhs: ['లక్షలు', 'लाख'], per: ['పర్', 'पर'], to: ['టు', 'टू'], with: ['విత్', 'विद'],
   road: ['రోడ్', 'रोड'], street: ['స్ట్రీట్', 'स्ट्रीट'], colony: ['కాలనీ', 'कॉलोनी'], cross: ['క్రాస్', 'क्रॉस'], main: ['మెయిన్', 'मेन'],
   near: ['నియర్', 'नियर'], opposite: ['ఆపోజిట్', 'अपोज़िट'], district: ['డిస్ట్రిక్ట్', 'डिस्ट्रिक्ट'], city: ['సిటీ', 'सिटी'],
   physics: ['ఫిజిక్స్', 'फिज़िक्स'], mathematics: ['మ్యాథమెటిక్స్', 'मैथमेटिक्स'], maths: ['మ్యాథ్స్', 'मैथ्स'], math: ['మ్యాథ్స్', 'मैथ्स'],
@@ -142,10 +142,38 @@ function spell(word, lang) {
   return out;
 }
 
+// SAID THE WAY PEOPLE SAY IT (founder 2026-10-30: "telugu lo cheppeytappudu, okka letter palukutundhi"). Heard back from the
+// Telugu voice: an English word ending in a dead consonant got an extra letter ("కన్సల్టెంట్స్" -> "కన్సల్టెంటో", "థాంక్స్" ->
+// "థాంకా", "జాబ్" -> "జామ్"), "1.2" was read "ఒకటి దశాంకం రెండు" and "6 days a week" letter by letter. People in Hyderabad
+// say "జాబు", "స్టెప్సు", "హైదరాబాదు": a hard final consonant gets its everyday "u". Numbers and time spans in daily words.
+const SPANS = [
+  // [pattern, Telugu, Hindi]
+  [/\b(\d{1,2})\s*days?\s*(?:a|per)\s*week\b/gi, 'వారానికి $1 రోజులు', 'हफ्ते में $1 दिन'],
+  [/\bper\s*month\b/gi, 'నెలకి', 'महीने का'],
+  [/\b(?:per\s*(?:year|annum)|p\.?\s*a\.?)\b/gi, 'సంవత్సరానికి', 'साल का'],
+  [/\b(\d{1,2})\s*(am|a\.m\.)\b/gi, 'ఉదయం $1', 'सुबह $1'],
+  [/\b(\d{1,2})\s*(pm|p\.m\.)\b/gi, 'సాయంత్రం $1', 'शाम $1'],
+  [/(\d+(?:\s*\S{0,12})?)\s+to\s+(\d+(?:\s*(?:lakh|lakhs|thousand|years?|days?|months?))?)/gi, '$1 నుంచి $2 వరకు', '$1 से $2 तक'],
+  [/(\d+)\.(\d+)/g, '$1 పాయింట్ $2', '$1 प्वाइंट $2'],
+];
+const HARD_END = /([కగచజటడతదపబసషఫఖఘఛఝఠఢథధభ])్(?=[\s.,!?;:)]|$)/g; // a dead hard consonant at a word's end (not inside: అసిస్టెంట్‌ని)
+
+// letter names (ఎస్, ఎఫ్), degrees (ఎం టెక్) and "and" keep their own ending - only words get the everyday "u"
+let keepSet = null;
+const keepEnd = () => keepSet || (keepSet = new Set([...Object.values(LETTER.Telugu), ...DEGREES.flatMap(([, w]) => String(w[0]).split(/\s+/)), 'అండ్', 'టెక్']));
+
 function native(text, lang) {
   if (lang !== 'Telugu' && lang !== 'Hindi') return text;
   const col = lang === 'Telugu' ? 0 : 1;
   let t = String(text || '').replace(/\s&\s/g, ' and '); // "AI & ML": the & is said as "and"
+  // "1.2 lakh" is said "1 lakh 20 thousand" (as people say pay), before any other number rule
+  t = t.replace(/(\d+)\.(\d{1,2})\s*(lakhs?|l)\b/gi, (m, a, b2) => {
+    const n = Number(b2.padEnd(2, '0'));
+    if (col === 1) return `${a} लाख ${n} हज़ार`;
+    return a === '1' ? `లక్షా ${n} వేలు` : `${a} లక్షల ${n} వేలు`;
+  });
+  t = t.replace(/\bwithin\s+(\d+)\s*days?\b/gi, col === 0 ? '$1 రోజుల్లో' : '$1 दिन में');
+  SPANS.forEach(([re, te, hi]) => { t = t.replace(re, col === 0 ? te : hi); });
   DEGREES.forEach(([re, words]) => { t = t.replace(re, words[col]); });
   return t
     .replace(/\b(Dr|Mr|Mrs|Ms)\.\s*/gi, '$1 ') // Dr. Karthik: said in full, no stop in the middle of a name
@@ -157,7 +185,10 @@ function native(text, lang) {
       return spell(word, lang);
     })
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    .replace(/థాంక్స్/g, col === 0 ? 'థాంక్యూ' : 'థాంక్స్')
+    .replace(/(వరకు|तक)(\s+(వరకు|तक))+/g, '$1') // "... నుంచి 2 లక్షలు వరకు" + "వరకు ఉంటుంది": once
+    .replace(/[^\s.,!?;:)]+/g, (w) => (col === 0 && !keepEnd().has(w) ? w.replace(HARD_END, '$1ు') : w));
 }
 
 module.exports = { native, spell, WORDS };
