@@ -245,6 +245,10 @@ function fromEnv(env = process.env) {
   const wh = env.AI_VOICE_WHISPER_URL ? whisperHttp({ url: env.AI_VOICE_WHISPER_URL, key }) : null;
   return {
     name: `free (${usePiper ? 'Piper' : 'VEXYL-TTS'}${hindi ? ' + Kokoro Hindi' : ''} + VEXYL-STT${wh ? ' + Whisper' : ''})`,
+    // which voices and settings made a sound: part of the saved-voice key, so a new voice (padmavathi -> maya) is never
+    // answered with the old voice's saved audio
+    voiceId: [env.AI_VOICE_PIPER_TELUGU, env.AI_VOICE_PIPER_ENGLISH, env.AI_VOICE_PIPER_HINDI, env.AI_VOICE_HINDI, env.AI_VOICE_SPEED_TELUGU, env.AI_VOICE_SPEED_ENGLISH, env.AI_VOICE_SPEED_HINDI, env.AI_VOICE_NOISE_W_TELUGU, 'nw-te-0.5']
+      .map((x) => String(x || '').split(/[\/]/).pop()).join('|'),
     tts: (text, lang) => (lang === 'Hindi' && hindi ? hindi(text) : tts(text, lang)),
     // English goes to Whisper; Telugu / Hindi to VEXYL-STT. Without Whisper, English is heard through the Hindi model
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
