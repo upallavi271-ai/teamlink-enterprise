@@ -26,6 +26,25 @@ import { ChainButton } from './leave/LeaveChainScreen.jsx'; // the Chain screen:
 
 const today = () => new Date().toISOString().slice(0, 10);
 
+// The employee cancels their OWN leave (founder 2026-10-30). Pending, or approved and not yet started: cancelled at once and kept
+// in the history (who, when, why). Approved and already started: it goes to HR as "Cancellation Requested" (backend POST /leave/:id/cancel).
+async function cancelOwnLeave(r, onDone, onError) {
+  const started = r.status === 'Approved' && !r.canSelfCancel;
+  const reason = window.prompt(started
+    ? `This leave (${r.fromDate} to ${r.toDate}) has already started, so HR confirms the cancellation.\n\nWhy are you cancelling? (optional)`
+    : `Cancel your ${r.type} leave from ${r.fromDate} to ${r.toDate}?\n\nWhy are you cancelling? (optional)`, '');
+  if (reason === null) return; // closed the box: nothing happens
+  try {
+    const { data } = await api.post(`/leave/${r.id}/cancel`, { reason });
+    if (data && data.message) window.alert(data.message);
+    onDone();
+  } catch (e) { onError(e.response?.data?.error || 'Could not cancel this leave'); }
+}
+function OwnCancelButton({ r, onDone, onError }) {
+  if (!r.mine || !(r.canSelfCancel || r.status === 'Approved')) return null;
+  return <button className="btn btn-sm" onClick={() => cancelOwnLeave(r, onDone, onError)}>{r.canSelfCancel ? 'Cancel leave' : 'Request Cancellation'}</button>;
+}
+
 // ---------------------------------------------------------------------------
 // THE APPROVAL WORKFLOW (§15, spec item 2).
 //
@@ -683,7 +702,8 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
               {/* Confirming a cancellation is a DECISION, so it needs the
                   approve permission. */}
               {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => decide(r, 'Cancelled')}>Confirm Cancel</button>}
-              {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
+              <OwnCancelButton r={r} onDone={onReload} onError={setError} />
+              {!r.mine && !isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
             </>
           )}
         />
@@ -746,7 +766,8 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
             <>
               <ChainButton requestId={r.id} />
               {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => confirmCancel(r)}>Confirm Cancel</button>}
-              {!isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
+              <OwnCancelButton r={r} onDone={onReload} onError={setError} />
+              {!r.mine && !isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
             </>
           )}
         />

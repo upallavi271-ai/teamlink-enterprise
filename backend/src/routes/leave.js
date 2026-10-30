@@ -177,6 +177,9 @@ router.get('/', async (req, res, next) => {
       const mine = !!(ownEmp && l.employeeId === ownEmp.id);
       return {
         ...l,
+        // The person's own request: they may cancel it (POST /:id/cancel), whatever their role.
+        mine,
+        canSelfCancel: mine && (l.status === 'Pending' || ((l.status === 'Approved' || l.status === 'Cancellation Requested') && String(l.fromDate || '') > istToday())),
         pendingState: l.status === 'Pending' ? (pendingState.get(l.id) || 'genuine') : null,
         source: (metaOf.get(l.id) || {}).source || 'TeamLink',
         earlyLogout: ev && (mine || !req.user.caps.hrmsSelfOnly) ? { state: ev.state, chip: ev.chip || null, text: ev.text, date: ev.date || null } : null,
@@ -1038,6 +1041,63 @@ router.patch('/:id/cancel-request', async (req, res) => {
   const leave = await prisma.leaveRequest.update({ where: { id: req.params.id }, data: { status: 'Cancellation Requested' } });
   await logAudit({ userId: req.user.id, action: 'Leave cancellation requested', entity: 'LeaveRequest', entityId: leave.id });
   res.json(leave);
+});
+
+// ---- THE EMPLOYEE CANCELS THEIR OWN LEAVE (founder 2026-10-30: "employee thana leave cancel chesukovachu, avvi kuda history lo record avvali") ----
+// Only on the person's OWN request, whatever their role. No approver is needed for:
+//   Pending                                   -> Cancelled at once; the approval steps still open are closed with a note.
+//   Approved / Cancellation Requested, not yet started (from date after today, IST) -> Cancelled at once; the days go back.
+// A leave that has already started stays with HR: it becomes "Cancellation Requested" (the existing flow, HR confirms).
+// History: cancelledAt / cancelledBy / cancelReason on the request, the closed steps' note and an audit row.
+const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+const SELF_CANCEL_NOTE = 'Not needed - the employee cancelled this leave.';
+router.post('/:id/cancel', async (req, res, next) => {
+  try {
+    const own = await prisma.employee.findUnique({ where: { userId: req.user.id } });
+    const existing = await prisma.leaveRequest.findUnique({ where: { id: req.params.id }, include: { employee: true } });
+    if (!existing) return res.status(404).json({ error: 'Leave request not found' });
+    if (!own || existing.employeeId !== own.id) return res.status(403).json({ error: 'You can cancel only your own leave.' });
+    const reason = String((req.body && req.body.reason) || '').trim().slice(0, 500) || null;
+    const started = String(existing.fromDate || '') <= istToday();
+
+    if (existing.status === 'Approved' && started) {
+      const leave = await prisma.leaveRequest.update({ where: { id: existing.id }, data: { status: 'Cancellation Requested', cancelReason: reason } });
+      await logAudit({ userId: req.user.id, action: 'Leave cancellation requested', entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: reason || undefined });
+      return res.json({ ...leave, message: 'This leave has already started, so HR confirms the cancellation. Your request is sent.' });
+    }
+    if (!(existing.status === 'Pending' || (['Approved', 'Cancellation Requested'].includes(existing.status) && !started))) {
+      return res.status(400).json({ error: `A ${existing.status.toLowerCase()} leave cannot be cancelled.` });
+    }
+
+    const days = existing.days != null ? existing.days : daySpan(existing.fromDate, existing.toDate);
+    const preCounted = existing.status === 'Pending' && !!await prisma.auditLog.findFirst({
+      where: { entity: 'LeaveRequest', entityId: existing.id, action: LEAVE_PRECOUNTED }, select: { id: true },
+    });
+    const by = own.name || req.user.name || req.user.email;
+    const now = new Date();
+    const leave = await prisma.leaveRequest.update({
+      where: { id: existing.id },
+      data: { status: 'Cancelled', cancelledAt: now, cancelledBy: by, cancelReason: reason, decidedAt: now, decidedBy: `${by} (cancelled by the employee)` },
+    });
+    if (existing.status === 'Pending') {
+      await prisma.approvalStep.updateMany({
+        where: { workflow: WF, recordId: existing.id, status: { in: ['Pending', 'Waiting'] } },
+        data: { status: 'Visibility', note: SELF_CANCEL_NOTE },
+      });
+    }
+    // The days go back exactly as when HR cancels (PATCH /:id/decision, status Cancelled).
+    if (['Approved', 'Cancellation Requested'].includes(existing.status) && await leaveCharge.lastCharge(existing.id) != null) {
+      await leaveCharge.onCancel(existing, req.user.id);
+    } else if (preCounted || ['Approved', 'Cancellation Requested'].includes(existing.status)) {
+      const balance = await prisma.leaveBalance.findUnique({ where: { employeeId_type: { employeeId: existing.employeeId, type: existing.type } } });
+      if (balance) await prisma.leaveBalance.update({ where: { id: balance.id }, data: { taken: Math.max(0, balance.taken - days) } });
+    }
+    await logAudit({ userId: req.user.id, action: 'Leave cancelled by the employee', entity: 'LeaveRequest', entityId: leave.id, fromValue: existing.status, toValue: reason ? `Cancelled - ${reason}` : 'Cancelled' });
+    await markedLeave.clearMarks(existing, req.user, 'Cancelled').catch((e) => console.error('[leave] clearing the leave mark failed', e.message));
+    return res.json({ ...leave, message: 'Your leave is cancelled.' });
+  } catch (err) {
+    return next(err);
+  }
 });
 
 // ---- Leave policy: types, reasons, holidays (configurable by Super Admin/Admin) ----
