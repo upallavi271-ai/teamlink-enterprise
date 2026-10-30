@@ -320,8 +320,8 @@ function decorate(candidate, { user, sharedIds = null, followUps = null, withApp
     recruiterName: (kind === 'internal' && followUps && followUps.get(latest.id)?.ownerName)
       || latest.ownerRecruiterName
       || (requirement && requirement.recruiter ? requirement.recruiter.name : null),
-    positionCode: (kind === 'internal' && followUps && followUps.get(latest.id)?.ownerPositionCode)
-      || (requirement ? requirement.positionCode || null : null),
+    // the seat of the recruiter shown above (their own HRMS seat on the application day); the stored seat only when unknown
+    positionCode: shownSeat(kind === 'internal' && followUps ? followUps.get(latest.id) : null, latest, requirement),
     bdeName: requirement && requirement.bde ? requirement.bde.name : null,
     tlName: (kind === 'internal' && followUps && followUps.get(latest.id)?.tlName)
       || (requirement ? requirement.tl || null : null),
@@ -984,7 +984,7 @@ async function buildPipelineRows(user, st, s, snap) {
       const latestFu = st.followUps.get(a.id) || null;
       const na = nextActionFor(a, { today, attributed: attributedOf(latestFu) });
       const fu = internalViewer ? latestFu : null;
-      const positionCode = (internalViewer && fu && fu.ownerPositionCode) || (r ? r.positionCode || null : null);
+      const positionCode = shownSeat(fu, a, r);
       const cfp = isClientFeedbackPending(a, snap);
       const srcRow = internalViewer ? CS.sourceOfApplication(a, c) : { key: null, raw: null };
       const row = {
@@ -2462,6 +2462,17 @@ require('./candidatesBoard')(router, {
   // ATS layout v3: the Candidates cards.
   pagedRowsFor, rowMatches, availableForMatching, contactAgeDays,
 });
+
+// The seat shown next to the recruiter's name: the seat THAT recruiter held on the application day (HRMS > Positions), so
+// the name and the seat always belong together (2026-10-30: "Sneha ... Position EDU-3" while Sneha sits in EDU-1). The
+// recruiter is the one the profile names - the follow-up's owner, else the application's owner, else the requirement's.
+function shownSeat(fu, app, requirement) {
+  const AO = require('../utils/applicationOwner'); // eslint-disable-line global-require
+  const userId = (fu && fu.ownerName ? fu.ownerUserId : null) || (app && app.ownerRecruiterId) || (requirement && requirement.recruiterId) || null;
+  const seat = AO.seatOf(userId, app && app.createdAt);
+  if (seat) return seat;
+  return (fu && fu.ownerPositionCode) || (requirement ? requirement.positionCode || null : null);
+}
 
 // "Matching Requirements": open requirements this candidate is not already in
 // the pipeline for, down to 50%, best fit first (full rows with their score).

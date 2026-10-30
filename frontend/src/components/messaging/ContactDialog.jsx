@@ -374,7 +374,7 @@ export default function ContactDialog({
           {ch === 'WhatsApp' && (
             <div style={{ marginTop: 6 }}>
               Their reply comes in the same chat as this message (Follow-ups → WhatsApp chats), sent and received together.{' '}
-              <Link className="btn btn-sm" to={`/ats/followups?sub=chats&chat=${{ candidates: 'CANDIDATE', clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(personId)}`} onClick={onClose}>Open this conversation</Link>
+              <Link className="btn btn-sm" to={audience === 'candidates' ? `/candidates/${encodeURIComponent(personId)}?tab=conversation` : `/ats/followups?sub=chats&chat=${{ clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(personId)}`} onClick={onClose}>Open this conversation</Link>
             </div>
           )}
         </div>

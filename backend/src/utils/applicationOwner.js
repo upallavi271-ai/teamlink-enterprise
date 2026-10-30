@@ -47,8 +47,46 @@ function warmNames(maxAgeMs = 60000) {
   }
   return loading;
 }
-// Express: warm the names before a router shapes candidate rows (never blocks on an error).
-const warmMiddleware = (req, res, next) => { warmNames().then(() => next(), () => next()); };
+// THE SEAT NEXT TO THE NAME (founder 2026-10-30: "recruiter names correct ga ney vasthunnai, but positions wrong - EDU-3 ...
+// proper ga data cross check cheskoni"): the seat shown beside a recruiter is the one THAT recruiter held (HRMS > Positions,
+// PositionAssignment) on the day of the application - not the requirement's seat, which may be another recruiter's.
+let SEATS = new Map(); // userId -> [{ code, from, to }]
+let seatsAt = 0;
+let seatsLoading = null;
+function warmSeats(maxAgeMs = 60000) {
+  if (seatsAt && Date.now() - seatsAt < maxAgeMs) return Promise.resolve(SEATS);
+  if (!seatsLoading) {
+    seatsLoading = require('../db').positionAssignment.findMany({ // eslint-disable-line global-require
+      select: { fromDate: true, toDate: true, position: { select: { code: true } }, employee: { select: { userId: true } } },
+    })
+      .then((rows) => {
+        const m = new Map();
+        rows.forEach((x) => {
+          const uid = x.employee && x.employee.userId;
+          if (!uid || !x.position) return;
+          if (!m.has(uid)) m.set(uid, []);
+          m.get(uid).push({ code: x.position.code, from: String(x.fromDate || '').slice(0, 10), to: x.toDate ? String(x.toDate).slice(0, 10) : null });
+        });
+        SEATS = m; seatsAt = Date.now(); return SEATS;
+      })
+      .catch(() => SEATS)
+      .finally(() => { seatsLoading = null; });
+  }
+  return seatsLoading;
+}
+// the seat this login held on that day (else the one they hold now, else the latest they held); null = no seat on record
+function seatOf(userId, on) {
+  const list = userId ? SEATS.get(userId) : null;
+  if (!list || !list.length) return null;
+  const day = (on ? new Date(on) : new Date()).toISOString().slice(0, 10);
+  const then = list.find((s) => s.from <= day && (!s.to || s.to >= day));
+  if (then) return then.code;
+  const now = list.find((s) => !s.to);
+  if (now) return now.code;
+  return list.slice().sort((a, b) => String(b.to).localeCompare(String(a.to)))[0].code;
+}
+// Express: warm the names and seats before a router shapes candidate rows (never blocks on an error).
+const warmMiddleware = (req, res, next) => { Promise.all([warmNames(), warmSeats()]).then(() => next(), () => next()); };
 // { id, name } of the recruiter of THIS application: its owner; the requirement's recruiter only when it has no owner.
 function ownerRecruiter(app) {
   if (!app) return null;
@@ -59,4 +97,4 @@ function ownerRecruiter(app) {
   return r && r.recruiter && r.recruiter.name ? { id: r.recruiter.id || r.recruiterId || null, name: r.recruiter.name } : null;
 }
 
-module.exports = { defaultOwnerOf, onJob, before, csv, warmNames, warmMiddleware, ownerRecruiter };
+module.exports = { defaultOwnerOf, onJob, before, csv, warmNames, warmSeats, seatOf, warmMiddleware, ownerRecruiter };

@@ -131,7 +131,7 @@ export function SendManyDialog({
         {channels.includes('WhatsApp') && (
           <div className="notice" style={{ marginTop: 12 }}>
             <b>Where the replies come:</b> in Follow-ups → WhatsApp chats. What you sent and what they answer are in the <b>same chat</b>, in order.
-            {' '}<Link className="btn btn-sm btn-primary" to={targets.length === 1 ? `/ats/followups?sub=chats&chat=${{ candidates: 'CANDIDATE', clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(targets[0])}` : '/ats/followups?sub=chats'} onClick={onClose}>{targets.length === 1 ? 'Open this conversation' : 'Open WhatsApp chats'}</Link>
+            {' '}<Link className="btn btn-sm btn-primary" to={targets.length === 1 ? (audience === 'candidates' ? `/candidates/${encodeURIComponent(targets[0])}?tab=conversation` : `/ats/followups?sub=chats&chat=${{ clients: 'CLIENT', employees: 'EMPLOYEE' }[audience] || 'CANDIDATE'}:${encodeURIComponent(targets[0])}`) : '/ats/followups?sub=chats'} onClick={onClose}>{targets.length === 1 ? 'Open this conversation' : 'Open WhatsApp chats'}</Link>
           </div>
         )}
       </Modal>

@@ -154,6 +154,9 @@ export default function CandidateDetail() {
   useEffect(load, [id]);
   const wantedApp = searchParams.get('application');
   useEffect(() => { if (wantedApp) { setSelectedAppId(wantedApp); setTabRaw('applications'); } }, [wantedApp, id]);
+  // ?tab=conversation: opened from "Open this conversation" after a WhatsApp / SMS / mail is sent - the profile's own tab
+  const wantedTab = searchParams.get('tab');
+  useEffect(() => { if (wantedTab) setTab(wantedTab); }, [wantedTab, id]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (tab !== 'history') return;
     api.get(`/candidates/${id}/followup-log`)
