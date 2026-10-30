@@ -58,7 +58,7 @@ function salaryOf(d, r) {
 // what the person asked about: [topic, ...]; the first that the ATS can answer wins
 const TOPICS = [
   { key: 'who', words: ['who are you', 'who is this', 'where are you calling from', 'which company are you', 'ఎవరు మీరు', 'మీరు ఎవరు', 'ఎక్కడి నుంచి', 'ఎవరండి', 'కౌన్', 'आप कौन', 'कौन बोल', 'कहाँ से', 'कहां से'], anytime: true },
-  { key: 'salary', words: ['salary', 'pay', 'package', 'ctc', 'stipend', 'per month', 'how much', 'సాలరీ', 'శాలరీ', 'సేలరీ', 'సాలరి', 'సాలెరీ', 'శాలరి', 'జీతం', 'सेलरी', 'सैलेरी', 'सालरी', 'सेलेरी', 'शैलरी', 'ప్యాకేజ్', 'ఎంత ఇస్తారు', 'పేమెంట్', 'सैलरी', 'पैकेज', 'वेतन', 'तनख्वाह', 'कितना देंगे', 'पेमेंट', 'jeetham', 'salary entha'] },
+  { key: 'salary', words: ['salary', 'pay', 'package', 'ctc', 'stipend', 'per month', 'how much', 'पैसे', 'पैसा', 'कितने देंगे', 'कितना देंगे', 'साले कितने', 'ఎంత ఇస్తారు', 'ఎంత ఇస్తార', 'డబ్బులు', 'సాలరీ', 'శాలరీ', 'సేలరీ', 'సాలరి', 'సాలెరీ', 'శాలరి', 'జీతం', 'सेलरी', 'सैलेरी', 'सालरी', 'सेलेरी', 'शैलरी', 'ప్యాకేజ్', 'ఎంత ఇస్తారు', 'పేమెంట్', 'सैलरी', 'पैकेज', 'वेतन', 'तनख्वाह', 'कितना देंगे', 'पेमेंट', 'jeetham', 'salary entha'] },
   { key: 'timings', words: ['timing', 'timings', 'hours', 'shift', 'duty', 'working time', 'days a week', 'టైమింగ్', 'టైమింగ్స్', 'షిఫ్ట్', 'డ్యూటీ', 'వర్కింగ్ టైమ్', 'ఎన్ని గంటలు', 'टाइमिंग', 'शिफ्ट', 'ड्यूटी', 'कितने घंटे', 'kitne ghante', 'timings enti'] },
   { key: 'accommodation', words: ['accommodation', 'hostel', 'room', 'stay', 'quarters', 'అకామడేషన్', 'రూమ్', 'హాస్టల్', 'క్వార్టర్స్', 'ఉండడానికి', 'रहने', 'रूम', 'हॉस्टल', 'क्वार्टर'] },
   { key: 'food', words: ['food', 'meals', 'lunch', 'canteen', 'ఫుడ్', 'భోజనం', 'క్యాంటీన్', 'खाना', 'कैंटीन'] },
@@ -79,7 +79,8 @@ const TOPICS = [
 // does it sound like a question? (a statement that holds a topic word - "I live in Hyderabad" - is an answer, not a question)
 const Q_MARK = ['what', 'where', 'when', 'which', 'how', 'is there', 'is it', 'do you', 'do they', 'will', 'can i', 'any',
   'ఏంటి', 'ఎంత', 'ఎక్కడ', 'ఎప్పుడు', 'ఎన్ని', 'ఏ ', 'ఉందా', 'ఉంటుందా', 'ఇస్తారా', 'కావాలా', 'ఉంటాయా', 'చేయాలా', 'చెప్తారా', 'ఎలా',
-  'क्या', 'कितना', 'कितनी', 'कितने', 'कहाँ', 'कहां', 'कब', 'कौन', 'मिलेगा', 'मिलेगी', 'है क्या', 'kya', 'kitna', 'entha', 'enti', 'ekkada', 'unda', 'untunda', 'kab'];
+  'क्या', 'कितना', 'कितनी', 'कितने', 'कहाँ', 'कहां', 'कब', 'कौन', 'मिलेगा', 'मिलेगी', 'है क्या', 'किस', 'किधर', 'कैसे', 'देंगे', 'बताओ', 'बताइए',
+  'ఇస్తారు', 'ఇస్తారా', 'ఉంటాయి', 'kya', 'kitna', 'entha', 'enti', 'ekkada', 'unda', 'untunda', 'kab'];
 function looksQuestion(text) {
   const raw = String(text || '');
   if (/[?？]\s*$/.test(raw.trim())) return true;
@@ -92,14 +93,14 @@ function topicOf(text) {
 
 const SAY = {
   English: {
-    who: "I'm calling from TeamLink Consultants, a recruitment company in Hyderabad.",
+    who: 'I am calling from TeamLink Consultants, a recruitment company in Hyderabad.',
     salary: 'The salary is {v}.', timings: 'The timings are: {v}.', line: '{v}.', location: "It's in {v}.", workMode: "It's {v}.",
     jobType: "It's a {v} job.", qualification: 'The qualification needed is {v}.', experienceNeeded: 'They want {v} of experience.',
     openings: 'There are {v} openings.', oneOpening: 'There is one opening.', joining: 'Joining is {v}.', companyInternal: "It's a job with TeamLink itself.",
-    companyLater: 'The recruiter shares the company name and full details once the interview is fixed.', role: 'The work is mainly {v}.',
-    interviewNone: "If you're interested, the recruiter will fix the interview and tell you the details.",
-    willCheck: 'Let me confirm that with the team and get back to you.',
-    eligibility: 'For this job they want {v}. Your profile is checked against it.', expWord: 'of experience',
+    companyLater: 'The recruiter will tell you the company name and full details when the interview is fixed.', role: 'The work is mainly {v}.',
+    interviewNone: 'If you are interested, the recruiter will fix the interview and tell you the details.',
+    willCheck: 'I will check with the team and tell you.',
+    eligibility: 'For this job they need {v}. We will check your profile.', expWord: 'of experience',
   },
   Telugu: {
     who: 'నేను టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి, హైదరాబాద్‌లో రిక్రూట్‌మెంట్ కంపెనీ.',
