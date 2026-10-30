@@ -514,7 +514,8 @@ class Dialogue {
     const lg = this.autoLanguage ? detectLanguage(text) : null;
     // A LANGUAGE SWITCH IS NOT ANNOUNCED (founder 2026-10-30: "sare telugu lo matladkundham ani cheppakunda, direct
     // conversation"): the next sentence is simply in their language, like a person who speaks both would do.
-    if (lg && lg.lang !== this.language) this.setLanguage(lg.lang);
+    const shortEnglish = lg && lg.lang === 'English' && this.language !== 'English' && !lg.only && String(text).trim().split(/\s+/).length < 4;
+    if (lg && lg.lang !== this.language && !shortEnglish) this.setLanguage(lg.lang);
     if (lg && lg.only) { turn.understood = 'language'; this.prefix = ''; return { say: this.again(''), done: false }; }
     // 1b. THE BRAIN (brain.js): what they meant in the context of the last question, the facts in it, and a short natural
     // lead-in in their language. The word lists below are the fallback - and the only reader when the brain is off / slow.

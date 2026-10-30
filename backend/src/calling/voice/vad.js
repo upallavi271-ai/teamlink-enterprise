@@ -50,7 +50,8 @@ class Vad {
     this.win = []; // the last frames while the assistant speaks: voice or not (barge-in window)
   }
 
-  level() { return Math.max(this.minLevel, this.noise * 3); }
+  // a voice: above the line's own background (2.5x its learned level), never below minLevel
+  level() { return Math.max(this.minLevel, this.noise * 2.5); }
 
   push(frame) {
     if (this.paused) return;

@@ -110,7 +110,11 @@ const SCENARIOS = {
         while (!closed && Date.now() - lastAudio < 900 && Date.now() - t0 < 60000) await sleep(100); // eslint-disable-line no-await-in-loop
       };
       const speak = async (text) => {
-        const pcm = await engines.tts(V.native(text, sc.voice), sc.voice);
+        const raw = await engines.tts(V.native(text, sc.voice), sc.voice);
+        // E2E_GAIN=0.15: a soft speaker on a weak line (the voice at 15% of its level)
+        const g = Number(process.env.E2E_GAIN) || 1;
+        const pcm = g === 1 ? raw : Buffer.from(raw);
+        if (g !== 1) for (let i = 0; i + 1 < pcm.length; i += 2) pcm.writeInt16LE(Math.round(raw.readInt16LE(i) * g), i);
         talking = true;
         for (let i = 0; i + A.FRAME_BYTES <= pcm.length && !closed; i += A.FRAME_BYTES) { sock.write(A.encode(A.KIND.AUDIO, pcm.subarray(i, i + A.FRAME_BYTES))); await sleep(A.FRAME_MS); } // eslint-disable-line no-await-in-loop
         talking = false;

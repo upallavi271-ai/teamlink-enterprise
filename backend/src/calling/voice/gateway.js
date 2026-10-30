@@ -51,6 +51,8 @@ const MAX_RATIO = 2.4; // repeated / looping text
 // no voice at all this long after the assistant finished = "are you still there?" (never read as an answer)
 const SILENCE_MS = Math.min(30000, Math.max(4000, num(process.env.AI_VOICE_SILENCE_MS, 8000)));
 const NOISE_MS = Math.max(0, num(process.env.AI_VOICE_NOISE_MS, 150)); // less real speech than this in a clip = noise
+// the quietest level that may be a voice (was 400: soft speakers on a SIM line - average 250-570 - were missed)
+const MIN_LEVEL = Math.min(800, Math.max(100, num(process.env.AI_VOICE_MIN_LEVEL, 220)));
 // "Bangalore" was heard as "Bang the law" (2026-10-30 test): at "which city?" Whisper is told the usual answers
 const CITY_HINT = ' Hyderabad, Secunderabad, Bangalore, Chennai, Vijayawada, Visakhapatnam, Warangal, Guntur, Kakinada, Tirupati, Nellore, Karimnagar, Pune, Mumbai, Delhi, Kolkata.';
 const END_YESNO_MS = Math.min(2000, Math.max(400, num(process.env.AI_VOICE_END_YESNO_MS, 750)));
@@ -107,6 +109,18 @@ function nativeAnswer(text, lang) {
   const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
   const list = NATIVE[lang] || [];
   return words.some((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n))));
+}
+
+// A FAINT VOICE MADE CLEAR for the listeners: the loudest moment brought up to a normal level (at most 4x, never clipped).
+// Line reports 2026-10-30: the person's voice averaged 250-570 on a scale where a normal voice is several thousand.
+function louder(pcm) {
+  let peak = 0;
+  for (let i = 0; i + 1 < pcm.length; i += 2) { const v = Math.abs(pcm.readInt16LE(i)); if (v > peak) peak = v; }
+  if (peak < 200 || peak >= 12000) return pcm;
+  const gain = Math.min(4, 12000 / peak);
+  const out = Buffer.alloc(pcm.length);
+  for (let i = 0; i + 1 < pcm.length; i += 2) out.writeInt16LE(Math.max(-32767, Math.min(32767, Math.round(pcm.readInt16LE(i) * gain))), i);
+  return out;
 }
 
 // "I'm listening" sounds - not answers when they come in the middle of the assistant's sentence
@@ -334,8 +348,9 @@ function handle(sock, engines, opts = {}) {
     }
   }
 
-  async function heard(pcm) {
+  async function heard(pcmIn) {
     if (ended || !d) return;
+    const pcm = louder(pcmIn);
     if (busy) { pending = pcm; return; } // keep only the latest sentence said while we were still thinking
     busy = true;
     try {
@@ -361,7 +376,7 @@ function handle(sock, engines, opts = {}) {
       // (the real call 2026-10-30 waited 3.8 s for them after Whisper).
       const spec = {};
       // (not on an open answer: the exact English model needs the CPU then)
-      if (engines.stt && cur === 'English' && !exact && pcm.length >= A.RATE * 2 * 0.6) { const l = spoken || 'Telugu'; spec[l] = engines.stt(pcm, l).catch(() => ''); }
+      if (engines.stt && cur === 'English' && (!exact || spoken) && pcm.length >= A.RATE * 2 * 0.6) { const l = spoken || 'Telugu'; spec[l] = engines.stt(pcm, l).catch(() => ''); }
       {
         // ENGLISH MODE (2026-10-29: "madhyalo telugu or hindi use chesthey, sorry i cant understand ani ..."): the English
         // model turns Telugu into English-looking words, so a Telugu / Hindi sound is believed more easily there (0.6).
@@ -418,7 +433,9 @@ function handle(sock, engines, opts = {}) {
         const understoodEn = !['unclear', 'silence', 'info_q'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
         const enIntent = require('../dialogue').classify(en.text).intent; // eslint-disable-line global-require
         const STRONG = ['yes', 'no', 'mixed', 'maybe', 'later', 'reschedule', 'stop', 'repeat', 'cant_hear', 'salary_q'];
-        const clearlyEnglish = spoken ? STRONG.includes(enIntent) && words <= 10 : (understoodEn || (words >= 4 && clarityOf(en.text, en.conf) === 'clear'));
+        // founder 2026-10-30: "telugu lo adigina kuda english lo matladthundhi" - a Telugu / Hindi speaker says "Yes", "OK",
+        // "Sure" in English all the time (Teluglish): never a switch. Only a full English sentence is.
+        const clearlyEnglish = words >= 4 && understoodEn && STRONG.concat(['info_q', 'human', 'ai_q']).includes(enIntent) && clarityOf(en.text, en.conf) === 'clear';
         if (clearlyEnglish) pre = en;
         else { if (DEBUG) debug(`${row.id} sound said English, but "${en.text}" makes no sense: staying in ${cur}`); found = null; }
       }
@@ -450,13 +467,14 @@ function handle(sock, engines, opts = {}) {
       }
       // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
       const unsureEn = heardAs === 'unclear' || (enProb != null && enProb < 0.5);
-      if (cur === 'English' && lang === 'English' && !unsureEn && spoken && spec[spoken]) {
-        // sure-looking English from a person who spoke Telugu / Hindi before ("I'm going to call the police" was Telugu):
-        // their own language's words, already heard at the same time, decide - no extra wait
-        const own = await spec[spoken];
-        if (nativeScore(own, spoken) >= 2) {
-          if (DEBUG) debug(`${row.id} "${r2.text}" was really ${spoken}: ${own}`);
-          lang = spoken; r2 = { text: own, conf: null }; heardAs = 'clear'; found = spoken;
+      const ownLang = spoken || 'Telugu';
+      if (cur === 'English' && lang === 'English' && !unsureEn && spec[ownLang]) {
+        // sure-looking English that was really Telugu / Hindi ("I'm going to call the police" was Telugu): the person's own
+        // language's words, heard at the same time, decide - no extra wait
+        const own = await spec[ownLang];
+        if (nativeScore(own, ownLang) >= 2) {
+          if (DEBUG) debug(`${row.id} "${r2.text}" was really ${ownLang}: ${own}`);
+          lang = ownLang; r2 = { text: own, conf: null }; heardAs = 'clear'; found = ownLang;
         }
       }
       if (cur === 'English' && lang === 'English' && engines.stt && unsureEn) {
@@ -492,6 +510,7 @@ function handle(sock, engines, opts = {}) {
   }
 
   const vad = new Vad({
+    minLevel: MIN_LEVEL,
     strict: () => speaker.busy,
     // a yes / no question: a short pause ends the answer; "how many years / which city / when": people think aloud, wait longer
     endMs: () => (d && OPEN_STEPS.includes(d.st.step) ? END_OPEN_MS : END_YESNO_MS),
@@ -555,4 +574,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { polish, nativeAnswer, nativeScore, teluguOrHindi, isBackchannel, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { polish, louder, nativeAnswer, nativeScore, teluguOrHindi, isBackchannel, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
