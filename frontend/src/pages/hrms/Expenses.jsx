@@ -36,6 +36,8 @@ export default function Expenses() {
         // see the claim. See backend/src/utils/attachments.js.
         showAttachment
         attachmentLabel="Bill / Receipt"
+        // How the claimant is paid: a UPI QR picture, a phone number proved by an SMS code, or the profile's bank account (2026-10-30).
+        showPayment
         statuses={['Pending', 'Approved', 'Reimbursed', 'Rejected']}
         decisions={['Approved', 'Reimbursed', 'Rejected']}
       />

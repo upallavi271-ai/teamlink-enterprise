@@ -1153,6 +1153,15 @@ model EmployeeRecord {
   billName         String? // sanitised original filename, for display only
   billMime         String? // image/png | image/jpeg | image/webp | application/pdf
   billSize         Int? // bytes
+  // EXPENSE: how the employee wants to be paid (2026-10-30, routes/employeeRecords.js + utils/claimPayPhone.js).
+  payMethod          String? // QR | PHONE | BANK
+  payPhone           String? // the UPI / phone number, proved by an SMS code
+  payPhoneVerifiedAt DateTime?
+  payBank            String? // the profile's bank account when the claim was made, masked for display
+  payQrFile          String? // the UPI QR image, stored like billFile
+  payQrName          String?
+  payQrMime          String?
+  payQrSize          Int?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 }

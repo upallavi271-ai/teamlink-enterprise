@@ -50,6 +50,9 @@ export default function SimpleRecordPage({
   audienceLabel = 'For',
   createLabel = 'New',
   aiKind = null, // AI Assist on the detail field, e.g. 'expense'
+  // EXPENSE CLAIMS (founder 2026-10-30): how the claimant is paid - a UPI QR picture, a phone number proved by an SMS code, or the
+  // bank account on their own HRMS profile. Server side: backend/src/routes/employeeRecords.js payData + utils/claimPayPhone.js.
+  showPayment = false,
 }) {
   const { user } = useAuth();
   // TWO HALVES, DELIBERATELY.
@@ -73,6 +76,32 @@ export default function SimpleRecordPage({
   const [form, setForm] = useState(emptyForm);
   const [file, setFile] = useState(null);
   const [fileKey, setFileKey] = useState(0); // resets the <input type="file">
+  // payment: method, the QR picture, the phone + its SMS code + the proof the server gave back, the profile's bank account
+  const EMPTY_PAY = { method: '', phone: '', code: '', proof: '', provedPhone: '', sent: '', busy: false, msg: '', bank: null };
+  const [pay, setPay] = useState(EMPTY_PAY);
+  const [qrFile, setQrFile] = useState(null);
+  const setP = (x) => setPay((o) => ({ ...o, ...x }));
+  const phoneOk = pay.proof && pay.provedPhone && pay.provedPhone === String(pay.phone).replace(/\D/g, '').slice(-10);
+  async function pickMethod(method) {
+    setP({ method, msg: '' });
+    if (method === 'BANK' && !pay.bank) {
+      try { setP({ bank: (await api.get(`${apiPath}/pay/bank`)).data }); } catch { setP({ bank: { onFile: false, failed: true } }); }
+    }
+  }
+  async function sendPayCode() {
+    setP({ busy: true, msg: '' });
+    try {
+      const { data } = await api.post(`${apiPath}/pay/phone/start`, { phone: pay.phone });
+      setP({ busy: false, sent: data.to, code: '', msg: `Code sent by SMS to ${data.to}. ${data.note || ''}` });
+    } catch (e) { setP({ busy: false, msg: e.response?.data?.error || 'The code could not be sent.' }); }
+  }
+  async function checkPayCode() {
+    setP({ busy: true, msg: '' });
+    try {
+      const { data } = await api.post(`${apiPath}/pay/phone/confirm`, { phone: pay.phone, code: pay.code });
+      setP({ busy: false, proof: data.proof, provedPhone: data.phone, msg: '' });
+    } catch (e) { setP({ busy: false, msg: e.response?.data?.error || 'The code could not be checked.' }); }
+  }
   const [error, setError] = useState('');
   // Filters (PeopleFilterBar): title search, the employee, status, the
   // record's category / priority when the page has them, and a date range on
@@ -117,6 +146,29 @@ export default function SimpleRecordPage({
     }
   }
 
+  // The QR picture opens in a new tab (fetched through the scope-checked API).
+  async function openQr(r) {
+    setError('');
+    try {
+      const res = await api.get(`${apiPath}/${r.id}/pay-qr`, { responseType: 'blob' });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, '_blank', 'noopener');
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch { setError('Could not open that QR code.'); }
+  }
+  // Where the money goes. HR (who pays) sees the full bank account from the employee's profile; the claimant sees the masked note.
+  function paidTo(r) {
+    if (r.payMethod === 'QR') return r.payQrFile ? <button type="button" className="link-btn" onClick={() => openQr(r)}>QR code (view)</button> : <span className="small-muted">QR (not uploaded)</span>;
+    if (r.payMethod === 'PHONE') return <span>{r.payPhone}{r.payPhoneVerifiedAt ? <span className="small-muted"> · verified</span> : null}</span>;
+    if (r.payMethod === 'BANK') {
+      const e = r.employee || {};
+      return isHR && e.bankAccountNumber
+        ? <span>{[e.bankName, `A/c ${e.bankAccountNumber}`, e.ifscCode && `IFSC ${e.ifscCode}`].filter(Boolean).join(' · ')}</span>
+        : <span>{r.payBank || 'Bank account'}</span>;
+    }
+    return <span className="small-muted">—</span>;
+  }
+
   async function submit() {
     setError('');
     if (!String(form.title || '').trim()) { setError(`Enter the ${titleLabel.toLowerCase()}.`); return; }
@@ -139,6 +191,18 @@ export default function SimpleRecordPage({
       if (file.size > MAX_BILL_BYTES) { setError('That file is larger than 5MB.'); return; }
       if (!BILL_TYPES.includes(file.type)) { setError('Only PNG, JPEG, WebP images and PDF files can be attached.'); return; }
     }
+    if (showPayment) {
+      if (!pay.method) { setError('Choose how you want to be paid: QR code, phone number or bank account.'); return; }
+      if (pay.method === 'QR') {
+        if (!qrFile) { setError('Upload your UPI QR code picture.'); return; }
+        if (qrFile.size > MAX_BILL_BYTES) { setError('The QR picture is larger than 5MB.'); return; }
+        if (!['image/png', 'image/jpeg', 'image/webp'].includes(qrFile.type)) { setError('The QR must be a picture (PNG, JPEG or WebP).'); return; }
+      }
+      if (pay.method === 'PHONE' && !phoneOk) { setError('Verify the phone number with the SMS code first.'); return; }
+      if (pay.method === 'BANK' && !(pay.bank && pay.bank.onFile)) { setError('Your bank account is not on your profile yet. Add it in My Profile, or choose QR / phone number.'); return; }
+      payload.payMethod = pay.method;
+      if (pay.method === 'PHONE') { payload.payPhone = pay.provedPhone; payload.payPhoneProof = pay.proof; }
+    }
     let created;
     setBusy(true);
     try {
@@ -158,8 +222,19 @@ export default function SimpleRecordPage({
         setError(`${err.response?.data?.error || 'The file could not be uploaded.'} The claim was saved without it.`);
       }
     }
+    if (showPayment && pay.method === 'QR' && qrFile) {
+      try {
+        const body = new FormData();
+        body.append('file', qrFile);
+        await api.post(`${apiPath}/${created.id}/pay-qr`, body);
+      } catch (err) {
+        setError(`${err.response?.data?.error || 'The QR picture could not be uploaded.'} The claim was saved without it.`);
+      }
+    }
     setForm(emptyForm);
     setFile(null);
+    setPay(EMPTY_PAY);
+    setQrFile(null);
     setFileKey((k) => k + 1);
     setAud(EMPTY_AUDIENCE);
     setChannels([]);
@@ -270,6 +345,48 @@ export default function SimpleRecordPage({
               />
             </Field>
           )}
+          {showPayment && (
+            <>
+              <Field label="Payment method" hint="How the money should reach you.">
+                <Combo value={pay.method} onChange={(e) => pickMethod(e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="QR">QR code (UPI)</option>
+                  <option value="PHONE">Phone number (UPI)</option>
+                  <option value="BANK">Bank account</option>
+                </Combo>
+              </Field>
+              {pay.method === 'QR' && (
+                <Field label="UPI QR code" hint="A clear picture of your UPI QR code: PNG, JPEG or WebP, up to 5MB.">
+                  <input key={`qr${fileKey}`} type="file" accept="image/png,image/jpeg,image/webp" onChange={(e) => setQrFile(e.target.files?.[0] || null)} />
+                </Field>
+              )}
+              {pay.method === 'PHONE' && (
+                <Field label="Phone number" hint={phoneOk ? `Verified: ${pay.provedPhone}` : 'We send a code by SMS to prove the number is yours.'}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <input inputMode="numeric" placeholder="10-digit mobile" value={pay.phone} style={{ flex: '1 1 160px' }}
+                      onChange={(e) => setP({ phone: e.target.value, proof: '', provedPhone: '', sent: '', code: '', msg: '' })} />
+                    {phoneOk ? <span className="status">Verified ✓</span> : (
+                      <button type="button" className="btn btn-sm" disabled={pay.busy || String(pay.phone).replace(/\D/g, '').length < 10} onClick={sendPayCode}>{pay.sent ? 'Send again' : 'Send code'}</button>
+                    )}
+                  </div>
+                  {pay.sent && !phoneOk && (
+                    <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                      <input inputMode="numeric" maxLength={6} placeholder="6-digit code" value={pay.code} style={{ flex: '1 1 120px' }} onChange={(e) => setP({ code: e.target.value.replace(/\D/g, '') })} />
+                      <button type="button" className="btn btn-sm btn-primary" disabled={pay.busy || pay.code.length !== 6} onClick={checkPayCode}>Verify</button>
+                    </div>
+                  )}
+                  {pay.msg && <div className="small-muted" role="status" style={{ marginTop: 6 }}>{pay.msg}</div>}
+                </Field>
+              )}
+              {pay.method === 'BANK' && (
+                <Field label="Bank account">
+                  {!pay.bank ? <span className="small-muted">Loading your bank details…</span>
+                    : pay.bank.onFile ? <div>The money will be paid to <b>{[pay.bank.bankName, `A/c ${pay.bank.account}`, `IFSC ${pay.bank.ifsc}`].filter(Boolean).join(' · ')}</b>, the account on your HRMS profile.</div>
+                      : <div className="error-text">{pay.bank.failed ? 'Your bank details could not be read.' : 'Your bank account is not on your profile yet.'} Add the account number and IFSC in My Profile, or choose QR / phone number.</div>}
+                </Field>
+              )}
+            </>
+          )}
           {canSendToOthers && (
             <>
               <AudiencePicker value={aud} onChange={setAud} label={audienceLabel} required />
@@ -323,6 +440,7 @@ export default function SimpleRecordPage({
               {showHours && <th>Hours</th>}
               {showProgress && <th>Progress</th>}
               {showAttachment && <th>{attachmentLabel}</th>}
+              {showPayment && <th>Paid to</th>}
               <th>Status</th>
               {isHR && decisions && <th></th>}
             </tr>
@@ -354,6 +472,7 @@ export default function SimpleRecordPage({
                     ) : <span className="small-muted">—</span>}
                   </td>
                 )}
+                {showPayment && <td>{paidTo(r)}</td>}
                 <td><span className="status">{r.status}</span></td>
                 {isHR && decisions && (
                   <td>

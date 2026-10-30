@@ -128,6 +128,58 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
     };
   }
 
+  // HOW AN EXPENSE IS PAID (founder 2026-10-30: "QR,Phone Numbers,Bank Details anni estey edhi select chestey dani daka feilds
+  // ravali ... QR upload ... phone number verification ... bank details antey employee echina bank detail through money padali"):
+  //   QR     the employee's UPI QR image, uploaded right after the claim (POST /:id/pay-qr, images only)
+  //   PHONE  a phone / UPI number the employee proved with an SMS code (utils/claimPayPhone.js): the claim keeps it only with
+  //          the proof the code check gave this same employee for this same number
+  //   BANK   the bank account on the employee's own HRMS profile - the money goes there; the claim keeps a masked note of it,
+  //          the full account stays on the profile (HR reads it there when paying)
+  async function payData(body, employeeId) {
+    const method = String(body.payMethod || '').toUpperCase();
+    if (method === 'QR') return { data: { payMethod: 'QR' } };
+    if (method === 'PHONE') {
+      const P = require('../utils/claimPayPhone'); // eslint-disable-line global-require
+      const phone = P.normalise(body.payPhone);
+      if (!phone) return { error: 'Enter the 10-digit phone number the money should go to.' };
+      if (!P.proofOk(employeeId, phone, body.payPhoneProof)) return { error: 'Verify the phone number with the SMS code first.' };
+      return { data: { payMethod: 'PHONE', payPhone: phone, payPhoneVerifiedAt: new Date() } };
+    }
+    if (method === 'BANK') {
+      const e = await prisma.employee.findUnique({ where: { id: employeeId }, select: { bankName: true, bankAccountNumber: true, ifscCode: true } });
+      const acct = String((e && e.bankAccountNumber) || '').replace(/\s+/g, '');
+      if (!acct || !(e && e.ifscCode)) return { error: 'Your bank account is not on your HRMS profile yet. Add the account number and IFSC in My Profile, or choose QR / phone number.' };
+      return { data: { payMethod: 'BANK', payBank: [String(e.bankName || '').trim(), `A/c ****${acct.slice(-4)}`, `IFSC ${String(e.ifscCode).trim()}`].filter(Boolean).join(' · ') } };
+    }
+    return { error: 'Choose how you want to be paid: QR code, phone number or bank account.' };
+  }
+
+  if (type === 'EXPENSE') {
+    // The bank account the claim would be paid to, masked - for the claim form, before anything is saved.
+    router.get('/pay/bank', async (req, res) => {
+      const e = req.user.employeeId ? await prisma.employee.findUnique({ where: { id: req.user.employeeId }, select: { bankName: true, bankAccountNumber: true, ifscCode: true } }) : null;
+      const acct = String((e && e.bankAccountNumber) || '').replace(/\s+/g, '');
+      if (!acct || !(e && e.ifscCode)) return res.json({ onFile: false });
+      return res.json({ onFile: true, bankName: e.bankName || null, account: `****${acct.slice(-4)}`, ifsc: e.ifscCode });
+    });
+    // The phone number proved by an SMS code: send, then check.
+    router.post('/pay/phone/start', async (req, res) => {
+      const employee = req.user.employeeId ? await prisma.employee.findUnique({ where: { id: req.user.employeeId } }) : null;
+      if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+      const out = await require('../utils/claimPayPhone').start(employee, req.body && req.body.phone); // eslint-disable-line global-require
+      if (out.status === 200) await logAudit({ userId: req.user.id, action: 'Expense payment phone: code sent', entity: 'Employee', entityId: employee.id, toValue: out.body.to });
+      return res.status(out.status).json(out.body);
+    });
+    router.post('/pay/phone/confirm', async (req, res) => {
+      const employee = req.user.employeeId ? await prisma.employee.findUnique({ where: { id: req.user.employeeId } }) : null;
+      if (!employee) return res.status(404).json({ error: 'No employee record linked to this account' });
+      const P = require('../utils/claimPayPhone'); // eslint-disable-line global-require
+      const out = P.confirm(employee, req.body && req.body.phone, req.body && req.body.code);
+      if (out.status === 200) await logAudit({ userId: req.user.id, action: 'Expense payment phone verified', entity: 'Employee', entityId: employee.id, toValue: P.mask(out.body.phone) });
+      return res.status(out.status).json(out.body);
+    });
+  }
+
   router.get('/', async (req, res) => {
     const where = { type, ...employeeRecordWhere(req.user) };
     if (req.query.employeeId) where.employeeId = req.query.employeeId;
@@ -247,10 +299,17 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
       }
     }
 
+    // EXPENSE: how the employee wants to be paid (founder 2026-10-30: QR, phone number, bank details)
+    let pay = {};
+    if (type === 'EXPENSE' && req.body.payMethod) {
+      const out = await payData(req.body, employeeId);
+      if (out.error) return res.status(400).json({ error: out.error });
+      pay = out.data;
+    }
     const record = await prisma.employeeRecord.create({
-      data: { ...recordData(req.body, req.user), employeeId },
+      data: { ...recordData(req.body, req.user), ...pay, employeeId },
     });
-    await logAudit({ userId: req.user.id, action: `${type} created`, entity: 'EmployeeRecord', entityId: record.id });
+    await logAudit({ userId: req.user.id, action: `${type} created`, entity: 'EmployeeRecord', entityId: record.id, toValue: pay.payMethod ? `paid by ${pay.payMethod}` : undefined });
     res.status(201).json(record);
   });
 
@@ -324,6 +383,42 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
           entity: 'EmployeeRecord', entityId: record.id, toValue: stored.billName,
         });
         return res.json(updated);
+      } catch (err) { return next(err); }
+    });
+
+    // --- The UPI QR an expense is paid to (payMethod QR) - images only, stored like the bill -------
+    router.post('/:id/pay-qr', async (req, res, next) => {
+      try {
+        const { record, error } = await reachable(req, req.params.id);
+        if (error === 404) return res.status(404).json({ error: 'Record not found' });
+        if (error === 403) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+        let parsed;
+        try { parsed = await attachments.parseMultipart(req); } catch (err) { return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not read the upload.' }); }
+        // a QR is a picture: a PDF is refused before it is stored (attachments.store checks the bytes match the type)
+        if (parsed.file && parsed.file.contentType === 'application/pdf') return res.status(400).json({ error: 'The QR must be a picture (PNG, JPEG or WebP).' });
+        let stored;
+        try { stored = attachments.store(parsed.file); } catch (err) { return res.status(400).json({ error: attachments.MESSAGE[err.code] || 'Could not store the upload.' }); }
+        if (record.payQrFile) attachments.remove(record.payQrFile);
+        const updated = await prisma.employeeRecord.update({
+          where: { id: record.id },
+          data: { payMethod: 'QR', payQrFile: stored.billFile, payQrName: stored.billName, payQrMime: stored.billMime, payQrSize: stored.billSize },
+        });
+        await logAudit({ userId: req.user.id, action: `${type} payment QR uploaded`, entity: 'EmployeeRecord', entityId: record.id, toValue: stored.billName });
+        return res.json(updated);
+      } catch (err) { return next(err); }
+    });
+    router.get('/:id/pay-qr', async (req, res, next) => {
+      try {
+        const { record, error } = await reachable(req, req.params.id);
+        if (error === 404) return res.status(404).json({ error: 'Record not found' });
+        if (error === 403) return res.status(403).json({ error: "This isn't included in your role's permissions" });
+        if (!record.payQrFile) return res.status(404).json({ error: 'No QR attached to this claim' });
+        const full = attachments.resolveStored(record.payQrFile);
+        if (!full) return res.status(404).json({ error: 'The QR file is no longer on the server' });
+        res.setHeader('Content-Type', record.payQrMime || 'application/octet-stream');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Disposition', `inline; filename="${attachments.safeDisplayName(record.payQrName)}"`);
+        return res.sendFile(full);
       } catch (err) { return next(err); }
     });
 
