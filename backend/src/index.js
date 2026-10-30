@@ -118,6 +118,8 @@ app.use(require('./utils/webSecurity').securityHeaders);
 // bytes for the signature check (routes/webhooks.js).
 // EXOTEL AI CALLING (2026-10-22): Exotel's status callback + the Voicebot text turn. Own proof (secret key / signature / IP list), own body parser. Ahead of the general webhooks router. calling/webhook.js
 app.use('/api/webhooks/exotel-ai', require('./calling/webhook'));
+// RCS (rcssms.in, 2026-10-30): template approvals + delivery reports, ?token=RCS_WEBHOOK_SECRET, always 200. Own body parser (JSON / form / text).
+app.use('/api/webhooks/rcs', require('./routes/rcsWebhook'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/public/facebook-connect', require('./utils/facebookConnect').router); // Facebook sends the browser back here after "Connect with Facebook" (the signed state proves it)
 // Omni-Channel email delivery events (bounce / complaint / delivered): signed, raw body, so it sits before the JSON parser (routes/outreachWebhook.js).
@@ -334,6 +336,7 @@ app.use('/api/messaging', require('./routes/messaging'));
 app.use('/api/wa-numbers', require('./routes/waNumbers')); // many WhatsApp numbers: list, assign, reconnect (Admin) + my-numbers (staff)
 app.use('/api/comm', require('./routes/comm'));
 app.use('/api/sms-platform', require('./routes/smsPlatform')); // SMS Push Platform screens (Admin)
+app.use('/api/rcs', require('./routes/rcs')); // RCS messaging (rcssms.in): templates, send, message log (Integrations > RCS)
 // Automatic stage messages: rules, scheduled list, approvals (routes/autoMessages.js).
 app.use('/api/auto-messages', require('./routes/autoMessages'));
 app.use('/api/conversations', require('./routes/conversations'));
@@ -508,6 +511,8 @@ const server = app.listen(PORT, () => {
   mailWorker.start();
   // SMS Push Platform: ask its Pull DLR API about SMS still waiting for a delivery report (off in the sandbox / SMS_PUSH_DLR_PULL=off)
   require('./utils/smsPushDlr').start();
+  // RCS: the background send queue (every minute) and the 24 h SMS fallback check (every 15 min); off in the sandbox / RCS_QUEUE=off
+  require('./utils/rcsQueue').start();
   // Uploaded repair bills: picks up bills a restart left waiting to be read by AI (utils/billUploadAi.js; BILL_AI_SWEEP_MS=0 switches it off).
   require('./utils/billUploadAi').start();
   // Omni-Channel Outreach sending loop: does nothing until an Admin switches "Outreach sending" on (outreach/runner.js; DB lease, one loop at a time).

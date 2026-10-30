@@ -57,6 +57,7 @@ import { ViewAsButton } from '../components/ViewAs.jsx';
 // WhatsApp quick chat (free wa.me links): row icon, row ticks + 'Send WhatsApp', Resume bar (components/wa/)
 import WaButton from '../components/wa/WaButton.jsx';
 import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import SendRcsModal, { useRcsMay } from '../components/rcs/SendRcsModal.jsx';
 import AppOmniPanel from '../components/omni/AppOmniPanel.jsx'; // the shared template library + campaigns of HRMS (inside this screen, no sidebar entry)
 import WaResume from '../components/wa/WaResume.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
@@ -202,6 +203,8 @@ export default function Employees() {
   // profile (announcements, information). Only the Super Admin (and Admin) and the HR desk see it; the server refuses everybody else.
   const { user: me } = useAuth() || {};
   const hrDesk = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || me.hrmsRole === 'HR' || me.atsRole === 'HR' || ['SUPER_ADMIN', 'ADMIN'].includes(me.hrmsRole));
+  const rcsMay = useRcsMay(); // RCS (rcssms.in): an Admin decides who may send (Integrations > RCS > Settings)
+  const [rcsSend, setRcsSend] = useState(null); // { ids }
   const [waMany, setWaMany] = useState(null); // ids ticked for a WhatsApp message through the company numbers
   const [waOne, setWaOne] = useState(null); // one employee
   useWaConfig();
@@ -870,6 +873,7 @@ export default function Employees() {
         <div className="wa-banner" role="region" aria-label="Selected employees">
           <b>{waSel.size} selected</b>
           <button type="button" className="btn btn-sm wa-go" onClick={() => setWaMany([...waSel])}>🟢 Send WhatsApp</button>
+          {rcsMay && <button type="button" className="btn btn-sm" onClick={() => setRcsSend({ ids: [...waSel] })}>💬 Send RCS</button>}
           <button type="button" className="btn btn-sm" onClick={() => setWaSel(new Set())}>Cancel</button>
         </div>
       )}
@@ -1110,6 +1114,7 @@ export default function Employees() {
         </table>
       </ScrollTable>
       <Pager page={pagedEmployees} noun="employees" />
+      {rcsSend && <SendRcsModal audience="employees" ids={rcsSend.ids} onClose={() => setRcsSend(null)} onSent={() => setWaSel(new Set())} />}
       {waMany && <SendManyDialog app="HRMS" mode="WhatsApp" audience="employees" ids={waMany} note="Sent from the company WhatsApp number to the mobile number on each employee's profile. You see who is left out, and why, before anything is sent." onClose={() => setWaMany(null)} onSent={() => setWaSel(new Set())} />}
       {waOne && <ContactDialog channel="WhatsApp" audience="employees" personId={waOne.id} name={waOne.name} email={waOne.email} phone={waOne.phone} onClose={() => setWaOne(null)} />}
       {waBulk && <WaBulkModal entityType="employee" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => { setWaSel(new Set()); setWaTick((n) => n + 1); }} />}

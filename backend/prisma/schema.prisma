@@ -5089,3 +5089,83 @@ model EmployeeIdea {
   @@index([userId, month])
   @@index([month])
 }
+
+// RCS MESSAGING (founder 2026-10-30, provider rcssms.in JSON API; utils/rcsService.js, utils/rcsQueue.js, routes/rcs.js). The table and
+// column names are the founder's spec (rcs_templates / rcs_message_logs). A template is only APPROVED when the provider says so (its
+// webhook) or an Admin saw it approved on the provider's panel. body_json = the template as made (type fields, number of blanks, cards,
+// the SMS fallback text + DLT id, promotional or not). No credential is ever stored here.
+model RcsTemplate {
+  id          String   @id @default(cuid())
+  templateId  String   @map("templateid") // the provider's template id
+  name        String
+  rcsType     String   @map("rcstype") // BASIC | RICH | RICHCASOUREL (the provider's spelling)
+  bodyJson    String   @map("body_json")
+  status      String   @default("PENDING") // PENDING | APPROVED | REJECTED
+  module      String? // HRMS | ATS | Accounts | null = every module
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@unique([templateId])
+  @@index([status])
+  @@map("rcs_templates")
+}
+
+// One row per number per send. status: queued -> sent (the provider gave a msgid) -> delivered (its report said so) | failed.
+// request_ref = the send batch (rcs_batches.id). The SMS fallback (Integrations > RCS) is recorded on the same row.
+model RcsMessageLog {
+  id             String    @id @default(cuid())
+  module         String // HRMS | ATS | Accounts
+  entityId       String?   @map("entity_id")
+  personName     String?   @map("person_name")
+  msisdn         String
+  templateId     String    @map("templateid")
+  rcsType        String?   @map("rcstype")
+  variablesJson  String?   @map("variables_json")
+  msgId          String?   @map("msgid")
+  status         String    @default("queued") // queued | sent | delivered | failed
+  errorCode      String?   @map("error_code")
+  errorText      String?   @map("error_text")
+  requestRef     String?   @map("request_ref")
+  attempts       Int       @default(0)
+  sentById       String?   @map("sent_by_id")
+  sentByName     String?   @map("sent_by_name")
+  sentAt         DateTime? @map("sent_at")
+  deliveredAt    DateTime? @map("delivered_at")
+  fallbackStatus String?   @map("fallback_status") // null | sent | failed | skipped
+  fallbackRef    String?   @map("fallback_ref")
+  fallbackError  String?   @map("fallback_error")
+  fallbackAt     DateTime? @map("fallback_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  @@index([msgId])
+  @@index([requestRef, status])
+  @@index([status, sentAt])
+  @@index([module, createdAt])
+  @@index([msisdn])
+  @@map("rcs_message_logs")
+}
+
+// A bulk send in the background queue (founder spec point 6): chunks of at most 500 numbers, a short wait between chunks, 2 retries,
+// and every batch PAUSES when the provider says "insufficient credit" (error 23) until an Admin presses Resume.
+model RcsBatch {
+  id          String    @id @default(cuid())
+  module      String
+  templateId  String    @map("templateid")
+  rcsType     String    @map("rcstype")
+  mode        String // same = one variables set for all (sendRcs) | personal = per person (sendRcsPersonalized)
+  payloadJson String    @map("payload_json") // variables / cards / button url / image url (no numbers, no credentials)
+  status      String    @default("queued") // queued | running | paused | done
+  total       Int       @default(0)
+  attempts    Int       @default(0)
+  lastError   String?   @map("last_error")
+  nextTryAt   DateTime? @map("next_try_at")
+  createdById String?   @map("created_by_id")
+  createdBy   String?   @map("created_by_name")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@index([status])
+  @@map("rcs_batches")
+}

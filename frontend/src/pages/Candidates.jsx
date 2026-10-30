@@ -46,6 +46,7 @@ import ReachRowButtons from '../components/reach/ReachRowButtons.jsx';
 // WhatsApp quick chat (free wa.me links): a row icon, a bulk 'Send WhatsApp' + 'Mark opted in', and the Resume bar (components/wa/)
 import WaButton from '../components/wa/WaButton.jsx';
 import WaBulkModal from '../components/wa/WaBulkModal.jsx';
+import SendRcsModal, { useRcsMay } from '../components/rcs/SendRcsModal.jsx';
 import WaResume from '../components/wa/WaResume.jsx';
 import { WaOptInModal } from '../components/wa/WaOptIn.jsx';
 import { useWaConfig, waMayUse } from '../components/wa/waKit.js';
@@ -513,6 +514,9 @@ export default function Candidates() {
   const [selected, setSelected] = useState(() => new Map());
   const [selectNote, setSelectNote] = useState('');
   const [bulkKind, setBulkKind] = useState(null);
+  // RCS (rcssms.in): 'Send RCS' on the ticked candidates, for the people an Admin allowed (Integrations > RCS > Settings)
+  const rcsMay = useRcsMay();
+  const [rcsSend, setRcsSend] = useState(null); // { ids }
   const [waBulk, setWaBulk] = useState(null); // { ids } = WhatsApp list to start; { sessionId } not used here (WaResume owns that)
   const [waOpt, setWaOpt] = useState(null); // { ids } = Mark opted in
   const waCfg = useWaConfig();
@@ -1391,6 +1395,7 @@ export default function Candidates() {
           onDone={() => { clearSelection(); reload(); }}
         />
       )}
+      {rcsSend && <SendRcsModal audience="candidates" ids={rcsSend.ids} onClose={() => setRcsSend(null)} />}
       {waBulk && <WaBulkModal entityType="candidate" ids={waBulk.ids} onClose={() => { setWaBulk(null); setWaTick((n) => n + 1); }} onDone={() => setWaTick((n) => n + 1)} />}
       {waOpt && <WaOptInModal entityType="candidate" ids={waOpt.ids} onClose={() => setWaOpt(null)} />}
       {drawer && (
@@ -2177,6 +2182,7 @@ export default function Candidates() {
                 mayExportSel && { key: 'download', icon: '⬇', label: 'Download', onClick: exportSelected },
               ].filter(Boolean)}
               also={[
+                rcsMay && { key: 'rcs', icon: '💬', label: 'Send RCS', onClick: () => setRcsSend({ ids: selectedCandidateIds }) },
                 may.interview && { key: 'interview', icon: '📅', label: 'Schedule interview', onClick: () => setBulkKind('interview') },
                 may.hold && { key: 'hold', icon: '⏸', label: 'Put on hold', onClick: () => setBulkKind('hold') },
                 may.reject && { key: 'reject', icon: '✖', label: 'Reject', danger: true, onClick: () => setBulkKind('reject') },
