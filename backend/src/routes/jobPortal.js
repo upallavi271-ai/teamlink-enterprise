@@ -52,6 +52,7 @@ const {
 } = require('../utils/atsVocab');
 const { screenEvents, screeningOf, findDuplicates } = require('../utils/preAtsScreening');
 const { computeMatch } = require('../utils/matching');
+const { aiInterviewOwed } = require('../calling/policy'); // Job Portal AI calling (AI interview pending)
 const { hiringTypeOf } = require('../utils/joining');
 const { applyStageMove } = require('./applications');
 const { canMoveToStage } = require('../utils/permissions');
@@ -466,6 +467,10 @@ router.get('/applications', perm(APPLICATIONS, 'view'), wrap(async (req, res) =>
       appliedAt: a.createdAt,
       imported: !!a.portalImportedAt,
       importedAt: a.portalImportedAt,
+      // JOB PORTAL AI CALLING (2026-10-30): may the AI remind them to take the AI interview? (calling/policy.js; the call
+      // itself checks consent, Do-not-call, test numbers and calling hours again)
+      aiCall: aiInterviewOwed(a),
+      aiInterviewDeadline: a.aiInterviewDeadline || null,
       // The screening before the ATS, and whether this login may work it.
       hiring: hiringTypeOf(a, a.requirement) === 'TeamLink Internal Hire' ? 'Internal' : 'Client',
       stageLabelWorkflow: stageLabelFor(a.stage, { internal: hiringTypeOf(a, a.requirement) === 'TeamLink Internal Hire' }),

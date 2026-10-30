@@ -13,8 +13,11 @@
 //   * a slot is filled only with a sanitised database value; a recruiter's note is screened for the same words
 // ---------------------------------------------------------------------------
 const LANGS = ['English', 'Telugu', 'Hindi'];
-const PURPOSES = ['Screening', 'Shortlist Notification', 'Interview Notification', 'Interview Reminder'];
-const TRANSACTIONAL = new Set(['Shortlist Notification', 'Interview Notification', 'Interview Reminder']);
+// 'AI Interview Pending' is a JOB PORTAL call (founder 2026-10-30: "job portal ai calling separate, ats ai calling separate"):
+// it is started from Candidates > New from job portal, never offered on the ATS AI Calling screens.
+const PURPOSES = ['Screening', 'Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending'];
+const PORTAL_PURPOSES = ['AI Interview Pending'];
+const TRANSACTIONAL = new Set(['Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending']);
 const TZ = 'Asia/Kolkata';
 
 // Words the assistant must never say unless an authorised decision exists (it never exists inside this module).
@@ -91,6 +94,12 @@ const PH = {
     shortNoIv: "The interview isn't fixed yet. The team will share the details later.",
     shortProceed: 'Are you okay to go to the next step?',
     shortYes: 'Thanks. The recruiter will call you with the next steps. Being shortlisted is just one step, not a final decision. Bye.',
+    // AI interview pending (Job Portal calling, 2026-10-30)
+    aiNews: "You applied for the {job} job on the TeamLink jobs website. Your AI interview for it is still pending.",
+    aiDue: "Please finish it by {date}.",
+    aiHow: "Log in on the TeamLink jobs website with your registered mobile number or email, open My Applications, and start the AI interview there.",
+    aiProceed: "Will you be able to complete it?",
+    aiYes: "Thanks. Please finish it before the deadline, so the recruiter can look at your application. Bye.",
     ivIntro: 'Your interview for the {job} position is fixed for {date} at {time}.',
     ivRemind: 'Just a reminder, your interview for the {job} position is on {date} at {time}.',
     ivOnline: "It's an online interview. The meeting link is in the message we send you.",
@@ -169,6 +178,12 @@ const PH = {
     shortNoIv: 'इंटरव्यू अभी फ़िक्स नहीं हुआ। टीम बाद में बताएगी।',
     shortProceed: 'आगे के स्टेप के लिए चलें?',
     shortYes: 'थैंक्यू। रिक्रूटर कॉल करके आगे के स्टेप्स बताएँगे। शॉर्टलिस्ट होना बस एक स्टेप है, फ़ाइनल फ़ैसला नहीं। बाय।',
+    // AI interview pending (Job Portal calling, 2026-10-30)
+    aiNews: "आपने टीमलिंक जॉब्स वेबसाइट पर {job} जॉब के लिए अप्लाई किया था। उसका आपका AI इंटरव्यू अभी पेंडिंग है।",
+    aiDue: "{date} तक पूरा कर दीजिए।",
+    aiHow: "अपने रजिस्टर्ड मोबाइल नंबर या ईमेल से टीमलिंक जॉब्स वेबसाइट पर लॉगिन कीजिए, माय एप्लिकेशन्स खोलिए, और वहाँ AI इंटरव्यू शुरू कीजिए।",
+    aiProceed: "क्या आप इसे पूरा कर पाएँगे?",
+    aiYes: "थैंक्यू। डेडलाइन से पहले पूरा कर दीजिए, ताकि रिक्रूटर आपकी एप्लिकेशन देख सकें। बाय।",
     ivIntro: '{job} पोस्ट के लिए आपका इंटरव्यू {date} को {time} पर फ़िक्स है।',
     ivRemind: 'बस याद दिलाने के लिए कॉल किया: {job} पोस्ट का आपका इंटरव्यू {date} को {time} पर है।',
     ivOnline: 'इंटरव्यू ऑनलाइन है। मीटिंग लिंक मैसेज में भेज देंगे।',
@@ -247,6 +262,12 @@ const PH = {
     shortNoIv: 'ఇంటర్వ్యూ ఇంకా ఫిక్స్ కాలేదు. టీమ్ తర్వాత చెప్తుంది.',
     shortProceed: 'నెక్స్ట్ స్టెప్‌కి వెళ్దామా?',
     shortYes: 'థాంక్స్. రిక్రూటర్ కాల్ చేసి నెక్స్ట్ స్టెప్స్ చెప్తారు. షార్ట్‌లిస్ట్ అనేది ఒక స్టెప్ మాత్రమే, ఫైనల్ డెసిషన్ కాదు. బై.',
+    // AI interview pending (Job Portal calling, 2026-10-30)
+    aiNews: "మీరు టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో {job} జాబ్‌కి అప్లై చేశారు. దానికి మీ AI ఇంటర్వ్యూ ఇంకా పెండింగ్‌లో ఉంది.",
+    aiDue: "{date} లోపు పూర్తి చేయండి.",
+    aiHow: "మీ రిజిస్టర్డ్ మొబైల్ నంబర్ లేదా ఈమెయిల్‌తో టీమ్‌లింక్ జాబ్స్ వెబ్‌సైట్‌లో లాగిన్ అయ్యి, మై అప్లికేషన్స్ ఓపెన్ చేసి, అక్కడ AI ఇంటర్వ్యూ స్టార్ట్ చేయండి.",
+    aiProceed: "మీరు అది పూర్తి చేయగలరా?",
+    aiYes: "థాంక్స్. డెడ్‌లైన్ లోపు పూర్తి చేయండి, అప్పుడు రిక్రూటర్ మీ అప్లికేషన్ చూస్తారు. బై.",
     ivIntro: '{job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఫిక్స్ అయింది.',
     ivRemind: 'జస్ట్ గుర్తు చేయడానికి కాల్ చేశా: {job} పోస్ట్‌కి మీ ఇంటర్వ్యూ {date} న {time} కి ఉంది.',
     ivOnline: 'ఇంటర్వ్యూ ఆన్‌లైన్‌లో. మీటింగ్ లింక్ మెసేజ్‌లో పంపిస్తాం.',
@@ -399,6 +420,8 @@ function buildData({ candidate, app, requirement, link }) {
       hasLink: linkOk,
       round: a.interviewRound || 1,
     } : null,
+    // the Job Portal AI interview's last day (India time), only when it is a real date
+    aiDeadline: /^\d{4}-\d\d-\d\d/.test(String(a.aiInterviewDeadline || '')) ? `${String(a.aiInterviewDeadline).slice(0, 10)}T12:00:00+05:30` : null,
   };
   return data;
 }
@@ -452,6 +475,8 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
   B.brief = brief.length ? brief.join(' ') : P.briefNone;
   B.news = fill(P.shortNews, { job: data.jobTitle });
   B.shortIv = iv ? fill(P.shortIv, { date: dateWords(iv.at, language), time: timeWords(iv.at, language) }) : P.shortNoIv;
+  B.aiNews = fill(P.aiNews, { job: data.jobTitle });
+  B.aiDue = data.aiDeadline ? fill(P.aiDue, { date: dateWords(data.aiDeadline, language) }) : '';
   B.ivLine = iv ? fill(purpose === 'Interview Reminder' ? P.ivRemind : P.ivIntro, { job: data.jobTitle, date: dateWords(iv.at, language), time: timeWords(iv.at, language) }) : '';
   let modeLine = '';
   if (iv) {
@@ -483,6 +508,13 @@ function preview(purpose, language, data, fieldsIn, opts = {}) {
     add('qNotice', P.qNotice);
     add('qProceed', P.qProceed);
     add('close', P.closeInterested);
+  } else if (purpose === 'AI Interview Pending') {
+    add('news', B.aiNews);
+    add('due', B.aiDue);
+    add('how', P.aiHow);
+    add('note', B.note);
+    add('proceed', P.aiProceed);
+    add('close', P.aiYes);
   } else if (purpose === 'Shortlist Notification') {
     add('news', B.news);
     add('iv', B.shortIv);
@@ -512,5 +544,5 @@ function checkTemplates() {
 }
 
 module.exports = {
-  LANGS, PURPOSES, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
+  LANGS, PURPOSES, PORTAL_PURPOSES, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
 };

@@ -158,6 +158,8 @@ async function applyResult(callId, resultIn, turns) {
   else if (res.humanFollowUpRequested) { nextAction = 'Candidate asked to speak to a recruiter. Call the candidate'; due = istDay(t); }
   else if (res.callbackRequested) { nextAction = `Call the candidate back${res.callbackWhen ? ` (${res.callbackWhen})` : ''}`; due = istDay(t, 1); }
   else if (res.outcome === 'No Response') { nextAction = 'Interview not confirmed. Call the candidate'; due = istDay(t); }
+  else if (res.outcome === 'Interested' && row.purpose === 'AI Interview Pending') { nextAction = 'Candidate said they will take the AI interview. Check it is done by the deadline'; due = istDay(t, 1); }
+  else if (res.outcome === 'Not Interested' && row.purpose === 'AI Interview Pending') { nextAction = 'Candidate does not want to take the AI interview. Decide: manual review or reject'; due = istDay(t, 1); }
   else if (res.outcome === 'Interested') { nextAction = row.purpose === 'Screening' ? 'Candidate is interested. Take the next step' : 'Candidate wants to go ahead. Share the next steps'; due = istDay(t, 1); }
   else if (res.outcome === 'Unclear') { nextAction = 'The AI call was unclear. Call the candidate yourself'; due = istDay(t, 1); }
   const patch = {

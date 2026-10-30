@@ -26,6 +26,8 @@ const OUTCOMES = {
   'Shortlist Notification': ['Interested', 'Not Interested', 'Call Back Later', 'Unclear'],
   'Interview Notification': ['Confirmed', 'Reschedule Requested', 'Not Available', 'No Response'],
   'Interview Reminder': ['Confirmed', 'Reschedule Requested', 'Not Available', 'No Response'],
+  // Interested = "I will take the AI interview"
+  'AI Interview Pending': ['Interested', 'Not Interested', 'Call Back Later', 'Unclear'],
 };
 const INTENTS = ['stop', 'human', 'later', 'reschedule', 'ai_q', 'salary_q', 'info_q', 'other_cand', 'no', 'yes', 'mixed', 'maybe', 'repeat', 'cant_hear', 'silence', 'unclear'];
 
@@ -634,6 +636,10 @@ class Dialogue {
       st.identity = true; st.tries = 0;
       // a call-back: "we spoke earlier about the ... job" before "is this a good time?" (memory, 2026-10-30)
       if (this.purpose === 'Screening') { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
+      if (this.purpose === 'AI Interview Pending') {
+        st.step = 'proceed'; st.told = true;
+        return { say: this.speak(this.B.aiNews, this.B.aiDue, this.P.aiHow, this.B.note, this.P.aiProceed), done: false };
+      }
       if (this.purpose === 'Shortlist Notification') {
         st.step = 'proceed'; st.told = true;
         return { say: this.speak(this.B.news, this.B.shortIv, this.B.note, this.P.shortProceed), done: false };
@@ -799,6 +805,7 @@ class Dialogue {
     let line = sentence;
     if (!line) {
       if (this.purpose === 'Screening') line = outcome === 'Interested' ? this.P.closeInterested : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
+      else if (this.purpose === 'AI Interview Pending') line = outcome === 'Interested' ? this.P.aiYes : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
       else if (this.purpose === 'Shortlist Notification') line = outcome === 'Interested' ? this.P.shortYes : outcome === 'Not Interested' ? this.P.closeNotInterested : this.P.closeUnclear;
       else line = outcome === 'Confirmed' ? this.P.ivConfirmed : outcome === 'Not Available' ? this.P.ivNotAvail : this.P.ivNoReply;
     }
@@ -821,7 +828,10 @@ class Dialogue {
     else if (!st.identity) bits.push('The person did not confirm their name. No details were shared.');
     else bits.push('Name confirmed.');
     if (st.identity && this.purpose === 'Shortlist Notification') bits.push(st.told ? 'Told that they are shortlisted.' : '');
-    if (st.interest === 'yes') bits.push('Interested.'); else if (st.interest === 'no') bits.push('Not interested.');
+    if (st.identity && this.purpose === 'AI Interview Pending') bits.push(st.told ? 'Told that the AI interview is pending and how to take it.' : '');
+    if (this.purpose === 'AI Interview Pending' && st.interest === 'yes') bits.push('Said they will take the AI interview.');
+    else if (this.purpose === 'AI Interview Pending' && st.interest === 'no') bits.push('Does not want to take the AI interview.');
+    else if (st.interest === 'yes') bits.push('Interested.'); else if (st.interest === 'no') bits.push('Not interested.');
     const a = st.answers;
     if (a.experienceYears != null) bits.push(`Experience: ${a.experienceYears} years.`);
     if (a.currentLocation) bits.push(`Lives in: ${a.currentLocation}.`);

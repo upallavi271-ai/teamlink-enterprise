@@ -74,6 +74,8 @@ function factsOf(d) {
     (x.needs || x.skills) && `They need: ${x.needs || x.skills}`, x.responsibilities && `Work includes: ${x.responsibilities}`,
     x.salary && d.fields && d.fields.includeSalary !== false && `Salary: ${x.salary}`,
     x.interview && x.interview.at && `Interview: ${x.interview.at} (${x.interview.mode || 'mode not set'})`,
+    d.purpose === 'AI Interview Pending' && 'The candidate applied on the TeamLink jobs website; the AI interview is taken there: log in with the registered mobile or email > My Applications > AI interview',
+    d.purpose === 'AI Interview Pending' && x.aiDeadline && `AI interview last day: ${x.aiDeadline.slice(0, 10)}`,
     ...(Array.isArray(d.knowledge) ? d.knowledge.map((k) => `Q: ${k.q} A: ${k.a}`) : []),
   ].filter(Boolean);
   return lines.length ? lines.join('\n') : 'No job details are on file.';

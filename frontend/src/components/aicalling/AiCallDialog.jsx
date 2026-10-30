@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
-import { PURPOSES, purposeLabel, errorOf, statusWord } from './aiCallingShared.js';
+import { PURPOSES, PORTAL_PURPOSES, purposeLabel, errorOf, statusWord } from './aiCallingShared.js';
 
 // The confirm window for AI calls. NOTHING is called until the person presses the big button here.
 //
@@ -172,7 +172,7 @@ export default function AiCallDialog({
             <div className="field">
               <label>What is the call for</label>
               <Combo value={purpose} onChange={(e) => setPurpose(e.target.value)} disabled={!!offerId}>
-                {PURPOSES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+                {(PORTAL_PURPOSES.some((p) => p.key === purposeIn) ? PORTAL_PURPOSES : PURPOSES).map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
               </Combo>
             </div>
             <div className="field">
