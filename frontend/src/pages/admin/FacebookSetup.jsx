@@ -123,7 +123,8 @@ export default function FacebookSetup() {
         <div style={{ marginTop: 10 }}>
           <button type="button" className="btn btn-primary" onClick={connect} disabled={busy}>{busy ? 'Opening Facebook…' : connected ? 'Connect again / change Page' : 'Connect with Facebook'}</button>
         </div>
-        {social.error && !connected && <div className="small-muted" style={{ marginTop: 6, color: '#b42318' }}>Last problem: {social.error}</div>}
+        {/* an error saved before the Meta app was set up belongs to an older try (the old demo test), so it is only shown once steps 1-3 are done */}
+        {social.error && !connected && hasApp && <div className="small-muted" style={{ marginTop: 6, color: '#b42318' }}>Last time it did not connect: {social.error}</div>}
       </Step>
 
       <Step n={5} done={inOmni} title="Omni-Channel gets the same Page (automatic)">
