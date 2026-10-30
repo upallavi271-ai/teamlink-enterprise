@@ -536,7 +536,7 @@ class Dialogue {
     this.memory = { at: prev.at || null };
     const a = prev.answers || {};
     if (Number.isFinite(a.experienceYears)) this.st.answers.experienceYears = a.experienceYears;
-    if (a.currentLocation) this.st.answers.currentLocation = S.clean(a.currentLocation, 40);
+    if (a.currentLocation && !S.looksGarbled(a.currentLocation)) this.st.answers.currentLocation = S.clean(a.currentLocation, 40);
     if (a.noticePeriodText) { this.st.answers.noticePeriodText = S.clean(a.noticePeriodText, 30); if (Number.isFinite(a.noticePeriodDays)) this.st.answers.noticePeriodDays = a.noticePeriodDays; }
     this.st.remembered = true;
     return this;
@@ -654,7 +654,7 @@ class Dialogue {
     const st = this.st;
     if (k.intent === 'yes') {
       st.identity = true; st.tries = 0;
-      this.ack('ackName', { first: S.clean(this.data.firstName, 30) });
+      this.ack('ackName');
       // a call-back: "we spoke earlier about the ... job" before "is this a good time?" (memory, 2026-10-30)
       if (S.screenLike(this.purpose)) { st.step = 'convenient'; return { say: this.speak(this.memory ? S.fill(this.P.resumeLine, { job: this.data.jobTitle }) : '', this.B.convenient), done: false }; }
       if (this.purpose === 'AI Interview Pending') {
@@ -745,7 +745,7 @@ class Dialogue {
       if (st.tries < 2) return { say: this.again(this.P.repeat), done: false };
     } else {
       st.answers.currentLocation = place;
-      this.ack('ackLoc', { place: S.clean(place, 40) });
+      if (!S.looksGarbled(place)) this.ack('ackLoc', { place: S.clean(place, 40) });
     }
     st.tries = 0;
     return this.ask('qNotice');

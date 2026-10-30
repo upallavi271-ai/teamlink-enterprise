@@ -75,10 +75,13 @@ const NATIVE = {
   Telugu: ['అవును', 'అవునండి', 'అవునా', 'లేదు', 'లేదండి', 'సరే', 'కాదు', 'వద్దు', 'చెప్పండి', 'చెప్పు', 'హా', 'నేను', 'నేనే', 'నాకు', 'నా', 'మీరు', 'మీకు',
     'మీ', 'ఉంది', 'ఉన్నాను', 'ఉంటాను', 'ఉంటున్నాను', 'లో', 'ఇప్పుడు', 'తర్వాత', 'తరువాత', 'రేపు', 'ఎల్లుండి', 'సంవత్సరాలు', 'సంవత్సర', 'ఏళ్ళు', 'రోజులు', 'రోజు',
     'నెలలు', 'నెల', 'ఆసక్తి', 'ఇష్టం', 'మాట్లాడ', 'తెలుగు', 'ఏంటి', 'ఎక్కడ', 'ఎప్పుడు', 'ఎలా', 'ఎందుకు', 'కావాలి', 'వస్తాను', 'చేస్తాను', 'పని', 'ఊరు', 'సాయంత్రం', 'ఉదయం',
-    'మధ్యాహ్నం', 'అలాగే', 'పర్లేదు', 'కూడా', 'ఇంకా', 'మళ్ళీ', 'గారు', 'అండి'],
+    'మధ్యాహ్నం', 'అలాగే', 'పర్లేదు', 'కూడా', 'ఇంకా', 'మళ్ళీ', 'గారు', 'అండి', 'చెప్పండి', 'చెప్పాలి', 'చెప్పన', 'ఏమి', 'ఏం', 'లేదా', 'ఉన్నారు',
+    'ఉన్నా', 'ఉంటా', 'చేస్తున్నా', 'చేశాను', 'చేసాను', 'చేస్తా', 'వచ్చు', 'అయితే', 'కదా', 'బాగుంది', 'బాగా', 'ఇక్కడ', 'అక్కడ', 'వెళ్ళ', 'రెండు', 'మూడు',
+    'నాలుగు', 'ఐదు', 'ఒక', 'వర్క్ చేస్తున్నా', 'చూస్తా', 'ఆలోచిస్తా', 'వద్దండి', 'ఓకేనా'],
   Hindi: ['हाँ', 'हां', 'जी', 'नहीं', 'नही', 'ठीक', 'बोलिए', 'बोलो', 'मैं', 'मुझे', 'मेरा', 'मेरी', 'आप', 'आपका', 'है', 'हैं', 'हूँ', 'हूं', 'में', 'का', 'की', 'के',
     'को', 'से', 'साल', 'दिन', 'महीने', 'कल', 'परसों', 'अभी', 'बाद', 'रहता', 'रहती', 'करता', 'करती', 'बात', 'हिंदी', 'क्या', 'कहाँ', 'कब', 'कैसे', 'क्यों', 'चाहिए',
-    'शाम', 'सुबह', 'दोपहर', 'बिल्कुल', 'अच्छा', 'भी', 'और'],
+    'शाम', 'सुबह', 'दोपहर', 'बिल्कुल', 'अच्छा', 'भी', 'और', 'बताइए', 'बताओ', 'सकते', 'सकता', 'सकती', 'रहा', 'रही', 'रहे', 'था', 'थी', 'गया',
+    'लेकिन', 'मतलब', 'यहाँ', 'वहाँ', 'दो', 'तीन', 'चार', 'पांच', 'पाँच', 'एक'],
 };
 function nativeAnswer(text, lang) {
   const t = String(text || '').trim();
@@ -87,6 +90,29 @@ function nativeAnswer(text, lang) {
   const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
   const list = NATIVE[lang] || [];
   return words.some((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n))));
+}
+
+// HOW MANY real everyday words of that language are in the words heard (0 = no proof it is that language)
+function nativeScore(text, lang) {
+  const t = String(text || '').trim();
+  const script = lang === 'Telugu' ? /[ఀ-౿]/g : /[ऀ-ॿ]/g;
+  if ((t.match(script) || []).length < 3) return 0;
+  const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
+  const list = NATIVE[lang] || [];
+  return words.filter((w) => list.some((n) => w === n || (n.length >= 3 && w.startsWith(n)))).length;
+}
+// TELUGU OR HINDI? (founder 2026-10-30: "telugu matladithey, hindi lo theeskuntundhi"). On phone audio Whisper's language
+// guess often calls Telugu "Hindi"; the Hindi listener then writes the Telugu sound in Hindi letters ("ఓకే చెప్పండి" came
+// out as "ओके चपंडी ह") and the call went over to Hindi. So BOTH listeners hear the answer and the language whose words
+// are real everyday words wins; Whisper's guess only breaks a tie. No real words in either = no proof (null).
+// known: { Telugu?: text, Hindi?: text } already heard, not asked again.
+async function teluguOrHindi(engines, pcm, guess, known = {}) {
+  const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => (known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''))));
+  const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
+  if (!sT && !sH) return null;
+  // eslint-disable-next-line no-nested-ternary
+  const lang = sT > sH ? 'Telugu' : sH > sT ? 'Hindi' : (guess === 'Hindi' ? 'Hindi' : 'Telugu');
+  return { lang, text: lang === 'Telugu' ? te : hi, sT, sH };
 }
 
 const sentences = (text) => String(text || '').split(/(?<=[.?!।])\s+/).map((s) => s.trim()).filter(Boolean);
@@ -295,12 +321,23 @@ function handle(sock, engines, opts = {}) {
         }
       }
       if (byScript) first = { text: '', conf: null }; // heard again below in the language found
+      let pre = null; // the words already heard in the language decided by teluguOrHindi
+      if (found && found !== cur && ['Telugu', 'Hindi'].includes(found) && engines.stt) {
+        const known = ['Telugu', 'Hindi'].includes(cur) ? { [cur]: first.text } : {};
+        const th = await teluguOrHindi(engines, pcm, found, known);
+        if (th) {
+          if (DEBUG && th.lang !== found) debug(`${row.id} sound said ${found}, the words say ${th.lang} (Telugu ${th.sT} / Hindi ${th.sH})`);
+          found = th.lang; pre = { text: th.text, conf: null };
+          if (found === cur) { first = pre; byScript = false; }
+        }
+      }
       // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
       // Whisper guesses badly on a second of sound (heard 'हाँ, ठीक है' as English in the 2026-10-28 test)
       const shortClip = pcm.length < A.RATE * 2 * 2;
       const understood = !byScript && shortClip && found && found !== cur && !['unclear', 'silence'].includes(require('../dialogue').classify(first.text).intent); // eslint-disable-line global-require
       let lang = (understood ? null : found) || cur;
-      const r = lang === cur && !byScript ? first : await listen(lang);
+      // eslint-disable-next-line no-nested-ternary
+      const r = lang === cur && !byScript ? first : (pre && lang === found ? pre : await listen(lang));
       let heardAs = clarityOf(r.text, r.conf);
       // a language guessed from the sound whose words make no sense in that language: noise, not a switch
       if (lang !== cur && !believable(r.text)) {
@@ -311,11 +348,20 @@ function handle(sock, engines, opts = {}) {
       // (a Telugu sentence came out as "I'm going to get ready to cool", 41% English) or the words were a guess. Before asking
       // again, the Telugu and Hindi listeners try the same audio; clearly Telugu / Hindi words switch the call.
       let r2 = r;
+      if (['Telugu', 'Hindi'].includes(cur) && lang === cur && engines.stt && !nativeScore(r.text, cur)
+        && ['unclear', 'silence'].includes(require('../dialogue').classify(r.text).intent)) { // eslint-disable-line global-require
+        const other = cur === 'Telugu' ? 'Hindi' : 'Telugu';
+        const th = await teluguOrHindi(engines, pcm, cur, { [cur]: r.text });
+        if (th && th.lang === other) {
+          if (DEBUG) debug(`${row.id} "${r.text}" is not ${cur}; the ${other} words make sense: back to ${other}`);
+          lang = other; r2 = { text: th.text, conf: null }; heardAs = 'clear'; found = other;
+        }
+      }
       // (only when English really is in doubt: unclear words, or Whisper under 50% sure it was English)
       if (cur === 'English' && lang === 'English' && engines.stt && (heardAs === 'unclear' || (enProb != null && enProb < 0.5))) {
-        const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => engines.stt(pcm, l).catch(() => '')));
-        const pick = nativeAnswer(te, 'Telugu') ? ['Telugu', te] : nativeAnswer(hi, 'Hindi') ? ['Hindi', hi] : null;
-        if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs}): Telugu "${te}" / Hindi "${hi}"${pick ? ` -> ${pick[0]}` : ''}`);
+        const th = await teluguOrHindi(engines, pcm, null);
+        const pick = th ? [th.lang, th.text] : null;
+        if (DEBUG) debug(`${row.id} English unsure (${enProb == null ? '?' : enProb}, ${heardAs})${th ? `: Telugu ${th.sT} / Hindi ${th.sH} words -> ${th.lang}: ${th.text}` : ': no Telugu / Hindi words'}`);
         if (pick) { lang = pick[0]; r2 = { text: pick[1], conf: null }; heardAs = 'clear'; found = pick[0]; }
       }
       const { text } = r2;
@@ -391,4 +437,4 @@ function start({ host = '127.0.0.1', port = 9092, engines = E.fromEnv(), ...opts
   return new Promise((resolve) => server.listen(port, host, () => { log(`listening on ${host}:${server.address().port} (${engines.name})`); resolve(server); }));
 }
 
-module.exports = { polish, nativeAnswer, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };
+module.exports = { polish, nativeAnswer, nativeScore, teluguOrHindi, clarityOf, believable, SILENCE_MS, start, handle, prepare, prepareCall, prepareFixed, sentences, VIA, engines: () => ENGINES || (ENGINES = E.fromEnv()), _cache: cache };

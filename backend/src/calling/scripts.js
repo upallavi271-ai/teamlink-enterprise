@@ -30,6 +30,8 @@ const FORBIDDEN = [
   /(चयनित|नियुक्त|ऑफर|बधाई|पक्की\s*नौकरी)/,
   /(ఎంపికైన|ఎంపిక\s*చేయబడ|ఆఫర్|అభినందనలు|నియమించ)/,
 ];
+// Words the listener got wrong: two vowel signs in a row ("हैायदराबाद") cannot be a real Telugu / Hindi word
+const looksGarbled = (t) => /[ा-ौా-ౌ][ा-ौా-ౌ]/.test(String(t || ''));
 const hasForbidden = (t) => FORBIDDEN.some((re) => re.test(String(t || '')));
 
 // Everyday spoken words, the way people talk on the phone (user, 2026-10-28: "normal daily language, like humans"; no
@@ -93,7 +95,7 @@ const PH = {
     thatsFine: "That's fine.",
     langSwitched: "Sure, let's continue in English.",
     // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
-    ackName: "Hi {first}.",
+    ackName: "Okay, thank you.",
     ackTime: "Thanks.",
     ackInterest: "Good.",
     ackExp: "Okay, {yrs}.",
@@ -190,7 +192,7 @@ const PH = {
     thatsFine: "कोई बात नहीं।",
     langSwitched: 'ठीक है, हिंदी में बात करते हैं।',
     // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
-    ackName: "हाय {first} जी।",
+    ackName: "ओके, थैंक्यू।",
     ackTime: "थैंक्यू।",
     ackInterest: "बढ़िया।",
     ackExp: "ओके, {yrs}।",
@@ -287,7 +289,7 @@ const PH = {
     thatsFine: "పర్లేదు.",
     langSwitched: 'సరే, తెలుగులో మాట్లాడుకుందాం.',
     // SPOKEN LIKE A PERSON (founder 2026-10-30: "oka person laaga matladali"): a short acknowledgement of what they said
-    ackName: "హాయ్ {first} గారు.",
+    ackName: "ఓకే, థాంక్స్.",
     ackTime: "థాంక్స్.",
     ackInterest: "మంచిది.",
     ackExp: "ఓకే, {yrs}.",
@@ -386,8 +388,7 @@ const VARIANTS = {
       "Sorry, I couldn't hear you properly."
     ],
     "ackName": [
-      "Hello {first}.",
-      "Hi {first}, thanks for picking up."
+      "Thanks for picking up."
     ],
     "ackTime": [
       "Okay, thank you.",
@@ -461,8 +462,7 @@ const VARIANTS = {
       "సారీ, మీ మాట క్లియర్‌గా వినపడలేదు."
     ],
     "ackName": [
-      "హలో {first} గారు.",
-      "హాయ్ {first} గారు, కాల్ లిఫ్ట్ చేసినందుకు థాంక్స్."
+      "కాల్ లిఫ్ట్ చేసినందుకు థాంక్స్."
     ],
     "ackTime": [
       "సరే, థాంక్యూ.",
@@ -536,8 +536,7 @@ const VARIANTS = {
       "सॉरी, आपकी आवाज़ साफ़ नहीं आई।"
     ],
     "ackName": [
-      "हाय {first} जी।",
-      "नमस्ते {first} जी, कॉल उठाने के लिए थैंक्यू।"
+      "कॉल उठाने के लिए थैंक्यू।"
     ],
     "ackTime": [
       "ठीक है, थैंक्यू।",
@@ -839,5 +838,5 @@ function checkTemplates() {
 }
 
 module.exports = {
-  LANGS, PURPOSES, PORTAL_PURPOSES, screenLike, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
+  LANGS, PURPOSES, PORTAL_PURPOSES, screenLike, looksGarbled, TRANSACTIONAL, TZ, FORBIDDEN, hasForbidden, phrases, clean, fill, dateWords, timeWords, buildData, cleanFields, checkFields, blocks, preview, checkTemplates, MODE_KIND,
 };
