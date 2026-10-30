@@ -39,6 +39,11 @@ router.post('/launch', async (req, res) => {
   if (!req.user.email) return res.status(409).json({ error: 'Your login has no email address, and the Job Portal finds your account by email.', code: 'NO_EMAIL' });
   if (!sso.secret()) return res.status(503).json({ error: 'Opening the Job Portal from TeamLink is not set up on this server.' });
   const next = NEXT_RE.test(String((req.body && req.body.next) || '')) ? req.body.next : '';
+  // An Admin / Super Admin without a portal admin login gets one now, before the portal looks for it (utils/jobPortalRecruiters.js
+  // ensureAdmins; founder 2026-10-30 "admin kiii job portal access denied"). A portal that does not answer: the sign-in goes on as before.
+  if (['ADMIN', 'SUPER_ADMIN'].includes(sso.portalRoleOf(req.user))) {
+    await require('../utils/jobPortalRecruiters').ensureAdminsQuietly({ users: [{ name: req.user.name, email: String(req.user.email).trim().toLowerCase(), role: req.user.role }] }); // eslint-disable-line global-require
+  }
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Opened the Job Portal (signed in from TeamLink)', entity: 'JobPortal' }).catch(() => {});
   const token = sso.launchToken(req.user, claims);
   return res.json({ url: `/jobs/hrms-sso.html#token=${encodeURIComponent(token)}${next ? `&next=${encodeURIComponent(next)}` : ''}` });

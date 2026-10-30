@@ -500,6 +500,7 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
   // every HRMS Recruiter / TL has a portal recruiter login with the same email (utils/jobPortalRecruiters.js); never stops the sync
   // ...and a mailbox mapped to a position follows that position's holder (utils/mailboxSeats.js)
   require('./jobPortalRecruiters').ensureQuietly().then(() => require('./mailboxSeats').reconcileQuietly()); // eslint-disable-line global-require
+  require('./jobPortalRecruiters').ensureAdminsQuietly(); // ...and every Admin / Super Admin a portal admin login // eslint-disable-line global-require
   try {
     const where = { portalPublished: true, status: { in: REQUIREMENT_LIVE_STATUSES } };
     // Unticked "Job Portal" on the job = not offered there (closeOthers closes it).

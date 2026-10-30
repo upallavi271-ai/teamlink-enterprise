@@ -68,7 +68,7 @@ async function portal() {
   const [db, errors, shapes, storage] = await Promise.all([at('db.js'), at('errors.js'), at('shapes.js'), at('storage.js')]);
   let alerts = null;
   try { alerts = await at('notify/job-alerts.js'); } catch { alerts = null; }
-  mods = { withUser: db.withUser, ApiError: errors.ApiError, toCandidate: shapes.toCandidate, getStorage: storage.getStorage, alerts };
+  mods = { withUser: db.withUser, getPool: db.getPool, ApiError: errors.ApiError, toCandidate: shapes.toCandidate, getStorage: storage.getStorage, alerts };
   return mods;
 }
 
@@ -492,6 +492,77 @@ export function teamlinkFrontRouter({ root, express }) {
     }
     const created = results.filter((x) => x.result === 'created').length;
     if (created) log(`recruiters: ${created} portal login(s) made for TeamLink Recruiters / TLs`);
+    res.json({ dryRun, results });
+  }));
+
+  /*
+   * EVERY TEAMLINK ADMIN / SUPER ADMIN IS A PORTAL ADMIN (founder 2026-10-30: "admin kiii job portal access denied anii
+   * ostundhii"). The HRMS sign-in (api/src/routes/hrms-sso.js) opens the portal account with the SAME EMAIL and never
+   * makes one; the portal has no screen that adds an administrator (only its seed, api/src/scripts/seed-auth.js). So
+   * TeamLink sends its active Admins / Super Admins (backend/src/utils/jobPortalRecruiters.js ensureAdmins) and one
+   * without a portal login gets one here, the way seed-auth.js makes it: a users row (role admin, a random password
+   * nobody types - they come in from TeamLink) and its admins profile. Written on the owner connection because app_api
+   * cannot write users (0027). An email that already signs in as something else (a recruiter, a candidate) is left
+   * alone and reported as a clash; nothing that exists is changed or removed.
+   *   POST /api/integrations/teamlink/admins/ensure  { people: [{ name, email }], dryRun }
+   *        ->  { results: [{ email, result: exists | created | would-create | clash | skipped, ... }] }
+   */
+  r.post('/api/integrations/teamlink/admins/ensure', wrap(async (req, res) => {
+    const people = Array.isArray(req.body && req.body.people) ? req.body.people.slice(0, 200) : [];
+    const dryRun = !(req.body && req.body.dryRun === false);
+    const { getPool } = await portal();
+    const { hashPassword } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    const { randomBytes } = await import('node:crypto');
+    const txt = (v, max) => { const s = String(v == null ? '' : v).trim(); return s ? s.slice(0, max) : null; };
+    const results = [];
+    for (const p of people) {
+      const email = txt(p && p.email, 160);
+      const name = txt(p && p.name, 120);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !name || name.length < 2) { results.push({ email, result: 'skipped', reason: 'no name or email' }); continue; } // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      const c = await getPool().connect();
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        await c.query('begin');
+        // eslint-disable-next-line no-await-in-loop
+        const u = (await c.query(`select u.id, u.role, u.status, a.id as admin_id from users u left join admins a on a.user_id = u.id
+                                    where lower(u.email) = lower($1) limit 1`, [email])).rows[0];
+        let out;
+        if (u && u.role === 'admin') {
+          if (!u.admin_id && !dryRun) {
+            // eslint-disable-next-line no-await-in-loop
+            await c.query(`insert into admins (id, user_id, name, email, title) values ($1, $2, $3, $4, 'Administrator')`,
+              [`tl_a_${randomBytes(6).toString('hex')}`, u.id, name, email.toLowerCase()]);
+          }
+          out = { email, result: 'exists', active: u.status === 'active' };
+        } else if (u) {
+          out = { email, result: 'clash', reason: `this email already signs in to the portal as ${u.role}` };
+        } else if (dryRun) {
+          out = { email, result: 'would-create' };
+        } else {
+          // eslint-disable-next-line no-await-in-loop
+          const hash = await hashPassword(randomBytes(24).toString('base64url'));
+          // eslint-disable-next-line no-await-in-loop
+          const id = (await c.query(`insert into users (email, password_hash, role, status) values ($1, $2, 'admin', 'active') returning id`,
+            [email.toLowerCase(), hash])).rows[0].id;
+          const initials = name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+          // eslint-disable-next-line no-await-in-loop
+          await c.query(`insert into admins (id, user_id, name, email, title, initials) values ($1, $2, $3, $4, 'Administrator', $5)`,
+            [`tl_a_${randomBytes(6).toString('hex')}`, id, name, email.toLowerCase(), initials || null]);
+          out = { email, result: 'created', active: true };
+        }
+        // eslint-disable-next-line no-await-in-loop
+        await c.query('commit');
+        results.push(out);
+      } catch (err) {
+        await c.query('rollback').catch(() => {}); // eslint-disable-line no-await-in-loop
+        results.push({ email, result: 'failed', reason: err.message });
+      } finally {
+        c.release();
+      }
+    }
+    const created = results.filter((x) => x.result === 'created').length;
+    if (created) log(`admins: ${created} portal admin login(s) made for TeamLink Admins`);
     res.json({ dryRun, results });
   }));
 

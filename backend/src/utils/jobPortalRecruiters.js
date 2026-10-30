@@ -124,4 +124,37 @@ function ensureQuietly() {
   return running;
 }
 
-module.exports = { people, seatData, seatList, successorOf, ensure, ensureQuietly, ROLES };
+// EVERY TEAMLINK ADMIN / SUPER ADMIN IS A JOB PORTAL ADMIN (founder 2026-10-30: "admin kiii job portal access denied anii ostundhii").
+// The portal opens the account with the same email and an admin role (utils/jobPortalSso.js portalRoleOf); it has no screen that adds
+// an administrator, so the active Admins / Super Admins (login status Active) are sent to its door
+// (job-portal-app/embed/teamlink-integration.mjs POST .../admins/ensure), which makes the missing ones. users = one login only (launch).
+const ADMIN_ROLES = ['ADMIN', 'SUPER_ADMIN'];
+async function admins() {
+  const rows = await prisma.user.findMany({ where: { role: { in: ADMIN_ROLES } }, select: { name: true, email: true, role: true, status: true } });
+  return rows.filter((u) => String(u.status || 'Active') === 'Active' && emailOf(u)).map((u) => ({ name: u.name, email: emailOf(u), role: u.role }));
+}
+async function ensureAdmins({ apply = false, users = null } = {}) {
+  const list = users || await admins();
+  if (!list.length) return { dryRun: !apply, results: [] };
+  const { portalFetch } = require('./jobPortalBridge'); // eslint-disable-line global-require
+  const res = await portalFetch('/integrations/teamlink/admins/ensure', {
+    method: 'POST', timeoutMs: 30000, body: { people: list.map(({ name, email }) => ({ name, email })), dryRun: !apply },
+  });
+  const by = new Map(list.map((p) => [p.email, p]));
+  return {
+    dryRun: !!(res && res.dryRun),
+    results: ((res && res.results) || []).map((r) => { const p = by.get(String(r.email || '').toLowerCase()) || {}; return { ...r, name: p.name, role: p.role }; }),
+  };
+}
+// For the automatic runs: never throws, logs only a count (no emails).
+function ensureAdminsQuietly(opts = {}) {
+  return ensureAdmins({ apply: true, ...opts })
+    .then((out) => {
+      const made = out.results.filter((r) => r.result === 'created').length;
+      if (made) console.log(`[job-portal] ${made} Admin login(s) added to the Job Portal`);
+      return out;
+    })
+    .catch(() => null);
+}
+
+module.exports = { people, seatData, seatList, successorOf, ensure, ensureQuietly, admins, ensureAdmins, ensureAdminsQuietly, ROLES };
