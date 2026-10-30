@@ -1296,6 +1296,10 @@ model LeaveRequest {
   decidedBy      String?
   createdAt      DateTime  @default(now())
   decidedAt      DateTime?
+  // The employee cancelled it themselves (POST /leave/:id/cancel, 20261030160000): kept for the request's history.
+  cancelledAt    DateTime?
+  cancelledBy    String?
+  cancelReason   String?
 
   @@index([employeeId, status]) // perf_indexes 20261009210000
 }

@@ -276,7 +276,9 @@ function decisionInfo(request, wfSummary) {
     by: request.decidedBy || null,
     level: null,
     at: request.decidedAt ? new Date(request.decidedAt).toISOString() : null,
-    comment: request.approvalReason || request.rejectReason || text.details['Approver comments'] || null,
+    // A leave the employee cancelled shows their own reason (routes/leave.js POST /:id/cancel).
+    comment: (request.status === 'Cancelled' && request.cancelledBy ? request.cancelReason : null)
+      || request.approvalReason || request.rejectReason || text.details['Approver comments'] || null,
   };
 }
 
