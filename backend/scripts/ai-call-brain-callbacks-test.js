@@ -74,6 +74,8 @@ const ok = (c, m, d) => { if (c) { pass += 1; console.log('PASS', m); } else { f
     d = mk(); d.start(); await d.hear('yes speaking'); await d.hear('yes'); await d.hear('yes');
     READ['No, I already have a job'] = { ...blank, intent: 'already_employed', declineReason: 'Already working in a college' };
     r = await d.hear('No, I already have a job');
+    ok(!r.done && d.st.step === 'convince', 'B8a the reason given with the no gets ONE honest try, not a second "why?"', [d.st.step, r.say]);
+    await d.hear('no'); r = await d.hear('no');
     ok(r.done && d.outcome().outcome === 'Not Interested' && /Already working in a college/.test(d.outcome().summary), 'B8 not interested with the reason already said: closed politely, reason kept, not asked again', d.outcome().summary);
     // no brain answer (too slow / no credits): the script goes on exactly as before
     d = mk(); d.start(); await d.hear('yes speaking');

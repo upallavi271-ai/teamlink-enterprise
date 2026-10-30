@@ -118,7 +118,7 @@ const ok = (c, m, d) => { if (c) { pass += 1; console.log('PASS', m); } else { f
     ok(last.done && o.outcome === 'Interested' && o.answers.experienceYears === 3, 'T3 the whole talk -> Interested, with the answers', [o.outcome, o.answers]);
     d = new Dialogue({ purpose: 'Job Match', language: 'English', data });
     d.start(); await d.hear('yes'); await d.hear('yes'); await d.hear('yes'); r = await d.hear('no not interested');
-    ok(d.outcome().outcome === 'Not Interested' || d.st.step === 'why_not', 'T4 "not interested" is taken as no', [d.st.step, d.outcome().outcome]);
+    ok(d.outcome().outcome === 'Not Interested' || ['why_not', 'convince'].includes(d.st.step), 'T4 "not interested" is taken as no', [d.st.step, d.outcome().outcome]);
     ok(S.PORTAL_PURPOSES.includes('Job Match') && !S.TRANSACTIONAL.has('Job Match') && S.checkTemplates().length === 0, 'X1 a Job Portal purpose, not a service call, no forbidden word');
   } catch (e) {
     fail += 1; console.log('FAIL crashed', e && e.stack);

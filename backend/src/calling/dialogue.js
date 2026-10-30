@@ -473,6 +473,8 @@ class Dialogue {
       later_when: this.P.laterAsk,
       calm: this.P.calmOffer,
       why_not: this.P.whyNot,
+      convince: this.P.convinceQ,
+      keep_other: this.P.keepOtherQ,
       audio_check: this.P.canHear,
     }[this.st.step];
     return this.speak(prefix, q);
@@ -532,6 +534,7 @@ class Dialogue {
     // a mis-heard "చెప్పండి" / "ఓకే" to "can we talk? / shall I tell you about it?": go on (only where a yes just means "go on")
     if (k.intent === 'unclear' && ['convenient', 'intro', 'audio_check', 'calm'].includes(st.step) && fuzzyGoAhead(text)) k = { intent: 'yes', human: k.human, goAhead: true, fuzzy: true };
     turn.understood = k.intent;
+    st.lastHeard = text;
     if (k.human) st.human = true;
 
     // silence is never yes, no, interest or consent: "are you still there?", then a polite end
@@ -609,13 +612,14 @@ class Dialogue {
     const qStep = /^q/.test(st.step);
     const asks = !['resched_time', 'later_when', 'why_not'].includes(st.step) && (qStep
       ? topics.some((x) => x !== OWN[st.step]) && A.looksQuestion(text)
-      : (k.intent === 'salary_q' || k.intent === 'info_q' || (topics.length > 0 && (A.looksQuestion(text) || String(text).trim().split(/\s+/).length <= 3))));
+      : (k.intent === 'salary_q' || k.intent === 'info_q' || (topics.length > 0 && k.intent !== 'no' && (A.looksQuestion(text) || String(text).trim().split(/\s+/).length <= 3))));
     if (asks) {
       const qa = A.answer(this, text);
       if (qa && (st.step !== 'identity' || qa.topic === 'who')) {
         turn.understood = 'question';
         turn.answered = qa.unknown ? 'to confirm' : (qa.fromRecruiter ? 'recruiter answer' : 'from the ATS');
         if (qa.unknown && st.pending.length < 5) { const q = S.clean(text, 200); if (q && !st.pending.includes(q)) st.pending.push(q); }
+        if (qa.topic === 'eligibility' && st.answers.experienceYears == null) { const y = readYears(text); if (y != null) st.answers.experienceYears = y; }
         return { say: this.again(qa.say), done: false };
       }
     }
@@ -708,23 +712,72 @@ class Dialogue {
     st.interest = 'no';
     const told = st.heardFacts && st.heardFacts.declineReason;
     if (told && !st.declineReason) st.declineReason = told;
-    if (st.askedWhy || st.declineReason) return this.close('Not Interested', 'not interested');
+    if (st.convinced) return this.keepOther(); // already tried once: never pushed twice
+    // a reason said WITH the no ("salary takkuva, interest ledhu"): what is left once the plain no-words are taken out
+    const NO_WORDS = new Set(['no', 'not', 'nope', 'interested', 'interest', 'i', 'am', 'im', "i'm", 'thanks', 'thank', 'you', 'sorry', 'sir', 'madam', 'really', 'at', 'all',
+      'లేదు', 'లేద', 'వద్దు', 'కాదు', 'ఇంట్రెస్ట్', 'ఇంట్రెస్టు', 'నాకు', 'సారీ', 'అండి', 'ఓకే', 'నహీం', 'नहीं', 'नही', 'इंटरेस्ट', 'है', 'मुझे', 'जी', 'सॉरी', 'ledu', 'vaddu', 'nahi']);
+    if (!st.declineReason && st.lastHeard && norm(st.lastHeard).split(' ').filter((w) => w && !NO_WORDS.has(w)).length >= 2) st.declineReason = S.clean(st.lastHeard, 120);
+    if (st.declineReason) return this.convince(st.declineReason); // the reason came with the "no"
+    if (st.askedWhy) return this.close('Not Interested', 'not interested');
     st.askedWhy = true; st.step = 'why_not'; st.tries = 0;
     return { say: this.speak(this.P.whyNot), done: false };
+  }
+
+  // ONE honest try (founder 2026-10-30: "not interested ante convince cheyyali, thanks cheppi pettesthundhi"): answer the
+  // reason with a true fact from the ATS (the pay when it is about money, the place when it is about distance, else what kind
+  // of job it is and that the interview commits them to nothing), then "would you like to give it a try?". A second no is
+  // respected: "shall I call you for a job that suits you better?" - never pushed twice.
+  convince(reason) {
+    const st = this.st;
+    st.convinced = true; st.step = 'convince'; st.tries = 0;
+    const t = norm(reason || '');
+    const x = this.data || {};
+    const money = has(t, [...L.salary, 'money', 'low', 'less', 'తక్కువ', 'कम']);
+    const far = has(t, ['far', 'distance', 'location', 'travel', 'దూరం', 'లొకేషన్', 'दूर', 'लोकेशन']);
+    const kind = [x.employmentType, x.workMode].filter(Boolean).join(', ');
+    const pay = x.salary && !String(x.salary).includes(',') ? S.clean(x.salary, 60) : '';
+    const place = x.location ? S.clean(x.location, 60) : '';
+    const notNow = has(t, ['not looking', 'no change', 'not changing', 'happy', 'working', 'job undi', 'మారే ఆలోచన', 'మారను', 'వర్క్ చేస్తున్నా', 'జాబ్ ఉంది', 'बदलने', 'काम कर रहा', 'जॉब है']);
+    const parts = [];
+    // what they said, answered first - then the job's true facts, the "nothing to lose", and the question
+    if (money && pay) parts.push(S.fill(this.P.convinceSalary, { salary: pay }));
+    else if (far && place) parts.push(S.fill(this.P.convinceLoc, { location: place }));
+    else parts.push(notNow ? this.P.pitchNotNow : this.P.pitchAck);
+    const job = place && kind ? S.fill(this.P.pitchJob, { location: place, kind }) : (kind ? S.fill(this.P.convinceGeneral, { kind }).replace(/^[^.।]*[.।]\s*/, '') : '');
+    if (job && !(far && place)) parts.push(job);
+    if (pay && !money) parts.push(S.fill(this.P.pitchPay, { salary: pay }));
+    parts.push(this.P.pitchNoLoss);
+    return { say: this.speak(...parts, this.P.convinceQ), done: false };
+  }
+  on_convince(k) {
+    const st = this.st;
+    if (k.intent === 'yes' || k.goAhead) { st.interest = 'yes'; st.changedMind = true; st.tries = 0; this.ack('ackInterest'); return this.ask('qExp'); }
+    if (k.intent === 'later') { st.callback = true; st.step = 'later_when'; return { say: this.speak(this.P.laterAsk), done: false }; }
+    if (k.intent === 'no' || k.intent === 'maybe') return this.keepOther();
+    return this.retry(k);
+  }
+  keepOther() {
+    this.st.step = 'keep_other'; this.st.tries = 0;
+    return { say: this.speak(this.P.keepOtherQ), done: false };
+  }
+  on_keep_other(k) {
+    const st = this.st;
+    if (k.intent === 'yes' || k.goAhead) { st.openToOther = true; return this.close('Not Interested', 'not interested, open to other jobs', this.P.keepOtherYes); }
+    return this.close('Not Interested', 'not interested');
   }
 
   on_why_not(k, text) {
     const st = this.st;
     const t = norm(text);
     // changed their mind: the earlier "no" stays in the history and the summary
-    if (k.intent === 'yes' && has(t, ['interested', 'interest', 'इंटरेस्टेड', 'ఇంట్రెస్ట్', 'ఆసక్తి ఉంది', 'dilchaspi'])) {
+    if (k.intent === 'yes' && (has(t, ['interested', 'interest', 'इंटरेस्टेड', 'ఇంట్రెస్ట్', 'ఆసక్తి ఉంది', 'dilchaspi', 'try', 'ట్రై', 'ट्राई', 'చేద్దాం', 'चलो']) || t.split(' ').length <= 2)) {
       st.interest = 'yes'; st.changedMind = true; st.tries = 0;
       return this.ask('qExp');
     }
     // their own words, short, as the reason (a bare yes / no says nothing about why: nothing is recorded)
     if (st.heardFacts && st.heardFacts.declineReason) st.declineReason = st.heardFacts.declineReason;
     else if (!['yes', 'no', 'silence'].includes(k.intent)) st.declineReason = S.clean(text, 120) || null;
-    return this.close('Not Interested', 'not interested');
+    return this.convince(st.declineReason || text);
   }
 
   // After an apology: go on (back to the question that was interrupted), a recruiter call, or a polite goodbye.
@@ -966,6 +1019,7 @@ class Dialogue {
     else if (!st.identity) bits.push('The person did not confirm their name. No details were shared.');
     else bits.push('Name confirmed.');
     if (st.identity && this.purpose === 'Shortlist Notification') bits.push(st.told ? 'Told that they are shortlisted.' : '');
+    if (st.convinced) bits.push(st.changedMind ? 'Said no first; agreed to try after hearing more about the job.' : (st.openToOther ? 'Not interested in this job; wants a call for other suitable jobs.' : 'Not interested even after hearing more.'));
     if (st.identity && this.purpose === 'AI Interview Pending') bits.push(st.told ? 'Told that the AI interview is pending and how to take it.' : '');
     if (this.purpose === 'AI Interview Pending' && st.interest === 'yes') bits.push('Said they will take the AI interview.');
     else if (this.purpose === 'AI Interview Pending' && st.interest === 'no') bits.push('Does not want to take the AI interview.');
@@ -1030,6 +1084,6 @@ class Dialogue {
 // the brain intents whose lead-in is spoken before the next question
 const LEAD_OK = ['answer', 'yes', 'no', 'maybe', 'later', 'reschedule', 'already_employed', 'human'];
 // the steps whose question is a plain yes / no
-const YES_NO_STEPS = ['identity', 'convenient', 'intro', 'interest', 'human_offer', 'qProceed', 'proceed', 'avail', 'calm', 'audio_check'];
+const YES_NO_STEPS = ['identity', 'convenient', 'intro', 'interest', 'human_offer', 'qProceed', 'proceed', 'avail', 'calm', 'audio_check', 'convince', 'keep_other'];
 
 module.exports = { Dialogue, timeLike, classify, fuzzyGoAhead, skeleton, detectLanguage, validateOutcome, OUTCOMES, INTENTS, readYears, readNotice, readPlace, norm };

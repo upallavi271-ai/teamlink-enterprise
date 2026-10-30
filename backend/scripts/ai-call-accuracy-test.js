@@ -46,14 +46,17 @@ async function to(d, step, answers) { // walk a Screening call to a step with pl
   r = await d.hear("No, I'm not interested");
   ok(r.say === P.whyNot && !r.done, 'H  "not interested": ONE optional question (this job, or not looking now?)', r.say);
   r = await d.hear('not looking for a change right now');
+  ok(!r.done && r.say.endsWith(P.convinceQ), 'H1 ... their reason gets ONE honest try ("would you like to give it a try?") - 2026-10-30', r.say);
+  r = await d.hear('no'); ok(!r.done && r.say === P.keepOtherQ, 'H1b a second no: "shall I call you for a job that suits you better?"', r.say);
+  r = await d.hear('no');
   ok(r.done && d.outcome().outcome === 'Not Interested' && /not looking for a change/.test(d.outcome().summary), 'H2 ... then accepted; their own words are the reason', d.outcome().summary);
   d = mk(); await to(d, 'interest', ['yes speaking', 'yes', 'yes']);
-  await d.hear('no'); r = await d.hear('no');
+  await d.hear('no'); await d.hear('no'); await d.hear('no'); r = await d.hear('no');
   ok(r.done && d.outcome().outcome === 'Not Interested' && !d.st.declineReason, 'H3 "no" to the why-question: accepted, nothing made up as the reason', d.st.declineReason);
 
   // ---- J. salary objection at the why-question ----------------------------------------------------------------------
   d = mk(); await to(d, 'interest', ['yes speaking', 'yes', 'yes']);
-  await d.hear('not interested'); r = await d.hear('the salary is too low');
+  await d.hear('not interested'); await d.hear('the salary is too low'); await d.hear('no'); r = await d.hear('no');
   ok(r.done && /salary is too low/.test(d.outcome().summary) && !/lakh|LPA|₹/i.test(r.say), 'J  "salary too low" is kept as their reason; no salary is promised', d.outcome().summary);
 
   // ---- C. conditional: "It depends on the salary" -----------------------------------------------------------------------

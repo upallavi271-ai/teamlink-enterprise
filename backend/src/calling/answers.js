@@ -72,6 +72,7 @@ const TOPICS = [
   { key: 'openings', words: ['how many posts', 'how many openings', 'vacancies', 'openings', 'positions', 'ఎన్ని పోస్ట్', 'ఎన్ని ఓపెనింగ్', 'ఎంత మంది', 'कितनी पोस्ट', 'कितनी वैकेंसी', 'कितने लोग'] },
   { key: 'joining', words: ['joining', 'when to join', 'join when', 'start date', 'జాయినింగ్', 'ఎప్పుడు జాయిన్', 'జాయిన్ అవ్వాలి', 'जॉइनिंग', 'कब जॉइन', 'kab join'] },
   { key: 'company', words: ['company', 'client', 'hospital name', 'college name', 'which hospital', 'which college', 'organisation', 'organization', 'కంపెనీ', 'హాస్పిటల్', 'కాలేజ్', 'ఏ హాస్పిటల్', 'ఏ కాలేజ్', 'कंपनी', 'हॉस्पिटल', 'कॉलेज', 'कौन सी कंपनी'] },
+  { key: 'eligibility', words: ['eligible', 'eligibility', 'am i eligible', 'suitable for me', 'can i apply', 'ఎలిజిబుల్', 'ఎలిజిబుల్‌నా', 'సరిపోతానా', 'సరిపోతాను', 'అర్హత', 'ఎలిజిబిల్', 'एलिजिबल', 'योग्य', 'चलेगा क्या', 'eligible na', 'saripothana'] },
   { key: 'role', words: ['what work', 'what is the work', 'job role', 'responsibilities', 'duties', 'what to do', 'ఏం పని', 'పని ఏంటి', 'వర్క్ ఏంటి', 'ఏం చేయాలి', 'क्या काम', 'काम क्या', 'क्या करना'] },
   { key: 'interview', words: ['interview', 'ఇంటర్వ్యూ', 'इंटरव्यू'] },
 ];
@@ -98,6 +99,7 @@ const SAY = {
     companyLater: 'The recruiter shares the company name and full details once the interview is fixed.', role: 'The work is mainly {v}.',
     interviewNone: "If you're interested, the recruiter will fix the interview and tell you the details.",
     willCheck: 'Let me confirm that with the team and get back to you.',
+    eligibility: 'For this job they want {v}. Your profile is checked against it.', expWord: 'of experience',
   },
   Telugu: {
     who: 'నేను టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి, హైదరాబాద్‌లో రిక్రూట్‌మెంట్ కంపెనీ.',
@@ -107,6 +109,7 @@ const SAY = {
     companyLater: 'కంపెనీ పేరు, పూర్తి డీటెయిల్స్ ఇంటర్వ్యూ ఫిక్స్ అయినప్పుడు రిక్రూటర్ చెప్తారు.', role: 'పని మెయిన్‌గా {v}.',
     interviewNone: 'మీకు ఇంట్రెస్ట్ ఉంటే, రిక్రూటర్ ఇంటర్వ్యూ ఫిక్స్ చేసి డీటెయిల్స్ చెప్తారు.',
     willCheck: 'అది టీమ్‌తో కన్ఫర్మ్ చేసుకుని మీకు చెప్తా.',
+    eligibility: 'ఈ జాబ్‌కి {v} కావాలి. మీ ప్రొఫైల్ దానితో చెక్ చేస్తాం.', expWord: 'ఎక్స్‌పీరియన్స్',
   },
   Hindi: {
     who: 'मैं टीमलिंक कंसल्टेंट्स से बोल रहा हूँ, हैदराबाद की रिक्रूटमेंट कंपनी।',
@@ -116,6 +119,7 @@ const SAY = {
     companyLater: 'कंपनी का नाम और पूरी डिटेल्स इंटरव्यू फिक्स होने पर रिक्रूटर बताएँगे।', role: 'काम मेनली {v} है।',
     interviewNone: 'अगर इंटरेस्ट है, तो रिक्रूटर इंटरव्यू फिक्स करके डिटेल्स बताएँगे।',
     willCheck: 'वो मैं टीम से कन्फर्म करके आपको बताता हूँ।',
+    eligibility: 'इस जॉब के लिए {v} चाहिए। आपकी प्रोफ़ाइल उसके हिसाब से देखी जाएगी।', expWord: 'एक्सपीरियंस',
   },
 };
 
@@ -161,6 +165,11 @@ function answer(d, text, { requirement } = {}) {
       case 'experienceNeeded': v = x.experience; if (v) return { say: fill('experienceNeeded', v), topic: t }; break;
       case 'openings': if (r.openings === 1) return { say: P.oneOpening, topic: t }; v = r.openings > 1 ? String(r.openings) : ''; if (v) return { say: fill('openings', v), topic: t }; break;
       case 'joining': v = r.joiningTimeline ? spoken(r.joiningTimeline) : ''; if (v) return { say: fill('joining', v.toLowerCase()), topic: t }; break;
+      case 'eligibility': {
+        const need = [x.experience && `${x.experience} ${P.expWord}`, r.education || r.qualifications].filter(Boolean).join(', ');
+        if (need) return { say: S.fill(P.eligibility, { v: S.clean(need, 120) }), topic: t };
+        break;
+      }
       case 'company': return { say: r.internal ? P.companyInternal : P.companyLater, topic: t };
       case 'role': v = x.responsibilities || x.needs || x.skills; if (v) return { say: fill('role', v), topic: t }; break;
       case 'interview':
