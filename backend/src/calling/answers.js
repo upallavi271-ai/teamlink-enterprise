@@ -93,14 +93,14 @@ function topicOf(text) {
 
 const SAY = {
   English: {
-    who: "I'm calling from TeamLink Consultants, a recruitment company in Hyderabad.",
+    who: 'I am calling from TeamLink Consultants, a recruitment company in Hyderabad.',
     salary: 'The salary is {v}.', timings: 'The timings are: {v}.', line: '{v}.', location: "It's in {v}.", workMode: "It's {v}.",
     jobType: "It's a {v} job.", qualification: 'The qualification needed is {v}.', experienceNeeded: 'They want {v} of experience.',
     openings: 'There are {v} openings.', oneOpening: 'There is one opening.', joining: 'Joining is {v}.', companyInternal: "It's a job with TeamLink itself.",
-    companyLater: 'The recruiter shares the company name and full details once the interview is fixed.', role: 'The work is mainly {v}.',
-    interviewNone: "If you're interested, the recruiter will fix the interview and tell you the details.",
-    willCheck: 'Let me confirm that with the team and get back to you.',
-    eligibility: 'For this job they want {v}. Your profile is checked against it.', expWord: 'of experience',
+    companyLater: 'The recruiter will tell you the company name and full details when the interview is fixed.', role: 'The work is mainly {v}.',
+    interviewNone: 'If you are interested, the recruiter will fix the interview and tell you the details.',
+    willCheck: 'I will check with the team and tell you.',
+    eligibility: 'For this job they need {v}. We will check your profile.', expWord: 'of experience',
   },
   Telugu: {
     who: 'నేను టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి, హైదరాబాద్‌లో రిక్రూట్‌మెంట్ కంపెనీ.',

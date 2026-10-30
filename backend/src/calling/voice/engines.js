@@ -185,7 +185,11 @@ function piperTts({ exe, voices, lengthScale = 0.75 }) {
   const procs = {};
   function procFor(lang) {
     if (procs[lang] && !procs[lang].dead) return procs[lang];
-    const p = spawn(exe, ['-m', voices[lang], '--json-input', '--sentence_silence', '0.05', '--length_scale', String(scaleOf(lang))], { cwd: path.dirname(exe), windowsHide: true });
+    // TELUGU: steady sound lengths (founder 2026-10-30: "telugu kuda letters ni sagadhisthundhi"). Piper's noise_w (default
+    // 0.8) makes each sound's length random - the same sentence came out 8.40-8.77 s, some sounds dragged; at 0.5 it is
+    // 8.34-8.38 s every time. AI_VOICE_NOISE_W_TELUGU tunes it; the other voices keep Piper's own setting.
+    const steady = lang === 'Telugu' ? ['--noise_w', String(Number(process.env.AI_VOICE_NOISE_W_TELUGU) > 0 ? Number(process.env.AI_VOICE_NOISE_W_TELUGU) : 0.5)] : [];
+    const p = spawn(exe, ['-m', voices[lang], '--json-input', '--sentence_silence', '0.05', '--length_scale', String(scaleOf(lang)), ...steady], { cwd: path.dirname(exe), windowsHide: true });
     const st = { p, queue: [], dead: false, buf: '' };
     p.stdout.on('data', (d) => {
       st.buf += String(d);

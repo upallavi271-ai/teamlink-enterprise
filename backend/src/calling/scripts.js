@@ -42,17 +42,17 @@ const hasForbidden = (t) => FORBIDDEN.some((re) => re.test(String(t || '')));
 const PH = {
   English: {
     ai: "Hi, this is TeamLink Consultants' AI recruitment assistant.",
-    noticeRec: 'This call may be recorded and written down for our records.',
+    noticeRec: "This call may be recorded for our records.",
     identity: 'Am I speaking with {name}?',
     identityAgain: "Sorry, I didn't catch that. Am I speaking with {name}?",
-    identityNeeded: "I just need to check I'm talking to {name} first, then I can share the details.",
+    identityNeeded: "First I need to check I'm talking to {name}. Then I can share the details.",
     wrong: 'Oh, sorry to bother you. Thanks, bye.',
     convenient: 'Do you have two minutes to talk now?',
     laterAsk: 'No problem. When should we call you back?',
     laterClose: "Okay, we'll call you later. Bye.",
     laterNoted: "Okay, {when}, got it. We'll call you then. Bye.",
-    screenIntro: 'We have an opening for {job}. Can I tell you a bit about it?',
-    matchIntro: "You had applied with TeamLink earlier. Your profile matches another opening, for {job}. Can I tell you a bit about it?", // Job Match (Job Portal calling, 2026-10-30)
+    screenIntro: "We have a job opening for {job}. Can I tell you about it?",
+    matchIntro: "You applied with TeamLink before. Your profile matches another job, {job}. Can I tell you about it?", // Job Match (Job Portal calling, 2026-10-30)
     briefLoc: 'The job is in {location}.',
     briefNeeds: "They need: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'Work mode is {workMode}.',
@@ -66,44 +66,44 @@ const PH = {
     interestMore: "Shall I tell you about the job once more?",
     qExp: 'How many years of experience do you have in this?',
     qLoc: 'Which city are you in right now?',
-    qNotice: "What's your notice period, in days?",
-    qProceed: 'Are you okay to go ahead with the next steps?',
-    closeInterested: "Thanks. I've noted everything. We'll send you the next details soon. Nothing is final from this call. Bye.",
+    qNotice: "What is your notice period, in days?",
+    qProceed: "Shall we go to the next step?",
+    closeInterested: "Thank you. I have noted everything. We will send you the next details soon. Nothing is final from this call. Bye.",
     closeNotInterested: 'Okay, thanks for your time. Bye.',
     closeStop: "Okay, we won't call you again. Bye.",
-    closeUnclear: "Okay, the line doesn't seem clear. I'll call you back. Thanks.",
-    humanNoted: "Okay, I've noted you want to talk to a recruiter. Someone from the team will call you.",
+    closeUnclear: "The line is not clear. I will call you again. Thank you.",
+    humanNoted: "Okay, I noted that you want to talk to a recruiter. Someone from our team will call you.",
     amAi: "I'm an AI assistant of TeamLink Consultants, not a person.",
-    noSalary: "Let me confirm that with the team and get back to you.",
-    noInfo: "Let me confirm that with the team and get back to you.",
+    noSalary: "I will check with the team and tell you.",
+    noInfo: "I will check with the team and tell you.",
     onlyYou: 'I can only talk about your own application.',
     repeat: "Sorry, I didn't catch that. Let me ask again.",
     resumeLine: "We spoke earlier about the {job} job.", // a call-back call (memory, 2026-10-30)
     // hearing problems / unclear answers (2026-10-29 fixes): never guess, ask again; never an endless loop
     notClear: "Sorry, I couldn't hear you clearly.",
     breaking: "Sorry, your voice is breaking up.",
-    audioClose: "Sorry, the line isn't clear, so I'll stop here and call you back a little later. Bye.",
+    audioClose: "Sorry, the line is not clear. I will call you again a little later. Bye.",
     stillThere: "Hello, are you still there?",
     stillThere2: "Hello, can you hear me?",
-    noAnswerClose: "I can't hear you, so I'll call you back a little later. Bye.",
+    noAnswerClose: "I can't hear you. I will call you again a little later. Bye.",
     yesOrNo: "Sorry, was that a yes or a no?",
     sureRepeat: "Sure, let me say that again.",
     canHear: "Sorry about that. Can you hear me now?",
-    whyNot: "Understood. If you don't mind me asking, is it this job, or are you not looking for a change right now?",
+    whyNot: "Okay. Can I ask why? Is it this job, or are you not looking for a new job now?",
     // not interested: one honest try to keep them, then other jobs (founder 2026-10-30)
     pitchAck: "I understand.",
-    pitchNotNow: "I understand. Even if you're not looking right now, it's worth a look.",
+    pitchNotNow: "I understand. Even if you are not looking now, you can check this job once.",
     pitchJob: "It's a {kind} job in {location}.",
-    pitchPay: "The pay is up to {salary}.",
-    pitchNoLoss: "Going for the interview costs you nothing and commits you to nothing.",
-    convinceSalary: "I understand. The pay for this job is up to {salary}, and you can talk about it at the interview.",
+    pitchPay: "The salary is up to {salary}.",
+    pitchNoLoss: "Going for the interview does not mean you must join.",
+    convinceSalary: "I understand. The salary for this job is up to {salary}. You can talk about it in the interview.",
     convinceLoc: "I understand. The job is in {location}.",
-    convinceGeneral: "I understand. It's a {kind} job, and going to the interview doesn't commit you to anything.",
-    convinceBare: "I understand. Going to the interview doesn't commit you to anything.",
-    convinceQ: "Shall we give it a try?",
-    keepOtherQ: "No problem. Shall I call you when a job that suits you better comes up?",
-    keepOtherYes: "Sure, I'll call you when a suitable job comes up. Thanks for your time. Bye.",
-    checkFollowUp: "Of course, please check. When should we call you back?",
+    convinceGeneral: "I understand. It is a {kind} job. Going for the interview does not mean you must join.",
+    convinceBare: "I understand. Going for the interview does not mean you must join.",
+    convinceQ: "Do you want to try once?",
+    keepOtherQ: "No problem. If a better job for you comes, shall I call you?",
+    keepOtherYes: "Okay, I will call you when a good job comes. Thanks for your time. Bye.",
+    checkFollowUp: "Sure, please check. When should we call you back?",
     laterWhenAgain: "Sorry, which day or time suits you?",
     thatsFine: "That's fine.",
     langSwitched: "Sure, let's continue in English.",
@@ -115,28 +115,28 @@ const PH = {
     ackFresher: "Okay, a fresher.",
     ackLoc: "Okay, {place}.",
     ackNotice: "Okay, {days} days.",
-    ackNoticeNow: "Okay, so you can join right away.",
+    ackNoticeNow: "Okay, so you can join immediately.",
     ackNoted: "Okay, noted.",
     briefWhere: "It's in {location}",
     briefExpSkills: "They want around {experience} of experience, mainly in {skills}.",
-    calmSorry: "Sorry if this is a bad time. I'll keep it really short.",
-    calmOffer: 'Shall I go on, or should a recruiter call you at a better time?',
-    calmClose: "Got it, sorry for the trouble. I won't take more of your time now. Thanks.",
-    noMoney: 'TeamLink never asks for money or any fee, and never asks for an OTP or bank details. This is only about your job application.',
-    shortNews: "I'm calling to let you know you've been shortlisted for the {job} position.",
+    calmSorry: "Sorry if this is a bad time. I will keep it short.",
+    calmOffer: "Shall I continue, or should someone call you at a better time?",
+    calmClose: "Okay, sorry for the trouble. I won't take more of your time. Thanks.",
+    noMoney: "TeamLink never asks for money, fees, an OTP or bank details. This call is only about your job application.",
+    shortNews: "I am calling to tell you that you are shortlisted for the {job} job.",
     shortIv: 'Your interview is on {date} at {time}.',
     shortNoIv: "The interview isn't fixed yet. The team will share the details later.",
     shortProceed: 'Are you okay to go to the next step?',
-    shortYes: "Thanks. We'll send you the next details soon. Being shortlisted is one step, not a final decision. Bye.",
+    shortYes: "Thank you. We will send you the next details soon. Shortlisting is one step, not the final decision. Bye.",
     // AI interview pending (Job Portal calling, 2026-10-30)
     aiNews: "You applied for the {job} job on the TeamLink jobs website. Your AI interview for it is still pending.",
     aiDue: "Please finish it by {date}.",
-    aiHow: "Log in on the TeamLink jobs website with your registered mobile number or email, open My Applications, and start the AI interview there.",
+    aiHow: "Please log in on the TeamLink jobs website with your mobile number or email. Open My Applications and start the AI interview there.",
     aiProceed: "Will you be able to complete it?",
-    aiYes: "Thanks. Please finish it before the deadline, so the recruiter can look at your application. Bye.",
+    aiYes: "Thank you. Please finish it before the last date, so the recruiter can check your application. Bye.",
     ivIntro: 'Your interview for the {job} position is fixed for {date} at {time}.',
     ivRemind: 'Just a reminder, your interview for the {job} position is on {date} at {time}.',
-    ivOnline: "It's an online interview. The meeting link is in the message we send you.",
+    ivOnline: "It is an online interview. The meeting link is in our message.",
     ivOnlineNoLink: "It's an online interview. The recruiter will send you the link.",
     ivInPerson: "It's an in-person interview at {location}.",
     ivInPersonNoLoc: "It's an in-person interview. The recruiter will share the address.",
@@ -145,7 +145,7 @@ const PH = {
     ivAvail: 'Can you make it?',
     ivConfirmed: 'Great, thanks. Please be ready on time. Bye.',
     ivReschedAsk: 'What time works better for you?',
-    ivReschedNoted: "Okay, I'll pass that to the recruiter. The interview stays at the same time until they confirm a change. Bye.",
+    ivReschedNoted: "Okay, I will tell the recruiter. Until they confirm, the interview stays at the same time. Bye.",
     ivNotAvail: 'Thanks for letting us know. The recruiter will call you. Bye.',
     ivNoReply: 'Okay, the recruiter will call you to confirm. Bye.',
     tz: 'IST',
@@ -378,7 +378,7 @@ const PH = {
 const VARIANTS = {
   "English": {
     "ai": [
-      "Hello, I'm calling from TeamLink Consultants. I'm their AI recruitment assistant."
+      "Hello, I'm calling from TeamLink Consultants. I am their AI recruitment assistant."
     ],
     "convenient": [
       "Is this a good time to talk for two minutes?",
@@ -386,38 +386,38 @@ const VARIANTS = {
     ],
     "laterAsk": [
       "Sure, no problem. When can we call you back?",
-      "Okay, when would be a better time to call?"
+      "Okay, when is a better time to call?"
     ],
     "screenIntro": [
-      "So, there's an opening for {job} with us. Shall I tell you a little about it?",
-      "There's a job for {job} with us. Can I quickly tell you about it?"
+      "There is a job opening for {job} with us. Shall I tell you about it?",
+      "We have a job for {job}. Can I tell you about it?"
     ],
     "interestQ": [
-      "Does this sound interesting to you?",
-      "So, would you be interested in this?"
+      "Is this job interesting for you?",
+      "Would you like this job?"
     ],
     "qExp": [
-      "How much experience do you have in this line?",
-      "And how many years have you worked in this field?"
+      "How many years of experience do you have?",
+      "How many years have you worked in this field?"
     ],
     "qLoc": [
-      "Where are you staying right now, which city?",
-      "Which city are you based in now?"
+      "Which city do you live in now?",
+      "Which city are you in now?"
     ],
     "qNotice": [
-      "And what is your notice period, roughly how many days?",
-      "How soon could you join? I mean, your notice period."
+      "What is your notice period?",
+      "How many days of notice period do you have?"
     ],
     "qProceed": [
-      "Shall we go ahead with the next steps?",
-      "Are you okay if we take this forward?"
+      "Can we move forward?",
+      "Shall we go ahead?"
     ],
     "closeInterested": [
-      "Great, thanks! I've noted everything and we'll send you the next details soon. Just so you know, nothing is final from this call. Bye."
+      "Great, thank you. I have noted everything. We will send you the next details soon. Nothing is final from this call. Bye."
     ],
     "closeNotInterested": [
-      "No problem at all, thanks for your time. Bye.",
-      "Okay, no worries. Thanks for talking. Bye."
+      "No problem. Thanks for your time. Bye.",
+      "Okay. Thank you for talking. Bye."
     ],
     "repeat": [
       "Sorry, I missed that.",
@@ -446,7 +446,7 @@ const VARIANTS = {
       "Oh, {place}."
     ],
     "ackNotice": [
-      "Got it, {days} days notice.",
+      "Okay, {days} days notice.",
       "{days} days, okay."
     ],
     "ackNoted": [
