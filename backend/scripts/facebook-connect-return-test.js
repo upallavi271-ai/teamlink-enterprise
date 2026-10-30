@@ -41,5 +41,13 @@ const fb = http.createServer((req, res) => { seen.push(req.url); res.setHeader('
   const q2 = new URL(st2.url).searchParams;
   ok('with a configuration ID: config_id is sent and no scope', q2.get('config_id') === '4455' && !q2.get('scope'));
   delete process.env.FACEBOOK_LOGIN_CONFIG_ID;
+  // the backup way: a token pasted from Graph API Explorer -> long-lived -> the Pages, same waiting list
+  const ft = await FBC.fromToken(u, 'EAAx' + 'y'.repeat(60));
+  ok('pasted token: Pages read, waiting-list key returned', ft.ok && /^[a-f0-9]{24}$/.test(ft.k));
+  ok('pasted token was made long-lived with the app', seen.some((x) => x.includes('grant_type=fb_exchange_token') && x.includes('client_id=111')));
+  const pend = await FBC.pending(u, ft.k);
+  ok('pasted token: the Page is offered to pick', pend.pages && pend.pages.some((p) => p.id === '987'));
+  const notTok = await FBC.fromToken(u, 'short');
+  ok('a non-token is refused in words', notTok.error && /does not look like/.test(notTok.error));
   console.log(`SUMMARY pass=${pass} fail=${fail}`); srv.close(); fb.close(); await prisma.$disconnect(); process.exit(0);
 })().catch((e) => { console.error(e); process.exit(1); });

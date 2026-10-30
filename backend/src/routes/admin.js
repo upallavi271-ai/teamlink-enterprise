@@ -1655,24 +1655,36 @@ async function applySocial(user, { how = 'Saved', save = true } = {}) {
 const FBC = require('../utils/facebookConnect');
 FBC.setFinisher((user, opts) => applySocial(user, opts));
 // "Connect with Facebook" (utils/facebookConnect.js). start: the typed Meta App ID / secret are saved first, then Facebook's login address is returned.
-router.post('/integrations/social/facebook/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+// the typed Meta App ID / secret / login configuration are saved first (both ways: the Facebook login and the pasted token)
+async function saveFacebookApp(req, res) {
   const v = (req.body && req.body.values) || {};
   const incoming = {};
   [FBC.APP_ID_LABEL, FBC.APP_SECRET_LABEL, FBC.CONFIG_LABEL].forEach((l) => { if (v[l] !== undefined) incoming[l] = v[l]; });
-  if (Object.keys(incoming).length) {
-    try {
-      await integrationRow('social');
-      const w = await writeValues('social', incoming);
-      await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
-    } catch (err) {
-      if (err && err.code === 'NO_SECRET_KEY') return res.status(400).json({ error: NO_KEY_MESSAGE });
-      throw err;
-    }
+  if (!Object.keys(incoming).length) return true;
+  try {
+    await integrationRow('social');
+    const w = await writeValues('social', incoming);
+    await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+    return true;
+  } catch (err) {
+    if (err && err.code === 'NO_SECRET_KEY') { res.status(400).json({ error: NO_KEY_MESSAGE }); return false; }
+    throw err;
   }
+}
+router.post('/integrations/social/facebook/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  if (!(await saveFacebookApp(req, res))) return undefined;
   const out = await FBC.start(req.user, req);
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   await logAudit({ userId: req.user.id, action: 'Connect with Facebook started', entity: 'Integration', entityId: 'social', toValue: 'Facebook login opened' });
   return res.json({ url: out.url, redirectUri: out.redirectUri });
+});
+// the backup way (Graph API Explorer token): the same Page pick follows (?facebook=pick&k=...)
+router.post('/integrations/social/facebook/token', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  if (!(await saveFacebookApp(req, res))) return undefined;
+  const out = await FBC.fromToken(req.user, req.body && req.body.token);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: 'Facebook Pages read from a pasted token', entity: 'Integration', entityId: 'social', toValue: 'Pages listed' });
+  return res.json({ k: out.k });
 });
 router.get('/integrations/social/facebook/redirect-uri', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const a = await FBC.appCreds();

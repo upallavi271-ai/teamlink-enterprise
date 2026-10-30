@@ -161,13 +161,33 @@ async function exchange(req, code, base = null) {
   if (!a.id || !a.secret) throw new Error('The Meta App ID / App secret are missing on this server.');
   const short = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ client_id: a.id, client_secret: a.secret, redirect_uri: base ? `${base}/api/public/facebook-connect/callback` : redirectUri(req), code })}`);
   if (!short.access_token) throw new Error('Facebook gave no token for this sign-in.');
-  let longTok = short.access_token;
+  return pagesOf(short.access_token, a);
+}
+// A USER token -> made long-lived with this app -> the Pages the person manages, each with its own Page token. Used after the
+// login above, and for a token pasted from Graph API Explorer (fromToken below: the backup when Facebook's login page only says
+// "Sorry, something went wrong", founder 2026-10-30).
+async function pagesOf(userToken, a) {
+  let longTok = userToken;
   try {
-    const l = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: a.id, client_secret: a.secret, fb_exchange_token: short.access_token })}`);
+    const l = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ grant_type: 'fb_exchange_token', client_id: a.id, client_secret: a.secret, fb_exchange_token: userToken })}`);
     if (l.access_token) longTok = l.access_token;
   } catch { /* the short one still lists the Pages; its Page tokens are then short too, the check below says so */ }
   const accounts = await readJson(`${graphBase()}/me/accounts?${new URLSearchParams({ fields: 'id,name,access_token', limit: '100', access_token: longTok })}`);
   return (accounts.data || []).filter((p) => p && p.id && p.access_token);
+}
+
+// The backup way: a user token copied from Graph API Explorer (made with THIS app). The same waiting list and Page pick follow.
+async function fromToken(user, token) {
+  const t = String(token || '').trim();
+  if (t.length < 30 || /\s/.test(t)) return { error: 'That does not look like a Facebook access token. Copy the whole "Access Token" box from Graph API Explorer.', status: 400 };
+  const a = await appCreds();
+  if (a.missingKey) return { error: 'The secret key of this server is missing, so nothing can be stored encrypted.', status: 400 };
+  if (!a.id || !a.secret) return { error: 'Type the Meta App ID and App secret first (step 3).', status: 400 };
+  let pages;
+  try { pages = await pagesOf(t, a); } catch (err) { return { error: `Facebook did not accept the token: ${err.message}`, status: 422 }; }
+  if (!pages.length) return { error: 'Facebook listed no Page for this token. In Graph API Explorer add the permission pages_show_list (and the other two), press Generate Access Token again and tick your Page.', status: 422 };
+  sweepPending().catch(() => {});
+  return { ok: true, k: await putPending(user.id, pages) };
 }
 
 const router = express.Router();
@@ -192,4 +212,4 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };
+module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };

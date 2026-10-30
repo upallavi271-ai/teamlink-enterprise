@@ -43,6 +43,8 @@ export default function FacebookSetup() {
   const [appId, setAppId] = useState('');
   const [secret, setSecret] = useState('');
   const [configId, setConfigId] = useState('');
+  const [pasted, setPasted] = useState('');
+  const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -69,6 +71,20 @@ export default function FacebookSetup() {
       const r = await api.post('/admin/integrations/social/facebook/start', { values });
       window.location.href = r.data.url; // Facebook's own login page; it comes back to Integrations and asks which Page
     } catch (e) { setErr(e.response?.data?.error || 'Could not open the Facebook sign-in.'); setBusy(false); }
+  }
+
+  // the backup way: a token from Graph API Explorer -> the server lists the Pages -> the same "Which Facebook Page?" pick (Integrations reads ?facebook=pick)
+  async function readPages() {
+    setErr('');
+    if (pasted.trim().length < 30) { setErr('Paste the whole Access Token from Graph API Explorer first.'); return; }
+    setReading(true);
+    try {
+      const values = {};
+      if (appId.trim()) values['Meta App ID'] = appId.trim();
+      if (secret.trim()) values['Meta App secret'] = secret.trim();
+      const r = await api.post('/admin/integrations/social/facebook/token', { token: pasted.trim(), values });
+      window.location.href = `/admin/integrations?tab=facebook&facebook=pick&k=${encodeURIComponent(r.data.k)}`;
+    } catch (e) { setErr(e.response?.data?.error || 'Facebook did not accept the token.'); setReading(false); }
   }
 
   if (!social) return <div className="small-muted">{err || 'Loading…'}</div>;
@@ -154,6 +170,20 @@ export default function FacebookSetup() {
         </div>
         {/* an error saved before the Meta app was set up belongs to an older try (the old demo test), so it is only shown once steps 1-3 are done */}
         {social.error && !connected && hasApp && <div className="small-muted" style={{ marginTop: 6, color: '#b42318' }}>Last time it did not connect: {social.error}</div>}
+
+        {/* founder 2026-10-30: Facebook's login page only said "Sorry, something went wrong" */}
+        <details style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#f7f7fb', border: '1px solid #e0e3ea' }}>
+          <summary style={{ cursor: 'pointer', fontWeight: 600 }}>Facebook only says &quot;Sorry, something went wrong&quot;? Use the backup way</summary>
+          <ol style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+            <li>Open <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer">Graph API Explorer</a> (signed in as the Page admin).</li>
+            <li>On the right, <b>Meta App</b>: pick the same app as step 3{appId ? ` (${appId})` : ''}. <b>User or Page</b>: <b>Get User Access Token</b>.</li>
+            <li>In <b>Permissions</b> add these three:{PERMS.map((x) => <CopyBox key={x} text={x} />)}</li>
+            <li>Press <b>Generate Access Token</b>, continue on Facebook, <b>tick your company Page</b> and allow.</li>
+            <li>Copy the long <b>Access Token</b> at the top and paste it here. TeamLink makes it long-lasting and lists your Pages.</li>
+          </ol>
+          <textarea rows={3} value={pasted} onChange={(e) => setPasted(e.target.value.replace(/\s/g, ''))} placeholder="Paste the Access Token here" style={{ width: '100%', marginTop: 8, fontFamily: 'monospace', fontSize: 12 }} />
+          <button type="button" className="btn btn-primary btn-sm" style={{ marginTop: 8 }} onClick={readPages} disabled={reading}>{reading ? 'Reading your Pages…' : 'Read my Pages'}</button>
+        </details>
       </Step>
 
       <Step n={5} done={inOmni} title="Omni-Channel gets the same Page (automatic)">
