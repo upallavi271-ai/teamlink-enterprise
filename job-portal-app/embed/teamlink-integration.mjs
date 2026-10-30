@@ -642,8 +642,18 @@ export function teamlinkFrontRouter({ root, express }) {
         const stage = str(u && u.stage, 40);
         if (!id || !stage) { out.push({ id, error: 'id and stage are required' }); continue; }
         if (!valid.has(stage)) { out.push({ id, error: `"${stage}" is not a portal stage` }); continue; }
-        const cur = await c.query(`select stage from applications where id=$1 and job_id like 'tl\\_%'`, [id]);
+        // a TeamLink job's application, or a Naukri / Shine mail response TeamLink filed in its ATS (utils/mailImports.js)
+        const cur = await c.query(`select stage from applications where id=$1 and (job_id like 'tl\\_%' or import_method = 'recruiter_email')`, [id]);
         if (!cur.rowCount) { out.push({ id, error: 'no such TeamLink application on the portal' }); continue; }
+        // "Pushed to ATS" (0145): TeamLink's 65% rule moved it (backend/src/utils/autoSendToAts.js); the first push stands
+        if (u.pushed && ['auto_screening', 'auto_ai_interview', 'send_to_ats'].includes(u.pushed.via)) {
+          await c.query('savepoint tl_pushed');
+          try {
+            await c.query(`update applications set ats_pushed_at = coalesce(ats_pushed_at, now()), ats_pushed_via = coalesce(ats_pushed_via, $2),
+                                 ats_pushed_score = coalesce(ats_pushed_score, $3) where id = $1`, [id, u.pushed.via, Number.isFinite(Number(u.pushed.score)) ? Number(u.pushed.score) : null]);
+            await c.query('release savepoint tl_pushed');
+          } catch { await c.query('rollback to savepoint tl_pushed').catch(() => {}); /* an older portal without 0145 */ }
+        }
         if (cur.rows[0].stage === stage) { out.push({ id, changed: false, stage }); continue; }
         await c.query(`select set_config('app.stage_note', $1, true)`, [str(u.note, 500) || 'Updated from TeamLink']);
         await c.query(`update applications set stage=$1 where id=$2`, [stage, id]);

@@ -546,6 +546,12 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
       // the portal's AI interview -> the ATS application (who still has to take it / who already did)
       // eslint-disable-next-line no-await-in-loop
       if (r.body && r.body.applicationId && await syncAiInterview(r.body.applicationId, a.application && a.application.aiInterview).catch(() => false)) out.aiInterviews += 1;
+      // the 65% rule: AI interview and resume both 65% or more -> into the ATS by itself (utils/autoSendToAts.js)
+      if (r.body && r.body.applicationId) {
+        // eslint-disable-next-line no-await-in-loop
+        const auto = await require('./autoSendToAts').checkQuietly(r.body.applicationId, { portalAppId: a.application && a.application.id }); // eslint-disable-line global-require
+        if (auto.sent) out.autoAts = (out.autoAts || 0) + 1;
+      }
       // STATUS BACK TO THE PORTAL: the applicant sees on the portal where
       // their application stands in the ATS.
       const atsStage = r.body && r.body.stage;
@@ -641,5 +647,5 @@ async function ping() {
 
 module.exports = {
   portalUrl, portalJobId, jobUrl, secretMatches, pushRequirement, ingestApplication, fullSync, syncAiInterview,
-  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi, portalFetch,
+  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi, portalFetch, syncAiInterview,
 };

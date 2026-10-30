@@ -109,7 +109,7 @@ async function pull({ sinceDays = 60 } = {}) {
     const users = emails.length ? await prisma.user.findMany({ where: { email: { in: emails } }, select: { id: true, email: true } }) : [];
     const userOf = new Map(users.map((u) => [u.email.toLowerCase(), u.id]));
     const seats = new Map((await require('./jobPortalRecruiters').people().catch(() => [])).map((p) => [p.email, p.department])); // eslint-disable-line global-require
-    const out = { at: new Date().toISOString(), read: apps.length, added: 0, already: 0, waiting: 0, failed: 0, waitingTitles: {} };
+    const out = { at: new Date().toISOString(), read: apps.length, added: 0, already: 0, waiting: 0, failed: 0, autoAts: 0, waitingTitles: {} };
     for (const a of apps) {
       const email = String(a.application.recruiterEmail || '').toLowerCase();
       const ctx = { userId: userOf.get(email) || null, department: seats.get(email) || null };
@@ -127,6 +127,15 @@ async function pull({ sinceDays = 60 } = {}) {
       if (r.status === 201) out.added += 1;
       else if (r.status === 200) out.already += 1;
       else out.failed += 1;
+      if (r.body && r.body.applicationId) {
+        // the portal's AI interview, then the 65% rule (utils/autoSendToAts.js), as for every portal application
+        const B = require('./jobPortalBridge'); // eslint-disable-line global-require
+        // eslint-disable-next-line no-await-in-loop
+        await B.syncAiInterview(r.body.applicationId, a.application && a.application.aiInterview).catch(() => false);
+        // eslint-disable-next-line no-await-in-loop
+        const auto = await require('./autoSendToAts').checkQuietly(r.body.applicationId, { portalAppId: a.application && a.application.id }); // eslint-disable-line global-require
+        if (auto.sent) out.autoAts = (out.autoAts || 0) + 1;
+      }
     }
     out.waitingTitles = Object.entries(out.waitingTitles).sort((x, y) => y[1].count - x[1].count).slice(0, 30)
       .map(([title, w]) => ({ title, count: w.count, why: w.several ? 'several requirements have this title' : 'no requirement has this title' }));
