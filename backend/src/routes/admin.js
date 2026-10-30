@@ -1126,7 +1126,13 @@ router.get('/notifications', async (req, res) => {
       prisma.notification.count({ where: { ...own, read: false } }),
     ]);
     const channels = [...new Set(chans.map((c) => c.channel || 'In-App'))].sort();
-    return res.json({ rows: await withMailStatus(rows.map(shapeNotification)), total, page, pageSize, channels, unread });
+    // the truth about email for the banner (was a fixed "Demo / Simulated" line): are notification emails switched on, can mail go
+    let mail = null;
+    try {
+      const [s, cfg] = await Promise.all([require('../utils/hrmsNotify').getSettings(), require('../utils/mailer').emailConfig()]); // eslint-disable-line global-require
+      mail = { emailsOn: !!s.emailsOn, configured: !!cfg.configured };
+    } catch { mail = null; }
+    return res.json({ rows: await withMailStatus(rows.map(shapeNotification)), total, page, pageSize, channels, unread, mail });
   }
   const notifications = await prisma.notification.findMany({
     where: { AND: [{ userId: req.user.id }, require('../utils/announcementPause').PAUSED_HIDE, ...(noAgreement ? [noAgreement] : [])] }, // eslint-disable-line global-require

@@ -52,14 +52,16 @@ const EVENTS = {
   missingCheckIn: { label: 'Missing check-in' },
   missingCheckOut: { label: 'Missing check-out' },
   // 2026-10-13: yesterday's (or earlier) attendance problems to put right - the employee's own, and a team lead's grouped list (utils/attendanceTasks.js)
-  attendanceIssue: { label: 'Attendance issue to resolve (yours, or your team)' },
-  taskAssigned: { label: 'Task given to you' },
-  taskChanged: { label: 'A task you were given was changed (new date, moved, cancelled)' },
-  taskDone: { label: 'A task you gave was finished' },
-  taskDue: { label: 'Task due soon' },
-  taskLate: { label: 'Tasks not finished on time' },
+  // 2026-10-30 (founder: "ey employee ki ayina, ey notifications ayina, employee mails ki vellali"): the task and attendance-issue
+  // notes are emailed AT ONCE too (they waited for the daily email); a per-event choice on the settings screen still wins
+  attendanceIssue: { label: 'Attendance issue to resolve (yours, or your team)', instant: true },
+  taskAssigned: { label: 'Task given to you', instant: true },
+  taskChanged: { label: 'A task you were given was changed (new date, moved, cancelled)', instant: true },
+  taskDone: { label: 'A task you gave was finished', instant: true },
+  taskDue: { label: 'Task due soon', instant: true },
+  taskLate: { label: 'Tasks not finished on time', instant: true },
   taskDayEnd: { label: 'End-of-day task report (Super Admin): completed, waiting for TL, partly done, in progress' },
-  goalNotMet: { label: 'Monthly target not reached' },
+  goalNotMet: { label: 'Monthly target not reached', instant: true },
 };
 const EVENT_KEYS = Object.keys(EVENTS);
 // Spec: important HRMS activities send BOTH in-app and email.
