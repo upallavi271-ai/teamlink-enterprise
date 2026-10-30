@@ -186,9 +186,8 @@ function native(text, lang) {
     })
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/థాంక్స్/g, col === 0 ? 'థాంక్యూ' : 'థాంక్స్')
     .replace(/(వరకు|तक)(\s+(వరకు|तक))+/g, '$1') // "... నుంచి 2 లక్షలు వరకు" + "వరకు ఉంటుంది": once
-    .replace(/[^\s.,!?;:)]+/g, (w) => (col === 0 && !keepEnd().has(w) ? w.replace(HARD_END, '$1ు') : w));
+    ; // (an everyday "u" on English words - జాబు, థాంక్యూ - was tried 2026-10-30 and stretched: "jobuuuu". Not used.)
 }
 
 module.exports = { native, spell, WORDS };

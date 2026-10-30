@@ -97,7 +97,8 @@ const NATIVE = {
   Hindi: ['हाँ', 'हां', 'जी', 'नहीं', 'नही', 'ठीक', 'बोलिए', 'बोलो', 'मैं', 'मुझे', 'मेरा', 'मेरी', 'आप', 'आपका', 'है', 'हैं', 'हूँ', 'हूं', 'में', 'का', 'की', 'के',
     'को', 'से', 'साल', 'दिन', 'महीने', 'कल', 'परसों', 'अभी', 'बाद', 'रहता', 'रहती', 'करता', 'करती', 'बात', 'हिंदी', 'क्या', 'कहाँ', 'कब', 'कैसे', 'क्यों', 'चाहिए',
     'शाम', 'सुबह', 'दोपहर', 'बिल्कुल', 'अच्छा', 'भी', 'और', 'बताइए', 'बताओ', 'सकते', 'सकता', 'सकती', 'रहा', 'रही', 'रहे', 'था', 'थी', 'गया',
-    'लेकिन', 'मतलब', 'यहाँ', 'वहाँ', 'दो', 'तीन', 'चार', 'पांच', 'पाँच', 'एक'],
+    'लेकिन', 'मतलब', 'यहाँ', 'वहाँ', 'दो', 'तीन', 'चार', 'पांच', 'पाँच', 'एक', 'किस', 'किसी', 'कितने', 'कितना', 'कितनी', 'ये', 'यह', 'वो', 'वह',
+    'जगह', 'करना', 'होगा', 'मिलेगा', 'मिलेगी', 'सकता', 'चाहता', 'चाहती'],
 };
 function nativeAnswer(text, lang) {
   const t = String(text || '').trim();
@@ -413,7 +414,10 @@ function handle(sock, engines, opts = {}) {
         const words = en.text.trim().split(/\s+/).filter(Boolean).length;
         // a "question" word alone is no proof ("हाँ, इंटरेस्ट है" was written "How interesting!" and read as a question)
         const understoodEn = !['unclear', 'silence', 'info_q'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
-        if (understoodEn || (words >= 4 && clarityOf(en.text, en.conf) === 'clear')) pre = en;
+        const enIntent = require('../dialogue').classify(en.text).intent; // eslint-disable-line global-require
+        const STRONG = ['yes', 'no', 'mixed', 'maybe', 'later', 'reschedule', 'stop', 'repeat', 'cant_hear', 'salary_q'];
+        const clearlyEnglish = spoken ? STRONG.includes(enIntent) && words <= 10 : (understoodEn || (words >= 4 && clarityOf(en.text, en.conf) === 'clear'));
+        if (clearlyEnglish) pre = en;
         else { if (DEBUG) debug(`${row.id} sound said English, but "${en.text}" makes no sense: staying in ${cur}`); found = null; }
       }
       // a short answer that already makes sense in the current language ("haan theek", "avunu", "yes") is not a switch:
