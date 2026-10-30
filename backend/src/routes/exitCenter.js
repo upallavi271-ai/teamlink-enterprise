@@ -532,7 +532,7 @@ async function buildView(req, ctx) {
   };
   const out = {
     id: record.id,
-    employee: { id: employee.id, name: employee.name, employeeCode: employee.employeeCode, department: employee.department, designation: employee.designation, employmentStatus: employee.employmentStatus },
+    employee: { id: employee.id, name: employee.name, employeeCode: employee.employeeCode, department: employee.department, designation: employee.designation, employmentStatus: employee.employmentStatus, dateOfJoining: employee.dateOfJoining ? new Date(employee.dateOfJoining).toISOString().slice(0, 10) : null },
     status: record.status, stage: stage.key, stageLabel: stage.label,
     reason: detail ? (detail.reason === 'Other' && detail.reasonOther ? `Other: ${detail.reasonOther}` : detail.reason) : record.title,
     comments: own ? null : (detail ? detail.comments : record.detail),

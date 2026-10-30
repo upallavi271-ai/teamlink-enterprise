@@ -510,7 +510,7 @@ function ResignationDetailModal({ id, isHR, myEmployeeId, onClose, onChanged }) 
           )}
           {editDates && (
             <EditDateModal
-              record={{ id: r.id, lastWorkingDate: f?.approvedLastWorkingDate || r.lastWorkingDate || '', resignationDate: f?.resignationDate || '', noticeDays: r.noticePeriodDays }}
+              record={{ id: r.id, lastWorkingDate: f?.approvedLastWorkingDate || r.lastWorkingDate || '', resignationDate: f?.resignationDate || '', noticeDays: r.noticePeriodDays, employee: { dateOfJoining: r.employee?.dateOfJoining ? String(r.employee.dateOfJoining).slice(0, 10) : null } }}
               onClose={() => setEditDates(false)}
               onSaved={() => { setEditDates(false); load(); onChanged(); }}
             />

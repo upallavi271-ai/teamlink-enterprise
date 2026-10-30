@@ -60,6 +60,18 @@ export function EditDateModal({ record, onClose, onSaved }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [checked, setChecked] = useState('');
+  // A date before the joining day is almost always a slip of the year (founder 2026-10-30: 17-09-2025 for a person who joined
+  // 09 Dec 2025 - meant 17-09-2026): said here at once, with the same day in the first year that fits, one click to use it.
+  const joined = (record.employee && record.employee.dateOfJoining) || '';
+  const beforeJoining = (d) => !!(joined && d && d < joined);
+  const sameDayLater = (d) => {
+    if (!beforeJoining(d)) return '';
+    for (let y = Number(joined.slice(0, 4)); y <= Number(joined.slice(0, 4)) + 1; y += 1) {
+      const c = `${y}${d.slice(4)}`;
+      if (c >= joined && !Number.isNaN(new Date(`${c}T00:00:00Z`).getTime())) return c;
+    }
+    return '';
+  };
   const noticeEndOf = (from, n) => { if (!from || n === '' || Number.isNaN(Number(n))) return ''; const d = new Date(`${from}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + Number(n)); return d.toISOString().slice(0, 10); };
   const startOrDaysMoved = (resDate && resDate !== curRes) || (days !== '' && days !== curDays);
   const suggested = noticeEndOf(resDate, days);
@@ -70,6 +82,7 @@ export function EditDateModal({ record, onClose, onSaved }) {
 
   useEffect(() => {
     if (!date || date === current || date === checked) return undefined;
+    if (beforeJoining(date)) { setWarnings([]); setError(''); return undefined; } // said under the date, with the fix
     const t = setTimeout(() => {
       api.post(`/resignations/exit/${record.id}/date/check`, { date, reason: reason || 'check' })
         .then((r) => { setWarnings(r.data.warnings || []); setError(''); setChecked(date); })
@@ -90,16 +103,23 @@ export function EditDateModal({ record, onClose, onSaved }) {
     } catch (e) { setError(err(e, 'Could not save the dates')); } finally { setBusy(false); }
   }
   const changed = (date && date !== current) || (resDate && resDate !== curRes) || (days !== '' && days !== curDays);
-  const can = changed && reason.trim().length >= 3 && !busy;
+  const can = changed && reason.trim().length >= 3 && !busy && !beforeJoining(date) && !beforeJoining(resDate);
+  const yearSlip = (d, set, what) => beforeJoining(d) && (
+    <div className="error-text" role="alert">
+      The {what} cannot be before the joining date ({dmy(joined)}).
+      {sameDayLater(d) && <>{' '}Did you mean <b>{dmy(sameDayLater(d))}</b>? <button type="button" className="btn btn-sm" onClick={() => set(sameDayLater(d))}>Use {dmy(sameDayLater(d))}</button></>}
+    </div>
+  );
   return (
     <Modal
       title="Edit resignation, notice and exit dates" onClose={onClose}
       footer={(<><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn-primary" disabled={!can} onClick={save}>{busy ? 'Saving…' : 'Save the dates'}</button></>)}
     >
       <div className="exc-form">
-        <div className="exc-now-date">Now: resigned on <b>{curRes ? dmy(curRes) : 'not set'}</b> · notice <b>{curDays === '' ? 'not set' : `${curDays} days`}</b> · last working day <b>{current ? dmy(current) : 'not set'}</b></div>
+        <div className="exc-now-date">Now: {joined && <>joined on <b>{dmy(joined)}</b> · </>}resigned on <b>{curRes ? dmy(curRes) : 'not set'}</b> · notice <b>{curDays === '' ? 'not set' : `${curDays} days`}</b> · last working day <b>{current ? dmy(current) : 'not set'}</b></div>
         <label className="exc-label" htmlFor="exc-resdate">Resigned on</label>
-        <input id="exc-resdate" type="date" value={resDate} onChange={(e) => setResDate(e.target.value)} />
+        <input id="exc-resdate" type="date" min={joined || undefined} value={resDate} onChange={(e) => setResDate(e.target.value)} />
+        {yearSlip(resDate, setResDate, 'resignation date')}
         <label className="exc-label" htmlFor="exc-days">Notice period (days)</label>
         <input id="exc-days" type="number" min="0" max="365" value={days} onChange={(e) => setDays(e.target.value)} />
         {startOrDaysMoved && suggested && (
@@ -109,7 +129,8 @@ export function EditDateModal({ record, onClose, onSaved }) {
           </label>
         )}
         <label className="exc-label" htmlFor="exc-date">Last working day (exit date)</label>
-        <input id="exc-date" type="date" value={date} onChange={(e) => { setRecalc(false); setDate(e.target.value); }} />
+        <input id="exc-date" type="date" min={joined || undefined} value={date} onChange={(e) => { setRecalc(false); setDate(e.target.value); }} />
+        {yearSlip(date, (d) => { setRecalc(false); setDate(d); }, 'last working day')}
         <label className="exc-label">Why are the dates changing? <span className="exc-req">(needed)</span></label>
         <div className="exc-quick">
           {REASONS.map((r) => <button type="button" key={r} className={`btn btn-sm${reason === r ? ' btn-primary' : ''}`} onClick={() => setReason(r)}>{r}</button>)}
