@@ -433,7 +433,10 @@ exit 0
 $SyncResumeCmd = 'S=/opt/teamlink-sync; if [ -f $S/PAUSE ] && grep -q deploy-local-to-vps $S/PAUSE; then rm -f $S/PAUSE && echo VPS auto-sync resumed; fi; exit 0'
 Write-Host ""
 Write-Host "Pausing the VPS auto-sync while this deploy runs..." -ForegroundColor Cyan
-($SyncPauseCmd.Replace("`r", "") + "`n") | ssh $VpsHost 'bash -s'
+# 2026-10-30: Windows PowerShell 5.1 adds a CR+LF after a string piped to a program, so bash -s read one more line (just a carriage return:
+# 'command not found', exit 127) after the script had finished OK, and every release preparation was reported as failed. Each script now ends with a
+# bare exit (= the status of its last real command) BEFORE that stray line.
+($SyncPauseCmd.Replace("`r", "") + "`nexit`n") | ssh $VpsHost 'bash -s'
 if ($LASTEXITCODE -ne 0) {
     ssh $VpsHost $SyncResumeCmd
     throw "The VPS auto-sync is busy deploying right now. Nothing was changed. Run this again in a few minutes."
@@ -495,9 +498,11 @@ npm run build
 [ -f dist/index.html ] || { echo "the screen build made no dist/index.html"; exit 1; }
 echo NEW RELEASE READY
 '@
-($PrepCmd.Replace("`r", "").Replace('__NEW__', $RemoteDeployNew).Replace('__VPSROOT__', $VpsRoot).Replace('__PKG__', $RemotePackage) + "`n") | ssh $VpsHost 'bash -s'
-if ($LASTEXITCODE -ne 0) {
-    throw "The new release could not be prepared (see the lines above)."
+($PrepCmd.Replace("`r", "").Replace('__NEW__', $RemoteDeployNew).Replace('__VPSROOT__', $VpsRoot).Replace('__PKG__', $RemotePackage) + "`nexit`n") | ssh $VpsHost 'bash -s'
+$PrepExit = $LASTEXITCODE
+Write-Host "(preparing the release: ssh exit code $PrepExit)"
+if ($PrepExit -ne 0) {
+    throw "The new release could not be prepared (ssh exit code $PrepExit; see the lines above)."
 }
 Write-Host "New release ready (packages, Prisma client, screens built) - the live site was not stopped" -ForegroundColor Green
 
@@ -660,7 +665,7 @@ for i in 1 2 3 4 5 6; do
 done
 exit 1
 '@
-($MigrateCmd.Replace("`r", "").Replace('__BACKEND__', "$VpsRoot/backend") + "`n") | ssh $VpsHost 'bash -s'
+($MigrateCmd.Replace("`r", "").Replace('__BACKEND__', "$VpsRoot/backend") + "`nexit`n") | ssh $VpsHost 'bash -s'
 
 if ($LASTEXITCODE -ne 0) {
     throw "Prisma migration failed."
