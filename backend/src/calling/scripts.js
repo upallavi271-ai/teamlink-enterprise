@@ -42,6 +42,7 @@ const PH = {
     laterNoted: "Okay, {when}, got it. We'll call you then. Bye.",
     screenIntro: 'We have a {job} job open. Can I tell you a bit about it?',
     briefLoc: 'The job is in {location}.',
+    briefNeeds: "They need: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'Work mode is {workMode}.',
     briefType: "It's a {employmentType} job.",
     briefExp: 'They want about {experience} of experience.',
@@ -118,6 +119,7 @@ const PH = {
     laterNoted: 'ठीक है, {when}, नोट कर लिया। तब कॉल करेंगे। बाय।',
     screenIntro: 'हमारे पास {job} की एक जॉब है। उसके बारे में थोड़ा बताऊँ?',
     briefLoc: 'जॉब {location} में है।',
+    briefNeeds: "इन्हें चाहिए: {needs}।", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'वर्क मोड {workMode} है।',
     briefType: 'ये {employmentType} जॉब है।',
     briefExp: 'करीब {experience} का एक्सपीरियंस चाहिए।',
@@ -194,6 +196,7 @@ const PH = {
     laterNoted: 'సరే, {when}, నోట్ చేసుకున్నా. అప్పుడు కాల్ చేస్తాం. బై.',
     screenIntro: 'మా దగ్గర {job} జాబ్ ఒకటి ఉంది. దాని గురించి కొంచెం చెప్పనా?',
     briefLoc: 'జాబ్ {location} లో.',
+    briefNeeds: "వాళ్ళకి కావాల్సింది: {needs}.", // what the requirement asks for, from the ATS description (2026-10-30)
     briefMode: 'వర్క్ మోడ్ {workMode}.',
     briefType: 'ఇది {employmentType} జాబ్.',
     briefExp: 'దాదాపు {experience} ఎక్స్‌పీరియన్స్ కావాలి.',
@@ -312,6 +315,58 @@ function experienceWords(exp) {
   return /year|yr/i.test(t) ? t : '';
 }
 
+// THE REQUIREMENT AS IT IS WRITTEN IN THE ATS (founder 2026-10-30: "reqments ni care ga, ats nunchi study chesko"). Many
+// requirements keep their real facts only in the description ("Location: Kakinada", "M.Tech CSE 4 members", "CSE - 40k",
+// "Fresher & 1 to 2 Experience"), with the structured fields empty. These are READ from it, word for word where possible;
+// nothing is guessed. A structured field, when filled, always wins.
+const NOISE_LINE = /^(requirements?|positions?|requirements?\s*\/\s*positions?|post(i|)on)\b.*:?\s*$|^from the .*sheet|^post(i|)on\s*[:\-]/i;
+// "LB NAGAR TO MEHADIPANAM ROAD" -> "LB Nagar to Mehadipanam Road" (2-letter words stay capitals: a place code)
+const titleCase = (v) => v.split(/\s+/).map((w) => (/^(TO|AND|OF|ON|NEAR|IN|AT)$/.test(w) ? w.toLowerCase() : (w.length <= 2 && /^[A-Z]+$/.test(w) ? w : w.charAt(0) + w.slice(1).toLowerCase()))).join(' ');
+function descriptionFacts(desc) {
+  const out = { location: '', experience: '', needs: '', salary: '' };
+  const lines = String(desc || '').replace(/[\u2060\u200b-\u200f\ufeff]/g, '').split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return out;
+  // where: the "Location:" line, its first sentence
+  const loc = lines.find((l) => /^location\s*[:\-]/i.test(l));
+  if (loc) {
+    let v = loc.replace(/^location\s*[:\-]\s*/i, '').split(/\.\s|\.$/)[0].replace(/^located\s+/i, '').replace(/^(on the way|on the way to|near|at|in)\s+/i, '');
+    if (v && v === v.toUpperCase()) v = titleCase(v);
+    out.location = clean(v, 70);
+  }
+  // experience: a range ("1 to 2 Experience", "2-5 yrs") or one number of years ("5 years industrial experience")
+  const all = lines.join(' ');
+  const range = /(\d{1,2})\s*(?:to|-|–)\s*(\d{1,2})\s*\+?\s*(?:yrs?|years?|experience|exp)\b/i.exec(all);
+  const single = /(\d{1,2})\s*\+?\s*(?:yrs?|years?)\b/i.exec(all);
+  if (range) out.experience = `${range[1]} to ${range[2]} years`;
+  else if (single) out.experience = `${single[1]} years`;
+  // salary lines: "CSE - 40k", "Physics - 20 - 25k", "3 - 4 LPA"
+  const pay = [];
+  lines.forEach((l) => {
+    const k = /^(.*?)[\s:\-–]*(\d{1,3})\s*(?:-|to|–)?\s*(\d{1,3})?\s*k\b/i.exec(l);
+    const lpa = /^(.*?)[\s:\-–]*(\d{1,2}(?:\.\d)?)\s*(?:-|to|–)?\s*(\d{1,2}(?:\.\d)?)?\s*lpa\b/i.exec(l);
+    const m = k || lpa;
+    if (!m) return;
+    const who = clean(m[1].replace(/[\s:\-–]+$/, ''), 30);
+    const amt = `${m[2]}${m[3] ? ` to ${m[3]}` : ''} ${k ? 'thousand' : 'lakh per year'}`;
+    pay.push(who ? `${who} ${amt}` : amt);
+  });
+  out.salary = clean(pay.slice(0, 3).join(', '), 120);
+  // what they need: the list lines (subjects, roles, degrees) - not the sentences, dates, pay, place or experience lines
+  const items = [];
+  lines.forEach((l) => {
+    if (NOISE_LINE.test(l) || /^location\s*[:\-]/i.test(l) || /\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/.test(l)) return;
+    if (/\b\d+\s*k\b|lpa|₹|salary|ctc|experience|fresher|eligible|who have|require/i.test(l)) return;
+    l.replace(/^\d+[.)]\s*/, '').split(',').forEach((part) => {
+      const v = part.replace(/\b\d+\s*(members?|persons?|people|posts?|nos?|vacanc(y|ies))\b/ig, '').replace(/^\d+\s+/, '').replace(/\s+/g, ' ').trim();
+      if (v && v.length <= 40 && /[a-z]/i.test(v) && !items.some((x) => x.toLowerCase() === v.toLowerCase())) items.push(v);
+    });
+  });
+  out.needs = clean(items.slice(0, 5).join(', '), 160);
+  return out;
+}
+// "Faculty requirement" is said as "Faculty" ("We have a Faculty job open")
+const spokenTitle = (t) => clean(String(t || '').replace(/\s*[-–(]?\s*\b(requirements?|vacanc(y|ies)|openings?|positions?)\b\)?\s*$/i, ''), 100) || clean(t, 100);
+
 // requirement + application + candidate -> the facts. NOTHING that is not stored is added.
 function buildData({ candidate, app, requirement, link }) {
   const c = candidate || {};
@@ -319,19 +374,21 @@ function buildData({ candidate, app, requirement, link }) {
   const a = app || {};
   const first = clean(String(c.name || '').split(/\s+/)[0], 40);
   const kind = MODE_KIND(a.interviewMode);
+  const fromDesc = descriptionFacts(r.description);
   let linkOk = false;
   if (link != null) linkOk = !!link; // caller already verified it
   const data = {
     name: clean(c.name, 80),
     firstName: first,
-    jobTitle: clean(r.title, 100),
-    location: clean(r.location, 80),
+    jobTitle: spokenTitle(r.title),
+    location: clean(r.location, 80) || fromDesc.location,
     workMode: WORK_MODE[String(r.workMode || '').toLowerCase()] || '',
     employmentType: clean(r.employmentType, 40).toLowerCase(),
-    experience: experienceWords(r.experience) || experienceWords(r.relevantExperience),
+    experience: experienceWords(r.experience) || experienceWords(r.relevantExperience) || fromDesc.experience,
+    needs: fromDesc.needs,
     skills: firstItems(r.skills, 6, 160),
     responsibilities: firstItems(r.responsibilities, 3, 220),
-    salary: clean(r.salary, 60),
+    salary: clean(r.salary, 60) || fromDesc.salary,
     interview: a.interviewAt ? {
       at: new Date(a.interviewAt).toISOString(),
       mode: kind,
@@ -380,6 +437,7 @@ function blocks(purpose, language, data, fieldsIn, opts = {}) {
   B.intro = fill(P.screenIntro, { job: data.jobTitle });
   const brief = [
     fill(P.briefLoc, { location: data.location }),
+    data.skills ? '' : fill(P.briefNeeds, { needs: data.needs }),
     fill(P.briefMode, { workMode: data.workMode }),
     fill(P.briefType, { employmentType: data.employmentType }),
     fill(P.briefExp, { experience: data.experience }),

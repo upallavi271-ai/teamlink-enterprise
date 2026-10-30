@@ -128,6 +128,11 @@ function vexylStt({ url, key }) {
 }
 
 // --- Whisper (English, and which language a sentence is in): voice-ai/whisper/whisper_server.py ----------------------------
+// the question for Whisper's prompt: plain English, the last 200 characters (the question is at the end of what was said)
+function promptHeader(prompt) {
+  const t = String(prompt || '').replace(/[^\x20-\x7e]/g, ' ').replace(/\s+/g, ' ').trim().slice(-200);
+  return t ? { 'X-Prompt': encodeURIComponent(t) } : {};
+}
 function whisperHttp({ url, key }) {
   const post = async (path, pcm8k, extra) => {
     const r = await fetch(`${url}${path}`, {
@@ -143,11 +148,12 @@ function whisperHttp({ url, key }) {
     detect: async (pcm8k, minProb = 0.7) => { const j = await post('/detect', pcm8k); return j.prob >= minProb ? (FROM_ISO[j.lang] || null) : null; },
     // English mode in one pass: { lang: 'Telugu' | 'Hindi' | 'English', text } - the English words only when it is English
     // conf: Whisper's own sureness of the words ({ logprob, noSpeech, ratio }, whisper_server.py); null from an older server
-    hear: async (pcm8k, minProb = 0.6) => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '', conf: j.conf || null }; },
+    // prompt: the question the assistant just asked (English); Whisper hears a short answer far better knowing it (2026-10-29)
+    hear: async (pcm8k, minProb = 0.6, prompt = '') => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb), ...promptHeader(prompt) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '', conf: j.conf || null, prob: typeof j.prob === 'number' ? j.prob : null }; },
     // lang 'auto': Whisper writes what it hears in the language it hears (Telugu / Hindi letters = the person switched)
     stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
     // the same, with the sureness: { text, conf }
-    sttEx: async (pcm8k, lang) => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2) }); return { text: j.text || '', conf: j.conf || null }; },
+    sttEx: async (pcm8k, lang, prompt = '') => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}) }); return { text: j.text || '', conf: j.conf || null }; },
   };
 }
 
@@ -169,12 +175,14 @@ function kokoroHttp({ url, key, voice, speed = 1.1 }) {
 // Voices free for business use (checked 2026-10-28): Telugu padmavathi / venkatesh (IndicVoices-R, CC-BY-4.0: credit
 // "AI4Bharat IndicVoices-R" in the product notes), English ljspeech (public domain). No free Hindi Piper voice yet.
 // lengthScale: speaking speed (1 = the voice's own pace, lower = faster). The Telugu voices are slow at 1 (user, 2026-10-28).
+// lengthScale: a number, or one per language ({ English: 1, Telugu: 0.9 })
 function piperTts({ exe, voices, lengthScale = 0.75 }) {
+  const scaleOf = (lang) => (typeof lengthScale === 'object' && lengthScale ? (lengthScale[lang] || 1) : lengthScale);
   const path = require('path'); const fs = require('fs'); const os = require('os'); const { spawn } = require('child_process'); // eslint-disable-line global-require
   const procs = {};
   function procFor(lang) {
     if (procs[lang] && !procs[lang].dead) return procs[lang];
-    const p = spawn(exe, ['-m', voices[lang], '--json-input', '--sentence_silence', '0.05', '--length_scale', String(lengthScale)], { cwd: path.dirname(exe), windowsHide: true });
+    const p = spawn(exe, ['-m', voices[lang], '--json-input', '--sentence_silence', '0.05', '--length_scale', String(scaleOf(lang))], { cwd: path.dirname(exe), windowsHide: true });
     const st = { p, queue: [], dead: false, buf: '' };
     p.stdout.on('data', (d) => {
       st.buf += String(d);
@@ -213,10 +221,16 @@ function fromEnv(env = process.env) {
     ? piperTts({
       exe: env.AI_VOICE_PIPER_EXE,
       voices: { Telugu: env.AI_VOICE_PIPER_TELUGU, English: env.AI_VOICE_PIPER_ENGLISH, Hindi: env.AI_VOICE_PIPER_HINDI },
-      lengthScale: Number(env.AI_VOICE_SPEED) > 0 ? Number(env.AI_VOICE_SPEED) : 0.75, // AI_VOICE_SPEED: 0.65 fast … 1 slow
+      // 2026-10-29 "fast ga matladthundhi": English at the voice's own pace, Telugu a little quicker (its voice is slow at 1).
+      // AI_VOICE_SPEED_ENGLISH / _TELUGU (0.65 fast ... 1.2 slow); the old single AI_VOICE_SPEED no longer speeds up English.
+      lengthScale: {
+        English: Number(env.AI_VOICE_SPEED_ENGLISH) > 0 ? Number(env.AI_VOICE_SPEED_ENGLISH) : 1,
+        Telugu: Number(env.AI_VOICE_SPEED_TELUGU) > 0 ? Number(env.AI_VOICE_SPEED_TELUGU) : 0.9,
+        Hindi: Number(env.AI_VOICE_SPEED_TELUGU) > 0 ? Number(env.AI_VOICE_SPEED_TELUGU) : 0.9,
+      },
     })
     : vexylTts({ url: env.AI_VOICE_TTS_URL || 'ws://127.0.0.1:8092', key, style: env.AI_VOICE_STYLE });
-  const hindi = env.AI_VOICE_KOKORO_URL ? kokoroHttp({ url: env.AI_VOICE_KOKORO_URL, key, voice: env.AI_VOICE_KOKORO_VOICE || undefined }) : null;
+  const hindi = env.AI_VOICE_KOKORO_URL ? kokoroHttp({ url: env.AI_VOICE_KOKORO_URL, key, voice: env.AI_VOICE_KOKORO_VOICE || undefined, speed: Number(env.AI_VOICE_SPEED_HINDI) > 0 ? Number(env.AI_VOICE_SPEED_HINDI) : 1 }) : null;
   const vstt = vexylStt({ url: env.AI_VOICE_STT_URL || 'ws://127.0.0.1:8091', key });
   const wh = env.AI_VOICE_WHISPER_URL ? whisperHttp({ url: env.AI_VOICE_WHISPER_URL, key }) : null;
   return {
@@ -226,7 +240,7 @@ function fromEnv(env = process.env) {
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
     stt: (pcm, lang) => (lang === 'English' && wh ? wh.stt(pcm, 'English') : vstt(pcm, lang === 'English' ? 'Hindi' : lang)),
     // { text, conf }: conf only from Whisper (English); IndicConformer gives no sureness, so Telugu / Hindi get null - never a made-up number
-    sttEx: async (pcm, lang) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English') : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
+    sttEx: async (pcm, lang, prompt) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English', prompt) : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
     detect: wh ? wh.detect : null,
     sttAny: wh ? (pcm) => wh.stt(pcm, 'auto') : null,
     hear: wh ? wh.hear : null,

@@ -34,6 +34,63 @@ const WORDS = {
   teamlink: ['టీమ్‌లింక్', 'टीमलिंक'], consultants: ['కన్సల్టెంట్స్', 'कंसल्टेंट्स'], ok: ['ఓకే', 'ओके'], okay: ['ఓకే', 'ओके'],
 };
 
+// MORE WORDS (2026-10-30: requirements read from the ATS description - subjects, degrees, places, numbers - came out as
+// letter-by-letter guesses: "years" -> యెఅర్స్, "road" -> రొఅద్). How people in India say them, in each voice's letters.
+Object.assign(WORDS, {
+  years: ['సంవత్సరాలు', 'साल'], year: ['సంవత్సరం', 'साल'], yrs: ['సంవత్సరాలు', 'साल'], months: ['నెలలు', 'महीने'], month: ['నెల', 'महीना'],
+  thousand: ['వేలు', 'हज़ार'], lakh: ['లక్షలు', 'लाख'], lakhs: ['లక్షలు', 'लाख'], per: ['పర్', 'पर'], to: ['టు', 'टू'], with: ['విత్', 'विद'],
+  road: ['రోడ్', 'रोड'], street: ['స్ట్రీట్', 'स्ट्रीट'], colony: ['కాలనీ', 'कॉलोनी'], cross: ['క్రాస్', 'क्रॉस'], main: ['మెయిన్', 'मेन'],
+  near: ['నియర్', 'नियर'], opposite: ['ఆపోజిట్', 'अपोज़िट'], district: ['డిస్ట్రిక్ట్', 'डिस्ट्रिक्ट'], city: ['సిటీ', 'सिटी'],
+  physics: ['ఫిజిక్స్', 'फिज़िक्स'], mathematics: ['మ్యాథమెటిక్స్', 'मैथमेटिक्स'], maths: ['మ్యాథ్స్', 'मैथ्स'], math: ['మ్యాథ్స్', 'मैथ्स'],
+  chemistry: ['కెమిస్ట్రీ', 'केमिस्ट्री'], biology: ['బయాలజీ', 'बायोलॉजी'], english: ['ఇంగ్లీష్', 'इंग्लिश'], telugu: ['తెలుగు', 'तेलुगु'], hindi: ['హిందీ', 'हिंदी'],
+  computer: ['కంప్యూటర్', 'कंप्यूटर'], computers: ['కంప్యూటర్స్', 'कंप्यूटर्स'], science: ['సైన్స్', 'साइंस'], computing: ['కంప్యూటింగ్', 'कंप्यूटिंग'],
+  cloud: ['క్లౌడ్', 'क्लाउड'], engineering: ['ఇంజనీరింగ్', 'इंजीनियरिंग'], electronics: ['ఎలక్ట్రానిక్స్', 'इलेक्ट्रॉनिक्स'],
+  electrical: ['ఎలక్ట్రికల్', 'इलेक्ट्रिकल'], mechanical: ['మెకానికల్', 'मैकेनिकल'], civil: ['సివిల్', 'सिविल'], commerce: ['కామర్స్', 'कॉमर्स'],
+  management: ['మేనేజ్‌మెంట్', 'मैनेजमेंट'], economics: ['ఎకనామిక్స్', 'इकोनॉमिक्स'], statistics: ['స్టాటిస్టిక్స్', 'स्टैटिस्टिक्स'],
+  data: ['డేటా', 'डेटा'], analytics: ['అనలిటిక్స్', 'एनालिटिक्स'], machine: ['మెషిన్', 'मशीन'], learning: ['లెర్నింగ్', 'लर्निंग'],
+  network: ['నెట్‌వర్క్', 'नेटवर्क'], networking: ['నెట్‌వర్కింగ్', 'नेटवर्किंग'], administrator: ['అడ్మినిస్ట్రేటర్', 'एडमिनिस्ट्रेटर'],
+  admin: ['అడ్మిన్', 'एडमिन'], service: ['సర్వీస్', 'सर्विस'], now: ['నౌ', 'नाउ'], salesforce: ['సేల్స్‌ఫోర్స్', 'सेल्सफोर्स'], pega: ['పెగా', 'पेगा'],
+  python: ['పైథాన్', 'पायथन'], java: ['జావా', 'जावा'], testing: ['టెస్టింగ్', 'टेस्टिंग'], software: ['సాఫ్ట్‌వేర్', 'सॉफ्टवेयर'], hardware: ['హార్డ్‌వేర్', 'हार्डवेयर'],
+  support: ['సపోర్ట్', 'सपोर्ट'], customer: ['కస్టమర్', 'कस्टमर'], call: ['కాల్', 'कॉल'], center: ['సెంటర్', 'सेंटर'], centre: ['సెంటర్', 'सेंटर'],
+  certified: ['సర్టిఫైడ్', 'सर्टिफाइड'], certification: ['సర్టిఫికేషన్', 'सर्टिफिकेशन'], course: ['కోర్స్', 'कोर्स'], courses: ['కోర్సులు', 'कोर्स'],
+  related: ['రిలేటెడ్', 'रिलेटेड'], trainer: ['ట్రైనర్', 'ट्रेनर'], trainers: ['ట్రైనర్స్', 'ट्रेनर्स'], teacher: ['టీచర్', 'टीचर'], teachers: ['టీచర్స్', 'टीचर्स'],
+  college: ['కాలేజ్', 'कॉलेज'], university: ['యూనివర్సిటీ', 'यूनिवर्सिटी'], degree: ['డిగ్రీ', 'डिग्री'], any: ['ఏదైనా', 'कोई भी'], graduate: ['గ్రాడ్యుయేట్', 'ग्रेजुएट'],
+  fresher: ['ఫ్రెషర్', 'फ्रेशर'], freshers: ['ఫ్రెషర్స్', 'फ्रेशर्स'], experience: ['ఎక్స్‌పీరియన్స్', 'एक्सपीरियंस'], salary: ['జీతం', 'सैलरी'],
+  pharmacist: ['ఫార్మసిస్ట్', 'फार्मासिस्ट'], pharmacy: ['ఫార్మసీ', 'फार्मेसी'], lab: ['ల్యాబ్', 'लैब'], ward: ['వార్డ్', 'वार्ड'], boy: ['బాయ్', 'बॉय'],
+  operator: ['ఆపరేటర్', 'ऑपरेटर'], machinist: ['మెషినిస్ట్', 'मशीनिस्ट'], welder: ['వెల్డర్', 'वेल्डर'], fitter: ['ఫిట్టర్', 'फिटर'], electrician: ['ఎలక్ట్రీషియన్', 'इलेक्ट्रीशियन'],
+  store: ['స్టోర్', 'स्टोर'], stores: ['స్టోర్స్', 'स्टोर्स'], plant: ['ప్లాంట్', 'प्लांट'], maintenance: ['మెయింటెనెన్స్', 'मेंटेनेंस'], safety: ['సేఫ్టీ', 'सेफ्टी'],
+  billing: ['బిల్లింగ్', 'बिलिंग'], front: ['ఫ్రంట్', 'फ्रंट'], desk: ['డెస్క్', 'डेस्क'], clinic: ['క్లినిక్', 'क्लिनिक'], diagnostics: ['డయాగ్నొస్టిక్స్', 'डायग्नोस्टिक्स'],
+  shift: ['షిఫ్ట్', 'शिफ्ट'], night: ['నైట్', 'नाइट'], day: ['డే', 'डे'], week: ['వీక్', 'वीक'],
+  // places (the spelling rules give "Kakinada" -> కకినద; people say కాకినాడ)
+  hyderabad: ['హైదరాబాద్', 'हैदराबाद'], secunderabad: ['సికింద్రాబాద్', 'सिकंदराबाद'], kakinada: ['కాకినాడ', 'काकीनाडा'],
+  andhra: ['ఆంధ్ర', 'आंध्र'], pradesh: ['ప్రదేశ్', 'प्रदेश'], telangana: ['తెలంగాణ', 'तेलंगाना'], vijayawada: ['విజయవాడ', 'विजयवाड़ा'],
+  visakhapatnam: ['విశాఖపట్నం', 'विशाखापत्तनम'], vizag: ['వైజాగ్', 'वाइज़ैग'], guntur: ['గుంటూరు', 'गुंटूर'], nellore: ['నెల్లూరు', 'नेल्लोर'],
+  tirupati: ['తిరుపతి', 'तिरुपति'], warangal: ['వరంగల్', 'वारंगल'], karimnagar: ['కరీంనగర్', 'करीमनगर'], khammam: ['ఖమ్మం', 'खम्मम'],
+  kurnool: ['కర్నూలు', 'कुरनूल'], rajahmundry: ['రాజమండ్రి', 'राजमुंदरी'], rajamahendravaram: ['రాజమహేంద్రవరం', 'राजमहेंद्रवरम'],
+  eluru: ['ఏలూరు', 'एलुरु'], ongole: ['ఒంగోలు', 'ओंगोल'], kadapa: ['కడప', 'कडप्पा'], anantapur: ['అనంతపురం', 'अनंतपुर'], chittoor: ['చిత్తూరు', 'चित्तूर'],
+  srikakulam: ['శ్రీకాకుళం', 'श्रीकाकुलम'], vizianagaram: ['విజయనగరం', 'विजयनगरम'], nizamabad: ['నిజామాబాద్', 'निज़ामाबाद'], nalgonda: ['నల్గొండ', 'नलगोंडा'],
+  mahabubnagar: ['మహబూబ్‌నగర్', 'महबूबनगर'], medak: ['మెదక్', 'मेदक'], adilabad: ['ఆదిలాబాద్', 'आदिलाबाद'], machilipatnam: ['మచిలీపట్నం', 'मछलीपट्टनम'],
+  bhimavaram: ['భీమవరం', 'भीमावरम'], narasaraopet: ['నరసరావుపేట', 'नरसरावपेट'], mehdipatnam: ['మెహదీపట్నం', 'मेहदीपट्टनम'], mehadipanam: ['మెహదీపట్నం', 'मेहदीपट्टनम'],
+  kukatpally: ['కూకట్‌పల్లి', 'कूकटपल्ली'], madhapur: ['మాదాపూర్', 'मादापुर'], gachibowli: ['గచ్చిబౌలి', 'गच्चीबौली'], ameerpet: ['అమీర్‌పేట్', 'अमीरपेट'],
+  dilsukhnagar: ['దిల్‌సుఖ్‌నగర్', 'दिलसुखनगर'], uppal: ['ఉప్పల్', 'उप्पल'], kondapur: ['కొండాపూర్', 'कोंडापुर'], nagar: ['నగర్', 'नगर'],
+  bangalore: ['బెంగళూరు', 'बैंगलोर'], bengaluru: ['బెంగళూరు', 'बेंगलुरु'], chennai: ['చెన్నై', 'चेन्नई'], mumbai: ['ముంబై', 'मुंबई'], pune: ['పుణె', 'पुणे'],
+  delhi: ['ఢిల్లీ', 'दिल्ली'], kolkata: ['కోల్‌కతా', 'कोलकाता'], karnataka: ['కర్ణాటక', 'कर्नाटक'], tamil: ['తమిళ్', 'तमिल'], nadu: ['నాడు', 'नाडु'],
+  kerala: ['కేరళ', 'केरल'], maharashtra: ['మహారాష్ట్ర', 'महाराष्ट्र'], odisha: ['ఒడిశా', 'ओडिशा'], belagavi: ['బెళగావి', 'बेलगावी'], india: ['ఇండియా', 'इंडिया'],
+});
+
+// Degrees, said the way people say them ("M.Tech" -> ఎం టెక్, "Ph.D" -> పీహెచ్‌డీ). Matched before the initials rule.
+const DEGREES = [
+  [/\bPh\.?\s?D\b/gi, ['పీహెచ్‌డీ', 'पीएचडी']], [/\bM\.?\s?Tech\b/gi, ['ఎం టెక్', 'एम टेक']], [/\bB\.?\s?Tech\b/gi, ['బీ టెక్', 'बी टेक']],
+  [/\bM\.?\s?Sc\b/gi, ['ఎమ్మెస్సీ', 'एमएससी']], [/\bB\.?\s?Sc\b/gi, ['బీఎస్సీ', 'बीएससी']], [/\bM\.?\s?Com\b/gi, ['ఎం కామ్', 'एम कॉम']],
+  [/\bB\.?\s?Com\b/gi, ['బీ కామ్', 'बी कॉम']], [/\bB\.\s?Ed\b/gi, ['బీఎడ్', 'बीएड']], [/\bM\.\s?Ed\b/gi, ['ఎంఎడ్', 'एमएड']],
+  [/\bM\.?\s?Pharm\b/gi, ['ఎం ఫార్మ్', 'एम फार्म']], [/\bB\.?\s?Pharm\b/gi, ['బీ ఫార్మ్', 'बी फार्म']], [/\bPharm\.?\s?D\b/gi, ['ఫార్మ్ డీ', 'फार्म डी']],
+];
+// Capital letters said one by one, by their names (CSE -> సీ ఎస్ ఈ, LB -> ఎల్ బీ) - not guessed as a word
+const LETTER = {
+  Telugu: { A: 'ఏ', B: 'బీ', C: 'సీ', D: 'డీ', E: 'ఈ', F: 'ఎఫ్', G: 'జీ', H: 'హెచ్', I: 'ఐ', J: 'జే', K: 'కే', L: 'ఎల్', M: 'ఎమ్', N: 'ఎన్', O: 'ఓ', P: 'పీ', Q: 'క్యూ', R: 'ఆర్', S: 'ఎస్', T: 'టీ', U: 'యూ', V: 'వీ', W: 'డబ్ల్యూ', X: 'ఎక్స్', Y: 'వై', Z: 'జెడ్' },
+  Hindi: { A: 'ए', B: 'बी', C: 'सी', D: 'डी', E: 'ई', F: 'एफ', G: 'जी', H: 'एच', I: 'आई', J: 'जे', K: 'के', L: 'एल', M: 'एम', N: 'एन', O: 'ओ', P: 'पी', Q: 'क्यू', R: 'आर', S: 'एस', T: 'टी', U: 'यू', V: 'वी', W: 'डब्ल्यू', X: 'एक्स', Y: 'वाई', Z: 'ज़ेड' },
+};
+
 // Indian spelling rules -> letters. [independent vowel, vowel sign] per language; consonants longest-first.
 const V = {
   Telugu: { a: ['అ', ''], aa: ['ఆ', 'ా'], i: ['ఇ', 'ి'], ee: ['ఈ', 'ీ'], ii: ['ఈ', 'ీ'], u: ['ఉ', 'ు'], oo: ['ఊ', 'ూ'], uu: ['ఊ', 'ూ'], e: ['ఎ', 'ె'], ai: ['ఐ', 'ై'], ei: ['ఐ', 'ై'], o: ['ఒ', 'ొ'], au: ['ఔ', 'ౌ'], ou: ['ఔ', 'ౌ'], y: ['ఇ', 'ి'] },
@@ -88,13 +145,15 @@ function spell(word, lang) {
 function native(text, lang) {
   if (lang !== 'Telugu' && lang !== 'Hindi') return text;
   const col = lang === 'Telugu' ? 0 : 1;
-  return String(text || '')
+  let t = String(text || '').replace(/\s&\s/g, ' and '); // "AI & ML": the & is said as "and"
+  DEGREES.forEach(([re, words]) => { t = t.replace(re, words[col]); });
+  return t
     .replace(/\b(Dr|Mr|Mrs|Ms)\.\s*/gi, '$1 ') // Dr. Karthik: said in full, no stop in the middle of a name
     .replace(/\b[A-Za-z]{1,2}\.\s*/g, '') // "Ch. " / "V. " initials: left out
     .replace(/[A-Za-z]+(?:'[A-Za-z]+)?/g, (word) => {
       const k = word.toLowerCase().replace(/'.*$/, '');
       if (WORDS[k]) return WORDS[k][col];
-      if (/^[A-Z]{2,4}$/.test(word)) return word.split('').map((ch) => spell(ch === 'A' ? 'e' : `${ch.toLowerCase()}`, lang)).join(''); // short capitals: letter by letter
+      if (/^[A-Z]{2,5}$/.test(word)) return word.split('').map((ch) => LETTER[lang][ch]).join(' '); // short capitals: letter by letter, by name
       return spell(word, lang);
     })
     .replace(/\s+/g, ' ')

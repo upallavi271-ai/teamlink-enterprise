@@ -106,7 +106,13 @@ const TIME_WORDS = ['today', 'tomorrow', 'morning', 'afternoon', 'evening', 'nig
   'repu', 'ellundi', 'podduna', 'sayantram', 'saayantram', 'raatri', 'gantalaku', 'ganta',
   'आज', 'कल', 'परसों', 'सुबह', 'दोपहर', 'शाम', 'रात', 'बजे', 'घंटे', 'घंटा', 'मिनट', 'सोमवार', 'मंगलवार', 'बुधवार', 'गुरुवार', 'शुक्रवार', 'शनिवार', 'रविवार', 'हफ्ते',
   'ఈరోజు', 'రేపు', 'ఎల్లుండి', 'ఉదయం', 'పొద్దున', 'మధ్యాహ్నం', 'సాయంత్రం', 'రాత్రి', 'గంటలకు', 'గంట', 'నిమిషాల', 'సోమవారం', 'మంగళవారం', 'బుధవారం',
-  'గురువారం', 'శుక్రవారం', 'శనివారం', 'ఆదివారం', 'వారం'];
+  'గురువారం', 'శుక్రవారం', 'శనివారం', 'ఆదివారం', 'వారం',
+  // a date by its month or its day ("First November", "5th", "November first" - 2026-10-29), in all three languages
+  'january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december',
+  'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'sept', 'oct', 'nov', 'dec', 'next', 'day after tomorrow', 'date',
+  'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'fifteenth', 'twentieth', 'thirtieth',
+  'జనవరి', 'ఫిబ్రవరి', 'మార్చి', 'ఏప్రిల్', 'జూన్', 'జూలై', 'ఆగస్టు', 'ఆగస్ట్', 'సెప్టెంబర్', 'అక్టోబర్', 'నవంబర్', 'డిసెంబర్', 'ఫస్ట్', 'సెకండ్', 'తేదీ',
+  'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून', 'जुलाई', 'अगस्त', 'सितंबर', 'अक्टूबर', 'नवंबर', 'दिसंबर', 'फर्स्ट', 'तारीख'];
 const timeLike = (text) => { const t = norm(text); return /\d/.test(t) || has(t, TIME_WORDS); };
 
 // --- which language the person is speaking (user rule 2026-10-28: answer in the person's language, switch at once) ---------

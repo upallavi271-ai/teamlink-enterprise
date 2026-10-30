@@ -159,7 +159,12 @@ export default function AiCallDialog({
           {pv && pv.candidate && !many && (
             <div style={{ marginBottom: 10 }}>
               <b>{pv.candidate.name}</b>
-              <span className="small-muted">{` · ${pv.candidate.job} · ${pv.candidate.phoneMask || 'no phone'}`}</span>
+              <span className="small-muted">{` · ${pv.candidate.phoneMask || 'no phone'}`}</span>
+              {/* which requirement this call is about (2026-10-30: one person, several applications with the same title) */}
+              <div className="small-muted" style={{ marginTop: 2 }}>
+                {'About: '}
+                <b>{[pv.requirement && pv.requirement.code, pv.candidate.job, pv.requirement && pv.requirement.client].filter(Boolean).join(' · ')}</b>
+              </div>
             </div>
           )}
           {many && <div className="small-muted" style={{ marginBottom: 8 }}>The first candidate&apos;s script is shown. Each candidate gets the same words with their own name and details.</div>}
