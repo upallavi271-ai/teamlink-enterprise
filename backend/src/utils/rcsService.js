@@ -138,11 +138,14 @@ function cleanVariables(v) {
 
 // ---- the provider's answer -------------------------------------------------------------------------------------------------------
 // -> { items: [{msgid, msisdn}], errorCode, errorDesc }. Read flexibly: {data:[{msgid, msisdn}]} is the documented success.
+// rcssms.in pads its codes (live answer 2026-10-31: ErrorCode "022" "Incorrect Username Password"): "022" is code 22, "023" is 23
+// (pause the queue), "030" is 30 (fetch a new token). Numeric codes are compared without the leading zeros.
+const normCode = (c) => { const s = String(c).trim(); return /^\d+$/.test(s) ? String(Number(s)) : s; };
 function parseReply(json, text) {
   const pickCode = (o) => {
     if (!o || typeof o !== 'object') return null;
     const c = o.errorcode ?? o.errorCode ?? o.ErrorCode ?? o.error_code ?? o.code ?? o.errcode;
-    return c == null || c === '' ? null : String(c).trim();
+    return c == null || c === '' ? null : normCode(c);
   };
   const pickDesc = (o) => (o && typeof o === 'object' ? String(o.errordesc ?? o.errorDesc ?? o.ErrorDesc ?? o.error_desc ?? o.message ?? o.msg ?? o.description ?? '') : '');
   if (json && typeof json === 'object') {
@@ -159,7 +162,7 @@ function parseReply(json, text) {
   }
   const t = String(text || '');
   const c = /error\s*_?code\s*["']?\s*[:=]\s*["']?(\d{1,4})/i.exec(t);
-  if (c) { const d = /error\s*_?desc\s*["']?\s*[:=]\s*["']?([^,"'<>}]+)/i.exec(t); return { items: [], errorCode: c[1], errorDesc: d ? d[1].trim() : null }; }
+  if (c) { const d = /error\s*_?desc\s*["']?\s*[:=]\s*["']?([^,"'<>}]+)/i.exec(t); return { items: [], errorCode: normCode(c[1]), errorDesc: d ? d[1].trim() : null }; }
   return { items: [], errorCode: null, errorDesc: null };
 }
 
