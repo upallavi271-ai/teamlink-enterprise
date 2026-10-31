@@ -182,6 +182,9 @@ async function requirementPermissions(user, record) {
     // a TL / STL / Recruiter cannot edit or close a job: "Ask the client manager to edit or close this job" (2026-10-13)
     askChange: view && JC.mayAskToAdd(user),
     share: share && (chain || bdeTlOwns || bdeDeskOwns),
+    // POSTING to the sites (founder 2026-10-31: "bde ki just send cheyyadam antharey"): the BDE sends a requirement to the
+    // team leads; the team leads (and the BDE TL, Admin) assign recruiters and post it. The BDE keeps the job text tools (share).
+    post: share && (chain || bdeTlOwns || bdeDeskOwns) && atsViewRole(user) !== 'bde',
     export: exportable,
     pipeline,
     pipelineEdit,
@@ -2730,7 +2733,7 @@ router.post('/:id/posting-log', async (req, res) => {
   const requirement = await prisma.requirement.findUnique({ where: { id: req.params.id } });
   if (!requirement) return res.status(404).json({ error: 'Requirement not found' });
   const perms = await requirementPermissions(req.user, requirement);
-  if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
+  if (!perms.post) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
   const source = String(req.body?.source || '').trim();
   const action = String(req.body?.action || '').trim();
   if (!POSTING_LOG_SOURCES.includes(source)) return res.status(400).json({ error: 'Unknown posting source.' });
@@ -2753,13 +2756,13 @@ router.get('/:id/postings', async (req, res) => {
   if (isClient(req.user)) return res.status(403).json({ error: 'Posting status is internal to TeamLink.' });
   const perms = await requirementPermissions(req.user, req.requirement);
   const out = await postingChannels(req.requirement, req.user);
-  return res.json({ ...out, canRetry: !!perms.share });
+  return res.json({ ...out, canRetry: !!perms.post });
 });
 
 router.post('/:id/postings/retry', async (req, res) => {
   if (isClient(req.user)) return res.status(403).json({ error: 'Posting is internal to TeamLink.' });
   const perms = await requirementPermissions(req.user, req.requirement);
-  if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
+  if (!perms.post) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
   if (!requirementIsLive(req.requirement.status)) {
     return res.status(400).json({ error: `A requirement at "${requirementStateWords(req.requirement.status)}" is not posted anywhere — reopen it first.` });
   }
@@ -3205,6 +3208,7 @@ router.post('/', JC.requireJobCreate({ needs: 'any', internalOf: hrInternalInten
   const { status } = req.body;
   let { clientId } = req.body;
   const data = pickRequirement(req.body);
+  if (atsViewRole(req.user) === 'bde') data.postingSources = 'None'; // a BDE sends to the team leads; they post it
   await require('../utils/openVocab').applyJob(req, data, null); // typed Education / Qualification / Specialization (2026-10-14) // eslint-disable-line global-require
   // INTERNAL HR raises INTERNAL jobs only (per-role spec 2026-10-03) — never
   // a client requirement, whatever the form sent.
@@ -3510,6 +3514,7 @@ router.put('/:id', JC.requireJobManage(), requirePerm('ats', 'requirements', 'Re
 
     const before = req.requirement;
     const data = pickRequirement(req.body);
+    if (!perms.post) delete data.postingSources; // the sites are the posters' (team lead, BDE TL, Admin), not the BDE's
     await require('../utils/openVocab').applyJob(req, data, before); // typed Education / Qualification / Specialization (2026-10-14) // eslint-disable-line global-require
 
     // --- the assignment gate ------------------------------------------------

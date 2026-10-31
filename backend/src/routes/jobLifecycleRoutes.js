@@ -293,7 +293,7 @@ module.exports = function registerJobLifecycle(router, deps) {
       // One sentence for the Save & Post panel and the job page ("Posted automatically on 2 of 6 sites. …").
       summary: require('../utils/jobConnectors').summarise(sites), // eslint-disable-line global-require
       live: requirementIsLive(r.status),
-      canEdit: !!perms.share,
+      canEdit: !!perms.post,
       feeds: posting.FEED_PATHS,
     };
   }
@@ -304,7 +304,7 @@ module.exports = function registerJobLifecycle(router, deps) {
   router.put('/:id/posting-sites', async (req, res) => {
     const r = req.requirement;
     const perms = await requirementPermissions(req.user, r);
-    if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
+    if (!perms.post) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
     const wanted = Array.isArray(req.body && req.body.sites) ? req.body.sites.map(String) : null;
     if (!wanted) return res.status(400).json({ error: 'Send the list of ticked sites.' });
     const ids = posting.SITES.map((s) => s.id).filter((id) => wanted.includes(id));
@@ -372,7 +372,7 @@ module.exports = function registerJobLifecycle(router, deps) {
       for (const j of jobs) {
         // eslint-disable-next-line no-await-in-loop
         const perms = await requirementPermissions(req.user, j);
-        if (!perms.share) { skipped += 1; continue; } // eslint-disable-line no-continue
+        if (!perms.post) { skipped += 1; continue; } // eslint-disable-line no-continue
         const boardOrder = Object.keys(guide.GUIDE); // Naukri, Shine, Indeed, LinkedIn
         j.postings.slice().sort((a, b) => boardOrder.indexOf(a.source) - boardOrder.indexOf(b.source)).filter((p) => guide.GUIDE[p.source] && ['Integration Required', 'Setup Required'].includes(p.status)
           && posting.siteTicked(j, p.source) && !readyBoards.has(p.source)).forEach((p) => {
@@ -395,7 +395,7 @@ module.exports = function registerJobLifecycle(router, deps) {
     const r = req.requirement;
     if ([req.user.role, req.user.atsRole].includes('CLIENT')) return res.status(403).json({ error: 'Posting is internal to TeamLink.' });
     const perms = await requirementPermissions(req.user, r);
-    if (!perms.share) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
+    if (!perms.post) return res.status(403).json(require('../utils/postingGuard').POSTING_BODY);
     // eslint-disable-next-line global-require
     const connectors = require('../utils/jobConnectors');
     const src = connectors.sourceById(String(req.params.source || ''));
@@ -418,7 +418,7 @@ module.exports = function registerJobLifecycle(router, deps) {
   const handDeps = async (req, res) => {
     if ([req.user.role, req.user.atsRole].includes('CLIENT')) { res.status(403).json({ error: 'Posting is internal to TeamLink.' }); return null; }
     const perms = await requirementPermissions(req.user, req.requirement);
-    if (!perms.share) { res.status(403).json(require('../utils/postingGuard').POSTING_BODY); return null; }
+    if (!perms.post) { res.status(403).json(require('../utils/postingGuard').POSTING_BODY); return null; }
     const board = String(req.params.source || '');
     const manual = require('../utils/jobBoards/manual'); // eslint-disable-line global-require
     if (!require('../utils/jobBoards/guide').GUIDE[board]) { res.status(404).json({ error: 'This site cannot be posted by hand.' }); return null; } // eslint-disable-line global-require
