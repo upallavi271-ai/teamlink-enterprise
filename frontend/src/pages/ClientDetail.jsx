@@ -20,14 +20,12 @@ import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListF
 import Pager, { usePaged } from '../components/Pager.jsx';
 import AgreementPanel from '../components/agreements/AgreementPanel.jsx';
 import AgreementFlow, { StageChip } from '../components/agreements/AgreementFlow.jsx';
-import AgreementLinkCard from '../components/agreements/AgreementLinkCard.jsx';
 import AgreementDriveCard from '../components/agreements/AgreementDriveCard.jsx';
 import OwnAgreementFile from '../components/agreements/OwnAgreementFile.jsx';
 import SignedAgreementFiles, { ViewAgreementButton } from '../components/agreements/SignedAgreementFiles.jsx'; // every signed agreement file kept on the client
 import { agreementBlind } from '../utils/agreementPrivacy.js';
 import AgreementDocView, { signersFrom } from '../components/agreements/AgreementDocView.jsx';
 import TeamLinkSeal, { AuthImg } from '../components/agreements/TeamLinkSeal.jsx';
-import TeamLinkSignerNotice from '../components/agreements/TeamLinkSignerNotice.jsx';
 // Spec B1: Client 360 -> Portal access (who at the client can sign in).
 import ClientPortalAccess from '../components/clients/ClientPortalAccess.jsx';
 import ClientHistoryView from '../components/joindrop/ClientHistoryView.jsx'; // History tab: the client date by date
@@ -1146,10 +1144,11 @@ export default function ClientDetail() {
         const step = agreementStepOf(c.agreementStatus);
         const when = (v) => (v ? protoDate(v) : '');
         const lead = {
-          DRAFT: c.agreementDocument ? 'The agreement is ready. Next: make the agreement link and share it with the client.' : 'No agreement made yet. Make it from the standard template.',
+          // ONE WAY TO SIGN: Aadhaar eSign in DigiLocker (founder 2026-10-31: "Aadhaar eSign (DigiLocker) only ee option matrame undali, signing lo")
+          DRAFT: c.agreementDocument ? 'The agreement is ready. Next: TeamLink and the client each eSign it with Aadhaar in DigiLocker, then upload both copies.' : 'No agreement made yet. Make it from the standard template.',
           SENT: `Sent${c.agreementSentAt ? ` on ${when(c.agreementSentAt)}` : ''}. Waiting for the client to open it.`,
           VIEWED: `The client opened it${c.agreementViewedAt ? ` on ${when(c.agreementViewedAt)}` : ''}. Waiting for their signature.`,
-          SIGNED: `Signed${c.agreementSignedBy ? ` by ${c.agreementSignedBy}` : ''}${c.agreementSignedAt ? ` on ${when(c.agreementSignedAt)}` : ''}${!c.agreementCompanySignFile || !c.agreementCompanyStampFile ? '. Next: TeamLink adds its signature & stamp (press Sign & stamp for TeamLink).' : '. Next: make it active.'}`,
+          SIGNED: `Signed by the client${c.agreementSignedAt ? ` on ${when(c.agreementSignedAt)}` : ''}. Next: upload TeamLink's eSigned copy (DigiLocker) in View agreement; with both copies it turns Active.`,
           ACTIVE: `Active${c.agreementActivatedAt ? ` since ${when(c.agreementActivatedAt)}` : ''}. Requirements for this client can go live.`,
           EXPIRED: 'This agreement has ended. Make a new agreement to renew it.',
           REJECTED: `The client said no${c.agreementRejectedReason ? ` (“${c.agreementRejectedReason}”)` : ''}. Change the terms and make a new agreement.`,
@@ -1162,10 +1161,7 @@ export default function ClientDetail() {
           DRAFT: c.agreementDocument
             ? null
             : ['generate', 'Make the agreement', () => run('generate', 'generate')],
-          // Active needs BOTH sides' signature + stamp (2026-10-05).
-          SIGNED: (!c.agreementCompanySignFile || !c.agreementCompanyStampFile)
-            ? ['tlseal', 'Sign & stamp for TeamLink', () => setTlSealOpen(true)]
-            : ['activate', 'Make it active', () => run('activate', 'activate')],
+          // signing is DigiLocker only (2026-10-31): both eSigned copies make it Active by themselves; no seal / activate button
           EXPIRED: ['generate', 'Make a new agreement', () => run('generate', 'generate')],
           REJECTED: ['generate', 'Make a new agreement', () => run('generate', 'generate')],
         }[step] || null);
@@ -1187,19 +1183,6 @@ export default function ClientDetail() {
                 <AgreementStepChip status={c.agreementStatus} />
               </div>
               <div className="agr6-lead">{lead}</div>
-              {/* Who still has to sign + stamp (2026-10-05). */}
-              {c.agreementDocument && !['EXPIRED', 'REJECTED'].includes(step) && (
-                <div className="agr-wait">
-                  <span className={c.agreementCompanySignFile && c.agreementCompanyStampFile ? 'ok' : 'wait'}>
-                    {c.agreementCompanySignFile && c.agreementCompanyStampFile ? '✓ TeamLink signed & stamped' : 'Waiting for TeamLink signature & stamp'}
-                  </span>
-                  <span className={(c.agreementClientSignFile || c.agreementEsignProvider === 'eMudhra') && c.agreementClientStampFile && c.agreementSignedAt ? 'ok' : 'wait'}>
-                    {(c.agreementClientSignFile || c.agreementEsignProvider === 'eMudhra') && c.agreementClientStampFile && c.agreementSignedAt
-                      ? `✓ Client signed & stamped${c.agreementEsignProvider === 'eMudhra' ? ' (Aadhaar eSign, eMudhra)' : ''}` : 'Waiting for client signature & stamp'}
-                  </span>
-                </div>
-              )}
-              {canManage && c.agreementDocument && !['ACTIVE', 'EXPIRED', 'REJECTED'].includes(step) && <TeamLinkSignerNotice refreshKey={tlSealOpen} />}
               {!agreementIsActive(c.agreementStatus) && counts.requirements > 0 && (
                 <div className="agr6-sub">{`${counts.requirements} ${counts.requirements === 1 ? 'requirement waits' : 'requirements wait'} for this agreement to be Active.`}</div>
               )}
@@ -1211,32 +1194,22 @@ export default function ClientDetail() {
                       {busy(main[0]) ? 'Working…' : main[1]}
                     </button>
                   )}
-                  <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
+                  {/* View agreement sits in the DigiLocker box while that box is shown */}
+                  {!(c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED', 'SIGNED'].includes(step) && !(flow && ['DRAFT', 'WITH_HR', 'WITH_TL'].includes(flow.stage))) && (
+                    <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
+                  )}
                 </div>
-                {/* HOW IT GETS SIGNED - one of three, said plainly (2026-10-31) */}
+                {/* THE ONE WAY TO SIGN: Aadhaar eSign in DigiLocker (founder 2026-10-31: "only ee option matrame undali") */}
                 {c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED', 'SIGNED'].includes(step) && !(flow && ['DRAFT', 'WITH_HR', 'WITH_TL'].includes(flow.stage)) && (
-                  <div style={{ marginTop: 10 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>How will it be signed? Pick one way:</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
-                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
-                        <div style={{ fontWeight: 600 }}>1. Online link</div>
-                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>TeamLink signs &amp; stamps, the client signs on the link with a code to their mobile.</div>
-                        {!(main && main[0] === 'tlseal') && <button type="button" className="btn btn-sm" onClick={() => setTlSealOpen(true)}>✍️ Sign &amp; stamp for TeamLink</button>}
-                        {['DRAFT', 'SENT', 'VIEWED'].includes(step) && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>The link to send is just below.</div>}
-                      </div>
-                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
-                        <div style={{ fontWeight: 600 }}>2. Aadhaar eSign (DigiLocker, free)</div>
-                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>Each side eSigns its copy in DigiLocker; upload both copies. Both valid = Active.</div>
-                        <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
-                      </div>
-                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
-                        <div style={{ fontWeight: 600 }}>3. Signed on paper / email</div>
-                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>Upload the signed agreement and Vasu sir&apos;s confirmation in View agreement.</div>
-                        {['SENT', 'VIEWED'].includes(step) && (
-                          <button type="button" className="btn btn-sm" disabled={!!agrBusy} onClick={() => { setDlgError(''); setSignedDlg({ open: true, name: '', title: '', file: '' }); }}>Mark as signed (paper / email)</button>
-                        )}
-                      </div>
-                    </div>
+                  <div style={{ marginTop: 10, border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>Sign with Aadhaar eSign (DigiLocker, free)</div>
+                    <ol className="small-muted" style={{ fontSize: 12.5, margin: '0 0 8px 18px', padding: 0, lineHeight: 1.6 }}>
+                      <li>Open View agreement and press <b>Download agreement PDF to eSign</b>.</li>
+                      <li>The TeamLink director eSigns it in DigiLocker (own Aadhaar OTP) and uploads it on the left.</li>
+                      <li>Send the same PDF to the client. They eSign it in their DigiLocker and send it back. Upload it on the right.</li>
+                      <li>Both copies checked valid: the agreement turns Active by itself.</li>
+                    </ol>
+                    <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
                   </div>
                 )}
                 {/* the rest, out of the way */}
@@ -1318,10 +1291,7 @@ export default function ClientDetail() {
                   <TeamLinkSeal mode="agreement" clientId={id} onDone={() => load()} />
                 </Modal>
               )}
-              {/* 2026-10-05 — the agreement link: make, copy, WhatsApp, email, stop. */}
-              {(canManage || p.sendLink) && c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED'].includes(step) && !(flow && ['DRAFT', 'WITH_HR', 'WITH_TL'].includes(flow.stage)) && (
-                <AgreementLinkCard clientId={id} onChanged={load} />
-              )}
+              {/* the online agreement link is not offered: signing is DigiLocker only (2026-10-31) */}
             </div>
 
             <div className="card section agr6-card">
