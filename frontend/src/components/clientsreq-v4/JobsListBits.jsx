@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { deptLabel } from '../../atsVocab'; // Manufacturing shows as Non IT MFG (2026-10-29)
+import { isOpenJob } from '../jobs/reqStatus.jsx'; // Open = not Closed: a job waiting for the agreement can still get its recruiter
 
 // ---------------------------------------------------------------------------
 // Small pieces of the Jobs list (Clients & Requirements -> Jobs): the same
@@ -75,7 +76,7 @@ export function ageSlaLine(r, sla, ageText, nf) {
 // A Recruiter, BDE or Accounts login never gets the assign buttons promoted to the main one.
 export function rowPrimary(r, role = '') {
   const server = r.primaryAction || { key: 'open', label: 'View' };
-  const promote = !r.mayAssign || ['bde', 'recruiter', 'accounts'].includes(role) ? false : r.live !== false;
+  const promote = !r.mayAssign || ['bde', 'recruiter', 'accounts'].includes(role) ? false : isOpenJob(r);
   if (promote && r.needs === 'tl') return { key: 'assign-tl', label: 'Assign a team lead', strong: true };
   if (promote && r.needs === 'recruiter') return { key: 'assign-recruiter', label: 'Assign a recruiter', strong: true };
   if (['open', 'edit', 'assign-recruiter', 'assign-tl'].includes(server.key)) return { key: 'open', label: 'Open requirement', strong: false };
@@ -87,14 +88,14 @@ export function rowPrimary(r, role = '') {
 
 // One sentence for the NEXT STEP box.
 export function nextStepSentence(r, primary, waiting) {
-  if (r.live !== false && r.needs === 'tl') return 'This requirement has no team lead yet. Pick one so work can start.';
-  if (r.live !== false && r.needs === 'recruiter') return 'This requirement has a team lead but no recruiter yet. Pick one to find people.';
+  if (isOpenJob(r) && r.needs === 'tl') return 'This requirement has no team lead yet. Pick one so work can start.';
+  if (isOpenJob(r) && r.needs === 'recruiter') return 'This requirement has a team lead but no recruiter yet. Pick one to find people.';
   if (waiting) return `${waiting}.`;
   switch (primary.key) {
     case 'add-candidate': return 'Add people for this requirement.';
     case 'submit-client': return 'People are ready to send to the client.';
     case 'generate-invoice': return 'Someone joined. The invoice can be made.';
     case 'view-candidates': return 'This requirement is not open now. You can still see its people.';
-    default: return r.live === false ? 'This requirement is not open. Open it to see the details.' : 'Nothing is waiting. Open the requirement to see the details.';
+    default: return !isOpenJob(r) ? 'This requirement is not open. Open it to see the details.' : 'Nothing is waiting. Open the requirement to see the details.';
   }
 }

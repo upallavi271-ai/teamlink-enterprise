@@ -29,6 +29,16 @@ export function jobStatusOf(r) {
   return r.status === 'CLOSED' ? BY_KEY.closed : BY_KEY.open;
 }
 
+// OPEN = not CLOSED - the question every screen asks before it shows "Closed" or hides "Assign a recruiter" (founder
+// 2026-10-30: "req open lo vunna kuda closed ani chupisthundhi (TL ki), assign cheyyadaniki raavatledhu"). `live` is
+// narrower (it leaves out a job waiting for the client agreement, a draft, a paused one) and is for counting live work only.
+export function isOpenJob(r) {
+  if (!r) return false;
+  if (r.status) return r.status !== 'CLOSED';
+  if (r.displayStatus && r.displayStatus.key) return r.displayStatus.key !== 'closed';
+  return r.live !== false;
+}
+
 // One plain sentence for an Open job that is not live yet (job page text, not a status).
 export function jobNoteOf(r) {
   if (!r) return '';

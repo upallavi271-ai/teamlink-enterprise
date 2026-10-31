@@ -179,7 +179,7 @@ function drawPageChrome(doc, ctx) {
     doc.font('Helvetica-Bold').fontSize(9).fillColor(NAVY)
       .text(`Agreement No. ${ctx.agreementId}`, L + 130, 26, { width: width - 130, align: 'right', lineBreak: false });
     doc.font('Helvetica').fontSize(7.5).fillColor(ctx.draft ? '#9a6700' : MUTED)
-      .text(ctx.draft ? 'NOT SIGNED' : fitText(doc, ctx.clientName, width - 130), L + 130, 38, { width: width - 130, align: 'right', lineBreak: false });
+      .text(ctx.draft ? 'NOT SIGNED' : (ctx.awaitingClient ? 'SIGNED BY TEAMLINK - AWAITING THE CLIENT' : fitText(doc, ctx.clientName, width - 130)), L + 130, 38, { width: width - 130, align: 'right', lineBreak: false });
     doc.moveTo(L, HEADER_RULE_Y).lineTo(R, HEADER_RULE_Y).lineWidth(0.6).strokeColor('#c9d0dc').stroke();
 
     // ---- footer ----
@@ -218,6 +218,7 @@ function drawPageChrome(doc, ctx) {
       { t: `${ctx.clientName} · Private & Confidential`, f: 'Helvetica', s: 6.8, c: MUTED },
     ];
     if (ctx.draft) lines.push({ t: 'NOT SIGNED - not an executed copy', f: 'Helvetica-Bold', s: 6.8, c: '#9a6700' });
+    else if (ctx.awaitingClient) lines.push({ t: "Signed by TeamLink - awaiting the Client's signature", f: 'Helvetica-Bold', s: 6.8, c: '#9a6700' });
     else lines.push({ t: `Text fingerprint (SHA-256): ${ctx.hash.slice(0, 16)}…`, f: 'Helvetica', s: 6.4, c: MUTED });
     if (ctx.stampNo) lines.push({ t: `Stamp paper / e-stamp no. ${ctx.stampNo}`, f: 'Helvetica', s: 6.4, c: MUTED });
     let ty = fy + 12;
@@ -235,7 +236,7 @@ function drawPageChrome(doc, ctx) {
 // known from a first pass).
 function drawDocument(a, totalPages) {
   const {
-    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft,
+    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft, awaitingClient,
   } = a;
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -298,10 +299,18 @@ function drawDocument(a, totalPages) {
         : '';
       rows.push([`Place of execution: ${place}`, `Date of execution: ${when || '—'}`]);
       if (stampNo) rows.push([`Stamp paper / e-stamp certificate no.: ${stampNo}`, '']);
+      // WHO SIGNS FOR EACH SIDE, printed on every copy (founder 2026-10-30): a digital signature (Aadhaar eSign / DSC) carries
+      // the signer's own name, so the reader matches it to this line - also when the signature box sits in a corner.
+      const usName = client.agreementCompanySignedBy || us.signatoryName || '';
+      rows.push([`For ${consultantName || 'TeamLink Consultants'}: ${usName || '________________'}, ${us.signatoryTitle || 'Authorised Signatory'}`, '']);
+      rows.push([`For ${client.legalName || client.name}: ${client.agreementSignedBy || '________________'}${client.agreementSignedByTitle ? `, ${client.agreementSignedByTitle}` : ', Authorised Signatory'}`, '']);
       const count = totalPages
         ? `This agreement consists of ${totalPages} pages${!withExec ? '.' : ', including the execution page and the certificate of electronic execution.'}`
         : '';
-      const need = 34 + rows.length * 15 + (count ? 24 : 0);
+      // COUNTERPARTS (founder 2026-10-30): each side may digitally sign its own copy (DigiLocker keeps one signature per PDF);
+      // the copies together are the one agreement.
+      const counterparts = 'This Agreement may be executed in counterparts, including by electronic signature (Aadhaar eSign or a digital signature certificate). Each signed counterpart is an original, and together they form one and the same agreement.';
+      const need = 34 + rows.length * 15 + (count ? 24 : 0) + 30;
       if (doc.y + need > bottomLimit()) doc.addPage();
       else doc.moveDown(0.8);
       const y0 = doc.y;
@@ -315,7 +324,9 @@ function drawDocument(a, totalPages) {
       });
       if (count) {
         doc.font('Helvetica-Oblique').fontSize(9).fillColor(MUTED).text(count, L, y + 2, { width });
+        y = doc.y + 2;
       }
+      doc.font('Helvetica').fontSize(9).fillColor('#111').text(counterparts, L, y + 2, { width, align: 'justify' });
       doc.x = L;
     }
 
@@ -352,7 +363,7 @@ function drawDocument(a, totalPages) {
         return y;
       };
       const y1 = column(doc.page.margins.left, `For ${consultantName || 'TeamLink Consultants'}`, {
-        sign: kSign, stamp: kStamp, name: client.agreementCompanySignedBy, title2: us.signatoryTitle || 'Authorised Signatory',
+        sign: kSign, stamp: kStamp, name: client.agreementCompanySignedBy || us.signatoryName, title2: us.signatoryTitle || 'Authorised Signatory',
         at: client.agreementCompanySealedAt, method: client.agreementCompanySignName,
       });
       const y2 = column(doc.page.margins.left + colW + 24, `For ${client.legalName || client.name}`, {
@@ -384,12 +395,26 @@ function drawDocument(a, totalPages) {
       });
     }
 
+    // --- SPACE FOR THE DIGITAL SIGNATURE (founder 2026-10-30) -------------------------
+    // DigiLocker's Aadhaar eSign (and eMudhra's "Bottom-Right") draws its box low on the LAST page, about 113-162 pt above the
+    // page bottom - inside the body area. That band is kept empty on the last page so the box never covers text or stamps.
+    {
+      const H = doc.page.height;
+      const L = doc.page.margins.left;
+      const capY = H - BOTTOM_MARGIN - 72;
+      if (doc.y > capY - 6) doc.addPage();
+      doc.font('Helvetica-Oblique').fontSize(7.5).fillColor(MUTED)
+        .text('Space kept for the digital signatures (Aadhaar eSign / DSC). The name of each signer is shown in the signature panel of this PDF.', L, capY, { width });
+      doc.x = L;
+    }
+
     // --- Header + footer + stamps and initials on EVERY page -----------------------
     drawPageChrome(doc, {
       logo: logoImg,
       agreementId: client.agreementId || '—',
       clientName: client.legalName || client.name || '',
       draft,
+      awaitingClient,
       hash,
       stampNo,
       kSign, kStamp, cSign, cStamp,
@@ -427,7 +452,10 @@ async function renderAgreementPdf(client, { trail = [], consultantName, agreemen
     stampNo: pdfText(String(settings.stampPaperNo || '').trim()),
     // A draft = the client has not signed: it carries the DRAFT watermark.
     // (The copy sent to eMudhra is the document to be signed: no watermark.)
-    draft: !client.agreementSignedAt && !agreementOnly,
+    // A copy TeamLink has already signed and stamped (sign first, then send - founder 2026-10-30) is NOT a draft: no
+    // watermark, the Execution page with TeamLink's side filled, and "awaiting the Client" in the header and footer.
+    draft: !client.agreementSignedAt && !agreementOnly && !(client.agreementCompanySignFile && client.agreementCompanySealedAt),
+    awaitingClient: !client.agreementSignedAt && !agreementOnly && !!(client.agreementCompanySignFile && client.agreementCompanySealedAt),
   };
   let guess = (await drawDocument(a, 99)).pages;
   let result = await drawDocument(a, guess);

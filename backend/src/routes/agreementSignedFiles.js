@@ -34,7 +34,14 @@ const { logAudit } = require('../utils/audit');
 
 const KIND = 'AGREEMENT_SIGNED';
 // the three papers a BDE uploads (?type=)
-const UPLOAD_TYPES = { vasu: 'Vasu sir confirmation', client: 'Client confirmation', agreement: 'Signed agreement' };
+const UPLOAD_TYPES = {
+  vasu: 'Vasu sir confirmation', client: 'Client confirmation', agreement: 'Signed agreement',
+  // THE TWO DIGILOCKER COPIES (founder 2026-10-31): DigiLocker's free Aadhaar eSign keeps ONE signature per PDF, so each side
+  // eSigns its own copy of the same agreement (counterparts). A copy is taken only when it truly carries a valid digital
+  // signature (utils/pdfSignature.js) - a merged / printed PDF that only shows signature boxes is refused.
+  dlteamlink: 'TeamLink eSigned copy (DigiLocker)', dlclient: 'Client eSigned copy (DigiLocker)',
+};
+const DL_TYPES = ['dlteamlink', 'dlclient'];
 const MAX_UPLOAD = 10 * 1024 * 1024;
 const PREFIX = 'agrsigned.';
 const EXT_MIME = {
@@ -75,6 +82,8 @@ async function filesOf(clientId) {
       branch: m.branch || null,
       version: m.version || null,
       kind: m.kind || 'Signed agreement',
+      // a DigiLocker copy: what the signature check found when it was uploaded
+      esign: m.esign && typeof m.esign === 'object' ? { valid: !!m.esign.valid, signer: m.esign.signer || null, issuer: m.esign.issuer || null, signedAt: m.esign.signedAt || null } : null,
       canShow: INLINE_OK.has(mime),
       addedAt: d.createdAt,
     });
@@ -102,8 +111,11 @@ async function statusFromPapers(clientId, user) {
   try {
     const files = await filesOf(clientId);
     const has = (label) => files.some((f) => f.label === label || f.kind === label);
-    if (!has(UPLOAD_TYPES.agreement)) return null;
-    const target = has(UPLOAD_TYPES.vasu) ? 'ACTIVE' : 'SIGNED';
+    // both DigiLocker copies with a valid signature = executed (each side signed the same agreement with Aadhaar eSign)
+    const dl = (label) => files.some((f) => f.kind === label && f.esign && f.esign.valid);
+    const dlBoth = dl(UPLOAD_TYPES.dlteamlink) && dl(UPLOAD_TYPES.dlclient);
+    if (!has(UPLOAD_TYPES.agreement) && !dlBoth && !dl(UPLOAD_TYPES.dlclient)) return null;
+    const target = dlBoth || has(UPLOAD_TYPES.vasu) ? 'ACTIVE' : 'SIGNED';
     const c = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, agreementSignedAt: true, agreementActivatedAt: true } });
     const now = String(c && c.agreementStatus || '').toUpperCase();
     if (!c || now === target || (now === 'ACTIVE') || (now === 'SIGNED' && target === 'SIGNED')) return null;
@@ -114,13 +126,14 @@ async function statusFromPapers(clientId, user) {
         agreementStatus: target,
         agreementSignedAt: c.agreementSignedAt || at,
         ...(target === 'ACTIVE' ? { agreementActivatedAt: c.agreementActivatedAt || at } : {}),
-        agreementSource: 'Uploaded (signed outside the ATS)',
+        agreementSource: dlBoth ? 'DigiLocker Aadhaar eSign (two signed copies)' : 'Uploaded (signed outside the ATS)',
       },
     });
     await logAudit({
       userId: user ? user.id : null, actorName: user ? user.name || null : 'TeamLink', action: target === 'ACTIVE' ? 'Agreement active (signed papers uploaded)' : 'Agreement signed (signed copy uploaded)',
       entity: 'Client', entityId: clientId, field: 'agreementStatus', fieldLabel: 'Agreement', fromValue: now || 'DRAFT', toValue: target,
-      reason: target === 'ACTIVE' ? 'Signed agreement and Vasu sir confirmation are on file' : 'Signed agreement on file; Vasu sir confirmation not yet - an Admin activates it',
+      reason: dlBoth ? 'TeamLink and the client each eSigned their copy with Aadhaar (DigiLocker); both signatures checked valid'
+        : (target === 'ACTIVE' ? 'Signed agreement and Vasu sir confirmation are on file' : 'Signed agreement on file; Vasu sir confirmation not yet - an Admin activates it'),
     });
     return target;
   } catch (e) {
@@ -192,6 +205,15 @@ function mountView(router, { requireAuth, loadForView }) {
       if (!file || !file.data || !file.data.length) return res.status(400).json({ error: 'Choose a file to upload.' });
       const mime = EXT_MIME[extOf(file.filename)];
       if (!mime) return res.status(400).json({ error: 'Upload a PDF, Word file or a picture (JPG / PNG).' });
+      // a DigiLocker copy: a PDF that really carries a valid digital signature
+      let esign = null;
+      if (DL_TYPES.includes(type)) {
+        if (mime !== 'application/pdf') return res.status(400).json({ error: 'Upload the PDF you downloaded from DigiLocker after eSign.' });
+        const r = require('../utils/pdfSignature').inspect(file.data); // eslint-disable-line global-require
+        if (!r.signed) return res.status(400).json({ error: 'This PDF has no digital signature. A merged, printed or scanned copy only shows the signature box. Upload the file you downloaded from DigiLocker right after eSign.' });
+        if (!r.valid) return res.status(400).json({ error: `The signature in this PDF is not valid${r.last && !r.last.unchanged ? ': the file was changed after it was signed' : ''}. Upload the file exactly as DigiLocker gave it (do not edit, merge, compress or print it).` });
+        esign = { valid: true, signer: r.last.signer, issuer: r.last.issuer, signedAt: r.last.signedAt, count: r.count };
+      }
       let stored;
       try { stored = attachments.store({ ...file, contentType: mime }, { maxBytes: MAX_UPLOAD, allowWord: true }); } catch (err) {
         if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
@@ -204,11 +226,12 @@ function mountView(router, { requireAuth, loadForView }) {
           uploadedById: req.user.id, uploadedByName: req.user.name || null,
         },
       });
-      await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null }) } });
-      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}`.slice(0, 300) });
+      await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null, ...(esign ? { esign, sha256: require('crypto').createHash('sha256').update(file.data).digest('hex') } : {}) }) } }); // eslint-disable-line global-require
+      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
       const status = await statusFromPapers(loaded.client.id, req.user);
-      const said = status === 'ACTIVE' ? ' The agreement is now Active.' : status === 'SIGNED' ? ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).' : '';
-      return res.status(201).json({ ok: true, message: `${label} uploaded.${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
+      const said = status === 'ACTIVE' ? ' The agreement is now Active.' : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
+      const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.` : '';
+      return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
     } catch (err) { return next(err); }
   });
 
@@ -271,6 +294,46 @@ function mountView(router, { requireAuth, loadForView }) {
       }));
       rows.sort((a, b) => (a.status === 'Active' ? 0 : 1) - (b.status === 'Active' ? 0 : 1) || String(a.name).localeCompare(String(b.name)));
       return res.set('Cache-Control', 'no-store').json({ total: rows.length, rows });
+    } catch (err) { return next(err); }
+  });
+
+  // THE TWO DIGILOCKER SIGNATURES SIDE BY SIDE (founder 2026-10-31): one summary page, made fresh - each signed copy on disk
+  // is checked again (utils/pdfSignature.js) and its fingerprint taken. TeamLink's summary; the signatures stay in the copies.
+  router.get('/:clientId/esign-summary', requireAuth, async (req, res, next) => {
+    try {
+      const loaded = await loadForView(req, res);
+      if (!loaded) return undefined;
+      const files = await filesOf(loaded.client.id);
+      const newest = (kind) => files.filter((f) => f.kind === kind).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0] || null;
+      const copyOf = async (f) => {
+        if (!f) return null;
+        const d = await prisma.clientDocument.findUnique({ where: { id: f.id }, select: { fileStored: true, fileName: true } });
+        const p = d ? attachments.resolveStored(d.fileStored) : null;
+        if (!p) return null;
+        const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
+        const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
+        return {
+          signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
+          issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName,
+          sha256: require('crypto').createHash('sha256').update(buf).digest('hex'), // eslint-disable-line global-require
+        };
+      };
+      const [us, them] = await Promise.all([copyOf(newest(UPLOAD_TYPES.dlteamlink)), copyOf(newest(UPLOAD_TYPES.dlclient))]);
+      if (!us && !them) return res.status(404).json({ error: 'No DigiLocker eSigned copy is on file yet.' });
+      const party = await require('../utils/agreement').consultantParty().catch(() => ({})); // eslint-disable-line global-require
+      const c = loaded.client;
+      res.set('Content-Type', 'application/pdf');
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${safeName(`${c.agreementId || 'agreement'}-signature-summary`)}.pdf"`);
+      require('../utils/esignSummaryPdf').renderEsignSummary({ // eslint-disable-line global-require
+        client: c, agreementId: c.agreementId, consultantName: party.name || 'TeamLink Consultants',
+        logoPath: require('../utils/agreementPdf').LOGO, // eslint-disable-line global-require
+        sides: [
+          { side: 'teamlink', title: `For ${party.name || 'TeamLink Consultants'}`, copy: us },
+          { side: 'client', title: `For ${c.legalName || c.name}`, copy: them },
+        ],
+      }, res);
+      return undefined;
     } catch (err) { return next(err); }
   });
 

@@ -458,6 +458,9 @@ async function buildWorld(user) {
       status: r.status,
       statusLabel: requirementStatusUser(r.status) || r.status,
       live: LIVE.has(r.status),
+      // OPEN = not Closed (founder 2026-10-30: a job waiting for the client agreement showed as Closed to the TL and could not
+      // get its recruiter). `live` stays for the narrower "work can run" checks; the Open counts and lists read `open`.
+      open: r.status !== 'CLOSED',
       openings: r.openings,
       createdAt: r.createdAt,
       assignment,
@@ -638,7 +641,7 @@ function personSets(world, person) {
   const sets = {};
   if (role === 'RECRUITER') {
     const mine = world.apps.filter((a) => a.recruiterUserId === id);
-    sets.openRequirements = { kind: 'requirements', ids: world.reqs.filter((r) => r.live && r.recruiters.some((x) => x.id === id)).map((r) => r.id) };
+    sets.openRequirements = { kind: 'requirements', ids: world.reqs.filter((r) => r.open && r.recruiters.some((x) => x.id === id)).map((r) => r.id) };
     sets.activeCandidates = { kind: 'applications', ids: mine.map((a) => a.id) };
     sets.needsAction = { kind: 'actions', ids: world.actions.filter((x) => x.ownerUserId === id).map((x) => x.id) };
     sets.interviewsToday = { kind: 'applications', ids: mine.filter((a) => isToday(a.interviewAt) && !DEAD_INTERVIEW.includes(a.interviewStatus)).map((a) => a.id) };
@@ -652,10 +655,10 @@ function personSets(world, person) {
     const reqs = world.reqs.filter((r) => !r.internal && ((r.clientId && clientIds.has(r.clientId)) || (r.bde && r.bde.id === id)));
     const reqIds = new Set(reqs.map((r) => r.id));
     const apps = world.apps.filter((a) => reqIds.has(a.requirementId));
-    const activeClientIds = new Set(reqs.filter((r) => r.live).map((r) => r.clientId));
+    const activeClientIds = new Set(reqs.filter((r) => r.open).map((r) => r.clientId));
     sets.clients = { kind: 'clients', ids: [...clientIds] };
     sets.activeClients = { kind: 'clients', ids: [...clientIds].filter((c) => activeClientIds.has(c)) };
-    sets.openRequirements = { kind: 'requirements', ids: reqs.filter((r) => r.live).map((r) => r.id) };
+    sets.openRequirements = { kind: 'requirements', ids: reqs.filter((r) => r.open).map((r) => r.id) };
     // People in process on their clients' jobs (the people-list column; the BDE's own screens use the client-step numbers below).
     sets.activeCandidates = { kind: 'applications', ids: apps.map((a) => a.id) };
     sets.submitted = { kind: 'applications', ids: apps.filter((a) => SUBMITTED_STAGES.includes(a.stage)).map((a) => a.id) };
@@ -669,7 +672,7 @@ function personSets(world, person) {
     // TL / STL — the team and its review work.
     const team = world.people.filter((p) => p.roleGroup === 'RECRUITER' && p.tlUserId === id && p.status === 'Active');
     const teamIds = new Set(team.map((p) => p.id));
-    const reqs = world.reqs.filter((r) => r.live && ((r.tl && r.tl.id === id) || (r.extraTlIds || []).includes(id) || r.recruiters.some((x) => teamIds.has(x.id))));
+    const reqs = world.reqs.filter((r) => r.open && ((r.tl && r.tl.id === id) || (r.extraTlIds || []).includes(id) || r.recruiters.some((x) => teamIds.has(x.id))));
     const apps = world.apps.filter((a) => a.tlUserId === id || (a.recruiterUserId && teamIds.has(a.recruiterUserId)));
     sets.recruiters = { kind: 'people', ids: team.map((p) => p.id) };
     sets.requirements = { kind: 'requirements', ids: reqs.map((r) => r.id) };
@@ -720,7 +723,7 @@ const METRIC_LABELS = {
   pendingReviews: 'Pending Reviews',
 };
 const METRIC_HINTS = {
-  openRequirements: 'Live requirements assigned to them',
+  openRequirements: 'Open requirements assigned to them',
   activeCandidates: 'Active ATS applications they own (not Candidate Master; Hold / Rejected / Joined and Job Portal screening left out)',
   needsAction: 'Active applications whose one next action is theirs',
   interviewsToday: 'Their active applications with an interview booked today',
@@ -792,7 +795,7 @@ async function assignmentRows(user, { fresh = false } = {}) {
   const world = await loadWorld(user, { fresh });
   return world.reqs
     .map((r) => ({ ...r }))
-    .sort((a, b) => (b.live - a.live) || (new Date(b.createdAt) - new Date(a.createdAt)));
+    .sort((a, b) => (b.open - a.open) || (new Date(b.createdAt) - new Date(a.createdAt)));
 }
 
 // ---------------------------------------------------------------------------
@@ -815,7 +818,7 @@ function listRows(world, kind, ids, { clientDesk }) {
   if (kind === 'requirements') {
     return world.reqs.filter((r) => want.has(r.id)).map((r) => ({
       id: r.id, reqCode: r.reqCode, title: r.title, client: r.client, type: r.type, department: r.department,
-      section: r.section, status: r.status, statusLabel: r.statusLabel, live: r.live,
+      section: r.section, status: r.status, statusLabel: r.statusLabel, live: r.live, open: r.open,
       recruiter: r.recruiters.map((x) => x.name).join(', ') || null, tl: r.tl ? r.tl.name : null, bde: r.bde ? r.bde.name : null,
       assignment: r.assignment, openings: r.openings,
     }));
@@ -842,7 +845,7 @@ function listRows(world, kind, ids, { clientDesk }) {
       const reqs = world.reqs.filter((r) => r.clientId === c.id && !r.internal);
       return {
         id: c.id, name: c.name, status: c.status || null, link: clientDesk,
-        requirements: reqs.length, openRequirements: reqs.filter((r) => r.live).length,
+        requirements: reqs.length, openRequirements: reqs.filter((r) => r.open).length,
       };
     }).sort((a, b) => b.openRequirements - a.openRequirements || a.name.localeCompare(b.name));
   }
