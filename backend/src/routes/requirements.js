@@ -1083,7 +1083,9 @@ async function enrichRows(found, user, { activity = false } = {}) {
       // §8.4 Unassigned = no TL, no recruiter, no co-recruiter.
       row.unassigned = isUnassigned(r);
       // Plain-words owner gap for the row badge (change list §22 "No owner").
-      row.needs = row.live ? (!effectiveTl(r) ? 'tl' : (needsRecruiter(r) ? 'recruiter' : null)) : null;
+      // Every OPEN (not Closed) job can be given its TL / recruiter - also one waiting for the client agreement, a draft or a
+      // paused one (founder 2026-10-30: "req open lo vunna kuda closed ani chupisthundhi, assign cheyyadaniki raavatledhu").
+      row.needs = r.status !== 'CLOSED' ? (!effectiveTl(r) ? 'tl' : (needsRecruiter(r) ? 'recruiter' : null)) : null;
       // §8.2 Days Open (live requirements only) and the 15+ days overdue flag.
       row.daysOpen = row.live ? row.ageDays : null;
       row.ageOverdue = row.live && row.ageDays !== null && row.ageDays >= 15;

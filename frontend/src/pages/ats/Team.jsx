@@ -9,6 +9,7 @@ import {
 } from '../../components/ui/ListPageHeader.jsx';
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import { isOpenJob } from '../../components/jobs/reqStatus.jsx'; // Open = not Closed (a job waiting for the agreement is Open)
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import Recruiter360, { metricLink } from './Recruiter360.jsx';
 import FormerHistory from './FormerHistory.jsx';
@@ -990,7 +991,7 @@ function MetricList({ personId, metric, onOpen }) {
                 <td>{[r.department, r.section].filter(Boolean).join(' · ') || '—'}</td>
                 <td>{r.tl || '—'}</td>
                 <td>{r.recruiter || '—'}</td>
-                <td><StatusChip status={r.live ? 'Open' : 'Closed'}>{r.statusLabel}</StatusChip></td>
+                <td><StatusChip status={isOpenJob(r) ? 'Open' : 'Closed'}>{r.statusLabel}</StatusChip></td>
               </tr>
             ))}
             {(kind === 'applications' || kind === 'joined') && page.slice.map((r) => (
@@ -1140,7 +1141,7 @@ export default function Team() {
   const clientsOf = useMemo(() => {
     const m = new Map();
     (assignments.rows || []).forEach((r) => {
-      if (!r.live || !r.client || r.client === '—') return;
+      if (!isOpenJob(r) || !r.client || r.client === '—') return;
       (r.recruiters || []).forEach((x) => { if (!m.has(x.id)) m.set(x.id, new Set()); m.get(x.id).add(r.client); });
     });
     return m;
@@ -1195,7 +1196,7 @@ export default function Team() {
   const [replyBadge] = useUnreadReplies(true);
   const VIEWS = [
     ['people', selfMode ? 'My Workload' : 'People & Workload', people.loading ? null : peopleRows.length, 'Recruiters, client managers and team leads in your area'],
-    ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => r.live).length : null, 'Open requirements and who works on them'],
+    ['assignments', selfMode ? 'My Assignments' : 'Assignments', assignments.rows ? assignments.rows.filter((r) => isOpenJob(r)).length : null, 'Open requirements and who works on them'],
     ['pending', selfMode ? 'My tasks' : 'Tasks', pendingCount, selfMode ? 'Next steps that are yours' : 'Every next step and who does it'],
     ...(leadView ? [['whohas', 'Pending work', null, 'Who has work waiting, and a Remind button']] : []),
     ['followups', selfMode ? 'My follow-ups' : 'Follow-ups', replyBadge > 0 ? replyBadge : null, 'Who to contact, why, and by when. Replies from Mail, WhatsApp and SMS are in the Inbox'],

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import StatusChip from '../../components/ui/StatusChip.jsx';
+import { isOpenJob } from '../../components/jobs/reqStatus.jsx'; // Open = not Closed
 import EmptyState from '../../components/ui/EmptyState.jsx';
 import { PendingStrip } from '../../components/team/pendingWorkKit.jsx'; // lead only: pending work + the Remind button
 import '../../components/CandidateDrawer.css';
@@ -67,7 +68,7 @@ function Rows({ sec, empty }) {
                 <Link to={`/requirements/${r.id}`} className="r360-strong">{r.title}</Link>
                 <div className="small-muted r360-ellipsis">{[r.reqCode, r.client, r.section].filter(Boolean).join(' · ')}</div>
               </div>
-              <div className="r360-right"><StatusChip status={r.live ? 'Open' : 'Closed'}>{r.statusLabel}</StatusChip></div>
+              <div className="r360-right"><StatusChip status={isOpenJob(r) ? 'Open' : 'Closed'}>{r.statusLabel}</StatusChip></div>
             </div>
           );
         }

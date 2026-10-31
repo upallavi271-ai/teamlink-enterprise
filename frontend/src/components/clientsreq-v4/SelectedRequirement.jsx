@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { Icon } from '../atskit/AtsKit.jsx';
-import { JobStatusChip } from '../jobs/reqStatus.jsx';
+import { JobStatusChip, isOpenJob } from '../jobs/reqStatus.jsx';
 import { PriorityChip, slaInfo, ageText, fmtShort, nf } from '../jobs/reqFormat.jsx';
 import { waitingText } from '../jobs/reqActions.js';
 import { ClientPausedBadge } from '../clients/ClientLifecycle.jsx';
@@ -51,7 +51,7 @@ export default function SelectedRequirement({
   const sla = slaInfo(r.sla);
   const primary = rowPrimary(r, role);
   const wait = role === 'accounts' ? '' : waitingText(r);
-  const live = r.live !== false;
+  const live = isOpenJob(r); // Open = not Closed (2026-10-30)
   const kv = (k, v) => (
     <div className="crq4-sel-kv"><span>{k}</span><span>{v === null || v === undefined || v === '' ? '—' : v}</span></div>
   );
