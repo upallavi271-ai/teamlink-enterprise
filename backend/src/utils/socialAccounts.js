@@ -197,4 +197,41 @@ async function remove(user, id) {
   return { ok: true, removed: [...drop].length, platform: acc.platform, wasDefault: !!acc.isDefault, nextDefault: (rest.find((a) => a.platform === acc.platform && a.isDefault) || {}).id || null };
 }
 
-module.exports = { list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };
+// EDIT (founder 2026-10-31: "edit chesukodaniki kuda button evvu"): the name shown in TeamLink, and - optionally - a new token for the same
+// account (a Page / Instagram / Threads token that expired or was renewed). The token must belong to THIS account (checked with Facebook /
+// Threads); for the default account the change reaches job posts and Omni-Channel at once. LinkedIn renews by connecting again.
+async function edit(user, id, { name, token } = {}, { saveFacebook } = {}) {
+  const all = await readAll();
+  const acc = all.find((a) => a.id === id);
+  if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
+  const nm = name === undefined ? acc.name : String(name || '').trim().slice(0, 80);
+  if (!nm) return { error: 'Type a name.', status: 400 };
+  const t = String(token || '').trim();
+  if (t) {
+    if (t.length < 20 || /\s/.test(t)) return { error: 'That does not look like an access token. Copy the whole token.', status: 400 };
+    try {
+      if (acc.platform === 'facebook' || acc.platform === 'instagram') {
+        const j = await getJson(`${graphBase()}/${encodeURIComponent(acc.externalId)}?${new URLSearchParams({ fields: 'id', access_token: t })}`);
+        if (String(j.id) !== String(acc.externalId)) return { error: 'That token belongs to another account.', status: 422 };
+      } else if (acc.platform === 'threads') {
+        const j = await getJson(`${threadsBase()}/me?${new URLSearchParams({ fields: 'id,username', access_token: t })}`);
+        if (String(j.id) !== String(acc.externalId)) return { error: `That token belongs to another Threads profile${j.username ? ` (@${j.username})` : ''}.`, status: 422 };
+      } else return { error: 'A LinkedIn token is renewed by pressing Connect LinkedIn again.', status: 400 };
+    } catch (err) { return { error: `Not accepted: ${err.message}`, status: 422 }; }
+    acc.tokenEnc = encryptSecret(t);
+    acc.status = 'Connected'; acc.error = null;
+  }
+  acc.name = nm;
+  acc.updatedAt = new Date().toISOString();
+  // an Instagram account reached through this Page shows the new Page name
+  if (acc.platform === 'facebook') all.forEach((a) => { if (a.platform === 'instagram' && a.parentId === acc.externalId) a.parentName = nm; });
+  await writeAll(all);
+  let result = null;
+  if (t && acc.isDefault) {
+    if (acc.platform === 'facebook' && saveFacebook) result = await saveFacebook(user, { id: acc.externalId, access_token: t });
+    if (acc.platform === 'threads') await writeThreadsChannel(t, nm);
+  }
+  return { ok: !result || result.ok !== false, account: shape(acc), tokenChanged: !!t, result };
+}
+
+module.exports = { edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };

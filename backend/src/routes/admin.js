@@ -1797,6 +1797,15 @@ router.post('/social-accounts/:id/default', requirePerm(null, 'administration', 
   if (!r.ok) return res.status(422).json({ error: `${r.account.name} is the default now, but Facebook did not accept it: ${r.result && r.result.words}`, accounts: await SA.list() });
   res.json({ accounts: await SA.list(), message: `${r.account.name} is the default ${r.account.platform} account now (job posts and Omni-Channel use it).` });
 });
+router.post('/social-accounts/:id/edit', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const b = req.body || {};
+  const r = await SA.edit(req.user, req.params.id, { name: b.name, token: b.token }, { saveFacebook: saveFacebookDefault });
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  if (r.tokenChanged && r.account.isDefault) GSI.schedule('default social token replaced');
+  await logAudit({ userId: req.user.id, action: 'Social account edited', entity: 'Integration', entityId: 'social', toValue: `${r.account.platform}: ${r.account.name}${r.tokenChanged ? ' (new token)' : ''}` });
+  if (!r.ok) return res.status(422).json({ error: `Saved, but Facebook did not accept it: ${r.result && r.result.words}`, accounts: await SA.list() });
+  res.json({ accounts: await SA.list(), message: `${r.account.name} saved${r.tokenChanged ? ' with the new token' : ''}${r.tokenChanged && r.account.isDefault ? ' (job posts and Omni-Channel use it now)' : ''}.` });
+});
 router.post('/social-accounts/:id/remove', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const r = await SA.remove(req.user, req.params.id);
   if (r.error) return res.status(r.status || 400).json({ error: r.error });

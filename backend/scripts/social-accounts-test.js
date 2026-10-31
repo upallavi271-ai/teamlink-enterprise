@@ -81,6 +81,17 @@ const srv = http.createServer((req, res) => {
   l = await SA.list();
   ok('two Threads profiles, one default', l.threads.length === 2 && l.threads.filter((x) => x.isDefault).length === 1);
 
+  // Edit: rename, a new token that belongs to the same account, a token of another account refused
+  const th = (await SA.list()).threads.find((x) => x.isDefault);
+  const e1 = await SA.edit(user, th.id, { name: 'Jobs on Threads' });
+  ok('Edit renames an account', e1.ok && e1.account.name === 'Jobs on Threads' && !e1.tokenChanged);
+  const e2 = await SA.edit(user, th.id, { name: 'Jobs on Threads', token: 'TH-good-token-9999999xx1' });
+  const cfg2 = await readConfig('social');
+  ok('Edit with a new token of the same profile saves it, and the default reaches Omni-Channel', e2.ok && e2.tokenChanged && cfg2.values['Threads access token'] === 'TH-good-token-9999999xx1');
+  const e3 = await SA.edit(user, th.id, { token: 'TH-good-token-0000000xx2' });
+  ok('Edit refuses a token of another profile', e3.error && /another Threads profile/.test(e3.error));
+  const e4 = await SA.edit(user, th.id, { name: '   ' });
+  ok('Edit refuses an empty name', e4.error && /Type a name/.test(e4.error));
   const ri = await SA.refreshInstagram(user);
   ok('Find Instagram again checks every remaining Page', typeof ri.found === 'number');
 

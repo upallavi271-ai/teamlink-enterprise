@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import FacebookSetup from './FacebookSetup.jsx';
+import Modal from '../../components/Modal.jsx';
 
 // Administration > Integrations > Social Media (founder 2026-10-30: "separate ga tabs ravali mothaniki okka tab social media anni dantlo
 // facebook anni okka tab and instagram tab ani and threds ... facebook accounts 5 ala unati anni accounts ina connect chesukodaniki undali").
@@ -9,7 +10,7 @@ import FacebookSetup from './FacebookSetup.jsx';
 // + LinkedIn (2026-10-31): job posts also go to LinkedIn (a post on the profile or Company Page, official LinkedIn API).
 const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['linkedin', 'LinkedIn']];
 
-function AccountList({ rows, noun, onDefault, onRemove, busy, extra }) {
+function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra }) {
   if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>No {noun} connected yet.</div>;
   return (
     <div className="tbl-wrap"><table>
@@ -20,7 +21,10 @@ function AccountList({ rows, noun, onDefault, onRemove, busy, extra }) {
           <td>{a.isDefault ? <b style={{ color: '#1c7c4a' }}>★ Default</b> : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onDefault(a)}>Make default</button>}</td>
           <td>{a.status === 'Connected' ? <span style={{ color: '#1c7c4a', fontWeight: 600 }}>Connected</span> : <span style={{ color: '#b42318' }} title={a.error || ''}>{a.status}{a.error ? `: ${a.error}` : ''}</span>}</td>
           <td className="small-muted">{a.connectedByName || ''}{a.connectedAt ? ` · ${new Date(a.connectedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}</td>
-          <td><button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onRemove(a)}>Remove</button></td>
+          <td style={{ whiteSpace: 'nowrap' }}>
+            {onEdit && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onEdit(a)}>Edit</button>}{' '}
+            <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={() => onRemove(a)}>Remove</button>
+          </td>
         </tr>
       ))}</tbody>
     </table></div>
@@ -35,6 +39,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const [err, setErr] = useState('');
   const [thToken, setThToken] = useState('');
   const [showSetup, setShowSetup] = useState(false);
+  const [editing, setEditing] = useState(null); // { a, name, token } - the Edit box
   const [li, setLi] = useState(null); // LinkedIn app: { hasApp, clientId, hasSecret, redirectUri }
   const [liForm, setLiForm] = useState({ clientId: '', clientSecret: '' });
   const [liPage, setLiPage] = useState('');
@@ -69,6 +74,12 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     setBusy(true); setErr(''); setMsg('');
     try { const r = await fn(); if (r.data.accounts) setAcc(r.data.accounts); setMsg(r.data.message || 'Done.'); } catch (e) { if (e.response?.data?.accounts) setAcc(e.response.data.accounts); setErr(e.response?.data?.error || 'That did not work.'); } finally { setBusy(false); }
   }
+  const openEdit = (a) => setEditing({ a, name: a.name, token: '' });
+  async function saveEdit() {
+    const e = editing;
+    await act(() => api.post(`/admin/social-accounts/${e.a.id}/edit`, { name: e.name, ...(e.token.trim() ? { token: e.token.trim() } : {}) }));
+    setEditing(null);
+  }
   const makeDefault = (a) => act(() => api.post(`/admin/social-accounts/${a.id}/default`));
   const removeOne = (a) => { if (window.confirm(`Remove ${a.name}?${a.platform === 'facebook' ? ' Its Instagram account goes too.' : ''}`)) act(() => api.post(`/admin/social-accounts/${a.id}/remove`)); };
   async function connectFacebook() {
@@ -79,8 +90,25 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   if (!acc) return <div className="small-muted">{err || 'Loading…'}</div>;
   const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length, linkedin: (acc.linkedin || []).length };
 
+  const NAMES = { facebook: 'Page access token', instagram: 'Page access token (of the Page it comes with)', threads: 'Threads access token' };
   return (
     <div style={{ maxWidth: 960 }}>
+      {editing && (
+        <Modal title={`Edit ${editing.a.name}`} onClose={() => setEditing(null)}
+          foot={<><button className="btn" onClick={() => setEditing(null)}>Cancel</button><button className="btn btn-primary" onClick={saveEdit} disabled={busy || !editing.name.trim()}>{busy ? 'Saving…' : 'Save'}</button></>}>
+          <label className="field"><span>Name shown in TeamLink</span>
+            <input value={editing.name} maxLength={80} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
+          </label>
+          {editing.a.platform === 'linkedin' ? (
+            <div className="small-muted" style={{ fontSize: 12.5 }}>A LinkedIn token lasts 60 days: to renew it, press <b>Connect LinkedIn</b> again on the LinkedIn tab.</div>
+          ) : (
+            <label className="field"><span>New {NAMES[editing.a.platform] || 'token'} (only if it changed)</span>
+              <textarea rows={2} value={editing.token} placeholder="Leave empty to keep the saved token" onChange={(e) => setEditing({ ...editing, token: e.target.value.replace(/\s/g, '') })} style={{ fontFamily: 'monospace', fontSize: 12 }} />
+            </label>
+          )}
+          <div className="small-muted" style={{ fontSize: 12 }}>A new token is checked first: it must belong to this same account. {editing.a.isDefault ? 'This is the default account, so job posts and Omni-Channel use the new token at once.' : ''}</div>
+        </Modal>
+      )}
       <div className="tabs" style={{ marginBottom: 14 }}>
         {SUBS.map(([k, label]) => (
           <div key={k} className={`tab${sub === k ? ' active' : ''}`} onClick={() => { setSub(k); setMsg(''); setErr(''); }}>
@@ -98,7 +126,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
               <b style={{ fontSize: 15 }}>Facebook Pages</b>
               <button type="button" className="btn btn-primary" onClick={connectFacebook} disabled={busy}>＋ Connect Facebook Pages</button>
             </div>
-            <AccountList rows={acc.facebook} noun="Facebook Pages" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => `Page ID ${a.externalId}`} />
+            <AccountList rows={acc.facebook} noun="Facebook Pages" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Page ID ${a.externalId}`} />
             <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
               Facebook asks which Pages: tick all you want, and tick them all again here. <b>Another Facebook account?</b> On Facebook&apos;s page press
               <b> Log in to another account</b> (or sign out of facebook.com first), then pick its Pages. That account needs a role in your Meta app (App roles → Roles) while the app is in development.
@@ -118,7 +146,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
             <b style={{ fontSize: 15 }}>Instagram accounts</b>
             <button type="button" className="btn" onClick={() => act(() => api.post('/admin/social-accounts/instagram/refresh'))} disabled={busy || !acc.facebook.length}>↻ Find Instagram accounts again</button>
           </div>
-          <AccountList rows={acc.instagram} noun="Instagram accounts" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => `Through the Page ${a.parentName || a.parentId}`} />
+          <AccountList rows={acc.instagram} noun="Instagram accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Through the Page ${a.parentName || a.parentId}`} />
           <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
             Instagram comes with a Facebook Page: an Instagram <b>professional</b> (business / creator) account linked to a connected Page shows here by itself.
             To link one: Facebook Page → <b>Settings → Linked accounts → Instagram → Connect</b>, then press <b>Connect Facebook Pages</b> again on the Facebook tab
@@ -130,7 +158,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
       {sub === 'threads' && (
         <div className="card" style={{ padding: 16 }}>
           <b style={{ fontSize: 15 }}>Threads profiles</b>
-          <div style={{ margin: '10px 0' }}><AccountList rows={acc.threads} noun="Threads profiles" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => `Threads ID ${a.externalId}`} /></div>
+          <div style={{ margin: '10px 0' }}><AccountList rows={acc.threads} noun="Threads profiles" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Threads ID ${a.externalId}`} /></div>
           <b>＋ Connect a Threads profile</b> (each profile has its own token, made in the same Meta app):
           <ol style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.7, fontSize: 13.5 }}>
             <li>Meta app: <b>App roles → Roles → Threads testers → Add</b> the Threads account. On threads.net: <b>Settings → Account → Website permissions → Invites → Accept</b>.</li>
@@ -153,7 +181,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
             <b style={{ fontSize: 15 }}>LinkedIn accounts</b>
             <button type="button" className="btn btn-primary" onClick={connectLinkedin} disabled={busy || !(li && li.hasApp)} title={li && li.hasApp ? '' : 'Do the one-time setup below first'}>＋ Connect LinkedIn</button>
           </div>
-          <AccountList rows={acc.linkedin || []} noun="LinkedIn accounts" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => (a.kind === 'page' ? `Company Page · posts as ${a.externalId.replace('urn:li:organization:', 'page ')}` : 'Your profile')} />
+          <AccountList rows={acc.linkedin || []} noun="LinkedIn accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => (a.kind === 'page' ? `Company Page · posts as ${a.externalId.replace('urn:li:organization:', 'page ')}` : 'Your profile')} />
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, fontSize: 13.5 }}>
             <input type="checkbox" checked={liPageOn} onChange={(e) => setLiPageOn(e.target.checked)} style={{ width: 18, height: 18 }} />
             <span>Also post for a <b>Company Page</b> (needs LinkedIn&apos;s approval of the Community Management API for your app)</span>
