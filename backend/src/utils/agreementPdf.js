@@ -236,7 +236,7 @@ function drawPageChrome(doc, ctx) {
 // known from a first pass).
 function drawDocument(a, totalPages) {
   const {
-    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft, awaitingClient, dl,
+    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft, awaitingClient, dl, signingSide,
   } = a;
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -274,7 +274,7 @@ function drawDocument(a, totalPages) {
     // block filled from the record (utils/vendorAgreementPdf.js).
     if (vendorDoc) {
       // eslint-disable-next-line global-require
-      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle, clean: !!agreementOnly, dl: dl || {} });
+      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle, clean: !!agreementOnly, dl: dl || {}, signingSide });
     }
     doc.moveDown(0.5);
     (vendorDoc ? '' : pdfText(client.agreementDocument)).split('\n').forEach((line) => {
@@ -294,16 +294,24 @@ function drawDocument(a, totalPages) {
     {
       const L = doc.page.margins.left;
       const rows = [];
+      // executed on the day of the LAST signature: both DigiLocker copies -> the later one; the client's copy being made to eSign
+      // (the client signs last) -> today
+      const dlBoth = dl && dl.teamlink && dl.client;
       const when = fullyExecuted
         ? ddmmyyyyIst(new Date(Math.max(new Date(client.agreementSignedAt).getTime(), new Date(client.agreementCompanySealedAt).getTime())))
-        : '';
+        : (dlBoth ? ddmmyyyyIst(new Date(Math.max(new Date(dl.teamlink.signedAt).getTime() || 0, new Date(dl.client.signedAt).getTime() || 0)))
+          : (signingSide === 'client' ? ddmmyyyyIst(new Date()) : ''));
       rows.push([`Place of execution: ${place}`, `Date of execution: ${when || '—'}`]);
       if (stampNo) rows.push([`Stamp paper / e-stamp certificate no.: ${stampNo}`, '']);
       // WHO SIGNS FOR EACH SIDE, printed on every copy (founder 2026-10-30): a digital signature (Aadhaar eSign / DSC) carries
       // the signer's own name, so the reader matches it to this line - also when the signature box sits in a corner.
       const usName = client.agreementCompanySignedBy || us.signatoryName || '';
       rows.push([`For ${consultantName || 'TeamLink Consultants'}: ${usName || '________________'}, ${us.signatoryTitle || 'Authorised Signatory'}`, '']);
-      rows.push([`For ${client.legalName || client.name}: ${client.agreementSignedBy || '________________'}${client.agreementSignedByTitle ? `, ${client.agreementSignedByTitle}` : ', Authorised Signatory'}`, '']);
+      // the client's signer: who signed, else the contact person on the record (a label stuck on, "Ravi Name:", dropped)
+      const plain = (v) => { const t = String(v || '').replace(/\s+(?:name|designation|title)\s*:.*$/i, '').trim(); return /^(name|contact|designation|title|na|n\/a|-+)\W*$/i.test(t) ? '' : t; };
+      const theirName = client.agreementSignedBy || plain(client.contactName || client.recruitmentContactName) || (dl && dl.client && dl.client.signer) || '';
+      const theirTitle = client.agreementSignedByTitle || plain(client.contactDesignation || client.recruitmentContactDesignation);
+      rows.push([`For ${client.legalName || client.name}: ${theirName || '________________'}, ${theirTitle || 'Authorised Signatory'}`, '']);
       const count = totalPages
         ? `This agreement consists of ${totalPages} pages${!withExec ? '.' : ', including the execution page and the certificate of electronic execution.'}`
         : '';
@@ -432,7 +440,10 @@ function drawDocument(a, totalPages) {
 // Execution / certificate page, which is kept as our separate appendix.
 // The document is built in memory (twice at most: the first pass counts the
 // pages for "This agreement consists of N pages"), then written to `out`.
-async function renderAgreementPdf(client, { trail = [], consultantName, agreementOnly = false }, out) {
+// signingSide ('teamlink' | 'client'): the copy downloaded to eSign in DigiLocker by that side. DigiLocker only adds its own signature
+// box at the end - it cannot write into "Sign:" / "Date:" - so that side's Sign and Date are printed in now (founder 2026-10-31:
+// "date & sign update avvatledhu ... digilocker nunchi").
+async function renderAgreementPdf(client, { trail = [], consultantName, agreementOnly = false, signingSide = null }, out) {
   // THE STAMPS ON THE COPY EACH SIDE eSIGNS (founder 2026-10-31: "client ey stamp veyyali", TeamLink's "automatic ga"): TeamLink's
   // company stamp saved once in Agreement settings is printed on every page and in TeamLink's Stamp box, and the stamp the client
   // put on through their link (agreementClientStampFile) on theirs - BEFORE the Aadhaar eSign, so the signature covers them.
@@ -465,6 +476,7 @@ async function renderAgreementPdf(client, { trail = [], consultantName, agreemen
     draft: !client.agreementSignedAt && !agreementOnly && !(client.agreementCompanySignFile && client.agreementCompanySealedAt) && !(dl && dl.teamlink),
     awaitingClient: !client.agreementSignedAt && !agreementOnly && (!!(client.agreementCompanySignFile && client.agreementCompanySealedAt) || !!(dl && dl.teamlink)),
     dl,
+    signingSide: agreementOnly ? signingSide : null,
   };
   let guess = (await drawDocument(a, 99)).pages;
   let result = await drawDocument(a, guess);
