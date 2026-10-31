@@ -107,6 +107,23 @@ async function countFor(clientId) {
 // Only moves forward: a client already Signed / Active is not touched (Signed -> Active when the confirmation comes later).
 // Returns the new status, or null when nothing changed. Never throws.
 const SIGNED_NOW = ['SIGNED', 'ACTIVE'];
+
+// ---- A WEB LINK TO ONE DIGILOCKER COPY (founder 2026-10-31: "verey option ettochu kadha, andharu ekkuva use chesedhi") ----------
+// The summary's file names open only in Adobe Acrobat Reader (they are PDF attachments). Each copy also gets a web link that opens
+// the exact signed copy in any browser or phone (Chrome, Edge, WhatsApp preview): /api/agreement/esign-copy/<docId>/<sig>.
+// sig = HMAC(server secret, document id + the copy's SHA-256): nobody can guess another file's link, and a replaced file's old
+// link stops working. It needs no login (a client reading the summary has none): whoever holds the summary can open its two copies.
+const crypto = require('crypto');
+
+const copySecret = () => process.env.AGREEMENT_LINK_SECRET || process.env.JWT_SECRET || 'teamlink-agreement-link';
+const copySig = (docId, sha256) => crypto.createHmac('sha256', copySecret()).update(`esigncopy:${docId}:${sha256}`).digest('hex').slice(0, 40);
+function apiBase(req) {
+  if (process.env.APP_BASE_URL) return String(process.env.APP_BASE_URL).replace(/\/+$/, '');
+  // behind nginx the browser's own address arrives in the X-Forwarded-* headers
+  const proto = String(req.get('x-forwarded-proto') || req.protocol || 'https').split(',')[0].trim();
+  const host = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
 async function statusFromPapers(clientId, user) {
   try {
     const files = await filesOf(clientId);
@@ -149,6 +166,28 @@ function mayAdd(user, access) {
 }
 
 function mountView(router, { requireAuth, loadForView }) {
+  // ONE DIGILOCKER COPY BY ITS WEB LINK (the links printed on the signature summary). No login; the signature in the link decides.
+  router.get('/esign-copy/:docId/:sig', async (req, res, next) => {
+    try {
+      const nope = () => res.status(404).type('text/plain').send('This link is not valid any more. Ask TeamLink for a fresh signature summary.');
+      if (!/^[a-f0-9]{40}$/.test(String(req.params.sig || ''))) return nope();
+      const d = await prisma.clientDocument.findFirst({ where: { id: String(req.params.docId), kind: KIND } });
+      const meta = d && metaOf(await prisma.appSetting.findUnique({ where: { key: `${PREFIX}${d.id}` } }));
+      if (!d || !meta || !meta.esign) return nope(); // only the DigiLocker copies have a web link
+      const p = attachments.resolveStored(d.fileStored);
+      if (!p) return nope();
+      const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
+      const want = Buffer.from(copySig(d.id, crypto.createHash('sha256').update(buf).digest('hex')));
+      const got = Buffer.from(String(req.params.sig));
+      if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return nope();
+      res.set('Content-Type', 'application/pdf');
+      res.set('Cache-Control', 'private, no-store');
+      res.set('X-Robots-Tag', 'noindex');
+      res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${safeName(d.fileName || 'signed-copy.pdf').replace(/\.pdf$/i, '')}.pdf"`);
+      return res.send(buf);
+    } catch (err) { return next(err); }
+  });
+
   // A CLIENT THAT SIGNED OUTSIDE THE ATS: add it (then its papers are uploaded through POST /:clientId/signed-files).
   router.post('/new-client-signed', requireAuth, async (req, res, next) => {
     try {
@@ -312,11 +351,14 @@ function mountView(router, { requireAuth, loadForView }) {
         if (!p) return null;
         const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
         const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
-        return {
+        const out = {
           signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
           issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName, buf, // attached to the summary
-          sha256: require('crypto').createHash('sha256').update(buf).digest('hex'), // eslint-disable-line global-require
+          sha256: crypto.createHash('sha256').update(buf).digest('hex'),
         };
+        // the web link that opens this copy in any browser (see copySig above)
+        out.url = `${apiBase(req)}/api/agreement/esign-copy/${f.id}/${copySig(f.id, out.sha256)}`;
+        return out;
       };
       const [us, them] = await Promise.all([copyOf(newest(UPLOAD_TYPES.dlteamlink)), copyOf(newest(UPLOAD_TYPES.dlclient))]);
       if (!us && !them) return res.status(404).json({ error: 'No DigiLocker eSigned copy is on file yet.' });

@@ -64,7 +64,7 @@ function renderEsignSummary({ client, agreementId, consultantName, sides, logoPa
       row('Certificate issued by', c.issuer);
       // THE SIGNED COPY ITSELF, inside this PDF: click the file name to open it (founder 2026-10-31: "files meedha click chesthe,
       // akkade files open ayyelaaga"). It is attached byte for byte, so its own signature stays valid.
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED).text('Signed copy (click to open)', x, y, { width: colW });
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED).text('Signed copy (file)', x, y, { width: colW });
       const fy = doc.y;
       const label = `${txt(c.fileName || 'signed-copy.pdf')}`;
       doc.font('Helvetica').fontSize(8.5).fillColor('#1d4ed8').text(label, x, fy, { width: colW, underline: !!c.buf });
@@ -77,6 +77,11 @@ function renderEsignSummary({ client, agreementId, consultantName, sides, logoPa
           }, { Name: 'Paperclip' });
         } catch { /* attaching is a convenience; the summary stands without it */ }
       }
+      // ...and a web link that opens the same copy in ANY browser or phone (Chrome, Edge), not only Adobe
+      if (c.url) {
+        doc.moveDown(0.25);
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#1d4ed8').text('Open this signed copy (any browser)', x, doc.y, { width: colW, link: c.url, underline: true });
+      }
       y = doc.y + 5;
       row('Fingerprint of the signed copy (SHA-256)', c.sha256);
       row('Checked', ok ? 'The signature verifies with the signer\'s certificate and the file was not changed after signing.' : 'The signature did not verify. Ask for a fresh copy from DigiLocker.');
@@ -88,7 +93,7 @@ function renderEsignSummary({ client, agreementId, consultantName, sides, logoPa
   doc.moveTo(L, doc.y).lineTo(L + W, doc.y).lineWidth(0.6).strokeColor('#c9d0dc').stroke();
   doc.moveDown(0.6);
   doc.font('Helvetica').fontSize(8.5).fillColor(MUTED).text(
-    `This page is a summary made by TeamLink on ${whenOf(new Date().toISOString())}. It carries no signature itself: the legal signatures are inside the two signed copies named above, which are attached to this PDF exactly as signed - click a file name (or open the Attachments panel) in Adobe Acrobat Reader, where each signature can also be checked. Both copies together form the agreement.`,
+    `This page is a summary made by TeamLink on ${whenOf(new Date().toISOString())}. It carries no signature itself: the legal signatures are inside the two signed copies named above, which are attached to this PDF exactly as signed. "Open this signed copy" opens each one in any browser or phone; in Adobe Acrobat Reader you can also click a file name (or the Attachments panel) and check the signature. Both copies together form the agreement.`,
     L, doc.y, { width: W },
   );
   doc.end();
