@@ -40,7 +40,15 @@ function drawTable(doc, rows, x, width) {
   doc.moveDown(0.6);
 }
 
-function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle }) {
+// a name typed with its label stuck on ("vasu chitturi Name:", "MD Designation:") or a placeholder ("Name:") reads as nothing
+const plainName = (v) => {
+  const t = String(v || '').replace(/\s+(?:name|designation|title)\s*:.*$/i, '').trim();
+  return /^(name|contact|contact name|designation|title|mr|ms|sir|madam|na|n\/a|-+)\W*$/i.test(t) ? '' : t;
+};
+
+// clean: the copy each side eSigns in DigiLocker (founder 2026-10-31) - no "Waiting for ..." words printed into it: the signature
+// is the Aadhaar eSign itself, so Sign / Date / Stamp stay as empty lines.
+function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false }) {
   const colW = (width - 24) / 2;
   const right = x + colW + 24;
   const signedName = client.agreementSignedBy || '';
@@ -65,10 +73,10 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
     if (lk === 'Name' && !lv) lv = client.agreementCompanySignedBy || teamlinkName || '';
     if (lk === 'Designation' && !lv) lv = teamlinkTitle || '';
     if (lk === 'Date' && !lv) lv = client.agreementCompanySignFile ? ddmmyyyy(client.agreementCompanySealedAt) : '';
-    // Right (client): filled by the e-sign.
+    // Right (client): filled by the e-sign, else the client's contact person (founder 2026-10-31: "ee details automatic ga fill avvali")
     let rv = rt.replace(/^[^:]+:\s*/, '');
-    if (rk === 'Name' && !rv) rv = signedName;
-    if (rk === 'Designation' && !rv) rv = client.agreementSignedByTitle || '';
+    if (rk === 'Name' && !rv) rv = signedName || plainName(client.contactName || client.recruitmentContactName);
+    if (rk === 'Designation' && !rv) rv = client.agreementSignedByTitle || plainName(client.contactDesignation || client.recruitmentContactDesignation);
     if (rk === 'Date' && !rv) rv = ddmmyyyy(client.agreementSignedAt);
     let h = 18;
     const cell = (cx, key, value, img, typedName) => {
@@ -82,6 +90,9 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
         // The client signs with Aadhaar eSign at eMudhra: the digital signature
         // is in the PDF itself (see the signature panel).
         doc.font('Helvetica-Oblique').fontSize(10).fillColor(INK).text('Digitally signed with Aadhaar eSign (eMudhra)', cx + 82, y + 1, { width: colW - 90 });
+      } else if (key === 'Sign' && clean) {
+        doc.moveTo(cx + 82, y + 12).lineTo(cx + colW - 10, y + 12).lineWidth(0.5).strokeColor('#9aa3b2').stroke();
+        doc.strokeColor(INK);
       } else if (key === 'Sign') {
         doc.font('Helvetica-Oblique').fontSize(10).fillColor('#9a6700').text(cx === x ? 'Waiting for TeamLink signature' : 'Waiting for client signature', cx + 82, y + 1, { width: colW - 90 });
         doc.fillColor(INK);
@@ -101,7 +112,7 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
     const label = (cx) => doc.font('Helvetica-Bold').fontSize(11).fillColor(INK).text('Stamp:', cx, y, { width: 80, lineBreak: false });
     [[x, kStamp], [right, cStamp]].forEach(([cx, img]) => {
       label(cx);
-      if (img) { try { doc.image(img, cx + 82, y - 4, { fit: [110, 80] }); } catch { /* unreadable image */ } } else {
+      if (img) { try { doc.image(img, cx + 82, y - 4, { fit: [110, 80] }); } catch { /* unreadable image */ } } else if (!clean) {
         doc.font('Helvetica-Oblique').fontSize(10).fillColor('#9a6700').text(cx === x ? 'Waiting for TeamLink stamp' : 'Waiting for client stamp', cx + 82, y + 1, { width: colW - 90 });
         doc.fillColor(INK);
       }
@@ -111,7 +122,7 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
   }
 }
 
-function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle }) {
+function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false }) {
   const x = doc.page.margins.left;
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const lines = pdfText(client.agreementDocument).split('\n');
@@ -140,7 +151,7 @@ function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, 
       const rows = [];
       while (i < lines.length && lines[i].includes('\t')) { rows.push(lines[i].split('\t').map((c) => c.trim())); i += 1; }
       doc.moveDown(0.6);
-      drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle });
+      drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean });
       continue;
     }
     if (doc.y > doc.page.height - doc.page.margins.bottom - 30) doc.addPage();

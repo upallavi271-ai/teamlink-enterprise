@@ -274,7 +274,7 @@ function drawDocument(a, totalPages) {
     // block filled from the record (utils/vendorAgreementPdf.js).
     if (vendorDoc) {
       // eslint-disable-next-line global-require
-      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle });
+      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle, clean: !!agreementOnly });
     }
     doc.moveDown(0.5);
     (vendorDoc ? '' : pdfText(client.agreementDocument)).split('\n').forEach((line) => {

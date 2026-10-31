@@ -130,4 +130,33 @@ function inspect(buf) {
   };
 }
 
-module.exports = { inspect };
+// THE WORDS ON THE PAGES, roughly (founder 2026-10-31: "agreement proper ithey ney kadha, active vachi green tick vasthadhi"):
+// enough to find "Agreement No. AGR0009" in a copy eSigned in DigiLocker. Our agreement PDF (pdfkit) writes its text as hex strings
+// inside Flate streams, and DigiLocker keeps those streams. Returns '' when nothing readable is found (a scan, another generator).
+function textOf(buf) {
+  const zlib = require('zlib'); // eslint-disable-line global-require
+  const s = buf.toString('latin1');
+  const parts = [];
+  const re = /stream\r?\n/g;
+  let m;
+  let budget = 40 * 1024 * 1024; // inflated bytes at most
+  while ((m = re.exec(s)) && budget > 0) {
+    const st = m.index + m[0].length;
+    const en = s.indexOf('endstream', st);
+    if (en < 0) break;
+    let out = null;
+    try { out = zlib.inflateSync(buf.subarray(st, en), { maxOutputLength: Math.min(budget, 8 * 1024 * 1024) }); } catch { out = null; }
+    if (out) {
+      budget -= out.length;
+      const t = out.toString('latin1');
+      if (/\b(Tj|TJ)\b/.test(t)) {
+        for (const h of t.matchAll(/<([0-9a-fA-F]{2,})>/g)) if (h[1].length % 2 === 0) parts.push(Buffer.from(h[1], 'hex').toString('latin1'));
+        for (const l of t.matchAll(/\(((?:\\.|[^\\)])*)\)/g)) parts.push(l[1]);
+      }
+    }
+    re.lastIndex = en + 9; // past "endstream"
+  }
+  return parts.join('');
+}
+
+module.exports = { inspect, textOf };

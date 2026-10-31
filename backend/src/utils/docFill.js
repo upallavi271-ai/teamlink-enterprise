@@ -201,6 +201,10 @@ const PIN_RE = /\b[1-9]\d{5}\b/g;
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const linesOf = (t) => String(t || '').split('\n').map((l) => l.trim()).filter(Boolean);
 const trimVal = (v) => String(v || '').replace(/^[\s:\-–—|]+|[\s|;,]+$/g, '').trim();
+// Two columns read as one line ("Name: vasu chitturi   Name:", "Designation: MD   Designation:" in a signatory table, founder
+// 2026-10-31): the value stops where the next label starts, so "Name:" / "Designation:" never land inside a value.
+const NEXT_LABEL = /\s+(?:name|designation|title|position|role|signature|signed|date|place|email|e-mail|phone|mobile|witness|seal|stamp|for)\s*[:\-–—]\s*.*$/i;
+const cutAtNextLabel = (v) => trimVal(String(v || '').replace(NEXT_LABEL, ''));
 
 // "Label: value" / "Label - value" / "Label value" on one line (first hit).
 // `labels` are tried in order; a label must start the line.
@@ -211,7 +215,7 @@ function labelled(text, labels, { maxLen = 200 } = {}) {
     for (const line of lines) {
       const m = re.exec(line);
       if (m) {
-        const v = trimVal(m[1]);
+        const v = cutAtNextLabel(m[1]);
         if (v && v.length <= maxLen) return v;
       }
     }
@@ -461,7 +465,11 @@ async function rulesCandidate(text) {
 function rulesClient(text) {
   const f = {}; const src = {};
   const warnings = [];
-  const first = linesOf(text)[0] || '';
+  // the heading of a document ("Vendor Services Agreement", "Service Contract") is not a company name
+  const first = (linesOf(text)[0] || '').replace(/^.*\b(agreement|contract|terms|proposal|quotation|invoice|purchase order|memorandum|mou|nda|letter)\b.*$/i, '');
+  // TeamLink's own agreement names the client in its first sentence: between "<client>" (hereinafter referred to as "CLIENT")
+  const between = (/between\s+["“']?([^"”'\n]{2,90}?)["”']?\s*\(\s*here\s*in\s*after\s+referred\s+to\s+as\s+["“']?client/i.exec(String(text).replace(/\s+/g, ' ')) || [])[1];
+  if (between && !/\b(agreement|contract)\b/i.test(between)) put(f, src, 'name', between.trim());
   put(f, src, 'name', labelled(text, ['company name', 'name of the company', 'company', 'organisation', 'organization', 'client name', 'client', 'firm', 'business name', 'trade name'])
     || (first.length >= 3 && first.length <= 70 && !/@|http|\d{6,}/.test(first) && /\b(pvt|private|limited|ltd|llp|inc|corp|technologies|solutions|industries|hospital|school|college|services|labs|systems|group|enterprises|consult)/i.test(first) ? first.replace(/[.:]+$/, '') : null));
   put(f, src, 'legalName', labelled(text, ['legal name', 'registered name', 'legal entity', 'legal company name']));
@@ -482,8 +490,11 @@ function rulesClient(text) {
   put(f, src, 'location', cityIn(labelled(text, ['city', 'location'])) || cityIn(addr) || cityIn(String(text).slice(0, 6000)));
   put(f, src, 'state', stateIn(labelled(text, ['state'])) || stateIn(addr) || stateIn(text));
   put(f, src, 'pincode', (() => { const p = labelled(text, ['pincode', 'pin code', 'pin', 'postal code', 'zip']); const m = (String(p || '').match(PIN_RE) || String(addr || '').match(PIN_RE) || [])[0]; return m || null; })());
-  put(f, src, 'contactName', labelled(text, ['contact person', 'contact name', 'contact person name', 'authorised signatory', 'authorized signatory', 'signatory', 'hr contact', 'spoc', 'point of contact', 'name', 'contact']));
-  put(f, src, 'contactDesignation', labelled(text, ['designation', 'title', 'position', 'role']));
+  // In TeamLink's own agreement the plain "Name:" / "Designation:" lines are the signature table, whose first column is TeamLink's
+  // signatory (founder 2026-10-31: TeamLink's MD landed as the client contact): there only a labelled contact person counts.
+  const ours = /referred\s+to\s+as\s+["“']?placement\s+company/i.test(String(text).replace(/\s+/g, ' '));
+  put(f, src, 'contactName', labelled(text, ['contact person', 'contact name', 'contact person name', 'authorised signatory', 'authorized signatory', 'signatory', 'hr contact', 'spoc', 'point of contact', ...(ours ? [] : ['name', 'contact'])]));
+  if (!ours) put(f, src, 'contactDesignation', labelled(text, ['designation', 'title', 'position', 'role']));
   put(f, src, 'contactEmail', firstEmail(labelled(text, ['contact email', 'email', 'e-mail', 'mail', 'email id'])) || emails.find((e) => e !== f.companyEmail) || emails[0] || null);
   put(f, src, 'contactPhone', (() => { const v = labelled(text, ['mobile', 'mobile number', 'mobile no', 'cell', 'contact number', 'contact no', 'phone', 'phone number', 'whatsapp']); const p = firstPhone(v) || firstPhone(text); return p ? p.replace(/^\+91\s?/, '') : null; })());
   // GSTIN: a real check (state code + checksum). A wrong one is a warning, never a value.
