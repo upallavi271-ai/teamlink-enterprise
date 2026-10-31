@@ -82,6 +82,17 @@ async function readUpload(req, { imageOnly = true } = {}) {
   await require('../utils/imageShrink').shrinkFile(attachments.resolveStored(stored.billFile));
   return { stored, fields: parsed.fields || {} };
 }
+// WHO WILL eSIGN a copy (founder 2026-10-31: "sign daggara evaru sign chesaro ... digilocker lo vunna name raavatledhu"): asked before the
+// download (?signer=&title=), printed in that side's Name / Sign, and kept so the upload can say when the Aadhaar name differs.
+async function rememberSigner(clientId, side, q) {
+  const name = String((q && (q.signer || q.name)) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const title = String((q && q.title) || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (!name) return null;
+  const key = `agrsigner.${clientId}.${side}`;
+  const value = JSON.stringify({ name, title, at: new Date().toISOString() });
+  await prisma.appSetting.upsert({ where: { key }, update: { value }, create: { key, value } }).catch(() => null);
+  return { name, title };
+}
 function dropFile(stored) { if (stored) { try { attachments.remove(stored); } catch { /* already gone */ } } }
 // The signing IP written into the audit trail: the safe helper (utils/clientIp.js), never the caller's own X-Forwarded-For.
 const ipOf = (req) => require('../utils/clientIp').ipOf(req); // eslint-disable-line global-require
@@ -269,7 +280,7 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}${client.agreementSignedAt ? '' : '-NOT-SIGNED'}.pdf"`);
     res.set('Cache-Control', 'private, no-store');
     // eslint-disable-next-line global-require
-    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name, agreementOnly: !!req.query.fresh, signingSide: req.query.fresh ? 'teamlink' : null }, res); // ?fresh=1: the clean copy to eSign in DigiLocker (no DRAFT / NOT SIGNED marks)
+    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name, agreementOnly: !!req.query.fresh, signingSide: req.query.fresh ? 'teamlink' : null, signer: req.query.fresh ? await rememberSigner(client.id, 'teamlink', req.query) : null }, res); // ?fresh=1: the clean copy to eSign in DigiLocker (no DRAFT / NOT SIGNED marks)
     return undefined;
   } catch (err) { return next(err); }
 });
@@ -477,7 +488,7 @@ router.get('/token/:token/esign-pdf', async (req, res, next) => {
     res.set('Content-Disposition', `${req.query.inline ? 'inline' : 'attachment'}; filename="${name}"`);
     await logAudit({ action: 'Agreement PDF to eSign downloaded by the client (stamped)', entity: 'Client', entityId: client.id, reason: `IP ${ipOf(req)}` });
     // eslint-disable-next-line global-require
-    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail: [], consultantName: us.name, agreementOnly: true, signingSide: 'client' }, res);
+    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail: [], consultantName: us.name, agreementOnly: true, signingSide: 'client', signer: await rememberSigner(client.id, 'client', req.query) }, res);
     return undefined;
   } catch (err) { return next(err); }
 });
@@ -522,7 +533,7 @@ router.post('/token/:token/esigned', signLimit, async (req, res, next) => {
       return res.status(400).json({ error: 'That file could not be read as a PDF. Please pick it again.' });
     }
     const who = `${lifecycle.contactsOf(client).name || 'The client'} (on the agreement link, IP ${ipOf(req)})`;
-    const status = await got.SF.saveCopy(client.id, { label: got.SF.UPLOAD_TYPES.dlclient, stored, data: got.file.data, esign: chk.esign, by: who.slice(0, 120) });
+    const status = await got.SF.saveCopy(client.id, { label: got.SF.UPLOAD_TYPES.dlclient, stored, data: got.file.data, esign: chk.esign, by: who.slice(0, 120), base: got.SF.apiBase(req) });
     return res.status(201).json({ ok: true, agreementStatus: status, signer: chk.esign.signer, signedAt: chk.esign.signedAt });
   } catch (err) { return next(err); }
 });

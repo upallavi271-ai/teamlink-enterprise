@@ -179,6 +179,12 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
   const paperInput = useRef(null);
   const paperType = useRef('');
   const [note, setNote] = useState('');
+  // who eSigns TeamLink's copy (name as on Aadhaar): printed in the PDF's Name / Sign (founder 2026-10-31). Starts as the signatory
+  // in Agreement settings (readable by Super Admin / Admin); left empty, the server prints that signatory anyway.
+  const [esignAs, setEsignAs] = useState({ name: '', title: '' });
+  useEffect(() => {
+    api.get('/agreement/settings/teamlink-seal').then((r) => setEsignAs((v) => (v.name ? v : { name: (r.data && r.data.signatoryName && !/^\[/.test(r.data.signatoryName) ? r.data.signatoryName : ''), title: (r.data && r.data.signatoryTitle && !/^\[/.test(r.data.signatoryTitle) ? r.data.signatoryTitle : '') }))).catch(() => {});
+  }, []);
   const first = useRef(true);
 
   const load = useCallback(async () => {
@@ -292,7 +298,15 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
             </div>
             <TeamLinkStampRow />
             {d.esign && (
-              <button type="button" className="btn btn-sm" style={{ marginBottom: 8 }} disabled={!!busy} onClick={() => pickItem({ key: 'fresh', path: `/agreement/${clientId}/pdf?fresh=1`, mime: 'application/pdf', canShow: true, fileName: 'agreement-to-eSign.pdf' }, true)}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'flex-end', marginBottom: 6 }}>
+                <label className="field" style={{ margin: 0, minWidth: 200 }}><span style={{ fontSize: 12 }}>Who eSigns for TeamLink (name as on Aadhaar)</span>
+                  <input value={esignAs.name} maxLength={80} placeholder="e.g. Vasudeva Rao Chitturi" onChange={(e) => setEsignAs({ ...esignAs, name: e.target.value })} /></label>
+                <label className="field" style={{ margin: 0, minWidth: 140 }}><span style={{ fontSize: 12 }}>Designation</span>
+                  <input value={esignAs.title} maxLength={80} placeholder="e.g. MD" onChange={(e) => setEsignAs({ ...esignAs, title: e.target.value })} /></label>
+              </div>
+            )}
+            {d.esign && (
+              <button type="button" className="btn btn-sm" style={{ marginBottom: 8 }} disabled={!!busy} onClick={() => pickItem({ key: 'fresh', path: `/agreement/${clientId}/pdf?fresh=1${esignAs.name.trim() ? `&signer=${encodeURIComponent(esignAs.name.trim())}&title=${encodeURIComponent(esignAs.title.trim())}` : ''}`, mime: 'application/pdf', canShow: true, fileName: 'agreement-to-eSign.pdf' }, true)}>
                 Download agreement PDF to eSign
               </button>
             )}

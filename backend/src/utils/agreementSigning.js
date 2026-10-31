@@ -408,6 +408,11 @@ async function publicView(client) {
       ? { captured: true, method: client.agreementClientSignName, signedBy: client.agreementSignedBy, signedByTitle: client.agreementSignedByTitle, at: client.agreementClientSealedAt }
       : { captured: false },
     hasStamp: !!client.agreementClientStampFile,
+    // who will eSign for the client, to fill in before the download (their contact person on the record; a label stuck on dropped)
+    signerHint: open ? (() => {
+      const plain = (v) => { const t = String(v || '').replace(/\s+(?:name|designation|title)\s*:.*$/i, '').trim(); return /^(name|contact|designation|title|na|n\/a|-+)\W*$/i.test(t) ? '' : t; };
+      return { name: plain(client.contactName || client.recruitmentContactName), title: plain(client.contactDesignation || client.recruitmentContactDesignation) };
+    })() : null,
     registeredMobile: core.maskMobile(client.contactPhone) || null,
     otp: {
       waiting: otp.active && !otp.locked, sentTo: client.agreementVerifyMobile || null, expiresAt: otp.active ? otp.expiresAt : null,

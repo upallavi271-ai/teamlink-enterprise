@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import api from '../../api';
 import JpModal from './JpModal.jsx';
 import JobPortalRows, { useJobPublish } from './JobPortalRows.jsx';
 import PublishPopup from './PublishPopup.jsx';
@@ -17,6 +18,14 @@ import './jobpublish.css';
 export default function JobPostingCard({ jobId, title, canPost, onChanged, onPost = null }) { // onPost: open another screen (the Post step with logins) instead of the plain popup
   const data = useJobPublish(jobId);
   const [popup, setPopup] = useState(false);
+  // the places the job went live from the "Posting sources" list too (TeamLink Job Portal, Website, boards marked posted by hand):
+  // one View list for every place, whichever button posted it (founder 2026-10-31: "view ... redirect avvali ahh site ki")
+  const [sites, setSites] = useState([]);
+  useEffect(() => {
+    let on = true;
+    api.get(`/requirements/${jobId}/posting-sites`).then((r) => { if (on) setSites((r.data && r.data.sites) || []); }).catch(() => { if (on) setSites([]); });
+    return () => { on = false; };
+  }, [jobId, data.status]);
   const [detail, setDetail] = useState(false);
   const [history, setHistory] = useState(false);
   const postings = (data.status && data.status.portals) || [];
@@ -42,7 +51,9 @@ export default function JobPostingCard({ jobId, title, canPost, onChanged, onPos
           <div aria-live="polite">
             {touched.length > 0
               ? <PortalChipRow postings={postings} infos={data.infos} only={touched} />
-              : <span className="jp-note">Not posted from here yet. {canPost ? 'Press Post this requirement.' : 'The team lead posts it.'}</span>}
+              : (sites.some((x) => x.link)
+                ? <span className="jp-note">Posted on {sites.filter((x) => x.link).map((x) => x.name).join(', ')}. {canPost ? 'Press Post this requirement for Facebook, Instagram and the other places.' : ''}</span>
+                : <span className="jp-note">Not posted from here yet. {canPost ? 'Press Post this requirement.' : 'The team lead posts it.'}</span>)}
           </div>
           {/* VIEW: open the post itself where it went live - the Facebook post, the Instagram post, the job board page
               (founder 2026-10-31: "view click chesthe, ekkadaithey job post ayyindho akkadaki redirect avvali") */}
@@ -51,6 +62,7 @@ export default function JobPostingCard({ jobId, title, canPost, onChanged, onPos
               ...(p.status === 'PUBLISHED' && p.portalUrl ? [{ key: p.portal, name: portalName(p.portal), url: p.portalUrl }] : []),
               ...((p.extraPosts || []).filter((x) => x.url).map((x, i) => ({ key: `${p.portal}-x${i}`, name: `${portalName(p.portal)}${x.name ? ` (${x.name})` : ''}`, url: x.url }))),
             ]);
+            sites.filter((x) => x.link && !links.some((l) => l.url === x.link)).forEach((x, i) => links.push({ key: `site-${x.id || i}`, name: x.name, url: x.link }));
             if (!links.length) return null;
             return (
               <div className="jp-row" style={{ flexWrap: 'wrap', gap: 6, marginTop: 6 }}>

@@ -131,7 +131,7 @@ function apiBase(req) {
   const host = String(req.get('x-forwarded-host') || req.get('host') || '').split(',')[0].trim();
   return `${proto}://${host}`;
 }
-async function statusFromPapers(clientId, user) {
+async function statusFromPapers(clientId, user, base = null) {
   try {
     const files = await filesOf(clientId);
     const has = (label) => files.some((f) => f.label === label || f.kind === label);
@@ -163,7 +163,7 @@ async function statusFromPapers(clientId, user) {
     // ani raavali client ki"). After the reply, never in its way; the result is in the client's history.
     if (target === 'ACTIVE' && dlBoth) {
       setImmediate(() => {
-        require('../utils/agreementLifecycle').dispatchThankYou(clientId) // eslint-disable-line global-require
+        require('../utils/agreementLifecycle').dispatchThankYou(clientId, { base }) // eslint-disable-line global-require
           .then((r) => logAudit({
             userId: user ? user.id : null, actorName: user ? user.name || null : 'TeamLink', action: 'Agreement thank-you sent to the client',
             entity: 'Client', entityId: clientId, toValue: require('../utils/agreementLifecycle').describeDispatch(r).slice(0, 300), // eslint-disable-line global-require
@@ -217,12 +217,22 @@ async function checkDigiLockerCopy(c, type, buf) {
       ? `This copy is eSigned by ${esign.signer}, the same person who signed for TeamLink. The client's authorised person must eSign it with their own Aadhaar.`
       : `This copy is eSigned by ${esign.signer}, the same person who signed the client's copy. TeamLink's director must eSign it with their own Aadhaar.` };
   }
+  // the name asked before the download vs the Aadhaar name in the signature: a note, not a refusal (Aadhaar names are often longer)
+  try {
+    const want = await prisma.appSetting.findUnique({ where: { key: `agrsigner.${c.id}.${type === 'dlclient' ? 'client' : 'teamlink'}` } });
+    const typed = want ? JSON.parse(want.value).name : '';
+    const toks = (n) => String(n || '').toLowerCase().replace(/[^a-z ]+/g, ' ').split(/\s+/).filter((t) => t.length >= 2);
+    const a = toks(typed); const b = toks(esign.signer);
+    const covers = (xs, ys) => xs.length && xs.every((t) => ys.some((u) => u.startsWith(t) || t.startsWith(u)));
+    if (a.length && b.length && !covers(a, b) && !covers(b, a)) esign.nameNote = `The copy was made for ${typed}, but it is eSigned by ${esign.signer}.`;
+  } catch { /* the note is a help only */ }
   return { esign };
 }
 
 // Keeps one uploaded paper (or DigiLocker copy) and moves the agreement on (statusFromPapers). user: the staff login, or null with
 // `by` for the client on their own link. Returns the new agreement status (or null when it did not change).
-async function saveCopy(clientId, { label, stored, data, esign, user = null, by = null }) {
+// base: the address the thank-you summary's web links start with (the request's own address)
+async function saveCopy(clientId, { label, stored, data, esign, user = null, by = null, base = null }) {
   const name = user ? user.name || null : by;
   const row = await prisma.clientDocument.create({
     data: {
@@ -233,7 +243,7 @@ async function saveCopy(clientId, { label, stored, data, esign, user = null, by 
   });
   await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: name, ...(esign ? { esign, sha256: crypto.createHash('sha256').update(data).digest('hex') } : {}) }) } });
   await logAudit({ userId: user ? user.id : null, actorName: name, action: 'Agreement paper uploaded', entity: 'Client', entityId: clientId, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
-  return statusFromPapers(clientId, user);
+  return statusFromPapers(clientId, user, base);
 }
 
 // WHO SIGNED IN DIGILOCKER, per side (the newest valid copy): { teamlink: { signer, signedAt } | null, client: … | null }.
@@ -387,9 +397,9 @@ function mountView(router, { requireAuth, loadForView }) {
         if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
         return res.status(400).json({ error: 'That file could not be read as a PDF, Word file or picture. Please pick it again.' });
       }
-      const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user });
+      const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user, base: apiBase(req) });
       const said = status === 'ACTIVE' ? ` The agreement is now Active.${type.startsWith('dl') ? ' A thank-you email with both signed copies and the summary goes to the client.' : ''}` : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
-      const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.` : '';
+      const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.${esign.nameNote ? ` Note: ${esign.nameNote}` : ''}` : '';
       return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
     } catch (err) { return next(err); }
   });
@@ -523,4 +533,4 @@ function mountView(router, { requireAuth, loadForView }) {
   });
 }
 
-module.exports = { dlSigners, checkDigiLockerCopy, saveCopy, UPLOAD_TYPES, MAX_UPLOAD, esignCopies, summaryBuffer, mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };
+module.exports = { apiBase, dlSigners, checkDigiLockerCopy, saveCopy, UPLOAD_TYPES, MAX_UPLOAD, esignCopies, summaryBuffer, mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };

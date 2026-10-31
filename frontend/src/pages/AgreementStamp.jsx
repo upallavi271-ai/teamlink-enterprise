@@ -24,6 +24,8 @@ export default function AgreementStamp() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [stampUrl, setStampUrl] = useState('');
+  // who will eSign for the client (name as on Aadhaar): printed in the PDF's Name / Designation / Sign
+  const [who, setWho] = useState({ name: '', title: '' });
   // step 4: the signed PDF, its check, the preview, the thank-you
   const [signed, setSigned] = useState(null);
   const [checked, setChecked] = useState(null);
@@ -40,7 +42,7 @@ export default function AgreementStamp() {
   }, [token]);
   const load = useCallback(() => {
     api.get(`/public/agreement/${token}`)
-      .then((r) => { setView(r.data); if (r.data && r.data.hasStamp) loadStamp(); })
+      .then((r) => { setView(r.data); if (r.data && r.data.signerHint) setWho((v) => (v.name ? v : { name: r.data.signerHint.name || '', title: r.data.signerHint.title || '' })); if (r.data && r.data.hasStamp) loadStamp(); })
       .catch((e) => setFatal(e.response?.data?.error || 'This link could not be opened. Ask your TeamLink contact for a new one.'));
   }, [token, loadStamp]);
   useEffect(() => { load(); }, [load]);
@@ -142,10 +144,16 @@ export default function AgreementStamp() {
             </div>
             <div className="agr-card">
               <h3 style={{ marginTop: 0 }}>2. Download the agreement to eSign</h3>
-              <p className="small-muted" style={{ marginTop: 0 }}>It comes with your stamp and TeamLink&apos;s stamp printed on every page.</p>
-              {has
-                ? <a className="btn btn-primary" href={`/api/agreement/token/${token}/esign-pdf`}>Download agreement PDF to eSign</a>
-                : <button type="button" className="btn" disabled>Add your stamp first (step 1)</button>}
+              <p className="small-muted" style={{ marginTop: 0 }}>It comes with your stamp and TeamLink&apos;s stamp printed on every page, and the name of the person who eSigns.</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                <label className="field" style={{ margin: 0, flex: '1 1 220px' }}><span>Who will eSign (name as on Aadhaar)</span>
+                  <input value={who.name} maxLength={80} onChange={(e) => setWho({ ...who, name: e.target.value })} /></label>
+                <label className="field" style={{ margin: 0, flex: '1 1 160px' }}><span>Designation</span>
+                  <input value={who.title} maxLength={80} onChange={(e) => setWho({ ...who, title: e.target.value })} /></label>
+              </div>
+              {has && who.name.trim()
+                ? <a className="btn btn-primary" href={`/api/agreement/token/${token}/esign-pdf?name=${encodeURIComponent(who.name.trim())}&title=${encodeURIComponent(who.title.trim())}`}>Download agreement PDF to eSign</a>
+                : <button type="button" className="btn" disabled>{has ? 'Type the name of the person who will eSign' : 'Add your stamp first (step 1)'}</button>}
             </div>
             <div className="agr-card">
               <h3 style={{ marginTop: 0 }}>3. Sign it with Aadhaar eSign (DigiLocker, free)</h3>
