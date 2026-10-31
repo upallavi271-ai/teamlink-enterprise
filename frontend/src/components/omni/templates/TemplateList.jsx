@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import omni, { errOf } from '../omniApi.js';
 import { Btn, TinyBtn, Pill, GsModal } from '../ui.jsx';
 import { langCode, AccountChips } from './tplCommon.jsx';
 import { CODE_WORDS } from './policy.js';
@@ -41,7 +43,28 @@ export function MetaReviewModal({ item, onClose, onEdit }) {
   );
 }
 
-export default function TemplateList({ ch, account, data, loading, q, setQ, where, setWhere, approval, setApproval, onCreate, onOpen, onRefresh, onDuplicate, onArchive, onReview, canWrite, err, staffOnly }) {
+// A WhatsApp template belongs to the WhatsApp account at Meta, so one made in Omni-Channel shows here too, and Meta's approval reaches both apps
+// (server: outreach/tplFromMeta.js, every 15 minutes by itself; an Admin can run it now).
+function FromMetaBar({ isAdmin, onDone }) {
+  const [last, setLast] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => { omni.get('/gs/templates/from-meta').then((r) => setLast(r.last)).catch(() => {}); }, []);
+  async function run() {
+    setBusy(true); setErr('');
+    try { const r = await omni.post('/gs/templates/from-meta', {}); setLast(r.last); if (onDone) onDone(); } catch (e) { setErr(errOf(e, 'Meta could not be asked now.')); } finally { setBusy(false); }
+  }
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', margin: '0 0 10px', fontSize: 11, color: 'var(--muted)' }}>
+      <span>Templates made here or in Omni-Channel get Meta&apos;s approval in both places (checked every 15 minutes).</span>
+      {isAdmin ? <TinyBtn onClick={run} disabled={busy}>{busy ? 'Asking Meta…' : 'Bring approvals from Meta now'}</TinyBtn> : null}
+      {last ? <span style={{ width: '100%' }}>Last check {new Date(last.at).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' })}: {last.words}</span> : null}
+      {err ? <span role="alert" style={{ color: '#9b1c1c', width: '100%' }}>{err}</span> : null}
+    </div>
+  );
+}
+
+export default function TemplateList({ ch, account, data, loading, q, setQ, where, setWhere, approval, setApproval, onCreate, onOpen, onRefresh, onDuplicate, onArchive, onReview, canWrite, err, staffOnly, isAdmin, onFromMeta }) {
   const rows = data.items || [];
   const queue = data.queue;
   const noun = { whatsapp: 'WhatsApp', sms: 'SMS', email: 'email', voice: 'voice' }[ch];
@@ -59,6 +82,7 @@ export default function TemplateList({ ch, account, data, loading, q, setQ, wher
       {ch === 'whatsapp' && account && !account.connected ? (
         <div className="mp-gate" style={{ marginBottom: 10 }}>Not connected: Administration &gt; Integrations &gt; WhatsApp Business. You can write and save templates now; sending one to Meta needs the connection.</div>
       ) : null}
+      {ch === 'whatsapp' && !staffOnly ? <FromMetaBar isAdmin={isAdmin} onDone={onFromMeta} /> : null}
       <div className="tpl-toolbar" style={{ flexWrap: 'wrap' }}>
         <input className="search" style={{ flex: 1, minWidth: 180 }} aria-label="Search templates" placeholder="Search by name or category..." value={q} onChange={(e) => setQ(e.target.value)} />
         {ch !== 'voice' && !staffOnly ? <select className="select" aria-label="Where the template is used" value={where} onChange={(e) => setWhere(e.target.value)} style={{ height: 36 }}>{WHERE.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select> : null}

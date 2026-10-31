@@ -503,6 +503,7 @@ const server = app.listen(PORT, () => {
   require('./utils/greenStartSupervisor').start();
   // One set of integrations (2026-10-30): TeamLink's Email / SMS / WhatsApp go to Omni-Channel (Green Start) too, hourly and after every save.
   require('./utils/greenStartIntegrations').start();
+  require('./outreach/tplFromMeta').start(); // WhatsApp template approvals from Meta, TeamLink + Omni-Channel, every 15 minutes
   // TEST SANDBOX: no background workers or timers at all (utils/sandbox.js).
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // AI phone calls through our own SIP line with free voices (calling/voice/sipCall.js): off unless AI_VOICE_GATEWAY=1.

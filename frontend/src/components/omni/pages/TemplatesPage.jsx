@@ -113,7 +113,7 @@ export default function TemplatesPage() {
       : <TemplateForm key={formKey} ch={sel.group} account={account} item={form.item} mode={form.mode} meta={meta} flows={flows} onBack={() => { setForm(null); loadList(); loadTree(); }} onSaved={afterSave} onMode={(m) => setForm((o) => ({ ...o, mode: m }))} onReview={setReview} onFlowsChanged={loadTree} />;
   } else {
     main = (
-      <TemplateList ch={sel.group} account={account ? { ...account, icon: group.icon } : null} data={list} loading={loading} q={q} setQ={setQ} where={where} setWhere={setWhere} approval={approval} setApproval={setApproval} err={err} staffOnly={!!(meta && meta.staffOnly)}
+      <TemplateList ch={sel.group} account={account ? { ...account, icon: group.icon } : null} data={list} loading={loading} q={q} setQ={setQ} where={where} setWhere={setWhere} approval={approval} setApproval={setApproval} err={err} staffOnly={!!(meta && meta.staffOnly)} isAdmin={!!(meta && meta.isAdmin)} onFromMeta={() => { loadTree(); loadList(); }}
         canWrite={canWrite} onCreate={() => setForm({ item: null, mode: 'create' })} onOpen={(t) => setForm({ item: t, mode: 'view' })} onRefresh={refresh} onDuplicate={duplicate} onArchive={archive} onReview={setReview} />
     );
   }

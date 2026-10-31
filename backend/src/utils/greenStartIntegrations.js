@@ -361,6 +361,26 @@ async function connections() {
   return { account: email, workspaces: out };
 }
 
+// WhatsApp templates: every workspace that has a WhatsApp number runs Green Start's own "Sync with Meta" (takes Meta's status, imports the
+// templates TeamLink made in the same WhatsApp account). Called by outreach/tplFromMeta.js (every 15 minutes and "Bring approvals from Meta now").
+async function templatesToOmni() {
+  const { token } = await signIn();
+  const wss = await workspacesOf(token);
+  const done = []; const bad = [];
+  for (const ws of wss) {
+    let list;
+    try { list = await call('GET', '/integrations', { token, ws: ws.id }); } catch (err) { bad.push(`${ws.name}: ${err.message}`); continue; } // eslint-disable-line no-await-in-loop, no-continue
+    if (!(list || []).some((x) => x.provider === 'whatsapp' && x.status && !GONE.includes(x.status) && x.status !== 'NOT_CONNECTED')) continue; // eslint-disable-line no-continue
+    try {
+      const r = await call('POST', '/templates/sync', { token, ws: ws.id, body: {} }); // eslint-disable-line no-await-in-loop
+      done.push(`${ws.name} (${(r && r.updated ? r.updated.length : 0)} updated, ${(r && r.imported ? r.imported.length : 0)} added)`);
+    } catch (err) { bad.push(`${ws.name}: ${err.message}`); }
+  }
+  const words = !done.length && !bad.length ? 'no workspace has a WhatsApp number yet'
+    : `${done.length ? `approvals brought in ${done.join(', ')}` : ''}${bad.length ? `${done.length ? '; ' : ''}not reached: ${bad.join(' | ')}` : ''}`;
+  return { ok: !bad.length, workspaces: done.length, words };
+}
+
 let timer = null;
 function schedule(why = 'saved') {
   if (timer) clearTimeout(timer);
@@ -376,4 +396,4 @@ function start() {
 }
 async function lastResult() { return (await readState()).last || null; }
 
-module.exports = { sync, connections, schedule, start, lastResult, teamlinkChannels, waMapView, saveWaMap, STATE_KEY };
+module.exports = { sync, connections, schedule, start, lastResult, teamlinkChannels, waMapView, saveWaMap, templatesToOmni, STATE_KEY };

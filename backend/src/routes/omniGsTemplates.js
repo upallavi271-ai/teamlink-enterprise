@@ -106,6 +106,12 @@ router.get('/outreach/:id/accounts', needTables, wrap(async (req, res) => send(r
 router.post('/outreach/:id/submit-all', needTables, wrap(async (req, res) => send(res, await Waba.submitAll(req.user, req.params.id))));
 router.post('/outreach/:id/check-all', needTables, wrap(async (req, res) => send(res, await Waba.checkAll(req.user, req.params.id))));
 // the older stores (ATS / HRMS message templates, saved jobs ...): edited through their owner's own rules
+// WhatsApp approvals from Meta for BOTH apps (outreach/tplFromMeta.js): runs by itself every 15 minutes; an Admin can run it now
+router.get('/from-meta', wrap(async (req, res) => res.json({ last: require('../outreach/tplFromMeta').lastRun() }))); // eslint-disable-line global-require
+router.post('/from-meta', needTables, wrap(async (req, res) => {
+  if (!A.isAdmin(req.user)) return res.status(403).json({ error: 'Only an Admin can bring the approvals from Meta now (it also runs by itself every 15 minutes).' });
+  return res.json({ last: await require('../outreach/tplFromMeta').bothWays() }); // eslint-disable-line global-require
+}));
 router.put('/other/:key', needTables, wrap(async (req, res) => {
   const key = String(req.params.key || '');
   if (key.startsWith('outreach:') || key.startsWith('script:')) return res.status(400).json({ error: 'Use the Omni-Channel template route for this one.' });
