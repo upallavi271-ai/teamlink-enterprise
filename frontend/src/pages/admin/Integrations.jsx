@@ -28,7 +28,9 @@ import JobPortalSettings from '../../components/jobpublish/JobPortalSettings.jsx
 // Omni-Channel (2026-10-30): the same Email / SMS / WhatsApp as TeamLink, and what Omni-Channel connected itself.
 import OmniChannelIntegrations from './OmniChannelIntegrations.jsx';
 // Facebook (2026-10-30): the whole connection as numbered steps.
-import FacebookSetup from './FacebookSetup.jsx';
+import FacebookSetup from './FacebookSetup.jsx'; // eslint-disable-line no-unused-vars
+// Social Media (2026-10-30): Facebook / Instagram / Threads tabs, many accounts each.
+import SocialMedia from './SocialMedia.jsx';
 import { useAuth } from '../../context/AuthContext';
 import Combo from '../../components/Combo.jsx';
 
@@ -113,7 +115,7 @@ export default function Integrations() {
   // Health opens first: what is broken and how to fix it (?tab=health|connections|jobportal).
   const [tab, setTab] = useState(() => (
     searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal'
-      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : ['jobportals', 'portal', 'mailboxes'].includes(searchParams.get('tab')) ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : searchParams.get('tab') === 'rcs' ? 'rcs' : searchParams.get('tab') === 'omni' ? 'omni' : (searchParams.get('tab') === 'facebook' || searchParams.get('facebook')) ? 'facebook' : 'health'));
+      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : ['jobportals', 'portal', 'mailboxes'].includes(searchParams.get('tab')) ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : searchParams.get('tab') === 'rcs' ? 'rcs' : searchParams.get('tab') === 'omni' ? 'omni' : (['facebook', 'social'].includes(searchParams.get('tab')) || searchParams.get('facebook')) ? 'facebook' : 'health'));
   const { user: me } = useAuth();
   const mayJobPortals = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || ['SUPER_ADMIN', 'ADMIN'].includes(me.atsRole));
   const [data, setData] = useState(null);
@@ -128,6 +130,8 @@ export default function Integrations() {
   // "Connect with Facebook" (Social Media card): the address to register in the Meta app, and the Pages to pick after Facebook's login
   const [fbUri, setFbUri] = useState(null);
   const [fbPick, setFbPick] = useState(null); // { k, pages }
+  const [fbTick, setFbTick] = useState({}); // Page id -> ticked (many Pages at once)
+  const [socialKey, setSocialKey] = useState(0);
 
   function load() {
     api.get('/admin/integrations').then((res) => setData(res.data)).catch(() => setError('Could not load the integration catalogue.'));
@@ -163,8 +167,11 @@ export default function Integrations() {
   }
   async function pickFacebookPage(page) {
     const k = fbPick.k;
-    setFbPick(null);
-    await run(() => api.post('/admin/integrations/social/facebook/select', { k, pageId: page.id }), (r) => (r.data && r.data.message) || `${page.name} connected.`);
+    const ids = page ? [page.id] : fbPick.pages.filter((p) => fbTick[p.id]).map((p) => p.id);
+    if (!ids.length) { setError('Tick at least one Page.'); return; }
+    setFbPick(null); setFbTick({});
+    await run(() => api.post('/admin/social-accounts/facebook/select', { k, pageIds: ids }), (r) => (r.data && r.data.message) || 'Facebook Pages connected.');
+    setSocialKey((n) => n + 1);
   }
 
   // Send test email — the proof that the SMTP configuration works. On failure
@@ -255,7 +262,7 @@ export default function Integrations() {
     <div>
       <div className="page-head">
         <div><h1>Integrations</h1>
-          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'rcs' ? 'RCS (rich messages) through rcssms.in: test send, templates, the message log and who may send.' : tab === 'omni' ? 'Omni-Channel uses the same Email, SMS and WhatsApp as TeamLink. Connect them once, here.' : tab === 'facebook' ? 'Connect your company Facebook Page, step by step.' : tab === 'jobportals' ? 'Naukri and Shine: the response mailboxes and their recruiters, job sites, email, SMS and WhatsApp of the Job Portal, and AI screening.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
+          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'rcs' ? 'RCS (rich messages) through rcssms.in: test send, templates, the message log and who may send.' : tab === 'omni' ? 'Omni-Channel uses the same Email, SMS and WhatsApp as TeamLink. Connect them once, here.' : tab === 'facebook' ? 'Facebook Pages, Instagram and Threads: connect as many accounts as you have; the default one is used for job posts and Omni-Channel.' : tab === 'jobportals' ? 'Naukri and Shine: the response mailboxes and their recruiters, job sites, email, SMS and WhatsApp of the Job Portal, and AI screening.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
             ? 'Every outside channel the platform talks to — messaging, email, calling, scheduling, job boards, storage, finance and developer access.'
             : 'Synchronisation between the TeamLink Job Portal and this ATS — status, controls and the record of every sync.'}</div></div>
       </div>
@@ -290,7 +297,7 @@ export default function Integrations() {
         )}
         {mayJobPortals && (
           <div className={`tab${tab === 'facebook' ? ' active' : ''}`} onClick={() => setTab('facebook')}>
-            Facebook
+            Social Media
           </div>
         )}
         {mayJobPortals && (
@@ -308,7 +315,7 @@ export default function Integrations() {
       {tab === 'rcs' && mayJobPortals && <RcsAdmin />}
       {tab === 'aicalling' && <AiCallingAdmin />}
       {tab === 'omni' && mayJobPortals && <OmniChannelIntegrations canConfigure={mayJobPortals} />}
-      {tab === 'facebook' && mayJobPortals && <FacebookSetup key={data ? data.connected : 0} />}
+      {tab === 'facebook' && mayJobPortals && <SocialMedia initialSub={searchParams.get('sub') || 'facebook'} reloadKey={`${socialKey}-${data ? data.connected : 0}`} />}
       {tab === 'jobportals' && mayJobPortals && <JobPortalSettings initial={searchParams.get('tab') === 'mailboxes' ? 'mailboxes' : searchParams.get('sub') || 'mailboxes'} legacy={<JobPortalsAdmin />} />}
 
       {tab !== 'health' && tab !== 'messaging' && tab !== 'jobportals' && tab !== 'aicalling' && tab !== 'sms' && tab !== 'rcs' && tab !== 'omni' && tab !== 'facebook' && <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6, margin: '-4px 0 14px' }}>
@@ -504,13 +511,17 @@ export default function Integrations() {
       )}
 
       {fbPick && (
-        <Modal title="Which Facebook Page?" onClose={() => setFbPick(null)} foot={<button className="btn" onClick={() => setFbPick(null)}>Cancel</button>}>
-          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>Facebook signed you in. Pick the Page TeamLink and Omni-Channel should use.</div>
+        <Modal title="Which Facebook Pages?" onClose={() => { setFbPick(null); setFbTick({}); }}
+          foot={<><button className="btn" onClick={() => { setFbPick(null); setFbTick({}); }}>Cancel</button><button className="btn btn-primary" onClick={() => pickFacebookPage(null)} disabled={!fbPick.pages.some((p) => fbTick[p.id])}>Connect {fbPick.pages.filter((p) => fbTick[p.id]).length || ''} selected</button></>}>
+          <div className="cell-muted" style={{ fontSize: 12, marginBottom: 10 }}>Facebook signed you in. Tick every Page to connect (their Instagram accounts come with them). The first one becomes the default if there is none yet.</div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '6px 0', borderBottom: '1px solid #eee', fontWeight: 600 }}>
+            <input type="checkbox" checked={fbPick.pages.length > 0 && fbPick.pages.every((p) => fbTick[p.id])} onChange={(e) => setFbTick(Object.fromEntries(fbPick.pages.map((p) => [p.id, e.target.checked])))} /> All Pages ({fbPick.pages.length})
+          </label>
           {fbPick.pages.map((p) => (
-            <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee' }}>
+            <label key={p.id} style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #eee', cursor: 'pointer' }}>
+              <input type="checkbox" checked={!!fbTick[p.id]} onChange={(e) => setFbTick((t) => ({ ...t, [p.id]: e.target.checked }))} />
               <span><b>{p.name}</b> <span className="small-muted">· {p.id}</span></span>
-              <button className="btn btn-sm btn-primary" onClick={() => pickFacebookPage(p)}>Use this Page</button>
-            </div>
+            </label>
           ))}
         </Modal>
       )}

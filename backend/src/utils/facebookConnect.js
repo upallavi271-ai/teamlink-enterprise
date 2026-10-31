@@ -176,6 +176,19 @@ async function select(user, k, pageId) {
   return { ok: true, result: await save(user, { id: page.id, access_token: token }) };
 }
 
+// many Pages at once (Social Media accounts, utils/socialAccounts.js): the picked Pages with their tokens; the waiting list is used up
+async function takePages(user, k, ids) {
+  const p = await getPending(k, user.id);
+  if (!p) return { error: 'This list of Pages has expired. Press Connect with Facebook again.', status: 410 };
+  const want = new Set((ids || []).map(String));
+  const picked = p.pages.filter((x) => want.has(String(x.id)));
+  if (!picked.length) return { error: 'Tick at least one Page.', status: 400 };
+  const pages = picked.map((x) => ({ id: x.id, name: x.name, token: decryptSecret(x.tokenEnc) }));
+  if (pages.some((x) => !x.token)) return { error: 'The secret key of this server changed; press Connect with Facebook again.', status: 400 };
+  await dropPending(k);
+  return { ok: true, pages };
+}
+
 // ---- 2. Facebook sends the browser back here ----------------------------------------------------------------------------------
 async function exchange(req, code, base = null) {
   const a = await appCreds();
@@ -233,4 +246,4 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-module.exports = { router, start, pending, select, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };
+module.exports = { router, start, pending, select, takePages, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };

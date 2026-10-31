@@ -1,0 +1,184 @@
+// ---------------------------------------------------------------------------
+// SOCIAL MEDIA ACCOUNTS - many per platform (founder 2026-10-30: "separate ga tabs ravali ... okka tab social media anni dantlo facebook ...
+// instagram ... threads ... okatey accounts unadav facebook accounts 5 ala unati anni accounts ina connect chesukodaniki undali").
+//
+// One list (AppSetting 'social.accounts'; tokens encrypted with utils/secrets.js, never sent to a screen):
+//   facebook   a Page, from "Connect with Facebook" (any number of Pages, from any number of Facebook logins)
+//   instagram  the Instagram professional account linked to such a Page (found by itself; posts use that Page's token)
+//   threads    a Threads profile, from a pasted Threads access token
+// One account per platform is the DEFAULT (*): it is the one job posts use and the one Omni-Channel gets (Green Start keeps one
+// Facebook Page / Threads profile per workspace). Making a Facebook Page the default writes it into the Social Media channel exactly
+// as before (facebookConnect.save -> routes/admin.js applySocial -> job-posting login + check + Omni-Channel), so nothing that reads
+// that channel changes. A connection made before this list existed is taken into it as the default.
+// ---------------------------------------------------------------------------
+const crypto = require('crypto');
+const prisma = require('../db');
+const { encryptSecret, decryptSecret } = require('./secrets');
+const { readConfig, writeValues } = require('./integrationStore');
+
+const KEY = 'social.accounts';
+const PLATFORMS = ['facebook', 'instagram', 'threads'];
+const graphBase = () => String(process.env.TL_FACEBOOK_GRAPH_BASE || 'https://graph.facebook.com/v19.0').replace(/\/+$/, '');
+const threadsBase = () => String(process.env.TL_THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0').replace(/\/+$/, '');
+
+async function readAll() {
+  try { const row = await prisma.appSetting.findUnique({ where: { key: KEY } }); const v = row ? JSON.parse(row.value) : []; return Array.isArray(v) ? v : []; } catch { return []; }
+}
+async function writeAll(list) {
+  const value = JSON.stringify(list);
+  await prisma.appSetting.upsert({ where: { key: KEY }, update: { value }, create: { key: KEY, value } });
+}
+const tokenOf = (a) => (a && a.tokenEnc ? decryptSecret(a.tokenEnc) : '');
+const shape = (a) => ({
+  id: a.id, platform: a.platform, externalId: a.externalId, name: a.name, username: a.username || null, parentId: a.parentId || null,
+  parentName: a.parentName || null, isDefault: !!a.isDefault, status: a.status || 'Connected', error: a.error || null,
+  connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null,
+});
+
+async function getJson(url) {
+  let res;
+  try { res = await fetch(url, { signal: AbortSignal.timeout(30000) }); } catch { throw new Error('could not be reached from this server'); }
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok || (j && j.error)) throw new Error(String((j.error && j.error.message) || res.status).replace(/access_token=[^&\s"]+/gi, 'access_token=...').slice(0, 200));
+  return j;
+}
+
+// a connection made before the list existed (the Social Media channel's Page / the Threads token) becomes the default entry
+async function adoptLegacy(list) {
+  let changed = false;
+  try {
+    const c = await readConfig('social');
+    const v = c.values || {};
+    const pageId = String(v['Facebook Page ID'] || '').trim();
+    const pageTok = String(v['Facebook Page access token'] || '').trim();
+    if (c.connected && pageId && pageTok && !list.some((a) => a.platform === 'facebook' && a.externalId === pageId)) {
+      list.push({ id: crypto.randomUUID(), platform: 'facebook', externalId: pageId, name: `Page ${pageId}`, tokenEnc: encryptSecret(pageTok), isDefault: !list.some((a) => a.platform === 'facebook' && a.isDefault), status: 'Connected', connectedAt: new Date().toISOString(), connectedByName: 'Earlier connection' });
+      changed = true;
+    }
+    const thTok = String(v['Threads access token'] || '').trim();
+    const thProfile = String(v['Threads profile'] || '').trim();
+    if (thTok && !list.some((a) => a.platform === 'threads')) {
+      list.push({ id: crypto.randomUUID(), platform: 'threads', externalId: thProfile || 'threads', name: thProfile || 'Threads', username: thProfile.replace(/^@/, '') || null, tokenEnc: encryptSecret(thTok), isDefault: true, status: 'Connected', connectedAt: new Date().toISOString(), connectedByName: 'Earlier connection' });
+      changed = true;
+    }
+  } catch { /* no key / nothing saved: nothing to adopt */ }
+  return changed;
+}
+
+async function list() {
+  const all = await readAll();
+  if (await adoptLegacy(all)) await writeAll(all);
+  const out = {};
+  PLATFORMS.forEach((p) => { out[p] = all.filter((a) => a.platform === p).map(shape).sort((x, y) => (y.isDefault - x.isDefault) || String(x.name).localeCompare(String(y.name))); });
+  return out;
+}
+
+function upsert(all, acc, token, user) {
+  const i = all.findIndex((a) => a.platform === acc.platform && a.externalId === acc.externalId);
+  const base = i >= 0 ? all[i] : { id: crypto.randomUUID(), isDefault: false, connectedAt: new Date().toISOString() };
+  const next = { ...base, ...acc, tokenEnc: token ? encryptSecret(token) : base.tokenEnc, status: 'Connected', error: null, connectedByName: user ? user.name : base.connectedByName, updatedAt: new Date().toISOString() };
+  if (i >= 0) all[i] = next; else all.push(next);
+  return next;
+}
+
+// the Instagram professional account linked to a Page (none = the Page has no linked Instagram account)
+async function instagramOf(pageId, pageToken) {
+  const j = await getJson(`${graphBase()}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: 'instagram_business_account{id,username,name}', access_token: pageToken })}`);
+  return j && j.instagram_business_account && j.instagram_business_account.id ? j.instagram_business_account : null;
+}
+
+// Pages picked after "Connect with Facebook": every one is kept; each Page's linked Instagram account is added by itself.
+async function addFacebookPages(user, pages, { viaLogin = null } = {}) {
+  const all = await readAll();
+  await adoptLegacy(all);
+  const added = [];
+  const igFound = [];
+  const igMissing = [];
+  for (const p of pages) {
+    const fb = upsert(all, { platform: 'facebook', externalId: String(p.id), name: String(p.name || p.id), viaLogin }, p.token, user);
+    added.push(fb);
+    try {
+      const ig = await instagramOf(p.id, p.token); // eslint-disable-line no-await-in-loop
+      if (ig) igFound.push(upsert(all, { platform: 'instagram', externalId: String(ig.id), name: ig.name || ig.username || String(ig.id), username: ig.username || null, parentId: String(p.id), parentName: String(p.name || p.id) }, p.token, user));
+      else igMissing.push(String(p.name || p.id));
+    } catch (err) { igMissing.push(`${p.name || p.id} (${err.message})`); }
+  }
+  // the first Instagram account becomes the default when none is
+  if (!all.some((a) => a.platform === 'instagram' && a.isDefault)) { const first = all.find((a) => a.platform === 'instagram'); if (first) first.isDefault = true; }
+  await writeAll(all);
+  const needDefault = !all.some((a) => a.platform === 'facebook' && a.isDefault);
+  return { added: added.map(shape), instagram: igFound.map(shape), instagramMissing: igMissing, needDefault, firstId: added[0] ? added[0].id : null };
+}
+
+async function refreshInstagram(user) {
+  const all = await readAll();
+  let found = 0;
+  const missing = [];
+  for (const fb of all.filter((a) => a.platform === 'facebook')) {
+    const tok = tokenOf(fb);
+    if (!tok) { missing.push(`${fb.name} (token cannot be read)`); continue; } // eslint-disable-line no-continue
+    try {
+      const ig = await instagramOf(fb.externalId, tok); // eslint-disable-line no-await-in-loop
+      if (ig) { upsert(all, { platform: 'instagram', externalId: String(ig.id), name: ig.name || ig.username || String(ig.id), username: ig.username || null, parentId: fb.externalId, parentName: fb.name }, tok, user); found += 1; } else missing.push(fb.name);
+    } catch (err) { missing.push(`${fb.name} (${err.message})`); }
+  }
+  if (!all.some((a) => a.platform === 'instagram' && a.isDefault)) { const first = all.find((a) => a.platform === 'instagram'); if (first) first.isDefault = true; }
+  await writeAll(all);
+  return { found, missing };
+}
+
+async function addThreads(user, token) {
+  const t = String(token || '').trim();
+  if (t.length < 20 || /\s/.test(t)) return { error: 'That does not look like a Threads access token. Copy the whole token.', status: 400 };
+  let me;
+  try { me = await getJson(`${threadsBase()}/me?${new URLSearchParams({ fields: 'id,username', access_token: t })}`); } catch (err) { return { error: `Threads did not accept the token: ${err.message}`, status: 422 }; }
+  const all = await readAll();
+  await adoptLegacy(all);
+  const acc = upsert(all, { platform: 'threads', externalId: String(me.id), name: me.username ? `@${me.username}` : String(me.id), username: me.username || null }, t, user);
+  const makeDefault = !all.some((a) => a.platform === 'threads' && a.isDefault && a.id !== acc.id);
+  await writeAll(all);
+  return { ok: true, account: shape(acc), makeDefault };
+}
+
+// Threads default -> the Social Media channel's Threads fields (what utils/greenStartIntegrations.js gives Omni-Channel)
+async function writeThreadsChannel(token, profile) {
+  const w = await writeValues('social', { 'Threads access token': token || '-', 'Threads profile': profile || '' });
+  await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values) } });
+}
+
+// make one account the default of its platform. saveFacebook(user, { id, access_token }) = facebookConnect.save (the old one-Page path)
+async function setDefault(user, id, { saveFacebook } = {}) {
+  const all = await readAll();
+  const acc = all.find((a) => a.id === id);
+  if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
+  const tok = tokenOf(acc);
+  if (!tok) return { error: 'The token of this account cannot be read on this server. Connect it again.', status: 400 };
+  let result = null;
+  if (acc.platform === 'facebook' && saveFacebook) result = await saveFacebook(user, { id: acc.externalId, access_token: tok });
+  if (acc.platform === 'threads') await writeThreadsChannel(tok, acc.name);
+  all.forEach((a) => { if (a.platform === acc.platform) a.isDefault = a.id === acc.id; });
+  if (result && result.ok === false) { acc.status = 'Problem'; acc.error = String(result.words || '').slice(0, 300); } else { acc.status = 'Connected'; acc.error = null; }
+  await writeAll(all);
+  return { ok: !result || result.ok !== false, account: shape(acc), result };
+}
+
+async function remove(user, id) {
+  const all = await readAll();
+  const acc = all.find((a) => a.id === id);
+  if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
+  // a Page takes its Instagram account with it (the Instagram account was reached through that Page)
+  const drop = new Set([acc.id, ...all.filter((a) => acc.platform === 'facebook' && a.platform === 'instagram' && a.parentId === acc.externalId).map((a) => a.id)]);
+  const rest = all.filter((a) => !drop.has(a.id));
+  let clearedDefault = false;
+  for (const p of PLATFORMS) {
+    if (all.some((a) => drop.has(a.id) && a.platform === p && a.isDefault)) {
+      clearedDefault = clearedDefault || p === acc.platform;
+      const next = rest.find((a) => a.platform === p);
+      if (next) next.isDefault = true;
+    }
+  }
+  await writeAll(rest);
+  return { ok: true, removed: [...drop].length, platform: acc.platform, wasDefault: !!acc.isDefault, nextDefault: (rest.find((a) => a.platform === acc.platform && a.isDefault) || {}).id || null };
+}
+
+module.exports = { list, addFacebookPages, refreshInstagram, addThreads, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };

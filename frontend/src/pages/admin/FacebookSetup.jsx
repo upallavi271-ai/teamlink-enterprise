@@ -36,7 +36,7 @@ function CopyBox({ text }) {
   );
 }
 
-export default function FacebookSetup() {
+export default function FacebookSetup({ embedded = false }) {
   const [social, setSocial] = useState(null);
   const [uri, setUri] = useState(null);
   const [omni, setOmni] = useState(null);
@@ -119,7 +119,8 @@ export default function FacebookSetup() {
   const lastTh = omni && omni.last && omni.last.workspaces && omni.last.workspaces[0] && omni.last.workspaces[0].channels ? omni.last.workspaces[0].channels.threads : null;
 
   return (
-    <div style={{ maxWidth: 860 }}>
+    <div style={{ maxWidth: embedded ? 'none' : 860 }}>
+      {!embedded && (
       <div className="card" style={{ padding: 16, marginBottom: 14, background: connected ? '#eef9f2' : '#f5f9ff' }}>
         <b style={{ fontSize: 15 }}>{connected ? `Facebook is connected (Page ${pageId}).` : 'Facebook is not connected yet.'}</b>
         <div className="small-muted" style={{ marginTop: 4 }}>
@@ -127,6 +128,7 @@ export default function FacebookSetup() {
           Do the steps in order; each turns green when it is done. It takes about 10 minutes the first time.
         </div>
       </div>
+      )}
       {err && <div className="error-text" style={{ marginBottom: 10 }}>{err}</div>}
 
       <Step n={1} done={hasApp} title="Make a Meta app (one time)">
@@ -203,6 +205,8 @@ export default function FacebookSetup() {
         </details>
       </Step>
 
+      {/* in Integrations > Social Media (embedded) Instagram, Omni-Channel and Threads have their own tabs */}
+      {!embedded && (<>
       {/* INSTAGRAM (2026-10-30): no extra step in TeamLink - the Instagram account linked to the Page comes with the Page */}
       <div className="card" style={{ padding: 14, marginBottom: 12, background: '#fdf4fb', border: '1px solid #f0d4ea' }}>
         <b>Instagram</b> comes with the Page: link your Instagram <b>professional</b> account to the Facebook Page once
@@ -240,6 +244,7 @@ export default function FacebookSetup() {
         {thMsg && <div className="small-muted" role="status" style={{ marginTop: 6 }}>{thMsg}</div>}
         {lastTh && lastTh.state !== 'same' && lastTh.state !== 'sent' && thProfile && <div className="small-muted" style={{ fontSize: 12 }}>Omni-Channel: {lastTh.words}</div>}
       </Step>
+      </>)}
 
       <div className="small-muted" style={{ fontSize: 12.5, lineHeight: 1.6 }}>
         Posting jobs to the Page stays <b>OFF</b> until an Admin switches it on (Postings).

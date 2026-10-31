@@ -1733,6 +1733,62 @@ router.get('/integrations/social/facebook/pending', requirePerm(null, 'administr
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   return res.json({ pages: out.pages });
 });
+// ---- SOCIAL MEDIA ACCOUNTS: many Facebook Pages / Instagram accounts / Threads profiles (utils/socialAccounts.js, founder 2026-10-30) ----
+const SA = require('../utils/socialAccounts');
+const saveFacebookDefault = (user, page) => FBC.save(user, page);
+router.get('/social-accounts', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  res.json({ accounts: await SA.list() });
+});
+// the Pages ticked after "Connect with Facebook" (one or many); the first ever becomes the default (job posts + Omni-Channel)
+router.post('/social-accounts/facebook/select', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const ids = Array.isArray(req.body && req.body.pageIds) ? req.body.pageIds : [req.body && req.body.pageId].filter(Boolean);
+  const t = await FBC.takePages(req.user, req.body && req.body.k, ids);
+  if (t.error) return res.status(t.status || 400).json({ error: t.error });
+  const r = await SA.addFacebookPages(req.user, t.pages);
+  let def = null;
+  if (r.needDefault && r.firstId) def = await SA.setDefault(req.user, r.firstId, { saveFacebook: saveFacebookDefault });
+  GSI.schedule('facebook pages connected');
+  await logAudit({ userId: req.user.id, action: 'Facebook Pages connected', entity: 'Integration', entityId: 'social', toValue: r.added.map((a) => a.name).join(', ').slice(0, 480) });
+  const ig = r.instagram.length ? ` Instagram found: ${r.instagram.map((a) => a.username ? `@${a.username}` : a.name).join(', ')}.` : '';
+  const igNo = r.instagramMissing.length ? ` No Instagram account linked to: ${r.instagramMissing.join(', ')}.` : '';
+  const bad = def && def.ok === false ? ` But Facebook did not accept the default Page: ${def.result && def.result.words}` : '';
+  return res.status(bad ? 422 : 200).json({ ok: !bad, accounts: await SA.list(), message: `${r.added.length} Facebook Page${r.added.length === 1 ? '' : 's'} connected: ${r.added.map((a) => a.name).join(', ')}.${ig}${igNo}${bad}` });
+});
+router.post('/social-accounts/instagram/refresh', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await SA.refreshInstagram(req.user);
+  res.json({ accounts: await SA.list(), message: `${r.found} Instagram account${r.found === 1 ? '' : 's'} found.${r.missing.length ? ` No Instagram linked to: ${r.missing.join(', ')}.` : ''}` });
+});
+router.post('/social-accounts/threads', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await SA.addThreads(req.user, req.body && req.body.token);
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  if (r.makeDefault) await SA.setDefault(req.user, r.account.id, {});
+  GSI.schedule('threads connected');
+  await logAudit({ userId: req.user.id, action: 'Threads connected', entity: 'Integration', entityId: 'social', toValue: r.account.name });
+  res.json({ accounts: await SA.list(), message: `Threads ${r.account.name} connected.${r.makeDefault ? ' It is the default: Omni-Channel gets it in a few seconds.' : ''}` });
+});
+router.post('/social-accounts/:id/default', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await SA.setDefault(req.user, req.params.id, { saveFacebook: saveFacebookDefault });
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  GSI.schedule('default social account changed');
+  await logAudit({ userId: req.user.id, action: 'Default social account changed', entity: 'Integration', entityId: 'social', toValue: `${r.account.platform}: ${r.account.name}` });
+  if (!r.ok) return res.status(422).json({ error: `${r.account.name} is the default now, but Facebook did not accept it: ${r.result && r.result.words}`, accounts: await SA.list() });
+  res.json({ accounts: await SA.list(), message: `${r.account.name} is the default ${r.account.platform} account now (job posts and Omni-Channel use it).` });
+});
+router.post('/social-accounts/:id/remove', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await SA.remove(req.user, req.params.id);
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  // the default went away: the next account takes its place, or the channel is emptied (job posts / Omni-Channel stop using it)
+  if (r.wasDefault && r.nextDefault) await SA.setDefault(req.user, r.nextDefault, { saveFacebook: saveFacebookDefault });
+  else if (r.wasDefault && r.platform === 'facebook') {
+    const w = await writeValues('social', { 'Facebook Page ID': '', 'Facebook Page access token': '-' });
+    await prisma.integration.update({ where: { id: 'social' }, data: { values: JSON.stringify(w.values), state: 'Not Connected', connected: false } });
+    await require('../jobPublish/credentials').remove('facebook', req.user).catch(() => {}); // eslint-disable-line global-require
+  } else if (r.wasDefault && r.platform === 'threads') await SA.writeThreadsChannel('', '');
+  GSI.schedule('social account removed');
+  await logAudit({ userId: req.user.id, action: 'Social account removed', entity: 'Integration', entityId: 'social', toValue: `${r.platform} (${r.removed})` });
+  res.json({ accounts: await SA.list(), message: r.removed > 1 ? 'Removed, with the Instagram account that came with that Page.' : 'Removed.' });
+});
+
 router.post('/integrations/social/facebook/select', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const out = await FBC.select(req.user, req.body && req.body.k, req.body && req.body.pageId);
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
