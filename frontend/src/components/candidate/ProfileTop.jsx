@@ -22,7 +22,10 @@ import './ProfileTop.css';
 // checks every rule again (routes/candidatesBoard.js).
 // ---------------------------------------------------------------------------
 const code = (c) => c.code || `CAN-${String(c.id || '').slice(-8).toUpperCase()}`;
-const ARCHIVE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL'];
+// Archive for the Recruiter too, Delete (wrong entry) for the TL too (founder 2026-10-31); the server keeps each to their own area
+const ARCHIVE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL', 'RECRUITER'];
+const DELETE_LEADS = ['ADMIN', 'STL', 'TL'];
+const hasRole = (user, list) => !!user && (list.includes(user.role) || list.includes(productRole(user, 'ats')));
 export const mayArchive = (user) => !!user && (ARCHIVE_ROLES.includes(user.role) || ARCHIVE_ROLES.includes(productRole(user, 'ats')));
 export const isSuperAdmin = (user) => !!user && (user.role === 'SUPER_ADMIN' || productRole(user, 'ats') === 'SUPER_ADMIN');
 
@@ -140,7 +143,7 @@ export function ProfileTools({
   const [msg, setMsg] = useState(null);
   const archived = c.profileStatus === 'Archived';
   const canArchive = mayArchive(user) && c.profileStatus !== 'Do Not Use';
-  const canDelete = isSuperAdmin(user);
+  const canDelete = isSuperAdmin(user) || hasRole(user, DELETE_LEADS);
   if (!canArchive && !canDelete) return null;
 
   async function doArchive(on) {
