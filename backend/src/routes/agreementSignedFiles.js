@@ -217,6 +217,15 @@ async function checkDigiLockerCopy(c, type, buf) {
       ? `This copy is eSigned by ${esign.signer}, the same person who signed for TeamLink. The client's authorised person must eSign it with their own Aadhaar.`
       : `This copy is eSigned by ${esign.signer}, the same person who signed the client's copy. TeamLink's director must eSign it with their own Aadhaar.` };
   }
+  // the name asked before the download vs the Aadhaar name in the signature: a note, not a refusal (Aadhaar names are often longer)
+  try {
+    const want = await prisma.appSetting.findUnique({ where: { key: `agrsigner.${c.id}.${type === 'dlclient' ? 'client' : 'teamlink'}` } });
+    const typed = want ? JSON.parse(want.value).name : '';
+    const toks = (n) => String(n || '').toLowerCase().replace(/[^a-z ]+/g, ' ').split(/\s+/).filter((t) => t.length >= 2);
+    const a = toks(typed); const b = toks(esign.signer);
+    const covers = (xs, ys) => xs.length && xs.every((t) => ys.some((u) => u.startsWith(t) || t.startsWith(u)));
+    if (a.length && b.length && !covers(a, b) && !covers(b, a)) esign.nameNote = `The copy was made for ${typed}, but it is eSigned by ${esign.signer}.`;
+  } catch { /* the note is a help only */ }
   return { esign };
 }
 
@@ -390,7 +399,7 @@ function mountView(router, { requireAuth, loadForView }) {
       }
       const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user, base: apiBase(req) });
       const said = status === 'ACTIVE' ? ` The agreement is now Active.${type.startsWith('dl') ? ' A thank-you email with both signed copies and the summary goes to the client.' : ''}` : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
-      const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.` : '';
+      const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.${esign.nameNote ? ` Note: ${esign.nameNote}` : ''}` : '';
       return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
     } catch (err) { return next(err); }
   });
