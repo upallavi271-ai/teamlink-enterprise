@@ -14,6 +14,7 @@ import TaxEditModal from './invoices/TaxEditModal.jsx';
 import StatementView from './bank/StatementView.jsx';
 import InvoiceStatusModal from './invoices/InvoiceStatusModal.jsx';
 import { placeOf, keepNote, takeNote, scrollBack } from '../utils/keptPlace.js';
+import { INVOICE_LOGO } from './invoices/invoiceLogo.js';
 import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
 } from './invoices/invTax';
@@ -223,7 +224,7 @@ export default function InvoiceDetail() {
 
   const printDoc = (mode) => {
     if (!doc) return;
-    const { style, inner } = invoiceDocumentHtml(doc, mode);
+    const { style, inner } = invoiceDocumentHtml(doc, mode, { logo: INVOICE_LOGO });
     const w = window.open('', '_blank');
     if (!w) { setError('Allow pop-ups to print'); return; }
     w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(doc.invoiceNumber)} — ${esc(doc.client.name)}</title><style>${style}</style></head><body>${inner}</body></html>`);
@@ -848,7 +849,7 @@ export default function InvoiceDetail() {
                 <iframe
                   title="Invoice preview"
                   style={{ width: '100%', height: 640, border: 0, background: '#fff' }}
-                  srcDoc={(() => { const { style, inner } = invoiceDocumentHtml(doc, preview); return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${inner}</body></html>`; })()}
+                  srcDoc={(() => { const { style, inner } = invoiceDocumentHtml(doc, preview, { logo: INVOICE_LOGO }); return `<!doctype html><html><head><meta charset="utf-8"><style>${style}</style></head><body>${inner}</body></html>`; })()}
                 />
               </div>
             </div>

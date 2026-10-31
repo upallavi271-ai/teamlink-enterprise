@@ -16,7 +16,8 @@ const esc = (s) => String(s == null ? '' : s)
 // register. The client copy is what gets emailed; the internal copy adds the
 // recruiter and the department and is never sent out.
 // ---------------------------------------------------------------------------
-export function invoiceDocumentHtml(d, mode) {
+// opts.logo: the logo to print when the company has not uploaded its own (the screens pass invoiceLogo.js).
+export function invoiceDocumentHtml(d, mode, opts = {}) {
   const forClient = mode !== 'internal';
   const showRec = !forClient && d.lines.some((l) => l.recruiter);
   const gst = d.totals.gst;
@@ -35,8 +36,8 @@ export function invoiceDocumentHtml(d, mode) {
   .pageno{max-width:190mm;margin:2mm auto 0;text-align:right;font-size:9px;color:#333}
   table{border-collapse:collapse;width:100%}
   .hd{display:flex;border-bottom:1px solid #000}
-  .hd .lg{width:140px;padding:10px;display:flex;align-items:flex-start}
-  .hd .lg img{max-width:130px;max-height:52px;object-fit:contain}
+  .hd .lg{width:190px;padding:10px;display:flex;align-items:center}
+  .hd .lg img{max-width:180px;max-height:56px;object-fit:contain}
   .hd .co{flex:1;padding:10px 8px}
   .hd .co h1{margin:0 0 4px;font-size:14px;font-weight:bold;text-transform:uppercase;max-width:30ch;line-height:1.25}
   .hd .co .l{font-size:10px;line-height:1.5}
@@ -106,7 +107,7 @@ export function invoiceDocumentHtml(d, mode) {
 
   const inner = `<div class="inv">
     <div class="hd">
-      <div class="lg">${co.logoUrl ? `<img src="${esc(co.logoUrl)}" alt="">` : ''}</div>
+      <div class="lg">${co.logoUrl || opts.logo ? `<img src="${esc(co.logoUrl || opts.logo)}" alt="TeamLink">` : ''}</div>
       <div class="co">
         <h1>${esc(co.legalName)}</h1>
         <div class="l">${co.addressLines.map(esc).join('<br>')}${co.gstin ? `<br>GSTIN ${esc(co.gstin)}` : ''}</div>

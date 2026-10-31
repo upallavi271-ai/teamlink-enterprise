@@ -36,6 +36,7 @@ import {
 } from './invoices/invFormat';
 import { saveBlob } from './office/officeUtil';
 import { invoiceDocumentHtml, esc } from './invoices/invoiceDoc';
+import { INVOICE_LOGO } from './invoices/invoiceLogo.js';
 import {
   ALL, changeFilter, reconcile, departmentOptions, sectionOptions, employeeOptions, roleOptions, describeEmployee,
   waitingUnder, sectionByKey, personByKey, deptLabelOf, recruiterOption,
@@ -83,7 +84,7 @@ export { invoiceDocumentHtml };
 // Open the printable copy in its own window and send it to the printer.
 export async function openInvoicePrint(invoiceId, mode) {
   const { data } = await api.get(`/invoices/${invoiceId}/document`);
-  const { style, inner } = invoiceDocumentHtml(data, mode);
+  const { style, inner } = invoiceDocumentHtml(data, mode, { logo: INVOICE_LOGO });
   const w = window.open('', '_blank');
   if (!w) throw new Error('Allow pop-ups to print');
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(data.invoiceNumber)} — ${esc(data.client.name)}</title><style>${style}</style></head><body>${inner}</body></html>`);

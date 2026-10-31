@@ -171,6 +171,8 @@
 .inv-sh-co { display: flex; gap: 14px; }
 .inv-sh-logo { width: 48px; height: 48px; border-radius: 10px; background: var(--navy); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 16px; flex: none; box-shadow: inset 0 -5px 0 var(--accent); overflow: hidden; }
 .inv-sh-logo img { width: 100%; height: 100%; object-fit: contain; background: #fff; }
+/* the TeamLink logo (wide artwork) when the company has not uploaded its own */
+.inv-sh-logo.wide { width: 170px; background: #fff; box-shadow: none; border-radius: 0; }
 .inv-sh-coname { font-family: 'Newsreader', Georgia, serif; font-size: 18px; font-weight: 600; color: var(--navy); margin-bottom: 2px; }
 .inv-sh-co div { color: #5a6477; }
 .inv-sh-co b { color: #18203a; }

@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import api from '../../api';
 import { money2, fmtD } from './invFormat';
+import { INVOICE_LOGO } from './invoiceLogo.js';
 
 const n2 = (v) => money2(v).replace('₹', '');
 
@@ -49,7 +50,7 @@ export default function GstInvoiceModal({ invoiceId, onClose }) {
     <div className="inv-sheet">
       <div className="inv-sh-top">
         <div className="inv-sh-co">
-          <div className="inv-sh-logo">{co.logoUrl ? <img src={co.logoUrl} alt="" /> : 'TL'}</div>
+          <div className={`inv-sh-logo${co.logoUrl ? '' : ' wide'}`}><img src={co.logoUrl || INVOICE_LOGO} alt="TeamLink" /></div>
           <div>
             <div className="inv-sh-coname">{co.legalName}</div>
             {co.addressLines.map((a) => <div key={a}>{a}</div>)}
