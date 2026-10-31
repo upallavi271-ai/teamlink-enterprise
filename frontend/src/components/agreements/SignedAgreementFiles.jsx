@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
@@ -96,10 +95,13 @@ async function loadAgreement(clientId, esignHint) {
     api.get(`/agreement/${clientId}/executed`).then((r) => r.data).catch(() => null),
   ]);
   const items = [];
-  if (ex && ex.pdfAvailable) {
+  // signing is DigiLocker only (2026-10-31): with a DigiLocker copy on file, the two signed copies below ARE the signed agreement,
+  // so the old "signed in TeamLink" entry (the online-link flow) is not listed
+  const hasDl = ((sf && sf.files) || []).some((f) => DL_KINDS.includes(f.kind));
+  if (ex && ex.pdfAvailable && !hasDl) {
     const no = String(ex.agreementId || 'agreement').replace(/[^w.-]/g, '');
     items.push({
-      key: 'esign', label: 'Signed agreement (e-signed in TeamLink)', meta: [ex.agreementId, ex.signedBy ? `signed by ${ex.signedBy}` : null, ex.signedAt ? `on ${niceDate(String(ex.signedAt).slice(0, 10))}` : null].filter(Boolean).join(' · '),
+      key: 'esign', label: 'Signed agreement', meta: [ex.agreementId, ex.signedBy ? `signed by ${ex.signedBy}` : null, ex.signedAt ? `on ${niceDate(String(ex.signedAt).slice(0, 10))}` : null].filter(Boolean).join(' · '),
       tag: ex.status === 'ACTIVE' ? 'Active' : '', path: `/agreement/${clientId}/pdf`, mime: 'application/pdf', canShow: true, fileName: `${no}-signed.pdf`,
     });
   }
@@ -123,7 +125,6 @@ async function loadAgreement(clientId, esignHint) {
 
 // The window (and the "one file opens at once" rule). Mount it to use it; onClose when it is done.
 export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
-  const navigate = useNavigate();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
@@ -309,11 +310,7 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
             {note && <div className="small-muted" style={{ marginTop: 4, color: 'var(--green, #15803d)' }}>{note}</div>}
           </div>
         )}
-        {d.esign && (
-          <div className="vag-esign">
-            <button type="button" className="btn" onClick={() => { onClose(); navigate(`/agreements/${clientId}`); }}>Open e-sign agreement</button>
-          </div>
-        )}
+        {/* "Open e-sign agreement" (the online signing link page) is gone: signing is Aadhaar eSign in DigiLocker only (founder 2026-10-31) */}
         {err && <div className="error-text">{err}</div>}
       </div>
     </Modal>,

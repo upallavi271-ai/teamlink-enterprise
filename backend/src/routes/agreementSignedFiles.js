@@ -252,6 +252,26 @@ function mountView(router, { requireAuth, loadForView }) {
         if (!r.signed) return res.status(400).json({ error: 'This PDF has no digital signature. A merged, printed or scanned copy only shows the signature box. Upload the file you downloaded from DigiLocker right after eSign.' });
         if (!r.valid) return res.status(400).json({ error: `The signature in this PDF is not valid${r.last && !r.last.unchanged ? ': the file was changed after it was signed' : ''}. Upload the file exactly as DigiLocker gave it (do not edit, merge, compress or print it).` });
         esign = { valid: true, signer: r.last.signer, issuer: r.last.issuer, signedAt: r.last.signedAt, count: r.count };
+        // IS IT THIS CLIENT'S AGREEMENT? (founder 2026-10-31: "agreement proper ithey ney ... green tick vasthadhi"). A valid signature
+        // only says the file is untouched since eSign; the words must also carry this agreement's number. Checked when the agreement
+        // was made in TeamLink (a client's own agreement has no such number) and the PDF's words can be read (a scan cannot).
+        const c = loaded.client;
+        if (c.agreementId && (c.agreementSource || 'Generated') === 'Generated') {
+          const words = require('../utils/pdfSignature').textOf(file.data).replace(/\s+/g, ''); // eslint-disable-line global-require
+          const idRe = new RegExp(`${String(c.agreementId).replace(/[^A-Za-z0-9]/g, '')}(?![0-9])`);
+          if (words.length > 300 && !idRe.test(words)) {
+            return res.status(400).json({ error: `This signed PDF is not agreement ${c.agreementId} of ${c.name}: its pages do not carry that agreement number. Download this client's agreement with "Download agreement PDF to eSign", eSign that file and upload it.` });
+          }
+          esign.matched = idRe.test(words) ? c.agreementId : null; // null: the words could not be read
+        }
+        // ONE PERSON CANNOT SIGN FOR BOTH SIDES: the client copy must be eSigned by the client's own person, not by TeamLink's signer
+        const other = (await filesOf(c.id)).find((f) => f.kind === (type === 'dlclient' ? UPLOAD_TYPES.dlteamlink : UPLOAD_TYPES.dlclient) && f.esign && f.esign.valid);
+        const norm = (n) => String(n || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+        if (other && norm(other.esign.signer) && norm(other.esign.signer) === norm(esign.signer)) {
+          return res.status(400).json({ error: type === 'dlclient'
+            ? `This copy is eSigned by ${esign.signer}, the same person who signed for TeamLink. The client's authorised person must eSign it with their own Aadhaar.`
+            : `This copy is eSigned by ${esign.signer}, the same person who signed the client's copy. TeamLink's director must eSign it with their own Aadhaar.` });
+        }
       }
       let stored;
       try { stored = attachments.store({ ...file, contentType: mime }, { maxBytes: MAX_UPLOAD, allowWord: true }); } catch (err) {
