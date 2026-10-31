@@ -112,7 +112,20 @@ async function teamlinkChannels() {
     if (c.missingKey) out.facebook = { none: 'The Facebook token cannot be read on this server (secret key missing).' };
     else if (!c.row || !token) out.facebook = { none: 'The Facebook Page is not connected in TeamLink (Administration > Integrations > Social Media).' };
     else if (!c.connected) out.facebook = { none: 'The Facebook Page is saved in TeamLink but Facebook has not accepted it yet, so it is not given to Omni-Channel.' };
-    else out.facebook = { body: { accessToken: token } };
+    else {
+      // EVERY connected Page (founder 2026-10-31: "rendu integrate chesi unna facebook accounts kanni okatey kanipistundhi"): Green Start keeps a
+      // social account per Page (keyed on the Page id) and the Instagram account linked to each Page, so each Page token is handed over
+      // one by one; the default Page goes LAST, so it stays Green Start's selected Page. Without the list, the one default Page as before.
+      let tokens = [];
+      try {
+        const SA = require('./socialAccounts'); // eslint-disable-line global-require
+        const fb = (await SA.readAll()).filter((a) => a.platform === 'facebook').sort((x, y) => (x.isDefault - y.isDefault));
+        tokens = fb.map((a) => SA.tokenOf(a)).filter(Boolean);
+      } catch { tokens = []; }
+      if (!tokens.includes(token)) tokens.push(token);
+      else tokens = [...tokens.filter((t) => t !== token), token];
+      out.facebook = { body: { accessToken: token, pageTokens: tokens } };
+    }
   } catch (err) { out.facebook = { none: `Facebook could not be read: ${err.message}` }; }
   try {
     const c = await require('./integrationStore').readConfig('social'); // eslint-disable-line global-require
@@ -152,9 +165,18 @@ async function pushOne(token, ws, channel, want, prev, force) {
           return { state: 'skipped', words: 'Omni-Channel already has its own Facebook connection, so TeamLink left it as it is. Disconnect it in Omni-Channel first if the TeamLink Page should be used there.' };
         }
       }
-      const out = await call('POST', '/social/facebook/connect-token', { token, ws: ws.id, body: { accessToken: want.body.accessToken } });
-      if (out && out.kind === 'user') return { state: 'failed', words: 'Facebook answered with a list of Pages: that is a person token, not a Page access token. Use the Page access token.', fp: prev };
-      return { state: 'sent', words: 'Same Facebook Page as TeamLink now', fp };
+      const pageTokens = Array.isArray(want.body.pageTokens) && want.body.pageTokens.length ? want.body.pageTokens : [want.body.accessToken];
+      let sent = 0;
+      const problems = [];
+      for (const pt of pageTokens) {
+        try {
+          const out = await call('POST', '/social/facebook/connect-token', { token, ws: ws.id, body: { accessToken: pt } }); // eslint-disable-line no-await-in-loop
+          if (out && out.kind === 'user') problems.push('a person token (not a Page token) was refused');
+          else sent += 1;
+        } catch (err) { problems.push(err.message); }
+      }
+      if (!sent) return { state: 'failed', words: problems.join(' | ').slice(0, 300) || 'Omni-Channel did not take the Pages.', fp: prev };
+      return { state: 'sent', words: `${sent} Facebook Page${sent === 1 ? '' : 's'} given to Omni-Channel (with the Instagram accounts linked to them)${problems.length ? `; not taken: ${problems.join(' | ').slice(0, 200)}` : ''}`, fp: problems.length ? prev : fp };
     }
     if (channel === 'threads') {
       // the same rule as Facebook: a Threads connection made inside Omni-Channel itself is never replaced
