@@ -66,6 +66,10 @@ async function filesOf(clientId) {
   if (!docs.length) return [];
   const settings = await prisma.appSetting.findMany({ where: { key: { in: docs.map((d) => `${PREFIX}${d.id}`) } } });
   const byKey = new Map(settings.map((s) => [s.key, metaOf(s)]));
+  // the agreement's current text: a DigiLocker copy eSigned on an earlier text (its esign.textHash differs) is an EARLIER VERSION -
+  // kept and listed, but it no longer counts as signed (valid: false, stale: true)
+  const cur = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementDocument: true } }).catch(() => null);
+  const curHash = cur && cur.agreementDocument ? require('../utils/agreementPdf').textHash(cur) : null; // eslint-disable-line global-require
   const out = [];
   docs.forEach((d) => {
     if (!attachments.resolveStored(d.fileStored)) return; // the file is gone from disk: do not offer it
@@ -83,7 +87,10 @@ async function filesOf(clientId) {
       version: m.version || null,
       kind: m.kind || 'Signed agreement',
       // a DigiLocker copy: what the signature check found when it was uploaded
-      esign: m.esign && typeof m.esign === 'object' ? { valid: !!m.esign.valid, signer: m.esign.signer || null, issuer: m.esign.issuer || null, signedAt: m.esign.signedAt || null } : null,
+      esign: m.esign && typeof m.esign === 'object' ? (() => {
+        const stale = !!(m.esign.textHash && curHash && m.esign.textHash !== curHash);
+        return { valid: !!m.esign.valid && !stale, stale, signer: m.esign.signer || null, issuer: m.esign.issuer || null, signedAt: m.esign.signedAt || null };
+      })() : null,
       canShow: INLINE_OK.has(mime),
       addedAt: d.createdAt,
     });
@@ -175,6 +182,70 @@ async function statusFromPapers(clientId, user) {
 function mayAdd(user, access) {
   if (access && access.edit) return true;
   return require('../utils/clientLifecycle').isBdeTeam(user); // eslint-disable-line global-require
+}
+
+// THE CHECKS BEHIND THE GREEN TICK for one DigiLocker copy - the staff upload and the client's own upload on their link use the
+// same ones. Returns { error } (plain words) or { esign: { valid, signer, issuer, signedAt, count, matched } }.
+async function checkDigiLockerCopy(c, type, buf) {
+  const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
+  if (!r.signed) return { error: 'This PDF has no digital signature. A merged, printed or scanned copy only shows the signature box. Upload the file you downloaded from DigiLocker right after eSign.' };
+  if (!r.valid) return { error: `The signature in this PDF is not valid${r.last && !r.last.unchanged ? ': the file was changed after it was signed' : ''}. Upload the file exactly as DigiLocker gave it (do not edit, merge, compress or print it).` };
+  const esign = { valid: true, signer: r.last.signer, issuer: r.last.issuer, signedAt: r.last.signedAt, count: r.count };
+  // IS IT THIS CLIENT'S AGREEMENT? (founder 2026-10-31: "agreement proper ithey ney ... green tick vasthadhi"). A valid signature
+  // only says the file is untouched since eSign; the words must also carry this agreement's number. Checked when the agreement
+  // was made in TeamLink (a client's own agreement has no such number) and the PDF's words can be read (a scan cannot).
+  if (c.agreementId && (c.agreementSource || 'Generated') === 'Generated') {
+    const words = require('../utils/pdfSignature').textOf(buf).replace(/\s+/g, ''); // eslint-disable-line global-require
+    const idRe = new RegExp(`${String(c.agreementId).replace(/[^A-Za-z0-9]/g, '')}(?![0-9])`);
+    if (words.length > 300 && !idRe.test(words)) {
+      return { error: `This signed PDF is not agreement ${c.agreementId} of ${c.name}: its pages do not carry that agreement number. Download this client's agreement with "Download agreement PDF to eSign", eSign that file and upload it.` };
+    }
+    esign.matched = idRe.test(words) ? c.agreementId : null; // null: the words could not be read
+    // ...and of the agreement's CURRENT text: every page carries "Text fingerprint (SHA-256): <first 16>". The BDE can change the
+    // text after a client asks (founder 2026-10-31); a copy eSigned on the earlier text is then refused.
+    const hash = require('../utils/agreementPdf').textHash(c); // eslint-disable-line global-require
+    if (esign.matched && /Textfingerprint/i.test(words) && !words.includes(hash.slice(0, 16))) {
+      return { error: `This signed PDF is an earlier version of agreement ${c.agreementId}: the agreement text was changed after it was made. Download the agreement again ("Download agreement PDF to eSign"), eSign the new version and upload it.` };
+    }
+    if (esign.matched) esign.textHash = hash;
+  }
+  // ONE PERSON CANNOT SIGN FOR BOTH SIDES: the client copy must be eSigned by the client's own person, not by TeamLink's signer
+  const other = (await filesOf(c.id)).find((f) => f.kind === (type === 'dlclient' ? UPLOAD_TYPES.dlteamlink : UPLOAD_TYPES.dlclient) && f.esign && f.esign.valid);
+  const norm = (n) => String(n || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
+  if (other && norm(other.esign.signer) && norm(other.esign.signer) === norm(esign.signer)) {
+    return { error: type === 'dlclient'
+      ? `This copy is eSigned by ${esign.signer}, the same person who signed for TeamLink. The client's authorised person must eSign it with their own Aadhaar.`
+      : `This copy is eSigned by ${esign.signer}, the same person who signed the client's copy. TeamLink's director must eSign it with their own Aadhaar.` };
+  }
+  return { esign };
+}
+
+// Keeps one uploaded paper (or DigiLocker copy) and moves the agreement on (statusFromPapers). user: the staff login, or null with
+// `by` for the client on their own link. Returns the new agreement status (or null when it did not change).
+async function saveCopy(clientId, { label, stored, data, esign, user = null, by = null }) {
+  const name = user ? user.name || null : by;
+  const row = await prisma.clientDocument.create({
+    data: {
+      clientId, kind: KIND, name: label,
+      fileStored: stored.billFile, fileName: stored.billName, fileMime: stored.billMime, fileSize: stored.billSize,
+      uploadedById: user ? user.id : null, uploadedByName: name,
+    },
+  });
+  await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: name, ...(esign ? { esign, sha256: crypto.createHash('sha256').update(data).digest('hex') } : {}) }) } });
+  await logAudit({ userId: user ? user.id : null, actorName: name, action: 'Agreement paper uploaded', entity: 'Client', entityId: clientId, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
+  return statusFromPapers(clientId, user);
+}
+
+// WHO SIGNED IN DIGILOCKER, per side (the newest valid copy): { teamlink: { signer, signedAt } | null, client: … | null }.
+// The agreement's signature block fills Sign / Date from it (founder 2026-10-31: "digilocker cheska automatic ga sign daggara sign,
+// date add ipovali").
+async function dlSigners(clientId) {
+  const files = await filesOf(clientId).catch(() => []);
+  const one = (kind) => {
+    const f = files.filter((x) => x.kind === kind && x.esign && x.esign.valid).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0];
+    return f ? { signer: f.esign.signer || null, signedAt: f.esign.signedAt || f.addedAt || null } : null;
+  };
+  return { teamlink: one(UPLOAD_TYPES.dlteamlink), client: one(UPLOAD_TYPES.dlclient) };
 }
 
 // THE TWO DIGILOCKER COPIES of a client (the newest valid-or-not of each side), each checked again now, with its bytes.
@@ -303,50 +374,20 @@ function mountView(router, { requireAuth, loadForView }) {
       if (!file || !file.data || !file.data.length) return res.status(400).json({ error: 'Choose a file to upload.' });
       const mime = EXT_MIME[extOf(file.filename)];
       if (!mime) return res.status(400).json({ error: 'Upload a PDF, Word file or a picture (JPG / PNG).' });
-      // a DigiLocker copy: a PDF that really carries a valid digital signature
+      // a DigiLocker copy: the checks behind the green tick (checkDigiLockerCopy)
       let esign = null;
       if (DL_TYPES.includes(type)) {
         if (mime !== 'application/pdf') return res.status(400).json({ error: 'Upload the PDF you downloaded from DigiLocker after eSign.' });
-        const r = require('../utils/pdfSignature').inspect(file.data); // eslint-disable-line global-require
-        if (!r.signed) return res.status(400).json({ error: 'This PDF has no digital signature. A merged, printed or scanned copy only shows the signature box. Upload the file you downloaded from DigiLocker right after eSign.' });
-        if (!r.valid) return res.status(400).json({ error: `The signature in this PDF is not valid${r.last && !r.last.unchanged ? ': the file was changed after it was signed' : ''}. Upload the file exactly as DigiLocker gave it (do not edit, merge, compress or print it).` });
-        esign = { valid: true, signer: r.last.signer, issuer: r.last.issuer, signedAt: r.last.signedAt, count: r.count };
-        // IS IT THIS CLIENT'S AGREEMENT? (founder 2026-10-31: "agreement proper ithey ney ... green tick vasthadhi"). A valid signature
-        // only says the file is untouched since eSign; the words must also carry this agreement's number. Checked when the agreement
-        // was made in TeamLink (a client's own agreement has no such number) and the PDF's words can be read (a scan cannot).
-        const c = loaded.client;
-        if (c.agreementId && (c.agreementSource || 'Generated') === 'Generated') {
-          const words = require('../utils/pdfSignature').textOf(file.data).replace(/\s+/g, ''); // eslint-disable-line global-require
-          const idRe = new RegExp(`${String(c.agreementId).replace(/[^A-Za-z0-9]/g, '')}(?![0-9])`);
-          if (words.length > 300 && !idRe.test(words)) {
-            return res.status(400).json({ error: `This signed PDF is not agreement ${c.agreementId} of ${c.name}: its pages do not carry that agreement number. Download this client's agreement with "Download agreement PDF to eSign", eSign that file and upload it.` });
-          }
-          esign.matched = idRe.test(words) ? c.agreementId : null; // null: the words could not be read
-        }
-        // ONE PERSON CANNOT SIGN FOR BOTH SIDES: the client copy must be eSigned by the client's own person, not by TeamLink's signer
-        const other = (await filesOf(c.id)).find((f) => f.kind === (type === 'dlclient' ? UPLOAD_TYPES.dlteamlink : UPLOAD_TYPES.dlclient) && f.esign && f.esign.valid);
-        const norm = (n) => String(n || '').toLowerCase().replace(/[^a-z]+/g, ' ').trim();
-        if (other && norm(other.esign.signer) && norm(other.esign.signer) === norm(esign.signer)) {
-          return res.status(400).json({ error: type === 'dlclient'
-            ? `This copy is eSigned by ${esign.signer}, the same person who signed for TeamLink. The client's authorised person must eSign it with their own Aadhaar.`
-            : `This copy is eSigned by ${esign.signer}, the same person who signed the client's copy. TeamLink's director must eSign it with their own Aadhaar.` });
-        }
+        const chk = await checkDigiLockerCopy(loaded.client, type, file.data);
+        if (chk.error) return res.status(400).json({ error: chk.error });
+        esign = chk.esign;
       }
       let stored;
       try { stored = attachments.store({ ...file, contentType: mime }, { maxBytes: MAX_UPLOAD, allowWord: true }); } catch (err) {
         if (err.code === 'TOO_LARGE') return res.status(413).json({ error: 'The file is too big. Keep it under 10 MB.' });
         return res.status(400).json({ error: 'That file could not be read as a PDF, Word file or picture. Please pick it again.' });
       }
-      const row = await prisma.clientDocument.create({
-        data: {
-          clientId: loaded.client.id, kind: KIND, name: label,
-          fileStored: stored.billFile, fileName: stored.billName, fileMime: stored.billMime, fileSize: stored.billSize,
-          uploadedById: req.user.id, uploadedByName: req.user.name || null,
-        },
-      });
-      await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null, ...(esign ? { esign, sha256: require('crypto').createHash('sha256').update(file.data).digest('hex') } : {}) }) } }); // eslint-disable-line global-require
-      await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
-      const status = await statusFromPapers(loaded.client.id, req.user);
+      const status = await saveCopy(loaded.client.id, { label, stored, data: file.data, esign, user: req.user });
       const said = status === 'ACTIVE' ? ` The agreement is now Active.${type.startsWith('dl') ? ' A thank-you email with both signed copies and the summary goes to the client.' : ''}` : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
       const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.` : '';
       return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
@@ -482,4 +523,4 @@ function mountView(router, { requireAuth, loadForView }) {
   });
 }
 
-module.exports = { esignCopies, summaryBuffer, mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };
+module.exports = { dlSigners, checkDigiLockerCopy, saveCopy, UPLOAD_TYPES, MAX_UPLOAD, esignCopies, summaryBuffer, mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };

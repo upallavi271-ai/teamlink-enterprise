@@ -48,7 +48,7 @@ const plainName = (v) => {
 
 // clean: the copy each side eSigns in DigiLocker (founder 2026-10-31) - no "Waiting for ..." words printed into it: the signature
 // is the Aadhaar eSign itself, so Sign / Date / Stamp stay as empty lines.
-function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false }) {
+function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false, dl = {} }) {
   const colW = (width - 24) / 2;
   const right = x + colW + 24;
   const signedName = client.agreementSignedBy || '';
@@ -72,12 +72,12 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
     // from Agreement settings fills them (2026-10-05).
     if (lk === 'Name' && !lv) lv = client.agreementCompanySignedBy || teamlinkName || '';
     if (lk === 'Designation' && !lv) lv = teamlinkTitle || '';
-    if (lk === 'Date' && !lv) lv = client.agreementCompanySignFile ? ddmmyyyy(client.agreementCompanySealedAt) : '';
+    if (lk === 'Date' && !lv) lv = dl.teamlink ? ddmmyyyy(dl.teamlink.signedAt) : (client.agreementCompanySignFile ? ddmmyyyy(client.agreementCompanySealedAt) : '');
     // Right (client): filled by the e-sign, else the client's contact person (founder 2026-10-31: "ee details automatic ga fill avvali")
     let rv = rt.replace(/^[^:]+:\s*/, '');
-    if (rk === 'Name' && !rv) rv = signedName || plainName(client.contactName || client.recruitmentContactName);
+    if (rk === 'Name' && !rv) rv = signedName || plainName(client.contactName || client.recruitmentContactName) || (dl.client && dl.client.signer) || '';
     if (rk === 'Designation' && !rv) rv = client.agreementSignedByTitle || plainName(client.contactDesignation || client.recruitmentContactDesignation);
-    if (rk === 'Date' && !rv) rv = ddmmyyyy(client.agreementSignedAt);
+    if (rk === 'Date' && !rv) rv = dl.client ? ddmmyyyy(dl.client.signedAt) : (dl.teamlink ? '' : ddmmyyyy(client.agreementSignedAt));
     let h = 18;
     const cell = (cx, key, value, img, typedName) => {
       doc.font('Helvetica-Bold').fontSize(11).fillColor(INK).text(`${key}:`, cx, y, { width: 80, lineBreak: false });
@@ -90,6 +90,12 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
         // The client signs with Aadhaar eSign at eMudhra: the digital signature
         // is in the PDF itself (see the signature panel).
         doc.font('Helvetica-Oblique').fontSize(10).fillColor(INK).text('Digitally signed with Aadhaar eSign (eMudhra)', cx + 82, y + 1, { width: colW - 90 });
+      } else if (key === 'Sign' && (cx === x ? dl.teamlink : dl.client)) {
+        // signed in DigiLocker: the Aadhaar eSign is the signature (in that side's own signed copy)
+        const who = cx === x ? dl.teamlink : dl.client;
+        doc.font('Helvetica-Oblique').fontSize(10).fillColor('#166534').text(pdfText(`Aadhaar eSign (DigiLocker): ${who.signer || 'signed'}`), cx + 82, y + 1, { width: colW - 90 });
+        doc.fillColor(INK);
+        h = Math.max(h, doc.y - y);
       } else if (key === 'Sign' && clean) {
         doc.moveTo(cx + 82, y + 12).lineTo(cx + colW - 10, y + 12).lineWidth(0.5).strokeColor('#9aa3b2').stroke();
         doc.strokeColor(INK);
@@ -122,7 +128,7 @@ function drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kSt
   }
 }
 
-function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false }) {
+function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean = false, dl = {} }) {
   const x = doc.page.margins.left;
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const lines = pdfText(client.agreementDocument).split('\n');
@@ -151,7 +157,7 @@ function renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, 
       const rows = [];
       while (i < lines.length && lines[i].includes('\t')) { rows.push(lines[i].split('\t').map((c) => c.trim())); i += 1; }
       doc.moveDown(0.6);
-      drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean });
+      drawSignatures(doc, rows, x, width, { client, cSign, kSign, cStamp, kStamp, pdfText, teamlinkName, teamlinkTitle, clean, dl });
       continue;
     }
     if (doc.y > doc.page.height - doc.page.margins.bottom - 30) doc.addPage();

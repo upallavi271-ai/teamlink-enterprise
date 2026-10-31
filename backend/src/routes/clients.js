@@ -1227,6 +1227,11 @@ router.get('/:id', async (req, res) => {
   out.sla = await CS.slaOf(req.client.id);
   // TeamLink's signer (Agreement settings) for the agreement's signature block.
   if (out.agreementDocument) { const us = await consultantParty(); out.teamlinkSigner = { name: us.signatoryName, title: us.signatoryTitle }; }
+  // DigiLocker: who signed each side and when (the signature block fills Sign / Date), and TeamLink's saved stamp (2026-10-31)
+  if (out.agreementDocument && !require('../utils/agreementPrivacy').blindTo(req.user)) { // eslint-disable-line global-require
+    out.agreementDigiLocker = await require('./agreementSignedFiles').dlSigners(req.client.id).catch(() => null); // eslint-disable-line global-require
+    out.agreementTeamlinkStampSaved = await require('../utils/teamlinkSeal').getSeal().then((s) => !!(s && s.stampFile)).catch(() => false); // eslint-disable-line global-require
+  }
   // The signing link survives a reload for whoever may send / resend it.
   if ((permissions.lifecycle || permissions.sendLink) && req.client.esignToken
     && ['SENT', 'VIEWED', 'CLIENT_CONFIRMATION_PENDING'].includes(normalizeAgreementStatus(req.client.agreementStatus))) {
@@ -2233,6 +2238,45 @@ router.post('/:id/agreement/generate', requirePerm('ats', 'clients', 'Agreement 
   });
   if (res.statusCode < 400) dropExecutionFiles(files);
   return out;
+});
+
+// EDIT THE AGREEMENT TEXT (founder 2026-10-31: "idhi edit chese option kuda bde ki undali, endhukantey, client konni points vaddhu
+// antaru, ledha add cheyyamantaru"). Before it is signed: the BDE while it is with the BDE or once it went to the client (the client
+// asked for a change), the BDE TL and an Admin at any step. A DigiLocker copy eSigned on the earlier words stops counting (its pages
+// carry the earlier text fingerprint - routes/agreementSignedFiles.js): TeamLink eSigns the new version, then Send to client again.
+router.put('/:id/agreement/text', requirePerm('ats', 'clients', 'Agreement Lifecycle', 'create'), async (req, res) => {
+  const client = req.client;
+  const old = String(client.agreementDocument || '').split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));
+  const text = String((req.body && req.body.text) || '').split(String.fromCharCode(13, 10)).join(String.fromCharCode(10)).trimEnd();
+  if (!old) return res.status(400).json({ error: 'Make the agreement first, then change its words.' });
+  if (agreementIsSigned(client.agreementStatus) || agreementIsActive(client.agreementStatus)) {
+    return res.status(400).json({ error: 'This agreement is signed. To change it, make a new version (More actions).' });
+  }
+  if (text.trim().length < 200) return res.status(400).json({ error: 'The agreement text looks empty. Undo the change and try again.' });
+  if (text.length > 120000) return res.status(400).json({ error: 'The agreement text is too long.' });
+  if (vendorAgreement.isVendorDocument(old) && (!vendorAgreement.isVendorDocument(text) || !/^\s*Name:/m.test(text) || !/^\s*Sign:/m.test(text))) {
+    return res.status(400).json({ error: 'Keep the first line "Vendor Services Agreement" and the signature block at the end (Name: / Designation: / Sign: / Date: lines): the PDF and the signatures are built from them.' });
+  }
+  const r = await AWF.rolesOf(req.user);
+  const stage = AWF.stageOf(client, await AWF.loadRow(client.id));
+  if (!(r.admin || r.bdeTl || (r.bdeDesk && ['DRAFT', 'SENT'].includes(stage)))) {
+    return res.status(403).json({ error: stage === 'WITH_HR' || stage === 'WITH_TL' ? 'It is with HR / the BDE TL now. The BDE TL or an Admin can change the words.' : 'Changing the agreement text is for the BDE team and Admin.' });
+  }
+  if (text === old) return res.json({ ok: true, changed: false, message: 'Nothing changed.' });
+  const updated = await prisma.client.update({ where: { id: client.id }, data: { agreementDocument: text } });
+  const why = String((req.body && req.body.reason) || '').trim().slice(0, 300) || null;
+  await logAudit({
+    userId: req.user.id, actorName: req.user.name || null, action: 'Agreement text edited', entity: 'Client', entityId: client.id,
+    field: 'agreementDocument', fieldLabel: 'Agreement text', fromValue: `${old.length} characters`, toValue: `${text.length} characters`, reason: why,
+  });
+  const files = await require('./agreementSignedFiles').filesOf(client.id).catch(() => []); // eslint-disable-line global-require
+  const earlier = files.filter((f) => f.esign && f.esign.stale);
+  return res.json({
+    ok: true, changed: true, agreementDocument: updated.agreementDocument,
+    message: earlier.length
+      ? `Saved. ${earlier.map((f) => f.kind.replace(' (DigiLocker)', '')).join(' and ')} was for the earlier words: TeamLink eSigns the new version in DigiLocker (View agreement), then Send to client again.`
+      : 'Saved. The agreement PDF to eSign now has the new words.',
+  });
 });
 
 // Upload a countersigned / negotiated document instead of generating one.

@@ -236,7 +236,7 @@ function drawPageChrome(doc, ctx) {
 // known from a first pass).
 function drawDocument(a, totalPages) {
   const {
-    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft, awaitingClient,
+    client, trail, consultantName, agreementOnly, vendorDoc, us, logo, images, place, stampNo, draft, awaitingClient, dl,
   } = a;
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -274,7 +274,7 @@ function drawDocument(a, totalPages) {
     // block filled from the record (utils/vendorAgreementPdf.js).
     if (vendorDoc) {
       // eslint-disable-next-line global-require
-      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle, clean: !!agreementOnly });
+      require('./vendorAgreementPdf').renderVendorText(doc, client, { cSign, kSign, cStamp, kStamp, pdfText, teamlinkName: us.signatoryName, teamlinkTitle: us.signatoryTitle, clean: !!agreementOnly, dl: dl || {} });
     }
     doc.moveDown(0.5);
     (vendorDoc ? '' : pdfText(client.agreementDocument)).split('\n').forEach((line) => {
@@ -436,9 +436,11 @@ async function renderAgreementPdf(client, { trail = [], consultantName, agreemen
   // THE STAMPS ON THE COPY EACH SIDE eSIGNS (founder 2026-10-31: "client ey stamp veyyali", TeamLink's "automatic ga"): TeamLink's
   // company stamp saved once in Agreement settings is printed on every page and in TeamLink's Stamp box, and the stamp the client
   // put on through their link (agreementClientStampFile) on theirs - BEFORE the Aadhaar eSign, so the signature covers them.
-  const savedStamp = agreementOnly && !client.agreementCompanyStampFile
+  const savedStamp = !client.agreementCompanyStampFile
     ? await require('./teamlinkSeal').getSeal().then((s) => s && s.stampFile).catch(() => null) // eslint-disable-line global-require
     : null;
+  // who signed in DigiLocker: Sign / Date of each side come from it (founder 2026-10-31)
+  const dl = client.id ? await require('../routes/agreementSignedFiles').dlSigners(client.id).catch(() => ({})) : {}; // eslint-disable-line global-require
   const [cSign, cStamp, kSign, kStamp] = await Promise.all([
     imageBuffer(client.agreementClientSignFile), imageBuffer(client.agreementClientStampFile),
     imageBuffer(client.agreementCompanySignFile), imageBuffer(client.agreementCompanyStampFile || savedStamp),
@@ -460,8 +462,9 @@ async function renderAgreementPdf(client, { trail = [], consultantName, agreemen
     // (The copy sent to eMudhra is the document to be signed: no watermark.)
     // A copy TeamLink has already signed and stamped (sign first, then send - founder 2026-10-30) is NOT a draft: no
     // watermark, the Execution page with TeamLink's side filled, and "awaiting the Client" in the header and footer.
-    draft: !client.agreementSignedAt && !agreementOnly && !(client.agreementCompanySignFile && client.agreementCompanySealedAt),
-    awaitingClient: !client.agreementSignedAt && !agreementOnly && !!(client.agreementCompanySignFile && client.agreementCompanySealedAt),
+    draft: !client.agreementSignedAt && !agreementOnly && !(client.agreementCompanySignFile && client.agreementCompanySealedAt) && !(dl && dl.teamlink),
+    awaitingClient: !client.agreementSignedAt && !agreementOnly && (!!(client.agreementCompanySignFile && client.agreementCompanySealedAt) || !!(dl && dl.teamlink)),
+    dl,
   };
   let guess = (await drawDocument(a, 99)).pages;
   let result = await drawDocument(a, guess);

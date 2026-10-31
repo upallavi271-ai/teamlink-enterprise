@@ -25,6 +25,7 @@ import OwnAgreementFile from '../components/agreements/OwnAgreementFile.jsx';
 import SignedAgreementFiles, { ViewAgreementButton } from '../components/agreements/SignedAgreementFiles.jsx'; // every signed agreement file kept on the client
 import { agreementBlind } from '../utils/agreementPrivacy.js';
 import AgreementDocView, { signersFrom } from '../components/agreements/AgreementDocView.jsx';
+import AgreementTextEditor from '../components/agreements/AgreementTextEditor.jsx';
 import TeamLinkSeal, { AuthImg } from '../components/agreements/TeamLinkSeal.jsx';
 // Spec B1: Client 360 -> Portal access (who at the client can sign in).
 import ClientPortalAccess from '../components/clients/ClientPortalAccess.jsx';
@@ -1214,8 +1215,10 @@ export default function ClientDetail() {
                 )}
                 {/* the rest, out of the way */}
                 <details className="agr6-moreacts" style={{ marginTop: 10 }}>
-                  <summary className="small-muted" style={{ cursor: 'pointer' }}>More actions (terms, client&apos;s own agreement, close / open)</summary>
+                  <summary className="small-muted" style={{ cursor: 'pointer' }}>More actions (edit text, terms, client&apos;s own agreement, close / open)</summary>
                 <div className="agr6-actions" style={{ marginTop: 8 }}>
+                  {/* the words of an agreement not signed yet (founder 2026-10-31): the BDE / BDE TL / Admin change points the client asked for */}
+                  {c.agreementDocument && !['SIGNED', 'ACTIVE', 'EXPIRED'].includes(step) && (<AgreementTextEditor clientId={id} text={c.agreementDocument} disabled={!!agrBusy} onSaved={(m) => { setNote(m || 'Saved.'); load(); }} />)}
                   {['SIGNED', 'ACTIVE', 'EXPIRED'].includes(step) && (
                     <button
                       type="button"
@@ -1327,6 +1330,7 @@ export default function ClientDetail() {
                     clientSide: { signedBy: c.agreementSignedBy, signedByTitle: c.agreementSignedByTitle, hasSignature: !!c.agreementClientSignFile, hasStamp: !!c.agreementClientStampFile, esign: c.agreementEsignProvider === 'eMudhra' && c.agreementEsignTxnId ? 'eMudhra' : null },
                     signedAt: c.agreementSignedAt,
                     teamlinkName: c.teamlinkSigner?.name, teamlinkTitle: c.teamlinkSigner?.title,
+                    dl: c.agreementDigiLocker, teamlinkStampSaved: !!c.agreementTeamlinkStampSaved,
                   }, (kind) => <AuthImg path={`/agreement/${id}/file/${kind}`} alt={kind} bust={`${c.agreementSignedAt}|${c.agreementCompanySealedAt}`} />)}
                 />
               </div>

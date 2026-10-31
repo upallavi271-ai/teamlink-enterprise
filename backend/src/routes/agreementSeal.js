@@ -280,7 +280,9 @@ router.get('/:clientId/file/:kind', requireAuth, async (req, res, next) => {
     if (!mapping) return res.status(404).json({ error: 'Unknown image' });
     const loaded = await loadForView(req, res);
     if (!loaded) return undefined;
-    const stored = loaded.client[mapping[0]];
+    let stored = loaded.client[mapping[0]];
+    // TeamLink's company stamp saved once in Agreement settings stands in for an agreement that has none of its own (2026-10-31)
+    if (!stored && req.params.kind === 'company-stamp') stored = await require('../utils/teamlinkSeal').getSeal().then((s) => s && s.stampFile).catch(() => null); // eslint-disable-line global-require
     if (!stored) return res.status(404).json({ error: 'Nothing uploaded for that' });
     const resolved = attachments.resolveStored(stored);
     if (!resolved) return res.status(404).json({ error: 'That file is no longer on disk' });
@@ -477,6 +479,51 @@ router.get('/token/:token/esign-pdf', async (req, res, next) => {
     // eslint-disable-next-line global-require
     await require('../utils/agreementPdf').renderAgreementPdf(client, { trail: [], consultantName: us.name, agreementOnly: true }, res);
     return undefined;
+  } catch (err) { return next(err); }
+});
+
+// THE CLIENT HANDS IN THEIR eSIGNED COPY on the same link (founder 2026-10-31: "last ki preview & submit button vundali. submit
+// chesaka thank you ani raavali ... automatic ga view agreement lo display avvali"): /check runs the checks behind the green tick
+// and saves nothing (the page then shows the preview); a plain POST runs them again and keeps the copy as the client's DigiLocker
+// copy - it shows in View agreement on the right, and with TeamLink's copy the agreement turns Active (then the thank-you email).
+async function readSignedPdf(req, res) {
+  const SF = require('./agreementSignedFiles'); // eslint-disable-line global-require
+  let parsed;
+  try { parsed = await attachments.parseMultipart(req, { maxBytes: SF.MAX_UPLOAD }); } catch (err) {
+    res.status(err.code === 'TOO_LARGE' ? 413 : 400).json({ error: err.code === 'TOO_LARGE' ? 'The file is too big. Keep it under 10 MB.' : 'Choose the signed PDF to upload.' });
+    return null;
+  }
+  const file = parsed && parsed.file;
+  if (!file || !file.data || !file.data.length) { res.status(400).json({ error: 'Choose the signed PDF to upload.' }); return null; }
+  if (file.data.subarray(0, 5).toString('latin1') !== '%PDF-') { res.status(400).json({ error: 'Upload the PDF you downloaded from DigiLocker after eSign.' }); return null; }
+  return { SF, file };
+}
+router.post('/token/:token/esigned/check', signLimit, async (req, res, next) => {
+  try {
+    const client = await byToken(req, res);
+    if (!client) return undefined;
+    const got = await readSignedPdf(req, res);
+    if (!got) return undefined;
+    const chk = await got.SF.checkDigiLockerCopy(client, 'dlclient', got.file.data);
+    if (chk.error) return res.status(400).json({ error: chk.error });
+    return res.json({ ok: true, signer: chk.esign.signer, signedAt: chk.esign.signedAt, issuer: chk.esign.issuer, agreementId: client.agreementId || null });
+  } catch (err) { return next(err); }
+});
+router.post('/token/:token/esigned', signLimit, async (req, res, next) => {
+  try {
+    const client = await byToken(req, res);
+    if (!client) return undefined;
+    const got = await readSignedPdf(req, res);
+    if (!got) return undefined;
+    const chk = await got.SF.checkDigiLockerCopy(client, 'dlclient', got.file.data);
+    if (chk.error) return res.status(400).json({ error: chk.error });
+    let stored;
+    try { stored = attachments.store({ ...got.file, contentType: 'application/pdf' }, { maxBytes: got.SF.MAX_UPLOAD }); } catch {
+      return res.status(400).json({ error: 'That file could not be read as a PDF. Please pick it again.' });
+    }
+    const who = `${lifecycle.contactsOf(client).name || 'The client'} (on the agreement link, IP ${ipOf(req)})`;
+    const status = await got.SF.saveCopy(client.id, { label: got.SF.UPLOAD_TYPES.dlclient, stored, data: got.file.data, esign: chk.esign, by: who.slice(0, 120) });
+    return res.status(201).json({ ok: true, agreementStatus: status, signer: chk.esign.signer, signedAt: chk.esign.signedAt });
   } catch (err) { return next(err); }
 });
 
