@@ -3385,8 +3385,11 @@ async function agreementGateNote(user, client) {
   const step = agreementStepText(client);
   const head = `Saved at Agreement Check — not live yet, because the service agreement with ${client.name} is ${label}.`;
   const tail = 'When the agreement is Active, open this requirement and press Activate Requirement.';
-  if (manage) return `${head} To make it live: Clients → ${client.name} → Agreement tab → ${step}. ${tail}`;
-  if (desk) return `${head} An Admin must complete it (Clients → ${client.name} → Agreement tab → ${step}). ${tail}`;
+  // ALREADY SIGNED, only not in TeamLink (founder 2026-10-31: "already agreements sign ayipoyi unnai, malli endhuku starting
+  // process chupisthundhi" - clients brought in from the sheets have no agreement record yet): the papers make it Active.
+  const signedPath = ` Already signed on paper or in DigiLocker? Open View agreement for ${client.name} and upload the signed agreement with Vasu sir's confirmation, or the TeamLink and client eSigned copies; it turns Active by itself.`;
+  if (manage) return `${head} To make it live: Clients → ${client.name} → Agreement tab → ${step}.${signedPath} ${tail}`;
+  if (desk) return `${head} An Admin must complete it (Clients → ${client.name} → Agreement tab → ${step}).${signedPath} ${tail}`;
   return `${head} Ask the BDE or an Admin who owns ${client.name} to complete the agreement. ${tail}`;
 }
 
