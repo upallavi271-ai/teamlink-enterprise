@@ -314,7 +314,7 @@ function mountView(router, { requireAuth, loadForView }) {
         const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
         return {
           signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
-          issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName,
+          issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName, buf, // attached to the summary
           sha256: require('crypto').createHash('sha256').update(buf).digest('hex'), // eslint-disable-line global-require
         };
       };
