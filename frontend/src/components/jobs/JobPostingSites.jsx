@@ -32,8 +32,19 @@ const origin = () => (typeof window !== 'undefined' ? window.location.origin : '
 const fullLink = (l) => (/^https?:/i.test(l) ? l : `${origin()}${l}`);
 const when = (d) => (d ? new Date(d).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '');
 
+// the social places TeamLink posts to through their APIs (jobPublish/constants.js API_PLACES), shown in this list like the sites
+// above (founder 2026-10-31: "same ilaagey annitiki kanipinchali"): Posted / Not posted, View the post, Live since
+const SOCIAL = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['linkedinpost', 'LinkedIn (post)'], ['telegram', 'Telegram']];
+const SOCIAL_WORDS = { PUBLISHED: ['✓ Posted', 'green'], QUEUED: ['Waiting', 'orange'], RUNNING: ['Posting…', 'orange'], FAILED: ['Failed', 'red'], NEEDS_HUMAN: ['Needs help', 'orange'], UNPUBLISHED: ['Taken down', 'grey'], CLOSED: ['Closed', 'grey'] };
+
 export default function JobPostingSites({ requirementId, version, onChanged }) {
   const [data, setData] = useState(null);
+  const [social, setSocial] = useState([]);
+  useEffect(() => {
+    let on = true;
+    api.get(`/job-publish/jobs/${requirementId}/status`).then((r) => { if (on) setSocial((r.data && r.data.portals) || []); }).catch(() => { if (on) setSocial([]); });
+    return () => { on = false; };
+  }, [requirementId, version]);
   const [busy, setBusy] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
@@ -146,6 +157,29 @@ export default function JobPostingSites({ requirementId, version, onChanged }) {
           </span>
         </div>
       ))}
+      {SOCIAL.map(([key, name]) => {
+        const p = social.find((x) => x.portal === key);
+        if (!p) return null;
+        const [label, tone] = SOCIAL_WORDS[p.status] || ['Not posted', 'grey'];
+        const live = p.status === 'PUBLISHED';
+        const extra = (p.extraPosts || []).filter((x) => x.url);
+        return (
+          <div key={`social-${key}`} className={`jobops-site${live ? '' : ' is-off'}`}>
+            <label className="jobops-tick"><b>{name}</b></label>
+            <StatusChip tone={tone}>{label}</StatusChip>
+            {live && <span className="jps-mode is-auto">Auto</span>}
+            <span className="jobops-site-btns">
+              {live && p.portalUrl && <a className="btn btn-sm" href={p.portalUrl} target="_blank" rel="noreferrer">View post ↗</a>}
+              {extra.map((x, i) => <a key={i} className="btn btn-sm" href={x.url} target="_blank" rel="noreferrer">View{x.name ? ` (${x.name})` : ''} ↗</a>)}
+            </span>
+            <span className="jobops-why">
+              {live
+                ? `Live since ${when(p.publishedAt) || '—'}${extra.length ? ` · also on ${extra.length} more account${extra.length === 1 ? '' : 's'}` : ''}`
+                : (p.status === 'FAILED' ? (p.lastError || 'It did not post. Open "Job posting status" to try again.') : 'Not posted here yet. Press "Ready template and post everywhere" or "Post this requirement".')}
+            </span>
+          </div>
+        );
+      })}
       {note && <div className="jobops-ok" role="status">{note}</div>}
       {error && <div className="error-text">{error}</div>}
       {kit && (
