@@ -1739,6 +1739,29 @@ const saveFacebookDefault = (user, page) => FBC.save(user, page);
 router.get('/social-accounts', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   res.json({ accounts: await SA.list() });
 });
+// Job posting follows the default account of each platform (Instagram, Threads, LinkedIn): after ANY change of the list the default is
+// copied to that place's job-posting connection and checked (read-only). Posting itself stays OFF until an Admin switches it on.
+router.use('/social-accounts', (req, res, next) => {
+  if (req.method !== 'GET') res.on('finish', () => { if (res.statusCode < 400) require('../utils/socialPosting').mirror(req.user).catch(() => {}); }); // eslint-disable-line global-require
+  next();
+});
+// LinkedIn (2026-10-31): the app's Client ID / secret (once), then "Connect LinkedIn" = LinkedIn's own sign-in (utils/linkedinConnect.js)
+router.get('/social-accounts/linkedin/app', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  res.json(await require('../utils/linkedinConnect').appView(req)); // eslint-disable-line global-require
+});
+router.put('/social-accounts/linkedin/app', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const LC = require('../utils/linkedinConnect'); // eslint-disable-line global-require
+  const r = await LC.saveApp(req.user, req.body || {});
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'LinkedIn app details saved', entity: 'Integration', entityId: 'social', toValue: 'Client ID / secret' });
+  return res.json({ ...(await LC.appView(req)), message: 'LinkedIn app details saved. Now press Connect LinkedIn.' });
+});
+router.post('/social-accounts/linkedin/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await require('../utils/linkedinConnect').start(req.user, req, { pageId: req.body && req.body.pageId }); // eslint-disable-line global-require
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'Connect LinkedIn started', entity: 'Integration', entityId: 'social', toValue: 'LinkedIn login opened' });
+  return res.json({ ok: true, url: r.url, redirectUri: r.redirectUri });
+});
 // the Pages ticked after "Connect with Facebook" (one or many); the first ever becomes the default (job posts + Omni-Channel)
 router.post('/social-accounts/facebook/select', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const ids = Array.isArray(req.body && req.body.pageIds) ? req.body.pageIds : [req.body && req.body.pageId].filter(Boolean);

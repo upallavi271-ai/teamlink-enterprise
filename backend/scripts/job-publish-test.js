@@ -273,7 +273,7 @@ const nowQ = (id) => D.ex('UPDATE "PostingQueue" SET "nextRunAt" = ? WHERE "id" 
   const noPortal = await post('tl', jobA.id, { portals: [] });
   Z.check('no site chosen -> 400', noPortal.status === 400);
   const stRec = await Z.call('GET', `${J}/jobs/${jobA.id}/status`, tok.rec);
-  Z.check('Recruiter may see the status of an assigned job, but no logs', stRec.status === 200 && stRec.body.portals.length === 7 && stRec.body.canViewLogs === false && stRec.body.portals.every((p) => p.logs === undefined), stRec.status);
+  Z.check('Recruiter may see the status of an assigned job, but no logs', stRec.status === 200 && stRec.body.portals.length === 10 && stRec.body.canViewLogs === false && stRec.body.portals.every((p) => p.logs === undefined), stRec.status);
   Z.check('Recruiter cannot read logs / queue', (await Z.call('GET', `${J}/logs`, tok.rec)).status === 403 && (await Z.call('GET', `${J}/queue`, tok.rec)).status === 403);
   Z.check('Manager can read logs and queue (view all)', (await Z.call('GET', `${J}/logs`, tok.mgr)).status === 200 && (await Z.call('GET', `${J}/queue`, tok.mgr)).status === 200);
   Z.check('TL of another department cannot see this job status (403)', (await Z.call('GET', `${J}/jobs/${jobA.id}/status`, tok.tlMed)).status === 403);

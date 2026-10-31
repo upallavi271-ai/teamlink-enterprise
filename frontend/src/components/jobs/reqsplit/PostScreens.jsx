@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import api from '../../../api';
 import StatusChip from '../../ui/StatusChip.jsx';
 import { pingLauncher, openWithLauncher } from '../launcherClient.js';
@@ -32,6 +32,7 @@ const CASE = 'M4 8h16v11H4zM9 8V5h6v3M4 13h16';
 // small round-square "logos" built from words and colours (no pictures from other sites)
 const LOGO = {
   save: ['Save', 'pw-lg-save'], naukri: ['N', 'pw-lg-naukri'], indeed: ['indeed', 'pw-lg-indeed'], shine: ['shine', 'pw-lg-shine'], linkedin: ['in', 'pw-lg-in'], jobportal: ['JP', 'pw-lg-jp'], website: ['www', 'pw-lg-web'],
+  facebook: ['f', 'pw-lg-fb'], instagram: ['IG', 'pw-lg-ig'], linkedinpost: ['in', 'pw-lg-in'], threads: ['@', 'pw-lg-th'],
 };
 export function Logo({ id }) {
   const [t, cls] = LOGO[id] || [id.slice(0, 2), ''];
@@ -41,7 +42,7 @@ export function Logo({ id }) {
 // ---- screen 1 -----------------------------------------------------------------------------------------------------
 // tiles: [{ id, name, hint, state: {key, note, link, retry}, loginBtn }]
 export function PlatformScreen({
-  job, tiles, selected, selectedCount = selected.length, onToggle, onRetry, onSaveOnly, onNext, onBack, busy, loginPanels = {}, onLogin, notice, children,
+  job, tiles, selected, selectedCount = selected.length, onToggle, onRetry, onSaveOnly, onNext, onBack, busy, loginPanels = {}, onLogin, notice, children, groupTitles = {},
 }) {
   return (
     <div className="pw-card">
@@ -49,25 +50,31 @@ export function PlatformScreen({
       <p className="pw-sub">{`Tick the places, then press Post selected.${job && job.title ? ` ${job.reqCode ? `${job.reqCode} · ` : ''}${job.title} is saved.` : ''}`}</p>
       {notice}
       <div className="pw-picks" role="group" aria-label="Where to post">
-        {tiles.map((t) => {
+        {tiles.map((t, ti) => {
           const [label, tone] = WORDS[t.state.key] || WORDS.idle;
           const on = selected.includes(t.id);
+          const gt = t.group && groupTitles[t.group] && (ti === 0 || tiles[ti - 1].group !== t.group) ? groupTitles[t.group] : null;
+          // a tile that is not posted yet shows how ready its account is (connected, switched on) instead of "Not posted"
+          const chip = t.setup && t.state.key === 'idle' ? [t.setup.label, t.setup.tone] : [label, tone];
           return (
-            <div className={`pw-pick${on ? ' on' : ''}`} key={t.id}>
-              <label className="pw-pickmain">
-                <input type="checkbox" checked={on} onChange={() => onToggle(t.id)} />
-                <Logo id={t.id} />
-                <span className="pw-pickname"><b>{t.name}</b><small>{t.hint}</small></span>
-              </label>
-              <span className="pw-pickside">
-                {t.mode && <span className={`pw-badge ${t.mode}`}>{t.mode === 'auto' ? 'Automatic' : 'Manual (you post)'}</span>}
-                <StatusChip tone={tone}>{label}</StatusChip>
-                {t.state.link && <a className="pw-tlink" href={t.state.link} target="_blank" rel="noreferrer">View</a>}
-                {t.state.retry && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onRetry(t.id)}>Retry</button>}
-                {t.loginBtn && <button type="button" className="rsp-link" onClick={() => onLogin(t.id)}>{loginPanels[t.id] ? 'Hide login' : 'Connect login'}</button>}
-              </span>
-              {t.state.note && ['failed', 'needs_help', 'queued', 'feed'].includes(t.state.key) && <div className="pw-picknote">{t.state.note}</div>}
-            </div>
+            <Fragment key={t.id}>
+              {gt && <h4 className="pw-social-h">{gt[0]} <small>{gt[1]}</small></h4>}
+              <div className={`pw-pick${on ? ' on' : ''}`}>
+                <label className="pw-pickmain">
+                  <input type="checkbox" checked={on} onChange={() => onToggle(t.id)} />
+                  <Logo id={t.id} />
+                  <span className="pw-pickname"><b>{t.name}</b><small>{t.hint}</small></span>
+                </label>
+                <span className="pw-pickside">
+                  {t.mode && <span className={`pw-badge ${t.mode}`}>{t.mode === 'auto' ? 'Automatic' : 'Manual (you post)'}</span>}
+                  <StatusChip tone={chip[1]}>{chip[0]}</StatusChip>
+                  {t.state.link && <a className="pw-tlink" href={t.state.link} target="_blank" rel="noreferrer">View</a>}
+                  {t.state.retry && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onRetry(t.id)}>Retry</button>}
+                  {t.loginBtn && <button type="button" className="rsp-link" onClick={() => onLogin(t.id)}>{loginPanels[t.id] ? 'Hide login' : 'Connect login'}</button>}
+                </span>
+                {t.state.note && ['failed', 'needs_help', 'queued', 'feed'].includes(t.state.key) && <div className="pw-picknote">{t.state.note}</div>}
+              </div>
+            </Fragment>
           );
         })}
       </div>

@@ -13,6 +13,9 @@ export const PORTALS = [
   { key: 'career', name: 'Internal careers page', short: 'Careers page', kind: 'internal' },
   { key: 'telegram', name: 'Telegram channel', short: 'Telegram', kind: 'api' },
   { key: 'facebook', name: 'Facebook page', short: 'Facebook', kind: 'api' },
+  { key: 'instagram', name: 'Instagram', short: 'Instagram', kind: 'api' },
+  { key: 'threads', name: 'Threads', short: 'Threads', kind: 'api' },
+  { key: 'linkedinpost', name: 'LinkedIn post', short: 'LinkedIn post', kind: 'api' },
 ];
 export const portalName = (k) => (PORTALS.find((p) => p.key === k) || { name: k }).name;
 

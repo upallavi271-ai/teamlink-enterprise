@@ -28,6 +28,9 @@ const LABEL = 'default';
 const API_FIELDS = {
   telegram: { username: 'Channel', usernameHint: '@yourchannel (or the number that starts with -100)', password: 'Bot token', passwordHint: 'From @BotFather, looks like 123456789:AAH...' },
   facebook: { username: 'Page number (Page ID)', usernameHint: 'The number of your Facebook Page', password: 'Page access token', passwordHint: 'A Page token with the pages_manage_posts permission' },
+  instagram: { username: 'Instagram account number', usernameHint: 'The number of your Instagram professional account (found by itself when you connect the Facebook Page)', password: 'Access token', passwordHint: 'The Page token, with the instagram_content_publish permission' },
+  threads: { username: 'Threads profile number', usernameHint: 'The number of your Threads profile', password: 'Threads access token', passwordHint: 'A Threads token with the threads_content_publish permission' },
+  linkedinpost: { username: 'Who posts (LinkedIn id)', usernameHint: 'urn:li:person:... for your profile or urn:li:organization:... for a Company Page', password: 'LinkedIn access token', passwordHint: 'A token with the w_member_social (profile) or w_organization_social (Company Page) permission' },
 };
 const STATUS_WORDS = {
   CONNECTED: 'Connected', FAILED: 'Login failed', UNVERIFIED: 'Not checked yet', NEEDS_HUMAN: 'Needs a person (CAPTCHA / OTP)', DISABLED: 'Switched off',
@@ -83,11 +86,13 @@ function validateLogin(portal, body = {}, { first = false } = {}) {
   return { ok: problems.length === 0, problems, warnings };
 }
 
-// FORMAT CHECK for a token portal (Telegram: channel + bot token; Facebook: page number + page token). Typing slips only.
+// FORMAT CHECK for a token portal (Telegram: channel + bot token; Facebook / Instagram / Threads / LinkedIn: account number + token). Typing slips only.
 const TG_CHANNEL = /^(@[A-Za-z][A-Za-z0-9_]{4,31}|-100\d{5,15}|-\d{5,15})$/;
 const TG_TOKEN = /^\d{6,12}:[A-Za-z0-9_-]{30,60}$/;
 const FB_PAGE = /^\d{5,20}$/;
 const FB_TOKEN = /^[A-Za-z0-9_.|-]{30,600}$/;
+const LI_URN = /^urn:li:(person|organization):[A-Za-z0-9_-]{3,40}$/;
+const LI_TOKEN = /^[A-Za-z0-9_.~+/=-]{30,2000}$/;
 function validateApiLogin(portal, body = {}, { first = false } = {}) {
   const problems = []; const warnings = [];
   const has = (k) => body[k] !== undefined && body[k] !== null && String(body[k]).trim() !== '' && String(body[k]).trim() !== '-';
@@ -98,11 +103,15 @@ function validateApiLogin(portal, body = {}, { first = false } = {}) {
     const u = String(body.username).trim();
     if (portal === 'telegram' && !TG_CHANNEL.test(u)) problems.push('The channel should look like @yourchannel, or a number that starts with -100 (for a private channel or group).');
     if (portal === 'facebook' && !FB_PAGE.test(u)) problems.push('The Page number is only digits (for example 104820934501234). Find it in the Page, About, Page transparency.');
+    if (['instagram', 'threads'].includes(portal) && !FB_PAGE.test(u)) problems.push(`The ${portal === 'instagram' ? 'Instagram account' : 'Threads profile'} number is only digits. Connecting the account in Social Media finds it by itself.`);
+    if (portal === 'linkedinpost' && !LI_URN.test(u)) problems.push('This should look like urn:li:person:AbC123 (your profile) or urn:li:organization:12345 (a Company Page). Connecting LinkedIn in Social Media fills it in by itself.');
   }
   if (has('password')) {
     const p = String(body.password).trim();
     if (portal === 'telegram' && !TG_TOKEN.test(p)) problems.push('This does not look like a bot token. It looks like 123456789:AAH... and comes from @BotFather.');
     if (portal === 'facebook' && !FB_TOKEN.test(p)) problems.push('This does not look like a Page access token (a long line of letters and numbers, no spaces).');
+    if (['instagram', 'threads'].includes(portal) && !FB_TOKEN.test(p)) problems.push('This does not look like an access token (a long line of letters and numbers, no spaces).');
+    if (portal === 'linkedinpost' && !LI_TOKEN.test(p)) problems.push('This does not look like a LinkedIn access token (a long line of letters and numbers, no spaces).');
   }
   return { ok: problems.length === 0, problems, warnings };
 }

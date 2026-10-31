@@ -31,12 +31,26 @@ const PORTALS = {
     key: 'facebook', name: 'Facebook page', kind: 'api', automation: true, legacySource: null, domains: ['graph.facebook.com'],
     note: 'Posts to your Facebook Page through the official Graph API with a Page access token. Nothing is sent until an Admin switches it on.',
   },
+  instagram: {
+    key: 'instagram', name: 'Instagram', kind: 'api', automation: true, noEdit: true, legacySource: null, domains: ['graph.facebook.com'],
+    note: 'Posts a picture of the job with the text under it to your Instagram professional account, through the official Graph API (the account linked to your Facebook Page). Nothing is sent until an Admin switches it on.',
+  },
+  threads: {
+    key: 'threads', name: 'Threads', kind: 'api', automation: true, noEdit: true, legacySource: null, domains: ['graph.threads.net'],
+    note: 'Posts a short text to your Threads profile through the official Threads API. Nothing is sent until an Admin switches it on.',
+  },
+  linkedinpost: {
+    key: 'linkedinpost', name: 'LinkedIn post', kind: 'api', automation: true, legacySource: null, domains: ['api.linkedin.com'],
+    note: 'Posts a short text with the apply link to your LinkedIn profile or Company Page through the official LinkedIn API. (This is a post on the feed, not an entry in LinkedIn Jobs.) Nothing is sent until an Admin switches it on.',
+  },
   career: {
     key: 'career', name: 'Career Page', kind: 'internal', automation: true, legacySource: null, legacySources: ['jobportal', 'website'], domains: [],
     note: 'TeamLink\'s own career page and Job Portal. Goes live at once, no sign-in needed.',
   },
 };
 const PORTAL_KEYS = Object.keys(PORTALS);
+// The social channels TeamLink posts to itself through an official API with a token (one list, so no screen forgets one).
+const API_PLACES = PORTAL_KEYS.filter((k) => PORTALS[k].kind === 'api');
 // The mock portal exists only for the tests (never in a real list).
 const portalName = (key) => (PORTALS[key] ? PORTALS[key].name : key);
 
@@ -134,6 +148,6 @@ const DEFAULTS = {
 };
 
 module.exports = {
-  PORTALS, PORTAL_KEYS, portalName, ACTIONS, QUEUE_STATUS, ACTIVE_STATUS, TERMINAL_STATUS, PORTAL_STATUS, CREDENTIAL_STATUS,
+  PORTALS, PORTAL_KEYS, API_PLACES, portalName, ACTIONS, QUEUE_STATUS, ACTIVE_STATUS, TERMINAL_STATUS, PORTAL_STATUS, CREDENTIAL_STATUS,
   QUEUE_WORDS, PORTAL_WORDS, ERRORS, DEFAULTS, CATEGORIES, categoryOf, TEST_STATES, TEST_STATE_OF,
 };

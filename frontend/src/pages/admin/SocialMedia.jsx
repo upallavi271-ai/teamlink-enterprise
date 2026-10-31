@@ -6,7 +6,8 @@ import FacebookSetup from './FacebookSetup.jsx';
 // facebook anni okka tab and instagram tab ani and threds ... facebook accounts 5 ala unati anni accounts ina connect chesukodaniki undali").
 // Three tabs - Facebook, Instagram, Threads - each with every connected account (any number, from any number of logins), one marked as
 // the default (*): job posts and Omni-Channel use the default. Server: /admin/social-accounts (utils/socialAccounts.js). No token is shown.
-const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads']];
+// + LinkedIn (2026-10-31): job posts also go to LinkedIn (a post on the profile or Company Page, official LinkedIn API).
+const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['linkedin', 'LinkedIn']];
 
 function AccountList({ rows, noun, onDefault, onRemove, busy, extra }) {
   if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>No {noun} connected yet.</div>;
@@ -34,8 +35,34 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const [err, setErr] = useState('');
   const [thToken, setThToken] = useState('');
   const [showSetup, setShowSetup] = useState(false);
+  const [li, setLi] = useState(null); // LinkedIn app: { hasApp, clientId, hasSecret, redirectUri }
+  const [liForm, setLiForm] = useState({ clientId: '', clientSecret: '' });
+  const [liPage, setLiPage] = useState('');
+  const [liPageOn, setLiPageOn] = useState(false);
 
-  const load = () => api.get('/admin/social-accounts').then((r) => setAcc(r.data.accounts)).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
+  // LinkedIn sends the browser back here (?sub=linkedin&linkedin=connected | denied | failed&why=...): say what happened, then clean the address
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const r = q.get('linkedin');
+    if (!r) return;
+    setSub('linkedin');
+    if (r === 'connected') setMsg('LinkedIn connected. Job posts can now go to it once an Admin switches LinkedIn posting ON (Job portals).');
+    else if (r === 'denied') setErr(`LinkedIn sign-in was cancelled${q.get('why') ? ` (${q.get('why')})` : ''}. Nothing was connected.`);
+    else setErr(`LinkedIn did not connect: ${q.get('why') || 'it did not accept the sign-in'}.`);
+    ['linkedin', 'why'].forEach((k) => q.delete(k));
+    window.history.replaceState(null, '', `${window.location.pathname}?${q.toString()}`);
+  }, []);
+  useEffect(() => { api.get('/admin/social-accounts/linkedin/app').then((r) => setLi(r.data)).catch(() => setLi(null)); }, [reloadKey]);
+  async function saveLinkedinApp() {
+    setBusy(true); setErr(''); setMsg('');
+    try { const r = await api.put('/admin/social-accounts/linkedin/app', liForm); setLi(r.data); setLiForm({ clientId: '', clientSecret: '' }); setMsg(r.data.message || 'Saved.'); } catch (e) { setErr(e.response?.data?.error || 'Could not save that.'); } finally { setBusy(false); }
+  }
+  async function connectLinkedin() {
+    setBusy(true); setErr('');
+    try { const r = await api.post('/admin/social-accounts/linkedin/start', { pageId: liPageOn ? liPage.trim() : '' }); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the LinkedIn sign-in.'); setBusy(false); }
+  }
+
+  const load =() => api.get('/admin/social-accounts').then((r) => setAcc(r.data.accounts)).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
   useEffect(() => { load(); }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(fn) {
@@ -50,7 +77,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   }
 
   if (!acc) return <div className="small-muted">{err || 'Loading…'}</div>;
-  const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length };
+  const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length, linkedin: (acc.linkedin || []).length };
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -117,6 +144,43 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
             {busy ? 'Checking with Threads…' : 'Connect Threads'}
           </button>
           <div className="small-muted" style={{ fontSize: 12.5, marginTop: 8 }}>The <b>★ default</b> Threads profile is the one Omni-Channel uses.</div>
+        </div>
+      )}
+
+      {sub === 'linkedin' && (
+        <div className="card" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+            <b style={{ fontSize: 15 }}>LinkedIn accounts</b>
+            <button type="button" className="btn btn-primary" onClick={connectLinkedin} disabled={busy || !(li && li.hasApp)} title={li && li.hasApp ? '' : 'Do the one-time setup below first'}>＋ Connect LinkedIn</button>
+          </div>
+          <AccountList rows={acc.linkedin || []} noun="LinkedIn accounts" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => (a.kind === 'page' ? `Company Page · posts as ${a.externalId.replace('urn:li:organization:', 'page ')}` : 'Your profile')} />
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, fontSize: 13.5 }}>
+            <input type="checkbox" checked={liPageOn} onChange={(e) => setLiPageOn(e.target.checked)} style={{ width: 18, height: 18 }} />
+            <span>Also post for a <b>Company Page</b> (needs LinkedIn&apos;s approval of the Community Management API for your app)</span>
+          </label>
+          {liPageOn && (
+            <input type="text" inputMode="numeric" value={liPage} onChange={(e) => setLiPage(e.target.value.replace(/\D/g, ''))} placeholder="Company Page number, for example 12345678 (linkedin.com/company/12345678/admin)" style={{ width: '100%', maxWidth: 520, marginTop: 6 }} />
+          )}
+          <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
+            You sign in on LinkedIn&apos;s own page (the password is never typed in TeamLink). By default jobs are posted on <b>your profile</b>; tick the Company Page box to post on the Page instead.
+            The <b>★ default</b> account is the one job posts use. A LinkedIn token lasts about <b>60 days</b>: press Connect LinkedIn again when it says Expired.
+            This posts on the LinkedIn <b>feed</b>; LinkedIn does not let programs create entries in LinkedIn Jobs (that stays the by-hand LinkedIn tile).
+          </div>
+          <details open={!(li && li.hasApp)} style={{ marginTop: 12 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: 8 }}>One-time setup of the LinkedIn app</summary>
+            <ol style={{ margin: '4px 0 8px', paddingLeft: 18, lineHeight: 1.7, fontSize: 13.5 }}>
+              <li>On <b>developers.linkedin.com</b> press <b>Create app</b> (it needs a LinkedIn Page of your company to belong to).</li>
+              <li><b>Products</b> tab: add <b>Sign In with LinkedIn using OpenID Connect</b> and <b>Share on LinkedIn</b> (both free and instant). For a Company Page also request <b>Community Management API</b>.</li>
+              <li><b>Auth</b> tab: under <b>Authorized redirect URLs</b> add exactly this address: <code style={{ userSelect: 'all' }}>{li ? li.redirectUri : ''}</code></li>
+              <li>On the same Auth tab copy the <b>Client ID</b> and <b>Client Secret</b> and type them here once.</li>
+            </ol>
+            {li && li.hasApp && <div className="small-muted" style={{ marginBottom: 6 }}>Saved: Client ID <b>{li.clientId}</b> · secret saved (never shown). Type new ones only to replace them.</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ fontSize: 13 }}>Client ID<br /><input type="text" autoComplete="off" value={liForm.clientId} onChange={(e) => setLiForm({ ...liForm, clientId: e.target.value.trim() })} placeholder={li && li.hasApp ? 'Leave empty to keep' : 'Client ID'} /></label>
+              <label style={{ fontSize: 13 }}>Client Secret<br /><input type="password" autoComplete="new-password" value={liForm.clientSecret} onChange={(e) => setLiForm({ ...liForm, clientSecret: e.target.value.trim() })} placeholder={li && li.hasSecret ? 'Leave empty to keep' : 'Client Secret'} /></label>
+              <button type="button" className="btn btn-primary btn-sm" disabled={busy || (!liForm.clientId && !liForm.clientSecret)} onClick={saveLinkedinApp}>Save app details</button>
+            </div>
+          </details>
         </div>
       )}
     </div>

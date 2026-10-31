@@ -36,6 +36,45 @@ const TEXT = {
     ],
     doc: 'docs/job-publishing/FACEBOOK.md',
   },
+  // 2026-10-31: the three social places are connected in Administration > Integrations > Social Media (the account's own sign-in);
+  // this card only checks them, shows the switch and, if needed, takes the details typed by hand.
+  instagram: {
+    name: 'Instagram',
+    api: 'Instagram (Graph)',
+    noClosing: true,
+    noTestPost: true,
+    steps: [
+      'Connect the Facebook Page in Administration, Integrations, Social Media. The Instagram professional account linked to that Page is found by itself. (An Instagram account must be a Business or Creator account, linked to the Page.)',
+      'Press Test connection. It only reads the Instagram account name. Nothing is posted.',
+      'An Admin switches it ON. Each job is then posted as a picture of the job with the text under it. Instagram needs the website address to be public (https) so it can fetch the picture.',
+      'A post on Instagram cannot be changed by a program afterwards: delete it in Instagram if it is wrong.',
+    ],
+    doc: 'docs/job-publishing/SOCIAL.md',
+  },
+  threads: {
+    name: 'Threads',
+    api: 'Threads',
+    noClosing: true,
+    steps: [
+      'Connect the Threads profile in Administration, Integrations, Social Media, Threads (paste the Threads token from the Meta app).',
+      'Press Test connection. It only reads the profile name. Nothing is posted.',
+      'An Admin switches it ON. Then press Send a test post to see one real post on Threads.',
+      'A Threads post cannot be changed by a program afterwards: delete it in Threads if it is wrong.',
+    ],
+    doc: 'docs/job-publishing/SOCIAL.md',
+  },
+  linkedinpost: {
+    name: 'LinkedIn post',
+    api: 'LinkedIn',
+    noClosing: true,
+    steps: [
+      "Connect LinkedIn in Administration, Integrations, Social Media, LinkedIn: type the LinkedIn app Client ID and secret once, then press Connect LinkedIn and sign in on LinkedIn. (Posting for a Company Page also needs LinkedIn's approval of the app.)",
+      'Press Test connection. It only reads who the token belongs to. Nothing is posted.',
+      'An Admin switches it ON. Then press Send a test post to see one real post on LinkedIn.',
+      'The LinkedIn token lasts about 60 days: connect again when the card says it has expired.',
+    ],
+    doc: 'docs/job-publishing/SOCIAL.md',
+  },
 };
 
 export default function ApiPortalSetup({
@@ -120,7 +159,7 @@ export default function ApiPortalSetup({
       </div>
       {open && (
         <>
-          <p className="jp-note" style={{ margin: 0 }}>Posts for free through the official {portal === 'telegram' ? 'Telegram Bot' : 'Facebook Graph'} API. Nothing is sent until an Admin switches it ON, and every post can be checked first with a dry run.</p>
+          <p className="jp-note" style={{ margin: 0 }}>Posts for free through the official {t.api || (portal === 'telegram' ? 'Telegram Bot' : 'Facebook Graph')} API. Nothing is sent until an Admin switches it ON, and every post can be checked first with a dry run.</p>
           {c.secretsConfigured === false && <div className="jp-err" role="alert">The server has no secret key yet, so details cannot be saved safely. Ask the team that looks after TeamLink.</div>}
           {c.killed && <div className="jp-note">Posting here is stopped by the big stop switch.</div>}
           {lt && <div><PortalChip state={{ label: lt.words, tone: TEST_TONE[lt.state] || 'grey', icon: '●' }} label="Last test" />{lt.reason ? <span className="jp-note"> {lt.reason}</span> : null}{lt.at ? <span className="jp-note"> {when(lt.at)}</span> : null}</div>}
@@ -145,7 +184,7 @@ export default function ApiPortalSetup({
           {!canSave && !hasLogin && <div className="jp-note">Not set up yet. Ask an Admin or your team lead to set it up.</div>}
           <div className="jp-row">
             {(isAdmin || canPoster) && <button type="button" className="btn" disabled={!hasLogin || busy === 'test'} onClick={test} title="Only reads. Nothing is posted.">{busy === 'test' ? 'Checking...' : 'Test connection'}</button>}
-            {(isAdmin || canPoster) && <button type="button" className="btn" disabled={!hasLogin || !c.enabled || busy === 'tp'} onClick={testPost} title={c.enabled ? 'Sends one real test message' : 'Works after an Admin switches posting ON'}>Send a test post to my {portal === 'telegram' ? 'channel' : 'page'}</button>}
+            {(isAdmin || canPoster) && !t.noTestPost && <button type="button" className="btn" disabled={!hasLogin || !c.enabled || busy === 'tp'} onClick={testPost} title={c.enabled ? 'Sends one real test message' : 'Works after an Admin switches posting ON'}>Send a test post to my {portal === 'telegram' ? 'channel' : 'page'}</button>}
             {isAdmin && (c.enabled
               ? <button type="button" className="btn" disabled={busy === 'sw'} onClick={() => sw(false)}>Switch OFF</button>
               : <button type="button" className="btn btn-primary" disabled={!hasLogin || c.status === 'FAILED' || busy === 'sw'} onClick={() => sw(true)}>Switch ON</button>)}
@@ -157,7 +196,7 @@ export default function ApiPortalSetup({
               <b>{result.ok ? 'Connected' : (result.words || 'Not working')}</b>{result.summary ? `: ${result.summary}` : ''}{result.apiStatus ? ` (the site answered ${result.apiStatus})` : ''}
             </div>
           )}
-          {isAdmin && settings && (
+          {isAdmin && settings && !t.noClosing && (
             <label className="jp-row" style={{ fontSize: 13 }}>
               <input type="checkbox" checked={!!(settings.closingNote && settings.closingNote[portal])} onChange={(e) => note(e.target.checked)} disabled={busy === 'note'} style={{ width: 18, height: 18 }} />
               <span>When a requirement is closed, post a short &quot;This job is now closed&quot; note (OFF means nothing is sent)</span>

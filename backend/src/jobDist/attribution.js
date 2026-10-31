@@ -15,7 +15,7 @@ const P = require('./platforms');
 const norm = (v) => String(v == null ? '' : v).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '');
 const defaults = () => P.DEFAULTS.map((d) => ({ key: d[0], name: d[1], medium: d[3] }));
 // The short name an applicant's source reads (the list name is longer: "WhatsApp group / channel"). An Admin's own rename wins.
-const SHORT = { whatsapp: 'WhatsApp', telegram: 'Telegram', facebook: 'Facebook', ncs: 'NCS portal', google: 'Google Jobs', college: 'College placement', referral: 'Employee referral' };
+const SHORT = { whatsapp: 'WhatsApp', telegram: 'Telegram', facebook: 'Facebook', instagram: 'Instagram', threads: 'Threads', linkedinpost: 'LinkedIn', ncs: 'NCS portal', google: 'Google Jobs', college: 'College placement', referral: 'Employee referral' };
 const DEFAULT_NAME = Object.fromEntries(P.DEFAULTS.map((d) => [d[0], d[1]]));
 const shown = (d) => (SHORT[d.key] && d.name === DEFAULT_NAME[d.key] ? SHORT[d.key] : d.name);
 

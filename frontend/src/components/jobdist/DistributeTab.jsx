@@ -131,7 +131,7 @@ function Card({ card, job, can, user, engineData, onChanged, flash }) {
   const info = card.engine ? (engineData.infos || []).find((p) => p.portal === card.engine) : null;
   const es = card.engine ? portalState({ posting: eng, info }) : null;
   const engineLive = !!(eng && eng.status && eng.status !== 'DRAFT');
-  const isApi = ['telegram', 'facebook'].includes(card.key);
+  const isApi = ['telegram', 'facebook', 'instagram', 'threads', 'linkedinpost'].includes(card.key);
   const s = card.state;
   const klass = s ? (s.key === 'EXPIRED' ? ' is-expired' : s.key === 'EXPIRING' ? ' is-soon' : ['POSTED', 'AUTO_ON'].includes(s.key) ? ' is-posted' : '') : (es && es.key === 'PUBLISHED' ? ' is-posted' : '');
 
@@ -189,13 +189,13 @@ function Card({ card, job, can, user, engineData, onChanged, flash }) {
           {can.post && (
             <div className="dx-acts">
               {!(eng && eng.status === 'PUBLISHED') && <button type="button" className="btn btn-primary" disabled={!!busy || (es && es.key !== 'READY' && es.key !== 'FAILED')} onClick={() => engineRun('publish', 'post')} title="Posts once. Posting the same requirement again does nothing.">{busy === 'post' ? 'Posting...' : `Post to ${card.name}`}</button>}
-              {eng && eng.status === 'PUBLISHED' && <button type="button" className="btn" disabled={!!busy} onClick={() => engineRun('update', 'update')} title="Changes the message that is already there. It does not post a second time.">Post update</button>}
+              {eng && eng.status === 'PUBLISHED' && !['instagram', 'threads'].includes(card.key) && <button type="button" className="btn" disabled={!!busy} onClick={() => engineRun('update', 'update')} title="Changes the message that is already there. It does not post a second time.">Post update</button>}
               <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => engineRun('publish', 'dry', true)} title="Builds the message and shows it. Nothing is sent.">Check only (dry run)</button>
               {lq && lq.status === 'DEAD' || (eng && eng.status === 'FAILED' && lq && lq.id) ? <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={async () => { setBusy('retry'); try { await jp.post(`/queue/${lq.id}/retry`); await engineData.reload(); } catch (e) { setErr(jpError(e)); } finally { setBusy(''); } }}>Retry</button> : null}
               {eng && eng.status === 'PUBLISHED' && eng.portalUrl && <a className="btn btn-sm" href={eng.portalUrl} target="_blank" rel="noopener noreferrer">See the post</a>}
             </div>
           )}
-          {eng && eng.status === 'PUBLISHED' && job.status === 'CLOSED' && <div className="dx-warn">This requirement is closed. The message stays in the {card.key === 'telegram' ? 'channel' : 'page'} unless you delete it there.</div>}
+          {eng && eng.status === 'PUBLISHED' && job.status === 'CLOSED' && <div className="dx-warn">This requirement is closed. The post stays on {card.name} unless you delete it there.</div>}
           {lq && lq.dryRun && lq.status === 'SUCCEEDED' && lq.result && lq.result.note && <details><summary className="dx-hint" style={{ cursor: 'pointer' }}>Last dry run: nothing was sent. See the message</summary><pre className="jp-pre" style={{ whiteSpace: 'pre-wrap' }}>{lq.result.note}</pre></details>}
         </>
       )}

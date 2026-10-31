@@ -32,11 +32,17 @@ const PLACES = [
   ['google', 'Google Jobs', 'Shows in Google job search from our job feed'],
   ['linkedin', 'LinkedIn (by hand)', 'We keep the task and the text; you post it'],
   ['telegram', 'Telegram channel', 'A short message to your channel (an Admin sets it up once)'],
-  ['facebook', 'Facebook page', 'A short post on your Page (an Admin sets it up once)'],
+  // Social media (2026-10-31): shown as their own list on the first screen. Each one posts the job through the account's official API.
+  ['facebook', 'Facebook', 'A post on your Facebook Page with the apply link'],
+  ['instagram', 'Instagram', 'A picture of the job with the text under it'],
+  ['linkedinpost', 'LinkedIn post', 'A post on your LinkedIn feed with the apply link (the LinkedIn tile above is the by-hand job listing)'],
+  ['threads', 'Threads', 'A short text post with the apply link'],
   ['whatsapp', 'WhatsApp contacts', 'Send the requirement link to one of your contact lists'],
 ];
 const AUTO = ['naukri', 'foundit', 'shine'];
-const API = ['telegram', 'facebook']; // official API posts: no login box here (an Admin sets them up in Integrations), a dry run is always offered
+const SOCIAL = ['facebook', 'instagram', 'linkedinpost', 'threads']; // the social media list of screen 1
+const API = ['telegram', ...SOCIAL]; // official API posts: no login box here (an Admin connects them in Integrations > Social Media), a dry run is always offered
+const SOCIAL_TAB = { facebook: 'facebook', instagram: 'instagram', threads: 'threads', linkedinpost: 'linkedin' }; // the Social Media tab that connects each one
 const TONE = { posted: 'green', feed: 'green', running: 'blue', queued: 'blue', needs_help: 'yellow', not_connected: 'yellow', not_available: 'grey', failed: 'red', idle: 'grey' };
 const LABEL = { posted: 'Posted', feed: 'In our feed', running: 'Running', queued: 'Queued', needs_help: 'Needs your help', not_connected: 'Not connected', not_available: 'Not available yet', failed: 'Failed', idle: 'Not posted' };
 const NAME = Object.fromEntries(PLACES.map((p) => [p[0], p[1]]));
@@ -147,7 +153,7 @@ function LoginPanel({ portal, info, worker, onConnected, canSwitch, reload, onSh
   );
 }
 
-function SwitchPanel({ portal, canSwitch, onSwitched }) {
+function SwitchPanel({ portal, canSwitch, onSwitched, api = false }) {
   const name = short(portal);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -160,17 +166,17 @@ function SwitchPanel({ portal, canSwitch, onSwitched }) {
       <b className="ps-login-t">{`${name} posting is switched off`}</b>
       {canSwitch ? (
         <>
-          <div className="ps-hint">{`The login is saved. Automatic posting to ${name} stays off until an Admin switches it on.`}</div>
+          <div className="ps-hint">{api ? `${name} is connected. Posting to it stays off until an Admin switches it on. Nothing is posted until then.` : `The login is saved. Automatic posting to ${name} stays off until an Admin switches it on.`}</div>
           <button type="button" className="btn btn-primary" disabled={busy} onClick={go}>{busy ? 'Switching on…' : `Switch on ${name} posting`}</button>
         </>
-      ) : <div className="ps-hint">{`Ask your Admin to switch on ${name} posting. Until then ${name} gets a by-hand task with this text instead.`}</div>}
+      ) : <div className="ps-hint">{api ? `Ask your Admin to switch on ${name} posting. Until then nothing is posted to ${name}.` : `Ask your Admin to switch on ${name} posting. Until then ${name} gets a by-hand task with this text instead.`}</div>}
       {err && <div className="ps-bad" role="alert">{err}</div>}
     </div>
   );
 }
 
 // Naukri and Shine are posted BY HAND on the tiles (the Naukri -> Shine workflow). The old automatic worker for them stays reachable in More places.
-const MORE = ['foundit', 'google', 'telegram', 'facebook', 'whatsapp']; // "More channels": ticked in the same list, posted by the same button
+const MORE = ['foundit', 'google', 'telegram', 'whatsapp']; // "More channels": ticked in the same list, posted by the same button
 const MORE_NAME = {};
 const SAVED_ONLY = 'Saved. Nothing was posted yet: open the requirement and press Post when you are ready.';
 
@@ -488,6 +494,7 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
   const where = namesOf(targets);
   const autoTargets = targets.filter((id) => AUTO.includes(id) && !MANUAL.includes(id)); // Naukri / Shine are by hand now: no dry run for them
   const ownOnly = targets.length > 0 && targets.every((id) => (cardOf(id) || {}).via === 'own');
+  const socialOnly = targets.length > 0 && targets.every((id) => API.includes(id));
   const panelFor = (id) => {
     const i = infoOf(id);
     if (!i || !i.credential) return <div className="ps-hint">{off === 'off' ? 'Job publishing is not switched on yet.' : 'The login box is not available right now.'}</div>;
@@ -497,6 +504,58 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
         {i.credential.hasLogin && !i.credential.enabled && <SwitchPanel portal={id} canSwitch={canSwitch} onSwitched={connected} />}
       </>
     );
+  };
+
+  // one tick row of "More channels"
+  const placeRow = ([id, name, hint]) => {
+    const on = AUTO.includes(id) && picked.includes(id);
+    const i = infoOf(id);
+    const c = (i && i.credential) || null;
+    const showLogin = on && c && (!c.hasLogin || c.status !== 'CONNECTED' || shown[id]);
+    const showSwitch = on && c && c.hasLogin && !c.enabled;
+    const ch = chips.find((x) => x.place === id && x.state !== 'idle');
+    return (
+      <div key={id} className="ps-site">
+        <label className={`bc-place${picked.includes(id) ? ' on' : ''}`}>
+          <input type="checkbox" checked={picked.includes(id)} onChange={() => toggle(id)} />
+          <span>{name}<small>{hint}</small></span>
+          {ch && <StatusChip tone={TONE[ch.state] || 'grey'}>{LABEL[ch.state] || ch.state}</StatusChip>}
+          {!ch && API.includes(id) && c && (
+            <StatusChip tone={!c.hasLogin ? 'grey' : !c.enabled ? 'grey' : c.status === 'FAILED' ? 'red' : 'green'}>
+              {!c.hasLogin ? 'Not set up' : !c.enabled ? 'Switched off' : c.status === 'FAILED' ? 'Token failed' : 'Ready'}
+            </StatusChip>
+          )}
+          {!ch && AUTO.includes(id) && c && (
+            <StatusChip tone={!c.hasLogin ? 'grey' : c.status === 'CONNECTED' ? 'green' : c.status === 'FAILED' ? 'red' : 'yellow'}>
+              {!c.hasLogin ? 'No login yet' : !c.enabled ? 'Switched off' : c.status === 'CONNECTED' ? 'Connected' : c.status === 'FAILED' ? 'Login failed' : 'Not checked yet'}
+            </StatusChip>
+          )}
+        </label>
+        {showLogin && <LoginPanel portal={id} info={i} worker={portals && portals.worker} onConnected={connected} canSwitch={canSwitch} reload={reload} onShown={(p) => setShown((s2) => (s2[p] ? s2 : { ...s2, [p]: true }))} />}
+        {showSwitch && <SwitchPanel portal={id} canSwitch={canSwitch} onSwitched={connected} />}
+      </div>
+    );
+  };
+
+  // ---- the social media tiles of screen 1 (Facebook, Instagram, LinkedIn, Threads) --------------------------------------
+  // the little word on a tile: is the account connected and is posting switched on
+  const socialSetup = (id) => {
+    const c = (infoOf(id) || {}).credential;
+    if (!c) return null;
+    if (!c.hasLogin) return { label: 'Not connected', tone: 'grey' };
+    if (c.status === 'FAILED') return { label: 'Connection refused', tone: 'red' };
+    if (!c.enabled) return { label: 'Switched off', tone: 'grey' };
+    return { label: 'Ready', tone: 'green' };
+  };
+  // what a ticked social tile still needs, said under the tiles (never a silent failure)
+  const socialPanel = (id) => {
+    const c = (infoOf(id) || {}).credential;
+    const name = NAME[id];
+    if (!c) return off && off !== 'off' ? <div className="ps-bad" role="alert">{off}</div> : <div className="ps-hint">{`${name} is not available right now. An Admin connects it in Administration, Integrations, Social Media.`}</div>;
+    if (!c.hasLogin) return <div className="ps-login"><b className="ps-login-t">{`${name} is not connected yet`}</b><div className="ps-hint">{canSwitch ? <>Connect it once in <Link to={`/admin/integrations?tab=facebook&sub=${SOCIAL_TAB[id]}`}>Administration, Integrations, Social Media</Link>. Nothing is posted to {name} until then.</> : `Ask your Admin to connect ${name} (Administration, Integrations, Social Media). Nothing is posted there until then.`}</div></div>;
+    if (c.status === 'FAILED') return <div className="ps-bad" role="alert">{`The saved ${name} connection was refused${c.lastError ? ` (${c.lastError})` : ''}. ${canSwitch ? 'Connect it again in Administration, Integrations, Social Media.' : 'Ask your Admin to connect it again.'}`}</div>;
+    if (!c.enabled) return <SwitchPanel portal={id} canSwitch={canSwitch} onSwitched={() => reload()} api />;
+    return null;
   };
 
   const stripe = (
@@ -515,8 +574,12 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
       {view === 'platforms' && (
         <PlatformScreen
           job={job}
-          tiles={CARDS.map((c) => ({ id: c.id, name: c.name, hint: c.hint, mode: c.mode, state: stateOf(c.id), loginBtn: false }))}
+          tiles={[
+            ...CARDS.map((c) => ({ id: c.id, name: c.name, hint: c.hint, mode: c.mode, state: stateOf(c.id), loginBtn: false })),
+            ...SOCIAL.map((id) => ({ id, name: NAME[id], hint: (PLACES.find((p) => p[0] === id) || [])[2], mode: 'auto', state: stateOf(id), group: 'social', setup: socialSetup(id), loginBtn: false })),
+          ]}
           selectedCount={selected.length + picked.length}
+          groupTitles={{ social: ['Social media', 'TeamLink posts the job on your own pages too. An Admin connects each one once.'] }}
           selected={selected}
           onToggle={(id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]))}
           onRetry={retryCard}
@@ -524,46 +587,19 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
           onNext={() => goCompose([...selected, ...picked])}
           onBack={onBack || (() => onDone({ ...finish(), summary: SAVED_ONLY }))}
           busy={busy || posting}
-          loginPanels={Object.fromEntries(Object.keys(loginOpen).filter((k) => loginOpen[k]).map((k) => [k, panelFor(k)]))}
+          loginPanels={Object.fromEntries([
+            ...Object.keys(loginOpen).filter((k) => loginOpen[k]).map((k) => [k, panelFor(k)]),
+            ...SOCIAL.filter((id) => selected.includes(id)).map((id) => [id, socialPanel(id)]).filter((x) => x[1]),
+          ])}
           onLogin={(id) => setLoginOpen((o) => ({ ...o, [id]: !o[id] }))}
           notice={stripe}
         >
           {err && <div className="bc-err" role="alert">{err}</div>}
 
           <details className="pw-more" open={picked.length > 0}>
-            <summary>More channels <small>(Foundit, Google Jobs, Telegram, Facebook, WhatsApp)</small></summary>
-            {off === 'off' && <div className="ps-hint">These need an Admin to set them up first.</div>}
-            {off && off !== 'off' && <div className="ps-bad" role="alert">{off}</div>}
+            <summary>More channels <small>(Foundit, Google Jobs, Telegram, WhatsApp)</small></summary>
             <div className="bc-places">
-              {PLACES.filter(([id]) => MORE.includes(id)).map(([id, name, hint]) => {
-                const on = AUTO.includes(id) && picked.includes(id);
-                const i = infoOf(id);
-                const c = (i && i.credential) || null;
-                const showLogin = on && c && (!c.hasLogin || c.status !== 'CONNECTED' || shown[id]);
-                const showSwitch = on && c && c.hasLogin && !c.enabled;
-                const ch = chips.find((x) => x.place === id && x.state !== 'idle');
-                return (
-                  <div key={id} className="ps-site">
-                    <label className={`bc-place${picked.includes(id) ? ' on' : ''}`}>
-                      <input type="checkbox" checked={picked.includes(id)} onChange={() => toggle(id)} />
-                      <span>{name}<small>{hint}</small></span>
-                      {ch && <StatusChip tone={TONE[ch.state] || 'grey'}>{LABEL[ch.state] || ch.state}</StatusChip>}
-                      {!ch && API.includes(id) && c && (
-                        <StatusChip tone={!c.hasLogin ? 'grey' : !c.enabled ? 'grey' : c.status === 'FAILED' ? 'red' : 'green'}>
-                          {!c.hasLogin ? 'Not set up' : !c.enabled ? 'Switched off' : c.status === 'FAILED' ? 'Token failed' : 'Ready'}
-                        </StatusChip>
-                      )}
-                      {!ch && AUTO.includes(id) && c && (
-                        <StatusChip tone={!c.hasLogin ? 'grey' : c.status === 'CONNECTED' ? 'green' : c.status === 'FAILED' ? 'red' : 'yellow'}>
-                          {!c.hasLogin ? 'No login yet' : !c.enabled ? 'Switched off' : c.status === 'CONNECTED' ? 'Connected' : c.status === 'FAILED' ? 'Login failed' : 'Not checked yet'}
-                        </StatusChip>
-                      )}
-                    </label>
-                    {showLogin && <LoginPanel portal={id} info={i} worker={portals && portals.worker} onConnected={connected} canSwitch={canSwitch} reload={reload} onShown={(p) => setShown((s2) => (s2[p] ? s2 : { ...s2, [p]: true }))} />}
-                    {showSwitch && <SwitchPanel portal={id} canSwitch={canSwitch} onSwitched={connected} />}
-                  </div>
-                );
-              })}
+              {PLACES.filter(([id]) => MORE.includes(id)).map(placeRow)}
             </div>
             {picked.includes('whatsapp') && (
               <div className="bc-row">
@@ -603,8 +639,8 @@ export default function PostStep({ job, initial = [], onDone, onBack = null, onA
           onDry={setDry}
           dryNote={unverifiedOf(targets) ? 'On for now because a site here is not marked verified yet. An Admin marks a site verified after a real test post.' : 'Untick to post for real.'}
           manual={targets.some((id) => MANUAL.includes(id)) ? { askShine: targets.includes('naukri') && !targets.includes('shine'), thenShine, onThenShine: setThenShine } : null}
-          ownOnly={ownOnly}
-          ownNote="Our Job Portal and Website show the requirement details saved on the requirement. To change those, edit the requirement."
+          ownOnly={ownOnly || socialOnly}
+          ownNote={socialOnly ? "TeamLink writes the post for each social page from the requirement (a short text with the apply link; Instagram also gets a picture of the job). The text above is for the job sites. To change a social post, edit its text on the Distribute list, or press Check only first to read it." : "Our Job Portal and Website show the requirement details saved on the requirement. To change those, edit the requirement."}
           err={screenErr}
           busy={posting}
           posting={posting}

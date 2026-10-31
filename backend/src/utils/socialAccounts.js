@@ -17,7 +17,7 @@ const { encryptSecret, decryptSecret } = require('./secrets');
 const { readConfig, writeValues } = require('./integrationStore');
 
 const KEY = 'social.accounts';
-const PLATFORMS = ['facebook', 'instagram', 'threads'];
+const PLATFORMS = ['facebook', 'instagram', 'threads', 'linkedin'];
 const graphBase = () => String(process.env.TL_FACEBOOK_GRAPH_BASE || 'https://graph.facebook.com/v19.0').replace(/\/+$/, '');
 const threadsBase = () => String(process.env.TL_THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0').replace(/\/+$/, '');
 
@@ -29,10 +29,12 @@ async function writeAll(list) {
   await prisma.appSetting.upsert({ where: { key: KEY }, update: { value }, create: { key: KEY, value } });
 }
 const tokenOf = (a) => (a && a.tokenEnc ? decryptSecret(a.tokenEnc) : '');
+// LinkedIn tokens last 60 days: a token past its date is shown as Expired (posting would be refused), never as Connected
+const expired = (a) => !!(a.expiresAt && Date.parse(a.expiresAt) < Date.now());
 const shape = (a) => ({
   id: a.id, platform: a.platform, externalId: a.externalId, name: a.name, username: a.username || null, parentId: a.parentId || null,
-  parentName: a.parentName || null, isDefault: !!a.isDefault, status: a.status || 'Connected', error: a.error || null,
-  connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null,
+  parentName: a.parentName || null, isDefault: !!a.isDefault, status: expired(a) ? 'Expired' : (a.status || 'Connected'), error: expired(a) ? 'The LinkedIn token has expired (they last 60 days). Press Connect LinkedIn again.' : (a.error || null),
+  connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null, expiresAt: a.expiresAt || null, kind: a.kind || null,
 });
 
 async function getJson(url) {
@@ -127,6 +129,20 @@ async function refreshInstagram(user) {
   return { found, missing };
 }
 
+// LinkedIn (2026-10-31): the profile that signed in (always) and, when its number was typed, a Company Page the same token may post for.
+// The default one is what job posts use (utils/socialPosting.js copies it to the job-posting connection).
+async function addLinkedin(user, { sub, name, token, expiresAt, orgId = null, orgName = null }) {
+  const all = await readAll();
+  await adoptLegacy(all);
+  const urn = `urn:li:person:${sub}`;
+  const person = upsert(all, { platform: 'linkedin', externalId: urn, name: name || urn, kind: 'profile', expiresAt: expiresAt || null }, token, user);
+  let page = null;
+  if (orgId) page = upsert(all, { platform: 'linkedin', externalId: `urn:li:organization:${orgId}`, name: orgName || `Company Page ${orgId}`, kind: 'page', parentId: urn, parentName: person.name, expiresAt: expiresAt || null }, token, user);
+  if (!all.some((a) => a.platform === 'linkedin' && a.isDefault)) (page || person).isDefault = true;
+  await writeAll(all);
+  return { ok: true, person: shape(person), page: page ? shape(page) : null };
+}
+
 async function addThreads(user, token) {
   const t = String(token || '').trim();
   if (t.length < 20 || /\s/.test(t)) return { error: 'That does not look like a Threads access token. Copy the whole token.', status: 400 };
@@ -167,7 +183,7 @@ async function remove(user, id) {
   const acc = all.find((a) => a.id === id);
   if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
   // a Page takes its Instagram account with it (the Instagram account was reached through that Page)
-  const drop = new Set([acc.id, ...all.filter((a) => acc.platform === 'facebook' && a.platform === 'instagram' && a.parentId === acc.externalId).map((a) => a.id)]);
+  const drop = new Set([acc.id, ...all.filter((a) => (acc.platform === 'facebook' && a.platform === 'instagram' && a.parentId === acc.externalId) || (acc.platform === 'linkedin' && a.platform === 'linkedin' && a.parentId === acc.externalId)).map((a) => a.id)]);
   const rest = all.filter((a) => !drop.has(a.id));
   let clearedDefault = false;
   for (const p of PLATFORMS) {
@@ -181,4 +197,4 @@ async function remove(user, id) {
   return { ok: true, removed: [...drop].length, platform: acc.platform, wasDefault: !!acc.isDefault, nextDefault: (rest.find((a) => a.platform === acc.platform && a.isDefault) || {}).id || null };
 }
 
-module.exports = { list, addFacebookPages, refreshInstagram, addThreads, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };
+module.exports = { list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };

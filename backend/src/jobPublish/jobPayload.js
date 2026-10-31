@@ -26,12 +26,15 @@ const REQUIRED = {
   career: ['title', 'description'],
   telegram: ['title'], // the message itself is built from the Posting Kit (jobDist/text.js)
   facebook: ['title'],
+  instagram: ['title'],
+  threads: ['title'],
+  linkedinpost: ['title'],
 };
 const FIELD_WORDS = { title: 'Job title', description: 'Job description', location: 'Job location', experience: 'Experience', skills: 'Key skills', salary: 'Salary' };
 
 const clean = (v) => String(v == null ? '' : v).replace(/\r/g, '').trim();
 const csv = (v) => clean(v).split(/[,\n;]+/).map((s) => s.trim()).filter(Boolean);
-const BOARD_FOR = { naukri: 'naukri', shine: 'shine', foundit: 'shine', linkedin: 'linkedin', career: 'indeed', telegram: 'linkedin', facebook: 'linkedin' };
+const BOARD_FOR = { naukri: 'naukri', shine: 'shine', foundit: 'shine', linkedin: 'linkedin', career: 'indeed', telegram: 'linkedin', facebook: 'linkedin', instagram: 'linkedin', threads: 'linkedin', linkedinpost: 'linkedin' };
 
 // Lines that talk about the agreement never go on a public post (agreement privacy).
 const AGREEMENT_LINE = /agreement|\be-?sign/i;

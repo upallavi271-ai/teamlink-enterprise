@@ -16,6 +16,8 @@ import './reqsplit.css';
 // <PostingsTab job={requirement} canPost onChanged>{the older cards}</PostingsTab>
 // ---------------------------------------------------------------------------
 const PORTALS = ['naukri', 'shine', 'indeed', 'linkedin'];
+// Social media (2026-10-31): TeamLink posts these itself, through the accounts an Admin connected in Integrations > Social Media
+const SOCIAL = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['linkedinpost', 'LinkedIn post'], ['threads', 'Threads']];
 const BTN = { post: 'Post', continue: 'Continue', retry: 'Retry', view: 'Open again' };
 
 export default function PostingsTab({ job, canPost, onChanged, children }) {
@@ -41,21 +43,25 @@ export default function PostingsTab({ job, canPost, onChanged, children }) {
     const state = cardState(id, { site: sites.find((s) => s.id === id) || null, chip: chips.find((c) => c.place === id) || null, flow });
     return { id, name: (cardOf(id) || {}).name || id, state, t: tableStatus(state) };
   });
-  const pending = rows.some((r) => r.t.word === 'Pending');
+  const socialRows = SOCIAL.map(([id, name]) => {
+    const state = cardState(id, { chip: chips.find((c) => c.place === id) || null });
+    return { id, name, state, t: tableStatus(state) };
+  });
+  const pending = [...rows, ...socialRows].some((r) => r.t.word === 'Pending');
   useEffect(() => {
     if (!pending || dlg) return undefined;
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
   }, [pending, dlg, load]);
 
-  const open = (targets) => { setPanel(targets[0]); setDlg({ targets }); };
+  const open = (targets) => { if (PORTALS.includes(targets[0])) setPanel(targets[0]); setDlg({ targets }); }; // the details panel is for the four job sites only
   const goOthers = () => { const el = document.getElementById('pt-others'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
 
   return (
     <div className="pt">
       <div className="pw-card">
         <h3 className="pw-h1">Post Job on External Portals</h3>
-        <p className="pw-sub">Click on the respective platform to post this requirement manually. You sign in and press Post on the site yourself. TeamLink never signs in or posts for you.</p>
+        <p className="pw-sub">Naukri, Shine, Indeed and LinkedIn are posted by you: you sign in and press Post on the site yourself. TeamLink never signs in or posts to them for you. Facebook, Instagram, LinkedIn post and Threads are below: those TeamLink posts for you.</p>
         {!canPost && <div className="ps-hint">You can see where this requirement is posted. Posting is done by your team lead or the client manager.</div>}
         <div className="pt-btns" role="group" aria-label="Post on a portal">
           {rows.map((r) => (
@@ -64,6 +70,16 @@ export default function PostingsTab({ job, canPost, onChanged, children }) {
             </button>
           ))}
           <button type="button" className="pt-big" onClick={goOthers} aria-label="Other places"><span className="pw-logo pw-lg-web">+</span><span className="pw-tname">Others</span></button>
+        </div>
+        <div className="pt-social">
+          <h4 className="pt-social-h">Post on social media <small>(TeamLink posts it for you on your connected pages)</small></h4>
+          <div className="pt-btns pt-4" role="group" aria-label="Post on social media">
+            {socialRows.map((r) => (
+              <button type="button" key={r.id} className="pt-big" disabled={!canPost} onClick={() => open([r.id])} aria-label={`Post on ${r.name}`}>
+                <Logo id={r.id} /><span className="pw-tname">{r.name}</span>
+              </button>
+            ))}
+          </div>
         </div>
 
         <h4 className="pw-h2">Post Status</h4>
@@ -74,6 +90,14 @@ export default function PostingsTab({ job, canPost, onChanged, children }) {
               <span role="cell"><b>{r.name}</b></span>
               <span role="cell"><StatusChip tone={r.t.tone}>{r.t.word}</StatusChip></span>
               <span role="cell" className="ps-hint">{r.t.reason}{r.state.link && <> <a href={r.state.link} target="_blank" rel="noreferrer">View requirement</a></>}</span>
+              <span role="cell">{canPost && <button type="button" className={`btn btn-sm${r.t.action === 'retry' || r.t.action === 'post' ? ' btn-primary' : ''}`} onClick={() => open([r.id])}>{BTN[r.t.action]}</button>}</span>
+            </div>
+          ))}
+          {socialRows.map((r) => (
+            <div className="pt-tr" role="row" key={r.id}>
+              <span role="cell"><b>{r.name}</b></span>
+              <span role="cell"><StatusChip tone={r.t.tone}>{r.t.word}</StatusChip></span>
+              <span role="cell" className="ps-hint">{r.t.reason}{r.state.link && <> <a href={r.state.link} target="_blank" rel="noreferrer">View post</a></>}</span>
               <span role="cell">{canPost && <button type="button" className={`btn btn-sm${r.t.action === 'retry' || r.t.action === 'post' ? ' btn-primary' : ''}`} onClick={() => open([r.id])}>{BTN[r.t.action]}</button>}</span>
             </div>
           ))}

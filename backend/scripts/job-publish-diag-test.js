@@ -425,7 +425,7 @@ const REAL_JSON = (p) => JSON.parse(fs.readFileSync(path.join(BACK, `src/portals
   await D.ex('UPDATE "PostingQueue" SET "attempts" = "maxAttempts" WHERE "portal" = \'naukri\' AND "status" = \'QUEUED\''); // (a retryable timeout waits for its next try: not needed any more)
   const dgA = await Z.call('GET', `${J}/diagnostics`, tok.admin);
   const nk2 = dgA.body.portals.find((p) => p.portal === 'naukri');
-  Z.check('diagnostics (Admin): all seven portals (incl. Telegram and Facebook), with health, credential (masked login), session, selectors and last attempts', dgA.status === 200 && dgA.body.portals.length === 7 && nk2.health.state && Array.isArray(nk2.health.issues) && nk2.credential.usernameMasked && nk2.session && nk2.selectors.steps.length >= 14 && nk2.lastAttempts.length > 0, dgA.body.portals.map((p) => p.portal));
+  Z.check('diagnostics (Admin): all ten portals (incl. Telegram, Facebook, Instagram, Threads and LinkedIn post), with health, credential (masked login), session, selectors and last attempts', dgA.status === 200 && dgA.body.portals.length === 10 && nk2.health.state && Array.isArray(nk2.health.issues) && nk2.credential.usernameMasked && nk2.session && nk2.selectors.steps.length >= 14 && nk2.lastAttempts.length > 0, dgA.body.portals.map((p) => p.portal));
   Z.check('diagnostics: no secret anywhere in the answer', !dgA.text.includes(MOCK.VALID_PASS) && !dgA.text.includes(MOCK.VALID_USER) && !dgA.text.includes('whatever1') && !dgA.text.includes(CODE));
   const cats = nk2.failures.byCategory;
   Z.check('diagnostics: failures by group - sign-in, OTP, CAPTCHA, page changed, site refused, site down', cats.LOGIN >= 1 && cats.OTP >= 1 && cats.CAPTCHA >= 1 && cats.SELECTOR >= 1 && cats.VALIDATION >= 1 && cats.PORTAL_DOWN >= 1, cats);

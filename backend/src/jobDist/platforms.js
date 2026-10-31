@@ -22,6 +22,7 @@ const FORMATS = ['jd', 'short'];
 const NOT_READY = 'Job distribution is not set up in this database yet (the migration 20261014300000_job_distribution has not been applied).';
 
 // key, name, kind, medium, format, postUrl, maxChars, maxTitle, includeSalary, expiryDays, formatHint, engine, sortOrder
+const { API_PLACES } = require('../jobPublish/constants');
 const { POST_URLS } = require('../config/postUrls'); // where Post opens each site: one list
 const DEFAULTS = [
   ['career', 'Own job portal', 'auto', 'careers', 'jd', null, null, null, 1, null, 'Goes live by itself on our careers page. Nothing to copy.', 'career', 10],
@@ -29,6 +30,9 @@ const DEFAULTS = [
   ['feed', 'RSS / XML feed', 'auto', 'feed', 'jd', null, null, null, 1, null, 'The requirement is in our feed for job aggregators. Nothing to post.', null, 30],
   ['telegram', 'Telegram channel', 'auto', 'social', 'short', null, 4096, null, 1, null, 'A short message with the apply link. Posted by the Telegram bot (an Admin sets it up once).', 'telegram', 40],
   ['facebook', 'Facebook page', 'auto', 'social', 'short', null, 5000, null, 1, null, 'A short post with the apply link. Posted by the Facebook page connection (an Admin sets it up once).', 'facebook', 50],
+  ['instagram', 'Instagram', 'auto', 'social', 'short', null, 2200, null, 1, null, 'A picture of the job with this text under it. Posted by the Instagram account linked to the Facebook Page (an Admin connects it once in Social Media).', 'instagram', 52],
+  ['threads', 'Threads', 'auto', 'social', 'short', null, 500, null, 1, null, 'A short text with the apply link. Posted by the Threads connection (an Admin connects it once in Social Media).', 'threads', 54],
+  ['linkedinpost', 'LinkedIn post', 'auto', 'social', 'short', null, 3000, null, 1, null, 'A short post on the LinkedIn feed with the apply link (not LinkedIn Jobs). Posted by the LinkedIn connection (an Admin connects it once in Social Media).', 'linkedinpost', 56],
   ['linkedin', 'LinkedIn', 'semi', 'job_board', 'jd', POST_URLS.linkedin, 3000, 100, 1, 30, 'Short and clear. Keep it under about 250 words. LinkedIn does not allow programs to post jobs, so a person posts it.', 'linkedin', 60],
   ['indeed', 'Indeed', 'semi', 'job_board', 'jd', POST_URLS.indeed, 5000, 100, 1, 30, 'Plain text. Paste the title and the description.', null, 70],
   ['naukri', 'Naukri', 'semi', 'job_board', 'jd', POST_URLS.naukri, 4000, 100, 1, 30, 'Plain text with short bullet lines. Naukri checks each job before it shows (up to 24 hours).', 'naukri', 80],
@@ -147,7 +151,7 @@ async function save(key, body, user, { create = false } = {}) {
   }
   if (b.kind !== undefined) {
     if (!KINDS.includes(b.kind)) return { error: 'Choose automatic, semi-automatic or by hand.', status: 400 };
-    if (cur && ['telegram', 'facebook', 'career', 'google', 'feed'].includes(k) && b.kind !== 'auto') return { error: 'This place is posted by TeamLink itself.', status: 400 };
+    if (cur && [...API_PLACES, 'career', 'google', 'feed'].includes(k) && b.kind !== 'auto') return { error: 'This place is posted by TeamLink itself.', status: 400 };
     next.kind = b.kind;
   }
   if (b.medium !== undefined) { if (!MEDIUMS.includes(b.medium)) return { error: 'Choose a type of place from the list.', status: 400 }; next.medium = b.medium; }

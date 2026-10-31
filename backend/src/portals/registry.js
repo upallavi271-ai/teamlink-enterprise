@@ -16,6 +16,9 @@ const loaders = {
   career: () => require('./career/InternalCareerAdapter'), // eslint-disable-line global-require
   telegram: () => require('./telegram/TelegramAdapter'), // eslint-disable-line global-require
   facebook: () => require('./facebook/FacebookAdapter'), // eslint-disable-line global-require
+  instagram: () => require('./instagram/InstagramAdapter'), // eslint-disable-line global-require
+  threads: () => require('./threads/ThreadsAdapter'), // eslint-disable-line global-require
+  linkedinpost: () => require('./linkedinpost/LinkedInPostAdapter'), // eslint-disable-line global-require
 };
 const custom = new Map(); // tests / future portals
 

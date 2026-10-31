@@ -20,7 +20,7 @@ function PlaceRow({ p, reload, flash }) {
   const val = (k) => (v[k] !== undefined ? v[k] : (p[k] == null ? '' : p[k]));
   const dirty = Object.keys(v).length > 0;
   const set = (k, x) => setV({ ...v, [k]: x });
-  const locked = ['career', 'google', 'feed', 'telegram', 'facebook'].includes(p.key);
+  const locked = ['career', 'google', 'feed', 'telegram', 'facebook', 'instagram', 'threads', 'linkedinpost'].includes(p.key);
   async function run(key, fn, ok) {
     setBusy(key); setErr('');
     try { await fn(); flash(ok); setV({}); await reload(); } catch (e) { setErr(dxError(e)); } finally { setBusy(''); }

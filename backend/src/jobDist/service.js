@@ -10,6 +10,7 @@
 const prisma = require('../db');
 const { requirementIsLive } = require('../utils/atsVocab');
 const access = require('../jobPublish/access');
+const { API_PLACES } = require('../jobPublish/constants');
 const Plat = require('./platforms');
 const T = require('./text');
 const Track = require('./tracker');
@@ -71,7 +72,7 @@ async function distribute(user, job, base) {
       card.state = Track.stateOf(row, now, s.reminderDays);
       card.posting = Track.view(row, now, s.reminderDays);
     }
-    if (pl.kind !== 'auto' || ['telegram', 'facebook'].includes(pl.key)) {
+    if (pl.kind !== 'auto' || API_PLACES.includes(pl.key)) {
       const built = T.withEdit(ctx, pl, T.build(ctx, pl));
       card.kit = {
         title: built.title, text: built.text, auto: built.auto, link: built.link, chars: built.chars, limit: built.limit, over: built.over, trimmed: built.trimmed, blanks: built.blanks,
@@ -94,7 +95,7 @@ async function distribute(user, job, base) {
 async function saveText(user, job, key, body, base) {
   const pl = await Plat.get(key);
   if (!pl) return { error: 'This place is not in the list.', status: 404 };
-  if (pl.kind === 'auto' && !['telegram', 'facebook'].includes(pl.key)) return { error: `${pl.name} needs no text: TeamLink does it by itself.`, status: 400 };
+  if (pl.kind === 'auto' && !API_PLACES.includes(pl.key)) return { error: `${pl.name} needs no text: TeamLink does it by itself.`, status: 400 };
   const ctx = await T.context(job.id, { base });
   const text = String((body && body.text) || '');
   if (text.trim().length > 30000) return { error: 'The text is too long.', status: 400 };

@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // ApiPortal: the adapter pattern for a portal that is posted to through an OFFICIAL API with a token (Telegram Bot API,
-// Facebook Graph API). No browser, no bot, no scraping.
+// Facebook / Instagram / Threads Graph APIs, LinkedIn Posts API). No browser, no bot, no scraping.
 //
 // STANDARD RESULT of run() (the same shape the browser adapters give the runner):
 //   { ok, portalJobId, portalUrl, verified, confirmed, dryRun, code, reason, retryable, retryAfterMs, apiStatus, note, screenshots: [] }
@@ -69,7 +69,9 @@ class ApiPortal {
     let parsed = null;
     try { parsed = await res.json(); } catch { parsed = null; }
     const ra = Number(res.headers.get('retry-after'));
-    return { status: res.status, json: parsed, retryAfterMs: Number.isFinite(ra) && ra > 0 ? ra * 1000 : null };
+    return {
+      status: res.status, json: parsed, retryAfterMs: Number.isFinite(ra) && ra > 0 ? ra * 1000 : null, header: (n) => res.headers.get(n),
+    };
   }
 
   async checkpoint(step) { if (this.ctx && this.ctx.checkpoint) await this.ctx.checkpoint(step); }

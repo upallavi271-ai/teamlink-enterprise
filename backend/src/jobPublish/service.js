@@ -98,6 +98,7 @@ async function one(user, r, portal, action, o) {
     if (action === 'PUBLISH' && !o.dryRun && posting && posting.status === 'PUBLISHED' && posting.payloadHash === hash) {
       return { ...base, ok: true, queued: false, mode: 'already', reason: `Already live on ${name}. Use Republish to post it again.`, posting: P.view(posting) };
     }
+    if (action === 'UPDATE' && meta.noEdit) return { ...base, ok: false, mode: 'refused', reason: `${name} does not let a program change a post after it is published. Delete the post there if it is wrong, then post the job again.` };
     if ((action === 'UPDATE') && !(posting && posting.status === 'PUBLISHED')) return { ...base, ok: false, mode: 'refused', reason: `It is not live on ${name}, so there is nothing to update. Publish it.` };
   }
   if (action === 'UNPUBLISH' && !(posting && ['PUBLISHED', 'NEEDS_CHECK'].includes(posting.status))) {

@@ -62,7 +62,7 @@ export const plusDays = (n, from = new Date()) => new Date(from.getTime() + n * 
 
 // the names of the default places (when the list is not loaded yet)
 export const PLACE_NAMES = {
-  career: 'Own job portal', google: 'Google for Jobs', feed: 'RSS / XML feed', telegram: 'Telegram channel', facebook: 'Facebook page', linkedin: 'LinkedIn', indeed: 'Indeed', naukri: 'Naukri', shine: 'Shine', foundit: 'Foundit',
+  career: 'Own job portal', google: 'Google for Jobs', feed: 'RSS / XML feed', telegram: 'Telegram channel', facebook: 'Facebook page', instagram: 'Instagram', threads: 'Threads', linkedinpost: 'LinkedIn post', linkedin: 'LinkedIn', indeed: 'Indeed', naukri: 'Naukri', shine: 'Shine', foundit: 'Foundit',
   apna: 'Apna', workindia: 'WorkIndia', freshersworld: 'Freshersworld', quikr: 'Quikr Jobs', olx: 'OLX Jobs', ncs: 'NCS portal', whatsapp: 'WhatsApp', college: 'College placement cells', referral: 'Employee referral',
 };
 export const placeName = (k) => PLACE_NAMES[k] || (k ? k.charAt(0).toUpperCase() + k.slice(1) : '');

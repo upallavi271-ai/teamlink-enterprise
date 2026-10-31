@@ -246,4 +246,4 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-module.exports = { router, start, pending, select, takePages, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };
+module.exports = { router, siteBase, baseOk, start, pending, select, takePages, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };

@@ -15,10 +15,10 @@ const T = require('./template');
 const C = require('./campaign');
 const { logAudit } = require('../utils/audit');
 
-const PUBLISH = ['naukri', 'foundit', 'shine', 'linkedin', 'career', 'telegram', 'facebook']; // telegram / facebook: official API posts, OFF until an Admin switches them on (job distribution 2026-10-14)
+const PUBLISH = ['naukri', 'foundit', 'shine', 'linkedin', 'career', 'telegram', 'facebook', 'instagram', 'threads', 'linkedinpost']; // telegram / facebook: official API posts, OFF until an Admin switches them on (job distribution 2026-10-14)
 const FEEDS = ['indeed', 'google', 'website', 'jobportal'];
-const NAMES = { naukri: 'Naukri', foundit: 'Foundit', shine: 'Shine', linkedin: 'LinkedIn (by hand)', career: 'Careers page', telegram: 'Telegram channel', facebook: 'Facebook page', indeed: 'Indeed', google: 'Google Jobs', website: 'Website', jobportal: 'Job Portal', whatsapp: 'WhatsApp contacts', email: 'Email list' };
-const PLACES = ['naukri', 'indeed', 'shine', 'foundit', 'linkedin', 'career', 'telegram', 'facebook', 'google', 'whatsapp', 'email'];
+const NAMES = { naukri: 'Naukri', foundit: 'Foundit', shine: 'Shine', linkedin: 'LinkedIn (by hand)', career: 'Careers page', telegram: 'Telegram channel', facebook: 'Facebook page', instagram: 'Instagram', threads: 'Threads', linkedinpost: 'LinkedIn post', indeed: 'Indeed', google: 'Google Jobs', website: 'Website', jobportal: 'Job Portal', whatsapp: 'WhatsApp contacts', email: 'Email list' };
+const PLACES = ['naukri', 'indeed', 'shine', 'foundit', 'linkedin', 'career', 'telegram', 'facebook', 'instagram', 'threads', 'linkedinpost', 'google', 'whatsapp', 'email'];
 
 function fromPublishRow(row) {
   const base = { place: row.portal, name: NAMES[row.portal] || row.name };
