@@ -12,6 +12,7 @@ import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // P4 — GST & TDS: the invoice summary block and its edit form.
 import TaxEditModal from './invoices/TaxEditModal.jsx';
 import StatementView from './bank/StatementView.jsx';
+import InvoiceStatusModal from './invoices/InvoiceStatusModal.jsx';
 import { placeOf, keepNote, takeNote, scrollBack } from '../utils/keptPlace.js';
 import {
   pct as pctTxt, gstSplitText, GST_TYPE_FROM, tdsStatusClass,
@@ -87,6 +88,8 @@ export default function InvoiceDetail() {
   const canBank = can(user, 'accounts', 'accounts', 'Bank & Reconciliation', 'view');
   const [openLine, setOpenLine] = useState(null); // payment id whose bank line is open under Proof
   const [stmtOf, setStmtOf] = useState(null); // bank line whose statement is open (View Statement)
+  const [changingStatus, setChangingStatus] = useState(false); // the "Change status" window (2026-10-31)
+  const [statusNote, setStatusNote] = useState('');
   const [lineData, setLineData] = useState({});
   const [lineErr, setLineErr] = useState({});
   const lineAsked = useRef('');
@@ -137,7 +140,7 @@ export default function InvoiceDetail() {
   // The uploaded payment proof (Invoice.proofFile) - fetched with the login's token.
   const viewProofFile = async () => {
     try {
-      const res = await api.get(`/accounts/control/proof/invoice/${id}/file`, { params: { inline: 1 }, responseType: 'blob' });
+      const res = await api.get(`/dashboard/accounts/control/proof/invoice/${id}/file`, { params: { inline: 1 }, responseType: 'blob' });
       const url = URL.createObjectURL(res.data);
       window.open(url, '_blank', 'noopener');
       setTimeout(() => URL.revokeObjectURL(url), 60000);
@@ -445,13 +448,14 @@ export default function InvoiceDetail() {
         <div className="small-muted" style={{ marginBottom: 6 }}>
           {payments.length} payment(s) · each with the date the money actually arrived
         </div>
+        {statusNote && <div className="notice green" role="status" style={{ marginBottom: 8 }}><span>{statusNote}</span></div>}
         {/* The whole story on one line: what was billed, what came in, what is left. */}
         <div className="kv-strip" style={{ display: 'flex', flexWrap: 'wrap', gap: 18, margin: '4px 0 12px', fontSize: 14 }}>
           <span>Invoice <b>{invoice.invoiceNumber}</b> · {invoice.client?.name || '—'}</span>
           <span>Amount to receive <b>{money2(receivable)}</b></span>
           <span>Total paid <b style={{ color: 'var(--green)' }}>{money2(received)}</b></span>
           <span>Balance due <b style={{ color: pending > 0.5 ? 'var(--red)' : undefined }}>{money2(pending)}</b></span>
-          <span>Status <b>{settleWord}</b></span>
+          <span>Status <b>{settleWord}</b>{canManage && <> <button type="button" className="btn btn-sm" style={{ marginLeft: 6 }} onClick={() => setChangingStatus(true)}>Change status</button></>}</span>
           {invoice.firstPaymentDate && <span>First payment <b>{fmtD(invoice.firstPaymentDate)}</b></span>}
           {invoice.lastPaymentDate && invoice.lastPaymentDate !== invoice.firstPaymentDate && <span>Last payment <b>{fmtD(invoice.lastPaymentDate)}</b></span>}
         </div>
@@ -803,6 +807,15 @@ export default function InvoiceDetail() {
 
       {/* View Statement: the actual statement the payment's line came from, the line highlighted */}
       {stmtOf && <StatementView txnId={stmtOf} onClose={() => setStmtOf(null)} />}
+      {changingStatus && (
+        <InvoiceStatusModal
+          invoice={invoice}
+          pending={pending}
+          received={received}
+          onClose={() => setChangingStatus(false)}
+          onDone={(msg) => { setChangingStatus(false); setStatusNote(msg); load(); }}
+        />
+      )}
       {preview && doc && (
         <div className="overlay show" onClick={() => setPreview(null)}>
           <div className="modal xwide" onClick={(e) => e.stopPropagation()}>

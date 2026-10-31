@@ -2528,11 +2528,37 @@ const STATUS_ACTIONS = {
 // stored is rewritten.
 const NEXT = { PENDING: ['PAID'], APPROVED: ['PAID'] };
 const RETIRED_MOVE = 'Approved, Rejected and Reimbursed are no longer used — mark the expense Paid when the money goes out, or delete it if it should not be in the books.';
+// BACK TO PENDING (founder 2026-10-31: "status change chese option"): a bill marked Paid by mistake goes back to Pending / Unpaid.
+// Approver only, audited with the reason, and refused while the money is tied elsewhere: a bank statement line paying it (unmatch
+// it on Bank & Reconciliation first) or a payment entry in the journal (reverse that first) - so the books never disagree.
+const BACK_TO_PENDING = ['PENDING', 'MARK_PENDING', 'UNPAID', 'MARK_UNPAID', 'UNPAY'];
+async function backToPending(req, res, existing) {
+  const from = approvalOf(existing);
+  if (!['PAID', 'APPROVED'].includes(from)) return res.status(409).json({ error: `This expense is already ${APPROVAL_LABEL[from]}.`, status: from });
+  if (existing.bankTxnId) return res.status(409).json({ error: 'A bank statement line pays this expense. Unmatch it on Bank & Reconciliation first, then change the status.' });
+  const linked = await prisma.bankTransaction.findFirst({ where: { billLinks: { contains: existing.id } }, select: { id: true } }).catch(() => null);
+  if (linked) return res.status(409).json({ error: 'A bank statement line pays this expense. Unmatch it on Bank & Reconciliation first, then change the status.' });
+  const posted = await prisma.journalEntry.findUnique({ where: { idempotencyKey: `vendor-pay:${existing.id}` } }).catch(() => null);
+  if (posted) return res.status(409).json({ error: 'The payment of this expense is posted in the journal. Reverse that journal entry first, then change the status.' });
+  const reason = String(req.body.reason || '').trim();
+  if (reason.length < 3) return res.status(400).json({ error: 'Write why it goes back to Pending (for example: marked paid by mistake).', field: 'reason' });
+  const data = { approvalStatus: 'PENDING', paidStatus: 'Unpaid', paidAt: null, paidById: null, paymentDate: null, updatedById: req.user.id };
+  const done = await prisma.officeExpense.updateMany({ where: { id: existing.id, approvalStatus: existing.approvalStatus }, data });
+  if (done.count !== 1) return res.status(409).json({ error: 'Someone else changed this expense a moment ago — reload and try again' });
+  const actor = req.user.name || req.user.email || null;
+  await logAudit({
+    userId: req.user.id, actorName: actor, action: 'Office expense status: Pending (back from Paid)', entity: 'OfficeExpense', entityId: existing.id,
+    field: 'approvalStatus', fieldLabel: 'Approval status', fromValue: from, toValue: 'PENDING', reason, approvalStatus: 'PENDING',
+  });
+  return res.json(await expenseDetail(existing.id, req.user));
+}
+
 router.patch('/:id/status', async (req, res) => {
   if (!(await isApprover(req.user))) return res.status(403).json({ error: APPROVER_ONLY });
   const existing = await prisma.officeExpense.findUnique({ where: { id: req.params.id } });
   if (!existing) return res.status(404).json({ error: 'Expense not found' });
   const raw = String(req.body.action || req.body.status || '').trim().toUpperCase().replace(/[\s-]+/g, '_');
+  if (BACK_TO_PENDING.includes(raw)) return backToPending(req, res, existing);
   const to = STATUS_ACTIONS[raw];
   if (!to) return res.status(400).json({ error: 'action must be approve, reject, mark_paid or mark_reimbursed' });
   const from = approvalOf(existing);
@@ -2626,6 +2652,9 @@ async function expenseDetail(id, user) {
       approve: false,
       reject: false,
       markPaid: approver && (st === 'PENDING' || st === 'APPROVED'),
+      // "Change status" (2026-10-31): an approver may also send a Paid bill back to Pending (the server refuses it while a bank line / journal entry holds it)
+      changeStatus: approver && ['PENDING', 'APPROVED', 'PAID'].includes(st),
+      markPending: approver && ['PAID', 'APPROVED'].includes(st),
       markReimbursed: false,
       edit: st === 'PENDING',
       override: st !== 'PENDING' && isAdminLike(user),

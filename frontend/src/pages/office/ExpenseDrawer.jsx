@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import BankLineModal from '../bank/BankLineModal.jsx';
 import AddGstin from './AddGstin.jsx';
+import ExpenseStatusModal from './ExpenseStatusModal.jsx';
 import { ApprovalBadge, detailCache } from './approval.jsx';
 import { money2, fmtD } from './officeUtil';
 import { payChip, proofRow, lineRowOf, sameLine } from './paymentProof';
@@ -32,6 +33,7 @@ export default function ExpenseDrawer({
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
   const [adding, setAdding] = useState(false);
+  const [changing, setChanging] = useState(false); // the "Change status" window
   const [note, setNote] = useState('');
   // The bank statement line behind the proof: { proof, detail, failed, error } while the window is open.
   const [line, setLine] = useState(null);
@@ -72,18 +74,6 @@ export default function ExpenseDrawer({
       if (e.response && e.response.status === 403) { setLine(null); setErr('Your login cannot open Bank statements, so the line cannot be shown here.'); return; }
       setLine({ proof, detail: null, failed: true });
     }
-  };
-  const act = async (action, extra = {}) => {
-    setBusy(action); setErr('');
-    try {
-      const r = await api.patch(`/office-expenses/${id}/status`, { action, ...extra });
-      detailCache.set(id, r.data);
-      setD(r.data);
-      onChanged();
-    } catch (e) {
-      setErr(e.response?.data?.error || 'That could not be done.');
-    }
-    setBusy('');
   };
   const onFile = async (e) => {
     const file = e.target.files && e.target.files[0];
@@ -214,10 +204,18 @@ export default function ExpenseDrawer({
         </div>
 
         <div className="oe-drw-foot">
-          {d && can.markPaid && (
+          {d && (can.markPaid || can.markPending) && (
             <div className="oe-drw-acts">
-              <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => act('mark_paid')}>{busy === 'mark_paid' ? 'Saving…' : '₹ Mark as Paid'}</button>
+              {/* Change status (2026-10-31): Paid / back to Pending, asks for the proof - the status still changes without it */}
+              <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => setChanging(true)}>Change status</button>
             </div>
+          )}
+          {changing && d && (
+            <ExpenseStatusModal
+              expense={d}
+              onClose={() => setChanging(false)}
+              onDone={(fresh, msg) => { setChanging(false); detailCache.set(id, fresh); setD(fresh); setNote(msg); onChanged(); }}
+            />
           )}
           <div className="oe-drw-acts">
             {canManage && d && (
