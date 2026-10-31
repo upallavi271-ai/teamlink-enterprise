@@ -44,8 +44,16 @@ as_gs "cd '$NEW/gs-api' && nice -n 10 npm ci --no-audit --no-fund --loglevel=err
 as_gs "cd '$NEW/green-start-web' && nice -n 10 npm ci --no-audit --no-fund --loglevel=error && nice -n 10 npm run build" >> /root/gs-update-build-$T.log 2>&1 || { echo "WEB BUILD FAILED (log /root/gs-update-build-$T.log). Live was not touched."; tail -30 /root/gs-update-build-$T.log; exit 1; }
 [ -f "$NEW/gs-api/dist/main.js" ] && [ -f "$NEW/green-start-web/dist/index.html" ] || { echo "BUILD OUTPUT MISSING. Live was not touched."; exit 1; }
 say "build ok"
-say "database changes waiting (should be the 5 release changes + 20261031140000_seo_keyword_research):"
-as_gs "cd '$NEW/gs-api' && set -a && . ./.env && set +a && npx prisma migrate status" 2>&1 | grep -E "^20|following|up to date|not yet been applied" || true
+say "database changes waiting (should be only what this package adds, e.g. 20261031140000_seo_keyword_research):"
+MS=$(as_gs "cd '$NEW/gs-api' && set -a && . ./.env && set +a && npx prisma migrate status" 2>&1 || true)
+echo "$MS" | grep -E "^20|following|up to date|not yet been applied|not found locally|have not been found" || true
+# GUARD (2026-10-31): live already shows Reviews / Site Audit, so it may run a NEWER Green Start than this package. If the live
+# database has changes this package does not know, switching would put OLDER code on a newer database: stop, change nothing.
+if echo "$MS" | grep -qiE "not found locally|have not been found|applied to the database but"; then
+  rm -rf "$NEW"
+  echo "STOPPED: live Green Start is NEWER than this package (its database has changes the package does not have). Nothing was switched. Ask for a package built on the live version."
+  exit 1
+fi
 
 if [ "$MODE" != apply ]; then
   rm -rf "$NEW"
