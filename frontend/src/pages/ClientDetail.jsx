@@ -33,7 +33,7 @@ import ClientPortalAccess from '../components/clients/ClientPortalAccess.jsx';
 import ClientHistoryView from '../components/joindrop/ClientHistoryView.jsx'; // History tab: the client date by date
 // Spec 6 — the agreement step badge (+ "Step N of 6").
 import {
-  AgreementStepChip, AGREEMENT_STEPS, agreementStepLabel, agreementStepOf,
+  AgreementStepChip, agreementStepLabel, agreementStepOf,
 } from '../components/clients/AgreementStep.jsx';
 import {
   ClientLifecycleDialog, ClientPausedBanner, LifecycleChip, lifecycleItemsFor,
@@ -1144,7 +1144,6 @@ export default function ClientDetail() {
         // Admin only — everyone else reads it). The document, the signing
         // details and the history sit under "Show …" so the screen stays calm.
         const step = agreementStepOf(c.agreementStatus);
-        const stepNo = AGREEMENT_STEPS.findIndex(([k]) => k === step) + 1;
         const when = (v) => (v ? protoDate(v) : '');
         const lead = {
           DRAFT: c.agreementDocument ? 'The agreement is ready. Next: make the agreement link and share it with the client.' : 'No agreement made yet. Make it from the standard template.',
@@ -1182,14 +1181,10 @@ export default function ClientDetail() {
             </div>
             <AgreementFlow clientId={id} onChanged={load} onLoaded={setFlow} refreshKey={`${c.agreementStatus}|${c.agreementSentAt || ''}|${c.updatedAt || ''}`} />
             <div className="card section agr6-card">
-              {/* One step chip + "Step N of 6" (was a six-chip strip). */}
+              {/* SIMPLE (founder 2026-10-31: "agreement signing daggara structure messy ga, clumsy ga undhi"): the steps live in the
+                  stepper above; this card says what happens now, who signed, and how it gets signed. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
                 <AgreementStepChip status={c.agreementStatus} />
-                {stepNo > 0 && <span className="small-muted">{`Step ${stepNo} of ${AGREEMENT_STEPS.length}`}</span>}
-              </div>
-              {/* The steps in one plain line (2026-10-05). */}
-              <div className="small-muted" style={{ fontSize: 12, marginBottom: 4 }}>
-                Steps: Made → Sent (link shared) → Signed (client signs) → Active (requirements can go live).
               </div>
               <div className="agr6-lead">{lead}</div>
               {/* Who still has to sign + stamp (2026-10-05). */}
@@ -1204,26 +1199,50 @@ export default function ClientDetail() {
                   </span>
                 </div>
               )}
-              <div style={{ margin: '6px 0' }}>
-                <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
-              </div>
               {canManage && c.agreementDocument && !['ACTIVE', 'EXPIRED', 'REJECTED'].includes(step) && <TeamLinkSignerNotice refreshKey={tlSealOpen} />}
               {!agreementIsActive(c.agreementStatus) && counts.requirements > 0 && (
                 <div className="agr6-sub">{`${counts.requirements} ${counts.requirements === 1 ? 'requirement waits' : 'requirements wait'} for this agreement to be Active.`}</div>
               )}
               {canManage ? (
+                <>
                 <div className="agr6-actions">
                   {main && (
                     <button type="button" className="btn btn-primary" disabled={!!agrBusy} onClick={main[2]}>
                       {busy(main[0]) ? 'Working…' : main[1]}
                     </button>
                   )}
-                  {['SENT', 'VIEWED'].includes(step) && (
-                    <button type="button" className="btn btn-sm" disabled={!!agrBusy} onClick={() => { setDlgError(''); setSignedDlg({ open: true, name: '', title: '', file: '' }); }}>Mark as signed (paper / email)</button>
-                  )}
-                  {c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED', 'SIGNED'].includes(step) && !(main && main[0] === 'tlseal') && (
-                    <button type="button" className="btn btn-sm" onClick={() => setTlSealOpen(true)}>✍️ Sign &amp; stamp for TeamLink</button>
-                  )}
+                  <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
+                </div>
+                {/* HOW IT GETS SIGNED - one of three, said plainly (2026-10-31) */}
+                {c.agreementDocument && ['DRAFT', 'SENT', 'VIEWED', 'SIGNED'].includes(step) && !(flow && ['DRAFT', 'WITH_HR', 'WITH_TL'].includes(flow.stage)) && (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>How will it be signed? Pick one way:</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 8 }}>
+                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
+                        <div style={{ fontWeight: 600 }}>1. Online link</div>
+                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>TeamLink signs &amp; stamps, the client signs on the link with a code to their mobile.</div>
+                        {!(main && main[0] === 'tlseal') && <button type="button" className="btn btn-sm" onClick={() => setTlSealOpen(true)}>✍️ Sign &amp; stamp for TeamLink</button>}
+                        {['DRAFT', 'SENT', 'VIEWED'].includes(step) && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>The link to send is just below.</div>}
+                      </div>
+                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
+                        <div style={{ fontWeight: 600 }}>2. Aadhaar eSign (DigiLocker, free)</div>
+                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>Each side eSigns its copy in DigiLocker; upload both copies. Both valid = Active.</div>
+                        <ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} />
+                      </div>
+                      <div style={{ border: '1px solid var(--line, #d5dbe5)', borderRadius: 8, padding: 10 }}>
+                        <div style={{ fontWeight: 600 }}>3. Signed on paper / email</div>
+                        <div className="small-muted" style={{ fontSize: 12, margin: '2px 0 8px' }}>Upload the signed agreement and Vasu sir&apos;s confirmation in View agreement.</div>
+                        {['SENT', 'VIEWED'].includes(step) && (
+                          <button type="button" className="btn btn-sm" disabled={!!agrBusy} onClick={() => { setDlgError(''); setSignedDlg({ open: true, name: '', title: '', file: '' }); }}>Mark as signed (paper / email)</button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {/* the rest, out of the way */}
+                <details className="agr6-moreacts" style={{ marginTop: 10 }}>
+                  <summary className="small-muted" style={{ cursor: 'pointer' }}>More actions (terms, client&apos;s own agreement, close / open)</summary>
+                <div className="agr6-actions" style={{ marginTop: 8 }}>
                   {['SIGNED', 'ACTIVE', 'EXPIRED'].includes(step) && (
                     <button
                       type="button"
@@ -1284,9 +1303,12 @@ export default function ClientDetail() {
                     </button>
                   )}
                 </div>
+                </details>
+                </>
               ) : (
                 !data.redacted && (
                   <div className="small-muted" style={{ fontSize: 12.5 }}>
+                    <div style={{ margin: '6px 0' }}><ViewAgreementButton clientId={id} esign={!!c.agreementDocument} onChanged={load} /></div>
                     {step === 'DRAFT' && c.agreementDocument && !p.sendLink ? 'Ask an Admin to send the agreement link to the client.' : (p.sendLink ? 'Use the box below to make the agreement link and send it to the client. An Admin changes the terms.' : 'Only an Admin changes or sends it. You can read it here.')}
                   </div>
                 )
@@ -1315,6 +1337,9 @@ export default function ClientDetail() {
               <OwnAgreementFile clientId={id} show={c.agreementSource === 'Uploaded'} refreshKey={`${c.agreementSignedCopyName || ''}|${c.agreementStatus}`} />
             </div>
 
+            {/* FILES, THE DOCUMENT AND THE HISTORY - one place, closed until opened (2026-10-31: the tab was a long column of cards) */}
+            <details className="card section agr6-more">
+              <summary>Signed files, Drive link, document and history</summary>
             {/* Every signed agreement file kept on this client (imported PDFs / pictures): the list, View and Download. Nothing shows when there are none. */}
             <SignedAgreementFiles clientId={id} skip={agreementBlind(user)} />
 
@@ -1354,6 +1379,7 @@ export default function ClientDetail() {
               </Row>
               <Row k="Active">{c.agreementActivatedAt ? protoDate(c.agreementActivatedAt) : null}</Row>
               <Row k="Said no">{c.agreementRejectedAt ? protoDate(c.agreementRejectedAt) : null}</Row>
+            </details>
             </details>
 
             {canSign && (
