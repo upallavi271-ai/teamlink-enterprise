@@ -456,6 +456,30 @@ router.use('/token', rateLimit({ bucket: 'agreement-token', max: 120, windowMs: 
 const codeLimit = rateLimit({ bucket: 'agreement-code', max: 6, windowMs: 60 * 60000, message: 'Too many codes asked for from your network. Please wait an hour, or ask your TeamLink contact.' });
 const signLimit = rateLimit({ bucket: 'agreement-sign', max: 20, windowMs: 10 * 60000 });
 
+// THE CLIENT'S COPY TO eSIGN, with their company stamp on it (founder 2026-10-31: "client ey stamp veyyali"). The client opens the
+// link from the email (/agreement/<token>/stamp), puts their stamp on (POST /token/:token/client-seal), then downloads this PDF -
+// TeamLink's stamp and theirs printed in - and eSigns it in DigiLocker. No stamp yet: refused, so no copy goes out unstamped.
+router.get('/token/:token/esign-pdf', async (req, res, next) => {
+  try {
+    const client = await byToken(req, res);
+    if (!client) return undefined;
+    if (!client.agreementClientStampFile || !attachments.resolveStored(client.agreementClientStampFile)) {
+      return res.status(409).json({ error: 'Put your company stamp on first (step 1). The PDF to eSign carries it.' });
+    }
+    // eslint-disable-next-line global-require
+    const { consultantParty } = require('../utils/agreement');
+    const us = await consultantParty();
+    const name = `${String(client.agreementId || 'Agreement').replace(/[^\w.-]/g, '')}-${String(client.name || 'client').replace(/[^\w.-]+/g, '-').slice(0, 40)}-to-eSign.pdf`;
+    res.set('Content-Type', 'application/pdf');
+    res.set('Cache-Control', 'private, no-store');
+    res.set('Content-Disposition', `${req.query.inline ? 'inline' : 'attachment'}; filename="${name}"`);
+    await logAudit({ action: 'Agreement PDF to eSign downloaded by the client (stamped)', entity: 'Client', entityId: client.id, reason: `IP ${ipOf(req)}` });
+    // eslint-disable-next-line global-require
+    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail: [], consultantName: us.name, agreementOnly: true }, res);
+    return undefined;
+  } catch (err) { return next(err); }
+});
+
 router.post('/token/:token/proceed', async (req, res, next) => {
   try {
     const client = await byToken(req, res);

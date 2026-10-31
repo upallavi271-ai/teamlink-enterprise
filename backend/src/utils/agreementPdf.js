@@ -433,9 +433,15 @@ function drawDocument(a, totalPages) {
 // The document is built in memory (twice at most: the first pass counts the
 // pages for "This agreement consists of N pages"), then written to `out`.
 async function renderAgreementPdf(client, { trail = [], consultantName, agreementOnly = false }, out) {
+  // THE STAMPS ON THE COPY EACH SIDE eSIGNS (founder 2026-10-31: "client ey stamp veyyali", TeamLink's "automatic ga"): TeamLink's
+  // company stamp saved once in Agreement settings is printed on every page and in TeamLink's Stamp box, and the stamp the client
+  // put on through their link (agreementClientStampFile) on theirs - BEFORE the Aadhaar eSign, so the signature covers them.
+  const savedStamp = agreementOnly && !client.agreementCompanyStampFile
+    ? await require('./teamlinkSeal').getSeal().then((s) => s && s.stampFile).catch(() => null) // eslint-disable-line global-require
+    : null;
   const [cSign, cStamp, kSign, kStamp] = await Promise.all([
     imageBuffer(client.agreementClientSignFile), imageBuffer(client.agreementClientStampFile),
-    imageBuffer(client.agreementCompanySignFile), imageBuffer(client.agreementCompanyStampFile),
+    imageBuffer(client.agreementCompanySignFile), imageBuffer(client.agreementCompanyStampFile || savedStamp),
   ]);
   // eslint-disable-next-line global-require
   const vendorDoc = require('./vendorAgreement').isVendorDocument(client.agreementDocument);
