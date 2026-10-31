@@ -129,7 +129,7 @@ async function readJson(url, init) {
 }
 
 // ---- 1. the login address -----------------------------------------------------------------------------------------------
-async function start(user, req) {
+async function start(user, req, { another = false } = {}) {
   const a = await appCreds();
   if (a.missingKey) return { error: 'The secret key of this server is missing, so nothing can be stored encrypted.', status: 400 };
   if (!a.id) return { error: 'Type the Meta App ID on this card first (Meta for Developers, your app, Settings, Basic), then press Connect with Facebook.', status: 400 };
@@ -138,6 +138,8 @@ async function start(user, req) {
   const q = new URLSearchParams(a.configId
     ? { client_id: a.id, redirect_uri: redirectUri(req), state, config_id: a.configId, response_type: 'code', override_default_response_type: 'true' }
     : { client_id: a.id, redirect_uri: redirectUri(req), state, scope: SCOPES, response_type: 'code' });
+  // "+ Add another Facebook account" (2026-10-31): Facebook asks to sign in again, where "Not you? Log in to another account" switches the login
+  if (another) q.set('auth_type', 'reauthenticate');
   return { ok: true, url: `${dialogBase()}?${q.toString()}`, redirectUri: redirectUri(req) };
 }
 

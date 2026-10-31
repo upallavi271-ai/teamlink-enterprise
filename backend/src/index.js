@@ -122,6 +122,7 @@ app.use('/api/webhooks/exotel-ai', require('./calling/webhook'));
 app.use('/api/webhooks/rcs', require('./routes/rcsWebhook'));
 app.use('/api/webhooks', require('./routes/webhooks'));
 app.use('/api/public/facebook-connect', require('./utils/facebookConnect').router); // Facebook sends the browser back here after "Connect with Facebook" (the signed state proves it)
+app.use('/api/public/youtube-connect', require('./utils/youtubeConnect').router); // Google sends the browser back here after "Connect YouTube" (the signed state proves it)
 app.use('/api/public/linkedin-connect', require('./utils/linkedinConnect').router); // LinkedIn sends the browser back here after "Connect LinkedIn" (the signed state proves it)
 app.use('/api/public/job-card', require('./utils/jobCard').router); // the picture of an open job that Instagram fetches when a job is posted there
 // Omni-Channel email delivery events (bounce / complaint / delivered): signed, raw body, so it sits before the JSON parser (routes/outreachWebhook.js).

@@ -8,7 +8,8 @@ import Modal from '../../components/Modal.jsx';
 // Three tabs - Facebook, Instagram, Threads - each with every connected account (any number, from any number of logins), one marked as
 // the default (*): job posts and Omni-Channel use the default. Server: /admin/social-accounts (utils/socialAccounts.js). No token is shown.
 // + LinkedIn (2026-10-31): job posts also go to LinkedIn (a post on the profile or Company Page, official LinkedIn API).
-const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['linkedin', 'LinkedIn']];
+// + YouTube (2026-10-31, founder: "youtube ki kuda inko tab pettu"): channels through Google's own sign-in (utils/youtubeConnect.js).
+const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['linkedin', 'LinkedIn'], ['youtube', 'YouTube']];
 
 function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra }) {
   if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>No {noun} connected yet.</div>;
@@ -44,6 +45,8 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const [liForm, setLiForm] = useState({ clientId: '', clientSecret: '' });
   const [liPage, setLiPage] = useState('');
   const [liPageOn, setLiPageOn] = useState(false);
+  const [yt, setYt] = useState(null); // Google app: { hasApp, clientId, hasSecret, redirectUri }
+  const [ytForm, setYtForm] = useState({ clientId: '', clientSecret: '' });
 
   // LinkedIn sends the browser back here (?sub=linkedin&linkedin=connected | denied | failed&why=...): say what happened, then clean the address
   useEffect(() => {
@@ -57,6 +60,27 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     ['linkedin', 'why'].forEach((k) => q.delete(k));
     window.history.replaceState(null, '', `${window.location.pathname}?${q.toString()}`);
   }, []);
+  // Google sends the browser back here (?sub=youtube&youtube=connected&n=2 | denied | failed&why=...)
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search);
+    const r = q.get('youtube');
+    if (!r) return;
+    setSub('youtube');
+    if (r === 'connected') setMsg(`YouTube connected: ${q.get('n') || 'the'} channel(s) added.`);
+    else if (r === 'denied') setErr('Google sign-in was cancelled. Nothing was connected.');
+    else setErr(`YouTube did not connect: ${q.get('why') || 'Google did not accept the sign-in'}.`);
+    ['youtube', 'why', 'n'].forEach((k) => q.delete(k));
+    window.history.replaceState(null, '', `${window.location.pathname}?${q.toString()}`);
+  }, []);
+  useEffect(() => { api.get('/admin/social-accounts/youtube/app').then((r) => setYt(r.data)).catch(() => setYt(null)); }, [reloadKey]);
+  async function saveYoutubeApp() {
+    setBusy(true); setErr(''); setMsg('');
+    try { const r = await api.put('/admin/social-accounts/youtube/app', ytForm); setYt(r.data); setYtForm({ clientId: '', clientSecret: '' }); setMsg(r.data.message || 'Saved.'); } catch (e) { setErr(e.response?.data?.error || 'Could not save that.'); } finally { setBusy(false); }
+  }
+  async function connectYoutube() {
+    setBusy(true); setErr('');
+    try { const r = await api.post('/admin/social-accounts/youtube/start'); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the Google sign-in.'); setBusy(false); }
+  }
   useEffect(() => { api.get('/admin/social-accounts/linkedin/app').then((r) => setLi(r.data)).catch(() => setLi(null)); }, [reloadKey]);
   async function saveLinkedinApp() {
     setBusy(true); setErr(''); setMsg('');
@@ -82,13 +106,14 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   }
   const makeDefault = (a) => act(() => api.post(`/admin/social-accounts/${a.id}/default`));
   const removeOne = (a) => { if (window.confirm(`Remove ${a.name}?${a.platform === 'facebook' ? ' Its Instagram account goes too.' : ''}`)) act(() => api.post(`/admin/social-accounts/${a.id}/remove`)); };
-  async function connectFacebook() {
+  // another = "+ Add another Facebook account": Facebook asks to sign in again, where "Not you? Log in to another account" switches the login
+  async function connectFacebook(another = false) {
     setBusy(true); setErr('');
-    try { const r = await api.post('/admin/integrations/social/facebook/start', { values: {} }); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the Facebook sign-in. Do the one-time setup first.'); setShowSetup(true); setBusy(false); }
+    try { const r = await api.post('/admin/integrations/social/facebook/start', { values: {}, another: !!another }); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the Facebook sign-in. Do the one-time setup first.'); setShowSetup(true); setBusy(false); }
   }
 
   if (!acc) return <div className="small-muted">{err || 'Loading…'}</div>;
-  const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length, linkedin: (acc.linkedin || []).length };
+  const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length, linkedin: (acc.linkedin || []).length, youtube: (acc.youtube || []).length };
 
   const NAMES = { facebook: 'Page access token', instagram: 'Page access token (of the Page it comes with)', threads: 'Threads access token' };
   return (
@@ -99,7 +124,9 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           <label className="field"><span>Name shown in TeamLink</span>
             <input value={editing.name} maxLength={80} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
           </label>
-          {editing.a.platform === 'linkedin' ? (
+          {editing.a.platform === 'youtube' ? (
+            <div className="small-muted" style={{ fontSize: 12.5 }}>To renew a YouTube channel, press <b>Connect YouTube</b> again on the YouTube tab.</div>
+          ) : editing.a.platform === 'linkedin' ? (
             <div className="small-muted" style={{ fontSize: 12.5 }}>A LinkedIn token lasts 60 days: to renew it, press <b>Connect LinkedIn</b> again on the LinkedIn tab.</div>
           ) : (
             <label className="field"><span>New {NAMES[editing.a.platform] || 'token'} (only if it changed)</span>
@@ -124,7 +151,10 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           <div className="card" style={{ padding: 16, marginBottom: 14 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
               <b style={{ fontSize: 15 }}>Facebook Pages</b>
-              <button type="button" className="btn btn-primary" onClick={connectFacebook} disabled={busy}>＋ Connect Facebook Pages</button>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-primary" onClick={() => connectFacebook(false)} disabled={busy}>＋ Connect Facebook Pages</button>
+                <button type="button" className="btn" onClick={() => connectFacebook(true)} disabled={busy} title="Sign in with a different Facebook account and add its Pages">＋ Add another Facebook account</button>
+              </div>
             </div>
             <AccountList rows={acc.facebook} noun="Facebook Pages" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Page ID ${a.externalId}`} />
             <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
@@ -144,7 +174,10 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
         <div className="card" style={{ padding: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
             <b style={{ fontSize: 15 }}>Instagram accounts</b>
-            <button type="button" className="btn" onClick={() => act(() => api.post('/admin/social-accounts/instagram/refresh'))} disabled={busy || !acc.facebook.length}>↻ Find Instagram accounts again</button>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button type="button" className="btn btn-primary" onClick={() => connectFacebook(false)} disabled={busy} title="Instagram accounts come through the Facebook Page they are linked to">＋ Add Instagram account</button>
+              <button type="button" className="btn" onClick={() => act(() => api.post('/admin/social-accounts/instagram/refresh'))} disabled={busy || !acc.facebook.length}>↻ Find Instagram accounts again</button>
+            </div>
           </div>
           <AccountList rows={acc.instagram} noun="Instagram accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Through the Page ${a.parentName || a.parentId}`} />
           <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
@@ -207,6 +240,35 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
               <label style={{ fontSize: 13 }}>Client ID<br /><input type="text" autoComplete="off" value={liForm.clientId} onChange={(e) => setLiForm({ ...liForm, clientId: e.target.value.trim() })} placeholder={li && li.hasApp ? 'Leave empty to keep' : 'Client ID'} /></label>
               <label style={{ fontSize: 13 }}>Client Secret<br /><input type="password" autoComplete="new-password" value={liForm.clientSecret} onChange={(e) => setLiForm({ ...liForm, clientSecret: e.target.value.trim() })} placeholder={li && li.hasSecret ? 'Leave empty to keep' : 'Client Secret'} /></label>
               <button type="button" className="btn btn-primary btn-sm" disabled={busy || (!liForm.clientId && !liForm.clientSecret)} onClick={saveLinkedinApp}>Save app details</button>
+            </div>
+          </details>
+        </div>
+      )}
+
+      {sub === 'youtube' && (
+        <div className="card" style={{ padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', alignItems: 'center', marginBottom: 10 }}>
+            <b style={{ fontSize: 15 }}>YouTube channels</b>
+            <button type="button" className="btn btn-primary" onClick={connectYoutube} disabled={busy || !(yt && yt.hasApp)} title={yt && yt.hasApp ? '' : 'Do the one-time setup below first'}>＋ Connect YouTube channel</button>
+          </div>
+          <AccountList rows={acc.youtube || []} noun="YouTube channels" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Channel ID ${a.externalId}`} />
+          <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
+            You sign in on Google&apos;s own page (the password is never typed in TeamLink) and pick the Google account or <b>Brand Account</b> that owns the channel.
+            Press the button again for every other channel / Google account. The <b>★ default</b> channel is the one TeamLink uses.
+          </div>
+          <details open={!(yt && yt.hasApp)} style={{ marginTop: 12 }}>
+            <summary style={{ cursor: 'pointer', fontWeight: 600, marginBottom: 8 }}>One-time setup of the Google app</summary>
+            <ol style={{ margin: '4px 0 8px', paddingLeft: 18, lineHeight: 1.7, fontSize: 13.5 }}>
+              <li>Open <b>console.cloud.google.com</b>, make (or pick) a project, then <b>APIs &amp; Services → Library</b> → enable <b>YouTube Data API v3</b>.</li>
+              <li><b>OAuth consent screen</b>: type <b>External</b>, app name TeamLink, your email; while it is in <b>Testing</b>, add every Google account that will connect under <b>Test users</b>.</li>
+              <li><b>Credentials → Create credentials → OAuth client ID</b> → type <b>Web application</b>; under <b>Authorized redirect URIs</b> add exactly: <code style={{ userSelect: 'all' }}>{yt ? yt.redirectUri : ''}</code></li>
+              <li>Copy the <b>Client ID</b> and <b>Client secret</b> it shows and type them here once.</li>
+            </ol>
+            {yt && yt.hasApp && <div className="small-muted" style={{ marginBottom: 6 }}>Saved: Client ID <b>{yt.clientId}</b> · secret saved (never shown). Type new ones only to replace them.</div>}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+              <label style={{ fontSize: 13 }}>Client ID<br /><input type="text" autoComplete="off" value={ytForm.clientId} onChange={(e) => setYtForm({ ...ytForm, clientId: e.target.value.trim() })} placeholder={yt && yt.hasApp ? 'Leave empty to keep' : '1234-abc.apps.googleusercontent.com'} style={{ minWidth: 280 }} /></label>
+              <label style={{ fontSize: 13 }}>Client secret<br /><input type="password" autoComplete="new-password" value={ytForm.clientSecret} onChange={(e) => setYtForm({ ...ytForm, clientSecret: e.target.value.trim() })} placeholder={yt && yt.hasSecret ? 'Leave empty to keep' : 'Client secret'} /></label>
+              <button type="button" className="btn btn-primary btn-sm" disabled={busy || (!ytForm.clientId && !ytForm.clientSecret)} onClick={saveYoutubeApp}>Save app details</button>
             </div>
           </details>
         </div>

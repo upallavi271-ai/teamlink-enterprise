@@ -17,7 +17,7 @@ const { encryptSecret, decryptSecret } = require('./secrets');
 const { readConfig, writeValues } = require('./integrationStore');
 
 const KEY = 'social.accounts';
-const PLATFORMS = ['facebook', 'instagram', 'threads', 'linkedin'];
+const PLATFORMS = ['facebook', 'instagram', 'threads', 'linkedin', 'youtube'];
 const graphBase = () => String(process.env.TL_FACEBOOK_GRAPH_BASE || 'https://graph.facebook.com/v19.0').replace(/\/+$/, '');
 const threadsBase = () => String(process.env.TL_THREADS_GRAPH_BASE || 'https://graph.threads.net/v1.0').replace(/\/+$/, '');
 
@@ -33,7 +33,7 @@ const tokenOf = (a) => (a && a.tokenEnc ? decryptSecret(a.tokenEnc) : '');
 const expired = (a) => !!(a.expiresAt && Date.parse(a.expiresAt) < Date.now());
 const shape = (a) => ({
   id: a.id, platform: a.platform, externalId: a.externalId, name: a.name, username: a.username || null, parentId: a.parentId || null,
-  parentName: a.parentName || null, isDefault: !!a.isDefault, status: expired(a) ? 'Expired' : (a.status || 'Connected'), error: expired(a) ? 'The LinkedIn token has expired (they last 60 days). Press Connect LinkedIn again.' : (a.error || null),
+  parentName: a.parentName || null, isDefault: !!a.isDefault, status: expired(a) ? 'Expired' : (a.status || 'Connected'), error: expired(a) ? (a.platform === 'youtube' ? 'The YouTube sign-in has expired. Press Connect YouTube again.' : 'The LinkedIn token has expired (they last 60 days). Press Connect LinkedIn again.') : (a.error || null),
   connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null, expiresAt: a.expiresAt || null, kind: a.kind || null,
 });
 
@@ -143,6 +143,19 @@ async function addLinkedin(user, { sub, name, token, expiresAt, orgId = null, or
   return { ok: true, person: shape(person), page: page ? shape(page) : null };
 }
 
+// YouTube (2026-10-31): the channels of the Google account that signed in (utils/youtubeConnect.js). The REFRESH token is kept (it does not
+// expire on its own); without one (Google gives it only with consent) the short access token is kept with its end time, shown as Expired after.
+async function addYoutube(user, channels, { refreshToken = null, accessToken = null, expiresIn = null } = {}) {
+  const all = await readAll();
+  await adoptLegacy(all);
+  const token = refreshToken || accessToken;
+  const expiresAt = refreshToken ? null : (expiresIn ? new Date(Date.now() + Number(expiresIn) * 1000).toISOString() : null);
+  const added = channels.map((c) => upsert(all, { platform: 'youtube', externalId: String(c.id), name: c.title || String(c.id), username: c.handle ? String(c.handle).replace(/^@/, '') : null, kind: 'channel', tokenKind: refreshToken ? 'refresh' : 'access', expiresAt }, token, user));
+  if (!all.some((a) => a.platform === 'youtube' && a.isDefault) && added[0]) added[0].isDefault = true;
+  await writeAll(all);
+  return { ok: true, added: added.map(shape) };
+}
+
 async function addThreads(user, token) {
   const t = String(token || '').trim();
   if (t.length < 20 || /\s/.test(t)) return { error: 'That does not look like a Threads access token. Copy the whole token.', status: 400 };
@@ -216,7 +229,7 @@ async function edit(user, id, { name, token } = {}, { saveFacebook } = {}) {
       } else if (acc.platform === 'threads') {
         const j = await getJson(`${threadsBase()}/me?${new URLSearchParams({ fields: 'id,username', access_token: t })}`);
         if (String(j.id) !== String(acc.externalId)) return { error: `That token belongs to another Threads profile${j.username ? ` (@${j.username})` : ''}.`, status: 422 };
-      } else return { error: 'A LinkedIn token is renewed by pressing Connect LinkedIn again.', status: 400 };
+      } else return { error: acc.platform === 'youtube' ? 'A YouTube channel is renewed by pressing Connect YouTube again.' : 'A LinkedIn token is renewed by pressing Connect LinkedIn again.', status: 400 };
     } catch (err) { return { error: `Not accepted: ${err.message}`, status: 422 }; }
     acc.tokenEnc = encryptSecret(t);
     acc.status = 'Connected'; acc.error = null;
@@ -234,4 +247,4 @@ async function edit(user, id, { name, token } = {}, { saveFacebook } = {}) {
   return { ok: !result || result.ok !== false, account: shape(acc), tokenChanged: !!t, result };
 }
 
-module.exports = { edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };
+module.exports = { edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };

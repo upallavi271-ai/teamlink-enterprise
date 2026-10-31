@@ -1679,7 +1679,7 @@ async function saveFacebookApp(req, res) {
 }
 router.post('/integrations/social/facebook/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   if (!(await saveFacebookApp(req, res))) return undefined;
-  const out = await FBC.start(req.user, req);
+  const out = await FBC.start(req.user, req, { another: !!(req.body && req.body.another) });
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   await logAudit({ userId: req.user.id, action: 'Connect with Facebook started', entity: 'Integration', entityId: 'social', toValue: 'Facebook login opened' });
   return res.json({ url: out.url, redirectUri: out.redirectUri });
@@ -1764,6 +1764,23 @@ router.post('/social-accounts/linkedin/start', requirePerm(null, 'administration
   const r = await require('../utils/linkedinConnect').start(req.user, req, { pageId: req.body && req.body.pageId }); // eslint-disable-line global-require
   if (r.error) return res.status(r.status || 400).json({ error: r.error });
   await logAudit({ userId: req.user.id, action: 'Connect LinkedIn started', entity: 'Integration', entityId: 'social', toValue: 'LinkedIn login opened' });
+  return res.json({ ok: true, url: r.url, redirectUri: r.redirectUri });
+});
+// YouTube (2026-10-31, founder: "youtube ki kuda inko tab pettu"): the Google OAuth client once, then "Connect YouTube" = Google's own sign-in
+router.get('/social-accounts/youtube/app', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  res.json(await require('../utils/youtubeConnect').appView(req)); // eslint-disable-line global-require
+});
+router.put('/social-accounts/youtube/app', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const YC = require('../utils/youtubeConnect'); // eslint-disable-line global-require
+  const r = await YC.saveApp(req.user, req.body || {});
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'YouTube (Google) app details saved', entity: 'Integration', entityId: 'social', toValue: 'Client ID / secret' });
+  return res.json({ ...(await YC.appView(req)), message: 'Google app details saved. Now press Connect YouTube.' });
+});
+router.post('/social-accounts/youtube/start', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const r = await require('../utils/youtubeConnect').start(req.user, req); // eslint-disable-line global-require
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'Connect YouTube started', entity: 'Integration', entityId: 'social', toValue: 'Google login opened' });
   return res.json({ ok: true, url: r.url, redirectUri: r.redirectUri });
 });
 // the Pages ticked after "Connect with Facebook" (one or many); the first ever becomes the default (job posts + Omni-Channel)
