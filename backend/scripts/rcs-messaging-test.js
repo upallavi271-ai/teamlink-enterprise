@@ -65,7 +65,8 @@ const until = async (fn, ms = 15000) => { const t0 = Date.now(); for (;;) { cons
 
     let g0 = GOT.length;
     let r = await S.sendChunk({ rcstype: 'BASIC', templateid: '22SVkoeCBF', numbers: ['919876543210'], variables: { var1: 'Ravi' } });
-    Z.check('A2 apitype not set: refused, NOTHING sent (the 1 / 2 mismatch must be confirmed first)', !r.ok && r.errorCode === 'APITYPE' && GOT.length === g0, r);
+    // 2026-10-31: rcssms.in's own document calls apitype=1 "Method 1 (Preferred)" (variables:[{var1}]), so an empty setting means 1
+    Z.check('A2 apitype not set: sent to apitype=1, the provider\'s preferred method', GOT.length === g0 + 1 && last().url === '/rcsapi/jsonapi.jsp?apitype=1', last() && last().url);
 
     process.env.RCS_SEND_APITYPE = '1'; process.env.RCS_PERSONAL_APITYPE = '2';
     g0 = GOT.length;

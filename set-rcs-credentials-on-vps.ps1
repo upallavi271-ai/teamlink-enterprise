@@ -36,7 +36,7 @@ if ($set['RCS_AUTH_MODE'] -eq 'token') {
   $tm = Read-Host 'Token address method: POST or GET (Enter = POST)'
   $set['RCS_TOKEN_METHOD'] = $(if ($tm -match '^\s*get\s*$') { 'GET' } else { 'POST' })
 }
-Write-Host "apitype: the sending document says 2, the brief says 1. Type it ONLY when rcssms.in has confirmed it (Enter = leave it as it is)." -ForegroundColor Yellow
+Write-Host "apitype: just press Enter (TeamLink uses 1, rcssms.in's 'Method 1 (Preferred)'). Type 2 only if rcssms.in tells you to." -ForegroundColor Yellow
 $a1 = Read-Host 'apitype for the same message to many (/rcsapi/jsonapi.jsp): 1 or 2'
 if ($a1) { if ($a1.Trim() -notmatch '^\d{1,2}$') { throw 'apitype is a number (1 or 2).' }; $set['RCS_SEND_APITYPE'] = $a1.Trim() }
 $a2 = Read-Host 'apitype for a different message per person (/rcsapimtpl/jsonapi.jsp): 1 or 2'

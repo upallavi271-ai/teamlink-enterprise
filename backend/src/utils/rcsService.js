@@ -8,9 +8,9 @@
 //   RCS_CLIENT_SECRET  token mode only: Authorization "Basic base64(username:clientSecret)" to {BASE}/api/rcs/accesstoken
 //   RCS_TOKEN_METHOD   POST (default) | GET - the provider's document does not say which, so it is a setting
 //   RCS_WEBHOOK_SECRET the ?token= of the webhook address (routes/rcsWebhook.js)
-//   RCS_SEND_APITYPE / RCS_PERSONAL_APITYPE   the "apitype" of the two send addresses. NO DEFAULT ON PURPOSE (founder 2026-10-30): the
-//                      sending document says apitype=2, the implementation brief (and Green Start's reading of the "JSON RCS API" PDF,
-//                      "Method 1, preferred") says apitype=1. Until rcssms.in confirms it and the value is set, that send is refused.
+//   RCS_SEND_APITYPE / RCS_PERSONAL_APITYPE   the "apitype" of the two send addresses. Default 1 (2026-10-31): rcssms.in's own "JSON RCS API"
+//                      document calls apitype=1 "Method 1 (Preferred)" with variables:[{var1, var2}] - exactly the shape sent here (apitype=2
+//                      wants a plain list). A value set in .env still wins.
 //
 //   sendRcs()              POST {BASE}/rcsapi/jsonapi.jsp?apitype=<RCS_SEND_APITYPE>      {username, password, rcstype, rcsid, msisdn:"n1,n2", variables:[{var1}], templateid}
 //                          (+ button:[{url}] dynamic URL button, + cardMedia:[{fileUrl}] rich card image). At most 500 numbers per request.
@@ -72,8 +72,8 @@ function config() {
     tokenMethod: env('RCS_TOKEN_METHOD').toUpperCase() === 'GET' ? 'GET' : 'POST',
     tokenPath: env('RCS_TOKEN_PATH') || '/api/rcs/accesstoken',
     webhookSecret: env('RCS_WEBHOOK_SECRET'),
-    sendApiType: /^\d{1,2}$/.test(env('RCS_SEND_APITYPE')) ? env('RCS_SEND_APITYPE') : '',
-    personalApiType: /^\d{1,2}$/.test(env('RCS_PERSONAL_APITYPE')) ? env('RCS_PERSONAL_APITYPE') : '',
+    sendApiType: /^\d{1,2}$/.test(env('RCS_SEND_APITYPE')) ? env('RCS_SEND_APITYPE') : '1',
+    personalApiType: /^\d{1,2}$/.test(env('RCS_PERSONAL_APITYPE')) ? env('RCS_PERSONAL_APITYPE') : '1',
     local: core.loopback(base),
   };
   const problems = [];
