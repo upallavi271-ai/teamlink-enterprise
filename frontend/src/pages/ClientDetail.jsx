@@ -552,8 +552,8 @@ export default function ClientDetail() {
           {params.get('saved') === 'draft'
             ? `Saved for later.${c.missingRequired?.length ? ` Next: fill ${c.missingRequired.join(', ')} with Edit, then make the agreement.` : ' Next: press Edit and then make the agreement.'}`
             : (canManage
-              ? 'Saved. The agreement is ready. Next: press 🔗 Create agreement link below and send it to the client.'
-              : 'Saved. The agreement is ready. Next: ask an Admin to send the agreement link to the client.')}
+              ? 'Saved. The agreement is ready. Next: open the Agreement tab. TeamLink eSigns the agreement PDF in DigiLocker and uploads it, then press Send to client.'
+              : 'Saved. The agreement is ready. Next: open the Agreement tab and send it on (BDE -> HR -> BDE TL).')}
         </div>
       )}
       <ClientPausedBanner clientName={c.name} lifecycle={c.lifecycle}>
