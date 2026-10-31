@@ -32,8 +32,10 @@ const stub = http.createServer((req, res) => {
     if (req.url.startsWith('/api/rcs/accesstoken')) { TOKENS += 1; return json({ access_token: `zz-token-${TOKENS}`, expires_in: 86400 }); }
     if (req.url.startsWith('/rcsapi/rcscreatetemplate.jsp')) return json({ status: 'PENDING', template_type: body && body.rcstype, templateid: `ZZTPL${GOT.length}`, type: 'template_approval' });
     if (MODE === '503') return json({ message: 'busy' }, 503);
+    // the exact shape rcssms.in answered live on 2026-10-31 (codes padded to 3 digits)
+    if (MODE.startsWith('live:')) return json({ Error: { ErrorCode: MODE.slice(5), ErrorDesc: 'Incorrect Username Password' } });
     if (MODE.startsWith('err:')) return json({ error: { errorcode: MODE.slice(4), errordesc: `zz error with ${USER} ${PASS}` } });
-    if (MODE === 'err30once' && ERR30 === 0) { ERR30 += 1; return json({ error: { errorcode: '30', errordesc: 'token expired' } }); }
+    if (MODE === 'err30once' && ERR30 === 0) { ERR30 += 1; return json({ Error: { ErrorCode: '030', ErrorDesc: 'token validity expired' } }); } // padded, as rcssms.in sends codes
     if (MODE === 'noid') return json({ status: 'ok' });
     const list = body && Array.isArray(body.messages) ? body.messages.map((m) => m.msisdn) : String((body && body.msisdn) || '').split(',').filter(Boolean);
     return json({ data: list.map((n, i) => ({ msgid: `ZZM${GOT.length}x${i}`, msisdn: `+${n}` })) });
@@ -83,6 +85,14 @@ const until = async (fn, ms = 15000) => { const t0 = Date.now(); for (;;) { cons
     MODE = 'ok';
     Z.check('A5 every documented error code -> not sent, its plain words; the login never appears in the error or the provider answer',
       Object.entries(codes).every(([c, x]) => !x.ok && x.errorCode === c && x.error === S.ERRORS[c] && !`${x.error}${x.said}`.includes(PASS) && !`${x.error}${x.said}`.includes(USER)), Object.fromEntries(Object.entries(codes).map(([c, x]) => [c, [x.errorCode, x.error, x.said]])));
+    for (const [padded, code] of [['022', '22'], ['023', '23'], ['030', '30']]) {
+      MODE = `live:${padded}`;
+      const x = await S.sendChunk({ rcstype: 'BASIC', templateid: 'T1', numbers: ['919876543210'], variables: {} }); // eslint-disable-line no-await-in-loop
+      codes[`live${code}`] = x;
+    }
+    MODE = 'ok';
+    Z.check('A5b the live answer {Error:{ErrorCode:"022"}}: padded codes read as 22 / 23 / 30 (so 023 pauses the queue and 030 renews the token)',
+      ['22', '23', '30'].every((c) => codes[`live${c}`].errorCode === c && !codes[`live${c}`].ok) && codes.live22.error === S.ERRORS['22'], Object.fromEntries(['22', '23', '30'].map((c) => [c, [codes[`live${c}`].errorCode, codes[`live${c}`].error]])));
     MODE = 'noid';
     r = await S.sendChunk({ rcstype: 'BASIC', templateid: 'T1', numbers: ['919876543210'], variables: {} });
     MODE = 'ok';
@@ -213,7 +223,7 @@ const until = async (fn, ms = 15000) => { const t0 = Date.now(); for (;;) { cons
     Z.check('B16 an unknown payload: 200, kept raw, nothing changed', d3.status === 200 && d3.body.unknown >= 1);
 
     // error 23 -> pause
-    MODE = 'err:23';
+    MODE = 'live:023'; // the padded form rcssms.in really sends
     const c23 = await Z.call('POST', '/api/rcs/send', sTok, { audience: 'candidates', ids: [cA.id, cB.id], templateId: reg.body.id, variables: { var1: 'x' } });
     if (c23.body && c23.body.batchId) made.batchRefs.push(c23.body.batchId);
     const paused = await until(async () => { const s = await Z.call('GET', '/api/rcs/status', sTok); return s.body.queue.paused ? s.body : null; });
