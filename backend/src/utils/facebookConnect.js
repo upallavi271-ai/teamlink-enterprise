@@ -63,25 +63,37 @@ const redirectUri = (req) => `${siteBase(req)}/api/public/facebook-connect/callb
 // signed state and used for both.
 const baseOk = (b) => /^https?:\/\/[A-Za-z0-9.:-]+$/.test(String(b || ''));
 
+// 2026-10-31 (live kept answering "Error validating client secret" after a new secret was typed): what is typed on the screen now comes
+// FIRST; FACEBOOK_APP_ID / FACEBOOK_APP_SECRET in .env are only the fallback, and `from` says which secret is used (never the value).
 async function appCreds() {
-  let id = String(process.env.FACEBOOK_APP_ID || '').trim();
-  let secret = String(process.env.FACEBOOK_APP_SECRET || '').trim();
-  let configId = String(process.env.FACEBOOK_LOGIN_CONFIG_ID || '').trim();
   const c = await readConfig('social');
-  if (!id || !secret) {
-    if (c.missingKey) return { missingKey: true };
-    id = id || String((c.values || {})[APP_ID_LABEL] || '').trim();
-    secret = secret || String((c.values || {})[APP_SECRET_LABEL] || '').trim();
-  }
-  configId = configId || String((c.values || {})[CONFIG_LABEL] || '').replace(/\D/g, '');
+  if (c.missingKey) return { missingKey: true };
+  const v = c.values || {};
+  let id = String(v[APP_ID_LABEL] || '').trim();
+  let secret = String(v[APP_SECRET_LABEL] || '').trim();
+  let from = secret ? 'typed on the Social Media screen' : '';
+  const configId = String(v[CONFIG_LABEL] || '').replace(/\D/g, '') || String(process.env.FACEBOOK_LOGIN_CONFIG_ID || '').trim();
+  if (!id) id = String(process.env.FACEBOOK_APP_ID || '').trim();
+  if (!secret && process.env.FACEBOOK_APP_SECRET) { secret = String(process.env.FACEBOOK_APP_SECRET).trim(); from = 'FACEBOOK_APP_SECRET in the server settings (.env)'; }
   if (id && !secret) { // the WhatsApp card's App secret belongs to the same Meta app
     try {
       const w = await readConfig('whatsapp');
       const key = Object.keys(w.values || {}).find((k) => /^app secret/i.test(k));
-      if (key) secret = String(w.values[key] || '').trim();
+      if (key) { secret = String(w.values[key] || '').trim(); if (secret) from = 'the WhatsApp card'; }
     } catch { /* none */ }
   }
-  return { id, secret, configId };
+  return { id, secret, configId, from };
+}
+
+// "Check App ID + Secret": asks Facebook for an app token with them (nothing is posted, no login needed) - the quickest proof the pair matches
+async function checkApp() {
+  const a = await appCreds();
+  if (a.missingKey) return { ok: false, words: 'The secret key of this server is missing.' };
+  if (!a.id || !a.secret) return { ok: false, words: 'Type the App ID and App secret first.' };
+  try {
+    const j = await readJson(`${graphBase()}/oauth/access_token?${new URLSearchParams({ client_id: a.id, client_secret: a.secret, grant_type: 'client_credentials' })}`);
+    return j.access_token ? { ok: true, from: a.from, words: `App ID ${a.id} and the App secret match (secret from ${a.from}).` } : { ok: false, from: a.from, words: 'Facebook gave no app token.' };
+  } catch (err) { return { ok: false, from: a.from, words: `Facebook says: ${err.message} (App ID ${a.id}; secret from ${a.from}). Copy the App secret again from App settings > Basic > Show.` }; }
 }
 
 // 2026-10-30 (live: "Facebook could not be reached from this server" right after a good sign-in): a call that never got an answer is tried
@@ -246,4 +258,4 @@ router.get('/callback', async (req, res) => {
   }
 });
 
-module.exports = { router, siteBase, baseOk, start, pending, select, takePages, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };
+module.exports = { checkApp, router, siteBase, baseOk, start, pending, select, takePages, save, setFinisher, redirectUri, appCreds, exchange, fromToken, APP_ID_LABEL, APP_SECRET_LABEL, CONFIG_LABEL, SCOPES };

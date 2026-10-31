@@ -1726,7 +1726,11 @@ router.post('/integrations/social/facebook/token', requirePerm(null, 'administra
 });
 router.get('/integrations/social/facebook/redirect-uri', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
   const a = await FBC.appCreds();
-  res.json({ redirectUri: FBC.redirectUri(req), hasApp: !!(a && a.id && a.secret) });
+  res.json({ redirectUri: FBC.redirectUri(req), hasApp: !!(a && a.id && a.secret), secretFrom: (a && a.from) || null });
+});
+router.post('/integrations/social/facebook/check-app', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  if (!(await saveFacebookApp(req, res))) return undefined; // a secret typed just now is checked as it is
+  res.json(await FBC.checkApp());
 });
 router.get('/integrations/social/facebook/pending', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   const out = await FBC.pending(req.user, req.query.k);

@@ -43,6 +43,7 @@ export default function FacebookSetup({ embedded = false }) {
   const [appId, setAppId] = useState('');
   const [secret, setSecret] = useState('');
   const [configId, setConfigId] = useState('');
+  const [appCheck, setAppCheck] = useState(null); // { ok, words } from Check App ID + Secret
   const [pasted, setPasted] = useState('');
   const [thToken, setThToken] = useState('');
   const [thBusy, setThBusy] = useState(false);
@@ -164,6 +165,18 @@ export default function FacebookSetup({ embedded = false }) {
           </label>
         </div>
         <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>Same app as WhatsApp? The secret can stay empty: the WhatsApp one is used. The secret is saved encrypted and never shown again.</div>
+        {/* 2026-10-31: "Error validating client secret" came back after Facebook's sign-in - check the pair before signing in */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', marginTop: 8 }}>
+          <button type="button" className="btn btn-sm" disabled={busy} onClick={async () => {
+            setAppCheck(null);
+            const values = {};
+            if (appId.trim()) values['Meta App ID'] = appId.trim();
+            if (secret.trim()) values['Meta App secret'] = secret.trim();
+            try { const r = await api.post('/admin/integrations/social/facebook/check-app', { values }); setAppCheck(r.data); setSecret(''); load(); } catch (e) { setAppCheck({ ok: false, words: e.response?.data?.error || 'The check could not run.' }); }
+          }}>Check App ID + Secret</button>
+          {uri && uri.secretFrom && <span className="small-muted" style={{ fontSize: 12 }}>Secret in use: {uri.secretFrom}</span>}
+        </div>
+        {appCheck && <div style={{ marginTop: 6, fontSize: 13, color: appCheck.ok ? '#1c7c4a' : '#b42318' }}>{appCheck.ok ? '✓ ' : '✗ '}{appCheck.words}</div>}
 
         {/* founder 2026-10-30: Facebook answered "Invalid Scopes: pages_show_list, pages_read_engagement, pages_manage_posts" */}
         <div style={{ marginTop: 12, padding: 12, borderRadius: 8, background: '#fff8ec', border: '1px solid #f3dcae' }}>
