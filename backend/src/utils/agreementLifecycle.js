@@ -106,7 +106,7 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     '3. Press "Download agreement PDF to eSign": the agreement comes with your stamp and ours printed on it.',
     '4. Open https://www.digilocker.gov.in and sign in with your Aadhaar (your Aadhaar must be linked to your mobile). Go to Drive, press Upload and choose that PDF.',
     '5. On the uploaded file, press eSign and enter the Aadhaar OTP sent to your mobile.',
-    '6. Download the signed PDF and send it back to us by replying to this email (attach that file as it is).',
+    '6. Download the signed PDF and upload it on the same page (step 4): check the preview and press Submit. (You can also reply to this email with that file attached, as it is.)',
     '',
     'Please do not edit, merge, print or compress the signed file - that would remove the digital signature.',
     ours ? "Your signed copy and TeamLink's signed copy together form the agreement." : 'TeamLink signs its own copy the same way. Both signed copies together form the agreement.',
@@ -115,7 +115,7 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     '',
     '— TeamLink Consultants',
   ].join('\n');
-  const shortText = `${lead}TeamLink: agreement ${ref} for ${client.name} is in your email${c.email ? ` (${core.maskEmail(c.email)})` : ''}. Put your company stamp on it${stampUrl ? ` here: ${stampUrl}` : ''}, then eSign it with Aadhaar in DigiLocker and reply with the signed PDF.`;
+  const shortText = `${lead}TeamLink: agreement ${ref} for ${client.name} is in your email${c.email ? ` (${core.maskEmail(c.email)})` : ''}. Put your company stamp on it${stampUrl ? ` here: ${stampUrl}` : ''}, then eSign it with Aadhaar in DigiLocker and upload the signed PDF on the same page.`;
 
   const email = await messaging.send('Email', {
     to: c.email,

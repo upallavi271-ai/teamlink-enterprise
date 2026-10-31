@@ -32,17 +32,21 @@ export function signersFrom(x, img) {
   const d = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { timeZone: 'Asia/Kolkata' }).split('/').join('-') : ''); // India time, like the PDF
   const tl = (x && x.company) || {};
   const cl = (x && x.clientSide) || {};
+  // signed in DigiLocker (2026-10-31): x.dl = { teamlink: { signer, signedAt }, client: … } fills Sign / Date by itself, and TeamLink's
+  // stamp saved in Agreement settings (x.teamlinkStampSaved) shows on TeamLink's side
+  const dl = (x && x.dl) || {};
+  const dlSign = (w) => <span className="agrd-esign">Aadhaar eSign (DigiLocker): {w.signer || 'signed'}</span>;
   return {
     teamlink: {
-      name: tl.signedBy || x.teamlinkName || '', title: x.teamlinkTitle || '', date: tl.hasSignature ? d(tl.sealedAt) : '',
-      signNode: tl.hasSignature ? img('company-sign') : null, stampNode: tl.hasStamp ? img('company-stamp') : null,
-      waiting: tl.hasSignature ? null : 'Waiting for TeamLink signature', waitingStamp: 'Waiting for TeamLink stamp',
+      name: tl.signedBy || x.teamlinkName || '', title: x.teamlinkTitle || '', date: dl.teamlink ? d(dl.teamlink.signedAt) : (tl.hasSignature ? d(tl.sealedAt) : ''),
+      signNode: tl.hasSignature ? img('company-sign') : (dl.teamlink ? dlSign(dl.teamlink) : null), stampNode: tl.hasStamp || x.teamlinkStampSaved ? img('company-stamp') : null,
+      waiting: tl.hasSignature || dl.teamlink ? null : 'Waiting for TeamLink signature', waitingStamp: 'Waiting for TeamLink stamp',
     },
     signer: {
-      name: cl.signedBy || '', title: cl.signedByTitle || '', date: x.signedAt ? d(x.signedAt) : '',
-      signNode: cl.hasSignature ? img('client-sign') : (cl.esign ? <span className="agrd-esign">Digitally signed with Aadhaar eSign (eMudhra)</span> : null),
+      name: cl.signedBy || (dl.client && dl.client.signer) || '', title: cl.signedByTitle || '', date: dl.client ? d(dl.client.signedAt) : (x.signedAt && !dl.teamlink ? d(x.signedAt) : ''),
+      signNode: cl.hasSignature ? img('client-sign') : (dl.client ? dlSign(dl.client) : (cl.esign ? <span className="agrd-esign">Digitally signed with Aadhaar eSign (eMudhra)</span> : null)),
       stampNode: cl.hasStamp ? img('client-stamp') : null,
-      waiting: cl.hasSignature || cl.esign ? null : 'Waiting for client signature', waitingStamp: 'Waiting for client stamp',
+      waiting: cl.hasSignature || cl.esign || dl.client ? null : 'Waiting for client signature', waitingStamp: 'Waiting for client stamp',
       esign: !!cl.esign && !cl.hasSignature,
     },
   };

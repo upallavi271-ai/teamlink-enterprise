@@ -8,6 +8,48 @@ import { agreementBlind } from '../../utils/agreementPrivacy.js';
 import useClientLabel from '../clients/useClientLabel.js'; // one company, many locations: "Name - Location" for same-name clients (2026-10-22)
 import { DEPTS, deptLabel } from '../../atsVocab';
 import './signedAgreementFiles.css';
+import { StampPicker } from './TeamLinkSeal.jsx';
+
+// TEAMLINK'S COMPANY STAMP for the DigiLocker copies (founder 2026-10-31: "digilocker ni base cheskoni & stamp upload chese option
+// vundali"): saved once (Agreement settings), printed on every agreement PDF to eSign. Only who may set it (Super Admin / Admin)
+// sees this row: the GET answers 403 to anyone else and the row stays hidden.
+function TeamLinkStampRow() {
+  const [st, setSt] = useState(null);
+  const [img, setImg] = useState('');
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const load = useCallback(() => {
+    api.get('/agreement/settings/teamlink-seal').then((r) => {
+      setSt(r.data);
+      if (r.data && r.data.hasStamp) {
+        api.get('/agreement/settings/teamlink-seal/file/stamp', { responseType: 'blob' })
+          .then((b) => setImg((old) => { if (old) URL.revokeObjectURL(old); return URL.createObjectURL(b.data); })).catch(() => setImg(''));
+      }
+    }).catch(() => setSt(false));
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  if (!st) return null;
+  const save = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const f = new FormData();
+      f.append('kind', 'stamp');
+      f.append('file', file, file.name || 'stamp.png');
+      await api.post('/agreement/settings/teamlink-seal', f);
+      setFile(null); setMsg('TeamLink stamp saved. It is printed on every agreement PDF to eSign.'); load();
+    } catch (e) { setMsg(e.response?.data?.error || 'The stamp could not be saved.'); } finally { setBusy(false); }
+  };
+  return (
+    <div style={{ border: '1px dashed var(--border, #d5dbe5)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
+      <div style={{ fontWeight: 600, marginBottom: 4 }}>TeamLink stamp {st.hasStamp ? <span style={{ color: 'var(--green, #15803d)', fontSize: 13 }}>✓ saved</span> : <span style={{ color: '#9a6700', fontSize: 13 }}>not saved yet</span>}</div>
+      {st.hasStamp && img && <img src={img} alt="TeamLink stamp" style={{ maxWidth: 90, maxHeight: 90, display: 'block', marginBottom: 6 }} />}
+      <StampPicker file={file} onFile={setFile} />
+      <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} disabled={busy || !file} onClick={save}>{busy ? 'Saving…' : (st.hasStamp ? 'Replace TeamLink stamp' : 'Save TeamLink stamp')}</button>
+      {msg && <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{msg}</div>}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // THE ONE "View agreement" - used on every screen that has a client.
@@ -238,10 +280,12 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
           <div className="vag-up" style={{ marginTop: 12 }}>
             <div className="saf-label" style={{ marginBottom: 4 }}>Aadhaar eSign through DigiLocker (free)</div>
             <div className="small-muted" style={{ fontSize: 12, marginBottom: 8, lineHeight: 1.5 }}>
-              1. Download the agreement PDF. 2. The TeamLink director eSigns it in DigiLocker; upload that file on the left.
-              {' '}3. Send the same PDF to the client; they eSign it in their DigiLocker and send it back. Upload it on the right.
+              1. TeamLink stamp saved (once). 2. Download the agreement PDF to eSign: the TeamLink stamp is printed on it.
+              {' '}3. The TeamLink director eSigns it in DigiLocker; upload that file on the left. 4. Send to client: on their link the client
+              {' '}puts their stamp on, eSigns in DigiLocker and submits - their copy appears on the right by itself.
               {' '}Both copies together are the signed agreement (signed in counterparts).
             </div>
+            <TeamLinkStampRow />
             {d.esign && (
               <button type="button" className="btn btn-sm" style={{ marginBottom: 8 }} disabled={!!busy} onClick={() => pickItem({ key: 'fresh', path: `/agreement/${clientId}/pdf?fresh=1`, mime: 'application/pdf', canShow: true, fileName: 'agreement-to-eSign.pdf' }, true)}>
                 Download agreement PDF to eSign
