@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../../api';
 import './greenstart.css';
-import { resolveGreenStartUrl } from './greenStartLink.js';
+import { resolveGreenStartUrl, openGreenStart } from './greenStartLink.js';
 
 // ---------------------------------------------------------------------------
 // OMNI-CHANNEL = the founder's own Green Start product, AS IT IS (green-start-app/, source unchanged), opened inside the TeamLink window.
@@ -9,12 +9,18 @@ import { resolveGreenStartUrl } from './greenStartLink.js';
 // browser that holds the signed cookie that POST /api/omni-gs/session sets for a signed-in TeamLink login that may open it.
 // 2026-10-22: the TeamLink backend now STARTS and looks after Green Start by itself (utils/greenStartSupervisor.js). This page shows the state
 // (Running / Starting step n of 5 / Waiting for memory / Waiting for Redis / Crashed + Stopped, Off ...), says exactly what to do next, and gives
-// Admins the buttons Start, Stop, Restart, Show log, Backup now. When everything is up the frame opens by itself. Shown by OmniEntry.jsx.
+// Admins the buttons Start, Stop, Restart, Show log, Backup now. Shown by OmniEntry.jsx.
+// 2026-10-31 NO FRAME ANY MORE (Google Business Profile "Continue with Google" showed Google's "403. That's an error ... you do not have
+// access to this page"): Google, Facebook and the other sign-in pages refuse to open inside another site's frame, and Green Start's
+// Connect buttons go to them in the window they run in. So Green Start is always a top-level page of its own address:
+//   /green-start (the sidebar's Omni-Channel ↗ tab)  -> this tab goes on to Green Start, signed in with the same one-click ticket;
+//   /omni-channel (Manage / Help)                     -> an "Open Green Start" button that opens it in a new tab the same way.
+// The door pass (POST /api/omni-gs/session) and the ticket (POST /api/omni-gs/sso-ticket) are unchanged: no second login.
 // ---------------------------------------------------------------------------
 const gsOrigin = (port) => {
   const forced = import.meta.env && import.meta.env.VITE_GREENSTART_ORIGIN;
   if (forced) return String(forced).replace(/\/+$/, '');
-  // the live site (*.teamlinks.in): Green Start has its own address; the frame shows it inside TeamLink, and the same address also opens on its own
+  // the live site (*.teamlinks.in): Green Start has its own address, opened as a page of its own (never in a frame, see below)
   const live = resolveGreenStartUrl({ envUrl: import.meta.env && import.meta.env.VITE_GREENSTART_URL, hostname: window.location.hostname });
   if (live) return live.replace(/\/+$/, '');
   return `${window.location.protocol}//${window.location.hostname}:${port || 5190}`;
@@ -217,6 +223,31 @@ export function GreenStartView({ st, err, busy, ready, onCheck, onAction, onLog,
   );
 }
 
+// /omni-channel: Green Start opens in a NEW TAB at the top level (never in a frame here: see the header), signed in with a fresh ticket.
+function OpenGreenStart({ port, onNote }) {
+  const [busy, setBusy] = useState(false);
+  const open = async () => {
+    setBusy(true);
+    try {
+      await openGreenStart({
+        url: gsOrigin(port),
+        postSession: () => api.post('/omni-gs/session'),
+        getTicket: () => api.post('/omni-gs/sso-ticket').then((r) => r.data),
+        openWindow: (u, target) => window.open(u, target),
+        assign: (u) => window.location.assign(u),
+        notify: onNote,
+      });
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="gs-state" role="status">
+      <b>Green Start opens as its own page</b>
+      <p>It opens in a new tab, already signed in. Google, Facebook and the other sign-ins (Connect buttons) only work there, not inside this page.</p>
+      <button type="button" className="gs-btn" onClick={open} disabled={busy}>{busy ? 'Opening…' : 'Open Green Start'}</button>
+    </div>
+  );
+}
+
 // Admin: which Green Start account everybody opens with (no login page). Empty = Green Start's own login page.
 function SsoAccount() {
   const [v, setV] = useState(null);
@@ -267,13 +298,11 @@ function Controls({ st, onAction, onLog }) {
 export default function GreenStart({ full = false }) {
   const [st, setSt] = useState(null); // status from /api/omni-gs/status
   const [err, setErr] = useState('');
-  const [ready, setReady] = useState(false); // session cookie set, safe to open the frame
+  const [ready, setReady] = useState(false); // session cookie set, safe to open Green Start
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const [log, setLog] = useState(null);
   const [logPart, setLogPart] = useState('');
-  const frame = useRef(null);
-  const [h, setH] = useState(720);
 
   const check = useCallback(async () => {
     setBusy(true);
@@ -325,22 +354,11 @@ export default function GreenStart({ full = false }) {
     return () => clearInterval(t);
   }, [ready]);
 
-  // fill the rest of the page: no second scrollbar
-  useLayoutEffect(() => {
-    const fit = () => {
-      const top = frame.current ? frame.current.getBoundingClientRect().top : 160;
-      setH(Math.max(480, window.innerHeight - top - 6));
-    };
-    fit();
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, [ready, st]);
-
-  // NO LOGIN PAGE (founder 2026-10-26): when the server has one-click sign-in set up, the frame opens Green Start already signed in to
+  // NO LOGIN PAGE (founder 2026-10-26): when the server has one-click sign-in set up, /green-start opens Green Start already signed in to
   // the company account (a single-use 60 s ticket from POST /api/omni-gs/sso-ticket). Not set up = Green Start's own login, as before.
   const [sso, setSso] = useState(undefined); // undefined = asking, null = not set up, string = the signed-in link
   useEffect(() => {
-    if (!ready || sso !== undefined) return;
+    if (!full || !ready || sso !== undefined) return; // /omni-channel asks for its own ticket when the button is clicked
     api.post('/omni-gs/sso-ticket').then((r) => {
       const t = r.data && r.data.ticket;
       setSso(t ? `${gsOrigin(st && st.port)}/auth/teamlink#ticket=${encodeURIComponent(t)}&next=${encodeURIComponent(r.data.next || '/app')}` : null);
@@ -354,19 +372,11 @@ export default function GreenStart({ full = false }) {
     document.title = 'Green Start';
     return () => { document.title = was; };
   }, [full]);
-  if (full && ready && sso !== undefined) {
-    return <iframe title="Green Start" src={src} className="gs-frame-full" allow="clipboard-write; microphone; autoplay" />;
-  }
-  const frameSlot = ready && sso !== undefined ? (
-    <iframe
-      ref={frame}
-      title="Green Start"
-      src={src}
-      className="gs-frame"
-      style={{ height: h }}
-      allow="clipboard-write; microphone; autoplay"
-    />
-  ) : null;
+  // /green-start: this tab BECOMES Green Start (replace: Back does not land on this hand-over page and its used ticket again)
+  const goTop = full && ready && sso !== undefined;
+  useEffect(() => { if (goTop) window.location.replace(src); }, [goTop, src]);
+  if (goTop) return <div className="gs-wrap"><div className="oc-note" role="status">Opening Green Start…</div></div>;
+  const frameSlot = ready ? <OpenGreenStart port={st && st.port} onNote={setNote} /> : null;
 
   return <GreenStartView st={st} err={err} busy={busy} ready={ready} onCheck={check} onAction={act} onLog={showLog} log={log} logPart={logPart} note={note} frameSlot={frameSlot} srcUrl={loginUrl} />;
 }
