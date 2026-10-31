@@ -50,7 +50,8 @@ function signingUrl(req, token) {
 function contactsOf(client) {
   return {
     // a label typed into the name box ("Name:", "Name", "-") is not a name (2026-10-31: the email said "Dear Name:,")
-    name: ((v) => (/^(name|contact|contact name|mr|ms|sir|madam|na|n\/a|-+)\W*$/i.test(v) ? '' : v))(String(client.contactName || client.recruitmentContactName || '').trim()) || null,
+    // and a label stuck on the end ("vasu chitturi Name:") is dropped
+    name: ((v) => (/^(name|contact|contact name|mr|ms|sir|madam|na|n\/a|-+)\W*$/i.test(v) ? '' : v))(String(client.contactName || client.recruitmentContactName || '').replace(/\s+(?:name|designation|title)\s*:.*$/i, '').trim()) || null,
     email: String(client.contactEmail || client.recruitmentContactEmail || '').trim() || null,
     mobile: String(client.contactPhone || '').trim() || null,
     whatsapp: String(client.contactWhatsApp || client.contactPhone || '').trim() || null,
@@ -132,6 +133,55 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
   results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: !!pdf, teamlinkCopy: !!ours };
 
   // a short note by SMS / WhatsApp that the agreement is in the email (no link: the PDF travels by email)
+  const sms = await messaging.send('SMS', { to: c.mobile, kind: 'text', text: shortText });
+  results.SMS = { outcome: sms.outcome, to: c.mobile ? core.maskMobile(c.mobile) : null, error: sms.ok ? null : sms.error };
+  const wa = await messaging.send('WhatsApp', { to: c.whatsapp, kind: 'text', text: shortText });
+  results.WhatsApp = { outcome: wa.outcome, to: c.whatsapp ? core.maskMobile(c.whatsapp) : null, error: wa.ok ? null : wa.error };
+  return results;
+}
+
+// ---- 1b. THANK YOU, once both sides have signed (founder 2026-10-31: "mottham complete ayyaka thank you ani raavali client ki") ----
+// Email: a thank-you with the client's signed copy, TeamLink's signed copy and the signature summary attached; SMS / WhatsApp: a
+// short thank-you saying the copies are in the email. Same channel rules and result shape as dispatchSigningLink. Never throws.
+async function dispatchThankYou(clientId) {
+  const messaging = require('./messaging'); // eslint-disable-line global-require
+  const core = require('./messagingCore'); // eslint-disable-line global-require
+  const SF = require('../routes/agreementSignedFiles'); // eslint-disable-line global-require
+  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  if (!client) return {};
+  const c = contactsOf(client);
+  const ref = client.agreementId || 'the service agreement';
+  const base = `${String(client.agreementId || 'Agreement').replace(/[^\w.-]/g, '')}-${String(client.name || 'client').replace(/[^\w.-]+/g, '-').slice(0, 40)}`;
+  const copies = await SF.esignCopies(clientId).catch(() => ({}));
+  const attachments = [];
+  if (copies.them) attachments.push({ filename: `${base}-signed-by-client.pdf`, content: copies.them.buf, contentType: 'application/pdf' });
+  if (copies.us) attachments.push({ filename: `${base}-signed-by-TeamLink.pdf`, content: copies.us.buf, contentType: 'application/pdf' });
+  try {
+    if (copies.us || copies.them) attachments.push({ filename: `${base}-signature-summary.pdf`, content: await SF.summaryBuffer(client, copies), contentType: 'application/pdf' });
+  } catch (e) { console.error('[agreement thank-you] summary not made:', e.message); } // eslint-disable-line no-console
+  const day = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : null);
+  const since = day(client.agreementActivatedAt || new Date());
+  const text = [
+    c.name ? `Dear ${c.name},` : 'Hello,',
+    '',
+    `Thank you for signing the service agreement ${ref} with Aadhaar eSign.`,
+    `Both sides have now signed: the agreement between ${client.legalName || client.name} and TeamLink Consultants is active from ${since}.`,
+    '',
+    'Attached for your records:',
+    ...(copies.them ? ['- your signed copy (Aadhaar eSign)'] : []),
+    ...(copies.us ? ["- TeamLink's signed copy (Aadhaar eSign)"] : []),
+    '- the signature summary: both signatures on one page, each checked valid',
+    '',
+    'Both signed copies together form the agreement. Please keep them as they are: editing, merging or printing a copy removes its digital signature.',
+    '',
+    `We look forward to working with you.${client.bdeOwner ? ` ${client.bdeOwner} from our team will be in touch about your hiring needs.` : ''}`,
+    '',
+    '— TeamLink Consultants',
+  ].join('\n');
+  const shortText = `TeamLink: thank you! Agreement ${ref} is signed by both sides and active. The signed copies are in your email${c.email ? ` (${core.maskEmail(c.email)})` : ''}.`;
+  const results = {};
+  const email = await messaging.send('Email', { to: c.email, subject: `Thank you - agreement ${ref} is signed and active`, text, fromName: '', attachments });
+  results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: attachments.length };
   const sms = await messaging.send('SMS', { to: c.mobile, kind: 'text', text: shortText });
   results.SMS = { outcome: sms.outcome, to: c.mobile ? core.maskMobile(c.mobile) : null, error: sms.ok ? null : sms.error };
   const wa = await messaging.send('WhatsApp', { to: c.whatsapp, kind: 'text', text: shortText });
@@ -450,7 +500,7 @@ async function bdeMayLink(user, client) {
 }
 
 module.exports = {
-  bdeMayLink, signingUrl, contactsOf, dispatchSigningLink, describeDispatch, dispatchReasons,
+  bdeMayLink, signingUrl, contactsOf, dispatchSigningLink, dispatchThankYou, describeDispatch, dispatchReasons,
   isExecuted, missingSeals, maybeAutoActivate, endOf, sweepExpiry, startExpirySweep, ownersAndAdmins,
   sweepSigningReminders, SIGN_REMINDER_DAYS, emailRenewal,
 };

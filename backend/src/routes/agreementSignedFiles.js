@@ -152,6 +152,18 @@ async function statusFromPapers(clientId, user) {
       reason: dlBoth ? 'TeamLink and the client each eSigned their copy with Aadhaar (DigiLocker); both signatures checked valid'
         : (target === 'ACTIVE' ? 'Signed agreement and Vasu sir confirmation are on file' : 'Signed agreement on file; Vasu sir confirmation not yet - an Admin activates it'),
     });
+    // ALL DONE: thank the client, with both signed copies and the summary (founder 2026-10-31: "mottham complete ayyaka thank you
+    // ani raavali client ki"). After the reply, never in its way; the result is in the client's history.
+    if (target === 'ACTIVE' && dlBoth) {
+      setImmediate(() => {
+        require('../utils/agreementLifecycle').dispatchThankYou(clientId) // eslint-disable-line global-require
+          .then((r) => logAudit({
+            userId: user ? user.id : null, actorName: user ? user.name || null : 'TeamLink', action: 'Agreement thank-you sent to the client',
+            entity: 'Client', entityId: clientId, toValue: require('../utils/agreementLifecycle').describeDispatch(r).slice(0, 300), // eslint-disable-line global-require
+          }))
+          .catch((e) => console.error('[agreement papers] thank-you not sent:', e.message)); // eslint-disable-line no-console
+      });
+    }
     return target;
   } catch (e) {
     console.error('[agreement papers] status not updated:', e.message); // eslint-disable-line no-console
@@ -163,6 +175,53 @@ async function statusFromPapers(clientId, user) {
 function mayAdd(user, access) {
   if (access && access.edit) return true;
   return require('../utils/clientLifecycle').isBdeTeam(user); // eslint-disable-line global-require
+}
+
+// THE TWO DIGILOCKER COPIES of a client (the newest valid-or-not of each side), each checked again now, with its bytes.
+// base: the address the summary's web links start with (none = no links).
+async function esignCopies(clientId, base = null) {
+  const files = await filesOf(clientId);
+  const newest = (kind) => files.filter((f) => f.kind === kind).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0] || null;
+  const copyOf = async (f) => {
+    if (!f) return null;
+    const d = await prisma.clientDocument.findUnique({ where: { id: f.id }, select: { fileStored: true, fileName: true } });
+    const p = d ? attachments.resolveStored(d.fileStored) : null;
+    if (!p) return null;
+    const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
+    const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
+    const out = {
+      signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
+      issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName, buf, // attached to the summary
+      sha256: crypto.createHash('sha256').update(buf).digest('hex'),
+    };
+    // the web link that opens this copy in any browser (see copySig above)
+    if (base) out.url = `${base}/api/agreement/esign-copy/${f.id}/${copySig(f.id, out.sha256)}`;
+    return out;
+  };
+  const [us, them] = await Promise.all([copyOf(newest(UPLOAD_TYPES.dlteamlink)), copyOf(newest(UPLOAD_TYPES.dlclient))]);
+  return { us, them };
+}
+// the signature summary PDF (both sides on one page), written to `out` (a response, or a sink that collects a Buffer)
+async function writeSummary(client, { us, them }, out) {
+  const party = await require('../utils/agreement').consultantParty().catch(() => ({})); // eslint-disable-line global-require
+  return require('../utils/esignSummaryPdf').renderEsignSummary({ // eslint-disable-line global-require
+    client, agreementId: client.agreementId, consultantName: party.name || 'TeamLink Consultants',
+    logoPath: require('../utils/agreementPdf').LOGO, // eslint-disable-line global-require
+    sides: [
+      { side: 'teamlink', title: `For ${party.name || 'TeamLink Consultants'}`, copy: us },
+      { side: 'client', title: `For ${client.legalName || client.name}`, copy: them },
+    ],
+  }, out);
+}
+async function summaryBuffer(client, copies) {
+  const { PassThrough } = require('stream'); // eslint-disable-line global-require
+  const sink = new PassThrough();
+  const parts = [];
+  sink.on('data', (b) => parts.push(b));
+  const done = new Promise((ok) => { sink.on('end', ok); sink.on('finish', ok); });
+  await writeSummary(client, copies, sink);
+  await done;
+  return Buffer.concat(parts);
 }
 
 function mountView(router, { requireAuth, loadForView }) {
@@ -288,7 +347,7 @@ function mountView(router, { requireAuth, loadForView }) {
       await prisma.appSetting.create({ data: { key: `${PREFIX}${row.id}`, value: JSON.stringify({ label, kind: label, uploadedBy: req.user.name || null, ...(esign ? { esign, sha256: require('crypto').createHash('sha256').update(file.data).digest('hex') } : {}) }) } }); // eslint-disable-line global-require
       await logAudit({ userId: req.user.id, actorName: req.user.name || null, action: 'Agreement paper uploaded', entity: 'Client', entityId: loaded.client.id, toValue: `${label}: ${stored.billName}${esign ? ` - valid Aadhaar eSign by ${esign.signer || 'unknown'} (${esign.issuer || 'CA'})` : ''}`.slice(0, 300) });
       const status = await statusFromPapers(loaded.client.id, req.user);
-      const said = status === 'ACTIVE' ? ' The agreement is now Active.' : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
+      const said = status === 'ACTIVE' ? ` The agreement is now Active.${type.startsWith('dl') ? ' A thank-you email with both signed copies and the summary goes to the client.' : ''}` : status === 'SIGNED' ? (type === 'dlclient' ? ' The agreement is now Signed by the client (upload the TeamLink eSigned copy to make it Active).' : ' The agreement is now Signed (upload Vasu sir confirmation to make it Active).') : '';
       const who = esign ? ` Valid Aadhaar eSign by ${esign.signer || 'the signer'}.` : '';
       return res.status(201).json({ ok: true, message: `${label} uploaded.${who}${said}`, agreementStatus: status, files: await filesOf(loaded.client.id) });
     } catch (err) { return next(err); }
@@ -362,39 +421,13 @@ function mountView(router, { requireAuth, loadForView }) {
     try {
       const loaded = await loadForView(req, res);
       if (!loaded) return undefined;
-      const files = await filesOf(loaded.client.id);
-      const newest = (kind) => files.filter((f) => f.kind === kind).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0] || null;
-      const copyOf = async (f) => {
-        if (!f) return null;
-        const d = await prisma.clientDocument.findUnique({ where: { id: f.id }, select: { fileStored: true, fileName: true } });
-        const p = d ? attachments.resolveStored(d.fileStored) : null;
-        if (!p) return null;
-        const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
-        const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
-        const out = {
-          signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
-          issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName, buf, // attached to the summary
-          sha256: crypto.createHash('sha256').update(buf).digest('hex'),
-        };
-        // the web link that opens this copy in any browser (see copySig above)
-        out.url = `${apiBase(req)}/api/agreement/esign-copy/${f.id}/${copySig(f.id, out.sha256)}`;
-        return out;
-      };
-      const [us, them] = await Promise.all([copyOf(newest(UPLOAD_TYPES.dlteamlink)), copyOf(newest(UPLOAD_TYPES.dlclient))]);
+      const { us, them } = await esignCopies(loaded.client.id, apiBase(req));
       if (!us && !them) return res.status(404).json({ error: 'No DigiLocker eSigned copy is on file yet.' });
-      const party = await require('../utils/agreement').consultantParty().catch(() => ({})); // eslint-disable-line global-require
       const c = loaded.client;
       res.set('Content-Type', 'application/pdf');
       res.set('Cache-Control', 'private, no-store');
       res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${safeName(`${c.agreementId || 'agreement'}-signature-summary`)}.pdf"`);
-      require('../utils/esignSummaryPdf').renderEsignSummary({ // eslint-disable-line global-require
-        client: c, agreementId: c.agreementId, consultantName: party.name || 'TeamLink Consultants',
-        logoPath: require('../utils/agreementPdf').LOGO, // eslint-disable-line global-require
-        sides: [
-          { side: 'teamlink', title: `For ${party.name || 'TeamLink Consultants'}`, copy: us },
-          { side: 'client', title: `For ${c.legalName || c.name}`, copy: them },
-        ],
-      }, res);
+      await writeSummary(c, { us, them }, res);
       return undefined;
     } catch (err) { return next(err); }
   });
@@ -449,4 +482,4 @@ function mountView(router, { requireAuth, loadForView }) {
   });
 }
 
-module.exports = { mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };
+module.exports = { esignCopies, summaryBuffer, mountView, filesOf, countFor, statusFromPapers, KIND, PREFIX };

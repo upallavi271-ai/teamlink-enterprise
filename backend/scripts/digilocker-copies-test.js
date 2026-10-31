@@ -88,6 +88,25 @@ async function upload(clientId, type, buf, name, token) {
     check('D8 the summary has a browser link for each copy; each opens without login, byte for byte', urls.length === 2 && got.every((g) => g.s === 200 && want.includes(g.b.toString('base64'))), [urls, got.map((g) => g.s)]);
     const badLink = urls[0] ? await fetch(urls[0].replace(/^https?:\/\/[^/]+/, API).replace(/[a-f0-9]$/, (x) => (x === 'a' ? 'b' : 'a'))) : { status: 0 };
     check('D9 a changed link does not open anything', badLink.status === 404, badLink.status);
+    // THANK YOU once Active (founder 2026-10-31): the history says it went out, and the email carries both copies + the summary
+    await new Promise((ok) => setTimeout(ok, 2500));
+    const ty = await prisma.auditLog.findFirst({ where: { entityId: clientId, action: 'Agreement thank-you sent to the client' } });
+    check('D12 a thank-you to the client is written in the history once it is Active', !!ty, ty);
+    {
+      const os = require('os'); // eslint-disable-line global-require
+      process.env.UPLOAD_DIR = process.env.UPLOAD_DIR || require('path').join(process.env.TEAMLINK_SANDBOX_FILES || require('path').join(os.homedir(), '.teamlink-sandbox'), 'uploads'); // eslint-disable-line global-require
+      const M = require('../src/utils/messaging'); // eslint-disable-line global-require
+      const real = M.send; const sent = [];
+      M.send = async (ch, msg) => { sent.push({ ch, msg }); return { ok: true, outcome: 'Sent' }; };
+      await prisma.client.update({ where: { id: clientId }, data: { contactName: 'Ravi Kumar Name:', contactEmail: 'ravi@acme-zz.in', contactPhone: '9000000003' } });
+      try { await require('../src/utils/agreementLifecycle').dispatchThankYou(clientId); } finally { M.send = real; } // eslint-disable-line global-require
+      const em = (sent.find((x) => x.ch === 'Email') || {}).msg || {};
+      const names = (em.attachments || []).map((a) => a.filename);
+      check('D13 the thank-you email: "Dear Ravi Kumar", both signed copies and the summary attached, SMS + WhatsApp too',
+        /^Dear Ravi Kumar,/.test(em.text || '') && /Thank you/.test(em.subject || '') && names.length === 3 && names.some((n) => /signed-by-client/.test(n)) && names.some((n) => /signed-by-TeamLink/.test(n)) && names.some((n) => /signature-summary/.test(n))
+          && (em.attachments || []).every((a) => a.content && a.content.subarray(0, 5).toString() === '%PDF-') && sent.some((x) => x.ch === 'SMS') && sent.some((x) => x.ch === 'WhatsApp'),
+        [em.subject, (em.text || '').slice(0, 40), names]);
+    }
     // ESIGN_OTHER: optional, a DigiLocker copy of ANOTHER agreement (its pages carry a different AGR number), signed by the same
     // person as ESIGN_TEAMLINK - proves the two checks behind the green tick (founder 2026-10-31)
     const O = process.env.ESIGN_OTHER;
