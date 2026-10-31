@@ -77,6 +77,9 @@ async function upload(clientId, type, buf, name, token) {
     const g = await fetch(`${API}/api/agreement/${clientId}/signed-files`, { headers: { Authorization: `Bearer ${T}` } }).then((r) => r.json());
     const dl = (g.files || []).filter((f) => /DigiLocker/.test(f.kind));
     check('D6 GET signed-files shows both copies with their check (valid, signer, certificate)', dl.length === 2 && dl.every((f) => f.esign && f.esign.valid && f.esign.signer && f.esign.issuer), dl.map((f) => [f.kind, f.esign]));
+    const sum = await fetch(`${API}/api/agreement/${clientId}/esign-summary`, { headers: { Authorization: `Bearer ${T}` } });
+    const sumBuf = Buffer.from(await sum.arrayBuffer());
+    check('D7 the signature summary (both sides on one page) is a PDF', sum.status === 200 && sumBuf.subarray(0, 5).toString() === '%PDF-' && sumBuf.length > 2000, [sum.status, sumBuf.length]);
   } catch (e) {
     check('no error', false, e.stack || e.message);
   } finally {

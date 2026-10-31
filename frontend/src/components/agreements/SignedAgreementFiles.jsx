@@ -275,6 +275,14 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
               })}
             </div>
             {dlBoth && <div style={{ marginTop: 8, color: 'var(--green, #15803d)', fontWeight: 600, fontSize: 13 }}>Both sides signed with Aadhaar eSign. The agreement is Active.</div>}
+            {/* one page with both signatures side by side, checked again when it is made (TeamLink's summary, 2026-10-31) */}
+            {Object.keys(d.dl || {}).length > 0 && (
+              <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>Signature summary (both sides):</span>
+                <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => pickItem({ key: 'sum', path: `/agreement/${clientId}/esign-summary`, mime: 'application/pdf', canShow: true, fileName: 'signature-summary.pdf' }, false)}>View</button>
+                <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => pickItem({ key: 'sumd', path: `/agreement/${clientId}/esign-summary?download=1`, mime: 'application/pdf', canShow: true, fileName: 'signature-summary.pdf' }, true)}>Download</button>
+              </div>
+            )}
             <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
               Checked here: the PDF carries a digital signature, it verifies with the signer&apos;s certificate, and the file was not changed after signing. A merged or printed copy has no signature and is refused. Adobe Acrobat Reader also checks the certificate chain.
             </div>

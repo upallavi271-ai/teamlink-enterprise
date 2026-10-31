@@ -297,6 +297,46 @@ function mountView(router, { requireAuth, loadForView }) {
     } catch (err) { return next(err); }
   });
 
+  // THE TWO DIGILOCKER SIGNATURES SIDE BY SIDE (founder 2026-10-31): one summary page, made fresh - each signed copy on disk
+  // is checked again (utils/pdfSignature.js) and its fingerprint taken. TeamLink's summary; the signatures stay in the copies.
+  router.get('/:clientId/esign-summary', requireAuth, async (req, res, next) => {
+    try {
+      const loaded = await loadForView(req, res);
+      if (!loaded) return undefined;
+      const files = await filesOf(loaded.client.id);
+      const newest = (kind) => files.filter((f) => f.kind === kind).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0] || null;
+      const copyOf = async (f) => {
+        if (!f) return null;
+        const d = await prisma.clientDocument.findUnique({ where: { id: f.id }, select: { fileStored: true, fileName: true } });
+        const p = d ? attachments.resolveStored(d.fileStored) : null;
+        if (!p) return null;
+        const buf = require('fs').readFileSync(p); // eslint-disable-line global-require
+        const r = require('../utils/pdfSignature').inspect(buf); // eslint-disable-line global-require
+        return {
+          signer: (r.last && r.last.signer) || (f.esign && f.esign.signer) || null, signedAt: (r.last && r.last.signedAt) || null,
+          issuer: (r.last && r.last.issuer) || null, valid: r.valid, fileName: d.fileName || f.fileName,
+          sha256: require('crypto').createHash('sha256').update(buf).digest('hex'), // eslint-disable-line global-require
+        };
+      };
+      const [us, them] = await Promise.all([copyOf(newest(UPLOAD_TYPES.dlteamlink)), copyOf(newest(UPLOAD_TYPES.dlclient))]);
+      if (!us && !them) return res.status(404).json({ error: 'No DigiLocker eSigned copy is on file yet.' });
+      const party = await require('../utils/agreement').consultantParty().catch(() => ({})); // eslint-disable-line global-require
+      const c = loaded.client;
+      res.set('Content-Type', 'application/pdf');
+      res.set('Cache-Control', 'private, no-store');
+      res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${safeName(`${c.agreementId || 'agreement'}-signature-summary`)}.pdf"`);
+      require('../utils/esignSummaryPdf').renderEsignSummary({ // eslint-disable-line global-require
+        client: c, agreementId: c.agreementId, consultantName: party.name || 'TeamLink Consultants',
+        logoPath: require('../utils/agreementPdf').LOGO, // eslint-disable-line global-require
+        sides: [
+          { side: 'teamlink', title: `For ${party.name || 'TeamLink Consultants'}`, copy: us },
+          { side: 'client', title: `For ${c.legalName || c.name}`, copy: them },
+        ],
+      }, res);
+      return undefined;
+    } catch (err) { return next(err); }
+  });
+
   router.get('/:clientId/signed-files', requireAuth, async (req, res, next) => {
     try {
       const loaded = await loadForView(req, res);
