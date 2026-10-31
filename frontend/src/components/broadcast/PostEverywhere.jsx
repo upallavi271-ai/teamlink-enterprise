@@ -110,7 +110,7 @@ export default function PostEverywhere({ requirementId, canPost = true, onChange
             <div className="bc-chip" key={`${c.place}${c.campaignId || ''}${i}`}>
               <b>{c.name}</b><StatusChip tone={TONE[c.state] || 'grey'}>{LABEL[c.state] || c.state}</StatusChip>
               <span className="bc-note" style={{ flex: 1 }}>{c.words}{c.error ? ` · ${c.error}` : ''}</span>
-              {c.link && <a className="btn btn-sm" href={c.link} target="_blank" rel="noreferrer">View requirement</a>}
+              {c.link && <a className="btn btn-sm" href={c.link} target="_blank" rel="noreferrer">View on {c.name} ↗</a>}
               {c.state === 'failed' && c.queueId && canPost && <button type="button" className="btn btn-sm btn-primary" onClick={() => retry(c)}>Retry</button>}
               {c.state === 'needs_help' && c.place !== 'whatsapp' && <span className="bc-note">Open "Posting sources" on the requirement to finish by hand.</span>}
               {c.campaignId && <Link className="btn btn-sm" to={`/candidates?tab=contacts&campaign=${c.campaignId}`}>See replies{c.replies ? ` (${c.replies})` : ''}</Link>}
