@@ -229,7 +229,9 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     const loaded = await loadForView(req, res);
     if (!loaded) return undefined;
     const { client } = loaded;
-    if (!req.query.copy) {
+    // ?fresh=1: the agreement built from the record - the copy each side eSigns in DigiLocker (2026-10-31) - even when
+    // signed papers are on file
+    if (!req.query.copy && !req.query.fresh) {
       const paper = await paperSignedPdf(client);
       if (paper) {
         res.set('Cache-Control', 'private, no-store');

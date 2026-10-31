@@ -40,6 +40,14 @@ const NONE_WORDS = 'No signed agreement uploaded for this client yet';
 const UPLOAD_ACCEPT = '.pdf,.doc,.docx,.png,.jpg,.jpeg,.webp';
 // the three papers the BDE team uploads (founder 2026-10-29); the server checks who may (routes/agreementSignedFiles.js)
 const PAPERS = [['vasu', 'Vasu sir confirmation'], ['client', 'Client confirmation'], ['agreement', 'Signed agreement']];
+// THE TWO DIGILOCKER COPIES (founder 2026-10-31): each side eSigns its own copy of the same agreement with Aadhaar in
+// DigiLocker (free; DigiLocker keeps one signature per PDF). The server takes a copy only when its signature checks valid.
+const DL = [
+  { type: 'dlteamlink', kind: 'TeamLink eSigned copy (DigiLocker)', side: 'TeamLink' },
+  { type: 'dlclient', kind: 'Client eSigned copy (DigiLocker)', side: 'Client' },
+];
+const DL_KINDS = DL.map((x) => x.kind);
+const whenOf = (iso) => { try { return new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 const CLIENT_DEPTS = DEPTS.filter((x) => !['BDE', 'HR', 'Accounts'].includes(x));
 
 // Who is shown the button: everyone the agreement screens are not hidden from, plus the client's own login.
@@ -101,11 +109,16 @@ async function loadAgreement(clientId, esignHint) {
       path: `/agreement/${clientId}/own-file`, mime: own.mime, canShow: !!own.canShow, fileName: own.name,
     });
   }
-  ((sf && sf.files) || []).forEach((f) => items.push({
+  // the newest DigiLocker copy of each side, shown side by side (not in the plain list)
+  const dl = {};
+  ((sf && sf.files) || []).filter((f) => DL_KINDS.includes(f.kind)).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt)).forEach((f) => {
+    if (!dl[f.kind]) dl[f.kind] = { ...f, path: `/agreement/${clientId}/signed-files/${f.id}` };
+  });
+  ((sf && sf.files) || []).filter((f) => !DL_KINDS.includes(f.kind)).forEach((f) => items.push({
     key: f.id, label: f.label, meta: metaLine(f), tag: f.kind && f.kind !== 'Signed agreement' ? f.kind : '',
     path: `/agreement/${clientId}/signed-files/${f.id}`, mime: f.mime, canShow: f.canShow, fileName: f.fileName,
   }));
-  return { items, esign: es, esignWaiting: !!es && !(ex && ex.pdfAvailable), canUpload: !!(sf && sf.canRemove), canAdd: !!(sf && sf.canAdd), denied: !!(sf && sf.denied && !items.length) };
+  return { items, dl, esign: es, esignWaiting: !!es && !(ex && ex.pdfAvailable), canUpload: !!(sf && sf.canRemove), canAdd: !!(sf && sf.canAdd), denied: !!(sf && sf.denied && !items.length && !Object.keys(dl).length) };
 }
 
 // The window (and the "one file opens at once" rule). Mount it to use it; onClose when it is done.
@@ -132,7 +145,7 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
       if (!live) return;
       first.current = false;
       // one file opens at once - not for the BDE team / Admin, who also add papers here
-      if (!data.denied && !data.canAdd && data.items.length === 1 && (!data.esign || data.items[0].key === 'esign')) {
+      if (!data.denied && !data.canAdd && data.items.length === 1 && !Object.keys(data.dl || {}).length && (!data.esign || data.items[0].key === 'esign')) {
         try { await openAgreementFile(data.items[0], false); onClose(); return; } catch { setErr('Could not open the file. Please try again.'); }
       }
       setD(data);
@@ -177,7 +190,9 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
   const hasPaper = (label) => !!(d && d.items.some((it) => it.label === label));
 
   if (!d) return null;
-  const none = !d.items.length;
+  const none = !d.items.length && !Object.keys(d.dl || {}).length;
+  const dlShown = !d.denied && (Object.keys(d.dl || {}).length > 0 || (d.canAdd && d.esign));
+  const dlBoth = DL.every((x) => d.dl && d.dl[x.kind] && d.dl[x.kind].esign && d.dl[x.kind].esign.valid);
   return createPortal(
     <Modal
       title={(
@@ -216,6 +231,54 @@ export function ViewAgreementWindow({ clientId, esign, onClose, onChanged }) {
               </li>
             ))}
           </ul>
+        )}
+        {/* AADHAAR eSIGN THROUGH DIGILOCKER: TeamLink's copy on the left, the client's on the right, each checked valid */}
+        {dlShown && (
+          <div className="vag-up" style={{ marginTop: 12 }}>
+            <div className="saf-label" style={{ marginBottom: 4 }}>Aadhaar eSign through DigiLocker (free)</div>
+            <div className="small-muted" style={{ fontSize: 12, marginBottom: 8, lineHeight: 1.5 }}>
+              1. Download the agreement PDF. 2. The TeamLink director eSigns it in DigiLocker; upload that file on the left.
+              {' '}3. Send the same PDF to the client; they eSign it in their DigiLocker and send it back. Upload it on the right.
+              {' '}Both copies together are the signed agreement (signed in counterparts).
+            </div>
+            {d.esign && (
+              <button type="button" className="btn btn-sm" style={{ marginBottom: 8 }} disabled={!!busy} onClick={() => pickItem({ key: 'fresh', path: `/agreement/${clientId}/pdf?fresh=1`, mime: 'application/pdf', canShow: true, fileName: 'agreement-to-eSign.pdf' }, true)}>
+                Download agreement PDF to eSign
+              </button>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 10 }}>
+              {DL.map((x) => {
+                const f = d.dl && d.dl[x.kind];
+                const ok = f && f.esign && f.esign.valid;
+                return (
+                  <div key={x.type} style={{ border: `1px solid ${ok ? 'var(--green, #15803d)' : 'var(--border, #d5dbe5)'}`, borderRadius: 8, padding: 10 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 4 }}>For {x.side}</div>
+                    {f ? (
+                      <>
+                        <div style={{ color: ok ? 'var(--green, #15803d)' : 'var(--danger, #b42318)', fontWeight: 600, fontSize: 13 }}>{ok ? '✓ Valid Aadhaar eSign' : 'Signature not checked'}</div>
+                        {f.esign && f.esign.signer && <div style={{ fontSize: 13 }}>Signed by <b>{f.esign.signer}</b></div>}
+                        {f.esign && f.esign.signedAt && <div className="small-muted" style={{ fontSize: 12 }}>{whenOf(f.esign.signedAt)}</div>}
+                        {f.esign && f.esign.issuer && <div className="small-muted" style={{ fontSize: 12 }}>Certificate: {f.esign.issuer}</div>}
+                        <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
+                          <button type="button" className="btn btn-sm btn-primary" disabled={!!busy} onClick={() => pickItem({ ...f, key: f.id }, false)}>View</button>
+                          <button type="button" className="btn btn-sm" disabled={!!busy} onClick={() => pickItem({ ...f, key: f.id }, true)}>Download</button>
+                        </div>
+                      </>
+                    ) : <div className="small-muted" style={{ fontSize: 13 }}>Not uploaded yet</div>}
+                    {d.canAdd && (
+                      <button type="button" className="btn btn-sm" style={{ marginTop: 8 }} disabled={!!busy} onClick={() => { paperType.current = x.type; if (paperInput.current) paperInput.current.click(); }}>
+                        {busy === `paper-${x.type}` ? 'Checking…' : (f ? 'Upload again' : `Upload ${x.side} eSigned PDF`)}
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {dlBoth && <div style={{ marginTop: 8, color: 'var(--green, #15803d)', fontWeight: 600, fontSize: 13 }}>Both sides signed with Aadhaar eSign. The agreement is Active.</div>}
+            <div className="small-muted" style={{ fontSize: 11.5, marginTop: 6 }}>
+              Checked here: the PDF carries a digital signature, it verifies with the signer&apos;s certificate, and the file was not changed after signing. A merged or printed copy has no signature and is refused. Adobe Acrobat Reader also checks the certificate chain.
+            </div>
+          </div>
         )}
         {!d.denied && d.canAdd && (
           <div className="vag-up" style={{ marginTop: 12 }}>

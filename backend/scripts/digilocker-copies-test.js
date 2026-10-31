@@ -1,0 +1,94 @@
+#!/usr/bin/env node
+// ---------------------------------------------------------------------------
+// THE TWO DIGILOCKER COPIES OF AN AGREEMENT (founder 2026-10-31) - COPY DATABASE ONLY, never dev.db.
+//
+//   cd backend && npm run sandbox -- --restart --detach --no-watch
+//   TL_API=http://localhost:4011 TL_TEST_DB=<absolute path of prisma/sandbox.db> \
+//   ESIGN_TEAMLINK=<a PDF eSigned in DigiLocker> ESIGN_CLIENT=<another PDF eSigned in DigiLocker> \
+//   ESIGN_MERGED=<optional: a merged / printed copy with no signature> node scripts/digilocker-copies-test.js
+//
+// Real DigiLocker-signed PDFs carry a person's Aadhaar name, so they are NOT kept in the repository: point the test at them.
+//   1. a merged / printed PDF (only pictures of signature boxes) is refused
+//   2. a signed PDF changed after signing is refused
+//   3. the TeamLink copy is taken with its signer's name; the agreement does not turn Active on one copy
+//   4. the client copy is taken; both valid -> the agreement is Active (source: DigiLocker Aadhaar eSign)
+//   5. GET signed-files shows each copy's check (valid, signer, certificate)
+// A ZZTEST client is made and removed again.
+// ---------------------------------------------------------------------------
+const path = require('path');
+const fs = require('fs');
+
+const BACK = path.resolve(__dirname, '..');
+const API = String(process.env.TL_API || '').replace(/\/+$/, '').replace(/\/api$/, '');
+if (!/^http:\/\/localhost:40(1[1-9]|[2-9][0-9])$/.test(API)) { console.error('Refusing: set TL_API=http://localhost:4011 (a copy-database server), never 4010.'); process.exit(2); }
+const DB = process.env.TL_TEST_DB;
+if (!DB || /dev\.db$/i.test(DB)) { console.error('Refusing: set TL_TEST_DB to the absolute path of a COPY database (never dev.db).'); process.exit(2); }
+const A = process.env.ESIGN_TEAMLINK; const C = process.env.ESIGN_CLIENT; const M = process.env.ESIGN_MERGED;
+if (!A || !C || !fs.existsSync(A) || !fs.existsSync(C)) { console.log('SKIP  set ESIGN_TEAMLINK and ESIGN_CLIENT to two DigiLocker-signed PDFs'); process.exit(0); }
+process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
+require(path.join(BACK, 'node_modules/dotenv')).config({ path: path.join(BACK, '.env'), override: false });
+process.env.DATABASE_URL = `file:${DB.split(path.sep).join('/')}`;
+process.env.TEST_MODE = '1';
+const jwt = require(path.join(BACK, 'node_modules/jsonwebtoken'));
+const prisma = require(path.join(BACK, 'src/db'));
+const { resolveIdentity, tokenPayload } = require(path.join(BACK, 'src/utils/identity'));
+
+const RUN = Date.now().toString(36);
+let pass = 0; let fail = 0;
+function check(name, ok, detail) {
+  if (ok) pass += 1; else fail += 1;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${!ok && detail != null ? `  -> ${String(typeof detail === 'string' ? detail : JSON.stringify(detail)).slice(0, 400)}` : ''}`);
+}
+async function upload(clientId, type, buf, name, token) {
+  const fd = new FormData();
+  fd.append('file', new Blob([buf], { type: 'application/pdf' }), name);
+  const r = await fetch(`${API}/api/agreement/${clientId}/signed-files?type=${type}`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'X-Forwarded-For': `10.8.${Math.floor(Math.random() * 250)}.1` }, body: fd });
+  let body = null; try { body = await r.json(); } catch { /* not json */ }
+  return { status: r.status, body };
+}
+
+(async () => {
+  let clientId = null;
+  try {
+    const admin = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN', status: 'Active' }, orderBy: { createdAt: 'asc' } });
+    await prisma.user.update({ where: { id: admin.id }, data: { passwordChangedAt: new Date() } });
+    const T = jwt.sign(tokenPayload(await resolveIdentity(admin.id)), process.env.JWT_SECRET, { expiresIn: '1h' });
+    const client = await prisma.client.create({ data: { name: `ZZTEST DL Client ${RUN}`, legalName: `ZZTEST DL Client ${RUN}`, status: 'Active', clientType: 'Direct', agreementStatus: 'SENT' } });
+    clientId = client.id;
+    const bufA = fs.readFileSync(A); const bufC = fs.readFileSync(C);
+
+    if (M && fs.existsSync(M)) {
+      const m = await upload(clientId, 'dlclient', fs.readFileSync(M), 'merged.pdf', T);
+      check('D1 a merged / printed PDF (signature boxes as pictures only) is refused', m.status === 400 && /no digital signature/i.test(m.body && m.body.error), m);
+    } else console.log('SKIP  D1 (set ESIGN_MERGED)');
+    const bad = Buffer.from(bufA); const at = bad.indexOf('stream') + 20; bad[at] ^= 1;
+    const t = await upload(clientId, 'dlteamlink', bad, 'changed.pdf', T);
+    check('D2 a signed PDF changed after signing is refused', t.status === 400 && /not valid/i.test(t.body && t.body.error), t);
+
+    const a = await upload(clientId, 'dlteamlink', bufA, 'teamlink-signed.pdf', T);
+    check('D3 the TeamLink copy is taken, with a valid signature and its signer', a.status === 201 && /Valid Aadhaar eSign by/.test(a.body.message), a);
+    let c1 = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true } });
+    check('D4 one copy alone does not make the agreement Active', c1.agreementStatus !== 'ACTIVE', c1);
+
+    const c = await upload(clientId, 'dlclient', bufC, 'client-signed.pdf', T);
+    c1 = await prisma.client.findUnique({ where: { id: clientId }, select: { agreementStatus: true, agreementSource: true, agreementActivatedAt: true } });
+    check('D5 the client copy is taken; both valid -> Active (source: DigiLocker Aadhaar eSign)', c.status === 201 && c1.agreementStatus === 'ACTIVE' && /DigiLocker/.test(c1.agreementSource || '') && !!c1.agreementActivatedAt, [c.status, c1]);
+
+    const g = await fetch(`${API}/api/agreement/${clientId}/signed-files`, { headers: { Authorization: `Bearer ${T}` } }).then((r) => r.json());
+    const dl = (g.files || []).filter((f) => /DigiLocker/.test(f.kind));
+    check('D6 GET signed-files shows both copies with their check (valid, signer, certificate)', dl.length === 2 && dl.every((f) => f.esign && f.esign.valid && f.esign.signer && f.esign.issuer), dl.map((f) => [f.kind, f.esign]));
+  } catch (e) {
+    check('no error', false, e.stack || e.message);
+  } finally {
+    if (clientId) {
+      const docs = await prisma.clientDocument.findMany({ where: { clientId }, select: { id: true } }).catch(() => []);
+      await prisma.appSetting.deleteMany({ where: { key: { in: docs.map((d) => `agrsigned.${d.id}`) } } }).catch(() => null);
+      await prisma.clientDocument.deleteMany({ where: { clientId } }).catch(() => null);
+      await prisma.auditLog.deleteMany({ where: { entityId: clientId } }).catch(() => null);
+      await prisma.client.delete({ where: { id: clientId } }).catch((e) => console.log('cleanup:', e.message));
+    }
+    console.log(`\n${pass} passed, ${fail} failed`);
+    await prisma.$disconnect();
+    process.exit(fail ? 1 : 0);
+  }
+})();
