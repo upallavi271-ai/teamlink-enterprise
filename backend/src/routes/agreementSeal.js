@@ -522,7 +522,7 @@ router.post('/token/:token/esigned', signLimit, async (req, res, next) => {
       return res.status(400).json({ error: 'That file could not be read as a PDF. Please pick it again.' });
     }
     const who = `${lifecycle.contactsOf(client).name || 'The client'} (on the agreement link, IP ${ipOf(req)})`;
-    const status = await got.SF.saveCopy(client.id, { label: got.SF.UPLOAD_TYPES.dlclient, stored, data: got.file.data, esign: chk.esign, by: who.slice(0, 120) });
+    const status = await got.SF.saveCopy(client.id, { label: got.SF.UPLOAD_TYPES.dlclient, stored, data: got.file.data, esign: chk.esign, by: who.slice(0, 120), base: got.SF.apiBase(req) });
     return res.status(201).json({ ok: true, agreementStatus: status, signer: chk.esign.signer, signedAt: chk.esign.signedAt });
   } catch (err) { return next(err); }
 });

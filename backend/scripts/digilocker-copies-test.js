@@ -82,7 +82,8 @@ async function upload(clientId, type, buf, name, token) {
     const sumBuf = Buffer.from(await sum.arrayBuffer());
     check('D7 the signature summary (both sides on one page) is a PDF', sum.status === 200 && sumBuf.subarray(0, 5).toString() === '%PDF-' && sumBuf.length > 2000, [sum.status, sumBuf.length]);
     // the web links on the summary open each signed copy in any browser, with no login (founder 2026-10-31)
-    const urls = [...sumBuf.toString('latin1').matchAll(/\/URI \((http[^)]*esign-copy[^)]*)\)/g)].map((m) => m[1].split('\\').join(''));
+    // each copy's link sits on its file name (and on "Open this signed copy"): one address per copy
+    const urls = [...new Set([...sumBuf.toString('latin1').matchAll(/\/URI \((http[^)]*esign-copy[^)]*)\)/g)].map((m) => m[1].split('\\').join('')))];
     const got = await Promise.all(urls.map((u) => fetch(u.replace(/^https?:\/\/[^/]+/, API)).then(async (r) => ({ s: r.status, b: Buffer.from(await r.arrayBuffer()) }))));
     const want = [fs.readFileSync(A), fs.readFileSync(C)].map((b) => b.toString('base64'));
     check('D8 the summary has a browser link for each copy; each opens without login, byte for byte', urls.length === 2 && got.every((g) => g.s === 200 && want.includes(g.b.toString('base64'))), [urls, got.map((g) => g.s)]);

@@ -137,7 +137,8 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
 // ---- 1b. THANK YOU, once both sides have signed (founder 2026-10-31: "mottham complete ayyaka thank you ani raavali client ki") ----
 // Email: a thank-you with the client's signed copy, TeamLink's signed copy and the signature summary attached; SMS / WhatsApp: a
 // short thank-you saying the copies are in the email. Same channel rules and result shape as dispatchSigningLink. Never throws.
-async function dispatchThankYou(clientId) {
+// base: the address the summary's "click to open" links start with (none = the copies are only attached)
+async function dispatchThankYou(clientId, { base: linkBase = null } = {}) {
   const messaging = require('./messaging'); // eslint-disable-line global-require
   const core = require('./messagingCore'); // eslint-disable-line global-require
   const SF = require('../routes/agreementSignedFiles'); // eslint-disable-line global-require
@@ -146,7 +147,7 @@ async function dispatchThankYou(clientId) {
   const c = contactsOf(client);
   const ref = client.agreementId || 'the service agreement';
   const base = `${String(client.agreementId || 'Agreement').replace(/[^\w.-]/g, '')}-${String(client.name || 'client').replace(/[^\w.-]+/g, '-').slice(0, 40)}`;
-  const copies = await SF.esignCopies(clientId).catch(() => ({}));
+  const copies = await SF.esignCopies(clientId, linkBase || (process.env.APP_BASE_URL ? String(process.env.APP_BASE_URL).replace(/\/+$/, '') : null)).catch(() => ({}));
   const attachments = [];
   if (copies.them) attachments.push({ filename: `${base}-signed-by-client.pdf`, content: copies.them.buf, contentType: 'application/pdf' });
   if (copies.us) attachments.push({ filename: `${base}-signed-by-TeamLink.pdf`, content: copies.us.buf, contentType: 'application/pdf' });

@@ -64,14 +64,18 @@ function renderEsignSummary({ client, agreementId, consultantName, sides, logoPa
       row('Certificate issued by', c.issuer);
       // THE SIGNED COPY ITSELF, inside this PDF: click the file name to open it (founder 2026-10-31: "files meedha click chesthe,
       // akkade files open ayyelaaga"). It is attached byte for byte, so its own signature stays valid.
-      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED).text('Signed copy (file)', x, y, { width: colW });
+      doc.font('Helvetica-Bold').fontSize(8.5).fillColor(MUTED).text(c.url ? 'Signed copy (click to open)' : 'Signed copy (file)', x, y, { width: colW });
+      const ly = y;
       const fy = doc.y;
       const label = `${txt(c.fileName || 'signed-copy.pdf')}`;
-      doc.font('Helvetica').fontSize(8.5).fillColor('#1d4ed8').text(label, x, fy, { width: colW, underline: !!c.buf });
+      // the FILE NAME opens the signed copy in any browser / phone when there is a web link (founder 2026-10-31: "click chesthe pdf
+      // open avvali"); the copy is also attached byte for byte - the paperclip next to the heading (Adobe Acrobat Reader)
+      doc.font('Helvetica').fontSize(8.5).fillColor('#1d4ed8').text(label, x, fy, { width: colW, underline: !!(c.url || c.buf), ...(c.url ? { link: c.url } : {}) });
       if (c.buf) {
         const h = Math.max(11, doc.y - fy);
         try {
-          doc.fileAnnotation(x, fy, colW, h, {
+          const ax = c.url ? x + colW - 12 : x; const ay = c.url ? ly - 1 : fy; const aw = c.url ? 12 : colW; const ah = c.url ? 12 : h;
+          doc.fileAnnotation(ax, ay, aw, ah, {
             src: c.buf, name: c.fileName || `${s.side}-signed-copy.pdf`, type: 'application/pdf', hidden: false,
             description: `${s.title}: signed copy (Aadhaar eSign by ${c.signer || 'the signer'})`,
           }, { Name: 'Paperclip' });
