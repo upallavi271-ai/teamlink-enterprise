@@ -75,19 +75,12 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
   const validity = days ? ` The link is valid for ${days} days.` : '';
   const results = {};
 
-  void url; void validity; // the online signing link is no longer offered (signing is DigiLocker only, 2026-10-31)
-
-  // THE AGREEMENT PDF TO eSIGN IN DIGILOCKER, attached (founder 2026-10-31: "Send to client" -> the PDF + the DigiLocker steps,
-  // not the online link). The same PDF View agreement offers as "Download agreement PDF to eSign".
-  let pdf = null;
-  try {
-    const parts = [];
-    const sink = { setHeader() {}, headersSent: false, end(buf) { if (buf) parts.push(buf); } };
-    const us = await require('./agreement').consultantParty(); // eslint-disable-line global-require
-    // the clean copy to eSign: no DRAFT / NOT SIGNED marks, no link e-sign certificate page (agreementOnly)
-    await require('./agreementPdf').renderAgreementPdf(client, { trail: [], consultantName: us.name, agreementOnly: true }, sink); // eslint-disable-line global-require
-    pdf = parts.length ? Buffer.concat(parts) : null;
-  } catch (e) { console.error('[agreement send] PDF not made:', e.message); } // eslint-disable-line no-console
+  void validity; // the online signing link is no longer offered (signing is DigiLocker only, 2026-10-31)
+  // THE CLIENT'S STAMP PAGE (founder 2026-10-31: "client ey stamp veyyali"): the link opens a page where the client puts their
+  // company stamp on and downloads the agreement to eSign WITH both stamps printed (routes/agreementSeal.js GET /token/:token/esign-pdf).
+  // So the PDF to sign is not attached any more - an attached copy would have no client stamp.
+  const stampUrl = url ? `${String(url).replace(/\/+$/, '')}/stamp` : null;
+  const pdf = null;
   const fileName = `${String(client.agreementId || 'Agreement').replace(/[^\w.-]/g, '')}-${String(client.name || 'client').replace(/[^\w.-]+/g, '-').slice(0, 40)}.pdf`;
   // TEAMLINK'S OWN eSIGNED COPY (DigiLocker), for the client's records: TeamLink signs first (2026-10-31)
   let ours = null;
@@ -104,15 +97,16 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
   const emailText = [
     greet,
     '',
-    `${lead}Please find attached the service agreement ${ref} between ${client.name} and TeamLink Consultants.`,
+    `${lead}Here is the service agreement ${ref} between ${client.name} and TeamLink Consultants.`,
     ...(ours ? [`TeamLink has already signed it with Aadhaar eSign: our signed copy is attached too (${ours.filename}) for your records.`] : []),
-    'Kindly sign it with your Aadhaar eSign in DigiLocker (free, government of India):',
+    'Kindly put your company stamp on it and sign it with your Aadhaar eSign in DigiLocker (free, government of India):',
     '',
-    `1. Save the attached PDF to sign (${fileName}).`,
-    '2. Open https://www.digilocker.gov.in and sign in with your Aadhaar (your Aadhaar must be linked to your mobile).',
-    '3. Go to Drive, press Upload and choose the PDF.',
-    '4. On the uploaded file, press eSign and enter the Aadhaar OTP sent to your mobile.',
-    '5. Download the signed PDF and send it back to us by replying to this email (attach that file as it is).',
+    `1. Open this link: ${stampUrl || '(ask your TeamLink contact for the link)'}`,
+    '2. Upload a photo or scan of your company stamp there.',
+    '3. Press "Download agreement PDF to eSign": the agreement comes with your stamp and ours printed on it.',
+    '4. Open https://www.digilocker.gov.in and sign in with your Aadhaar (your Aadhaar must be linked to your mobile). Go to Drive, press Upload and choose that PDF.',
+    '5. On the uploaded file, press eSign and enter the Aadhaar OTP sent to your mobile.',
+    '6. Download the signed PDF and send it back to us by replying to this email (attach that file as it is).',
     '',
     'Please do not edit, merge, print or compress the signed file - that would remove the digital signature.',
     ours ? "Your signed copy and TeamLink's signed copy together form the agreement." : 'TeamLink signs its own copy the same way. Both signed copies together form the agreement.',
@@ -121,7 +115,7 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     '',
     '— TeamLink Consultants',
   ].join('\n');
-  const shortText = `${lead}TeamLink: agreement ${ref} for ${client.name} is in your email${c.email ? ` (${core.maskEmail(c.email)})` : ''}. Please eSign it with Aadhaar in DigiLocker and reply with the signed PDF.`;
+  const shortText = `${lead}TeamLink: agreement ${ref} for ${client.name} is in your email${c.email ? ` (${core.maskEmail(c.email)})` : ''}. Put your company stamp on it${stampUrl ? ` here: ${stampUrl}` : ''}, then eSign it with Aadhaar in DigiLocker and reply with the signed PDF.`;
 
   const email = await messaging.send('Email', {
     to: c.email,
@@ -130,7 +124,7 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     fromName: '',
     attachments: [...(pdf ? [{ filename: fileName, content: pdf, contentType: 'application/pdf' }] : []), ...(ours ? [ours] : [])],
   });
-  results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: !!pdf, teamlinkCopy: !!ours };
+  results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: !!pdf, teamlinkCopy: !!ours, stampLink: !!stampUrl };
 
   // a short note by SMS / WhatsApp that the agreement is in the email (no link: the PDF travels by email)
   const sms = await messaging.send('SMS', { to: c.mobile, kind: 'text', text: shortText });

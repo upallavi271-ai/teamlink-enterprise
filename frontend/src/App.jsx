@@ -74,6 +74,7 @@ import Profile from './pages/admin/Profile.jsx';
 import JobPortalRedirect from './pages/JobPortalRedirect.jsx';
 import JobPortalLaunch from './pages/JobPortalLaunch.jsx'; // /sso/job-portal: the Job Portal already signed in with this login (2026-10-29)
 import AgreementSigning from './pages/AgreementSigning.jsx';
+import AgreementStamp from './pages/AgreementStamp.jsx';
 import OfferSigning from './pages/OfferSigning.jsx'; // B3: the candidate's offer link (public)
 import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free AI link (public)
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
@@ -188,6 +189,7 @@ export default function App() {
       <Route path="/careers/:id" element={<JobPortalRedirect />} />
 
       {/* Client-facing agreement signing link — no login, token is the key */}
+      <Route path="/agreement/:token/stamp" element={<AgreementStamp />} />
       <Route path="/agreement/:token" element={<AgreementSigning />} />
       <Route path="/offer/:token" element={<OfferSigning />} />
       <Route path="/talk/:token" element={<TalkLink />} />
