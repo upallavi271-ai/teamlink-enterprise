@@ -90,8 +90,8 @@ export default function AgreementFlow({ clientId, onChanged, onLoaded, compact =
       </ol>
       <div className="af-line">
         {d.stage === 'ACTIVE' && 'The agreement is active. Requirements can go live.'}
-        {d.stage === 'SIGNED' && 'The client signed. TeamLink signs and stamps, then makes it active.'}
-        {d.stage === 'SENT' && 'The client has the link and will sign it.'}
+        {d.stage === 'SIGNED' && "The client signed. Upload TeamLink's Aadhaar eSigned copy (DigiLocker) in View agreement; with both copies it turns Active."}
+        {d.stage === 'SENT' && 'Now both sides eSign it with Aadhaar in DigiLocker and the two copies are uploaded in View agreement.'}
         {['DRAFT', 'WITH_HR', 'WITH_TL'].includes(d.stage) && (mine ? <b>It is your turn.</b> : <>It is with <b>{d.waitingOn}</b>.</>)}
         {d.stage === 'REJECTED' && 'The client said no. Change the terms and make a new draft.'}
         {d.stage === 'EXPIRED' && 'This agreement ended. Make a new draft.'}

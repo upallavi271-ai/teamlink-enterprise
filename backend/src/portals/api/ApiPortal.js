@@ -20,6 +20,8 @@ const { PortalError, RunAborted } = require('../base/errors');
 const S = require('../../jobPublish/settings');
 
 const LOCAL = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+// the job-posting places that are social platforms with possibly MORE THAN ONE connected account (utils/socialAccounts.js)
+const SOCIAL_PLATFORM = { facebook: 'facebook', instagram: 'instagram', threads: 'threads', linkedinpost: 'linkedin' };
 
 class ApiPortal {
   constructor({ portal, creds = null, log, ctx = {} }) {
@@ -76,6 +78,81 @@ class ApiPortal {
 
   async checkpoint(step) { if (this.ctx && this.ctx.checkpoint) await this.ctx.checkpoint(step); }
 
+  // ---- EVERY CONNECTED ACCOUNT (founder 2026-10-31: "social media lo anni accounts ki post avvali") ---------------------------
+  // The job-posting connection of a social place is that platform's DEFAULT account (utils/socialPosting.js). Every OTHER account
+  // connected in Administration > Integrations > Social Media (more Facebook Pages, their Instagram accounts, Threads profiles,
+  // LinkedIn profiles / Company Pages) gets the same post too: one post per job per account (kept in AppSetting
+  // 'jobpublish.extra.<requirementId>.<portal>'), "Post update" edits each, the closing note (when on) answers each.
+  // An account whose token is missing or expired is left out. Telegram and the job boards have no extra accounts.
+  async otherAccounts() {
+    const platform = SOCIAL_PLATFORM[this.portal];
+    if (!platform) return [];
+    const SA = require('../../utils/socialAccounts'); // eslint-disable-line global-require
+    const all = await SA.readAll().catch(() => []);
+    const mine = this.creds && this.creds.username ? String(this.creds.username) : '';
+    return all
+      .filter((a) => a.platform === platform && !a.isDefault && a.externalId && String(a.externalId) !== mine && !(a.expiresAt && Date.parse(a.expiresAt) < Date.now()))
+      .map((a) => ({ id: a.id, name: a.name || a.username || String(a.externalId), creds: { username: String(a.externalId), password: SA.tokenOf(a) } }))
+      .filter((x) => x.creds.password);
+  }
+
+  // the same adapter, posting as another account
+  asAccount(creds) { return new this.constructor({ portal: this.portal, creds, log: this.log, ctx: this.ctx }); }
+
+  async extraStore(requirementId) {
+    const key = `jobpublish.extra.${requirementId}.${this.portal}`;
+    const prisma = require('../../db'); // eslint-disable-line global-require
+    const row = await prisma.appSetting.findUnique({ where: { key } }).catch(() => null);
+    let v = {};
+    try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
+    const posts = v && typeof v.posts === 'object' && v.posts ? v.posts : {};
+    const save = async () => { const value = JSON.stringify({ posts }); await prisma.appSetting.upsert({ where: { key }, update: { value }, create: { key, value } }); };
+    return { posts, save };
+  }
+
+  // action: 'post' | 'update' | 'close'. Returns { lines: [plain words], results: [{ name, ok, postId, url, error }] }.
+  async fanOut(action, rid, text, ctx = {}) {
+    const out = { lines: [], results: [] };
+    let accounts = [];
+    try { accounts = await this.otherAccounts(); } catch { accounts = []; }
+    if (!accounts.length || !rid) return out;
+    const store = await this.extraStore(rid);
+    for (const acc of accounts) {
+      const had = store.posts[acc.id];
+      const a = this.asAccount(acc.creds);
+      try {
+        await this.checkpoint('send'); // eslint-disable-line no-await-in-loop
+        if (action === 'post') {
+          if (had && had.postId) { out.results.push({ name: acc.name, ok: true, postId: had.postId, url: had.url || null, already: true }); continue; } // eslint-disable-line no-continue
+          const r = await a.send(text, ctx); // eslint-disable-line no-await-in-loop
+          store.posts[acc.id] = { postId: String(r.id), url: r.url || null, name: acc.name, at: new Date().toISOString() };
+          out.results.push({ name: acc.name, ok: true, postId: String(r.id), url: r.url || null });
+        } else if (action === 'update') {
+          if (!had || !had.postId) continue; // eslint-disable-line no-continue
+          const r = await a.edit(String(had.postId), text, ctx); // eslint-disable-line no-await-in-loop
+          if (r && r.url) store.posts[acc.id] = { ...had, url: r.url };
+          out.results.push({ name: acc.name, ok: true, postId: had.postId });
+        } else if (action === 'close') {
+          if (!had || !had.postId) continue; // eslint-disable-line no-continue
+          await a.send(text, { ...ctx, replyTo: had.postId }); // eslint-disable-line no-await-in-loop
+          out.results.push({ name: acc.name, ok: true, postId: had.postId });
+        }
+      } catch (e) {
+        if (e instanceof RunAborted) throw e;
+        const words = a.scrub((e && e.message) || String(e)).split('\n')[0].slice(0, 160);
+        out.results.push({ name: acc.name, ok: false, error: words });
+      }
+    }
+    await store.save().catch(() => null);
+    const ok = out.results.filter((r) => r.ok && !r.already);
+    const bad = out.results.filter((r) => !r.ok);
+    const verb = action === 'post' ? 'Also posted to' : action === 'update' ? 'Also updated on' : 'Closing note also on';
+    if (ok.length) out.lines.push(`${verb} ${ok.length} more account${ok.length === 1 ? '' : 's'}: ${ok.map((r) => r.name).join(', ')}.`);
+    if (bad.length) out.lines.push(`Not done on ${bad.map((r) => `${r.name} (${r.error})`).join('; ')}.`);
+    for (const l of out.lines) await this.log.info('accounts', l); // eslint-disable-line no-await-in-loop
+    return out;
+  }
+
   // The settings: closing note on/off for this channel.
   async closingNoteOn() {
     try { return !!(await require('../../jobDist/tracker').settings()).closingNote[this.portal]; } catch { return false; } // eslint-disable-line global-require
@@ -130,16 +207,25 @@ class ApiPortal {
         // ONE post per job per channel
         if (job.live && job.portalJobId) {
           await this.log.info('already', 'Already posted here. Nothing was sent. Use "Post update" to change the message.');
+          // an account connected since the first post still gets the job (each account once)
+          let more = { lines: [], results: [] };
+          if (!ctx.dryRun) { const kitA = await this.kit(rid).catch(() => null); if (kitA) more = await this.fanOut('post', rid, kitA.text, ctx); }
           return {
-            ok: true, verified: true, confirmed: true, portalJobId: job.portalJobId, portalUrl: job.portalUrl || null, note: 'Already posted: nothing was sent.', screenshots: [], alreadyPosted: true,
+            ok: true, verified: true, confirmed: true, portalJobId: job.portalJobId, portalUrl: job.portalUrl || null, note: ['Already posted: nothing was sent.', ...more.lines].join(' '), screenshots: [], alreadyPosted: true, accounts: more.results,
           };
         }
         const kit = await this.kit(rid);
-        if (ctx.dryRun) return this.dry(kit.text, 'post');
+        if (ctx.dryRun) {
+          const d = await this.dry(kit.text, 'post');
+          const others = await this.otherAccounts().catch(() => []);
+          if (others.length) d.note = `${d.note}\n\nIt would also go to ${others.length} more account${others.length === 1 ? '' : 's'}: ${others.map((o) => o.name).join(', ')}.`.slice(0, 4800);
+          return d;
+        }
         await this.checkpoint('send');
         const r = await this.send(kit.text, ctx);
+        const more = await this.fanOut('post', rid, kit.text, ctx);
         return {
-          ok: true, verified: true, confirmed: true, portalJobId: String(r.id), portalUrl: r.url || null, apiStatus: r.apiStatus || null, note: `Posted (${kit.chars} characters).`, screenshots: [],
+          ok: true, verified: true, confirmed: true, portalJobId: String(r.id), portalUrl: r.url || null, apiStatus: r.apiStatus || null, note: [`Posted (${kit.chars} characters).`, ...more.lines].join(' '), screenshots: [], accounts: more.results,
         };
       }
       if (action === 'UPDATE') {
@@ -148,8 +234,9 @@ class ApiPortal {
         if (ctx.dryRun) return this.dry(kit.text, 'update');
         await this.checkpoint('send');
         const r = await this.edit(String(job.portalJobId), kit.text, ctx);
+        const more = await this.fanOut('update', rid, kit.text, ctx);
         return {
-          ok: true, verified: true, confirmed: true, portalJobId: String(job.portalJobId), portalUrl: r.url || job.portalUrl || null, apiStatus: r.apiStatus || null, note: `Updated (${kit.chars} characters).`, screenshots: [],
+          ok: true, verified: true, confirmed: true, portalJobId: String(job.portalJobId), portalUrl: r.url || job.portalUrl || null, apiStatus: r.apiStatus || null, note: [`Updated (${kit.chars} characters).`, ...more.lines].join(' '), screenshots: [], accounts: more.results,
         };
       }
       if (action === 'UNPUBLISH') {
@@ -162,7 +249,8 @@ class ApiPortal {
         if (ctx.dryRun) return this.dry(text, 'closing note');
         await this.checkpoint('send');
         const r = await this.send(text, { ...ctx, replyTo: job.portalJobId || null });
-        return { ok: true, verified: true, confirmed: true, keepStatus: true, apiStatus: r.apiStatus || null, note: 'A closing note was posted. The first post stays there.', screenshots: [] };
+        const more = await this.fanOut('close', rid, text, ctx);
+        return { ok: true, verified: true, confirmed: true, keepStatus: true, apiStatus: r.apiStatus || null, note: ['A closing note was posted. The first post stays there.', ...more.lines].join(' '), screenshots: [], accounts: more.results };
       }
       return { ok: false, code: 'UNEXPECTED', reason: `Unknown action ${action}`, retryable: false, screenshots: [] };
     } catch (e) {

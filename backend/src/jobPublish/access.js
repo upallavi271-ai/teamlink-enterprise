@@ -26,6 +26,8 @@ const isClientLogin = (user) => [user.role, user.atsRole].some((r) => ['CLIENT',
 async function mayPost(user, r) {
   if (!user || isClientLogin(user)) return false;
   if (!(await can(user, 'ats', 'requirements', 'Job Posting', 'edit'))) return false;
+  // a BDE sends the requirement to the team leads, who post it (founder 2026-10-31: "bde ki just send cheyyadam antharey")
+  if (scope.atsViewRole(user) === 'bde') return false;
   const s = scope.atsScopeOf(user);
   const chain = s.global || scope.isAssignedTo(user, r);
   const bdeTlOwns = !!r && !r.internal && scope.isBdeTl(user);

@@ -42,7 +42,7 @@ export default function JobPostingCard({ jobId, title, canPost, onChanged, onPos
           <div aria-live="polite">
             {touched.length > 0
               ? <PortalChipRow postings={postings} infos={data.infos} only={touched} />
-              : <span className="jp-note">Not posted from here yet. {canPost ? 'Press Post this requirement.' : 'Your team lead or the client manager posts it.'}</span>}
+              : <span className="jp-note">Not posted from here yet. {canPost ? 'Press Post this requirement.' : 'The team lead posts it.'}</span>}
           </div>
           {postings.filter((p) => p.lastQueue && (p.lastQueue.waiting || (p.lastQueue.status === 'NEEDS_HUMAN' && p.lastQueue.help))).map((p) => (
             <NeedsHelp key={p.portal} item={p.lastQueue} name={portalName(p.portal)} canPost={canPost} onChanged={changed} />

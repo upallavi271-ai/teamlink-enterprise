@@ -320,6 +320,9 @@ export default function RequirementForm({
   const hideAgr = !can(user, 'ats', 'clients', 'Agreement Lifecycle', 'view'); // TL / Recruiter / HR: no agreement words at all (2026-10-12)
   const clientDesk = can(user, null, 'clients', 'Client List', 'view');
   const mayPostJob = can(user, 'ats', 'requirements', 'Job Posting', 'edit');
+  // A BDE only SENDS the requirement (founder 2026-10-31: "bde ki just send cheyyadam antharey"): they tick the team leads,
+  // the team leads see it on their dashboard, give it to recruiters and post it on the sites. No Save & Post for a BDE.
+  const sendsOnly = atsRole === 'BDE';
   const openAndPost = editing && canOpen && !!requirement && requirement.status === 'DRAFT' && !requirement.internal;
   const [form, setForm] = useState(() => (editing
     ? (() => {
@@ -508,7 +511,21 @@ export default function RequirementForm({
     onSaved?.(st.job, { ...st.info, posting, openJob: false, another });
   }
 
-  async function save(kind, extra = {}) { // kind: draft | create (saved, not posted) | post (saved, then the Post step). B9.1: extra = { duplicateOverride, duplicateReason }
+  // the team leads ticked in "Team & Internal Notes", by name
+  const pickedTlNames = () => (form.tlIds || []).map((id) => ((allTls || tls).find((t) => t.id === id) || {}).name || (id === form.tlId ? form.tl : '')).filter(Boolean);
+  // BDE: Send to team leads = save it (nothing posted) with at least one team lead ticked
+  function sendToTeamLeads() {
+    if (!(form.tlIds || []).length && !form.tlId) {
+      setError('Tick at least one team lead under "Team & Internal Notes". They get this requirement, give it to recruiters and post it.');
+      const box = document.getElementById('rf-tls');
+      if (box) box.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+    if (editing) saveEdit({}, openAndPost, false);
+    else save('create', {}, true);
+  }
+
+  async function save(kind, extra = {}, sending = false) { // kind: draft | create (saved, not posted) | post (saved, then the Post step). B9.1: extra = { duplicateOverride, duplicateReason }. sending: a BDE's Send to team leads
     if (saving || busy.current) return;
     setError('');
     const found = formProblems(form, { kind: kind === 'draft' ? 'draft' : 'post', internal, editing: false });
@@ -527,14 +544,17 @@ export default function RequirementForm({
       const n = sitesToSave().length;
       if (kind === 'post' && n && !isLive && res.data?.status === 'AGREEMENT_CHECK') posting = 'Will post when the agreement is Active.';
       else if (kind === 'post' && n && !isLive && hideAgr && res.data?.gateNote) posting = 'Saved. It will be posted once the requirement is live.';
-      else if (kind === 'create') posting = 'Nothing was posted. Open the requirement and press Post when you are ready.';
+      else if (kind === 'create' && sending) {
+        const names = pickedTlNames();
+        posting = `Sent to ${names.length ? names.join(', ') : 'the team lead'}. They give it to recruiters and post it.${res.data?.status === 'AGREEMENT_CHECK' ? " It opens for posting once the client's agreement is Active." : ''}`;
+      } else if (kind === 'create') posting = 'Nothing was posted. Open the requirement and press Post when you are ready.';
       // docfill_: keep the uploaded requirement on the job as its source document.
       const sourceNote = await fill.attach('job', res.data?.id);
       if (sourceNote) posting = [posting, sourceNote].filter(Boolean).join(' ');
       if (kind === 'post' && isLive && res.data?.id) { setPostStep({ job: res.data, initial: placesFromSources(form.postingSources), info: { created: true } }); return; }
       onSaved?.(res.data, { created: true, posting, openJob: false });
     } catch (err) {
-      if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind }); return; } // B9.1
+      if (err.response?.status === 409 && err.response.data?.code === 'DUPLICATE_JOB') { setDup({ ...err.response.data, kind: sending ? 'send' : kind }); return; } // B9.1
       setError(err.response?.data?.error || 'Could not save the requirement. Please try again.');
     } finally {
       setSaving('');
@@ -681,7 +701,9 @@ export default function RequirementForm({
       footer={(
         <div className="cf-bar">
           <span className="cf-bar-note">
-            {editing
+            {sendsOnly
+              ? 'Save for later needs only the requirement title and the client. Send to team leads needs the requirement details and at least one team lead ticked: they give it to recruiters and post it.'
+              : editing
               ? 'Save changes keeps the requirement as it is. Save & Post also asks where to post it.'
               : 'Save for later needs only the requirement title and the client. Save & create and Save & Post also need the requirement details; anything missing turns red. Save & Post then asks where to post.'}
           </span>
@@ -691,7 +713,12 @@ export default function RequirementForm({
               <button className={`btn${openAndPost || !mayPostJob ? '' : ''}`} type="button" disabled={saving} onClick={() => saveEdit()} title={requirement?.status === 'DRAFT' ? 'Saves the draft. Nothing is posted.' : 'Saves the requirement. The sites it is already on are updated.'}>
                 {saving === 'save' ? 'Saving…' : 'Save changes'}
               </button>
-              {(openAndPost || (mayPostJob && requirement?.status !== 'DRAFT')) && (
+              {sendsOnly && openAndPost && (
+                <button className="btn btn-primary" type="button" disabled={saving} onClick={sendToTeamLeads} title="Saves it and sends it to the team leads you ticked. They post it.">
+                  {saving === 'save' ? 'Sending…' : 'Send to team leads'}
+                </button>
+              )}
+              {!sendsOnly && (openAndPost || (mayPostJob && requirement?.status !== 'DRAFT')) && (
                 <button className="btn btn-primary" type="button" disabled={saving} onClick={() => saveEdit({}, openAndPost, true)} title="Saves the requirement and its text, then lets you choose the sites and post.">
                   {saving === 'post' ? 'Saving…' : 'Save & Post'}
                 </button>
@@ -701,15 +728,21 @@ export default function RequirementForm({
             <>
               <button className="btn" type="button" disabled={!!saving} onClick={onClose}>Cancel</button>
               <button className="btn" type="button" disabled={!!saving} onClick={() => save('draft')} title="Keeps the requirement without opening it: nothing is live or posted yet">{saving === 'draft' ? 'Saving…' : 'Save for later'}</button>
-              <button className="btn" type="button" disabled={!!saving} onClick={() => save('create')} title="Saves the requirement and its text. Nothing is posted yet.">{saving === 'create' ? 'Saving…' : 'Save & create'}</button>
-              <button className="btn btn-primary" type="button" disabled={!!saving} onClick={() => save('post')} title="Saves the requirement and its text, then asks where to post it.">{saving === 'post' ? 'Saving…' : 'Save & Post'}</button>
+              {sendsOnly ? (
+                <button className="btn btn-primary" type="button" disabled={!!saving} onClick={sendToTeamLeads} title="Saves it and sends it to the team leads you ticked. They give it to recruiters and post it.">{saving === 'create' ? 'Sending…' : 'Send to team leads'}</button>
+              ) : (
+                <>
+                  <button className="btn" type="button" disabled={!!saving} onClick={() => save('create')} title="Saves the requirement and its text. Nothing is posted yet.">{saving === 'create' ? 'Saving…' : 'Save & create'}</button>
+                  <button className="btn btn-primary" type="button" disabled={!!saving} onClick={() => save('post')} title="Saves the requirement and its text, then asks where to post it.">{saving === 'post' ? 'Saving…' : 'Save & Post'}</button>
+                </>
+              )}
             </>
           )}
         </div>
       )}
     >
       {/* B9.1: the same client already has this job open — show it, "Create anyway" needs a reason. */}
-      <DuplicateJobWarning dup={dup} editing={editing} onCancel={() => setDup(null)} onCreateAnyway={(reason) => { const k = dup.kind; setDup(null); if (k === 'edit') saveEdit({ duplicateOverride: true, duplicateReason: reason }); else save(k, { duplicateOverride: true, duplicateReason: reason }); }} />
+      <DuplicateJobWarning dup={dup} editing={editing} onCancel={() => setDup(null)} onCreateAnyway={(reason) => { const k = dup.kind; setDup(null); if (k === 'edit') saveEdit({ duplicateOverride: true, duplicateReason: reason }); else save(k === 'send' ? 'create' : k, { duplicateOverride: true, duplicateReason: reason }, k === 'send'); }} />
       <div className="acw-wrap rf-wrap rf-one">
         <div className="acw-form">
           {!editing && <FillBanner fill={fill} names={JOB_FIELD_NAMES} />}
@@ -990,7 +1023,7 @@ export default function RequirementForm({
               {editing && !canAssign && (
                 <div className="notice amber">Read-only for you: changing the team needs the <b>assign</b> permission. Ask a TL or an admin to re-assign it.</div>
               )}
-              <div className="rf-teamhelp">Pick who works on this requirement. Leave empty to assign later.</div>
+              <div className="rf-teamhelp">{sendsOnly ? 'Tick the team leads to send this requirement to. It shows on their dashboard; they give it to recruiters and post it.' : 'Pick who works on this requirement. Leave empty to assign later.'}</div>
               <div className="rf-chain">
                 <span>Requirement → Team lead → Recruiter → Client manager (BDE) → Client</span>
                 <Help text="This chain decides who can see the requirement: a recruiter sees the requirements given to them, a team lead the ones they lead, a BDE their clients' requirements." />

@@ -273,8 +273,11 @@ async function cleanRows(reqIds, userIds) {
   Z.check('mark: honest words "Posted by <name> (not checked by the system)"', /^Posted by Priya \(colleague\) \(not checked by the system\)$/.test(lp.state.label), lp.state.label);
   const days = (Date.parse(lp.expiresAt) - Date.parse(lp.postedAt)) / day;
   Z.check('mark: expiry defaults to +30 days (the place\'s own setting)', Math.round(days) === 30, days);
+  // a BDE only sends the requirement to the team leads; posting (by hand too) is the team lead's (founder 2026-10-31)
   r = await post('bde', jobA, 'apna', { postUrl: 'https://apna.co/job/9', noExpiry: true });
-  Z.check('mark: a BDE can; "no expiry" is honoured', r.status === 200 && r.body.posting.expiresAt === null && r.body.posting.state.key === 'POSTED', r.body);
+  Z.check('mark: a BDE cannot (the team lead posts)', r.status === 403, [r.status, r.body]);
+  r = await post('tl', jobA, 'apna', { postUrl: 'https://apna.co/job/9', noExpiry: true });
+  Z.check('mark: a TL can; "no expiry" is honoured', r.status === 200 && r.body.posting.expiresAt === null && r.body.posting.state.key === 'POSTED', r.body);
   r = await post('admin', jobA, customKey, {});
   Z.check('mark: a place added by an Admin works the same (default expiry 30 days)', r.status === 200 && r.body.posting.expiresAt, r.body);
   r = await post('tl', jobA, 'whatsapp', { keepText: true });

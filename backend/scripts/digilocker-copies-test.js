@@ -80,6 +80,13 @@ async function upload(clientId, type, buf, name, token) {
     const sum = await fetch(`${API}/api/agreement/${clientId}/esign-summary`, { headers: { Authorization: `Bearer ${T}` } });
     const sumBuf = Buffer.from(await sum.arrayBuffer());
     check('D7 the signature summary (both sides on one page) is a PDF', sum.status === 200 && sumBuf.subarray(0, 5).toString() === '%PDF-' && sumBuf.length > 2000, [sum.status, sumBuf.length]);
+    // the web links on the summary open each signed copy in any browser, with no login (founder 2026-10-31)
+    const urls = [...sumBuf.toString('latin1').matchAll(/\/URI \((http[^)]*esign-copy[^)]*)\)/g)].map((m) => m[1].split('\\').join(''));
+    const got = await Promise.all(urls.map((u) => fetch(u.replace(/^https?:\/\/[^/]+/, API)).then(async (r) => ({ s: r.status, b: Buffer.from(await r.arrayBuffer()) }))));
+    const want = [fs.readFileSync(A), fs.readFileSync(C)].map((b) => b.toString('base64'));
+    check('D8 the summary has a browser link for each copy; each opens without login, byte for byte', urls.length === 2 && got.every((g) => g.s === 200 && want.includes(g.b.toString('base64'))), [urls, got.map((g) => g.s)]);
+    const badLink = urls[0] ? await fetch(urls[0].replace(/^https?:\/\/[^/]+/, API).replace(/[a-f0-9]$/, (x) => (x === 'a' ? 'b' : 'a'))) : { status: 0 };
+    check('D9 a changed link does not open anything', badLink.status === 404, badLink.status);
   } catch (e) {
     check('no error', false, e.stack || e.message);
   } finally {

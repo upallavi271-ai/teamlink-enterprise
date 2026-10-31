@@ -269,7 +269,7 @@ router.get('/:clientId/pdf', requireAuth, async (req, res, next) => {
     res.set('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${(client.agreementId || 'agreement').replace(/[^\w.-]/g, '')}-${client.name.replace(/[^\w.-]+/g, '-').slice(0, 40)}${client.agreementSignedAt ? '' : '-NOT-SIGNED'}.pdf"`);
     res.set('Cache-Control', 'private, no-store');
     // eslint-disable-next-line global-require
-    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name }, res);
+    await require('../utils/agreementPdf').renderAgreementPdf(client, { trail, consultantName: us.name, agreementOnly: !!req.query.fresh }, res); // ?fresh=1: the clean copy to eSign in DigiLocker (no DRAFT / NOT SIGNED marks)
     return undefined;
   } catch (err) { return next(err); }
 });
