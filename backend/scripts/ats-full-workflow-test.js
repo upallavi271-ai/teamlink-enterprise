@@ -24,6 +24,7 @@ const err = (r) => (r ? [r.status, (r.body && (r.body.error || r.body.code)) || 
   const apBefore = await prisma.appSetting.findUnique({ where: { key: AP_KEY } });
   const ids = { client: null, req: null, cand: null, app: null, inv: null };
   const steps = [];
+  const ours = require('./lib/teamlinkSigned')(prisma); // TeamLink's eSigned copy, needed before Send to client
   const step = (who, what, okay, detail) => { steps.push({ who, what, okay }); Z.check(`[${who}] ${what}`, okay, detail); return okay; };
   try {
     const DEPT = 'IT'; // no real IT TL in the database, so nobody is auto-assigned
@@ -73,6 +74,7 @@ const err = (r) => (r ? [r.status, (r.body && (r.body.error || r.body.code)) || 
     step('HR', '3c sends it to the BDE TL', ok2(a3) && a3.body.stage === 'WITH_TL', err(a3));
     const a4bad = await C('POST', `/api/clients/${ids.client}/agreement/send`, 'bde', {});
     step('BDE', '3d cannot send it to the client himself (BDE TL checks first)', !ok2(a4bad), err(a4bad));
+    await ours.add(ids.client); // TeamLink eSigns its copy in DigiLocker first (a stand-in here)
     const a4 = await C('POST', `/api/clients/${ids.client}/agreement/send`, 'bdeTl', { verified: ['commercial', 'tax', 'payment', 'documents'] });
     let cr = await prisma.client.findUnique({ where: { id: ids.client } });
     step('BDE TL', '3e checks and sends the agreement to the client (Sent)', ok2(a4) && cr.agreementStatus === 'SENT', [err(a4), cr.agreementStatus]);
@@ -204,6 +206,7 @@ const err = (r) => (r ? [r.status, (r.body && (r.body.error || r.body.code)) || 
     console.log('\nWORKFLOW SUMMARY');
     steps.forEach((s) => console.log(`  ${s.okay ? 'OK ' : 'XX '} ${s.who.padEnd(12)} ${s.what}`));
     // ---------- cleanup (rows zzfix does not know about first) ----------
+    await ours.removeAll().catch(() => null);
     try {
       if (apBefore) await prisma.appSetting.update({ where: { key: AP_KEY }, data: { value: apBefore.value } });
       else await prisma.appSetting.deleteMany({ where: { key: AP_KEY } });

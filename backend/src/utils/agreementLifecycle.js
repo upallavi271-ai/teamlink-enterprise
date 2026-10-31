@@ -49,7 +49,8 @@ function signingUrl(req, token) {
 // Where a client is reached: the contact on the client record.
 function contactsOf(client) {
   return {
-    name: String(client.contactName || client.recruitmentContactName || '').trim() || null,
+    // a label typed into the name box ("Name:", "Name", "-") is not a name (2026-10-31: the email said "Dear Name:,")
+    name: ((v) => (/^(name|contact|contact name|mr|ms|sir|madam|na|n\/a|-+)\W*$/i.test(v) ? '' : v))(String(client.contactName || client.recruitmentContactName || '').trim()) || null,
     email: String(client.contactEmail || client.recruitmentContactEmail || '').trim() || null,
     mobile: String(client.contactPhone || '').trim() || null,
     whatsapp: String(client.contactWhatsApp || client.contactPhone || '').trim() || null,
@@ -87,21 +88,33 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     pdf = parts.length ? Buffer.concat(parts) : null;
   } catch (e) { console.error('[agreement send] PDF not made:', e.message); } // eslint-disable-line no-console
   const fileName = `${String(client.agreementId || 'Agreement').replace(/[^\w.-]/g, '')}-${String(client.name || 'client').replace(/[^\w.-]+/g, '-').slice(0, 40)}.pdf`;
+  // TEAMLINK'S OWN eSIGNED COPY (DigiLocker), for the client's records: TeamLink signs first (2026-10-31)
+  let ours = null;
+  try {
+    const SF = require('../routes/agreementSignedFiles'); // eslint-disable-line global-require
+    const f = (await SF.filesOf(client.id)).filter((x) => x.kind === 'TeamLink eSigned copy (DigiLocker)' && x.esign && x.esign.valid).sort((a, b) => new Date(b.addedAt) - new Date(a.addedAt))[0];
+    if (f) {
+      const d = await prisma.clientDocument.findUnique({ where: { id: f.id }, select: { fileStored: true } });
+      const fp = d ? require('./attachments').resolveStored(d.fileStored) : null; // eslint-disable-line global-require
+      if (fp) ours = { filename: fileName.replace(/\.pdf$/, '-signed-by-TeamLink.pdf'), content: require('fs').readFileSync(fp), contentType: 'application/pdf' }; // eslint-disable-line global-require
+    }
+  } catch { ours = null; }
 
   const emailText = [
     greet,
     '',
     `${lead}Please find attached the service agreement ${ref} between ${client.name} and TeamLink Consultants.`,
+    ...(ours ? [`TeamLink has already signed it with Aadhaar eSign: our signed copy is attached too (${ours.filename}) for your records.`] : []),
     'Kindly sign it with your Aadhaar eSign in DigiLocker (free, government of India):',
     '',
-    `1. Save the attached PDF (${fileName}).`,
+    `1. Save the attached PDF to sign (${fileName}).`,
     '2. Open https://www.digilocker.gov.in and sign in with your Aadhaar (your Aadhaar must be linked to your mobile).',
     '3. Go to Drive, press Upload and choose the PDF.',
     '4. On the uploaded file, press eSign and enter the Aadhaar OTP sent to your mobile.',
     '5. Download the signed PDF and send it back to us by replying to this email (attach that file as it is).',
     '',
     'Please do not edit, merge, print or compress the signed file - that would remove the digital signature.',
-    'TeamLink signs its own copy the same way. Both signed copies together form the agreement.',
+    ours ? "Your signed copy and TeamLink's signed copy together form the agreement." : 'TeamLink signs its own copy the same way. Both signed copies together form the agreement.',
     '',
     'If you were not expecting this, please reply and let us know.',
     '',
@@ -114,9 +127,9 @@ async function dispatchSigningLink({ client, url, kind = 'send', days }) {
     subject: `${lead}Service agreement ${ref} — please eSign with Aadhaar (DigiLocker)`,
     text: emailText,
     fromName: '',
-    attachments: pdf ? [{ filename: fileName, content: pdf, contentType: 'application/pdf' }] : [],
+    attachments: [...(pdf ? [{ filename: fileName, content: pdf, contentType: 'application/pdf' }] : []), ...(ours ? [ours] : [])],
   });
-  results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: !!pdf };
+  results.Email = { outcome: email.outcome, to: c.email ? core.maskEmail(c.email) : null, error: email.ok ? null : (email.error || null), attached: !!pdf, teamlinkCopy: !!ours };
 
   // a short note by SMS / WhatsApp that the agreement is in the email (no link: the PDF travels by email)
   const sms = await messaging.send('SMS', { to: c.mobile, kind: 'text', text: shortText });

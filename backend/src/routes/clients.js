@@ -2279,6 +2279,15 @@ router.post('/:id/agreement/send', requirePerm('ats', 'clients', 'Agreement Life
   if (!OPEN_FOR_AUTHORING.includes(current)) {
     return res.status(400).json({ error: `An agreement in "${current}" cannot be sent.` });
   }
+  // TEAMLINK SIGNS FIRST (founder 2026-10-31: "TeamLink vallu eSign cheyyali kadha first"): the client gets the agreement only
+  // once TeamLink's own Aadhaar eSigned copy (DigiLocker) is uploaded and checked valid - and that copy goes in the email too.
+  {
+    const SF = require('./agreementSignedFiles'); // eslint-disable-line global-require
+    const mine = (await SF.filesOf(client.id).catch(() => [])).find((f) => f.kind === 'TeamLink eSigned copy (DigiLocker)' && f.esign && f.esign.valid);
+    if (!mine) {
+      return res.status(409).json({ error: 'TeamLink signs first. Open View agreement, press "Download agreement PDF to eSign", eSign it in DigiLocker (TeamLink director\'s Aadhaar) and upload it on the left (TeamLink eSigned PDF). Then press Send to client.' });
+    }
+  }
 
   // A NEW LINK EVERY SEND: any earlier link stops working, and whatever was
   // half-done on it (a signature without its code) is cleared.

@@ -23,6 +23,7 @@ const callR = async (...a) => { for (let i = 0; i < 10; i += 1) { const r = awai
 (async () => {
   await Z.preclean();
   const keys = [];
+  const ours = require('./lib/teamlinkSigned')(prisma); // TeamLink's eSigned copy, needed before Send to client
   try {
     const { RUN } = Z;
     const bdeTl = await Z.mkUser('bdetl', { role: 'TL', atsRole: 'TL', atsDepartment: 'BDE', atsScopeDepartments: 'BDE' }, { designation: 'TL' });
@@ -150,6 +151,9 @@ const callR = async (...a) => { for (let i = 0; i < 10; i += 1) { const r = awai
     check('T3 the BDE TL cannot edit 6-9 (read only)', tlEditHr.status === 403, tlEditHr.status);
     const tlNo = await call('POST', `/api/clients/${A.id}/agreement/send`, tk.bdeTl, {});
     check('T4 Send to client needs the "I checked" ticks', tlNo.status === 403 && /Tick/.test(tlNo.body.error || ''), [tlNo.status, tlNo.body]);
+    const tlFirst = await call('POST', `/api/clients/${A.id}/agreement/send`, tk.bdeTl, { verified: ['commercial', 'tax', 'payment', 'documents'] });
+    check('T4b Send to client is refused until TeamLink has eSigned (409, says what to do)', tlFirst.status === 409 && /TeamLink signs first/.test(tlFirst.body.error || ''), [tlFirst.status, tlFirst.body && tlFirst.body.error]);
+    await ours.add(A.id);
     const tlSend = await call('POST', `/api/clients/${A.id}/agreement/send`, tk.bdeTl, { verified: ['commercial', 'tax', 'payment', 'documents'] });
     check('T5 BDE TL sends to the client -> link made, status SENT', tlSend.status === 200 && tlSend.body.agreementStatus === 'SENT' && !!tlSend.body.signingPath, [tlSend.status, tlSend.body && tlSend.body.error]);
     const stA = await call('GET', `/api/agreement-flow/${A.id}`, tk.bdeTl);
@@ -178,6 +182,7 @@ const callR = async (...a) => { for (let i = 0; i < 10; i += 1) { const r = awai
 
     // ---- client C: Admin sends directly ----
     const C = await mkClient('C'); keys.push(`agrwf:${C.id}`);
+    await ours.add(C.id);
     const adSend = await call('POST', `/api/clients/${C.id}/agreement/send`, tk.admin, {});
     check('D1 Admin can send to the client from any step', adSend.status === 200 && adSend.body.agreementStatus === 'SENT', [adSend.status, adSend.body && adSend.body.error]);
 
@@ -200,6 +205,7 @@ const callR = async (...a) => { for (let i = 0; i < 10; i += 1) { const r = awai
     const oOne = await call('GET', `/api/clients/${oA.id}`, tk.admin);
     check('O2 an old Active agreement still opens and keeps its status', oOne.status === 200 && oOne.body.agreementStatus === 'ACTIVE', oOne.status);
     // a re-send of a link already out (old flow) still works for the Admin and is not gated for a BDE-owned SENT one
+    await ours.add(oS.id);
     const reS = await call('POST', `/api/clients/${oS.id}/agreement/send`, tk.admin, {});
     check('O3 the e-sign stage is untouched: re-send of a SENT link works', reS.status === 200, [reS.status, reS.body && reS.body.error]);
   } catch (e) {
@@ -214,6 +220,7 @@ const callR = async (...a) => { for (let i = 0; i < 10; i += 1) { const r = awai
     await prisma.task.deleteMany({ where: { OR: [{ name: { contains: 'ZZTEST AGW' } }, { description: { contains: 'ZZTEST AGW' } }, { assigneeId: { in: Z.made.users } }] } });
     await prisma.notification.deleteMany({ where: { OR: [{ title: { contains: 'ZZTEST AGW' } }, { message: { contains: 'ZZTEST AGW' } }] } });
     await prisma.auditLog.deleteMany({ where: { OR: [{ entityId: { in: ids } }, { toValue: { contains: 'ZZTEST AGW' } }, { reason: { contains: 'ZZTEST AGW' } }, { entityId: 'agreementWorkflow' }] } });
+    await ours.removeAll();
     const left = await Z.cleanup();
     const rest = {
       agrwf: await prisma.appSetting.count({ where: { OR: [{ key: { startsWith: 'agrwf:' }, value: { contains: 'ZZTEST' } }, { key: 'agreementWorkflow' }] } }),
