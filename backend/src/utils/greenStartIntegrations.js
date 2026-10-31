@@ -80,7 +80,7 @@ async function signIn() {
 }
 async function workspacesOf(token) {
   const list = await call('GET', '/workspaces', { token });
-  const rows = (Array.isArray(list) ? list : (list && list.items) || []).map((w) => ({ id: w.id, name: w.name, createdAt: w.createdAt || '' }));
+  const rows = (Array.isArray(list) ? list : (list && list.items) || []).map((w) => ({ id: w.id, name: w.name, createdAt: w.createdAt || '', orgId: (w.organization && w.organization.id) || null }));
   return rows.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
 }
 
@@ -192,8 +192,78 @@ async function pushOne(token, ws, channel, want, prev, force) {
     if (channel === 'email') await call('PUT', '/integrations/email', { token, ws: ws.id, body: want.body });
     else if (channel === 'sms') await call('PUT', '/integrations/sms', { token, ws: ws.id, body: want.body });
     else await call('POST', '/integrations/whatsapp/credentials', { token, ws: ws.id, body: want.body });
-    return { state: 'sent', words: 'Same as TeamLink now', fp };
+    return { state: 'sent', words: channel === 'whatsapp' && want.body.label ? `Same as TeamLink now (${String(want.body.label).replace(`${LABEL} - `, '')})` : 'Same as TeamLink now', fp };
   } catch (err) { return { state: 'failed', words: err.message, fp: prev }; }
+}
+
+// ---- WHATSAPP NUMBERS -> OMNI-CHANNEL WORKSPACES (founder 2026-10-31: "nenu integrate chesina whatsapp accounts omnichannel nuchi promotion
+// chestey povali ... superadmin assign chesukuntaru enni numbers ina okka department ki assign cheyochu") ----------------------------------
+// Green Start holds ONE WhatsApp number per workspace (and a number in one workspace only). So the Super Admin picks, for every WhatsApp number
+// of TeamLink (Administration > Integrations > WhatsApp numbers), the Omni-Channel workspace it goes to - an existing one, or "a new workspace"
+// with a name (made once in the company account's organisation). Several numbers of one department = several workspaces ("Medical - 1", ...).
+// AppSetting 'omni.gs.waMap' = { [numberId]: { workspaceId } | { newName } }. With no entries, the old rule: the default number, main workspace.
+const WA_MAP_KEY = 'omni.gs.waMap';
+async function readWaMap() {
+  try { const row = await prisma.appSetting.findUnique({ where: { key: WA_MAP_KEY } }); const v = row ? JSON.parse(row.value) : {}; return v && typeof v === 'object' ? v : {}; } catch { return {}; }
+}
+async function writeWaMap(m) {
+  const value = JSON.stringify(m);
+  await prisma.appSetting.upsert({ where: { key: WA_MAP_KEY }, update: { value }, create: { key: WA_MAP_KEY, value } });
+}
+// every WhatsApp number TeamLink has, with its credentials (server side only) and its departments
+async function waNumbers() {
+  const WN = require('./waNumbers'); // eslint-disable-line global-require
+  const out = [];
+  try {
+    if (await WN.hasNumbers()) {
+      for (const row of await WN.listRows()) {
+        if (row.removedAt) continue; // eslint-disable-line no-continue
+        const cfg = await WN.configOf(row); // eslint-disable-line no-await-in-loop
+        const deps = (await WN.accessOf(row.id)).filter((a) => /dep/i.test(a.kind)).map((a) => a.refLabel || a.refId); // eslint-disable-line no-await-in-loop
+        out.push({ id: row.id, label: row.label, display: row.displayNumber || '', isDefault: !!row.isDefault, departments: [...new Set(deps)], cfg });
+      }
+      return out;
+    }
+  } catch { /* fall back to the single connection */ }
+  const cfg = await require('./whatsappCloud').legacyConfig(); // eslint-disable-line global-require
+  return [{ id: 'main', label: 'Main number', display: cfg.display || '', isDefault: true, departments: [], cfg }];
+}
+const credsOf = (n) => (n && n.cfg && n.cfg.configured && !n.cfg.testMode
+  ? { body: { accessToken: n.cfg.token, phoneNumberId: n.cfg.phoneId, ...(n.cfg.wabaId ? { wabaId: n.cfg.wabaId } : {}), label: `${LABEL} - ${n.label}` } }
+  : { none: (n && n.cfg && (n.cfg.testMode ? 'This number is on a test server address.' : n.cfg.reason)) || 'This WhatsApp number is not set up in TeamLink.' });
+
+// what the Omni-Channel tab shows: the numbers (no secret), the workspaces and the current choice
+async function waMapView() {
+  const nums = await waNumbers();
+  let workspaces = [];
+  let workspacesError = null;
+  try { const { token } = await signIn(); workspaces = (await workspacesOf(token)).map((w) => ({ id: w.id, name: w.name })); } catch (err) { workspacesError = err.message; }
+  return {
+    numbers: nums.map((n) => ({ id: n.id, label: n.label, display: n.display, isDefault: n.isDefault, departments: n.departments, ready: !!(n.cfg && n.cfg.configured && !n.cfg.testMode), problem: n.cfg && !n.cfg.configured ? n.cfg.reason : null })),
+    workspaces, workspacesError, map: await readWaMap(),
+  };
+}
+// save the Super Admin's choice: one number per workspace (Green Start's rule), a new workspace needs a name
+async function saveWaMap(input) {
+  const nums = await waNumbers();
+  const ids = new Set(nums.map((n) => n.id));
+  const next = {};
+  const used = new Map();
+  for (const [numberId, v] of Object.entries(input || {})) {
+    if (!ids.has(numberId) || !v) continue; // eslint-disable-line no-continue
+    if (v.workspaceId) {
+      const wid = String(v.workspaceId);
+      if (used.has(wid)) return { error: `Two numbers are given to the same Omni-Channel workspace. Omni-Channel keeps one WhatsApp number per workspace: give one of them "a new workspace".`, status: 400 };
+      used.set(wid, numberId);
+      next[numberId] = { workspaceId: wid };
+    } else if (v.newName) {
+      const name = String(v.newName).trim().slice(0, 120);
+      if (name.length < 2) return { error: 'Give the new workspace a name.', status: 400 };
+      next[numberId] = { newName: name };
+    }
+  }
+  await writeWaMap(next);
+  return { ok: true, map: next };
 }
 
 // ---- the whole run ----------------------------------------------------------------
@@ -208,15 +278,50 @@ async function sync({ force = false, why = 'manual', by = null } = {}) {
       if (!enabled()) throw new Error('Omni-Channel (Green Start) is switched off on this server (GREENSTART_ENABLED).');
       const want = await teamlinkChannels();
       const { token, email } = await signIn();
-      const wss = await workspacesOf(token);
+      let wss = await workspacesOf(token);
       if (!wss.length) throw new Error(`The company Omni-Channel account (${email}) has no workspace yet.`);
       result.account = email;
+      // WhatsApp numbers by the Super Admin's choice (see WHATSAPP NUMBERS above): a "new workspace" is made once and remembered
+      const waMap = await readWaMap();
+      const mapped = Object.keys(waMap).length > 0;
+      const nums = mapped ? await waNumbers() : [];
+      if (mapped) {
+        let changed = false;
+        for (const [numberId, v] of Object.entries(waMap)) {
+          if (!v.newName || v.workspaceId) continue; // eslint-disable-line no-continue
+          const existing = wss.find((w) => w.name.toLowerCase() === v.newName.toLowerCase());
+          try {
+            const made = existing || await call('POST', '/workspaces', { token, body: { organizationId: wss[0].orgId, name: v.newName } }); // eslint-disable-line no-await-in-loop
+            waMap[numberId] = { workspaceId: made.id };
+            changed = true;
+          } catch (err) { result.words = `The workspace "${v.newName}" could not be made: ${err.message}`; }
+        }
+        if (changed) { await writeWaMap(waMap); wss = await workspacesOf(token); }
+      }
+      const waWant = (ws) => {
+        const numberId = Object.keys(waMap).find((k) => waMap[k].workspaceId === ws.id);
+        if (!numberId) return { none: 'No TeamLink WhatsApp number is given to this workspace (Integrations > Omni-Channel > WhatsApp numbers).' };
+        return credsOf(nums.find((n) => n.id === numberId));
+      };
+      // numbers leave the workspaces they no longer belong to FIRST (one number may be in one workspace only), then go to their new ones
+      if (mapped) {
+        for (const ws of wss) {
+          const w = waWant(ws);
+          if (!w.none) continue; // eslint-disable-line no-continue
+          const k = `${ws.id}:whatsapp`;
+          const r = await pushOne(token, ws, 'whatsapp', w, fps[k] || null, force); // eslint-disable-line no-await-in-loop
+          if (r.fp) fps[k] = r.fp; else if (r.fp === null) delete fps[k];
+          ws.waDone = { state: r.state, words: r.words };
+        }
+      }
       for (const [i, ws] of wss.entries()) {
         const one = { id: ws.id, name: ws.name, main: i === 0, channels: {} };
         for (const ch of ['email', 'sms', 'whatsapp', 'facebook', 'threads']) {
           const k = `${ws.id}:${ch}`;
           let r;
-          if (ch === 'whatsapp' && i > 0) r = { state: 'skipped', words: `One WhatsApp number can belong to one workspace only: it is in "${wss[0].name}".` };
+          if (ch === 'whatsapp' && mapped && ws.waDone) r = ws.waDone;
+          else if (ch === 'whatsapp' && mapped) r = await pushOne(token, ws, ch, waWant(ws), fps[k] || null, force); // eslint-disable-line no-await-in-loop
+          else if (ch === 'whatsapp' && i > 0) r = { state: 'skipped', words: `One WhatsApp number can belong to one workspace only: it is in "${wss[0].name}".` };
           else if (ch === 'threads' && i > 0) r = { state: 'skipped', words: `Threads is given to the main workspace only: "${wss[0].name}".` };
           else if (ch === 'facebook' && i > 0) r = { state: 'skipped', words: `The Facebook Page is given to the main workspace only: "${wss[0].name}".` };
           else r = await pushOne(token, ws, ch, want[ch], fps[k] || null, force); // eslint-disable-line no-await-in-loop
@@ -271,4 +376,4 @@ function start() {
 }
 async function lastResult() { return (await readState()).last || null; }
 
-module.exports = { sync, connections, schedule, start, lastResult, teamlinkChannels, STATE_KEY };
+module.exports = { sync, connections, schedule, start, lastResult, teamlinkChannels, waMapView, saveWaMap, STATE_KEY };

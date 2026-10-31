@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
+import OmniWhatsappMap from './OmniWhatsappMap.jsx';
 
 // Administration > Integrations > Omni-Channel (founder 2026-10-30: "both application is same").
 // TeamLink and Omni-Channel use ONE set of connections: Email, SMS, WhatsApp and the Facebook Page (Social Media card) are typed here in TeamLink and Omni-Channel gets the
@@ -50,6 +51,8 @@ export default function OmniChannelIntegrations({ canConfigure }) {
         </div>
         {msg && <div className="small-muted" role="status" style={{ marginTop: 10 }}>{msg}</div>}
       </div>
+
+      <OmniWhatsappMap onSaved={load} />
 
       <div className="card" style={{ padding: 16, marginBottom: 16 }}>
         <b>From TeamLink to Omni-Channel</b>

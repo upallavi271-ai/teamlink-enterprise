@@ -1623,6 +1623,18 @@ router.get('/integrations-omni-channel', requirePerm(null, 'administration', 'In
   try { connections = await GSI.connections(); } catch (err) { connectionsError = err.message; }
   res.json({ teamlink, last: await GSI.lastResult(), connections, connectionsError });
 });
+// WhatsApp numbers -> Omni-Channel workspaces: the Super Admin's choice (utils/greenStartIntegrations.js WHATSAPP NUMBERS)
+router.get('/integrations-omni-channel/whatsapp-map', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  res.json(await GSI.waMapView());
+});
+router.put('/integrations-omni-channel/whatsapp-map', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  if (req.user.role !== 'SUPER_ADMIN') return res.status(403).json({ error: 'Only the Super Admin gives WhatsApp numbers to Omni-Channel workspaces.' });
+  const r = await GSI.saveWaMap((req.body && req.body.map) || {});
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  await logAudit({ userId: req.user.id, action: 'WhatsApp numbers given to Omni-Channel workspaces', entity: 'Integration', entityId: 'omni-channel', toValue: `${Object.keys(r.map).length} number(s)` });
+  const s = await GSI.sync({ force: true, why: 'WhatsApp numbers given to workspaces', by: req.user.name });
+  res.json({ ...(await GSI.waMapView()), result: s, message: s.ok ? 'Saved. Every number is in its Omni-Channel workspace.' : `Saved, but: ${s.words}` });
+});
 router.post('/integrations-omni-channel/sync', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
   res.json(await GSI.sync({ force: true, why: 'Send to Omni-Channel now', by: req.user.name }));
 });
