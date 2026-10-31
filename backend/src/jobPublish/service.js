@@ -190,6 +190,17 @@ async function jobStatus(user, r) {
       logs: canLogs ? logs : undefined,
     });
   }
+  // THE OTHER CONNECTED ACCOUNTS' POSTS of a social place (portals/api/ApiPortal.js fanOut keeps them in AppSetting
+  // 'jobpublish.extra.<requirementId>.<portal>'): each with its link, so "View" opens every post (founder 2026-10-31)
+  const extraRows = await prisma.appSetting.findMany({ where: { key: { startsWith: `jobpublish.extra.${r.id}.` } } }).catch(() => []);
+  extraRows.forEach((row) => {
+    const portal = row.key.slice(`jobpublish.extra.${r.id}.`.length);
+    let v = {};
+    try { v = JSON.parse(row.value) || {}; } catch { v = {}; }
+    const list = Object.values((v && v.posts) || {}).filter((x) => x && x.postId).map((x) => ({ name: x.name || null, url: x.url || null, at: x.at || null }));
+    const target = rows.find((x) => x.portal === portal);
+    if (target && list.length) target.extraPosts = list;
+  });
   return { requirementId: r.id, reqCode: r.reqCode || null, title: r.title, live: requirementIsLive(r.status), portals: rows, canPost: await access.mayPost(user, r), canViewLogs: canLogs };
 }
 

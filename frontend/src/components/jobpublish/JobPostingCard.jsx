@@ -44,6 +44,21 @@ export default function JobPostingCard({ jobId, title, canPost, onChanged, onPos
               ? <PortalChipRow postings={postings} infos={data.infos} only={touched} />
               : <span className="jp-note">Not posted from here yet. {canPost ? 'Press Post this requirement.' : 'The team lead posts it.'}</span>}
           </div>
+          {/* VIEW: open the post itself where it went live - the Facebook post, the Instagram post, the job board page
+              (founder 2026-10-31: "view click chesthe, ekkadaithey job post ayyindho akkadaki redirect avvali") */}
+          {(() => {
+            const links = postings.flatMap((p) => [
+              ...(p.status === 'PUBLISHED' && p.portalUrl ? [{ key: p.portal, name: portalName(p.portal), url: p.portalUrl }] : []),
+              ...((p.extraPosts || []).filter((x) => x.url).map((x, i) => ({ key: `${p.portal}-x${i}`, name: `${portalName(p.portal)}${x.name ? ` (${x.name})` : ''}`, url: x.url }))),
+            ]);
+            if (!links.length) return null;
+            return (
+              <div className="jp-row" style={{ flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
+                <span className="jp-note">View the post:</span>
+                {links.map((l) => <a key={l.key} className="btn btn-sm" href={l.url} target="_blank" rel="noreferrer">View on {l.name} ↗</a>)}
+              </div>
+            );
+          })()}
           {postings.filter((p) => p.lastQueue && (p.lastQueue.waiting || (p.lastQueue.status === 'NEEDS_HUMAN' && p.lastQueue.help))).map((p) => (
             <NeedsHelp key={p.portal} item={p.lastQueue} name={portalName(p.portal)} canPost={canPost} onChanged={changed} />
           ))}
