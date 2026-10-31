@@ -18,7 +18,8 @@
 //   POST /candidates/:id/archive     Archive (hidden from every list, data
 //   POST /candidates/:id/unarchive   kept) / bring back. profileStatus =
 //                                    'Archived'; never overwrites 'Do Not Use'.
-//   DELETE /candidates/:id           real delete — Super Admin only, and only
+//   DELETE /candidates/:id           real delete — Super Admin; also Admin / STL / TL in their own area
+//                                    (founder 2026-10-31) — and only
 //                                    for a duplicate or a wrong entry with no
 //                                    work on it (nothing past New, no
 //                                    interview, offer, invoice or login).
@@ -61,8 +62,12 @@ const atsRole = (u) => roleForProduct(u, 'ats') || u.atsRole || u.role;
 const isSuperAdmin = (u) => !!u && (u.role === 'SUPER_ADMIN' || atsRole(u) === 'SUPER_ADMIN');
 // Archive: the people who manage a team's candidates. Manager / Assistant
 // Manager stay view + export only (binding decision); a recruiter asks the TL.
-const ARCHIVE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL'];
+// Archive also for the Recruiter, "Delete (wrong entry)" also for the TL (founder 2026-10-31: "tl ki delete option ivvu, recruiter ki
+// archive option ivvu"), always inside their own area (loadInScope). Delete stays for a duplicate or a wrong entry with no work on it.
+const ARCHIVE_ROLES = ['SUPER_ADMIN', 'ADMIN', 'STL', 'TL', 'RECRUITER'];
 const mayArchive = (u) => !!u && (ARCHIVE_ROLES.includes(u.role) || ARCHIVE_ROLES.includes(atsRole(u)));
+const DELETE_LEADS = ['ADMIN', 'STL', 'TL'];
+const isLead = (u) => !!u && (DELETE_LEADS.includes(u.role) || DELETE_LEADS.includes(atsRole(u)));
 
 // The step a card lands on when dropped on a column.
 function targetStageFor(col, app, internal) {
@@ -483,7 +488,7 @@ module.exports = function mountCandidatesBoard(router, deps) {
 
   // --- Archive / bring back -------------------------------------------------
   async function setArchived(req, res, archive) {
-    if (!mayArchive(req.user)) return res.status(403).json({ error: 'Only a Team lead, Admin or Super Admin can archive people.' });
+    if (!mayArchive(req.user)) return res.status(403).json({ error: 'Only a Recruiter, Team lead, Admin or Super Admin can archive people.' });
     const loaded = await loadInScope(req, res);
     if (!loaded) return undefined;
     const c = loaded.candidate;
@@ -512,7 +517,13 @@ module.exports = function mountCandidatesBoard(router, deps) {
   // --- Real delete: Super Admin, duplicate / wrong entry only -----------------
   router.delete('/:id', async (req, res, next) => {
     try {
-      if (!isSuperAdmin(req.user)) return res.status(403).json({ error: 'Only a Super Admin can delete a person. Use Archive instead.' });
+      const superAdmin = isSuperAdmin(req.user);
+      if (!superAdmin && !isLead(req.user)) return res.status(403).json({ error: 'Deleting a person is for a Team lead, Admin or Super Admin. Use Archive instead.' });
+      if (!superAdmin) {
+        // a Team lead / Admin: inside their own area only
+        const inScope = await loadInScope(req, res);
+        if (!inScope) return undefined;
+      }
       const b = req.body || {};
       const reason = String(b.reason || '');
       if (!['Duplicate', 'Wrong entry'].includes(reason)) {

@@ -67,7 +67,8 @@ export default function JobPortalRows({
             <div className="jp-row">
               <b style={{ fontSize: 14.5 }}>{name}</b>
               <PortalChip state={s} />
-              {s.key === 'PUBLISHED' && posting.portalUrl && <a href={posting.portalUrl} target="_blank" rel="noreferrer">See the post</a>}
+              {s.key === 'PUBLISHED' && posting.portalUrl && <a className="btn btn-sm" href={posting.portalUrl} target="_blank" rel="noreferrer">View the post ↗</a>}
+              {(posting && posting.extraPosts || []).filter((x) => x.url).map((x, i) => <a key={i} className="btn btn-sm" href={x.url} target="_blank" rel="noreferrer">View{x.name ? ` (${x.name})` : ''} ↗</a>)}
               {s.key === 'PUBLISHED' && posting.publishedAt && <span className="jp-note">{when(posting.publishedAt)}</span>}
             </div>
             {(s.key === 'HELP' || (s.key === 'NEEDS_CHECK' && lq && lq.help)) && <NeedsHelp item={lq} name={name} canPost={canPost} onChanged={() => { reload(); if (onChanged) onChanged(); }} />}

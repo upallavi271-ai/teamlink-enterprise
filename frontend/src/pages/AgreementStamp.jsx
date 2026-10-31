@@ -11,6 +11,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api';
 import { StampPicker } from '../components/agreements/TeamLinkSeal.jsx';
+import shrinkImage from '../components/agreements/shrinkImage.js';
 import { AgreementHeader } from '../components/agreements/AgreementBrand.jsx';
 import '../components/agreements/agreements.css';
 import '../components/agreements/agreementSignPage.css';
@@ -48,13 +49,15 @@ export default function AgreementStamp() {
     if (!file) { setErr('Choose the picture of your company stamp first.'); return; }
     setBusy(true); setErr('');
     try {
+      const small = await shrinkImage(file);
       const b = new FormData();
       b.append('kind', 'client-stamp');
-      b.append('file', file, file.name || 'stamp.png');
+      b.append('file', small, small.name || 'stamp.png');
       const r = await api.post(`/agreement/token/${token}/client-seal`, b);
       setView(r.data); setFile(null); loadStamp();
     } catch (e) {
-      setErr(e.response?.data?.error || 'The stamp could not be saved. Please try again.');
+      const st = e.response && e.response.status;
+      setErr(e.response?.data?.error || (st === 413 ? 'That picture is too big. Try a smaller photo or a scan.' : `The stamp could not be saved${st ? ` (error ${st})` : ''}. Please try again.`));
     } finally { setBusy(false); }
   };
 

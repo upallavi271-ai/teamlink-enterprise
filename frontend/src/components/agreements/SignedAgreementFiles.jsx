@@ -9,6 +9,7 @@ import useClientLabel from '../clients/useClientLabel.js'; // one company, many 
 import { DEPTS, deptLabel } from '../../atsVocab';
 import './signedAgreementFiles.css';
 import { StampPicker } from './TeamLinkSeal.jsx';
+import shrinkImage from './shrinkImage.js';
 
 // TEAMLINK'S COMPANY STAMP for the DigiLocker copies (founder 2026-10-31: "digilocker ni base cheskoni & stamp upload chese option
 // vundali"): saved once (Agreement settings), printed on every agreement PDF to eSign. Only who may set it (Super Admin / Admin)
@@ -33,12 +34,16 @@ function TeamLinkStampRow() {
   const save = async () => {
     setBusy(true); setMsg('');
     try {
+      const small = await shrinkImage(file);
       const f = new FormData();
       f.append('kind', 'stamp');
-      f.append('file', file, file.name || 'stamp.png');
+      f.append('file', small, small.name || 'stamp.png');
       await api.post('/agreement/settings/teamlink-seal', f);
       setFile(null); setMsg('TeamLink stamp saved. It is printed on every agreement PDF to eSign.'); load();
-    } catch (e) { setMsg(e.response?.data?.error || 'The stamp could not be saved.'); } finally { setBusy(false); }
+    } catch (e) {
+      const st = e.response && e.response.status;
+      setMsg(e.response?.data?.error || (st === 413 ? 'That picture is too big for the server. Try a smaller photo or a scan.' : `The stamp could not be saved${st ? ` (error ${st})` : ''}. Please try again.`));
+    } finally { setBusy(false); }
   };
   return (
     <div style={{ border: '1px dashed var(--border, #d5dbe5)', borderRadius: 8, padding: 10, marginBottom: 8 }}>
