@@ -22,7 +22,8 @@ echo "worker runs in: $(systemctl show -p WorkingDirectory --value green-start-w
 echo "files saved in /opt/green-start/uploads: $(find /opt/green-start/uploads -type f 2>/dev/null | wc -l)"
 '@
 Write-Host "[1/2] What the live server has (nothing changes)..." -ForegroundColor Cyan
-($Look.Replace("`r", "") + "`n") | ssh $VpsHost 'bash -s'
+# tr on the server: PowerShell ends piped text with a Windows line end, which bash would read as a command (the dollar-backslash-r "command not found" error)
+$Look.Replace("`r", "") | ssh $VpsHost 'tr -d ''\r'' | bash -s'
 if ($LASTEXITCODE -ne 0) { throw 'Could not read the server.' }
 Write-Host ""
 Write-Host "It will set STORAGE_LOCAL_DIR=../uploads (only when the API and the worker run in /opt/green-start/gs-api), then restart them." -ForegroundColor Yellow
@@ -44,7 +45,7 @@ systemctl restart green-start-api green-start-worker
 for i in $(seq 1 30); do if curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:4020/api/v1/health | grep -q 200; then echo "Green Start API is up"; break; fi; sleep 2; done
 '@
 Write-Host "[2/2] Changing it (a copy of the .env is kept)..." -ForegroundColor Cyan
-($Fix.Replace("`r", "") + "`n") | ssh $VpsHost 'bash -s'
+$Fix.Replace("`r", "") | ssh $VpsHost 'tr -d ''\r'' | bash -s'
 if ($LASTEXITCODE -ne 0) { throw 'It did not finish (see the lines above).' }
 
 Start-Sleep -Seconds 3
