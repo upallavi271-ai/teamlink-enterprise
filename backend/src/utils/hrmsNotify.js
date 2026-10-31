@@ -562,7 +562,59 @@ async function run({ now = new Date(), mailer = sendMail, testMode = false, scop
     out.dayEnd = await sendDayEnd({ now, settings: s, mailer }).catch((e) => ({ error: String(e.message).slice(0, 200) }));
     if (!testMode) lastDayEndDay = day;
   }
+  out.bells = await bellsToEmail({ now, mailer, settings: s, testMode, scope }).catch((e) => ({ error: String(e.message).slice(0, 200) }));
   out.retries = await retryFailed({ now, mailer, testMode, scope, settings: s });
+  return out;
+}
+
+// ---- EVERY BELL IS EMAILED TOO (founder 2026-10-30: "only attendance ey kaadhu, entire application lo ey work pending lo
+// vunna, em ayina, mail vellali") -----------------------------------------------------------------------------------------
+// The whole application writes its notes into the Notification table (70+ places: tasks, ATS, interviews, accounts,
+// approvals, exits, ideas ...). This sweep emails each new bell to its person, so no screen has to remember to do it:
+//   - only while notification emails are ON, and only bells made after they were switched on (no flood of old ones)
+//   - a bell that already has its own email (same person, same title, around the same time) is not emailed twice
+//   - one email per person per title per day; inactive logins and test addresses are skipped
+//   - "Open: /path" in the note becomes a full link; a failed send is retried by retryFailed() like the other emails
+const BELL_WAIT_MS = 60 * 1000; // give a screen that sends its own email a minute to do so first
+const BELL_BATCH = 300;
+async function bellsToEmail({ now = new Date(), mailer = sendMail, settings = null, testMode = false, scope = null } = {}) {
+  const s = settings || await getSettings();
+  const out = { looked: 0, sent: 0, notSent: 0, skipped: 0 };
+  if (!s.emailsOn || !s.emailsOnAt) return out;
+  const since = new Date(Math.max(new Date(s.emailsOnAt).getTime(), now.getTime() - 86400000));
+  const bells = await prisma.notification.findMany({
+    where: { userId: { not: null }, OR: [{ channel: 'In-App' }, { channel: null }], createdAt: { gte: since, lte: new Date(now.getTime() - BELL_WAIT_MS) } },
+    orderBy: { createdAt: 'asc' }, take: BELL_BATCH, select: { id: true, userId: true, title: true, message: true, createdAt: true },
+  });
+  if (!bells.length) return out;
+  const users = new Map((await prisma.user.findMany({ where: { id: { in: [...new Set(bells.map((b) => b.userId))] } }, select: { id: true, name: true, email: true, status: true } })).map((u) => [u.id, u]));
+  const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '');
+  const done = new Set();
+  for (const b of bells) {
+    out.looked += 1;
+    const key = `${b.userId}|${b.title}`;
+    const u = users.get(b.userId);
+    if (done.has(key) || !u || (u.status && u.status !== 'Active')) { out.skipped += 1; continue; } // eslint-disable-line no-continue
+    if (testMode ? !(scope && scope.userIds.includes(u.id)) : isTest(u.email, u.name)) { out.skipped += 1; continue; } // eslint-disable-line no-continue
+    done.add(key);
+    // its own email already (written by the screen that made the bell, or by this sweep before)?
+    // eslint-disable-next-line no-await-in-loop
+    const had = await prisma.notification.findFirst({ where: { userId: b.userId, title: b.title, channel: 'Email', createdAt: { gte: new Date(Math.min(startOfDay(now).getTime(), b.createdAt.getTime() - 15 * 60000)) } }, select: { id: true } });
+    if (had) { out.skipped += 1; continue; } // eslint-disable-line no-continue
+    const row = { userId: b.userId, title: b.title, message: b.message || null, channel: 'Email', read: true };
+    if (!u.email) {
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.notification.create({ data: { ...row, recipient: u.name || null, status: NO_ADDRESS } });
+      out.notSent += 1; continue; // eslint-disable-line no-continue
+    }
+    const text = String(b.message || b.title).replace(/(^|\n)Open: (\/\S*)/g, (m, nl, p) => `${nl}Open: ${base ? base + p : p}`);
+    // eslint-disable-next-line no-await-in-loop
+    const r = await mailer({ to: u.email, subject: `TeamLink — ${b.title}`, text, useEmployeeFrom: false });
+    const status = statusOfResult(r, 0);
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.notification.create({ data: { ...row, recipient: u.email, status } });
+    if (status === 'Sent') out.sent += 1; else out.notSent += 1;
+  }
   return out;
 }
 
@@ -617,5 +669,5 @@ function registerRoutes(router, { requirePerm }) {
 module.exports = {
   STORE_ID, EVENTS, EVENT_KEYS, WAITING, ATTENDANCE_EVENT,
   MODES, ATTENDANCE_MAIL_EVENTS, EMAILS_OFF, NOT_SET_UP, NO_ADDRESS, modeOf, displayStatus, retryFailed, waitingOnes, sendWaiting, resend,
-  getSettings, saveSettings, notify, approvalRaised, leaveRaised, regularizationRaised, dayName, KIND_WORDS, leaveDecided, latePermissionRaised, latePermissionDecided, taskAssigned, taskDone, taskChanged, reminders, sendDigests, run, registerRoutes, whoOfEmployee, sendDayEnd,
+  getSettings, saveSettings, notify, bellsToEmail, approvalRaised, leaveRaised, regularizationRaised, dayName, KIND_WORDS, leaveDecided, latePermissionRaised, latePermissionDecided, taskAssigned, taskDone, taskChanged, reminders, sendDigests, run, registerRoutes, whoOfEmployee, sendDayEnd,
 };

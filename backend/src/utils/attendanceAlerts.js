@@ -339,6 +339,7 @@ function startSweep() {
     // Item 14: task / target reminders and each person's one daily email.
     .then(() => hrmsNotify.run()).then((o) => {
       if (o && o.digests && o.digests.emails) console.log(`[hrms-notify] ${o.digests.emails} daily email(s), ${o.digests.items} item(s)`);
+      if (o && o.bells && (o.bells.sent || o.bells.notSent)) console.log(`[hrms-notify] bells emailed: ${o.bells.sent} sent, ${o.bells.notSent} not sent`);
     }).catch((e) => console.error('[hrms-notify]', e.message))
     // Items 4/6: re-read the days used by leaves charged through the ledger
     // (biometric punches arrive without passing a route), once an hour.
