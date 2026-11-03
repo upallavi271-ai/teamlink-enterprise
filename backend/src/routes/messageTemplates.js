@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 const express = require('express');
+const prisma = require('../db');
 const T = require('../utils/messageTemplates');
 
 const router = express.Router();
@@ -102,6 +103,7 @@ router.post('/', async (req, res, next) => {
     if (!mustEdit(req, res)) return undefined;
     const out = await T.create(req.user, req.body || {});
     if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    if (out.template && out.template.channel === 'SMS') require('../utils/smsOmniSync').pullSoon(); // eslint-disable-line global-require -- shows in Omni-Channel too
     return res.status(201).json(out.template);
   } catch (err) { return next(err); }
 });
@@ -111,6 +113,7 @@ router.put('/:id', async (req, res, next) => {
     if (!mustEdit(req, res)) return undefined;
     const out = await T.update(req.user, req.params.id, req.body || {});
     if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    if (out.template && out.template.channel === 'SMS' && !out.unchanged) require('../utils/smsOmniSync').pullSoon(); // eslint-disable-line global-require
     return res.json({ ...out.template, unchanged: !!out.unchanged });
   } catch (err) { return next(err); }
 });
@@ -127,8 +130,12 @@ router.post('/:id/restore', async (req, res, next) => {
 router.delete('/:id', async (req, res, next) => {
   try {
     if (!mustEdit(req, res)) return undefined;
+    const row = await prisma.messageTemplate.findUnique({ where: { id: req.params.id } }).catch(() => null);
     const out = await T.remove(req.user, req.params.id);
     if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    // a template that came from Omni-Channel stays deleted here (the next copy run does not bring it back)
+    const O = require('../utils/smsOmniSync'); // eslint-disable-line global-require
+    if (row && row.channel === 'SMS' && O.isFromOmni(row)) await O.forget(row.dltTemplateId);
     return res.json({ ok: true });
   } catch (err) { return next(err); }
 });

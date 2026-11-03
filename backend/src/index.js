@@ -545,6 +545,7 @@ const server = app.listen(PORT, () => {
   require('./utils/smsPushDlr').start();
   // RCS: the background send queue (every minute) and the 24 h SMS fallback check (every 15 min); off in the sandbox / RCS_QUEUE=off
   require('./utils/rcsQueue').start();
+  require('./utils/smsOmniSync').start(); // SMS templates (DLT id) both ways with Omni-Channel, every 10 minutes
   // Uploaded repair bills: picks up bills a restart left waiting to be read by AI (utils/billUploadAi.js; BILL_AI_SWEEP_MS=0 switches it off).
   require('./utils/billUploadAi').start();
   // Omni-Channel Outreach sending loop: does nothing until an Admin switches "Outreach sending" on (outreach/runner.js; DB lease, one loop at a time).

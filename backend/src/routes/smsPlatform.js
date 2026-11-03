@@ -7,6 +7,7 @@
 //   POST /send                  Admin: single / several / CSV list; needs an approved template; bulk needs a confirm; never twice for one key
 //   GET  /history               one row per SMS (filters, pages) + /history.csv       GET /history/detail?ref=|id=   one SMS with its status ticks
 //   GET  /dashboard             real counts from the records, by status and by source module
+//   GET|POST /omni-sync         SMS templates (DLT id) copied both ways with Omni-Channel: last run / run now (utils/smsOmniSync.js)
 //
 // The sending itself is the SAME channel layer every module uses (channels.send, provider sms.gateway), so rate limits, opt-outs, the
 // communication log and delivery reports are not duplicated. Configuration is edited where it always was (Integrations > SMS Gateway);
@@ -220,6 +221,14 @@ router.post('/history/check-delivery', wrap(async (req, res) => {
   const out = await require('../utils/smsPushDlr').pullOne(rec); // eslint-disable-line global-require
   const now = await store.byRef(ref);
   return res.json({ ...out, status: now ? statusOf(now) : null, message: out.error ? out.error : (out.applied ? 'The provider reported on this SMS; the status is updated.' : 'The provider has no final delivery report for this SMS yet (still pending).') });
+}));
+
+// SMS templates both ways with Omni-Channel (utils/smsOmniSync.js): the last copy run, and "Get from Omni-Channel" now.
+router.get('/omni-sync', wrap(async (req, res) => { res.json({ last: await require('../utils/smsOmniSync').lastPull() }); })); // eslint-disable-line global-require
+router.post('/omni-sync', wrap(async (req, res) => {
+  const r = await require('../utils/smsOmniSync').pull({ why: 'manual' }); // eslint-disable-line global-require
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'SMS templates copied with Omni-Channel', entity: 'MessageTemplate', toValue: r.words.slice(0, 300) }).catch(() => {});
+  res.json({ last: r });
 }));
 
 router.get('/dashboard', wrap(async (req, res) => {

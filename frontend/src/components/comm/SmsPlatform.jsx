@@ -255,10 +255,22 @@ function TemplatesTab() {
   const shown = (rows || []).filter((t) => (!q || `${t.name} ${t.purposeLabel} ${t.body} ${t.dltTemplateId || ''}`.toLowerCase().includes(q.toLowerCase()))
     && (!st || (st === 'active' ? t.active : st === 'inactive' ? !t.active : st === 'dlt' ? !!t.dltTemplateId : !t.dltTemplateId)));
   const toggle = async (t) => { try { await api.put(`/messaging/templates/${t.id}`, { active: !t.active }); load(); } catch (e) { setErr(errOf(e, 'Could not change it.')); } };
+  // Omni-Channel: SMS templates with a DLT id are copied both ways every 10 minutes (backend utils/smsOmniSync.js); this is the last run
+  const [omni, setOmni] = useState(null); const [pulling, setPulling] = useState(false);
+  useEffect(() => { api.get('/sms-platform/omni-sync').then((r) => setOmni(r.data.last)).catch(() => setOmni(null)); }, []);
+  const pull = async () => {
+    setPulling(true);
+    try { const r = await api.post('/sms-platform/omni-sync'); setOmni(r.data.last); load(); } catch (e) { setErr(errOf(e, 'Could not reach Omni-Channel.')); } finally { setPulling(false); }
+  };
   return (
     <div className="cm-card">
-      <div className="cm-cardhead"><h3>SMS templates</h3><button type="button" className="btn btn-primary" onClick={() => setForm({})}>Add template</button></div>
-      <div className="cm-help">The DLT Template ID is what the provider checks. TeamLink cannot tell whether DLT approved a template: add the id only from your DLT portal. Syncing templates from the provider is not offered because the provider has no documented way to do it.</div>
+      <div className="cm-cardhead"><h3>SMS templates</h3>
+        <span className="sp-actions">
+          <button type="button" className="btn" disabled={pulling} onClick={pull}>{pulling ? 'Getting…' : 'Get from Omni-Channel'}</button>
+          <button type="button" className="btn btn-primary" onClick={() => setForm({})}>Add template</button>
+        </span></div>
+      <div className="cm-help">The DLT Template ID is what the provider checks. TeamLink cannot tell whether DLT approved a template: add the id only from your DLT portal. The SMS provider has no way to list its templates, so add each template once, here or in <b>Omni-Channel &gt; Templates &gt; SMS</b>: every template with a DLT Template ID shows in both places by itself within 10 minutes (or press &quot;Get from Omni-Channel&quot;).</div>
+      {omni && <div className={`cm-line ${omni.ok ? 'cm-green' : 'cm-red'}`}>Omni-Channel ({fmt(omni.at)}): {omni.words}</div>}
       <div className="cm-filters">
         <div><label>Search</label><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="name, words or DLT id" /></div>
         <div><label>Show</label>
@@ -272,7 +284,7 @@ function TemplatesTab() {
           <thead><tr><th>Name</th><th>Category</th><th>Words</th><th>DLT id</th><th>Sender</th><th>Language</th><th>DLT</th><th>Status</th><th>Changed by</th><th>Created</th><th>Updated</th><th /></tr></thead>
           <tbody>{shown.map((t) => (
             <tr key={t.id}>
-              <td><b>{t.name}</b></td><td>{t.purposeLabel}</td><td className="sp-words">{t.body}</td><td>{t.dltTemplateId || '—'}</td><td>{t.senderId || '—'}</td><td>{t.language}</td>
+              <td><b>{t.name}</b>{t.purpose === 'CUSTOM_FROM_OMNI_CHANNEL' && <> <span className="cm-pill sent" title="Made in Omni-Channel; its words are changed there">Omni-Channel</span></>}</td><td>{t.purposeLabel}</td><td className="sp-words">{t.body}</td><td>{t.dltTemplateId || '—'}</td><td>{t.senderId || '—'}</td><td>{t.language}</td>
               <td><span className={`cm-pill ${t.dltTemplateId ? 'sent' : 'unknown'}`}>{t.dltTemplateId ? 'Id added' : 'No id'}</span></td>
               <td><span className={`cm-pill ${t.active ? 'delivered' : 'unknown'}`}>{t.active ? 'Active' : 'Inactive'}</span></td>
               <td>{t.updatedByName || ''}</td><td>{fmt(t.createdAt)}</td><td>{fmt(t.updatedAt)}</td>

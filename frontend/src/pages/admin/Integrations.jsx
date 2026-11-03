@@ -107,6 +107,34 @@ function SmsTestBox() {
   );
 }
 
+// The SMS templates (DLT id) the saved sender can send, on the SMS Gateway form too (founder 2026-11-03: the templates must show
+// wherever SMS is). Same list as Integrations > SMS > Templates, which also holds the ones made in Omni-Channel (utils/smsOmniSync.js).
+function SmsTemplatesMini() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    api.get('/messaging/templates', { params: { channel: 'SMS' } })
+      .then((r) => setRows((r.data.templates || []).filter((t) => t.dltTemplateId && t.active)))
+      .catch(() => setRows([]));
+  }, []);
+  return (
+    <div className="field" style={{ borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 10, marginTop: 6 }}>
+      <label>SMS templates this sender can send ({rows ? rows.length : '…'})</label>
+      {!rows ? <div className="muted">Loading…</div> : !rows.length ? (
+        <div className="muted">No SMS template with a DLT Template ID yet. Add one on the SMS tab (Templates) or in Omni-Channel &gt; Templates &gt; SMS.</div>
+      ) : (
+        <div style={{ maxHeight: 180, overflowY: 'auto' }}>
+          <table className="table" style={{ fontSize: 12 }}>
+            <thead><tr><th>Name</th><th>DLT Template ID</th><th>Sender</th><th>From</th></tr></thead>
+            <tbody>{rows.map((t) => (
+              <tr key={t.id} title={t.body}><td>{t.name}</td><td>{t.dltTemplateId}</td><td>{t.senderId || 'the Sender ID above'}</td><td>{t.purpose === 'CUSTOM_FROM_OMNI_CHANNEL' ? 'Omni-Channel' : 'TeamLink'}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Integrations() {
   // Administration → Integrations → Job Portal is ?tab=jobportal (the admin
   // dashboard's job-source status links there); /ats/job-portal opens on it.
@@ -500,6 +528,7 @@ export default function Integrations() {
             );
           })}
           {configuring.channel.id === 'sms' && <SmsTestBox />}
+          {configuring.channel.id === 'sms' && <SmsTemplatesMini />}
           <div className="cell-muted" style={{ fontSize: 11.5, fontStyle: 'italic' }}>
             {configuring.channel.id === 'biometric'
               ? 'Saved in the TeamLink database. The device pushes its heartbeat and punches to this endpoint; the status shows Connected once a heartbeat arrives, and Last Seen updates automatically.'
