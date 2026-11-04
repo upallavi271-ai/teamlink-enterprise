@@ -15,6 +15,11 @@
 //                    shown the count first and starts it with that count (backlog() / sendBacklog({ expected })).
 //   Naukri / Shine  mails the portal imports itself: the same switch turns the portal's own import message on (bridge .../candidates/auto).
 //
+//   INTERESTED ONLY (founder 2026-11-04: "import chesina data lo interested ani unte ney login pampali, not interested ani cheppite
+//                    pettodhu, malli sheets pedithe aa candidate interested ani cheppite interested ani ravali, duplicates create cheyyodhu"):
+//                    a candidate whose recruiter sheet says Not Interested, or an imported row with no answer, is never sent a login. When a
+//                    later sheet marks someone already on file Interested, the import calls queue() and the next pass sends it (once).
+//                    Candidates typed by hand or from Naukri / Shine (no interest recorded) are sent as before.
 // Kept in the Integration table as an internal row (the pattern of utils/portalSettings.js), no schema change.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
@@ -52,6 +57,8 @@ const reachable = () => ({
     { OR: [{ email: { not: null } }, { phone: { not: null } }] },
     { doNotContact: false },
     { OR: [{ consentStatus: null }, { consentStatus: { not: 'WITHDRAWN' } }] },
+    // the recruiter's sheet: only Interested, or nothing recorded at all (typed by hand, Naukri / Shine ...)
+    { OR: [{ interestStatus: null }, { interestStatus: 'INTERESTED' }] },
   ],
 });
 const person = (c) => ({ ref: c.id, name: c.name, email: c.email || undefined, phone: c.phone || undefined });
@@ -215,6 +222,17 @@ async function sendBacklog({ expected, by }) {
   return { started: true, total: b.wouldInvite };
 }
 
+// Someone already on file was marked Interested (a later import sheet): sent on the next pass, once (the portal never invites twice).
+async function queue(ids) {
+  const list = [...new Set((ids || []).filter(Boolean))];
+  if (!list.length) return { queued: 0 };
+  const s = await settings();
+  const have = new Set(s.retry.map((r) => r.id));
+  const add = list.filter((id) => !have.has(id)).map((id) => ({ id, tries: 0, after: null }));
+  if (add.length) await save({ ...s, retry: [...add, ...s.retry].slice(0, 500) });
+  return { queued: add.length };
+}
+
 let timer = null;
 function startSchedule() {
   if (timer || process.env.NODE_ENV === 'test') return;
@@ -224,4 +242,4 @@ function startSchedule() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { STORE_ID, settings, setAuto, sweep, backlogCount, sendBacklog, progress, startSchedule, reachable, afterCursor };
+module.exports = { STORE_ID, settings, setAuto, sweep, backlogCount, sendBacklog, progress, startSchedule, reachable, afterCursor, queue };

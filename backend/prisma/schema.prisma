@@ -515,6 +515,10 @@ model Candidate {
   consentWithdrawnAt   DateTime?
   consentByName        String?
   doNotContact         Boolean   @default(false) // set on Withdrawn: bulk sends / exports skip
+  // INTERESTED OR NOT (founder 2026-11-04): what the recruiter's sheet says. null = never asked (typed, Naukri / Shine ...: the login
+  // goes as before); NOT_ASKED = imported with no answer; INTERESTED = the Job Portal login is sent; NOT_INTERESTED = never sent.
+  interestStatus       String?
+  interestAt           DateTime?
   // b5_: referred by (an employee id, or only a name for an outside person)
   referredByEmployeeId String?
   referredByName       String?

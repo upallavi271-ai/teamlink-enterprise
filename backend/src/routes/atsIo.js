@@ -956,6 +956,7 @@ const ALIASES = {
   Email: ['emailid', 'mail', 'emailaddress', 'candidateemail'],
   Phone: ['mobile', 'mobileno', 'mobilenumber', 'phonenumber', 'contactnumber', 'contactno', 'candidatephone'],
   Stage: ['pipelinestage', 'currentstage'],
+  Interested: ['interest', 'interestedornot', 'intrested', 'intersted', 'candidatestatus', 'candidateinterest', 'callstatus', 'response', 'candidateresponse', 'status'],
   Department: ['dept'],
   Openings: ['positions', 'noofpositions', 'vacancies', 'headcount', 'noofopenings'],
   'Assigned Recruiter': ['recruiter', 'recruitername', 'workedby'],
@@ -1135,6 +1136,17 @@ function prepare(file, spec, { mapping, sheet: askedSheet, onlyRows = null } = {
 const norm = (s) => String(s || '').trim().toLowerCase();
 const csvIds = (v) => String(v || '').split(',').map((s) => s.trim()).filter(Boolean);
 const OUT = 'is outside your scope';
+
+// The recruiter sheet's Interested column -> { value: INTERESTED | NOT_INTERESTED | null, label, note }. Typos and yes / no are read;
+// any other word (Call back, Switched off ...) is NOT Interested for the login: no login, and the row says so.
+function interestOf(raw) {
+  const k = String(raw == null ? '' : raw).toLowerCase().replace(/[^a-z]/g, '');
+  if (!k) return { value: null };
+  const NOT = ['no', 'n', 'ni', 'nope', 'notinterest', 'uninterested', 'notwilling'];
+  if (NOT.includes(k) || /^not(int|intr|inter|intrest)/.test(k)) return { value: 'NOT_INTERESTED', label: 'Not Interested' };
+  if (['y', 'yes', 'ok', 'okay', 'willing', 'interested'].includes(k) || /^in(t|tr|te)[a-z]*st/.test(k)) return { value: 'INTERESTED', label: 'Interested' };
+  return { value: null, note: `Interested column says "${String(raw).trim().slice(0, 40)}" — not read as Interested, so no login is sent` };
+}
 
 async function requirementByCode(ctx, code) {
   const id = ctx.ix.requirement.get(norm(code));
@@ -1333,6 +1345,7 @@ const RULES = {
 
   candidates: {
     keyOf: (d, ix) => ix.norm(d.email || d.phone || `ref:${d.externalRef}`),
+    interestOf,
     // EVERY way of naming the person, so a row with the e-mail only and a later row with the phone only (or "+91 98765 43210" and
     // "09876543210") are one person inside the file too, not just against what is already on file (founder 2026-10-24: duplicates).
     keysOf: (d) => {
@@ -1367,7 +1380,20 @@ const RULES = {
         d._update = true;
         note('already on file — will be updated; blank cells keep what they have');
       }
-      if (existing && !requirement && !d._update) return { skip: 'a candidate with this email / phone is already on file — skipped, nothing overwritten', duplicate: true };
+      // INTERESTED on a later sheet for someone already on file: their answer is changed, nothing else, and no second candidate is made
+      const interest = interestOf(d._interest);
+      if (existing && interest.value && !d._update) {
+        if (!ctx.global && !(await prisma.candidate.count({ where: { AND: [{ id: existing }, candidateWhere(ctx.user)] } }))) {
+          throw new Error(`a candidate with this email / phone is on file but ${OUT} — their answer was not changed`);
+        }
+        const cur = await prisma.candidate.findUnique({ where: { id: existing }, select: { interestStatus: true } });
+        if (cur && cur.interestStatus !== interest.value) {
+          d._interestOnly = true;
+          note(`already on file — marked ${interest.label}${interest.value === 'INTERESTED' ? ' (their Job Portal login is sent)' : ' (no login is sent)'}`);
+        } else if (!requirement) return { skip: `already on file and already ${interest.label} — skipped`, duplicate: true };
+      }
+      if (interest.note) note(interest.note);
+      if (existing && !requirement && !d._update && !d._interestOnly) return { skip: 'a candidate with this email / phone is already on file — skipped, nothing overwritten', duplicate: true };
       if (existing && requirement) note(`already on file — added to ${d._requirement}`);
       d._existing = existing;
       return null;
@@ -1375,8 +1401,23 @@ const RULES = {
     async handle(ctx, d, note, row) {
       let action = 'skipped';
       if (!d._existing || d._update) {
-        const { _existing, _update, ...rest } = d;
+        const { _existing, _update, _interestOnly, ...rest } = d;
         action = await HANDLERS.candidate({ data: rest, ix: ctx.ix, dry: ctx.dry, row, note });
+      }
+      // the sheet's Interested / Not Interested (blank on a NEW candidate = not asked: no login until a sheet says Interested)
+      {
+        const interest = interestOf(d._interest);
+        const id = d._existing || ctx.ix.candidate.get(ctx.ix.norm(d.email || d.phone || `ref:${d.externalRef}`));
+        const value = interest.value || (!d._existing ? 'NOT_ASKED' : null);
+        if (value && id && !isDry(id) && !ctx.dry) {
+          const cur = await prisma.candidate.findUnique({ where: { id }, select: { interestStatus: true } });
+          if (cur && cur.interestStatus !== value) {
+            await prisma.candidate.update({ where: { id }, data: { interestStatus: value, interestAt: new Date() } });
+            // someone already on file who is Interested now: the login goes on the next pass (utils/candidateLogins.js)
+            if (value === 'INTERESTED' && d._existing) await require('../utils/candidateLogins').queue([id]); // eslint-disable-line global-require
+          }
+        }
+        if (d._interestOnly && action === 'skipped') action = 'updated';
       }
       if (d._requirement) {
         const key = d.email || d.phone || `ref:${d.externalRef}`;

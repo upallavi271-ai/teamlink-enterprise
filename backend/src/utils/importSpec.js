@@ -804,6 +804,9 @@ const ATS_IMPORT_SHEETS = {
       // `_stage`, not `stage`: a Candidate has no stage (that is the whole
       // point of the Applications sheet), so it must never reach pick().
       { ...borrow('Applications', ['Stage'])[0], f: '_stage', req: false, help: 'Stage on that pipeline. Blank = NEW.' },
+      // INTERESTED OR NOT (founder 2026-11-04): only an Interested candidate is sent their Job Portal login. A later sheet that says
+      // Interested for someone already on file changes them to Interested (no second candidate is made) and sends the login then.
+      c('Interested', '_interest', { help: 'Interested or Not Interested. Only Interested candidates get their Job Portal login. Blank = not asked yet (no login).', eg: 'Interested' }),
     ],
   },
   applications: { ...sheetNamed('Applications'), columns: sheetNamed('Applications').columns.filter((x) => !x.legacy) },
