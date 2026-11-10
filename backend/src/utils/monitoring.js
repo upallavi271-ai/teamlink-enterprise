@@ -406,15 +406,42 @@ function workDayOf(day, c, now = Date.now()) {
   const ws = atShift(day, c.workStart, c).getTime();
   const we = atShift(day, c.workEnd, c).getTime();
   const daySec = Math.max(0, Math.round((we - ws) / 1000));
-  let lunch = 0;
+  let lunch = 0; let lunchFrom = null; let lunchTo = null;
   if (HM.test(String(c.breakStart || '')) && HM.test(String(c.breakEnd || ''))) {
     const bs = Math.max(ws, atShift(day, c.breakStart, c).getTime());
     const be = Math.min(we, atShift(day, c.breakEnd, c).getTime());
-    if (be > bs) lunch = Math.round((be - bs) / 1000);
+    if (be > bs) { lunch = Math.round((be - bs) / 1000); lunchFrom = bs; lunchTo = be; }
   }
   const elapsed = Math.max(0, Math.round((Math.min(Math.max(now, ws), we) - ws) / 1000));
   const personal = Math.min(PERSONAL_BREAK_SECONDS, Math.max(0, daySec - lunch));
-  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch - personal), elapsedSeconds: elapsed, personalSeconds: personal };
+  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch - personal), elapsedSeconds: elapsed, personalSeconds: personal, ws, we, lunchFrom, lunchTo };
+}
+// NOT ON PC ONLY WHEN IT REALLY WAS NOT (founder 2026-11-10: "nenu asalu laptop close cheyyaledhu, not on pc ani endhuku vasthundhi"):
+// the agent keeps one piece open while the same window stays in front (up to 30 minutes) and sends every 2 minutes, so the newest
+// minutes of a PC that is on have simply not arrived yet. While the PC is online now, the time since its last piece counts as what
+// it is doing now (active / idle / break). And the lunch window with nothing recorded is the lunch break, not "not on the PC".
+function gapFill(logs, wd, status, live, now = Date.now()) {
+  const out = { active: 0, idle: 0, brk: 0 };
+  if (!wd || !wd.ws) return out;
+  const end = Math.min(live ? now : wd.we, wd.we);
+  const overlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
+  let lunchGap = 0;
+  if (wd.lunchFrom && end > wd.lunchFrom) {
+    const lt = Math.min(wd.lunchTo, end);
+    const covered = (logs || []).reduce((n, l) => n + overlap(new Date(l.startTime).getTime(), new Date(l.endTime).getTime(), wd.lunchFrom, lt), 0);
+    lunchGap = Math.max(0, (lt - wd.lunchFrom) - covered);
+    out.brk += Math.round(lunchGap / 1000);
+  }
+  if (live && ['Online', 'Idle', 'On break'].includes(status)) {
+    const lastEnd = (logs || []).reduce((m, l) => Math.max(m, new Date(l.endTime).getTime()), 0);
+    const from = Math.max(lastEnd || wd.ws, wd.ws);
+    if (end > from && lastEnd) {
+      const pending = (end - from) - (wd.lunchFrom ? overlap(from, end, wd.lunchFrom, wd.lunchTo) : 0); // the lunch part is counted above
+      const sec = Math.max(0, Math.round(pending / 1000));
+      if (status === 'Online') out.active += sec; else if (status === 'Idle') out.idle += sec; else out.brk += sec;
+    }
+  }
+  return out;
 }
 const hrs = (sec) => Math.round((sec / 3600) * 100) / 100;
 function totalsOf(logs, catOf, department = '') {
@@ -518,6 +545,9 @@ async function overview(day, access = null) {
     const mine = rulesOf(id);
     if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
     const wd = workDayOf(d, mine, now);
+    const fill = status === 'On leave' ? { active: 0, idle: 0, brk: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
+    t.activeSeconds += fill.active; t.idleSeconds += fill.idle; t.breakSeconds += fill.brk;
+    t.activeHours = hrs(t.activeSeconds); t.idleHours = hrs(t.idleSeconds); t.breakHours = hrs(t.breakSeconds);
     const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds);
     return {
       workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
@@ -861,6 +891,6 @@ function startSweep() {
 }
 
 module.exports = {
-  liveUpdate, liveRows, liveStatus, workDayOf, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice,
+  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };
