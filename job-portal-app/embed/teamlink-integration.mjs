@@ -39,6 +39,7 @@ import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { withRcsLogin } from './rcs-login.mjs';
+import { isIP } from 'node:net';
 
 const SYSTEM = { userId: '', role: 'admin' };
 const PREFIX = 'tl_';
@@ -668,6 +669,80 @@ export function teamlinkFrontRouter({ root, express }) {
     res.set('Cache-Control', 'no-store');
     return next();
   }, json);
+
+  /*
+   * FORGOT PASSWORD THAT REALLY SENDS THE MAIL (founder 2026-11-10: "forgot password kii kuda alaney mail send ayela cheyali" - ten
+   * presses, no mail, while TeamLink's own test mail reached Gmail). The portal's POST /api/auth/forgot gave up the moment its one
+   * database connection was busy ("[auth] could not start a password reset: timeout exceeded when trying to connect") and logged
+   * nothing when a mail did go, so nobody could tell. Same route, answered here first, the portal's own code unchanged:
+   *   - the same screen, the same answer for every address (no hint whether an account exists), 5 requests per address per hour;
+   *   - the link is made by the portal's OWN startPasswordReset (its table, its expiry, its one-use rule), tried 3 times when busy;
+   *   - the mail is the portal's own text, sent by the portal's mail account; if that fails, by TeamLink's email account (the one
+   *     whose test mail arrives), through the bridge (backend routes/jobPortalBridge.js POST /email);
+   *   - every outcome is written to the portal log (address masked, never the link), so check-portal-login-on-vps.ps1 shows it.
+   */
+  const forgotHits = new Map();
+  const forgotLimited = (key, max) => {
+    const now = Date.now(); const list = (forgotHits.get(key) || []).filter((t) => now - t < 3_600_000);
+    list.push(now); forgotHits.set(key, list);
+    if (forgotHits.size > 5000) forgotHits.delete(forgotHits.keys().next().value);
+    return list.length > max;
+  };
+  const maskMail = (e) => { const [u, d] = String(e).split('@'); return `${u.slice(0, 3)}***@${d || ''}`; };
+  const pause = (ms) => new Promise((done) => { setTimeout(done, ms); });
+  r.post('/api/auth/forgot', json, wrap(async (req, res) => {
+    const SAME = { ok: true, message: "If an account exists for this email, we've sent a password reset link." };
+    const email = String((req.body && req.body.email) || '').trim();
+    if (email.length < 3 || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ error: { code: 'VALIDATION_FAILED', message: 'Please enter a valid email address.' } });
+    }
+    const ipRaw = String(req.get('x-forwarded-for') || req.ip || '').split(',')[0].trim().replace(/^::ffff:/, '');
+    const ip = isIP(ipRaw) ? ipRaw : null;
+    if (forgotLimited(`em:${email.toLowerCase()}`, 5) || forgotLimited(`ip:${ip || 'unknown'}`, 30)) {
+      return res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Too many reset requests. Please wait an hour and try again.' } });
+    }
+    const auth = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    let issued = null; let lastErr = null;
+    for (let i = 0; i < 3; i += 1) {
+      try { issued = await auth.startPasswordReset({ email, ip }); lastErr = null; break; } catch (e) { lastErr = e; await pause(1500 * (i + 1)); } // eslint-disable-line no-await-in-loop
+    }
+    if (lastErr) { log(`forgot password: reset mail NOT sent to ${maskMail(email)} - the link could not be made after 3 tries: ${lastErr.message}`); return res.json(SAME); }
+    if (!issued) { log(`forgot password: no reset mail - no active portal account for ${maskMail(email)}`); return res.json(SAME); }
+
+    const { config } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'config.js')).href);
+    const base = String(config.publicOrigin || '').replace(/\/$/, '');
+    const link = `${base}/reset-password?token=${encodeURIComponent(issued.token)}`;
+    const greeting = issued.name ? `Hi ${issued.name},` : 'Hi,';
+    const safe = (s) => String(s).replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[ch]));
+    const subject = 'Reset your TeamLink password';
+    const text = [greeting, '', 'We received a request to reset the password on your TeamLink account.', 'Open this link to choose a new one:', '', link, '',
+      `This link can be used once and expires in ${issued.minutes} minutes.`, '', "If you didn't request this, ignore this email - your password has", 'not been changed.'].join('\n');
+    const html = ['<div style="font-family:system-ui,Segoe UI,Arial,sans-serif;font-size:15px;color:#1f2933">', `<p>${safe(greeting)}</p>`,
+      '<p>We received a request to reset the password on your TeamLink account.</p>',
+      `<p style="margin:26px 0"><a href="${safe(link)}" style="background:#2a4bc0;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;display:inline-block;font-weight:600">Reset password</a></p>`,
+      `<p style="color:#52606d">This link can be used once and expires in ${issued.minutes} minutes.</p>`,
+      '<p style="color:#52606d">If you didn&#39;t request this, ignore this email &mdash; your password has not been changed.</p>', '</div>'].join('');
+
+    let how = null; let why = '';
+    try {
+      const { emailProvider } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href);
+      const sent = await emailProvider.send({ to: issued.email, subject, text, html });
+      if (sent && (sent.status === 'sent' || sent.status === 'delivered')) how = 'the portal mail account';
+      else why = `portal mail: ${(sent && (sent.error || sent.status)) || 'no answer'}`;
+    } catch (e) { why = `portal mail: ${e.message}`; }
+    if (!how) {
+      try {
+        const r2 = await fetch(`${teamlinkApi()}/api/public/job-portal/email`, {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-job-portal-secret': pushSecret() },
+          body: JSON.stringify({ to: issued.email, subject, text, html }), signal: AbortSignal.timeout(30000),
+        });
+        const o = await r2.json().catch(() => ({}));
+        if (o && o.ok) how = 'TeamLink\'s email account'; else why += `; TeamLink email: ${String((o && o.error) || `HTTP ${r2.status}`).slice(0, 200)}`;
+      } catch (e) { why += `; TeamLink email: ${e.message}`; }
+    }
+    log(how ? `forgot password: reset mail sent to ${maskMail(issued.email)} through ${how}` : `forgot password: reset mail NOT sent to ${maskMail(issued.email)} - ${why}`);
+    return res.json(SAME);
+  }));
 
   /*
    * WHY A CANDIDATE'S SIGN-IN SAYS "INCORRECT EMAIL OR PASSWORD" (founder 2026-11-10; backend/scripts/portal-login-check.js,

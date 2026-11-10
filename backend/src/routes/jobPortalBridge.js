@@ -102,6 +102,22 @@ router.post('/rcs-login', async (req, res) => {
   return res.json(out);
 });
 
+// THE PORTAL'S FORGOT PASSWORD MAIL, WHEN THE PORTAL'S OWN MAIL ACCOUNT CANNOT SEND IT (founder 2026-11-10): job-portal-app/embed/
+// teamlink-integration.mjs POST /api/auth/forgot hands the portal's own reset mail here with the bridge secret, and it leaves through
+// TeamLink's email account (the one whose test mail reaches Gmail), from the company address. Always 200 with ok / error (no retry storm).
+router.post('/email', async (req, res) => {
+  if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ ok: false, error: 'Invalid or missing job portal secret' });
+  const b = req.body || {};
+  const to = String(b.to || '').trim();
+  if (!to || !b.subject || !(b.text || b.html)) return res.status(422).json({ ok: false, error: 'to, subject and text are required' });
+  try {
+    const out = await require('../utils/mailer').sendMail({ to, subject: String(b.subject).slice(0, 200), text: b.text ? String(b.text) : '', html: b.html ? String(b.html) : undefined, useEmployeeFrom: false }); // eslint-disable-line global-require
+    return res.json({ ok: !!out.ok, providerRef: out.providerRef || null, notConfigured: !!out.notConfigured, error: out.ok ? null : String(out.error || '').slice(0, 300) });
+  } catch (err) {
+    return res.json({ ok: false, error: String((err && err.message) || err).slice(0, 300) });
+  }
+});
+
 // THE PORTAL'S AI INTERVIEW HEARS AND SPEAKS WITH THE AI CALLING VOICES (founder 2026-11-05): utils/interviewVoice.js. Server to server with the
 // bridge secret; the audio never leaves this server. Always 200 with ready:false when the engines are not set up, and on a failure: the screen
 // then works from the browser alone.
