@@ -255,6 +255,19 @@ const INTEGRATION_CATALOG = [
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
       ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
       ['Bill reading model', 'claude-opus-5-5'], ['Bill reads per vendor per day', '30']] },
+  // AI Marketing (Omni-Channel / Green Start). FIELDS ONLY for now: the values are stored here (secrets encrypted at rest, never returned
+  // to the browser) so TeamLink is the one place they are typed. Green Start's AI Marketing reads ANTHROPIC_API_KEY / OPENAI_API_KEY from
+  // its own server settings today; handing these values over is a separate step (utils/greenStartIntegrations.js), so this card is not
+  // in LIVE_CHANNELS and says so.
+  { id: 'ai-marketing', name: 'AI Marketing (Omni-Channel)', group: 'AI', glyph: '\u{1F4E3}',
+    desc: 'Settings for the AI Marketing module inside Omni-Channel: the AI keys and models, the brand voice and the channels and limits for generated campaigns. Typed once here; keys are encrypted and never shown again. Hand-over to Omni-Channel is not switched on yet.',
+    fields: [['Anthropic API key (text)', 'sk-ant-...'], ['Text model', 'claude-opus-5'],
+      ['OpenAI API key (images, voice, video)', 'sk-...'], ['Image model', 'gpt-image-2'],
+      ['Brand name', 'e.g. TeamLink'], ['Brand tone', 'e.g. professional, friendly'], ['Default language', 'en'],
+      ['Default channels (comma separated)', 'whatsapp, email, sms, facebook'],
+      ['Approval needed before sending (Yes or No)', 'Yes'], ['Monthly AI generation limit', '500']],
+    hints: ['Text model', 'Image model', 'Brand name', 'Brand tone', 'Default language', 'Default channels (comma separated)',
+      'Approval needed before sending (Yes or No)', 'Monthly AI generation limit'] },
 ];
 
 const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling', 'Job Boards', 'Storage', 'Finance', 'Workforce', 'Developer'];
