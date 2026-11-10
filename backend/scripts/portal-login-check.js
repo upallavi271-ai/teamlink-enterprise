@@ -36,6 +36,10 @@ const when = (d) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16
     // the account row is stamped on every change (a sign-in, a new password, a reset, an admin setting it): later than the last sign-in = changed since
     const after = u.updated_at && u.last_login_at && Date.parse(u.updated_at) - Date.parse(u.last_login_at) > 60000;
     console.log(`      account last changed=${when(u.updated_at)}${after ? '  <- AFTER the last sign-in: the password (or the account) was changed since then' : '  (nothing changed since the last sign-in)'}`);
+    if (Array.isArray(u.resets)) {
+      console.log(`      Forgot password links made (latest ${u.resets.length}):${u.resets.length ? '' : ' NONE - no Forgot password request for this email ever reached the portal'}`);
+      u.resets.forEach((r) => console.log(`        ${when(r.created_at)}  ${r.used_at ? `used ${when(r.used_at)}` : (Date.parse(r.expires_at) < Date.now() ? 'expired, not used' : 'still valid, not used')}`));
+    }
   });
   console.log(`\nPORTAL CANDIDATES with "${find}" in the email, name or phone: ${cands.length}`);
   cands.forEach((k) => {
@@ -47,6 +51,8 @@ const when = (d) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16
 
   const em = out.email;
   console.log(`\nPORTAL MAILS (Forgot password, logins): ${em ? (em.configured ? `ready - sent through ${em.host} from ${em.from}` : 'NOT SET UP - the portal has no mail account, so no reset mail can leave') : 'unknown'}`);
+  if (out.smtpCheck) console.log(`Mail server sign-in test (nothing sent): ${out.smtpCheck.ok ? 'OK - the mail server accepts the portal' : `FAILED - ${out.smtpCheck.error}`}`);
+  if (out.resetsError) console.log(`Reset links could not be read: ${out.resetsError}`);
   try {
     const { LOGFILE } = require('../src/utils/jobPortalEmbed'); // eslint-disable-line global-require
     const fs = require('fs'); // eslint-disable-line global-require

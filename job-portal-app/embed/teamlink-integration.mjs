@@ -685,6 +685,26 @@ export function teamlinkFrontRouter({ root, express }) {
     });
     // where the portal's mails go (Forgot password, logins): TeamLink's SMTP account, set in memory after each portal start
     out.email = await emailInfo().catch(() => null);
+    // does the mail server accept the portal's login? (nodemailer verify: connects and signs in, sends nothing)
+    try {
+      const P = await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href);
+      out.smtpCheck = await P.verifySmtp();
+    } catch (e) { out.smtpCheck = { ok: false, error: String((e && e.message) || e).slice(0, 200) }; }
+    // the reset links made for these accounts (when, used or not; never the token). The row rule hides password_resets from every role,
+    // so this one read uses the pool's own connection without dropping to the app role - read only, inside a read-only transaction.
+    if (out.users.length) {
+      try {
+        const { getPool } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'db.js')).href);
+        const c = await getPool().connect();
+        try {
+          await c.query('begin read only');
+          const rows = (await c.query(`select user_id, created_at, expires_at, used_at from password_resets
+              where user_id = any($1::uuid[]) order by created_at desc limit 20`, [out.users.map((u) => u.id)])).rows;
+          await c.query('rollback');
+          out.users.forEach((u) => { u.resets = rows.filter((x) => x.user_id === u.id).map(({ created_at, expires_at, used_at }) => ({ created_at, expires_at, used_at })); });
+        } finally { c.release(); }
+      } catch (e) { out.resetsError = String((e && e.message) || e).slice(0, 200); }
+    }
     return res.json(out);
   }));
 
