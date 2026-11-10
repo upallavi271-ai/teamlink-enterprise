@@ -756,6 +756,27 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json({ entries: forgotLogEntries(), email: await emailInfo().catch(() => null) });
   }));
 
+  /*
+   * JUNK CANDIDATES FROM IMPORTS (founder 2026-11-10: names showing as 7.56947364E9 after a bulk import; backend/scripts/portal-junk-candidates.js).
+   * READ ONLY, asked through the running portal (its database takes one connection). A candidate whose NAME is only digits / dots / "e+" (a phone
+   * or an Excel date read as a name) or has fewer than two letters. Counts and examples only; nothing is changed.
+   *   GET /api/integrations/teamlink/junk-candidates  ->  { total, junk, byImport: [...], examples: [...] }
+   */
+  r.get('/api/integrations/teamlink/junk-candidates', wrap(async (_req, res) => {
+    const { withUser } = await portal();
+    const JUNK = `(coalesce(name,'') ~ '^[0-9.,eE+ -]*$' or length(regexp_replace(coalesce(name,''), '[^A-Za-z\u00C0-\uFFFF]', '', 'g')) < 2)`;
+    const out = await withUser(SYSTEM, async (c) => {
+      const total = Number((await c.query('select count(*) as n from candidates')).rows[0].n);
+      const junk = Number((await c.query(`select count(*) as n from candidates where ${JUNK}`)).rows[0].n);
+      const byImport = (await c.query(`select coalesce(import_id,'(not from an import)') as import_id, count(*) as n, min(created_at) as first_at
+          from candidates where ${JUNK} group by 1 order by n desc limit 15`)).rows;
+      const examples = (await c.query(`select id, name, email, phone, import_id, created_at, user_id is not null as has_login
+          from candidates where ${JUNK} order by created_at desc limit 25`)).rows;
+      return { total, junk, byImport, examples };
+    });
+    res.json(out);
+  }));
+
   r.post('/api/integrations/teamlink/login-check', wrap(async (req, res) => {
     const find = String((req.body && req.body.find) || '').trim().toLowerCase().replace(/[%_]/g, '');
     if (find.length < 4) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'find needs at least 4 letters' } });
