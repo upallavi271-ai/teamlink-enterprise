@@ -136,9 +136,26 @@ function shortFormOf(typed, names) {
 // NAMES THE FOUNDER CONFIRMED ARE ONE PERSON (the automatic rules never match a single first name - it could be two people):
 // the name as typed in the sheets -> the login's name.
 //   2026-11-10 "Bhavana anna, Gandrathi Bhavana anna okarey" (the Team lead list showed both)
+//   2026-11-10 "edu1 to edu5 usha team": the Education sheets' TL "D.Usha" is D.Leela Usha Sri
 const CONFIRMED_NAMES = new Map([
   ['bhavana', 'gandrathi bhavana'],
+  ['d.usha', 'd.leela usha sri'],
 ]);
+
+// EDUCATION'S TWO TEAMS GO BY THE SEAT (founder 2026-11-10: "edu1 to edu5 usha team - edu team a, edu6 to edu10 sirisha team -
+// edu team b"). The sheets' TL column was often blank, "mamatha" (the manager) or the other team's TL; the seat says the team.
+const EDU_SEAT_TEAMS = [
+  { from: 1, to: 5, team: 'Edu Team A', tl: 'D.Leela Usha Sri' },
+  { from: 6, to: 10, team: 'Edu Team B', tl: 'Masabattula Sai Sirisha' },
+];
+// the Education manager: written as the TL on some rows ("mamatha"), the team's own TL is meant
+const EDU_MANAGERS = ['Mamatha Dara'];
+function eduTeamOfSeat(seat) {
+  const m = /^edu[\s_-]*0*(\d{1,2})$/i.exec(String(seat || '').trim());
+  if (!m) return null;
+  const n = Number(m[1]);
+  return EDU_SEAT_TEAMS.find((x) => n >= x.from && n <= x.to) || null;
+}
 
 // --- People directory ---------------------------------------------------------
 // Resolves (userId, name) to ONE person, the way ATS Reports always has.
@@ -146,7 +163,7 @@ function makeResolver(users) {
   const byId = new Map(users.map((u) => [u.id, u]));
   const byName = new Map();
   users.forEach((u) => { const k = nameKey(u.name); if (k && !byName.has(k)) byName.set(k, u); });
-  const asPerson = (u) => ({ key: `u:${u.id}`, userId: u.id, label: u.name, team: u.team || null });
+  const asPerson = (u) => ({ key: `u:${u.id}`, userId: u.id, label: u.name, team: u.team || null, status: u.status || null });
   const shortCache = new Map();
   const byShort = (name) => {
     const k = nameKey(name);
@@ -170,7 +187,7 @@ function makeResolver(users) {
 }
 
 async function loadDirectory() {
-  const [users, employees] = await Promise.all([
+  const [users, employees, eduSeats] = await Promise.all([
     prisma.user.findMany({
       select: {
         id: true, name: true, team: true, status: true, atsRole: true, atsAccess: true,
@@ -180,8 +197,29 @@ async function loadDirectory() {
     prisma.employee.findMany({
       select: { id: true, name: true, userId: true, department: true, employmentStatus: true, dateOfJoining: true },
     }),
+    // who sat in which Education seat, from when to when (the team of the work, eduTeamOfSeat)
+    prisma.positionAssignment.findMany({
+      where: { position: { code: { startsWith: 'EDU' } } },
+      select: { employeeId: true, fromDate: true, toDate: true, position: { select: { code: true } } },
+    }).catch(() => []),
   ]);
   const person = makeResolver(users);
+  const userOfEmp = new Map(employees.filter((e) => e.userId).map((e) => [e.id, e.userId]));
+  const seatsByUser = new Map();
+  eduSeats.forEach((x) => {
+    const u = userOfEmp.get(x.employeeId);
+    if (!u || !eduTeamOfSeat(x.position.code)) return;
+    if (!seatsByUser.has(u)) seatsByUser.set(u, []);
+    seatsByUser.get(u).push({ code: x.position.code, from: x.fromDate || '0000-00-00', to: x.toDate || '9999-99-99' });
+  });
+  // the Education seat a login sat in on that day, else null
+  person.eduSeatAt = (userId, at) => {
+    const list = userId && seatsByUser.get(userId);
+    if (!list) return null;
+    const d = new Date(at || Date.now()).toISOString().slice(0, 10);
+    const hit = list.find((x) => x.from <= d && d <= x.to);
+    return hit ? hit.code : null;
+  };
   // the day each login started here (HR > the employee's Date of joining), for creditAt(): a step done before that day was
   // somebody else's work. No date on file = no limit.
   const startByUser = new Map();
@@ -276,6 +314,17 @@ function attribute(req, fus, evs, person) {
   let tl = tlFu ? person(tlFu.tlUserId, tlFu.tlName) : null;
   if (!tl && (r.tlId || r.tl)) tl = person(r.tlId, r.tl);
   if (!tl) { const e = evOf('TL'); if (e) tl = person(e.actorUserId, e.actorName); }
+  // An Education seat names its team's TL: the seat on the work, else the seat the recruiter sat in when they last worked it.
+  // It replaces a blank TL, the manager, or the two team TLs written the wrong way round; any other TL on the work (a former
+  // TL who led the team then) is kept - history stays as it was.
+  const when = ownerFu ? ownerFu.createdAt : null;
+  const edu = eduTeamOfSeat(seat || r.positionCode) || (recruiter && person.eduSeatAt ? eduTeamOfSeat(person.eduSeatAt(recruiter.userId, when)) : null);
+  if (edu) {
+    const own = person(null, edu.tl);
+    const mine = new Set([...EDU_SEAT_TEAMS.map((x) => x.tl), ...EDU_MANAGERS].map((n) => { const q = person(null, n); return q ? q.key : null; }).filter(Boolean));
+    const replace = !tl || mine.has(tl.key) || EDU_MANAGERS.some((n) => nameKey(n).split(' ')[0] === nameKey(tl.label));
+    if (own && replace) tl = { ...own, team: edu.team };
+  }
   let bde = r.bdeId ? person(r.bdeId) : null;
   if (!bde) { const b = lastOf(fus, (x) => x.bdeName || x.bdeUserId); if (b) bde = person(b.bdeUserId, b.bdeName); }
   if (!bde) { const e = evOf('BDE'); if (e) bde = person(e.actorUserId, e.actorName); }
@@ -750,6 +799,7 @@ async function listWorkers(user, { department = '', role = '' } = {}) {
 }
 
 module.exports = {
+  EDU_SEAT_TEAMS, eduTeamOfSeat,
   ROLES, ROLE_LABEL, LEFT_STATUSES, REAL_EVENT, ATTR_SELECT,
   clean, nameKey, seatRole, roleOfLabel, realActor,
   makeResolver, loadDirectory, resolvePersonValue, nameVariantsFor, shortFormFits, shortFormOf, partOfName,
