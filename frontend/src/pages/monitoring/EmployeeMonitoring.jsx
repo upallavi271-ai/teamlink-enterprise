@@ -331,6 +331,78 @@ function Alerts({ onOpen }) {
 
 // ------------------------------------------------------------------------------------------------ Attendance suggestions
 // A working day with PC activity and no attendance at all. HR approves or dismisses; it only fills an empty day.
+// PRESENT / ABSENT FROM THE PC (founder 2026-11-10: "active hours count cheskoni, present / absent raavali, including percentage")
+const MARK_TONE = { Present: 'green', 'Half day': 'amber', Absent: 'red', 'On leave': 'violet' };
+function PcAttendance() {
+  const [from, setFrom] = useState(`${todayIst().slice(0, 8)}01`);
+  const [to, setTo] = useState(todayIst());
+  const [view, setView] = useState('people');
+  const [q, setQ] = useState('');
+  const { data, error, loading } = useGet('/monitoring/pc-attendance', { from, to });
+  const match = (r) => !q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase());
+  const people = ((data && data.people) || []).filter(match);
+  const days = ((data && data.days) || []).filter(match);
+  const tone = (m) => MARK_TONE[m] || 'slate';
+  const bar = (pct) => <div className="mon-item-bar" style={{ maxWidth: 120 }}><i style={{ width: `${Math.max(2, Math.min(100, pct || 0))}%`, background: pct >= ((data && data.presentPct) || 75) ? '#22a06b' : pct >= ((data && data.halfPct) || 50) ? '#e59a1a' : '#d64545' }} /></div>;
+  return (
+    <Panel title="Present or absent, from the PC" sub={data ? `Active time out of the 8 h work day: Present at ${data.presentPct}% (6 h) or more, Half day at ${data.halfPct}% (4 h), Absent below. A reference beside HR attendance: it changes nothing.` : 'Active time out of the 8 h work day'} flush>
+      <div style={{ padding: '10px 12px 0' }}>
+        <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo}>
+        <input type="search" placeholder="Search a name, code or department" value={q} onChange={(e) => setQ(e.target.value)} />
+        <span className="mon-tabs" style={{ border: 0, padding: 0 }}>
+          <button type="button" className={view === 'people' ? 'on' : ''} onClick={() => setView('people')}>Per employee</button>
+          <button type="button" className={view === 'days' ? 'on' : ''} onClick={() => setView('days')}>Day by day</button>
+        </span>
+        <span style={{ marginLeft: 'auto' }}><ExportMenu url="/monitoring/pc-attendance" params={{ from, to, view }} label="Export" /></span>
+        </RangeBar>
+      </div>
+      {error && <div className="notice red">{error}</div>}
+      {loading && !data && <div className="small-muted" style={{ padding: 12 }}>Loading…</div>}
+      <div className="tbl-wrap">
+        {view === 'people' ? (
+          <table className="mon-table">
+            <thead><tr><th>Employee</th><th>Department</th><th className="num">Working days</th><th className="num">Present</th><th className="num">Half day</th><th className="num">Absent</th><th className="num">On leave</th><th className="num" title="Present days, and half days as half, out of the working days without leave">Attendance</th><th className="num">Active</th><th title="Active time out of the work time">Active %</th></tr></thead>
+            <tbody>
+              {people.map((r) => (
+                <tr key={r.key}>
+                  <td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td>
+                  <td>{r.department || '—'}{r.team && <div className="small-muted">{r.team}</div>}</td>
+                  <td className="num">{r.days}</td>
+                  <td className="num">{r.present}</td>
+                  <td className="num">{r.halfDays}</td>
+                  <td className="num">{r.absent}</td>
+                  <td className="num">{r.leave}</td>
+                  <td className="num"><b>{r.attendancePct == null ? '—' : `${r.attendancePct}%`}</b></td>
+                  <td className="num">{hm(r.activeHours)}{r.workHours > 0 && <div className="small-muted">of {hm(r.workHours)}</div>}</td>
+                  <td><b>{r.pct == null ? '—' : `${r.pct}%`}</b>{r.pct != null && bar(r.pct)}</td>
+                </tr>
+              ))}
+              {data && !people.length && <tr><td colSpan={10} className="small-muted">No monitored PC in these days.</td></tr>}
+            </tbody>
+          </table>
+        ) : (
+          <table className="mon-table">
+            <thead><tr><th>Date</th><th>Employee</th><th>First</th><th>Last</th><th className="num">Active</th><th>Active %</th><th>From the PC</th></tr></thead>
+            <tbody>
+              {days.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{r.day}</td>
+                  <td><b>{r.name}</b><div className="small-muted">{[r.code, r.department].filter(Boolean).join(' · ')}</div></td>
+                  <td>{r.first || '—'}</td><td>{r.last || '—'}</td>
+                  <td className="num">{hm(r.activeHours)}<div className="small-muted">of {hm(r.workHours)}</div></td>
+                  <td><b>{r.pct}%</b>{bar(r.pct)}</td>
+                  <td><Pill tone={tone(r.mark)}>{r.mark}</Pill></td>
+                </tr>
+              ))}
+              {data && !days.length && <tr><td colSpan={7} className="small-muted">No monitored PC in these days.</td></tr>}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function AttendanceTab() {
   const [from, setFrom] = useState(addDays(todayIst(), -13));
   const [to, setTo] = useState(addDays(todayIst(), -1));
@@ -349,6 +421,8 @@ function AttendanceTab() {
   }
   return (
     <>
+      <PcAttendance />
+      <h3 className="mon-h3">Days to fill in HR attendance</h3>
       <div className="small-muted" style={{ marginBottom: 8 }}>Working days with PC activity but no attendance: no mark, no punch and no leave. Approve to fill the day, or dismiss it. Attendance that is already there is never changed.</div>
       <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo} />
       {msg && <div className="notice green">{msg}</div>}

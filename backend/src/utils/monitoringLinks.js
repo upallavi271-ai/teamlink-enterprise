@@ -78,6 +78,69 @@ async function payrollRows(from, to, department, access = null) {
   return { from: a, to: b, view: 'payroll', rows, departments: [...new Set(emps.map((e) => e.department).filter(Boolean))].sort() };
 }
 
+// --- Attendance from the PC: present / half day / absent by the active hours ---------------------------------------------------
+// founder 2026-11-10: "emp yokka active hours count cheskoni, present / absent raavali, including percentage". Out of the day's work
+// time (9 am - 6 pm less the lunch and the 15-minute personal break: 8 h), the ACTIVE time decides. A reference beside HR's own
+// attendance: nothing is written; the suggestions below are still how a day is filled.
+const PRESENT_PCT = 75; // 6 h of 8
+const HALF_PCT = 50; // 4 h of 8
+const pcMark = (pct) => (pct >= PRESENT_PCT ? 'Present' : pct >= HALF_PCT ? 'Half day' : 'Absent');
+async function pcAttendance(from, to, access = null) {
+  const today = M.todayIst();
+  const b = M.validDay(to) && to < today ? to : today;
+  let a = M.validDay(from) ? from : `${b.slice(0, 8)}01`;
+  if (a > b) a = b;
+  if (M.addDays(a, 62) < b) a = M.addDays(b, -62);
+  const WD = require('./workingDays'); // eslint-disable-line global-require
+  await WD.ready().catch(() => {});
+  const within = access && access.ids ? { employeeId: { in: access.ids } } : {};
+  const [cfg, idx, devices, logs, leaves] = await Promise.all([
+    M.settings(), M.overrideIndex(),
+    prisma.monitoringDevice.findMany({ where: { isActive: true, ...within }, select: { employeeId: true, registeredAt: true } }),
+    prisma.activityLog.groupBy({ by: ['employeeId', 'day'], where: { day: { gte: a, lte: b }, isIdle: false, isBreak: false, ...within }, _sum: { durationSeconds: true }, _min: { startTime: true }, _max: { endTime: true } }),
+    prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: b }, toDate: { gte: a }, ...within }, select: { employeeId: true, fromDate: true, toDate: true } }),
+  ]);
+  const since = new Map();
+  devices.forEach((d) => { const day = M.istDay ? M.istDay(d.registeredAt) : new Date(new Date(d.registeredAt).getTime() + IST).toISOString().slice(0, 10); if (!since.has(d.employeeId) || day < since.get(d.employeeId)) since.set(d.employeeId, day); });
+  logs.forEach((l) => { if (!since.has(l.employeeId) || l.day < since.get(l.employeeId)) since.set(l.employeeId, l.day); });
+  const ids = [...since.keys()];
+  const emps = await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, employeeCode: true, department: true, team: true, employmentStatus: true } });
+  const act = new Map(logs.map((l) => [`${l.employeeId}|${l.day}`, l]));
+  const days = eachDay(a, b).filter(WD.isWorking);
+  const dayRows = []; const people = [];
+  emps.filter((e) => !M.effective(cfg, idx, e).excluded).forEach((e) => {
+    const mine = M.effective(cfg, idx, e);
+    const sum = { present: 0, half: 0, absent: 0, leave: 0, activeSeconds: 0, workSeconds: 0, days: 0 };
+    days.filter((d) => d >= since.get(e.id)).forEach((d) => {
+      const l = act.get(`${e.id}|${d}`);
+      const onLeave = leaves.some((v) => v.employeeId === e.id && d >= v.fromDate && d <= v.toDate);
+      const wd = M.workDayOf(d, mine);
+      const active = l ? l._sum.durationSeconds || 0 : 0;
+      const pct = wd.workSeconds ? Math.min(100, Math.round((active / wd.workSeconds) * 100)) : 0;
+      const running = d === today;
+      let mark = onLeave ? 'On leave' : pcMark(pct);
+      if (running && !onLeave) mark = 'Day not over'; // today is judged once it is over
+      if (!running) {
+        sum.days += 1; sum.workSeconds += onLeave ? 0 : wd.workSeconds; sum.activeSeconds += onLeave ? 0 : active;
+        if (onLeave) sum.leave += 1; else if (mark === 'Present') sum.present += 1; else if (mark === 'Half day') sum.half += 1; else sum.absent += 1;
+      }
+      dayRows.push({
+        key: `${e.id}|${d}`, employeeId: e.id, day: d, name: e.name, code: e.employeeCode || null, department: e.department || null,
+        first: l ? hmOf(l._min.startTime) : null, last: l ? hmOf(l._max.endTime) : null, activeHours: hrs(active), workHours: hrs(wd.workSeconds), pct, mark, running,
+      });
+    });
+    people.push({
+      key: e.id, employeeId: e.id, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
+      days: sum.days, present: sum.present, halfDays: sum.half, absent: sum.absent, leave: sum.leave,
+      activeHours: hrs(sum.activeSeconds), workHours: hrs(sum.workSeconds), pct: sum.workSeconds ? Math.round((sum.activeSeconds / sum.workSeconds) * 100) : null,
+      attendancePct: sum.days - sum.leave > 0 ? Math.round(((sum.present + sum.half / 2) / (sum.days - sum.leave)) * 100) : null,
+    });
+  });
+  people.sort((p, q) => (q.pct || 0) - (p.pct || 0) || String(p.name).localeCompare(String(q.name)));
+  dayRows.sort((p, q) => q.day.localeCompare(p.day) || q.pct - p.pct || String(p.name).localeCompare(String(q.name)));
+  return { from: a, to: b, presentPct: PRESENT_PCT, halfPct: HALF_PCT, people, days: dayRows };
+}
+
 // --- Attendance: suggestions HR approves ----------------------------------------------------------------------------------------
 async function suggestions(from, to, access = null) {
   const yesterday = M.addDays(M.todayIst(), -1); // a day still running is not suggested
@@ -167,5 +230,6 @@ async function sendScheduled(now = Date.now()) {
 }
 
 module.exports = {
+  pcAttendance,
   workCounts, payrollRows, suggestions, approveSuggestion, dismissSuggestion, sendScheduled,
 };
