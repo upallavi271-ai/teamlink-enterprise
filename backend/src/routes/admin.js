@@ -1758,6 +1758,18 @@ router.get('/integrations/social/facebook/pending', requirePerm(null, 'administr
   if (out.error) return res.status(out.status || 400).json({ error: out.error });
   return res.json({ pages: out.pages });
 });
+// ---- AI MARKETING PLATFORM: the outside AI that makes Omni-Channel AI Marketing's pictures and videos (utils/aiMarketingPlatform.js, founder 2026-11-09) ----
+const AMP = require('../utils/aiMarketingPlatform');
+router.get('/ai-marketing-platform', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => res.json(await AMP.view()));
+router.put('/ai-marketing-platform', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => {
+  const out = await AMP.save(req.body || {}, req.user.name || req.user.email);
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  await logAudit({ userId: req.user.id, action: 'AI Marketing platform saved', entity: 'Integration', entityId: 'ai-marketing-platform', toValue: `${out.name} ${out.enabled ? 'on' : 'off'}${req.body && req.body.apiKey ? ', new key' : ''}${req.body && req.body.removeKey ? ', key removed' : ''}` });
+  return res.json(out);
+});
+router.post('/ai-marketing-platform/send', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => res.json(await AMP.send()));
+router.post('/ai-marketing-platform/test', requirePerm(null, 'administration', 'Integrations', 'configure'), async (req, res) => res.json(await AMP.test()));
+
 // ---- SOCIAL MEDIA ACCOUNTS: many Facebook Pages / Instagram accounts / Threads profiles (utils/socialAccounts.js, founder 2026-10-30) ----
 const SA = require('../utils/socialAccounts');
 const saveFacebookDefault = (user, page) => FBC.save(user, page);

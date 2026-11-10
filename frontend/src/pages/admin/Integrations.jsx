@@ -31,6 +31,7 @@ import OmniChannelIntegrations from './OmniChannelIntegrations.jsx';
 import FacebookSetup from './FacebookSetup.jsx'; // eslint-disable-line no-unused-vars
 // Social Media (2026-10-30): Facebook / Instagram / Threads tabs, many accounts each.
 import SocialMedia from './SocialMedia.jsx';
+import AiMarketingPlatform from './AiMarketingPlatform.jsx';
 import { useAuth } from '../../context/AuthContext';
 import Combo from '../../components/Combo.jsx';
 
@@ -143,7 +144,7 @@ export default function Integrations() {
   // Health opens first: what is broken and how to fix it (?tab=health|connections|jobportal).
   const [tab, setTab] = useState(() => (
     searchParams.get('tab') === 'jobportal' || pathname.startsWith('/ats/job-portal') ? 'jobportal'
-      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : ['jobportals', 'portal', 'mailboxes'].includes(searchParams.get('tab')) ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : searchParams.get('tab') === 'rcs' ? 'rcs' : searchParams.get('tab') === 'omni' ? 'omni' : (['facebook', 'social'].includes(searchParams.get('tab')) || searchParams.get('facebook')) ? 'facebook' : 'health'));
+      : searchParams.get('tab') === 'connections' ? 'connections' : searchParams.get('tab') === 'messaging' ? 'messaging' : ['jobportals', 'portal', 'mailboxes'].includes(searchParams.get('tab')) ? 'jobportals' : searchParams.get('tab') === 'aicalling' ? 'aicalling' : searchParams.get('tab') === 'sms' ? 'sms' : searchParams.get('tab') === 'rcs' ? 'rcs' : searchParams.get('tab') === 'omni' ? 'omni' : searchParams.get('tab') === 'aimarketing' ? 'aimarketing' : (['facebook', 'social'].includes(searchParams.get('tab')) || searchParams.get('facebook')) ? 'facebook' : 'health'));
   const { user: me } = useAuth();
   const mayJobPortals = !!me && (['SUPER_ADMIN', 'ADMIN'].includes(me.role) || ['SUPER_ADMIN', 'ADMIN'].includes(me.atsRole));
   const [data, setData] = useState(null);
@@ -290,7 +291,7 @@ export default function Integrations() {
     <div>
       <div className="page-head">
         <div><h1>Integrations</h1>
-          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'rcs' ? 'RCS (rich messages) through rcssms.in: test send, templates, the message log and who may send.' : tab === 'omni' ? 'Omni-Channel uses the same Email, SMS and WhatsApp as TeamLink. Connect them once, here.' : tab === 'facebook' ? 'Facebook Pages, Instagram, Threads and LinkedIn: connect as many accounts as you have; the default one is used for job posts (and Omni-Channel for the first three).' : tab === 'jobportals' ? 'Naukri and Shine: the response mailboxes and their recruiters, job sites, email, SMS and WhatsApp of the Job Portal, and AI screening.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
+          <div className="page-sub">{tab === 'health' ? 'Is every connection working? What to fix.' : tab === 'rcs' ? 'RCS (rich messages) through rcssms.in: test send, templates, the message log and who may send.' : tab === 'omni' ? 'Omni-Channel uses the same Email, SMS and WhatsApp as TeamLink. Connect them once, here.' : tab === 'aimarketing' ? 'The outside AI platform that makes the pictures and videos of Omni-Channel > AI Marketing. Connect it once, here.' : tab === 'facebook' ? 'Facebook Pages, Instagram, Threads and LinkedIn: connect as many accounts as you have; the default one is used for job posts (and Omni-Channel for the first three).' : tab === 'jobportals' ? 'Naukri and Shine: the response mailboxes and their recruiters, job sites, email, SMS and WhatsApp of the Job Portal, and AI screening.' : tab === 'messaging' ? 'Send WhatsApp and SMS straight from TeamLink, and see every message in the Communication log.' : tab === 'connections'
             ? 'Every outside channel the platform talks to — messaging, email, calling, scheduling, job boards, storage, finance and developer access.'
             : 'Synchronisation between the TeamLink Job Portal and this ATS — status, controls and the record of every sync.'}</div></div>
       </div>
@@ -333,6 +334,11 @@ export default function Integrations() {
             Omni-Channel
           </div>
         )}
+        {mayJobPortals && (
+          <div className={`tab${tab === 'aimarketing' ? ' active' : ''}`} onClick={() => setTab('aimarketing')}>
+            AI Marketing
+          </div>
+        )}
         <div className={`tab${tab === 'jobportal' ? ' active' : ''}`} onClick={() => setTab('jobportal')}>
           Job Portal <span className={`status ${jpBadge.cls}`}>{jpBadge.txt}</span>
         </div>
@@ -343,6 +349,7 @@ export default function Integrations() {
       {tab === 'rcs' && mayJobPortals && <RcsAdmin />}
       {tab === 'aicalling' && <AiCallingAdmin />}
       {tab === 'omni' && mayJobPortals && <OmniChannelIntegrations canConfigure={mayJobPortals} />}
+      {tab === 'aimarketing' && mayJobPortals && <AiMarketingPlatform />}
       {tab === 'facebook' && mayJobPortals && <SocialMedia initialSub={searchParams.get('sub') || 'facebook'} reloadKey={`${socialKey}-${data ? data.connected : 0}`} />}
       {tab === 'jobportals' && mayJobPortals && <JobPortalSettings initial={searchParams.get('tab') === 'mailboxes' ? 'mailboxes' : searchParams.get('sub') || 'mailboxes'} legacy={<JobPortalsAdmin />} />}
 
