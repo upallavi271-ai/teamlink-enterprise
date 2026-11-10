@@ -644,6 +644,21 @@ export function teamlinkFrontRouter({ root, express }) {
    * THE APPLY LINK FROM WHATSAPP (founder 2026-11-09): /tl-addon/apply-link.js (embed/apply-link-addon.js). A job link with tl_apply=1 sends a visitor
    * without a login to registration first ("You're applying for <job>"), and the portal's own apply flow sends the application after they register.
    */
+  /*
+   * IMPORT RESUMES THAT ALSO ADD THE NEW PEOPLE (founder 2026-11-10, embed/resume-import.mjs + embed/resume-import-addon.js): a resume of
+   * somebody new makes the candidate, attaches it and sends a login with the TeamLink link; files are read a few at a time. The portal's
+   * own session, CSRF and role checks guard it; the portal's own modules do the work.
+   */
+  r.get('/tl-addon/resume-import.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'resume-import-addon.js'));
+  });
+  r.post('/api/tl-resumes/import', (req, res, next) => {
+    import(pathToFileURL(join(import.meta.dirname, 'resume-import.mjs')).href)
+      .then((m) => m.handler(ROOT))
+      .then((h) => h(req, res, next), next);
+  });
   r.get('/tl-addon/apply-link.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');
