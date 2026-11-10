@@ -332,11 +332,15 @@ async function loadWorld(appWhere, reqWhere, today) {
   };
 }
 
-async function worldFor(user, { fresh = false } = {}) {
+async function worldFor(user, opts = {}) {
+  return worldOf(applicationWhere(user), requirementWhere(user), opts);
+}
+// The whole company's rows (the same cached copy the Super Admin page reads): the department TL's results boxes read their
+// department out of it (dropsAndMonths), so a TL sees every joining / drop / replacement of their department.
+const companyWorld = (opts = {}) => worldOf({}, {}, opts);
+async function worldOf(appWhere, reqWhere, { fresh = false } = {}) {
   // ?fresh=1 (a bulk action, the reminders, the tests): the next-action snapshot must be current too, not only the rows.
   if (fresh) await NA.ensureNextActionContext({ fresh: true });
-  const appWhere = applicationWhere(user);
-  const reqWhere = requirementWhere(user);
   const today = NA.todayIst();
   const key = crypto.createHash('md5').update(JSON.stringify([appWhere, reqWhere, today])).digest('hex');
   const stamp = await dataStamp();
@@ -728,53 +732,57 @@ function replacementWord(r) {
   if (Number(r.backfilled)) return ['Not recorded', 'grey']; // an old drop brought in from the sheets
   return ['Waiting for the client', 'amber'];
 }
-async function dropsWidget(c, b, k) {
-  let recs = [];
+async function droppedRecords() {
   try {
     const S = require('../joindrop/schema'); // eslint-disable-line global-require
     if (await S.ensure()) {
-      recs = await S.rows('SELECT "applicationId", "backfilled", "joinedOn", "droppedOn", "dropReason", "dropReasonDetail", "dropWithinGuarantee", "guaranteeEndsOn", "replacementDecision", "replacementStatus", "replacementApplicationId", "updatedAt" FROM "JoiningRecord" WHERE "status" = \'Dropped\'');
+      return await S.rows('SELECT "applicationId", "backfilled", "joinedOn", "droppedOn", "dropReason", "dropReasonDetail", "dropWithinGuarantee", "guaranteeEndsOn", "replacementDecision", "replacementStatus", "replacementApplicationId", "updatedAt" FROM "JoiningRecord" WHERE "status" = \'Dropped\'');
     }
-  } catch (err) { console.error('[atsHome] drops failed:', err.message); recs = []; } // eslint-disable-line no-console
-  const w = b.world;
-  const inSel = new Set(k.sel.map((x) => x.a.id));
+  } catch (err) { console.error('[atsHome] drops failed:', err.message); } // eslint-disable-line no-console
+  return [];
+}
+// the day a "did not join" was closed: the last move to a closed step, else the last change
+const closedDayOf = (x) => { const e = [...x.evs].reverse().find((v) => v.to === 'REJECTED'); return istDayOf(e ? e.at : x.a.updatedAt); };
+const replacedDayOf = (w, r) => { const x = r.replacementApplicationId && w.byId.get(r.replacementApplicationId); return (x && joinFacts(x).day) || String(r.updatedAt || '').slice(0, 10); };
+function dropExtra(r) {
+  const [repl, replTone] = replacementWord(r);
+  const reason = r.dropReason && /^other/i.test(r.dropReason) && r.dropReasonDetail ? r.dropReasonDetail : (r.dropReason && !/^not recorded$/i.test(r.dropReason) ? r.dropReason : null);
+  return {
+    dropKind: 'left', joinedOn: r.joinedOn || null, droppedOn: r.droppedOn || null, dropReason: reason,
+    inGuarantee: r.dropWithinGuarantee === 1 ? true : (r.dropWithinGuarantee === 0 ? false : null), guaranteeEndsOn: r.guaranteeEndsOn || null,
+    replacement: repl, replTone, note: `Left ${r.droppedOn ? dmyShort(r.droppedOn) : '(day not recorded)'}${reason ? ` · ${reason}` : ''} · ${repl}`, tone: replTone === 'red' ? 'red' : 'amber',
+  };
+}
+const nojoinExtra = (day) => ({ dropKind: 'nojoin', droppedOn: day, joinedOn: null, dropReason: null, replacement: null, note: `Did not join · ${dmyShort(day)}`, tone: 'amber' });
+// a set over these rows (the department / company copy for a TL, the BDE TL and the admins: setRows reads set.world)
+const recSetOf = (b, w, id, title, list) => {
+  const sorted = [...list].sort((x, y) => String(y.droppedOn || '').localeCompare(String(x.droppedOn || '')));
+  return addSet(b, id, { kind: 'app', title, world: w, ids: sorted.map((r) => r.applicationId).filter((a) => w.byId.has(a)), extra: new Map(sorted.map((r) => [r.applicationId, dropExtra(r)])) });
+};
+const noJoinOf = (rows, recs) => {
+  const recorded = new Set(recs.map((r) => r.applicationId));
+  return rows.filter((x) => x.a.joiningStatus === 'Dropped' && !JOINED.includes(x.a.stage) && !recorded.has(x.a.id)).map((x) => ({ x, day: closedDayOf(x) }));
+};
+
+async function dropsWidget(c, b, k, rows = k.sel, w = b.world, recsIn = null, scopeWord = '') {
+  const recs = recsIn || await droppedRecords();
+  const inSel = new Set(rows.map((x) => x.a.id));
   const p = c.period;
   const inP = (d) => !!d && d >= p.from && d <= p.to;
   const left = recs.filter((r) => inSel.has(r.applicationId));
   // an old drop brought in from the sheets has no drop day: it counts under "so far" only
   const leftP = left.filter((r) => (r.droppedOn ? inP(r.droppedOn) : p.key === 'all'));
-  const recorded = new Set(recs.map((r) => r.applicationId));
-  // the day a "did not join" was closed: the last move to a closed step, else the last change
-  const closedDay = (x) => { const e = [...x.evs].reverse().find((v) => v.to === 'REJECTED'); return istDayOf(e ? e.at : x.a.updatedAt); };
-  const noJoin = k.sel.filter((x) => x.a.joiningStatus === 'Dropped' && !JOINED.includes(x.a.stage) && !recorded.has(x.a.id))
-    .map((x) => ({ x, day: closedDay(x) })).filter((o) => inP(o.day));
+  const noJoin = noJoinOf(rows, recs).filter((o) => inP(o.day));
   const toGive = left.filter((r) => (r.replacementDecision === 'NEEDED' || r.replacementStatus === 'Requested' || r.replacementStatus === 'New candidate added') && !['Closed', 'Not needed'].includes(r.replacementStatus));
   const toDecide = leftP.filter((r) => !r.replacementDecision && !r.replacementStatus && r.dropWithinGuarantee !== 0 && !Number(r.backfilled));
-  const replacedDay = (r) => { const x = r.replacementApplicationId && w.byId.get(r.replacementApplicationId); return (x && joinFacts(x).day) || String(r.updatedAt || '').slice(0, 10); };
-  const replaced = left.filter((r) => r.replacementStatus === 'Closed' && inP(replacedDay(r)));
-
-  const recExtra = (r) => {
-    const [repl, replTone] = replacementWord(r);
-    const reason = r.dropReason && /^other/i.test(r.dropReason) && r.dropReasonDetail ? r.dropReasonDetail : (r.dropReason && !/^not recorded$/i.test(r.dropReason) ? r.dropReason : null);
-    return {
-      dropKind: 'left', joinedOn: r.joinedOn || null, droppedOn: r.droppedOn || null, dropReason: reason,
-      inGuarantee: r.dropWithinGuarantee === 1 ? true : (r.dropWithinGuarantee === 0 ? false : null), guaranteeEndsOn: r.guaranteeEndsOn || null,
-      replacement: repl, replTone, note: `Left ${r.droppedOn ? dmyShort(r.droppedOn) : '(day not recorded)'}${reason ? ` · ${reason}` : ''} · ${repl}`, tone: replTone === 'red' ? 'red' : 'amber',
-    };
-  };
-  const recSet = (id, title, list) => {
-    const sorted = [...list].sort((x, y) => String(y.droppedOn || '').localeCompare(String(x.droppedOn || '')));
-    return addSet(b, id, { kind: 'app', title, ids: sorted.map((r) => r.applicationId).filter((a) => w.byId.has(a)), extra: new Map(sorted.map((r) => [r.applicationId, recExtra(r)])) });
-  };
-  recSet('drop-left', `Left after joining ${c.word}`, leftP);
-  recSet('repl-todo', 'Replacement to give', toGive);
-  recSet('repl-wait', `Client to decide on a replacement (left ${c.word})`, toDecide);
-  recSet('repl-done', `Replaced ${c.word}`, replaced);
+  const replaced = left.filter((r) => r.replacementStatus === 'Closed' && inP(replacedDayOf(w, r)));
+  const sfx = scopeWord ? ` · ${scopeWord}` : '';
+  recSetOf(b, w, 'drop-left', `Left after joining ${c.word}${sfx}`, leftP);
+  recSetOf(b, w, 'repl-todo', `Replacement to give${sfx}`, toGive);
+  recSetOf(b, w, 'repl-wait', `Client to decide on a replacement (left ${c.word})${sfx}`, toDecide);
+  recSetOf(b, w, 'repl-done', `Replaced ${c.word}${sfx}`, replaced);
   const nj = [...noJoin].sort((x, y) => String(y.day).localeCompare(String(x.day)));
-  addSet(b, 'drop-nojoin', {
-    kind: 'app', title: `Did not join ${c.word}`, ids: nj.map((o) => o.x.a.id),
-    extra: new Map(nj.map((o) => [o.x.a.id, { dropKind: 'nojoin', droppedOn: o.day, joinedOn: null, dropReason: null, replacement: null, note: `Did not join · ${dmyShort(o.day)}`, tone: 'amber' }])),
-  });
+  addSet(b, 'drop-nojoin', { kind: 'app', world: w, title: `Did not join ${c.word}${sfx}`, ids: nj.map((o) => o.x.a.id), extra: new Map(nj.map((o) => [o.x.a.id, nojoinExtra(o.day)])) });
   const cards = [
     { id: 'drop-left', label: 'Left after joining', hint: `Joined, then left ${c.word}`, value: leftP.length, tone: 'red', drill: 'drop-left', button: 'See who', zero: `Nobody left ${c.word}` },
     { id: 'drop-nojoin', label: 'Did not join', hint: `Selected, then dropped before joining ${c.word}`, value: noJoin.length, tone: 'yellow', drill: 'drop-nojoin', button: 'See who', zero: `No drops before joining ${c.word}` },
@@ -783,7 +791,74 @@ async function dropsWidget(c, b, k) {
     { id: 'repl-done', label: 'Replaced', hint: `The replacement joined ${c.word}`, value: replaced.length, tone: 'green', drill: 'repl-done', button: 'See who', zero: `No replacement joined ${c.word}` },
   ];
   if (!cards.some((x) => x.value)) return null;
-  return { id: 'drops', type: 'alerts', size: 'full', title: 'Drops & replacements', cards };
+  return { id: 'drops', type: 'alerts', size: 'full', title: `Drops & replacements${scopeWord ? ` — ${scopeWord}` : ''}`, cards };
+}
+
+// MONTH BY MONTH (founder 2026-11-10: "department joiings ahh dep tl ki kanipinchali, monthly wise etc... joiings, drops, replcements
+// respective dep tls ki, evarivi vallakey; overall bde tl ki"): the last six months - Joined, Left after joining, Did not join,
+// Replacement asked, Replaced - over the same rows as the Drops & replacements box. Every number opens its list.
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const prevMonthOf = (m) => { const [y, mo] = m.split('-').map(Number); return mo === 1 ? `${y - 1}-12` : `${y}-${String(mo - 1).padStart(2, '0')}`; };
+function monthsWidget(c, b, rows, w, recs, scopeWord = '') {
+  const months = [];
+  for (let m = c.today.slice(0, 7), i = 0; i < 6; i += 1, m = prevMonthOf(m)) months.push(m);
+  const ids = new Set(rows.map((x) => x.a.id));
+  const left = recs.filter((r) => ids.has(r.applicationId));
+  const joined = rows.filter((x) => JOINED.includes(x.a.stage)).map((x) => ({ x, day: joinFacts(x).day }));
+  const noJoin = noJoinOf(rows, recs);
+  const asked = (r) => r.replacementDecision === 'NEEDED' || ['Requested', 'New candidate added', 'Closed'].includes(r.replacementStatus);
+  const sfx = scopeWord ? ` · ${scopeWord}` : '';
+  const out = months.map((m) => {
+    const label = `${MONTH_NAMES[+m.slice(5) - 1]} ${m.slice(0, 4)}`;
+    const inM = (d) => !!d && String(d).slice(0, 7) === m;
+    const J = joined.filter((o) => inM(o.day)).map((o) => o.x);
+    const L = left.filter((r) => inM(r.droppedOn));
+    const N = noJoin.filter((o) => inM(o.day));
+    const A = L.filter(asked);
+    const R = left.filter((r) => r.replacementStatus === 'Closed' && inM(replacedDayOf(w, r)));
+    const cell = (n, id) => ({ n, drill: n ? id : null });
+    addSet(b, `mon-${m}-joined`, { kind: 'app', world: w, title: `Joined in ${label}${sfx}`, ids: ids2(J), extra: joinExtraOf(J) });
+    recSetOf(b, w, `mon-${m}-left`, `Left after joining in ${label}${sfx}`, L);
+    addSet(b, `mon-${m}-nojoin`, { kind: 'app', world: w, title: `Did not join in ${label}${sfx}`, ids: N.map((o) => o.x.a.id), extra: new Map(N.map((o) => [o.x.a.id, nojoinExtra(o.day)])) });
+    recSetOf(b, w, `mon-${m}-asked`, `Replacement asked (left in ${label})${sfx}`, A);
+    recSetOf(b, w, `mon-${m}-replaced`, `Replaced in ${label}${sfx}`, R);
+    return {
+      month: m, label, joined: cell(J.length, `mon-${m}-joined`), left: cell(L.length, `mon-${m}-left`), nojoin: cell(N.length, `mon-${m}-nojoin`),
+      asked: cell(A.length, `mon-${m}-asked`), replaced: cell(R.length, `mon-${m}-replaced`),
+    };
+  });
+  if (!out.some((r) => r.joined.n || r.left.n || r.nojoin.n || r.asked.n || r.replaced.n)) return null;
+  return { id: 'drops-months', type: 'months', size: 'full', title: `Joinings, drops & replacements — month by month${scopeWord ? ` · ${scopeWord}` : ''}`, rows: out };
+}
+const ids2 = (list) => list.map((x) => x.a.id);
+
+// WHOSE RESULTS A PAGE SHOWS: a department TL (TL / STL / Manager / Asst Manager with departments) - their departments across the
+// whole company, Medical and Non IT Medical never mixed (the department must match exactly); the BDE TL and the admins - every
+// department; anyone else - their own rows. The page's filters (department, client …) still apply.
+const deptKey = (d) => String(d || '').toLowerCase().replace(/[^a-z]/g, '');
+const DEPT_LEADS = ['tl', 'stl', 'manager', 'asstmanager'];
+async function resultsScope(c, k) {
+  const s = scopeOf(c.user);
+  const depts = (s.departments || []).filter(Boolean);
+  const deptLead = DEPT_LEADS.includes(c.layout) && depts.length > 0;
+  const overall = COMPANY.includes(c.layout) || (c.layout === 'bde' && isBdeTl(c.user));
+  if (!deptLead && !overall) return { rows: k.sel, w: null, word: '' };
+  const cw = await companyWorld();
+  let rows = cw.rows.filter((x) => rowMatches(x, c.f));
+  let word = c.f.department || '';
+  if (deptLead) {
+    const want = new Set(depts.map(deptKey));
+    rows = rows.filter((x) => want.has(deptKey(x.a.requirement && x.a.requirement.department)));
+    // a TL with a team (Education: Usha's Team-A, Sirisha's Team-B): only the rows that are theirs - the team lead named on the
+    // candidate (the sheets' "TL Name", the follow-up, the requirement: the dashboard's Team lead filter) or in their own scope;
+    // a department's only lead (Keerthana - Medical, Bhavana - Non IT Medical / Manufacturing) sees the whole department
+    if ((s.teams || []).length) {
+      const own = new Set(k.sel.map((x) => x.a.id));
+      rows = rows.filter((x) => own.has(x.a.id) || (x.who.tl && x.who.tl.userId === c.user.id));
+      word = word || `${depts.join(' · ')} · my team`;
+    } else word = word || depts.join(' · ');
+  } else word = word || 'All departments';
+  return { rows, w: cw, word };
 }
 
 // ---- the cleanup bucket (Administration → Company Setup → Data cleanup) ---------------
@@ -1236,13 +1311,21 @@ async function buildHome(user, req) {
   else await recruiterHome(c, b, k);
   P.mark('layout');
   // Drops & replacements: right under Needs attention (or the first box), on every page but HR's internal hiring
+  // + the month-by-month box under it. A department TL: their department's; the BDE TL and the admins: every department.
   if (c.layout !== 'hr' && Array.isArray(b.widgets)) {
-    const dw = await dropsWidget(c, b, k).catch((err) => { console.error('[atsHome] drops widget failed:', err.message); return null; }); // eslint-disable-line no-console
-    if (dw) {
-      const at = b.widgets.findIndex((x) => x && (x.id === 'attention' || x.type === 'missed'));
-      const kp = b.widgets.findIndex((x) => x && x.type === 'kpis');
-      b.widgets.splice(at >= 0 ? at + 1 : (kp >= 0 ? kp + 1 : 0), 0, dw);
-    }
+    try {
+      const rs = await resultsScope(c, k);
+      const w = rs.w || b.world;
+      const recs = await droppedRecords();
+      const dw = await dropsWidget(c, b, k, rs.rows, w, recs, rs.word);
+      const mw = monthsWidget(c, b, rs.rows, w, recs, rs.word);
+      const add = [dw, mw].filter(Boolean);
+      if (add.length) {
+        const at = b.widgets.findIndex((x) => x && (x.id === 'attention' || x.type === 'missed'));
+        const kp = b.widgets.findIndex((x) => x && x.type === 'kpis');
+        b.widgets.splice(at >= 0 ? at + 1 : (kp >= 0 ? kp + 1 : 0), 0, ...add);
+      }
+    } catch (err) { console.error('[atsHome] drops widgets failed:', err.message); } // eslint-disable-line no-console
   }
   // The follow-ups line: "N candidates not followed up yet" (the role views;
   // the v3 page keeps to its fixed layout — max 6 cards).
@@ -2635,7 +2718,7 @@ const SEARCH_OF = {
 };
 
 async function setRows(user, b, set) {
-  const w = b.world;
+  const w = set.world || b.world; // the drops / month lists of a department TL read the company copy
   if (set.kind === 'app') {
     const extra = set.extra || new Map();
     return set.ids.map((id) => w.byId.get(id)).filter(Boolean).map((x) => appRowOf(x, extra.get(x.a.id), b.clientDesk));

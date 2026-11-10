@@ -575,6 +575,7 @@ export default function AtsV4({
   const lines = take((w) => w.type === 'lines');
   // Drops & replacements (utils/atsHome.js dropsWidget, 2026-11-10): its own row under Needs attention, never folded away
   const drops = take((w) => w.id === 'drops');
+  const dropMonths = take((w) => w.id === 'drops-months'); // the month-by-month table under it (2026-11-10)
   void lines;
   const att = attentionOf(data, ws, onDrill);
   const openjobs = ws.find((w) => w.type === 'openjobs') || null;
@@ -662,6 +663,7 @@ export default function AtsV4({
         )}
       </div>
       {drops && <div className="av4-drops">{draw(drops)}</div>}
+      {dropMonths && <div className="av4-drops">{draw(dropMonths)}</div>}
 
       {(depts || left3 || tlsW || peopleW || right3) && (
         <div className="av4-row av4-row3">

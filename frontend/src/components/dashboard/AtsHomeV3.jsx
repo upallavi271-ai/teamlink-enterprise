@@ -316,8 +316,33 @@ function Activity({ w, onDrill }) {
   );
 }
 
+// JOININGS, DROPS & REPLACEMENTS MONTH BY MONTH (utils/atsHome.js monthsWidget, 2026-11-10): a department TL sees their department,
+// the BDE TL and the admins every department. Every number opens its list.
+const MONTH_COLS = [['joined', 'Joined'], ['left', 'Left after joining'], ['nojoin', 'Did not join'], ['asked', 'Replacement asked'], ['replaced', 'Replaced']];
+function Months({ w, onDrill }) {
+  return (
+    <Box title={w.title} className="ahv3-months">
+      <div className="tbl-wrap" style={{ border: 0 }}>
+        <table>
+          <thead><tr><th>Month</th>{MONTH_COLS.map(([k, l]) => <th key={k} className="num">{l}</th>)}</tr></thead>
+          <tbody>{w.rows.map((r) => (
+            <tr key={r.month}>
+              <td>{r.label}</td>
+              {MONTH_COLS.map(([k]) => (
+                <td key={k} className="num">
+                  {r[k].n ? <button type="button" className="link-btn" onClick={() => onDrill(r[k].drill)} title="Open the list">{fmt(r[k].n)}</button> : <span className="cell-muted">0</span>}
+                </td>
+              ))}
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    </Box>
+  );
+}
+
 // widget type → how it is drawn (AtsHome.jsx merges this into its registry).
 export const V3_WIDGETS = {
-  alerts: Alerts, funnel3: Funnel, bars: Joinings, donut: Rejections, depts3: Departments,
+  alerts: Alerts, months: Months, funnel3: Funnel, bars: Joinings, donut: Rejections, depts3: Departments,
   interviews: Interviews, team: Team, money3: Money, activity: Activity,
 };
