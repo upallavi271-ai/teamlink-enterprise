@@ -127,6 +127,38 @@ function OwnershipLines({ o, owner }) {
   );
 }
 
+// OWNERSHIP & CREDIT (founder 2026-11-10, the format he gave): Originally sourced by · Currently assigned to · Sourcing credit ·
+// Follow-up credit · Selection credit · Joining credit (who got them Selected) · the handover history. Server: routes/candidates.js
+// loadInScope (utils/handover.js, utils/workers.js) - read from the history, never overwritten by a handover.
+function OwnershipCreditCard({ app }) {
+  const o = app.ownership;
+  const rows = [
+    ['Originally sourced by', o.sourcedBy], ['Currently assigned to', o.currentlyWith], ['Sourcing credit', o.sourcedBy],
+    ['Follow-up credit', o.followUpCredit], ['Selection credit', o.selectedBy], ['Joining credit', o.joiningCredit],
+  ].filter(([, v]) => v);
+  const tl = o.timeline || [];
+  return (
+    <div className="cdw-card c360-own">
+      <div className="cdw-label">Ownership &amp; credit</div>
+      <div className="c360-facts">
+        <div className="cdw-kv"><span>Pipeline stage</span><b><StatusChip status={app.stageGroupLabel || app.stageLabel} /></b></div>
+        {rows.map(([l, v]) => <div key={l} className="cdw-kv"><span>{l}</span><b>{v}</b></div>)}
+      </div>
+      {tl.length > 0 && (
+        <>
+          <div className="c360-sub">Handover history</div>
+          <ol style={{ margin: '4px 0 0', paddingLeft: 20, display: 'grid', gap: 4 }}>
+            {tl.map((t, i) => (
+              <li key={`${t.at}-${i}`} style={{ fontSize: 12.5 }}>{t.text} <span className="small-muted">{`· ${shortDay(t.at)}`}</span></li>
+            ))}
+          </ol>
+        </>
+      )}
+      {o.joiningCredit && <div className="small-muted" style={{ marginTop: 6 }}>The joining counts for whoever got the candidate Selected; a handover never moves it.</div>}
+    </div>
+  );
+}
+
 export default function CandidateDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -485,6 +517,7 @@ export default function CandidateDetail() {
             linkTo={(a) => <Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link>}
           />
         </div>
+        {primary && internal && primary.ownership && <OwnershipCreditCard app={primary} />}
         {/* Progress, Actions, AI and Client feedback are direct cells of the
             page grid (same card padding and gap), so rows stay aligned. */}
         <>

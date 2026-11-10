@@ -2238,7 +2238,7 @@ async function loadInScope(req, res) {
       const ids = apps.map((a) => a.id);
       const [evRows, fuRows, dir, HO] = await Promise.all([
         prisma.applicationStageEvent.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, fromStage: true, toStage: true, actorUserId: true, actorName: true, actorRole: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
-        prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
+        prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, createdAt: true, completedAt: true }, orderBy: { createdAt: 'asc' } }),
         W.loadDirectory(),
         require('../utils/handover').handoversFor(ids), // eslint-disable-line global-require
       ]);
@@ -2255,7 +2255,28 @@ async function loadInScope(req, res) {
         const selAt = W.selectedAt(e);
         const joined = ['JOINED', 'HIRED'].includes(a.stage);
         const joinAt = /^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : (a.joinedAt || null);
+        // FOLLOW-UP CREDIT: who did the latest follow-up that was done (else who has the candidate now)
+        const lastDone = [...f].filter((x) => x.completedAt && (x.ownerUserId || x.ownerName)).sort((x, y) => new Date(x.completedAt) - new Date(y.completedAt)).pop();
+        const followUpBy = lastDone ? label(dir.person(lastDone.ownerUserId, lastDone.ownerName)) : null;
+        // THE HISTORY OF WHO DID WHAT (the founder's "Handover history"): sourced, the key steps and by whom, every handover - by date
+        const STEP_WORDS = { SHARED_WITH_CLIENT: 'sent to the client', CLIENT_REVIEW: 'sent to the client', CLIENT_SHORTLISTED: 'shortlisted by the client', INTERVIEW_SCHEDULED: 'moved to Client Interview', SELECTED: 'selected', OFFER: 'given the offer', OFFER_ACCEPTED: 'confirmed to join', JOINED: 'joined', HIRED: 'joined', REJECTED: 'closed (dropped / rejected)' };
+        const realName = (ev) => (ev.actorUserId || (ev.actorName && !/^imported|^system$|joinings sheet/i.test(ev.actorName)) ? label(dir.person(ev.actorUserId, ev.actorName)) : null);
+        const timeline = [];
+        const src = W.sourcedBy(attrReq, f, e, dir.person, h);
+        timeline.push({ at: (e[0] && e[0].createdAt) || a.createdAt, text: `Candidate sourced${src ? ` by ${src.label}` : ''}` });
+        const seen = new Set();
+        e.forEach((ev) => {
+          const w = STEP_WORDS[ev.toStage];
+          if (!w || seen.has(w) || !ev.fromStage) return;
+          seen.add(w);
+          const who = realName(ev);
+          timeline.push({ at: ev.createdAt, text: `Candidate ${w}${who ? ` by ${who}` : ''}` });
+        });
+        h.forEach((x) => timeline.push({ at: new Date(x.at), text: `Candidate handed over${x.from ? ` from ${x.from}` : ''} to ${x.to}${x.kind === 'the recruiter left' ? ' (the recruiter left)' : x.kind === 'taken off the requirement' ? ' (taken off the requirement)' : ''}${x.reason && x.kind === 'handed over by hand' ? ` - ${x.reason}` : ''}` }));
+        timeline.sort((x, y) => new Date(x.at) - new Date(y.at));
         a.ownership = {
+          followUpCredit: followUpBy || a.ownerRecruiterName || null,
+          timeline: timeline.slice(0, 14).map((t) => ({ at: new Date(t.at).toISOString(), text: t.text })),
           sourcedBy: label(W.sourcedBy(attrReq, f, e, dir.person, h)),
           currentlyWith: a.ownerRecruiterName || null,
           selectedBy: selAt ? label(W.creditAt(attrReq, f, e, dir.person, selAt, h)) : null,
