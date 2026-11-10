@@ -40,6 +40,7 @@ const {
 } = require('../utils/audience');
 
 const WD = require('../utils/workingDays'); // "days late" = working days only (founder 2026-11-03)
+const DayUpd = require('../utils/taskDayUpdate'); // Timesheet daily tracking (founder 2026-11-10)
 const router = express.Router();
 router.use(requireAuth);
 // the week-off setting + holiday calendar for the working-day counts below (utils/workingDays.js)
@@ -449,7 +450,7 @@ async function dayEndReport({ day = today(), userIds = null } = {}) {
   const tasks = all.filter((t) => OPEN_STATUSES.includes(t.status) || t.reviewState === 'Pending Review'
     || istDay(t.completedAt) === day || istDay(t.reviewedAt) === day);
   const ids = tasks.map((t) => t.id);
-  const [total, todayHrs, tls] = await Promise.all([hoursMap(ids), hoursMap(ids, { from: day, to: day }), tlOfUsers(tasks.map((t) => t.assigneeId))]);
+  const [total, todayHrs, tls, upd] = await Promise.all([hoursMap(ids), hoursMap(ids, { from: day, to: day }), tlOfUsers(tasks.map((t) => t.assigneeId)), DayUpd.todayOf(ids, day)]);
   const emps = await prisma.employee.findMany({ where: { userId: { in: [...new Set(tasks.map((t) => t.assigneeId))] } }, select: { userId: true, department: true, employeeCode: true } });
   const empOf = new Map(emps.map((e) => [e.userId, e]));
   const counts = Object.fromEntries(DAY_STATES.map(([k]) => [k, 0]));
@@ -461,7 +462,7 @@ async function dayEndReport({ day = today(), userIds = null } = {}) {
     let state;
     if (t.status === 'Completed') state = t.reviewState === 'Pending Review' ? 'waiting' : 'completed';
     else if (t.reviewState === 'Changes Requested') state = 'sentback';
-    else if (hrs > 0 || addOnsDone > 0) state = 'partial';
+    else if (hrs > 0 || addOnsDone > 0 || (t.progress || 0) > 0) state = 'partial';
     else state = t.status === 'In Progress' ? 'inprogress' : t.status === 'On Hold' ? 'onhold' : 'notstarted';
     const isLate = isOverdue(t, day);
     counts[state] += 1;
@@ -475,6 +476,8 @@ async function dayEndReport({ day = today(), userIds = null } = {}) {
     people.get(t.assigneeId).tasks.push({
       id: t.id, name: t.name, state, label: (DAY_STATES.find(([k]) => k === state) || [])[1], why, late: isLate, daysLate: isLate ? Math.max(1, WD.after(t.endDate, day)) : 0,
       due: t.endDate, givenBy: t.assignedById === t.assigneeId ? 'Self' : t.assignedByName, hoursToday: todayHrs.logged.get(t.id) || 0, hoursTotal: round2(hrs),
+      progress: t.status === 'Completed' ? 100 : (t.progress || 0),
+      update: upd.get(t.id) ? { progress: upd.get(t.id).progress, done: upd.get(t.id).done, why: upd.get(t.id).why } : null,
     });
   });
   return { day, counts, late, total: tasks.length, states: DAY_STATES.map(([key, label]) => ({ key, label })), people: [...people.values()] };
@@ -635,6 +638,7 @@ router.get('/', VIEW, async (req, res, next) => {
     const assigneeOf = Object.fromEntries(assignees.map((e) => [e.userId, e]));
     const now = today();
     const tlMap = await tlOfUsers(tasks.map((t) => t.assigneeId));
+    const todayUpd = await DayUpd.todayOf(tasks.filter((t) => OPEN_STATUSES.includes(t.status)).map((t) => t.id));
     const canApproveTasks = await can(req.user, 'hrms', 'hrms', 'Employee Services', 'approve');
     const reviewable = new Set();
     for (const t of tasks.filter((x) => x.reviewState === 'Pending Review')) { // eslint-disable-line no-restricted-syntax
@@ -648,6 +652,9 @@ router.get('/', VIEW, async (req, res, next) => {
       assignee: assigneeOf[t.assigneeId] || null,
       hoursLogged: hrs.logged.get(t.id) || 0,
       estimatedHours: hrs.estimate.has(t.id) ? hrs.estimate.get(t.id) : null,
+      // TIMESHEET DAILY TRACKING (2026-11-10): today's update, and whether it is owed (due today or late, open, none yet)
+      todayUpdate: todayUpd.get(t.id) || null,
+      updateOwed: OPEN_STATUSES.includes(t.status) && !!t.endDate && t.endDate <= now && !todayUpd.has(t.id),
       cancelReason: t.status === 'Cancelled' ? (t.reviewNote || null) : null,
       rights: { ...rightsOf(t), review: reviewable.has(t.id) },
     })));
@@ -1720,6 +1727,34 @@ async function noteOnTask(task, me, text) {
 // Start and Complete belong to the person the work is FOR. A lead who may edit
 // the task can also drive them (someone has to, when the assignee is away),
 // which is exactly the taskRights().manage rule.
+// --- TIMESHEET DAILY TRACKING (founder 2026-11-10): today's update + every day's line (utils/taskDayUpdate.js) ---------------------
+router.get('/:id/updates', VIEW, async (req, res, next) => {
+  try {
+    const found = await reachable(req.user, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const t = found.task;
+    const day = today();
+    const rows = await DayUpd.history(t.id);
+    return res.json({
+      task: { id: t.id, name: t.name, status: t.status, progress: t.progress || 0, endDate: t.endDate, assigneeName: t.assigneeName },
+      today: day, updates: rows, mineToday: rows.find((r) => r.date === day) || null,
+      canUpdate: t.assigneeId === req.user.id && OPEN_STATUSES.includes(t.status),
+      dueNow: !!t.endDate && t.endDate <= day,
+    });
+  } catch (err) { return next(err); }
+});
+router.post('/:id/updates', VIEW, async (req, res, next) => {
+  try {
+    const me = req.user;
+    const found = await reachable(me, req.params.id);
+    if (found.error) return res.status(found.status).json(found.error);
+    const out = await DayUpd.save(me, found.task, req.body || {}, today());
+    if (out.error) return res.status(out.status || 400).json({ error: out.error });
+    await logAudit({ userId: me.id, action: 'Task daily update', entity: 'Task', entityId: found.task.id, field: 'progress', fieldLabel: 'Progress', fromValue: `${found.task.progress || 0}%`, toValue: `${out.progress}%` });
+    return res.status(201).json(out);
+  } catch (err) { return next(err); }
+});
+
 router.post('/:id/start', VIEW, async (req, res, next) => {
   try {
     const me = req.user;
@@ -1766,6 +1801,7 @@ router.post('/:id/complete', VIEW, async (req, res, next) => {
         status: 'Completed',
         startedAt: t.startedAt || new Date(),
         completedAt: new Date(),
+        progress: 100,
         reviewState: 'Pending Review',
         reviewedById: null,
         reviewedByName: null,

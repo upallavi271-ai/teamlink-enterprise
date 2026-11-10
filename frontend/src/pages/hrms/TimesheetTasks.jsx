@@ -542,12 +542,14 @@ export function DayEndDialog({ onClose, today }) {
               <div className="tt-name">{p.name}<span className="small-muted">{[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ') ? ` · ${[p.employeeCode, p.department, p.tl ? `TL ${p.tl}` : 'no TL on file'].filter(Boolean).join(' · ')}` : ''}</span></div>
               <div className="tbl-wrap">
                 <table>
-                  <thead><tr><th>Task</th><th>Status</th><th>Given by</th><th>Due</th><th className="num">Hours today</th><th className="num">Hours in all</th></tr></thead>
+                  <thead><tr><th>Task</th><th>Status</th><th className="num">Done</th><th>Today's update</th><th>Given by</th><th>Due</th><th className="num">Hours today</th><th className="num">Hours in all</th></tr></thead>
                   <tbody>
                     {p.tasks.map((t) => (
                       <tr key={t.id}>
                         <td>{t.name}</td>
                         <td><span className={`tt-state ${DAY_TONE[t.state]}`}>{t.label}</span>{t.late && <span className="tt-state red" style={{ marginLeft: 4 }}>{t.daysLate} {t.daysLate === 1 ? 'day' : 'days'} late</span>}{t.why && <div className="small-muted">{t.why}</div>}</td>
+                        <td className="num"><b>{t.progress ?? 0}%</b></td>
+                        <td style={{ maxWidth: 320, whiteSpace: 'pre-wrap' }}>{t.update ? <>{t.update.done}{t.update.why ? <div className="small-muted">Not finished because: {t.update.why}</div> : null}</> : (t.state === 'completed' || t.state === 'waiting' || !(t.late || t.due === day) ? '—' : <span className="small-muted" style={{ color: 'var(--red)' }}>No update today</span>)}</td>
                         <td>{t.givenBy}</td>
                         <td>{t.due ? dmy(t.due) : '—'}</td>
                         <td className="num">{hoursText(t.hoursToday)}</td>
@@ -595,6 +597,7 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
       <AddOnList t={t} me={me} onChanged={() => dlg.reload()} setError={dlg.setError} />
       <TaskFiles t={t} />
       {t.reviewState === 'Changes Requested' && t.reviewNote && <div className="tt-notes">{t.reviewedByName} asked for changes: {t.reviewNote}</div>}
+      <ProgressLine t={t} mine={mine} />
       {(t.hoursLogged > 0 || est != null) && (
         <div className="tt-hours">
           <b>{hoursText(t.hoursLogged)} h</b> worked{est != null ? ` of ${hoursText(est)} h planned` : ''}
@@ -605,6 +608,8 @@ export function TaskCard({ t, me, today, canReview, who, dlg, onStart, busy }) {
         {mine && open && (t.status === 'In Progress'
           ? <button className="btn btn-primary btn-sm" onClick={() => dlg.open('done', t)}>Mark as done</button>
           : <button className="btn btn-primary btn-sm" disabled={busy === t.id} onClick={() => onStart(t)}>Start</button>)}
+        {mine && open && <button className={`btn btn-sm${t.updateOwed ? ' btn-primary' : ''}`} onClick={() => dlg.open('update', t)}>{t.todayUpdate ? "Change today's update" : "Today's update"}</button>}
+        {!mine && (r.assignee || r.manage) && <button className="btn btn-sm" onClick={() => dlg.open('update', t)}>Daily updates</button>}
         {mine && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>Add hours</button>}
         {mine && open && t.status !== 'In Progress' && <button className="btn btn-sm" onClick={() => dlg.open('done', t)}>Mark as done</button>}
         {!mine && (r.assignee || r.manage) && t.status !== 'Cancelled' && <button className="btn btn-sm" onClick={() => dlg.open('hours', t)}>See hours</button>}
@@ -634,6 +639,7 @@ export function useTaskDialogs({ options, reload, setNotice, setError }) {
     const props = { task: d.task, options, onClose: close, onDone: done, setError };
     if (d.kind === 'edit') node = <TaskForm options={options} task={d.task} onClose={close} onSaved={done} />;
     else if (d.kind === 'hours') node = <HoursDialog {...props} />;
+    else if (d.kind === 'update') node = <UpdateDialog {...props} />;
     else if (d.kind === 'done') node = <DoneDialog {...props} />;
     else if (d.kind === 'cancel') node = <CancelDialog {...props} />;
     else if (d.kind === 'extend') node = <ExtendDialog {...props} />;
@@ -1023,6 +1029,116 @@ function NoteDialog({ task, onClose, setError }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// TIMESHEET DAILY TRACKING (founder 2026-11-10: "daily tracking undali, eroju kani complete cheyapothey adhi emaindhi ani notification
+// povali, adhi entha daka vachindhi ani tracking undali"). The person the task is for gives one update a day: how far it got, what they
+// did today and why it is not finished. At 18:00 anyone who owes one is asked; at 19:00 whoever gave the task hears how far it got
+// (backend utils/taskDayUpdate.js). Everyone who can open the task sees every day's line here.
+// ---------------------------------------------------------------------------
+const STEPS = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+export function ProgressLine({ t, mine }) {
+  const open = ['Not Started', 'In Progress', 'On Hold'].includes(t.status);
+  const pct = t.status === 'Completed' ? 100 : (t.progress || 0);
+  if (!open && t.status !== 'Completed') return null;
+  const u = t.todayUpdate;
+  return (
+    <div className="tt-hours">
+      <b>{pct}%</b> done
+      <div className="tt-bar-track"><div className="tt-bar-fill" style={{ width: `${pct}%`, background: pct >= 100 ? 'var(--green)' : undefined }} /></div>
+      {open && u && <div className="small-muted">Today: {u.done}{u.why ? ` · Not finished because: ${u.why}` : ''}</div>}
+      {open && !u && t.updateOwed && (
+        <div className="tt-notes" style={{ color: 'var(--red)' }}>{mine ? "Due by today and not finished: press \"Today's update\" and say what happened." : 'Due by today and not finished. No update today yet.'}</div>
+      )}
+    </div>
+  );
+}
+
+function UpdateDialog({ task, onDone }) {
+  const [data, setData] = useState(null);
+  const [form, setForm] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [saved, setSaved] = useState('');
+  const load = () => api.get(`/tasks/${task.id}/updates`).then((r) => {
+    setData(r.data);
+    const m = r.data.mineToday;
+    setForm({ progress: m ? m.progress : (r.data.task.progress || 0), done: m ? m.done : '', why: m ? m.why : '' });
+  }).catch((e) => setErr(apiError(e, 'The daily updates could not be opened.')));
+  useEffect(() => { load(); }, [task.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function save(e) {
+    e.preventDefault(); setErr(''); setSaved('');
+    if (!form.done.trim()) { setErr('Write what you did on it today.'); return; }
+    if (form.progress < 100 && data.dueNow && !form.why.trim()) { setErr('It was due by today. Write why it is not finished.'); return; }
+    setBusy(true);
+    try {
+      const r = await api.post(`/tasks/${task.id}/updates`, { progress: form.progress, done: form.done, why: form.progress >= 100 ? '' : form.why });
+      setSaved(r.data.finishHint || 'Saved. Your lead can see it.');
+      await load();
+    } catch (er) { setErr(apiError(er, 'The update could not be saved.')); } finally { setBusy(false); }
+  }
+  const can = data && data.canUpdate;
+  return (
+    <Modal title={can ? "Today's update" : 'Daily updates'} onClose={() => onDone('')} foot={(
+      <>
+        <button className="btn" type="button" onClick={() => onDone('')}>Close</button>
+        {can && <button className="btn btn-primary" type="submit" form="tt-upd" disabled={busy}>{busy ? 'Saving...' : 'Save update'}</button>}
+      </>
+    )}>
+      <div className="tt-name" style={{ marginBottom: 4 }}>{task.name}</div>
+      {err && <div className="error-text">{err}</div>}
+      {!data && !err && <div className="small-muted">Loading...</div>}
+      {data && (
+        <>
+          <div className="small-muted" style={{ marginBottom: 8 }}>
+            For {data.task.assigneeName} · {data.task.endDate ? `due ${dmy(data.task.endDate)}` : 'no due day'} · now <b>{data.task.status === 'Completed' ? 100 : data.task.progress}%</b> done
+          </div>
+          {can && form && (
+            <form id="tt-upd" onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 6 }}>How far has it got? <b>{form.progress}%</b></div>
+                <div className="tt-chips" role="group" aria-label="How far">
+                  {STEPS.map((p) => (
+                    <button type="button" key={p} className={`tt-chip${form.progress === p ? ' on' : ''}${p === 100 ? ' green' : ''}`} onClick={() => setForm({ ...form, progress: p })}>{p}%</button>
+                  ))}
+                </div>
+              </div>
+              <label className="field" style={{ margin: 0 }}><span>What did you do on it today?</span>
+                <textarea rows={3} maxLength={1000} value={form.done} onChange={(e) => setForm({ ...form, done: e.target.value })} placeholder="For example: called 12 candidates, 3 interested" />
+              </label>
+              {form.progress < 100 && (
+                <label className="field" style={{ margin: 0 }}><span>{data.dueNow ? 'Why is it not finished? (it was due by today)' : 'Anything stopping you? (optional)'}</span>
+                  <textarea rows={2} maxLength={1000} value={form.why} onChange={(e) => setForm({ ...form, why: e.target.value })} placeholder="For example: waiting for the client's answer" />
+                </label>
+              )}
+              {saved && <div style={{ color: 'var(--green)', fontSize: 13.5 }}>{saved}</div>}
+              <div className="small-muted">One update a day; saving again today changes today's line. At 6 pm you are reminded if a task due by today has no update.</div>
+            </form>
+          )}
+          <div style={{ fontWeight: 600, fontSize: 13.5, marginBottom: 6 }}>Day by day</div>
+          {!data.updates.length && <div className="empty-mini">No daily update yet.</div>}
+          {data.updates.length > 0 && (
+            <div className="tbl-wrap">
+              <table>
+                <thead><tr><th>Day</th><th className="num">Done</th><th>What was done</th><th>Why not finished</th></tr></thead>
+                <tbody>
+                  {data.updates.map((u) => (
+                    <tr key={u.id}>
+                      <td>{dmy(u.date)}</td>
+                      <td className="num"><b>{u.progress}%</b></td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{u.done}</td>
+                      <td style={{ whiteSpace: 'pre-wrap' }}>{u.why || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </Modal>
+  );
+}
+
 function HoursDialog({ task, options, onClose, onDone, setError }) {
   const today = options.today || new Date().toISOString().slice(0, 10);
   const [data, setData] = useState(null);
@@ -1116,7 +1232,13 @@ export function GivenToMe({ tasks, options, dlg, busy, onStart }) {
   const chips = [['open', 'To do', 'blue'], ['late', 'Overdue', 'red'], ['done', 'Done', 'green'], ['cancelled', 'Cancelled', 'grey'], ['all', 'Everything', '']];
   return (
     <div>
-      <p className="tt-lead">Tasks your lead gave you, and tasks you added for yourself. Start one, add your hours each day, then mark it as done.</p>
+      <p className="tt-lead">Tasks your lead gave you, and tasks you added for yourself. Start one, give today's update each day (how far it got), then mark it as done.</p>
+      {mine.some((t) => t.updateOwed) && (
+        <div className="tt-notes" style={{ color: 'var(--red)', marginBottom: 8 }}>
+          {mine.filter((t) => t.updateOwed).length} task(s) were due by today and are not finished. Press "Today's update" on each: how far it got and what happened.{' '}
+          {mine.filter((t) => t.updateOwed).slice(0, 5).map((t) => <button type="button" key={t.id} className="btn btn-sm" style={{ marginLeft: 4 }} onClick={() => dlg.open('update', t)}>{t.name}</button>)}
+        </div>
+      )}
       <div className="tt-chips" role="group" aria-label="Show">
         {chips.filter(([k]) => k === 'open' || k === 'all' || (groups[k] || []).length).map(([k, label, tone]) => (
           <button type="button" key={k} className={`tt-chip ${tone}${f === k ? ' on' : ''}`} onClick={() => setF(k)}>{label} <b>{k === 'all' ? mine.length : groups[k].length}</b></button>

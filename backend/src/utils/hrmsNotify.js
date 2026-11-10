@@ -65,6 +65,9 @@ const EVENTS = {
   // 2026-11-04 (founder: morning / afternoon / evening reminders + a popup; LMS "complete this course"): utils/dayNudges.js
   dayNudge: { label: 'Morning, afternoon and evening reminder (your tasks, courses, Timesheet checklist)', instant: true },
   courseAssigned: { label: 'A course was given to you - complete it', instant: true },
+  // 2026-11-10 (founder: Timesheet daily tracking): utils/taskDayUpdate.js
+  taskDayAsk: { label: 'Evening: your task was not finished today - what happened? (give today\'s update)', instant: true },
+  taskDayReport: { label: 'Evening: how far the tasks you gave got today, and why they are not finished', instant: true },
 };
 const EVENT_KEYS = Object.keys(EVENTS);
 // Spec: important HRMS activities send BOTH in-app and email.

@@ -533,6 +533,8 @@ const server = app.listen(PORT, () => {
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)
   require('./utils/dayNudges').start();
+  // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
+  require('./utils/taskDayUpdate').start();
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).
   setTimeout(() => require('./utils/approvalWorkflow').reopenOwnLeads().then((r) => { if (r.moved) console.log(`[approvals] ${r.moved} request(s) sent back to the requester's own TL`); }).catch((e) => console.error('[approvals] reopen own TL:', e.message)), 20 * 1000).unref();
   // AI phone calls through our own SIP line with free voices (calling/voice/sipCall.js): off unless AI_VOICE_GATEWAY=1.
