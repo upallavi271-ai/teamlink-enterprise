@@ -30,8 +30,13 @@ const when = (d) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16
   }
   const users = out.users || []; const cands = out.candidates || [];
   console.log(`\nPORTAL ACCOUNTS with "${find}" in the email: ${users.length}`);
-  users.forEach((u) => console.log(`  "${u.email}"  role=${u.role}  status=${u.status}  made=${when(u.created_at)}  last sign-in=${when(u.last_login_at)}`
-    + `  temporary password=${u.must_change_password ? 'yes (never changed)' : 'no'}`));
+  users.forEach((u) => {
+    console.log(`  "${u.email}"  role=${u.role}  status=${u.status}  made=${when(u.created_at)}  last sign-in=${when(u.last_login_at)}`
+      + `  temporary password=${u.must_change_password ? 'yes (never changed)' : 'no'}`);
+    // the account row is stamped on every change (a sign-in, a new password, a reset, an admin setting it): later than the last sign-in = changed since
+    const after = u.updated_at && u.last_login_at && Date.parse(u.updated_at) - Date.parse(u.last_login_at) > 60000;
+    console.log(`      account last changed=${when(u.updated_at)}${after ? '  <- AFTER the last sign-in: the password (or the account) was changed since then' : '  (nothing changed since the last sign-in)'}`);
+  });
   console.log(`\nPORTAL CANDIDATES with "${find}" in the email, name or phone: ${cands.length}`);
   cands.forEach((k) => {
     console.log(`  ${k.id}  ${k.name}  email="${k.email}"  phone=${k.phone || '-'}  made=${when(k.created_at)}`
@@ -39,6 +44,19 @@ const when = (d) => (d ? new Date(d).toISOString().replace('T', ' ').slice(0, 16
     (k.invites || []).forEach((i) => console.log(`      login message: ${when(i.created_at)} ${i.channel} -> ${i.to_address || '-'}  ${i.status}${i.provider ? ` via ${i.provider}` : ''}${i.error ? `  (${String(i.error).slice(0, 120)})` : ''}`));
     if (!(k.invites || []).length) console.log('      login message: none was ever sent');
   });
+
+  const em = out.email;
+  console.log(`\nPORTAL MAILS (Forgot password, logins): ${em ? (em.configured ? `ready - sent through ${em.host} from ${em.from}` : 'NOT SET UP - the portal has no mail account, so no reset mail can leave') : 'unknown'}`);
+  try {
+    const { LOGFILE } = require('../src/utils/jobPortalEmbed'); // eslint-disable-line global-require
+    const fs = require('fs'); // eslint-disable-line global-require
+    const size = fs.statSync(LOGFILE).size; const fd = fs.openSync(LOGFILE, 'r');
+    const buf = Buffer.alloc(Math.min(size, 3 * 1024 * 1024)); fs.readSync(fd, buf, 0, buf.length, size - buf.length); fs.closeSync(fd);
+    const lines = buf.toString('utf8').split('\n').filter((l) => /\[auth\]|reset mail|smtp|email:/i.test(l)).slice(-12);
+    console.log(`Portal log, mail lines (latest ${lines.length}):`);
+    lines.forEach((l) => console.log(`  ${l.slice(0, 220)}`));
+    if (!lines.length) console.log('  none: no reset mail failed in the recent log (Forgot password with an email that has no account sends nothing, silently)');
+  } catch (e) { console.log(`Portal log not readable here: ${e.message}`); }
 
   console.log('\nWHAT IT MEANS');
   if (!users.length && !cands.length) console.log('  Nothing in the Job Portal looks like this. There is no account: the candidate has to Register first (or be added and sent a login).');

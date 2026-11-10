@@ -444,7 +444,7 @@ export function teamlinkFrontRouter({ root, express }) {
     const digits = find.replace(/\D/g, '');
     const { withUser } = await portal();
     const out = await withUser(SYSTEM, async (c) => {
-      const users = (await c.query(`select id, email, role, status, created_at, last_login_at, must_change_password
+      const users = (await c.query(`select id, email, role, status, created_at, last_login_at, updated_at, must_change_password
           from users where lower(email) like $1 order by created_at limit 20`, [like])).rows;
       const cands = (await c.query(`select c.id, c.name, c.email, c.phone, c.user_id, c.created_at, u.email as login_email, u.status as login_status
           from candidates c left join users u on u.id = c.user_id
@@ -458,6 +458,8 @@ export function teamlinkFrontRouter({ root, express }) {
       }
       return { users, candidates: cands };
     });
+    // where the portal's mails go (Forgot password, logins): TeamLink's SMTP account, set in memory after each portal start
+    out.email = await emailInfo().catch(() => null);
     return res.json(out);
   }));
 
