@@ -130,9 +130,18 @@ async function snapshot() {
 let timer = null;
 function startSchedule() {
   if (timer || process.env.NODE_ENV === 'test') return;
-  const tick = () => { pushAll().catch(() => {}); };
-  setTimeout(tick, 45 * 1000); // after the portal is up
-  timer = setInterval(tick, 2 * 60 * 1000);
+  // Every 15 s (founder 2026-11-10, Forgot password mails missing): the portal keeps TeamLink's email / WhatsApp / SMS in memory only,
+  // so after each portal restart (several a day while TeamLink deploys) it had NO mail account for up to 2 minutes and every reset
+  // mail in that gap failed as "not configured". Each tick is three small local checks; a push happens only when the portal restarted
+  // (its pid changed) or a setting changed. One tick at a time.
+  let busy = false;
+  const tick = () => {
+    if (busy) return;
+    busy = true;
+    pushAll().catch(() => {}).finally(() => { busy = false; });
+  };
+  setTimeout(tick, 10 * 1000); // as soon as the portal can answer
+  timer = setInterval(tick, 15 * 1000);
   if (timer.unref) timer.unref();
 }
 
