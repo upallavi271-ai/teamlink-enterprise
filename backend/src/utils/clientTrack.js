@@ -697,13 +697,13 @@ function fileOf(track, kind) {
   return full ? { full, name: rec.file.name, mime: rec.file.mime } : null;
 }
 
-// --- reminders (OFF by default: inert until an Admin arms them) -------------------------------------------
+// --- reminders (ON since 2026-11-10, founder: "joining date ki follow-up mails vellali ... whatsapp, sms kuda"; an Admin can switch them off) ---
 async function loadReminders() {
   const row = await prisma.appSetting.findUnique({ where: { key: REMINDERS_KEY } }).catch(() => null);
   let v = {};
   try { v = row ? JSON.parse(row.value) : {}; } catch { v = {}; }
   const nd = Math.round(Number(v.offerNudgeDays));
-  return { armed: v.armed === true, offerNudgeDays: Number.isFinite(nd) && nd >= 1 && nd <= 30 ? nd : 3, lastRunAt: v.lastRunAt || null, updatedByName: row ? row.updatedByName : null };
+  return { armed: v.armed !== false, offerNudgeDays: Number.isFinite(nd) && nd >= 1 && nd <= 30 ? nd : 3, lastRunAt: v.lastRunAt || null, updatedByName: row ? row.updatedByName : null };
 }
 async function saveReminders(patch, user) {
   const cur = await loadReminders();
@@ -763,12 +763,9 @@ async function runReminders({ now = new Date(), force = false, dryRun = false } 
             const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : 'in 3 days';
             // eslint-disable-next-line no-await-in-loop
             await notifyUsers([...people.recruiters, ...people.tls, ...people.bdes], { title: `⏰ ${cand} joins ${when}`, message: `${(app.requirement || {}).title || 'Requirement'}${j.joiningTime ? ` at ${j.joiningTime}` : ''}${j.state === 'CONFIRMED' ? '' : ' — the candidate has not confirmed yet'}.` });
-            // The candidate: recorded on Communications; mailed only while the Admin switch is on.
+            // The candidate: Email, SMS and WhatsApp (recorded on Communications; sent while the "Candidate emails" switch is on).
             // eslint-disable-next-line no-await-in-loop
-            await require('./interviewNotices').queueCandidateEmail(app, { // eslint-disable-line global-require
-              template: 'JOINING_REMINDER', label: 'Joining reminder', subject: `Reminder: you join ${when}`,
-              body: `Hi ${firstName(cand)}, a reminder that you join ${when}${j.joiningTime ? ` at ${j.joiningTime}` : ''}. Please carry your documents. — TeamLink`, actor: null,
-            });
+            await joiningReminderToCandidate(app, { joiningDate: j.joiningDate, joiningTime: j.joiningTime, left });
             // eslint-disable-next-line no-await-in-loop
             await saveTrack(appId, track, null);
           }
@@ -776,8 +773,55 @@ async function runReminders({ now = new Date(), force = false, dryRun = false } 
       }
     }
   }
+  // EVERY JOINING IN THE ATS (founder 2026-11-10: "joining appudu undi ATS lo check chesukoni joining date ki follow-up"): an application
+  // with a joining date that the client hiring track above does not follow (an internal hire, a joining typed on the application) gets the
+  // same T-3 / T-1 / joining-day reminder. Once per application per day-mark: the Communications row is the record.
+  const tracked = new Set([...all.keys()].filter((id) => { const t = all.get(id); return t && t.joining && t.joining.joiningDate; }));
+  const apps = await prisma.application.findMany({
+    where: { joiningDate: { not: null }, stage: { notIn: ['REJECTED', 'HOLD', 'JOINED', 'HIRED'] } },
+    include: FULL,
+  });
+  for (const app of apps) {
+    if (tracked.has(app.id)) continue; // eslint-disable-line no-continue
+    const jd = String(app.joiningDate || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(jd)) continue; // eslint-disable-line no-continue
+    const left = dayDiff(jd, day);
+    if (![3, 1, 0].includes(left)) continue; // eslint-disable-line no-continue
+    const trigger = `Joining reminder T-${left} (${jd})`;
+    // eslint-disable-next-line no-await-in-loop
+    if (await prisma.candidateMessage.count({ where: { applicationId: app.id, template: 'JOINING_REMINDER', trigger } })) continue; // eslint-disable-line no-continue
+    summary.joiningReminders += 1; summary.items.push({ appId: app.id, key: `app-joining-t${left}` });
+    if (dryRun) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    const people = await peopleFor(app);
+    const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : 'in 3 days';
+    // eslint-disable-next-line no-await-in-loop
+    await notifyUsers([...people.recruiters, ...people.tls, ...people.bdes], { title: `⏰ ${app.candidate ? app.candidate.name : 'Candidate'} joins ${when}`, message: `${(app.requirement || {}).title || 'Requirement'} — joining date ${jd}.` });
+    // eslint-disable-next-line no-await-in-loop
+    await joiningReminderToCandidate(app, { joiningDate: jd, joiningTime: null, left, trigger });
+  }
   if (!dryRun && st.armed) await saveReminders({ lastRunAt: now.toISOString() }, null);
   return summary;
+}
+
+// The candidate's joining reminder on Email, SMS and WhatsApp. The words are the "Joining reminder" Message template when there is one
+// for that channel (an SMS needs its DLT-approved wording there), else the text below.
+async function joiningReminderToCandidate(app, { joiningDate, joiningTime, left, trigger = null }) {
+  const cand = app.candidate;
+  if (!cand) return [];
+  const when = left === 0 ? 'today' : left === 1 ? 'tomorrow' : 'in 3 days';
+  const pretty = new Date(`${joiningDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+  return require('./interviewNotices').queueCandidateMessage(app, { // eslint-disable-line global-require
+    template: 'JOINING_REMINDER', label: 'Joining reminder', purpose: 'JOINING_REMINDER',
+    trigger: trigger || `Joining reminder T-${left} (${joiningDate})`,
+    subject: `Reminder: you join ${when}`,
+    body: `Hi ${firstName(cand.name)}, a reminder that you join ${when} (${pretty})${joiningTime ? ` at ${joiningTime}` : ''}. Please carry your documents. - TeamLink`,
+    tokens: {
+      name: cand.name, firstName: firstName(cand.name), role: (app.requirement || {}).title || 'the role',
+      client: (app.requirement || {}).internal ? 'TeamLink Internal' : 'our client', joiningDate: pretty, recruiterName: 'TeamLink',
+    },
+    actor: null,
+  });
 }
 
 module.exports = {

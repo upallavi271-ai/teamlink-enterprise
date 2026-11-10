@@ -141,10 +141,12 @@ const OK_DOMAIN = 'zztest-sandbox.in'; // not a reserved test domain, so the fak
     // ============================================================== A. dormant until the first save
     {
       const r0 = await call('GET', '/api/auto-messages/rules', T.admin);
-      check('A1 before any save: not started, defaults mirror today (11 steps ON)', r0.status === 200 && r0.body.started === false && r0.body.rules.filter((x) => x.rule.on).length === 11 && r0.body.rules.length === ALL_STAGE_CODES.length, { st: r0.status, started: r0.body && r0.body.started });
-      const onSteps = r0.body.rules.filter((x) => x.rule.on).map((x) => x.stage).sort();
+      // the steps that send today = the stage messages of utils/candidateComms.js (SENT_TO_ATS is a moment, not a step: it has no rule row)
       const { TEMPLATES } = require(path.join(BACK, 'src/utils/candidateComms'));
-      check('A2 the ON steps are exactly the ones that send today', JSON.stringify(onSteps) === JSON.stringify(Object.keys(TEMPLATES).sort()));
+      const sendingSteps = Object.keys(TEMPLATES).filter((k) => ALL_STAGE_CODES.includes(k)).sort();
+      check(`A1 before any save: not started, defaults mirror today (${sendingSteps.length} steps ON)`, r0.status === 200 && r0.body.started === false && r0.body.rules.filter((x) => x.rule.on).length === sendingSteps.length && r0.body.rules.length === ALL_STAGE_CODES.length, { st: r0.status, started: r0.body && r0.body.started });
+      const onSteps = r0.body.rules.filter((x) => x.rule.on).map((x) => x.stage).sort();
+      check('A2 the ON steps are exactly the ones that send today', JSON.stringify(onSteps) === JSON.stringify(sendingSteps));
       const { a, c } = await mkApp('INTERVIEW_COMPLETED');
       const mv = await call('PATCH', `/api/applications/${a.id}/stage`, T.admin, { stage: 'SELECTED' });
       check('A3 a real move works (board/step popup path)', mv.status === 200, mv.body);

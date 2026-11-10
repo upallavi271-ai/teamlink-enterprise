@@ -51,6 +51,24 @@ const NOT_SENT_DETAIL = 'Recorded, not transmitted — this app has no Email/SMS
 // that transition uses. Bodies are plain text with {{tokens}} filled from the
 // candidate, requirement and application.
 const TEMPLATES = {
+  // STAGE MESSAGES ON EVERY CHANNEL (founder 2026-11-10: "candidate aa stage lo unnaro aa stage ki mail vellali ... ATS ki move ayite you are
+  // shortlisted, client interview ki adigithe 2nd round interview, client reject chesthe rejected, shortlist ayite shortlisted, joining date ki
+  // follow-ups ... mails ante mails aa kaadu whatsapp, sms kuda povali"). SENT_TO_ATS is not a pipeline stage: it is the moment a Job Portal
+  // candidate leaves the screening for the ATS (routes/jobPortal.js Send to ATS, utils/autoSendToAts.js the 65% rule).
+  SENT_TO_ATS: {
+    key: 'ATS_SHORTLISTED',
+    label: 'You are shortlisted',
+    channels: ['Email', 'SMS', 'WhatsApp'],
+    subject: 'You are shortlisted for {{role}}',
+    body: 'Hi {{name}}, good news: you are shortlisted for {{role}}. Our recruiter will contact you about the next round. - TeamLink',
+  },
+  CLIENT_SHORTLISTED: {
+    key: 'STAGE_CLIENT_SHORTLISTED',
+    label: 'Shortlisted',
+    channels: ['Email', 'SMS', 'WhatsApp'],
+    subject: 'You are shortlisted for {{role}}',
+    body: 'Hi {{firstName}}, good news: the hiring team has shortlisted you for {{role}}. We will share the interview details soon. - {{recruiterName}}',
+  },
   AI_INTERVIEW_SCHEDULED: {
     key: 'AI_INTERVIEW_SCHEDULED',
     label: 'AI Interview Scheduled',
@@ -80,8 +98,9 @@ const TEMPLATES = {
     key: 'INTERVIEW_SCHEDULED',
     label: 'Interview Scheduled',
     channels: ['Email', 'SMS', 'WhatsApp'],
-    subject: 'Interview scheduled: {{role}}',
-    body: 'Hi {{name}}, your interview for {{role}} at {{client}} is scheduled for {{interviewAt}} '
+    // {{interviewName}} = "2nd round interview" after the AI interview (the 1st round), else "interview"
+    subject: 'Your {{interviewName}}: {{role}}',
+    body: 'Hi {{name}}, your {{interviewName}} for {{role}} at {{client}} is scheduled for {{interviewAt}} '
       + '({{mode}}). Interviewer: {{interviewer}}. Please confirm your availability.',
   },
   INTERVIEW_COMPLETED: {
@@ -135,12 +154,17 @@ const TEMPLATES = {
   REJECTED: {
     key: 'REJECTED',
     label: 'Application Closed',
-    channels: ['Email'],
+    channels: ['Email', 'SMS', 'WhatsApp'],
     subject: 'Update on your application for {{role}}',
     body: 'Hi {{name}}, we will not be moving forward with your application for {{role}} on this '
       + 'occasion. Your profile stays with us for other roles.',
   },
 };
+
+// The interview a candidate is invited to: after the AI interview (the 1st round) the client's is the 2nd round.
+function interviewNameOf(application) {
+  return application && String(application.aiInterviewStatus || '').toLowerCase() === 'completed' ? '2nd round interview' : 'interview';
+}
 
 // Fills {{tokens}} through the Message templates renderer; a detail nobody has stays "—" as before.
 // The AI interview message always carries its link, also when an Admin's saved wording has none (2026-11-03).
@@ -267,9 +291,12 @@ async function recordStageCommunications({
     deadline: (application && application.aiInterviewDeadline) || 'the date in your invite',
     aiInterviewLink: require('./messageContext').appTokens({ requirement: requirement || {} }).aiInterviewLink || '', // eslint-disable-line global-require
     sender: sender.senderName || '—',
+    firstName: String(candidate.name || '').trim().split(/\s+/)[0] || candidate.name,
+    recruiterName: sender.senderName || 'TeamLink',
+    interviewName: interviewNameOf(application),
   };
 
-  const trigger = `Stage change: ${stageLabel(fromStage) || 'New'} → ${stageLabel(toStage)}`;
+  const trigger = `Stage change: ${stageLabel(fromStage) || 'New'} → ${toStage === 'SENT_TO_ATS' ? 'Sent to ATS (shortlisted)' : stageLabel(toStage)}`;
 
   // Is there a live provider for this channel right now? Only Email can have
   // one. If there is, the row is QUEUED and the worker will really send it;

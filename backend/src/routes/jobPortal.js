@@ -766,6 +766,12 @@ async function sendToAts(req, res) {
     exceptUserId: req.user.id,
   });
   const fresh = await prisma.application.findUnique({ where: { id: application.id } });
+  // the candidate is told: "You are shortlisted" on Email, SMS and WhatsApp (utils/candidateComms.js SENT_TO_ATS). Never blocks the move.
+  try {
+    await require('../utils/candidateComms').recordStageCommunications({ // eslint-disable-line global-require
+      application: fresh, candidate: application.candidate, requirement: application.requirement, fromStage: application.stage, toStage: 'SENT_TO_ATS', user: req.user,
+    });
+  } catch (err) { console.error('[send-to-ats] candidate message:', err.message); } // eslint-disable-line no-console
   return res.json({
     ok: true, id: fresh.id, stage: fresh.stage, stageLabel: lands, hiring: internal ? 'Internal' : 'Client',
     sentToAtsAt: fresh.portalImportedAt,

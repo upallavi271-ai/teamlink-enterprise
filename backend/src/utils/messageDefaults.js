@@ -79,8 +79,9 @@ function list() {
   require('./vendorMessageDefaults').list().forEach((d) => out.push(d));
   // eslint-disable-next-line global-require
   require('./messageScripts').SCRIPTS.forEach((s) => out.push({ purpose: s.purpose, label: s.label, audience: s.audience, channel: 'Call', language: 'English', subject: '', body: s.body }));
-  cache = out;
-  return out;
+  const seen = new Set();
+  cache = out.filter((d) => { const k = `${d.purpose}|${d.channel}|${d.language}`; if (seen.has(k)) return false; seen.add(k); return true; });
+  return cache;
 }
 
 const find = (purpose, channel) => list().find((d) => d.purpose === purpose && d.channel === channel) || null;

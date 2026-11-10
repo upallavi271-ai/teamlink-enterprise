@@ -590,7 +590,13 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
       // STATUS BACK TO THE PORTAL: the applicant sees on the portal where
       // their application stands in the ATS.
       const atsStage = r.body && r.body.stage;
-      const want = PORTAL_STAGE_OF[atsStage];
+      let want = PORTAL_STAGE_OF[atsStage];
+      // Sent to the ATS by a recruiter (it lands on Recruiter Review): for the applicant that is "shortlisted" (founder 2026-11-10)
+      if (!want && atsStage === 'RECRUITER_REVIEW' && r.body.applicationId) {
+        // eslint-disable-next-line no-await-in-loop
+        const sent = await prisma.application.findUnique({ where: { id: r.body.applicationId }, select: { portalImportedAt: true } }).catch(() => null);
+        if (sent && sent.portalImportedAt) want = 'shortlisted';
+      }
       if (want && a.application && want !== a.application.stage) {
         stageUpdates.push({ id: a.application.id, stage: want, note: `TeamLink ATS: ${atsStage}` });
       }

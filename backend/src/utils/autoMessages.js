@@ -145,6 +145,7 @@ function tokensFor(ctx) {
     mode: t.mode || 'to be confirmed',
     interviewer: t.interviewer || 'to be confirmed',
     deadline: t.deadline || 'the date in your invite',
+    interviewName: app && String(app.aiInterviewStatus || '').toLowerCase() === 'completed' ? '2nd round interview' : 'interview',
     recruiterName: recruiter ? recruiter.name : null,
     recruiterPhone: recruiter ? recruiter.phone : null,
     recruiterEmail: recruiter ? recruiter.email : null,

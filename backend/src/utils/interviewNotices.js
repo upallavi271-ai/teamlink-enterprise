@@ -257,6 +257,54 @@ async function queueCandidateEmail(app, { template, label, subject, body, actor 
   return row;
 }
 
+// The same candidate message on several channels (founder 2026-11-10: "mails ante mails aa kaadu whatsapp, sms kuda povali"). The words
+// come from Message templates (`purpose`, filled with `tokens`) when a template exists for that channel, else `subject` / `body`. A row is
+// QUEUED only when the "Candidate emails" switch is on, the person has the address / number and that channel is connected; otherwise it
+// is recorded with the honest reason (never "Sent"). Returns the rows written.
+async function queueCandidateMessage(app, { template, label, subject, body, actor, channels = ['Email', 'SMS', 'WhatsApp'], purpose = null, tokens = {}, trigger = null }) {
+  const cand = app.candidate;
+  if (!cand || skipPerson(`${cand.name} ${cand.email}`)) return [];
+  if (cand.doNotContact || cand.consentStatus === 'WITHDRAWN') return [];
+  // eslint-disable-next-line global-require
+  const { emailConfig } = require('./mailer');
+  // eslint-disable-next-line global-require
+  const T = require('./messageTemplates');
+  const switchedOn = await candidateEmailsOn();
+  let status = {};
+  try { status = await require('./messaging').channelStatus(); } catch { status = {}; } // eslint-disable-line global-require
+  let emailLive = false;
+  try { emailLive = (await emailConfig()).configured; } catch { emailLive = false; }
+  const rows = [];
+  let queued = false;
+  for (const channel of channels) {
+    const recipient = channel === 'Email' ? (cand.email || '') : (cand.phone || '');
+    // eslint-disable-next-line no-await-in-loop
+    const tpl = purpose ? await T.resolve({ purpose, channel }).catch(() => null) : null;
+    const text = tpl && tpl.body ? T.render(tpl.body, tokens, { blank: '—' }).text : body;
+    const subj = channel === 'Email' ? (tpl && tpl.subject ? T.render(tpl.subject, tokens, { blank: '—' }).text : subject) : null;
+    const connected = channel === 'Email' ? emailLive : !!(status[channel] && status[channel].configured);
+    const live = switchedOn && !!recipient && connected;
+    // eslint-disable-next-line no-await-in-loop
+    const row = await prisma.candidateMessage.create({
+      data: {
+        candidateId: cand.id, applicationId: app.id, channel, template, templateLabel: label, trigger: trigger || `Reminder: ${label}`,
+        recipient, subject: subj, body: text,
+        status: !switchedOn ? SWITCHED_OFF : (live ? 'QUEUED' : 'NOT_SENT_NO_PROVIDER'),
+        statusDetail: !switchedOn ? `${SWITCHED_OFF_DETAIL}.`
+          : live ? 'Queued for sending.'
+            : !recipient ? `No ${channel === 'Email' ? 'email address' : 'phone number'} on this candidate.`
+              : `Recorded, not transmitted — ${channel} is not connected.`,
+        senderUserId: actor ? actor.id : null,
+        senderName: actor ? actor.name : 'TeamLink',
+      },
+    });
+    if (live) queued = true;
+    rows.push(row);
+  }
+  if (queued) { try { require('./mailWorker').kick(); } catch { /* next tick */ } } // eslint-disable-line global-require
+  return rows;
+}
+
 // One notice to everybody on the interview. Never throws: a notice that could
 // not be written must never undo the booking that already happened.
 // opts: { actor, fromSlot, reason, candidateEmail (default true), key }
@@ -545,6 +593,6 @@ function startSweep() {
 }
 
 module.exports = {
-  SETTINGS_KEY, loadSettings, saveSettings, STAFF_SETTINGS_KEY, loadStaffSettings, saveStaffSettings, announceInterview, runInterviewReminders, startSweep, queueCandidateEmail, when,
+  SETTINGS_KEY, loadSettings, saveSettings, STAFF_SETTINGS_KEY, loadStaffSettings, saveStaffSettings, announceInterview, runInterviewReminders, startSweep, queueCandidateEmail, queueCandidateMessage, when,
   whatsappLinks, waPhone, candidateEmailsOn, SWITCHED_OFF, SWITCHED_OFF_DETAIL, staffLines, mailTo, lines, whereLine, peopleOf, skipPerson, isTest,
 };

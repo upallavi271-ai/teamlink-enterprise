@@ -83,6 +83,12 @@ async function check(applicationId, { portalAppId = null } = {}) {
   await event(app, `${V.SENT_TO_ATS_ACTION} — automatically (${internal ? 'HR Review' : 'Shortlisted'})`, `${why}. Duplicate check: ${st.duplicateResult || 'clear'}.`, 'RECRUITER_APPROVED');
   await logAudit({ action: 'Job Portal application sent to ATS automatically (65% rule)', entity: 'Application', entityId: app.id, fromValue: 'Job Portal screening', toValue: why });
   const r = app.requirement;
+  // the candidate is told: "You are shortlisted" on Email, SMS and WhatsApp (utils/candidateComms.js SENT_TO_ATS). Never blocks the move.
+  try {
+    await require('./candidateComms').recordStageCommunications({ // eslint-disable-line global-require
+      application: { ...app, stage: 'RECRUITER_APPROVED', portalImportedAt: new Date() }, candidate: app.candidate, requirement: r, fromStage: app.stage, toStage: 'SENT_TO_ATS', user: null,
+    });
+  } catch (err) { console.error(`[auto-ats] candidate message for ${app.id}: ${err.message}`); } // eslint-disable-line no-console
   try {
     await require('./notify').notifyUsers([r.recruiterId, r.tlId, app.ownerRecruiterId].filter(Boolean), { // eslint-disable-line global-require
       title: `${app.candidate.name} is in the ATS (Shortlisted)`,

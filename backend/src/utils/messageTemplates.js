@@ -63,6 +63,7 @@ const TOKENS = [
   { key: 'meetingLink', label: 'Interview link', sample: 'https://meet.example.com/abc', group: 'Interview', aliases: ['interviewLink'] },
   { key: 'venue', label: 'Interview place', sample: 'City Care Hospital, Hyderabad', group: 'Interview', aliases: ['location'] },
   { key: 'interviewRound', label: 'Interview round', sample: '1', group: 'Interview', aliases: [] },
+  { key: 'interviewName', label: 'Interview name ("2nd round interview" after the AI interview)', sample: '2nd round interview', group: 'Interview', aliases: [] },
   { key: 'interviewWhere', label: 'Where (link or address)', sample: 'Online - join here: https://meet.example.com/abc', group: 'Interview', aliases: [] },
   { key: 'interviewContact', label: 'Who to ask (recruiter)', sample: 'Ravi Kumar, 98765 43210', group: 'Interview', aliases: [] },
   { key: 'prepNote', label: 'How to prepare (link)', sample: 'How to prepare: https://tmlink.in/prep/abc', group: 'Interview', aliases: [] },
@@ -244,7 +245,8 @@ async function ensureDefaults() {
     }
     // The vendor emails (utils/vendorMessageDefaults.js): a built-in nobody has edited yet (still version 1) follows the current starter wording,
     // so a wording fix (for example the temporary password line) reaches the saved copy. An edited template (version 2 and up) is never touched.
-    for (const d of defaults.filter((x) => x.audience === 'vendor')) {
+    const REFRESH = new Set(['INTERVIEW_SCHEDULED', 'ATS_SHORTLISTED', 'STAGE_CLIENT_SHORTLISTED']); // stage messages reworded 2026-11-10
+    for (const d of defaults.filter((x) => x.audience === 'vendor' || REFRESH.has(x.purpose))) {
       // eslint-disable-next-line no-await-in-loop
       const row = await prisma.messageTemplate.findFirst({ where: { builtIn: true, purpose: d.purpose, channel: d.channel, language: d.language } });
       if (row && row.version === 1 && (row.body !== d.body || row.subject !== d.subject)) {
