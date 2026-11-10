@@ -100,3 +100,7 @@ button.ct-issue:hover { background: #f5f7fd; }
 .ct-badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; background: #eef0f3; color: #4b5563; }
 .ct-badge.good { background: #dff5ea; color: #17703a; } .ct-badge.warn { background: #fdeccf; color: #8a5200; } .ct-badge.bad { background: #fde8e8; color: #a61b1b; }
 @media (max-width: 640px) { .ct-drawer { width: 100vw; } .ct-d-head, .ct-d-tools, .ct-d-body { padding-left: 12px; padding-right: 12px; } }
+/* FIT THE SCREEN (founder 2026-11-10: "fit this page properly"): the page used the app's 1220px column and left wide empty sides on
+   a big screen. It now uses the width like the other wide pages (Employee Monitoring, CRM), and the KPI row and two-column grid
+   share it. Small screens are unchanged (the media rules above). */
+main:has(.ct){max-width:1680px}
