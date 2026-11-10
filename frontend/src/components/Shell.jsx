@@ -146,6 +146,17 @@ export default function Shell() {
   const isActive = (to) => !!(current && current.to === to);
   const currentPath = current ? current.to.split('?')[0] : null;
 
+  // THE TAB'S TITLE NAMES THE PAGE (founder 2026-11-10: Employee Monitoring showed only "TeamLink.Enterprise" for 1.6 h of work -
+  // "topics kuda display avvali"). The window title is what the monitoring agent sees, so it now says which page:
+  // "Candidates & Pipeline · ATS · TeamLink.Enterprise". "TeamLink.Enterprise" stays in it, so the website's rule still applies.
+  useEffect(() => {
+    const tab = (SETUP_TABS.find((t) => t.to === pathname) || INTERVIEW_TABS.find((t) => t.to === pathname) || {}).label || moduleTabLabel(pathname);
+    const detail = current && pathname !== currentPath && pathname.startsWith(`${currentPath}/`) && !tab ? 'Details' : null;
+    const parts = [detail, tab && (!current || tab !== current.label) ? tab : null, current ? current.label : null, section === 'dashboard' ? 'Dashboard' : sectionLabel(section, user)]
+      .filter((x, i, all) => x && all.indexOf(x) === i);
+    document.title = `${parts.join(' · ')}${parts.length ? ' · ' : ''}TeamLink.Enterprise`;
+  }, [pathname, current, currentPath, section, user]);
+
   return (
     <div className="app-shell">
       <aside

@@ -174,6 +174,7 @@ function Overview({ onOpen }) {
         <div className="mon-dayline">
           <b>Work day {clock(first.workStart)} – {clock(first.workEnd)}</b>
           {first.lunchStart && <> · lunch {clock(first.lunchStart)} – {clock(first.lunchEnd)}</>}
+          {first.personalBreakMinutes > 0 && <> · {first.personalBreakMinutes} min personal break</>}
           {' '}· <b>{hm(first.workHours)}</b> of work{live && first.elapsedHours < first.dayHours && <> · {hm(first.elapsedHours)} of the day has passed</>}
           <span className="mon-day-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i className="away" /> Not on the PC</span>{live && <span><i className="rest" /> Still to come</span>}</span>
         </div>
@@ -497,7 +498,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
 // and the sittings in order (founder 2026-11-10: "overall summary kanipinchali, kaani complete work cover avvali").
 const NOT_SHOWN = 'Not shown (the app does not say)';
 function AppWork({ app, who, range, total, onClose }) {
-  const [tab, setTab] = useState('items');
+  const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : 'items');
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
@@ -528,10 +529,26 @@ function AppWork({ app, who, range, total, onClose }) {
           {!app.titlesKnown && <div className="notice" style={{ marginTop: 8 }}>This app&apos;s window always shows only its own name, so only the time is known, not what was open in it.{/claude/i.test(app.name) ? ' The same work on claude.ai in the browser shows the name of each chat.' : ''}</div>}
         </div>
         <div className="mon-tabs">
+          {app.teamlinkWork && <button type="button" className={tab === 'work' ? 'on' : ''} onClick={() => setTab('work')}>Work done in TeamLink ({app.teamlinkWork.total})</button>}
           <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was open ({items.length})</button>
           <button type="button" className={tab === 'sittings' ? 'on' : ''} onClick={() => setTab('sittings')}>Hour by hour ({sittings.length})</button>
         </div>
         <div className="mon-modal-body">
+          {tab === 'work' && app.teamlinkWork && (app.teamlinkWork.lines.length ? (
+            <table className="mon-table">
+              <thead><tr><th>Area</th><th>What was done</th><th className="num">How many</th><th>First – last</th></tr></thead>
+              <tbody>
+                {app.teamlinkWork.lines.map((x) => (
+                  <tr key={`${x.area}|${x.action}`}>
+                    <td>{x.area}</td>
+                    <td>{x.action}</td>
+                    <td className="num">{x.count}</td>
+                    <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : <div className="ak-empty" style={{ padding: 16 }}>Nothing was saved in TeamLink in this period: only pages were looked at.</div>)}
           {tab === 'items' && (
             <table className="mon-table">
               <thead><tr><th>Page, file or chat</th><th className="num">Time</th><th>First – last</th><th className="num" title="How many separate times it was in front">Times</th></tr></thead>

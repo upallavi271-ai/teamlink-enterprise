@@ -397,9 +397,12 @@ async function categoryIndex() {
 
 // --- the numbers ----------------------------------------------------------------------------------------------------------
 // One person's work day (founder 2026-11-10: "9 to 6, 45 mins break, 8 hours lo entha sepu active, idle, break - 4 hours active out of 8"):
-// the whole day from start to end of work, the work time in it (the day without the lunch break), and how much of the day has passed.
+// the whole day from start to end of work, the work time in it, and how much of the day has passed.
+// The work time is the day without the lunch break and a short personal break (founder 2026-11-10: "lunch break 45 min, 15 min
+// normal personal break, so out of 9, 8 working hrs"): 9 am - 6 pm is 9 h - 45 min - 15 min = 8 h.
+const PERSONAL_BREAK_SECONDS = 15 * 60;
 function workDayOf(day, c, now = Date.now()) {
-  if (!HM.test(String(c.workStart || '')) || !HM.test(String(c.workEnd || ''))) return { daySeconds: 0, workSeconds: 0, elapsedSeconds: 0 };
+  if (!HM.test(String(c.workStart || '')) || !HM.test(String(c.workEnd || ''))) return { daySeconds: 0, workSeconds: 0, elapsedSeconds: 0, personalSeconds: 0 };
   const ws = atShift(day, c.workStart, c).getTime();
   const we = atShift(day, c.workEnd, c).getTime();
   const daySec = Math.max(0, Math.round((we - ws) / 1000));
@@ -410,7 +413,8 @@ function workDayOf(day, c, now = Date.now()) {
     if (be > bs) lunch = Math.round((be - bs) / 1000);
   }
   const elapsed = Math.max(0, Math.round((Math.min(Math.max(now, ws), we) - ws) / 1000));
-  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch), elapsedSeconds: elapsed };
+  const personal = Math.min(PERSONAL_BREAK_SECONDS, Math.max(0, daySec - lunch));
+  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch - personal), elapsedSeconds: elapsed, personalSeconds: personal };
 }
 const hrs = (sec) => Math.round((sec / 3600) * 100) / 100;
 function totalsOf(logs, catOf, department = '') {
@@ -517,7 +521,7 @@ async function overview(day, access = null) {
     const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds);
     return {
       workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
-      dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
+      dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), personalBreakMinutes: Math.round(wd.personalSeconds / 60), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
       employeeId: id, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
       firstSeen: t.first, lastSeen: t.last, activeHours: t.activeHours, idleHours: t.idleHours, breakHours: t.breakHours, productivity: t.productivity,
       status, currentApp: live && dev && ['Online', 'Idle'].includes(status) ? dev.currentApp || null : null, currentTitle: live && dev && status === 'Online' ? dev.currentTitle || null : null,
@@ -552,8 +556,28 @@ function itemOf(title, appLabel) {
   if (!title) return NO_TITLE;
   let t = String(title);
   for (let i = 0; i < 2; i += 1) t = t.replace(APP_SUFFIX, '');
+  t = t.replace(/\s*[\u00b7|-]\s*TeamLink\.Enterprise$/i, '');
   t = t.replace(/\s*\[(Protected View|Read-Only|Compatibility Mode|Group|Shared)\]/gi, '').replace(/\s*-\s*Personal\s*-\s*Microsoft.*$/i, '').replace(/\s*-\s*Profile \d+$/i, '').trim();
   return t || String(appLabel || '') || NO_TITLE;
+}
+// The saves a person made in TeamLink in a period, from the audit history: one line per kind of work, with how many and when.
+const ENTITY_WORD = { Application: 'Candidate pipeline', Candidate: 'Candidates', Requirement: 'Requirements', Client: 'Clients', Task: 'Tasks', FollowUp: 'Follow-ups', Interview: 'Interviews', Employee: 'Employees', LeaveRequest: 'Leave', User: 'Sign-in', AttendancePunch: 'Attendance' };
+async function teamlinkWorkOf(employeeId, a, b) {
+  const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { userId: true } });
+  if (!emp || !emp.userId) return { lines: [], total: 0 };
+  const rows = await prisma.auditLog.findMany({
+    where: { userId: emp.userId, createdAt: { gte: atIst(a, '00:00'), lt: atIst(addDays(b, 1), '00:00') } },
+    orderBy: { createdAt: 'asc' }, take: 5000, select: { entity: true, action: true, createdAt: true },
+  });
+  const map = new Map();
+  rows.forEach((r) => {
+    const action = String(r.action || '').replace(/\s*\(.*$/, '').trim().slice(0, 120) || 'Saved';
+    const k = `${r.entity}|${action}`;
+    const x = map.get(k) || { area: ENTITY_WORD[r.entity] || String(r.entity || 'Other').replace(/([a-z])([A-Z])/g, '$1 $2'), action, count: 0, first: r.createdAt, last: r.createdAt };
+    x.count += 1; x.last = r.createdAt;
+    map.set(k, x);
+  });
+  return { total: rows.length, lines: [...map.values()].sort((x, y) => y.count - x.count) };
 }
 // One employee over a few days: the day's timeline (one day), the top apps, the usage table, the totals.
 async function employeeDetail(employeeId, from, to) {
@@ -599,6 +623,10 @@ async function employeeDetail(employeeId, from, to) {
   }));
   const days = [...new Set(logs.map((l) => l.day))].sort();
   const perDay = days.map((d) => ({ day: d, ...totalsOf(logs.filter((l) => l.day === d), catOf, dept) }));
+  // WHAT THEY DID IN TEAMLINK ITSELF (founder 2026-11-10: "topics kuda display avvali"): TeamLink's own history of this login's
+  // saves - "Candidate: Application stage changed x 12" - so the TeamLink website shows the work, not only "TeamLink.Enterprise"
+  const tl = apps.find((x) => /teamlink/i.test(`${x.key} ${x.name}`));
+  if (tl) tl.teamlinkWork = await teamlinkWorkOf(emp.id, a, b).catch(() => null);
   const s = await settings();
   return {
     employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay,
