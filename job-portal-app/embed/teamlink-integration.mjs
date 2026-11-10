@@ -56,6 +56,45 @@ export const requirementIdOf = (jobId) =>
 
 const log = (...a) => console.log(new Date().toISOString(), '[teamlink]', ...a);
 
+/*
+ * FORGOT PASSWORD FOR A CANDIDATE WHO HAS NO LOGIN YET (founder 2026-11-10: "forgot password click chestey mails povadam ledhu").
+ * The portal's own POST /api/auth/forgot mails a reset link only to an ACCOUNT (users.email). A candidate who is in the portal's
+ * candidates list without an account - a Naukri / Shine mail import whose login mail never left, or one never invited - got nothing,
+ * while the screen still said "we've sent a link". Now such a candidate is handed to the portal's OWN inviteCandidate instead: it makes
+ * the account and mails the login (email + temporary password, changed at the first sign-in), the candidate portal link and any open
+ * AI interview. Somebody with an account still gets the portal's normal reset link (handled = false: the portal's route runs).
+ * The answer on screen is the portal's own, the same for every address, so nobody learns who is registered. At most once in 15 minutes
+ * per address, and never for do-not-contact.
+ */
+export const FORGOT_ANSWER = { ok: true, message: "If an account exists for this email, we've sent a password reset link." };
+const FORGOT_GAP_MS = 15 * 60 * 1000;
+export async function forgotWithoutLogin(emailRaw, { withUser, loadInvite, seen, now = Date.now() }) {
+  const email = String(emailRaw || '').trim().toLowerCase();
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { handled: false, why: 'not an email' };
+  const found = await withUser(SYSTEM, async (c) => {
+    if ((await c.query('select 1 from users where lower(email) = $1 limit 1', [email])).rows.length) return { account: true };
+    const cand = (await c.query(
+      `select id, name, email, phone, user_id, do_not_contact from candidates where lower(email) = $1 order by created_at asc limit 1`,
+      [email])).rows[0] || null;
+    return { cand };
+  });
+  if (found.account) return { handled: false, why: 'has an account' };
+  const k = found.cand;
+  if (!k) return { handled: false, why: 'not a candidate' };
+  if (k.user_id) return { handled: false, why: 'has a login under another address' };
+  if (k.do_not_contact) return { handled: true, result: 'do-not-contact' };
+  const last = seen.get(email);
+  if (last && now - last < FORGOT_GAP_MS) return { handled: true, result: 'recent' };
+  seen.set(email, now);
+  if (seen.size > 5000) seen.delete(seen.keys().next().value);
+  const { inviteCandidate } = await loadInvite();
+  const name = String(k.name || '').trim() || email.split('@')[0];
+  const sent = await inviteCandidate({ id: k.id, name, email, phone: k.phone || null }, { invitedBy: 'Forgot password' });
+  const result = sent.invited ? 'invited' : (sent.reason === 'already invited' ? 'already' : 'not-sent');
+  log(`forgot password: candidate ${k.id} had no login -> ${result}${sent.reason ? ` (${sent.reason})` : ''}`);
+  return { handled: true, result, reason: sent.reason || null };
+}
+
 /* The portal's own modules, imported LAZILY: api/src/config.js reads the
    environment once at import, and dev-server.mjs sets it (DATABASE_URL for
    the embedded database, AUTH_SECRET, PUBLIC_ORIGIN ...) only after it has
@@ -419,6 +458,18 @@ export function teamlinkFrontRouter({ root, express }) {
       res.on('finish', () => { if (res.statusCode >= 200 && res.statusCode < 300) setTimeout(pushRecent, 150); });
     }
     next();
+  });
+
+  // Forgot password: a candidate with no login yet gets their login made and mailed (forgotWithoutLogin above); anyone else falls
+  // through to the portal's own reset (the parsed body stays on req for it). A failure here never blocks the portal's route.
+  const forgotSeen = new Map();
+  r.post('/api/auth/forgot', json, (req, res, next) => {
+    forgotWithoutLogin(req.body && req.body.email, {
+      withUser: async (...a) => (await portal()).withUser(...a),
+      loadInvite: () => import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'invite.js')).href),
+      seen: forgotSeen,
+    }).then((out) => (out.handled ? res.json(FORGOT_ANSWER) : next()))
+      .catch((err) => { log('forgot password check failed:', String((err && err.message) || err).slice(0, 200)); next(); });
   });
 
   r.use('/api/integrations/teamlink', (req, res, next) => {
