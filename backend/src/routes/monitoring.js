@@ -210,6 +210,8 @@ router.get('/alerts', teamOnly, wrap(async (req, res) => {
   res.json(await require('../utils/monitoringAlerts').list(from, to, req.access)); // eslint-disable-line global-require
 }));
 
+// --- tasks vs work (founder 2026-11-10): the HRMS tasks and Timesheet Checklist of a day beside what was open on the PC, with a match %
+router.get('/task-match', teamOnly, wrap(async (req, res) => res.json(await require('../utils/monitoringTasks').taskMatch(req.query.from, req.query.to, req.access)))); // eslint-disable-line global-require
 // --- attendance from the PC (founder 2026-11-10): present / half day / absent by the active hours, with the percentage
 router.get('/pc-attendance', teamOnly, wrap(async (req, res) => {
   const out = await L.pcAttendance(req.query.from, req.query.to, req.access);

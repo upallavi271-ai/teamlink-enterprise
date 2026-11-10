@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ListPageHeader from '../../components/ui/ListPageHeader.jsx';
@@ -63,8 +63,8 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['attendance', 'Attendance'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
-    : lead ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
+    : lead ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
       : it ? [['devices', 'Devices'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
   const employee = params.get('employee');
@@ -93,6 +93,7 @@ export default function EmployeeMonitoring() {
             {tab === 'categories' && <Categories />}
             {tab === 'reports' && <Reports admin={admin} onOpen={(id) => go('reports', { employee: id })} />}
             {tab === 'attendance' && <AttendanceTab />}
+            {tab === 'tasks' && <TasksVsWork onOpen={(id) => go('tasks', { employee: id })} />}
             {tab === 'usage' && <Usage />}
             {tab === 'audit' && <Audit />}
             {tab === 'alerts' && <Alerts onOpen={(id) => go('alerts', { employee: id })} />}
@@ -331,6 +332,100 @@ function Alerts({ onOpen }) {
 
 // ------------------------------------------------------------------------------------------------ Attendance suggestions
 // A working day with PC activity and no attendance at all. HR approves or dismisses; it only fills an empty day.
+// TASKS VS WORK (founder 2026-11-10: "time sheet lo task assign cheskuntaru kadah, aa task ki, vallu work chesthunna dhaaniki match
+// avuthundha ledha, entha percent match avuthundhi"): the HRMS tasks and the Timesheet Checklist of each day beside what was open.
+const matchTone = (p) => (p == null ? 'slate' : p >= 60 ? 'green' : p >= 30 ? 'amber' : 'red');
+function TasksVsWork({ onOpen }) {
+  const [from, setFrom] = useState(todayIst());
+  const [to, setTo] = useState(todayIst());
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState({});
+  const { data, error, loading } = useGet('/monitoring/task-match', { from, to });
+  const rows = ((data && data.rows) || []).filter((r) => !q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const items = (list) => (list || []).map((x) => `${x.item} (${dur(x.seconds)})`).join(' · ');
+  return (
+    <>
+      <div className="small-muted" style={{ marginBottom: 8 }}>
+        Each day&apos;s HRMS tasks (Timesheet &gt; Tasks) and Timesheet Checklist, beside what was open on the PC. <b>Match</b> is the active time on windows that fit a task:
+        its own words in the window title or app, or the kind of app the task needs (profiles: TeamLink ATS, Naukri; invoices: Accounts, Excel; code: GitHub, Claude).
+        It reads the words, not the work.
+      </div>
+      <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo}>
+        <input type="search" placeholder="Search a name, code or department" value={q} onChange={(e) => setQ(e.target.value)} />
+      </RangeBar>
+      {error && <div className="notice red">{error}</div>}
+      {loading && !data && <div className="small-muted">Loading…</div>}
+      <div className="tbl-wrap">
+        <table className="mon-table">
+          <thead><tr><th>Date</th><th>Employee</th><th className="num">Tasks</th><th className="num">Checklist</th><th className="num">Active</th><th className="num" title="Active time on windows that fit a task">On the tasks</th><th>Match</th><th /></tr></thead>
+          <tbody>
+            {rows.map((r) => {
+              const isOpen = !!open[r.key];
+              return (
+                <Fragment key={r.key}>
+                  <tr className="row-link" onClick={() => setOpen({ ...open, [r.key]: !isOpen })}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{r.day}</td>
+                    <td><b>{r.name}</b><div className="small-muted">{[r.code, r.department].filter(Boolean).join(' · ')}</div></td>
+                    <td className="num">{r.tasks.length}</td>
+                    <td className="num">{r.checklist.length}</td>
+                    <td className="num">{hm(r.activeHours)}</td>
+                    <td className="num">{r.matchPct == null ? '—' : hm(r.matchedHours)}</td>
+                    <td>{r.matchPct == null ? <span className="small-muted">No task open</span> : <><Pill tone={matchTone(r.matchPct)}>{r.matchPct}%</Pill>{r.ownPct != null && <div className="small-muted">{r.ownPct}% by the task&apos;s own words</div>}</>}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm btn-ghost">{isOpen ? 'Hide' : 'Details'}</button></td>
+                  </tr>
+                  {isOpen && (
+                    <tr className="mon-task-detail">
+                      <td colSpan={8}>
+                        {r.tasks.length > 0 && (
+                          <table className="mon-table">
+                            <thead><tr><th>Task</th><th>Status</th><th className="num">Own words</th><th className="num">Related apps</th><th>Share of the day</th><th>Where the time went</th></tr></thead>
+                            <tbody>
+                              {r.tasks.map((t) => (
+                                <tr key={t.id}>
+                                  <td><b>{t.name}</b>{t.subTaskName && <div className="small-muted">{t.subTaskName}</div>}<div className="small-muted">{[t.startDate, t.endDate].filter(Boolean).join(' – ')}{t.priority ? ` · ${t.priority}` : ''}</div></td>
+                                  <td>{t.status}</td>
+                                  <td className="num">{hm(t.ownHours)}</td>
+                                  <td className="num">{hm(t.relatedHours)}</td>
+                                  <td><Pill tone={matchTone(t.sharePct)}>{t.sharePct == null ? '—' : `${t.sharePct}%`}</Pill></td>
+                                  <td className="small-muted mon-item">{t.items.length ? items(t.items) : 'Nothing open on the PC fitted this task.'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {r.checklist.length > 0 && (
+                          <table className="mon-table" style={{ marginTop: 8 }}>
+                            <thead><tr><th>Checklist</th><th>What they wrote</th><th className="num">Active in it</th><th>Match</th><th>Open on the PC then</th></tr></thead>
+                            <tbody>
+                              {r.checklist.map((c) => (
+                                <tr key={`${c.from}-${c.to}-${c.description.slice(0, 20)}`}>
+                                  <td style={{ whiteSpace: 'nowrap' }}>{c.from} – {c.to}<div className="small-muted">{c.status}</div></td>
+                                  <td className="mon-item">{c.description}</td>
+                                  <td className="num">{hm(c.activeHours)}{c.slotPct != null && <div className="small-muted">{c.slotPct}% of the slot</div>}</td>
+                                  <td><Pill tone={matchTone(c.matchPct)}>{c.matchPct == null ? 'PC not used' : `${c.matchPct}%`}</Pill></td>
+                                  <td className="small-muted mon-item">{c.items.length ? items(c.items) : '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        )}
+                        {!r.tasks.length && !r.checklist.length && <div className="small-muted" style={{ padding: 8 }}>No HRMS task was open for {r.name} on this day, and nothing was written in the Checklist.</div>}
+                        {r.other.length > 0 && <div className="small-muted" style={{ padding: '8px 10px' }}><b>Did not fit any task:</b> {items(r.other)}</div>}
+                        <div style={{ padding: '0 10px 8px' }}><button type="button" className="btn btn-sm" onClick={() => onOpen(r.employeeId)}>Open {r.name}&apos;s day</button></div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+            {data && !rows.length && <tr><td colSpan={8} className="small-muted">No PC activity in these days.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
 // PRESENT / ABSENT FROM THE PC (founder 2026-11-10: "active hours count cheskoni, present / absent raavali, including percentage")
 const MARK_TONE = { Present: 'green', 'Half day': 'amber', Absent: 'red', 'On leave': 'violet' };
 function PcAttendance() {
