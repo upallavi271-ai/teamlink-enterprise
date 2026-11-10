@@ -15,7 +15,9 @@
 //             the history row and a done follow-up naming the recruiter and Keerthana
 //   DUPLICATE a second October Medical joining of a person the sheet has once, at the same client (e.g. "Dr . Divya" next to
 //             "Dr.Divya"): merged into the matched one (undo for 7 days in Candidates > Duplicates > Merges)
-//   NOT ON THE LIST  an October Medical joining that matches no row and duplicates nobody: listed only - the founder decides
+//   NOT ON THE LIST  an October Medical joining that matches no row and duplicates nobody: listed; with --remove-extras (founder
+//             2026-11-10: "andhulo evaru vuntey vallu matremey vundali") it goes back to the step it was at before Joined, with a
+//             history row - never deleted - and its joining-list record is taken out
 //
 //   node scripts/medical-october-final.js --file <csv>                                   DRY RUN
 //   TL_ALLOW_REAL_APPLY=1 node scripts/medical-october-final.js --file <csv> --apply --really-real
@@ -28,6 +30,7 @@ const path = require('path');
 const argv = process.argv.slice(2);
 const val = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : null; };
 const APPLY = argv.includes('--apply');
+const REMOVE = argv.includes('--remove-extras');
 if (APPLY && !(argv.includes('--really-real') && process.env.TL_ALLOW_REAL_APPLY === '1')) {
   console.error('REFUSED: this writes to the REAL database. It needs --really-real AND TL_ALLOW_REAL_APPLY=1.');
   process.exit(2);
@@ -89,7 +92,7 @@ function parseCsv(text) {
         id: true, candidateId: true, joiningDate: true, joinedAt: true,
         candidate: { select: { name: true, phone: true } },
         requirement: { select: { id: true, reqCode: true, title: true, clientId: true, client: { select: { name: true } } } },
-        stageEvents: { where: { toStage: { in: ['JOINED', 'HIRED'] } }, select: { createdAt: true }, orderBy: { createdAt: 'asc' }, take: 1 },
+        stageEvents: { where: { toStage: { in: ['JOINED', 'HIRED'] } }, select: { createdAt: true, fromStage: true }, orderBy: { createdAt: 'asc' }, take: 1 },
       },
     });
     const dayOf = (a) => (/^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? String(a.joiningDate).slice(0, 10) : istDay(a.joinedAt || (a.stageEvents[0] && a.stageEvents[0].createdAt)));
@@ -115,15 +118,26 @@ function parseCsv(text) {
       console.log(`  row ${r.row}: ${r.name} | ${titleCase(r.desig)} — ${titleCase(r.spec)} | ${r.clientRaw.slice(0, 40)} | ${r.join} | ${r.recruiter} -> ${what}`);
     });
     dup.forEach(({ a, of }) => console.log(`  DUPLICATE: "${a.candidate.name}" ${a.requirement.reqCode || ''} (${a.day}) is the same person as row ${of.r.row} -> merged into it`));
-    other.forEach((a) => console.log(`  NOT ON THE LIST: "${a.candidate.name}" ${a.requirement.reqCode || ''} ${a.clientName} joined ${a.day} - left as it is; tell me if it should go`));
-    const after = rows.filter((r) => r.join && r.join.startsWith(MONTH)).length + other.length;
-    console.log(`After: ${after} Medical joining(s) in October (the list's ${rows.filter((r) => r.join && r.join.startsWith(MONTH)).length}${other.length ? ` + ${other.length} not on the list` : ''}).`);
+    const backTo = (a) => { const f = a.stageEvents[0] && a.stageEvents[0].fromStage; return f && !['JOINED', 'HIRED'].includes(f) ? f : 'SELECTED'; };
+    other.forEach((a) => console.log(`  NOT ON THE LIST: "${a.candidate.name}" ${a.requirement.reqCode || ''} ${a.clientName} joined ${a.day} - ${REMOVE ? `REMOVED from Joined: back to ${backTo(a)}` : 'left as it is (--remove-extras takes it out)'}`));
+    const after = rows.filter((r) => r.join && r.join.startsWith(MONTH)).length + (REMOVE ? 0 : other.length);
+    console.log(`After: ${after} Medical joining(s) in October (the list's ${rows.filter((r) => r.join && r.join.startsWith(MONTH)).length}${other.length && !REMOVE ? ` + ${other.length} not on the list` : ''}).`);
     if (!APPLY) { console.log('DRY RUN: nothing was changed.'); return; }
 
     const bakDir = path.join(os.homedir(), '.teamlink-backups', `medical-october-final-${new Date().toISOString().replace(/[:.]/g, '-')}`);
     fs.mkdirSync(bakDir, { recursive: true });
     await prisma.$executeRawUnsafe(`VACUUM INTO '${path.join(bakDir, 'before.db').split(path.sep).join('/').replace(/'/g, "''")}'`);
     const MERGE = require('../src/utils/candidateMerge'); // eslint-disable-line global-require
+    if (REMOVE) {
+      for (const a of other) {
+        const to = backTo(a);
+        await prisma.application.update({ where: { id: a.id }, data: { stage: to, joiningStatus: null } });
+        await prisma.applicationStageEvent.create({ data: { applicationId: a.id, candidateId: a.candidateId, fromStage: 'JOINED', toStage: to, action: 'Not a joining (final list)', comment: `Not in Keerthana's October final list (founder 2026-11-10): back to ${to}. It was marked Joined on ${a.day}.`, actorName: ACTOR.name } });
+        await prisma.$executeRawUnsafe('DELETE FROM "JoiningRecord" WHERE "applicationId" = ? AND "status" = ?', a.id, 'Joined').catch(() => 0);
+        await logAudit({ userId: null, actorName: ACTOR.name, action: 'Taken out of Joined (not in the final list)', entity: 'Application', entityId: a.id, fromValue: 'JOINED', toValue: to, reason: `Keerthana's October final list; was Joined ${a.day}` });
+        console.log(`  "${a.candidate.name}" (${a.requirement.reqCode || ''}) taken out of Joined: back to ${to}`);
+      }
+    }
     for (const { a, of } of dup) {
       const out = await MERGE.mergeCandidates({ masterId: of.m.candidateId, donorIds: [a.candidateId], user: ACTOR, kind: 'MERGE', reason: `The same doctor twice in October (${a.requirement.reqCode}); Keerthana's final list has them once (founder 2026-11-10)` });
       await prisma.$executeRawUnsafe('DELETE FROM "JoiningRecord" WHERE "applicationId" = ? AND NOT EXISTS (SELECT 1 FROM "Application" WHERE "id" = ?)', a.id, a.id).catch(() => 0);
