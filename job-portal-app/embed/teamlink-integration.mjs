@@ -698,6 +698,9 @@ export function teamlinkFrontRouter({ root, express }) {
         const c = await getPool().connect();
         try {
           await c.query('begin read only');
+          // a database login that obeys the row rules would read nothing here and look like "no request": say "unknown" instead
+          const free = (await c.query('select rolsuper or rolbypassrls as free from pg_roles where rolname = current_user')).rows[0];
+          if (!free || !free.free) throw new Error('this database login cannot see reset links (row rules apply to it)');
           const rows = (await c.query(`select user_id, created_at, expires_at, used_at from password_resets
               where user_id = any($1::uuid[]) order by created_at desc limit 20`, [out.users.map((u) => u.id)])).rows;
           await c.query('rollback');
