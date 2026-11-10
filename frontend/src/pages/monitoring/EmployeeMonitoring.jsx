@@ -434,8 +434,14 @@ function PcAttendance() {
   const [to, setTo] = useState(todayIst());
   const [view, setView] = useState('people');
   const [q, setQ] = useState('');
-  const { data, error, loading } = useGet('/monitoring/pc-attendance', { from, to });
-  const match = (r) => !q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase());
+  const [department, setDepartment] = useState('');
+  const [team, setTeam] = useState('');
+  const [mark, setMark] = useState('');
+  const [band, setBand] = useState('');
+  const filters = { department, team, mark, band };
+  const { data, error, loading } = useGet('/monitoring/pc-attendance', { from, to, ...filters });
+  const anyFilter = department || team || mark || band || q.trim();
+  const match = (r) => !q.trim() || `${r.name} ${r.code || ''} ${r.department || ''} ${r.team || ''}`.toLowerCase().includes(q.trim().toLowerCase());
   const people = ((data && data.people) || []).filter(match);
   const days = ((data && data.days) || []).filter(match);
   const tone = (m) => MARK_TONE[m] || 'slate';
@@ -449,8 +455,33 @@ function PcAttendance() {
           <button type="button" className={view === 'people' ? 'on' : ''} onClick={() => setView('people')}>Per employee</button>
           <button type="button" className={view === 'days' ? 'on' : ''} onClick={() => setView('days')}>Day by day</button>
         </span>
-        <span style={{ marginLeft: 'auto' }}><ExportMenu url="/monitoring/pc-attendance" params={{ from, to, view }} label="Export" /></span>
+        <span style={{ marginLeft: 'auto' }}><ExportMenu url="/monitoring/pc-attendance" params={{ from, to, view, ...filters }} label="Export" /></span>
         </RangeBar>
+        <div className="mon-bar">
+          <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setTeam(''); }} aria-label="Department">
+            <option value="">All departments</option>
+            {((data && data.departments) || []).map((d) => <option key={d} value={d}>{d}</option>)}
+          </Combo>
+          <Combo value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
+            <option value="">All teams</option>
+            {((data && data.teams) || []).map((d) => <option key={d} value={d}>{d}</option>)}
+          </Combo>
+          <Combo value={mark} onChange={(e) => setMark(e.target.value)} aria-label="Present, half day, absent or on leave">
+            <option value="">Present, half day, absent</option>
+            <option value="Present">Present</option>
+            <option value="Half day">Half day</option>
+            <option value="Absent">Absent</option>
+            <option value="On leave">On leave</option>
+          </Combo>
+          <Combo value={band} onChange={(e) => setBand(e.target.value)} aria-label="Active %">
+            <option value="">Any active %</option>
+            <option value="present">75% or more</option>
+            <option value="half">50% to 75%</option>
+            <option value="low">Below 50%</option>
+          </Combo>
+          {anyFilter && <button type="button" className="btn btn-sm btn-ghost" onClick={() => { setDepartment(''); setTeam(''); setMark(''); setBand(''); setQ(''); }}>Clear filters</button>}
+          {data && <span className="small-muted">{view === 'people' ? `${people.length} of ${data.total} employee${data.total === 1 ? '' : 's'}` : `${days.length} day${days.length === 1 ? '' : 's'}`}{mark && view === 'people' ? ` with at least one ${mark.toLowerCase()} day` : ''}</span>}
+        </div>
       </div>
       {error && <div className="notice red">{error}</div>}
       {loading && !data && <div className="small-muted" style={{ padding: 12 }}>Loading…</div>}

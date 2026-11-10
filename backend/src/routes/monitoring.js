@@ -214,19 +214,20 @@ router.get('/alerts', teamOnly, wrap(async (req, res) => {
 router.get('/task-match', teamOnly, wrap(async (req, res) => res.json(await require('../utils/monitoringTasks').taskMatch(req.query.from, req.query.to, req.access)))); // eslint-disable-line global-require
 // --- attendance from the PC (founder 2026-11-10): present / half day / absent by the active hours, with the percentage
 router.get('/pc-attendance', teamOnly, wrap(async (req, res) => {
-  const out = await L.pcAttendance(req.query.from, req.query.to, req.access);
+  const q = req.query;
+  const out = await L.pcAttendance(q.from, q.to, req.access, { department: q.department || '', team: q.team || '', mark: q.mark || '', band: q.band || '' });
   const KIT = require('../utils/exportKit'); // eslint-disable-line global-require
   const format = req.query.format ? KIT.formatOf(req.query) : null;
   if (!format) return res.json(out);
   const pct = (v) => (v == null ? '' : `${v}%`);
   const days = req.query.view === 'days';
   return KIT.sendTable(req, res, {
-    format, name: `pc-attendance-${days ? 'days' : 'employees'}-${out.from}-to-${out.to}`, title: `Present or absent from the PC ${out.from} to ${out.to}`,
+    format, name: `pc-attendance-${days ? 'days' : 'employees'}-${out.from}-to-${out.to}`, title: `Present or absent from the PC ${out.from} to ${out.to}${[q.department, q.team, q.mark].filter(Boolean).length ? ` · ${[q.department, q.team, q.mark].filter(Boolean).join(' · ')}` : ''}`,
     headers: days ? ['Date', 'Employee', 'Code', 'Department', 'First', 'Last', 'Active hours', 'Work hours', 'Active %', 'From the PC']
       : ['Employee', 'Code', 'Department', 'Working days', 'Present', 'Half day', 'Absent', 'On leave', 'Attendance %', 'Active hours', 'Work hours', 'Active %'],
     rows: days ? out.days.map((r) => [r.day, r.name, r.code || '', r.department || '', r.first || '', r.last || '', r.activeHours, r.workHours, pct(r.pct), r.mark])
       : out.people.map((r) => [r.name, r.code || '', r.department || '', r.days, r.present, r.halfDays, r.absent, r.leave, pct(r.attendancePct), r.activeHours, r.workHours, pct(r.pct)]),
-    sheet: 'PC attendance', entity: 'ActivityLog', what: 'Present or absent from the PC', scope: 'All departments', period: { from: out.from, to: out.to }, screen: 'Employee Monitoring',
+    sheet: 'PC attendance', entity: 'ActivityLog', what: 'Present or absent from the PC', scope: q.department || 'All departments', period: { from: out.from, to: out.to }, screen: 'Employee Monitoring',
   });
 }));
 // --- attendance suggestions: HR approves, and only an empty day is filled

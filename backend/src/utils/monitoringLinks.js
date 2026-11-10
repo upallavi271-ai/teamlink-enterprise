@@ -85,7 +85,7 @@ async function payrollRows(from, to, department, access = null) {
 const PRESENT_PCT = 75; // 6 h of 8
 const HALF_PCT = 50; // 4 h of 8
 const pcMark = (pct) => (pct >= PRESENT_PCT ? 'Present' : pct >= HALF_PCT ? 'Half day' : 'Absent');
-async function pcAttendance(from, to, access = null) {
+async function pcAttendance(from, to, access = null, filters = {}) {
   const today = M.todayIst();
   const b = M.validDay(to) && to < today ? to : today;
   let a = M.validDay(from) ? from : `${b.slice(0, 8)}01`;
@@ -125,7 +125,7 @@ async function pcAttendance(from, to, access = null) {
         if (onLeave) sum.leave += 1; else if (mark === 'Present') sum.present += 1; else if (mark === 'Half day') sum.half += 1; else sum.absent += 1;
       }
       dayRows.push({
-        key: `${e.id}|${d}`, employeeId: e.id, day: d, name: e.name, code: e.employeeCode || null, department: e.department || null,
+        key: `${e.id}|${d}`, employeeId: e.id, day: d, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
         first: l ? hmOf(l._min.startTime) : null, last: l ? hmOf(l._max.endTime) : null, activeHours: hrs(active), workHours: hrs(wd.workSeconds), pct, mark, running,
       });
     });
@@ -138,7 +138,17 @@ async function pcAttendance(from, to, access = null) {
   });
   people.sort((p, q) => (q.pct || 0) - (p.pct || 0) || String(p.name).localeCompare(String(q.name)));
   dayRows.sort((p, q) => q.day.localeCompare(p.day) || q.pct - p.pct || String(p.name).localeCompare(String(q.name)));
-  return { from: a, to: b, presentPct: PRESENT_PCT, halfPct: HALF_PCT, people, days: dayRows };
+  // THE FILTERS (founder 2026-11-10: "filters option ivvu"): department, team, the mark and the active % band - the same for the
+  // screen and the export. Per employee, a mark keeps the people with at least one such day.
+  const f = filters || {};
+  const departments = [...new Set(people.map((r) => r.department).filter(Boolean))].sort();
+  const teams = [...new Set(people.filter((r) => !f.department || r.department === f.department).map((r) => r.team).filter(Boolean))].sort();
+  const band = (pct) => (f.band === 'present' ? pct >= PRESENT_PCT : f.band === 'half' ? pct >= HALF_PCT && pct < PRESENT_PCT : f.band === 'low' ? pct < HALF_PCT : true);
+  const MARK_KEY = { Present: 'present', 'Half day': 'halfDays', Absent: 'absent', 'On leave': 'leave' };
+  const who = (r) => (!f.department || r.department === f.department) && (!f.team || r.team === f.team);
+  const keepPeople = people.filter((r) => who(r) && (!f.mark || (MARK_KEY[f.mark] && r[MARK_KEY[f.mark]] > 0)) && (!f.band || (r.pct != null && band(r.pct))));
+  const keepDays = dayRows.filter((r) => who(r) && (!f.mark || r.mark === f.mark) && (!f.band || (r.mark !== 'On leave' && band(r.pct))));
+  return { from: a, to: b, presentPct: PRESENT_PCT, halfPct: HALF_PCT, people: keepPeople, days: keepDays, departments, teams, total: people.length };
 }
 
 // --- Attendance: suggestions HR approves ----------------------------------------------------------------------------------------
