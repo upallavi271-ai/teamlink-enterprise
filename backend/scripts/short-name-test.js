@@ -19,6 +19,7 @@ check('words out of order are not', !W.shortFormFits('M.Sirisha Sai', 'Masabattu
 check('"Bhanu teja" (no surname) is "Gundala Bhanu Teja"', W.partOfName('Bhanu teja', 'Gundala Bhanu Teja') && W.shortFormOf('Bhanu teja', ['Gundala Bhanu Teja', 'Ravi Teja']) === 'gundala bhanu teja');
 check('a single first name is never matched ("Sravanthi")', W.shortFormOf('Sravanthi', ['sravanthi Anumolu']) === null);
 check('two people with that part of the name: nobody is picked', W.shortFormOf('Sai Sirisha', ['Masabattula Sai Sirisha', 'Kota Sai Sirisha']) === null);
+check('a confirmed name: "Bhavana" is Gandrathi Bhavana (founder 2026-11-10)', W.makeResolver([{ id: 'b1', name: 'Gandrathi Bhavana', status: 'Active' }])(null, 'Bhavana').key === 'u:b1');
 check('two people who fit: nobody is picked', W.shortFormOf('M.Sai Sirisha', ['Masabattula Sai Sirisha', 'Mekala Sai Sirisha']) === null);
 
 const users = [

@@ -133,6 +133,13 @@ function shortFormOf(typed, names) {
   return fits.length === 1 ? fits[0] : null;
 }
 
+// NAMES THE FOUNDER CONFIRMED ARE ONE PERSON (the automatic rules never match a single first name - it could be two people):
+// the name as typed in the sheets -> the login's name.
+//   2026-11-10 "Bhavana anna, Gandrathi Bhavana anna okarey" (the Team lead list showed both)
+const CONFIRMED_NAMES = new Map([
+  ['bhavana', 'gandrathi bhavana'],
+]);
+
 // --- People directory ---------------------------------------------------------
 // Resolves (userId, name) to ONE person, the way ATS Reports always has.
 function makeResolver(users) {
@@ -153,7 +160,7 @@ function makeResolver(users) {
   };
   const person = (id, name) => {
     if (id && byId.has(id)) return asPerson(byId.get(id));
-    const u = byName.get(nameKey(name)) || (clean(name) ? byShort(name) : null);
+    const u = byName.get(nameKey(name)) || byName.get(CONFIRMED_NAMES.get(nameKey(name)) || '') || (clean(name) ? byShort(name) : null);
     if (u) return asPerson(u);
     return clean(name) ? { key: `n:${nameKey(name)}`, userId: null, label: clean(name), team: null } : null;
   };
