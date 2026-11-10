@@ -437,4 +437,82 @@ router.get('/webhook-raw', adminOnly, wrap(async (_req, res) => {
   res.json(parse(row && row.value, []));
 }));
 
+// ---- the candidate login by RCS (utils/rcsCandidateLogin.js) -----------------------------------------------------------------------
+//   GET  /candidate-login            the switch, the chosen template, the blanks, why logins were last NOT sent by RCS        Admin
+//   PUT  /candidate-login            { on, templateId (TeamLink row id), map: { candidate_name: 'var1', ... } }                 Admin
+//   POST /candidate-login/template   the ready-made login template -> rcssms.in for approval, chosen at once                   Admin
+//   GET  /candidate-login/history    ?status=&page=  every login message: Sent / Delivered / Failed + the reason                 who may send RCS
+//   POST /candidate-login/:id/retry  the SAME login again (a failed one, password still kept encrypted)                         who may send RCS + may contact candidates
+//   POST /candidate-login/:id/resend a NEW temporary password through the Job Portal (RCS, SMS, WhatsApp, email)                who may send RCS + may contact candidates
+const L = require('../utils/rcsCandidateLogin');
+async function shapeLoginSettings() {
+  const s = await L.settings();
+  const t = s.templateRowId ? await prisma.rcsTemplate.findUnique({ where: { id: s.templateRowId } }).catch(() => null) : null;
+  const cfg = rcs.config();
+  const ready = !!(s.on && t && t.status === 'APPROVED' && cfg.configured);
+  return {
+    on: s.on, map: s.map, fields: L.FIELDS.map((k) => ({ key: k, label: L.FIELD_WORD[k] })), template: t ? shapeTemplate(t) : null, ready,
+    blocker: !s.on ? 'Switched off.' : !t ? 'No template chosen yet.' : t.status !== 'APPROVED' ? `The template "${t.name}" is ${t.status === 'REJECTED' ? 'rejected by rcssms.in' : 'waiting for rcssms.in approval'}.` : !cfg.configured ? `RCS is not set up on the server: ${cfg.reason}` : null,
+    skipped: s.skipped, changedBy: s.changedBy, changedAt: s.changedAt, readyText: L.READY_TEMPLATE.description,
+  };
+}
+async function mayResend(user) {
+  if (!(await mayUse(user))) return { ok: false, error: 'You are not on the list of people who may send RCS. An Admin adds you in Administration > Integrations > RCS.' };
+  if (isAdmin(user)) return { ok: true };
+  const rule = await access.ruleFor(user, 'candidates');
+  if (!rule.allowed) return { ok: false, error: rule.reason || 'Your role may not contact candidates.' };
+  if (rule.mode === 'masked') return { ok: false, error: 'Your role does not see candidates\' numbers, so it cannot send them a login.' };
+  return { ok: true };
+}
+router.get('/candidate-login', adminOnly, wrap(async (_req, res) => res.json(await shapeLoginSettings())));
+router.put('/candidate-login', adminOnly, wrap(async (req, res) => {
+  const b = req.body || {};
+  const patch = {};
+  if (b.on !== undefined) patch.on = !!b.on;
+  if (b.templateId !== undefined) {
+    if (b.templateId) {
+      const t = await prisma.rcsTemplate.findUnique({ where: { id: String(b.templateId) } });
+      if (!t) return res.status(400).json({ error: 'Choose one of the RCS templates.' });
+      if (t.rcsType === 'RICHCASOUREL') return res.status(400).json({ error: 'A carousel cannot carry a login: choose a Basic or Rich card template.' });
+    }
+    patch.templateRowId = b.templateId || null;
+  }
+  if (b.map !== undefined) {
+    const m = L.cleanMap(b.map);
+    if (!m.temporary_password || !m.login_id) return res.status(400).json({ error: 'The Login ID and the Temporary password each need their own blank (var1, var2 ...).' });
+    patch.map = m;
+  }
+  const before = await shapeLoginSettings();
+  await L.saveSettings(patch, req.user);
+  const after = await shapeLoginSettings();
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'RCS candidate login settings changed', entity: 'Rcs', entityId: 'candidate-login', fromValue: `${before.on ? 'on' : 'off'}, ${before.template ? before.template.name : 'no template'}`, toValue: `${after.on ? 'on' : 'off'}, ${after.template ? after.template.name : 'no template'}, ${Object.entries(after.map).map(([k, v]) => `${k}=${v}`).join(' ')}` });
+  return res.json(after);
+}));
+router.post('/candidate-login/template', adminOnly, wrap(async (req, res) => {
+  const r = await L.makeReadyTemplate(req.user);
+  if (!r.ok) return res.status(r.invalid ? 400 : 422).json({ error: r.error, errorCode: r.errorCode || null }); // 422, not 502 (see POST /templates)
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'RCS template sent for approval', entity: 'RcsTemplate', entityId: r.row.id, toValue: `${r.row.name} (BASIC, candidate login) - rcssms.in id ${r.row.templateId}, ${r.row.status}` });
+  require('../utils/rcsOmniSync').pull({ why: 'template made in TeamLink' }).catch(() => {}); // eslint-disable-line global-require
+  return res.status(201).json(await shapeLoginSettings());
+}));
+router.get('/candidate-login/history', wrap(async (req, res) => {
+  if (!(await mayUse(req.user))) return res.status(403).json({ error: 'You may not send RCS.' });
+  const ok = ['queued', 'sent', 'delivered', 'failed'];
+  return res.json(await L.history({ status: ok.includes(req.query.status) ? req.query.status : null, page: req.query.page, size: req.query.size }));
+}));
+router.post('/candidate-login/:id/retry', require('../channels/rateLimit').limiter({ perMinute: 20 }), wrap(async (req, res) => {
+  const g = await mayResend(req.user);
+  if (!g.ok) return res.status(403).json({ error: g.error });
+  const r = await L.retry(req.params.id);
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'RCS candidate login tried again', entity: 'RcsMessageLog', entityId: req.params.id, toValue: r.ok ? `Accepted by rcssms.in, msgid ${r.msgId}` : `Not sent: ${r.error}` });
+  return r.ok ? res.json(r) : res.status(r.status || 422).json({ error: r.error, errorCode: r.errorCode || null });
+}));
+router.post('/candidate-login/:id/resend', require('../channels/rateLimit').limiter({ perMinute: 10 }), wrap(async (req, res) => {
+  const g = await mayResend(req.user);
+  if (!g.ok) return res.status(403).json({ error: g.error });
+  const r = await L.resend(req.params.id);
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Candidate login resent (new temporary password)', entity: 'RcsMessageLog', entityId: req.params.id, toValue: r.ok ? `Sent: ${Object.entries(r.delivery || {}).map(([k, v]) => `${k} ${v}`).join(', ')}` : r.error });
+  return r.ok ? res.json(r) : res.status(r.status || 422).json({ error: r.error, result: r.result || null });
+}));
+
 module.exports = router;

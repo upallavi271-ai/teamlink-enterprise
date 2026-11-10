@@ -354,6 +354,107 @@ function LogTab() {
   );
 }
 
+// ---- Candidate login (utils/rcsCandidateLogin.js) -------------------------------------------------------------------
+// The Job Portal makes a candidate's account and temporary password; right after, the login goes by RCS with the template chosen here.
+const SLOTS = Array.from({ length: 10 }, (_, i) => `var${i + 1}`);
+function LoginTab() {
+  const [s, setS] = useState(null);
+  const [tpls, setTpls] = useState([]);
+  const [note, setNote] = useState(null);
+  const [busy, setBusy] = useState('');
+  const [status, setStatus] = useState('');
+  const [page, setPage] = useState(1);
+  const [h, setH] = useState(null);
+  const [rowNote, setRowNote] = useState({});
+  const load = useCallback(() => {
+    api.get('/rcs/candidate-login').then((r) => setS(r.data)).catch((e) => setNote({ ok: false, text: errOf(e, 'Could not load.') }));
+    api.get('/rcs/templates').then((r) => setTpls(r.data.filter((t) => t.rcsType !== 'RICHCASOUREL'))).catch(() => setTpls([]));
+  }, []);
+  const loadHistory = useCallback(() => api.get('/rcs/candidate-login/history', { params: { status: status || undefined, page } }).then((r) => setH(r.data)).catch(() => setH(null)), [status, page]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+  if (!s) return <div className="cm-help">{note ? note.text : 'Loading…'}</div>;
+  const setMap = (field, slot) => setS((x) => ({ ...x, map: { ...x.map, [field]: slot } }));
+  const save = async () => {
+    setBusy('save'); setNote(null);
+    try { const r = await api.put('/rcs/candidate-login', { on: s.on, templateId: s.template ? s.template.id : null, map: s.map }); setS(r.data); setNote({ ok: true, text: 'Saved.' }); } catch (e) { setNote({ ok: false, text: errOf(e, 'Not saved.') }); } finally { setBusy(''); }
+  };
+  const makeReady = async () => {
+    if (!window.confirm('Send the ready login template to rcssms.in for approval? It is chosen for the candidate login at once and is used when rcssms.in approves it.')) return;
+    setBusy('make'); setNote(null);
+    try { const r = await api.post('/rcs/candidate-login/template'); setS(r.data); load(); setNote({ ok: true, text: 'Sent to rcssms.in for approval. It waits there until they approve it.' }); } catch (e) { setNote({ ok: false, text: errOf(e, 'Not sent to rcssms.in.') }); } finally { setBusy(''); }
+  };
+  const act = async (row, what) => {
+    if (what === 'resend' && !window.confirm(`Send ${row.person || 'this candidate'} a NEW temporary password? It goes by RCS, SMS, WhatsApp and email, and the old one stops working once a message has left.`)) return;
+    setRowNote((x) => ({ ...x, [row.id]: { busy: true } }));
+    try {
+      const r = await api.post(`/rcs/candidate-login/${row.id}/${what}`);
+      setRowNote((x) => ({ ...x, [row.id]: { ok: true, text: what === 'retry' ? `Accepted by rcssms.in (id ${r.data.msgId}).` : 'New login sent.' } }));
+      loadHistory();
+    } catch (e) { setRowNote((x) => ({ ...x, [row.id]: { ok: false, text: errOf(e, 'Not sent.') } })); loadHistory(); }
+  };
+  const chosen = s.template;
+  const pages = h ? Math.max(1, Math.ceil(h.total / h.size)) : 1;
+  return (
+    <div>
+      <div className="cm-card" data-rcs-login>
+        <div className="cm-cardhead"><h3>Candidate login by RCS</h3><button type="button" className="btn btn-primary" disabled={!!busy} onClick={save}>{busy === 'save' ? 'Saving…' : 'Save'}</button></div>
+        <div className="cm-help">When the Job Portal makes a candidate&apos;s account (added, imported, Naukri / Shine, Forgot password) or sends a new login, the login also goes by RCS right away: once per account, only with an <b>Approved</b> template. The password is never saved in plain text.</div>
+        <div className={`notice ${s.ready ? 'green' : 'orange'}`} style={{ margin: '8px 0', display: 'block' }}>{s.ready ? 'Ready: every new candidate login also goes by RCS.' : `Not sending by RCS yet: ${s.blocker}`}</div>
+        {s.skipped && <div className="cm-help">Last login NOT sent by RCS: {fmt(s.skipped.at)} · {s.skipped.reason}{s.skipped.count > 1 ? ` (${s.skipped.count} times)` : ''}</div>}
+        <label className="sp-check"><input type="checkbox" checked={s.on} onChange={(e) => setS({ ...s, on: e.target.checked })} /> Send the candidate login by RCS</label>
+        <div className="cm-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+          <Field label="RCS template" hint={chosen ? `${STATUS_WORD[chosen.status] || chosen.status} · id ${chosen.templateId}` : 'Choose one, or make the ready one below.'}>
+            <Combo value={chosen ? chosen.id : ''} onChange={(e) => setS({ ...s, template: tpls.find((t) => t.id === e.target.value) || null })}>
+              <option value="">Choose a template</option>
+              {tpls.map((t) => <option key={t.id} value={t.id}>{t.name} ({STATUS_WORD[t.status] || t.status})</option>)}
+            </Combo>
+          </Field>
+        </div>
+        <h4 className="sp-h4">Which blank carries what</h4>
+        <div className="cm-grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
+          {s.fields.map((f) => (
+            <Field key={f.key} label={f.label}>
+              <Combo value={s.map[f.key] || ''} onChange={(e) => setMap(f.key, e.target.value)}>
+                <option value="">Not in the message</option>
+                {SLOTS.map((v) => <option key={v} value={v}>{`{#${v}#}`}</option>)}
+              </Combo>
+            </Field>
+          ))}
+        </div>
+        <h4 className="sp-h4">The ready login template</h4>
+        <div className="sp-preview sp-small">{s.readyText}</div>
+        <div className="cm-btnrow"><button type="button" className="btn" disabled={!!busy} onClick={makeReady}>{busy === 'make' ? 'Sending…' : 'Send the ready template to rcssms.in for approval'}</button></div>
+        {note && <div className={`cm-line ${note.ok ? 'cm-green' : 'cm-orange'}`}>{note.text}</div>}
+      </div>
+      <div className="cm-card">
+        <div className="cm-cardhead"><h3>Login messages</h3>
+          <Combo value={status} onChange={(e) => { setStatus(e.target.value); setPage(1); }}><option value="">All</option><option value="sent">Sent</option><option value="delivered">Delivered</option><option value="failed">Failed</option></Combo>
+        </div>
+        {h && <div className="cm-help">{h.total} login message{h.total === 1 ? '' : 's'}{Object.keys(h.counts).length ? ` · ${Object.entries(h.counts).map(([k, v]) => `${v} ${k}`).join(' · ')}` : ''}. &quot;Sent&quot; = rcssms.in took it; &quot;Delivered&quot; only when its report says so.</div>}
+        {h && h.rows.length === 0 && <div className="cm-help">No login has gone by RCS yet.</div>}
+        {h && h.rows.length > 0 && (
+          <div className="sp-scroll"><table>
+            <thead><tr><th>When</th><th>Candidate</th><th>Candidate ID</th><th>Number</th><th>Status</th><th>Problem</th><th>Tries</th><th /></tr></thead>
+            <tbody>{h.rows.map((r) => (
+              <tr key={r.id}>
+                <td>{fmt(r.at)}</td><td>{r.person || '—'}</td><td>{r.candidateId || '—'}</td><td>{r.number}</td><td><Pill s={r.status} /></td>
+                <td className="sp-words" style={{ minWidth: 220 }}>{r.error ? `${r.errorCode ? `[${r.errorCode}] ` : ''}${r.error}` : '—'}</td><td>{r.attempts}</td>
+                <td className="sp-actions">
+                  {r.canRetry && <button type="button" className="btn btn-sm" disabled={rowNote[r.id] && rowNote[r.id].busy} onClick={() => act(r, 'retry')}>Retry</button>}
+                  {r.status !== 'Delivered' && <button type="button" className="btn btn-sm" disabled={rowNote[r.id] && rowNote[r.id].busy} onClick={() => act(r, 'resend')}>Resend new login</button>}
+                  {rowNote[r.id] && rowNote[r.id].text && <div className={rowNote[r.id].ok ? 'cm-help' : 'error-text'}>{rowNote[r.id].text}</div>}
+                </td>
+              </tr>
+            ))}</tbody>
+          </table></div>
+        )}
+        {h && pages > 1 && <div className="cm-btnrow"><button type="button" className="btn btn-sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Previous</button><span className="cm-help">Page {page} of {pages}</span><button type="button" className="btn btn-sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Next</button></div>}
+      </div>
+    </div>
+  );
+}
+
 // ---- Settings ------------------------------------------------------------------
 function SettingsTab({ reload }) {
   const [s, setS] = useState(null);
@@ -395,7 +496,7 @@ export default function RcsAdmin() {
   const [err, setErr] = useState('');
   const load = useCallback(() => api.get('/rcs/status').then((r) => { setD(r.data); setErr(''); }).catch((e) => setErr(errOf(e, 'Could not load RCS.'))), []);
   useEffect(() => { load(); }, [load]);
-  const tabs = [['status', 'Status'], ['test', 'Test send'], ['templates', 'Templates'], ['log', 'Message log'], ['settings', 'Settings']];
+  const tabs = [['status', 'Status'], ['test', 'Test send'], ['templates', 'Templates'], ['login', 'Candidate login'], ['log', 'Message log'], ['settings', 'Settings']];
   return (
     <div className="cm-page" data-rcs>
       <div className="cm-tabs">{tabs.map(([k, l]) => <button key={k} type="button" className={sub === k ? 'on' : ''} onClick={() => setSub(k)}>{l}</button>)}</div>
@@ -403,6 +504,7 @@ export default function RcsAdmin() {
       {sub === 'status' && <StatusTab d={d} reload={load} onGoTest={() => setSub('test')} />}
       {sub === 'test' && <TestTab reload={load} />}
       {sub === 'templates' && <TemplatesTab />}
+      {sub === 'login' && <LoginTab />}
       {sub === 'log' && <LogTab />}
       {sub === 'settings' && <SettingsTab reload={load} />}
     </div>

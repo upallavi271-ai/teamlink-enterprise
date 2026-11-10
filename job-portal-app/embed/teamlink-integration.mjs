@@ -38,6 +38,7 @@ import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { withRcsLogin } from './rcs-login.mjs';
 
 const SYSTEM = { userId: '', role: 'admin' };
 const PREFIX = 'tl_';
@@ -200,16 +201,34 @@ export const withoutStandIn = (body, standIn) => {
   try { return JSON.parse(JSON.stringify(body).split(standIn).join('')); } catch { return body; }
 };
 
+/*
+ * THE LOGIN ALSO GOES BY RCS (founder 2026-11-10): right after the SMS of a message that carries a NEW password, the same login is handed
+ * to TeamLink's RCS sender (embed/rcs-login.mjs -> backend/src/utils/rcsCandidateLogin.js). Each send function is wrapped once (marked);
+ * the SMS relay below replaces smsProvider.send and calls this again, so the login text and the RCS stay on (before, turning the relay on
+ * after the portal had loaded dropped the login text).
+ */
+const rcsOpts = () => ({ api: teamlinkApi(), secret: pushSecret() });
 export function installLoginText(providers) {
-  if (!providers || providers.__teamlinkLoginText) return false;
+  if (!providers) return false;
+  let wrapped = false;
   for (const ch of ['sms', 'whatsapp']) {
     const o = providers[ch];
-    if (!o || typeof o.send !== 'function') continue; // eslint-disable-line no-continue
+    if (!o || typeof o.send !== 'function' || o.send.__teamlinkLoginText) continue; // eslint-disable-line no-continue
     const send = o.send;
-    o.send = function sendWithLogin(args, ...rest) { return send.call(this, loginMessage(ch, args), ...rest); };
+    const fn = ch === 'sms'
+      ? async function sendWithLogin(args, ...rest) {
+        const a = loginMessage(ch, args);
+        let result;
+        try { result = await send.call(this, a, ...rest); } catch (err) { result = { status: 'failed', provider: 'sms', error: String((err && err.message) || err).slice(0, 300) }; }
+        return withRcsLogin(a, result, rcsOpts());
+      }
+      : function sendWithLogin(args, ...rest) { return send.call(this, loginMessage(ch, args), ...rest); };
+    Object.defineProperty(fn, '__teamlinkLoginText', { value: true });
+    o.send = fn;
+    wrapped = true;
   }
-  Object.defineProperty(providers, '__teamlinkLoginText', { value: true });
-  return true;
+  if (!providers.__teamlinkLoginText) Object.defineProperty(providers, '__teamlinkLoginText', { value: true });
+  return wrapped;
 }
 
 class HttpError extends Error {
@@ -817,6 +836,8 @@ export function teamlinkFrontRouter({ root, express }) {
           return { status: 'failed', provider: 'teamlink-sms', error: String((out && out.error) || `HTTP ${res2.status}`).slice(0, 300) };
         } catch (e) { return { status: 'failed', provider: 'teamlink-sms', error: String((e && e.message) || e).slice(0, 300) }; }
       };
+      // the login text + the RCS login wrap the new send too (installLoginText above)
+      try { installLoginText((await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'providers.js')).href)).providers); } catch { /* the plain relay still sends */ }
       log('sms: the portal now sends SMS through TeamLink\'s SMS channel');
     }
     return res.json(relayInfo());

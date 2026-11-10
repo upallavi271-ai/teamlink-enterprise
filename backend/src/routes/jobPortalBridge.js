@@ -88,6 +88,20 @@ router.post('/sms', async (req, res) => {
   }
 });
 
+// THE CANDIDATE LOGIN ALSO GOES BY RCS (founder 2026-11-10): the portal's SMS wrapper (job-portal-app/embed/rcs-login.mjs) hands each
+// message that carries a NEW temporary password here, server to server with the bridge secret. utils/rcsCandidateLogin.js sends it with
+// the approved RCS login template, once per account event, and never stores the password in plain text. Always 200 (see /sms above).
+//   POST /rcs-login { to, vars: { candidate_name, login_email, temporary_password, portal_link } } -> { ok, status, msgId?, reason? }
+router.post('/rcs-login', async (req, res) => {
+  if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ ok: false, error: 'Invalid or missing job portal secret' });
+  const b = req.body || {};
+  const v = b.vars && typeof b.vars === 'object' && !Array.isArray(b.vars) ? b.vars : {};
+  const vars = {};
+  ['candidate_name', 'to_name', 'login_email', 'temporary_password', 'portal_link'].forEach((k) => { if (v[k] != null) vars[k] = String(v[k]).slice(0, 300); });
+  const out = await require('../utils/rcsCandidateLogin').sendLogin({ to: String(b.to || '').slice(0, 40), vars }); // eslint-disable-line global-require
+  return res.json(out);
+});
+
 // THE PORTAL'S AI INTERVIEW HEARS AND SPEAKS WITH THE AI CALLING VOICES (founder 2026-11-05): utils/interviewVoice.js. Server to server with the
 // bridge secret; the audio never leaves this server. Always 200 with ready:false when the engines are not set up, and on a failure: the screen
 // then works from the browser alone.
