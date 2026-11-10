@@ -42,7 +42,8 @@ export default function DashboardOfPicker({ value, onPick }) {
 
   const byRole = useMemo(() => {
     const out = {};
-    (people || []).forEach((p) => {
+    // Only logins that can open an ATS dashboard: they hold the ATS and have not left.
+    (people || []).filter((p) => p.ats !== false && !p.left).forEach((p) => {
       const r = roleOfPerson(p);
       if (r) (out[r] = out[r] || []).push(p);
     });

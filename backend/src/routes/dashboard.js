@@ -1611,6 +1611,8 @@ async function boardSubject(req) {
   }
   const identity = await resolveIdentity(target.id, target);
   if (!identity || !identity.products || !identity.products.ats) throw boardRefusal(400, `${target.name} has no ATS dashboard.`);
+  // A person who has left cannot sign in any more (middleware/auth.js), so they have no dashboard to look at.
+  if (require('../utils/leftLogin').hasLeft(identity)) throw boardRefusal(400, `${target.name} has left, so their login is closed and has no dashboard.`); // eslint-disable-line global-require
   return identity;
 }
 // fn(subject) runs as the login whose dashboard is drawn: the Super Admin

@@ -122,6 +122,10 @@ router.get('/people', superAdminOnly, async (req, res) => {
       client: u.clientId ? (clientName.get(u.clientId) || null) : null,
       scope,
       landingPath: identity.landingPath,
+      // For the ATS dashboard's "Dashboard of" picker (routes/dashboard.js boardSubject):
+      // it lists only logins that hold the ATS and have not left (a left login is closed).
+      ats: !!(identity.products && identity.products.ats),
+      left: require('../utils/leftLogin').hasLeft(identity), // eslint-disable-line global-require
     });
   }
   res.json({ groups: GROUPS.map(([code, label]) => ({ code, label })), people });
