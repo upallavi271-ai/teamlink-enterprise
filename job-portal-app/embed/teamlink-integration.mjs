@@ -34,7 +34,7 @@
  * (Adapted from the api/src/integrations/teamlink.js that the previous
  * portal copy carried - kept in backups/job-portal-before-v2-*.)
  */
-import { timingSafeEqual } from 'node:crypto';
+import { timingSafeEqual, randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { readFileSync, writeFileSync, renameSync, mkdirSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -172,6 +172,23 @@ export function loginMessage(channel, args) {
   }
   return args;
 }
+/*
+ * ADD CANDIDATE WITHOUT AN EMAIL (founder 2026-11-10: "add candidates loo email compulsory anii unadhii adhii remove cehyuu", screenshot of the
+ * portal's quick-add dialog). The portal's POST /api/candidates insists on an email (its createSchema), though its own database, duplicate
+ * check and invitation all work with a phone alone. So, without touching the portal's code: a quick add with a phone and NO email is given a
+ * one-off stand-in address for the portal's checks, saved with no login sent, then the stand-in is removed (email = null) and the portal's
+ * own inviteCandidate makes the login from the mobile number and sends it by SMS / WhatsApp with the TeamLink link (loginMessage above).
+ * The answer the dialog gets is the portal's own, with email null and the real delivery result.
+ */
+export const isPhoneOnlyAdd = (b) => !!b && typeof b === 'object' && !Array.isArray(b)
+  && !String(b.email == null ? '' : b.email).trim() && String(b.phone == null ? '' : b.phone).replace(/\D/g, '').length >= 7;
+export const standInEmail = () => `nomail-${randomBytes(8).toString('hex')}@phone.invalid`;
+/** Removes the stand-in from anything the portal answers (an error message, a duplicate list). */
+export const withoutStandIn = (body, standIn) => {
+  if (!standIn || body == null) return body;
+  try { return JSON.parse(JSON.stringify(body).split(standIn).join('')); } catch { return body; }
+};
+
 export function installLoginText(providers) {
   if (!providers || providers.__teamlinkLoginText) return false;
   for (const ch of ['sms', 'whatsapp']) {
@@ -558,6 +575,58 @@ export function teamlinkFrontRouter({ root, express }) {
       forgotCurrent = entry;
       next();
     });
+  });
+
+  // Add Candidate with a phone and no email (isPhoneOnlyAdd above). Anything else goes to the portal's route exactly as it came.
+  r.post('/api/candidates', json, (req, res, next) => {
+    if (!isPhoneOnlyAdd(req.body)) return next();
+    const standIn = standInEmail();
+    const wantLogin = req.body.sendCredentials !== false;
+    const phone = String(req.body.phone);
+    req.body.email = standIn;
+    req.body.sendCredentials = false; // no login to the stand-in: it is sent below, to the number
+    const send = res.json.bind(res);
+    res.json = (body) => {
+      res.json = send;
+      const cand = body && body.candidate;
+      if (res.statusCode >= 300 || !cand || !cand.id) return send(withoutStandIn(body, standIn));
+      (async () => {
+        const { withUser } = await portal();
+        await withUser(SYSTEM, (c) => c.query('update candidates set email = null where id = $1 and lower(email) = $2', [cand.id, standIn]));
+        const out = { ...body, candidate: { ...cand, email: null } };
+        const credentials = { attempted: false, sent: false, accountCreated: false, delivery: {} };
+        if (wantLogin) {
+          credentials.attempted = true;
+          const { inviteCandidate } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'invite.js')).href);
+          const sending = inviteCandidate({ id: cand.id, name: cand.name || cand.fullName || [req.body.firstName, req.body.lastName].filter(Boolean).join(' '),
+            email: null, phone: cand.phone || phone }, { invitedBy: (req.session && req.session.userId) || 'recruiter' });
+          sending.catch((err) => log('add without email: the login failed after the reply:', err && err.message));
+          let timer = null;
+          const late = Symbol('still sending');
+          const done = await Promise.race([sending, new Promise((ok) => { timer = setTimeout(() => ok(late), Number(process.env.INVITE_WAIT_MS || 4000)); })]);
+          clearTimeout(timer);
+          if (done === late) Object.assign(credentials, { queued: true, reason: 'still sending' });
+          else Object.assign(credentials, { sent: !!done.invited, accountCreated: !!done.accountCreated, delivery: done.delivery || {}, ...(done.reason ? { reason: done.reason } : {}) });
+        }
+        out.credentials = credentials;
+        return out;
+      })().then((out) => send(out), (err) => {
+        log('add without email: after the save:', err && err.message);
+        send(withoutStandIn({ ...body, candidate: { ...cand, email: null },
+          credentials: { attempted: true, sent: false, delivery: {}, reason: 'the login could not be sent - use Resend credentials' } }, standIn));
+      });
+      return res;
+    };
+    return next();
+  });
+
+  /*
+   * ADD CANDIDATE: the email is optional in the quick-add dialog (embed/quick-add-addon.js, added to the portal's pages by the TeamLink proxy).
+   */
+  r.get('/tl-addon/quick-add.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'quick-add-addon.js'));
   });
 
   r.use('/api/integrations/teamlink', (req, res, next) => {
