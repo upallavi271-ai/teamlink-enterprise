@@ -99,6 +99,14 @@ gs_changed_files() {   # old_main_commit new_main_commit
   if [ -n "$o" ] && git -C "$SRC/green-start-app" cat-file -e "$o^{commit}" 2>/dev/null; then git -C "$SRC/green-start-app" diff --name-only "$o" "$n"
   else git -C "$SRC/green-start-app" ls-tree -r --name-only "$n"; fi | sed 's#^#green-start-app/#'
 }
+# files the Green Start repo DELETED (or renamed away) between two main-repo commits, relative to green-start-app/ (= relative to $GS).
+# rsync without --delete leaves them on the server, and tsc still compiles them (2026-11-10: OperatorActivityPage.tsx / SystemLogsPage.tsx).
+gs_deleted_files() {   # old_main_commit new_main_commit
+  [ -n "$1" ] || return 0
+  local o n; o=$(g rev-parse -q --verify "$1:green-start-app" 2>/dev/null); n=$(g rev-parse -q --verify "$2:green-start-app" 2>/dev/null)
+  [ -n "$o" ] && [ -n "$n" ] && git -C "$SRC/green-start-app" cat-file -e "$o^{commit}" 2>/dev/null || return 0
+  git -C "$SRC/green-start-app" diff --no-renames --name-only --diff-filter=D "$o" "$n" -- gs-api green-start-web
+}
 
 # STEP 1b: the main repo follows the newest commit of each sub repo (branch $SUBBRANCH), so a push to Green Start or to the Job Portal reaches the
 # main repo and then this server by itself. Only a change to something that gets deployed moves the pin (docs / notes do not).
@@ -539,6 +547,8 @@ deploy_greenstart() {   # new commit  old commit
   local new=$1 old=$2 BK="$STATE/backups/greenstart-$STAMP"
   local changed; changed=$(gs_changed_files "$old" "$new")   # inside the submodule (the main repo diff would show just one pointer line)
   if [ "$DRY" = 1 ]; then log "[dry-run] Green Start: $(echo "$changed" | grep -c .) changed file(s) would be deployed"; return 0; fi
+  # a rollback that did not complete left the code folder mixed: a new backup of it would be worthless, and the ALERT must keep naming the good one
+  if [ -f "$STATE/gs-hold" ]; then alert "Green Start deploys are ON HOLD: restore $(cat "$STATE/gs-hold") by hand (deploy/vps/SYNC-STEPS.md), then rm $STATE/gs-hold"; return 1; fi
   log "Green Start deploy of ${new:0:8} starting"
   mkdir -p "$BK"
   if command -v pg_dump >/dev/null 2>&1 && [ -n "$GS_DB" ]; then
@@ -546,11 +556,21 @@ deploy_greenstart() {   # new commit  old commit
     log "Green Start database saved to $BK/greenstart-db.sql.gz"
   fi
   tar -czf "$BK/gs-code.tar.gz" -C "$GS" --exclude=node_modules --exclude=.env --exclude=uploads gs-api/src gs-api/dist gs-api/package.json gs-api/package-lock.json green-start-web/src green-start-web/dist run 2>/dev/null
+  # the rollback below empties the code folders before unpacking this file, so it must hold every code folder the server has now
+  # (an unreadable or cut-off file lists as nothing; a server that never built Green Start has no dist/ yet, and that is fine)
+  local listing d; listing=$(tar -tzf "$BK/gs-code.tar.gz" 2>/dev/null) || listing=""      # (grep -q <<< , not tar | grep -q : see below)
+  for d in gs-api/src/ gs-api/dist/ green-start-web/src/ green-start-web/dist/ gs-api/dist/main.js; do
+    if [ -e "$GS/$d" ] && ! grep -qxF "$d" <<< "$listing"; then alert "could not save the Green Start code ($BK/gs-code.tar.gz has no $d): its deploy was stopped"; return 1; fi
+  done
   (
     set -e
     local_api=$SRC/green-start-app/gs-api; local_web=$SRC/green-start-app/green-start-web; local_run=$SRC/green-start-helpers/run   # helper files: main repo, not the submodule
     rsync -ac --exclude-from="$STATE/exclude-gs.txt" "$local_api/" "$GS/gs-api/"
     rsync -ac --exclude-from="$STATE/exclude-gs.txt" "$local_web/" "$GS/green-start-web/"
+    # files Green Start deleted are deleted here too (src/ is code only, so it is mirrored exactly; outside src/ only what git says was deleted)
+    rsync -ac --delete --exclude-from="$STATE/exclude-gs.txt" "$local_api/src/" "$GS/gs-api/src/"
+    rsync -ac --delete --exclude-from="$STATE/exclude-gs.txt" "$local_web/src/" "$GS/green-start-web/src/"
+    gs_deleted_files "$old" "$new" | while IFS= read -r f; do if [ -n "$f" ]; then rm -f -- "$GS/$f"; fi; done
     # only the helper files that already live in run/ on the server (gate, local bind, seed scripts); the rest of run/ is for the PC
     for f in "$GS"/run/*; do b=$(basename "$f"); [ -f "$local_run/$b" ] && cp -p "$local_run/$b" "$GS/run/$b"; done
     chown -R "$GS_USER:$GS_USER" "$GS/gs-api" "$GS/green-start-web" "$GS/run"
@@ -572,9 +592,15 @@ deploy_greenstart() {   # new commit  old commit
     return 0
   fi
   alert "Green Start deploy of ${new:0:8} FAILED. Putting the previous code back."
-  ( tar -xzf "$BK/gs-code.tar.gz" -C "$GS" && chown -R "$GS_USER:$GS_USER" "$GS/gs-api" "$GS/green-start-web" "$GS/run" \
-    && runuser -u "$GS_USER" -- bash -lc "cd $GS/gs-api && npm run build" && systemctl restart green-start-api green-start-worker green-start-gate ) >>"$LOG" 2>&1 \
-    && log "Green Start rolled back" || alert "GREEN START ROLLBACK DID NOT COMPLETE: restore $BK/gs-code.tar.gz by hand"
+  # put back EXACTLY what was there: empty the folders first (unpacking on top would keep the files the failed deploy added, and the
+  # old code would no longer build), and no rebuild (the backup has the dist/ that belongs to that source; rebuilding it only adds risk).
+  # (an && chain, not "set -e": this subshell is part of an && / || list, where bash ignores set -e)
+  ( rm -rf "$GS/gs-api/src" "$GS/gs-api/dist" "$GS/green-start-web/src" "$GS/green-start-web/dist" \
+    && tar -xzf "$BK/gs-code.tar.gz" -C "$GS" \
+    && chown -R "$GS_USER:$GS_USER" "$GS/gs-api" "$GS/green-start-web" "$GS/run" \
+    && systemctl restart green-start-api green-start-worker green-start-gate ) >>"$LOG" 2>&1 && health_gs \
+    && log "Green Start rolled back" \
+    || { echo "$BK/gs-code.tar.gz" > "$STATE/gs-hold"; alert "GREEN START ROLLBACK DID NOT COMPLETE: restore $BK/gs-code.tar.gz by hand (Green Start deploys are on hold until rm $STATE/gs-hold)"; }
   return 1
 }
 

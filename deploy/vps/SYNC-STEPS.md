@@ -32,6 +32,18 @@ Never synced through Git (on purpose): databases, `.env` files, uploads, `node_m
 - What is it doing? `tail -50 /opt/teamlink-sync/sync.log` and `cat /opt/teamlink-sync/STATUS`.
 - If `/opt/teamlink-sync/ALERT` exists, something needs you: a failed build (rolled back automatically), or a VPS edit that clashes with a newer GitHub change. Resolve with `teamlink-sync.sh accept-github` (keep GitHub's version) or `accept-vps` (keep the VPS version).
 - Going back to an older release by hand: `.\deploy-local-to-vps.ps1 -RollbackTo <stamp>` still works (the folders `backend-old-<stamp>` are kept, the 3 newest).
+- Green Start: `gs-api/src` and `green-start-web/src` on the VPS are kept exactly equal to the pinned Green Start commit, so a file deleted in the Green Start repo is deleted on the VPS too. Each deploy first saves the code (`/opt/teamlink-sync/backups/greenstart-<stamp>/gs-code.tar.gz`) and the database. A failed deploy puts that code back exactly and restarts Green Start.
+
+## Green Start: a rollback that did not finish (`/opt/teamlink-sync/gs-hold` exists)
+The ALERT says "GREEN START ROLLBACK DID NOT COMPLETE" or "Green Start deploys are ON HOLD". Green Start deploys stop until this is fixed; TeamLink deploys go on. `gs-hold` names the good backup. Put it back exactly. Empty the code folders first, and never unpack on top:
+```bash
+B=$(cat /opt/teamlink-sync/gs-hold); tar -tzf "$B" | grep -qx gs-api/dist/main.js && echo "backup is whole"
+cd /opt/green-start && rm -rf gs-api/src gs-api/dist green-start-web/src green-start-web/dist
+tar -xzf "$B" -C /opt/green-start && chown -R greenstart:greenstart gs-api green-start-web run
+systemctl restart green-start-api green-start-worker green-start-gate
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:4020/api/v1/health     # 200 = running again
+rm /opt/teamlink-sync/gs-hold /opt/teamlink-sync/failed-commit                   # deploys resume with the next commit
+```
 
 ## Honest limits
 - Editing code directly on the VPS is risky (it is live at once). It is supported, but use it for small fixes.
