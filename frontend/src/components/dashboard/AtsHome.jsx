@@ -537,7 +537,7 @@ export default function AtsHome() {
     <div className="notice dof-banner" role="status">
       <span className="dof-banner-t">
         {of
-          ? <>You are looking at <b>{of.name}</b>’s dashboard ({of.title}{of.scope ? ` · ${of.scope}` : ''}), with the same panels, charts and numbers they see.</>
+          ? <>You are looking at <b>{of.name}</b>’s dashboard ({of.title}), with the same panels, charts and numbers they see.</>
           : (error ? 'This login’s dashboard could not be opened.' : 'Opening their dashboard…')}
       </span>
       <button type="button" className="btn btn-sm" onClick={() => pickDashboard('')}>Back to my dashboard</button>
