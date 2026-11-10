@@ -1382,3 +1382,7 @@ tbody tr:nth-child(even) td{background:#FAFBFD}
 .row-click:hover td{background:var(--line-soft)}
 .row-click:focus-visible{outline:2px solid var(--brand,#2b5bd7);outline-offset:-2px}
 .row-click:focus-visible td{background:var(--line-soft)}
+
+/* THE LOGO STAYS PUT (founder 2026-11-10: "move avuthundhi, constant ga fix ayyi undatledhu"): the logo was inside the sidebar's
+   scrolling list, so scrolling the menu carried it away. It is pinned to the top of the sidebar now; the menu scrolls under it. */
+.sidebar-brand{position:sticky;top:0;z-index:3;background:inherit}
