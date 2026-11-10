@@ -57,6 +57,10 @@ const secretNames = (obj) => Object.keys((obj && typeof obj === 'object') ? obj 
 router.get('/connected', view, wrap(async (req, res) => {
   res.json(await require('../utils/portalIntegrations').snapshot()); // eslint-disable-line global-require
 }));
+/* ---- Forgot password: what happened to the last requests (job-portal-app/embed/teamlink-integration.mjs forgotLog) ---- */
+router.get('/forgot-log', view, wrap(async (req, res) => {
+  res.json(await require('../utils/jobPortalBridge').portalFetch('/integrations/teamlink/forgot-log', { timeoutMs: 8000 })); // eslint-disable-line global-require
+}));
 router.post('/connected/sync', change, wrap(async (req, res) => {
   const out = await require('../utils/portalIntegrations').pushAll({ force: true }); // eslint-disable-line global-require
   const word = (o) => (o.pushed ? 'pushed' : (o.skipped || o.error || 'unchanged'));

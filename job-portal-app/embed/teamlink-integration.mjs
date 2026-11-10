@@ -72,13 +72,14 @@ export async function forgotWithoutLogin(emailRaw, { withUser, loadInvite, seen,
   const email = String(emailRaw || '').trim().toLowerCase();
   if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { handled: false, why: 'not an email' };
   const found = await withUser(SYSTEM, async (c) => {
-    if ((await c.query('select 1 from users where lower(email) = $1 limit 1', [email])).rows.length) return { account: true };
+    const u = (await c.query('select role, status, must_change_password, last_login_at from users where lower(email) = $1 limit 1', [email])).rows[0];
+    if (u) return { account: { role: u.role, status: u.status, neverSignedIn: !u.last_login_at, mustChangePassword: !!u.must_change_password } };
     const cand = (await c.query(
       `select id, name, email, phone, user_id, do_not_contact from candidates where lower(email) = $1 order by created_at asc limit 1`,
       [email])).rows[0] || null;
     return { cand };
   });
-  if (found.account) return { handled: false, why: 'has an account' };
+  if (found.account) return { handled: false, why: 'has an account', account: found.account };
   const k = found.cand;
   if (!k) return { handled: false, why: 'not a candidate' };
   if (k.user_id) return { handled: false, why: 'has a login under another address' };
@@ -92,8 +93,40 @@ export async function forgotWithoutLogin(emailRaw, { withUser, loadInvite, seen,
   const sent = await inviteCandidate({ id: k.id, name, email, phone: k.phone || null }, { invitedBy: 'Forgot password' });
   const result = sent.invited ? 'invited' : (sent.reason === 'already invited' ? 'already' : 'not-sent');
   log(`forgot password: candidate ${k.id} had no login -> ${result}${sent.reason ? ` (${sent.reason})` : ''}`);
-  return { handled: true, result, reason: sent.reason || null };
+  return { handled: true, result, reason: sent.reason || null, delivery: sent.delivery || null };
 }
+
+/*
+ * WHAT HAPPENED TO EACH FORGOT-PASSWORD REQUEST (founder 2026-11-10: "raledhu mail"). The portal's own route says the same thing on
+ * screen whatever happens and writes a failure only to its server log, so nobody could see why a reset mail did not arrive. The last
+ * 30 requests are kept in memory: when, the address half hidden, which path (account -> portal reset, candidate without a login ->
+ * invite, ...), the account's role / status, and the mail result (the portal's own "[auth] reset mail ..." line, or the invite's
+ * per-channel delivery). Never a password, token, link or hash. Read by TeamLink's Administrators (GET .../forgot-log).
+ */
+const forgotLog = [];
+export const maskEmail = (e) => { const [u, d] = String(e || '').trim().toLowerCase().split('@'); return d ? `${u.slice(0, 2)}***@${d}` : '(not an email)'; };
+let forgotCurrent = null;
+let authTap = false;
+function tapAuthErrors() {
+  if (authTap) return;
+  authTap = true;
+  const orig = console.error;
+  console.error = (...a) => {
+    try {
+      const t = String(a[0] || '');
+      if (forgotCurrent && /^\[auth\] (reset mail|could not start a password reset)/.test(t)) {
+        forgotCurrent.portalError = a.map((x) => String(x)).join(' ').slice(0, 300);
+      }
+    } catch { /* the tap never breaks logging */ }
+    return orig.apply(console, a);
+  };
+}
+function logForgot(entry) {
+  forgotLog.unshift(entry);
+  if (forgotLog.length > 30) forgotLog.length = 30;
+  return entry;
+}
+export const forgotLogEntries = () => forgotLog.slice();
 
 /* The portal's own modules, imported LAZILY: api/src/config.js reads the
    environment once at import, and dev-server.mjs sets it (DATABASE_URL for
@@ -463,13 +496,28 @@ export function teamlinkFrontRouter({ root, express }) {
   // Forgot password: a candidate with no login yet gets their login made and mailed (forgotWithoutLogin above); anyone else falls
   // through to the portal's own reset (the parsed body stays on req for it). A failure here never blocks the portal's route.
   const forgotSeen = new Map();
+  tapAuthErrors();
   r.post('/api/auth/forgot', json, (req, res, next) => {
+    const entry = logForgot({ at: new Date().toISOString(), email: maskEmail(req.body && req.body.email) });
+    res.on('finish', () => { entry.httpStatus = res.statusCode; setTimeout(() => { if (forgotCurrent === entry) forgotCurrent = null; }, 3000); });
     forgotWithoutLogin(req.body && req.body.email, {
       withUser: async (...a) => (await portal()).withUser(...a),
       loadInvite: () => import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'invite.js')).href),
       seen: forgotSeen,
-    }).then((out) => (out.handled ? res.json(FORGOT_ANSWER) : next()))
-      .catch((err) => { log('forgot password check failed:', String((err && err.message) || err).slice(0, 200)); next(); });
+    }).then((out) => {
+      Object.assign(entry, { path: out.handled ? `invite: ${out.result}` : out.why, account: out.account || null, reason: out.reason || null,
+        delivery: out.delivery || null });
+      if (out.handled) return res.json(FORGOT_ANSWER);
+      if (out.why === 'has an account') entry.path = 'portal reset link';
+      forgotCurrent = entry;
+      return next();
+    }).catch((err) => {
+      entry.path = 'check failed, portal reset tried';
+      entry.reason = String((err && err.message) || err).slice(0, 200);
+      log('forgot password check failed:', entry.reason);
+      forgotCurrent = entry;
+      next();
+    });
   });
 
   r.use('/api/integrations/teamlink', (req, res, next) => {
@@ -488,6 +536,11 @@ export function teamlinkFrontRouter({ root, express }) {
    * let it read accounts and login messages); never a password, hash or token.
    *   POST /api/integrations/teamlink/login-check  { find }  ->  { users: [...], candidates: [{ ..., invites: [...] }] }
    */
+  //   GET /api/integrations/teamlink/forgot-log  ->  { entries: [...newest first], email: { configured, host, from } }   (see forgotLog above)
+  r.get('/api/integrations/teamlink/forgot-log', wrap(async (_req, res) => {
+    res.json({ entries: forgotLogEntries(), email: await emailInfo().catch(() => null) });
+  }));
+
   r.post('/api/integrations/teamlink/login-check', wrap(async (req, res) => {
     const find = String((req.body && req.body.find) || '').trim().toLowerCase().replace(/[%_]/g, '');
     if (find.length < 4) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'find needs at least 4 letters' } });
