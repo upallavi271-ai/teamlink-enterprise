@@ -560,6 +560,47 @@ function itemOf(title, appLabel) {
   t = t.replace(/\s*\[(Protected View|Read-Only|Compatibility Mode|Group|Shared)\]/gi, '').replace(/\s*-\s*Personal\s*-\s*Microsoft.*$/i, '').replace(/\s*-\s*Profile \d+$/i, '').trim();
   return t || String(appLabel || '') || NO_TITLE;
 }
+// WORK DONE IN EVERY APP AND WEBSITE (founder 2026-11-10: "remaining anni apps lo, anni website lo kuda ee format lo raavali"):
+// the same Area / What was done / How many / First - last as TeamLink's own history, read from the window titles -
+// which file, page, folder or chat was in front. Nothing typed is known, only what was open.
+const OFFICE = { excel: ['Excel files', 'Worked on'], winword: ['Word documents', 'Worked on'], powerpnt: ['PowerPoint files', 'Worked on'], acrord32: ['PDF files', 'Read'], acrobat: ['PDF files', 'Read'], notepad: ['Text files', 'Worked on'], 'notepad++': ['Text files', 'Worked on'], mspaint: ['Pictures', 'Edited'], photos: ['Pictures', 'Looked at'], code: ['Code', 'Edited'] };
+const TERMINALS = ['powershell', 'pwsh', 'cmd', 'windowsterminal', 'wt', 'conhost'];
+const SITE_WORD = /^(YouTube|Gmail|LinkedIn|GitHub|Claude|ChatGPT|Google (Docs|Sheets|Slides|Drive|Search|Meet|Forms)|Naukri|Indeed|Facebook|Instagram|X|Twitter|Outlook|Zoom|Teams|Microsoft Teams|Canva|Notion|Wikipedia|Stack Overflow|WhatsApp)$/i;
+function doneOf(appName, appLabel, kind, item) {
+  const a = String(appName || '').toLowerCase();
+  const raw = String(appLabel || appName || 'App');
+  const label = raw.charAt(0).toUpperCase() + raw.slice(1);
+  if (/snip|screenclip|screensketch/.test(a)) return { area: 'Screenshots', action: 'Took a screenshot' };
+  if (/^(searchhost|searchapp|searchui)$/.test(a)) return { area: 'Windows search', action: 'Searched the PC' };
+  const NONE = 'Used it (the window does not say for what)';
+  if (!item || item === NO_TITLE) return { area: label, action: NONE };
+  if (Object.values(CHAT_NAMES).includes(item)) return { area: 'Chat', action: `${item} (what was written is never recorded)` };
+  if (Object.values(MAIL_NAMES).includes(item)) return { area: 'Mail', action: `${item} (mail content is never recorded)` };
+  if (OFFICE[a]) return { area: OFFICE[a][0], action: `${OFFICE[a][1]} ${item}` };
+  if (a === 'explorer') return { area: 'Folders', action: `Opened ${item}` };
+  if (TERMINALS.includes(a)) return { area: 'Command window', action: item };
+  if (item.toLowerCase() === label.toLowerCase() || item.toLowerCase() === a) return { area: label, action: NONE };
+  if (BROWSERS.includes(a) || kind === 'site') {
+    if (/^[\w.-]+\/[\w.-]+$/.test(item)) return { area: 'GitHub', action: `Repository ${item}` };
+    const m = /^(.*\S)\s+[-\u2013\u2014|\u00b7:]\s+([^-\u2013\u2014|\u00b7]{2,32})$/.exec(item);
+    if (m && (SITE_WORD.test(m[2].trim()) || kind !== 'site')) return { area: m[2].trim(), action: m[1].trim() };
+    return { area: kind === 'site' ? label : 'Websites', action: item };
+  }
+  return { area: label, action: item };
+}
+function workDone(appName, appLabel, kind, items) {
+  const map = new Map();
+  items.forEach((x) => {
+    const d = doneOf(appName, appLabel, kind, x.item);
+    const k = `${d.area}|${d.action}`;
+    const y = map.get(k) || { area: d.area, action: d.action, seconds: 0, count: 0, first: x.first, last: x.last };
+    y.seconds += x.seconds; y.count += x.pieces;
+    if (x.first < y.first) y.first = x.first;
+    if (x.last > y.last) y.last = x.last;
+    map.set(k, y);
+  });
+  return [...map.values()].sort((p, q) => q.seconds - p.seconds).map((y) => ({ ...y, first: new Date(y.first), last: new Date(y.last) }));
+}
 // The saves a person made in TeamLink in a period, from the audit history: one line per kind of work, with how many and when.
 const ENTITY_WORD = { Application: 'Candidate pipeline', Candidate: 'Candidates', Requirement: 'Requirements', Client: 'Clients', Task: 'Tasks', FollowUp: 'Follow-ups', Interview: 'Interviews', Employee: 'Employees', LeaveRequest: 'Leave', User: 'Sign-in', AttendancePunch: 'Attendance' };
 async function teamlinkWorkOf(employeeId, a, b) {
@@ -606,6 +647,7 @@ async function employeeDetail(employeeId, from, to) {
     // every page, file or chat the window showed, with its time, and the sittings in order
     const item = itemOf(shown, c.label);
     const st = new Date(l.startTime).getTime(); const en = new Date(l.endTime).getTime();
+    if (!u.appName) u.appName = l.appName;
     const it = u.items.get(item) || { item, seconds: 0, first: st, last: en, pieces: 0 };
     it.seconds += l.durationSeconds; it.first = Math.min(it.first, st); it.last = Math.max(it.last, en); it.pieces += 1;
     u.items.set(item, it);
@@ -616,6 +658,7 @@ async function employeeDetail(employeeId, from, to) {
   const apps = [...usage.values()].sort((x, y) => y.seconds - x.seconds).map((u) => ({
     key: u.key, name: u.name, kind: u.kind, category: u.category, seconds: u.seconds, hours: hrs(u.seconds),
     topTitles: [...u.titles.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([title, sec]) => ({ title, minutes: Math.round(sec / 60) })),
+    done: workDone(u.appName, u.name, u.kind, [...u.items.values()]),
     items: [...u.items.values()].sort((x, y) => y.seconds - x.seconds).map((x) => ({ item: x.item, seconds: x.seconds, first: new Date(x.first), last: new Date(x.last), opened: x.pieces })),
     // the app's own name only (e.g. the Claude desktop app always says "Claude"): only the time is known
     titlesKnown: [...u.items.keys()].some((k) => k !== NO_TITLE && k.toLowerCase() !== String(u.name).toLowerCase()),

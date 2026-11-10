@@ -498,7 +498,8 @@ export function EmployeeDetail({ id, onBack, own = false }) {
 // and the sittings in order (founder 2026-11-10: "overall summary kanipinchali, kaani complete work cover avvali").
 const NOT_SHOWN = 'Not shown (the app does not say)';
 function AppWork({ app, who, range, total, onClose }) {
-  const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : 'items');
+  const done = app.done || [];
+  const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : (done.length ? 'done' : 'items'));
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
@@ -530,6 +531,7 @@ function AppWork({ app, who, range, total, onClose }) {
         </div>
         <div className="mon-tabs">
           {app.teamlinkWork && <button type="button" className={tab === 'work' ? 'on' : ''} onClick={() => setTab('work')}>Work done in TeamLink ({app.teamlinkWork.total})</button>}
+          {!app.teamlinkWork && done.length > 0 && <button type="button" className={tab === 'done' ? 'on' : ''} onClick={() => setTab('done')}>Work done ({done.length})</button>}
           <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was open ({items.length})</button>
           <button type="button" className={tab === 'sittings' ? 'on' : ''} onClick={() => setTab('sittings')}>Hour by hour ({sittings.length})</button>
         </div>
@@ -549,6 +551,25 @@ function AppWork({ app, who, range, total, onClose }) {
               </tbody>
             </table>
           ) : <div className="ak-empty" style={{ padding: 16 }}>Nothing was saved in TeamLink in this period: only pages were looked at.</div>)}
+          {tab === 'done' && (
+            <>
+              <div className="small-muted" style={{ padding: '8px 10px 0' }}>From the window: which file, page, folder or chat was open. What was typed is never recorded.</div>
+              <table className="mon-table">
+                <thead><tr><th>Area</th><th>What was done</th><th className="num">Time</th><th className="num" title="How many separate times it was in front">How many</th><th>First – last</th></tr></thead>
+                <tbody>
+                  {done.map((x) => (
+                    <tr key={`${x.area}|${x.action}`}>
+                      <td>{x.area}</td>
+                      <td className="mon-item">{x.action}</td>
+                      <td className="num">{dur(x.seconds)}</td>
+                      <td className="num">{x.count}</td>
+                      <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
           {tab === 'items' && (
             <table className="mon-table">
               <thead><tr><th>Page, file or chat</th><th className="num">Time</th><th>First – last</th><th className="num" title="How many separate times it was in front">Times</th></tr></thead>
