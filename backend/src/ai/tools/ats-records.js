@@ -493,11 +493,11 @@ defineTool({
   name: 'create_candidate',
   module: 'ats',
   label: 'Add a new candidate',
-  description: 'Add a candidate: name, mobile, email, at least one skill, and current + expected salary.',
+  description: 'Add a candidate: name, mobile, email if there is one, at least one skill, and current + expected salary.',
   parameters: {
     name: { type: 'text', required: true, description: 'Full name.' },
     phone: { type: 'phone', required: true, description: 'Mobile number.' },
-    email: { type: 'email', required: true, description: 'Email.' },
+    email: { type: 'email', required: false, description: 'Email, if the candidate has one (founder 2026-11-10: not compulsory).' },
     skills: { type: 'text', required: true, description: 'At least one skill.' },
     currentSalary: { type: 'text', required: true, description: 'Current salary, like 4.5 LPA or 45000 per month (0 if a fresher).' },
     expectedSalary: { type: 'text', required: true, description: 'Expected salary, like 6 LPA or 50000 per month.' },
@@ -517,8 +517,7 @@ defineTool({
     const email = (input.slots.emails || [])[0] || '';
     let skills = F.grab(input.text, ['skills', 'skill', 'knows', 'with experience in'], { stops: F.DEFAULT_STOPS.filter((s) => s !== 'with') }) || (answers.skills || '');
     if (!phone) return T.clarify(`What is ${name}'s mobile number (10 digits)?`, { need: 'phone' });
-    if (!email) return T.clarify(`What is ${name}'s email address?`, { need: 'email' });
-    if (!EMAIL_RE.test(email)) return T.refuse(`"${email}" does not look like an email address.`);
+    if (email && !EMAIL_RE.test(email)) return T.refuse(`"${email}" does not look like an email address.`);
     skills = S.CLEAN(skills).replace(/\band\b/gi, ',').replace(/\s*,\s*/g, ', ').replace(/^,\s*|,\s*$/g, '');
     if (!skills) return T.clarify(`Tell me at least one skill of ${name} (for example "Java, SQL").`, { need: 'skills' });
     // SALARY (the app asks for both on every new candidate): read it from the sentence, else ask - never guess a number.
@@ -536,8 +535,8 @@ defineTool({
     const company = F.grab(input.text, ['current company', 'company', 'works at']);
     return T.done({
       params: { name, phone, email, skills, currentSalary, expectedSalary, ...(location ? { location } : {}), ...(company ? { currentCompany: company } : {}) },
-      summary: `Add the candidate ${name} (${phone}, ${email}).`,
-      display: T.card('Add Candidate', [['Name', name], ['Mobile', phone], ['Email', email], ['Skills', skills], ['Current salary', sal.values.currentSalary], ['Expected salary', sal.values.expectedSalary], ['City', location], ['Company', company]]),
+      summary: `Add the candidate ${name} (${email ? `${phone}, ${email}` : phone}).`,
+      display: T.card('Add Candidate', [['Name', name], ['Mobile', phone], ['Email', email || '—'], ['Skills', skills], ['Current salary', sal.values.currentSalary], ['Expected salary', sal.values.expectedSalary], ['City', location], ['Company', company]]),
     });
   },
   async execute(ctx, p) {
