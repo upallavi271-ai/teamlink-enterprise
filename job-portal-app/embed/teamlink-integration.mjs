@@ -121,6 +121,17 @@ function tapAuthErrors() {
     return orig.apply(console, a);
   };
 }
+// Kept in a file too (var/teamlink-forgot-log.json), so a portal restart - several a day while TeamLink deploys - does not empty it.
+let forgotFile = '';
+function loadForgotLog(root) {
+  forgotFile = root ? join(root, 'var', 'teamlink-forgot-log.json') : '';
+  if (!forgotFile) return;
+  try { const saved = JSON.parse(readFileSync(forgotFile, 'utf8')); if (Array.isArray(saved)) forgotLog.splice(0, forgotLog.length, ...saved.slice(0, 30)); } catch { /* none yet */ }
+}
+function saveForgotLog() {
+  if (!forgotFile) return;
+  try { mkdirSync(dirname(forgotFile), { recursive: true }); writeFileSync(`${forgotFile}.tmp`, JSON.stringify(forgotLog)); renameSync(`${forgotFile}.tmp`, forgotFile); } catch { /* the log never breaks a reset */ }
+}
 function logForgot(entry) {
   forgotLog.unshift(entry);
   if (forgotLog.length > 30) forgotLog.length = 30;
@@ -554,9 +565,10 @@ export function teamlinkFrontRouter({ root, express }) {
   // through to the portal's own reset (the parsed body stays on req for it). A failure here never blocks the portal's route.
   const forgotSeen = new Map();
   tapAuthErrors();
+  loadForgotLog(ROOT);
   r.post('/api/auth/forgot', json, (req, res, next) => {
     const entry = logForgot({ at: new Date().toISOString(), email: maskEmail(req.body && req.body.email) });
-    res.on('finish', () => { entry.httpStatus = res.statusCode; setTimeout(() => { if (forgotCurrent === entry) forgotCurrent = null; }, 3000); });
+    res.on('finish', () => { entry.httpStatus = res.statusCode; saveForgotLog(); setTimeout(() => { if (forgotCurrent === entry) forgotCurrent = null; }, 3000); });
     forgotWithoutLogin(req.body && req.body.email, {
       withUser: async (...a) => (await portal()).withUser(...a),
       loadInvite: () => import(pathToFileURL(join(ROOT, 'api', 'src', 'notify', 'invite.js')).href),
