@@ -49,9 +49,9 @@ install -m 600 -o "$U" -g "$U" "$ROOT/gs-api/.env" "$NEW/gs-api/.env"
 [ -f "$ROOT/green-start-web/.env.production" ] && install -m 644 -o "$U" -g "$U" "$ROOT/green-start-web/.env.production" "$NEW/green-start-web/.env.production"
 [ -d "$ROOT/gs-api/storage" ] && cp -a "$ROOT/gs-api/storage" "$NEW/gs-api/storage"
 chown -R "$U:$U" "$NEW"
-as_gs "cd '$NEW/gs-api' && nice -n 10 npm ci --no-audit --no-fund --loglevel=error && nice -n 10 npx prisma generate && nice -n 10 npm run build" > /root/gs-update-build-$T.log 2>&1 || { echo "API BUILD FAILED (log /root/gs-update-build-$T.log). Live was not touched."; tail -30 /root/gs-update-build-$T.log; exit 1; }
-as_gs "cd '$NEW/green-start-web' && nice -n 10 npm ci --no-audit --no-fund --loglevel=error && nice -n 10 npm run build" >> /root/gs-update-build-$T.log 2>&1 || { echo "WEB BUILD FAILED (log /root/gs-update-build-$T.log). Live was not touched."; tail -30 /root/gs-update-build-$T.log; exit 1; }
-[ -f "$NEW/gs-api/dist/main.js" ] && [ -f "$NEW/green-start-web/dist/index.html" ] || { echo "BUILD OUTPUT MISSING. Live was not touched."; exit 1; }
+as_gs "cd '$NEW/gs-api' && nice -n 10 npm ci --no-audit --no-fund --loglevel=error && nice -n 10 npx prisma generate && nice -n 10 npm run build" > /root/gs-update-build-$T.log 2>&1 || { echo "API BUILD FAILED (log /root/gs-update-build-$T.log). Live was not touched."; tail -30 /root/gs-update-build-$T.log; rm -rf "$NEW"; exit 1; }
+as_gs "cd '$NEW/green-start-web' && nice -n 10 npm ci --no-audit --no-fund --loglevel=error && nice -n 10 npm run build" >> /root/gs-update-build-$T.log 2>&1 || { echo "WEB BUILD FAILED (log /root/gs-update-build-$T.log). Live was not touched."; tail -30 /root/gs-update-build-$T.log; rm -rf "$NEW"; exit 1; }
+[ -f "$NEW/gs-api/dist/main.js" ] && [ -f "$NEW/green-start-web/dist/index.html" ] || { echo "BUILD OUTPUT MISSING. Live was not touched."; rm -rf "$NEW"; exit 1; }
 say "build ok"
 say "database changes waiting (expected: 20261102100000_gsc_history, maybe 20261031140000_seo_keyword_research):"
 MS=$(as_gs "cd '$NEW/gs-api' && set -a && . ./.env && set +a && npx prisma migrate status" 2>&1 || true)
@@ -104,7 +104,12 @@ if [ "$ok" != 1 ]; then
   exit 1
 fi
 rm -f "$SRC"
-echo "GREEN START UPDATED with __PKG__ (the whole Green Start code; only what this package changed is new). Old code kept in $OLD (delete it after a few good days)."
+# Omni-channel housekeeping (10 Nov 2026): every old version and every unfinished update folder holds a copy of gs-api/.env and
+# about 400 MB. Keep the 2 newest old versions for a rollback; remove older ones and update folders left by builds that stopped
+# more than an hour ago (the database backups in $BK are not touched).
+ls -1dt "$ROOT"/.old-* 2>/dev/null | tail -n +3 | xargs -r rm -rf -- || true
+find "$ROOT" -maxdepth 1 -type d -name '.update-*' -mmin +60 -exec rm -rf {} + 2>/dev/null || true
+echo "GREEN START UPDATED with __PKG__ (the whole Green Start code; only what this package changed is new). Old code kept in $OLD (the 2 newest old versions are kept, older ones removed)."
 systemctl is-active green-start-api green-start-worker green-start-gate | paste -sd' '
 '@
 $mode = if ($Apply) { 'apply' } else { 'dry' }
