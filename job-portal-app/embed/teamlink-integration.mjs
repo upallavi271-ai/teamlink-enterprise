@@ -141,7 +141,47 @@ async function portal() {
   let alerts = null;
   try { alerts = await at('notify/job-alerts.js'); } catch { alerts = null; }
   mods = { withUser: db.withUser, getPool: db.getPool, ApiError: errors.ApiError, toCandidate: shapes.toCandidate, getStorage: storage.getStorage, alerts };
+  try { installLoginText((await at('notify/providers.js')).providers); } catch (err) { log('login text: not installed:', err && err.message); }
   return mods;
+}
+
+/*
+ * THE LOGIN GOES TO THE NUMBER WHEN THERE IS NO EMAIL (founder 2026-11-10: "candidate nii import chesinappuudu valla kii emails lekapothey
+ * valla numbers kii mesage vellalii login credientials and teamlink link"). The portal already makes the account of a candidate with no
+ * email from the mobile number (login = the 10 digits) and sends the invitation by SMS and WhatsApp too - but its SMS said only "you have
+ * been added, sign in: <link>" with NO login and NO password, and its WhatsApp called the number "Login Email". So somebody who has only a
+ * phone could never get in. Here, without touching the portal's code, a message that carries a NEW password (an invitation, or new
+ * credentials sent again) is rewritten on its way out: the SMS says the login, the temporary password and the TeamLink link
+ * (<site>/jobs/#/login/candidate); the WhatsApp labels a number login "Login (mobile number)". Every other message passes unchanged.
+ * The password is only put in the message, never logged or stored here.
+ */
+const isPhoneLogin = (v) => /^\d{10}$/.test(String(v || ''));
+export function loginMessage(channel, args) {
+  const v = args && args.vars;
+  if (!v || Array.isArray(v) || !v.temporary_password || !v.login_email || typeof (args && args.text) !== 'string') return args;
+  if (channel === 'sms') {
+    const first = String(v.candidate_name || v.to_name || '').trim().split(/\s+/)[0] || '';
+    const who = isPhoneLogin(v.login_email) ? 'Login (your mobile number)' : 'Login';
+    const text = `TeamLink: Hi ${first || 'there'}, your ${v.company_name || 'TeamLink'} candidate login. `
+      + `${who}: ${v.login_email} Password: ${v.temporary_password} Sign in: ${v.portal_link || ''} `
+      + '(choose a new password at first sign-in)';
+    return { ...args, text: text.replace(/\s+/g, ' ').trim().slice(0, 320) };
+  }
+  if (channel === 'whatsapp' && isPhoneLogin(v.login_email)) {
+    return { ...args, text: args.text.split(`Login Email: ${v.login_email}`).join(`Login (mobile number): ${v.login_email}`) };
+  }
+  return args;
+}
+export function installLoginText(providers) {
+  if (!providers || providers.__teamlinkLoginText) return false;
+  for (const ch of ['sms', 'whatsapp']) {
+    const o = providers[ch];
+    if (!o || typeof o.send !== 'function') continue; // eslint-disable-line no-continue
+    const send = o.send;
+    o.send = function sendWithLogin(args, ...rest) { return send.call(this, loginMessage(ch, args), ...rest); };
+  }
+  Object.defineProperty(providers, '__teamlinkLoginText', { value: true });
+  return true;
 }
 
 class HttpError extends Error {
