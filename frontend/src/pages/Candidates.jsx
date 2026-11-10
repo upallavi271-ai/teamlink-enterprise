@@ -1460,7 +1460,7 @@ export default function Candidates() {
         >
         <form id="addCandidateForm" onSubmit={createCandidate}>
           <FillBanner fill={fill} names={CANDIDATE_FIELD_NAMES} />
-          <MissingHint items={[['the first name', !String(form.firstName || '').trim()], ['the mobile number', !String(form.phone || '').trim()], ['the email', !String(form.email || '').trim()]]} />
+          <MissingHint items={[['the first name', !String(form.firstName || '').trim()], ['the mobile number', !String(form.phone || '').trim()]]} />
           <SectionHead first caps>A. Personal</SectionHead>
           <div className="grid-2">
             <label className={`field${ff('firstName')}`}>
@@ -1477,7 +1477,8 @@ export default function Candidates() {
             </label>
             <label className={`field${ff('email')}`}>
               <span>Email{ft('email')}</span>
-              <input required value={form.email} onBlur={checkDuplicate} onChange={(e) => set({ email: e.target.value })} />
+              {/* not required (founder 2026-11-10): a candidate with no email gets the login on the mobile number */}
+              <input placeholder="Optional" value={form.email} onBlur={checkDuplicate} onChange={(e) => set({ email: e.target.value })} />
             </label>
             <label className={`field${ff('dob')}`}>
               <span>Date of Birth{ft('dob')}</span>

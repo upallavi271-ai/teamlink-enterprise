@@ -3550,12 +3550,13 @@ async function writeSourceNote(candidateId, user, body, storedBefore = undefined
 router.post('/', requirePerm('ats', 'candidates', 'Add Candidate', 'create'), async (req, res) => {
   const { email, phone } = req.body;
   const data = pickCandidate(req.body);
-  if (data.email) data.email = String(data.email).trim();
+  if (data.email !== undefined) data.email = String(data.email || '').trim() || null; // optional: empty = no email (not '')
   if (data.phone) data.phone = String(data.phone).trim();
   // Prototype saveNewCandidate() (line 8304) required fields, in its order.
   if (!data.name) return res.status(400).json({ error: 'First name is required.' });
   if (!phone) return res.status(400).json({ error: 'Mobile is required.' });
-  if (!email) return res.status(400).json({ error: 'Email is required.' });
+  // Email is OPTIONAL (founder 2026-11-10: "add candidates loo email compulsory anii unadhii adhii remove cehyuu"): a candidate with only a
+  // mobile number is saved, and the Job Portal login then goes to that number by SMS / WhatsApp (embed/teamlink-integration.mjs loginMessage).
   if (!String(data.skills || '').trim()) return res.status(400).json({ error: 'Enter at least one mandatory skill.' });
   // SALARY (user note 2026-10-10): Current + Expected salary are required on every new candidate.
   // Stored as a clean "4.5 LPA" (a monthly entry is converted once); odd-but-possible values only warn.
