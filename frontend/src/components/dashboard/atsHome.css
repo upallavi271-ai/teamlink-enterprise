@@ -212,3 +212,11 @@
 
 /* ---- Names fit (2026-10-17): wrap instead of "..." ---- */
 .ahome .ah-ellip{max-width:none;overflow:visible;text-overflow:clip;white-space:normal;overflow-wrap:anywhere;line-height:1.3}
+
+/* SUPER ADMIN "DASHBOARD OF" (2026-11-10): Role -> Person picker and the banner over another login's dashboard. */
+.dof{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.dof-f{min-width:170px}
+.dof-err{align-self:center}
+.dof-row{margin-bottom:8px}
+.dof-banner{align-items:center;justify-content:space-between;flex-wrap:wrap}
+.dof-banner-t{flex:1 1 280px;min-width:0}

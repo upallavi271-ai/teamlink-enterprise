@@ -1572,6 +1572,57 @@ router.get('/ats/role/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
 // ---------------------------------------------------------------------------
 const atsHome = require('../utils/atsHome');
 const HOME_CACHE = new Map();
+// ---------------------------------------------------------------------------
+// SUPER ADMIN "DASHBOARD OF" (2026-11-10): the role picker on the ATS
+// dashboard. ?asUser=<userId> on /ats/home, /ats/home/list and
+// /ats/home/export draws THAT login's own dashboard (its layout, its scope,
+// its panels and charts) inside the Super Admin's session, so the Super Admin
+// can go through every role's dashboard without leaving their own login.
+//
+// The same rules as View as (routes/viewAs.js), because it shows the same thing:
+//   * Super Admin only: not an HR-super login, not while viewing / acting as;
+//   * the target is an active login, not a Super Admin, and holds the ATS;
+//   * READ-ONLY: the board is built inside the View-as context
+//     (utils/viewAs.js readOnly), so a write a GET makes on the side is a no-op.
+// The Super Admin's own export rights and audit rows are unchanged: the file is
+// sent outside the read-only context, as the Super Admin.
+// Without ?asUser nothing changes for anybody.
+// ---------------------------------------------------------------------------
+const viewAs = require('../utils/viewAs');
+const { resolveIdentity } = require('../utils/identity');
+const { isStrictSystemAccount } = require('../utils/systemAccounts');
+function boardRefusal(status, message) {
+  const e = new Error(message);
+  e.status = status;
+  e.boardRefusal = true;
+  return e;
+}
+async function boardSubject(req) {
+  const id = req.query && req.query.asUser ? String(req.query.asUser) : '';
+  if (!id || id === String(req.user.id)) return req.user;
+  if (req.viewAs || req.actingAs || req.user.role !== 'SUPER_ADMIN' || req.user.hrSuper) {
+    throw boardRefusal(403, 'Only a Super Admin can open another login’s dashboard.');
+  }
+  const target = await prisma.user.findUnique({ where: { id } });
+  if (!target) throw boardRefusal(404, 'That login does not exist.');
+  if (isStrictSystemAccount(target)) throw boardRefusal(403, 'That is a Super Admin login. Your own dashboard already shows the whole company.');
+  if ((target.status || 'Active') !== 'Active') {
+    throw boardRefusal(403, `That login is ${String(target.status).toLowerCase()}. Only an active login's dashboard can be opened.`);
+  }
+  const identity = await resolveIdentity(target.id, target);
+  if (!identity || !identity.products || !identity.products.ats) throw boardRefusal(400, `${target.name} has no ATS dashboard.`);
+  return identity;
+}
+// fn(subject) runs as the login whose dashboard is drawn: the Super Admin
+// themself, or (with ?asUser) the picked login, read-only.
+async function asBoardSubject(req, fn) {
+  const subject = await boardSubject(req);
+  if (subject === req.user) return fn(subject);
+  return viewAs.readOnly(
+    { byUserId: req.user.id, byName: req.user.name, readOnly: true, sid: null, dashboardOf: true },
+    () => fn(subject),
+  );
+}
 // The Admin health dot in the top bar (integration / sync / job-posting errors).
 router.get('/ats/health', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try { return res.json(await atsHome.healthDot(req.user)); } catch (err) { return next(err); }
@@ -1589,12 +1640,17 @@ async function mayExportAtsHome(user) {
 }
 router.get('/ats/home', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try {
-    const b = await atsHome.buildHomeCached(req.user, req);
+    const { b, subject } = await asBoardSubject(req, async (u) => ({ b: await atsHome.buildHomeCached(u, req), subject: u }));
     HOME_CACHE.set(homeKey(req), { at: Date.now(), b });
     if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+    // dashboardOf: whose dashboard this is, when a Super Admin picked another login (the page's banner).
+    const dashboardOf = subject === req.user ? null : {
+      id: subject.id, name: subject.name, layout: b.layout, title: b.title, scope: b.scopeChip || null,
+    };
     // mayExport: the page shows its Export button only when this is true (the export route checks again).
-    return res.json({ ...atsHome.publicHome(b), mayExport: await mayExportAtsHome(req.user) });
+    return res.json({ ...atsHome.publicHome(b), mayExport: await mayExportAtsHome(req.user), dashboardOf });
   } catch (err) {
+    if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
     return next(err);
   }
@@ -1612,14 +1668,16 @@ router.get('/ats/home/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     // The board the page just drew (same login, same filters) is reused for a
     // little while, so opening a number's list does not rebuild the dashboard.
     const key = homeKey(req);
-    const hit = HOME_CACHE.get(key);
-    let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
-    if (!b) {
-      b = await atsHome.buildHomeCached(req.user, req);
-      HOME_CACHE.set(key, { at: Date.now(), b });
-      if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
-    }
-    const list = await atsHome.homeList(req.user, b, String(req.query.set || ''), req.query);
+    const { list, subject } = await asBoardSubject(req, async (u) => {
+      const hit = HOME_CACHE.get(key);
+      let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
+      if (!b) {
+        b = await atsHome.buildHomeCached(u, req);
+        HOME_CACHE.set(key, { at: Date.now(), b });
+        if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+      }
+      return { list: await atsHome.homeList(u, b, String(req.query.set || ''), req.query), subject: u };
+    });
     if (!list) return res.status(404).json({ error: 'That list is not on your dashboard any more — close it and click the number again.' });
     if (req.query.format) {
       const { formatOf, sendTable } = require('../utils/exportKit'); // eslint-disable-line global-require
@@ -1634,13 +1692,14 @@ router.get('/ats/home/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
       const viaAts = Object.create(req, { baseUrl: { value: '/api/ats/dashboard' } });
       return sendTable(viaAts, res, {
         format, name: `dashboard-${list.title}`.slice(0, 60), title: list.title, headers: t.headers, rows: t.rows,
-        sheet: 'List', entity: 'Dashboard', what: `Dashboard list "${list.title}"`, scope: require('../utils/scope').scopeLabel(req.user, 'ats'), // eslint-disable-line global-require
+        sheet: 'List', entity: 'Dashboard', what: `Dashboard list "${list.title}"${subject === req.user ? '' : ` (dashboard of ${subject.name})`}`, scope: require('../utils/scope').scopeLabel(subject, 'ats'), // eslint-disable-line global-require
         period: null,
       });
     }
     const { _all, ...out } = list; // eslint-disable-line no-unused-vars
     return res.json(out);
   } catch (err) {
+    if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
     return next(err);
   }
@@ -1660,21 +1719,26 @@ router.get('/ats/home/export', ...ATS_BOARD_GUARDS, async (req, res, next) => {
     if (!format || format === 'pdf') return res.status(400).json({ error: 'Pick Excel or CSV.' });
     if (!(await mayExportAtsHome(req.user))) return res.status(403).json({ error: 'Your role cannot export the dashboard.' });
     const key = homeKey(req);
-    const hit = HOME_CACHE.get(key);
-    let b = hit && Date.now() - hit.at < 60000 ? hit.b : null;
-    if (!b) {
-      b = await atsHome.buildHomeCached(req.user, req);
-      HOME_CACHE.set(key, { at: Date.now(), b });
-      if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
-    }
-    const { sheets } = await require('../utils/dashboardExport').atsHomeBook(req.user, b); // eslint-disable-line global-require
+    const { b, sheets, subject } = await asBoardSubject(req, async (u) => {
+      const hit = HOME_CACHE.get(key);
+      let board = hit && Date.now() - hit.at < 60000 ? hit.b : null;
+      if (!board) {
+        board = await atsHome.buildHomeCached(u, req);
+        HOME_CACHE.set(key, { at: Date.now(), b: board });
+        if (HOME_CACHE.size > 50) HOME_CACHE.delete(HOME_CACHE.keys().next().value);
+      }
+      const book = await require('../utils/dashboardExport').atsHomeBook(u, board); // eslint-disable-line global-require
+      return { b: board, sheets: book.sheets, subject: u };
+    });
     const viaAts = Object.create(req, { baseUrl: { value: '/api/ats/dashboard' } });
+    const of = subject === req.user ? '' : ` of ${subject.name}`;
     return sendBook(viaAts, res, {
-      format, name: `ats-dashboard-${b.title || 'home'}`, sheets, entity: 'Dashboard', what: `ATS dashboard (${b.title || 'home'})`,
-      scope: require('../utils/scope').scopeLabel(req.user, 'ats'), // eslint-disable-line global-require
+      format, name: `ats-dashboard-${b.title || 'home'}${of ? `-${subject.name}` : ''}`, sheets, entity: 'Dashboard', what: `ATS dashboard${of} (${b.title || 'home'})`,
+      scope: require('../utils/scope').scopeLabel(subject, 'ats'), // eslint-disable-line global-require
       period: b.period && b.period.key !== 'all' ? { from: b.period.from, to: b.period.to } : null,
     });
   } catch (err) {
+    if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
     if (err.status === 400 || err.name === 'RangeError400') return res.status(400).json({ error: err.message });
     return next(err);
   }

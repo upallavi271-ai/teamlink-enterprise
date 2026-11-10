@@ -22,6 +22,7 @@ import { Icon } from '../atskit/AtsKit.jsx';
 import PendingOnTeam from './PendingOnTeam.jsx';
 import MissedItemsBox from '../MissedItemsBox.jsx';
 import { BdeWorkspace } from '../clients/ClientBusiness.jsx';
+import DashboardOfPicker from './DashboardOfPicker.jsx'; // Super Admin: see another login's dashboard (2026-11-10)
 import './atsHome.css';
 import Combo from '../Combo.jsx';
 
@@ -406,7 +407,21 @@ export default function AtsHome() {
   const extra = Object.fromEntries(EXTRA_FILTERS.map(([k]) => [k, sp.get(k) || '']).filter(([, v]) => v));
   const fp = filterParams(f);
   if (f.range !== 'custom') { delete fp.from; delete fp.to; }
-  const params = { ...extra, ...fp, range: f.range || 'all' };
+  // DASHBOARD OF (Super Admin, 2026-11-10): ?as=<userId> draws that login's own
+  // dashboard, read-only (routes/dashboard.js boardSubject). It rides on every
+  // request this page makes (the numbers' lists, Team leads, Export), so they
+  // all answer for the same login.
+  const mayPickDashboard = !!user && user.role === 'SUPER_ADMIN' && !user.hrSuper && !user.viewAs;
+  const asUser = mayPickDashboard ? (sp.get('as') || '') : '';
+  const params = { ...extra, ...fp, range: f.range || 'all', ...(asUser ? { asUser } : {}) };
+  // A new login keeps the date range; the other filters belonged to the last one's page.
+  const pickDashboard = (id) => setSp((prev) => {
+    const p = new URLSearchParams(prev);
+    ['department', 'clientId', 'recruiterId', 'bdeId', ...EXTRA_FILTERS.map(([k]) => k)].forEach((k) => p.delete(k));
+    if (id) p.set('as', id); else p.delete('as');
+    return p;
+  }, { replace: true });
+  const dashboardOfPicker = mayPickDashboard ? <DashboardOfPicker value={asUser} onPick={pickDashboard} /> : null;
   const key = JSON.stringify(params);
   useEffect(() => {
     let alive = true;
@@ -515,11 +530,24 @@ export default function AtsHome() {
     && ['superadmin', 'admin'].includes(data.layout));
 
   // "Good morning, Aarti — 2 late, 3 client feedback pending." Every number opens its list.
+  // Whose dashboard this is, once the server has drawn the one picked (Dashboard of).
+  const of = asUser && data && data.dashboardOf && String(data.dashboardOf.id) === String(asUser) ? data.dashboardOf : null;
+  const helloName = of ? of.name : (user && user.name);
+  const ofBanner = asUser ? (
+    <div className="notice dof-banner" role="status">
+      <span className="dof-banner-t">
+        {of
+          ? <>You are looking at <b>{of.name}</b>’s dashboard ({of.title}{of.scope ? ` · ${of.scope}` : ''}), with the same panels, charts and numbers they see.</>
+          : (error ? 'This login’s dashboard could not be opened.' : 'Opening their dashboard…')}
+      </span>
+      <button type="button" className="btn btn-sm" onClick={() => pickDashboard('')}>Back to my dashboard</button>
+    </div>
+  ) : null;
   const hello = (
     <div className="ah-hello">
       {g && g.items ? (
         <>
-          {greeting(user && user.name)} —{' '}
+          {greeting(helloName)} —{' '}
           {!g.items.length ? 'nothing is late and nothing is waiting.' : (
             <>
               {g.items.map((it, i) => (
@@ -534,7 +562,7 @@ export default function AtsHome() {
         </>
       ) : g ? (
         <>
-          {greeting(user && user.name)} —{' '}
+          {greeting(helloName)} —{' '}
           {!g.late && !g.feedback ? 'nothing is late and every client has replied.' : (
             <>
               {g.late ? <button type="button" className="ahv3-hello-n t-red" onClick={() => setDrill(g.lateDrill)}>{fmt(g.late)} late</button> : 'nothing late'}
@@ -545,7 +573,7 @@ export default function AtsHome() {
           )}
         </>
       ) : (
-        <>{greeting(user && user.name)}{tasks ? <> — <span className={`ah-hello-t${tasks.late ? ' t-red' : ''}`}>{tasks.short}</span></> : '.'}</>
+        <>{greeting(helloName)}{tasks && !asUser ? <> — <span className={`ah-hello-t${tasks.late ? ' t-red' : ''}`}>{tasks.short}</span></> : '.'}</>
       )}
     </div>
   );
@@ -563,7 +591,7 @@ export default function AtsHome() {
     <>
       {drill && <HomeDrill listUrl={LIST_URL} params={params} setId={drill} onClose={() => setDrill(null)} />}
       {cand && <CandidateDrawer candidateId={cand.candidateId} applicationId={cand.applicationId} user={user} onClose={() => setCand(null)} onChanged={() => {}} />}
-      {data && <FirstTour user={user} layout={data.layout} />}
+      {data && !asUser && <FirstTour user={user} layout={data.layout} />}
     </>
   );
 
@@ -581,6 +609,7 @@ export default function AtsHome() {
             {hello}
           </div>
           <div className="av4-tools">
+            {dashboardOfPicker}
             {showDept && (
               <label className={`lph-facet av4-dept-f${f.department ? ' is-picked' : ''}`}>
                 <span className="lph-facet-lbl">Department</span>
@@ -600,6 +629,7 @@ export default function AtsHome() {
           </div>
         </header>
         <NewItems module="ats" />
+        {ofBanner}
         {(f.department || extraChips.length > 0) && (
           <div className="av4-chips">
             {f.department && <button type="button" className="btn btn-sm ah-dept-all" onClick={() => setF({ ...f, department: '' })}>✕ All departments</button>}
@@ -642,6 +672,8 @@ export default function AtsHome() {
           : <button type="button" className="btn btn-primary" onClick={() => setDrill(data.main.drill)}>{data.main.label} →</button>)}
       </div>
       <NewItems module="ats" />
+      {dashboardOfPicker && <div className="ah-row2 dof-row">{dashboardOfPicker}</div>}
+      {ofBanner}
       {/* Row 1: the department chooser (2+ departments). "Your area" is in the top bar. */}
       {showDept && (
       <div className={`ah-deptbar${f.department ? ' is-picked' : ''}`}>

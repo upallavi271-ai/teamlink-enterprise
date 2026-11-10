@@ -107,6 +107,13 @@ function enterContext(viewAs) {
   if (c && c.viewAs) return;
   als.enterWith({ viewAs, skipped: 0 });
 }
+// Run fn READ-ONLY, exactly as a View-as request runs: every Prisma write made
+// inside it (and in everything it awaits) is a no-op. Used by the Super Admin
+// "Dashboard of" picker (routes/dashboard.js), which draws another login's
+// dashboard inside the Super Admin's own session.
+function readOnly(viewAs, fn) {
+  return als.run({ viewAs, skipped: 0 }, fn);
+}
 
 // requireAuth's per-request check of a View-as token, after the TARGET has
 // been resolved: the Super Admin behind it must still be an active Super
@@ -199,6 +206,6 @@ prisma.$use(async (params, next) => {
 });
 
 module.exports = {
-  VIEW_AS_MINUTES, READ_ONLY_POSTS, viewAsGuard, checkSession, viewAsContext, isViewingAs, withWrites, enterContext,
+  VIEW_AS_MINUTES, READ_ONLY_POSTS, viewAsGuard, checkSession, viewAsContext, isViewingAs, withWrites, enterContext, readOnly,
   readOnlyMessage, bumpBlocked, takeBlocked, isEnded, markEnded, markLive, newSid, sessionReason,
 };
