@@ -18,10 +18,11 @@
 param(
   [string]$Server = 'https://teamlink.teamlinks.in',
   [string]$SetupCode = '',   # the installer's /code=: fills the box, the notice is still shown
-  [switch]$AfterUpdate       # started by its own older copy, which is closing
+  [switch]$AfterUpdate,      # started by its own older copy, which is closing
+  [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.2'
+$AgentVersion = '2.3'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -60,18 +61,79 @@ public static class TLWin {
 }
 '@
 
+# THE KEEPER (founder 2026-11-10: "chaala mandhi laptop shutdown cheyyakunda close chesi vellipotharu, next day open chestharu - offline
+# ani vasthundhi"). A Windows task of this user starts this script with -Keeper when the PC wakes or is unlocked. It takes over ONLY
+# when the running copy is dead or stuck (no sign of life for 3 minutes, after giving a just-woken copy a minute to come back), and
+# never after the employee stopped it (Stop recording and close) or switched off starting with Windows.
+$FlagDir = Join-Path $env:APPDATA 'TeamLinkMonitor'
+$AliveFile = Join-Path $FlagDir 'alive.txt'      # this copy's process id and last sign of life, every 15 seconds
+$StoppedFlag = Join-Path $FlagDir 'stopped.flag' # the employee pressed Stop recording and close
+$NoStartFlag = Join-Path $FlagDir 'nostart.flag' # the employee chose Do not start with Windows
+function Alive-Age {
+  try { $t = [datetime]::Parse(((Get-Content $AliveFile -Raw) -split '\|')[1]); return ((Get-Date) - $t).TotalSeconds } catch { return 99999 }
+}
+if ($Keeper) {
+  if ((Test-Path $StoppedFlag) -or (Test-Path $NoStartFlag) -or -not (Test-Path (Join-Path $FlagDir 'config.json'))) { exit 0 }
+}
+
+Add-Type -ReferencedAssemblies System -TypeDefinition @'
+using System;
+using System.Net;
+using System.Text;
+using Microsoft.Win32;
+public static class TLPower {
+  public static string Url; public static string Token; public static string Version;
+  public static volatile bool Locked;
+  static bool started;
+  public static void Start() {
+    if (started) return; started = true;
+    SystemEvents.PowerModeChanged += (s, e) => { if (e.Mode == PowerModes.Suspend) Tell("sleep"); };
+    SystemEvents.SessionSwitch += (s, e) => {
+      if (e.Reason == SessionSwitchReason.SessionLock) Locked = true;
+      else if (e.Reason == SessionSwitchReason.SessionUnlock) Locked = false;
+    };
+  }
+  // one short heartbeat that says the laptop is going to sleep; a few seconds at most, and nothing else
+  public static void Tell(string state) {
+    try {
+      if (String.IsNullOrEmpty(Url) || String.IsNullOrEmpty(Token)) return;
+      var req = (HttpWebRequest)WebRequest.Create(Url);
+      req.Method = "POST"; req.Timeout = 3000; req.ReadWriteTimeout = 3000; req.ContentType = "application/json; charset=utf-8";
+      req.Headers["Authorization"] = "Device " + Token;
+      var body = Encoding.UTF8.GetBytes("{\"paused\":\"" + state + "\",\"agentVersion\":\"" + Version + "\",\"currentApp\":\"\",\"title\":\"\",\"idle\":true}");
+      req.ContentLength = body.Length;
+      using (var st = req.GetRequestStream()) st.Write(body, 0, body.Length);
+      using (req.GetResponse()) { }
+    } catch { }
+  }
+}
+'@
+
 # one agent per PC login: running the setup file again must not start a second copy (two icons, every minute counted twice)
 $script:OneCopy = New-Object Threading.Mutex($false, 'Local\TeamLinkMonitor')
 # After an update the older copy closes still holding this - Windows then hands it over with an "abandoned" error, which used to
 # stop the NEW copy too and leave the PC with no agent until the next sign-in (founder 2026-11-09: working, but shown Offline).
 $got = $false
 try { $got = $script:OneCopy.WaitOne($(if ($AfterUpdate) { 30000 } else { 0 })) } catch [Threading.AbandonedMutexException] { $got = $true }
+if (-not $got -and $Keeper) {
+  # a copy is running: a PC that just woke needs a minute before its timers tick again, so look twice before calling it stuck
+  if ((Alive-Age) -gt 180) { Start-Sleep -Seconds 75 }
+  if ((Alive-Age) -le 180) { exit 0 }
+  try {
+    $old = [int]((Get-Content $AliveFile -Raw) -split '\|')[0]
+    $pr = Get-Process -Id $old -ErrorAction Stop
+    if ($pr.ProcessName -like 'powershell*') { Stop-Process -Id $old -Force -ErrorAction Stop }
+  } catch {}
+  try { $got = $script:OneCopy.WaitOne(15000) } catch [Threading.AbandonedMutexException] { $got = $true }
+  if ($got) { $script:tookOver = $true }
+}
 if (-not $got) {
-  [Windows.Forms.MessageBox]::Show('TeamLink Monitor is already running on this PC. Look for its icon next to the clock.', 'TeamLink') | Out-Null
+  if (-not $Keeper) { [Windows.Forms.MessageBox]::Show('TeamLink Monitor is already running on this PC. Look for its icon next to the clock.', 'TeamLink') | Out-Null }
   exit 0
 }
+if (-not $Keeper) { Remove-Item -Path $StoppedFlag -ErrorAction SilentlyContinue }   # started again by the employee or Windows
 
-Write-Log "started: version $AgentVersion$(if ($AfterUpdate) { ', after an update' })"
+Write-Log "started: version $AgentVersion$(if ($AfterUpdate) { ', after an update' })$(if ($Keeper) { $(if ($script:tookOver) { ', by the keeper: the old copy was stuck' } else { ', by the keeper: no copy was running' }) })"
 
 $Dir = Join-Path $env:APPDATA 'TeamLinkMonitor'
 $ConfigFile = Join-Path $Dir 'config.json'
@@ -89,7 +151,50 @@ function Add-Startup {
   $s.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$copy`""
   $s.Description = 'TeamLink Monitor: records PC use in work hours (app names, window titles, active and idle time)'
   $s.Save()
+  Remove-Item -Path $NoStartFlag -ErrorAction SilentlyContinue
 }
+# The keeper task: this user's own Windows task, run when the PC wakes from sleep or the user unlocks it. Set once per start.
+$KeeperTask = 'TeamLink Monitor keeper'
+function Set-Keeper {
+  if (Test-Path $NoStartFlag) { return }
+  $copy = Join-Path $Dir 'TeamLinkMonitor.ps1'
+  if (-not (Test-Path $copy)) { return }
+  $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $esc = { param($t) [Security.SecurityElement]::Escape([string]$t) }
+  $ps = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  $argline = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$copy`" -Keeper"
+  $wake = "<QueryList><Query Id=`"0`" Path=`"System`"><Select Path=`"System`">*[System[Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1]]</Select></Query></QueryList>"
+  $xml = @"
+<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>TeamLink Monitor: starts it again when the PC wakes or is unlocked, only if it stopped working by itself. It never starts it after the employee stopped it.</Description></RegistrationInfo>
+  <Triggers>
+    <SessionStateChangeTrigger><Enabled>true</Enabled><StateChange>SessionUnlock</StateChange><UserId>$(& $esc $user)</UserId></SessionStateChangeTrigger>
+    <EventTrigger><Enabled>true</Enabled><Subscription>$(& $esc $wake)</Subscription></EventTrigger>
+  </Triggers>
+  <Principals><Principal id="Author"><UserId>$(& $esc $user)</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <StartWhenAvailable>false</StartWhenAvailable>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Enabled>true</Enabled>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>$(& $esc $ps)</Command><Arguments>$(& $esc $argline)</Arguments></Exec></Actions>
+</Task>
+"@
+  $file = Join-Path $env:TEMP 'teamlink-keeper.xml'
+  try {
+    [IO.File]::WriteAllText($file, $xml, [Text.Encoding]::Unicode)
+    $out = & schtasks.exe /Create /TN $KeeperTask /XML $file /F 2>&1
+    if ($LASTEXITCODE -ne 0) { Write-Log "keeper not set: $out" } elseif (-not $script:keeperLogged) { $script:keeperLogged = $true; Write-Log 'keeper set (wake / unlock)' }
+  } catch { Write-Log "keeper not set: $($_.Exception.Message)" }
+  Remove-Item -Path $file -ErrorAction SilentlyContinue
+}
+function Remove-Keeper { try { & schtasks.exe /Delete /TN $KeeperTask /F 2>&1 | Out-Null } catch {} }
 
 # ---------------------------------------------------------------- config (token encrypted for this Windows user)
 function Save-Config($cfg) {
@@ -193,6 +298,10 @@ function Register {
 $cfg = Load-Config
 if ($cfg -and $cfg.server) { $script:Server = $cfg.server } else { $script:Server = $Server }
 if (-not $cfg) { $cfg = Register; if (-not $cfg) { exit } }
+
+[TLPower]::Url = $script:Server.TrimEnd('/') + '/api/monitoring/heartbeat'; [TLPower]::Token = $cfg.token; [TLPower]::Version = $AgentVersion
+try { [TLPower]::Start() } catch { Write-Log "power watcher not started: $($_.Exception.Message)" }
+try { Set-Keeper } catch {}
 
 $settings = @{ workStart = '09:30'; workEnd = '18:30'; idleThresholdMinutes = 5; excluded = $false }
 $queue = New-Object System.Collections.ArrayList
@@ -362,7 +471,7 @@ function Apply-Update($u) {
 function Heartbeat {
   # what the Live Dashboard shows: the app's name only, never a title
   $c = $script:current
-  $state = if ($script:stopping) { 'stopped' } elseif ($script:clockedOutDay) { 'clockout' } elseif ($script:onBreak) { 'break' } else { $null }
+  $state = if ($script:stopping) { 'stopped' } elseif ($script:clockedOutDay) { 'clockout' } elseif ($script:onBreak) { 'break' } elseif ([TLPower]::Locked -or ($c -and $c.app -eq 'Locked')) { 'locked' } else { $null }
   $beat = @{ agentVersion = $AgentVersion; paused = $state; currentApp = $(if ($c -and -not $c.brk) { $c.app } else { '' }); title = $(if ($c -and -not $c.brk) { $c.title } else { '' }); idle = [bool]($c -and $c.idle) }
   $r = Call-Api 'POST' '/heartbeat' $beat $script:cfg.token
   if ($r.status -ne 200 -and -not $script:beatFailing) { $script:beatFailing = $true; Write-Log "cannot reach TeamLink (answer $($r.status))" }
@@ -395,8 +504,8 @@ function Update-Menu {
   $script:tray.Text = if ($script:clockedOutDay) { 'TeamLink: clocked out for today, nothing is recorded' } elseif ($script:onBreak) { 'TeamLink: on a break, nothing is recorded' } else { 'TeamLink: recording PC use in work hours' }
 }
 # HR sees that it was stopped: stopping is allowed, and never silent
-[void]$menu.Items.Add('Stop recording and close', $null, { Write-Log 'stopped by the employee (Stop recording and close)'; Flush; $script:stopping = $true; try { Heartbeat } catch {}; $script:tray.Visible = $false; [Windows.Forms.Application]::Exit() })
-[void]$menu.Items.Add('Do not start with Windows', $null, { Write-Log 'set not to start with Windows'; Remove-Item -Path $StartupLink -ErrorAction SilentlyContinue; $script:tray.ShowBalloonTip(5000, 'TeamLink', 'It will not start with Windows any more.', 'Info') })
+[void]$menu.Items.Add('Stop recording and close', $null, { Write-Log 'stopped by the employee (Stop recording and close)'; try { Set-Content -Path $StoppedFlag -Value (Get-Date).ToString('o') } catch {}; Flush; $script:stopping = $true; try { Heartbeat } catch {}; $script:tray.Visible = $false; [Windows.Forms.Application]::Exit() })
+[void]$menu.Items.Add('Do not start with Windows', $null, { Write-Log 'set not to start with Windows'; Remove-Item -Path $StartupLink -ErrorAction SilentlyContinue; try { Set-Content -Path $NoStartFlag -Value (Get-Date).ToString('o') } catch {}; Remove-Keeper; $script:tray.ShowBalloonTip(5000, 'TeamLink', 'It will not start with Windows any more.', 'Info') })
 $tray.ContextMenuStrip = $menu
 $tray.ShowBalloonTip(6000, 'TeamLink', 'Recording PC use in work hours: app names, window titles, active and idle time. Nothing you type is recorded.', 'Info')
 # the icon above is what shows it is running: the black window goes, so closing it by mistake does not stop the agent
@@ -430,6 +539,7 @@ $wakeTimer.Add_Tick({
   # Windows does not always say "resumed": a lid opened with no key pressed sends a signal .NET leaves out. So a 4-second timer
   # that did not tick for 30 seconds also means the PC slept (tested 2026-11-09: only the keyed resume reached the handler above).
   $now = Get-Date
+  if (-not $script:lastAlive -or ($now - $script:lastAlive).TotalSeconds -ge 15) { $script:lastAlive = $now; try { Set-Content -Path $AliveFile -Value ("{0}|{1}" -f $PID, $now.ToString('o')) } catch {} }
   if (($now - $script:lastWakeTick).TotalSeconds -gt 30 -and -not $script:resumeAt) { $script:resumeAt = $now }
   $script:lastWakeTick = $now
   if ($script:resumeAt -and -not $script:wakeLogged) { $script:wakeLogged = $true; Write-Log 'woke from sleep' }

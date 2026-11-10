@@ -41,7 +41,8 @@ function DayBar({ r }) {
 const pct = (v) => (v == null ? '—' : `${v}%`);
 const CAT_TONE = { productive: 'green', neutral: 'slate', unproductive: 'red' };
 const CAT_WORD = { productive: 'Productive', neutral: 'Neutral', unproductive: 'Unproductive' };
-const STATUS_TONE = { Online: 'green', Idle: 'amber', 'On break': 'teal', 'Clocked out': 'slate', Stopped: 'red', 'On leave': 'violet', Offline: 'slate' };
+const STATUS_TONE = { Online: 'green', Idle: 'amber', 'On break': 'teal', 'Clocked out': 'slate', Stopped: 'red', 'On leave': 'violet', Offline: 'slate', 'Laptop closed': 'blue', 'Old agent': 'red' };
+const STATUS_TIP = { 'Laptop closed': 'The laptop was closed (asleep). It shows Online again the moment it is opened.', 'Old agent': 'This PC runs an agent older than 2.1, which does not come back after sleep. Restart the PC once: it then updates itself.' };
 
 function useGet(url, params, deps = []) {
   const [st, setSt] = useState({ data: null, error: '', loading: true });
@@ -167,7 +168,7 @@ function Overview({ onOpen }) {
         <KpiTile icon="users" tone="blue" label="Tracked" value={c ? c.tracked : null} loading={loading && !c} sub="With a registered PC" />
         <KpiTile icon="check" tone="green" label="Online" value={live && c ? c.online : (live ? null : '—')} loading={loading && !c} sub="Using the PC now" {...card('Online')} />
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
-        <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub="No signal for 3 minutes" {...card('Offline')} />
+        <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub={c && c.closed ? `No signal for 3 minutes · ${c.closed} laptop${c.closed === 1 ? '' : 's'} closed` : 'No signal for 3 minutes'} {...card('Offline')} />
         <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub="Approved leave today" {...card('On leave')} />
         <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h${first && first.workHours ? ` · out of ${hm(first.workHours)}` : ''}`} />
       </KpiRow>
@@ -188,7 +189,7 @@ function Overview({ onOpen }) {
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
                 <td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td>
                 <td>{r.department || '—'}{r.team && <div className="small-muted">{r.team}</div>}</td>
-                {live && <td><Pill tone={STATUS_TONE[r.status] || 'slate'}>{r.status || '—'}</Pill></td>}
+                {live && <td title={STATUS_TIP[r.status] || undefined}><Pill tone={STATUS_TONE[r.status] || 'slate'}>{r.status || '—'}</Pill>{r.status === 'Old agent' && <div className="small-muted">Restart the PC once</div>}</td>}
                 {live && (() => {
                   const { site, page } = siteOf(r.currentApp, r.currentTitle);
                   return <td className="mon-now">{r.currentApp || <span className="small-muted">—</span>}{site && <> · <b>{site}</b></>}{page && <div className="small-muted" title={r.currentTitle}>{page}</div>}</td>;

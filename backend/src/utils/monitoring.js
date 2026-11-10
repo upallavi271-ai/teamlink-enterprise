@@ -365,7 +365,8 @@ async function liveUpdate(device, body = {}) {
 }
 // A heartbeat: what the PC is doing now, for the Live Dashboard.
 async function heartbeat(device, body = {}) {
-  const paused = ['break', 'clockout', 'stopped'].includes(body.paused) ? body.paused : null;
+  // sleep: the laptop is closing (agent 2.3 says so just before it sleeps); locked: the session is locked
+  const paused = ['break', 'clockout', 'stopped', 'sleep', 'locked'].includes(body.paused) ? body.paused : null;
   await prisma.monitoringDevice.update({
     where: { id: device.id },
     data: {
@@ -477,13 +478,19 @@ function liveStatus(dev, onLeave, now) {
     if (dev.pausedState === 'break') return 'On break';
     if (dev.pausedState === 'clockout') return 'Clocked out';
     if (dev.pausedState === 'stopped') return 'Stopped';
-    return dev.currentIdle ? 'Idle' : 'Online';
+    if (dev.pausedState === 'sleep') return 'Laptop closed';
+    return dev.currentIdle || dev.pausedState === 'locked' ? 'Idle' : 'Online';
   }
   if (onLeave) return 'On leave';
   // the person closed the agent (Stop recording and close) or clocked out: that stays on the board until the PC reports again,
   // instead of turning into a plain Offline after 3 minutes (founder 2026-11-09: two people working, both shown Offline)
   if (dev && dev.pausedState === 'stopped') return 'Stopped';
   if (dev && dev.pausedState === 'clockout' && dev.lastSeenAt && istDay(dev.lastSeenAt) === istDay(now)) return 'Clocked out';
+  // LAPTOP CLOSED, NOT OFFLINE (founder 2026-11-10: "laptop shutdown cheyyakunda close chesi vellipotharu - offline ani vasthundhi,
+  // alaa vundakudadhu"): the agent said it was going to sleep, or its last word was a locked screen (Windows locks on closing the lid)
+  if (dev && ['sleep', 'locked'].includes(dev.pausedState)) return 'Laptop closed';
+  // an agent older than 2.1 does not come back after sleep by itself, and so never takes the update that fixes it: one restart does
+  if (dev && dev.agentVersion && older(dev.agentVersion, '2.1')) return 'Old agent';
   return 'Offline';
 }
 
@@ -494,7 +501,7 @@ async function liveRows(access = null) {
   const now = Date.now();
   const nowHm = hmOf(now);
   const [devices, leaves, rules] = await Promise.all([
-    prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, employee: { select: { id: true, department: true } } } }),
+    prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true, employee: { select: { id: true, department: true } } } }),
     prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: today }, toDate: { gte: today }, ...within(access) }, select: { employeeId: true } }),
     overrideIndex(),
   ]);
@@ -511,7 +518,7 @@ async function liveRows(access = null) {
     rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, lastHeartbeat: dev.lastSeenAt, online: using });
   });
   const count = (s) => rows.filter((r) => r.status === s).length;
-  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped'), onBreak: count('On break') + count('Clocked out') } };
+  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out') } };
 }
 
 // The Live Dashboard / Overview of one day: every employee this login may see who has a registered PC.
@@ -521,7 +528,7 @@ async function overview(day, access = null) {
   const cfg = await settings();
   const nowHm = hmOf(Date.now());
   const [devices, logs, catOf, leaves, rules] = await Promise.all([
-    prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true } }),
+    prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true } }),
     prisma.activityLog.findMany({ where: { day: d, ...within(access) }, select: LOG_SELECT }),
     categoryIndex(),
     prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: d }, toDate: { gte: d }, ...within(access) }, select: { employeeId: true } }),
@@ -564,7 +571,7 @@ async function overview(day, access = null) {
   return {
     day: d, live,
     cards: {
-      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped'), onLeave: count('On leave'),
+      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onLeave: count('On leave'),
       onBreak: count('On break') + count('Clocked out'), avgActiveHours: avg('activeHours'), avgIdleHours: avg('idleHours'),
     },
     // the work day of everybody on the board together (founder 2026-11-10: "mottham annitiki")
