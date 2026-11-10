@@ -777,6 +777,43 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json(out);
   }));
 
+  /*
+   * CLEAN-UP OF THE JUNK CANDIDATES (founder 2026-11-10: "start cheyyi"). Strict on purpose, nothing else is touched:
+   *   a candidate whose NAME has no letter at all (only digits, dots, "e+", punctuation: "7.56947364E9", "....") - a name written in ANY
+   *   alphabet, fancy fonts included, is never matched - AND whose portal account has never signed in.
+   *   GET  /api/integrations/teamlink/junk-candidates/dump              -> { rows: [full candidate + login rows] }   (read only: the backup)
+   *   POST /api/integrations/teamlink/junk-candidates/delete { ids, expect } -> { deleted }   deletes the account (the candidate and its
+   *        dependants go with it, ON DELETE CASCADE) of exactly those ids that STILL match, in one transaction; `expect` must equal the
+   *        number of ids or nothing is done.
+   */
+  const JUNK_STRICT = `(coalesce(c.name,'') ~ '^[0-9.,eE+ -]*$' or coalesce(c.name,'') ~ '^[\\x01-\\x40\\x5B-\\x60\\x7B-\\x7F]*$')`;
+  r.get('/api/integrations/teamlink/junk-candidates/dump', wrap(async (_req, res) => {
+    const { withUser } = await portal();
+    const rows = await withUser(SYSTEM, async (c) => (await c.query(`select to_jsonb(c) as candidate, to_jsonb(u) - 'password_hash' as login
+        from candidates c left join users u on u.id = c.user_id
+        where ${JUNK_STRICT} and (u.id is null or u.last_login_at is null) order by c.created_at`)).rows);
+    res.json({ count: rows.length, rows });
+  }));
+  r.post('/api/integrations/teamlink/junk-candidates/delete', wrap(async (req, res) => {
+    const ids = Array.isArray(req.body && req.body.ids) ? req.body.ids.map(String) : [];
+    if (!ids.length || ids.length > 200 || Number(req.body.expect) !== ids.length) {
+      return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'ids (1-200) and expect (the same number) are required' } });
+    }
+    const { withUser } = await portal();
+    const out = await withUser(SYSTEM, async (c) => {
+      const ok = (await c.query(`select c.id, c.user_id from candidates c left join users u on u.id = c.user_id
+          where c.id = any($1::text[]) and ${JUNK_STRICT} and (u.id is null or u.last_login_at is null)`, [ids])).rows;
+      if (ok.length !== ids.length) throw Object.assign(new Error(`only ${ok.length} of ${ids.length} still match the junk rule - nothing deleted`), { status: 409 });
+      const userIds = ok.map((x) => x.user_id).filter(Boolean);
+      if (userIds.length) await c.query('delete from users where id = any($1::uuid[])', [userIds]);
+      await c.query('delete from candidates where id = any($1::text[])', [ids]);
+      const left = Number((await c.query('select count(*) as n from candidates where id = any($1::text[])', [ids])).rows[0].n);
+      if (left) throw new Error(`${left} rows are still there after the delete - rolled back`);
+      return { deleted: ids.length };
+    });
+    res.json(out);
+  }));
+
   r.post('/api/integrations/teamlink/login-check', wrap(async (req, res) => {
     const find = String((req.body && req.body.find) || '').trim().toLowerCase().replace(/[%_]/g, '');
     if (find.length < 4) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'find needs at least 4 letters' } });
