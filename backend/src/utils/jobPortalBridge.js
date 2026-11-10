@@ -528,6 +528,89 @@ async function syncAiInterview(applicationId, iv) {
   return true;
 }
 
+// The portal's applications of the last `pullDays` days: new ones into the ATS, AI interview results in, and each applicant's ATS stage
+// back to the portal (what they see under My Applications). Used by fullSync and by pushStagesNow (right after a stage change).
+async function pullApplications(out, pullDays, fetchFn) {
+    const since = new Date(Date.now() - pullDays * 86400000).toISOString();
+    const pulled = await fetchFn(`/integrations/teamlink/applications?since=${encodeURIComponent(since)}&limit=2000`, { timeoutMs: 30000 });
+    const apps = (pulled && pulled.applications) || [];
+    out.pulled = apps.length;
+    const stageUpdates = [];
+    for (const a of apps) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await ingestApplication(a).catch((e) => ({ status: 500, body: { error: e.message } }));
+      if (r.status === 201) out.created += 1;
+      if (r.status >= 400) {
+        out.errors.push(`portal application ${(a.application && (a.application.reference || a.application.id)) || '?'}: ${r.body && r.body.error}`);
+        continue;
+      }
+      // the portal's AI interview -> the ATS application (who still has to take it / who already did)
+      // eslint-disable-next-line no-await-in-loop
+      if (r.body && r.body.applicationId && await syncAiInterview(r.body.applicationId, a.application && a.application.aiInterview).catch(() => false)) out.aiInterviews += 1;
+      // the 65% rule: AI interview and resume both 65% or more -> into the ATS by itself (utils/autoSendToAts.js)
+      if (r.body && r.body.applicationId) {
+        // eslint-disable-next-line no-await-in-loop
+        const auto = await require('./autoSendToAts').checkQuietly(r.body.applicationId, { portalAppId: a.application && a.application.id }); // eslint-disable-line global-require
+        if (auto.sent) out.autoAts = (out.autoAts || 0) + 1;
+      }
+      // STATUS BACK TO THE PORTAL: the applicant sees on the portal where
+      // their application stands in the ATS.
+      const atsStage = r.body && r.body.stage;
+      let want = PORTAL_STAGE_OF[atsStage];
+      // Sent to the ATS by a recruiter (it lands on Recruiter Review): for the applicant that is "shortlisted" (founder 2026-11-10)
+      if (!want && atsStage === 'RECRUITER_REVIEW' && r.body.applicationId) {
+        // eslint-disable-next-line no-await-in-loop
+        const sent = await prisma.application.findUnique({ where: { id: r.body.applicationId }, select: { portalImportedAt: true } }).catch(() => null);
+        if (sent && sent.portalImportedAt) want = 'shortlisted';
+      }
+      if (want && a.application && want !== a.application.stage) {
+        stageUpdates.push({ id: a.application.id, stage: want, note: `TeamLink ATS: ${atsStage}` });
+      }
+    }
+    if (stageUpdates.length) {
+      try {
+        const res2 = await fetchFn('/integrations/teamlink/applications/stages', {
+          method: 'POST', timeoutMs: 30000, body: { updates: stageUpdates },
+        });
+        const results2 = (res2 && res2.results) || [];
+        out.stageUpdates = results2.filter((x) => x.changed).length;
+        results2.filter((x) => x.error).forEach((x) => out.errors.push(`status to portal for ${x.id}: ${x.error}`));
+      } catch (err) {
+        out.errors.push(`status updates not sent to the portal: ${err.message}`);
+      }
+    }
+}
+
+// STAGE TO THE PORTAL RIGHT AWAY (founder 2026-11-10: "stage maaragane portal lo kuda ventane maarali"). A stage change on a portal
+// application asks for this; 15 seconds later (several moves in a row are one run) the stages go to the portal, instead of waiting for
+// the hourly sync. One run at a time; a move during a run gets one more run after it.
+let stageTimer = null;
+let stageRun = null;
+let stageAgain = false;
+let stageLast = null;
+function pushStagesSoon(delayMs = 15000) {
+  if (!syncToken() || require('./sandbox').isSandbox()) return false; // eslint-disable-line global-require
+  if (stageTimer) clearTimeout(stageTimer);
+  stageTimer = setTimeout(() => { stageTimer = null; pushStagesNow().catch(() => {}); }, delayMs);
+  if (stageTimer.unref) stageTimer.unref();
+  return true;
+}
+async function pushStagesNow({ pullDays = 90, fetchFn = portalFetch } = {}) {
+  if (stageRun) { stageAgain = true; return stageRun; }
+  stageRun = (async () => {
+    const out = { ok: true, pulled: 0, created: 0, stageUpdates: 0, aiInterviews: 0, errors: [], error: null };
+    try { await pullApplications(out, pullDays, fetchFn); } catch (err) { out.ok = false; out.error = err.message; }
+    stageLast = { at: new Date().toISOString(), ...out };
+    // eslint-disable-next-line no-console
+    if (out.stageUpdates || !out.ok) console.log(`[job-portal] stage push: ${out.ok ? `${out.stageUpdates} status update(s) sent to the portal` : out.error}`);
+    return out;
+  })();
+  try { return await stageRun; } finally {
+    stageRun = null;
+    if (stageAgain) { stageAgain = false; pushStagesSoon(5000); }
+  }
+}
+
 async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system' } = {}) {
   const started = new Date();
   const out = { ok: true, jobs: 0, closed: 0, pruned: 0, failed: 0, pulled: 0, created: 0, stageUpdates: 0, aiInterviews: 0, errors: [], error: null };
@@ -565,54 +648,7 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
       data: { portalSyncStatus: 'Failed' },
     });
 
-    const since = new Date(Date.now() - pullDays * 86400000).toISOString();
-    const pulled = await portalFetch(`/integrations/teamlink/applications?since=${encodeURIComponent(since)}&limit=2000`, { timeoutMs: 30000 });
-    const apps = (pulled && pulled.applications) || [];
-    out.pulled = apps.length;
-    const stageUpdates = [];
-    for (const a of apps) {
-      // eslint-disable-next-line no-await-in-loop
-      const r = await ingestApplication(a).catch((e) => ({ status: 500, body: { error: e.message } }));
-      if (r.status === 201) out.created += 1;
-      if (r.status >= 400) {
-        out.errors.push(`portal application ${(a.application && (a.application.reference || a.application.id)) || '?'}: ${r.body && r.body.error}`);
-        continue;
-      }
-      // the portal's AI interview -> the ATS application (who still has to take it / who already did)
-      // eslint-disable-next-line no-await-in-loop
-      if (r.body && r.body.applicationId && await syncAiInterview(r.body.applicationId, a.application && a.application.aiInterview).catch(() => false)) out.aiInterviews += 1;
-      // the 65% rule: AI interview and resume both 65% or more -> into the ATS by itself (utils/autoSendToAts.js)
-      if (r.body && r.body.applicationId) {
-        // eslint-disable-next-line no-await-in-loop
-        const auto = await require('./autoSendToAts').checkQuietly(r.body.applicationId, { portalAppId: a.application && a.application.id }); // eslint-disable-line global-require
-        if (auto.sent) out.autoAts = (out.autoAts || 0) + 1;
-      }
-      // STATUS BACK TO THE PORTAL: the applicant sees on the portal where
-      // their application stands in the ATS.
-      const atsStage = r.body && r.body.stage;
-      let want = PORTAL_STAGE_OF[atsStage];
-      // Sent to the ATS by a recruiter (it lands on Recruiter Review): for the applicant that is "shortlisted" (founder 2026-11-10)
-      if (!want && atsStage === 'RECRUITER_REVIEW' && r.body.applicationId) {
-        // eslint-disable-next-line no-await-in-loop
-        const sent = await prisma.application.findUnique({ where: { id: r.body.applicationId }, select: { portalImportedAt: true } }).catch(() => null);
-        if (sent && sent.portalImportedAt) want = 'shortlisted';
-      }
-      if (want && a.application && want !== a.application.stage) {
-        stageUpdates.push({ id: a.application.id, stage: want, note: `TeamLink ATS: ${atsStage}` });
-      }
-    }
-    if (stageUpdates.length) {
-      try {
-        const res2 = await portalFetch('/integrations/teamlink/applications/stages', {
-          method: 'POST', timeoutMs: 30000, body: { updates: stageUpdates },
-        });
-        const results2 = (res2 && res2.results) || [];
-        out.stageUpdates = results2.filter((x) => x.changed).length;
-        results2.filter((x) => x.error).forEach((x) => out.errors.push(`status to portal for ${x.id}: ${x.error}`));
-      } catch (err) {
-        out.errors.push(`status updates not sent to the portal: ${err.message}`);
-      }
-    }
+    await pullApplications(out, pullDays, portalFetch);
     // Naukri / Shine responses read from the recruiters' mailboxes (portal jobs of their own) -> ATS applications (utils/mailImports.js)
     const mail = await require('./mailImports').pullQuietly({ sinceDays: pullDays }); // eslint-disable-line global-require
     if (mail && !mail.error) { out.mailAdded = mail.added; out.mailWaiting = mail.waiting; out.created += mail.added; }
@@ -720,6 +756,6 @@ async function ping() {
 
 module.exports = {
   portalUrl, portalJobId, jobUrl, secretMatches, pushRequirement, ingestApplication, fullSync, syncAiInterview,
-  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, portalJobLive, portalApi, portalFetch, syncAiInterview,
+  startSchedule, status, ping, findCandidateByContact, PORTAL_STAGE_OF, pushStagesSoon, pushStagesNow, lastStagePush: () => stageLast, portalJobLive, portalApi, portalFetch, syncAiInterview,
   pollAiInterviews, aiInterviewDone,
 };

@@ -239,6 +239,10 @@ async function recordStageCommunications({
 }) {
   // silent: imports and historical loads never message anybody (no row, no log).
   if (silent) return [];
+  // A Job Portal applicant sees the new stage on the portal right away (utils/jobPortalBridge.js pushStagesSoon), not at the hourly sync.
+  if (application && (application.source === 'TeamLink Job Portal' || application.portalImportedAt)) {
+    try { require('./jobPortalBridge').pushStagesSoon(); } catch { /* the hourly sync still carries it */ } // eslint-disable-line global-require
+  }
   // SELECTED: the confirmation mail is written by itself and waits for the TL's Send (utils/selectionMail.js,
   // founder 2026-11-04). It takes the place of the automatic "Selected" message, so nothing goes by itself.
   if (toStage === 'SELECTED' && candidate) {
