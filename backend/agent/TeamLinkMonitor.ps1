@@ -22,7 +22,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.3'
+$AgentVersion = '2.4'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -80,11 +80,41 @@ Add-Type -ReferencedAssemblies System -TypeDefinition @'
 using System;
 using System.Net;
 using System.Text;
+using System.Threading;
+using System.Diagnostics;
 using Microsoft.Win32;
 public static class TLPower {
   public static string Url; public static string Token; public static string Version;
   public static volatile bool Locked;
   static bool started;
+  // THE GUARD (agent 2.4): Windows does not let an ordinary user set a task that restarts the agent (2.3's keeper: "Access is
+  // denied" on a real PC), so the agent guards itself. The window side calls Beat() every 4 seconds; this thread checks it. If the
+  // PC has been awake and the window side has not beaten for StuckSeconds, it is stuck: a fresh copy is started and this one ends.
+  // Right after the PC wakes, the clock starts again - a just-woken agent is given the full time before anything is done.
+  public static long LastBeat = DateTime.UtcNow.Ticks;
+  public static string RelaunchExe; public static string RelaunchArgs;
+  public static bool KillOnRelaunch = true;
+  public static volatile bool Relaunched;
+  public static void Beat() { Interlocked.Exchange(ref LastBeat, DateTime.UtcNow.Ticks); }
+  public static void Guard(int stuckSeconds, int everySeconds) {
+    var t = new Thread(() => {
+      var prev = DateTime.UtcNow;
+      while (true) {
+        Thread.Sleep(everySeconds * 1000);
+        var now = DateTime.UtcNow;
+        bool slept = (now - prev).TotalSeconds > everySeconds * 3; prev = now;
+        if (slept) { Beat(); continue; }
+        var since = (now - new DateTime(Interlocked.Read(ref LastBeat))).TotalSeconds;
+        if (since > stuckSeconds && !String.IsNullOrEmpty(RelaunchExe)) {
+          try { Process.Start(new ProcessStartInfo(RelaunchExe, RelaunchArgs) { UseShellExecute = false, CreateNoWindow = true }); } catch { }
+          Relaunched = true;
+          if (KillOnRelaunch) { try { Process.GetCurrentProcess().Kill(); } catch { } }
+          return;
+        }
+      }
+    });
+    t.IsBackground = true; t.Start();
+  }
   public static void Start() {
     if (started) return; started = true;
     SystemEvents.PowerModeChanged += (s, e) => { if (e.Mode == PowerModes.Suspend) Tell("sleep"); };
@@ -156,7 +186,7 @@ function Add-Startup {
 # The keeper task: this user's own Windows task, run when the PC wakes from sleep or the user unlocks it. Set once per start.
 $KeeperTask = 'TeamLink Monitor keeper'
 function Set-Keeper {
-  if (Test-Path $NoStartFlag) { return }
+  if ((Test-Path $NoStartFlag) -or (Test-Path (Join-Path $Dir 'keeper-denied.flag'))) { return }
   $copy = Join-Path $Dir 'TeamLinkMonitor.ps1'
   if (-not (Test-Path $copy)) { return }
   $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -190,7 +220,7 @@ function Set-Keeper {
   try {
     [IO.File]::WriteAllText($file, $xml, [Text.Encoding]::Unicode)
     $out = & schtasks.exe /Create /TN $KeeperTask /XML $file /F 2>&1
-    if ($LASTEXITCODE -ne 0) { Write-Log "keeper not set: $out" } elseif (-not $script:keeperLogged) { $script:keeperLogged = $true; Write-Log 'keeper set (wake / unlock)' }
+    if ($LASTEXITCODE -ne 0) { if (-not (Test-Path (Join-Path $Dir 'keeper-denied.flag'))) { Write-Log "keeper task not allowed by Windows (the guard inside the agent does the job): $out"; Set-Content -Path (Join-Path $Dir 'keeper-denied.flag') -Value 1 } } elseif (-not $script:keeperLogged) { $script:keeperLogged = $true; Write-Log 'keeper set (wake / unlock)' }
   } catch { Write-Log "keeper not set: $($_.Exception.Message)" }
   Remove-Item -Path $file -ErrorAction SilentlyContinue
 }
@@ -302,6 +332,13 @@ if (-not $cfg) { $cfg = Register; if (-not $cfg) { exit } }
 [TLPower]::Url = $script:Server.TrimEnd('/') + '/api/monitoring/heartbeat'; [TLPower]::Token = $cfg.token; [TLPower]::Version = $AgentVersion
 try { [TLPower]::Start() } catch { Write-Log "power watcher not started: $($_.Exception.Message)" }
 try { Set-Keeper } catch {}
+# the guard: a stuck agent starts a fresh copy of itself (the fresh copy takes over as the keeper would)
+try {
+  $me = Join-Path $Dir 'TeamLinkMonitor.ps1'; if (-not (Test-Path $me)) { $me = $PSCommandPath }
+  [TLPower]::RelaunchExe = "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe"
+  [TLPower]::RelaunchArgs = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$me`" -Keeper"
+  [TLPower]::Guard(180, 20)
+} catch { Write-Log "guard not started: $($_.Exception.Message)" }
 
 $settings = @{ workStart = '09:30'; workEnd = '18:30'; idleThresholdMinutes = 5; excluded = $false }
 $queue = New-Object System.Collections.ArrayList
@@ -539,6 +576,7 @@ $wakeTimer.Add_Tick({
   # Windows does not always say "resumed": a lid opened with no key pressed sends a signal .NET leaves out. So a 4-second timer
   # that did not tick for 30 seconds also means the PC slept (tested 2026-11-09: only the keyed resume reached the handler above).
   $now = Get-Date
+  [TLPower]::Beat()
   if (-not $script:lastAlive -or ($now - $script:lastAlive).TotalSeconds -ge 15) { $script:lastAlive = $now; try { Set-Content -Path $AliveFile -Value ("{0}|{1}" -f $PID, $now.ToString('o')) } catch {} }
   if (($now - $script:lastWakeTick).TotalSeconds -gt 30 -and -not $script:resumeAt) { $script:resumeAt = $now }
   $script:lastWakeTick = $now
