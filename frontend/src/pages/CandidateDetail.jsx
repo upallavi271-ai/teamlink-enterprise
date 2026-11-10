@@ -105,6 +105,28 @@ const dateTime = (value) => (value
   })
   : '—');
 
+// WHO SOURCED, WHO HAS THEM NOW, WHO GETS THE CREDIT (founder 2026-11-10, server: routes/candidates.js loadInScope + utils/handover.js).
+// A handover never overwrites the earlier names: the joining counts for who got the candidate Selected.
+const shortDay = (v) => (v ? new Date(v).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
+function OwnershipLines({ o, owner }) {
+  if (!o) return null;
+  const line = (label, v) => (v ? <div className="small-muted">{`${label}: ${v}`}</div> : null);
+  const hs = o.handovers || [];
+  return (
+    <div style={{ marginTop: 4 }}>
+      {line('Sourced by', o.sourcedBy)}
+      {o.currentlyWith && o.currentlyWith !== o.sourcedBy && o.currentlyWith !== owner && line('Currently with', o.currentlyWith)}
+      {o.selectedBy && o.selectedBy !== o.sourcedBy && line('Selected by', o.selectedBy)}
+      {line('Joining credit', o.joiningCredit)}
+      {hs.length > 0 && (
+        <div className="small-muted" title={hs.map((h) => `${shortDay(h.at)}: ${h.from || '—'} → ${h.to} (${h.how || 'handed over'}${h.reason ? `, ${h.reason}` : ''}) by ${h.by}`).join(' | ')}>
+          {hs.length === 1 ? `Handed over ${shortDay(hs[0].at)}: ${hs[0].from || '—'} → ${hs[0].to}` : `Handed over ${hs.length} times · last ${shortDay(hs[hs.length - 1].at)} to ${hs[hs.length - 1].to}`}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function CandidateDetail() {
   const { id } = useParams();
   const { user } = useAuth();
@@ -561,7 +583,7 @@ export default function CandidateDetail() {
                             ? '—'
                             : (a.followUp && !a.followUp.completedAt && a.followUp.nextAction) || a.nextAction || '—'}
                         </td>
-                        <td className="cell-muted" data-k="Owner">{a.owner || '—'}</td>
+                        <td className="cell-muted" data-k="Owner">{a.owner || '—'}<OwnershipLines o={a.ownership} owner={a.owner} /></td>
                         <td data-k="Status"><span className={`status ${lifeStatusClass(a.lifeStatus)}`}>{a.lifeStatus}</span></td>
                       </tr>
                     ))}

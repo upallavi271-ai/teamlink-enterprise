@@ -480,7 +480,7 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     RA.getBase(),
     RA.idsWhere(prisma.requirement, requirementsWhere(user, f)),
     RA.idsWhere(prisma.application, appWhere),
-    prisma.user.findMany({ select: { id: true, name: true, team: true } }),
+    prisma.user.findMany({ select: { id: true, name: true, team: true, status: true } }),
     prisma.client.findMany({ select: { id: true, name: true } }),
   ]);
   const clientName = new Map(clients.map((c) => [c.id, c.name]));
@@ -493,15 +493,10 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   // People. A follow-up imported from a tracker names its recruiter as text
   // (some have left and have no login); a name that matches a login IS that
   // login, so one person is never two rows.
-  const userById = new Map(users.map((u) => [u.id, u]));
-  const userByName = new Map();
-  users.forEach((u) => { if (!userByName.has(nameKey(u.name))) userByName.set(nameKey(u.name), u); });
-  const person = (id, name) => {
-    if (id && userById.has(id)) return { key: `u:${id}`, userId: id, label: userById.get(id).name, team: userById.get(id).team };
-    const u = userByName.get(nameKey(name));
-    if (u) return { key: `u:${u.id}`, userId: u.id, label: u.name, team: u.team };
-    return clean(name) ? { key: `n:${nameKey(name)}`, label: clean(name), team: null } : null;
-  };
+  // the one people rule (utils/workers.js makeResolver): a short form in the sheets ("M.Sai Sirisha") is the login it stands for
+  const person = workers.makeResolver(users);
+  // handovers: the credit reads who had the candidate before each one (utils/handover.js)
+  const HO = await require('../utils/handover').handoversFor(appRows.map((a) => a.id)); // eslint-disable-line global-require
   person.startOf = (await workers.loadDirectory()).person.startOf; // each login's Date of joining, for workers.creditAt()
 
   const reqMap = new Map();
@@ -578,7 +573,8 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     const steps = Object.values(crossedAt).filter(Boolean).map((d) => new Date(d).getTime());
     const typedJoin = /^(\d{4})-\d{2}-\d{2}/.test(String(a.joiningDate || '')) && +String(a.joiningDate).slice(0, 4) >= 2015 ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : null;
     const creditTime = joined ? (typedJoin || a.joinedAt || crossedAt.joined || null) : (steps.length ? new Date(Math.max(...steps)) : null);
-    const recruiter = creditTime ? (workers.creditAt(reqForAttr, fus, evs, person, creditTime) || recruiterNow) : recruiterNow;
+    // the joining: who got them Selected (workers.joinCredit, founder 2026-11-10)
+    const recruiter = creditTime ? ((joined ? workers.joinCredit(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) : workers.creditAt(reqForAttr, fus, evs, person, creditTime, HO.get(a.id))) || recruiterNow) : recruiterNow;
 
     const fb = fbBy.get(a.id) || [];
     const clientFb = fb.find((x) => x.kind === 'Client') || fb.find((x) => x.kind === 'Internal');

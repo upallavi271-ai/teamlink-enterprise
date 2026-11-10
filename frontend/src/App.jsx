@@ -21,6 +21,7 @@ import CandidateDuplicates from './pages/CandidateDuplicates.jsx';
 import CandidateHome from './pages/CandidateHome.jsx';
 import AtsDashboard from './pages/ats/AtsDashboard.jsx';
 import Team from './pages/ats/Team.jsx';
+import RecruiterHandover from './pages/ats/RecruiterHandover.jsx'; // Reports & Team -> Handover (2026-11-10)
 import AiCallingPage from './components/aicalling/AiCallingPage.jsx'; // Exotel AI Calling (a tab of Reports & Team)
 import { FollowUpsRoute } from './pages/ats/FollowUps.jsx';
 import InterviewCalendar from './pages/ats/InterviewCalendar.jsx';
@@ -284,6 +285,7 @@ export default function App() {
             The route did not exist, so logging in as one hit a dead page. */}
         <Route path="my-applications" element={<CandidateHome />} />
         <Route path="ats/team" element={<Team />} />
+        <Route path="ats/handover" element={<RecruiterHandover />} />
         <Route path="ats/ai-calling" element={<AiCallingPage />} />
         {/* ATS → Reports & Team → Settings: links to Administration only (layout v3). */}
         <Route path="ats/settings" element={<Navigate to="/admin/company" replace />} />

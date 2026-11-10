@@ -287,12 +287,22 @@ async function loadWorld(appWhere, reqWhere, today) {
   const group = (list) => { const m = new Map(); list.forEach((x) => { if (!m.has(x.applicationId)) m.set(x.applicationId, []); m.get(x.applicationId).push(x); }); return m; };
   const fuBy = group(fus);
   const evBy = group(evs);
+  // handovers (utils/handover.js): a Joined candidate counts for who got them Selected, read from before any handover
+  const HO = await require('./handover').handoversFor(whole ? null : apps.filter((a) => JOINED.includes(a.stage)).map((a) => a.id)); // eslint-disable-line global-require
   const recruiterOfReq = (r) => (r && (r.recruiterId || String(r.recruiterIds || '').split(',').filter(Boolean)[0])) || null;
   const rows = apps.map((a) => {
     const r = reqById.get(a.requirementId) || null;
     a.requirement = r; // nextAction / isInternal read it
     const req = r || {};
-    const who = W.attribute({ recruiterId: recruiterOfReq(r), tlId: req.tlId, tl: req.tl, bdeId: req.bdeId, positionCode: req.positionCode }, fuBy.get(a.id) || [], evBy.get(a.id) || [], dir.person);
+    const attrReq = { recruiterId: recruiterOfReq(r), tlId: req.tlId, tl: req.tl, bdeId: req.bdeId, positionCode: req.positionCode };
+    const who = W.attribute(attrReq, fuBy.get(a.id) || [], evBy.get(a.id) || [], dir.person);
+    // THE JOINING'S CREDIT (founder 2026-11-10): a Joined row is shown and counted under who got them Selected, not under whoever has
+    // the candidate now; live rows stay with who follows them up now (they are the one to act)
+    if (JOINED.includes(a.stage)) {
+      const jd = /^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : (a.joinedAt || null);
+      const credit = W.joinCredit(attrReq, fuBy.get(a.id) || [], evBy.get(a.id) || [], dir.person, jd, HO.get(a.id));
+      if (credit) who.recruiter = credit;
+    }
     const live = !CLOSED.includes(a.stage);
     return {
       a,

@@ -50,7 +50,8 @@ const LIST_OF = { RECRUITER: 'recruiters', TL: 'tls', BDE: 'bdes' };
 const LEFT_STATUSES = ['Relieved', 'Exited', 'Exit Process'];
 
 const clean = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
-const nameKey = (v) => clean(v).toLowerCase();
+// "P. Anitha" and "P.Anitha" are one name (the sheets type both)
+const nameKey = (v) => clean(v).toLowerCase().replace(/\.\s+/g, '.');
 const csv = (v) => String(v || '').split(',').map((x) => x.trim()).filter(Boolean);
 // The importers wrote "Imported — Medical tracker" etc. as the actor of the
 // stage moves they created. That is a process, not a person.
@@ -270,10 +271,14 @@ function attribute(req, fus, evs, person) {
 // it, and so did the old recruiter's joinings. creditAt() names who had the candidate WHEN the step happened (`at`): the owner of
 // the latest follow-up written by then, else the recruiter who moved it by then, else the job's recruiter - never somebody who had
 // not joined yet (HR > Date of joining after `at`). null = nobody here now (a former recruiter's work).
-function creditAt(req, fus, evs, person, at) {
+// `handovers` (utils/handover.js handoversFor, oldest first): when the candidate was handed over AFTER `at`, the recruiter they were
+// handed over FROM had them at `at` - the open follow-up tasks moved to the new recruiter, so they cannot say who did the old work.
+function creditAt(req, fus, evs, person, at, handovers = null) {
   const t = at ? new Date(at).getTime() : NaN;
   if (!Number.isFinite(t)) return attribute(req, fus, evs, person).recruiter;
   const started = (p) => !!p && (!p.userId || !person.startOf || !person.startOf(p.userId) || person.startOf(p.userId) <= t);
+  const nextHandover = (handovers || []).find((h) => h.at > t && h.from);
+  if (nextHandover) { const p = person(null, nextHandover.from); if (p) return p; }
   const before = (x) => x && x.createdAt && new Date(x.createdAt).getTime() <= t;
   for (let i = (fus || []).length - 1; i >= 0; i -= 1) {
     const f = fus[i];
@@ -292,6 +297,33 @@ function creditAt(req, fus, evs, person, at) {
   const now = attribute(req, fus, evs, person).recruiter;
   return started(now) ? now : null;
 }
+// THE JOINING GOES TO WHO GOT THEM SELECTED (founder 2026-11-10: Kiran sources and takes the candidate to Selected, hands over to
+// Divya, Divya does the joining formalities -> the joining counts for Kiran). The credit at the first move into Selected or a later
+// step (Offer, Waiting to join); with no such move on record (imported straight to Joined), the credit on the joining day.
+const SELECTED_ON = ['SELECTED', 'OFFER', 'OFFER_ACCEPTED'];
+function selectedAt(evs) {
+  const e = (evs || []).find((x) => SELECTED_ON.includes(x.toStage) && !(x.fromStage && SELECTED_ON.includes(x.fromStage)));
+  return e ? e.createdAt : null;
+}
+function joinCredit(req, fus, evs, person, joinAt, handovers = null) {
+  return creditAt(req, fus, evs, person, selectedAt(evs) || joinAt, handovers);
+}
+// WHO SOURCED THEM: who first brought the candidate onto this requirement - the person who added it (its first step), else the
+// first recruiter on record (an import's tracker name, the first handover's old recruiter). Never changes with a handover.
+function sourcedBy(req, fus, evs, person, handovers = null) {
+  const first = (evs || [])[0];
+  if (first && !first.fromStage && realActor(first) && (!first.actorRole || ['RECRUITER', 'TL'].includes(roleOfLabel(first.actorRole)))) {
+    const p = person(first.actorUserId, first.actorName);
+    if (p) return p;
+  }
+  const h = (handovers || []).find((x) => x.from);
+  const fu = (fus || []).find((f) => f.ownerUserId || f.ownerName);
+  const t = fu && h && new Date(fu.createdAt).getTime() > h.at ? null : fu;
+  if (t) return person(t.ownerUserId, t.ownerName);
+  if (h) return person(null, h.from);
+  return creditAt(req, fus, evs, person, first ? first.createdAt : null, handovers);
+}
+
 // When a step happened: the first move into one of `stages` (fallback: the given time).
 function stepAt(evs, stages, fallback = null) {
   const e = (evs || []).find((x) => stages.includes(x.toStage));
@@ -701,6 +733,6 @@ module.exports = {
   ROLES, ROLE_LABEL, LEFT_STATUSES, REAL_EVENT, ATTR_SELECT,
   clean, nameKey, seatRole, roleOfLabel, realActor,
   makeResolver, loadDirectory, resolvePersonValue, nameVariantsFor, shortFormFits, shortFormOf,
-  attribute, creditAt, stepAt, attributionWhere, seatWhere, seatCodes, personQuery, hasPersonQuery,
+  attribute, creditAt, joinCredit, selectedAt, sourcedBy, stepAt, attributionWhere, seatWhere, seatCodes, personQuery, hasPersonQuery,
   attributedApplications, attributedCounts, listWorkers,
 };

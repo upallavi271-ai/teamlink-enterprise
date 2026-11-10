@@ -415,6 +415,7 @@ app.use('/api/accounts', require('./routes/accountsCombined'));
 // list (utils/workers.js). Ahead of the /api/ats routers, which gate on the
 // calendar permission.
 app.use('/api/ats/workers', require('./routes/atsWorkers'));
+app.use('/api/ats/handover', require('./routes/handover')); // recruiter handover & ownership (2026-11-10)
 // Department -> Section -> TL -> Recruiter, the dependent filter tree (components/HierarchyFilter.jsx).
 app.use('/api/ats/hierarchy', require('./routes/atsHierarchy'));
 // The actual workflow with live counts per box (routes/atsWorkflow.js).

@@ -188,6 +188,8 @@ export const REPORTS_TEAM_TABS = [
   leaf('📊', '/reports/ats', 'Reports', [['reports', 'ATS Reports', 'view']], 'ats'),
   leaf('📊', '/reports/my-results', 'My Results', [['reports', 'My Results', 'view']], 'ats', [['reports', 'ATS Reports', 'view']]),
   leaf('👥', '/ats/team', 'Team', [['recruiterbde', 'Team View', 'view']]),
+  // RECRUITER HANDOVER (founder 2026-11-10): hand a leaving / moving recruiter's candidates to another (pages/ats/RecruiterHandover.jsx)
+  leaf('🔁', '/ats/handover', 'Handover', [['recruiterbde', 'Team View', 'assign']]),
   // AI Calling is a tab on the candidate profile now (founder 2026-11-04), not a tab here or a sidebar entry.
   // NO Settings tab (user, 2026-10-03: 'settings already Administration lo
   // vunnai, extra em cheyyaku'). Settings stay in Administration only.

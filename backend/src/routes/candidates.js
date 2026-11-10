@@ -2229,6 +2229,42 @@ async function loadInScope(req, res) {
       .map((u) => [u.id, u.status !== 'Active' || (u.employee && LEFT.includes(u.employee.employmentStatus)) ? `${u.name} (left)` : u.name])) : new Map();
     (candidate.applications || []).forEach((a) => { a.ownerRecruiterName = names.get(a.ownerRecruiterId) || null; });
   }
+  // WHO SOURCED, WHO HAS THEM NOW, WHO GETS THE CREDIT (founder 2026-11-10, utils/handover.js): read from the history, never overwritten
+  // by a handover - Sourced by · Currently with · Selected by · Joining credit (who got them Selected) · every handover
+  try {
+    const apps = candidate.applications || [];
+    if (apps.length) {
+      const W = require('../utils/workers'); // eslint-disable-line global-require
+      const ids = apps.map((a) => a.id);
+      const [evRows, fuRows, dir, HO] = await Promise.all([
+        prisma.applicationStageEvent.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, fromStage: true, toStage: true, actorUserId: true, actorName: true, actorRole: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
+        prisma.applicationFollowUp.findMany({ where: { applicationId: { in: ids } }, select: { applicationId: true, ownerUserId: true, ownerName: true, createdAt: true }, orderBy: { createdAt: 'asc' } }),
+        W.loadDirectory(),
+        require('../utils/handover').handoversFor(ids), // eslint-disable-line global-require
+      ]);
+      const by = (rows) => { const m = new Map(); rows.forEach((r) => { if (!m.has(r.applicationId)) m.set(r.applicationId, []); m.get(r.applicationId).push(r); }); return m; };
+      const evBy = by(evRows);
+      const fuBy = by(fuRows);
+      const label = (p) => (p ? p.label : null);
+      apps.forEach((a) => {
+        const r = a.requirement || {};
+        const attrReq = { recruiterId: r.recruiterId || String(r.recruiterIds || '').split(',').map((x) => x.trim()).filter(Boolean)[0] || null, positionCode: r.positionCode };
+        const e = evBy.get(a.id) || [];
+        const f = fuBy.get(a.id) || [];
+        const h = HO.get(a.id) || [];
+        const selAt = W.selectedAt(e);
+        const joined = ['JOINED', 'HIRED'].includes(a.stage);
+        const joinAt = /^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : (a.joinedAt || null);
+        a.ownership = {
+          sourcedBy: label(W.sourcedBy(attrReq, f, e, dir.person, h)),
+          currentlyWith: a.ownerRecruiterName || null,
+          selectedBy: selAt ? label(W.creditAt(attrReq, f, e, dir.person, selAt, h)) : null,
+          joiningCredit: joined ? label(W.joinCredit(attrReq, f, e, dir.person, joinAt, h)) : null,
+          handovers: h.map((x) => ({ at: new Date(x.at).toISOString(), from: x.from, to: x.to, by: x.by, how: x.kind, reason: x.reason })),
+        };
+      });
+    }
+  } catch (err) { console.error('[candidates] ownership failed:', err.message); } // eslint-disable-line no-console
   const s = scopeOf(req.user);
   const sharedIds = await clientSharedApplicationIds(req.user, [candidate]);
   const followUps = await currentFollowUpsByApplication(
@@ -2644,6 +2680,8 @@ router.get('/:id', async (req, res) => {
     stageGroupLabel: groupLabelOfStage(a.stage),
     stageDetailLabel: stageDetail(a, { internal: isInternalApp(a, a.requirement) }),
     owner: applicationOwner(a, a.requirement),
+    // Sourced by · Currently with · Selected by · Joining credit · handovers (loadInScope, utils/handover.js) - TeamLink logins only
+    ...(kind === 'internal' && a.ownership ? { ownership: a.ownership } : {}),
     // Who we are waiting on OUTSIDE TeamLink, reported beside the owner
     // rather than instead of them (§5).
     waitingOn: applicationWaitingOn(a, a.requirement),

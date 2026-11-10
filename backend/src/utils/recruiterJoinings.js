@@ -203,6 +203,8 @@ async function monthApplications(month, { fresh = false } = {}) {
     select: APP_SELECT,
   });
   const dir = await workers.loadDirectory();
+  // handovers: the credit reads who had the candidate before each one (utils/handover.js)
+  const HO = await require('./handover').handoversFor(rows.filter((a) => JOINED.includes(a.stage)).map((a) => a.id)); // eslint-disable-line global-require
   const today = todayIst();
   const apps = [];
   const undated = [];
@@ -220,10 +222,10 @@ async function monthApplications(month, { fresh = false } = {}) {
     const req = a.requirement || {};
     const reqForAttr = { recruiterId: req.recruiterId, tlId: req.tlId, tl: req.tl, bdeId: req.bdeId, positionCode: req.positionCode };
     const at = workers.attribute(reqForAttr, a.followUps || [], evs, dir.person);
-    // the joining is the work of who had the person on the joining day (utils/workers.js creditAt, founder 2026-11-04): not of a
-    // recruiter who took the seat or the job later
+    // the joining is the work of who got the person Selected (utils/workers.js joinCredit, founder 2026-11-10; before that: who had
+    // them on the joining day) - not of a recruiter who took the seat, the job or the candidate later
     if (joined) {
-      const by = workers.creditAt(reqForAttr, a.followUps || [], evs, dir.person, day ? `${day}T23:59:59+05:30` : (firstMove && firstMove.createdAt) || null);
+      const by = workers.joinCredit(reqForAttr, a.followUps || [], evs, dir.person, day ? `${day}T23:59:59+05:30` : (firstMove && firstMove.createdAt) || null, HO.get(a.id));
       if (by) at.recruiter = by;
     }
     const client = req.internal ? 'TeamLink Internal' : (req.client && req.client.name) || '—';

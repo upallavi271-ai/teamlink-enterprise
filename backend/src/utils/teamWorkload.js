@@ -65,7 +65,7 @@ const {
   REQUIREMENT_LIVE_STATUSES, stageLabel, isPreAtsApplication, requirementStatusLabel, requirementStatusUser,
 } = require('./atsVocab');
 const {
-  ATTR_SELECT, attribute, creditAt, stepAt, loadDirectory,
+  ATTR_SELECT, attribute, creditAt, joinCredit, stepAt, loadDirectory,
 } = require('./workers');
 // THE JOINING DAY (founder 2026-11-04: "oct 30 evaru join avvaledhu"): the typed joining date, else joined-at, else the move into
 // Joined - the one rule every report uses (utils/joinDayShared.js). Never the day the record was last changed.
@@ -479,7 +479,10 @@ async function buildWorld(user) {
   const reqById = new Map(shapedReqs.map((r) => [r.id, r]));
 
   // --- Applications: attribution + the ONE next action ----------------------
-  const creditUserOf = (a, when) => { const p = creditAt(a.requirement, a.followUps, a.stageEvents, dir.person, when); return p ? p.userId : null; };
+  // handovers: the credit reads who had the candidate before each one; the joining goes to who got them Selected (founder 2026-11-10)
+  const HO = await require('./handover').handoversFor([...apps, ...joinedApps].map((a) => a.id)); // eslint-disable-line global-require
+  const creditUserOf = (a, when) => { const p = creditAt(a.requirement, a.followUps, a.stageEvents, dir.person, when, HO.get(a.id)); return p ? p.userId : null; };
+  const joinUserOf = (a, when) => { const p = joinCredit(a.requirement, a.followUps, a.stageEvents, dir.person, when, HO.get(a.id)); return p ? p.userId : null; };
   const shapeApp = (a) => {
     const at = attribute(a.requirement, a.followUps, a.stageEvents, dir.person);
     const req = reqById.get(a.requirementId) || (a.requirement ? shapeReq({
@@ -511,7 +514,7 @@ async function buildWorld(user) {
       sentBy: creditUserOf(a, stepAt(a.stageEvents, SUBMITTED_STAGES, a.updatedAt)),
       interviewBy: creditUserOf(a, stepAt(a.stageEvents, INTERVIEW_STAGES, a.interviewAt || a.updatedAt)),
       joinDay: JOINED_STAGES.includes(a.stage) ? joinDay(a, stepAt(a.stageEvents, JOINED_STAGES, null)) : null,
-      joinedBy: JOINED_STAGES.includes(a.stage) ? creditUserOf(a, endOfDay(joinDay(a, stepAt(a.stageEvents, JOINED_STAGES, null))) || a.updatedAt) : null,
+      joinedBy: JOINED_STAGES.includes(a.stage) ? joinUserOf(a, endOfDay(joinDay(a, stepAt(a.stageEvents, JOINED_STAGES, null))) || a.updatedAt) : null,
       tlUserId: at.tl && at.tl.userId,
       tlName: at.tl && at.tl.label,
       bdeUserId: at.bde && at.bde.userId,

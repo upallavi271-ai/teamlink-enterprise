@@ -1252,7 +1252,15 @@ router.post('/bulk', async (req, res, next) => {
       const r = app.requirement || {};
       let onRequirement = r.recruiterId === target.id || String(r.recruiterIds || '').split(',').includes(target.id)
         || r.tlId === target.id || r.stlId === target.id;
-      if (target.atsRole === 'RECRUITER') {
+      if (target.atsRole === 'RECRUITER' && !['JOINED', 'HIRED'].includes(app.stage)) {
+        // a change of owner is a handover: who had them before is recorded, so their earlier work keeps its credit (utils/handover.js);
+        // a Joined / Hired candidate stays with who placed them
+        if (app.ownerRecruiterId && app.ownerRecruiterId !== target.id) {
+          // eslint-disable-next-line no-await-in-loop
+          const was = await prisma.user.findUnique({ where: { id: app.ownerRecruiterId }, select: { name: true } }).catch(() => null);
+          // eslint-disable-next-line no-await-in-loop, global-require
+          await require('../utils/handover').recordOnly({ appId: app.id, from: was && was.name, to: target.name, by: { id: user.id, name: user.name }, kind: 'assigned', reason: b.comment ? String(b.comment).slice(0, 300) : null });
+        }
         // eslint-disable-next-line no-await-in-loop
         await prisma.application.update({ where: { id: app.id }, data: { ownerRecruiterId: target.id } });
         if (!onRequirement && r.id) {
