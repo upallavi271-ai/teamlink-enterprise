@@ -13,6 +13,9 @@
 //   - follow-ups written before the late owner joined, that carry the late owner's name, get the placing recruiter's name back;
 //   - one audit row per candidate. Steps, dates and everything else stay as they are.
 //
+//   --backup <teamlink.db>   a copy of the database from BEFORE the 2026-11-04 clean-up (the nightly 2026-11-04_0208 one): the
+//                            follow-ups' recruiter names are read from it where the clean-up overwrote them with the late owner,
+//                            so the joining goes to the recruiter the sheets named, and those names go back on the follow-ups.
 //   node scripts/repair-joined-owners.js                                             DRY RUN: what would change, per recruiter
 //   TL_ALLOW_REAL_APPLY=1 node scripts/repair-joined-owners.js --apply --really-real  does it (VACUUM INTO backup first)
 // Running it twice changes nothing new.
@@ -34,6 +37,24 @@ const prisma = require('../src/db');
 const W = require('../src/utils/workers');
 const H = require('../src/utils/handover');
 const { logAudit } = require('../src/utils/audit');
+
+const argVal = (f) => { const i = argv.indexOf(f); return i >= 0 ? argv[i + 1] : null; };
+const BACKUP = argVal('--backup');
+// follow-up id -> { ownerUserId, ownerName } as they were in the backup
+function backupOwners(ids) {
+  const out = new Map();
+  if (!BACKUP || !ids.length) return out;
+  const { DatabaseSync } = require('node:sqlite'); // eslint-disable-line global-require
+  const db = new DatabaseSync(BACKUP, { readOnly: true });
+  try {
+    for (let i = 0; i < ids.length; i += 500) {
+      const part = ids.slice(i, i + 500);
+      db.prepare(`SELECT "id", "ownerUserId", "ownerName" FROM "ApplicationFollowUp" WHERE "id" IN (${part.map(() => '?').join(',')})`).all(...part)
+        .forEach((r) => out.set(r.id, { ownerUserId: r.ownerUserId || null, ownerName: r.ownerName || null }));
+    }
+  } finally { db.close(); }
+  return out;
+}
 
 const istDay = (v) => (v ? new Date(new Date(v).getTime() + 330 * 60000).toISOString().slice(0, 10) : null);
 const dayOf = (a, evs) => {
@@ -57,6 +78,8 @@ const dayOf = (a, evs) => {
       },
     });
     const HO = await H.handoversFor(apps.map((a) => a.id));
+    const OLD = backupOwners(apps.flatMap((a) => a.followUps.map((f) => f.id)));
+    if (BACKUP) console.log(`Backup ${BACKUP}: ${OLD.size} follow-up(s) found in it.`);
     const plan = [];
     for (const a of apps) {
       const start = dir.person.startOf(a.ownerRecruiterId);
@@ -66,10 +89,18 @@ const dayOf = (a, evs) => {
       if (startDay <= day) continue; // eslint-disable-line no-continue -- the owner was here by the joining day
       const r = a.requirement || {};
       const attrReq = { recruiterId: r.recruiterId || String(r.recruiterIds || '').split(',').map((x) => x.trim()).filter(Boolean)[0] || null, tlId: r.tlId, tl: r.tl, positionCode: r.positionCode };
-      const credit = W.joinCredit(attrReq, a.followUps, a.stageEvents, dir.person, `${day}T23:59:59+05:30`, HO.get(a.id));
+      // the follow-ups the late owner's name was put on before they joined: their name in the backup (else nobody's)
+      const lateFu = (f) => (f.ownerUserId === a.ownerRecruiterId || (f.ownerName && dir.person(null, f.ownerName) && dir.person(null, f.ownerName).userId === a.ownerRecruiterId)) && new Date(f.createdAt).getTime() < start;
+      const restored = a.followUps.map((f) => {
+        if (!lateFu(f)) return f;
+        const was = OLD.get(f.id);
+        const wasLate = was && (was.ownerUserId === a.ownerRecruiterId || (was.ownerName && (dir.person(null, was.ownerName) || {}).userId === a.ownerRecruiterId));
+        return { ...f, ownerUserId: was && !wasLate ? was.ownerUserId : null, ownerName: was && !wasLate ? was.ownerName : null, restored: true };
+      });
+      const credit = W.joinCredit(attrReq, restored, a.stageEvents, dir.person, `${day}T23:59:59+05:30`, HO.get(a.id));
       if (credit && credit.userId === a.ownerRecruiterId) continue; // eslint-disable-line no-continue
       const lateName = (dir.person.userById.get(a.ownerRecruiterId) || {}).name || 'the late owner';
-      const fus = a.followUps.filter((f) => f.ownerUserId === a.ownerRecruiterId && new Date(f.createdAt).getTime() < start);
+      const fus = restored.filter((f) => f.restored);
       plan.push({ a, day, startDay, lateName, credit, fus });
     }
 
@@ -95,7 +126,8 @@ const dayOf = (a, evs) => {
       // eslint-disable-next-line no-await-in-loop
       await prisma.$transaction([
         prisma.application.update({ where: { id: p.a.id }, data: { ownerRecruiterId: toId } }),
-        ...p.fus.map((f) => prisma.applicationFollowUp.update({ where: { id: f.id }, data: { ownerUserId: toId, ownerName: toName || f.ownerName } })),
+        // the backup's name where there is one, else the placing recruiter's
+        ...p.fus.map((f) => prisma.applicationFollowUp.update({ where: { id: f.id }, data: f.ownerName ? { ownerUserId: f.ownerUserId, ownerName: f.ownerName } : { ownerUserId: toId, ownerName: toName || 'Earlier recruiter (not recorded)' } })),
       ]);
       // eslint-disable-next-line no-await-in-loop
       await logAudit({ userId: null, actorName: 'Joinings clean-up 2026-11-10', action: 'Joined candidate given back to who placed them', entity: 'Application', entityId: p.a.id, fromValue: p.lateName, toValue: toName || 'nobody (earlier recruiter)', reason: `Joined ${p.day}; ${p.lateName} joined the company ${p.startDay}` });
