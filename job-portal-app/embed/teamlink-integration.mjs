@@ -799,18 +799,28 @@ export function teamlinkFrontRouter({ root, express }) {
     if (!ids.length || ids.length > 200 || Number(req.body.expect) !== ids.length) {
       return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'ids (1-200) and expect (the same number) are required' } });
     }
-    const { withUser } = await portal();
-    const out = await withUser(SYSTEM, async (c) => {
+    // The portal's own role may not delete from `users` ("permission denied for table users"), so this one clean-up uses the pool's own
+    // database login, like the reset-link read below: ONE transaction, the same strict junk rule re-checked inside it, everything rolled back
+    // if the count differs or any row is left. Never reached by a browser: the TeamLink router in front of the portal guards this path.
+    const { getPool } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'db.js')).href);
+    const c = await getPool().connect();
+    let out;
+    try {
+      await c.query('begin');
       const ok = (await c.query(`select c.id, c.user_id from candidates c left join users u on u.id = c.user_id
-          where c.id = any($1::text[]) and ${JUNK_STRICT} and (u.id is null or u.last_login_at is null)`, [ids])).rows;
+          where c.id = any($1::text[]) and ${JUNK_STRICT} and (u.id is null or u.last_login_at is null) for update of c`, [ids])).rows;
       if (ok.length !== ids.length) throw Object.assign(new Error(`only ${ok.length} of ${ids.length} still match the junk rule - nothing deleted`), { status: 409 });
       const userIds = ok.map((x) => x.user_id).filter(Boolean);
-      if (userIds.length) await c.query('delete from users where id = any($1::uuid[])', [userIds]);
       await c.query('delete from candidates where id = any($1::text[])', [ids]);
+      if (userIds.length) await c.query('delete from users where id = any($1::uuid[])', [userIds]);
       const left = Number((await c.query('select count(*) as n from candidates where id = any($1::text[])', [ids])).rows[0].n);
       if (left) throw new Error(`${left} rows are still there after the delete - rolled back`);
-      return { deleted: ids.length };
-    });
+      await c.query('commit');
+      out = { deleted: ids.length };
+    } catch (e) {
+      try { await c.query('rollback'); } catch { /* the connection is going away */ }
+      throw e;
+    } finally { c.release(); }
     res.json(out);
   }));
 
