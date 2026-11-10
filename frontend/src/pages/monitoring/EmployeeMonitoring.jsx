@@ -27,6 +27,17 @@ const dt = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'As
 // under an hour reads in minutes: "0.0 h" said nothing about 2 minutes of work
 const h = (v) => { if (v == null) return '—'; const n = Number(v); if (!n) return '0 h'; return n < 1 ? `${Math.max(1, Math.round(n * 60))} min` : `${n.toFixed(1)} h`; };
 const dur = (sec) => (sec < 60 ? `${sec} sec` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${(sec / 3600).toFixed(1)} h`);
+// 8.25 -> "8 h 15 min", 0.4 -> "24 min" (the work day line: "4 h active out of 8 h 15 min")
+const hm = (v) => { const m = Math.round(Number(v || 0) * 60); if (!m) return '0 min'; const a = Math.floor(m / 60); const b = m % 60; return a ? `${a} h${b ? ` ${b} min` : ''}` : `${b} min`; };
+const clock = (x) => { if (!x) return ''; const [a, b] = String(x).split(':').map(Number); return `${a % 12 || 12}${b ? `:${String(b).padStart(2, '0')}` : ''} ${a < 12 ? 'am' : 'pm'}`; };
+// One bar for the whole day from start to end of work: active, idle, break, away from the PC, and what is still to come.
+function DayBar({ r }) {
+  const day = Number(r.dayHours) || 0;
+  if (!day) return null;
+  const parts = [['active', r.activeHours], ['idle', r.idleHours], ['break', r.breakHours], ['away', r.awayHours], ['rest', Math.max(0, day - (Number(r.elapsedHours) || 0))]];
+  const tip = `Active ${hm(r.activeHours)} · Idle ${hm(r.idleHours)} · Break ${hm(r.breakHours)} · Not on the PC ${hm(r.awayHours)}`;
+  return <div className="mon-day" title={tip}>{parts.map(([k, v]) => (Number(v) > 0 ? <i key={k} className={k} style={{ width: `${Math.min(100, (Number(v) / day) * 100)}%` }} /> : null))}</div>;
+}
 const pct = (v) => (v == null ? '—' : `${v}%`);
 const CAT_TONE = { productive: 'green', neutral: 'slate', unproductive: 'red' };
 const CAT_WORD = { productive: 'Productive', neutral: 'Neutral', unproductive: 'Unproductive' };
@@ -133,6 +144,7 @@ function Overview({ onOpen }) {
     && (!status || r.status === status)
     && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [data, fresh, dept, team, status, q]);
   const c = data && data.cards ? { ...data.cards, ...((now && now.cards) || {}) } : null;
+  const first = ((data && data.rows) || []).find((r) => r.workHours > 0) || null;
   const card = (s) => ({ active: status === s, onClick: live ? () => setStatus(status === s ? '' : s) : undefined });
   return (
     <>
@@ -156,11 +168,19 @@ function Overview({ onOpen }) {
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
         <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub="No signal for 3 minutes" {...card('Offline')} />
         <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub="Approved leave today" {...card('On leave')} />
-        <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h`} />
+        <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h${first && first.workHours ? ` · out of ${hm(first.workHours)}` : ''}`} />
       </KpiRow>
+      {first && first.workHours > 0 && (
+        <div className="mon-dayline">
+          <b>Work day {clock(first.workStart)} – {clock(first.workEnd)}</b>
+          {first.lunchStart && <> · lunch {clock(first.lunchStart)} – {clock(first.lunchEnd)}</>}
+          {' '}· <b>{hm(first.workHours)}</b> of work{live && first.elapsedHours < first.dayHours && <> · {hm(first.elapsedHours)} of the day has passed</>}
+          <span className="mon-day-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i className="away" /> Not on the PC</span>{live && <span><i className="rest" /> Still to come</span>}</span>
+        </div>
+      )}
       <div className="tbl-wrap">
         <table className="mon-table">
-          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="num">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className="num" title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num" title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
@@ -173,13 +193,30 @@ function Overview({ onOpen }) {
                 })()}
                 <td>{tm(r.firstSeen)}</td>
                 <td>{live && r.lastHeartbeat ? dt(r.lastHeartbeat) : tm(r.lastSeen)}</td>
-                <td className="num">{h(r.activeHours)}</td>
-                <td className="num">{h(r.idleHours)}</td>
-                <td className="num">{h(r.breakHours)}</td>
+                <td className="mon-daycol"><DayBar r={r} /></td>
+                <td className="num"><b>{hm(r.activeHours)}</b>{r.workHours > 0 && <div className="small-muted">of {hm(r.workHours)}</div>}</td>
+                <td className="num">{hm(r.idleHours)}</td>
+                <td className="num">{hm(r.breakHours)}</td>
+                <td className="num">{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
                 <td className="num">{pct(r.productivity)}</td>
               </tr>
             ))}
-            {!rows.length && !loading && <tr><td colSpan={live ? 10 : 8} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
+            {rows.length > 1 && (() => {
+              const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+              const all = { activeHours: sum('activeHours'), idleHours: sum('idleHours'), breakHours: sum('breakHours'), awayHours: sum('awayHours'), dayHours: sum('dayHours'), elapsedHours: sum('elapsedHours'), workHours: sum('workHours') };
+              return (
+                <tr className="mon-total">
+                  <td colSpan={live ? 6 : 4}><b>All {rows.length} together</b><div className="small-muted">Active {all.workHours ? Math.round((all.activeHours / all.workHours) * 100) : 0}% of the work time</div></td>
+                  <td className="mon-daycol"><DayBar r={all} /></td>
+                  <td className="num"><b>{hm(all.activeHours)}</b><div className="small-muted">of {hm(all.workHours)}</div></td>
+                  <td className="num">{hm(all.idleHours)}</td>
+                  <td className="num">{hm(all.breakHours)}</td>
+                  <td className="num">{hm(all.awayHours)}</td>
+                  <td />
+                </tr>
+              );
+            })()}
+            {!rows.length && !loading && <tr><td colSpan={live ? 12 : 10} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -392,6 +429,8 @@ export function EmployeeDetail({ id, onBack, own = false }) {
   const [to, setTo] = useState(todayIst());
   const { data, error, loading } = useGet(`/monitoring/employee/${id}`, { from, to });
   const t = data && data.totals;
+  const [appKey, setAppKey] = useState(null);
+  const openApp = data && appKey ? data.apps.find((a) => a.key === appKey) : null;
   return (
     <>
       {onBack && <button type="button" className="btn btn-sm" onClick={onBack} style={{ marginBottom: 10 }}>← Back</button>}
@@ -427,15 +466,15 @@ export function EmployeeDetail({ id, onBack, own = false }) {
           )}
           <div className="mon-two">
             <Panel title="Top 10 apps and websites" sub="Active time">
-              <BarList showShare rows={data.top10.map((a, i) => ({ key: a.key, label: a.name, value: a.seconds, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate', 'blue', 'violet', 'teal'][i] }))} format={dur} empty="No app used in this period." />
+              <BarList showShare rows={data.top10.map((a, i) => ({ key: a.key, label: a.name, value: a.seconds, onClick: () => setAppKey(a.key), tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate', 'blue', 'violet', 'teal'][i] }))} format={dur} empty="No app used in this period." />
             </Panel>
-            <Panel title="All apps and websites" flush>
+            <Panel title="All apps and websites" sub="Click one to see everything it was used for" flush>
               <div className="mon-scroll">
                 <table className="mon-table">
                   <thead><tr><th>App / website</th><th className="num">Time</th><th>Category</th></tr></thead>
                   <tbody>
                     {data.apps.map((a) => (
-                      <tr key={a.key}>
+                      <tr key={a.key} className="row-link" onClick={() => setAppKey(a.key)} title="See everything it was used for">
                         <td><b>{a.name}</b>{a.kind === 'site' && <span className="small-muted"> · website</span>}{a.topTitles.length > 0 && <div className="small-muted mon-titles">{a.topTitles.map((x) => `${x.title} (${x.minutes ? `${x.minutes} min` : 'under 1 min'})`).join(' · ')}</div>}</td>
                         <td className="num">{dur(a.seconds)}</td>
                         <td>{a.category ? <Pill tone={CAT_TONE[a.category]}>{CAT_WORD[a.category]}</Pill> : <span className="small-muted">Not set</span>}</td>
@@ -447,9 +486,84 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               </div>
             </Panel>
           </div>
+          {openApp && <AppWork app={openApp} who={data.employee.name} range={data.from === data.to ? data.from : `${data.from} to ${data.to}`} total={t.activeSeconds} onClose={() => setAppKey(null)} />}
         </>
       )}
     </>
+  );
+}
+
+// Everything one app or website was used for, in one person's period: a summary line, every page / file / chat with its time,
+// and the sittings in order (founder 2026-11-10: "overall summary kanipinchali, kaani complete work cover avvali").
+const NOT_SHOWN = 'Not shown (the app does not say)';
+function AppWork({ app, who, range, total, onClose }) {
+  const [tab, setTab] = useState('items');
+  useEffect(() => {
+    const k = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [onClose]);
+  const items = app.items || [];
+  const sittings = app.sittings || [];
+  const named = items.filter((x) => x.item !== NOT_SHOWN);
+  const first = sittings.length ? sittings[0].start : null;
+  const last = sittings.length ? sittings[sittings.length - 1].end : null;
+  const top = named.slice(0, 3).map((x) => `${x.item} (${dur(x.seconds)})`);
+  const max = items.length ? items[0].seconds : 1;
+  const oneDay = !range.includes(' to ');
+  const when = (x) => (oneDay ? tm(x) : dt(x));
+  return (
+    <div className="mon-modal" role="dialog" aria-modal="true" aria-label={`${app.name}: what it was used for`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="mon-modal-box">
+        <div className="mon-modal-head">
+          <div>
+            <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
+            <div className="small-muted">{who} · {range}</div>
+          </div>
+          <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
+        </div>
+        <div className="mon-summary">
+          <b>{dur(app.seconds)}</b> in {app.name}{total ? ` (${Math.round((app.seconds / total) * 100)}% of the active time)` : ''}, in <b>{sittings.length}</b> {sittings.length === 1 ? 'sitting' : 'sittings'}{first && <> from {when(first)} to {when(last)}</>}.
+          {app.titlesKnown && named.length > 0 && <> <b>{named.length}</b> different {named.length === 1 ? 'page, file or chat' : 'pages, files or chats'}{top.length ? <>; most time on {top.join(', ')}{named.length > 3 ? <>, and {named.length - 3} more</> : ''}.</> : '.'}</>}
+          {!app.titlesKnown && <div className="notice" style={{ marginTop: 8 }}>This app&apos;s window always shows only its own name, so only the time is known, not what was open in it.{/claude/i.test(app.name) ? ' The same work on claude.ai in the browser shows the name of each chat.' : ''}</div>}
+        </div>
+        <div className="mon-tabs">
+          <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was open ({items.length})</button>
+          <button type="button" className={tab === 'sittings' ? 'on' : ''} onClick={() => setTab('sittings')}>Hour by hour ({sittings.length})</button>
+        </div>
+        <div className="mon-modal-body">
+          {tab === 'items' && (
+            <table className="mon-table">
+              <thead><tr><th>Page, file or chat</th><th className="num">Time</th><th>First – last</th><th className="num" title="How many separate times it was in front">Times</th></tr></thead>
+              <tbody>
+                {items.map((x) => (
+                  <tr key={x.item}>
+                    <td><div className="mon-item">{x.item}</div><div className="mon-item-bar"><i style={{ width: `${Math.max(2, (x.seconds / max) * 100)}%` }} /></div></td>
+                    <td className="num">{dur(x.seconds)}</td>
+                    <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
+                    <td className="num">{x.opened}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          {tab === 'sittings' && (
+            <table className="mon-table">
+              <thead><tr><th>When</th><th className="num">Time</th><th>What was open</th></tr></thead>
+              <tbody>
+                {sittings.map((x) => (
+                  <tr key={String(x.start)}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{when(x.start)} – {tm(x.end)}</td>
+                    <td className="num">{dur(x.seconds)}</td>
+                    <td>{x.items.map((y) => <div key={y.item} className="mon-item">{y.item} <span className="small-muted">({dur(y.seconds)})</span></div>)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
 

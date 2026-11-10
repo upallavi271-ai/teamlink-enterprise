@@ -396,6 +396,22 @@ async function categoryIndex() {
 }
 
 // --- the numbers ----------------------------------------------------------------------------------------------------------
+// One person's work day (founder 2026-11-10: "9 to 6, 45 mins break, 8 hours lo entha sepu active, idle, break - 4 hours active out of 8"):
+// the whole day from start to end of work, the work time in it (the day without the lunch break), and how much of the day has passed.
+function workDayOf(day, c, now = Date.now()) {
+  if (!HM.test(String(c.workStart || '')) || !HM.test(String(c.workEnd || ''))) return { daySeconds: 0, workSeconds: 0, elapsedSeconds: 0 };
+  const ws = atShift(day, c.workStart, c).getTime();
+  const we = atShift(day, c.workEnd, c).getTime();
+  const daySec = Math.max(0, Math.round((we - ws) / 1000));
+  let lunch = 0;
+  if (HM.test(String(c.breakStart || '')) && HM.test(String(c.breakEnd || ''))) {
+    const bs = Math.max(ws, atShift(day, c.breakStart, c).getTime());
+    const be = Math.min(we, atShift(day, c.breakEnd, c).getTime());
+    if (be > bs) lunch = Math.round((be - bs) / 1000);
+  }
+  const elapsed = Math.max(0, Math.round((Math.min(Math.max(now, ws), we) - ws) / 1000));
+  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch), elapsedSeconds: elapsed };
+}
 const hrs = (sec) => Math.round((sec / 3600) * 100) / 100;
 function totalsOf(logs, catOf, department = '') {
   let active = 0; let idle = 0; let breaks = 0; let productive = 0; let unproductive = 0; let first = null; let last = null;
@@ -497,7 +513,11 @@ async function overview(day, access = null) {
     let status = live ? liveStatus(dev, onLeave.has(id), now) : (onLeave.has(id) ? 'On leave' : null);
     const mine = rulesOf(id);
     if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
+    const wd = workDayOf(d, mine, now);
+    const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds);
     return {
+      workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
+      dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
       employeeId: id, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
       firstSeen: t.first, lastSeen: t.last, activeHours: t.activeHours, idleHours: t.idleHours, breakHours: t.breakHours, productivity: t.productivity,
       status, currentApp: live && dev && ['Online', 'Idle'].includes(status) ? dev.currentApp || null : null, currentTitle: live && dev && status === 'Online' ? dev.currentTitle || null : null,
@@ -513,12 +533,28 @@ async function overview(day, access = null) {
       tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped'), onLeave: count('On leave'),
       onBreak: count('On break') + count('Clocked out'), avgActiveHours: avg('activeHours'), avgIdleHours: avg('idleHours'),
     },
+    // the work day of everybody on the board together (founder 2026-11-10: "mottham annitiki")
+    total: (() => {
+      const sum = (k) => Math.round(rows.reduce((n, r) => n + (Number(r[k]) || 0), 0) * 100) / 100;
+      return { people: rows.length, activeHours: sum('activeHours'), idleHours: sum('idleHours'), breakHours: sum('breakHours'), awayHours: sum('awayHours'), workHours: sum('workHours'), dayHours: sum('dayHours'), elapsedHours: sum('elapsedHours') };
+    })(),
     rows,
     departments: [...new Set(rows.map((r) => r.department).filter(Boolean))].sort(),
     teams: [...new Set(rows.map((r) => r.team).filter(Boolean))].sort(),
   };
 }
 
+// A window title as one piece of work: "joinings [Protected View] - Excel" and "joinings - Excel" are the same file, "Recruiter Handover - Google Chrome" is the page.
+const NO_TITLE = 'Not shown (the app does not say)';
+const SITTING_GAP_MS = 2 * 60000; // back in the same app within 2 minutes: the same sitting
+const APP_SUFFIX = /\s*[-–—|]\s*(Google Chrome|Microsoft​? Edge|Microsoft Edge|Mozilla Firefox|Brave|Opera|Excel|Word|PowerPoint|Outlook|File Explorer|Visual Studio Code|Notepad|Paint|Adobe Acrobat[^-]*)\s*$/i;
+function itemOf(title, appLabel) {
+  if (!title) return NO_TITLE;
+  let t = String(title);
+  for (let i = 0; i < 2; i += 1) t = t.replace(APP_SUFFIX, '');
+  t = t.replace(/\s*\[(Protected View|Read-Only|Compatibility Mode|Group|Shared)\]/gi, '').replace(/\s*-\s*Personal\s*-\s*Microsoft.*$/i, '').replace(/\s*-\s*Profile \d+$/i, '').trim();
+  return t || String(appLabel || '') || NO_TITLE;
+}
 // One employee over a few days: the day's timeline (one day), the top apps, the usage table, the totals.
 async function employeeDetail(employeeId, from, to) {
   const t = todayIst();
@@ -537,16 +573,29 @@ async function employeeDetail(employeeId, from, to) {
   const usage = new Map();
   logs.filter((l) => !l.isIdle && !l.isBreak).forEach((l) => {
     const c = catOf(l.appName, l.windowTitle, dept);
-    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map() };
+    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
     u.seconds += l.durationSeconds;
     // the same cleaning on the way out: records kept before a rule changed never show more than it allows
     const shown = cleanTitle(l.appName, l.windowTitle);
     if (shown) u.titles.set(shown, (u.titles.get(shown) || 0) + l.durationSeconds);
+    // WHAT IT WAS USED FOR (founder 2026-11-10: "claude meedha click chesthe, claude lo em use chesaro clear ga kanipinchali - complete work cover avvali"):
+    // every page, file or chat the window showed, with its time, and the sittings in order
+    const item = itemOf(shown, c.label);
+    const st = new Date(l.startTime).getTime(); const en = new Date(l.endTime).getTime();
+    const it = u.items.get(item) || { item, seconds: 0, first: st, last: en, pieces: 0 };
+    it.seconds += l.durationSeconds; it.first = Math.min(it.first, st); it.last = Math.max(it.last, en); it.pieces += 1;
+    u.items.set(item, it);
+    const prev = u.sittings[u.sittings.length - 1];
+    if (prev && st - prev.end <= SITTING_GAP_MS) { prev.end = Math.max(prev.end, en); prev.seconds += l.durationSeconds; prev.items.set(item, (prev.items.get(item) || 0) + l.durationSeconds); } else u.sittings.push({ start: st, end: en, seconds: l.durationSeconds, items: new Map([[item, l.durationSeconds]]) });
     usage.set(c.key, u);
   });
   const apps = [...usage.values()].sort((x, y) => y.seconds - x.seconds).map((u) => ({
     key: u.key, name: u.name, kind: u.kind, category: u.category, seconds: u.seconds, hours: hrs(u.seconds),
     topTitles: [...u.titles.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([title, sec]) => ({ title, minutes: Math.round(sec / 60) })),
+    items: [...u.items.values()].sort((x, y) => y.seconds - x.seconds).map((x) => ({ item: x.item, seconds: x.seconds, first: new Date(x.first), last: new Date(x.last), opened: x.pieces })),
+    // the app's own name only (e.g. the Claude desktop app always says "Claude"): only the time is known
+    titlesKnown: [...u.items.keys()].some((k) => k !== NO_TITLE && k.toLowerCase() !== String(u.name).toLowerCase()),
+    sittings: u.sittings.slice(-300).map((x) => ({ start: new Date(x.start), end: new Date(x.end), seconds: x.seconds, items: [...x.items.entries()].sort((p, q) => q[1] - p[1]).map(([item, sec]) => ({ item, seconds: sec })) })),
   }));
   const days = [...new Set(logs.map((l) => l.day))].sort();
   const perDay = days.map((d) => ({ day: d, ...totalsOf(logs.filter((l) => l.day === d), catOf, dept) }));
@@ -741,6 +790,6 @@ function startSweep() {
 }
 
 module.exports = {
-  liveUpdate, liveRows, liveStatus, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice,
+  liveUpdate, liveRows, liveStatus, workDayOf, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };

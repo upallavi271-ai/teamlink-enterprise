@@ -63,3 +63,28 @@ main:has(.mon){max-width:1680px}
 @media (max-width:760px){.mon .mon-grid-4{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .mon .mon-now{max-width:280px}
 .mon .mon-now .small-muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px}
+.mon .mon-dayline{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center;margin:4px 0 10px;font-size:13.5px;color:var(--ink-soft,#5b6577)}
+.mon .mon-dayline b{color:var(--ink,#1f2937)}
+.mon .mon-day-legend{display:flex;flex-wrap:wrap;gap:12px;margin-left:auto;font-size:12.5px}
+.mon .mon-day-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.mon .mon-daycol{min-width:150px;width:180px}
+.mon .mon-day{display:flex;height:12px;border-radius:6px;overflow:hidden;background:#eef1f5;margin-top:4px}
+.mon .mon-day i{display:block;height:100%}
+.mon :is(.mon-day,.mon-day-legend) i.active{background:#22a06b}.mon :is(.mon-day,.mon-day-legend) i.idle{background:#e59a1a}.mon :is(.mon-day,.mon-day-legend) i.break{background:#0e7c7b}.mon :is(.mon-day,.mon-day-legend) i.away{background:#c4cad4}.mon :is(.mon-day,.mon-day-legend) i.rest{background:#eef1f5;box-shadow:inset 0 0 0 1px #dfe3e8}
+.mon .mon-total td{background:var(--bg-soft,#f8fafc);border-top:2px solid var(--line,#e4e7ec)}
+.mon-modal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:1000;overflow:auto}
+.mon-modal-box{background:var(--card,#fff);border-radius:12px;width:min(900px,100%);box-shadow:0 20px 50px rgba(15,23,42,.25);display:flex;flex-direction:column;max-height:calc(100vh - 80px)}
+.mon-modal-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;padding:16px 18px 8px}
+.mon-modal-head h3{margin:0 0 2px;font-size:18px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.mon-summary{padding:4px 18px 12px;font-size:14px;line-height:1.55}
+.mon-tabs{display:flex;gap:6px;padding:0 18px;border-bottom:1px solid var(--line,#e4e7ec)}
+.mon-tabs button{border:0;background:none;padding:8px 10px;font-size:13.5px;color:var(--ink-soft,#5b6577);border-bottom:2px solid transparent;cursor:pointer}
+.mon-tabs button.on{color:var(--ink,#1f2937);font-weight:600;border-bottom-color:#2563eb}
+.mon-modal-body{overflow:auto;padding:0 8px 12px}
+.mon-modal .mon-table{width:100%;border-collapse:collapse}
+.mon-modal .mon-table th{text-align:left;font-size:12.5px;color:var(--ink-soft,#5b6577);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line,#e4e7ec);position:sticky;top:0;background:var(--card,#fff)}
+.mon-modal .mon-table td{padding:8px 10px;border-bottom:1px solid var(--line,#eef0f3);font-size:13.5px;vertical-align:top}
+.mon-modal .mon-table .num{text-align:right;white-space:nowrap}
+.mon-item{word-break:break-word}
+.mon-item-bar{height:4px;border-radius:2px;background:#eef1f5;margin-top:4px;max-width:360px}
+.mon-item-bar i{display:block;height:100%;border-radius:2px;background:#2563eb}
