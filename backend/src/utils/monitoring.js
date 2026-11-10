@@ -768,9 +768,6 @@ async function reportRows(from, to, department, access = null, view = 'employee'
       const e = emps.get(id) || {};
       return { key: id, employeeId: id, name: e.name || 'Employee', code: e.employeeCode || null, department: e.department || null, ...base(list, e.department || '') };
     }).sort((p, q) => String(p.name).localeCompare(String(q.name)));
-    // the ATS and Omnichannel work beside the PC time
-    const work = await L.workCounts(rows.map((r) => r.employeeId), a, b);
-    rows.forEach((r) => Object.assign(r, work.get(r.employeeId)));
   }
   return { from: a, to: b, view, rows, departments: [...new Set([...emps.values()].map((e) => e.department).filter(Boolean))].sort() };
 }

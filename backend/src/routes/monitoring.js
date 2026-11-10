@@ -189,7 +189,8 @@ router.get('/reports', teamOnly, wrap(async (req, res) => {
   const nums = (r) => [r.activeHours, r.idleHours, r.breakHours, r.productiveHours, r.unproductiveHours, pct(r.productivity)];
   const tail = ['Active hours', 'Idle hours', 'Break hours', 'Productive hours', 'Unproductive hours', 'Productivity'];
   const table = {
-    employee: [['Employee', 'Code', 'Department', 'Days', ...tail, 'Profiles moved', 'Sent to client', 'Calls', 'Messages'], (r) => [r.name, r.code || '', r.department || '', r.days, ...nums(r), r.moved, r.submitted, r.calls, r.messages]],
+    // founder 2026-11-10: the Moved / Sent / Calls / Messages columns removed ("remove this")
+    employee: [['Employee', 'Code', 'Department', 'Days', ...tail], (r) => [r.name, r.code || '', r.department || '', r.days, ...nums(r)]],
     daily: [['Date', 'Day type', 'Employee', 'Code', 'Department', 'Login', 'Logout', ...tail], (r) => [r.day, r.dayType || 'Working day', r.name, r.code || '', r.department || '', tm(r.login), tm(r.logout), ...nums(r)]],
     payroll: [['Employee', 'Code', 'Department', 'Working days', 'Days on PC', 'Leave days', 'Days with neither', 'Active hours', 'Productive hours', 'Idle hours', 'Productivity'], (r) => [r.name, r.code || '', r.department || '', r.workingDays, r.pcDays, r.leaveDays, r.noPcDays, r.activeHours, r.productiveHours, r.idleHours, pct(r.productivity)]],
     team: [['Department', 'Employees', ...tail], (r) => [r.name, r.employees, ...nums(r)]],

@@ -940,13 +940,13 @@ function Reports({ onOpen, admin = false }) {
           <thead>
             {view === 'team' && <tr><th>Department</th><th className="num">Employees</th>{heads}</tr>}
             {view === 'daily' && <tr><th>Date</th><th>Employee</th><th>Login</th><th>Logout</th>{heads}</tr>}
-            {view === 'employee' && <tr><th>Employee</th><th>Department</th><th className="num">Days</th>{heads}<th className="num" title="Candidates moved a step in the ATS">Moved</th><th className="num" title="Profiles sent to the client">Sent</th><th className="num">Calls</th><th className="num" title="WhatsApp, SMS and email sent">Messages</th></tr>}
+            {view === 'employee' && <tr><th>Employee</th><th>Department</th><th className="num">Days</th>{heads}</tr>}
             {view === 'payroll' && <tr><th>Employee</th><th>Department</th><th className="num">Working days</th><th className="num">On PC</th><th className="num">Leave</th><th className="num">Neither</th><th className="num">Active</th><th className="num">Productive</th><th className="num">Idle</th><th className="num">Score</th></tr>}
           </thead>
           <tbody>
             {view === 'team' && rows.map((r) => <tr key={r.key}><td><b>{r.name}</b></td><td className="num">{r.employees}</td>{nums(r)}</tr>)}
             {view === 'daily' && rows.map((r) => <tr key={r.key} className="row-link" onClick={() => onOpen(r.employeeId)}><td style={{ whiteSpace: 'nowrap' }}>{r.day}{r.dayType && <div className="small-muted">{r.dayType}</div>}</td><td><b>{r.name}</b>{r.department && <div className="small-muted">{r.department}</div>}</td><td>{tm(r.login)}</td><td>{tm(r.logout)}</td>{nums(r)}</tr>)}
-            {view === 'employee' && rows.map((r) => <tr key={r.key} className="row-link" onClick={() => onOpen(r.employeeId)}><td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td><td>{r.department || '—'}</td><td className="num">{r.days}</td>{nums(r)}<td className="num">{r.moved || 0}</td><td className="num">{r.submitted || 0}</td><td className="num">{r.calls || 0}</td><td className="num">{r.messages || 0}</td></tr>)}
+            {view === 'employee' && rows.map((r) => <tr key={r.key} className="row-link" onClick={() => onOpen(r.employeeId)}><td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td><td>{r.department || '—'}</td><td className="num">{r.days}</td>{nums(r)}</tr>)}
             {view === 'payroll' && rows.map((r) => <tr key={r.key} className="row-link" onClick={() => onOpen(r.employeeId)}><td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td><td>{r.department || '—'}</td><td className="num">{r.workingDays}</td><td className="num">{r.pcDays}</td><td className="num">{r.leaveDays}</td><td className="num">{r.noPcDays}</td><td className="num">{h(r.activeHours)}</td><td className="num">{h(r.productiveHours)}</td><td className="num">{h(r.idleHours)}</td><td className="num">{pct(r.productivity)}</td></tr>)}
             {data && !rows.length && !loading && <tr><td colSpan={13} className="small-muted">No activity in these days.</td></tr>}
           </tbody>
