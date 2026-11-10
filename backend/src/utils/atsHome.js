@@ -198,6 +198,8 @@ const APP_SELECT = {
   id: true, candidateId: true, requirementId: true, stage: true, createdAt: true, updatedAt: true,
   source: true, portalImportedAt: true, hiringType: true, interviewAt: true, interviewStatus: true,
   interviewResult: true, interviewCompletedAt: true, joiningDate: true, joinedAt: true,
+  // Drops & replacements: "Dropped" on a step that is not Joined = did not join
+  joiningStatus: true,
   // v3 dashboard: "Today's interviews" shows the round and the mode.
   interviewRound: true, interviewMode: true,
 };
@@ -694,6 +696,85 @@ function joinedFigures(b, rows) {
   return out;
 }
 
+// ---- DROPS & REPLACEMENTS (founder 2026-11-10: "dropped history kuda dashboard lo anipinchela pettu. & also, replacement related dhi kuda..
+// chusey vallaki clumzy avvakunda easy vundali") -------------------------------------------------------------------------------------------
+// Five cards, each opening its own list (Joined · Dropped · Reason · Replacement), on the same filters and period as the rest of the page:
+//   Left after joining    joined, then left: a drop recorded on the joining (joindrop/core.js reportDrop), the drop day in the period
+//   Did not join          selected / offered, then dropped before joining (step closed with joining status Dropped), in the period
+//   Replacement to give   the client asked for a replacement and the new person has not joined yet (any day: open work)
+//   Client to decide      left inside the replacement period in the period, and the client has not said yes or no
+//   Replaced              the replacement joined in the period
+// Hidden when all five are 0.
+const istDayOf = (v) => { const t = msOf(v); return t ? new Date(t + 330 * 60000).toISOString().slice(0, 10) : null; };
+const dmyShort = (d) => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || '')); return m ? `${+m[3]} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][+m[2] - 1]}` : ''; };
+function replacementWord(r) {
+  if (r.replacementStatus === 'Closed') return ['Replaced', 'green'];
+  if (r.replacementStatus === 'New candidate added') return ['New candidate added', 'blue'];
+  if (r.replacementStatus === 'Requested' || r.replacementDecision === 'NEEDED') return ['Replacement to give', 'red'];
+  if (r.replacementStatus === 'Not needed' || r.replacementDecision === 'NOT_NEEDED') return ['Not needed', 'grey'];
+  if (r.replacementDecision === 'LATER') return ['Client will decide later', 'amber'];
+  if (r.dropWithinGuarantee === 0) return ['Outside the replacement period', 'grey'];
+  if (Number(r.backfilled)) return ['Not recorded', 'grey']; // an old drop brought in from the sheets
+  return ['Waiting for the client', 'amber'];
+}
+async function dropsWidget(c, b, k) {
+  let recs = [];
+  try {
+    const S = require('../joindrop/schema'); // eslint-disable-line global-require
+    if (await S.ensure()) {
+      recs = await S.rows('SELECT "applicationId", "backfilled", "joinedOn", "droppedOn", "dropReason", "dropReasonDetail", "dropWithinGuarantee", "guaranteeEndsOn", "replacementDecision", "replacementStatus", "replacementApplicationId", "updatedAt" FROM "JoiningRecord" WHERE "status" = \'Dropped\'');
+    }
+  } catch (err) { console.error('[atsHome] drops failed:', err.message); recs = []; } // eslint-disable-line no-console
+  const w = b.world;
+  const inSel = new Set(k.sel.map((x) => x.a.id));
+  const p = c.period;
+  const inP = (d) => !!d && d >= p.from && d <= p.to;
+  const left = recs.filter((r) => inSel.has(r.applicationId));
+  // an old drop brought in from the sheets has no drop day: it counts under "so far" only
+  const leftP = left.filter((r) => (r.droppedOn ? inP(r.droppedOn) : p.key === 'all'));
+  const recorded = new Set(recs.map((r) => r.applicationId));
+  // the day a "did not join" was closed: the last move to a closed step, else the last change
+  const closedDay = (x) => { const e = [...x.evs].reverse().find((v) => v.to === 'REJECTED'); return istDayOf(e ? e.at : x.a.updatedAt); };
+  const noJoin = k.sel.filter((x) => x.a.joiningStatus === 'Dropped' && !JOINED.includes(x.a.stage) && !recorded.has(x.a.id))
+    .map((x) => ({ x, day: closedDay(x) })).filter((o) => inP(o.day));
+  const toGive = left.filter((r) => (r.replacementDecision === 'NEEDED' || r.replacementStatus === 'Requested' || r.replacementStatus === 'New candidate added') && !['Closed', 'Not needed'].includes(r.replacementStatus));
+  const toDecide = leftP.filter((r) => !r.replacementDecision && !r.replacementStatus && r.dropWithinGuarantee !== 0 && !Number(r.backfilled));
+  const replacedDay = (r) => { const x = r.replacementApplicationId && w.byId.get(r.replacementApplicationId); return (x && joinFacts(x).day) || String(r.updatedAt || '').slice(0, 10); };
+  const replaced = left.filter((r) => r.replacementStatus === 'Closed' && inP(replacedDay(r)));
+
+  const recExtra = (r) => {
+    const [repl, replTone] = replacementWord(r);
+    const reason = r.dropReason && /^other/i.test(r.dropReason) && r.dropReasonDetail ? r.dropReasonDetail : (r.dropReason && !/^not recorded$/i.test(r.dropReason) ? r.dropReason : null);
+    return {
+      dropKind: 'left', joinedOn: r.joinedOn || null, droppedOn: r.droppedOn || null, dropReason: reason,
+      inGuarantee: r.dropWithinGuarantee === 1 ? true : (r.dropWithinGuarantee === 0 ? false : null), guaranteeEndsOn: r.guaranteeEndsOn || null,
+      replacement: repl, replTone, note: `Left ${r.droppedOn ? dmyShort(r.droppedOn) : '(day not recorded)'}${reason ? ` · ${reason}` : ''} · ${repl}`, tone: replTone === 'red' ? 'red' : 'amber',
+    };
+  };
+  const recSet = (id, title, list) => {
+    const sorted = [...list].sort((x, y) => String(y.droppedOn || '').localeCompare(String(x.droppedOn || '')));
+    return addSet(b, id, { kind: 'app', title, ids: sorted.map((r) => r.applicationId).filter((a) => w.byId.has(a)), extra: new Map(sorted.map((r) => [r.applicationId, recExtra(r)])) });
+  };
+  recSet('drop-left', `Left after joining ${c.word}`, leftP);
+  recSet('repl-todo', 'Replacement to give', toGive);
+  recSet('repl-wait', `Client to decide on a replacement (left ${c.word})`, toDecide);
+  recSet('repl-done', `Replaced ${c.word}`, replaced);
+  const nj = [...noJoin].sort((x, y) => String(y.day).localeCompare(String(x.day)));
+  addSet(b, 'drop-nojoin', {
+    kind: 'app', title: `Did not join ${c.word}`, ids: nj.map((o) => o.x.a.id),
+    extra: new Map(nj.map((o) => [o.x.a.id, { dropKind: 'nojoin', droppedOn: o.day, joinedOn: null, dropReason: null, replacement: null, note: `Did not join · ${dmyShort(o.day)}`, tone: 'amber' }])),
+  });
+  const cards = [
+    { id: 'drop-left', label: 'Left after joining', hint: `Joined, then left ${c.word}`, value: leftP.length, tone: 'red', drill: 'drop-left', button: 'See who', zero: `Nobody left ${c.word}` },
+    { id: 'drop-nojoin', label: 'Did not join', hint: `Selected, then dropped before joining ${c.word}`, value: noJoin.length, tone: 'yellow', drill: 'drop-nojoin', button: 'See who', zero: `No drops before joining ${c.word}` },
+    { id: 'repl-todo', label: 'Replacement to give', hint: 'The client asked for a replacement; the new person has not joined yet', value: toGive.length, tone: 'red', drill: 'repl-todo', button: 'Open', zero: 'No replacement pending' },
+    { id: 'repl-wait', label: 'Client to decide', hint: `Left inside the replacement period ${c.word}; the client has not said if they want a replacement`, value: toDecide.length, tone: 'yellow', drill: 'repl-wait', button: 'Chase', zero: 'No decision pending' },
+    { id: 'repl-done', label: 'Replaced', hint: `The replacement joined ${c.word}`, value: replaced.length, tone: 'green', drill: 'repl-done', button: 'See who', zero: `No replacement joined ${c.word}` },
+  ];
+  if (!cards.some((x) => x.value)) return null;
+  return { id: 'drops', type: 'alerts', size: 'full', title: 'Drops & replacements', cards };
+}
+
 // ---- the cleanup bucket (Administration → Company Setup → Data cleanup) ---------------
 // The old backlog is OFF the dashboard (review #2): nothing happening for
 // 30+ days (Stale) and jobs open 30+ days with no recruiter. The sets are
@@ -1143,6 +1224,15 @@ async function buildHome(user, req) {
   else if (c.layout === 'hr') await hrHome(c, b, k);
   else await recruiterHome(c, b, k);
   P.mark('layout');
+  // Drops & replacements: right under Needs attention (or the first box), on every page but HR's internal hiring
+  if (c.layout !== 'hr' && Array.isArray(b.widgets)) {
+    const dw = await dropsWidget(c, b, k).catch((err) => { console.error('[atsHome] drops widget failed:', err.message); return null; }); // eslint-disable-line no-console
+    if (dw) {
+      const at = b.widgets.findIndex((x) => x && (x.id === 'attention' || x.type === 'missed'));
+      const kp = b.widgets.findIndex((x) => x && x.type === 'kpis');
+      b.widgets.splice(at >= 0 ? at + 1 : (kp >= 0 ? kp + 1 : 0), 0, dw);
+    }
+  }
   // The follow-ups line: "N candidates not followed up yet" (the role views;
   // the v3 page keeps to its fixed layout — max 6 cards).
   if (!b.v3) {

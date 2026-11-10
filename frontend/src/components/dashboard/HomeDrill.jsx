@@ -85,9 +85,36 @@ function OpenLink({ to, onClose }) {
   return <Link className="hd-open" to={to} onClick={onClose}>Open</Link>;
 }
 
+// DROPS & REPLACEMENTS lists (utils/atsHome.js dropsWidget): when they joined, when they left, why, and where the replacement stands.
+const REPL_TONE = { green: 'green', blue: 'blue', red: 'red', amber: 'amber', grey: 'grey' };
+function DropRows({ rows, onClose }) {
+  return (
+    <table className="hd-tbl">
+      <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Joined</th><th>Dropped</th><th>Reason</th><th>Replacement</th><th aria-label="Open" /></tr></thead>
+      <tbody>{rows.map((r) => (
+        <tr key={r.id}>
+          <td><b className="hd-name">{r.candidate}</b>{r.recruiter && <div className="hd-sub">{r.recruiter}</div>}</td>
+          <td>{r.requirement}{r.reqCode && <div className="hd-sub">{r.reqCode}</div>}</td>
+          <td>{r.client || '—'}</td>
+          <td>{r.dropKind === 'nojoin' ? <span className="cell-muted">Did not join</span> : (r.joinedOn ? longDay(r.joinedOn) : <span className="cell-muted">—</span>)}</td>
+          <td>
+            {r.droppedOn ? longDay(r.droppedOn) : <span className="cell-muted">{r.dropKind === 'left' ? 'Day not recorded' : '—'}</span>}
+            {r.dropKind === 'left' && r.inGuarantee === true && <div className="hd-sub">inside the replacement period</div>}
+            {r.dropKind === 'left' && r.inGuarantee === false && <div className="hd-sub">after the replacement period</div>}
+          </td>
+          <td>{r.dropReason || <span className="cell-muted">—</span>}</td>
+          <td>{r.replacement ? <StatusChip tone={REPL_TONE[r.replTone] || 'amber'}>{r.replacement}</StatusChip> : <span className="cell-muted">—</span>}</td>
+          <td><OpenLink to={`/candidates/${r.candidateId}?tab=history`} onClose={onClose} /></td>
+        </tr>
+      ))}</tbody>
+    </table>
+  );
+}
+
 function Rows({ data, onClose }) {
   const rows = data.rows || [];
   const k = data.kind;
+  if (k === 'app' && rows.some((r) => r.dropKind)) return <DropRows rows={rows} onClose={onClose} />;
   if (k === 'app') {
     const joinList = rows.some((r) => r.joinHow);
     const bdeView = rows.some((r) => 'bde' in r);

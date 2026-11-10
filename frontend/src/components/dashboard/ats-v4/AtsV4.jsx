@@ -573,6 +573,8 @@ export default function AtsV4({
   const kpi = take((w) => w.type === 'kpis');
   const tiles = buildTiles(data, ws);
   const lines = take((w) => w.type === 'lines');
+  // Drops & replacements (utils/atsHome.js dropsWidget, 2026-11-10): its own row under Needs attention, never folded away
+  const drops = take((w) => w.id === 'drops');
   void lines;
   const att = attentionOf(data, ws, onDrill);
   const openjobs = ws.find((w) => w.type === 'openjobs') || null;
@@ -659,6 +661,7 @@ export default function AtsV4({
           </Panel>
         )}
       </div>
+      {drops && <div className="av4-drops">{draw(drops)}</div>}
 
       {(depts || left3 || tlsW || peopleW || right3) && (
         <div className="av4-row av4-row3">
