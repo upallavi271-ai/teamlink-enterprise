@@ -345,6 +345,7 @@ async function recordStageCommunications({
         trigger,
         recipient,
         subject: channel === 'Email' ? fill(tpl.subject, tokens) : null,
+        sendSpec: channel === 'Email' ? null : IN.sendSpecFor(tpl, channel, tokens),
         body: withAiLink(template.key, fill(tpl.body, tokens), tokens.aiInterviewLink),
         // eslint-disable-next-line no-nested-ternary
         status: !switchedOn ? IN.SWITCHED_OFF : (live ? 'QUEUED' : NOT_SENT),

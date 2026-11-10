@@ -90,11 +90,31 @@ async function refreshTeamLink() {
   }
   // the summary column follows the per-account answers (the same rule as "Check with Meta")
   for (const id of touched) await Waba.aggregate(id); // eslint-disable-line no-restricted-syntax, no-await-in-loop
+  // MESSAGE TEMPLATES WAITING FOR META (2026-11-10): a Message template linked to a Meta template and marked "Pending" follows Meta's own
+  // answer (Approved / Rejected), so a stage message starts going by WhatsApp as soon as Meta approves. Only "Pending" rows change: an
+  // Admin's own Approved / Rejected / None is never touched.
+  try { report.messageTemplates = await pendingFollowMeta(); } catch { report.messageTemplates = 0; }
   report.updated = touched.size - report.added.length;
   if (report.added.length) {
     await logAudit({ userId: null, actorName: SYSTEM.name, action: 'WhatsApp templates added from Meta', entity: 'OutreachTemplate', entityId: 'meta', toValue: S.clip(report.added.join(', '), 480) });
   }
   return report;
+}
+
+async function pendingFollowMeta() {
+  const prisma = require('../db'); // eslint-disable-line global-require
+  const waiting = await prisma.messageTemplate.findMany({ where: { channel: 'WhatsApp', waStatus: 'Pending', waTemplateName: { not: null } }, select: { id: true, waTemplateName: true } });
+  let changed = 0;
+  for (const t of waiting) { // eslint-disable-line no-restricted-syntax
+    const name = P.slug(t.waTemplateName);
+    const rows = await S.q('SELECT waApprovalStatus FROM "OutreachTemplate" WHERE channel = \'whatsapp\' AND status = \'active\' AND (waTemplateName = ? OR name = ?)', name, name); // eslint-disable-line no-await-in-loop
+    const st = rows.map((r) => String(r.waApprovalStatus || '')).find((s) => s === 'approved' || s === 'rejected');
+    if (!st) continue; // eslint-disable-line no-continue
+    await prisma.messageTemplate.update({ where: { id: t.id }, data: { waStatus: st === 'approved' ? 'Approved' : 'Rejected' } }); // eslint-disable-line no-await-in-loop
+    changed += 1;
+  }
+  if (changed) await logAudit({ userId: null, actorName: SYSTEM.name, action: 'Message templates follow Meta', entity: 'MessageTemplate', entityId: 'meta', toValue: `${changed} WhatsApp template(s) changed from Pending to Meta's answer` });
+  return changed;
 }
 
 // both apps at once
@@ -127,4 +147,4 @@ function start() {
   if (every.unref) every.unref();
 }
 
-module.exports = { refreshTeamLink, bothWays, start, layoutOf, listAt, lastRun: () => last };
+module.exports = { refreshTeamLink, bothWays, start, layoutOf, listAt, pendingFollowMeta, lastRun: () => last };

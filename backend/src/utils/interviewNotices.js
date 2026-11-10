@@ -261,6 +261,24 @@ async function queueCandidateEmail(app, { template, label, subject, body, actor 
 // come from Message templates (`purpose`, filled with `tokens`) when a template exists for that channel, else `subject` / `body`. A row is
 // QUEUED only when the "Candidate emails" switch is on, the person has the address / number and that channel is connected; otherwise it
 // is recorded with the honest reason (never "Sent"). Returns the rows written.
+// HOW A CANDIDATE SMS / WHATSAPP GOES (founder 2026-11-10: stage messages on WhatsApp and SMS too). When the Message template for this
+// purpose has a Meta-approved WhatsApp template (Administration > Message templates > WhatsApp (Meta), status Approved) or a DLT Template ID,
+// the row keeps that template and the values for its blanks; utils/mailWorker.js sends exactly that. Otherwise null: sent as before.
+// WhatsApp blanks are ONLY the details the Admin picked ("Which detail goes in each {{1}} {{2}}"): a Meta template with no blanks gets none.
+function sendSpecFor(tpl, channel, tokens = {}) {
+  if (!tpl || tpl.source !== 'saved') return null;
+  const T = require('./messageTemplates'); // eslint-disable-line global-require
+  const val = (k) => { const v = tokens[k]; return v === undefined || v === null || String(v).trim() === '' ? '-' : String(v); };
+  if (channel === 'WhatsApp' && tpl.waStatus === 'Approved' && tpl.waTemplateName) {
+    const keys = Array.isArray(tpl.waVars) ? tpl.waVars.map(T.canonOf).filter(Boolean) : [];
+    return JSON.stringify({ wa: { name: tpl.waTemplateName, language: tpl.waLanguageCode || undefined }, vars: keys.map(val) });
+  }
+  if (channel === 'SMS' && tpl.dltTemplateId) {
+    return JSON.stringify({ dlt: { templateId: String(tpl.dltTemplateId), senderId: tpl.senderId || undefined }, vars: T.waVarList(tpl).map(val) });
+  }
+  return null;
+}
+
 async function queueCandidateMessage(app, { template, label, subject, body, actor, channels = ['Email', 'SMS', 'WhatsApp'], purpose = null, tokens = {}, trigger = null }) {
   const cand = app.candidate;
   if (!cand || skipPerson(`${cand.name} ${cand.email}`)) return [];
@@ -288,7 +306,7 @@ async function queueCandidateMessage(app, { template, label, subject, body, acto
     const row = await prisma.candidateMessage.create({
       data: {
         candidateId: cand.id, applicationId: app.id, channel, template, templateLabel: label, trigger: trigger || `Reminder: ${label}`,
-        recipient, subject: subj, body: text,
+        recipient, subject: subj, body: text, sendSpec: channel === 'Email' ? null : sendSpecFor(tpl, channel, tokens),
         status: !switchedOn ? SWITCHED_OFF : (live ? 'QUEUED' : 'NOT_SENT_NO_PROVIDER'),
         statusDetail: !switchedOn ? `${SWITCHED_OFF_DETAIL}.`
           : live ? 'Queued for sending.'
@@ -594,5 +612,5 @@ function startSweep() {
 
 module.exports = {
   SETTINGS_KEY, loadSettings, saveSettings, STAFF_SETTINGS_KEY, loadStaffSettings, saveStaffSettings, announceInterview, runInterviewReminders, startSweep, queueCandidateEmail, queueCandidateMessage, when,
-  whatsappLinks, waPhone, candidateEmailsOn, SWITCHED_OFF, SWITCHED_OFF_DETAIL, staffLines, mailTo, lines, whereLine, peopleOf, skipPerson, isTest,
+  whatsappLinks, waPhone, candidateEmailsOn, sendSpecFor, SWITCHED_OFF, SWITCHED_OFF_DETAIL, staffLines, mailTo, lines, whereLine, peopleOf, skipPerson, isTest,
 };

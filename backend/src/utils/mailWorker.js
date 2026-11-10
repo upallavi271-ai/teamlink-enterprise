@@ -74,8 +74,11 @@ async function processRow(row, summary) {
     summary.failed += 1;
     return;
   }
-  // eslint-disable-next-line global-require
-  const result = await require('./messaging').send(row.channel, {
+  // An SMS / WhatsApp recorded with its Message template (utils/interviewNotices.js sendSpecFor) goes as exactly that template:
+  // the Meta-approved WhatsApp template with its blanks, or the DLT template. Without one: the "bulk" template / plain text as before.
+  let spec = null;
+  try { spec = row.sendSpec ? JSON.parse(row.sendSpec) : null; } catch { spec = null; }
+  const opts = {
     to: row.recipient,
     kind: 'bulk',
     subject: row.subject || row.templateLabel || 'A message about your application',
@@ -83,7 +86,15 @@ async function processRow(row, summary) {
     vars: [row.body || ''],
     senderEmail: row.senderEmail,
     senderName: row.senderName,
-  });
+  };
+  if (spec && row.channel === 'WhatsApp' && spec.wa && spec.wa.name) { opts.template = spec.wa; opts.vars = Array.isArray(spec.vars) ? spec.vars : []; }
+  if (spec && row.channel === 'SMS' && spec.dlt && spec.dlt.templateId) {
+    opts.templateId = spec.dlt.templateId;
+    if (spec.dlt.senderId) opts.senderId = spec.dlt.senderId;
+    opts.vars = Array.isArray(spec.vars) ? spec.vars : [];
+  }
+  // eslint-disable-next-line global-require
+  const result = await require('./messaging').send(row.channel, opts);
   const attempts = (row.attempts || 0) + 1;
   if (result.ok) {
     await prisma.candidateMessage.update({
@@ -213,6 +224,6 @@ async function requeueHeldMessages(channel = 'Email') {
 
 module.exports = {
   QUEUED, RETRY, SENT, FAILED, MAX_ATTEMPTS,
-  runOnce, kick, start, stop, requeueHeldMessages,
+  runOnce, kick, start, stop, requeueHeldMessages, processRow,
   status: () => ({ running, lastRun }),
 };

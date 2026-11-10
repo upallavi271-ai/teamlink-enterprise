@@ -76,6 +76,53 @@ const path = require('path');
     await CT.runReminders({ force: true });
     Z.check('4c joining in 2 days: no reminder (only 3 days / 1 day / the day)', (await rowsOf(a4.id, 'JOINING_REMINDER')).length === 0);
     Z.check('4d the reminders switch is ON unless an Admin turned it off', (await CT.loadReminders()).armed === true);
+
+    // 5. an approved Meta template / a DLT ID on the Message template -> the row keeps it, the worker sends exactly that
+    const T = require(path.join(Z.BACK, 'src/utils/messageTemplates'));
+    await T.ensureDefaults();
+    const waT = await prisma.messageTemplate.findFirst({ where: { purpose: 'ATS_SHORTLISTED', channel: 'WhatsApp', language: 'English' } });
+    const smsT = await prisma.messageTemplate.findFirst({ where: { purpose: 'ATS_SHORTLISTED', channel: 'SMS', language: 'English' } });
+    const keepWa = { waTemplateName: waT.waTemplateName, waStatus: waT.waStatus, waLanguageCode: waT.waLanguageCode, waVars: waT.waVars };
+    const keepSms = { dltTemplateId: smsT.dltTemplateId, senderId: smsT.senderId };
+    try {
+      await prisma.messageTemplate.update({ where: { id: waT.id }, data: { waTemplateName: 'zz_stgm_shortlisted', waStatus: 'Approved', waLanguageCode: 'en', waVars: JSON.stringify(['name', 'role']) } });
+      await prisma.messageTemplate.update({ where: { id: smsT.id }, data: { dltTemplateId: '1107000000000000001', senderId: 'TMLINK' } });
+      const esha = await mkCand('esha');
+      const a5 = await mkApp(esha, { aiInterviewStatus: 'Completed', stage: 'RECRUITER_APPROVED' });
+      await move(a5, 'AI_INTERVIEW_COMPLETED', 'SENT_TO_ATS');
+      r = await rowsOf(a5.id, 'ATS_SHORTLISTED');
+      const wa = JSON.parse((r.find((x) => x.channel === 'WhatsApp') || {}).sendSpec || 'null');
+      const sms = JSON.parse((r.find((x) => x.channel === 'SMS') || {}).sendSpec || 'null');
+      Z.check('5 WhatsApp row keeps the approved Meta template and its two blanks (name, role)', wa && wa.wa.name === 'zz_stgm_shortlisted' && wa.wa.language === 'en' && wa.vars.length === 2 && wa.vars[0] === esha.name && wa.vars[1] === req.title, wa);
+      Z.check('5b SMS row keeps the DLT template ID and the sender', sms && sms.dlt.templateId === '1107000000000000001' && sms.dlt.senderId === 'TMLINK' && sms.vars.length >= 1, sms);
+      Z.check('5c the Email row has no send spec', (r.find((x) => x.channel === 'Email') || {}).sendSpec == null);
+      // a template marked Pending is not used yet
+      await prisma.messageTemplate.update({ where: { id: waT.id }, data: { waStatus: 'Pending' } });
+      const farah = await mkCand('farah');
+      const a6 = await mkApp(farah, { stage: 'RECRUITER_APPROVED' });
+      await move(a6, 'AI_INTERVIEW_COMPLETED', 'SENT_TO_ATS');
+      Z.check('5d a Meta template still Pending is not used (sent as before)', (await rowsOf(a6.id, 'ATS_SHORTLISTED')).find((x) => x.channel === 'WhatsApp').sendSpec == null);
+      // the worker hands the template to the provider (messaging.send stubbed: nothing leaves this PC)
+      const msgPath = require.resolve(path.join(Z.BACK, 'src/utils/messaging'));
+      const M = require(msgPath);
+      const realSend = M.send; const seen = [];
+      M.send = async (channel, opts) => { seen.push({ channel, opts }); return { ok: false, transient: false, invalid: true, outcome: 'Skipped', error: 'test stub' }; };
+      try {
+        const W = require(path.join(Z.BACK, 'src/utils/mailWorker'));
+        const waRow = r.find((x) => x.channel === 'WhatsApp'); const smsRow = r.find((x) => x.channel === 'SMS');
+        const proc = W.processRow || W._processRow;
+        if (proc) {
+          await proc({ ...waRow, recipient: waRow.recipient || '+919800000001' }, { sent: 0, failed: 0, retried: 0 });
+          await proc({ ...smsRow, recipient: smsRow.recipient || '+919800000001' }, { sent: 0, failed: 0, retried: 0 });
+          const w = seen.find((s) => s.channel === 'WhatsApp'); const s = seen.find((x) => x.channel === 'SMS');
+          Z.check('5e the worker sends WhatsApp as the Meta template with its blanks', w && w.opts.template && w.opts.template.name === 'zz_stgm_shortlisted' && w.opts.vars.length === 2, w && w.opts);
+          Z.check('5f the worker sends SMS with the DLT template ID', s && s.opts.templateId === '1107000000000000001' && s.opts.senderId === 'TMLINK', s && s.opts);
+        } else Z.check('5e/5f mailWorker exports processRow for the check', false, Object.keys(W));
+      } finally { M.send = realSend; }
+    } finally {
+      await prisma.messageTemplate.update({ where: { id: waT.id }, data: keepWa });
+      await prisma.messageTemplate.update({ where: { id: smsT.id }, data: keepSms });
+    }
   } catch (err) {
     Z.fail += 1; console.log('FAIL  crashed', err && err.stack ? err.stack.slice(0, 900) : err);
   } finally {

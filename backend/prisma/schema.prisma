@@ -3558,6 +3558,9 @@ model CandidateMessage {
   lastAttemptAt    DateTime?
   nextAttemptAt    DateTime? // set on a transient failure — the backoff
   lastError        String? // the provider's own words on the last failure
+  // How an SMS / WhatsApp is sent (2026-11-10): JSON { wa: { name, language }, vars } or { dlt: { templateId, senderId }, vars }, from the
+  // Message template (an approved Meta template / a DLT ID). Empty = sent as before (WhatsApp "bulk" template, SMS plain text).
+  sendSpec         String?
   createdAt        DateTime  @default(now())
 
   @@index([candidateId])
