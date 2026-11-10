@@ -703,9 +703,13 @@ export function teamlinkFrontRouter({ root, express }) {
           if (!free || !free.free) throw new Error('this database login cannot see reset links (row rules apply to it)');
           const rows = (await c.query(`select user_id, created_at, expires_at, used_at from password_resets
               where user_id = any($1::uuid[]) order by created_at desc limit 20`, [out.users.map((u) => u.id)])).rows;
-          await c.query('rollback');
           out.users.forEach((u) => { u.resets = rows.filter((x) => x.user_id === u.id).map(({ created_at, expires_at, used_at }) => ({ created_at, expires_at, used_at })); });
-        } finally { c.release(); }
+        } finally {
+          // the portal has ONE connection: it must go back closed, never inside this read-only transaction
+          let clean = true;
+          try { await c.query('rollback'); } catch { clean = false; }
+          c.release(clean ? undefined : true);
+        }
       } catch (e) { out.resetsError = String((e && e.message) || e).slice(0, 200); }
     }
     return res.json(out);
