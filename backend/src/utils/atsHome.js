@@ -301,7 +301,8 @@ async function loadWorld(appWhere, reqWhere, today) {
     if (JOINED.includes(a.stage)) {
       const jd = /^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : (a.joinedAt || null);
       const credit = W.joinCredit(attrReq, fuBy.get(a.id) || [], evBy.get(a.id) || [], dir.person, jd, HO.get(a.id));
-      if (credit) who.recruiter = credit;
+      // nobody on record had joined the company by then: an earlier recruiter's work - never the one who has the candidate now
+      who.recruiter = credit || { key: 'n:earlier recruiter', userId: null, label: 'Earlier recruiter (not recorded)', team: null };
     }
     const live = !CLOSED.includes(a.stage);
     return {

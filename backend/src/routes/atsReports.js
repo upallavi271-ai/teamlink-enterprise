@@ -574,7 +574,10 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
     const typedJoin = /^(\d{4})-\d{2}-\d{2}/.test(String(a.joiningDate || '')) && +String(a.joiningDate).slice(0, 4) >= 2015 ? `${String(a.joiningDate).slice(0, 10)}T23:59:59+05:30` : null;
     const creditTime = joined ? (typedJoin || a.joinedAt || crossedAt.joined || null) : (steps.length ? new Date(Math.max(...steps)) : null);
     // the joining: who got them Selected (workers.joinCredit, founder 2026-11-10)
-    const recruiter = creditTime ? ((joined ? workers.joinCredit(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) : workers.creditAt(reqForAttr, fus, evs, person, creditTime, HO.get(a.id))) || recruiterNow) : recruiterNow;
+    // (a joining with no date on record still goes to who had them when they were moved to Joined - workers.joinCredit)
+    const recruiter = joined
+      ? (workers.joinCredit(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) || { key: 'n:earlier recruiter', label: 'Earlier recruiter (not recorded)', team: null })
+      : (creditTime ? (workers.creditAt(reqForAttr, fus, evs, person, creditTime, HO.get(a.id)) || recruiterNow) : recruiterNow);
 
     const fb = fbBy.get(a.id) || [];
     const clientFb = fb.find((x) => x.kind === 'Client') || fb.find((x) => x.kind === 'Internal');

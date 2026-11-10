@@ -16,6 +16,9 @@ check('a different initial is not', !W.shortFormFits('K.Sai Sirisha', 'Masabattu
 check('no initial (just "Sai Sirisha") is not matched', !W.shortFormFits('Sai Sirisha', 'Masabattula Sai Sirisha'));
 check('a word left over is not ("D.Usha" vs "D.Leela Usha Sri")', !W.shortFormFits('D.Usha', 'Dasari Leela Usha Sri'));
 check('words out of order are not', !W.shortFormFits('M.Sirisha Sai', 'Masabattula Sai Sirisha'));
+check('"Bhanu teja" (no surname) is "Gundala Bhanu Teja"', W.partOfName('Bhanu teja', 'Gundala Bhanu Teja') && W.shortFormOf('Bhanu teja', ['Gundala Bhanu Teja', 'Ravi Teja']) === 'gundala bhanu teja');
+check('a single first name is never matched ("Sravanthi")', W.shortFormOf('Sravanthi', ['sravanthi Anumolu']) === null);
+check('two people with that part of the name: nobody is picked', W.shortFormOf('Sai Sirisha', ['Masabattula Sai Sirisha', 'Kota Sai Sirisha']) === null);
 check('two people who fit: nobody is picked', W.shortFormOf('M.Sai Sirisha', ['Masabattula Sai Sirisha', 'Mekala Sai Sirisha']) === null);
 
 const users = [

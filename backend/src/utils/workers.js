@@ -116,10 +116,20 @@ function shortFormFits(typed, full) {
   const rest = U.filter((_, i) => !used[i]);
   return rest.length === inits.length && rest.every((u, i) => u.startsWith(inits[i]));
 }
+// A NAME WITHOUT THE SURNAME (founder 2026-11-10: the history says "Bhanu teja", the login is "Gundala Bhanu Teja"): two or more
+// words, each of 3+ letters, that are words of the full name side by side. A single first name ("Sravanthi") is never matched.
+function partOfName(typed, full) {
+  const T = nameTokens(typed);
+  const U = nameTokens(full);
+  if (T.length < 2 || T.length >= U.length || T.some((t) => t.length < 3)) return false;
+  for (let i = 0; i + T.length <= U.length; i += 1) if (T.every((t, j) => U[i + j] === t)) return true;
+  return false;
+}
 // the ONE name in `names` that `typed` is a short form of, else null (none, or more than one person fits)
 function shortFormOf(typed, names) {
-  if (!nameTokens(typed).some((t) => t.length === 1)) return null;
-  const fits = [...new Set(names.filter((n) => n && shortFormFits(typed, n)).map(nameKey))];
+  const hasInitial = nameTokens(typed).some((t) => t.length === 1);
+  const fitsIt = hasInitial ? shortFormFits : partOfName;
+  const fits = [...new Set(names.filter((n) => n && fitsIt(typed, n)).map(nameKey))];
   return fits.length === 1 ? fits[0] : null;
 }
 
@@ -305,8 +315,11 @@ function selectedAt(evs) {
   const e = (evs || []).find((x) => SELECTED_ON.includes(x.toStage) && !(x.fromStage && SELECTED_ON.includes(x.fromStage)));
   return e ? e.createdAt : null;
 }
+// No joining date typed ("day moved to Joined"): the day they were moved to Joined - never "whoever has them now", which gave
+// recruiters who joined later the joinings of the ones before them (founder 2026-11-10: Koushik, Janathri).
 function joinCredit(req, fus, evs, person, joinAt, handovers = null) {
-  return creditAt(req, fus, evs, person, selectedAt(evs) || joinAt, handovers);
+  const moved = (evs || []).find((e) => ['JOINED', 'HIRED'].includes(e.toStage));
+  return creditAt(req, fus, evs, person, selectedAt(evs) || joinAt || (moved && moved.createdAt) || null, handovers);
 }
 // WHO SOURCED THEM: who first brought the candidate onto this requirement - the person who added it (its first step), else the
 // first recruiter on record (an import's tracker name, the first handover's old recruiter). Never changes with a handover.
@@ -732,7 +745,7 @@ async function listWorkers(user, { department = '', role = '' } = {}) {
 module.exports = {
   ROLES, ROLE_LABEL, LEFT_STATUSES, REAL_EVENT, ATTR_SELECT,
   clean, nameKey, seatRole, roleOfLabel, realActor,
-  makeResolver, loadDirectory, resolvePersonValue, nameVariantsFor, shortFormFits, shortFormOf,
+  makeResolver, loadDirectory, resolvePersonValue, nameVariantsFor, shortFormFits, shortFormOf, partOfName,
   attribute, creditAt, joinCredit, selectedAt, sourcedBy, stepAt, attributionWhere, seatWhere, seatCodes, personQuery, hasPersonQuery,
   attributedApplications, attributedCounts, listWorkers,
 };

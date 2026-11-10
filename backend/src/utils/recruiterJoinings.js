@@ -226,7 +226,8 @@ async function monthApplications(month, { fresh = false } = {}) {
     // them on the joining day) - not of a recruiter who took the seat, the job or the candidate later
     if (joined) {
       const by = workers.joinCredit(reqForAttr, a.followUps || [], evs, dir.person, day ? `${day}T23:59:59+05:30` : (firstMove && firstMove.createdAt) || null, HO.get(a.id));
-      if (by) at.recruiter = by;
+      // nobody on record had joined the company by then: an earlier recruiter's work, never whoever has the candidate now
+      at.recruiter = by || { key: 'n:earlier recruiter', userId: null, label: 'Earlier recruiter (not recorded)', team: null };
     }
     const client = req.internal ? 'TeamLink Internal' : (req.client && req.client.name) || '—';
     const row = {
