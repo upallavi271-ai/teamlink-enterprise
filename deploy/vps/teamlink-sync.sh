@@ -46,7 +46,7 @@ MODE=${1:-normal}     # normal | rebuild-gs (rebuild + migrate + restart Green S
 CONFLICTS=""
 SUBS=${SUBS:-"job-portal-app/job_portal-main green-start-app"}   # the git submodules this server uses
 SUBS_BAD=""
-SUBBRANCH=${SUBBRANCH:-main}                    # the branch of the two sub repos that the main repo follows
+SUBBRANCH=${SUBBRANCH:-main}                    # the branch a sub repo follows when .gitmodules gives it none (see sub_branch)
 GH_PREFIX=${GH_PREFIX:-git@github.com:}         # .gitmodules lists https://github.com/... ; this server fetches them over ssh with the same key instead
 # VPS_EDITS=0 (default) = ONE WAY: code goes PC -> GitHub -> VPS only. A file changed directly on the VPS is never sent back to GitHub.
 # VPS_EDITS=1 = step 1 is on: such edits of the TeamLink folders (backend/, frontend/, ...) are pushed to GitHub. Edits of the two sub repos are never pushed.
@@ -108,21 +108,30 @@ gs_deleted_files() {   # old_main_commit new_main_commit
   git -C "$SRC/green-start-app" diff --no-renames --name-only --diff-filter=D "$o" "$n" -- gs-api green-start-web
 }
 
-# STEP 1b: the main repo follows the newest commit of each sub repo (branch $SUBBRANCH), so a push to Green Start or to the Job Portal reaches the
+# STEP 1b: the main repo follows the newest commit of each sub repo (its branch in .gitmodules), so a push to Green Start or to the Job Portal reaches the
 # main repo and then this server by itself. Only a change to something that gets deployed moves the pin (docs / notes do not).
 # Only the MAIN repo is written to (a one-line pointer commit); the sub repos are only read.
 sg() { git -C "$SRC/$1" "${@:2}"; }                                                 # sg <submodule folder> <git args...>
 deployable() {   # <submodule folder> : keeps (from stdin) the file paths whose change must reach the VPS
   if [ "$1" = "green-start-app" ]; then grep -E '^green-start-app/(gs-api|green-start-web)/'; else grep -Ev '/(docs|\.claude)/|\.md$'; fi
 }
+# The branch each sub repo follows: its `branch =` line in .gitmodules, else $SUBBRANCH. Both say main today, so nothing changes until
+# .gitmodules is edited (Green Start: `branch = release`, moved only by its CI after every test passes; see its docs/deploy/CI_AND_RELEASE.md).
+sub_branch() { git -C "$SRC" config -f .gitmodules --get "submodule.$1.branch" 2>/dev/null || echo "$SUBBRANCH"; }
 bump_subs() {
-  local s cur latest files moved=""
+  local s b cur latest files moved=""
   for s in $SUBS; do
     [ -e "$SRC/$s/.git" ] || continue
-    sg "$s" fetch --quiet origin "$SUBBRANCH" 2>>"$LOG" || { log "cannot reach the repo of $s (offline?) - will try again"; continue; }
-    cur=$(sg "$s" rev-parse HEAD); latest=$(sg "$s" rev-parse "origin/$SUBBRANCH")
+    b=$(sub_branch "$s")
+    sg "$s" fetch --quiet origin "$b" 2>>"$LOG" || { log "cannot reach the repo of $s (offline?) - will try again"; continue; }
+    cur=$(sg "$s" rev-parse HEAD); latest=$(sg "$s" rev-parse "origin/$b")
     [ "$cur" = "$latest" ] && continue
-    sg "$s" merge-base --is-ancestor "$cur" "$latest" 2>/dev/null || { log "$s: the commit the main repo pins is not an ancestor of $SUBBRANCH in its repo - left alone"; continue; }
+    if ! sg "$s" merge-base --is-ancestor "$cur" "$latest" 2>/dev/null; then
+      # A branch other than main may be moved BACK on purpose (Green Start's "Rollback release"): follow it only when the new commit is an
+      # older commit of the same line. Anything else (a rewritten branch) is still left alone, as before.
+      if [ "$b" != main ] && sg "$s" merge-base --is-ancestor "$latest" "$cur" 2>/dev/null; then log "$s: $b was moved back (rollback) from ${cur:0:8} to ${latest:0:8}"
+      else log "$s: the commit the main repo pins is not an ancestor of $b in its repo - left alone"; continue; fi
+    fi
     files=$(sg "$s" diff --name-only "$cur" "$latest" | sed "s#^#$s/#" | deployable "$s")
     [ -n "$files" ] || continue                  # only docs / notes changed: the main repo keeps its pin
     if [ "$DRY" = 1 ]; then log "[dry-run] would move the pin of $s from ${cur:0:8} to ${latest:0:8} ($(echo "$files" | wc -l) deployable file(s))"; continue; fi
