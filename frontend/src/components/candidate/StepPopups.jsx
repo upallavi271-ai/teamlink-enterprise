@@ -28,6 +28,7 @@
 //   facts (optional): { skills, experienceYears, currentSalary, expectedSalary, noticePeriod }
 // ---------------------------------------------------------------------------
 import { useEffect, useState } from 'react';
+import MonthlySalary, { salaryStart, yearlyOf } from '../MonthlySalary.jsx';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
@@ -46,7 +47,6 @@ const SOURCED = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_I
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const inDays = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
 const rupees = (n) => (Number(n) > 0 ? `₹${Number(n).toLocaleString('en-IN')} a year` : '');
-const inrPlain = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 const errText = (err, fallback) => (err && err.response && err.response.data && err.response.data.error) || fallback;
 
 // Which popup a drag from one board column to another opens (null = move straight away).
@@ -382,8 +382,9 @@ function JoinedDialog({ app, onClose, onDone }) {
   const [terms, setTerms] = useState(null);
   // THE CTC PER MONTH OR PER YEAR (founder 2026-11-11: "annual ctc aduguthundhi, dhaani place lo monthly pettina theeskuney laaga
   // pettu"): the box takes either; a monthly amount is saved x 12 (the server always keeps the yearly CTC).
-  const [form, setForm] = useState({ joiningDate: istToday(), offeredCtc: '', feePercent: '', ctcUnit: 'month' });
-  const yearly = Number(form.offeredCtc) > 0 ? Math.round(Number(form.offeredCtc) * (form.ctcUnit === 'month' ? 12 : 1)) : 0;
+  const [form, setForm] = useState({ joiningDate: istToday(), feePercent: '' });
+  const [sal, setSal] = useState(salaryStart(0)); // always opens per month (components/MonthlySalary.jsx)
+  const yearly = yearlyOf(sal);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -392,10 +393,9 @@ function JoinedDialog({ app, onClose, onDone }) {
         setTerms(r.data);
         setForm({
           joiningDate: r.data.joiningDate ? String(r.data.joiningDate).slice(0, 10) : istToday(),
-          offeredCtc: r.data.offeredCtc ? String(r.data.offeredCtc) : '',
           feePercent: r.data.feePercent != null ? String(r.data.feePercent) : '',
-          ctcUnit: r.data.offeredCtc ? 'year' : 'month', // a CTC already on file is yearly
         });
+        setSal(salaryStart(r.data.offeredCtc)); // a yearly CTC on file is shown per month
       })
       .catch((err) => setError(errText(err, 'Could not open the joining details.')));
   }, [app.id]);
@@ -466,23 +466,7 @@ function JoinedDialog({ app, onClose, onDone }) {
             <input type="date" value={form.joiningDate} onChange={(e) => setForm({ ...form, joiningDate: e.target.value })} />
           </label>
           {!internal && (
-            <label className="field">
-              <span>{`Final salary (₹ ${form.ctcUnit === 'month' ? 'per month' : 'per year'})`}</span>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <input type="number" min="1" step={form.ctcUnit === 'month' ? 500 : 1000} inputMode="numeric" placeholder={form.ctcUnit === 'month' ? 'e.g. 44000' : 'e.g. 528000'} value={form.offeredCtc} onChange={(e) => { setForm({ ...form, offeredCtc: e.target.value }); setAsk(null); }} style={{ flex: 1 }} />
-                <div className="seg" role="group" aria-label="Per month or per year" style={{ display: 'inline-flex', gap: 4 }}>
-                  {[['month', 'Per month'], ['year', 'Per year']].map(([u, l]) => (
-                    <button key={u} type="button" className={`btn btn-sm${form.ctcUnit === u ? ' btn-primary' : ''}`} aria-pressed={form.ctcUnit === u} onClick={() => { setForm({ ...form, ctcUnit: u }); setAsk(null); }}>{l}</button>
-                  ))}
-                </div>
-              </div>
-              <span className="small-muted">
-                {yearly > 0
-                  ? (form.ctcUnit === 'month' ? `${inrPlain(form.offeredCtc)} a month = ${inrPlain(yearly)} a year (CTC)` : `${inrPlain(yearly)} a year = about ${inrPlain(Math.round(yearly / 12))} a month`)
-                  : (terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : 'The salary in the offer letter')}
-                {form.ctcUnit === 'year' && yearly > 0 && yearly < 100000 ? ' — this looks like a monthly amount: press "Per month".' : ''}
-              </span>
-            </label>
+            <MonthlySalary label="Final salary" value={sal} onChange={(v) => { setSal(v); setAsk(null); }} hint={terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : ''} />
           )}
           {!internal && terms.canSetFee && (
             <label className="field">

@@ -23,6 +23,8 @@ import { Modal } from '../../components/proto.jsx';
 import { ReleaseLetterModal, ShareModal, TrackChip, openLetter } from '../../components/clientTrack/ClientTrack.jsx';
 import '../../components/interviews/Interviews.css';
 import JoinDropList from '../../components/joindrop/JoinDropList.jsx';
+import MonthlySalary, { salaryStart, yearlyOf } from '../../components/MonthlySalary.jsx';
+import { ctcAsk, CtcAsk, CtcAskButtons } from '../../components/CtcConfirm.jsx';
 import { DropDialog, errText } from '../../components/joindrop/JdParts.jsx';
 import {
   fmtDate, money, Banner, IntJoinEmpty, EMPTY_INTJOIN_FILTERS, useIntJoinPaged, ShowOlder, PAGE_SIZES_IJ,
@@ -83,14 +85,15 @@ export default function Joining() {
   const live = dialog && dialog.id ? (data.rows || []).find((r) => r.id === dialog.id) : null;
   const close = () => setDialog(null);
 
+  // returns null when saved, else the error (the dialog shows it, or asks "is this CTC right?")
   async function markJoined(r, body) {
     setJoinedMsg('');
-    const ok = await act(async () => {
+    try {
       const res = await api.post(`/ats/joining/${r.id}/joined`, body || {});
       setJoinedMsg(res.data.message || `🎉 ${first(r.candidate.name)} joined.`);
-      return res;
-    }, ' ');
-    if (ok) { setNotice(''); close(); }
+      setNotice(''); close(); load();
+      return null;
+    } catch (err) { return err; }
   }
 
   return (
@@ -340,6 +343,20 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
   const [joinedOn, setJoinedOn] = useState(r.joiningDate || todayIso());
   const [place, setPlace] = useState(r.requirement?.location || r.requirement?.client?.location || '');
   const [placeErr, setPlaceErr] = useState('');
+  // the salary per month -> the yearly CTC saved with Joined (components/MonthlySalary.jsx, founder 2026-11-11)
+  const [sal, setSal] = useState(salaryStart(r.offeredCtc));
+  const [ask, setAsk] = useState(null);
+  async function joined(confirmCtc = false) {
+    if (!place.trim()) { setPlaceErr('Type the place (city or branch) where they joined.'); return; }
+    const yearly = yearlyOf(sal);
+    if (!internal && !(yearly > 0)) { setPlaceErr('Write the salary (per month) they joined on.'); return; }
+    setPlaceErr(''); setBusy(true);
+    const err = await onJoined({ joinedOn, location: place.trim(), ...(yearly > 0 ? { offeredCtc: yearly } : {}), ...(confirmCtc ? { confirmCtc: true } : {}) });
+    setBusy(false);
+    if (!err) return;
+    const a = ctcAsk(err);
+    if (a) setAsk(a); else setPlaceErr(errText(err, 'Could not save the joining. Please try again.'));
+  }
   const step = async (fn, msg) => { setBusy(true); try { return await act(fn, msg); } finally { setBusy(false); } };
   useEffect(() => { setDate(r.joiningDate || ''); }, [r.joiningDate]);
   const docText = { Pending: 'Not received', Submitted: 'Received — check them', Verified: 'Checked' }[r.documentsStatus] || r.documentsStatus;
@@ -353,7 +370,9 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
       ) : (
         <>
           <button type="button" className="btn btn-ghost" onClick={() => setDrop(true)}>Did not join</button>
-          <button type="button" className="btn btn-primary" disabled={busy || !c.date} title={c.date ? '' : 'Set the joining date first'} onClick={() => { if (!place.trim()) { setPlaceErr('Type the place (city or branch) where they joined.'); return; } setPlaceErr(''); onJoined({ joinedOn, location: place.trim() }); }}>Joined ✓</button>
+          {ask ? <CtcAskButtons busy={busy} onNo={() => setAsk(null)} onYes={() => joined(true)} /> : (
+            <button type="button" className="btn btn-primary" disabled={busy || !c.date} title={c.date ? '' : 'Set the joining date first'} onClick={() => joined(false)}>Joined ✓</button>
+          )}
         </>
       )}
     >
@@ -413,6 +432,8 @@ function Checklist({ r, canDocs, act, onClose, onJoined }) {
                 <input type="date" max={todayIso()} value={joinedOn} onChange={(e) => setJoinedOn(e.target.value)} aria-label="Day they joined" />
                 <input style={{ flex: 1, minWidth: 160 }} placeholder="Place (city or branch)" value={place} onChange={(e) => setPlace(e.target.value)} aria-label="Place they joined" />
               </div>
+              {!internal && <div style={{ marginTop: 8 }}><MonthlySalary label="Salary they joined on" value={sal} onChange={(v) => { setSal(v); setAsk(null); }} /></div>}
+              {ask && <CtcAsk ask={ask} />}
               {placeErr && <div className="error-text">{placeErr}</div>}
             </div>
 
