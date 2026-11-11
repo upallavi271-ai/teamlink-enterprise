@@ -77,6 +77,24 @@ async function stop(code) {
   const det = await M.employeeDetail(emp.id, day, day);
   check('the day view lists it', det && det.repeats && det.repeats.length === 1 && det.repeats[0].presses === 4500, det && det.repeats);
 
+  console.log('How many times each key / button (agent 2.6)');
+  const cnt = async (body) => { const r = await fetch(`${API}/monitoring/input-counts`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => null) }; };
+  const c1 = await cnt({ day, counts: { 'Letter keys': 900, Space: 150, Enter: 40, 'Left click': 300, 'Mouse wheel': 80, '<script>': 5 } });
+  const c2 = await cnt({ day, counts: { 'Letter keys': 100, Space: 50, 'Right click': 12 } });
+  check('both sends are taken; an odd name is refused', c1.status === 200 && c1.body.saved === 5 && c2.status === 200 && c2.body.saved === 3, [c1, c2]);
+  const bad = await cnt({ day: 'yesterday', counts: { Space: 1 } });
+  check('a wrong day is refused', bad.status === 400, bad);
+  const kc = (await MI.countsOf([emp.id], day)).get(emp.id);
+  const k = (n) => ((kc && kc.keys.concat(kc.mouse).find((x) => x.name === n)) || {}).count;
+  check('the counts add up', k('Letter keys') === 1000 && k('Space') === 200 && k('Enter') === 40 && k('Left click') === 300 && k('Right click') === 12, kc);
+  check('totals: 1,240 keys, 312 clicks (the wheel is not a click)', kc && kc.keyTotal === 1240 && kc.clickTotal === 312, kc && [kc.keyTotal, kc.clickTotal]);
+  const ov2 = await M.overview(day, null);
+  const row2 = ov2.rows.find((x) => x.employeeId === emp.id);
+  check('the overview row has keys and clicks', row2 && row2.keys === 1240 && row2.clicks === 312 && /Letter keys 1000/.test(row2.topKeys), row2 && [row2.keys, row2.clicks, row2.topKeys]);
+  const det2 = await M.employeeDetail(emp.id, day, day);
+  check('the day view lists each key, most first', det2.keyCounts && det2.keyCounts.keys[0].name === 'Letter keys' && det2.keyCounts.mouse[0].name === 'Left click', det2.keyCounts);
+  check('the notice says letter keys are counted together', /letter keys are counted together/i.test((await M.settings()).policyText));
+
   console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

@@ -5,8 +5,11 @@
     * the name of the app in front (chrome, excel ...) and its window title,
     * whether the PC is in use or idle (no mouse / keyboard for the idle minutes HR set),
     * (2.5) how much the keyboard and mouse are used, as counts per minute - and ONLY when one single key or button makes up
-      nearly all of a minute (a key held down, an auto-clicker, a mouse mover), that one key's name. Never which keys make up
-      the typing, so nothing typed can be rebuilt. Only the flagged minutes leave the PC.
+      nearly all of a minute (a key held down, an auto-clicker, a mouse mover), that one key's name. Only the flagged minutes
+      leave the PC.
+    * (2.6) how many times each kind of key and mouse button was pressed in work hours: Space, Enter, Backspace, Ctrl, each
+      arrow, left click ... one by one, but ALL letter keys as one count and all number keys as one count - so what was typed
+      can never be rebuilt. Sent as totals every two minutes.
   and only during work hours (HR sets them; the server throws away anything outside).
   It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
 
@@ -25,7 +28,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.5'
+$AgentVersion = '2.6'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -81,6 +84,10 @@ public class TLInput : NativeWindow {
   static TLInput me;
   static readonly object gate = new object();
   static int[] keys = new int[256];
+  // agent 2.6: the presses of each key since the last TakeTotals (a key held down counts once: down[] is cleared on key-up)
+  static int[] dayKeys = new int[256];
+  static bool[] down = new bool[256];
+  static int dayLeft, dayRight, dayMiddle, dayWheel;
   static int keyTotal, clicks, left, right, middle, wheel, moves, injected;
   static long px, py, minX, maxX, minY, maxY;
   public static bool Started;
@@ -113,17 +120,18 @@ public class TLInput : NativeWindow {
       if (type == 1 && b.Length >= hs + 12) {
         ushort vk = BitConverter.ToUInt16(b, hs + 6);
         uint msg = BitConverter.ToUInt32(b, hs + 8);
-        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; if (dev == 0) injected++; }
+        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; if (dev == 0) injected++; if (!down[vk]) { down[vk] = true; dayKeys[vk]++; } }
+        else if ((msg == 0x101 || msg == 0x105) && vk > 0 && vk < 255) { down[vk] = false; }
       } else if (type == 0 && b.Length >= hs + 20) {
         ushort fl = BitConverter.ToUInt16(b, hs);
         ushort bf = BitConverter.ToUInt16(b, hs + 4);
         int dx = BitConverter.ToInt32(b, hs + 12), dy = BitConverter.ToInt32(b, hs + 16);
         int c = 0;
-        if ((bf & 0x1) != 0) { left++; c++; }
-        if ((bf & 0x4) != 0) { right++; c++; }
-        if ((bf & 0x10) != 0) { middle++; c++; }
+        if ((bf & 0x1) != 0) { left++; c++; dayLeft++; }
+        if ((bf & 0x4) != 0) { right++; c++; dayRight++; }
+        if ((bf & 0x10) != 0) { middle++; c++; dayMiddle++; }
         clicks += c;
-        if ((bf & 0xC00) != 0) wheel++;
+        if ((bf & 0xC00) != 0) { wheel++; dayWheel++; }
         bool moved = (dx != 0 || dy != 0) && (fl & 1) == 0;
         if (moved) { moves++; px += dx; py += dy; if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py; }
         if (dev == 0 && (c > 0 || moved)) injected++;
@@ -131,6 +139,16 @@ public class TLInput : NativeWindow {
     }
   }
   // "keys|topKey|topKeyCount|clicks|left|right|middle|wheel|moves|spanX|spanY|fromAProgram" for the minute just ended; a new one starts
+  // "vk=count;vk=count;...|left|right|middle|wheel" since the last call (agent 2.6); the counters start again
+  public static string TakeTotals() {
+    lock (gate) {
+      var sb = new System.Text.StringBuilder();
+      for (int i = 0; i < 256; i++) if (dayKeys[i] > 0) { sb.Append(i).Append('=').Append(dayKeys[i]).Append(';'); }
+      string s = sb.ToString() + "|" + dayLeft + "|" + dayRight + "|" + dayMiddle + "|" + dayWheel;
+      Array.Clear(dayKeys, 0, 256); dayLeft = dayRight = dayMiddle = dayWheel = 0;
+      return s;
+    }
+  }
   public static string TakeMinute() {
     lock (gate) {
       int top = 0, topN = 0;
@@ -577,6 +595,51 @@ function Check-Input {
   [void]$script:inputQueue.Add(@{ at = (Get-Date).ToUniversalTime().AddSeconds(-60).ToString('o'); kind = $kind; key = $name; count = [int]$count })
   if ($script:inputQueue.Count -gt 2000) { $script:inputQueue.RemoveRange(0, $script:inputQueue.Count - 2000) }
 }
+# THE KEYS AND BUTTONS OF THE DAY (agent 2.6, founder 2026-11-11: "evaru ey buttons enni times press chesthunnaro teliyali").
+# Every key one by one, except that all LETTER keys are one count and all NUMBER keys are one count (so typing can never be rebuilt).
+function Key-Group([int]$vk) {
+  if ($vk -ge 65 -and $vk -le 90) { return 'Letter keys' }
+  if (($vk -ge 48 -and $vk -le 57) -or ($vk -ge 96 -and $vk -le 105)) { return 'Number keys' }
+  if ($vk -ge 112 -and $vk -le 135) { return 'F-keys (F1 - F24)' }
+  if (($vk -ge 186 -and $vk -le 192) -or ($vk -ge 219 -and $vk -le 223) -or $vk -eq 226 -or ($vk -ge 106 -and $vk -le 111)) { return 'Symbol keys' }
+  if ($vk -eq 20) { return 'Caps Lock' }
+  if ($vk -eq 44) { return 'Print Screen' }
+  if ($vk -in @(1, 2, 4, 5, 6)) { return $null }   # mouse buttons arrive as keys too on some PCs: counted from the mouse instead
+  if ($KeyNames.ContainsKey($vk)) { return $KeyNames[$vk] }
+  return 'Other keys'
+}
+$script:dayCounts = @{}   # 'yyyy-mm-dd' -> @{ 'Space' = 12; ... }
+function Take-Counts {
+  if (-not [TLInput]::Started) { return }
+  $raw = [TLInput]::TakeTotals()
+  if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { return }   # outside work hours: thrown away
+  $parts = $raw -split '\|'
+  if ($parts.Count -lt 5) { return }
+  $day = Today-Ist
+  if (-not $script:dayCounts.ContainsKey($day)) { $script:dayCounts[$day] = @{} }
+  $c = $script:dayCounts[$day]
+  foreach ($pair in ($parts[0] -split ';')) {
+    if (-not $pair) { continue }
+    $kv = $pair -split '='
+    $g = Key-Group ([int]$kv[0])
+    if (-not $g) { continue }
+    $c[$g] = [int]$c[$g] + [int]$kv[1]
+  }
+  foreach ($m in @(@('Left click', 1), @('Right click', 2), @('Middle click', 3), @('Mouse wheel', 4))) {
+    $n = [int]$parts[$m[1]]
+    if ($n -gt 0) { $c[$m[0]] = [int]$c[$m[0]] + $n }
+  }
+}
+function Send-Counts {
+  if ($script:inputOff -or $script:dayCounts.Count -eq 0) { return }
+  foreach ($day in @($script:dayCounts.Keys)) {
+    $c = $script:dayCounts[$day]
+    if ($c.Count -eq 0) { $script:dayCounts.Remove($day); continue }
+    $r = Call-Api 'POST' '/input-counts' @{ day = $day; counts = $c } $script:cfg.token
+    if ($r.status -eq 200) { $script:dayCounts.Remove($day) }
+    elseif ($r.status -eq 404) { $script:dayCounts.Clear(); return }   # an older TeamLink: it does not take these
+  }
+}
 function Send-Input {
   if ($script:inputOff -or $script:inputQueue.Count -eq 0) { return }
   $batch = @($script:inputQueue | Select-Object -First 300)
@@ -586,6 +649,7 @@ function Send-Input {
 }
 function Flush {
   try { Send-Input } catch {}
+  try { Take-Counts; Send-Counts } catch {}
   Close-Segment   # send what is done so far
   Sample          # and go straight on: a heartbeat right after this must still say what is in front
   if ($script:queue.Count -eq 0) { return }

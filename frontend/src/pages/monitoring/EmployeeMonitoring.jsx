@@ -183,7 +183,7 @@ function Overview({ onOpen }) {
       )}
       <div className="tbl-wrap">
         <table className="mon-table">
-          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className="num" title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num" title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className="num" title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num" title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th><th className="num" title="How many key presses and mouse clicks today (letter keys and number keys counted together). Open the person for each key.">Keys · Clicks</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
@@ -206,9 +206,10 @@ function Overview({ onOpen }) {
                 <td className="num">{hm(r.breakHours)}</td>
                 <td className="num">{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
                 <td className="num">{pct(r.productivity)}</td>
+                <td className="num" title={r.topKeys || undefined}>{r.keys == null && r.clicks == null ? <span className="small-muted">—</span> : <>{Number(r.keys || 0).toLocaleString('en-IN')}<div className="small-muted">{`${Number(r.clicks || 0).toLocaleString('en-IN')} clicks`}</div></>}</td>
               </tr>
             ))}
-            {!rows.length && !loading && <tr><td colSpan={live ? 12 : 10} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
+            {!rows.length && !loading && <tr><td colSpan={live ? 13 : 11} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -728,6 +729,14 @@ export function EmployeeDetail({ id, onBack, own = false }) {
           {data.timeline && (
             <Panel title="The day" sub={`Work hours ${data.workStart} – ${data.workEnd}`}>
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
+            </Panel>
+          )}
+          {data.keyCounts && (data.keyCounts.keys.length > 0 || data.keyCounts.mouse.length > 0) && (
+            <Panel title="Keys and buttons pressed" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · ${Number(data.keyCounts.keyTotal).toLocaleString('en-IN')} key presses · ${Number(data.keyCounts.clickTotal).toLocaleString('en-IN')} clicks. Letter keys and number keys are counted together, never one by one.`}>
+              <div className="mon-two">
+                <BarList rows={data.keyCounts.keys.slice(0, 15).map((k, i) => ({ key: k.name, label: k.name, value: k.count, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No key presses recorded." />
+                <BarList rows={data.keyCounts.mouse.map((k, i) => ({ key: k.name, label: k.name, value: k.count, tone: ['green', 'amber', 'slate', 'teal'][i % 4] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No clicks recorded." />
+              </div>
             </Panel>
           )}
           {(data.repeats || []).length > 0 && (

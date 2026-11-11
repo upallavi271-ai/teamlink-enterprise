@@ -139,6 +139,8 @@ router.post('/heartbeat', agent, wrap(async (req, res) => {
 }));
 // agent 2.5: the minutes in which one key / button was pressed over and over (utils/monitoringInput.js) - never what was typed
 router.post('/input', agent, wrap(async (req, res) => res.json(await require('../utils/monitoringInput').save(req.device, (req.body || {}).minutes)))); // eslint-disable-line global-require
+// agent 2.6: how many times each key / button today (letter and number keys as one count each)
+router.post('/input-counts', agent, wrap(async (req, res) => { const b = req.body || {}; const out = await require('../utils/monitoringInput').addCounts(req.device, b.day, b.counts); return out.status ? res.status(out.status).json(out) : res.json(out); })); // eslint-disable-line global-require
 router.post('/live', agent, wrap(async (req, res) => { await M.liveUpdate(req.device, req.body || {}); res.json({ ok: true }); }));
 // auto-update: the agent script itself; the PC checks its hash against the heartbeat before using it
 router.get('/agent-script', agent, wrap(async (req, res) => {

@@ -118,10 +118,74 @@ function summaryOf(list) {
   return { minutes, stretches: list.length, top: `${big.label} · ${big.fromTime}–${big.toTime} (${big.minutes} min)` };
 }
 
-async function cleanup(retentionDays) {
-  await ensure();
-  const cutoff = istDay(Date.now() - Math.max(7, Number(retentionDays) || 90) * 86400000);
-  await prisma.$executeRawUnsafe('DELETE FROM "MonitoringInputFlag" WHERE "day" < ?', cutoff);
+// ---------------------------------------------------------------------------
+// HOW MANY TIMES EACH KEY / BUTTON (agent 2.6, founder 2026-11-11: "evaru ey buttons enni times press chesthunnaro teliyali").
+// Per person per day: { 'Space': 1200, 'Enter': 300, 'Letter keys': 9000, 'Left click': 2500, ... }. Letter keys and number keys
+// arrive as ONE count each (the agent groups them), so nothing typed can be rebuilt. Table MonitoringKeyCount, added to as it comes.
+let readyCounts = null;
+function ensureCounts() {
+  if (!readyCounts) {
+    readyCounts = (async () => {
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "MonitoringKeyCount" (
+        "employeeId" TEXT NOT NULL, "day" TEXT NOT NULL, "keyName" TEXT NOT NULL, "cnt" INTEGER NOT NULL DEFAULT 0, "updatedAt" TEXT NOT NULL,
+        PRIMARY KEY ("employeeId", "day", "keyName")
+      )`);
+      return true;
+    })().catch((e) => { readyCounts = null; throw e; });
+  }
+  return readyCounts;
+}
+const KEY_NAME = /^[A-Za-z0-9 ()\-.]{1,40}$/;
+async function addCounts(device, day, counts) {
+  await ensureCounts();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return { status: 400, error: 'Which day?' };
+  const today = istDay(Date.now());
+  if (day > today || day < istDay(Date.now() - 14 * 86400000)) return { saved: 0 };
+  const now = new Date().toISOString();
+  let saved = 0;
+  for (const [k, v] of Object.entries(counts && typeof counts === 'object' ? counts : {}).slice(0, 80)) {
+    const n = Math.round(Number(v));
+    if (!KEY_NAME.test(k) || !(n > 0) || n > 200000) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.$executeRawUnsafe(
+      'INSERT INTO "MonitoringKeyCount" ("employeeId","day","keyName","cnt","updatedAt") VALUES (?,?,?,?,?) ON CONFLICT("employeeId","day","keyName") DO UPDATE SET "cnt" = "cnt" + excluded."cnt", "updatedAt" = excluded."updatedAt"',
+      device.employeeId, day, k, n, now,
+    );
+    saved += 1;
+  }
+  return { saved };
+}
+// the grouped keys shown first, then the rest by count
+const MOUSE = ['Left click', 'Right click', 'Middle click', 'Mouse wheel'];
+/** Map(employeeId -> { keys: [{ name, count }], mouse: [{ name, count }], keyTotal, clickTotal }) for the days given. */
+async function countsOf(employeeIds, fromDay, toDay = fromDay) {
+  await ensureCounts();
+  const ids = (employeeIds || []).filter(Boolean);
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT "employeeId", "keyName", SUM("cnt") AS "n" FROM "MonitoringKeyCount" WHERE "day" >= ? AND "day" <= ? AND "employeeId" IN (${part.map(() => '?').join(',')}) GROUP BY "employeeId", "keyName"`,
+      fromDay, toDay, ...part,
+    );
+    rows.forEach((r) => {
+      if (!out.has(r.employeeId)) out.set(r.employeeId, { keys: [], mouse: [], keyTotal: 0, clickTotal: 0 });
+      const o = out.get(r.employeeId);
+      const n = Number(r.n) || 0;
+      if (MOUSE.includes(r.keyName)) { o.mouse.push({ name: r.keyName, count: n }); if (r.keyName !== 'Mouse wheel') o.clickTotal += n; } else { o.keys.push({ name: r.keyName, count: n }); o.keyTotal += n; }
+    });
+  }
+  out.forEach((o) => { o.keys.sort((a, b) => b.count - a.count); o.mouse.sort((a, b) => MOUSE.indexOf(a.name) - MOUSE.indexOf(b.name)); });
+  return out;
 }
 
-module.exports = { ensure, save, stretches, summaryOf, cleanup, MIN_STRETCH, KINDS };
+async function cleanup(retentionDays) {
+  await ensure();
+  await ensureCounts();
+  const cutoff = istDay(Date.now() - Math.max(7, Number(retentionDays) || 90) * 86400000);
+  await prisma.$executeRawUnsafe('DELETE FROM "MonitoringInputFlag" WHERE "day" < ?', cutoff);
+  await prisma.$executeRawUnsafe('DELETE FROM "MonitoringKeyCount" WHERE "day" < ?', cutoff);
+}
+
+module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, MIN_STRETCH, KINDS };

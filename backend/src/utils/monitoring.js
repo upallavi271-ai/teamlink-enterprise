@@ -37,7 +37,10 @@ const WHO_OLD = 'Who can see it: HR and Admin, and you yourself (HRMS -> Employe
 const WHO_NEW = 'Who can see it: HR and Admin, your team lead or manager (their own team only), and you yourself (HRMS -> Employee Monitoring -> My activity). Every look at your activity by someone else is written in an audit log.';
 const PAUSE_LINE = 'You can pause it for a break, or clock out for the day, from the TeamLink icon next to the clock. Nothing is recorded while it is paused.';
 // agent 2.5 (founder 2026-11-11): key and click COUNTS, and the name of a key only when that one key is pressed over and over
-const INPUT_LINE = 'How much the keyboard and mouse are used: only counts per minute (key presses, clicks, mouse movement). The name of a key or button is kept only when that one key or button is pressed again and again for a long time (for example a key held down, or an auto-clicker). Which keys make up your typing is never recorded.';
+// the 2.5 words (kept to recognise a notice still in use)
+const INPUT_LINE_25 = 'How much the keyboard and mouse are used: only counts per minute (key presses, clicks, mouse movement). The name of a key or button is kept only when that one key or button is pressed again and again for a long time (for example a key held down, or an auto-clicker). Which keys make up your typing is never recorded.';
+// agent 2.6 (founder 2026-11-11: "evaru ey buttons enni times press chesthunnaro teliyali")
+const INPUT_LINE = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed in a day (for example Space, Enter, Backspace, left click). All letter keys are counted together as one number, and all number keys as one number, so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
 const POLICY_LINES = [
   'TeamLink records how this office PC is used during work hours, so that HR can see working time and idle time.',
   '',
@@ -54,6 +57,8 @@ const DEFAULT_POLICY = POLICY_LINES.join('\n');
 const FIRST_POLICY = POLICY_LINES.filter((l) => l !== PAUSE_LINE && l !== INPUT_LINE).map((l) => (l === WHO_NEW ? WHO_OLD : l)).join('\n');
 // the notice before agent 2.5 (no key / click counts): still in use -> the new words, a new version everybody accepts again
 const BEFORE_INPUT_POLICY = POLICY_LINES.filter((l) => l !== INPUT_LINE).join('\n');
+// the 2.5 notice (minutes only): still in use -> the 2.6 words, a new version
+const INPUT_25_POLICY = POLICY_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_25 : l)).join('\n');
 
 // --- time ------------------------------------------------------------------------------------------------------
 const istDay = (d) => new Date(new Date(d).getTime() + IST).toISOString().slice(0, 10);
@@ -97,7 +102,7 @@ async function accessOf(user) {
 async function settings() {
   let row = await prisma.monitoringSetting.findUnique({ where: { id: 'default' } });
   if (!row) row = await prisma.monitoringSetting.create({ data: { id: 'default', policyText: DEFAULT_POLICY } }).catch(() => null);
-  if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
+  if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY || row.policyText === INPUT_25_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
   const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: false, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
   return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshotsEnabled: false };
 }
@@ -559,6 +564,7 @@ async function overview(day, access = null) {
   const now = Date.now();
   const MI = require('./monitoringInput'); // eslint-disable-line global-require
   const repeatsOf = await MI.stretches(ids, d).catch(() => new Map());
+  const countsOfDay = await MI.countsOf(ids, d).catch(() => new Map());
   const rows = ids.map((id) => {
     const e = emps.get(id) || { id, name: 'Employee', department: null };
     const t = totalsOf(byEmp.get(id), catOf, e.department || '');
@@ -579,6 +585,8 @@ async function overview(day, access = null) {
       status, currentApp: live && dev && ['Online', 'Idle'].includes(status) ? dev.currentApp || null : null, currentTitle: live && dev && status === 'Online' ? dev.currentTitle || null : null,
       lastHeartbeat: dev ? dev.lastSeenAt : null, online: status === 'Online' || status === 'Idle',
       repeat: MI.summaryOf(repeatsOf.get(id)), // the same key / button over and over today, 10+ minutes at a time
+      keys: countsOfDay.get(id) ? countsOfDay.get(id).keyTotal : null, clicks: countsOfDay.get(id) ? countsOfDay.get(id).clickTotal : null, // agent 2.6
+      topKeys: countsOfDay.get(id) ? countsOfDay.get(id).keys.slice(0, 3).map((k) => `${k.name} ${k.count}`).join(' · ') : null,
     };
   }).sort((a, b) => b.activeHours - a.activeHours || String(a.name).localeCompare(String(b.name)));
   const withData = rows.filter((r) => r.activeHours || r.idleHours);
@@ -760,8 +768,10 @@ async function employeeDetail(employeeId, from, to) {
   const s = await settings();
   // the same key / button over and over (agent 2.5, utils/monitoringInput.js)
   const repeats = ((await require('./monitoringInput').stretches([emp.id], a, b).catch(() => new Map())).get(emp.id)) || []; // eslint-disable-line global-require
+  // how many times each key / button (agent 2.6): letter keys and number keys as one count each
+  const keyCounts = ((await require('./monitoringInput').countsOf([emp.id], a, b).catch(() => new Map())).get(emp.id)) || null; // eslint-disable-line global-require
   return {
-    employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay, repeats,
+    employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay, repeats, keyCounts,
     // the timeline of one day: one bar, active / idle / break
     timeline: a === b ? (() => {
       let left = PERSONAL_BREAK_SECONDS * 1000; // the personal break: the first 15 minutes of idle (drawn as break, like the totals)
