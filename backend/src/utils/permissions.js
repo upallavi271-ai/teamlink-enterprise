@@ -1567,6 +1567,7 @@ const STAGE_OWNERS = {
 };
 
 // The BDE TL, whatever role code the login carries. WITH_BDE: sending a profile back to the BDE.
+// Since 2026-11-11 the BDE TL may move ANY step (stepFree / ownsStage); this list stays for reading only.
 const BDE_TL_STAGES = ['WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 'CLIENT_REVIEW', 'CLIENT_SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_COMPLETED', 'SELECTED', 'OFFER', 'OFFER_ACCEPTED', 'JOINED', 'HIRED', 'REJECTED', 'HOLD'];
 const LATE_FROM_PHASE = 3; // SHARED_WITH_CLIENT on (utils/atsVocab.js STAGE_PHASE)
 const SIDE_ROLES = ['RECRUITER', 'TL', 'STL', 'BDE']; // who stops at the client
@@ -1616,6 +1617,13 @@ function stageRoleOf(user) {
 function stageGlobal(user) {
   return rolesFor(user, null).some((r) => ['SUPER_ADMIN', 'ADMIN'].includes(r)) || stageRoleOf(user) === 'ADMIN';
 }
+// THE BDE TL MOVES ANY STEP, ANY TIME (founder 2026-11-11: "bde tl ki, ey time lo ey step move chesey option ayina vundali" - the
+// existing clients were never given logins, so the BDE TL does everything). For the step OWNER and step ORDER rules the BDE TL is
+// treated like an Admin; the data checks (job not live, salary details missing, "Do not use", duplicates) still apply, and only on
+// the BDE TL's own clients (scope).
+function stepFree(user) {
+  return stageGlobal(user) || require('./scope').isBdeTl(user); // eslint-disable-line global-require
+}
 
 // Which target stages this login may move a candidate to. Access half first,
 // ownership half second — a login that fails the access half gets an empty
@@ -1642,7 +1650,7 @@ const isInterviewBooker = (user, stage, ctx = {}) => INTERVIEW_BOOKER_STAGES.inc
 const BOOKED_BY_BDE = 'Interviews are booked by the client manager (BDE). Your candidate is waiting for them.';
 
 function ownsStage(user, stage, role = stageRoleOf(user)) {
-  if (require('./scope').isBdeTl(user)) return BDE_TL_STAGES.includes(stage); // eslint-disable-line global-require
+  if (require('./scope').isBdeTl(user)) return true; // any step (stepFree, 2026-11-11); BDE_TL_STAGES was the 2026-11-06 list
   return STAGE_OWNERS[stage].includes(role);
 }
 // A candidate who reached the client is the BDE TL's: Reject and Hold by anybody else stop there (a client job; HR runs internal hiring).
@@ -2023,6 +2031,7 @@ module.exports = {
   // Super Admin / Admin (or an ADMIN-alias custom role) — exempt from the
   // stage-chain rule in routes/applications.js, as from stage ownership.
   stageGlobal,
+  stepFree,
   BOOKED_BY_BDE,
   // The ATS role stage ownership resolves against (custom roles -> their alias).
   stageRoleOf,

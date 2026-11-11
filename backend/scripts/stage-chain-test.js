@@ -53,7 +53,7 @@ const FORWARD = ['TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 
   check('Recruiter: only up to the TL', r.join() === 'TL_REVIEW', r);
   check('TL: only to the BDE (and the TL step)', t.join() === 'TL_REVIEW,WITH_BDE', t);
   check('BDE: to the BDE TL, and the interview', b.join() === 'BDE_APPROVED,INTERVIEW_SCHEDULED,INTERVIEW_COMPLETED', b);
-  check('BDE TL: to the client and everything after', d.join() === 'WITH_BDE,BDE_APPROVED,SHARED_WITH_CLIENT,CLIENT_SHORTLISTED,INTERVIEW_SCHEDULED,INTERVIEW_COMPLETED,SELECTED,JOINED', d);
+  check('BDE TL: any step (2026-11-11)', d.join() === FORWARD.join(), d);
   if (hr) { const h = await P.allowedStagesFor(hr); check('HR keeps internal hiring', ['SELECTED', 'OFFER', 'JOINED', 'INTERVIEW_SCHEDULED'].every((s) => h.includes(s)), h); }
 
   console.log('On a real client job');
@@ -129,6 +129,23 @@ const FORWARD = ['TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 
   await at('BDE_APPROVED');
   const e3 = await move('bdetl', 'WITH_BDE', { comment: 'Please fix' });
   check('the BDE TL can send a profile back to the BDE', e3.status === 200, e3.body);
+
+  console.log('The BDE TL moves any step, any time (founder 2026-11-11: clients have no logins)');
+  await at('WITH_BDE');
+  const f1 = await move('bdetl', 'SELECTED');
+  check('the BDE TL jumps from BDE review straight to Selected', f1.status === 200 && (await stageNow()) === 'SELECTED', f1.body);
+  await at('BDE_APPROVED');
+  const f2 = await move('bdetl', 'INTERVIEW_COMPLETED');
+  check('the BDE TL skips to Interview done', f2.status === 200 && (await stageNow()) === 'INTERVIEW_COMPLETED', f2.body);
+  await at('SELECTED');
+  const f3 = await move('bdetl', 'RECRUITER_REVIEW', { comment: 'Back to the start' });
+  check('the BDE TL moves a person back to any earlier step', f3.status === 200 && (await stageNow()) === 'RECRUITER_REVIEW', f3.body);
+  await at('SELECTED');
+  const f4 = await move('bdetl', 'JOINED', { joiningDate: '2026-11-10', offeredCtc: 480000, confirmCtc: true, feePercent: 8.33 });
+  check('the BDE TL marks Joined straight from Selected', f4.status === 200 && (await stageNow()) === 'JOINED', f4.body);
+  await at('RECRUITER_REVIEW');
+  check('the recruiter still cannot skip ahead', (await move('rec', 'SELECTED')).status === 403);
+  check('the BDE still cannot skip to Selected', (await move('bde', 'SELECTED')).status === 403);
 
   console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
   await stop(failed ? 1 : 0);

@@ -350,7 +350,7 @@ router.post('/interviews/:id/decision', requirePerm('ats', 'interviews', 'Interv
   // move (e2e gap 15): someone put on hold at "Check by team lead" can't be
   // marked Selected from here. Super Admin / Admin stay exempt.
   // eslint-disable-next-line global-require
-  if (app.stage === 'HOLD' && decision !== 'Rejected' && !require('../utils/permissions').stageGlobal(req.user)) {
+  if (app.stage === 'HOLD' && decision !== 'Rejected' && !require('../utils/permissions').stepFree(req.user)) {
     const parked = await prisma.applicationStageEvent.findFirst({
       where: { applicationId: app.id, toStage: 'HOLD' }, orderBy: { createdAt: 'desc' }, select: { fromStage: true },
     });

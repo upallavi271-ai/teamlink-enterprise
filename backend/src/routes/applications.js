@@ -20,7 +20,7 @@ const {
 } = require('../utils/joining');
 const { REJECTED_BY, REJECTED_BY_LABEL, stageMoveProblem } = require('../utils/atsVocab');
 // §12 stage chain + §32 who hears about a move (utils/stageEvents.js).
-const { stageGlobal } = require('../utils/permissions');
+const { stageGlobal, stepFree } = require('../utils/permissions');
 const { applicationInScope, OUT_OF_SCOPE } = require('../utils/scope');
 const { stageMoveAudience, stageMoveNotice } = require('../utils/stageEvents');
 const { hasPersonQuery, attributedApplications } = require('../utils/workers');
@@ -628,7 +628,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     });
     flowBase = (parkedAt && parkedAt.fromStage) || 'RECRUITER_REVIEW';
   }
-  if (FLOW_RANK[stage] && FLOW_RANK[stage] > (FLOW_RANK[flowBase] || 0) && !opts.viaFlow && !stageGlobal(user)) {
+  if (FLOW_RANK[stage] && FLOW_RANK[stage] > (FLOW_RANK[flowBase] || 0) && !opts.viaFlow && !stepFree(user)) {
     const who = existing.candidate ? existing.candidate.name : 'This person';
     const why = {
       OFFER: `An offer is made with "Prepare offer" on ${who}'s profile (or the Offers screen). The TL approves it and it is sent to the candidate — "Move step" can't skip that.`,
@@ -700,7 +700,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
     && !require('../utils/scope').scopeOf(user).global) { // eslint-disable-line global-require
     const sharedBefore = await prisma.applicationStageEvent.count({ where: { applicationId: existing.id, toStage: { in: ['SHARED_WITH_CLIENT', 'CLIENT_REVIEW'] } } });
     if (!sharedBefore) {
-      if (existing.stage !== 'BDE_APPROVED') {
+      if (existing.stage !== 'BDE_APPROVED' && !require('../utils/scope').isBdeTl(user)) { // eslint-disable-line global-require
         return { status: 409, body: { code: 'BDE_TL_CHECK', error: 'Every profile is checked by the BDE TL before it goes to the client. Approve it in BDE review: it goes to the BDE TL, who sends it to the client.' } };
       }
       if (!require('../utils/scope').isBdeTl(user)) { // eslint-disable-line global-require
@@ -754,7 +754,7 @@ async function applyStageMove(user, applicationId, body = {}, opts = {}) {
 
   // §12 THE CHAIN: forward at most one phase (utils/atsVocab.js
   // stageMoveProblem). Super Admin / Admin are exempt, for data correction.
-  if (!stageGlobal(user)) {
+  if (!stepFree(user)) { // the BDE TL too (any step, any time: 2026-11-11)
     let resumeFrom = null;
     if (['HOLD', 'REJECTED'].includes(existing.stage)) {
       const parked = await prisma.applicationStageEvent.findFirst({
