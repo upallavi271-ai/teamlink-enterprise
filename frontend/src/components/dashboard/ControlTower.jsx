@@ -1,7 +1,40 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import DrillExport, { useDrillRight } from '../DrillExport.jsx';
+import { V3_WIDGETS } from './AtsHomeV3.jsx';
+import HomeDrill from './HomeDrill.jsx';
 import './controlTower.css';
+
+// JOININGS, DROPS & REPLACEMENTS ON THE CONTROL TOWER (founder 2026-11-11: "joining list, dropped, replacement list dashboard meedha
+// anipinchali - for super admin"): the same two sections as the ATS dashboard (utils/atsHome.js dropsWidget + monthsWidget, company-wide
+// for a Super Admin / Admin), and every number opens its list of names in the same details panel.
+const ATS_LIST_URL = '/dashboard/ats/home/list';
+function JoinDrops() {
+  const [ws, setWs] = useState(null);
+  const [err, setErr] = useState('');
+  const [setId, setSetId] = useState(null);
+  useEffect(() => {
+    let off = false;
+    api.get('/dashboard/ats/home').then((r) => {
+      if (off) return;
+      const all = (r.data && r.data.widgets) || [];
+      setWs(['drops', 'drops-months'].map((id) => all.find((w) => w.id === id)).filter(Boolean));
+    }).catch((e) => { if (!off) setErr(e.response?.data?.error || 'Joinings, drops and replacements could not be loaded.'); });
+    return () => { off = true; };
+  }, []);
+  if (err) return <div className="notice red" style={{ marginBottom: 12 }}><span>{err}</span></div>;
+  if (!ws) return <div className="ct-card ct-jd-loading">Loading joinings, drops and replacements…</div>;
+  if (!ws.length) return null;
+  return (
+    <div className="ct-jd ahome">
+      {ws.map((w) => {
+        const Draw = V3_WIDGETS[w.type];
+        return Draw ? <div key={w.id} className="ct-jd-box"><Draw w={w} onDrill={(id) => id && setSetId(id)} /></div> : null;
+      })}
+      {setId && <HomeDrill listUrl={ATS_LIST_URL} params={{}} setId={setId} onClose={() => setSetId(null)} />}
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // THE 360° CONTROL TOWER (founder, 2026-10-23): the Super Admin / Admin home. ONE server call (GET /api/dashboard/control-tower, utils/controlTower.js).
@@ -275,6 +308,8 @@ export default function ControlTower() {
       {error && <div className="notice red" style={{ marginBottom: 8 }}><span>{error} (showing the last figures)</span></div>}
 
       <div className="ct-kpis">{d.kpis.map((k) => <Tile key={k.key} k={k} onShow={show} />)}</div>
+
+      <JoinDrops />
 
       <div className="ct-grid2">
         <div className="ct-col">

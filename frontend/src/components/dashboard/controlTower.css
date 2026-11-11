@@ -104,3 +104,6 @@ button.ct-issue:hover { background: #f5f7fd; }
    a big screen. It now uses the width like the other wide pages (Employee Monitoring, CRM), and the KPI row and two-column grid
    share it. Small screens are unchanged (the media rules above). */
 main:has(.ct){max-width:1680px}
+.ct-jd{display:grid;gap:12px;margin:0 0 14px}
+.ct-jd-box > *{margin:0}
+.ct-jd-loading{padding:14px;color:var(--ct-soft,#6b7280);margin:0 0 14px}
