@@ -138,7 +138,8 @@ function postJson(url, payload, timeoutMs) {
 }
 
 // the voice of a live AI call comes first: the model waits for the calls to end (at most OLLAMA_WAIT_FOR_CALLS_MS, default 2 min) and uses only part of the cores
-const modelThreads = () => Math.max(1, Number(process.env.OLLAMA_NUM_THREAD) || Math.floor(require('os').cpus().length / 2)); // eslint-disable-line global-require
+// 3 of 4 cores (was 2): measured on this server, 2 threads read ~35 prompt tokens a second and 3 about 50, and the model already waits for live calls to end (whenQuiet)
+const modelThreads = () => Math.max(1, Number(process.env.OLLAMA_NUM_THREAD) || Math.max(2, require('os').cpus().length - 1)); // eslint-disable-line global-require
 
 async function ollamaChat(systemPrompt, history, { json = false, model: wanted = null, timeoutMs = null } = {}) {
   const model = wanted || ollamaModel();

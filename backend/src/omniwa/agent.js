@@ -25,7 +25,8 @@ const delivery = require('../utils/messageDelivery');
 const AI_NAME = 'AI assistant';
 // founder 2026-11-05: replies took a minute. Each model step costs 5-15 s on this server, so at most 3, and one that hangs gives way to the fallback.
 const MAX_STEPS = 3;
-const MODEL_TIMEOUT_MS = 45000;
+// the local model reads about 35-70 prompt tokens a second on this CPU and the agent's prompt is ~2000 tokens: 45 s made most turns fail
+const MODEL_TIMEOUT_MS = Number(process.env.WA_AI_TIMEOUT_MS) >= 10000 ? Number(process.env.WA_AI_TIMEOUT_MS) : 120000;
 const FALLBACK_GAP_MS = 12 * 3600000;
 const clip = (v, n) => S.clip(v, n);
 // founder 2026-11-05: nobody should press a button each time. A chat the AI passed on because it had no answer comes back to it with the person's next message.
@@ -484,12 +485,14 @@ async function runTurn(row, defaults, now = Date.now()) {
   const input = waiting.map((m) => m.body).filter(Boolean).join('\n');
   const stamp = (outcome, extra = {}) => log(conv, { input, outcome, ...extra });
 
-  if (!cfg.enabled) return { skipped: 'off' };
+  // a turn that stops here used to leave no trace at all: it is written to the AI log now (outcome skipped_<why>)
+  const skip = async (why, shown) => { await stamp(`skipped_${why}`, { output: shown || null }).catch(() => {}); return { skipped: why }; };
+  if (!cfg.enabled) return skip('off');
   // a number with the AI off still gets the AI in a chat a Bot Builder bot handed to it, for a day (omniwa/gsBot.js take)
-  if (cfg.numberOff && !(Number(JSON.parse(conv.collected || '{}').aiByBotUntil) > now)) return { skipped: 'number_off' };
+  if (cfg.numberOff && !(Number(JSON.parse(conv.collected || '{}').aiByBotUntil) > now)) return skip('number_off');
   // a business lead in a CRM sales talk: the CRM's AI sales assistant answers it (crm/salesAgent.js), not this recruitment agent
-  if (await require('../crm/salesAgent').handles(conv.e164).catch(() => false)) return { skipped: 'crm_sales' }; // eslint-disable-line global-require
-  if (cfg.testNumbers.length && !cfg.testNumbers.includes(conv.e164)) return { skipped: 'not_a_test_number' };
+  if (await require('../crm/salesAgent').handles(conv.e164).catch(() => false)) return skip('crm_sales', 'An open CRM lead: the CRM sales assistant answers, not this agent.'); // eslint-disable-line global-require
+  if (cfg.testNumbers.length && !cfg.testNumbers.includes(conv.e164)) return skip('not_a_test_number');
   // somebody who said no and writes again ("Yes", a question) is talking again; "bye" / "thanks" ends it; STOP is the isBlocked check below
   if (conv.mode === 'ai' && ((conv.state === 'needs_human' && !STAYS_WITH_PEOPLE.test(conv.handoffReason || '')) || (conv.state === 'not_interested' && !T.isClosing(input)))) {
     await S.run('UPDATE "OmniWaConv" SET state = \'active\', handoffReason = NULL, updatedAt = ? WHERE id = ?', now, conv.id);
@@ -503,8 +506,8 @@ async function runTurn(row, defaults, now = Date.now()) {
       Object.assign(conv, { mode: 'ai', state: conv.state === 'stopped' ? 'stopped' : 'active', pausedByName: null, aiTurns: 0 });
     }
   }
-  if (conv.mode !== 'ai' || conv.state !== 'active') return { skipped: conv.state };
-  if (await isBlocked(conv.e164)) return { skipped: 'stopped' };
+  if (conv.mode !== 'ai' || conv.state !== 'active') return skip(`${conv.mode}_${conv.state}`, `mode ${conv.mode}, state ${conv.state}`);
+  if (await isBlocked(conv.e164)) return skip('stopped', 'This number asked to stop (or is on a stop list).');
   const human = await humanSentSince(conv);
   if (human) { await pause(conv, human.senderName, now); await stamp('paused', { output: `${human.senderName || 'A recruiter'} is answering this chat.` }); return { skipped: 'human' }; }
   const ongoing = !!conv.aiStartedAt;
@@ -619,11 +622,36 @@ async function tick(now = Date.now(), { force = false } = {}) {
   } finally { busy = false; }
 }
 
+// A restart (an update, a crash) in the middle of a turn: tick() had set runningAt and runTurn had marked the person's messages consumed, so the answer was
+// lost for good. At start, a turn that was running in the last 30 minutes and has no answer after it is asked again (at most twice per chat).
+async function recoverInterrupted(now = Date.now()) {
+  await ensure();
+  const rows = await S.q('SELECT id, runningAt, collected FROM "OmniWaConv" WHERE runningAt IS NOT NULL');
+  const out = [];
+  for (const r of rows) {
+    const at = Number(r.runningAt);
+    await S.run('UPDATE "OmniWaConv" SET runningAt = NULL WHERE id = ?', r.id); // eslint-disable-line no-await-in-loop
+    if (!(at > now - 30 * 60000)) { out.push({ id: r.id, recovered: false, why: 'too old' }); continue; }
+    const mem = (() => { try { return JSON.parse(r.collected || '{}'); } catch { return {}; } })();
+    const tries = Number(mem.interruptedRetries) || 0;
+    if (tries >= 2) { out.push({ id: r.id, recovered: false, why: 'tried twice already' }); continue; }
+    const answered = (await S.q('SELECT 1 AS x FROM "OmniWaMessage" WHERE convId = ? AND direction = \'OUT\' AND at >= ? LIMIT 1', r.id, at)).length; // eslint-disable-line no-await-in-loop
+    const ranLogged = (await S.q('SELECT 1 AS x FROM "OmniWaAiRun" WHERE convId = ? AND at >= ? LIMIT 1', r.id, at)).length; // eslint-disable-line no-await-in-loop
+    if (answered || ranLogged) { out.push({ id: r.id, recovered: false, why: 'it was answered' }); continue; }
+    await S.run('UPDATE "OmniWaMessage" SET consumedAt = NULL WHERE convId = ? AND direction = \'IN\' AND consumedAt = ?', r.id, at); // eslint-disable-line no-await-in-loop
+    await S.run('UPDATE "OmniWaConv" SET pendingAt = ?, collected = ? WHERE id = ?', now, JSON.stringify({ ...mem, interruptedRetries: tries + 1 }), r.id); // eslint-disable-line no-await-in-loop
+    out.push({ id: r.id, recovered: true });
+  }
+  if (out.some((o) => o.recovered)) console.log(`[omni-wa] ${out.filter((o) => o.recovered).length} interrupted turn(s) will be answered now`); // eslint-disable-line no-console
+  return out;
+}
+
 let timer = null;
 function start() {
   if (timer || process.env.NODE_ENV === 'test' || require('../utils/sandbox').isSandbox()) return; // eslint-disable-line global-require
+  setTimeout(() => { recoverInterrupted().catch((e) => console.error('[omni-wa] recover:', e && e.message)); }, 3000).unref(); // eslint-disable-line no-console
   timer = setInterval(() => { tick().catch((e) => console.error('[omni-wa] tick:', e && e.message)); }, 1000); // eslint-disable-line no-console
   if (timer.unref) timer.unref();
 }
 
-module.exports = { blockState, unblock, onInbound, tick, start, runTurn, sendText, pause, resume, noteHumanSend, ownsChat, optOut, convOf, isBlocked, windowOpen, handoff, AI_NAME, parseMeta };
+module.exports = { blockState, unblock, onInbound, tick, start, recoverInterrupted, runTurn, sendText, pause, resume, noteHumanSend, ownsChat, optOut, convOf, isBlocked, windowOpen, handoff, AI_NAME, parseMeta };
