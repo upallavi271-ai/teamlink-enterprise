@@ -952,11 +952,20 @@ function EditOwner({ app, ownership, onClose, onDone }) {
   const [why, setWhy] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [dept, setDept] = useState('');
+  // only the people of the candidate's own department (founder 2026-11-11: "ey dep vallaki ahh dept valaley kanipinchali"):
+  // ?forJobs=<the job> keeps the job's department(s) only (routes/requirements.js, the bulk Assign rule)
   useEffect(() => {
-    api.get('/requirements/assignable-people')
-      .then((r) => setPeople((r.data || []).filter((p) => p.atsRole === 'RECRUITER')))
+    const jobId = app && (app.requirementId || (app.requirement && app.requirement.id));
+    api.get('/requirements/assignable-people', { params: jobId ? { forJobs: jobId } : {} })
+      .then((r) => {
+        const list = Array.isArray(r.data) ? r.data : ((r.data && r.data.people) || []);
+        setPeople(list.filter((p) => p.atsRole === 'RECRUITER'));
+        const ds = (r.data && r.data.departments) || [];
+        setDept(ds.map((d) => d.name).filter(Boolean).join(' / '));
+      })
       .catch(() => setPeople([]));
-  }, []);
+  }, [app]);
   async function save() {
     if (!pick) { setErr('Choose the right recruiter.'); return; }
     if (why.trim().length < 3) { setErr('Say in a few words why it is changed.'); return; }
@@ -998,7 +1007,7 @@ function EditOwner({ app, ownership, onClose, onDone }) {
         <span>Why (kept on the history)</span>
         <input type="text" value={why} maxLength={300} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Sourced by Kavya, wrongly shown under Sneha" />
       </label>
-      <div className="small-muted">The team lead and section follow the recruiter&apos;s seat. The earlier name keeps no credit for this profile.</div>
+      <div className="small-muted">{`${dept ? `Only ${dept} people are offered. ` : ''}The team lead and section follow the recruiter's seat. The earlier name keeps no credit for this profile.`}</div>
       {err && <div className="notice red" style={{ marginTop: 8 }}>{err}</div>}
     </Modal>
   );
