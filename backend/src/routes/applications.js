@@ -1131,6 +1131,10 @@ router.post('/bulk', async (req, res, next) => {
         if (!inTeam && !depts.some((d) => s.departments.includes(d))) {
           return res.status(403).json({ error: `${target.name} is outside your team, so work cannot be assigned to them.` });
         }
+        // Education Team A / Team B (utils/eduTeams.js, 2026-11-11): never to the other team
+        if (s.eduTeam && (s.eduTeam.otherUserIds || []).includes(target.id)) {
+          return res.status(403).json({ error: `${target.name} is in the other Education team, so work cannot be assigned to them.` });
+        }
       }
       targetSeat = await stampFor(target, 'owner');
     }
@@ -1199,11 +1203,16 @@ router.post('/bulk', async (req, res, next) => {
       }
 
       // --- assign -----------------------------------------------------------
+      // A CORRECTION (founder 2026-11-11, the TL's Edit on "Who is on this": "okari profiles okariki shift avuthunnayi"): the
+      // recruiter on file was wrong. The right one becomes the owner even of a Joined / Hired candidate, the wrong one keeps no
+      // credit (no handover), and a joined person gets no new task - only a closed note saying who corrected it.
+      const correct = b.correct === true;
+      const settled = ['JOINED', 'HIRED'].includes(app.stage);
       // eslint-disable-next-line no-await-in-loop
       const open = await prisma.applicationFollowUp.findFirst({
         where: { applicationId: app.id, completedAt: null }, orderBy: { createdAt: 'desc' },
       });
-      if (open && open.ownerUserId === target.id) {
+      if (open && open.ownerUserId === target.id && (!correct || app.ownerRecruiterId === target.id)) {
         results.push({ ...base, ok: false, skipped: true, error: `Already with ${target.name}` });
         continue;
       }
@@ -1211,7 +1220,7 @@ router.post('/bulk', async (req, res, next) => {
         // eslint-disable-next-line no-await-in-loop
         await prisma.applicationFollowUp.update({
           where: { id: open.id },
-          data: { completedAt: new Date(), completedById: user.id, completedNote: `Reassigned to ${target.name} by ${user.name}.` },
+          data: { completedAt: new Date(), completedById: user.id, completedNote: `${correct ? 'Recruiter corrected' : 'Reassigned'} to ${target.name} by ${user.name}.` },
         });
       }
       // eslint-disable-next-line no-await-in-loop
@@ -1232,15 +1241,16 @@ router.post('/bulk', async (req, res, next) => {
           dueDate: (open && open.dueDate) || defaultDueDate(app),
           dueTime: (open && open.dueTime) || null,
           purpose: (open && open.purpose) || null,
-          notes: `Assigned to ${target.name} by ${user.name}${b.comment ? ` — ${String(b.comment).slice(0, 500)}` : ''}`,
+          notes: `${correct ? 'Recruiter corrected' : 'Assigned'} to ${target.name} by ${user.name}${b.comment ? ` — ${String(b.comment).slice(0, 500)}` : ''}`,
           createdById: user.id,
           createdByName: user.name,
+          ...(correct && settled ? { completedAt: new Date(), completedById: user.id, completedNote: 'Recruiter corrected (the candidate has joined: nothing to do)' } : {}),
         },
       });
       // eslint-disable-next-line no-await-in-loop
       await logAudit({
         userId: user.id,
-        action: 'Candidate assigned to recruiter',
+        action: correct ? 'Candidate recruiter corrected' : 'Candidate assigned to recruiter',
         entity: 'Application',
         entityId: app.id,
         fromValue: open ? open.ownerName || '—' : '—',
@@ -1252,10 +1262,10 @@ router.post('/bulk', async (req, res, next) => {
       const r = app.requirement || {};
       let onRequirement = r.recruiterId === target.id || String(r.recruiterIds || '').split(',').includes(target.id)
         || r.tlId === target.id || r.stlId === target.id;
-      if (target.atsRole === 'RECRUITER' && !['JOINED', 'HIRED'].includes(app.stage)) {
+      if (target.atsRole === 'RECRUITER' && (correct || !settled)) {
         // a change of owner is a handover: who had them before is recorded, so their earlier work keeps its credit (utils/handover.js);
         // a Joined / Hired candidate stays with who placed them
-        if (app.ownerRecruiterId && app.ownerRecruiterId !== target.id) {
+        if (!correct && app.ownerRecruiterId && app.ownerRecruiterId !== target.id) {
           // eslint-disable-next-line no-await-in-loop
           const was = await prisma.user.findUnique({ where: { id: app.ownerRecruiterId }, select: { name: true } }).catch(() => null);
           // eslint-disable-next-line no-await-in-loop, global-require

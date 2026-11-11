@@ -153,6 +153,8 @@ export default function CandidateDrawer({
                   <CurrentApplication
                     app={app}
                     ownership={c.ownership}
+                    user={user}
+                    onChanged={changed}
                     clientName={clientOf(app)}
                     linkTo={(a) => <Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link>}
                   />

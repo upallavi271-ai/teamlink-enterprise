@@ -513,6 +513,8 @@ export default function CandidateDetail() {
           <CurrentApplication
             app={primary}
             ownership={c.ownership}
+            user={user}
+            onChanged={load}
             clientName={primary ? (primary.requirement?.internal ? 'TeamLink Internal' : primary.requirement?.client?.name) : null}
             linkTo={(a) => <Link to={`/requirements/${a.requirementId}`}>{a.requirement?.title || '—'}</Link>}
           />

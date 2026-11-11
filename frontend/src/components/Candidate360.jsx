@@ -942,9 +942,74 @@ function PrepareOfferDialog({
 }
 
 // "Current application" facts, shared by both views.
+// THE TL CORRECTS WHO IS ON A PROFILE (founder 2026-11-11: "ikkada tl ki edit option vundali, okari profiles okariki shift
+// avuthunnayi"): Edit beside "Who is on this" -> pick the right recruiter (only the TL's own team is offered and accepted) and say why.
+// POST /applications/bulk { action: 'assign', correct: true }: the right recruiter becomes the owner (even of a joined candidate),
+// the wrong one keeps no credit, it is on the history; Team lead and Section follow the recruiter's seat.
+function EditOwner({ app, ownership, onClose, onDone }) {
+  const [people, setPeople] = useState(null);
+  const [pick, setPick] = useState('');
+  const [why, setWhy] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    api.get('/requirements/assignable-people')
+      .then((r) => setPeople((r.data || []).filter((p) => p.atsRole === 'RECRUITER')))
+      .catch(() => setPeople([]));
+  }, []);
+  async function save() {
+    if (!pick) { setErr('Choose the right recruiter.'); return; }
+    if (why.trim().length < 3) { setErr('Say in a few words why it is changed.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post('/applications/bulk', { action: 'assign', correct: true, applicationIds: [app.id], recruiterId: pick, comment: why.trim() });
+      const row = (r.data && r.data.results && r.data.results[0]) || null;
+      if (row && !row.ok) { setErr(row.error || 'Not changed.'); setBusy(false); return; }
+      onDone(row && row.note ? row.note : null);
+    } catch (e) {
+      setErr((e.response && e.response.data && e.response.data.error) || 'Could not change it. Try again.');
+      setBusy(false);
+    }
+  }
+  return (
+    <Modal
+      title="Change the recruiter"
+      onClose={onClose}
+      footer={(
+        <>
+          <button type="button" className="btn" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="button" className="btn btn-primary" onClick={save} disabled={busy || !pick}>{busy ? 'Saving…' : 'Save'}</button>
+        </>
+      )}
+    >
+      <div className="small-muted" style={{ marginBottom: 10 }}>
+        {`Now: ${ownership && ownership.recruiter ? ownership.recruiter : 'nobody'}${ownership && ownership.positionCode ? ` (${ownership.positionCode})` : ''}${ownership && ownership.tl ? ` · Team lead ${ownership.tl}` : ''}`}
+      </div>
+      <label className="field">
+        <span>The right recruiter</span>
+        <Combo value={pick} onChange={(e) => setPick(e.target.value)}>
+          <option value="">{people === null ? 'Loading…' : 'Choose…'}</option>
+          {(people || []).map((p) => (
+            <option key={p.id} value={p.id}>{`${p.name}${p.seat ? ` · ${p.seat.code || p.seat}` : ''}${p.atsDepartment ? ` · ${p.atsDepartment}` : ''}`}</option>
+          ))}
+        </Combo>
+      </label>
+      <label className="field">
+        <span>Why (kept on the history)</span>
+        <input type="text" value={why} maxLength={300} onChange={(e) => setWhy(e.target.value)} placeholder="e.g. Sourced by Kavya, wrongly shown under Sneha" />
+      </label>
+      <div className="small-muted">The team lead and section follow the recruiter&apos;s seat. The earlier name keeps no credit for this profile.</div>
+      {err && <div className="notice red" style={{ marginTop: 8 }}>{err}</div>}
+    </Modal>
+  );
+}
+
 export function CurrentApplication({
-  app, ownership, clientName, linkTo,
+  app, ownership, clientName, linkTo, user = null, onChanged = null,
 }) {
+  const [editing, setEditing] = useState(false);
+  const [note, setNote] = useState('');
+  const mayEdit = !!(user && onChanged && app && app.id && can(user, 'ats', 'recruiterbde', 'Team View', 'assign'));
   if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
   const fu = app.followUp;
   return (
@@ -962,9 +1027,21 @@ export function CurrentApplication({
       </div>
       {ownership && (
         <>
-          <div className="c360-sub">Who is on this</div>
+          <div className="c360-sub">
+            Who is on this
+            {mayEdit && <button type="button" className="link-btn" style={{ marginLeft: 8, fontSize: 11.5 }} onClick={() => { setNote(''); setEditing(true); }}>Edit</button>}
+          </div>
           <OwnershipGrid o={ownership} compact />
+          {note && <div className="small-muted" style={{ marginTop: 6 }}>{note}</div>}
         </>
+      )}
+      {editing && (
+        <EditOwner
+          app={app}
+          ownership={ownership}
+          onClose={() => setEditing(false)}
+          onDone={(n) => { setEditing(false); setNote(n || 'Recruiter changed.'); onChanged(); }}
+        />
       )}
     </>
   );
