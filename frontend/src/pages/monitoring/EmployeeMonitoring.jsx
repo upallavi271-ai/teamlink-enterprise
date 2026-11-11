@@ -700,6 +700,8 @@ export function EmployeeDetail({ id, onBack, own = false }) {
 const NOT_SHOWN = 'Not shown (the app does not say)';
 function AppWork({ app, who, range, total, onClose }) {
   const done = app.done || [];
+  const [openRow, setOpenRow] = useState({}); // the rows opened to their details
+  const toggle = (k) => setOpenRow((o) => ({ ...o, [k]: !o[k] }));
   const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : (done.length ? 'done' : 'items'));
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
@@ -741,32 +743,56 @@ function AppWork({ app, who, range, total, onClose }) {
             <table className="mon-table">
               <thead><tr><th>Area</th><th>What was done</th><th className="num">How many</th><th>First – last</th></tr></thead>
               <tbody>
-                {app.teamlinkWork.lines.map((x) => (
-                  <tr key={`${x.area}|${x.action}`}>
-                    <td>{x.area}</td>
-                    <td>{x.action}</td>
-                    <td className="num">{x.count}</td>
-                    <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
-                  </tr>
-                ))}
+                {app.teamlinkWork.lines.map((x) => {
+                  const k = `w|${x.area}|${x.action}`;
+                  return (
+                    <Fragment key={k}>
+                      <tr className="row-link" onClick={() => toggle(k)} title="See each one">
+                        <td>{x.area}</td>
+                        <td><span className="mon-caret">{openRow[k] ? '▾' : '▸'}</span> {x.action}{x.items && x.items[0] && x.items[0].what && !openRow[k] && <div className="small-muted mon-item">{x.items.slice(0, 2).map((i) => i.what).filter(Boolean).join(' · ')}{x.items.length > 2 ? ` · +${x.items.length - 2} more` : ''}</div>}</td>
+                        <td className="num">{x.count}</td>
+                        <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
+                      </tr>
+                      {openRow[k] && (x.items || []).map((i, n) => (
+                        <tr key={`${k}|${n}`} className="mon-sub">
+                          <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(i.at)}</td>
+                          <td colSpan={3}><b>{i.what || x.action}</b>{i.change && <span> · {i.change}</span>}{i.note && <span className="small-muted"> · {i.note}</span>}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           ) : <div className="ak-empty" style={{ padding: 16 }}>Nothing was saved in TeamLink in this period: only pages were looked at.</div>)}
           {tab === 'done' && (
             <>
-              <div className="small-muted" style={{ padding: '8px 10px 0' }}>From the window: which file, page, folder or chat was open. What was typed is never recorded.</div>
+              <div className="small-muted" style={{ padding: '8px 10px 0' }}>From the window: which file, page, folder or chat was open. Click a line to see each time it was open. What was typed is never recorded.</div>
               <table className="mon-table">
                 <thead><tr><th>Area</th><th>What was done</th><th className="num">Time</th><th className="num" title="How many separate times it was in front">How many</th><th>First – last</th></tr></thead>
                 <tbody>
-                  {done.map((x) => (
-                    <tr key={`${x.area}|${x.action}`}>
-                      <td>{x.area}</td>
-                      <td className="mon-item">{x.action}</td>
-                      <td className="num">{dur(x.seconds)}</td>
-                      <td className="num">{x.count}</td>
-                      <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
-                    </tr>
-                  ))}
+                  {done.map((x) => {
+                    const k = `d|${x.area}|${x.action}`;
+                    return (
+                      <Fragment key={k}>
+                        <tr className="row-link" onClick={() => toggle(k)} title="See each time it was open">
+                          <td>{x.area}</td>
+                          <td className="mon-item"><span className="mon-caret">{openRow[k] ? '▾' : '▸'}</span> {x.action}</td>
+                          <td className="num">{dur(x.seconds)}</td>
+                          <td className="num">{x.count}</td>
+                          <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
+                        </tr>
+                        {openRow[k] && (x.times || []).map((t, n) => (
+                          <tr key={`${k}|${n}`} className="mon-sub">
+                            <td />
+                            <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(t.start)} – {tm(t.end)}</td>
+                            <td className="num small-muted">{dur(t.seconds)}</td>
+                            <td colSpan={2} />
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </>

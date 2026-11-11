@@ -638,13 +638,17 @@ function workDone(appName, appLabel, kind, items) {
   items.forEach((x) => {
     const d = doneOf(appName, appLabel, kind, x.item);
     const k = `${d.area}|${d.action}`;
-    const y = map.get(k) || { area: d.area, action: d.action, seconds: 0, count: 0, first: x.first, last: x.last };
-    y.seconds += x.seconds; y.count += x.pieces;
+    const y = map.get(k) || { area: d.area, action: d.action, seconds: 0, count: 0, first: x.first, last: x.last, times: [] };
+    y.seconds += x.seconds; y.count += x.pieces; y.times.push(...(x.times || []));
     if (x.first < y.first) y.first = x.first;
     if (x.last > y.last) y.last = x.last;
     map.set(k, y);
   });
-  return [...map.values()].sort((p, q) => q.seconds - p.seconds).map((y) => ({ ...y, first: new Date(y.first), last: new Date(y.last) }));
+  // WHEN, IN DETAIL (founder 2026-11-11: "what was done inka clear ga, in detail ga vundali"): every stretch it was open, from - to
+  return [...map.values()].sort((p, q) => q.seconds - p.seconds).map((y) => ({
+    ...y, first: new Date(y.first), last: new Date(y.last),
+    times: y.times.sort((p, q) => p.start - q.start).slice(0, 60).map((t) => ({ start: new Date(t.start), end: new Date(t.end), seconds: Math.round(t.seconds) })),
+  }));
 }
 // The saves a person made in TeamLink in a period, from the audit history: one line per kind of work, with how many and when.
 const ENTITY_WORD = { Application: 'Candidate pipeline', Candidate: 'Candidates', Requirement: 'Requirements', Client: 'Clients', Task: 'Tasks', FollowUp: 'Follow-ups', Interview: 'Interviews', Employee: 'Employees', LeaveRequest: 'Leave', User: 'Sign-in', AttendancePunch: 'Attendance' };
@@ -653,14 +657,42 @@ async function teamlinkWorkOf(employeeId, a, b) {
   if (!emp || !emp.userId) return { lines: [], total: 0 };
   const rows = await prisma.auditLog.findMany({
     where: { userId: emp.userId, createdAt: { gte: atIst(a, '00:00'), lt: atIst(addDays(b, 1), '00:00') } },
-    orderBy: { createdAt: 'asc' }, take: 5000, select: { entity: true, action: true, createdAt: true },
+    orderBy: { createdAt: 'asc' }, take: 5000, select: { entity: true, action: true, createdAt: true, entityId: true, fromValue: true, toValue: true, fieldLabel: true },
   });
+  // WHAT EXACTLY (founder 2026-11-11: "what was done inka clear ga, in detail ga vundali"): the task's name, the candidate and the job,
+  // the requirement, the client, the employee - and the change itself (Screening -> Sent to client), for every save
+  const ids = (ent) => [...new Set(rows.filter((r) => r.entity === ent && r.entityId).map((r) => r.entityId))];
+  const pick = (p) => p.catch(() => []);
+  const [tasks, apps, cands, reqs, clients, emps] = await Promise.all([
+    pick(prisma.task.findMany({ where: { id: { in: ids('Task') } }, select: { id: true, name: true } })),
+    pick(prisma.application.findMany({ where: { id: { in: ids('Application') } }, select: { id: true, candidate: { select: { name: true } }, requirement: { select: { title: true } } } })),
+    pick(prisma.candidate.findMany({ where: { id: { in: ids('Candidate') } }, select: { id: true, name: true } })),
+    pick(prisma.requirement.findMany({ where: { id: { in: ids('Requirement') } }, select: { id: true, title: true } })),
+    pick(prisma.client.findMany({ where: { id: { in: ids('Client') } }, select: { id: true, name: true } })),
+    pick(prisma.employee.findMany({ where: { id: { in: ids('Employee') } }, select: { id: true, name: true } })),
+  ]);
+  const NAME = new Map([
+    ...tasks.map((x) => [`Task|${x.id}`, x.name]),
+    ...apps.map((x) => [`Application|${x.id}`, [x.candidate && x.candidate.name, x.requirement && x.requirement.title].filter(Boolean).join(' · ')]),
+    ...cands.map((x) => [`Candidate|${x.id}`, x.name]), ...reqs.map((x) => [`Requirement|${x.id}`, x.title]),
+    ...clients.map((x) => [`Client|${x.id}`, x.name]), ...emps.map((x) => [`Employee|${x.id}`, x.name]),
+  ]);
+  const STAGE = require('./atsVocab').STAGE_LABELS || {}; // eslint-disable-line global-require
+  const word = (v) => { const t = String(v == null ? '' : v).trim(); return STAGE[t] || t; };
   const map = new Map();
   rows.forEach((r) => {
-    const action = String(r.action || '').replace(/\s*\(.*$/, '').trim().slice(0, 120) || 'Saved';
+    const full = String(r.action || '').trim();
+    const action = full.replace(/\s*\(.*$/, '').trim().slice(0, 120) || 'Saved';
     const k = `${r.entity}|${action}`;
-    const x = map.get(k) || { area: ENTITY_WORD[r.entity] || String(r.entity || 'Other').replace(/([a-z])([A-Z])/g, '$1 $2'), action, count: 0, first: r.createdAt, last: r.createdAt };
+    const x = map.get(k) || { area: ENTITY_WORD[r.entity] || String(r.entity || 'Other').replace(/([a-z])([A-Z])/g, '$1 $2'), action, count: 0, first: r.createdAt, last: r.createdAt, items: [] };
     x.count += 1; x.last = r.createdAt;
+    if (x.items.length < 100) {
+      const from = word(r.fromValue); const to = word(r.toValue);
+      // eslint-disable-next-line no-nested-ternary
+      const change = from && to ? `${from} → ${to}` : to ? `${r.fieldLabel ? `${r.fieldLabel}: ` : ''}${to}` : '';
+      const note = full.length > action.length ? full.slice(action.length).replace(/^\s*\(|\)\s*$/g, '').trim() : '';
+      x.items.push({ at: r.createdAt, what: (NAME.get(`${r.entity}|${r.entityId}`) || '').slice(0, 140), change: change.slice(0, 200), note: note.slice(0, 160) });
+    }
     map.set(k, x);
   });
   return { total: rows.length, lines: [...map.values()].sort((x, y) => y.count - x.count) };
@@ -693,8 +725,10 @@ async function employeeDetail(employeeId, from, to) {
     const item = itemOf(shown, c.label);
     const st = new Date(l.startTime).getTime(); const en = new Date(l.endTime).getTime();
     if (!u.appName) u.appName = l.appName;
-    const it = u.items.get(item) || { item, seconds: 0, first: st, last: en, pieces: 0 };
+    const it = u.items.get(item) || { item, seconds: 0, first: st, last: en, pieces: 0, times: [] };
     it.seconds += l.durationSeconds; it.first = Math.min(it.first, st); it.last = Math.max(it.last, en); it.pieces += 1;
+    const lastT = it.times[it.times.length - 1];
+    if (lastT && st - lastT.end <= SITTING_GAP_MS) { lastT.end = Math.max(lastT.end, en); lastT.seconds += l.durationSeconds; } else it.times.push({ start: st, end: en, seconds: l.durationSeconds });
     u.items.set(item, it);
     const prev = u.sittings[u.sittings.length - 1];
     if (prev && st - prev.end <= SITTING_GAP_MS) { prev.end = Math.max(prev.end, en); prev.seconds += l.durationSeconds; prev.items.set(item, (prev.items.get(item) || 0) + l.durationSeconds); } else u.sittings.push({ start: st, end: en, seconds: l.durationSeconds, items: new Map([[item, l.durationSeconds]]) });
