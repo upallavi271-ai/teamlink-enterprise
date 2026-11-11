@@ -4,6 +4,9 @@
   What it records, and nothing else:
     * the name of the app in front (chrome, excel ...) and its window title,
     * whether the PC is in use or idle (no mouse / keyboard for the idle minutes HR set),
+    * (2.5) how much the keyboard and mouse are used, as counts per minute - and ONLY when one single key or button makes up
+      nearly all of a minute (a key held down, an auto-clicker, a mouse mover), that one key's name. Never which keys make up
+      the typing, so nothing typed can be rebuilt. Only the flagged minutes leave the PC.
   and only during work hours (HR sets them; the server throws away anything outside).
   It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
 
@@ -22,7 +25,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.4'
+$AgentVersion = '2.5'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -60,6 +63,86 @@ public static class TLWin {
   }
 }
 '@
+
+# ---------------------------------------------------------------- KEYS AND CLICKS, COUNTED (agent 2.5, founder 2026-11-11: "ekkuva sepu ey
+# button use chesthunnaro kuda teliyali... constant ga"). Windows' raw input (the way games read the keyboard), on a hidden window of
+# this agent: per minute, how many key presses, clicks, wheel turns and mouse moves, which single key was pressed most, and how much
+# came from a program instead of a real keyboard / mouse (auto-clickers, mouse-mover apps, remote control). No order of keys is kept.
+# a PC where this cannot be built still records apps and idle time as before: only the counting is off (written in the agent's diary)
+try {
+Add-Type -ReferencedAssemblies System.Windows.Forms -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+public class TLInput : NativeWindow {
+  [StructLayout(LayoutKind.Sequential)] struct RAWINPUTDEVICE { public ushort UsagePage; public ushort Usage; public uint Flags; public IntPtr Target; }
+  [DllImport("user32.dll", SetLastError = true)] static extern bool RegisterRawInputDevices(RAWINPUTDEVICE[] d, uint n, uint size);
+  [DllImport("user32.dll")] static extern uint GetRawInputData(IntPtr h, uint cmd, byte[] data, ref uint size, uint headerSize);
+  static TLInput me;
+  static readonly object gate = new object();
+  static int[] keys = new int[256];
+  static int keyTotal, clicks, left, right, middle, wheel, moves, injected;
+  static long px, py, minX, maxX, minY, maxY;
+  public static bool Started;
+  public static bool Start() {
+    if (me != null) return Started;
+    me = new TLInput();
+    me.CreateHandle(new CreateParams());   // never shown
+    var d = new RAWINPUTDEVICE[2];
+    d[0].UsagePage = 1; d[0].Usage = 6; d[0].Flags = 0x100; d[0].Target = me.Handle;   // keyboard, also when another app is in front
+    d[1].UsagePage = 1; d[1].Usage = 2; d[1].Flags = 0x100; d[1].Target = me.Handle;   // mouse
+    Started = RegisterRawInputDevices(d, 2, (uint)Marshal.SizeOf(typeof(RAWINPUTDEVICE)));
+    Reset();
+    return Started;
+  }
+  static void Reset() { Array.Clear(keys, 0, 256); keyTotal = clicks = left = right = middle = wheel = moves = injected = 0; px = py = minX = maxX = minY = maxY = 0; }
+  protected override void WndProc(ref Message m) {
+    if (m.Msg == 0x00FF) { try { Read(m.LParam); } catch { } }
+    base.WndProc(ref m);
+  }
+  static void Read(IntPtr h) {
+    int hs = 8 + 2 * IntPtr.Size;
+    uint size = 0;
+    GetRawInputData(h, 0x10000003, null, ref size, (uint)hs);
+    if (size == 0 || size > 2048) return;
+    var b = new byte[size];
+    if (GetRawInputData(h, 0x10000003, b, ref size, (uint)hs) != size) return;
+    uint type = BitConverter.ToUInt32(b, 0);
+    long dev = IntPtr.Size == 8 ? BitConverter.ToInt64(b, 8) : BitConverter.ToInt32(b, 8);
+    lock (gate) {
+      if (type == 1 && b.Length >= hs + 12) {
+        ushort vk = BitConverter.ToUInt16(b, hs + 6);
+        uint msg = BitConverter.ToUInt32(b, hs + 8);
+        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; if (dev == 0) injected++; }
+      } else if (type == 0 && b.Length >= hs + 20) {
+        ushort fl = BitConverter.ToUInt16(b, hs);
+        ushort bf = BitConverter.ToUInt16(b, hs + 4);
+        int dx = BitConverter.ToInt32(b, hs + 12), dy = BitConverter.ToInt32(b, hs + 16);
+        int c = 0;
+        if ((bf & 0x1) != 0) { left++; c++; }
+        if ((bf & 0x4) != 0) { right++; c++; }
+        if ((bf & 0x10) != 0) { middle++; c++; }
+        clicks += c;
+        if ((bf & 0xC00) != 0) wheel++;
+        bool moved = (dx != 0 || dy != 0) && (fl & 1) == 0;
+        if (moved) { moves++; px += dx; py += dy; if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py; }
+        if (dev == 0 && (c > 0 || moved)) injected++;
+      }
+    }
+  }
+  // "keys|topKey|topKeyCount|clicks|left|right|middle|wheel|moves|spanX|spanY|fromAProgram" for the minute just ended; a new one starts
+  public static string TakeMinute() {
+    lock (gate) {
+      int top = 0, topN = 0;
+      for (int i = 0; i < 256; i++) if (keys[i] > topN) { topN = keys[i]; top = i; }
+      string s = String.Join("|", new long[] { keyTotal, top, topN, clicks, left, right, middle, wheel, moves, maxX - minX, maxY - minY, injected });
+      Reset();
+      return s;
+    }
+  }
+}
+'@
+} catch { Write-Log "key and click counting is not available on this PC: $($_.Exception.Message)" }
 
 # THE KEEPER (founder 2026-11-10: "chaala mandhi laptop shutdown cheyyakunda close chesi vellipotharu, next day open chestharu - offline
 # ani vasthundhi"). A Windows task of this user starts this script with -Keeper when the PC wakes or is unlocked. It takes over ONLY
@@ -459,7 +542,50 @@ function Watch-Front {
   $r = Call-Api 'POST' '/live' @{ currentApp = $app; title = $title; idle = [bool]$idle } $script:cfg.token 5
   if ($r.status -eq 200) { $script:lastLive = $key; $script:nextLive = $now.AddSeconds(2) } else { $script:nextLive = $now.AddSeconds(30) }  # no line: try again later, quietly
 }
+# ONE MINUTE OF INPUT, LOOKED AT (agent 2.5). A minute is kept only when nearly all of it is ONE thing over and over:
+#   key       30+ key presses and one key is 85%+ of them (a key held down or tapped again and again)
+#   click     20+ clicks, hardly any typing, and one button is 95%+ of them (an auto-clicker)
+#   mouse     only small mouse moves inside a 40-pixel spot, no key, no click, no wheel (a mouse mover / jiggler)
+#   software  30+ events and 80%+ of the input came from a program, not a real keyboard or mouse
+# TeamLink joins the kept minutes into stretches; 10 minutes in a row is shown to HR and the team lead.
+$script:inputQueue = New-Object Collections.ArrayList
+$script:inputOff = $false
+$KeyNames = @{ 8 = 'Backspace'; 9 = 'Tab'; 13 = 'Enter'; 16 = 'Shift'; 17 = 'Ctrl'; 18 = 'Alt'; 27 = 'Esc'; 32 = 'Space'; 33 = 'Page Up'; 34 = 'Page Down'; 35 = 'End'; 36 = 'Home'; 37 = 'Left arrow'; 38 = 'Up arrow'; 39 = 'Right arrow'; 40 = 'Down arrow'; 45 = 'Insert'; 46 = 'Delete'; 160 = 'Shift'; 161 = 'Shift'; 162 = 'Ctrl'; 163 = 'Ctrl'; 164 = 'Alt'; 165 = 'Alt'; 91 = 'Windows key'; 92 = 'Windows key' }
+function Key-Name([int]$vk) {
+  if ($KeyNames.ContainsKey($vk)) { return $KeyNames[$vk] }
+  if ($vk -ge 48 -and $vk -le 57) { return "Key $([char]$vk)" }
+  if ($vk -ge 65 -and $vk -le 90) { return "Key $([char]$vk)" }
+  if ($vk -ge 96 -and $vk -le 105) { return "Number pad $($vk - 96)" }
+  if ($vk -ge 112 -and $vk -le 135) { return "F$($vk - 111)" }
+  return "Key code $vk"
+}
+function Check-Input {
+  if (-not [TLInput]::Started) { return }
+  $p = @(([TLInput]::TakeMinute()) -split '\|' | ForEach-Object { [double]$_ })
+  if ($p.Count -lt 12) { return }
+  if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { return }
+  $keys = $p[0]; $top = [int]$p[1]; $topN = $p[2]; $clicks = $p[3]; $l = $p[4]; $r = $p[5]; $m = $p[6]; $wheel = $p[7]; $moves = $p[8]; $sx = $p[9]; $sy = $p[10]; $inj = $p[11]
+  $all = $keys + $clicks + $wheel + $moves
+  $kind = $null; $name = ''; $count = 0
+  if ($inj -ge 30 -and $inj -ge 0.8 * $all) { $kind = 'software'; $name = 'Input sent by a program'; $count = $inj }
+  elseif ($keys -ge 30 -and $topN -ge 0.85 * $keys) { $kind = 'key'; $name = Key-Name $top; $count = $topN }
+  elseif ($clicks -ge 20 -and $keys -le 3 -and [math]::Max($l, [math]::Max($r, $m)) -ge 0.95 * $clicks) {
+    $kind = 'click'; $name = $(if ($l -ge $r -and $l -ge $m) { 'Left click' } elseif ($r -ge $m) { 'Right click' } else { 'Middle click' }); $count = $clicks
+  }
+  elseif ($keys -eq 0 -and $clicks -eq 0 -and $wheel -eq 0 -and $moves -ge 5 -and $sx -le 40 -and $sy -le 40) { $kind = 'mouse'; $name = 'Mouse moving in one small spot'; $count = $moves }
+  if (-not $kind) { return }
+  [void]$script:inputQueue.Add(@{ at = (Get-Date).ToUniversalTime().AddSeconds(-60).ToString('o'); kind = $kind; key = $name; count = [int]$count })
+  if ($script:inputQueue.Count -gt 2000) { $script:inputQueue.RemoveRange(0, $script:inputQueue.Count - 2000) }
+}
+function Send-Input {
+  if ($script:inputOff -or $script:inputQueue.Count -eq 0) { return }
+  $batch = @($script:inputQueue | Select-Object -First 300)
+  $r = Call-Api 'POST' '/input' @{ minutes = $batch } $script:cfg.token
+  if ($r.status -eq 200) { $script:inputQueue.RemoveRange(0, $batch.Count) }
+  elseif ($r.status -eq 404) { $script:inputOff = $true; $script:inputQueue.Clear() }   # an older TeamLink: it does not take these
+}
 function Flush {
+  try { Send-Input } catch {}
   Close-Segment   # send what is done so far
   Sample          # and go straight on: a heartbeat right after this must still say what is in front
   if ($script:queue.Count -eq 0) { return }
@@ -544,7 +670,7 @@ function Update-Menu {
 [void]$menu.Items.Add('Stop recording and close', $null, { Write-Log 'stopped by the employee (Stop recording and close)'; try { Set-Content -Path $StoppedFlag -Value (Get-Date).ToString('o') } catch {}; Flush; $script:stopping = $true; try { Heartbeat } catch {}; $script:tray.Visible = $false; [Windows.Forms.Application]::Exit() })
 [void]$menu.Items.Add('Do not start with Windows', $null, { Write-Log 'set not to start with Windows'; Remove-Item -Path $StartupLink -ErrorAction SilentlyContinue; try { Set-Content -Path $NoStartFlag -Value (Get-Date).ToString('o') } catch {}; Remove-Keeper; $script:tray.ShowBalloonTip(5000, 'TeamLink', 'It will not start with Windows any more.', 'Info') })
 $tray.ContextMenuStrip = $menu
-$tray.ShowBalloonTip(6000, 'TeamLink', 'Recording PC use in work hours: app names, window titles, active and idle time. Nothing you type is recorded.', 'Info')
+$tray.ShowBalloonTip(6000, 'TeamLink', 'Recording PC use in work hours: app names, window titles, active and idle time, and how much the keyboard and mouse are used. Nothing you type is recorded.', 'Info')
 # the icon above is what shows it is running: the black window goes, so closing it by mistake does not stop the agent
 try { [void][TLWin]::ShowWindow([TLWin]::GetConsoleWindow(), 0) } catch {}
 
@@ -555,6 +681,8 @@ if ($updating) { $tray.Dispose(); Write-Log 'closed for the update'; exit 0 }
 $sampleTimer = New-Object Windows.Forms.Timer; $sampleTimer.Interval = 15000; $sampleTimer.Add_Tick({ try { Sample } catch {} }); $sampleTimer.Start()
 $flushTimer = New-Object Windows.Forms.Timer; $flushTimer.Interval = 120000; $flushTimer.Add_Tick({ try { Flush } catch {} }); $flushTimer.Start()
 $liveTimer = New-Object Windows.Forms.Timer; $liveTimer.Interval = 2000; $liveTimer.Add_Tick({ try { Watch-Front } catch {} }); $liveTimer.Start()
+try { if (-not [TLInput]::Start()) { Write-Log 'key and click counting could not start on this PC' } } catch { Write-Log "key and click counting could not start: $($_.Exception.Message)" }
+$inputTimer = New-Object Windows.Forms.Timer; $inputTimer.Interval = 60000; $inputTimer.Add_Tick({ try { Check-Input } catch {} }); $inputTimer.Start()
 $beatTimer = New-Object Windows.Forms.Timer; $beatTimer.Interval = 60000; $beatTimer.Add_Tick({ try { Heartbeat } catch {} }); $beatTimer.Start()
 # ---------------------------------------------------------------- WAKE FROM SLEEP
 # Closing the laptop and opening it the next day does NOT sign out of Windows, so this same agent keeps running. But while the

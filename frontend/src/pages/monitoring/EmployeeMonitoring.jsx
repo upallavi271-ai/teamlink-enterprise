@@ -187,7 +187,11 @@ function Overview({ onOpen }) {
           <tbody>
             {rows.map((r) => (
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
-                <td><b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}</td>
+                <td>
+                  <b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}
+                  {/* the same key / button over and over today (agent 2.5): a check, not a verdict */}
+                  {r.repeat && <div title={r.repeat.top} style={{ marginTop: 3 }}><Pill tone="red">{`Same key / click over and over · ${r.repeat.minutes} min`}</Pill></div>}
+                </td>
                 <td>{r.department || '—'}{r.team && <div className="small-muted">{r.team}</div>}</td>
                 {live && <td title={STATUS_TIP[r.status] || undefined}><Pill tone={STATUS_TONE[r.status] || 'slate'}>{r.status || '—'}</Pill>{r.status === 'Old agent' && <div className="small-muted">Restart the PC once</div>}</td>}
                 {live && (() => {
@@ -641,6 +645,23 @@ export function EmployeeDetail({ id, onBack, own = false }) {
           {data.timeline && (
             <Panel title="The day" sub={`Work hours ${data.workStart} – ${data.workEnd}`}>
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
+            </Panel>
+          )}
+          {(data.repeats || []).length > 0 && (
+            <Panel title="Same key or button over and over" sub="10 minutes or more in a row: a key held down, an auto-clicker, a mouse mover, or input sent by a program. Only the key's name is known, never what was typed. Worth a word with the person - it can also be someone scrolling a long sheet with one key." flush>
+              <table className="mon-table">
+                <thead><tr><th>When</th><th className="num">Minutes</th><th>What</th><th className="num">Presses / moves</th></tr></thead>
+                <tbody>
+                  {data.repeats.map((x) => (
+                    <tr key={`${x.from}-${x.kind}-${x.key}`}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{data.from !== data.to && <div className="small-muted">{x.day}</div>}{`${x.fromTime} – ${x.toTime}`}</td>
+                      <td className="num"><b>{x.minutes}</b></td>
+                      <td><Pill tone={x.kind === 'key' ? 'amber' : 'red'}>{x.label}</Pill></td>
+                      <td className="num">{Number(x.presses || 0).toLocaleString('en-IN')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </Panel>
           )}
           {!data.timeline && data.perDay.length > 0 && (

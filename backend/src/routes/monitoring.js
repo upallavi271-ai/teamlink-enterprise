@@ -137,6 +137,8 @@ router.post('/heartbeat', agent, wrap(async (req, res) => {
   const update = s.autoUpdate !== false && M.needsUpdate(body.agentVersion) ? { version: M.latestAgent().version, sha256: M.latestAgent().sha256 } : undefined;
   return res.json({ settings: { ...publicSettings(s), ...mine }, consentRequired: !consent, update, ...(consent ? {} : { policyText: s.policyText }) });
 }));
+// agent 2.5: the minutes in which one key / button was pressed over and over (utils/monitoringInput.js) - never what was typed
+router.post('/input', agent, wrap(async (req, res) => res.json(await require('../utils/monitoringInput').save(req.device, (req.body || {}).minutes)))); // eslint-disable-line global-require
 router.post('/live', agent, wrap(async (req, res) => { await M.liveUpdate(req.device, req.body || {}); res.json({ ok: true }); }));
 // auto-update: the agent script itself; the PC checks its hash against the heartbeat before using it
 router.get('/agent-script', agent, wrap(async (req, res) => {
