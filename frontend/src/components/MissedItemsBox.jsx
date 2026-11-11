@@ -35,16 +35,19 @@ function Group({ g }) {
   );
 }
 
-export default function MissedItemsBox() {
+export default function MissedItemsBox({ params } = {}) {
   const [st, setSt] = useState({ loading: true, data: null, error: '' });
   const location = useLocation();
+  // On the ATS dashboard a Super Admin may be looking at another login's dashboard ("Dashboard of", ?asUser): show THEIR box.
+  const asUser = (params && params.asUser) || '';
   useEffect(() => {
     let live = true;
-    api.get('/pending-work/my-missed')
+    setSt({ loading: true, data: null, error: '' });
+    api.get('/pending-work/my-missed', { params: asUser ? { asUser } : {} })
       .then((r) => { if (live) setSt({ loading: false, data: r.data, error: '' }); })
       .catch((e) => { if (live) setSt({ loading: false, data: null, error: e.response?.data?.error || 'Could not load your missed items. Please try again.' }); });
     return () => { live = false; };
-  }, []);
+  }, [asUser]);
   useEffect(() => {
     if (st.data && location.hash === '#missed-items') {
       const el = document.getElementById('missed-items');

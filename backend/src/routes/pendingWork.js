@@ -167,9 +167,15 @@ router.post('/chain/run', guarded(async (req, res) => {
 // "MY MISSED ITEMS" (user, 2026-10-12): what the signed-in person missed - follow-ups, calls not made, tasks and to-dos, late steps, interview
 // feedback not recorded, candidates waiting for their check - with an Open link each. Their OWN rows only, for any ATS login; the same items
 // (utils/missedItems.js) the morning reminder to them and to their team lead is made from.
+// ?asUser=<id>: the Super Admin's "Dashboard of" picker shows THAT login's box, read-only (utils/dashboardOf.js).
 router.get('/my-missed', guarded(async (req, res) => {
-  const out = await require('../utils/missedItems').forPerson(req.user, { fresh: req.query.fresh === '1' }); // eslint-disable-line global-require
-  return res.json(out);
+  try {
+    const out = await require('../utils/dashboardOf').asBoardSubject(req, (u) => require('../utils/missedItems').forPerson(u, { fresh: req.query.fresh === '1' })); // eslint-disable-line global-require
+    return res.json(out);
+  } catch (err) {
+    if (err.boardRefusal) return res.status(err.status).json({ error: err.message });
+    throw err;
+  }
 }));
 
 // ---- end of day --------------------------------------------------------------

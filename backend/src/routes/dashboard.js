@@ -1572,59 +1572,12 @@ router.get('/ats/role/list', ...ATS_BOARD_GUARDS, async (req, res, next) => {
 // ---------------------------------------------------------------------------
 const atsHome = require('../utils/atsHome');
 const HOME_CACHE = new Map();
-// ---------------------------------------------------------------------------
-// SUPER ADMIN "DASHBOARD OF" (2026-11-10): the role picker on the ATS
-// dashboard. ?asUser=<userId> on /ats/home, /ats/home/list and
-// /ats/home/export draws THAT login's own dashboard (its layout, its scope,
-// its panels and charts) inside the Super Admin's session, so the Super Admin
-// can go through every role's dashboard without leaving their own login.
-//
-// The same rules as View as (routes/viewAs.js), because it shows the same thing:
-//   * Super Admin only: not an HR-super login, not while viewing / acting as;
-//   * the target is an active login, not a Super Admin, and holds the ATS;
-//   * READ-ONLY: the board is built inside the View-as context
-//     (utils/viewAs.js readOnly), so a write a GET makes on the side is a no-op.
-// The Super Admin's own export rights and audit rows are unchanged: the file is
-// sent outside the read-only context, as the Super Admin.
-// Without ?asUser nothing changes for anybody.
-// ---------------------------------------------------------------------------
-const viewAs = require('../utils/viewAs');
-const { resolveIdentity } = require('../utils/identity');
-const { isStrictSystemAccount } = require('../utils/systemAccounts');
-function boardRefusal(status, message) {
-  const e = new Error(message);
-  e.status = status;
-  e.boardRefusal = true;
-  return e;
-}
-async function boardSubject(req) {
-  const id = req.query && req.query.asUser ? String(req.query.asUser) : '';
-  if (!id || id === String(req.user.id)) return req.user;
-  if (req.viewAs || req.actingAs || req.user.role !== 'SUPER_ADMIN' || req.user.hrSuper) {
-    throw boardRefusal(403, 'Only a Super Admin can open another login’s dashboard.');
-  }
-  const target = await prisma.user.findUnique({ where: { id } });
-  if (!target) throw boardRefusal(404, 'That login does not exist.');
-  if (isStrictSystemAccount(target)) throw boardRefusal(403, 'That is a Super Admin login. Your own dashboard already shows the whole company.');
-  if ((target.status || 'Active') !== 'Active') {
-    throw boardRefusal(403, `That login is ${String(target.status).toLowerCase()}. Only an active login's dashboard can be opened.`);
-  }
-  const identity = await resolveIdentity(target.id, target);
-  if (!identity || !identity.products || !identity.products.ats) throw boardRefusal(400, `${target.name} has no ATS dashboard.`);
-  // A person who has left cannot sign in any more (middleware/auth.js), so they have no dashboard to look at.
-  if (require('../utils/leftLogin').hasLeft(identity)) throw boardRefusal(400, `${target.name} has left, so their login is closed and has no dashboard.`); // eslint-disable-line global-require
-  return identity;
-}
-// fn(subject) runs as the login whose dashboard is drawn: the Super Admin
-// themself, or (with ?asUser) the picked login, read-only.
-async function asBoardSubject(req, fn) {
-  const subject = await boardSubject(req);
-  if (subject === req.user) return fn(subject);
-  return viewAs.readOnly(
-    { byUserId: req.user.id, byName: req.user.name, readOnly: true, sid: null, dashboardOf: true },
-    () => fn(subject),
-  );
-}
+// SUPER ADMIN "DASHBOARD OF" (2026-11-10): ?asUser=<userId> on /ats/home,
+// /ats/home/list and /ats/home/export draws that login's own dashboard,
+// read-only (rules in utils/dashboardOf.js). The Super Admin's own export
+// rights and audit rows are unchanged: the file is sent outside the read-only
+// context, as the Super Admin.
+const { asBoardSubject } = require('../utils/dashboardOf');
 // The Admin health dot in the top bar (integration / sync / job-posting errors).
 router.get('/ats/health', ...ATS_BOARD_GUARDS, async (req, res, next) => {
   try { return res.json(await atsHome.healthDot(req.user)); } catch (err) { return next(err); }

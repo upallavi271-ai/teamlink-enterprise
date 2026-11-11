@@ -237,18 +237,21 @@ function SubmitDialog({ ws, onClose, onDone }) {
 }
 
 // ---- THE DASHBOARD BOX ---------------------------------------------------------------------------------------
-export function BdeWorkspace({ w }) {
+export function BdeWorkspace({ w, params }) {
   const [ws, setWs] = useState(w.ws);
   const [dialog, setDialog] = useState('');
   const [flash, setFlash] = useState('');
   const tiles = w.tiles || [];
-  const can = ws.can || {};
+  // A Super Admin looking at a BDE's dashboard ("Dashboard of", ?asUser): THAT BDE's numbers, and no actions (nothing is done in their name).
+  const asUser = (params && params.asUser) || '';
+  const can = asUser ? {} : (ws.can || {});
+  const wsParams = asUser ? { asUser } : {};
   // The dashboard page may come from a short cache: read the numbers fresh once, so a request just sent is counted.
-  useEffect(() => { api.get('/clients/my-business').then((r) => setWs(r.data)).catch(() => {}); }, []);
+  useEffect(() => { api.get('/clients/my-business', { params: wsParams }).then((r) => setWs(r.data)).catch(() => {}); }, [asUser]); // eslint-disable-line react-hooks/exhaustive-deps
   function reload(msg) {
     setDialog('');
     if (msg) setFlash(String(msg));
-    api.get('/clients/my-business').then((r) => setWs(r.data)).catch(() => {});
+    api.get('/clients/my-business', { params: wsParams }).then((r) => setWs(r.data)).catch(() => {});
   }
   const counts = ws.counts || {};
   const live = {

@@ -62,8 +62,14 @@ module.exports = function mountClientRequests(router, { shapeFor }) {
       return res.json(out.body);
     } catch (e) { return next(e); }
   });
+  // ?asUser=<id>: the Super Admin's "Dashboard of" picker shows THAT BDE's workspace box, read-only (utils/dashboardOf.js).
   router.get('/my-business', async (req, res, next) => {
-    try { return res.json(await biz.workspaceFor(req.user)); } catch (e) { return next(e); }
+    try {
+      return res.json(await require('../utils/dashboardOf').asBoardSubject(req, (u) => biz.workspaceFor(u))); // eslint-disable-line global-require
+    } catch (e) {
+      if (e.boardRefusal) return res.status(e.status).json({ error: e.message });
+      return next(e);
+    }
   });
   router.post('/followups/:fid/done', async (req, res, next) => {
     try {
