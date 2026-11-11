@@ -277,11 +277,16 @@ const asksDetail = (t) => isQuestion(t) && !JOB_ASK.test(String(t || '')) && ASK
 function promoAnswer(bodies, text) {
   const t = String(text || '');
   const ask = ASKS.find(([, , , re]) => re.test(t));
-  const whole = DETAILS_ASK.test(t) || (ask && ask[0] === 'role');
+  const whole = DETAILS_ASK.test(t);
   if (!ask && !whole) return null;
   const body = (bodies || []).map((b) => String(b || '').trim()).find(Boolean);
   if (!body) return ask ? { missing: ask[2].replace(/^The /, '').toLowerCase() } : null;
-  if (whole) return { text: `Here are the details from our message:\n${body.length > 600 ? `${body.slice(0, 600).replace(/\s+\S*$/, '')}...` : body}` };
+  // "what is the job role": the Position / Role line of our message, or the message itself when it has no such line (founder 2026-11-11)
+  if (!whole && ask[0] === 'role') {
+    const pos = body.split(/\n+/).map((l) => l.trim()).find((l) => /\b(position|role|designation|hiring for)\b/i.test(l));
+    if (pos) return { text: pos.replace(/^[^\p{L}\p{N}]+/u, '') };
+  }
+  if (whole || ask[0] === 'role') return { text: `Here are the details from our message:\n${body.length > 600 ? `${body.slice(0, 600).replace(/\s+\S*$/, '')}...` : body}` };
   const line = body.split(/\n+/).map((l) => l.trim()).find((l) => ask[3].test(l));
   return line ? { text: line } : { missing: ask[2].replace(/^The /, '').toLowerCase() };
 }
