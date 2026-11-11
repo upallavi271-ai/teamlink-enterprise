@@ -109,7 +109,8 @@ async function derived(user) {
       key: `cand:${a.id}`, kind: 'candidate', at: a.createdAt,
       title: `New candidate: ${(a.candidate && a.candidate.name) || 'A candidate'}`,
       text: a.requirement ? `For ${a.requirement.title}${a.requirement.reqCode ? ` (${a.requirement.reqCode})` : ''}` : '',
-      link: a.requirement ? `/requirements/${a.requirement.id}` : '/candidates',
+      // the person themself (founder 2026-11-11: clicking it opens that one), not the job's page
+      link: a.candidate ? `/candidates/${a.candidate.id}` : (a.requirement ? `/requirements/${a.requirement.id}` : '/candidates'),
     }));
   } catch { /* skip */ }
 
@@ -119,13 +120,13 @@ async function derived(user) {
       where: { AND: [scope.applicationWhere(user), { interviewAt: { gte: new Date(now - DAY) } }, { updatedAt: { gte: new Date(now - 7 * DAY) } }, { OR: [{ interviewStatus: null }, { interviewStatus: { notIn: ['Cancelled', 'Completed'] } }] }] },
       orderBy: { updatedAt: 'desc' },
       take: 15,
-      select: { id: true, interviewAt: true, updatedAt: true, interviewCode: true, candidate: { select: { name: true } }, requirement: { select: { id: true, title: true } } },
+      select: { id: true, interviewAt: true, updatedAt: true, interviewCode: true, candidate: { select: { id: true, name: true } }, requirement: { select: { id: true, title: true } } },
     });
     ints.forEach((a) => out.push({
       key: `intv:${a.id}:${a.interviewAt ? a.interviewAt.toISOString().slice(0, 16) : ''}`, kind: 'interview', at: a.updatedAt,
       title: `New interview: ${(a.candidate && a.candidate.name) || 'A candidate'}`,
       text: `${a.requirement ? `${a.requirement.title} · ` : ''}${a.interviewAt ? a.interviewAt.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}`,
-      link: '/interviews',
+      link: a.candidate ? `/candidates/${a.candidate.id}` : '/interviews',
     }));
   } catch { /* skip */ }
 

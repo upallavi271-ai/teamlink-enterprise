@@ -22,3 +22,8 @@
   .nwi-list li { flex-wrap: wrap; }
   .nwi-list li .btn { width: 100%; min-height: 40px; }
 }
+
+/* the whole card opens the item (2026-11-11) */
+.nwi-list li.nwi-click{cursor:pointer;transition:background .12s}
+.nwi-list li.nwi-click:hover{background:var(--surface-2,#f5f7fb)}
+.nwi-list li.nwi-click:focus-visible{outline:2px solid var(--brand,#1b2a4a);outline-offset:2px}

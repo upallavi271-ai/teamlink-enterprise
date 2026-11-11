@@ -113,14 +113,16 @@ export default function NewItems({ module = null }) {
             )}
             <ul className="nwi-list">
               {list.map((i) => (
-                <li key={i.key} className={i.seen ? 'is-seen' : ''}>
+                // the whole card opens the item, not only the Open button (founder 2026-11-11)
+                <li key={i.key} className={`nwi-click${i.seen ? ' is-seen' : ''}`} role="button" tabIndex={0} aria-label={`Open ${i.title}`}
+                  onClick={() => { if (!busy) openItem(i); }} onKeyDown={(e) => { if ((e.key === 'Enter' || e.key === ' ') && !busy) { e.preventDefault(); openItem(i); } }}>
                   <span className="nwi-ic" aria-hidden="true">{(KIND[i.kind] || KIND.message).icon}</span>
                   <div className="nwi-body">
                     <div className="nwi-title"><span className="nwi-kind">{(KIND[i.kind] || KIND.message).one}</span> {i.title}</div>
                     {i.text && <div className="nwi-text">{i.text}</div>}
                     <div className="nwi-when">{ago(i.at)}</div>
                   </div>
-                  <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={() => openItem(i)}>Open</button>
+                  <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={(e) => { e.stopPropagation(); openItem(i); }}>Open</button>
                 </li>
               ))}
             </ul>
