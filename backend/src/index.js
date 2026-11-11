@@ -333,8 +333,6 @@ app.use('/api/public', publicRoutes);
 app.use('/api/performance', performanceRoutes);
 // HRMS → Performance & Development → Recruiter joinings + the Super Admin popup (routes/recruiterJoinings.js).
 app.use('/api/recruiter-joinings', require('./routes/recruiterJoinings'));
-// Role-wise recruitment performance (same Performance & Development screen; routes/rolePerformance.js).
-app.use('/api/role-performance', require('./routes/rolePerformance'));
 // Payroll -> Incentives: department-wise rules, awards, approval (routes/incentives.js).
 app.use('/api/incentives', require('./routes/incentives'));
 // ATS-100 B6: employee referrals, campus drives, campaign costs (routes/sourcing.js).

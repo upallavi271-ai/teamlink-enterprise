@@ -325,7 +325,7 @@ export function PersonDetail({ row, month, details = false }) {
     <div>
       <h4>{monthLabel(month)}</h4>
       <p className="rj-hint">
-        Required <b>{row.required ?? row.target}</b> · Achieved <b>{row.achieved ?? row.joinings}</b> · Completion <b>{pct(row.joinings, row.target)}</b>
+        {row.generated != null ? <>Generated <b>{row.generated}</b> candidates · </> : null}Required <b>{row.required ?? row.target}</b> · Achieved <b>{row.achieved ?? row.joinings}</b> · Completion <b>{pct(row.joinings, row.target)}</b>
         {row.droppedCount ? <> · <b>{row.droppedCount}</b> left after joining</> : null}
         {row.didNotJoinCount ? <> · <b>{row.didNotJoinCount}</b> did not join</> : null}
         {row.notCountedCount ? <> · {row.notCountedCount} not counted (did not join, left, or still waiting)</> : null}.
@@ -355,16 +355,16 @@ export function PersonDetail({ row, month, details = false }) {
           <h4>Completion history (last 12 months)</h4>
           <div className="tbl-wrap">
             <table className="rj-mini">
-              <thead><tr><th>Month</th><th>Required</th><th>Achieved</th><th>Completion</th><th>Drop-outs</th><th>Result</th></tr></thead>
+              <thead><tr><th>Month</th><th>Candidates generated</th><th>Required</th><th>Achieved</th><th>Completion</th><th>Drop-outs</th><th>Result</th></tr></thead>
               <tbody>
                 {hist.filter((h) => h.listed).map((h) => (
                   <tr key={h.month}>
-                    <td>{h.label}</td><td>{h.target}</td><td>{h.joinings}</td><td>{pct(h.joinings, h.target)}</td>
+                    <td>{h.label}</td><td>{h.generated == null ? '—' : h.generated}</td><td>{h.target}</td><td>{h.joinings}</td><td>{pct(h.joinings, h.target)}</td>
                     <td>{(h.dropped || 0) + (h.didNotJoin || 0) ? <span className="rj-tag red" title={`${h.dropped || 0} left after joining, ${h.didNotJoin || 0} did not join`}>{(h.dropped || 0) + (h.didNotJoin || 0)}</span> : <span className="rj-sub">None</span>}</td>
                     <td><span className={`rj-score ${h.tone}`}>{h.toneWord}</span>{h.decision ? <span className="rj-sub"> · {h.decision.decision === 'INCENTIVE' ? `Incentive${h.decision.amount != null ? ` ${inr(h.decision.amount)}` : ''}` : h.decision.word}</span> : null}</td>
                   </tr>
                 ))}
-                {!hist.some((h) => h.listed) && <tr><td colSpan="6" className="rj-sub">No months on the recruiter list yet.</td></tr>}
+                {!hist.some((h) => h.listed) && <tr><td colSpan="7" className="rj-sub">No months on the recruiter list yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -384,7 +384,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
   const v = board.viewer || {};
   const canDecide = !!v.decide;
   const hasCarry = rows.some((r) => r.completed !== undefined);
-  const cols = 7 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
+  const cols = 8 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
 
   async function undo(row) {
     if (!window.confirm(`Undo the decision for ${row.name}?`)) return;
@@ -409,7 +409,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
         <table>
           <thead>
             <tr>
-              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th><th>Drop-outs</th>
+              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th title="Candidates this recruiter generated (sourced / added) in the month">Candidates generated</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th><th>Drop-outs</th>
               {showDecision && v.decisions && <th>Decision</th>}
             </tr>
           </thead>
@@ -425,6 +425,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
                   </td>
                   <td>{r.seat || '—'}</td>
                   <td>{r.tlName || '—'}</td>
+                  <td>{r.generated == null ? '—' : r.generated}</td>
                   <td><Score row={r} /></td>
                   <td><b>{pct(r.joinings, r.target)}</b>{r.completed !== undefined && <div className="rj-sub">{r.completed ? 'Target completed' : 'Not completed yet'}</div>}</td>
                   {hasCarry && <td>{r.completed !== undefined ? <IncentiveCell row={r} mayDecide={v.decide} /> : <span className="rj-sub">No rule</span>}</td>}
@@ -497,7 +498,9 @@ export function SummaryCards({ s, decisions }) {
   if (!s) return null;
   const cards = [
     { k: 'people', label: 'Recruiters', v: s.people, tone: 'blue' },
+    { k: 'generated', label: 'Candidates generated', v: s.generated, tone: 'blue' },
     { k: 'joinings', label: `Joinings (target ${s.target})`, v: s.joinings, tone: 'blue' },
+    { k: 'dropouts', label: 'Drop-outs', v: s.dropouts, tone: 'red' },
     { k: 'reached', label: 'Reached target', v: s.reached, tone: 'green' },
     { k: 'close', label: 'Close (1 short)', v: s.close, tone: 'orange' },
     { k: 'low', label: 'Low', v: s.low, tone: 'red' },

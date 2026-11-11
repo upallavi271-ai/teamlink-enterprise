@@ -1,6 +1,11 @@
 // ---------------------------------------------------------------------------
 // ROLE-WISE RECRUITMENT PERFORMANCE — the DATA step (user spec 2026-10-13).
 //
+// 2026-11-11: the "Recruitment performance by role" screen, its route and its report builder were retired (founder: it showed a
+// second joining number). THIS file stays for ONE reader: utils/recruiterJoinings.js takes the "generated" events from it for
+// the "Candidates generated" column of Recruiter joinings. The submitted / selected / joined events and the attribution switch
+// below are no longer shown anywhere.
+//
 // Builds, once per minute, one in-memory picture of the whole company that the
 // report / drill-down / export / filter options all read, so a number on screen,
 // the list behind it and the Excel file are the SAME rows by construction.

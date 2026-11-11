@@ -10,8 +10,6 @@ import Performance from './Performance.jsx';
 import Projects from './Projects.jsx';
 // Recruiter joinings vs target + Super Admin's incentive / raise (2026-10-05).
 import RecruiterJoinings from './RecruiterJoinings.jsx';
-// Role-wise recruitment performance: generated / selected / joined per role, employee and month (2026-10-13).
-import RolePerformance from '../../components/rolePerformance/RolePerformance.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, isSuperAdmin } from '../../permissions';
 import './performance-merged.css';
@@ -23,18 +21,13 @@ function seesJoinings(user) {
   const ats = (user.scopeRoles && user.scopeRoles.ats) || user.atsRole || user.role;
   return isSuperAdmin(user) || hasHrmsAdmin(user) || ['TL', 'STL', 'RECRUITER'].includes(ats);
 }
-// The role-wise performance section: the same people, plus the managers and the BDE team (the server scopes every row).
-function seesRolePerformance(user) {
-  if (!user) return false;
-  const ats = (user.scopeRoles && user.scopeRoles.ats) || user.atsRole || user.role;
-  return seesJoinings(user) || ['MANAGER', 'ASSISTANT_MANAGER', 'ADMIN', 'BDE'].includes(ats);
-}
+// The "Recruitment performance by role" section was retired (founder 2026-11-11): it showed a second joining number that
+// disagreed with Recruiter joinings; its one unique figure, Candidates generated, is now a column of Recruiter joinings.
 
 export default function PerformanceDevelopment() {
   const { user } = useAuth();
   const [params] = useSearchParams();
   const joinings = seesJoinings(user);
-  const rolePerf = seesRolePerformance(user);
   // ONE tab (user, 2026-10-09): Monthly Targets, with the recruiter joinings on the
   // same screen as their own section. Both show the ATS joinings and drop-outs of each month; who joined and
   // who dropped (with the reason) opens per person for a login that holds the ATS (founder 2026-11-11).
@@ -52,12 +45,6 @@ export default function PerformanceDevelopment() {
             <section className="pd-section" id="pd-joinings">
               <h2 className="pd-h2">Recruiter joinings</h2>
               <RecruiterJoinings />
-            </section>
-          )}
-          {rolePerf && (
-            <section className="pd-section" id="pd-role-performance">
-              <h2 className="pd-h2">Recruitment performance by role</h2>
-              <RolePerformance />
             </section>
           )}
         </div>

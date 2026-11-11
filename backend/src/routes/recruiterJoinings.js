@@ -143,6 +143,8 @@ function shapeBoard(user, viewer, board, cp = null) {
     close: rows.filter((r) => r.tone === 'orange').length,
     low: rows.filter((r) => r.tone === 'red').length,
     notCounted: rows.reduce((n, r) => n + r.notCountedCount, 0),
+    generated: rows.reduce((n, r) => n + (r.generated || 0), 0),
+    dropouts: rows.reduce((n, r) => n + (r.droppedCount || 0) + (r.didNotJoinCount || 0), 0),
   };
   if (viewer.decisions) {
     summary.needDecision = needs.length;
@@ -157,6 +159,8 @@ function shapeBoard(user, viewer, board, cp = null) {
     // only HOW MANY - who they are is in ATS.
     skipped: [],
     skippedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.skipped.length : 0,
+    // company-wide viewers only: candidates generated that month by people who are not on the list
+    generatedElsewhere: viewer.level === 'sa' || viewer.level === 'all' ? board.generatedElsewhere : null,
     undatedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.undatedCount : 0,
     summary,
     rules: cp ? cp.ruleLines : [], example: cp ? cp.example : [],
@@ -456,11 +460,11 @@ router.get('/export', guarded(async (req, res) => {
   const f = { department: s(req.query.department), tl: s(req.query.tl), recruiter: s(req.query.recruiter), status: s(req.query.status) };
   const rows = b.rows.filter((r) => (!f.department || r.department === f.department)
     && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter) && (!f.status || r.statusGroup === f.status));
-  const head = ['Recruiter', 'Employee ID', 'Employee status', 'Seat', 'Department', 'Team lead', 'Required joinings', 'Carried from earlier months', 'Achieved joinings', 'Completion %', 'Target completed', 'Result', 'Not counted', 'Left after joining', 'Did not join'];
+  const head = ['Recruiter', 'Employee ID', 'Employee status', 'Seat', 'Department', 'Team lead', 'Required joinings', 'Carried from earlier months', 'Achieved joinings', 'Completion %', 'Target completed', 'Result', 'Not counted', 'Left after joining', 'Did not join', 'Candidates generated'];
   if (viewer.decisions) head.push('Decision');
   if (viewer.money) head.push('Incentive (₹)', 'Paid with', 'Raise from', 'Note');
   const main = rows.map((r) => {
-    const out = [r.name, r.employeeCode, r.statusGroup, r.seat, r.department, r.tlName, r.required, r.carried || 0, r.achieved, r.completionPct == null ? '' : r.completionPct, r.completed === undefined ? '' : (r.completed ? 'Yes' : 'No'), r.toneWord, r.notCountedCount, r.droppedCount || 0, r.didNotJoinCount || 0];
+    const out = [r.name, r.employeeCode, r.statusGroup, r.seat, r.department, r.tlName, r.required, r.carried || 0, r.achieved, r.completionPct == null ? '' : r.completionPct, r.completed === undefined ? '' : (r.completed ? 'Yes' : 'No'), r.toneWord, r.notCountedCount, r.droppedCount || 0, r.didNotJoinCount || 0, r.generated == null ? '' : r.generated];
     if (viewer.decisions) out.push(r.decision ? r.decision.word : (r.needsDecision ? 'Waiting for decision' : '—'));
     if (viewer.money) {
       const d = r.decision || {};

@@ -174,7 +174,7 @@ export default function RecruiterJoinings() {
   return (
     <div className="rj">
       <p className="rj-lead">
-        How many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed), and how many <b>dropped</b>.
+        How many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed), how many candidates they <b>generated</b>, and how many <b>dropped</b>.
         {v.details ? ' Open a recruiter to see who joined, who dropped and the reason.' : ''}
         {v.decide ? ' After a month ends, decide per person: give an incentive, raise the salary, or no action.' : ''}
         {v.level === 'team' ? ' You see your team.' : ''}{v.level === 'self' ? ' You see your own joinings.' : ''}
@@ -206,6 +206,12 @@ export default function RecruiterJoinings() {
           {board.current && <p className="rj-hint">{board.label} is still going — these are the joinings so far. Decisions open after the month ends.</p>}
           <JoiningsTable board={board} rows={page.slice} onChanged={load} />
           {page.total > 0 && <Pager page={page} noun="recruiters" />}
+          {board.generatedElsewhere > 0 && (
+            <p className="rj-hint">
+              <b>{board.generatedElsewhere}</b> more candidate(s) were generated in {board.label} by people who are not on this list: a creator recorded only by a first name
+              that matches no employee record, or no creator on record.
+            </p>
+          )}
           {((board.skippedCount || 0) + (board.undatedCount || 0) > 0) && (
             <div style={{ marginTop: 14 }}>
               <button className="btn btn-sm" onClick={() => setSkipped((x) => !x)}>
