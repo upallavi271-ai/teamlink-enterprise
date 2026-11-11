@@ -44,8 +44,10 @@
       AI calling engines (embed/interview-language.mjs): when they are
       speaking Telugu, Hindi or English, live capture moves to that language
       at once, the words already said are written again in it, and the next
-      questions come in it - on screen and in that language's voice. The
-      three buttons do the same by hand. The portal keeps its own questions
+      questions come in it - on screen and in that language's voice.
+      (Founder 2026-11-11: "first start english tho start avvali, tharvatha candidate matladey language ni batti switch avvali" - every
+      interview starts in ENGLISH, not the profile's preferred language, and there are no language buttons: only what the candidate
+      speaks changes it.) The portal keeps its own questions
       and keeps scoring English: an answer in Telugu / Hindi is put into
       English before it is saved. See the header of that file.
    ===================================================================== */
@@ -432,8 +434,13 @@
     }, function () { /* the questions stay in English */ });
   }
 
-  /* ---- the bar: the language now, and the three buttons ---- */
+  /* ---- the bar: none any more (founder 2026-11-11: no language buttons - the candidate's speech alone switches the language) ---- */
   function paintBar() {
+    var bar = document.getElementById('tllang');
+    if (bar) bar.remove();
+  }
+  // (the old bar with the three buttons, kept unused for reference)
+  function paintBarWithButtons() {
     var a = A(), bar = document.getElementById('tllang');
     if (!a || a.phase !== 'interview') { if (bar) bar.remove(); return; }
     styles();
@@ -639,7 +646,8 @@
       LG.iv = s.interviewId; LG.manual = false; LG.serverHears = true;
       var saved = null;
       try { saved = localStorage.getItem('tl_iv_lang_' + LG.iv); } catch (e) { /* none */ }
-      LG.cur = saved === 'te' || saved === 'hi' || saved === 'en' ? saved : preferred();
+      // every interview STARTS IN ENGLISH; only a reload of the same interview keeps the language it had switched to
+      LG.cur = saved === 'te' || saved === 'hi' || saved === 'en' ? saved : 'en';
       if (LG.cur !== 'en') applyQuestions(s);
     }
     paintBar();

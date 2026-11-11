@@ -142,9 +142,20 @@ function page({ preferredLanguage = 'en', hearReply = { ready: true, lang: 'en',
 }
 const settle = (ms = 15) => new Promise((r) => { setTimeout(r, ms); });
 
-test('browser: starts in the Preferred language; the recogniser and the questions follow', async () => {
+test('browser: every interview starts in English (founder 2026-11-11), even with Telugu as the Preferred language; no language buttons', async () => {
   const P = page({ preferredLanguage: 'te' });
   P.T.langTick(); await settle();
+  assert.equal(P.T.LG.cur, 'en');
+  assert.equal(P.win.TL.__aiivSession.questions[0].q, 'Could you share a specific example?');
+  assert.equal(P.win.document.getElementById('tllang'), null, 'no bar with English / Telugu / Hindi buttons');
+  const r0 = new P.win.webkitSpeechRecognition(); r0.start();
+  assert.equal(P.SR.langs.at(-1), 'en-IN');
+});
+
+test('browser: the candidate speaking Telugu moves the recogniser and the questions to Telugu', async () => {
+  const P = page({ preferredLanguage: 'te' });
+  P.T.langTick(); await settle();
+  P.T.switchTo('te', ''); await settle();
   assert.equal(P.T.LG.cur, 'te');
   assert.equal(P.win.TL.__aiivSession.questions[0].q, fromTable('Could you share a specific example?', 'te'));
   assert.equal(P.win.TL.__aiivSession.questions[0].__en, 'Could you share a specific example?');
@@ -177,7 +188,7 @@ test('browser: a switch in the middle of an answer restarts capture in that lang
 
 test('browser: the answer saved is English and marked; no translator = flagged for a person; the follow-up comes translated', async () => {
   const P = page({ preferredLanguage: 'te' });
-  P.T.langTick(); await settle();
+  P.T.langTick(); await settle(); P.T.switchTo('te', ''); await settle();
   const { api } = P.win.TL;
   const r = await api.post('/ai-interviews/iv1/answer', { seq: 1, transcript: 'నేను ఈ పని చేశాను' });
   assert.equal(r.saved, true);
@@ -192,7 +203,7 @@ test('browser: the answer saved is English and marked; no translator = flagged f
 
 test('browser: a Telugu line goes to the server voice, an English line to the browser voice', async () => {
   const P = page({ preferredLanguage: 'te' });
-  P.T.langTick(); await settle();
+  P.T.langTick(); await settle(); P.T.switchTo('te', ''); await settle();
   let ended = 0;
   P.win.speechSynthesis.speak({ text: 'దాని ఫలితం ఏమిటి?', onend: () => { ended += 1; } });
   await settle();
