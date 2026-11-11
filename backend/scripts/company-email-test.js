@@ -169,6 +169,13 @@ async function stop(code) {
   const made4 = await call('POST', url4, { email: 'four.th@teamlink.test', createMailbox: true, password: 'Teamlink@082026' }, hr);
   check('the mailbox is made with the password HR gave', made4.status === 200 && /password=Teamlink%40082026/.test((cpanelSeen[0] || {}).body || ''), { st: made4.status, body: made4.body, cp: cpanelSeen[0] });
   const p4 = (await call('GET', url4, null, hr)).body.personalEmail;
+  // founder 2026-11-11: the "company email is ready" mail carries both sign-ins, and the TeamLink password is the same first password
+  const u4a = await prisma.user.findUnique({ where: { id: fourth.userId } });
+  check('a new mailbox: the TeamLink password is set to the same first password (new one asked at the first sign-in)', await bcrypt.compare('Teamlink@082026', u4a.passwordHash) && u4a.passwordResetRequired === true);
+  const readyText = CE.readyMail({ name: 'Four Th', company: 'four.th@teamlink.test', personal: 'four@gmail.com', mailbox: { password: 'Teamlink@082026' }, sameForTeamLink: true });
+  const NL_ = String.fromCharCode(10);
+  const twoBlocks = (t) => !!t && t.includes('TeamLink website') && t.includes(['  Login email: four.th@teamlink.test', '  Password: Teamlink@082026'].join(NL_)) && t.includes(['Webmail', '  https://neo.herosite.pro:2096/', '  Login email: four.th@teamlink.test', '  Password: Teamlink@082026'].join(NL_)) && !t.includes('cpsess');
+  check('the ready mail: TeamLink website + Webmail, each with the login email and the password', twoBlocks(readyText), readyText);
   const curl = `${url4}/credentials`;
   check('send credentials with a weak password is refused', (await call('POST', curl, { password: '1234' }, hr)).status === 400);
   check('a bad Send to address is refused', (await call('POST', curl, { password: 'Teamlink@082026', to: 'not an email' }, hr)).status === 400);
@@ -194,7 +201,7 @@ async function stop(code) {
   const signIn = await call('POST', '/auth/login', { email: 'four.th@teamlink.test', password: 'Teamlink@082026' });
   check('they can sign in with the company email and that password', signIn.status === 200 && !!signIn.body.token, signIn.body);
   const mail = mailsTo(p4).find((m) => /sign-in details/.test(m.subject || ''));
-  check('one mail to the personal email with the HRMS link, the webmail link, the email and the password', !!mail && /\/login/.test(mail.text) && /https:\/\/webmail\.teamlink\.test/.test(mail.text) && mail.text.includes('four.th@teamlink.test') && mail.text.includes('Teamlink@082026'), { mailed: sent.body.mailed, subjects: mailsTo('').map((m) => `${m.to} | ${m.subject}`).slice(-4), text: mail && mail.text });
+  check('one mail to the personal email: TeamLink website link + login, Webmail link + login (the email and the password in both)', !!mail && twoBlocks(mail.text), { mailed: sent.body.mailed, subjects: mailsTo('').map((m) => `${m.to} | ${m.subject}`).slice(-4), text: mail && mail.text });
   const aud4 = await prisma.auditLog.findFirst({ where: { entity: 'Employee', entityId: fourth.id, action: { startsWith: 'Sign-in details' } }, orderBy: { createdAt: 'desc' } });
   check('the audit says details were sent, never the password', !!aud4 && !JSON.stringify(aud4).includes('Teamlink@082026'), aud4);
 

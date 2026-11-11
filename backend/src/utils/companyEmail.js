@@ -121,25 +121,41 @@ async function personalOf(employee, c = null) {
 }
 const phoneOf = (employee) => { const m = require('./messagingCore').normalizeMobile(employee && employee.phone); return m.ok ? m.e164 : null; }; // eslint-disable-line global-require
 function credentialsText({ name, company, password, webmail }) {
-  return `TeamLink sign-in for ${String(name || '').split(' ')[0]}: HRMS ${appLink()} | ${webmail ? `Webmail ${webmailLink(company)} | ` : ''}Email ${company} | Password ${password} | You will be asked for a new password at the first sign-in. - TeamLink HR`;
+  return `TeamLink sign-in for ${String(name || '').split(' ')[0]}: TeamLink website ${appLink()} | ${webmail ? `Webmail ${webmailLink()} | ` : ''}Login email ${company} | Password ${password} | You will be asked for a new password at the first sign-in. - TeamLink HR`;
 }
-const appLink = () => `${require('./passwordReset').baseUrl()}/login`; // eslint-disable-line global-require
-const webmailLink = (company) => `https://webmail.${String(company).split('@')[1]}`;
+// THE TWO LINKS IN EVERY SIGN-IN MAIL (founder 2026-11-11: "teamlink website link & webmail link rendu vellali"): the TeamLink website, and the
+// webmail sign-in page. The founder's webmail link carried a cPanel session (".../cpsess4633519995/..."), which ends with that sign-in, so the
+// stable sign-in page of the same server is sent: WEBMAIL_URL on the server changes it.
+const appLink = () => `${require('./passwordReset').baseUrl().replace(/\/+$/, '')}/`; // eslint-disable-line global-require
+const webmailLink = () => String(process.env.WEBMAIL_URL || 'https://neo.herosite.pro:2096/').trim();
+// the two blocks, the same in both mails
+function signInLines(company, password) {
+  return [
+    'TeamLink website', `  ${appLink()}`, `  Login email: ${company}`, `  Password: ${password}`, '',
+    'Webmail', `  ${webmailLink()}`, `  Login email: ${company}`, `  Password: ${password}`,
+  ];
+}
 
 function credentialsMail({ name, company, password }) {
   return [
     `Hello ${String(name || '').split(' ')[0] || ''},`, '',
     'Your sign-in details:', '',
-    'TeamLink HRMS (attendance, leave, payslips):', `  Link: ${appLink()}`, `  Email: ${company}`, `  Password: ${password}`, '',
-    'Company webmail:', `  Link: ${webmailLink(company)}`, `  Email: ${company}`, `  Password: ${password}`, '',
+    ...signInLines(company, password), '',
     'TeamLink asks you for a new password the first time you sign in. Please change the webmail password too, from the webmail settings.',
     'Do not share these details with anyone.', '', '— TeamLink HR',
   ].join('\n');
 }
 
-function readyMail({ name, company, personal, mailbox }) {
-  const lines = [`Hello ${String(name || '').split(' ')[0] || ''},`, '', `Your company email is ready: ${company}`, '', `From now on, sign in to TeamLink with ${company}. Your password stays the same.`];
-  if (mailbox) lines.push('', 'Your mailbox:', `  Email: ${company}`, `  First password: ${mailbox.password}`, `  Webmail: https://webmail.${company.split('@')[1]}`, '', 'Please change this mailbox password the first time you open it.');
+function readyMail({ name, company, personal, mailbox, sameForTeamLink }) {
+  const lines = [`Hello ${String(name || '').split(' ')[0] || ''},`, '', `Your company email is ready: ${company}`];
+  if (mailbox && sameForTeamLink) {
+    // a new mailbox: the TeamLink password was set to the same first password, so both sign-ins go in the mail
+    lines.push('', 'Your sign-in details:', '', ...signInLines(company, mailbox.password), '',
+      'TeamLink asks you for a new password the first time you sign in. Please change the webmail password too, from the webmail settings.', 'Do not share these details with anyone.');
+  } else {
+    lines.push('', 'TeamLink website', `  ${appLink()}`, `  Login email: ${company}`, '  Password: the same as before');
+    if (mailbox) lines.push('', 'Webmail', `  ${webmailLink()}`, `  Login email: ${company}`, `  Password: ${mailbox.password}`, '', 'Please change this mailbox password the first time you open it.');
+  }
   lines.push('', `This address (${personal}) stays on your record for documents and password recovery. If you forget your password, you can use "Forgot password" with either address.`, '', '— TeamLink HR');
   return lines.join('\n');
 }
@@ -180,6 +196,19 @@ async function assign(actor, employeeIn, { email: rawEmail, personalEmail: rawPe
     await logAudit({ userId: actor.id, action: 'Company mailbox created in cPanel', entity: 'Employee', entityId: employee.id, toValue: email });
   }
 
+  // ONE FIRST PASSWORD FOR BOTH (founder 2026-11-11: both links with the login email and password in the mail): a mailbox TeamLink made gets
+  // the same first password on the TeamLink login, which asks for a new one at the first sign-in. Never on a login HR may not reset.
+  let sameForTeamLink = false;
+  if (mailbox && employee.userId) {
+    const target = await prisma.user.findUnique({ where: { id: employee.userId } });
+    const why = target ? require('./roleGuard').checkPasswordTarget({ actor, target }) : 'no login'; // eslint-disable-line global-require
+    if (!why) {
+      await prisma.user.update({ where: { id: target.id }, data: { passwordHash: await bcrypt.hash(mailbox.password, 10), ...passwordEventData('admin'), setPasswordTokenHash: null, setPasswordExpiresAt: null } });
+      const after = await prisma.user.findUnique({ where: { id: target.id } });
+      await require('./passwordReset').afterPasswordChange({ user: after, method: 'admin_reset', byUserId: actor.id, byName: actor.name }).catch(() => {}); // eslint-disable-line global-require
+      sameForTeamLink = true;
+    }
+  }
   const oldLogin = employee.userId ? (await prisma.user.findUnique({ where: { id: employee.userId }, select: { email: true } }) || {}).email : null;
   const now = Date.now();
   await prisma.$transaction([
@@ -204,7 +233,7 @@ async function assign(actor, employeeIn, { email: rawEmail, personalEmail: rawPe
   try {
     // eslint-disable-next-line global-require
     mailed = await require('./mailer').sendMail({
-      to: personalNow, subject: `Your company email is ready: ${email}`, text: readyMail({ name: employee.name, company: email, personal: personalNow, mailbox }), useEmployeeFrom: false, fromName: 'TeamLink HR',
+      to: personalNow, subject: `Your company email is ready: ${email}`, text: readyMail({ name: employee.name, company: email, personal: personalNow, mailbox, sameForTeamLink }), useEmployeeFrom: false, fromName: 'TeamLink HR',
     });
   } catch (e) { mailed = { ok: false, error: e.message }; }
   if (employee.userId) await prisma.notification.create({ data: { userId: employee.userId, title: 'Your company email is ready', message: `Sign in with ${email} from now on.`, channel: 'In-App', recipient: `company-email|${employee.id}|${email}`, status: 'Sent' } }).catch(() => {});
@@ -322,5 +351,6 @@ async function emailLocked(employeeId, email) {
 }
 
 module.exports = {
+  readyMail, credentialsMail,
   TASK, state, assign, sendCredentials, generatedPassword, movedLogin, recoveryLogin, emailLocked, allowedDomains,
 };
