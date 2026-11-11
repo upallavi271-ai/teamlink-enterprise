@@ -223,6 +223,7 @@ let SNAP = {
   openFu: new Map(), // appId -> open follow-up
   clientFeedback: new Set(), // appIds with a Client InterviewFeedback row
   activeUsers: new Map(), // userId -> name, active logins only (no test accounts)
+  userRoles: new Map(), // userId -> their own ATS role
   nameToId: new Map(), // unique active name (lower-case) -> userId
   anyEntries: new Map(), // appId|stage -> latest stage event into it, ANY actor (ms)
   fuActivity: new Map(), // appId -> latest follow-up contact / created date (ms)
@@ -286,7 +287,7 @@ async function build(stamp, t0 = Date.now()) {
       where: { entity: { in: ['Candidate', 'Application'] }, userId: { not: null } },
       select: { entity: true, entityId: true, action: true, createdAt: true },
     }),
-    prisma.user.findMany({ select: { id: true, name: true, email: true, status: true } }),
+    prisma.user.findMany({ select: { id: true, name: true, email: true, status: true, role: true, atsRole: true } }),
     // Every follow-up's own dates (imported ones keep their real contact date).
     prisma.applicationFollowUp.findMany({ select: { applicationId: true, createdAt: true, lastContactedAt: true } }),
     prisma.application.findMany({
@@ -330,11 +331,13 @@ async function build(stamp, t0 = Date.now()) {
   // as owners (agent rules, 2026-09-29 lesson). nameToId holds only names
   // that are unique among active logins.
   const activeUsers = new Map();
+  const userRoles = new Map(); // userId -> the person's own ATS role (the Owner column names who they ARE, not only whose step it is)
   const nameCount = new Map();
   users.forEach((u) => {
     const tag = `${u.name || ''} ${u.email || ''}`;
     if (u.status !== 'Active' || /zztest|example\.test/i.test(tag)) return;
     activeUsers.set(u.id, u.name);
+    userRoles.set(u.id, u.atsRole || u.role || null);
     const k = String(u.name || '').trim().toLowerCase().replace(/\s+/g, ' ');
     if (k) nameCount.set(k, (nameCount.get(k) || []).concat(u.id));
   });
@@ -375,7 +378,7 @@ async function build(stamp, t0 = Date.now()) {
     tracks,
     builtAt: t0, loaded: true, stamp, checkedAt: Date.now(),
     entries, lastAction, candAction, openFu, clientFeedback: new Set(fbs.map((f) => f.applicationId)),
-    activeUsers, nameToId, anyEntries, fuActivity, appDates, bulkDays,
+    activeUsers, userRoles, nameToId, anyEntries, fuActivity, appDates, bulkDays,
   };
   return SNAP;
 }
@@ -534,7 +537,9 @@ function namedOwner(role, r, snap, app) {
     if (r.bdeId) return { id: r.bdeId, name: (r.bde && r.bde.name) || snap.activeUsers.get(r.bdeId) || null, source: 'assigned' };
     const co = clientOwnerId(r, snap);
     if (co) return { id: co, name: r.client.bdeOwner, source: 'client owner' };
-    if (rec.id) return { ...rec, source: 'assigned' };
+    // no BDE on the job: the job's recruiter is asked - and is shown as the Recruiter they are, never as "BDE"
+    // (founder 2026-11-11: "A.Dhathri — BDE": "dhatri bde kaadhu")
+    if (rec.id) return { ...rec, source: 'assigned', actsAs: 'Recruiter' };
   }
   return { id: null, name: null, source: null };
 }
@@ -640,16 +645,20 @@ function nextActionFor(app, ctx = {}) {
   let ownerUserId = null;
   let ownerName = null;
   let ownerSource = null;
+  let shownRole = null; // the named person's own role, when it is not the step's role
   if (live) {
     if (openFu && openFu.ownerUserId) {
       ownerUserId = openFu.ownerUserId; ownerName = openFu.ownerName || snap.activeUsers.get(openFu.ownerUserId) || null; ownerSource = 'follow-up';
+      if (!openFu.ownerRole && snap.userRoles) shownRole = V.atsRoleLabel(snap.userRoles.get(openFu.ownerUserId)) || null;
     } else {
       const named = ov && ownerRole === 'BDE' ? bdeOnly(r, snap) : namedOwner(ownerRole, r, snap, app);
-      if (named.id) { ownerUserId = named.id; ownerName = named.name || snap.activeUsers.get(named.id) || null; ownerSource = named.source; } else {
+      if (named.id) { ownerUserId = named.id; ownerName = named.name || snap.activeUsers.get(named.id) || null; ownerSource = named.source; if (named.actsAs) shownRole = named.actsAs; } else {
         const attributed = ctx.attributed || (ctx.workedBy ? { recruiter: ctx.workedBy } : null);
         const who = attributed && attributed[ROLE_KEY[ownerRole]];
         if (who && who.userId && snap.activeUsers.has(who.userId)) {
           ownerUserId = who.userId; ownerName = snap.activeUsers.get(who.userId) || who.name || null; ownerSource = 'attributed';
+          const own = snap.userRoles ? V.atsRoleLabel(snap.userRoles.get(who.userId)) : null;
+          if (own && own !== ownerRole) shownRole = own;
         }
       }
     }
@@ -660,7 +669,7 @@ function nextActionFor(app, ctx = {}) {
     live,
     internal,
     action: live ? ((openFu && openFu.nextAction) || action) : action,
-    ownerRole: live ? ((openFu && openFu.ownerRole) || ownerRole) : '—',
+    ownerRole: live ? ((openFu && openFu.ownerRole) || shownRole || ownerRole) : '—',
     ownerUserId,
     ownerName,
     ownerSource,
