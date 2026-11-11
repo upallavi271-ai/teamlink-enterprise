@@ -96,3 +96,13 @@ main:has(.mon){max-width:1680px}
 .mon-sumup-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
 .mon-sumup ul{margin:4px 0 0;padding-left:18px}
 .mon-sumup li{margin:5px 0;line-height:1.45;word-break:break-word}
+/* the day bar, clickable (2026-11-11): a click on a colour lists what was open in that stretch */
+.mon button.mon-tl-seg{border:0;padding:0;margin:0;cursor:pointer;border-radius:0}
+.mon button.mon-tl-seg:hover{filter:brightness(1.12)}
+.mon button.mon-tl-seg.on{box-shadow:inset 0 0 0 2px #0f172a;z-index:1}
+.mon button.mon-tl-seg:focus-visible{outline:2px solid #2563eb;outline-offset:-2px;z-index:2}
+.mon .mon-tl-detail{margin-top:10px;border:1px solid #e2e8f0;border-left:4px solid #22a06b;border-radius:8px;padding:10px 12px;background:#fff}
+.mon .mon-tl-detail.idle{border-left-color:#e59a1a}
+.mon .mon-tl-detail.break{border-left-color:#0f766e}
+.mon .mon-tl-dhead{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:14px}
+.mon .mon-tl-sum{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;margin-bottom:8px;color:#334155}

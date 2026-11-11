@@ -592,6 +592,74 @@ function Audit() {
 }
 
 // ------------------------------------------------------------------------------------------------ One employee
+// THE DAY, CLICKABLE (founder 2026-11-11: "ahh colours lo dheyni meedha click chesina, ahh time lo vallu em open chesaro, mottham clear ga,
+// indetail ga kaavali"). A click on any colour selects that whole stretch (green from 9:12 to 9:47, an idle spell, a break) and lists,
+// under the bar, everything that was in front in it: when, how long, the app or website, and the page / file (the window title).
+const kindOf = (r) => (r.break ? 'break' : r.idle ? 'idle' : 'active');
+const KIND_WORD = { active: 'Active', idle: 'Idle (no mouse or keyboard)', break: 'Break' };
+function blocksOf(rows) {
+  const sorted = [...rows].sort((x, y) => new Date(x.start) - new Date(y.start));
+  const out = [];
+  sorted.forEach((r, i) => {
+    const k = kindOf(r);
+    const last = out[out.length - 1];
+    const st = new Date(r.start).getTime(); const en = new Date(r.end).getTime();
+    if (last && last.kind === k && st - last.to <= 2 * 60000) { last.to = Math.max(last.to, en); last.rows.push(r); last.idx.push(i); } else out.push({ kind: k, from: st, to: en, rows: [r], idx: [i] });
+  });
+  return { sorted, blocks: out };
+}
+function appWord(app) {
+  const a = String(app || '');
+  const known = { chrome: 'Chrome', msedge: 'Edge', firefox: 'Firefox', excel: 'Excel', winword: 'Word', powerpnt: 'PowerPoint', outlook: 'Outlook', explorer: 'File Explorer', whatsapp: 'WhatsApp', teams: 'Teams', 'ms-teams': 'Teams', code: 'VS Code', notepad: 'Notepad', acrord32: 'Adobe Reader', claude: 'Claude (app)', chatgpt: 'ChatGPT (app)', zoom: 'Zoom', anydesk: 'AnyDesk', locked: 'Screen locked', desktop: 'Desktop' };
+  return known[a.toLowerCase()] || a || '—';
+}
+function BlockDetail({ block, onClose }) {
+  const secs = (r) => Math.max(0, Math.round((new Date(r.end) - new Date(r.start)) / 1000));
+  const total = Math.round((block.to - block.from) / 1000);
+  // most of the time in ...: app / website, longest first
+  const by = new Map();
+  block.rows.forEach((r) => {
+    const { site } = siteOf(r.app, r.title);
+    const key = site ? `${appWord(r.app)} · ${site}` : appWord(r.app);
+    by.set(key, (by.get(key) || 0) + secs(r));
+  });
+  const top = [...by.entries()].sort((x, y) => y[1] - x[1]);
+  return (
+    <div className={`mon-tl-detail ${block.kind}`}>
+      <div className="mon-tl-dhead">
+        <b>{`${tm(new Date(block.from).toISOString())} – ${tm(new Date(block.to).toISOString())}`}</b>
+        <span>{` · ${KIND_WORD[block.kind]} · ${dur(total)}`}</span>
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} style={{ marginLeft: 'auto' }}>Close</button>
+      </div>
+      {block.kind === 'break' ? (
+        <div className="small-muted">{block.rows.some((r) => r.app === 'Personal break') ? 'Personal break: the first 15 minutes of idle time in the day count as a break.' : 'On a break (the TeamLink icon was set to Pause, or the lunch break). Nothing is recorded in a break.'}</div>
+      ) : (
+        <>
+          {block.kind === 'idle' && <div className="small-muted" style={{ marginBottom: 6 }}>Nobody touched the mouse or keyboard in this time. This is what was left open on the screen:</div>}
+          {block.kind === 'active' && top.length > 1 && (
+            <div className="mon-tl-sum">{top.slice(0, 6).map(([k, v]) => <span key={k}><b>{k}</b>{` ${dur(v)}`}</span>)}</div>
+          )}
+          <table className="mon-table">
+            <thead><tr><th>When</th><th className="num">How long</th><th>App / website</th><th>What was open</th></tr></thead>
+            <tbody>
+              {block.rows.map((r, i) => {
+                const { site, page } = siteOf(r.app, r.title);
+                return (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: 'nowrap' }}>{`${tm(r.start)} – ${tm(r.end)}`}</td>
+                    <td className="num">{dur(secs(r))}</td>
+                    <td><b>{appWord(r.app)}</b>{site && <div className="small-muted">{site}</div>}</td>
+                    <td className="mon-item">{(site ? page : r.title) || <span className="small-muted">{r.title === null && r.app && !['Locked', 'Desktop'].includes(r.app) ? 'Not shown (the app does not say)' : '—'}</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
 function Timeline({ rows, workStart, workEnd, day }) {
   const a = new Date(`${day}T${workStart}:00+05:30`).getTime();
   const b = new Date(`${day}T${workEnd}:00+05:30`).getTime();
@@ -599,18 +667,33 @@ function Timeline({ rows, workStart, workEnd, day }) {
   const pos = (t) => Math.min(100, Math.max(0, ((new Date(t).getTime() - a) / span) * 100));
   const hours = [];
   for (let t = a; t <= b; t += 3600000) hours.push(t);
+  const { sorted, blocks } = useMemo(() => blocksOf(rows), [rows]);
+  const [pick, setPick] = useState(null); // the index of the chosen stretch
+  const blockOfRow = (i) => blocks.findIndex((x) => x.idx.includes(i));
+  const chosen = pick != null ? blocks[pick] : null;
   return (
     <div className="mon-tl" aria-label="The day: active and idle">
       <div className="mon-tl-bar">
-        {rows.map((r, i) => {
+        {sorted.map((r, i) => {
           const l = pos(r.start); const w = Math.max(0.2, pos(r.end) - l);
-          return <span key={i} className={`mon-tl-seg ${r.break ? 'break' : r.idle ? 'idle' : 'active'}`} style={{ left: `${l}%`, width: `${w}%` }} title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break') : r.idle ? 'Idle' : r.app}`} />;
+          const bi = blockOfRow(i);
+          return (
+            <button
+              type="button" key={i}
+              className={`mon-tl-seg ${kindOf(r)}${pick === bi ? ' on' : ''}`}
+              style={{ left: `${l}%`, width: `${w}%` }}
+              title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break') : r.idle ? 'Idle' : `${appWord(r.app)}${r.title ? ` · ${r.title}` : ''}`} - click to see this stretch`}
+              aria-label={`${tm(r.start)} to ${tm(r.end)}: ${KIND_WORD[kindOf(r)]}. Show what was open`}
+              onClick={() => setPick(pick === bi ? null : bi)}
+            />
+          );
         })}
       </div>
       <div className="mon-tl-axis">
         {hours.map((t) => <span key={t} style={{ left: `${pos(t)}%` }}>{tm(t).replace(':00', '')}</span>)}
       </div>
-      <div className="mon-tl-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i /> No activity / PC off</span></div>
+      <div className="mon-tl-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i /> No activity / PC off</span><span className="small-muted">Click any colour to see what was open then</span></div>
+      {chosen && <BlockDetail block={chosen} onClose={() => setPick(null)} />}
     </div>
   );
 }

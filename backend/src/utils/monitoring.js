@@ -771,8 +771,9 @@ async function employeeDetail(employeeId, from, to) {
         if (l.isIdle && !l.isBreak && left > 0) {
           const cut = Math.min(en, st + left); left -= cut - st;
           out.push({ start: new Date(st), end: new Date(cut), idle: false, break: true, app: 'Personal break' });
-          if (cut < en) out.push({ start: new Date(cut), end: new Date(en), idle: true, break: false, app: l.appName });
-        } else out.push({ start: l.startTime, end: l.endTime, idle: l.isIdle, break: l.isBreak, app: l.appName });
+          if (cut < en) out.push({ start: new Date(cut), end: new Date(en), idle: true, break: false, app: l.appName, title: l.windowTitle ? cleanTitle(l.appName, l.windowTitle) : null });
+        } else out.push({ start: l.startTime, end: l.endTime, idle: l.isIdle, break: l.isBreak, app: l.appName, title: l.isBreak || !l.windowTitle ? null : cleanTitle(l.appName, l.windowTitle) });
+        // the window title too (founder 2026-11-11: a click on the day bar shows what was open then, in detail)
       });
       return out;
     })() : null,
