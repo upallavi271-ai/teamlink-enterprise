@@ -54,8 +54,11 @@ async function hear(pcm16k, current, deps = {}) {
   if (!th) {
     // an interview answer is free speech, not the phone line's short list of everyday words (founder 2026-11-11: he spoke Telugu and it stayed English): a clear run of words
     // written in the script the sound was recognised as, from a listener that heard Telugu / Hindi, is proof enough
-    const text = await en.stt(pcm, found).catch(() => '');
-    if (scriptRun(text, found)) return { ready: true, lang: found, changed: found !== cur, text };
+    // Whisper often calls Telugu 'Hindi' (and the Hindi listener then writes the Telugu sound in Devanagari): when NO real everyday word of either was found, the Telugu listener is asked first
+    const te = await en.stt(pcm, 'Telugu').catch(() => '');
+    if (scriptRun(te, 'Telugu')) return { ready: true, lang: 'Telugu', changed: cur !== 'Telugu', text: te };
+    const hi = found === 'Hindi' ? await en.stt(pcm, 'Hindi').catch(() => '') : '';
+    if (scriptRun(hi, 'Hindi')) return { ready: true, lang: 'Hindi', changed: cur !== 'Hindi', text: hi };
     return { ready: true, lang: cur, changed: false, why: 'no real words' };
   }
   return { ready: true, lang: th.lang, changed: th.lang !== cur, text: th.text };
