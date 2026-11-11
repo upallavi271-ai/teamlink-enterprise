@@ -67,6 +67,10 @@ const RULES = {
   mayApprove: ['admin', 'tl', 'bdetl'], // Campaigns: approve or send back a campaign a BDE made
   mayForms: ['admin', 'bdetl', 'bde', 'tl'], // Contacts > Forms (public capture forms)
   mayCustomFields: ['admin'], // Contacts > Custom fields
+  // AI Marketing (2026-11-11): Omni-Channel > AI Marketing. Write with AI, save drafts, ask for approval, brand voice, AI usage = Admin + Marketing.
+  // Approve or send back AI content = Admin (any), a Team Lead / BDE TL for content of their own department (never their own).
+  mayAiMarketing: ['admin', 'marketing'],
+  mayAiApprove: ['admin', 'tl', 'bdetl'],
 };
 const has = (id) => (u) => RULES[id].includes(kind(u));
 const isAdmin = (u) => kind(u) === 'admin';
@@ -149,6 +153,8 @@ const ROLE_ROWS = [
   ['mayApprove', 'Campaigns: approve or send back a campaign'],
   ['mayForms', 'Contacts: make capture forms'],
   ['mayCustomFields', 'Contacts: add custom fields'],
+  ['mayAiMarketing', 'AI Marketing: write with AI, brand voice, AI usage, ask for approval'],
+  ['mayAiApprove', 'AI Marketing: approve or send back AI content (own department)'],
 ];
 function rolesTable() {
   return {
@@ -242,6 +248,9 @@ function pagesFor(u) {
   add(true, 'billing');
   add(['admin', 'depthead', 'teamlead'].includes(l), 'team', 'audit');
   add(l === 'admin', 'superadmin', 'settings', 'waai'); // waai = Settings > WhatsApp AI
+  // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page and the Approvals tab
+  add(has('mayAiMarketing')(u), 'mkhome', 'mkcontent', 'mkapprove', 'mkbrand', 'mkusage');
+  add(!has('mayAiMarketing')(u) && has('mayAiApprove')(u), 'mkhome', 'mkapprove');
   return out;
 }
 function me(u) {
@@ -263,6 +272,7 @@ function me(u) {
     level: level(u), levelWords: LEVEL_WORDS[level(u)], hubs: hubsFor(u), pages: pagesFor(u), marketing: k === 'marketing' || marketingIds.has(u.id),
     greenStart: mayGreenStart(u), canExportReport: mayExportReport(u), canCreditsView: mayCreditsView(u),
     canLibraryUpload: has('mayLibraryUpload')(u), canImportAts: has('mayImportAts')(u), canApprove: has('mayApprove')(u), canForms: has('mayForms')(u), canCustomFields: has('mayCustomFields')(u),
+    canAiMarketing: has('mayAiMarketing')(u), canAiApprove: has('mayAiApprove')(u),
   };
 }
 

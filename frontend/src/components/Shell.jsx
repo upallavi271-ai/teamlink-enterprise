@@ -99,7 +99,7 @@ export default function Shell() {
   // The same group row, arrow, icons and active highlight as every other group; the page itself then shows only the sub-tabs of the open hub.
   // 2026-10-21: for the logins that may open the founder's Green Start product, Omni-Channel is ONE sidebar entry that opens it (below Administration,
   // above Job Portal (public)). The other logins (BDE, BDE TL, Recruiter, Marketing, Finance) keep the group with the native pages.
-  const { kids: omniKids, greenStart: omniGreenStart } = useOmniEntry(user);
+  const { kids: omniKids, greenStart: omniGreenStart, aiMarketing: omniAiMarketing } = useOmniEntry(user);
   const groups = useMemo(() => (omniKids && omniKids.length && !omniGreenStart ? [...baseGroups, ['omni', 'Omni-Channel', omniKids, '📣']] : baseGroups), [baseGroups, omniKids, omniGreenStart]);
   const section = sectionOf(pathname, user);
   // The 🔔 count and its dropdown live in ./NotificationBell.jsx (§33).
@@ -236,6 +236,19 @@ export default function Shell() {
               <a className="sb-item" href="/green-start" target="_blank" rel="noopener noreferrer" title="Opens Green Start full page in a new tab, already signed in">
                 <Ico char="📣" />Omni-Channel ↗
               </a>
+            </div>
+          )}
+          {/* 2026-11-11: AI Marketing (the AI Marketing OS, Omni-Channel native pages). The logins sent to Green Start have no native Omni-Channel group, so they get their own entry;
+              Marketing, BDE, BDE TL and the others already find it inside their Omni-Channel group. */}
+          {omniGreenStart && omniAiMarketing && (
+            <div className="sb-group">
+              <div
+                className={'sb-item' + (pathname.startsWith('/omni-channel-native/aimarketing') ? ' top-active' : '')}
+                {...press(() => navTo('/omni-channel-native/aimarketing'), 'link')}
+                aria-current={pathname.startsWith('/omni-channel-native/aimarketing') ? 'page' : undefined}
+              >
+                <Ico char="✧" />AI Marketing
+              </div>
             </div>
           )}
           {/* Only for logins with ATS (user, 2026-09-29: R&D / non-ATS staff have

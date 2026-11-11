@@ -1,0 +1,57 @@
+/* AI Marketing (Omni-Channel): only what gs.css does not already have. Everything is scoped under .gsx. */
+.gsx .mk-mods { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.gsx .mk-mod { display: flex; flex-direction: column; gap: 8px; padding: 16px; }
+.gsx .mk-mod.live { border-color: #bfe3d0; background: var(--accent-tint); }
+.gsx .mk-mod-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.gsx .mk-mod-no { width: 26px; height: 26px; border-radius: 8px; background: var(--green-3); color: var(--green-2); font-weight: 900; font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.gsx .mk-mod h3 { margin: 2px 0 0; font-size: 14px; }
+.gsx .mk-mod p { margin: 0; font-size: 11px; line-height: 1.55; color: var(--muted); flex: 1; }
+.gsx .mk-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.gsx .mk-chip { border: 1px solid var(--line); background: #fff; border-radius: 99px; padding: 4px 10px; font-size: 10px; font-weight: 700; color: #54645b; }
+.gsx .mk-steps { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.gsx .mk-steps li { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.gsx .mk-steps .dot { width: 20px; height: 20px; border-radius: 50%; border: 2px solid var(--line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; flex: none; }
+.gsx .mk-steps .dot.done { background: var(--green); border-color: var(--green); }
+
+.gsx .mk-two { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.3fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { .gsx .mk-two { grid-template-columns: 1fr; } }
+.gsx .mk-ch-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.gsx .mk-ch-pick label { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 99px; padding: 6px 11px; font-size: 11px; font-weight: 800; cursor: pointer; background: #fff; color: #44554b; letter-spacing: 0; text-transform: none; }
+.gsx .mk-ch-pick label.on { border-color: var(--green); background: var(--green-3); color: var(--green-2); }
+.gsx .mk-ch-pick input { width: auto; margin: 0; accent-color: var(--green); }
+
+.gsx .mk-variants { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 10px; }
+.gsx .mk-var { border: 1px solid var(--line); border-radius: 13px; padding: 12px; background: #fff; display: flex; flex-direction: column; gap: 8px; }
+.gsx .mk-var.on { border-color: var(--green); box-shadow: 0 0 0 2px rgba(17, 152, 90, .12); }
+.gsx .mk-var b { font-size: 12px; }
+.gsx .mk-var-text { font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: #2c3c33; max-height: 150px; overflow: auto; background: var(--surface-2); border-radius: 9px; padding: 8px 10px; }
+
+.gsx .mk-ed-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 10px; }
+.gsx .mk-ed-tab { border: 1px solid var(--line); background: #fff; border-radius: 9px; padding: 6px 11px; font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; display: inline-flex; gap: 6px; align-items: center; }
+.gsx .mk-ed-tab.on { border-color: var(--green); background: var(--green-3); color: var(--green-2); }
+.gsx .mk-ed-tab i { font-style: normal; font-size: 9px; color: #fff; border-radius: 5px; padding: 1px 5px; }
+.gsx .mk-count { display: flex; justify-content: space-between; gap: 8px; font-size: 10px; color: var(--muted); margin-top: 4px; }
+.gsx .mk-count.over { color: #b3261e; font-weight: 800; }
+.gsx .mk-flag { font-size: 10.5px; color: #8a6410; background: #fff6df; border: 1px solid #f0e0b4; border-radius: 8px; padding: 5px 9px; margin-top: 6px; }
+.gsx .mk-revise { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.gsx .mk-revise input { flex: 1; min-width: 150px; }
+.gsx .mk-note { font-size: 11px; background: #fff0f1; border: 1px solid #f4c9cc; color: #9b1c1c; border-radius: 9px; padding: 7px 10px; margin: 8px 0; }
+.gsx .mk-note.ok { background: #e8f7ef; border-color: #bfe3d0; color: #087844; }
+
+.gsx .mk-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.gsx .mk-row:first-child { border-top: 0; }
+.gsx .mk-row > div:first-child { min-width: 0; flex: 1; }
+.gsx .mk-row b { font-size: 12.5px; overflow-wrap: anywhere; }
+.gsx .mk-row small { display: block; font-size: 10px; color: var(--muted); margin-top: 3px; line-height: 1.5; }
+.gsx .mk-acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.gsx .mk-preview { margin-top: 8px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-2); padding: 10px 12px; }
+.gsx .mk-preview pre { margin: 6px 0 0; font: inherit; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gsx .mk-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.gsx .mk-table th { text-align: left; font-size: 8.5px; letter-spacing: .08em; color: #7f8b84; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+.gsx .mk-table td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.gsx .mk-table td.num, .gsx .mk-table th.num { text-align: right; }
+.gsx .mk-prov { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+.gsx .mk-prov > div { border: 1px solid var(--line); border-radius: 12px; padding: 12px; background: #fff; font-size: 11px; line-height: 1.55; }
+.gsx .mk-prov b { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+.gsx .mk-prov span { color: var(--muted); }
+@media (max-width: 700px) { .gsx .mk-row { flex-direction: column; } .gsx .mk-acts { justify-content: flex-start; } }

@@ -45,6 +45,12 @@ export const PAGES = {
   billing: { label: 'Billing', icon: '₹', title: 'Billing' },
   superadmin: { label: 'Super Admin', icon: '◇', title: 'Super Admin' },
   audit: { label: 'Audit log', icon: '☰', title: 'Audit log' },
+  // AI Marketing (2026-11-11): the AI Marketing OS, six modules built phase by phase (Phase 1 = AI Content). Page ids are lower-case letters only (they are in the address).
+  mkhome: { label: 'Overview', icon: '✧', title: 'AI Marketing' },
+  mkcontent: { label: 'AI Content', icon: '✎', title: 'AI Content' },
+  mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
+  mkbrand: { label: 'Brand voice', icon: '❝', title: 'Brand voice' },
+  mkusage: { label: 'AI usage', icon: '◔', title: 'AI usage and limits' },
 };
 // the ten sections, in the founder's order. `views` = the tabs of the section (first allowed one opens by itself)
 export const SECTIONS = [
@@ -58,6 +64,7 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkcontent', 'mkapprove', 'mkbrand', 'mkusage'] },
 ];
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);

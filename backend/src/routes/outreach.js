@@ -316,7 +316,7 @@ router.use(require('./outreachV2'));
 
 // v3 (2026-10-17): one route file per area of the Green Start rebuild, each mounted at /api/outreach/gs/<area>. A file that is missing or broken only loses its
 // own area (it is logged); it can never take the rest of the API down.
-['overview', 'campaigns', 'console', 'inbox', 'analytics', 'templates', 'studio', 'crm', 'automation', 'bots', 'admin', 'external', 'library'].forEach((area) => {
+['overview', 'campaigns', 'console', 'inbox', 'analytics', 'templates', 'studio', 'crm', 'automation', 'bots', 'admin', 'external', 'library', 'marketing'].forEach((area) => {
   const file = `./omniGs${area.charAt(0).toUpperCase()}${area.slice(1)}`;
   try { router.use(`/gs/${area}`, require(file)); } catch (e) { if (e.code !== 'MODULE_NOT_FOUND' || !String(e.message).includes(file.slice(2))) console.error(`[omni-gs] ${area} routes not loaded:`, e.message); } // eslint-disable-line global-require, no-console
 });

@@ -12,7 +12,9 @@ let cache = null;
 // from outreach/access.js mayGreenStart: Admin, Manager / AM, TL / STL, HR). The others keep the native Omni-Channel group with its pages.
 export function useOmniEntry(user) {
   const kids = useOmniChildren(user);
-  return { kids, greenStart: !!(kids && kids.length && cache && cache.uid === (user && user.id) && cache.acc && cache.acc.greenStart) };
+  // aiMarketing (2026-11-11): this login may open Omni-Channel > AI Marketing (the Shell gives the Green Start logins their own sidebar entry for it)
+  const mine = !!(kids && kids.length && cache && cache.uid === (user && user.id) && cache.acc);
+  return { kids, greenStart: !!(mine && cache.acc.greenStart), aiMarketing: !!(mine && Array.isArray(cache.acc.pages) && cache.acc.pages.includes('mkhome')) };
 }
 export default function useOmniChildren(user) {
   const uid = user && user.id;

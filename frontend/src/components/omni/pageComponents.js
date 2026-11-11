@@ -40,4 +40,10 @@ export const PAGE_COMPONENTS = {
   credituse: lazy(() => import('./pages/CreditUsePage.jsx')),
   connections: lazy(() => import('./pages/ConnectionsPage.jsx')),
   audit: lazy(() => import('./pages/AuditPage.jsx')),
+  // AI Marketing (2026-11-11)
+  mkhome: lazy(() => import('./pages/MkHomePage.jsx')),
+  mkcontent: lazy(() => import('./pages/MkContentPage.jsx')),
+  mkapprove: lazy(() => import('./pages/MkApprovePage.jsx')),
+  mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),
+  mkusage: lazy(() => import('./pages/MkUsagePage.jsx')),
 };

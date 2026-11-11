@@ -233,7 +233,8 @@ async function claudeConfig() {
   return cfg;
 }
 
-async function claudeChat(systemPrompt, history, { json = false, model: wanted = null } = {}) {
+// maxTokens: optional, for ONE call that needs a longer answer (AI Marketing writes several versions at once); empty = the Assistant's setting (still never above 4000)
+async function claudeChat(systemPrompt, history, { json = false, model: wanted = null, maxTokens = null } = {}) {
   const cfg = await claudeConfig();
   const messages = claudeMessages(history);
   if (!messages.length) throw new AiError('Ask a question first.', 400, 'empty');
@@ -244,7 +245,7 @@ async function claudeChat(systemPrompt, history, { json = false, model: wanted =
   try {
     response = await clientFor(cfg.apiKey).messages.create({
       model: wanted || cfg.model,
-      max_tokens: Math.min(cfg.maxTokens || CLAUDE_MAX_TOKENS, 4000),
+      max_tokens: Math.min(Number(maxTokens) || cfg.maxTokens || CLAUDE_MAX_TOKENS, 4000),
       system,
       messages,
     });
@@ -320,7 +321,7 @@ async function chat(systemPrompt, history) {
 async function chatJson(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
   const text = provider() === 'claude'
-    ? await claudeChat(systemPrompt, history, { json: true, model: opts.model })
+    ? await claudeChat(systemPrompt, history, { json: true, model: opts.model, maxTokens: opts.maxTokens })
     : await ollamaChat(systemPrompt, history, { json: true, model: opts.model, timeoutMs: opts.timeoutMs });
   const parsed = parseJsonLoose(text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...CLARIFY_UNREADABLE };
