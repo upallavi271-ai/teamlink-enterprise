@@ -263,6 +263,8 @@ app.use(require('./routes/outreachPublic')); // the short /u/<token> unsubscribe
 // route inside is guarded on a feature of `requirements`, which is where the
 // Job Portal lives in the navigation too (Jobs / Requirements -> Job Portal).
 app.use('/api/job-portal', jobPortalRoutes);
+// The AI calling voice for the Job Portal's AI video interview: this machine only, with the shared portal secret (routes/voiceService.js).
+app.use('/api/voice-service', require('./routes/voiceService'));
 // Client portal + candidate portal (outside logins) and 'Invite to portal'.
 app.use('/api/portal', require('./routes/portal'));
 // JOINING & DROP (2026-10-17): the joining record, the drop, the client's replacement decision, the journey, the client history (routes/joinDrop.js).

@@ -211,7 +211,8 @@ function piperTts({ exe, voices, lengthScale = 0.75 }) {
     p.on('exit', () => { st.dead = true; st.queue.splice(0).forEach((w) => w.reject(new Error('Piper stopped'))); });
     return st;
   }
-  return async (text, lang) => {
+  // outRate: 8000 for the phone (default); 'native' = the voice's own rate (the Job Portal interview: full quality) -> { pcm, rate }
+  return async (text, lang, outRate = 8000) => {
     if (!voices[lang]) throw new Error(`No free Piper voice for ${lang}`);
     const st = procFor(lang);
     const out = path.join(os.tmpdir(), `tl-piper-${crypto.randomBytes(6).toString('hex')}.wav`);
@@ -222,7 +223,8 @@ function piperTts({ exe, voices, lengthScale = 0.75 }) {
     });
     const { pcm, rate } = wavToPcm(fs.readFileSync(out));
     fs.unlink(out, () => {});
-    return resample(pcm, rate, 8000);
+    if (outRate === 'native') return { pcm, rate };
+    return resample(pcm, rate, outRate);
   };
 }
 
@@ -257,6 +259,8 @@ function fromEnv(env = process.env) {
     voiceId: [env.AI_VOICE_PIPER_TELUGU, env.AI_VOICE_PIPER_ENGLISH, env.AI_VOICE_PIPER_HINDI, env.AI_VOICE_HINDI, env.AI_VOICE_SPEED_TELUGU, env.AI_VOICE_SPEED_ENGLISH, env.AI_VOICE_SPEED_HINDI, env.AI_VOICE_NOISE_W_TELUGU, 'nw-te-0.5']
       .map((x) => String(x || '').split(/[\/]/).pop()).join('|'),
     tts: (text, lang) => (lang === 'Hindi' && hindi ? hindi(text) : tts(text, lang)),
+    // the same voices at full quality, for a screen and not a phone (routes/voiceService.js: the Job Portal's AI video interview) -> { pcm, rate }
+    ttsWide: async (text, lang) => (usePiper && !(lang === 'Hindi' && hindi) ? tts(text, lang, 'native') : { pcm: await (lang === 'Hindi' && hindi ? hindi(text) : tts(text, lang)), rate: 8000 }),
     // English goes to Whisper; Telugu / Hindi to VEXYL-STT. Without Whisper, English is heard through the Hindi model
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
     stt: (pcm, lang) => (lang === 'English' && wh ? wh.stt(pcm, 'English') : vstt(pcm, lang === 'English' ? 'Hindi' : lang)),
