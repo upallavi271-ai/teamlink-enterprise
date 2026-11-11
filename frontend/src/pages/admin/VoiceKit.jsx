@@ -26,9 +26,15 @@ async function toTake(chunks, inRate) {
   const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
   let pcm = (await off.startRendering()).getChannelData(0);
   // trim: the first / last sound louder than the room, kept with 250 ms around it
-  const win = Math.round(RATE * 0.02); let floor = 0;
-  for (let i = 0; i < Math.min(pcm.length, RATE * 0.3); i += 1) floor = Math.max(floor, Math.abs(pcm[i]));
-  const level = Math.max(0.02, floor * 2.5);
+  // The room's own level is read from the QUIETEST moments of the whole take (the 10th percentile of 20 ms windows), not from its
+  // first 0.3 s: a speaker who starts reading the moment Record is pressed made that "room level" their own voice, and almost the
+  // whole line was cut away ("Very short - was the whole line read?", 2026-11-11).
+  const win = Math.round(RATE * 0.02);
+  const peaks = [];
+  for (let i = 0; i < pcm.length; i += win) { let m = 0; for (let j = i; j < Math.min(pcm.length, i + win); j += 1) m = Math.max(m, Math.abs(pcm[j])); peaks.push(m); }
+  const sorted = peaks.slice().sort((x, y) => x - y);
+  const floor = sorted.length ? sorted[Math.floor(sorted.length * 0.1)] : 0;
+  const level = Math.max(0.015, floor * 3);
   let a = 0; let b = pcm.length;
   for (let i = 0; i < pcm.length; i += win) { let m = 0; for (let j = i; j < Math.min(pcm.length, i + win); j += 1) m = Math.max(m, Math.abs(pcm[j])); if (m > level) { a = i; break; } }
   for (let i = pcm.length - win; i > 0; i -= win) { let m = 0; for (let j = i; j < Math.min(pcm.length, i + win); j += 1) m = Math.max(m, Math.abs(pcm[j])); if (m > level) { b = i + win; break; } }
