@@ -92,3 +92,7 @@ main:has(.mon){max-width:1680px}
 .mon .mon-task-detail .mon-table th{background:transparent}
 .mon-modal .mon-sub td{background:var(--bg-soft,#f8fafc);font-size:12.5px;padding-top:5px;padding-bottom:5px}
 .mon-caret{display:inline-block;width:12px;color:var(--ink-soft,#5b6577)}
+.mon-sumup{margin:10px 10px 6px;padding:10px 14px;border:1px solid var(--line,#e4e7ec);border-radius:10px;background:var(--bg-soft,#f8fafc);font-size:13.5px}
+.mon-sumup-head{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.mon-sumup ul{margin:4px 0 0;padding-left:18px}
+.mon-sumup li{margin:5px 0;line-height:1.45;word-break:break-word}

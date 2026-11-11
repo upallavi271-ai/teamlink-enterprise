@@ -683,6 +683,47 @@ export function EmployeeDetail({ id, onBack, own = false }) {
 // Everything one app or website was used for, in one person's period: a summary line, every page / file / chat with its time,
 // and the sittings in order (founder 2026-11-10: "overall summary kanipinchali, kaani complete work cover avvali").
 const NOT_SHOWN = 'Not shown (the app does not say)';
+// THE WORK IN PLAIN WORDS (founder 2026-11-11: "work done lo, vallu em em chesthunnaru in detail ga sum up chesthuu vundali; what was open
+// lo, em em open chesaru ani vundali"): Work done opens with a written summary - each piece of work, how long and when - and the table
+// under it; What was open stays the list of everything that was open.
+function spans(times, when, max = 4) {
+  const list = (times || []).map((t) => `${when(t.start)}–${tm(t.end)}`);
+  return list.length > max ? `${list.slice(0, max).join(', ')} and ${list.length - max} more` : list.join(', ');
+}
+function WorkSummary({ app, done, when, total }) {
+  const lines = [];
+  if (app.teamlinkWork && app.teamlinkWork.lines.length) {
+    app.teamlinkWork.lines.forEach((x) => {
+      const named = (x.items || []).filter((i) => i.what);
+      const eg = named.slice(0, 4).map((i) => `${i.what}${i.change ? ` (${i.change})` : ''}`);
+      lines.push({ key: `w${x.area}${x.action}`, head: `${x.action}${x.count > 1 ? ` – ${x.count} times` : ''}`, area: x.area, detail: eg.length ? `${eg.join('; ')}${named.length > 4 ? `; and ${named.length - 4} more` : ''}` : '', at: `${when(x.first)}${x.count > 1 ? ` to ${tm(x.last)}` : ''}` });
+    });
+  }
+  done.forEach((x) => {
+    lines.push({ key: `d${x.area}${x.action}`, head: x.action, area: x.area, time: dur(x.seconds), detail: '', at: spans(x.times, when) });
+  });
+  if (!lines.length) return null;
+  const pages = (app.items || []).filter((i) => i.item !== NOT_SHOWN).length;
+  return (
+    <div className="mon-sumup">
+      <div className="mon-sumup-head">
+        <b>What {app.teamlinkWork ? 'was done in TeamLink' : `was done in ${app.name}`}</b>
+        <span className="small-muted">{dur(app.seconds)}{total ? ` · ${Math.round((app.seconds / total) * 100)}% of the active time` : ''}{pages ? ` · ${pages} ${pages === 1 ? 'thing' : 'different things'} open` : ''}</span>
+      </div>
+      <ul>
+        {lines.slice(0, 25).map((l) => (
+          <li key={l.key}>
+            <b>{l.head}</b>{l.time && <> – {l.time}</>}{l.area && l.area !== app.name && <span className="small-muted"> · {l.area}</span>}
+            {l.detail && <div>{l.detail}</div>}
+            {l.at && <div className="small-muted">{l.at}</div>}
+          </li>
+        ))}
+      </ul>
+      {lines.length > 25 && <div className="small-muted">and {lines.length - 25} more below.</div>}
+    </div>
+  );
+}
+
 function AppWork({ app, who, range, total, onClose }) {
   const done = app.done || [];
   const [openRow, setOpenRow] = useState({}); // the rows opened to their details
@@ -720,10 +761,11 @@ function AppWork({ app, who, range, total, onClose }) {
         <div className="mon-tabs">
           {app.teamlinkWork && <button type="button" className={tab === 'work' ? 'on' : ''} onClick={() => setTab('work')}>Work done in TeamLink ({app.teamlinkWork.total})</button>}
           {!app.teamlinkWork && done.length > 0 && <button type="button" className={tab === 'done' ? 'on' : ''} onClick={() => setTab('done')}>Work done ({done.length})</button>}
-          <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was open ({items.length})</button>
+          <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was opened ({items.length})</button>
           <button type="button" className={tab === 'sittings' ? 'on' : ''} onClick={() => setTab('sittings')}>Hour by hour ({sittings.length})</button>
         </div>
         <div className="mon-modal-body">
+          {tab === 'work' && app.teamlinkWork && <WorkSummary app={app} done={[]} when={when} total={total} />}
           {tab === 'work' && app.teamlinkWork && (app.teamlinkWork.lines.length ? (
             <table className="mon-table">
               <thead><tr><th>Area</th><th>What was done</th><th className="num">How many</th><th>First – last</th></tr></thead>
@@ -752,7 +794,8 @@ function AppWork({ app, who, range, total, onClose }) {
           ) : <div className="ak-empty" style={{ padding: 16 }}>Nothing was saved in TeamLink in this period: only pages were looked at.</div>)}
           {tab === 'done' && (
             <>
-              <div className="small-muted" style={{ padding: '8px 10px 0' }}>From the window: which file, page, folder or chat was open. Click a line to see each time it was open. What was typed is never recorded.</div>
+              <WorkSummary app={app} done={done} when={when} total={total} />
+              <div className="small-muted" style={{ padding: '8px 10px 0' }}>Read from the window: which file, page, folder or chat was in front. Click a line for each time it was open. What was typed is never recorded.</div>
               <table className="mon-table">
                 <thead><tr><th>Area</th><th>What was done</th><th className="num">Time</th><th className="num" title="How many separate times it was in front">How many</th><th>First – last</th></tr></thead>
                 <tbody>
