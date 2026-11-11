@@ -770,7 +770,11 @@ export function teamlinkFrontRouter({ root, express }) {
       const ids = interviews.map((i) => i.id);
       const audit = ids.length ? (await c.query(`select interview_id, action, detail, actor_role, at from ai_interview_audit
           where interview_id = any($1::text[]) order by at desc limit 40`, [ids])).rows : [];
-      return { interviews, audit };
+      // what the recogniser actually delivered for the newest interviews (length and the first words only), to see whether speech is captured
+      const recent = (await c.query(`select interview_id, seq, part, answered, length(coalesce(transcript,'')) as chars, left(coalesce(transcript,''), 70) as starts, submitted_at
+          from ai_interview_answer_parts where interview_id in (select id from ai_interviews order by created_at desc limit 3)
+          order by submitted_at desc nulls last limit 30`)).rows;
+      return { interviews, audit, recent };
     });
     res.json(out);
   }));
