@@ -125,7 +125,11 @@ router.post('/interview-voice', express.raw({ type: 'application/octet-stream', 
   if (!bridge.secretMatches(req.get('x-job-portal-secret'))) return res.status(401).json({ error: 'Invalid or missing job portal secret' });
   const V = require('../utils/interviewVoice'); // eslint-disable-line global-require
   try {
-    if (req.query.op === 'hear') return res.json(await V.hear(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), req.query.lang));
+    if (req.query.op === 'hear') {
+      const out = await V.hear(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), req.query.lang);
+      console.log('[interview-voice] hear: was', req.query.lang, '->', out.lang, out.changed ? 'CHANGED' : 'same', out.why || '', out.text ? JSON.stringify(String(out.text).slice(0, 60)) : ''); // eslint-disable-line no-console
+      return res.json(out);
+    }
     const out = await V.say(req.body && req.body.text, req.query.lang);
     if (!out.ready) return res.json({ ready: false });
     res.set('Content-Type', 'audio/wav');
