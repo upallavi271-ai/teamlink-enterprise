@@ -151,11 +151,10 @@ export const HRMS_ITEMS = [
   leaf('🏖️', '/leave', 'Leave & Holidays', [['hrms', 'Leave & Holidays', 'view']]),
   leaf('💵', '/payroll', 'Payroll & Compensation', [['hrms', 'Payroll & Compensation', 'view']]),
   leaf('📈', '/performance', 'Performance & Development', [['hrms', 'Performance & Development', 'view']]),
+  leaf('🛎️', '/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
   // EMPLOYEE MONITORING (2026-11-04): office PC use in work hours. HR / Admin see everyone (Overview, Reports, Devices,
   // Settings ...); every employee sees My activity - their own data and the notice they accepted. The server decides.
-  // Listed BEFORE Employee Services (founder 2026-11-11).
   leaf('🖥️', '/monitoring', 'Employee Monitoring', [['hrms', 'Attendance & Time', 'view']]),
-  leaf('🛎️', '/employee-services', 'Employee Services', [['hrms', 'Employee Services', 'view']]),
 ];
 
 // ATS LAYOUT v3 (user, 2026-10-03) — EXACTLY FIVE ATS ENTRIES:
