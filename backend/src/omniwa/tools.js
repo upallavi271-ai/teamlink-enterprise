@@ -44,7 +44,7 @@ async function jobFacts(requirementId) {
 }
 
 // ---- open jobs -------------------------------------------------------------------------------------------------------------------------------------
-const NOISE = new Set('i am im looking for a an the new job jobs position positions vacancy vacancies vaccancy vacancey opening openings role roles interested intrested also want need any please hi hello yes no ok okay is are there do you have in at of to and or my me work this that one tell about know field details more give show list available related regarding relevant sector department dept area kind type'.split(' '));
+const NOISE = new Set('i am im looking for a an the new job jobs position positions vacancy vacancies vaccancy vacancey opening openings role roles interested intrested also want need any please hi hello yes no ok okay is are there do you have in at of to and or my me work this that one tell about know field details more give show list available related regarding relevant sector department dept area kind type full time part nay hloo hlo helo hii may can could sir madam mam'.split(' '));
 const wordsOf = (t) => [...new Set(String(t || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length > 2 && !NOISE.has(w) && !/^vac/.test(w) && !/^r[a-z]?e?w?lat/.test(w)))].slice(0, 6);
 const JOB_ASK = /\b(jobs?|positions?|posts?|vacanc\w*|vaccan?c\w*|vacnc\w*|openings?|hiring|work)\b/i;
 // "nurseing" must find "Nursing": the start of a word is enough
@@ -54,15 +54,23 @@ const wordStarts = (title, stem) => String(title || '').toLowerCase().split(/[^\
 
 // the open client jobs that fit the words: the title counts most, then the specialisation and department ("education" must find the Education jobs, whose titles say "Faculty"),
 // then skills and place. Only "any jobs?" on a number given to one department lists that department. The same safe facts as get_job_details, the client's name never. id stays on this side.
-const FIELDS = [['title', 3], ['specialisation', 2], ['department', 2], ['skills', 1], ['location', 1]];
+const FIELDS = [['title', 3], ['specialisation', 2], ['department', 2], ['education', 2], ['qualifications', 2], ['skills', 1], ['location', 1]];
+// what people write and what the titles say: "mbbs" is a degree, the jobs are titled Doctor / Consultant. Matched at the start of a word, like every stem.
+const SYNONYMS = {
+  mbbs: ['doctor', 'consultant', 'physician'], md: ['doctor', 'consultant', 'physician'], doctor: ['mbbs', 'consultant', 'physician'], doctors: ['doctor', 'mbbs', 'consultant'],
+  dr: ['doctor', 'consultant'], physician: ['doctor', 'consultant'], surgeon: ['surgery', 'consultant'], nurse: ['nursing'], nurses: ['nursing'], nursing: ['nurse'],
+  gnm: ['nursing', 'nurse'], anm: ['nursing', 'nurse'], bpt: ['physiotherap', 'physio'], physio: ['physiotherap'], pharmacist: ['pharma'], dmlt: ['lab', 'technician'], mlt: ['lab', 'technician'],
+};
 async function searchJobs(text, { limit = 5, department = null } = {}) {
   const words = wordsOf(text);
   const generic = !words.length && department && JOB_ASK.test(String(text || ''));
   if (!words.length && !generic) return { searched: false, jobs: [], total: 0 };
   const stems = words.map(stemOf);
-  const where = generic ? { department } : { OR: stems.flatMap((w) => FIELDS.map(([f]) => ({ [f]: { contains: w } }))) };
-  const rows = await prisma.requirement.findMany({ where: { status: { in: REQUIREMENT_LIVE_STATUSES }, internal: false, ...where }, orderBy: { createdAt: 'desc' }, take: 300, select: { id: true, title: true, specialisation: true, department: true, skills: true, location: true, portalPublished: true } });
-  const scoreOf = (r) => (generic ? 1 : stems.reduce((n, w) => n + FIELDS.reduce((m, [f, pts]) => m + (wordStarts(r[f], w) ? pts : 0), 0), 0));
+  const extra = [...new Set(words.flatMap((w) => SYNONYMS[w] || []))].filter((x) => !stems.includes(x));
+  const where = generic ? { department } : { OR: [...stems, ...extra].flatMap((w) => FIELDS.map(([f]) => ({ [f]: { contains: w } }))) };
+  const rows = await prisma.requirement.findMany({ where: { status: { in: REQUIREMENT_LIVE_STATUSES }, internal: false, ...where }, orderBy: { createdAt: 'desc' }, take: 300, select: { id: true, title: true, specialisation: true, department: true, education: true, qualifications: true, skills: true, location: true, portalPublished: true } });
+  const scoreOf = (r) => (generic ? 1 : stems.reduce((n, w) => n + FIELDS.reduce((m, [f, pts]) => m + (wordStarts(r[f], w) ? pts : 0), 0), 0)
+    + extra.reduce((n, w) => n + FIELDS.reduce((m, [f, pts]) => m + (wordStarts(r[f], w) ? pts / 2 : 0), 0), 0));
   // the better fit first, and among equals a job with a Job Portal page (it can get an apply link)
   const scored = rows.map((r) => ({ id: r.id, n: scoreOf(r), pub: r.portalPublished ? 1 : 0 })).filter((r) => r.n > 0).sort((a, b) => b.n - a.n || b.pub - a.pub);
   const jobs = [];
