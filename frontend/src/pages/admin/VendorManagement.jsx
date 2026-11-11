@@ -261,6 +261,13 @@ function VendorDetail({ id, onClose, onChanged, onSaved, onError, onOpenLogins, 
     if (onMailDone) onMailDone(res); else done(res.message);
     setMsg(res.message || ''); load(); onChanged();
   }
+  // The button on each login row: one secure link (an invitation if they never signed in, a reset if they did), shown like every other send.
+  async function link(login) {
+    try {
+      const res = await api.post(`/vendor-logins/${login.id}/invite`, {});
+      mailResult({ ...res.data, login: res.data.login || login });
+    } catch (e) { onError(errText(e, 'Could not send the link.')); }
+  }
   async function linkBills() {
     try { const res = await api.post(`/vendor-master/${id}/link-bills`, { all: true }); done(res.data.message); } catch (e) { onError(errText(e, 'Could not link the bills.')); }
   }

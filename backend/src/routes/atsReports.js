@@ -495,6 +495,8 @@ async function loadContext(user, f, { appDate = 'createdAt' } = {}) {
   // login, so one person is never two rows.
   // the one people rule (utils/workers.js makeResolver): a short form in the sheets ("M.Sai Sirisha") is the login it stands for
   const person = workers.makeResolver(users);
+  // returned on the context: the filter caption names a chosen recruiter / TL even when no row in the scope carries them
+  const userById = new Map(users.map((u) => [u.id, u]));
   // handovers: the credit reads who had the candidate before each one (utils/handover.js)
   const HO = await require('../utils/handover').handoversFor(appRows.map((a) => a.id)); // eslint-disable-line global-require
   person.startOf = (await workers.loadDirectory()).person.startOf; // each login's Date of joining, for workers.creditAt()

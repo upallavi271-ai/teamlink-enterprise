@@ -1079,7 +1079,7 @@ export default function Requirements() {
         tools={(
           <>
             <AtsDataTools module="requirements" kinds={['requirements']} onImported={load} body={exportBody} />
-            <button type="button" className={`btn${filters.fresh === '1' ? ' btn-primary' : ''}`} title="Requirements posted in the last 7 days, newest first. Click again to see everything." onClick={() => { if (filters.fresh === '1') removeFilter({ fresh: '' }); else { setSort('created'); setDir('desc'); const vs = ((data && data.views) || []).map((v) => v.key); setView(vs.includes('all') ? 'all' : (vs.includes('open') ? 'open' : view)); setFilters((f) => ({ ...f, fresh: '1' })); } }}>🆕 New</button>
+            <button type="button" className={`btn${filters.fresh === '1' ? ' btn-primary' : ''}`} title="Requirements posted in the last 7 days, newest first. Click again to see everything." onClick={() => { if (filters.fresh === '1') removeFilter({ fresh: '' }); else { setSort('created'); setDir('desc'); const vs = ((data && data.views) || []).map((v) => v.key); setView(vs.includes('all') ? 'all' : (vs.includes('open') ? 'open' : view)); setDraftFilter({ fresh: '1' }); } }}>🆕 New</button>
             {canRaiseRequirement(user)
               ? <button type="button" className="btn btn-primary" onClick={() => openForm()} title={isHrUser ? "TeamLink's own opening (internal hiring)" : undefined}>{isHrUser ? '+ New internal opening' : '+ Add Requirement'}</button>
               : mayRequestJob ? <button type="button" className="btn btn-primary" onClick={() => setShowRequest(true)}>+ Request requirement</button> : null}
