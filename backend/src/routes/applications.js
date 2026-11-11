@@ -1213,7 +1213,7 @@ router.post('/bulk', async (req, res, next) => {
         const jobDepts = require('../utils/reqDepartments').departmentsOf(app.requirement).map((d) => String(d).trim().toLowerCase()); // eslint-disable-line global-require
         const theirs = [target.atsDepartment, ...String(target.atsScopeDepartments || '').split(',')].map((d) => String(d || '').trim().toLowerCase()).filter(Boolean);
         if (jobDepts.length && !theirs.some((d) => jobDepts.includes(d))) {
-          results.push({ ...base, ok: false, error: `${target.name} works in ${target.atsDepartment || 'another department'}; this candidate is is on the ${app.requirement.department} side: only ${app.requirement.department} people can take it.` });
+          results.push({ ...base, ok: false, error: `${target.name} works in ${target.atsDepartment || 'another department'}; this candidate is on an ${app.requirement.department} job, so only ${app.requirement.department} people can take it.` });
           continue;
         }
       }
