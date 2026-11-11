@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import CandidateDrawer from '../CandidateDrawer.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import './newItems.css';
 
 // ---------------------------------------------------------------------------
@@ -35,7 +37,11 @@ function ago(at) {
 // only, the ATS dashboard's lists ATS lines only. Nothing else about the button changes. No module = everything (the home Dashboard).
 export default function NewItems({ module = null }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [data, setData] = useState(null);
+  // a candidate / interview opens in the side panel on this page; closing it brings the list back (founder 2026-11-11:
+  // "open meedha click chesthey, akkadey open ithey better" - no trip to Candidates and back each time)
+  const [peek, setPeek] = useState(null);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState('new');
   const [kind, setKind] = useState('');
@@ -64,6 +70,14 @@ export default function NewItems({ module = null }) {
     setBusy(false);
   }
   async function openItem(i) {
+    const m = /^\/candidates\/([A-Za-z0-9_-]+)\/?$/.exec(String(i.link || '')); // a message about a person opens the same way
+    const candidateId = i.candidateId || (m ? m[1] : null);
+    if (candidateId) {
+      setOpen(false);
+      setPeek({ ...i, candidateId });
+      if (!i.seen) mark([i.key]);
+      return;
+    }
     if (!i.seen) await mark([i.key]);
     setOpen(false);
     navigate(i.link || '/');
@@ -128,6 +142,15 @@ export default function NewItems({ module = null }) {
             </ul>
           </div>
         </Modal>
+      )}
+      {peek && (
+        <CandidateDrawer
+          candidateId={peek.candidateId}
+          applicationId={peek.applicationId || null}
+          user={user}
+          onClose={() => { setPeek(null); setOpen(true); }}
+          onChanged={() => load()}
+        />
       )}
     </>
   );

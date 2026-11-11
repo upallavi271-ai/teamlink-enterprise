@@ -111,6 +111,8 @@ async function derived(user) {
       text: a.requirement ? `For ${a.requirement.title}${a.requirement.reqCode ? ` (${a.requirement.reqCode})` : ''}` : '',
       // the person themself (founder 2026-11-11: clicking it opens that one), not the job's page
       link: a.candidate ? `/candidates/${a.candidate.id}` : (a.requirement ? `/requirements/${a.requirement.id}` : '/candidates'),
+      // opened right there in the side panel (founder 2026-11-11: "akkadey open ithey better")
+      candidateId: a.candidate ? a.candidate.id : null, applicationId: a.id,
     }));
   } catch { /* skip */ }
 
@@ -127,6 +129,7 @@ async function derived(user) {
       title: `New interview: ${(a.candidate && a.candidate.name) || 'A candidate'}`,
       text: `${a.requirement ? `${a.requirement.title} · ` : ''}${a.interviewAt ? a.interviewAt.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''}`,
       link: a.candidate ? `/candidates/${a.candidate.id}` : '/interviews',
+      candidateId: a.candidate ? a.candidate.id : null, applicationId: a.id,
     }));
   } catch { /* skip */ }
 
