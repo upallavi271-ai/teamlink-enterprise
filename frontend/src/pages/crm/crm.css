@@ -167,3 +167,9 @@ main:has(> .crm-page){max-width:1680px;margin:0}
 .crm-deal-row .n small{white-space:nowrap}
 .crm-grid2>.crm-card{max-height:440px;overflow:auto}
 .crm-deal-row .v{flex:0 0 auto}
+
+/* the sales team with each person's rights (CRM settings, 2026-11-11) */
+.crm-member{border:1px solid var(--line-soft,#eef0f3);border-radius:8px;padding:8px 10px;margin-bottom:6px}
+.crm-rights{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px}
+.crm-right{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;font-weight:400;white-space:nowrap}
+.crm-right input{width:auto;margin:0}

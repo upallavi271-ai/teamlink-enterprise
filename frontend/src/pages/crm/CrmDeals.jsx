@@ -1,6 +1,6 @@
 // CRM > DEALS (2026-11-02): the pipeline board - one column per stage (Prospecting ... Negotiation, Won, Lost) with the
 // count and value; drag a deal to move it (Lost asks the reason), or open it to log calls, set follow-ups and, once Won,
-// "Add as client". Won / Lost show the last 90 days. A list view is there too (sortable by value / close date).
+// Won / Lost show the last 90 days. A list view is there too (sortable by value / close date).
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
@@ -50,7 +50,6 @@ export default function CrmDeals() {
       )}
       {staleDays(d, null, me.lists.staleDays) > 0 && <div className="s late" title="Nothing logged for a while">💤 {staleDays(d, null, me.lists.staleDays)} days quiet</div>}
       {d.stage === 'Lost' && d.lostReason && <div className="s">{d.lostReason}</div>}
-      {d.stage === 'Won' && <div className="s">{d.clientId ? '✓ TeamLink client' : 'Add as client →'}</div>}
     </div>
   );
 
@@ -66,8 +65,8 @@ export default function CrmDeals() {
             <button type="button" className={`btn btn-sm${view === 'board' ? ' btn-primary' : ''}`} onClick={() => setView('board')}>Board</button>
             <button type="button" className={`btn btn-sm${view === 'list' ? ' btn-primary' : ''}`} onClick={() => setView('list')}>List</button>
           </div>
-          <button type="button" className="btn" onClick={() => download('/crm/export/deals', `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>
-          {me.canEdit && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
+          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/deals', `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
         </div>
       </div>
       <div className="filter-row">
@@ -114,7 +113,7 @@ export default function CrmDeals() {
           </table>
         </div>
       )}
-      {adding && <RecordForm kind="deal" preset={{ feePercent: '8.33' }} onClose={() => setAdding(false)} onSaved={(row) => { setAdding(false); load(); setOpen({ kind: 'deal', id: row.id }); }} />}
+      {adding && <RecordForm kind="deal" preset={{}} onClose={() => setAdding(false)} onSaved={(row) => { setAdding(false); load(); setOpen({ kind: 'deal', id: row.id }); }} />}
       {dialog}
     </div>
   );

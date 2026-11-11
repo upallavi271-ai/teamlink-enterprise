@@ -255,7 +255,12 @@ function WebsiteForm() {
 export function CrmSettings({ onClose, onSaved }) {
   const { me, toast } = useCrm();
   const L = me.lists;
-  const [f, setF] = useState({ sources: L.sources.join('\n'), lostReasons: L.lostReasons.join('\n'), stageProbability: { ...L.stageProbability }, staleDays: L.staleDays, proposalValidityDays: L.proposalValidityDays, salesTeam: (me.salesTeam || []).map((m) => ({ ...m })) });
+  const [f, setF] = useState({ sources: L.sources.join('\n'), lostReasons: L.lostReasons.join('\n'), stageProbability: { ...L.stageProbability }, staleDays: L.staleDays, proposalValidityDays: L.proposalValidityDays, salesTeam: (me.salesTeam || []).map((m) => ({ ...m, rights: { ...(m.rights || {}) } })),
+    invoiceFrom: { ...(me.invoiceFrom || {}) }, invoiceTaxPercent: me.invoiceTaxPercent ?? 18, invoiceDueDays: me.invoiceDueDays ?? 15, meetingLink: me.meetingLink || '', bookingHours: { ...(me.bookingHours || { from: '10:00', to: '18:00', minutes: 30 }) } });
+  const RIGHT_WORDS = { create: 'Add', edit: 'Change', delete: 'Delete', import: 'Import', export: 'Download', reports: 'Team reports' };
+  const roleRights = (me.team && me.team.roleRights) || {};
+  const setMember = (i, patchM) => setF((x) => ({ ...x, salesTeam: x.salesTeam.map((y, j) => (j === i ? { ...y, ...patchM } : y)) }));
+  const setInv = (k, v) => setF((x) => ({ ...x, invoiceFrom: { ...x.invoiceFrom, [k]: v } }));
   // the people picker for the sales team
   const [q, setQ] = useState('');
   const [found, setFound] = useState([]);
@@ -264,7 +269,7 @@ export function CrmSettings({ onClose, onSaved }) {
     const t = setTimeout(() => api.get('/crm/people', { params: { q } }).then((r) => setFound(r.data.people)).catch(() => setFound([])), 300);
     return () => clearTimeout(t);
   }, [q]);
-  const addMember = (p) => { setF((x) => (x.salesTeam.some((m) => m.userId === p.id) ? x : { ...x, salesTeam: [...x.salesTeam, { userId: p.id, name: p.name, role: 'rep' }] })); setQ(''); setFound([]); };
+  const addMember = (p) => { setF((x) => (x.salesTeam.some((m) => m.userId === p.id) ? x : { ...x, salesTeam: [...x.salesTeam, { userId: p.id, name: p.name, role: 'rep', seeAll: false, rights: { ...(roleRights.rep || {}) } }] })); setQ(''); setFound([]); };
   const [stages, setStages] = useState(L.leadStages.map((s) => ({ ...s })));
   const [before, setBefore] = useState(String(L.defaultRemindBefore));
   const open = stages.filter((s) => !['Won', 'Lost'].includes(s.name));
@@ -280,15 +285,26 @@ export function CrmSettings({ onClose, onSaved }) {
   return (
     <Modal title="CRM settings" size="wide" onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
       <SampleData />
-      <div className="section-label" style={{ marginTop: 0 }}>Sales team</div>
-      <p className="small-muted" style={{ marginTop: 0 }}>Who uses the CRM. A <b>Salesperson</b> sees and works their own leads and deals; a <b>Sales manager</b> sees the whole team, gives leads to people, sets targets and these settings. The BDEs and BDE team leads are on the team already; add anybody else here.</p>
+      <div className="section-label" style={{ marginTop: 0 }}>Sales team and rights</div>
+      <p className="small-muted" style={{ marginTop: 0 }}>Only the people listed here open the CRM (with Super Admin / Admin) - nothing comes from ATS roles. A <b>Sales manager</b> has every right and gives records to others; a <b>Salesperson</b> works their own records (tick &quot;Sees everyone&#39;s&quot; to let them read the team&#39;s); a <b>Viewer</b> reads only. Untick a right to take it away from one person.</p>
       {f.salesTeam.map((m, i) => (
-        <div key={m.userId} style={{ display: 'flex', gap: 6, alignItems: 'center', marginBottom: 6 }}>
-          <span style={{ flex: 1, fontSize: 13 }}><b>{m.name || m.userId}</b></span>
-          <select value={m.role} onChange={(e) => setF((x) => ({ ...x, salesTeam: x.salesTeam.map((y, j) => (j === i ? { ...y, role: e.target.value } : y)) }))} style={{ width: 170 }} aria-label={`Role of ${m.name}`}>
-            <option value="rep">Salesperson</option><option value="manager">Sales manager</option>
-          </select>
-          <button type="button" className="btn btn-sm" onClick={() => setF((x) => ({ ...x, salesTeam: x.salesTeam.filter((_, j) => j !== i) }))} aria-label={`Remove ${m.name}`}>Remove</button>
+        <div key={m.userId} className="crm-member">
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ flex: 1, fontSize: 13, minWidth: 140 }}><b>{m.name || m.userId}</b></span>
+            <select value={m.role} onChange={(e) => setMember(i, { role: e.target.value, rights: { ...(roleRights[e.target.value] || {}) }, seeAll: e.target.value !== 'rep' })} style={{ width: 150 }} aria-label={`Role of ${m.name}`}>
+              <option value="rep">Salesperson</option><option value="manager">Sales manager</option><option value="viewer">Viewer (read only)</option>
+            </select>
+            {m.role === 'rep' && <label className="crm-right"><input type="checkbox" checked={!!m.seeAll} onChange={(e) => setMember(i, { seeAll: e.target.checked })} /> Sees everyone&#39;s</label>}
+            <button type="button" className="btn btn-sm" onClick={() => setF((x) => ({ ...x, salesTeam: x.salesTeam.filter((_, j) => j !== i) }))} aria-label={`Remove ${m.name}`}>Remove</button>
+          </div>
+          {m.role !== 'manager' && (
+            <div className="crm-rights">
+              {Object.keys(RIGHT_WORDS).map((k) => {
+                const locked = m.role === 'viewer' && ['create', 'edit', 'delete', 'import'].includes(k);
+                return <label key={k} className="crm-right" title={locked ? 'A viewer only reads' : undefined}><input type="checkbox" disabled={locked} checked={!locked && !!(m.rights || {})[k]} onChange={(e) => setMember(i, { rights: { ...(m.rights || {}), [k]: e.target.checked } })} /> {RIGHT_WORDS[k]}</label>;
+              })}
+            </div>
+          )}
         </div>
       ))}
       <div style={{ position: 'relative', marginBottom: 14 }}>
@@ -302,6 +318,26 @@ export function CrmSettings({ onClose, onSaved }) {
             ))}
           </div>
         )}
+      </div>
+      <div className="section-label">Invoices</div>
+      <p className="small-muted" style={{ marginTop: 0 }}>What every CRM invoice says about us. The CRM keeps its own invoices; nothing goes to Accounts.</p>
+      <div className="grid-2">
+        <div className="field"><label>Company name</label><input type="text" value={f.invoiceFrom.name || ''} onChange={(e) => setInv('name', e.target.value)} /></div>
+        <div className="field"><label>GSTIN</label><input type="text" value={f.invoiceFrom.gstin || ''} onChange={(e) => setInv('gstin', e.target.value)} /></div>
+        <div className="field"><label>Address</label><textarea rows={2} value={f.invoiceFrom.address || ''} onChange={(e) => setInv('address', e.target.value)} /></div>
+        <div className="field"><label>Bank details (shown on the invoice)</label><textarea rows={2} value={f.invoiceFrom.bank || ''} onChange={(e) => setInv('bank', e.target.value)} /></div>
+        <div className="field"><label>Email</label><input type="email" value={f.invoiceFrom.email || ''} onChange={(e) => setInv('email', e.target.value)} /></div>
+        <div className="field"><label>Phone</label><input type="text" value={f.invoiceFrom.phone || ''} onChange={(e) => setInv('phone', e.target.value)} /></div>
+        <div className="field"><label>Tax % (GST)</label><input type="number" min={0} max={50} value={f.invoiceTaxPercent} onChange={(e) => setF({ ...f, invoiceTaxPercent: e.target.value })} /></div>
+        <div className="field"><label>Payment due after (days)</label><input type="number" min={0} max={180} value={f.invoiceDueDays} onChange={(e) => setF({ ...f, invoiceDueDays: e.target.value })} /></div>
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label>Payment terms</label><input type="text" value={f.invoiceFrom.terms || ''} onChange={(e) => setInv('terms', e.target.value)} /></div>
+      </div>
+      <div className="section-label">Meetings a lead books</div>
+      <div className="grid-2">
+        <div className="field" style={{ gridColumn: '1 / -1' }}><label>Meeting link (Google Meet / Zoom)</label><input type="url" placeholder="https://meet.google.com/..." value={f.meetingLink} onChange={(e) => setF({ ...f, meetingLink: e.target.value })} /></div>
+        <div className="field"><label>Slots from</label><input type="time" value={f.bookingHours.from} onChange={(e) => setF({ ...f, bookingHours: { ...f.bookingHours, from: e.target.value } })} /></div>
+        <div className="field"><label>Slots until</label><input type="time" value={f.bookingHours.to} onChange={(e) => setF({ ...f, bookingHours: { ...f.bookingHours, to: e.target.value } })} /></div>
+        <div className="field"><label>Each meeting</label><select value={f.bookingHours.minutes} onChange={(e) => setF({ ...f, bookingHours: { ...f.bookingHours, minutes: Number(e.target.value) } })}><option value={15}>15 minutes</option><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>1 hour</option></select></div>
       </div>
       <div className="grid-2">
         <div className="field"><label>Lead sources (one per line)</label><textarea rows={8} value={f.sources} onChange={(e) => setF({ ...f, sources: e.target.value })} /></div>

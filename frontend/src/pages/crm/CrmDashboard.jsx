@@ -140,7 +140,7 @@ function Overview({ mine, period, onTab }) {
   const own = mine ? { owner: me.userId } : {};
   const W = {
     leads: { title: 'Leads (newest first)', source: 'leads', params: { status: 'all', ...own } },
-    customers: { title: 'Customers (TeamLink clients)', source: 'accounts', params: { kind: 'Client', ...own } },
+    customers: { title: 'Customers', source: 'accounts', params: { kind: 'Client', ...own } },
     won: { title: 'Won deals', source: 'deals', params: own, keep: (x) => x.stage === 'Won' },
     open: { title: 'Open deals', source: 'deals', params: own, keep: (x) => !['Won', 'Lost'].includes(x.stage) },
     deals: { title: 'All deals (closed: last 90 days)', source: 'deals', params: own },
@@ -328,7 +328,7 @@ function Activities({ mine }) {
         <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" style={{ width: 150 }} />
         {me.seesAll && !mine && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Salesperson"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
         <input type="text" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} aria-label="Search activities" />
-        <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => download('/crm/export/activities', `crm-activities-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>
+        {me.rights && me.rights.export && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => download('/crm/export/activities', `crm-activities-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
       </div>
       {!d && <div className="small-muted">Loading…</div>}
       {d && !d.rows.length && <div className="empty"><h3>Nothing here</h3>Calls, meetings, emails, WhatsApp messages and notes logged on leads, deals and accounts show up here.</div>}
@@ -373,15 +373,15 @@ export default function CrmDashboard() {
             </select>
           )}
           {me.canAssign && <button type="button" className="btn" onClick={() => setSettings(true)} title="Sales team, sources, lost reasons, stage probabilities">⚙ Settings</button>}
-          <select defaultValue="" onChange={(e) => { const k = e.target.value; e.target.value = ''; if (k) download(`/crm/export/${k}`, `crm-${k}-${istToday()}.csv`).catch(() => toast('The download did not work.')); }} aria-label="Download" style={{ width: 'auto' }}>
+          {me.rights && me.rights.export && <select defaultValue="" onChange={(e) => { const k = e.target.value; e.target.value = ''; if (k) download(`/crm/export/${k}`, `crm-${k}-${istToday()}.csv`).catch(() => toast('The download did not work.')); }} aria-label="Download" style={{ width: 'auto' }}>
             <option value="">Download…</option><option value="leads">Leads</option><option value="deals">Deals</option><option value="accounts">Accounts</option><option value="contacts">Contacts</option><option value="activities">Calls, meetings, notes</option><option value="tasks">Follow-ups</option>
-          </select>
-          {me.canEdit && <button type="button" className="btn" onClick={() => setAdding('lead')}>+ Lead</button>}
-          {me.canEdit && <button type="button" className="btn btn-primary" onClick={() => setAdding('deal')}>+ Deal</button>}
+          </select>}
+          {me.canCreate && <button type="button" className="btn" onClick={() => setAdding('lead')}>+ Lead</button>}
+          {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding('deal')}>+ Deal</button>}
         </div>
       </div>
       <div className="tabs" role="tablist">
-        {[['overview', 'Overview'], ['activities', 'Activities'], ['team', me.seesAll ? 'Team & targets' : 'My month & target'], ['forecast', 'Forecast & funnel']].map(([k, l]) => (
+        {[['overview', 'Overview'], ['activities', 'Activities'], ...(!me.seesAll || (me.rights && me.rights.reports) ? [['team', me.seesAll ? 'Team & targets' : 'My month & target']] : []), ...(me.rights && me.rights.reports ? [['forecast', 'Forecast & funnel']] : [])].map(([k, l]) => (
           <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>{l}</div>
         ))}
       </div>
@@ -389,7 +389,7 @@ export default function CrmDashboard() {
       {tab === 'activities' && <Activities mine={mine} />}
       {tab === 'team' && <TeamTargets />}
       {tab === 'forecast' && <ForecastFunnel />}
-      {adding && <RecordForm kind={adding} preset={adding === 'deal' ? { feePercent: '8.33' } : { source: '' }} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); openRecord(k, row.id); }} />}
+      {adding && <RecordForm kind={adding} preset={adding === 'deal' ? {} : { source: '' }} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); openRecord(k, row.id); }} />}
       {settings && <CrmSettings onClose={() => setSettings(false)} onSaved={() => { setSettings(false); reloadMe(); }} />}
     </div>
   );

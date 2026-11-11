@@ -1,5 +1,5 @@
 // CRM > LEADS (2026-11-02): every lead (company, contact, source, rating, status, owner, last touched, next follow-up),
-// search and filters; + Lead (duplicate check against leads, accounts, contacts and TeamLink clients); Import from Excel /
+// search and filters; + Lead (duplicate check against the CRM's leads, accounts and contacts); Import from Excel /
 // CSV (preview first, duplicates skipped with the reason); tick leads to give them to a BDE (BDE TL / Admin) or set their
 // status / rating together; Download as CSV. A row opens the lead with its timeline, follow-ups and "Convert to deal".
 import { useEffect, useState } from 'react';
@@ -100,9 +100,9 @@ export default function CrmLeads() {
       <div className="page-head">
         <div><h1>Leads</h1><div className="page-sub">Companies to sell to, before they become a deal · campaigns to reach many at once</div></div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <button type="button" className="btn" onClick={() => download('/crm/export/leads', `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>
-          {me.canEdit && <button type="button" className="btn" onClick={() => setImporting(true)}>Import Excel</button>}
-          {me.canEdit && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Lead</button>}
+          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/leads', `crm-leads-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {me.rights && me.rights.import && <button type="button" className="btn" onClick={() => setImporting(true)}>Import Excel</button>}
+          {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Lead</button>}
         </div>
       </div>
       <div className="tabs" role="tablist">

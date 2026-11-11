@@ -34,7 +34,7 @@ function insightOf(kind, d, st) {
 
   if (kind === 'deal') {
     if (['Won', 'Lost'].includes(row.stage)) {
-      return { score: row.stage === 'Won' ? 100 : 0, label: row.stage, reasons: [{ pts: 0, why: `This deal is ${row.stage.toLowerCase()}.` }], actions: row.stage === 'Won' && !row.clientId ? [{ text: 'Add it as a TeamLink client (Add as client) so the agreement and requirements can start.', urgent: true }] : [] };
+      return { score: row.stage === 'Won' ? 100 : 0, label: row.stage, reasons: [{ pts: 0, why: `This deal is ${row.stage.toLowerCase()}.` }], actions: row.stage === 'Won' ? [{ text: 'Raise the invoice for this deal (Invoices on the deal) and keep in touch for repeat business.', urgent: false }] : [] };
     }
     score = row.probability || 10;
     reasons.push({ pts: 0, why: `Stage "${row.stage}" starts at ${row.probability}%.` });
@@ -46,7 +46,7 @@ function insightOf(kind, d, st) {
     if (!row.expectedClose) actions.push({ text: 'Add an expected close date (it feeds the forecast).' });
     const dm = (d.contacts || []).some((c) => c.role === 'Decision maker');
     if (dm) add(5, 'A decision maker is in the contacts.'); else { add(-5, 'No decision maker in the contacts.'); actions.push({ text: 'Find and add the decision maker (who signs the agreement) as a contact.' }); }
-    if (!row.value) actions.push({ text: 'Fill openings, average CTC and fee: the deal has no value yet.' });
+    if (!row.value) actions.push({ text: 'Fill the deal value: the deal has no value yet.' });
     const stageIdx = SETTINGS.STAGES.indexOf(row.stage);
     if (stageIdx >= 0 && stageIdx < SETTINGS.STAGES.indexOf('Proposal sent') && stageIdx >= SETTINGS.STAGES.indexOf('Requirement discussed')) actions.push({ text: 'The requirement is discussed: send the proposal (Proposals tab) while it is fresh.' });
     if (row.stage === 'Proposal sent') {
@@ -71,7 +71,7 @@ function insightOf(kind, d, st) {
     score = 50;
     const openDeals = (d.deals || []).filter((x) => !['Won', 'Lost'].includes(x.stage));
     if (openDeals.length) add(15, `${openDeals.length} open deal(s).`);
-    if (row.kind === 'Client') add(15, 'Already a TeamLink client.');
+    if (row.kind === 'Client') add(15, 'Already a customer.');
     if (quiet != null && quiet >= 30) { add(-15, `Nothing logged for ${quiet} days.`); actions.push({ text: `Check in with ${row.name}: no contact for ${quiet} days - ask about new openings.` }); }
     if (!(d.contacts || []).length) actions.push({ text: 'Add at least one contact (HR / decision maker).' });
     if (row.kind === 'Client' && !openDeals.length) actions.push({ text: 'A client with no open deal: ask about upcoming positions (more business).' });

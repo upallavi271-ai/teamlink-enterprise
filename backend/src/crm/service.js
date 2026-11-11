@@ -19,7 +19,6 @@ const prisma = require('../db');
 const DB = require('./schema');
 const { logAudit } = require('../utils/audit');
 const { notifyUsers } = require('../utils/notify');
-const { atsViewRole, isBdeTl } = require('../utils/scope');
 
 // stages are fixed; sources, lost reasons and stage probabilities are CRM settings (crm/settings.js, BDE TL / Admin)
 const SETTINGS = require('./settings');
@@ -43,41 +42,50 @@ const okBody = (body) => ({ status: 200, body });
 // ---- access -------------------------------------------------------------------------------------------
 // 'admin' | 'tl' (sales manager) | 'view' | 'bde' (salesperson) | null. The listed team comes from the CRM settings already
 // read (crmRoleFor / the CRM routes read them first).
+// The CRM's own list decides (crm/settings.js): Super Admin / Admin 'admin'; a Sales manager 'tl'; a Viewer 'view'; a Salesperson 'bde'
+// (their own records) or 'bdeAll' (allowed to see everyone's records, still changes only their own). Nothing comes from ATS roles.
 function roleOf(user) {
   if (!user || !user.id) return null;
-  const v = atsViewRole(user);
-  if (v === 'admin') return 'admin';
-  if (user.clientId || user.candidateId || v === 'client' || v === 'candidate') return null; // never a client / candidate login
-  const t = SETTINGS.teamRole(user.id);
-  if (t === 'manager' || isBdeTl(user)) return 'tl';
-  if (v === 'mgmt') return 'view';
-  if (t === 'rep' || v === 'bde' || user.role === 'BDE') return 'bde';
-  return null;
+  if (user.clientId || user.candidateId) return null; // never a client / candidate login
+  if (['SUPER_ADMIN', 'ADMIN'].includes(user.role)) return 'admin';
+  const m = SETTINGS.member(user.id);
+  if (!m) return null;
+  if (m.role === 'manager') return 'tl';
+  if (m.role === 'viewer') return 'view';
+  return m.seeAll ? 'bdeAll' : 'bde';
 }
+// one right of a person: create / edit / delete / import / export / reports (Admin and Sales managers have all of them)
+function can(user, right) {
+  const r = roleOf(user);
+  if (r === 'admin' || r === 'tl') return true;
+  const m = SETTINGS.member(user && user.id);
+  return !!(m && m.rights && m.rights[right]);
+}
+const rightsOf = (user) => Object.fromEntries(SETTINGS.RIGHTS.map((k) => [k, can(user, k)]));
 async function crmRoleFor(user) {
   await SETTINGS.load().catch(() => null);
   return roleOf(user);
 }
-const seesAll = (r) => r === 'admin' || r === 'tl' || r === 'view';
-const mayEdit = (r) => r === 'admin' || r === 'tl' || r === 'bde';
+const seesAll = (r) => r === 'admin' || r === 'tl' || r === 'view' || r === 'bdeAll';
+const mayEdit = (r) => r === 'admin' || r === 'tl' || r === 'bde' || r === 'bdeAll';
 const mayAssign = (r) => r === 'admin' || r === 'tl';
 const canSeeRow = (user, r, row) => !!row && (seesAll(r) || row.ownerId === user.id);
-const canEditRow = (user, r, row) => !!row && mayEdit(r) && (r !== 'bde' || row.ownerId === user.id);
+const canEditRow = (user, r, row) => !!row && mayEdit(r) && can(user, 'edit') && ((r !== 'bde' && r !== 'bdeAll') || row.ownerId === user.id);
 // SQL piece for a list: a BDE reads their own rows only
 const scopeSql = (user, r, alias = '') => (seesAll(r) ? { sql: '1=1', params: [] } : { sql: `${alias}"ownerId" = ?`, params: [user.id] });
 
-// The people a record may belong to: the sales team who still work here - the BDEs, the BDE TLs and the people listed in
-// CRM settings. tl = a sales manager.
+// The people a record may belong to: the Sales managers and Salespeople on the CRM's own list who still work here.
 async function ownerOptions() {
   const st = await SETTINGS.load();
-  const listed = new Map(st.salesTeam.map((m) => [m.userId, m.role]));
+  const listed = new Map(st.salesTeam.filter((m) => m.role !== 'viewer').map((m) => [m.userId, m.role]));
+  if (!listed.size) return [];
   const users = await prisma.user.findMany({
-    where: { OR: [{ atsRole: 'BDE' }, { role: 'BDE' }, { AND: [{ atsRole: 'TL' }, { atsDepartment: 'BDE' }] }, ...(listed.size ? [{ id: { in: [...listed.keys()] } }] : [])] },
-    select: { id: true, name: true, status: true, atsRole: true, atsDepartment: true, clientId: true, candidateId: true },
+    where: { id: { in: [...listed.keys()] } },
+    select: { id: true, name: true, status: true, clientId: true, candidateId: true },
     orderBy: { name: 'asc' },
   }).catch(() => []);
   return users.filter((u) => !u.clientId && !u.candidateId && !/inactive|disabled|deleted|left|relieved|exit|suspended/i.test(String(u.status || '')))
-    .map((u) => ({ id: u.id, name: u.name, tl: listed.get(u.id) === 'manager' || (u.atsRole === 'TL' && String(u.atsDepartment || '').toUpperCase() === 'BDE') }));
+    .map((u) => ({ id: u.id, name: u.name, tl: listed.get(u.id) === 'manager' }));
 }
 async function pickOwner(user, r, wanted) {
   if (!wanted || !mayAssign(r) || wanted === user.id) return { id: user.id, name: user.name || null };
@@ -91,7 +99,7 @@ const KINDS = {
   lead: { table: 'CrmLead', label: 'Lead', name: 'company', fields: { company: 's', contactName: 's', designation: 's', phone: 's', email: 's', industry: 's', city: 's', source: 's', status: 's', rating: 's', notes: 'L', expectedValue: 'n' } },
   account: { table: 'CrmAccount', label: 'Account', name: 'name', fields: { name: 's', industry: 's', city: 's', website: 's', phone: 's', email: 's', source: 's', notes: 'L' } },
   contact: { table: 'CrmContact', label: 'Contact', name: 'name', fields: { accountId: 's', name: 's', designation: 's', role: 's', phone: 's', email: 's', notes: 'L' } },
-  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', openings: 'i', avgCtc: 'n', feePercent: 'n', value: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
+  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
 };
 
 function cleanFields(kind, body, { partial }) {
@@ -124,9 +132,8 @@ function cleanFields(kind, body, { partial }) {
   return { data: out };
 }
 
-// Deal value = openings x average CTC x fee % (when all three are given); otherwise the value typed.
+// A deal's value is the amount typed (the CRM sells anything; nothing is worked out from hiring numbers any more).
 function dealValue(d) {
-  if (d.openings && d.avgCtc && d.feePercent) return Math.round(d.openings * d.avgCtc * (d.feePercent / 100));
   return d.value || 0;
 }
 
@@ -163,8 +170,6 @@ async function duplicatesOf({ company, phone, email }, { exceptLeadId } = {}) {
   (await DB.all('SELECT "id", "name", "phone", "email", "ownerName" FROM "CrmContact"')).forEach((c) => {
     if ((ph.length === 10 && phone10(c.phone) === ph) || (em && String(c.email || '').toLowerCase() === em)) out.push({ where: 'Contact', id: c.id, name: c.name, owner: c.ownerName });
   });
-  const clients = await prisma.client.findMany({ select: { id: true, name: true, contactPhone: true, contactEmail: true, bdeOwner: true, status: true } }).catch(() => []);
-  clients.forEach((c) => { if (hit(c.name, c.contactPhone, c.contactEmail)) out.push({ where: 'TeamLink client', id: c.id, name: c.name, owner: c.bdeOwner, status: c.status }); });
   return out.slice(0, 10);
 }
 
@@ -249,7 +254,6 @@ async function detail(user, kind, id) {
     const acts = await DB.all(`SELECT * FROM "CrmActivity" WHERE "accountId" = ? OR "dealId" IN (SELECT "id" FROM "CrmDeal" WHERE "accountId" = ?) ORDER BY "at" DESC LIMIT 300`, row.id, row.id);
     const tasks = await DB.all(`SELECT * FROM "CrmTask" WHERE "accountId" = ? OR "dealId" IN (SELECT "id" FROM "CrmDeal" WHERE "accountId" = ?) ORDER BY "status" DESC, "dueDate" ASC LIMIT 300`, row.id, row.id);
     Object.assign(out, { activities: acts, tasks });
-    if (row.clientId) out.client = await prisma.client.findUnique({ where: { id: row.clientId }, select: { id: true, name: true, status: true, agreementStatus: true } }).catch(() => null);
   }
   return okBody(out);
 }
@@ -257,7 +261,7 @@ async function detail(user, kind, id) {
 // ---- create / update ----------------------------------------------------------------------------------
 async function create(user, kind, body = {}) {
   const r = roleOf(user);
-  if (!mayEdit(r)) return fail(403, 'Your role can read the CRM but not add to it.');
+  if (!mayEdit(r) || !can(user, 'create')) return fail(403, 'Your CRM rights do not allow adding records. Ask a Sales manager.');
   const c = cleanFields(kind, body, { partial: false });
   if (c.error) return fail(400, c.error);
   const own = await pickOwner(user, r, clip(body.ownerId, 60));
@@ -268,11 +272,11 @@ async function create(user, kind, body = {}) {
     row.status = row.status && row.status !== 'Converted' ? row.status : 'New';
     if (row.source && !(await SETTINGS.load()).sources.includes(row.source)) row.source = 'Other';
     const dups = await duplicatesOf(row);
-    if (dups.length && body.force !== true) return fail(409, 'This company or person is already in TeamLink.', { duplicates: dups });
+    if (dups.length && body.force !== true) return fail(409, 'This company or person is already in the CRM.', { duplicates: dups });
   }
   if (kind === 'account') {
-    const dups = (await duplicatesOf({ company: row.name, phone: row.phone, email: row.email })).filter((d) => d.where === 'Account' || d.where === 'TeamLink client');
-    if (dups.length && body.force !== true) return fail(409, 'This company is already in TeamLink.', { duplicates: dups });
+    const dups = (await duplicatesOf({ company: row.name, phone: row.phone, email: row.email })).filter((d) => d.where === 'Account');
+    if (dups.length && body.force !== true) return fail(409, 'This company is already in the CRM.', { duplicates: dups });
   }
   if (kind === 'contact' || kind === 'deal') {
     if (row.accountId) {
@@ -339,24 +343,10 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   const now = DB.nowIso();
   const data = { stage, probability: (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
   const saved = await update('CrmDeal', row.id, data);
+  if (stage === 'Won' && row.accountId) await update('CrmAccount', row.accountId, { kind: 'Client', updatedAt: now });
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Stage: ${row.stage} → ${stage}`, note: stage === 'Lost' ? `Lost: ${reason}` : null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await audit(user, stage === 'Won' ? 'CRM deal won' : stage === 'Lost' ? 'CRM deal lost' : 'CRM deal stage changed', 'CrmDeal', row.id, `${row.title}: ${row.stage} -> ${stage}`, reason || undefined);
   return okBody({ ok: true, deal: saved });
-}
-
-// Won -> "Add as client": the client is added in ATS > Clients (its own form, agreement flow and rules); then the deal and
-// its account point at that client (the account becomes a Client).
-async function linkClient(user, id, clientId) {
-  const r = roleOf(user);
-  const row = await getRow('deal', id);
-  if (!canEditRow(user, r, row)) return fail(404, 'This deal is not there, or it is not yours.');
-  const client = await prisma.client.findUnique({ where: { id: String(clientId || '').slice(0, 60) }, select: { id: true, name: true } }).catch(() => null);
-  if (!client) return fail(400, 'That client is not in TeamLink.');
-  const now = DB.nowIso();
-  const saved = await update('CrmDeal', row.id, { clientId: client.id, updatedAt: now });
-  if (row.accountId) await update('CrmAccount', row.accountId, { clientId: client.id, kind: 'Client', updatedAt: now });
-  await audit(user, 'CRM deal linked to a client', 'CrmDeal', row.id, client.name);
-  return okBody({ ok: true, deal: saved, client });
 }
 
 // Convert a lead: an account (or the one picked), a contact (when the lead names a person) and, unless asked not to, a deal.
@@ -378,7 +368,7 @@ async function convertLead(user, id, body = {}) {
   }
   let deal = null;
   if (body.createDeal !== false) {
-    const d = cleanFields('deal', { title: body.dealTitle || `${lead.company} - hiring`, openings: body.openings, avgCtc: body.avgCtc, feePercent: body.feePercent, value: body.value, expectedClose: body.expectedClose }, { partial: false });
+    const d = cleanFields('deal', { title: body.dealTitle || `${lead.company} - deal`, value: body.value != null && body.value !== '' ? body.value : lead.expectedValue, expectedClose: body.expectedClose }, { partial: false });
     if (d.error) return fail(400, d.error);
     const row = { id: newId('deal'), ...d.data, accountId: account.id, contactId: contact ? contact.id : null, leadId: lead.id, stage: 'Contacted', probability: (await SETTINGS.load()).stageProbability.Contacted, ...base };
     row.value = dealValue(row);
@@ -582,9 +572,12 @@ async function remove(user, kind, id) {
   if (!table) return fail(404, 'Not found.');
   const row = await getRow(table, id);
   if (!row) return fail(404, 'This record is not there.');
-  const own = (kind === 'activity' ? row.byId : row.createdById || row.ownerId) === user.id;
-  if (!mayAssign(r) && !(r === 'bde' && own && (kind === 'activity' || kind === 'task'))) {
-    return fail(403, kind === 'lead' ? 'A salesperson does not delete a lead: mark it Junk. A Sales manager or an Admin can delete it.' : 'Only a Sales manager or an Admin can delete this.');
+  const own = (kind === 'activity' ? row.byId : row.createdById || row.ownerId) === user.id || row.ownerId === user.id;
+  // a Sales manager / Admin deletes anything; a Salesperson their own activities and follow-ups, and their own records when their
+  // rights allow deleting
+  const mine = (r === 'bde' || r === 'bdeAll') && own;
+  if (!mayAssign(r) && !(mine && (kind === 'activity' || kind === 'task')) && !(mine && can(user, 'delete'))) {
+    return fail(403, kind === 'lead' ? 'Your CRM rights do not allow deleting: mark the lead Junk, or ask a Sales manager.' : 'Your CRM rights do not allow deleting this.');
   }
   if (kind === 'account') {
     const n = await DB.one('SELECT COUNT(*) AS "n" FROM "CrmDeal" WHERE "accountId" = ?', row.id);
@@ -595,30 +588,6 @@ async function remove(user, kind, id) {
   await DB.run(`DELETE FROM "${table}" WHERE "id" = ?`, row.id);
   await audit(user, `CRM ${kind} deleted`, table, row.id, row.company || row.name || row.title || row.subject);
   return okBody({ ok: true });
-}
-
-// Existing TeamLink clients as CRM accounts (for more business with a client we already have): the clients I may pick
-// (Admin / BDE TL / Manager: every client; a BDE: the ones they own, Owner BDE = their name) that are not an account yet.
-const normName = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
-async function clientOptions(user) {
-  const r = roleOf(user);
-  const linked = new Set((await DB.all('SELECT "clientId" FROM "CrmAccount" WHERE "clientId" IS NOT NULL')).map((x) => x.clientId));
-  const rows = await prisma.client.findMany({ where: { OR: [{ status: null }, { status: { notIn: ['Archived', 'Deleted'] } }] }, select: { id: true, name: true, industry: true, location: true, bdeOwner: true, status: true }, orderBy: { name: 'asc' } }).catch(() => []);
-  const testViewer = /zztest|example\.test/i.test(`${user.name || ''} ${user.email || ''}`) || !!process.env.TEST_MODE;
-  return rows.filter((c) => !linked.has(c.id) && (testViewer || !/zztest/i.test(c.name)) && (seesAll(r) || normName(c.bdeOwner) === normName(user.name)));
-}
-async function accountFromClient(user, clientId) {
-  const r = roleOf(user);
-  if (!mayEdit(r)) return fail(403, 'Your role can read the CRM but not add to it.');
-  const c = (await clientOptions(user)).find((x) => x.id === String(clientId || ''));
-  if (!c) return fail(400, 'Pick one of your TeamLink clients that is not in the CRM yet.');
-  const full = await prisma.client.findUnique({ where: { id: c.id }, select: { website: true, contactName: true, contactDesignation: true, contactPhone: true, contactEmail: true } }).catch(() => ({}));
-  const now = DB.nowIso();
-  const base = { ownerId: user.id, ownerName: user.name || null, createdById: user.id, createdAt: now, updatedAt: now };
-  const account = await insert('CrmAccount', { id: newId('account'), name: c.name, industry: c.industry, city: c.location, website: full.website || null, phone: full.contactPhone || null, email: full.contactEmail || null, source: 'Existing client', kind: 'Client', clientId: c.id, ...base });
-  if (full.contactName) await insert('CrmContact', { id: newId('contact'), accountId: account.id, name: full.contactName, designation: full.contactDesignation || null, role: 'HR', phone: full.contactPhone || null, email: full.contactEmail || null, ...base });
-  await audit(user, 'CRM account added from a client', 'CrmAccount', account.id, c.name);
-  return okBody({ ok: true, account });
 }
 
 // the support pick lists (crm/support.js requires this file, so it is read when asked)
@@ -633,15 +602,17 @@ async function me(user) {
   const st = await SETTINGS.load();
   return okBody({
     userId: user.id, name: user.name || '',
-    role: r, canEdit: mayEdit(r), canAssign: mayAssign(r), seesAll: seesAll(r),
+    role: r, canEdit: mayEdit(r) && can(user, 'edit'), canCreate: mayEdit(r) && can(user, 'create'), canAssign: mayAssign(r), seesAll: seesAll(r), rights: rightsOf(user),
     owners: mayAssign(r) || seesAll(r) ? await ownerOptions() : [],
-    salesTeam: mayAssign(r) ? st.salesTeam : [], // the people added in CRM settings (the BDEs / BDE TLs are on the team anyway)
+    salesTeam: mayAssign(r) ? st.salesTeam : [], // the CRM's own team: who may open it, and each one's rights
+    team: mayAssign(r) ? { roles: SETTINGS.ROLES, rights: SETTINGS.RIGHTS, roleRights: SETTINGS.ROLE_RIGHTS } : null,
+    invoiceFrom: st.invoiceFrom, invoiceTaxPercent: st.invoiceTaxPercent, invoiceDueDays: st.invoiceDueDays, meetingLink: st.meetingLink, bookingHours: st.bookingHours,
     lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'Email', 'WhatsApp', 'Other'], defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
   });
 }
 
 module.exports = {
-  roleOf, crmRoleFor, me, list, clientOptions, accountFromClient, detail, create, edit, moveDeal, linkClient, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
+  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
   ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,

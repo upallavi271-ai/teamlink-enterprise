@@ -303,7 +303,7 @@ export default function Shell() {
             {hasAtsWork(user) && <TaskPopup />}
             {/* A client's new job request: the client's BDE and the BDE TL see it on screen at once (2026-10-09). */}
             {hasAtsWork(user) && <JobRequestPopup />}
-            {hasAtsWork(user) && <CrmReminderToast />}
+            {user && user.crmRole && <CrmReminderToast />}
             {/* A candidate is Selected: the confirmation mail waits for the TL's Send (2026-11-04). */}
             {hasAtsWork(user) && <SelectionMailPopup />}
             {hasAtsWork(user) && <UnsignedAgreementPopup />}

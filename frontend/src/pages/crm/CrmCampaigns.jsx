@@ -53,7 +53,7 @@ function CampaignForm({ row, onClose, onDone }) {
         ) : (
           <>
             <div className="field"><label>Role</label><select value={a.role} onChange={(e) => setA('role', e.target.value)}><option value="">Any</option>{L.contactRoles.map((s) => <option key={s} value={s}>{s}</option>)}</select></div>
-            <div className="field"><label>Account type</label><select value={a.accountKind} onChange={(e) => setA('accountKind', e.target.value)}><option value="">Prospects and clients</option><option value="Prospect">Prospects</option><option value="Client">TeamLink clients</option></select></div>
+            <div className="field"><label>Account type</label><select value={a.accountKind} onChange={(e) => setA('accountKind', e.target.value)}><option value="">Prospects and customers</option><option value="Prospect">Prospects</option><option value="Client">Customers</option></select></div>
           </>
         )}
         <div className="field"><label>City</label><input type="text" value={a.city} onChange={(e) => setA('city', e.target.value)} /></div>

@@ -31,6 +31,8 @@ const byKey = (rows, key) => new Map(rows.map((r) => [r[key], r]));
 // ---- reports (Dashboard) -------------------------------------------------------------------------------
 async function reports(user, { month } = {}) {
   const r = S.roleOf(user);
+  // a salesperson always sees their own month and target; the team's numbers need the reports right
+  if (!S.can(user, 'reports') && S.seesAll(r)) return S.fail(403, 'Your CRM rights do not include reports. Ask a Sales manager.');
   const ym = YM.test(String(month || '')) ? month : monthNow();
   const [from, to] = monthRange(ym);
   const all = S.seesAll(r);
@@ -133,6 +135,7 @@ async function setTarget(user, { month, ownerId, amount, deals } = {}) {
 async function saveSettings(user, body) {
   if (!S.mayAssign(S.roleOf(user))) return S.fail(403, 'CRM settings are changed by a Sales manager or an Admin.');
   const st = await SETTINGS.save(body || {});
+  if (body && Array.isArray(body.salesTeam)) await S.audit(user, 'CRM sales team changed', 'AppSetting', 'crm.settings', st.salesTeam.map((m) => `${m.name}: ${m.role}`).join(', ').slice(0, 300));
   await S.audit(user, 'CRM settings changed', 'AppSetting', 'crm.settings', `${st.sources.length} sources, ${st.lostReasons.length} lost reasons, cold after ${st.staleDays} days`);
   return S.okBody({ ok: true, settings: st });
 }
@@ -200,7 +203,7 @@ const normHead = (h) => String(h || '').toLowerCase().replace(/[^a-z]/g, '');
 
 async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}) {
   const r = S.roleOf(user);
-  if (!S.mayEdit(r)) return S.fail(403, 'Your role can read the CRM but not add to it.');
+  if (!S.mayEdit(r) || !S.can(user, 'import')) return S.fail(403, 'Your CRM rights do not allow importing. Ask a Sales manager.');
   if (!buf || !buf.length) return S.fail(400, 'Choose an Excel or CSV file.');
   let rows;
   try {
@@ -234,7 +237,6 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}
   (await DB.all('SELECT "company", "phone", "email", "ownerName" FROM "CrmLead" WHERE "status" != \'Junk\'')).forEach((l) => remember(l.company, l.phone, l.email, `lead ${l.company}${l.ownerName ? ` (${l.ownerName})` : ''}`));
   (await DB.all('SELECT "name", "phone", "email", "ownerName" FROM "CrmAccount"')).forEach((a) => remember(a.name, a.phone, a.email, `account ${a.name}${a.ownerName ? ` (${a.ownerName})` : ''}`));
   (await DB.all('SELECT "name", "phone", "email", "ownerName" FROM "CrmContact"')).forEach((c) => remember('', c.phone, c.email, `contact ${c.name}`));
-  (await prisma.client.findMany({ select: { name: true, contactPhone: true, contactEmail: true } }).catch(() => [])).forEach((c) => remember(c.name, c.contactPhone, c.contactEmail, `TeamLink client ${c.name}`));
   const dupOf = (x) => {
     const c = S.normCo(x.company); const p = S.phone10(x.phone); const e = String(x.email || '').trim().toLowerCase();
     return (c && c.length >= 3 && seen.co.get(c)) || (p.length === 10 && seen.ph.get(p)) || (e && seen.em.get(e)) || null;
@@ -267,7 +269,7 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}
 // ---- export (CSV) -------------------------------------------------------------------------------------------------
 const EXPORTS = {
   leads: { sql: 'SELECT * FROM "CrmLead"', cols: [['company', 'Company'], ['contactName', 'Contact'], ['designation', 'Designation'], ['phone', 'Phone'], ['email', 'Email'], ['industry', 'Industry'], ['city', 'City'], ['source', 'Source'], ['rating', 'Rating'], ['status', 'Status'], ['ownerName', 'Owner'], ['createdAt', 'Added'], ['notes', 'Notes']] },
-  deals: { sql: 'SELECT x.*, a."name" AS "accountName" FROM "CrmDeal" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['title', 'Deal'], ['accountName', 'Account'], ['stage', 'Stage'], ['value', 'Value (₹)'], ['probability', 'Probability %'], ['openings', 'Openings'], ['avgCtc', 'Average CTC'], ['feePercent', 'Fee %'], ['expectedClose', 'Expected close'], ['nextStep', 'Next step'], ['lostReason', 'Lost reason'], ['wonAt', 'Won on'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
+  deals: { sql: 'SELECT x.*, a."name" AS "accountName" FROM "CrmDeal" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['title', 'Deal'], ['accountName', 'Account'], ['stage', 'Stage'], ['value', 'Value (₹)'], ['probability', 'Probability %'], ['expectedClose', 'Expected close'], ['nextStep', 'Next step'], ['lostReason', 'Lost reason'], ['wonAt', 'Won on'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
   accounts: { sql: 'SELECT * FROM "CrmAccount"', cols: [['name', 'Company'], ['kind', 'Type'], ['industry', 'Industry'], ['city', 'City'], ['website', 'Website'], ['phone', 'Phone'], ['email', 'Email'], ['source', 'Source'], ['ownerName', 'Owner'], ['createdAt', 'Added']] },
   contacts: { sql: 'SELECT x.*, a."name" AS "accountName" FROM "CrmContact" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', cols: [['name', 'Name'], ['designation', 'Designation'], ['role', 'Role'], ['accountName', 'Company'], ['phone', 'Phone'], ['email', 'Email'], ['ownerName', 'Owner']] },
   activities: { sql: 'SELECT x.*, COALESCE(d."title", l."company", a."name") AS "record" FROM "CrmActivity" x LEFT JOIN "CrmDeal" d ON d."id" = x."dealId" LEFT JOIN "CrmLead" l ON l."id" = x."leadId" LEFT JOIN "CrmAccount" a ON a."id" = x."accountId"', alias: 'x.', ownerCol: 'byId', cols: [['at', 'When'], ['kind', 'Type'], ['subject', 'Subject'], ['note', 'What happened'], ['record', 'Lead / deal / account'], ['byName', 'By']] },
@@ -275,6 +277,7 @@ const EXPORTS = {
 };
 async function exportCsv(user, kind) {
   const r = S.roleOf(user);
+  if (!S.can(user, 'export')) return S.fail(403, 'Your CRM rights do not allow downloading. Ask a Sales manager.');
   const e = EXPORTS[kind];
   if (!e) return S.fail(404, 'Nothing to download here.');
   const own = S.seesAll(r) ? '' : ` WHERE ${e.alias || ''}"${e.ownerCol || 'ownerId'}" = ?`;
@@ -293,7 +296,7 @@ async function proposalDefaults(user, dealId) {
   const acc = deal.accountId ? await S.getRow('account', deal.accountId) : null;
   const ct = deal.contactId ? await S.getRow('contact', deal.contactId) : (deal.accountId ? await DB.one('SELECT * FROM "CrmContact" WHERE "accountId" = ? ORDER BY CASE "role" WHEN \'Decision maker\' THEN 0 WHEN \'HR\' THEN 1 ELSE 2 END LIMIT 1', deal.accountId) : null);
   let ag = {};
-  try { ag = await require('../utils/agreementSettings').agreementSettings({ fresh: false }); } catch { ag = {}; } // eslint-disable-line global-require
+  // the CRM's own defaults (it reads nothing from the agreements of ATS any more - founder 2026-11-11: the CRM stands alone)
   const st = await SETTINGS.load();
   const u = await prisma.user.findUnique({ where: { id: user.id }, select: { name: true, email: true, employee: { select: { phone: true } } } }).catch(() => null);
   const me = u ? { name: u.name, email: u.email, phone: u.employee ? u.employee.phone : '' } : null;

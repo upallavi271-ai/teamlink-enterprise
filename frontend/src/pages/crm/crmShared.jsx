@@ -11,7 +11,6 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
 import { useMoveLead } from './CrmLeadBoard.jsx';
-import AddClientWizard from '../../components/clients/AddClientWizard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
 
@@ -53,58 +52,6 @@ export function RecLink({ kind, id, children, className, style, title }) {
   );
 }
 
-// The TeamLink client behind a won deal, shown here (no trip to ATS > Clients)
-export function ClientSummary({ id, onClose }) {
-  const [c, setC] = useState(null);
-  const [err, setErr] = useState('');
-  useEffect(() => { api.get(`/clients/${id}`).then((r) => setC(r.data.client || r.data)).catch((e) => setErr(errOf(e, 'This client could not be read.'))); }, [id]);
-  const rows = c ? [
-    ['Client', c.name], ['Status', c.status], ['Agreement', c.agreementStatus], ['Type', c.clientType], ['Industry', c.industry], ['Location', c.location],
-    ['Owner (BDE)', c.bdeOwner], ['Contact', [c.contactName, c.contactDesignation].filter(Boolean).join(' · ')], ['Phone', c.contactPhone], ['Email', c.contactEmail],
-    ['Fee', c.agreementFeePercent != null ? `${c.agreementFeePercent}%` : null], ['Added', c.createdAt ? dateOf(c.createdAt) : null],
-  ].filter(([, v]) => v) : [];
-  return (
-    <Modal title="TeamLink client" onClose={onClose}>
-      {err && <div className="notice" role="alert">{err}</div>}
-      {!c && !err && <div className="small-muted">Loading…</div>}
-      {c && (
-        <div className="crm-rec-info" style={{ gridTemplateColumns: '1fr', borderTop: 'none' }}>
-          {rows.map(([k, v]) => <div key={k}><span className="k">{k}</span><span>{v}</span></div>)}
-          <div className="small-muted" style={{ fontSize: 12 }}>Requirements, candidates and the agreement for this client are worked in ATS.</div>
-        </div>
-      )}
-    </Modal>
-  );
-}
-
-// "Add as client" for a won deal: the ATS Add client form, opened right here with the deal's details; once saved, the deal and
-// its account are linked to the new client.
-function AddClientHere({ deal, account, contact, onClose, onDone }) {
-  const { user } = useAuth();
-  const { toast } = useCrm();
-  const [meta, setMeta] = useState(undefined);
-  useEffect(() => { api.get('/clients/meta').then((r) => setMeta(r.data)).catch(() => setMeta(null)); }, []);
-  if (meta === undefined) return null;
-  const acc = account || {}; const ct = contact || {};
-  const initial = {};
-  [['name', acc.name], ['industry', acc.industry], ['location', acc.city], ['website', acc.website], ['contactName', ct.name], ['contactDesignation', ct.designation], ['contactPhone', ct.phone || acc.phone], ['contactEmail', ct.email || acc.email]]
-    .forEach(([k, v]) => { if (v) initial[k] = String(v).replace(/^Sample · /, ''); });
-  if (initial.contactPhone) initial.contactWhatsApp = initial.contactPhone;
-  return (
-    <AddClientWizard
-      user={user}
-      meta={meta}
-      initial={initial}
-      onClose={onClose}
-      onSaved={(created, warning) => {
-        if (!created || !created.id) { onClose(); return; }
-        api.post(`/crm/deals/${deal.id}/client`, { clientId: created.id })
-          .then(() => { toast(warning || `${created.name} added as a TeamLink client and linked to this deal.`); onDone(); })
-          .catch(() => { toast(`${created.name} added. Linking it to the deal did not work - try "Add as client" again.`); onDone(); });
-      }}
-    />
-  );
-}
 const STATUS_CLASS = { Draft: 'review', Sent: 'pending', Accepted: 'joined', Declined: 'rejected', Hot: 'overdue', Warm: 'pending', Cold: 'new', New: 'new', Contacted: 'pending', Qualified: 'active', Junk: 'rejected', Converted: 'joined', Won: 'joined', Lost: 'rejected', Prospect: 'new', Client: 'active' };
 // a file from the API (CSV, PDF) with the login's token: opened (PDF) or saved (CSV)
 export async function download(url, name, { open } = {}) {
@@ -158,8 +105,7 @@ function fieldsFor(kind, me) {
   }
   return [
     { k: 'title', label: 'Deal name *' }, { k: 'accountId', label: 'Account *', type: 'account' }, { k: 'contactId', label: 'Contact', type: 'contact' },
-    { k: 'openings', label: 'Openings', type: 'number' }, { k: 'avgCtc', label: 'Average CTC (₹ a year)', type: 'number' }, { k: 'feePercent', label: 'Our fee (% of CTC)', type: 'number' },
-    { k: 'value', label: 'Deal value (₹)', type: 'number', hint: 'Worked out from openings × CTC × fee when all three are given.' },
+    { k: 'value', label: 'Deal value (₹)', type: 'number' },
     { k: 'expectedClose', label: 'Expected close', type: 'date' },
     { k: 'nextStep', label: 'Next step', hint: 'For example: send the proposal, meet the HR head' },
   ];
@@ -182,7 +128,6 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
     api.get('/crm/contacts', { params: { accountId: f.accountId } }).then((r) => setContacts(r.data.rows)).catch(() => setContacts([]));
   }, [kind, f.accountId]);
   const set = (k, v) => { setF((x) => ({ ...x, [k]: v })); setErr(''); setDups(null); };
-  const auto = kind === 'deal' && Number(f.openings) && Number(f.avgCtc) && Number(f.feePercent) ? Math.round(Number(f.openings) * Number(f.avgCtc) * (Number(f.feePercent) / 100)) : null;
 
   async function save(force) {
     setBusy(true); setErr('');
@@ -233,8 +178,7 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
           <div key={x.k} className="field" style={x.wide ? { gridColumn: '1 / -1' } : undefined}>
             <label>{x.label}</label>
             {input(x)}
-            {x.k === 'value' && auto != null && <div className="small-muted" style={{ marginTop: 3 }}>{money(auto)} (openings × CTC × fee)</div>}
-            {x.hint && (x.k !== 'value' || auto == null) && <div className="small-muted" style={{ marginTop: 3 }}>{x.hint}</div>}
+            {x.hint && <div className="small-muted" style={{ marginTop: 3 }}>{x.hint}</div>}
           </div>
         ))}
         {me.canAssign && (
@@ -383,11 +327,10 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
 // ---- convert a lead -------------------------------------------------------------------------------------
 function ConvertLead({ lead, onClose, onDone }) {
   const { toast } = useCrm();
-  const [f, setF] = useState({ dealTitle: `${lead.company} - hiring`, openings: '', avgCtc: '', feePercent: '8.33', value: '', expectedClose: '', createDeal: true });
+  const [f, setF] = useState({ dealTitle: `${lead.company} - deal`, value: lead.expectedValue || '', expectedClose: '', createDeal: true });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
-  const auto = Number(f.openings) && Number(f.avgCtc) && Number(f.feePercent) ? Math.round(Number(f.openings) * Number(f.avgCtc) * (Number(f.feePercent) / 100)) : null;
   async function go() {
     setBusy(true); setErr('');
     try { const r = await api.post(`/crm/leads/${lead.id}/convert`, f); toast('Converted: account, contact and deal are ready.'); onDone(r.data); } catch (e) { setErr(errOf(e, 'The lead could not be converted.')); } finally { setBusy(false); }
@@ -399,10 +342,7 @@ function ConvertLead({ lead, onClose, onDone }) {
       {f.createDeal && (
         <div className="grid-2">
           <div className="field" style={{ gridColumn: '1 / -1' }}><label>Deal name</label><input type="text" value={f.dealTitle} onChange={(e) => set('dealTitle', e.target.value)} /></div>
-          <div className="field"><label>Openings</label><input type="number" min={0} value={f.openings} onChange={(e) => set('openings', e.target.value)} /></div>
-          <div className="field"><label>Average CTC (₹ a year)</label><input type="number" min={0} value={f.avgCtc} onChange={(e) => set('avgCtc', e.target.value)} /></div>
-          <div className="field"><label>Our fee (% of CTC)</label><input type="number" min={0} value={f.feePercent} onChange={(e) => set('feePercent', e.target.value)} /></div>
-          <div className="field"><label>Deal value (₹)</label>{auto != null ? <div style={{ padding: '8px 0', fontWeight: 600 }}>{money(auto)}</div> : <input type="number" min={0} value={f.value} onChange={(e) => set('value', e.target.value)} />}</div>
+          <div className="field"><label>Deal value (₹)</label><input type="number" min={0} value={f.value} onChange={(e) => set('value', e.target.value)} /></div>
           <div className="field"><label>Expected close</label><input type="date" value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
         </div>
       )}
@@ -619,8 +559,6 @@ export function AskAi() {
 // ---- one record ---------------------------------------------------------------------------------------------
 export function RecordPanel({ kind, id, onClose, onChanged }) {
   const { me, toast, openRecord } = useCrm();
-  const [addingClient, setAddingClient] = useState(false);
-  const [showClient, setShowClient] = useState(null);
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
   const [editing, setEditing] = useState(null); // { kind, row, preset }
@@ -645,7 +583,6 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
     try { await api.put(`/crm/${kind}s/${row.id}`, { notes }); toast('Notes saved.'); setNotes(null); changed(); } catch (e) { toast(errOf(e, 'The notes could not be saved.')); }
   }
 
-  const addAsClient = () => setAddingClient(true); // the ATS Add client form, here (AddClientHere)
 
   let body = null;
   if (err) body = <div className="notice" role="alert">{err}</div>;
@@ -667,8 +604,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ? [['Lead source', row.source], ['Stage', row.stage], ['Expected value', row.expectedValue ? `₹${Number(row.expectedValue).toLocaleString('en-IN')}` : null], ['Lost reason', row.lostReason], ['Industry', row.industry], ['Rating', row.rating && <Pill v={row.rating} />], ['Came from', [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(' / ')], ['Page', row.pageUrl]]
       : kind === 'deal'
         ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}</b>], ['Probability', `${row.probability}%`],
-          ['Openings × CTC × fee', row.openings ? `${row.openings} × ${money(row.avgCtc)} × ${row.feePercent || 0}%` : ''], ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : [])]
-        : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ...(d.client ? [['TeamLink client', <button type="button" className="crm-reclink" onClick={() => setShowClient(d.client.id)}>{d.client.name}</button>]] : [])];
+          ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : [])]
+        : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['Type', row.kind === 'Client' ? 'Customer' : 'Prospect']];
     const info = [
       ...about,
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
@@ -707,10 +644,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-sm" title="Stop or start the automatic mails, SMS, WhatsApp and calls to this lead" onClick={() => api.post(`/crm/leads/${row.id}/auto`, { paused: !row.autoPaused }).then(() => { toast(row.autoPaused ? 'Automatic follow-through is on for this lead.' : 'Automatic follow-through stopped for this lead.'); changed(); }).catch((e) => toast(errOf(e, 'This could not be changed.')))}>{row.autoPaused ? 'Start automatic' : 'Stop automatic'}</button>}
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setConverting(true)}>Convert to deal</button>}
             {kind === 'lead' && row.status === 'Converted' && row.dealId && <button type="button" className="btn btn-sm" onClick={() => openRecord('deal', row.dealId)}>Open the deal</button>}
-            {d.canEdit && kind === 'deal' && row.stage === 'Won' && !row.clientId && <button type="button" className="btn btn-primary btn-sm" onClick={addAsClient}>Add as client</button>}
-            {kind === 'deal' && row.clientId && <button type="button" className="btn btn-sm" onClick={() => setShowClient(row.clientId)}>TeamLink client</button>}
             {d.canEdit && kind === 'account' && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind: 'contact', preset: { accountId: row.id } })}>+ Contact</button>}
-            {d.canEdit && kind === 'account' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing({ kind: 'deal', preset: { accountId: row.id, title: `${row.name} - hiring`, feePercent: '8.33' } })}>+ Deal</button>}
+            {d.canEdit && kind === 'account' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setEditing({ kind: 'deal', preset: { accountId: row.id, title: `${row.name} - deal` } })}>+ Deal</button>}
           </div>
         </div>
         {kind === 'deal' && (
@@ -807,8 +742,6 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       <Modal title={kind === 'lead' ? 'Lead record' : kind === 'deal' ? 'Deal record' : 'Customer record'} size="xwide" onClose={onClose}>{body}</Modal>
       {editing && <RecordForm kind={editing.kind} row={editing.row} preset={editing.preset} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); changed(); }} />}
       {converting && row && <ConvertLead lead={row} onClose={() => setConverting(false)} onDone={(out) => { setConverting(false); changed(); if (out.deal) openRecord('deal', out.deal.id); }} />}
-      {addingClient && row && <AddClientHere deal={row} account={d.account} contact={d.contact || (d.contacts || [])[0]} onClose={() => setAddingClient(false)} onDone={() => { setAddingClient(false); changed(); }} />}
-      {showClient && <ClientSummary id={showClient} onClose={() => setShowClient(null)} />}
       {dialog}{leadDialog}
     </>
   );

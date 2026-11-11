@@ -136,11 +136,8 @@ router.get('/proposals/:id/pdf', async (req, res, next) => {
 });
 router.post('/proposals/:id/send', wrap((req) => X.sendProposal(req.user, req.params.id, req.body || {})));
 router.post('/proposals/:id/status', wrap((req) => X.decideProposal(req.user, req.params.id, req.body || {})));
-router.get('/client-options', wrap(async (req) => ({ status: 200, body: { clients: (await CRM.clientOptions(req.user)).map((c) => ({ id: c.id, name: c.name, city: c.location, owner: c.bdeOwner })) } })));
-router.post('/accounts/from-client', wrap((req) => CRM.accountFromClient(req.user, req.body && req.body.clientId)));
 router.post('/leads/:id/convert', wrap((req) => CRM.convertLead(req.user, req.params.id, req.body || {})));
 router.post('/deals/:id/stage', wrap((req) => CRM.moveDeal(req.user, req.params.id, req.body || {})));
-router.post('/deals/:id/client', wrap((req) => CRM.linkClient(req.user, req.params.id, req.body && req.body.clientId)));
 
 router.get('/:kind(leads|accounts|contacts|deals)', wrap(async (req) => ({ status: 200, body: { rows: await CRM.list(req.user, kindOf(req), req.query || {}) } })));
 router.post('/:kind(leads|accounts|contacts|deals)', wrap((req) => CRM.create(req.user, kindOf(req), req.body || {})));

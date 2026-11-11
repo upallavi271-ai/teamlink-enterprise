@@ -159,10 +159,11 @@ function calendarFile({ id, title, start, minutes, link, to }) {
     ...to.map((a) => `ATTENDEE;RSVP=TRUE:mailto:${a}`), 'END:VEVENT', 'END:VCALENDAR',
   ].join('\r\n');
 }
+// the CRM's own meeting link: Automatic settings, else CRM settings (never the interview settings of ATS any more)
 async function meetingLink(st) {
   if (st.meeting.link) return st.meeting.link;
-  const s = await require('../utils/interviewMeet').loadSettings().catch(() => null); // eslint-disable-line global-require
-  return (s && s.defaultMeetLink) || '';
+  const crm = await require('./settings').load().catch(() => null); // eslint-disable-line global-require
+  return (crm && crm.meetingLink) || '';
 }
 /** One meeting: a Meeting follow-up with its reminders, and an invite to the person and the owner. -> the task */
 async function bookMeeting({ leadId, accountId, name, email, ownerId, ownerName, title }, st, now, deps) {
