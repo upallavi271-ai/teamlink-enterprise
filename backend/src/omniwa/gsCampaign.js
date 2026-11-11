@@ -88,4 +88,27 @@ async function mirror(e164, text, providerMessageId, numberId, again = true) {
 }
 const reset = () => { login = null; };
 
-module.exports = { recentSend, mirror, reset };
+// THE WORDS OF THE TEMPLATE A GREEN START CAMPAIGN SENT this number (founder 2026-11-11: after a campaign from Omni-Channel "what is the job role" got "not in our message":
+// that send is not in TeamLink's log, so the message text was empty). Read from the person's thread there: its template messages, newest first. Never throws: [] = none.
+async function sentText(e164, numberId) {
+  try {
+    const { token, wss } = await inTime(session());
+    const out = [];
+    for (const ws of await workspacesFor(numberId, wss)) {
+      // eslint-disable-next-line no-await-in-loop
+      const list = await inTime(GI.call('GET', `/conversations?channel=whatsapp&search=${encodeURIComponent(String(e164).slice(-10))}&pageSize=3`, { token, ws: ws.id })).catch(() => null);
+      for (const c of ((list && list.items) || []).slice(0, 2)) {
+        // eslint-disable-next-line no-await-in-loop
+        const m = await inTime(GI.call('GET', `/conversations/${c.id}/messages?page=1&pageSize=100`, { token, ws: ws.id })).catch(() => null);
+        ((m && m.items) || []).filter((x) => x.direction === 'outbound' && (x.type === 'template' || x.templateName) && String(x.text || '').trim())
+          .forEach((x) => out.push({ at: new Date(x.createdAt || x.sentAt || 0).getTime() || 0, text: String(x.text).trim() }));
+      }
+    }
+    return out.sort((a, b) => b.at - a.at).map((x) => x.text);
+  } catch (err) {
+    console.error('[omni-wa] Green Start template text:', err && err.message); // eslint-disable-line no-console
+    return [];
+  }
+}
+
+module.exports = { recentSend, mirror, reset, sentText };

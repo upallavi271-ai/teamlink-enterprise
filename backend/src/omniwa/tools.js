@@ -332,6 +332,7 @@ async function saveData(conv, args, ctx) {
 // WHAT WE SENT THEM: the bodies of our own (not AI) WhatsApp messages, newest first; the promotion of this chat first when there is one.
 async function sentBodies(conv) {
   const rows = [];
+  if (conv.campaignId && String(conv.campaignId).startsWith('gs:')) rows.push(...(await require('./gsCampaign').sentText(conv.e164, conv.numberId)).map((body) => ({ body }))); // eslint-disable-line global-require
   if (conv.campaignId) rows.push(...await S.q('SELECT body FROM "OmniWaMessage" WHERE e164 = ? AND direction = \'OUT\' AND aiGenerated = 0 AND campaignId = ? AND body IS NOT NULL ORDER BY at DESC LIMIT 3', conv.e164, conv.campaignId).catch(() => []));
   rows.push(...await S.q('SELECT body FROM "OmniWaMessage" WHERE e164 = ? AND direction = \'OUT\' AND aiGenerated = 0 AND body IS NOT NULL ORDER BY at DESC LIMIT 10', conv.e164).catch(() => []));
   if (conv.candidateId) {

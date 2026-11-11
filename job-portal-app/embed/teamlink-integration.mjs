@@ -768,8 +768,8 @@ export function teamlinkFrontRouter({ root, express }) {
           from ai_interviews where suspended_at > now() - interval '3 days' or integrity_strikes > 0 and started_at > now() - interval '3 days'
           order by coalesce(suspended_at, started_at) desc limit 15`)).rows;
       const ids = interviews.map((i) => i.id);
-      const audit = ids.length ? (await c.query(`select interview_id, action, detail, actor_role, created_at from ai_interview_audit
-          where interview_id = any($1::text[]) order by created_at desc limit 40`, [ids])).rows : [];
+      const audit = ids.length ? (await c.query(`select interview_id, action, detail, actor_role, at from ai_interview_audit
+          where interview_id = any($1::text[]) order by at desc limit 40`, [ids])).rows : [];
       return { interviews, audit };
     });
     res.json(out);
