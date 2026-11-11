@@ -507,7 +507,7 @@ async function runTurn(row, defaults, now = Date.now()) {
     const h = await humanSentSince(conv);
     if (last && ((last.outcome === 'paused' && !h) || (h && now - new Date(h.createdAt).getTime() > HUMAN_HOLD_MS))) {
       await resume(conv, now);
-      Object.assign(conv, { mode: 'ai', state: conv.state === 'stopped' ? 'stopped' : 'active', pausedByName: null, aiTurns: 0 });
+      Object.assign(conv, { mode: 'ai', state: conv.state === 'stopped' ? 'stopped' : 'active', pausedByName: null, aiTurns: 0, resumedAt: now });
     }
   }
   if (conv.mode !== 'ai' || conv.state !== 'active') return skip(`${conv.mode}_${conv.state}`, `mode ${conv.mode}, state ${conv.state}`);
