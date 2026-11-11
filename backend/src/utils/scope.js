@@ -133,6 +133,8 @@ function scopeOf(user) {
     // THE SEAT STRUCTURE (utils/positionScope.js, resolved by identity.js):
     // set only for a TL / STL / Recruiter who holds a seat of that kind.
     // When set it is the ATS scope; null -> the team / department logic.
+    // Education Team A / B (utils/eduTeams.js): the other team's people and seats, or null
+    eduTeam: u.atsEduTeam && Array.isArray(u.atsEduTeam.otherUserIds) ? u.atsEduTeam : null,
     positions: u.atsPositionScope && Array.isArray(u.atsPositionScope.positionCodes)
       && u.atsPositionScope.role === atsRole ? u.atsPositionScope : null,
   };
@@ -277,6 +279,33 @@ function nonItSplit(user) {
   const hide = d.has('medical') && !d.has('non it medical') ? 'Non IT Medical'
     : (d.has('non it medical') && !d.has('medical') ? 'Medical' : null);
   return hide ? { OR: [{ department: null }, { department: { notIn: [hide] } }] } : null;
+}
+// EDUCATION TEAM A vs TEAM B, both ways (founder 2026-11-11: "team a profiles team b ki kanipinchakudadhu, team b profiles team a
+// ki kanipinchakudadhu"): a TL / STL / Recruiter of one Education team never reaches an application of the other team - one whose
+// owner recruiter sits (or last sat) in the other team's seats or, with no owner, whose job is the other team's seat or recruiter.
+// The jobs themselves stay shared (both teams work the same colleges). Super Admin / Admin / Manager / the BDE desk: unchanged.
+function eduSplit(user) {
+  const s = atsScopeOf(user);
+  if (s.global || !s.eduTeam || isBdeTl(user) || !['TL', 'STL', 'RECRUITER'].includes(s.atsRole)) return null;
+  return s.eduTeam;
+}
+function eduSplitWhere(et) {
+  const users = et.otherUserIds.length ? et.otherUserIds : ['__none__'];
+  const seats = et.otherSeats.length ? et.otherSeats : ['__none__'];
+  return {
+    OR: [
+      { AND: [{ NOT: { ownerRecruiterId: null } }, { ownerRecruiterId: { notIn: users } }] },
+      {
+        ownerRecruiterId: null,
+        requirement: { AND: [{ OR: [{ positionCode: null }, { positionCode: { notIn: seats } }] }, { OR: [{ recruiterId: null }, { recruiterId: { notIn: users } }] }] },
+      },
+    ],
+  };
+}
+function eduSplitOk(et, a) {
+  if (a.ownerRecruiterId) return !et.otherUserIds.includes(a.ownerRecruiterId);
+  const r = a.requirement || {};
+  return !(r.positionCode && et.otherSeats.includes(r.positionCode)) && !(r.recruiterId && et.otherUserIds.includes(r.recruiterId));
 }
 function requirementWhere(user, opts = {}) {
   const base = requirementWhereBase(user, opts);
@@ -558,7 +587,8 @@ function applicationWhere(user) {
   const own = ownOnlyArm(atsScopeOf(user));
   const limit = deptTlLimit(user); // a department TL's candidates: their department's jobs only (2026-10-29)
   const split = nonItSplit(user); // Medical vs Non IT Medical, both ways (2026-10-29)
-  const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : []), ...(split ? [{ requirement: split }] : [])];
+  const edu = eduSplit(user); // Education Team A vs Team B, both ways (2026-11-11)
+  const arms = [base, ...(own ? [own] : []), ...(limit ? [{ requirement: limit }] : []), ...(split ? [{ requirement: split }] : []), ...(edu ? [eduSplitWhere(edu)] : [])];
   return arms.length === 1 ? base : { AND: arms };
 }
 function applicationWhereBase(user) {
@@ -674,7 +704,7 @@ const APP_SCOPE_FIELDS = [
   'atsScopeDepartments', 'department', 'atsScopeTeams', 'team', 'scopeRoles', 'atsRole', 'hrmsRole', 'accountsRole', 'role',
   'products', 'id', 'clientId', 'atsScopeClients', 'atsOwnedClientIds', 'atsBdeDeskDepartments', 'atsBdeDeskRequirementDepartments',
   'atsBdeUnownedClientIds', 'atsDeptClientDepartments', 'atsJoinedRequirementIds', 'candidateId', 'employeeId', 'atsTeamUserIds',
-  'hrmsTeamScope', 'atsPositionScope', 'atsBdeSplit',
+  'hrmsTeamScope', 'atsPositionScope', 'atsBdeSplit', 'atsEduTeam',
 ];
 const APP_SCOPE_MEMO = new WeakMap();
 function appScopeCtx(user) {
@@ -706,6 +736,8 @@ function applicationInScope(user, application) {
   const r = application.requirement;
   // one application on a profile page: the same department rules as the lists (2026-10-29)
   for (const rule of [deptTlLimit(user), nonItSplit(user)]) if (rule && !(r && matches(r, rule))) return false;
+  const edu = eduSplit(user); // Education Team A vs Team B (2026-11-11)
+  if (edu && !eduSplitOk(edu, application)) return false;
   if (s.atsRole === 'BDE' || ctx.bdeTl) {
     // (the HOLD-after-sharing arm needs the stage history: not known here)
     if (!ctx.teamWhere) ctx.teamWhere = teamRequirementWhere(user);

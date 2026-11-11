@@ -356,6 +356,12 @@ async function resolveIdentity(userId, preloaded = null) {
   let atsBdeUnownedClientIds = null;
   // BDE-EDU-1 and BDE-EDU-2 both filled: each seat its own requirements and its own sheet's lines (utils/bdeSplit.js); null until then
   let atsBdeSplit = null;
+  // Education Team A / Team B never see each other's profiles (utils/eduTeams.js, 2026-11-11): a TL / STL / Recruiter of one team
+  // carries the other team's people and seats; utils/scope.js hides their applications. null = not in an Education team.
+  let atsEduTeam = null;
+  if (['TL', 'STL', 'RECRUITER'].includes(named(atsScopeRole))) {
+    atsEduTeam = await require('./eduTeams').viewOf(user.id).catch(() => null); // eslint-disable-line global-require
+  }
   if (named(atsScopeRole) === 'BDE' && user.name) {
     // Owner BDE is typed free text: match it trimmed and case-blind (SQLite
     // LIKE narrows, the exact compare decides).
@@ -477,6 +483,7 @@ async function resolveIdentity(userId, preloaded = null) {
     atsBdeDeskRequirementDepartments,
     atsBdeUnownedClientIds,
     atsBdeSplit,
+    atsEduTeam,
     atsDeptClientDepartments,
     atsJoinedRequirementIds,
     landingWorkspace: user.landingWorkspace || (mapping ? mapping.landing : null) || null,

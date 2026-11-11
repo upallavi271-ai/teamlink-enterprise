@@ -41,7 +41,9 @@ const FORWARD = ['TL_REVIEW', 'WITH_BDE', 'BDE_APPROVED', 'SHARED_WITH_CLIENT', 
   const ok = pool.filter((u) => !['Exited', 'Relieved', 'Terminated'].includes(u.employee && u.employee.employmentStatus));
   const pick = async (test) => { for (const u of ok) { const i = await resolveIdentity(u.id); if (i && test(i)) return i; } return null; }; // eslint-disable-line no-await-in-loop
   const tl = await pick((i) => P.stageRoleOf(i) === 'TL' && !S.isBdeTl(i) && !!i.atsDepartment);
-  const rec = (await pick((i) => P.stageRoleOf(i) === 'RECRUITER' && i.atsDepartment === tl.atsDepartment)) || (await pick((i) => P.stageRoleOf(i) === 'RECRUITER'));
+  // the same Education team as the TL (Team A / Team B do not see each other's candidates, 2026-11-11)
+  const sameTeam = (i) => !tl.atsEduTeam || (i.atsEduTeam && i.atsEduTeam.team === tl.atsEduTeam.team);
+  const rec = (await pick((i) => P.stageRoleOf(i) === 'RECRUITER' && i.atsDepartment === tl.atsDepartment && sameTeam(i))) || (await pick((i) => P.stageRoleOf(i) === 'RECRUITER'));
   const bde = await pick((i) => P.stageRoleOf(i) === 'BDE' && !S.isBdeTl(i));
   const bdetl = await pick((i) => S.isBdeTl(i));
   const hr = await pick((i) => P.stageRoleOf(i) === 'HR');

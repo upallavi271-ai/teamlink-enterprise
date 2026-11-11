@@ -692,7 +692,7 @@ function scopeSig(s) {
   const p = s.positions;
   return crypto.createHash('md5').update(JSON.stringify([
     s.global, s.atsRole, s.role, s.departments, s.teams, s.clientId, s.clientIds, s.bdeOwnClientIds, s.bdeDeskDepartments,
-    s.bdeDeskRequirementDepartments, s.deptClientDepartments, s.teamUserIds, s.candidateId,
+    s.bdeDeskRequirementDepartments, s.deptClientDepartments, s.teamUserIds, s.candidateId, s.eduTeam ? [s.eduTeam.team, s.eduTeam.otherUserIds] : null,
     p ? [p.role, p.positionCodes, p.holderUserIds, p.departments, p.workApplicationIds, p.foreignApplicationIds] : null,
   ])).digest('hex');
 }
