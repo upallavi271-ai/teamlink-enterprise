@@ -775,6 +775,17 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json(out);
   }));
 
+  /* One more attempt for ONE suspended interview, on the founder's word (2026-11-11: "Yes, grant retake"): the same control a recruiter has
+     (interview_retake_control 'extra_attempt'), audited as retake.extra_attempt.  POST { interviewId, reason } */
+  r.post('/api/integrations/teamlink/interview-retake', wrap(async (req, res) => {
+    const id = String((req.body && req.body.interviewId) || '');
+    const reason = String((req.body && req.body.reason) || '').slice(0, 200);
+    if (!/^aiv_[a-z0-9]+$/i.test(id) || reason.length < 3) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'interviewId and reason are required' } });
+    const { withUser } = await portal();
+    const row = await withUser(SYSTEM, async (c) => (await c.query(`select id, status, retake_available_at, retake_blocked from interview_retake_control($1, 'extra_attempt', $2, null)`, [id, reason])).rows[0]);
+    res.json({ ok: true, interview: row });
+  }));
+
   /*
    * JUNK CANDIDATES FROM IMPORTS (founder 2026-11-10: names showing as 7.56947364E9 after a bulk import; backend/scripts/portal-junk-candidates.js).
    * READ ONLY, asked through the running portal (its database takes one connection). A candidate whose NAME is only digits / dots / "e+" (a phone
