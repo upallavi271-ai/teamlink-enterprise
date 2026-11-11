@@ -32,7 +32,7 @@ function scriptRun(text, lang) {
   if (words.length < 5 || !letters || (t.match(own) || []).length / letters < 0.85) return false;
   return new Set(words).size >= Math.ceil(words.length * 0.6);
 }
-async function hear(pcm16k, current, deps = {}) {
+async function hearCore(pcm16k, current, deps = {}) {
   const en = Object.prototype.hasOwnProperty.call(deps, 'engines') ? deps.engines : engines();
   if (!en || !en.detect || !en.stt) return { ready: false };
   const cur = langOf(current);
@@ -41,7 +41,18 @@ async function hear(pcm16k, current, deps = {}) {
   const sp = en.speech ? await en.speech(pcm).catch(() => null) : null;
   if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < MIN_SPEECH_MS) return { ready: true, lang: cur, changed: false, why: 'noise' };
   const found = await en.detect(pcm, 0.7).catch(() => null);
-  if (!found) return { ready: true, lang: cur, changed: false, why: 'unsure' };
+  if (!found) {
+    // Whisper was not sure (Hindi after Telugu was never heard this way): somebody already speaking Telugu / Hindi is asked of both listeners, and only REAL everyday words of the other language switch
+    if (cur !== 'English') {
+      const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l).catch(() => '')));
+      const sT = G.nativeScore(te, 'Telugu'); const sH = G.nativeScore(hi, 'Hindi');
+      const other = cur === 'Telugu' ? 'Hindi' : 'Telugu';
+      const so = other === 'Telugu' ? sT : sH; const sc = cur === 'Telugu' ? sT : sH;
+      if (so >= 2 && so > sc) return { ready: true, lang: other, changed: true, text: other === 'Telugu' ? te : hi };
+      return { ready: true, lang: cur, changed: false, why: 'unsure', text: cur === 'Telugu' ? te : hi };
+    }
+    return { ready: true, lang: cur, changed: false, why: 'unsure' };
+  }
   if (found === 'English') {
     if (cur === 'English') return { ready: true, lang: cur, changed: false };
     // the phone line's rule: English-looking sound over real words of the current language stays in that language
@@ -62,6 +73,16 @@ async function hear(pcm16k, current, deps = {}) {
     return { ready: true, lang: cur, changed: false, why: 'no real words' };
   }
   return { ready: true, lang: th.lang, changed: th.lang !== cur, text: th.text };
+}
+
+// what the candidate said so far, in the language they are speaking, comes back with every check: the live caption of a Telugu / Hindi answer (the browser's own
+// recogniser was slow for Telugu - founder 2026-11-11)
+async function hear(pcm16k, current, deps = {}) {
+  const out = await hearCore(pcm16k, current, deps);
+  if (!out || !out.ready || out.text || out.why === 'noise' || !['Telugu', 'Hindi'].includes(out.lang)) return out;
+  const en = Object.prototype.hasOwnProperty.call(deps, 'engines') ? deps.engines : engines();
+  const text = en && en.stt ? await en.stt(E.resample(pcm16k, 16000, 8000), out.lang).catch(() => '') : '';
+  return text ? { ...out, text } : out;
 }
 
 async function say(text, lang, deps = {}) {

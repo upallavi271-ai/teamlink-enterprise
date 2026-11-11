@@ -65,6 +65,7 @@
     cur: 'en', manual: false, iv: null, code: { en: 'en-IN', te: 'te-IN', hi: 'hi-IN' }, words: { en: 'English', te: 'తెలుగు', hi: 'हिन्दी' },
     serverHears: true, answer: null, checks: 0, busy: false, unsure: false, chunks: [], voicedMs: 0, proc: null, procStream: null,
     en: {}, says: {}, answers: {}, audio: null,
+    all: [], allN: 0, prefix: '', lastAt: 0, lastVoiced: 0, caps: false,
   };
 
   /* ------------------------------------------------------------------ *
@@ -104,7 +105,7 @@
         self._fails = 0;
         var last = e.results && e.results.length ? e.results[e.results.length - 1] : null;
         self._interim = last && !last.isFinal && last[0] ? String(last[0].transcript || '') : '';
-        if (self.onresult) self.onresult(e);
+        if (self.onresult && !(LG.caps && LG.cur !== 'en')) self.onresult(e);
       };
       r.onerror = function (ev) {
         var err = ev && ev.error;
@@ -123,7 +124,7 @@
       };
       r.onend = function () {
         /* words still "in progress" when the browser cut the session are kept, as a finished line */
-        if (self._interim && !self._stopped && self.onresult) {
+        if (self._interim && !self._stopped && self.onresult && !(LG.caps && LG.cur !== 'en')) {
           var t = self._interim; self._interim = '';
           var res = { isFinal: true, length: 1, 0: { transcript: t, confidence: 0 } };
           try { self.onresult({ resultIndex: 0, results: { length: 1, 0: res } }); } catch (e) { /* the page's handler */ }
@@ -506,29 +507,48 @@
         LG.chunks.push(d);
         var keep = Math.ceil((ctx.sampleRate * 9) / d.length);
         if (LG.chunks.length > keep) LG.chunks.shift();
+        LG.all.push(d); LG.allN += d.length;
+        if (LG.allN > ctx.sampleRate * 24) { var gone = LG.all.shift(); LG.allN -= gone.length; } /* a check that never answers cannot grow this for ever */
       };
       src.connect(p); p.connect(mute); mute.connect(ctx.destination);
       LG.proc = p; LG.procStream = a.stream; LG.rate = ctx.sampleRate;
     } catch (e) { LG.proc = null; }
   }
   /* the kept seconds as 16 kHz 16-bit mono, base64 */
-  function pcm16k() {
-    var n = 0, i, k; LG.chunks.forEach(function (c) { n += c.length; });
+  function pcm16k(chunks) {
+    chunks = chunks || LG.chunks;
+    var n = 0, i, k; chunks.forEach(function (c) { n += c.length; });
     var step = (LG.rate || 48000) / 16000, out = new Int16Array(Math.floor(n / step)), all = new Float32Array(n), at = 0;
-    LG.chunks.forEach(function (c) { all.set(c, at); at += c.length; });
+    chunks.forEach(function (c) { all.set(c, at); at += c.length; });
     for (i = 0; i < out.length; i++) { k = all[Math.floor(i * step)]; out[i] = Math.max(-1, Math.min(1, k)) * 32767; }
     var bytes = new Uint8Array(out.buffer), s = '';
     for (i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
     return btoa(s);
   }
+  /* the caption of a Telugu / Hindi answer: what the server heard of the whole answer so far (founder 2026-11-11: the browser's Telugu was very slow) */
+  function setCaption(text) {
+    var a = A(); if (!a || !text) return;
+    var full = (LG.prefix ? LG.prefix + ' ' : '') + text;
+    a.sttFinal = full + ' '; a.sttText = full; a.spoke = true;
+    if (window.TLVI && window.TLVI.transcript && window.TLVI.transcript.live) window.TLVI.transcript.live(full);
+    else { var e = document.getElementById('aiivTranscript'); if (e) e.textContent = full; }
+  }
   function check(key) {
-    LG.busy = true; LG.checks += 1;
-    post('/hear', { lang: LG.cur, pcm: pcm16k() }).then(function (r) {
+    var asr = LG.cur !== 'en';                       /* in Telugu / Hindi the whole answer goes, and the words come back as the caption */
+    var chunks = asr ? LG.all.slice() : LG.chunks, took = chunks.length, voiced = LG.voicedMs;
+    LG.busy = true; LG.checks += 1; LG.lastAt = Date.now(); LG.lastVoiced = voiced;
+    post('/hear', { lang: LG.cur, pcm: pcm16k(chunks) }).then(function (r) {
       LG.busy = false;
       if (!r) return;
-      if (r.ready === false) { LG.serverHears = false; return; }
+      if (r.ready === false) { LG.serverHears = false; LG.caps = false; return; }
+      if (LG.answer !== key) return;
       LG.unsure = !r.changed;
-      if (r.changed && !LG.manual && LG.answer === key && r.lang) switchTo(r.lang, r.text || '');
+      if (r.changed && !LG.manual && r.lang) { LG.prefix = ''; LG.all = []; LG.allN = 0; switchTo(r.lang, r.text || ''); if (r.text) LG.caps = true; return; }
+      if (asr && r.text && r.lang === LG.cur) {
+        LG.caps = true; setCaption(r.text);
+        /* a long answer: what has been heard is kept as text, and the audio starts again from here */
+        if (LG.allN > (LG.rate || 48000) * 18) { LG.prefix = (LG.prefix ? LG.prefix + ' ' : '') + r.text; LG.all.splice(0, took); LG.allN = 0; LG.all.forEach(function (c) { LG.allN += c.length; }); }
+      }
     }, function () { LG.busy = false; });
   }
 
@@ -656,12 +676,20 @@
     var key = (a.idx || 0) + '|' + (a.part || 'main');
     if (LG.answer !== key) {
       LG.answer = key; LG.checks = 0; LG.unsure = false; LG.chunks = []; LG.voicedMs = 0;
+      LG.all = []; LG.allN = 0; LG.prefix = ''; LG.lastAt = 0; LG.lastVoiced = 0; LG.caps = false;
       prefetchNext(s);
     }
     if (LG.manual || a.micOff) return;
     if (LG.serverHears) {
       ensureCapture(a);
-      if (LG.proc && !LG.busy && ((LG.checks === 0 && LG.voicedMs >= 3500) || (LG.checks === 1 && LG.unsure && LG.voicedMs >= 8000))) check(key);
+      /* English: a check after 3.5 s of voice, then again every 3.5 s more (up to 6), so a switch to Telugu / Hindi later in the answer is heard too.
+         Telugu / Hindi: every 2.5 s, with the whole answer, because that is also the caption. */
+      if (LG.proc && !LG.busy) {
+        var due = LG.cur !== 'en'
+          ? (LG.voicedMs >= 1200 && Date.now() - LG.lastAt >= 2500 && LG.voicedMs >= LG.lastVoiced + 600)
+          : (LG.checks < 6 && LG.voicedMs >= 3500 && LG.voicedMs >= LG.lastVoiced + 3500);
+        if (due) check(key);
+      }
     } else {
       var w = fromWords(a.sttText, LG.cur);
       if (w) switchTo(w, '');
