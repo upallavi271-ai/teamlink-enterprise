@@ -198,12 +198,122 @@ export function RaiseDialog({ row, month, onClose, onSaved }) {
   );
 }
 
+// ---- WHO JOINED, WHO DROPPED AND WHY (founder 2026-11-11) ----------------------------
+// The people behind a recruiter's month, straight from ATS: the joinings, the drop-outs with the reason, and the ones still to join.
+// Names, clients and jobs are ATS data: the server answers only a login that holds the ATS (and only for recruiters it may see);
+// `allowed` is that answer in advance (board.viewer.details), so a login without the ATS sees the counts and this note.
+const dropWhen = (x) => (x.droppedOn ? dayLabel(x.droppedOn) : (x.lastWorkingDay ? `last day ${dayLabel(x.lastWorkingDay)}` : '—'));
+
+export function JoiningPeople({ month, rowKey, allowed = true }) {
+  const [d, setD] = useState(null);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    if (!allowed || !rowKey) return undefined;
+    let alive = true;
+    setD(null); setError('');
+    api.get('/recruiter-joinings/details', { params: { month, key: rowKey } })
+      .then((r) => { if (alive) setD(r.data); })
+      .catch((e) => { if (alive) setError(errText(e, 'Could not load who joined.')); });
+    return () => { alive = false; };
+  }, [month, rowKey, allowed]);
+  if (!allowed) return <p className="rj-hint">Candidate names and details are in ATS. Your login shows the counts only.</p>;
+  if (error) return <div className="rj-error">{error}</div>;
+  if (!d) return <div className="rj-empty">Loading who joined…</div>;
+  const none = !d.joined.length && !d.dropouts.length && !d.waiting.length;
+  const unrecorded = d.dropouts.filter((x) => !x.reasonRecorded).length;
+  return (
+    <div className="rj-people">
+      {none && <p className="rj-hint">No joinings or drop-outs with a joining date in {d.label}.</p>}
+      {d.joined.length > 0 && (
+        <>
+          <h4>Joined in {d.label} ({d.joined.length})</h4>
+          <div className="tbl-wrap">
+            <table className="rj-mini">
+              <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>Joining date</th><th>Status</th></tr></thead>
+              <tbody>
+                {d.joined.map((x) => (
+                  <tr key={x.id}>
+                    <td><b>{x.candidate}</b></td>
+                    <td>{x.client}</td>
+                    <td>{x.job}{x.jobCode ? <span className="rj-sub"> · {x.jobCode}</span> : null}</td>
+                    <td>{dayLabel(x.joiningDate)}</td>
+                    <td>
+                      <span className={`rj-tag ${x.kind === 'left' ? 'red' : x.tone === 'orange' ? 'orange' : 'green'}`}>{x.kind === 'left' ? 'Dropped after joining' : x.status}</span>
+                      {x.kind === 'left' && <div className="rj-sub">Still counted in the joinings above</div>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+      {d.dropouts.length > 0 && (
+        <>
+          <h4>Drop-outs ({d.dropouts.length})</h4>
+          <div className="tbl-wrap">
+            <table className="rj-mini">
+              <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>What happened</th><th>Joining date</th><th>Dropped on</th><th>Reason</th></tr></thead>
+              <tbody>
+                {d.dropouts.map((x) => (
+                  <tr key={x.id}>
+                    <td><b>{x.candidate}</b></td>
+                    <td>{x.client}</td>
+                    <td>{x.job}{x.jobCode ? <span className="rj-sub"> · {x.jobCode}</span> : null}</td>
+                    <td>
+                      <span className="rj-tag red">{x.kind === 'left' ? 'Left after joining' : (/declined/i.test(x.status) ? 'Offer declined' : 'Did not join')}</span>
+                      {x.withinGuarantee === true && <div className="rj-sub">Inside the guarantee</div>}
+                      {x.afterIncentive && <div className="rj-sub">After the incentive was decided: HR to review</div>}
+                    </td>
+                    <td>{dayLabel(x.joiningDate)}</td>
+                    <td>{x.kind === 'left' || x.droppedOn ? dropWhen(x) : '—'}</td>
+                    <td>{x.reasonRecorded ? x.reason : <span className="rj-sub">Reason not recorded</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {unrecorded > 0 && <p className="rj-hint">{unrecorded} of {d.dropouts.length} have no reason on record. The reason is added in ATS, on the candidate&rsquo;s Joining &amp; Drop record, and shows here after that.</p>}
+        </>
+      )}
+      {d.waiting.length > 0 && (
+        <>
+          <h4>Not joined yet ({d.waiting.length})</h4>
+          <div className="tbl-wrap">
+            <table className="rj-mini">
+              <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>Joining date</th><th>Status</th></tr></thead>
+              <tbody>
+                {d.waiting.map((x) => (
+                  <tr key={x.id}>
+                    <td><b>{x.candidate}</b></td><td>{x.client}</td>
+                    <td>{x.job}{x.jobCode ? <span className="rj-sub"> · {x.jobCode}</span> : null}</td>
+                    <td>{dayLabel(x.joiningDate)}</td><td><span className="rj-tag orange">{x.status}</span></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// The same panel in a window: opened from a row of the Monthly Targets table.
+export function JoiningDetailModal({ month, rowKey, name, allowed, onClose }) {
+  return (
+    <Modal title={`Joinings and drop-outs · ${name} · ${monthLabel(month)}`} onClose={onClose} wide footer={<button className="btn btn-sm" onClick={onClose}>Close</button>}>
+      <div className="rj"><JoiningPeople month={month} rowKey={rowKey} allowed={allowed} /></div>
+    </Modal>
+  );
+}
+
 // ---- One person's joinings + month-by-month history ---------------------------------
-// HRMS shows COUNTS ONLY (required, achieved, completion %). Who joined, for
-// which client and job is in ATS (Candidates & Pipeline).
+// The counts (required, achieved, completion %, drop-outs) come with the board; the people behind them
+// (who joined, who dropped and why) are JoiningPeople above, for a login that holds the ATS.
 const pct = (a, t) => (t > 0 ? `${Math.round((a * 100) / t)}%` : '—');
 
-export function PersonDetail({ row, month }) {
+export function PersonDetail({ row, month, details = false }) {
   const [hist, setHist] = useState(null);
   const [carry, setCarry] = useState([]);
   const [error, setError] = useState('');
@@ -216,15 +326,12 @@ export function PersonDetail({ row, month }) {
       <h4>{monthLabel(month)}</h4>
       <p className="rj-hint">
         Required <b>{row.required ?? row.target}</b> · Achieved <b>{row.achieved ?? row.joinings}</b> · Completion <b>{pct(row.joinings, row.target)}</b>
-        {row.notCountedCount ? <> · {row.notCountedCount} more had a joining date but did not join</> : null}.
-        {' '}Who joined, and for which client, is in ATS.
+        {row.droppedCount ? <> · <b>{row.droppedCount}</b> left after joining</> : null}
+        {row.didNotJoinCount ? <> · <b>{row.didNotJoinCount}</b> did not join</> : null}
+        {row.notCountedCount ? <> · {row.notCountedCount} not counted (did not join, left, or still waiting)</> : null}.
+        {row.droppedCount ? ' A person who left after joining stays in the count: a drop does not change a past count or incentive.' : ''}
       </p>
-      {(row.joiningList || []).some((j) => j.drop) && (
-        <p className="rj-hint">
-          {(row.joiningList || []).filter((j) => j.drop).length} of these joinings dropped after joining (a note only: they are still counted, and no past count or incentive is changed)
-          {(row.joiningList || []).some((j) => j.drop && j.drop.afterIncentive) ? '. For at least one, the incentive had already been decided: HR to review' : ''}.
-        </p>
-      )}
+      <JoiningPeople month={month} rowKey={row.key} allowed={details} />
       {carry.length > 0 && (
         <>
           <h4>Target month by month (the missing joinings are carried forward)</h4>
@@ -248,15 +355,16 @@ export function PersonDetail({ row, month }) {
           <h4>Completion history (last 12 months)</h4>
           <div className="tbl-wrap">
             <table className="rj-mini">
-              <thead><tr><th>Month</th><th>Required</th><th>Achieved</th><th>Completion</th><th>Result</th></tr></thead>
+              <thead><tr><th>Month</th><th>Required</th><th>Achieved</th><th>Completion</th><th>Drop-outs</th><th>Result</th></tr></thead>
               <tbody>
                 {hist.filter((h) => h.listed).map((h) => (
                   <tr key={h.month}>
                     <td>{h.label}</td><td>{h.target}</td><td>{h.joinings}</td><td>{pct(h.joinings, h.target)}</td>
+                    <td>{(h.dropped || 0) + (h.didNotJoin || 0) ? <span className="rj-tag red" title={`${h.dropped || 0} left after joining, ${h.didNotJoin || 0} did not join`}>{(h.dropped || 0) + (h.didNotJoin || 0)}</span> : <span className="rj-sub">None</span>}</td>
                     <td><span className={`rj-score ${h.tone}`}>{h.toneWord}</span>{h.decision ? <span className="rj-sub"> · {h.decision.decision === 'INCENTIVE' ? `Incentive${h.decision.amount != null ? ` ${inr(h.decision.amount)}` : ''}` : h.decision.word}</span> : null}</td>
                   </tr>
                 ))}
-                {!hist.some((h) => h.listed) && <tr><td colSpan="5" className="rj-sub">No months on the recruiter list yet.</td></tr>}
+                {!hist.some((h) => h.listed) && <tr><td colSpan="6" className="rj-sub">No months on the recruiter list yet.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -276,7 +384,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
   const v = board.viewer || {};
   const canDecide = !!v.decide;
   const hasCarry = rows.some((r) => r.completed !== undefined);
-  const cols = 6 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
+  const cols = 7 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
 
   async function undo(row) {
     if (!window.confirm(`Undo the decision for ${row.name}?`)) return;
@@ -301,7 +409,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
         <table>
           <thead>
             <tr>
-              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th>
+              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th><th>Drop-outs</th>
               {showDecision && v.decisions && <th>Decision</th>}
             </tr>
           </thead>
@@ -321,6 +429,11 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
                   <td><b>{pct(r.joinings, r.target)}</b>{r.completed !== undefined && <div className="rj-sub">{r.completed ? 'Target completed' : 'Not completed yet'}</div>}</td>
                   {hasCarry && <td>{r.completed !== undefined ? <IncentiveCell row={r} mayDecide={v.decide} /> : <span className="rj-sub">No rule</span>}</td>}
                   <td>{r.notCountedCount ? <span className="rj-tag orange">{r.notCountedCount}</span> : <span className="rj-sub">None</span>}</td>
+                  <td>
+                    {(r.droppedCount || 0) + (r.didNotJoinCount || 0)
+                      ? <span className="rj-tag red" title={`${r.droppedCount || 0} left after joining, ${r.didNotJoinCount || 0} did not join`}>{(r.droppedCount || 0) + (r.didNotJoinCount || 0)}</span>
+                      : <span className="rj-sub">None</span>}
+                  </td>
                   {showDecision && v.decisions && (
                     <td>
                       {r.decision ? <DecisionLine d={r.decision} /> : (r.needsDecision ? <span className="rj-wait">{board.ended ? 'Waiting for decision' : 'Month not over yet'}</span> : <span className="rj-sub">{r.employeeId ? 'Not needed (left)' : 'No HRMS record'}</span>)}
@@ -336,7 +449,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
                   )}
                 </tr>
                 {open === r.key && (
-                  <tr className="rj-detail"><td colSpan={cols}><PersonDetail row={r} month={board.month} /></td></tr>
+                  <tr className="rj-detail"><td colSpan={cols}><PersonDetail row={r} month={board.month} details={!!v.details} /></td></tr>
                 )}
               </Fragment>
             ))}

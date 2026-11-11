@@ -174,7 +174,8 @@ export default function RecruiterJoinings() {
   return (
     <div className="rj">
       <p className="rj-lead">
-        How many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed).
+        How many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed), and how many <b>dropped</b>.
+        {v.details ? ' Open a recruiter to see who joined, who dropped and the reason.' : ''}
         {v.decide ? ' After a month ends, decide per person: give an incentive, raise the salary, or no action.' : ''}
         {v.level === 'team' ? ' You see your team.' : ''}{v.level === 'self' ? ' You see your own joinings.' : ''}
       </p>

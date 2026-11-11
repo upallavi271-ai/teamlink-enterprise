@@ -65,10 +65,12 @@ function scopeRows(user, viewer, rows) {
   return rows.filter((r) => (r.userId && r.userId === user.id) || (user.employeeId && r.employeeId === user.employeeId));
 }
 
-// HRMS SHOWS ONLY ATS SUMMARY COUNTS (user, 2026-10-09): required joinings,
-// achieved joinings, completion %. Client names, candidate names and job
-// titles stay in ATS - they never leave utils/recruiterJoinings.js for an
-// HRMS screen, export or popup (stripNames below is the one place).
+// THE BOARD CARRIES ONLY ATS SUMMARY COUNTS (user, 2026-10-09): required joinings,
+// achieved joinings, completion %, and (2026-11-11) how many dropped. Client names,
+// candidate names and job titles are not in the board, the export or the popup
+// (stripNames below is the one place). Since 2026-11-11 the founder wants the people
+// behind a month's numbers in the monthly targets: they come from /details below,
+// one recruiter and one month at a time, and only to a login that holds the ATS.
 const statusGroupOf = (employmentStatus) => (employmentStatus === 'Relieved' ? 'Relieved' : employmentStatus === 'Exited' ? 'Exited' : 'Active');
 const pctOf = (joinings, target) => (target > 0 ? Math.round((joinings * 100) / target) : null);
 function stripNames(r) {
@@ -158,7 +160,8 @@ function shapeBoard(user, viewer, board, cp = null) {
     undatedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.undatedCount : 0,
     summary,
     rules: cp ? cp.ruleLines : [], example: cp ? cp.example : [],
-    viewer: { level: viewer.level, money: viewer.money, decide: viewer.decide && board.ended, decisions: viewer.decisions, setTarget: viewer.level === 'sa' },
+    // details: this login may open who joined / dropped (ATS data: only a login that holds the ATS)
+    viewer: { level: viewer.level, money: viewer.money, decide: viewer.decide && board.ended, decisions: viewer.decisions, setTarget: viewer.level === 'sa', details: !!(user.products && user.products.ats) },
   };
 }
 
@@ -215,6 +218,25 @@ router.get('/history/:employeeId', guarded(async (req, res) => {
     carry = (plan.get(id) || {}).history || [];
   } catch { carry = []; }
   res.json({ employee: emp, months: hist.map((h) => ({ ...h, decision: decisionFor(viewer, h.decision) })), carry });
+}));
+
+// WHO JOINED, WHO DROPPED AND WHY - one recruiter, one month (founder 2026-11-11: the candidate details from ATS in the
+// monthly targets). Candidate names, clients and jobs are ATS data, so only a login that holds the ATS gets them, and only
+// for a recruiter this viewer may see in the board (self / team / everyone, the same rule as the counts). A login without the
+// ATS keeps the counts only, as before. A read: nothing is written and nobody is told.
+router.get('/details', guarded(async (req, res) => {
+  const month = monthOf(req.query, RJ.thisMonth());
+  const key = s(req.query.key) || s(req.query.employeeId);
+  if (!key) return err(res, 400, 'Say which recruiter.');
+  if (!(req.user.products || {}).ats) {
+    return err(res, 403, 'Candidate names and details are in ATS, and your login does not include ATS. Here you see the counts only.', { countsOnly: true });
+  }
+  const viewer = viewerOf(req.user);
+  const board = await RJ.monthBoard(month);
+  const row = board.rows.find((r) => r.key === key || (r.employeeId && r.employeeId === key));
+  if (!row || !scopeRows(req.user, viewer, [row]).length) return err(res, 403, 'You can only see the people in your own area.');
+  const detail = await RJ.personMonthDetail(month, row.key);
+  res.json({ ...detail, ended: board.ended, current: board.current });
 }));
 
 // Joined applications that belong to no month (no usable joining date).
@@ -434,11 +456,11 @@ router.get('/export', guarded(async (req, res) => {
   const f = { department: s(req.query.department), tl: s(req.query.tl), recruiter: s(req.query.recruiter), status: s(req.query.status) };
   const rows = b.rows.filter((r) => (!f.department || r.department === f.department)
     && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter) && (!f.status || r.statusGroup === f.status));
-  const head = ['Recruiter', 'Employee ID', 'Employee status', 'Seat', 'Department', 'Team lead', 'Required joinings', 'Carried from earlier months', 'Achieved joinings', 'Completion %', 'Target completed', 'Result', 'Not counted'];
+  const head = ['Recruiter', 'Employee ID', 'Employee status', 'Seat', 'Department', 'Team lead', 'Required joinings', 'Carried from earlier months', 'Achieved joinings', 'Completion %', 'Target completed', 'Result', 'Not counted', 'Left after joining', 'Did not join'];
   if (viewer.decisions) head.push('Decision');
   if (viewer.money) head.push('Incentive (₹)', 'Paid with', 'Raise from', 'Note');
   const main = rows.map((r) => {
-    const out = [r.name, r.employeeCode, r.statusGroup, r.seat, r.department, r.tlName, r.required, r.carried || 0, r.achieved, r.completionPct == null ? '' : r.completionPct, r.completed === undefined ? '' : (r.completed ? 'Yes' : 'No'), r.toneWord, r.notCountedCount];
+    const out = [r.name, r.employeeCode, r.statusGroup, r.seat, r.department, r.tlName, r.required, r.carried || 0, r.achieved, r.completionPct == null ? '' : r.completionPct, r.completed === undefined ? '' : (r.completed ? 'Yes' : 'No'), r.toneWord, r.notCountedCount, r.droppedCount || 0, r.didNotJoinCount || 0];
     if (viewer.decisions) out.push(r.decision ? r.decision.word : (r.needsDecision ? 'Waiting for decision' : '—'));
     if (viewer.money) {
       const d = r.decision || {};

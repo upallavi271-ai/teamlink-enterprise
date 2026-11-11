@@ -36,7 +36,8 @@ export default function PerformanceDevelopment() {
   const joinings = seesJoinings(user);
   const rolePerf = seesRolePerformance(user);
   // ONE tab (user, 2026-10-09): Monthly Targets, with the recruiter joinings on the
-  // same screen as their own section (counts only; who joined is in ATS).
+  // same screen as their own section. Both show the ATS joinings and drop-outs of each month; who joined and
+  // who dropped (with the reason) opens per person for a login that holds the ATS (founder 2026-11-11).
   const tabs = [
     {
       key: 'targets',

@@ -202,13 +202,32 @@ async function monthApplications(month, { fresh = false } = {}) {
     },
     select: APP_SELECT,
   });
+  // DID NOT JOIN (founder 2026-11-11): a person the ATS moved to Rejected with the reason "Did Not Join" and who has no joining date
+  // of their own belongs to the month it was recorded, so the month shows the drop-out with its reason. Never counted; a person
+  // WITH a joining date is already in that date's month above.
+  let extraRows = [];
+  const dnjDay = new Map();
+  try {
+    const dnj = await prisma.applicationStageEvent.findMany({
+      where: { toStage: 'REJECTED', reasonCategory: 'Did Not Join', createdAt: { gte: new Date(`${from}T00:00:00+05:30`), lt: new Date(`${addDays(to, 1)}T00:00:00+05:30`) } },
+      select: { applicationId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    dnj.forEach((e) => { if (!dnjDay.has(e.applicationId)) dnjDay.set(e.applicationId, istDay(e.createdAt)); });
+    const have = new Set(rows.map((a) => a.id));
+    const ids = [...dnjDay.keys()].filter((id) => !have.has(id));
+    if (ids.length) {
+      extraRows = (await prisma.application.findMany({ where: { id: { in: ids }, stage: 'REJECTED' }, select: APP_SELECT }))
+        .filter((a) => !/^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')));
+    }
+  } catch { /* the list is a bonus: the count never depends on it */ }
   const dir = await workers.loadDirectory();
   // handovers: the credit reads who had the candidate before each one (utils/handover.js)
   const HO = await require('./handover').handoversFor(rows.filter((a) => JOINED.includes(a.stage)).map((a) => a.id)); // eslint-disable-line global-require
   const today = todayIst();
   const apps = [];
   const undated = [];
-  rows.forEach((a) => {
+  [...rows, ...extraRows].forEach((a) => {
     if (isTest(a.candidate && a.candidate.name)) return;
     const evs = a.stageEvents || [];
     const joined = JOINED.includes(a.stage);
@@ -216,7 +235,9 @@ async function monthApplications(month, { fresh = false } = {}) {
     const x = { joined, a, crossedAt: { joined: firstMove ? firstMove.createdAt : null }, evs };
     let day = joined ? joinDayOf(x) : null;
     const typed = /^\d{4}-\d{2}-\d{2}/.test(String(a.joiningDate || '')) ? String(a.joiningDate).slice(0, 10) : null;
-    if (!joined) day = typed;
+    // a person who never joined and has no joining date: the day it was recorded (extraRows above)
+    const recordedOnly = !joined && !typed && dnjDay.has(a.id);
+    if (!joined) day = typed || (recordedOnly ? dnjDay.get(a.id) : null);
     if (joined && !day) { undated.push(a); return; }
     if (!day || day < from || day > to) return;
     const req = a.requirement || {};
@@ -239,6 +260,7 @@ async function monthApplications(month, { fresh = false } = {}) {
       jobCode: req.reqCode || null,
       client,
       joiningDate: day,
+      recordedOnly, // true: `joiningDate` is the day the "Did Not Join" was recorded, not a joining date
       stage: a.stage,
       recruiterKey: at.recruiter ? at.recruiter.key : null,
       recruiterName: at.recruiter ? at.recruiter.label : null,
@@ -291,13 +313,16 @@ async function monthApplications(month, { fresh = false } = {}) {
       for (let i = 0; i < ids.length; i += 400) {
         const chunk = ids.slice(i, i + 400);
         // eslint-disable-next-line no-await-in-loop
-        const got = await S.rows(`SELECT "applicationId","status","droppedOn","dropReason","dropWithinGuarantee","dropAfterIncentive" FROM "JoiningRecord" WHERE "applicationId" IN (${chunk.map(() => '?').join(',')})`, ...chunk);
+        const got = await S.rows(`SELECT "applicationId","status","droppedOn","lastWorkingDay","dropReason","dropReasonDetail","dropWithinGuarantee","dropAfterIncentive" FROM "JoiningRecord" WHERE "applicationId" IN (${chunk.map(() => '?').join(',')})`, ...chunk);
         got.forEach((g) => byApp.set(g.applicationId, g));
       }
       apps.forEach((r) => {
         const d = byApp.get(r.id);
         if (!d || d.status !== 'Dropped') return;
-        r.drop = { droppedOn: d.droppedOn, reason: d.dropReason, withinGuarantee: d.dropWithinGuarantee === 1, afterIncentive: d.dropAfterIncentive === 1 };
+        r.drop = {
+          droppedOn: d.droppedOn, lastWorkingDay: d.lastWorkingDay || null, reason: d.dropReason, detail: d.dropReasonDetail || null,
+          withinGuarantee: d.dropWithinGuarantee === 1, afterIncentive: d.dropAfterIncentive === 1,
+        };
         const note = `Dropped after joining${d.droppedOn ? ` on ${d.droppedOn}` : ''}${d.dropReason ? ` (${d.dropReason})` : ''}. Still counted here: a drop does not change a past count or incentive.${d.dropAfterIncentive === 1 ? ' An incentive was already decided for this month: HR to review.' : ''}`;
         r.note = r.note ? `${r.note} ${note}` : note;
         r.tone = 'orange';
@@ -307,6 +332,16 @@ async function monthApplications(month, { fresh = false } = {}) {
   const value = { month, apps, undated, dir };
   CACHE.set(month, { at: Date.now(), value });
   return value;
+}
+
+// DROP-OUTS (founder 2026-11-11: "which joinings came and how many dropped, with the reason, in the monthly targets").
+//   left     a person who joined and then left: a Joining & Drop record says Dropped, or the step moved off Joined to Rejected
+//   notjoin  a person who had a joining date this month and never joined: did not join / offer declined
+// A drop never changes the Joinings count or an incentive (the rule above); it is shown beside it.
+function dropKind(r) {
+  if (r.drop || /^Left after joining/.test(r.status || '')) return 'left';
+  if (!r.counted && /^(Did not join|Offer declined)/.test(r.status || '')) return 'notjoin';
+  return null;
 }
 
 // --- The month board ---------------------------------------------------------------
@@ -408,6 +443,9 @@ async function monthBoard(month, { fresh = false } = {}) {
       targetSource: t.source,
       joinings,
       notCountedCount: p.notCounted.length,
+      // drop-outs of the month's joining dates: left after joining / never joined (counts only; the people are in personMonthDetail)
+      droppedCount: [...p.apps, ...p.notCounted].filter((x) => dropKind(x) === 'left').length,
+      didNotJoinCount: p.notCounted.filter((x) => dropKind(x) === 'notjoin').length,
       tone,
       toneWord: TONE_WORD[tone],
       // A decision is needed for anyone with an HRMS record who is still on
@@ -466,6 +504,8 @@ async function personHistory(employeeId, months = 12) {
       target: r ? r.target : null,
       joinings: r ? r.joinings : 0,
       notCounted: r ? r.notCountedCount : 0,
+      dropped: r ? r.droppedCount : 0,
+      didNotJoin: r ? r.didNotJoinCount : 0,
       tone: r ? r.tone : 'grey',
       toneWord: r ? r.toneWord : '—',
       seat: r ? r.seat : null,
@@ -475,6 +515,73 @@ async function personHistory(employeeId, months = 12) {
     m = prevMonth(m);
   }
   return out;
+}
+
+// ONE recruiter, ONE month, with the people: who joined, who dropped after joining and why, who never joined and why.
+// Names, clients and jobs are ATS data: the route that calls this only answers a login that holds the ATS and may see this
+// recruiter (routes/recruiterJoinings.js /details). -> { month, label, key, name, target, joinings, joined[], dropouts[], waiting[] }
+async function personMonthDetail(month, key) {
+  const b = await monthBoard(month);
+  const row = b.rows.find((r) => r.key === key || (r.employeeId && r.employeeId === key));
+  if (!row) return null;
+  const all = [...row.joiningList, ...row.notCountedList];
+  const ids = all.filter((r) => dropKind(r) || r.stage === 'REJECTED').map((r) => r.id);
+  // why a person who never joined (or left) was moved to Rejected: the reason on that step, latest first
+  const why = new Map();
+  if (ids.length) {
+    try {
+      const evs = await prisma.applicationStageEvent.findMany({
+        where: { applicationId: { in: ids }, toStage: 'REJECTED' },
+        orderBy: { createdAt: 'desc' },
+        select: { applicationId: true, reasonCategory: true, reasonDetail: true, comment: true, createdAt: true },
+      });
+      evs.forEach((e) => { if (!why.has(e.applicationId)) why.set(e.applicationId, e); });
+    } catch { /* the reason is a bonus: the list never depends on it */ }
+  }
+  const item = (r) => {
+    const kind = dropKind(r);
+    const d = r.drop || null;
+    const ev = why.get(r.id) || null;
+    const typed = d && d.reason && !/^not recorded$/i.test(d.reason) ? [d.reason, d.detail].filter(Boolean).join(' - ') : '';
+    // "Did Not Join - won't join" says "did not join" twice: the "what happened" column already does, so only the detail is the reason
+    const stepWhy = ev ? (ev.reasonDetail || ev.comment || '') : '';
+    const fromStep = ev ? (/^did not join$/i.test(ev.reasonCategory || '') && stepWhy ? stepWhy : [ev.reasonCategory, stepWhy].filter(Boolean).join(' - ')) : '';
+    const reason = typed || fromStep || '';
+    return {
+      id: r.id,
+      candidateId: r.candidateId,
+      candidate: r.candidate,
+      client: r.client,
+      job: r.job,
+      jobCode: r.jobCode,
+      joiningDate: r.recordedOnly ? null : r.joiningDate,
+      status: r.status,
+      tone: r.tone,
+      counted: !!r.counted,
+      kind: kind || (r.counted ? 'joined' : 'waiting'),
+      droppedOn: d ? d.droppedOn || null : (r.recordedOnly ? r.joiningDate : null),
+      lastWorkingDay: d ? d.lastWorkingDay || null : null,
+      withinGuarantee: d ? !!d.withinGuarantee : null,
+      afterIncentive: d ? !!d.afterIncentive : false,
+      reason,
+      reasonRecorded: !!reason,
+      guaranteeEnd: r.guaranteeEnd || null,
+    };
+  };
+  const byDate = (a, c) => String(a.joiningDate || '').localeCompare(String(c.joiningDate || ''));
+  const items = all.map(item).sort(byDate);
+  return {
+    month,
+    label: monthLabel(month),
+    key: row.key,
+    employeeId: row.employeeId,
+    name: row.name,
+    target: row.target,
+    joinings: row.joinings,
+    joined: items.filter((x) => x.counted),
+    dropouts: items.filter((x) => x.kind === 'left' || x.kind === 'notjoin'),
+    waiting: items.filter((x) => x.kind === 'waiting'),
+  };
 }
 
 // The recruiter's own figure for a month (ATS dashboard, HRMS dashboard).
@@ -515,6 +622,6 @@ async function countedPlacements(month) {
 module.exports = {
   countedPlacements,
   DEFAULT_TARGET, PAYABLE, isMonth, thisMonth, prevMonth, nextMonth, monthLabel, todayIst, lastDay,
-  guaranteeDays, targetOf, loadTargetRules, monthApplications, monthBoard, undatedJoinings, personHistory,
+  guaranteeDays, targetOf, loadTargetRules, monthApplications, monthBoard, undatedJoinings, personHistory, personMonthDetail,
   ownFigure, targetFor, invalidate, toneOf, TONE_WORD,
 };

@@ -10,12 +10,16 @@ import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, audienceReady } from '../../components/AudiencePicker.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import Modal from '../../components/Modal.jsx';
+import { JoiningDetailModal } from '../../components/recruiterJoinings/RjParts.jsx';
+import '../../components/recruiterJoinings/rj.css';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
 import {
   ComposeModal, Field, Row, AiAssist, ResultNote, useSubmit,
 } from '../../components/ComposeForm.jsx';
 
 const thisMonth = () => new Date().toISOString().slice(0, 7);
+// Targets counted in people placed: their Achieved comes from ATS (see effRecords in Targets below).
+const PLACEMENT_UNIT = /placement|joining|joined/i;
 
 // A target's stored status never moves off Open, so the status that means
 // something is how far it has got — read off target vs achieved, the same
@@ -123,6 +127,10 @@ export default function Targets() {
   const [sort, setSort] = useState('month');
   const [sg, setSg] = useState('');
   const [histFor, setHistFor] = useState('');
+  // ATS joinings per month (founder 2026-11-11): who joined that month, how many dropped and why, beside each target.
+  // One board per month on screen (the server scopes it: your own row, your team, or everyone); a month is asked once.
+  const [boards, setBoards] = useState({});
+  const [peek, setPeek] = useState(null); // { month, key, name }
 
   function load() {
     api.get('/targets').then((res) => setRecords(res.data));
@@ -136,10 +144,19 @@ export default function Targets() {
     load();
   }
 
-  const shown = records.filter((r) => textMatches(`${r.title || ''} ${r.detail || ''} ${r.unit || ''}`, pf.q)
+  // A PLACEMENT / JOINING target is measured by ATS, not typed (founder 2026-11-11: the joinings from ATS in the monthly targets):
+  // once a month's ATS board is in, Achieved, Progress and the status follow the person's joinings that month. Other units
+  // (calls, revenue ...) keep the number HR typed. `_ats` is that board row.
+  const effRecords = useMemo(() => records.map((r) => {
+    const b = boards[r.date];
+    if (!b || typeof b !== 'object' || !r.employeeId || !PLACEMENT_UNIT.test(r.unit || '')) return r;
+    const row = (b.rows || []).find((x) => x.employeeId === r.employeeId);
+    return row ? { ...r, achieved: row.joinings, _ats: row } : r;
+  }), [records, boards]);
+  const shown = effRecords.filter((r) => textMatches(`${r.title || ''} ${r.detail || ''} ${r.unit || ''}`, pf.q)
     && peopleMatches(r, pf, undefined, targetStatusOf) && (!pf.month || r.date === pf.month) && (!sg || statusGroupOf(r.employee) === sg));
-  const sgFacets = useLocalFacets(records, SG_FIELDS, { sg });
-  const opts = peopleOptions(records);
+  const sgFacets = useLocalFacets(effRecords, SG_FIELDS, { sg });
+  const opts = peopleOptions(effRecords);
   const pctOf = (r) => ((Number(r.amount) || 0) > 0 ? (Number(r.achieved) || 0) / Number(r.amount) : 0);
   const SORTS = {
     month: (a, b) => String(b.date || '').localeCompare(String(a.date || '')) || String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')),
@@ -147,6 +164,20 @@ export default function Targets() {
     name: (a, b) => String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')),
   };
   const page = usePaged([...shown].sort(SORTS[sort] || SORTS.month));
+  const monthsOnScreen = [...new Set(page.slice.map((r) => r.date).filter((m) => /^\d{4}-\d{2}$/.test(String(m || ''))))].join(',');
+  useEffect(() => {
+    monthsOnScreen.split(',').filter(Boolean).forEach((m) => {
+      if (boards[m]) return;
+      setBoards((b) => (b[m] ? b : { ...b, [m]: 'loading' }));
+      api.get('/recruiter-joinings/board', { params: { month: m } })
+        .then((r) => setBoards((b) => ({ ...b, [m]: r.data })))
+        .catch(() => setBoards((b) => ({ ...b, [m]: 'none' })));
+    });
+  }, [monthsOnScreen]); // eslint-disable-line react-hooks/exhaustive-deps
+  const atsRowOf = (r) => {
+    const b = boards[r.date];
+    return b && typeof b === 'object' && r.employeeId ? (b.rows || []).find((x) => x.employeeId === r.employeeId) || null : null;
+  };
   const clearPf = () => { setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, '']))); setSg(''); };
 
   return (
@@ -193,12 +224,15 @@ export default function Targets() {
         {shown.length === 0 ? <ListEmpty lf={{ activeCount: Object.values(pf).some(Boolean) ? 1 : 0, clear: clearPf }} noun="targets" title="No targets set yet." /> : (
           <div className="tbl-wrap">
             <table>
-              <thead><tr><th>Employee</th><th>Month</th><th>Target</th><th>Achieved</th><th>Progress</th></tr></thead>
+              <thead><tr><th>Employee</th><th>Month</th><th>Target</th><th>Achieved</th><th>Progress</th><th title="From ATS: the people who joined that month and the drop-outs, with the reason">ATS joinings</th></tr></thead>
               <tbody>
                 {page.slice.map((r) => {
                   const target = Number(r.amount) || 0;
                   const achieved = Number(r.achieved) || 0;
                   const pct = target > 0 ? Math.round((achieved / target) * 100) : 0;
+                  const ats = r._ats || atsRowOf(r);
+                  const drops = ats ? (ats.droppedCount || 0) + (ats.didNotJoinCount || 0) : 0;
+                  const atsBoard = boards[r.date];
                   return (
                     <tr key={r.id}>
                       <td>
@@ -209,9 +243,20 @@ export default function Targets() {
                       <td className="cell-muted">{target} {r.unit || ''}</td>
                       <td className="cell-muted">
                         {achieved} {r.unit || ''}
-                        {isHR && <> <button className="btn btn-sm" onClick={() => editAchieved(r)}>Edit</button></>}
+                        {r._ats
+                          ? <div className="small-muted" title="Placement targets are counted from the joinings in ATS, so nobody types this number">from ATS</div>
+                          : isHR && <> <button className="btn btn-sm" onClick={() => editAchieved(r)}>Edit</button></>}
                       </td>
                       <td><b>{pct}%</b></td>
+                      <td>
+                        {atsBoard === 'loading' ? <span className="small-muted">Loading…</span> : !ats ? <span className="small-muted">—</span> : (
+                          <>
+                            <b>{ats.joinings}</b> joined{ats.target ? <span className="small-muted"> of {ats.target}</span> : null}
+                            {drops > 0 && <> · <span className="rj-tag red" title={`${ats.droppedCount || 0} left after joining, ${ats.didNotJoinCount || 0} did not join`}>{drops} dropped</span></>}
+                            {' '}<button type="button" className="link-btn" title="Who joined, who dropped and why" onClick={() => setPeek({ month: r.date, key: ats.key, name: r.employee?.name || ats.name, allowed: !!(atsBoard.viewer && atsBoard.viewer.details) })}>Details</button>
+                          </>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -222,7 +267,8 @@ export default function Targets() {
         {page.total > 0 && <Pager page={page} noun="targets" />}
       </Panel>
 
-      {histFor && <HistoryModal rows={records.filter((r) => r.employeeId === histFor)} onClose={() => setHistFor('')} />}
+      {histFor && <HistoryModal rows={effRecords.filter((r) => r.employeeId === histFor)} onClose={() => setHistFor('')} />}
+      {peek && <JoiningDetailModal month={peek.month} rowKey={peek.key} name={peek.name} allowed={peek.allowed} onClose={() => setPeek(null)} />}
       {open && <SetTargetModal onClose={() => setOpen(false)} onSaved={(r) => { setOpen(false); setDone(`Target set for ${r.label} — ${r.created} employee(s). ${r.deliveryText || ''}`); load(); }} />}
     </div>
   );
