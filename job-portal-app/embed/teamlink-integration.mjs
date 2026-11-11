@@ -757,6 +757,25 @@ export function teamlinkFrontRouter({ root, express }) {
   }));
 
   /*
+   * SUSPENDED AI INTERVIEWS, READ ONLY (founder 2026-11-11: "ai interview click chestey back velthundi, interview suspended ani vastundi").
+   *   GET /api/integrations/teamlink/interview-suspensions -> { interviews: [...recent suspended / warned...], audit: [...their latest events...] }
+   */
+  r.get('/api/integrations/teamlink/interview-suspensions', wrap(async (_req, res) => {
+    const { withUser } = await portal();
+    const out = await withUser(SYSTEM, async (c) => {
+      const interviews = (await c.query(`select id, application_id, candidate_id, attempt_number, status, integrity_status, integrity_strikes,
+          suspension_code, suspension_message, suspension_question_no, detection_count, started_at, suspended_at, retake_available_at, retake_blocked
+          from ai_interviews where suspended_at > now() - interval '3 days' or integrity_strikes > 0 and started_at > now() - interval '3 days'
+          order by coalesce(suspended_at, started_at) desc limit 15`)).rows;
+      const ids = interviews.map((i) => i.id);
+      const audit = ids.length ? (await c.query(`select interview_id, action, detail, actor_role, created_at from ai_interview_audit
+          where interview_id = any($1::text[]) order by created_at desc limit 40`, [ids])).rows : [];
+      return { interviews, audit };
+    });
+    res.json(out);
+  }));
+
+  /*
    * JUNK CANDIDATES FROM IMPORTS (founder 2026-11-10: names showing as 7.56947364E9 after a bulk import; backend/scripts/portal-junk-candidates.js).
    * READ ONLY, asked through the running portal (its database takes one connection). A candidate whose NAME is only digits / dots / "e+" (a phone
    * or an Excel date read as a name) or has fewer than two letters. Counts and examples only; nothing is changed.
