@@ -204,21 +204,6 @@ function Overview({ onOpen }) {
                 <td className="num">{pct(r.productivity)}</td>
               </tr>
             ))}
-            {rows.length > 1 && (() => {
-              const sum = (k) => rows.reduce((n, r) => n + (Number(r[k]) || 0), 0);
-              const all = { activeHours: sum('activeHours'), idleHours: sum('idleHours'), breakHours: sum('breakHours'), awayHours: sum('awayHours'), dayHours: sum('dayHours'), elapsedHours: sum('elapsedHours'), workHours: sum('workHours') };
-              return (
-                <tr className="mon-total">
-                  <td colSpan={live ? 6 : 4}><b>All {rows.length} together</b><div className="small-muted">Active {all.workHours ? Math.round((all.activeHours / all.workHours) * 100) : 0}% of the work time</div></td>
-                  <td className="mon-daycol"><DayBar r={all} /></td>
-                  <td className="num"><b>{hm(all.activeHours)}</b><div className="small-muted">of {hm(all.workHours)}</div></td>
-                  <td className="num">{hm(all.idleHours)}</td>
-                  <td className="num">{hm(all.breakHours)}</td>
-                  <td className="num">{hm(all.awayHours)}</td>
-                  <td />
-                </tr>
-              );
-            })()}
             {!rows.length && !loading && <tr><td colSpan={live ? 12 : 10} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
           </tbody>
         </table>
