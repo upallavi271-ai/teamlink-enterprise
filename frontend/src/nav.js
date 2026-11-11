@@ -322,6 +322,8 @@ export const ADMIN_ITEMS = [
   leaf('🔌', '/admin/integrations', 'Integrations', [['administration', 'Integrations', 'view']]),
   leaf('🏗️', '/admin/org-structure', 'Organization Structure', [['administration', 'Organization Structure', 'view']]),
   leaf('📜', '/admin/audit', 'Audit Logs', [['administration', 'Audit Logs', 'view']]),
+  // AI VOICE RECORDING (founder 2026-11-11): one speaker records English, Telugu and Hindi for the AI calls' own voice. Admin / Super Admin.
+  { ...leaf('🎙️', '/admin/voice-recording', 'AI Voice Recording', null), when: (u) => !!u && ['SUPER_ADMIN', 'ADMIN'].includes(u.role) && !u.viewAs },
   leaf('🔔', '/admin/notifications', 'Notifications', null),
   leaf('👤', '/admin/profile', 'Profile', null),
 ];

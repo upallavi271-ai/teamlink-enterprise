@@ -289,6 +289,8 @@ app.use('/api/employee-fields', employeeFieldRoutes);
 app.use('/api/attendance', attendanceRoutes);
 // Employee Monitoring (2026-11-04): the desktop agent (device token) and the HR / Admin screens (routes/monitoring.js).
 app.use('/api/monitoring', require('./routes/monitoring'));
+// AI voice recording kit (founder 2026-11-11: one consistent AI voice in English, Telugu and Hindi) - Admin only, the live calls untouched.
+app.use('/api/voice-kit', require('./routes/voiceKit'));
 app.use('/api/leave', leaveRoutes);
 app.use('/api/late-permissions', latePermissionRoutes);
 app.use('/api/payroll', payrollRoutes);
