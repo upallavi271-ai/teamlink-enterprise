@@ -28,6 +28,9 @@ const MAX_STEPS = 3;
 // the local model reads about 35-70 prompt tokens a second on this CPU and the agent's prompt is ~2000 tokens: 45 s made most turns fail
 const MODEL_TIMEOUT_MS = Number(process.env.WA_AI_TIMEOUT_MS) >= 10000 ? Number(process.env.WA_AI_TIMEOUT_MS) : 120000;
 const FALLBACK_GAP_MS = 12 * 3600000;
+// a person answered a chat and went quiet: after this long the AI answers the candidate's next message again (founder 2026-11-11: three numbers got a promotion, two were
+// answered, the third stayed with 'Developer Team' for ever; anybody who writes must get a relevant answer). A Pause pressed by hand with no typed message stays.
+const HUMAN_HOLD_MS = Number(process.env.WA_AI_HUMAN_HOLD_MIN) > 0 ? Number(process.env.WA_AI_HUMAN_HOLD_MIN) * 60000 : 30 * 60000;
 const clip = (v, n) => S.clip(v, n);
 // founder 2026-11-05: nobody should press a button each time. A chat the AI passed on because it had no answer comes back to it with the person's next message.
 // These stay with people: they asked for a person, were abusive, or the AI used up its replies (Give back to AI, or a recruiter's own message, ends those).
@@ -268,7 +271,7 @@ async function humanSentSince(conv) {
       candidateId: conv.candidateId, channel: 'WhatsApp', senderUserId: { not: null }, createdAt: { gt: new Date(since) },
       template: 'MANUAL', OR: [{ templateLabel: null }, { templateLabel: { in: ['', 'Message'] } }], // typed words only: a stage or campaign template is not an answer
     },
-    orderBy: { createdAt: 'desc' }, select: { senderName: true },
+    orderBy: { createdAt: 'desc' }, select: { senderName: true, createdAt: true },
   });
 }
 async function pause(conv, name, now = Date.now()) {
@@ -501,7 +504,8 @@ async function runTurn(row, defaults, now = Date.now()) {
   // paused by a send that was not a person answering (the rule above was wider before): the AI takes the chat back. A Pause pressed by hand stays.
   if (conv.mode === 'paused') {
     const last = (await S.q('SELECT outcome FROM "OmniWaAiRun" WHERE convId = ? ORDER BY at DESC LIMIT 1', conv.id))[0];
-    if (last && last.outcome === 'paused' && !(await humanSentSince(conv))) {
+    const h = await humanSentSince(conv);
+    if (last && ((last.outcome === 'paused' && !h) || (h && now - new Date(h.createdAt).getTime() > HUMAN_HOLD_MS))) {
       await resume(conv, now);
       Object.assign(conv, { mode: 'ai', state: conv.state === 'stopped' ? 'stopped' : 'active', pausedByName: null, aiTurns: 0 });
     }
