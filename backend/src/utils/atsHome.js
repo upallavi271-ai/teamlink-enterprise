@@ -462,7 +462,8 @@ const HIDDEN_FILTERS = {
   tl: ['tl'],
   // THE BDE TL (user, 2026-10-10) leads the client managers: no Recruiter / Team lead pickers,
   // and she may pick a client manager (BDE).
-  bdetl: ['recruiter', 'tl'],
+  // 2026-11-11: she gets the Super Admin's page, so the Super Admin's filters too (Recruiter / BDE, Team lead)
+  bdetl: [],
 };
 function readFilters(layout, q) {
   const s = (v) => (typeof v === 'string' ? v.trim() : '');
@@ -1304,7 +1305,10 @@ async function buildHome(user, req) {
   // (the v3 layout, every department); ?v3=0 gives the older lead page.
   const askV3 = req && req.query && req.query.v3;
   if (V3.includes(c.layout) && (c.layout === 'manager' ? askV3 !== '0' : (V3_DEFAULT ? askV3 !== '0' : askV3 === '1'))) await v3Home(c, b, k);
-  else if (COMPANY.includes(c.layout)) await companyHome(c, b, k);
+  // THE BDE TL GETS THE SUPER ADMIN'S PAGE (founder 2026-11-11: "super admin ats dashboard idhi... same ilaagey, bde tl ki
+  // kanipinchali"): the same cards, Needs attention, top requirements, departments, team leads, drops and joinings - over what
+  // she may see (every client's jobs; candidates from BDE review on). Money only when her login has Accounts money.
+  else if (COMPANY.includes(c.layout) || (c.layout === 'bde' && isBdeTl(user))) await companyHome(c, b, k);
   else if (c.layout === 'manager' || c.layout === 'asstmanager' || c.layout === 'stl' || c.layout === 'tl') await leadHome(c, b, k);
   else if (c.layout === 'bde') await bdeHome(c, b, k);
   else if (c.layout === 'hr') await hrHome(c, b, k);
@@ -1500,7 +1504,7 @@ async function companyHome(c, b, k) {
   const team = { ...teamSnapshot(c, b, k), size: 'half' };
   const dep = deptsWidget(c, b, k);
   const happening = sectionsOf(c, b, k, dep);
-  if (c.layout === 'superadmin') {
+  if (c.layout === 'superadmin' || isBdeTl(c.user)) {
     const money = await memoPanel('money', c, b, moneyPanel);
     b.widgets = [
       kpis(b.top), att, team, ...happening,
@@ -2467,7 +2471,8 @@ async function tlsList(user, b) {
   // eslint-disable-next-line global-require
   const TW = require('./teamWorkload');
   const { c, k } = b.kx;
-  const tw = await TW.teamWorld(user);
+  // the BDE TL's dashboard is the Super Admin's page: every team lead, not only her BDE desk (2026-11-11)
+  const tw = await TW.teamWorld(user, isBdeTl(user) ? { company: true } : {});
   const open = new Set(k.openJobs.map((r) => r.id));
   const work = k.sel.filter((x) => !x.pre);
   const anyOther = ['clientId', 'tl', 'recruiter', 'bde', 'requirementId', 'hiring', 'priority', 'source'].some((key) => c.f[key]);

@@ -230,14 +230,15 @@ async function readApplications(where, select) {
 }
 
 // The people on this caller's screen.
-async function peopleFor(user) {
+// opts.company: every team lead / recruiter, whoever is asking (the BDE TL's dashboard shows the company's team leads, 2026-11-11)
+async function peopleFor(user, opts = {}) {
   const s = scopeOf(user);
-  let where = teamPeopleWhere(user);
-  if (isBdeTl(user)) {
+  let where = opts.company ? {} : teamPeopleWhere(user);
+  if (opts.company) { /* everyone */ } else if (isBdeTl(user)) {
     const ids = await require('./bdeTeam').bdeTeamUserIds({ includeTest: isTestPerson(user) }); // eslint-disable-line global-require
     where = { id: { in: ids.length ? ids : ['__none__'] } };
   }
-  if (s.atsRole === 'HR' && !s.global) {
+  if (!opts.company && s.atsRole === 'HR' && !s.global) {
     // HR — internal hiring: the people assigned to the internal requirements.
     const reqs = await prisma.requirement.findMany({
       where: { internal: true },
@@ -279,8 +280,8 @@ const WORLD_MAX_AGE_MS = 3 * 60 * 1000;
 const WORLD_STALE_OK_MS = 30 * 60 * 1000;
 const { dataStamp, snapshotCurrent } = require('./dataStamp');
 const STARTING = new Map();
-async function loadWorld(user, { fresh = false } = {}) {
-  const key = user.id;
+async function loadWorld(user, { fresh = false, company = false } = {}) {
+  const key = company ? `${user.id}|company` : user.id;
   const hit = WORLD.get(key);
   // A world with a stamp is checked against the data (a few ms) however young it is,
   // so a write made a moment ago shows on the very next call. Without a stamp (the
@@ -290,22 +291,22 @@ async function loadWorld(user, { fresh = false } = {}) {
     const now = await dataStamp().catch(() => null);
     if (now && now.all === hit.stamp && WORLD.get(key) === hit) {
       if (Date.now() - hit.at >= WORLD_MAX_AGE_MS && !STARTING.has(key)) {
-        loadWorldNow(user, key, true).catch((err) => console.error('[teamWorkload] world refresh failed:', err.message)); // eslint-disable-line no-console
+        loadWorldNow(user, key, true, company).catch((err) => console.error('[teamWorkload] world refresh failed:', err.message)); // eslint-disable-line no-console
       }
       return hit.promise;
     }
   }
   // Tabs that load together share one rebuild.
   if (!fresh && STARTING.has(key)) return STARTING.get(key);
-  return loadWorldNow(user, key);
+  return loadWorldNow(user, key, false, company);
 }
 // background: the old (still right) world keeps being served until the new one is ready.
-function loadWorldNow(user, key, background = false) {
+function loadWorldNow(user, key, background = false, company = false) {
   const starting = (async () => {
     // The stamp is taken BEFORE the read: a write that lands while the world
     // is being built makes the next stamp differ, so it is never missed.
     const stamp = await dataStamp().catch(() => null);
-    const promise = buildWorld(user);
+    const promise = buildWorld(user, { company });
     const entry = { at: Date.now(), promise, stamp: stamp ? stamp.all : null };
     if (background) promise.then(() => { WORLD.set(key, entry); }, () => {});
     else WORLD.set(key, entry);
@@ -322,10 +323,10 @@ function loadWorldNow(user, key, background = false) {
   return starting;
 }
 
-async function buildWorld(user) {
+async function buildWorld(user, opts = {}) {
   const [, basePeople, positions, current, reqs, apps, joinedApps, dir] = await Promise.all([
     nextAction.ensureNextActionContext(),
-    peopleFor(user),
+    peopleFor(user, opts),
     prisma.position.findMany({ select: { id: true, code: true, kind: true, department: true, team: true, reportsToId: true, active: true } }),
     prisma.positionAssignment.findMany({
       where: { toDate: null },
