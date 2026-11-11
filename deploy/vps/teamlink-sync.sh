@@ -443,8 +443,24 @@ deploy_teamlink_fast() {   # commit  be(0/1)  fe(0/1)  backupdir
   return 1
 }
 
+# AN AI CALL ON THE LINE COMES FIRST (founder 2026-11-11: replies 5-22 s late while an update built and restarted TeamLink on this server).
+# TeamLink writes the number of live calls to LIVE_CALLS_FILE (backend/src/calling/voice/liveLoad.js); the build and the restart wait while
+# it is above 0 - up to 20 minutes, and never on a count older than 30 minutes (a crash can leave one behind).
+wait_for_calls() {
+  local f=${LIVE_CALLS_FILE:-/tmp/teamlink-live-calls} waited=0 n t
+  while [ -f "$f" ]; do
+    read -r n t < "$f" || break
+    [ "${n:-0}" -gt 0 ] 2>/dev/null || break
+    [ $(( $(date +%s) - ${t:-0} )) -lt 1800 ] || break
+    if [ $waited -ge 1200 ]; then log "an AI call is still on the line after 20 minutes: deploying anyway"; break; fi
+    [ $waited -eq 0 ] && log "an AI call is on the line ($n): the deploy waits until it ends (up to 20 minutes)"
+    sleep 15; waited=$((waited + 15))
+  done
+}
+
 deploy_teamlink() {   # new commit  [changed areas]
   local PKG="$STATE/pkg" BK="/root/teamlink-backups/$STAMP-before-auto-deploy" step="packaging"
+  [ "$DRY" = 1 ] || wait_for_calls
   rm -rf "$PKG"; mkdir -p "$PKG/backend" "$PKG/frontend"
   rsync -a --exclude-from="$STATE/exclude-backend.txt"  "$SRC/backend/"  "$PKG/backend/"
   rsync -a --exclude-from="$STATE/exclude-frontend.txt" "$SRC/frontend/" "$PKG/frontend/"

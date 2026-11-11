@@ -67,6 +67,12 @@ const END_OPEN_MS = Math.min(2500, Math.max(600, num(process.env.AI_VOICE_END_OP
 // ahead (prepareFixed / prepareCall) and only played from the cache - never made on the spot. Not for a cough / noise.
 // AI_VOICE_FILLER_MS (default 800 - at 600 ms the "okay" came too early and a long pause followed it; 0 = off).
 const FILLER_MS = Math.max(0, num(process.env.AI_VOICE_FILLER_MS, 800));
+// NO LONG SILENCE (founder 2026-11-11: "chaala gaps theeskuntundhi"; a real call waited 22.4 s - the language double-check took 17 s):
+// a SECOND listener (the Telugu / Hindi / English check after the first words) gets SECOND_MS; later than that the call stays in its
+// language with what it has. And when nothing is playing SURE_FILLER_MS after the answer ended, the short "okay" is said every time.
+const SECOND_MS = Math.min(8000, Math.max(1500, num(process.env.AI_VOICE_SECOND_MS, 3000)));
+const SURE_FILLER_MS = Math.max(1500, num(process.env.AI_VOICE_SURE_FILLER_MS, 3000));
+const late = (p, ms, fallback) => Promise.race([Promise.resolve(p), new Promise((r) => { setTimeout(() => r(fallback), ms); })]);
 const FILLERS = { English: 'Okay.', Telugu: 'సరే.', Hindi: 'ठीक है।' };
 const OPEN_STEPS = ['qExp', 'qLoc', 'qCtc', 'qExpCtc', 'qNotice', 'later_when', 'resched_time', 'why_not'];
 // Whisper's known made-up lines on noise / non-English sound (Bag of Hallucinations, arXiv 2501.11378, + our own calls): believed
@@ -170,11 +176,11 @@ async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
   // already heard and clearly that language (2+ everyday words) and the sound did not say the other: no second listener
   for (const l of ['Telugu', 'Hindi']) {
     if (known[l] == null || guess === (l === 'Telugu' ? 'Hindi' : 'Telugu')) continue;
-    const t = await known[l]; // eslint-disable-line no-await-in-loop
+    const t = await late(known[l], SECOND_MS, ''); // eslint-disable-line no-await-in-loop
     known[l] = t; // eslint-disable-line no-param-reassign
     if (nativeScore(t, l) >= 2) return { lang: l, text: t, sT: l === 'Telugu' ? nativeScore(t, l) : 0, sH: l === 'Hindi' ? nativeScore(t, l) : 0 };
   }
-  const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => (known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''))));
+  const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => late(known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''), SECOND_MS, '')));
   const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
   if (sT < 1 && sH < 1) return null; // no real word in either
   const tie = ['Telugu', 'Hindi'].includes(prefer) ? prefer : (guess === 'Hindi' ? 'Hindi' : 'Telugu');
@@ -404,7 +410,7 @@ function handle(sock, engines, opts = {}) {
     const pcm = louder(pcmIn);
     if (busy) { pending = pcm; return; } // keep only the latest sentence said while we were still thinking
     busy = true;
-    let fillT = null; let over = false; // the short "okay" while thinking (FILLER_MS), and "this turn is finished"
+    let fillT = null; let sureT = null; let over = false; // the short "okay" while thinking (FILLER_MS), and "this turn is finished"
     try {
       // which language + the words, at the same time; only when the person really switched is it heard again in the new one
       // (a clip under ~2 s with its end pause - "yes", "haan theek" - is too short to tell a language by sound)
@@ -436,6 +442,19 @@ function handle(sock, engines, opts = {}) {
           speaker.add(pcmF); speaker.add(E.silence(GAP_MS)); lastFillTurn = d.st.turns || 1;
           if (DEBUG && row) debug(`${row.id} filler after ${Date.now() - t0} ms`);
         }, FILLER_MS);
+      }
+      // still nothing playing SURE_FILLER_MS after the answer: the short "okay" now, whatever the once-in-three rule says (not over noise)
+      if (FILLERS[cur]) {
+        sureT = setTimeout(async () => {
+          const sp = await speechP.catch(() => null);
+          if (over || ended || !d || sock.destroyed || speaker.busy || speaker.timer) return;
+          if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < NOISE_MS) return;
+          const key = `${d.language}|${FILLERS[d.language] || FILLERS[cur]}`;
+          const pcmF = cache.get(key) || diskGet(engines, key);
+          if (!pcmF || !pcmF.length) return;
+          speaker.add(pcmF); speaker.add(E.silence(GAP_MS)); lastFillTurn = d.st.turns || 1;
+          if (DEBUG && row) debug(`${row.id} sure filler after ${Date.now() - t0} ms`);
+        }, SURE_FILLER_MS);
       }
       // (Starting BOTH other listeners on every turn was tried: it loaded the speech server and made every reply ~1 s slower.)
       // An ENGLISH call starts ONE Indian listener at the same time as Whisper - the language the person already spoke in
@@ -502,7 +521,7 @@ function handle(sock, engines, opts = {}) {
         found = null;
       }
       if (found === 'English' && cur !== 'English') {
-        const en = await listen('English');
+        const en = await late(listen('English'), SECOND_MS, { text: '', conf: null });
         const words = en.text.trim().split(/\s+/).filter(Boolean).length;
         // a "question" word alone is no proof ("हाँ, इंटरेस्ट है" was written "How interesting!" and read as a question)
         const understoodEn = !['unclear', 'silence', 'info_q'].includes(require('../dialogue').classify(en.text).intent); // eslint-disable-line global-require
@@ -546,7 +565,7 @@ function handle(sock, engines, opts = {}) {
       if (cur === 'English' && lang === 'English' && !unsureEn && spec[ownLang]) {
         // sure-looking English that was really Telugu / Hindi ("I'm going to call the police" was Telugu): the person's own
         // language's words, heard at the same time, decide - no extra wait
-        const own = await spec[ownLang];
+        const own = await late(spec[ownLang], SECOND_MS, '');
         if (nativeScore(own, ownLang) >= 2) {
           if (DEBUG) debug(`${row.id} "${r2.text}" was really ${ownLang}: ${own}`);
           lang = ownLang; r2 = { text: own, conf: null }; heardAs = 'clear'; found = ownLang;
@@ -591,7 +610,7 @@ function handle(sock, engines, opts = {}) {
       // (not "sorry, I couldn't hear you" - they were heard; the fault is ours. 2026-11-03: "sorry ... every time")
       if (!ended && d && !sock.destroyed) { let q = ''; try { q = d.again(''); } catch { q = ''; } if (q) await say(q).catch(() => {}); }
     } finally {
-      over = true; if (fillT) clearTimeout(fillT);
+      over = true; if (fillT) clearTimeout(fillT); if (sureT) clearTimeout(sureT);
       busy = false;
       if (pending && !ended) { const p = pending; pending = null; heard(p); }
     }
