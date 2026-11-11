@@ -570,7 +570,11 @@ function handle(sock, engines, opts = {}) {
       // what it was saying. (Over the LAST sentence - the question - a "yes" is the answer and is read as one.)
       const cut = interrupted && Date.now() - interrupted.at < 15000 ? interrupted : null;
       interrupted = null;
-      if (cut && cut.rest.length > 1 && (heardAs !== 'clear' || isBackchannel(text) || isEcho(text, cut.rest.join(' ')))) {
+      // ...but only a SHORT sound is that (founder 2026-11-11: "candidate ni matladanivvatledhu"): a person who spoke over the assistant
+      // for 1.3 s or more said something, even when the words did not come through clearly - the assistant stops and answers / asks
+      // again instead of going back to its own lines over them.
+      const overSecs = pcm.length / (A.RATE * 2);
+      if (cut && cut.rest.length > 1 && overSecs < 1.3 && (heardAs !== 'clear' || isBackchannel(text) || isEcho(text, cut.rest.join(' ')))) {
         if (DEBUG) debug(`${row.id} "${text}" over the assistant: going on with what it was saying`);
         await say(cut.rest.join(' '));
         return;
