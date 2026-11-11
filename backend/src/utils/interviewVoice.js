@@ -23,6 +23,15 @@ function engines(env = process.env) {
 }
 const langOf = (v) => (LANGS.includes(v) ? v : 'English');
 
+// at least 5 words, 85% of the letters in that language's script, and not one word said over and over (noise written in a script)
+function scriptRun(text, lang) {
+  const t = String(text || '').trim();
+  const own = lang === 'Telugu' ? /[ఀ-౿]/g : /[ऀ-ॿ]/g;
+  const letters = (t.match(/\p{L}/gu) || []).length;
+  const words = t.replace(/[.,!?।]/g, ' ').split(/\s+/).filter(Boolean);
+  if (words.length < 5 || !letters || (t.match(own) || []).length / letters < 0.85) return false;
+  return new Set(words).size >= Math.ceil(words.length * 0.6);
+}
 async function hear(pcm16k, current, deps = {}) {
   const en = Object.prototype.hasOwnProperty.call(deps, 'engines') ? deps.engines : engines();
   if (!en || !en.detect || !en.stt) return { ready: false };
@@ -42,7 +51,13 @@ async function hear(pcm16k, current, deps = {}) {
   }
   // Telugu or Hindi: no real words = no proof = no switch
   const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null);
-  if (!th) return { ready: true, lang: cur, changed: false, why: 'no real words' };
+  if (!th) {
+    // an interview answer is free speech, not the phone line's short list of everyday words (founder 2026-11-11: he spoke Telugu and it stayed English): a clear run of words
+    // written in the script the sound was recognised as, from a listener that heard Telugu / Hindi, is proof enough
+    const text = await en.stt(pcm, found).catch(() => '');
+    if (scriptRun(text, found)) return { ready: true, lang: found, changed: found !== cur, text };
+    return { ready: true, lang: cur, changed: false, why: 'no real words' };
+  }
   return { ready: true, lang: th.lang, changed: th.lang !== cur, text: th.text };
 }
 
@@ -53,4 +68,4 @@ async function say(text, lang, deps = {}) {
   return { ready: true, wav: E.pcmToWav(pcm, 8000) };
 }
 
-module.exports = { hear, say, MIN_SPEECH_MS };
+module.exports = { hear, say, MIN_SPEECH_MS, scriptRun };
