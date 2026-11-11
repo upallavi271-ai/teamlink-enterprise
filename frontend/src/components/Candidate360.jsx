@@ -1029,7 +1029,7 @@ export function CurrentApplication({
         <>
           <div className="c360-sub">
             Who is on this
-            {mayEdit && <button type="button" className="link-btn" style={{ marginLeft: 8, fontSize: 11.5 }} onClick={() => { setNote(''); setEditing(true); }}>Edit</button>}
+            {mayEdit && <button type="button" className="btn btn-sm" style={{ marginLeft: 10, textTransform: 'none', letterSpacing: 0 }} title="The recruiter on this candidate is wrong: give it to the right one" onClick={() => { setNote(''); setEditing(true); }}>✎ Change recruiter</button>}
           </div>
           <OwnershipGrid o={ownership} compact />
           {note && <div className="small-muted" style={{ marginTop: 6 }}>{note}</div>}

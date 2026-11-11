@@ -46,6 +46,7 @@ const SOURCED = ['NEW', 'AI_INTERVIEW_REQUIRED', 'AI_INTERVIEW_SCHEDULED', 'AI_I
 const istToday = () => new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
 const inDays = (n) => new Date(Date.now() + 330 * 60000 + n * 86400000).toISOString().slice(0, 10);
 const rupees = (n) => (Number(n) > 0 ? `₹${Number(n).toLocaleString('en-IN')} a year` : '');
+const inrPlain = (n) => `₹${Math.round(Number(n) || 0).toLocaleString('en-IN')}`;
 const errText = (err, fallback) => (err && err.response && err.response.data && err.response.data.error) || fallback;
 
 // Which popup a drag from one board column to another opens (null = move straight away).
@@ -379,7 +380,10 @@ function ClientDialog({
 // --- Joined: joining date, final CTC, commission % → Accounts ----------------------
 function JoinedDialog({ app, onClose, onDone }) {
   const [terms, setTerms] = useState(null);
-  const [form, setForm] = useState({ joiningDate: istToday(), offeredCtc: '', feePercent: '' });
+  // THE CTC PER MONTH OR PER YEAR (founder 2026-11-11: "annual ctc aduguthundhi, dhaani place lo monthly pettina theeskuney laaga
+  // pettu"): the box takes either; a monthly amount is saved x 12 (the server always keeps the yearly CTC).
+  const [form, setForm] = useState({ joiningDate: istToday(), offeredCtc: '', feePercent: '', ctcUnit: 'month' });
+  const yearly = Number(form.offeredCtc) > 0 ? Math.round(Number(form.offeredCtc) * (form.ctcUnit === 'month' ? 12 : 1)) : 0;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   useEffect(() => {
@@ -390,12 +394,13 @@ function JoinedDialog({ app, onClose, onDone }) {
           joiningDate: r.data.joiningDate ? String(r.data.joiningDate).slice(0, 10) : istToday(),
           offeredCtc: r.data.offeredCtc ? String(r.data.offeredCtc) : '',
           feePercent: r.data.feePercent != null ? String(r.data.feePercent) : '',
+          ctcUnit: r.data.offeredCtc ? 'year' : 'month', // a CTC already on file is yearly
         });
       })
       .catch((err) => setError(errText(err, 'Could not open the joining details.')));
   }, [app.id]);
   const internal = terms ? terms.internal : !!app.internal;
-  const ctcOk = internal || Number(form.offeredCtc) > 0;
+  const ctcOk = internal || yearly > 0;
   const feeOk = !terms || !terms.canSetFee || (Number(form.feePercent) > 0 && Number(form.feePercent) <= 50);
   // AN INTERNAL HIRE'S DOCUMENTS (founder 2026-11-05): the joining date needs them checked, so they are marked here too (same as the Joining screen).
   const docsNeeded = !!(terms && internal && terms.documentsStatus && terms.documentsStatus !== 'Verified');
@@ -419,7 +424,7 @@ function JoinedDialog({ app, onClose, onDone }) {
       // "Move step" can no longer skip them. The server refuses in plain words
       // when something is missing (e.g. documents not verified).
       const extra = {};
-      if (Number(form.offeredCtc) > 0) extra.offeredCtc = Number(form.offeredCtc);
+      if (yearly > 0) extra.offeredCtc = yearly;
       if (terms && terms.canSetFee && form.feePercent !== '' && Number(form.feePercent) !== Number(terms.feePercent)) extra.feePercent = Number(form.feePercent);
       if (confirmCtc) extra.confirmCtc = true;
       await api.post(`/ats/joining/${app.id}/schedule`, { joiningDate: form.joiningDate, ...(extra.offeredCtc ? { offeredCtc: extra.offeredCtc, ...(confirmCtc ? { confirmCtc: true } : {}) } : {}) });
@@ -462,9 +467,21 @@ function JoinedDialog({ app, onClose, onDone }) {
           </label>
           {!internal && (
             <label className="field">
-              <span>Final CTC (₹ per year)</span>
-              <input type="number" min="1" step="1000" inputMode="numeric" placeholder="e.g. 850000" value={form.offeredCtc} onChange={(e) => { setForm({ ...form, offeredCtc: e.target.value }); setAsk(null); }} />
-              <span className="small-muted">{rupees(form.offeredCtc) || (terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : 'The yearly CTC in the offer letter')}</span>
+              <span>{`Final salary (₹ ${form.ctcUnit === 'month' ? 'per month' : 'per year'})`}</span>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="number" min="1" step={form.ctcUnit === 'month' ? 500 : 1000} inputMode="numeric" placeholder={form.ctcUnit === 'month' ? 'e.g. 44000' : 'e.g. 528000'} value={form.offeredCtc} onChange={(e) => { setForm({ ...form, offeredCtc: e.target.value }); setAsk(null); }} style={{ flex: 1 }} />
+                <div className="seg" role="group" aria-label="Per month or per year" style={{ display: 'inline-flex', gap: 4 }}>
+                  {[['month', 'Per month'], ['year', 'Per year']].map(([u, l]) => (
+                    <button key={u} type="button" className={`btn btn-sm${form.ctcUnit === u ? ' btn-primary' : ''}`} aria-pressed={form.ctcUnit === u} onClick={() => { setForm({ ...form, ctcUnit: u }); setAsk(null); }}>{l}</button>
+                  ))}
+                </div>
+              </div>
+              <span className="small-muted">
+                {yearly > 0
+                  ? (form.ctcUnit === 'month' ? `${inrPlain(form.offeredCtc)} a month = ${inrPlain(yearly)} a year (CTC)` : `${inrPlain(yearly)} a year = about ${inrPlain(Math.round(yearly / 12))} a month`)
+                  : (terms.expectedSalary ? `They asked for ${terms.expectedSalary}` : 'The salary in the offer letter')}
+                {form.ctcUnit === 'year' && yearly > 0 && yearly < 100000 ? ' — this looks like a monthly amount: press "Per month".' : ''}
+              </span>
             </label>
           )}
           {!internal && terms.canSetFee && (
@@ -473,7 +490,7 @@ function JoinedDialog({ app, onClose, onDone }) {
               <input type="number" min="0.1" max="50" step="0.01" value={form.feePercent} onChange={(e) => setForm({ ...form, feePercent: e.target.value })} />
               <span className="small-muted">
                 {`Agreement with ${terms.clientName || 'the client'}: ${terms.feePercent}%.`}
-                {Number(form.offeredCtc) > 0 && Number(form.feePercent) > 0 ? ` Fee ≈ ₹${Math.round((Number(form.offeredCtc) * Number(form.feePercent)) / 100).toLocaleString('en-IN')} + GST.` : ''}
+                {yearly > 0 && Number(form.feePercent) > 0 ? ` Fee ≈ ₹${Math.round((yearly * Number(form.feePercent)) / 100).toLocaleString('en-IN')} + GST.` : ''}
               </span>
             </label>
           )}
