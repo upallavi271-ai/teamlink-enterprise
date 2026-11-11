@@ -28,6 +28,7 @@ const MAX_STEPS = 3;
 // the local model reads about 35-70 prompt tokens a second on this CPU and the agent's prompt is ~2000 tokens: 45 s made most turns fail
 const MODEL_TIMEOUT_MS = Number(process.env.WA_AI_TIMEOUT_MS) >= 10000 ? Number(process.env.WA_AI_TIMEOUT_MS) : 120000;
 const FALLBACK_GAP_MS = 12 * 3600000;
+const LIMIT_RESET_MS = 6 * 3600000;
 // a person answered a chat and went quiet: after this long the AI answers the candidate's next message again (founder 2026-11-11: three numbers got a promotion, two were
 // answered, the third stayed with 'Developer Team' for ever; anybody who writes must get a relevant answer). A Pause pressed by hand with no typed message stays.
 const HUMAN_HOLD_MS = Number(process.env.WA_AI_HUMAN_HOLD_MIN) > 0 ? Number(process.env.WA_AI_HUMAN_HOLD_MIN) * 60000 : 30 * 60000;
@@ -500,6 +501,11 @@ async function runTurn(row, defaults, now = Date.now()) {
   if (conv.mode === 'ai' && ((conv.state === 'needs_human' && !STAYS_WITH_PEOPLE.test(conv.handoffReason || '')) || (conv.state === 'not_interested' && !T.isClosing(input)))) {
     await S.run('UPDATE "OmniWaConv" SET state = \'active\', handoffReason = NULL, updatedAt = ? WHERE id = ?', now, conv.id);
     conv.state = 'active'; conv.handoffReason = null;
+  }
+  // the reply limit is per talk, not for ever (founder 2026-11-11: anybody who writes must get an answer): six quiet hours after the AI's last reply, a new message starts a new count
+  if (conv.mode === 'ai' && Number(conv.aiTurns) >= cfg.maxTurns && now - Number(conv.lastAiAt || 0) > LIMIT_RESET_MS) {
+    await S.run('UPDATE "OmniWaConv" SET aiTurns = 0, state = CASE WHEN state = \'stopped\' THEN state ELSE \'active\' END, handoffReason = NULL, updatedAt = ? WHERE id = ?', now, conv.id);
+    Object.assign(conv, { aiTurns: 0, state: conv.state === 'stopped' ? 'stopped' : 'active', handoffReason: null });
   }
   // paused by a send that was not a person answering (the rule above was wider before): the AI takes the chat back. A Pause pressed by hand stays.
   if (conv.mode === 'paused') {
