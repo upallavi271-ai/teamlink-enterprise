@@ -615,7 +615,7 @@ function Timeline({ rows, workStart, workEnd, day }) {
       <div className="mon-tl-bar">
         {rows.map((r, i) => {
           const l = pos(r.start); const w = Math.max(0.2, pos(r.end) - l);
-          return <span key={i} className={`mon-tl-seg ${r.break ? 'break' : r.idle ? 'idle' : 'active'}`} style={{ left: `${l}%`, width: `${w}%` }} title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? 'Break' : r.idle ? 'Idle' : r.app}`} />;
+          return <span key={i} className={`mon-tl-seg ${r.break ? 'break' : r.idle ? 'idle' : 'active'}`} style={{ left: `${l}%`, width: `${w}%` }} title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break') : r.idle ? 'Idle' : r.app}`} />;
         })}
       </div>
       <div className="mon-tl-axis">

@@ -445,11 +445,15 @@ function gapFill(logs, wd, status, live, now = Date.now()) {
   return out;
 }
 const hrs = (sec) => Math.round((sec / 3600) * 100) / 100;
+// THE 15-MINUTE PERSONAL BREAK COMES OUT OF IDLE (founder 2026-11-11: "lunch break 45 min, adhi kaakunda 15 min break vuntadhi. idle lo vunnappudu
+// 15 min break consider cheskovali, aa 15 min tharvatha kuda idle vuntey appudu idle"): each day, the first 15 minutes of idle are Break; only the
+// idle after them is Idle. (The work day of 8 h already leaves these 15 minutes out - workDayOf.)
 function totalsOf(logs, catOf, department = '') {
   let active = 0; let idle = 0; let breaks = 0; let productive = 0; let unproductive = 0; let first = null; let last = null;
+  const idleByDay = new Map();
   logs.forEach((l) => {
     if (l.isBreak) breaks += l.durationSeconds;
-    else if (l.isIdle) idle += l.durationSeconds;
+    else if (l.isIdle) { idle += l.durationSeconds; idleByDay.set(l.day || '', (idleByDay.get(l.day || '') || 0) + l.durationSeconds); }
     else {
       active += l.durationSeconds;
       const c = catOf(l.appName, l.windowTitle, department).category;
@@ -459,7 +463,11 @@ function totalsOf(logs, catOf, department = '') {
     if (!first || l.startTime < first) first = l.startTime;
     if (!last || l.endTime > last) last = l.endTime;
   });
+  let personal = 0;
+  idleByDay.forEach((sec) => { personal += Math.min(PERSONAL_BREAK_SECONDS, sec); });
+  idle -= personal; breaks += personal;
   return {
+    personalBreakSeconds: personal,
     activeSeconds: active, idleSeconds: idle, breakSeconds: breaks, productiveSeconds: productive, unproductiveSeconds: unproductive,
     activeHours: hrs(active), idleHours: hrs(idle), breakHours: hrs(breaks), productivity: active ? Math.round((productive / active) * 100) : null, first, last,
   };
@@ -711,7 +719,19 @@ async function employeeDetail(employeeId, from, to) {
   return {
     employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay,
     // the timeline of one day: one bar, active / idle / break
-    timeline: a === b ? logs.map((l) => ({ start: l.startTime, end: l.endTime, idle: l.isIdle, break: l.isBreak, app: l.appName })) : null,
+    timeline: a === b ? (() => {
+      let left = PERSONAL_BREAK_SECONDS * 1000; // the personal break: the first 15 minutes of idle (drawn as break, like the totals)
+      const out = [];
+      logs.forEach((l) => {
+        const st = new Date(l.startTime).getTime(); const en = new Date(l.endTime).getTime();
+        if (l.isIdle && !l.isBreak && left > 0) {
+          const cut = Math.min(en, st + left); left -= cut - st;
+          out.push({ start: new Date(st), end: new Date(cut), idle: false, break: true, app: 'Personal break' });
+          if (cut < en) out.push({ start: new Date(cut), end: new Date(en), idle: true, break: false, app: l.appName });
+        } else out.push({ start: l.startTime, end: l.endTime, idle: l.isIdle, break: l.isBreak, app: l.appName });
+      });
+      return out;
+    })() : null,
     workStart: s.workStart, workEnd: s.workEnd,
   };
 }
