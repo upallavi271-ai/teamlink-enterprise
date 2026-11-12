@@ -7,9 +7,10 @@
     * (2.5) how much the keyboard and mouse are used, as counts per minute - and ONLY when one single key or button makes up
       nearly all of a minute (a key held down, an auto-clicker, a mouse mover), that one key's name. Only the flagged minutes
       leave the PC.
-    * (2.6) how many times each kind of key and mouse button was pressed in work hours: Space, Enter, Backspace, Ctrl, each
+    * (2.6-2.7) how many times each kind of key and mouse button was pressed in work hours: Space, Enter, Backspace, Ctrl, each
       arrow, left click ... one by one, but ALL letter keys as one count and all number keys as one count - so what was typed
-      can never be rebuilt. Sent as totals every two minutes.
+      can never be rebuilt - and in which app / website and in which hour each of those counts happened. Letters are NEVER
+      split one from another. Sent every two minutes.
   and only during work hours (HR sets them; the server throws away anything outside).
   It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
 
@@ -28,7 +29,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.6'
+$AgentVersion = '2.7'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -608,7 +609,18 @@ function Key-Group([int]$vk) {
   if ($KeyNames.ContainsKey($vk)) { return $KeyNames[$vk] }
   return 'Other keys'
 }
-$script:dayCounts = @{}   # 'yyyy-mm-dd' -> @{ 'Space' = 12; ... }
+$script:dayCounts = @{}   # 'yyyy-mm-dd' -> @{ 'Space' = 12; ... }  (the day's flat totals)
+$script:dayBuckets = @{}  # 'yyyy-mm-dd' -> @{ "<app>`t<site>`t<hour>" = @{ 'Space' = 4; ... } }  (the same counts, by app/site and hour)
+$BrowserApps = @('chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi', 'iexplore', 'safari')
+# the website out of a browser's window title (the same idea as the page's siteOf); '' for a non-browser
+function Site-Of($app, $title) {
+  if (($BrowserApps -notcontains ([string]$app).ToLower()) -or -not $title) { return '' }
+  $t = $title -replace '\s+[-\u2013\u2014|]\s+(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi|Internet Explorer)\s*$', ''
+  $segs = @($t -split '\s+[-\u2013\u2014|]\s+' | Where-Object { $_ })
+  if ($segs.Count -eq 0) { return '' }
+  $last = $segs[-1].Trim()
+  return $last.Substring(0, [Math]::Min(60, $last.Length))
+}
 function Take-Counts {
   if (-not [TLInput]::Started) { return }
   $raw = [TLInput]::TakeTotals()
@@ -618,16 +630,44 @@ function Take-Counts {
   $day = Today-Ist
   if (-not $script:dayCounts.ContainsKey($day)) { $script:dayCounts[$day] = @{} }
   $c = $script:dayCounts[$day]
+  # which app / website, and which hour (IST), these keys were pressed in (agent 2.7)
+  $f = Get-Front
+  $app = [string]$f.app
+  $b = $null
+  if ($app -notin @('LockApp', 'LogonUI', 'Locked')) {
+    $site = Site-Of $app $f.title
+    $hour = [int]((Get-Date).ToUniversalTime().AddMinutes(330).ToString('HH'))
+    if (-not $script:dayBuckets.ContainsKey($day)) { $script:dayBuckets[$day] = @{} }
+    $bd = $script:dayBuckets[$day]
+    $bk = "$app`t$site`t$hour"
+    if (-not $bd.ContainsKey($bk) -and $bd.Count -lt 600) { $bd[$bk] = @{} }
+    if ($bd.ContainsKey($bk)) { $b = $bd[$bk] }
+  }
   foreach ($pair in ($parts[0] -split ';')) {
     if (-not $pair) { continue }
     $kv = $pair -split '='
     $g = Key-Group ([int]$kv[0])
     if (-not $g) { continue }
-    $c[$g] = [int]$c[$g] + [int]$kv[1]
+    $n = [int]$kv[1]
+    $c[$g] = [int]$c[$g] + $n
+    if ($b) { $b[$g] = [int]$b[$g] + $n }
   }
   foreach ($m in @(@('Left click', 1), @('Right click', 2), @('Middle click', 3), @('Mouse wheel', 4))) {
     $n = [int]$parts[$m[1]]
-    if ($n -gt 0) { $c[$m[0]] = [int]$c[$m[0]] + $n }
+    if ($n -gt 0) { $c[$m[0]] = [int]$c[$m[0]] + $n; if ($b) { $b[$m[0]] = [int]$b[$m[0]] + $n } }
+  }
+}
+# the same counts, by app/website and hour, sent so a click on a key shows where and when (agent 2.7)
+function Send-Buckets {
+  if ($script:inputOff -or $script:dayBuckets.Count -eq 0) { return }
+  foreach ($day in @($script:dayBuckets.Keys)) {
+    $bd = $script:dayBuckets[$day]
+    if ($bd.Count -eq 0) { $script:dayBuckets.Remove($day); continue }
+    $rows = @()
+    foreach ($bk in $bd.Keys) { $kp = $bk -split "`t"; $rows += @{ app = $kp[0]; site = $kp[1]; hour = [int]$kp[2]; counts = $bd[$bk] } }
+    $r = Call-Api 'POST' '/input-breakdown' @{ day = $day; rows = $rows } $script:cfg.token
+    if ($r.status -eq 200) { $script:dayBuckets.Remove($day) }
+    elseif ($r.status -eq 404) { $script:dayBuckets.Clear(); return }   # an older TeamLink: it does not take these
   }
 }
 function Send-Counts {
@@ -649,7 +689,7 @@ function Send-Input {
 }
 function Flush {
   try { Send-Input } catch {}
-  try { Take-Counts; Send-Counts } catch {}
+  try { Take-Counts; Send-Counts; Send-Buckets } catch {}
   Close-Segment   # send what is done so far
   Sample          # and go straight on: a heartbeat right after this must still say what is in front
   if ($script:queue.Count -eq 0) { return }
@@ -746,7 +786,7 @@ $sampleTimer = New-Object Windows.Forms.Timer; $sampleTimer.Interval = 15000; $s
 $flushTimer = New-Object Windows.Forms.Timer; $flushTimer.Interval = 120000; $flushTimer.Add_Tick({ try { Flush } catch {} }); $flushTimer.Start()
 $liveTimer = New-Object Windows.Forms.Timer; $liveTimer.Interval = 2000; $liveTimer.Add_Tick({ try { Watch-Front } catch {} }); $liveTimer.Start()
 try { if (-not [TLInput]::Start()) { Write-Log 'key and click counting could not start on this PC' } } catch { Write-Log "key and click counting could not start: $($_.Exception.Message)" }
-$inputTimer = New-Object Windows.Forms.Timer; $inputTimer.Interval = 60000; $inputTimer.Add_Tick({ try { Check-Input } catch {} }); $inputTimer.Start()
+$inputTimer = New-Object Windows.Forms.Timer; $inputTimer.Interval = 60000; $inputTimer.Add_Tick({ try { Check-Input; Take-Counts } catch {} }); $inputTimer.Start()
 $beatTimer = New-Object Windows.Forms.Timer; $beatTimer.Interval = 60000; $beatTimer.Add_Tick({ try { Heartbeat } catch {} }); $beatTimer.Start()
 # ---------------------------------------------------------------- WAKE FROM SLEEP
 # Closing the laptop and opening it the next day does NOT sign out of Windows, so this same agent keeps running. But while the

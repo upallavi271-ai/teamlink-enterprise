@@ -40,7 +40,10 @@ const PAUSE_LINE = 'You can pause it for a break, or clock out for the day, from
 // the 2.5 words (kept to recognise a notice still in use)
 const INPUT_LINE_25 = 'How much the keyboard and mouse are used: only counts per minute (key presses, clicks, mouse movement). The name of a key or button is kept only when that one key or button is pressed again and again for a long time (for example a key held down, or an auto-clicker). Which keys make up your typing is never recorded.';
 // agent 2.6 (founder 2026-11-11: "evaru ey buttons enni times press chesthunnaro teliyali")
-const INPUT_LINE = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed in a day (for example Space, Enter, Backspace, left click). All letter keys are counted together as one number, and all number keys as one number, so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
+// the 2.6 words (kept to recognise a notice still in use)
+const INPUT_LINE_26 = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed in a day (for example Space, Enter, Backspace, left click). All letter keys are counted together as one number, and all number keys as one number, so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
+// agent 2.7 (founder 2026-11-12): the same counts, by app / website and hour
+const INPUT_LINE = 'How much the keyboard and mouse are used: how many times each kind of key and mouse button is pressed (for example Space, Enter, Backspace, left click), in which app or website, and in which hour. All letter keys are counted together as one number, and all number keys as one number - single letters are never counted apart - so what you type can never be rebuilt. When one single key or button is pressed again and again for a long time (a key held down, an auto-clicker), its name and the time are kept.';
 const POLICY_LINES = [
   'TeamLink records how this office PC is used during work hours, so that HR can see working time and idle time.',
   '',
@@ -59,6 +62,8 @@ const FIRST_POLICY = POLICY_LINES.filter((l) => l !== PAUSE_LINE && l !== INPUT_
 const BEFORE_INPUT_POLICY = POLICY_LINES.filter((l) => l !== INPUT_LINE).join('\n');
 // the 2.5 notice (minutes only): still in use -> the 2.6 words, a new version
 const INPUT_25_POLICY = POLICY_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_25 : l)).join('\n');
+// the 2.6 notice (daily counts only): still in use -> the 2.7 words, a new version
+const INPUT_26_POLICY = POLICY_LINES.map((l) => (l === INPUT_LINE ? INPUT_LINE_26 : l)).join('\n');
 
 // --- time ------------------------------------------------------------------------------------------------------
 const istDay = (d) => new Date(new Date(d).getTime() + IST).toISOString().slice(0, 10);
@@ -102,7 +107,7 @@ async function accessOf(user) {
 async function settings() {
   let row = await prisma.monitoringSetting.findUnique({ where: { id: 'default' } });
   if (!row) row = await prisma.monitoringSetting.create({ data: { id: 'default', policyText: DEFAULT_POLICY } }).catch(() => null);
-  if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY || row.policyText === INPUT_25_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
+  if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY || row.policyText === INPUT_25_POLICY || row.policyText === INPUT_26_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
   const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: false, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
   return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshotsEnabled: false };
 }

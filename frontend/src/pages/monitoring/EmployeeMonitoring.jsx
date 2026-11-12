@@ -699,12 +699,62 @@ function Timeline({ rows, workStart, workEnd, day }) {
   );
 }
 
+// ONE KEY / BUTTON: WHERE AND WHEN (agent 2.7, founder 2026-11-12: "letter keys meedha click chesthey ... ey time nunchi ey time varaku,
+// ey platform or app or website lo"). A click on a key in Keys and buttons pressed: its count by app / website, by hour, and each hour
+// with the apps in it. Letter keys and number keys stay one count each - never split into single letters.
+const hourWord = (hr) => { const h12 = (x) => `${x % 12 || 12} ${x < 12 || x === 24 ? 'am' : 'pm'}`; return `${h12(hr)} – ${h12(hr + 1)}`; };
+function KeyDetail({ id, from, to, keyName, onClose }) {
+  const { data, error, loading } = useGet(`/monitoring/employee/${id}/key-detail`, { from, to, key: keyName });
+  const place = (r) => `${appWord(r.app)}${r.site ? ` · ${r.site}` : ''}`;
+  return (
+    <div className="mon-tl-detail" style={{ marginTop: 12 }}>
+      <div className="mon-tl-dhead">
+        <b>{keyName}</b>
+        {data && <span>{` · ${Number(data.total).toLocaleString('en-IN')} times${from === to ? '' : ` · ${from} to ${to}`}`}</span>}
+        <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} style={{ marginLeft: 'auto' }}>Close</button>
+      </div>
+      {error && <div className="notice red">{error}</div>}
+      {loading && !data && <div className="small-muted">Loading…</div>}
+      {data && data.grouped && <div className="small-muted" style={{ marginBottom: 8 }}>{`${keyName} are one count: where and when the typing happened is shown, never which single letter or digit (that would let what was typed be read back).`}</div>}
+      {data && !data.total && <div className="small-muted">No app / time detail for this key yet. It is recorded from agent 2.7 on; this PC may still be on an older agent.</div>}
+      {data && data.total > 0 && (
+        <>
+          <div className="mon-two">
+            <div>
+              <div className="small-muted" style={{ marginBottom: 4 }}>In which app / website</div>
+              <BarList showShare rows={data.byApp.slice(0, 12).map((r, i) => ({ key: `${r.app}|${r.site}`, label: place(r), value: r.count, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} />
+            </div>
+            <div>
+              <div className="small-muted" style={{ marginBottom: 4 }}>In which hour</div>
+              <BarList showShare rows={data.byHour.map((r) => ({ key: String(r.hour), label: hourWord(r.hour), value: r.count, tone: 'teal' }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} />
+            </div>
+          </div>
+          <table className="mon-table" style={{ marginTop: 10 }}>
+            <thead><tr>{from !== to && <th>Day</th>}<th>Time</th><th>App / website</th><th className="num">Times</th></tr></thead>
+            <tbody>
+              {data.cells.map((c, i) => (
+                <tr key={i}>
+                  {from !== to && <td style={{ whiteSpace: 'nowrap' }}>{c.day}</td>}
+                  <td style={{ whiteSpace: 'nowrap' }}>{hourWord(c.hour)}</td>
+                  <td><b>{appWord(c.app)}</b>{c.site && <div className="small-muted">{c.site}</div>}</td>
+                  <td className="num">{Number(c.count).toLocaleString('en-IN')}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function EmployeeDetail({ id, onBack, own = false }) {
   const [from, setFrom] = useState(todayIst());
   const [to, setTo] = useState(todayIst());
   const { data, error, loading } = useGet(`/monitoring/employee/${id}`, { from, to });
   const t = data && data.totals;
   const [appKey, setAppKey] = useState(null);
+  const [keyPick, setKeyPick] = useState(null); // a key / button clicked in Keys and buttons pressed
   const openApp = data && appKey ? data.apps.find((a) => a.key === appKey) : null;
   return (
     <>
@@ -732,11 +782,12 @@ export function EmployeeDetail({ id, onBack, own = false }) {
             </Panel>
           )}
           {data.keyCounts && (data.keyCounts.keys.length > 0 || data.keyCounts.mouse.length > 0) && (
-            <Panel title="Keys and buttons pressed" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · ${Number(data.keyCounts.keyTotal).toLocaleString('en-IN')} key presses · ${Number(data.keyCounts.clickTotal).toLocaleString('en-IN')} clicks. Letter keys and number keys are counted together, never one by one.`}>
+            <Panel title="Keys and buttons pressed" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · ${Number(data.keyCounts.keyTotal).toLocaleString('en-IN')} key presses · ${Number(data.keyCounts.clickTotal).toLocaleString('en-IN')} clicks. Letter keys and number keys are counted together, never one by one. Click any key or button to see where and when.`}>
               <div className="mon-two">
-                <BarList rows={data.keyCounts.keys.slice(0, 15).map((k, i) => ({ key: k.name, label: k.name, value: k.count, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No key presses recorded." />
-                <BarList rows={data.keyCounts.mouse.map((k, i) => ({ key: k.name, label: k.name, value: k.count, tone: ['green', 'amber', 'slate', 'teal'][i % 4] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No clicks recorded." />
+                <BarList rows={data.keyCounts.keys.slice(0, 15).map((k, i) => ({ key: k.name, label: k.name, value: k.count, onClick: () => setKeyPick(keyPick === k.name ? null : k.name), tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No key presses recorded." />
+                <BarList rows={data.keyCounts.mouse.map((k, i) => ({ key: k.name, label: k.name, value: k.count, onClick: () => setKeyPick(keyPick === k.name ? null : k.name), tone: ['green', 'amber', 'slate', 'teal'][i % 4] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No clicks recorded." />
               </div>
+              {keyPick && <KeyDetail key={`${keyPick}|${from}|${to}`} id={id} from={from} to={to} keyName={keyPick} onClose={() => setKeyPick(null)} />}
             </Panel>
           )}
           {(data.repeats || []).length > 0 && (

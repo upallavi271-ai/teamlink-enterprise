@@ -30,7 +30,7 @@ let server;
 async function stop(code) {
   if (server) server.kill();
   await prisma.$disconnect().catch(() => {});
-  setTimeout(() => { for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(COPY + s); } catch { /* none */ } } process.exit(code); }, 800);
+  setTimeout(() => { try { console.log(fs.readFileSync(COPY + '.log', 'utf8').slice(-1500)); } catch {} for (const s of ['', '-wal', '-shm']) { try { fs.unlinkSync(COPY + s); } catch { /* none */ } } process.exit(code); }, 800);
 }
 
 (async () => {
@@ -43,13 +43,13 @@ async function stop(code) {
   console.log('The notice says it');
   check('the notice tells about key and click counts', /keyboard and mouse are used/.test(s.policyText) && /never recorded/.test(s.policyText), s.policyText.slice(0, 200));
 
-  server = spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: 'ignore' });
-  for (let i = 0; i < 60; i += 1) {
+  server = spawn(process.execPath, ['src/index.js'], { cwd: BACK, env, stdio: ['ignore', fs.openSync(COPY + '.log', 'w'), fs.openSync(COPY + '.log', 'a')] });
+  for (let i = 0; i < 180; i += 1) {
     if (await fetch(`${API}/health`).then((x) => x.ok).catch(() => false)) break; // eslint-disable-line no-await-in-loop
     await new Promise((x) => { setTimeout(x, 500); }); // eslint-disable-line no-await-in-loop
   }
   // today, 11:00 IST onwards: 15 minutes of Space, 5 minutes of left clicks (too short to show), one minute of something else
-  const day = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const day = new Date(Date.now() + 330 * 60000 - 86400000).toISOString().slice(0, 10); // yesterday: its 11 am is always in the past
   const at = (hhmm) => new Date(`${day}T${hhmm}:00+05:30`).toISOString();
   const minutes = [];
   for (let m = 0; m < 15; m += 1) minutes.push({ at: at(`11:${String(m).padStart(2, '0')}`), kind: 'key', key: 'Space', count: 300 });
@@ -94,6 +94,31 @@ async function stop(code) {
   const det2 = await M.employeeDetail(emp.id, day, day);
   check('the day view lists each key, most first', det2.keyCounts && det2.keyCounts.keys[0].name === 'Letter keys' && det2.keyCounts.mouse[0].name === 'Left click', det2.keyCounts);
   check('the notice says letter keys are counted together', /letter keys are counted together/i.test((await M.settings()).policyText));
+
+  console.log('Where and when each key was pressed (agent 2.7)');
+  const brk = async (body) => { const r = await fetch(`${API}/monitoring/input-breakdown`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => null) }; };
+  const b1 = await brk({ day, rows: [
+    { app: 'chrome', site: 'WhatsApp', hour: 11, counts: { 'Letter keys': 300, Space: 60, 'Left click': 20 } },
+    { app: 'EXCEL', site: '', hour: 14, counts: { 'Letter keys': 120, Space: 10, Enter: 30 } },
+    { app: 'chrome', site: 'WhatsApp', hour: 15, counts: { Space: 5, '<b>': 3 } },
+    { app: 'chrome', site: '', hour: 99, counts: { Space: 1 } },
+  ] });
+  check('buckets are taken; a bad hour and an odd key are refused', b1.status === 200 && b1.body.saved === 7, b1);
+  const b2 = await brk({ day, rows: [{ app: 'chrome', site: 'WhatsApp', hour: 11, counts: { Space: 40 } }] });
+  check('a second send adds to the same hour', b2.status === 200 && b2.body.saved === 1, b2);
+  const sp = await MI.keyDetail(emp.id, day, day, 'Space');
+  check('Space: 115 in total', sp.total === 115, sp.total);
+  check('Space by app: Chrome · WhatsApp 105, Excel 10', sp.byApp[0].app === 'chrome' && sp.byApp[0].site === 'WhatsApp' && sp.byApp[0].count === 105 && sp.byApp[1].app === 'EXCEL' && sp.byApp[1].count === 10, sp.byApp);
+  check('Space by hour: 11 am 100, 2 pm 10, 3 pm 5', JSON.stringify(sp.byHour) === JSON.stringify([{ hour: 11, count: 100 }, { hour: 14, count: 10 }, { hour: 15, count: 5 }]), sp.byHour);
+  const lk = await MI.keyDetail(emp.id, day, day, 'Letter keys');
+  check('Letter keys stay one count (420), split only by app and hour', lk.total === 420 && lk.grouped === true && lk.cells.length === 2, lk);
+  const tok2 = require('jsonwebtoken').sign({ ...require('../src/utils/identity').tokenPayload(await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN', status: 'Active' } })), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
+  const sa = await prisma.user.findFirst({ where: { role: 'SUPER_ADMIN', status: 'Active' } });
+  await prisma.user.update({ where: { id: sa.id }, data: { passwordResetRequired: false, passwordChangedAt: new Date(Date.now() - 86400000) } });
+  const http = await fetch(`${API}/monitoring/employee/${emp.id}/key-detail?from=${day}&to=${day}&key=Enter`, { headers: { Authorization: `Bearer ${tok2}` } });
+  const hj = await http.json().catch(() => null);
+  check('the page can read it: Enter 30, Excel, 2 pm', http.status === 200 && hj.total === 30 && hj.byApp[0].app === 'EXCEL' && hj.byHour[0].hour === 14, [http.status, hj]);
+  check('the notice says by app and hour, never single letters', /in which app or website, and in which hour/.test((await M.settings()).policyText) && /single letters are never counted apart/.test((await M.settings()).policyText));
 
   console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
   await stop(failed ? 1 : 0);
