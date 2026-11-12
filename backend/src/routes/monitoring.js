@@ -307,6 +307,8 @@ router.post('/overrides', adminOnly, wrap(async (req, res) => {
 router.delete('/overrides/:id', adminOnly, wrap(async (req, res) => { await M.removeOverride(req.user, req.params.id); res.json({ ok: true }); }));
 
 router.get('/audit', adminOnly, wrap(async (req, res) => res.json(await M.auditRows(req.query.from, req.query.to))));
+// --- data security: who exported candidate / client data, and bulk pulls (founder 2026-11-12)
+router.get('/data-security', adminOnly, wrap(async (req, res) => res.json(await M.dataSecurity(req.query.from, req.query.to))));
 
 // --- app categories
 router.get('/app-categories', teamOnly, wrap(async (req, res) => {

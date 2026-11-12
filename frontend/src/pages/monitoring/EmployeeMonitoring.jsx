@@ -65,7 +65,7 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['agentver', 'Agent versions'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['agentver', 'Agent versions'], ['audit', 'Audit log'], ['datasec', 'Data security'], ['settings', 'Settings'], ['mine', 'My activity']]
     : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
       : it ? [['devices', 'Devices'], ['agentver', 'Agent versions'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
@@ -100,6 +100,7 @@ export default function EmployeeMonitoring() {
             {tab === 'tasks' && <TasksVsWork onOpen={(id) => go('tasks', { employee: id })} />}
             {tab === 'usage' && <Usage />}
             {tab === 'audit' && <Audit />}
+            {tab === 'datasec' && <DataSecurity />}
             {tab === 'alerts' && <Alerts onOpen={(id) => go('alerts', { employee: id })} />}
             {tab === 'misuse' && <Misuse onOpen={(id) => go('misuse', { employee: id })} />}
             {tab === 'devices' && <Devices manage />}
@@ -1456,6 +1457,74 @@ function Reports({ onOpen, admin = false }) {
 }
 
 // ------------------------------------------------------------------------------------------------ Devices
+// ------------------------------------------------------------------------------------------------ Data security (who took data out)
+// Who exported candidate / client / requirement / application data, how much, and a bulk pull flagged (founder 2026-11-12: the
+// 360-review pick - a recruiter taking the database before leaving). Built from the export audit rows; only counts and scope, never
+// the data itself. HR / Admin only.
+function DataSecurity() {
+  const [from, setFrom] = useState(todayIst());
+  const [to, setTo] = useState(todayIst());
+  const [q, setQ] = useState('');
+  const { data, error, loading } = useGet('/monitoring/data-security', { from, to });
+  const big = (data && data.big) || 200;
+  const events = ((data && data.events) || []).filter((e) => !q.trim() || `${e.who} ${e.kind} ${e.entity} ${e.scope}`.toLowerCase().includes(q.trim().toLowerCase()));
+  const t = (data && data.totals) || {};
+  const num = (v) => (v == null ? '—' : Number(v).toLocaleString('en-IN'));
+  return (
+    <>
+      <div className="small-muted" style={{ marginBottom: 8 }}>Who took candidate, client, requirement or application data out as a file, and how much - so a bulk pull of the database (for example a recruiter taking data before leaving) is caught. An export of <b>{big}+ rows at once</b> is flagged as a bulk pull. Only the counts and the scope are shown, never the data itself.</div>
+      <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo}>
+        <input type="search" placeholder="Search a name or data" value={q} onChange={(e) => setQ(e.target.value)} />
+      </RangeBar>
+      {error && <div className="notice red">{error}</div>}
+      {loading && !data && <div className="small-muted">Loading…</div>}
+      {t.bulk > 0 && (
+        <div className="mon-misuse-banner" style={{ cursor: 'default' }}>
+          <span className="dot" />
+          <span><b>{`${t.bulk} bulk export${t.bulk === 1 ? '' : 's'}`}</b> of {big}+ rows in this period. Check who, below - a large pull of candidate or client data can be someone taking the database out.</span>
+        </div>
+      )}
+      <KpiRow>
+        <KpiTile icon="file" tone="blue" label="Exports" value={t.exports != null ? t.exports : '—'} sub="Candidate / client data files" />
+        <KpiTile icon="list" tone="violet" label="Rows taken out" value={num(t.rows)} sub="Across all exports" />
+        <KpiTile icon="users" tone="slate" label="People exporting" value={t.people != null ? t.people : '—'} sub="Who took data out" />
+        <KpiTile icon="alert" tone="red" label="Bulk pulls" value={t.bulk != null ? t.bulk : '—'} sub={`${big}+ rows at once`} />
+      </KpiRow>
+      <Panel title="Who exported the most" sub="By rows taken out, in this period">
+        <table className="mon-table">
+          <thead><tr><th>Who</th><th className="num">Exports</th><th className="num">Rows</th><th className="num">Bulk pulls</th></tr></thead>
+          <tbody>
+            {((data && data.byPerson) || []).slice(0, 20).map((pr, i) => (
+              <tr key={i}><td><b>{pr.who}</b></td><td className="num">{pr.exports}</td><td className="num">{num(pr.rows)}</td><td className="num">{pr.bulk ? <Pill tone="red">{pr.bulk}</Pill> : <span className="small-muted">—</span>}</td></tr>
+            ))}
+            {(!data || !(data.byPerson || []).length) && !loading && <tr><td colSpan={4} className="small-muted">No candidate or client data was exported in this period.</td></tr>}
+          </tbody>
+        </table>
+      </Panel>
+      <Panel title={`Every export (${events.length})`} sub="Newest first; a bulk pull is in red">
+        <div className="mon-scroll">
+          <table className="mon-table">
+            <thead><tr><th>When</th><th>Who</th><th>Data</th><th>Format</th><th className="num">Rows</th><th>Scope</th></tr></thead>
+            <tbody>
+              {events.map((e) => (
+                <tr key={e.id}>
+                  <td style={{ whiteSpace: 'nowrap' }}>{dt(e.at)}</td>
+                  <td><b>{e.who}</b></td>
+                  <td>{e.kind || e.entity}<div className="small-muted">{e.entity}</div></td>
+                  <td>{e.format || '—'}</td>
+                  <td className="num">{e.rows == null ? '—' : (e.bulk ? <Pill tone="red">{num(e.rows)}</Pill> : num(e.rows))}</td>
+                  <td className="small-muted">{e.scope || '—'}</td>
+                </tr>
+              ))}
+              {!events.length && !loading && <tr><td colSpan={6} className="small-muted">No exports match.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </>
+  );
+}
+
 // ------------------------------------------------------------------------------------------------ Agent versions
 // Which TeamLink agent each office PC is on, who is behind the latest, and who has not reported one (founder 2026-11-12, a rating
 // follow-up: the "who is on which version" central view that was missing). PCs update themselves on the next connection; a restart

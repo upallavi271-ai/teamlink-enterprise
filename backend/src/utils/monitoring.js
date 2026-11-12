@@ -965,6 +965,36 @@ async function uncategorised() {
 
 // The audit log of this module: who looked at whose data, what was exported, settings, PCs.
 const AUDIT_ENTITIES = ['Monitoring', 'MonitoringDevice', 'MonitoringSetting', 'ActivityLog'];
+// ---------------------------------------------------------------------------
+// DATA SECURITY - WHO TOOK CANDIDATE / CLIENT DATA OUT (founder 2026-11-12: "candidate-data-theft detection", the 360-review pick).
+// Every export already writes an audit row (utils/exportKit.js: "<what> exported (XLSX)", entity, "N row(s) · scope: ... · range").
+// Here those rows for the crown-jewel data - candidates, clients, requirements, applications - are gathered, the row count read out,
+// and a one-shot BULK PULL (BIG_EXPORT rows or more at once, e.g. a recruiter taking the database before leaving) is flagged. Only
+// counts and scope are shown, never the data itself.
+const DATA_ENTITIES = ['Candidate', 'Client', 'Application', 'Requirement'];
+const BIG_EXPORT = 200;
+async function dataSecurity(from, to) {
+  const [a, b] = rangeOf(from, to, 184);
+  const rows = await prisma.auditLog.findMany({
+    where: { action: { contains: 'exported' }, entity: { in: DATA_ENTITIES }, createdAt: { gte: atIst(a, '00:00'), lte: new Date(atIst(b, '23:59').getTime() + 60000) } },
+    orderBy: { createdAt: 'desc' }, take: 3000,
+    select: { id: true, createdAt: true, action: true, entity: true, toValue: true, actorName: true, userId: true, user: { select: { name: true } } },
+  });
+  const events = rows.map((r) => {
+    const who = r.actorName || (r.user && r.user.name) || 'TeamLink';
+    const m = /([\d,]+)\s*row/.exec(r.toValue || '');
+    const n = m ? Number(m[1].replace(/,/g, '')) : null;
+    const fmt = (/(XLSX|CSV|PDF)/i.exec(r.action) || [])[1] || '';
+    const sc = (/scope:\s*([^\u00b7]+)/i.exec(r.toValue || '') || [])[1];
+    const kind = r.action.replace(/\s*exported.*$/i, '').trim();
+    return { id: r.id, at: r.createdAt, who, userId: r.userId || null, entity: r.entity, kind, format: String(fmt).toUpperCase(), rows: n, scope: sc ? sc.trim() : '', bulk: n != null && n >= BIG_EXPORT };
+  });
+  const byP = new Map();
+  events.forEach((e) => { const k = e.userId || e.who; const o = byP.get(k) || { who: e.who, exports: 0, rows: 0, bulk: 0 }; o.exports += 1; o.rows += e.rows || 0; if (e.bulk) o.bulk += 1; byP.set(k, o); });
+  const byPerson = [...byP.values()].sort((x, y) => y.rows - x.rows || y.exports - x.exports);
+  const totals = { exports: events.length, rows: events.reduce((s, e) => s + (e.rows || 0), 0), people: byP.size, bulk: events.filter((e) => e.bulk).length };
+  return { from: a, to: b, big: BIG_EXPORT, events, byPerson, totals };
+}
 async function auditRows(from, to) {
   const [a, b] = rangeOf(from, to, 366);
   const rows = await prisma.auditLog.findMany({
@@ -1048,6 +1078,6 @@ function startSweep() {
 }
 
 module.exports = {
-  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
+  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, dataSecurity, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };
