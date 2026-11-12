@@ -76,12 +76,14 @@ export function VacanciesPopup({ d, setD, onClose }) {
                 <td><b>{g.name}</b></td>
                 {d.roles.map((role) => {
                   const row = g.rows.find((r) => r.role === role);
+                  const fromTeams = (g.teams || []).some((t) => t.rows.some((r) => r.role === role)); // a role the teams plan is the teams added together
+                  if (row && fromTeams) return <td key={role}><span className="small-muted">{row.planned} (the teams below)</span></td>;
                   return <td key={role}>{row ? <input type="number" min={0} max={500} value={row.planned} onChange={(e) => setNum(gi, role, e.target.value)} style={{ width: 70 }} aria-label={`${g.name} ${role}`} /> : <span className="small-muted">—</span>}</td>;
                 })}
               </tr>,
               ...(g.teams || []).map((t, ti) => (
                 <tr key={`${g.name}|${t.name}`}>
-                  <td style={{ paddingLeft: 22 }}><span className="small-muted">↳ {g.name} · </span>{t.name}</td>
+                  <td><b>{g.name} · {t.name}</b></td>
                   {d.roles.map((role) => {
                     const row = t.rows.find((r) => r.role === role);
                     return <td key={role}>{row ? <input type="number" min={0} max={500} value={row.planned} onChange={(e) => setTeamNum(gi, ti, role, e.target.value)} style={{ width: 70 }} aria-label={`${g.name} ${t.name} ${role}`} /> : <span className="small-muted">—</span>}</td>;
@@ -99,52 +101,43 @@ export function VacanciesPopup({ d, setD, onClose }) {
       ) : (
         <div className="tbl-wrap" style={{ marginTop: 12 }}><table>
           <thead><tr><th>Department</th><th>Role</th><th>Should have</th><th>Working now</th><th>Vacant</th></tr></thead>
-          <tbody>{d.groups.flatMap((g) => [
-            ...g.rows.map((r, i) => {
-              const k = `${g.name}|${r.role}`;
+          <tbody>{d.groups.flatMap((g) => {
+            // one row, the same look for a department and for a team of it; a team's names start open (founder 2026-11-12: Education = Team A and Team B only)
+            const vrow = (label, r, k, startOpen) => {
+              const shown = open[k] === undefined ? !!startOpen : open[k];
               return (
                 <tr key={k}>
-                  <td>{i === 0 ? <b>{g.name}</b> : ''}</td>
+                  <td>{label}</td>
                   <td>{r.role}</td>
                   <td>{r.planned}</td>
                   <td>
-                    {r.filled ? <button type="button" className="link-btn" onClick={() => setOpen({ ...open, [k]: !open[k] })} style={{ background: 'none', border: 0, padding: 0, color: 'var(--primary, #1a56db)', cursor: 'pointer' }}>{r.filled}</button> : 0}
+                    {r.filled ? <button type="button" className="link-btn" onClick={() => setOpen({ ...open, [k]: !shown })} style={{ background: 'none', border: 0, padding: 0, color: 'var(--primary, #1a56db)', cursor: 'pointer' }}>{r.filled}</button> : 0}
                     {r.leaving ? <span className="small-muted"> ({r.leaving} leaving)</span> : null}
                     {r.over ? <span className="small-muted"> (+{r.over} more than planned)</span> : null}
-                    {open[k] ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(r.people)}</div> : null}
+                    {shown ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(r.people)}</div> : null}
                   </td>
                   <td><b style={{ color: r.vacant ? red : green }}>{r.vacant}</b></td>
                 </tr>
               );
-            }),
-            // the teams of the department (Education: Team A / Team B): a split of the rows above, with the names always shown
-            ...(g.teams || []).flatMap((t) => t.rows.map((r, i) => (
-              <tr key={`${g.name}|${t.name}|${r.role}`} style={{ background: 'var(--surface-2, #f8fafc)' }}>
-                <td />
-                <td style={{ paddingLeft: 22 }}>{i === 0 ? <><b>{t.name}</b><br /></> : null}<span className="small-muted">{r.role}</span></td>
-                <td>{r.planned}</td>
-                <td>
-                  {r.filled}
-                  {r.leaving ? <span className="small-muted"> ({r.leaving} leaving)</span> : null}
-                  {r.over ? <span className="small-muted"> (+{r.over} more than planned)</span> : null}
-                  {r.people.length ? <div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>{nameList(r.people)}</div> : null}
-                </td>
-                <td><b style={{ color: r.vacant ? red : green }}>{r.vacant}</b></td>
-              </tr>
-            ))),
-            ...(g.teamless || []).map((x) => (
-              <tr key={`${g.name}|noteam|${x.role}`} style={{ background: 'var(--surface-2, #f8fafc)' }}>
-                <td />
-                <td style={{ paddingLeft: 22 }}><b>No team set</b><br /><span className="small-muted">{x.role}</span></td>
+            };
+            // a department split into teams shows its own roles (the STL) and then its teams: the TL / Employee rows are the teams added together, so they are not drawn twice
+            const split = new Set((g.teams || []).flatMap((t) => t.rows.map((r) => r.role)));
+            const out = g.rows.filter((r) => !split.has(r.role)).map((r, i) => vrow(i === 0 ? <b>{g.name}</b> : '', r, `${g.name}|${r.role}`, false));
+            (g.teams || []).forEach((t) => t.rows.forEach((r, i) => out.push(vrow(i === 0 ? <b>{g.name} · {t.name}</b> : '', r, `${g.name}|${t.name}|${r.role}`, true))));
+            (g.teamless || []).forEach((x, i) => out.push(
+              <tr key={`${g.name}|noteam|${x.role}`}>
+                <td>{i === 0 ? <b>{g.name} · No team set</b> : ''}</td>
+                <td>{x.role}</td>
                 <td><span className="small-muted">—</span></td>
-                <td>{x.people.length}<div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>{nameList(x.people)} - set their team in Employee Management</div></td>
+                <td>{x.people.length}<div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(x.people)} (set their team in Employee Management)</div></td>
                 <td><span className="small-muted">—</span></td>
-              </tr>
-            )),
-          ])}</tbody>
+              </tr>,
+            ));
+            return out;
+          })}</tbody>
         </table></div>
       )}
-      {hasTeams && !edit ? <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>Team rows are part of the department rows above them, so they are not added to the totals again.</div> : null}
+      {hasTeams && !edit ? <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>A department with teams shows its teams: its TL and Employee numbers are the teams added together.</div> : null}
     </Modal>
   );
 }

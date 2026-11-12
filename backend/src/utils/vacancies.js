@@ -12,10 +12,10 @@
 // VACANT = plan - filled (never below 0); more people than the plan shows as "over".
 //
 // TEAMS (founder 2026-11-12: "vacancies lo education team A undhi and Team B undhi, aa team vacancies unaya anni in detail ga pettu"):
-// a department may also list its TEAMS (Education: Team A and Team B, each 1 TL + 5 employees). A team row is a SPLIT of the department's
-// own TL / Employee rows, matched on Employee.team ("Team-A", "Team A" and "team a" are the same team). The department rows stay the
-// ones that count: the totals, the dashboard card and the HRMS tile never add a team row again. A person of a team-split role whose team
-// is blank or unknown is listed as "No team set", so nobody disappears from the screen.
+// a department may also list its TEAMS (Education: Team A and Team B, each 1 TL + 5 employees). A team's people are matched on Employee.team
+// ("Team-A", "Team A" and "team a" are the same team). The department's TL / Employee numbers are its teams added together (syncTeamTotals), and
+// they are the ones that count: the totals, the dashboard card and the HRMS tile never add a team row again. The popup then shows the teams
+// alone (plus the STL). A person of a team-split role whose team is blank or unknown is listed as "No team set", so nobody disappears.
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
 
@@ -58,13 +58,22 @@ function withDefaultTeams(plan) {
   });
 }
 
+// A department split into teams takes its TL / Employee numbers from the teams (Team A + Team B), so the two can never disagree and the screen
+// shows the teams alone (founder 2026-11-12: "education team A and team B only"). Roles the teams do not plan (the STL) stay the department's own.
+function syncTeamTotals(g) {
+  if (!g || !Array.isArray(g.teams) || !g.teams.length) return g;
+  const sums = {};
+  g.teams.forEach((t) => t.rows.forEach((r) => { sums[r.role] = (sums[r.role] || 0) + (Number(r.planned) || 0); }));
+  return { ...g, rows: g.rows.map((r) => (r.role in sums ? { ...r, planned: sums[r.role] } : r)) };
+}
+
 async function readPlan() {
   try {
     const row = await prisma.appSetting.findUnique({ where: { key: PLAN_KEY } });
     const v = row ? JSON.parse(row.value) : null;
-    if (Array.isArray(v) && v.length) return withDefaultTeams(v);
+    if (Array.isArray(v) && v.length) return withDefaultTeams(v).map(syncTeamTotals);
   } catch { /* the default */ }
-  return DEFAULT_PLAN;
+  return DEFAULT_PLAN.map(syncTeamTotals);
 }
 
 // the rows of a department or a team -> clean rows, or { error }
@@ -105,7 +114,7 @@ function cleanPlan(input) {
         group.teams.push({ name: tn, rows: tr.rows });
       }
     }
-    out.push(group);
+    out.push(syncTeamTotals(group));
   }
   return { plan: out };
 }
