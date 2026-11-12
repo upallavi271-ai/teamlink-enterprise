@@ -238,6 +238,8 @@ async function dialQueued(id, deps = {}) {
   if (!lim.ok) { await svc.setRow(id, { nextAttemptAt: new Date(t.getTime() + 60 * 60000).toISOString(), waitReason: lim.reason }); return { status: 'queued', note: lim.reason }; }
   const busy = await DB.one(`SELECT "id" FROM "AiCall" WHERE "initiatedVia" IN (?, 'campaign') AND "applicationId" = ? AND "status" = 'calling' AND "id" <> ?`, gateway.VIA, row.applicationId, id);
   if (busy) { await svc.setRow(id, { nextAttemptAt: new Date(t.getTime() + 5 * 60000).toISOString(), waitReason: 'A call to this candidate is going on right now.' }); return { status: 'queued', note: 'already on a call' }; }
+  // KAVYA (2026-11-12): every rule has passed. When Kavya is the engine for this purpose she takes the candidate; otherwise (or on any problem) the old line rings.
+  try { if (await require('../kavya/engine').handOver(row, ctx, verdict)) return { status: 'calling', note: 'with Kavya' }; } catch { /* the old line places the call */ } // eslint-disable-line global-require
   const lang = S.LANGS.includes(row.language) ? row.language : (S.LANGS.includes(process.env.AI_VOICE_START_LANGUAGE) ? process.env.AI_VOICE_START_LANGUAGE : 'English');
   const uuid = crypto.randomUUID();
   const stamp = t.toISOString();

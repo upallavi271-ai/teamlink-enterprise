@@ -26,6 +26,13 @@ const guard = (fn) => async (req, res) => {
 };
 
 router.get('/status', guard(async (req, res) => res.json(await kavya.status(req.user))));
+// The engine switch: 'kavya' = Kavya takes every Screening / Job Match call of AI Calling (default), 'old' = the old engine again. Admins only.
+router.post('/engine', guard(async (req, res) => {
+  if (!['SUPER_ADMIN', 'ADMIN'].includes(String((req.user && req.user.role) || '').toUpperCase())) return res.status(403).json({ error: 'Only an Admin can switch the calling engine.' });
+  const value = await require('../calling/kavya/engine').setEngine(req.body && req.body.engine); // eslint-disable-line global-require
+  await require('../utils/audit').logAudit({ userId: req.user.id, action: 'Kavya engine switch', entity: 'KavyaSetting', entityId: 'engine', toValue: value }); // eslint-disable-line global-require
+  return res.json({ ok: true, engine: value });
+}));
 router.post('/runs', guard(async (req, res) => send(res, await kavya.createRuns(req.user, req.body || {}))));
 router.get('/runs', guard(async (req, res) => send(res, await kavya.listRuns(req.user))));
 router.get('/runs/:id', guard(async (req, res) => send(res, await kavya.runDetail(req.user, req.params.id))));

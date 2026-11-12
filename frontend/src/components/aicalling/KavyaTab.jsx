@@ -30,6 +30,19 @@ export default function KavyaTab({ source = 'ats' }) {
       {status && status.mode === 'Off' && <div className="notice amber">AI calling is switched off, so nobody is handed to Kavya. An Admin turns it on in Administration &gt; Integrations &gt; AI Calling.</div>}
       {status && status.testMode && <div className="notice amber">Test mode: only the Admin&apos;s test phone numbers are called.</div>}
       {status && !status.canCall && <div className="notice">Your role can look at Kavya&apos;s runs but not hand candidates to her.</div>}
+      {status && status.configured && (
+        <div className={`notice ${status.engine === 'kavya' ? 'green' : 'amber'}`}>
+          {status.engine === 'kavya'
+            ? <>Kavya is the calling engine: every <b>{(status.enginePurposes || []).join(' and ')}</b> call placed from AI Calling, the Job Portal and Omni-Channel is made by Kavya (Telugu, Hindi, English). Interview notices and reminders, shortlist notices and &quot;AI interview pending&quot; calls still use the earlier AI engine.</>
+            : <>The earlier AI engine is placing the calls. Kavya only calls the people you give her on this page.</>}
+          {status.isAdmin && (
+            <> <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={async () => {
+              if (!window.confirm(status.engine === 'kavya' ? 'Switch AI calling back to the earlier engine?' : 'Let Kavya place the Screening and Job Match calls everywhere?')) return;
+              try { const r = await api.post('/kavya/engine', { engine: status.engine === 'kavya' ? 'old' : 'kavya' }); setStatus({ ...status, engine: r.data.engine }); } catch (e) { setErr(errorOf(e, 'Could not switch.')); }
+            }}>{status.engine === 'kavya' ? 'Switch back to the earlier engine' : 'Let Kavya call'}</button></>
+          )}
+        </div>
+      )}
       <GiveToKavya status={status} source={source} onStarted={(id) => { setTick((t) => t + 1); setOpenRun(id); }} />
       <Runs tick={tick} openRun={openRun} setOpenRun={setOpenRun} />
     </div>

@@ -290,6 +290,8 @@ async function dispatch(id, { force = false } = {}) {
     if (lim.wait) { await setRow(row.id, { status: 'queued', nextAttemptAt: iso(lim.until), waitReason: lim.reason.slice(0, 250) }); return { status: 'queued', note: lim.code }; }
     await cancelWith(row, lim.reason); return { status: 'cancelled', note: lim.code };
   }
+  // KAVYA (2026-11-12): every rule has passed. When Kavya is the engine for this purpose she takes the candidate; otherwise (or on any problem) the old engine rings.
+  try { if (await require('./kavya/engine').handOver(row, ctx, verdict)) return { status: 'calling', note: 'with Kavya' }; } catch { /* the old engine places the call */ } // eslint-disable-line global-require
   // Place the call.
   const n = row.attempts + 1;
   const stamp = iso(t);

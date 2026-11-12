@@ -86,8 +86,11 @@ async function status(user) {
     configured: client.configured(),
     reachable: !!h.ok,
     problem: h.ok ? null : h.error,
+    engine: await require('./engine').getEngine(), // eslint-disable-line global-require
+    enginePurposes: require('./engine').PURPOSES, // eslint-disable-line global-require
     mode: s.mode, // the same Off / Test / Live switch as AI Calling
     testMode: s.mode === 'Test',
+    isAdmin: isAdmin(user),
     canCall: P.roleAllows(user, s),
     canBulk: P.roleAllows(user, s, true),
     maxPeople: MAX_PEOPLE,
@@ -281,7 +284,7 @@ async function sync(run) {
         JSON.stringify(c.answers || {}).slice(0, 20000), c.ts || null, DB.nowIso(),
       );
       // eslint-disable-next-line no-await-in-loop
-      await timelineLine(run, person, row);
+      if (run.source !== 'engine') await timelineLine(run, person, row); // engine runs: applyResult writes the timeline line
     }
   }
   let status = run.status;

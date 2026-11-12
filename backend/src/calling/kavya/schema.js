@@ -47,6 +47,9 @@ const DDL = [
   )`,
   'CREATE UNIQUE INDEX IF NOT EXISTS "KavyaCall_unique" ON "KavyaCall"("runId", "kavyaCallId")',
   'CREATE INDEX IF NOT EXISTS "KavyaCall_run" ON "KavyaCall"("runId")',
+  `CREATE TABLE IF NOT EXISTS "KavyaSetting" ("key" TEXT NOT NULL PRIMARY KEY, "value" TEXT NOT NULL, "updatedAt" TEXT NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS "KavyaLink" ("callId" TEXT NOT NULL PRIMARY KEY, "runId" TEXT NOT NULL, "phone" TEXT NOT NULL, "createdAt" TEXT NOT NULL, "appliedAt" TEXT)`,
+  'CREATE INDEX IF NOT EXISTS "KavyaLink_open" ON "KavyaLink"("appliedAt", "runId")',
 ];
 
 let done = null;
