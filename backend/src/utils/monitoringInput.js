@@ -31,6 +31,10 @@ function ensure() {
       )`);
       await prisma.$executeRawUnsafe('CREATE UNIQUE INDEX IF NOT EXISTS "MonitoringInputFlag_one" ON "MonitoringInputFlag" ("deviceId", "minuteAt", "kind")');
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "MonitoringInputFlag_day" ON "MonitoringInputFlag" ("day", "employeeId")');
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "MonitoringMisuseNote" (
+        "id" TEXT PRIMARY KEY, "employeeId" TEXT NOT NULL, "day" TEXT NOT NULL, "fromAt" TEXT NOT NULL, "note" TEXT, "byName" TEXT, "at" TEXT NOT NULL
+      )`);
+      await prisma.$executeRawUnsafe('CREATE UNIQUE INDEX IF NOT EXISTS "MonitoringMisuseNote_one" ON "MonitoringMisuseNote" ("employeeId", "fromAt")');
       return true;
     })().catch((e) => { ready = null; throw e; });
   }
@@ -116,6 +120,69 @@ function summaryOf(list) {
   const minutes = list.reduce((n, s) => n + s.minutes, 0);
   const big = [...list].sort((a, b) => b.minutes - a.minutes)[0];
   return { minutes, stretches: list.length, top: `${big.label} · ${big.fromTime}–${big.toTime} (${big.minutes} min)` };
+}
+
+// ---------------------------------------------------------------------------
+// THE MISUSE LIST (founder 2026-11-12: "ilaanti unwanted misuse chesnavi anni, oka tab lo remark or else edhaina oka name tho oka
+// tab meedha vundali"). Every stretch of continuous single-button use across the people the viewer may see, with a remark the admin
+// or team lead can add. The employee is warned on their own screen by the agent while it happens (agent 3.0). Nothing typed is kept.
+// allowedIds: an array limits it to those people (a team lead's team); null means everyone (HR / Admin).
+async function misuse(allowedIds, fromDay, toDay, { min = 2 } = {}) {
+  await ensure();
+  const useFilter = Array.isArray(allowedIds);
+  if (useFilter && !allowedIds.length) return [];
+  let empIds = [];
+  if (useFilter) {
+    for (let i = 0; i < allowedIds.length; i += 400) {
+      const part = allowedIds.slice(i, i + 400).filter(Boolean);
+      if (!part.length) continue; // eslint-disable-line no-continue
+      // eslint-disable-next-line no-await-in-loop
+      const rows = await prisma.$queryRawUnsafe(`SELECT DISTINCT "employeeId" FROM "MonitoringInputFlag" WHERE "day" >= ? AND "day" <= ? AND "employeeId" IN (${part.map(() => '?').join(',')})`, fromDay, toDay, ...part);
+      empIds.push(...rows.map((r) => r.employeeId));
+    }
+  } else {
+    const rows = await prisma.$queryRawUnsafe('SELECT DISTINCT "employeeId" FROM "MonitoringInputFlag" WHERE "day" >= ? AND "day" <= ?', fromDay, toDay);
+    empIds = rows.map((r) => r.employeeId);
+  }
+  empIds = [...new Set(empIds)];
+  if (!empIds.length) return [];
+  const [map, notes] = await Promise.all([stretches(empIds, fromDay, toDay, { min }), misuseNotes(empIds, fromDay, toDay)]);
+  const out = [];
+  map.forEach((list, employeeId) => list.forEach((snip) => {
+    const key = `${employeeId}|${snip.from}`;
+    const n = notes.get(key) || null;
+    out.push({
+      id: key, employeeId, kind: snip.kind, key: snip.key, label: snip.label, day: snip.day,
+      from: snip.from, to: snip.to, fromTime: snip.fromTime, toTime: snip.toTime, minutes: snip.minutes, presses: snip.presses,
+      note: n ? n.note : '', noteBy: n ? n.byName : '', noteAt: n ? n.at : '',
+    });
+  }));
+  out.sort((a, b) => b.day.localeCompare(a.day) || b.minutes - a.minutes || a.from.localeCompare(b.from));
+  return out;
+}
+async function misuseNotes(ids, fromDay, toDay) {
+  await ensure();
+  const out = new Map();
+  const list = (ids || []).filter(Boolean);
+  if (!list.length) return out;
+  for (let i = 0; i < list.length; i += 400) {
+    const part = list.slice(i, i + 400);
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await prisma.$queryRawUnsafe(`SELECT "employeeId", "fromAt", "note", "byName", "at" FROM "MonitoringMisuseNote" WHERE "day" >= ? AND "day" <= ? AND "employeeId" IN (${part.map(() => '?').join(',')})`, fromDay, toDay, ...part);
+    rows.forEach((r) => out.set(`${r.employeeId}|${r.fromAt}`, { note: r.note || '', byName: r.byName || '', at: r.at }));
+  }
+  return out;
+}
+async function setMisuseNote(employeeId, day, fromAt, note, byName) {
+  await ensure();
+  const clean = clip(note, 400);
+  if (!clean) { await prisma.$executeRawUnsafe('DELETE FROM "MonitoringMisuseNote" WHERE "employeeId" = ? AND "fromAt" = ?', employeeId, fromAt); return { note: '', noteBy: '' }; }
+  await prisma.$executeRawUnsafe(
+    `INSERT INTO "MonitoringMisuseNote" ("id","employeeId","day","fromAt","note","byName","at") VALUES (?,?,?,?,?,?,?)
+     ON CONFLICT("employeeId","fromAt") DO UPDATE SET "note" = excluded."note", "byName" = excluded."byName", "at" = excluded."at"`,
+    `mmn${crypto.randomBytes(9).toString('hex')}`, employeeId, day, fromAt, clean, clip(byName, 80) || null, new Date().toISOString(),
+  );
+  return { note: clean, noteBy: clip(byName, 80) };
 }
 
 // ---------------------------------------------------------------------------
@@ -388,4 +455,4 @@ async function cleanup(retentionDays) {
   await prisma.$executeRawUnsafe('DELETE FROM "MonitoringDayStat" WHERE "day" < ?', cutoff);
 }
 
-module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, addBuckets, keyDetail, addActivity, activityOf, appKeys, MIN_STRETCH, KINDS };
+module.exports = { ensure, save, stretches, summaryOf, misuse, misuseNotes, setMisuseNote, cleanup, addCounts, countsOf, addBuckets, keyDetail, addActivity, activityOf, appKeys, MIN_STRETCH, KINDS };

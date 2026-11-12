@@ -65,8 +65,8 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
-    : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
+    : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
       : it ? [['devices', 'Devices'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
   const employee = params.get('employee');
@@ -87,6 +87,7 @@ export default function EmployeeMonitoring() {
           {tabs.map(([k, label]) => <div key={k} className={`tab${tab === k && !employee ? ' active' : ''}`} onClick={() => go(k)}>{label}</div>)}
         </div>
       )}
+      {(admin || lead) && !employee && <MisuseBanner onGo={() => go('misuse')} />}
       {employee && (admin || lead)
         ? <EmployeeDetail id={employee} onBack={() => go(tab)} />
         : (
@@ -100,6 +101,7 @@ export default function EmployeeMonitoring() {
             {tab === 'usage' && <Usage />}
             {tab === 'audit' && <Audit />}
             {tab === 'alerts' && <Alerts onOpen={(id) => go('alerts', { employee: id })} />}
+            {tab === 'misuse' && <Misuse onOpen={(id) => go('misuse', { employee: id })} />}
             {tab === 'devices' && <Devices manage />}
             {tab === 'settings' && <Settings />}
             {tab === 'mine' && <Mine me={me} />}
@@ -122,7 +124,98 @@ function siteOf(app, title) {
 // which time column to highlight for a chosen status, and the one line that says what is shown
 const HI_OF = { Online: 'active', Idle: 'idle', 'On break': 'break', Offline: 'away' };
 const HI_WORD = { Online: 'Active people and how long each has been working.', Idle: 'Idle people and how long each has been idle.', 'On break': 'People on a break and how long each has been on it.', Offline: 'People off the PC and how long the PC has had no signal.' };
+// ------------------------------------------------------------------------------------------------ Misuse (the same button over and over)
+// Every continuous single-button stretch - a key held / tapped again and again, an auto-clicker, a mouse mover or input from a program
+// - across the people the viewer may see, with a remark the admin / team lead can add (founder 2026-11-12: "ilaanti unwanted misuse
+// chesnavi anni, oka tab lo remark or else edhaina oka name tho ... and at the same time popup avvali"). The employee sees a popup on
+// their own screen while it happens (agent 3.0). A red banner above every tab says how many there are today. Nothing typed is kept.
+const MISUSE_WORD = { key: 'Key held / tapped', click: 'Auto-clicker', mouse: 'Mouse mover', software: 'Program input' };
+const MISUSE_TONE = { key: 'red', click: 'red', mouse: 'amber', software: 'violet' };
+function MisuseBanner({ onGo }) {
+  const { data } = useGet('/monitoring/misuse', { from: todayIst(), to: todayIst(), min: 2 });
+  const n = (data && data.events && data.events.length) || 0;
+  if (!n) return null;
+  return (
+    <div className="mon-misuse-banner" role="button" tabIndex={0} onClick={onGo} onKeyDown={(e) => { if (e.key === 'Enter') onGo(); }}>
+      <span className="dot" />
+      <span><b>{`${n} misuse alert${n === 1 ? '' : 's'} today`}</b> - someone kept pressing one button (a key held down, an auto-clicker or a mouse mover). The employee was warned on their screen. Click to see who and add a remark.</span>
+    </div>
+  );
+}
+function NoteCell({ e, onSave }) {
+  const [val, setVal] = useState(e.note || '');
+  const [saved, setSaved] = useState(false);
+  useEffect(() => { setVal(e.note || ''); }, [e.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  const commit = () => { if (val.trim() !== (e.note || '')) { onSave(e, val.trim()); setSaved(true); setTimeout(() => setSaved(false), 1600); } };
+  return (
+    <div className="mon-note" onClick={(ev) => ev.stopPropagation()}>
+      <input type="text" value={val} placeholder="Add a remark / name…" maxLength={400} onChange={(ev) => setVal(ev.target.value)} onBlur={commit} onKeyDown={(ev) => { if (ev.key === 'Enter') ev.target.blur(); }} />
+      {saved ? <span className="small-muted ok"> saved</span> : (e.noteBy && <div className="small-muted">{e.noteBy}</div>)}
+    </div>
+  );
+}
+function Misuse({ onOpen }) {
+  const [from, setFrom] = useState(todayIst());
+  const [to, setTo] = useState(todayIst());
+  const [min, setMin] = useState(2);
+  const [dept, setDept] = useState('');
+  const [kind, setKind] = useState('');
+  const [q, setQ] = useState('');
+  const { data, error, loading } = useGet('/monitoring/misuse', { from, to, min });
+  const events = (data && data.events) || [];
+  const range = from !== to;
+  const depts = useMemo(() => [...new Set(events.map((x) => x.department).filter(Boolean))].sort(), [events]);
+  const rows = events.filter((x) => (!dept || x.department === dept) && (!kind || x.kind === kind)
+    && (!q.trim() || `${x.name} ${x.code || ''} ${x.label} ${x.note || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+  const saveNote = async (e, value) => {
+    try { await api.post('/monitoring/misuse/note', { employeeId: e.employeeId, day: e.day, from: e.from, note: value }); e.note = value; } catch (_) { /* a transient save error: the next load shows the truth */ }
+  };
+  return (
+    <>
+      <div className="small-muted">The same key or button pressed again and again - a key held down, an auto-clicker, a mouse mover, or input sent by a program - which looks like fake activity. The employee gets a popup on their own screen while it is happening. Open a person for the full day, or give each one a remark or a name. Nothing typed is ever recorded.</div>
+      <div className="mon-bar">
+        <label>From <input type="date" value={from} max={to} onChange={(e) => setFrom(e.target.value || todayIst())} /></label>
+        <label>To <input type="date" value={to} max={todayIst()} min={from} onChange={(e) => setTo(e.target.value || todayIst())} /></label>
+        <Combo value={min} onChange={(e) => setMin(Number(e.target.value))} aria-label="Least minutes">
+          <option value={1}>1 min or more</option>
+          <option value={2}>2 min or more</option>
+          <option value={5}>5 min or more</option>
+          <option value={10}>10 min or more</option>
+        </Combo>
+        <Combo value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department">
+          <option value="">All departments</option>
+          {depts.map((d) => <option key={d} value={d}>{d}</option>)}
+        </Combo>
+        <Combo value={kind} onChange={(e) => setKind(e.target.value)} aria-label="Kind">
+          <option value="">All kinds</option>
+          {Object.entries(MISUSE_WORD).map(([k, w]) => <option key={k} value={k}>{w}</option>)}
+        </Combo>
+        <input type="search" placeholder="Search a name, key or remark" value={q} onChange={(e) => setQ(e.target.value)} />
+      </div>
+      {error && <div className="notice red">{error}</div>}
+      <table className="mon-table">
+        <thead><tr><th>Employee</th><th>What happened</th><th>When</th><th className="num">How long</th><th className="num">Times</th><th>Remark / name</th></tr></thead>
+        <tbody>
+          {rows.map((e) => (
+            <tr key={e.id}>
+              <td className="row-link" onClick={() => onOpen(e.employeeId)} title="Open this person's day"><b>{e.name}</b>{e.code && <div className="small-muted">{e.code}</div>}{e.department && <div className="small-muted">{e.department}</div>}</td>
+              <td><Pill tone={MISUSE_TONE[e.kind] || 'slate'}>{MISUSE_WORD[e.kind] || e.kind}</Pill><div className="small-muted">{e.label}</div></td>
+              <td style={{ whiteSpace: 'nowrap' }}>{range && <div className="small-muted">{e.day}</div>}{`${e.fromTime} – ${e.toTime}`}</td>
+              <td className="num"><b>{`${e.minutes} min`}</b></td>
+              <td className="num">{Number(e.presses || 0).toLocaleString('en-IN')}</td>
+              <td><NoteCell e={e} onSave={saveNote} /></td>
+            </tr>
+          ))}
+          {!rows.length && !loading && <tr><td colSpan={6} className="small-muted">{events.length ? 'None match these filters.' : 'No continuous single-button use in this period. PCs record this once they are on agent 3.0 or later.'}</td></tr>}
+        </tbody>
+      </table>
+      {events.length > 0 && <div className="small-muted" style={{ marginTop: 8 }}>{`${rows.length} of ${events.length} shown · ${data.people} ${data.people === 1 ? 'person' : 'people'}.`}</div>}
+    </>
+  );
+}
+
 // ------------------------------------------------------------------------------------------------ Keyboard (Keys . Clicks, its own tab)
+
 // How much each person used the keyboard and mouse - key presses and clicks in work hours - from the same per-person figures the Live
 // Dashboard had in its Keys . Clicks column (founder 2026-11-12: "keep this in a separate tab"). A click opens the person for each key.
 function Keyboard({ onOpen }) {

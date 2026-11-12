@@ -125,3 +125,13 @@ main:has(.mon){max-width:1680px}
 /* when a status is filtered on the Live Dashboard, its time column stands out (2026-11-12) */
 .mon .mon-table td.mon-hi,.mon .mon-table th.mon-hi{background:#fff7ed}
 .mon .mon-table td.mon-hi{font-weight:700;color:#b45309}
+
+/* misuse: the red alert banner above every tab, and the inline remark input (2026-11-12) */
+.mon .mon-misuse-banner{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px;padding:11px 14px;border:1px solid #f3c0c0;background:#fdf1f1;border-radius:9px;color:#8a2a2a;font-size:13.5px;line-height:1.45;cursor:pointer}
+.mon .mon-misuse-banner:hover{background:#fbe8e8}
+.mon .mon-misuse-banner .dot{flex:none;width:9px;height:9px;border-radius:50%;background:#d84a4a;margin-top:5px;box-shadow:0 0 0 3px #f6d3d3}
+.mon .mon-misuse-banner b{color:#8a2a2a}
+.mon .mon-note{display:flex;flex-direction:column;gap:2px;min-width:170px}
+.mon .mon-note input{width:100%;max-width:230px;padding:5px 8px;border:1px solid var(--line,#d9dee6);border-radius:6px;font-size:13px;background:#fff}
+.mon .mon-note input:focus{outline:none;border-color:#9bb3d6;box-shadow:0 0 0 2px #e7eefb}
+.mon .mon-note .ok{color:#15803d}

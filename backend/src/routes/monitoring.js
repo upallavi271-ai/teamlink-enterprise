@@ -240,6 +240,24 @@ router.get('/reports', teamOnly, wrap(async (req, res) => {
 
 router.get('/usage', teamOnly, wrap(async (req, res) => res.json(await M.usage(req.query.from, req.query.to, req.query.department || '', req.access))));
 
+// --- misuse: the same button over and over (founder 2026-11-12), a remark the admin / team lead can add
+router.get('/misuse', teamOnly, wrap(async (req, res) => {
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  const to = day.test(String(req.query.to || '')) ? String(req.query.to) : M.todayIst();
+  const from = day.test(String(req.query.from || '')) ? String(req.query.from) : to;
+  const min = Math.max(1, Math.min(60, parseInt(req.query.min, 10) || 2));
+  res.json(await M.misuseList(from, to, req.access, min));
+}));
+router.post('/misuse/note', teamOnly, wrap(async (req, res) => {
+  const b = req.body || {};
+  const employeeId = String(b.employeeId || '');
+  const fromAt = String(b.from || '');
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(b.day || '')) ? String(b.day) : null;
+  if (!employeeId || !fromAt || !day) return fail(res, 400, 'Which event is this remark for?');
+  if (req.access && req.access.ids && !req.access.ids.includes(employeeId)) return fail(res, 403, 'This person is not on your team.');
+  const out = await require('../utils/monitoringInput').setMisuseNote(employeeId, day, fromAt, String(b.note || ''), req.user && req.user.name); // eslint-disable-line global-require
+  res.json(out);
+}));
 router.get('/alerts', teamOnly, wrap(async (req, res) => {
   const day = /^\d{4}-\d{2}-\d{2}$/;
   const to = day.test(String(req.query.to || '')) ? String(req.query.to) : M.todayIst();

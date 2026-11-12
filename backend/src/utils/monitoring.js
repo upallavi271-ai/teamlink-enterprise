@@ -732,6 +732,19 @@ function deriveSite(app, shown) {
   const site = (segs[segs.length - 1] || '').slice(0, 60);
   return site || null;
 }
+// The misuse list for a viewer (founder 2026-11-12): every continuous single-button stretch the viewer may see, with the person's
+// name and a remark. HR / Admin see everyone; a team lead sees their team. The agent warns the employee on their own screen as it happens.
+async function misuseList(from, to, access = null, min = 2) {
+  const MI = require('./monitoringInput'); // eslint-disable-line global-require
+  const allowed = access && access.ids ? access.ids : null;
+  const events = await MI.misuse(allowed, from, to, { min }).catch(() => []);
+  if (!events.length) return { from, to, min, events: [], people: 0 };
+  const ids = [...new Set(events.map((e) => e.employeeId))];
+  const emps = await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, employeeCode: true, department: true } });
+  const by = new Map(emps.map((e) => [e.id, e]));
+  const withName = events.map((e) => { const emp = by.get(e.employeeId) || {}; return { ...e, name: emp.name || 'Employee', code: emp.employeeCode || '', department: emp.department || '' }; });
+  return { from, to, min, events: withName, people: ids.length };
+}
 async function employeeDetail(employeeId, from, to) {
   const t = todayIst();
   let a = validDay(from) ? from : t;
@@ -993,6 +1006,6 @@ function startSweep() {
 }
 
 module.exports = {
-  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice,
+  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };
