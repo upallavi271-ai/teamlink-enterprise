@@ -61,7 +61,7 @@ async function dueCalls(t, summary) {
 
 async function stuckCalls(s, t, summary) {
   const cutoff = new Date(t.getTime() - 30 * 60000).toISOString();
-  const rows = await DB.all('SELECT * FROM "AiCall" WHERE "status" = \'calling\' AND "startedAt" <= ? AND "candidateId" NOT LIKE \'omni:%\' LIMIT 50', cutoff);
+  const rows = await DB.all('SELECT * FROM "AiCall" WHERE "status" = \'calling\' AND "startedAt" <= ? AND "candidateId" NOT LIKE \'omni:%\' AND COALESCE("providerStatus", \'\') NOT LIKE \'kavya%\' LIMIT 50', cutoff); // Kavya rows (2026-11-12): her own dialer retries and reports; calling/kavya/engine.js closes them
   for (const r of rows) { // eslint-disable-line no-restricted-syntax
     const why = 'Exotel did not report the end of this call (no confirmation after 30 minutes).';
     const more = r.attempts < r.maxAttempts;
