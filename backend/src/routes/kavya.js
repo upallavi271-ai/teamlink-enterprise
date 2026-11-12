@@ -29,9 +29,13 @@ router.get('/status', guard(async (req, res) => res.json(await kavya.status(req.
 // The engine switch: 'kavya' = Kavya takes every Screening / Job Match call of AI Calling (default), 'old' = the old engine again. Admins only.
 router.post('/engine', guard(async (req, res) => {
   if (!['SUPER_ADMIN', 'ADMIN'].includes(String((req.user && req.user.role) || '').toUpperCase())) return res.status(403).json({ error: 'Only an Admin can switch the calling engine.' });
-  const value = await require('../calling/kavya/engine').setEngine(req.body && req.body.engine); // eslint-disable-line global-require
-  await require('../utils/audit').logAudit({ userId: req.user.id, action: 'Kavya engine switch', entity: 'KavyaSetting', entityId: 'engine', toValue: value }); // eslint-disable-line global-require
-  return res.json({ ok: true, engine: value });
+  const E = require('../calling/kavya/engine'); // eslint-disable-line global-require
+  const b = req.body || {};
+  const out = { ok: true };
+  if (b.engine !== undefined) out.engine = await E.setEngine(b.engine);
+  if (b.omni !== undefined) out.omni = await E.setOmni(b.omni); // Omni-Channel / Green Start script calls: 'kavya' | 'old'
+  await require('../utils/audit').logAudit({ userId: req.user.id, action: 'Kavya engine switch', entity: 'KavyaSetting', entityId: 'engine', toValue: JSON.stringify({ engine: out.engine, omni: out.omni }) }); // eslint-disable-line global-require
+  return res.json(out);
 }));
 router.post('/runs', guard(async (req, res) => send(res, await kavya.createRuns(req.user, req.body || {}))));
 router.get('/runs', guard(async (req, res) => send(res, await kavya.listRuns(req.user))));

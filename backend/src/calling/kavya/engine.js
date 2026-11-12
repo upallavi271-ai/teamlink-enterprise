@@ -173,6 +173,75 @@ async function applyOne(link, calls) {
   log(`call ${row.id} finished: ${real ? real.outcome : 'no answer'}`);
 }
 
+// ---- Omni-Channel / Green Start script calls (Kavya SCRIPT MODE) ---------------------------------------------------------------------------
+// Green Start asks TeamLink for ONE call by the script of its campaign (omniCalls.create -> sipCall.dialOmni). When the switch 'omniEngine' is 'kavya'
+// (default 'old': Admin turns it on in the Kavya tab) and Kavya is reachable, dialOmni hands the script to Kavya instead of ringing the old line; her
+// finished call is written on the same AiCall row (omniCalls.applyResult), so Green Start reads it exactly as before. Any problem: the old line rings.
+async function omniOn() {
+  const r = await DB.one('SELECT "value" FROM "KavyaSetting" WHERE "key" = ?', 'omniEngine');
+  return !!r && r.value === 'kavya';
+}
+async function setOmni(value) {
+  const v = value === 'kavya' ? 'kavya' : 'old';
+  await DB.run('INSERT OR REPLACE INTO "KavyaSetting" ("key","value","updatedAt") VALUES (?,?,?)', 'omniEngine', v, nowIso());
+  return v;
+}
+async function handOverOmni(row, input, e164) {
+  try {
+    if (!row || !(await omniOn()) || !client.configured() || !(await kavyaUp())) return false;
+    const sj = (input && input.scriptJson) || {};
+    const a = sj.agentScript || {};
+    if (!a.text) return false;
+    const scripts = {};
+    Object.entries(a.texts || {}).forEach(([k, v]) => { if (v) scripts[k] = v; });
+    const r = await client.request('POST', '/api/v1/script-calls', {
+      externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: a.text, scriptLanguage: a.language || 'English', scripts, agentName: clip(a.name || 'Kavya', 60),
+    }, 30000);
+    if (!r.ok || !r.data || !r.data.id) return false;
+    await svc.setRow(row.id, { providerStatus: 'kavya-script', callSid: `kavya-script:${r.data.id}`, initiatedVia: 'kavya' });
+    log(`omni call ${row.id} handed to Kavya (script call ${r.data.id})`);
+    return true;
+  } catch (err) {
+    console.error('[kavya-engine] omni hand-over failed, the old line rings:', err.message); // eslint-disable-line no-console
+    return false;
+  }
+}
+// Kavya's finished script call -> the row. Called when Green Start asks for the call, and every 45 s for the ones still open.
+async function syncScriptCall(row) {
+  const sid = String(row.callSid || '');
+  if (!sid.startsWith('kavya-script:') || row.status !== 'calling') return false;
+  const kid = Number(sid.split(':')[1]);
+  const ageH = (Date.now() - new Date(row.startedAt || row.createdAt).getTime()) / 3600000;
+  const r = await client.request('GET', `/api/v1/script-calls/${kid}`);
+  const stamp = nowIso();
+  if (!r.ok) {
+    if (ageH > 3) await svc.setRow(row.id, { status: 'failed', failReason: 'Kavya did not report this call.', endedAt: stamp, providerStatus: 'kavya-lost' });
+    return false;
+  }
+  const c = r.data;
+  if (!c.ended) { if (ageH > 3) await svc.setRow(row.id, { status: 'failed', failReason: 'Kavya did not finish this call in 3 hours.', endedAt: stamp, providerStatus: 'kavya-lost' }); return false; }
+  const omni = require('../omniCalls'); // eslint-disable-line global-require
+  if (c.status === 'no-answer' || c.status === 'failed') {
+    await svc.setRow(row.id, { status: c.status === 'failed' ? 'failed' : 'no-answer', failReason: clip(c.failReason || 'The person did not answer.', 250), endedAt: stamp, providerStatus: 'kavya-' + c.status });
+    return true;
+  }
+  const o = String(c.outcome || '');
+  const outcome = o === 'interested' ? 'Interested' : (o === 'not_interested' ? 'Not Interested' : (o === 'callback' ? 'Call Back Later' : 'Unclear'));
+  const turns = (c.turns || []).map((t) => ({ who: t.who === 'ai' ? 'assistant' : 'candidate', text: t.text }));
+  await svc.setRow(row.id, { status: 'completed', endedAt: stamp, durationSec: c.durationSec != null ? Number(c.durationSec) : null, providerStatus: 'kavya-completed', language: ({ te: 'Telugu', hi: 'Hindi', en: 'English' })[c.language] || row.language });
+  await omni.applyResult(row.id, {
+    outcome, summary: c.summary || '', interest: o === 'interested' ? 'yes' : (o === 'not_interested' ? 'no' : null), humanFollowUpRequested: !!c.humanFollowUp,
+    doNotCallRequested: !!c.optOut || o === 'do_not_call', callbackRequested: !!c.callBack || o === 'callback',
+  }, turns, { dropped: !!c.dropped });
+  if (c.messageSaid) await svc.setRow(row.id, { botStateJson: JSON.stringify({ messageOnly: true, done: true }) });
+  log(`omni call ${row.id} finished: ${o || c.status}`);
+  return true;
+}
+async function syncOmniOpen() {
+  const rows = await require('../schema').all("SELECT * FROM \"AiCall\" WHERE \"status\" = 'calling' AND \"callSid\" LIKE 'kavya-script:%' LIMIT 100");
+  for (const r of rows) { try { await syncScriptCall(r); } catch (err) { console.error('[kavya-engine] omni sync:', err.message); } } // eslint-disable-line no-await-in-loop, no-console
+}
+
 let busy = false;
 async function syncAll() {
   if (busy || !client.configured()) return 0;
@@ -195,6 +264,7 @@ async function syncAll() {
         try { await applyOne(l, calls); done += 1; } catch (err) { console.error('[kavya-engine] result not applied:', err.message); } // eslint-disable-line no-console
       }
     }
+    await syncOmniOpen();
   } catch (err) {
     console.error('[kavya-engine] sync:', err.message); // eslint-disable-line no-console
   } finally { busy = false; }
@@ -208,4 +278,4 @@ function start() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { PURPOSES, getEngine, setEngine, wants, handOver, syncAll, start, resultFor };
+module.exports = { PURPOSES, getEngine, setEngine, wants, handOver, syncAll, start, resultFor, omniOn, setOmni, handOverOmni, syncScriptCall, syncOmniOpen };

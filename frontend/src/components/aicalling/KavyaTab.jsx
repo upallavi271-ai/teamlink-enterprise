@@ -30,6 +30,17 @@ export default function KavyaTab({ source = 'ats' }) {
       {status && status.mode === 'Off' && <div className="notice amber">AI calling is switched off, so nobody is handed to Kavya. An Admin turns it on in Administration &gt; Integrations &gt; AI Calling.</div>}
       {status && status.testMode && <div className="notice amber">Test mode: only the Admin&apos;s test phone numbers are called.</div>}
       {status && !status.canCall && <div className="notice">Your role can look at Kavya&apos;s runs but not hand candidates to her.</div>}
+      {status && status.configured && status.isAdmin && (
+        <div className={`notice ${status.omni === 'kavya' ? 'green' : ''}`}>
+          {status.omni === 'kavya'
+            ? <>Omni-Channel / Green Start Voice Calling campaigns are phoned by <b>Kavya</b>: she says the campaign&apos;s own script in her voice.</>
+            : <>Omni-Channel / Green Start Voice Calling campaigns are phoned by the earlier AI line. Turn Kavya on for them once you have tried a test script.</>}
+          <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={async () => {
+            if (!window.confirm(status.omni === 'kavya' ? 'Give Green Start campaign calls back to the earlier AI line?' : 'Let Kavya phone the Green Start / Omni-Channel campaign calls? (Her calling hours do not apply: the campaign decides when.)')) return;
+            try { const r = await api.post('/kavya/engine', { omni: status.omni === 'kavya' ? 'old' : 'kavya' }); setStatus({ ...status, omni: r.data.omni }); } catch (e) { setErr(errorOf(e, 'Could not switch.')); }
+          }}>{status.omni === 'kavya' ? 'Back to the earlier AI line' : 'Let Kavya call'}</button>
+        </div>
+      )}
       {status && status.configured && (
         <div className={`notice ${status.engine === 'kavya' ? 'green' : 'amber'}`}>
           {status.engine === 'kavya'

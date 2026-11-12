@@ -200,9 +200,12 @@ async function create(input, deps = {}) {
 
 /** The call as Green Start needs it. */
 async function status(id) {
-  const row = await DB.one('SELECT * FROM "AiCall" WHERE "id" = ? AND "candidateId" LIKE \'omni:%\'', String(id));
+  let row = await DB.one('SELECT * FROM "AiCall" WHERE "id" = ? AND "candidateId" LIKE \'omni:%\'', String(id));
   if (!row) return null;
-  const ended = ['completed', 'failed', 'busy', 'no-answer', 'cancelled'].includes(row.status);
+  if (String(row.callSid || '').startsWith('kavya-script:') && row.status === 'calling') { // KAVYA script call (2026-11-12): copy her result first
+    try { await require('./kavya/engine').syncScriptCall(row); row = (await DB.one('SELECT * FROM "AiCall" WHERE "id" = ?', String(id))) || row; } catch { /* the next read tries again */ } // eslint-disable-line global-require
+  }
+  const ended =['completed', 'failed', 'busy', 'no-answer', 'cancelled'].includes(row.status);
   return {
     id: row.id, status: row.status, ended, outcome: row.outcome || null, summary: row.summary || null, interest: row.interest || null, language: row.language || null,
     durationSec: Number(row.durationSec) || null, failReason: row.failReason || null, humanFollowUp: !!row.humanFollowUp, turns: ended ? turnsOf(row) : [],

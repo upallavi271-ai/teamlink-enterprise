@@ -322,6 +322,8 @@ async function dialOmni(input, deps = {}) {
     id, c.mode.toLowerCase(), 'Screening', `omni:${input.externalId}`, `omni:${input.externalId}`, lang, JSON.stringify(input.scriptJson), 'Omni-Channel', gateway.VIA, core.maskMobile(m.e164), uuid, stamp, stamp, stamp, stamp,
   );
   await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', svc.newId('aie'), id, `attempt:${id}:1`, 'attempt', 'attempt', stamp);
+  // KAVYA (2026-11-12): the Omni-Channel / Green Start script call. When the Admin turned Kavya on for these (Kavya tab), she says the script; otherwise (or on any problem) the old line rings.
+  try { if (await require('../kavya/engine').handOverOmni(await svc.getCall(id), input, m.e164)) return { ok: true, id }; } catch { /* the old line rings */ } // eslint-disable-line global-require
   if (deps.prepare !== false) {
     try {
       const d = await require('../webTalk').dialogueFor(await svc.getCall(id)); // eslint-disable-line global-require
