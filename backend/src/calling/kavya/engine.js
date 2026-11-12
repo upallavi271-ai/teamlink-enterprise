@@ -74,6 +74,7 @@ async function openRun(requirementId) {
 async function handOver(row, ctx, verdict, opts = {}) {
   try {
     if (!row) return false;
+    if (NOTICE_PURPOSES.includes(row.purpose)) return await handOverNotice(row, ctx, verdict, opts);
     if (!(await wants(row.purpose))) return false;
     const ph = P.phoneKey(verdict && verdict.e164);
     if (!ph || !ctx || !ctx.candidate || !ctx.requirement) return false;
@@ -173,6 +174,95 @@ async function applyOne(link, calls) {
   log(`call ${row.id} finished: ${real ? real.outcome : 'no answer'}`);
 }
 
+// ---- the notice calls: Interview Notification / Interview Reminder / Shortlist Notification / AI Interview Pending (Kavya SCRIPT MODE) -----------------------------
+// TeamLink already writes these calls' sentences in all three languages (scripts.preview). They are turned into a flat script (Opening / Say / Interest + IfYes / IfNo)
+// and Kavya says it in her voice; her answer (yes / no / call me later) becomes Confirmed / Not Available / Reschedule Requested (interviews) or
+// Interested / Not Interested / Call Back Later (shortlist, AI interview). Own switch 'noticeEngine': default 'old' until the Admin has tried it (Kavya tab).
+const NOTICE_PURPOSES = ['Shortlist Notification', 'Interview Notification', 'Interview Reminder', 'AI Interview Pending'];
+async function noticeOn() {
+  const r = await DB.one('SELECT "value" FROM "KavyaSetting" WHERE "key" = ?', 'noticeEngine');
+  return !!r && r.value === 'kavya';
+}
+async function setNotice(value) {
+  const v = value === 'kavya' ? 'kavya' : 'old';
+  await DB.run('INSERT OR REPLACE INTO "KavyaSetting" ("key","value","updatedAt") VALUES (?,?,?)', 'noticeEngine', v, nowIso());
+  return v;
+}
+const OPENING = {
+  English: (n) => `Hello ${n}, this is Kavya from TeamLink Consultants.`,
+  Telugu: (n) => `నమస్కారం ${n} గారు, నేను కావ్యని, టీమ్‌లింక్ కన్సల్టెంట్స్ నుంచి మాట్లాడుతున్నాను.`,
+  Hindi: (n) => `नमस्ते ${n} जी, मैं काव्या, टीमलिंक कंसल्टेंट्स से बोल रही हूँ।`,
+};
+// the flat script of one purpose in one language, from TeamLink's own sentences; null when the call has nothing to ask (no interview booked ...)
+async function noticeScript(ctx, row, s, language) {
+  const fields = (svc.safeJson(row.scriptJson) || {}).fields || {};
+  const sc = await svc.scriptFor(ctx, row.purpose, language, fields, { ...s, recording: false, keepTranscripts: false });
+  if (sc.error) return null;
+  const by = Object.fromEntries(sc.lines.map((l) => [l.key, l.text]));
+  const P = S.phrases(language);
+  const first = String((ctx.candidate && ctx.candidate.name) || '').trim().split(/\s+/)[0] || '';
+  const out = [`Opening: ${(OPENING[language] || OPENING.English)(first)}`];
+  const say = (k) => { if (by[k]) out.push(`Say: ${by[k]}`); };
+  if (row.purpose.startsWith('Interview')) {
+    if (!by.avail || !by.iv) return null;
+    ['iv', 'mode', 'instructions', 'note'].forEach(say);
+    out.push(`Interest: ${by.avail}`, `IfYes: ${by.close || P.ivConfirmed}`, `IfNo: ${P.ivNotAvail}`);
+  } else if (row.purpose === 'Shortlist Notification') {
+    ['news', 'iv', 'note'].forEach(say);
+    if (!by.proceed) return null;
+    out.push(`Interest: ${by.proceed}`, `IfYes: ${by.close || P.shortYes}`, `IfNo: ${P.closeNotInterested}`);
+  } else {
+    ['news', 'due', 'how', 'note'].forEach(say);
+    if (!by.proceed) return null;
+    out.push(`Interest: ${by.proceed}`, `IfYes: ${by.close || P.aiYes}`, `IfNo: ${P.closeNotInterested}`);
+  }
+  return out.join('\n');
+}
+async function handOverNotice(row, ctx, verdict, opts = {}) {
+  if (!(await noticeOn()) || !client.configured() || !(await kavyaUp())) return false;
+  const ph = P.phoneKey(verdict && verdict.e164);
+  if (!ph || !ctx || !ctx.candidate) return false;
+  const s = await require('../settings').load({ fresh: true }); // eslint-disable-line global-require
+  const start = S.LANGS.includes(row.language) ? row.language : 'English';
+  const main = await noticeScript(ctx, row, s, start);
+  if (!main) return false;
+  const scripts = {};
+  for (const L of S.LANGS) { // eslint-disable-line no-restricted-syntax
+    if (L === start) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    const t = await noticeScript(ctx, row, s, L);
+    if (t) scripts[L] = t;
+  }
+  const r = await client.request('POST', '/api/v1/script-calls', {
+    externalId: row.id, toNumber: ph, name: clip(ctx.candidate.name, 80), script: main, scriptLanguage: start, scripts, agentName: 'Kavya',
+  }, 30000);
+  if (!r.ok || !r.data || !r.data.id) return false;
+  const n = opts.counted ? (Number(row.attempts) || 1) : (Number(row.attempts) || 0) + 1;
+  const stamp = nowIso();
+  if (!opts.counted) await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', svc.newId('aie'), row.id, `attempt:${row.id}:${n}`, 'attempt', 'attempt', stamp);
+  await svc.setRow(row.id, { attempts: n, lastAttemptAt: stamp, status: 'calling', nextAttemptAt: null, waitReason: null, failReason: null, startedAt: stamp, endedAt: null, providerStatus: 'kavya-script', callSid: `kavya-script:${r.data.id}`, initiatedVia: row.initiatedVia === 'sip' ? 'recruiter' : row.initiatedVia });
+  log(`${row.purpose} call ${row.id} handed to Kavya (script call ${r.data.id})`);
+  return true;
+}
+// her finished notice call -> the AiCall row through the normal outcome path (timeline, follow-ups, notices to the team)
+function noticeResultFor(row, c) {
+  const o = String(c.outcome || '');
+  const person = (c.turns || []).filter((t) => t.who === 'person').map((t) => t.text);
+  const heard = person.length > 0;
+  const interview = row.purpose.startsWith('Interview');
+  const lang = ({ te: 'Telugu', hi: 'Hindi', en: 'English' })[c.language] || (S.LANGS.includes(row.language) ? row.language : 'English');
+  let outcome; let attendance = null; let interest = null; let callbackRequested = false;
+  if (interview) {
+    if (o === 'interested') { outcome = 'Confirmed'; attendance = 'confirmed'; } else if (o === 'not_interested' || o === 'do_not_call') { outcome = 'Not Available'; attendance = 'not_available'; } else if (o === 'callback') { outcome = 'Reschedule Requested'; attendance = 'reschedule'; } else outcome = 'No Response';
+  } else if (o === 'interested') { outcome = 'Interested'; interest = 'yes'; } else if (o === 'not_interested') { outcome = 'Not Interested'; interest = 'no'; } else if (o === 'callback') { outcome = 'Call Back Later'; callbackRequested = true; } else outcome = 'Unclear';
+  return {
+    purpose: row.purpose, language: lang, outcome, interest, attendance, identityConfirmed: heard, wrongPerson: false, shortlistTold: heard && row.purpose === 'Shortlist Notification',
+    callbackRequested, preferredTime: attendance === 'reschedule' ? clip(person[person.length - 1] || '', 120) || undefined : undefined,
+    doNotCallRequested: !!c.optOut || o === 'do_not_call', humanFollowUpRequested: !!c.humanFollowUp,
+    summary: clip(`Kavya (${lang}): ${o.replace(/_/g, ' ') || 'finished'}.${person.length ? ` Said: ${person.join(' | ')}` : ''}`, 600), turns: (c.turns || []).length,
+  };
+}
+
 // ---- Omni-Channel / Green Start script calls (Kavya SCRIPT MODE) ---------------------------------------------------------------------------
 // Green Start asks TeamLink for ONE call by the script of its campaign (omniCalls.create -> sipCall.dialOmni). When the switch 'omniEngine' is 'kavya'
 // (default 'old': Admin turns it on in the Kavya tab) and Kavya is reachable, dialOmni hands the script to Kavya instead of ringing the old line; her
@@ -221,8 +311,16 @@ async function syncScriptCall(row) {
   const c = r.data;
   if (!c.ended) { if (ageH > 3) await svc.setRow(row.id, { status: 'failed', failReason: 'Kavya did not finish this call in 3 hours.', endedAt: stamp, providerStatus: 'kavya-lost' }); return false; }
   const omni = require('../omniCalls'); // eslint-disable-line global-require
+  const isOmni = String(row.candidateId || '').startsWith('omni:');
   if (c.status === 'no-answer' || c.status === 'failed') {
     await svc.setRow(row.id, { status: c.status === 'failed' ? 'failed' : 'no-answer', failReason: clip(c.failReason || 'The person did not answer.', 250), endedAt: stamp, providerStatus: 'kavya-' + c.status });
+    if (!isOmni) { try { await require('../outcomes').attemptFailed(await svc.getCall(row.id), clip(c.failReason || 'The person did not answer.', 200), true); } catch { /* the record is best effort */ } } // eslint-disable-line global-require
+    return true;
+  }
+  if (!isOmni) { // an ATS notice / reminder call: the normal outcome path writes the timeline, the follow-up and the notices
+    await svc.setRow(row.id, { status: 'completed', endedAt: stamp, durationSec: c.durationSec != null ? Number(c.durationSec) : null, providerStatus: 'kavya-completed', outcomePending: 1, language: ({ te: 'Telugu', hi: 'Hindi', en: 'English' })[c.language] || row.language });
+    await require('../outcomes').applyResult(row.id, noticeResultFor(row, c), (c.turns || []).map((t) => ({ who: t.who === 'ai' ? 'assistant' : 'candidate', text: t.text }))); // eslint-disable-line global-require
+    log(`notice call ${row.id} finished: ${c.outcome || c.status}`);
     return true;
   }
   const o = String(c.outcome || '');
@@ -278,4 +376,4 @@ function start() {
   if (timer.unref) timer.unref();
 }
 
-module.exports = { PURPOSES, getEngine, setEngine, wants, handOver, syncAll, start, resultFor, omniOn, setOmni, handOverOmni, syncScriptCall, syncOmniOpen };
+module.exports = { PURPOSES, getEngine, setEngine, wants, handOver, syncAll, start, resultFor, omniOn, setOmni, handOverOmni, syncScriptCall, syncOmniOpen, noticeOn, setNotice, noticeScript, noticeResultFor, NOTICE_PURPOSES };

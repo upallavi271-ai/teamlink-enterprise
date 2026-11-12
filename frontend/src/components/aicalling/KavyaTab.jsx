@@ -31,6 +31,17 @@ export default function KavyaTab({ source = 'ats' }) {
       {status && status.testMode && <div className="notice amber">Test mode: only the Admin&apos;s test phone numbers are called.</div>}
       {status && !status.canCall && <div className="notice">Your role can look at Kavya&apos;s runs but not hand candidates to her.</div>}
       {status && status.configured && status.isAdmin && (
+        <div className={`notice ${status.notice === 'kavya' ? 'green' : ''}`}>
+          {status.notice === 'kavya'
+            ? <>Interview notices and reminders, shortlist notices and &quot;AI interview pending&quot; calls are phoned by <b>Kavya</b> too: yes = confirmed / interested, no = cannot come / not interested, &quot;later&quot; = reschedule / call back.</>
+            : <>Interview notices and reminders, shortlist notices and &quot;AI interview pending&quot; calls still use the earlier AI engine. Turn Kavya on for them after a test call.</>}
+          <button type="button" className="btn btn-sm" style={{ marginLeft: 8 }} onClick={async () => {
+            if (!window.confirm(status.notice === 'kavya' ? 'Give the notice and reminder calls back to the earlier AI engine?' : 'Let Kavya phone the interview notices / reminders, shortlist notices and AI-interview-pending calls?')) return;
+            try { const r = await api.post('/kavya/engine', { notice: status.notice === 'kavya' ? 'old' : 'kavya' }); setStatus({ ...status, notice: r.data.notice }); } catch (e) { setErr(errorOf(e, 'Could not switch.')); }
+          }}>{status.notice === 'kavya' ? 'Back to the earlier AI engine' : 'Let Kavya call'}</button>
+        </div>
+      )}
+      {status && status.configured && status.isAdmin && (
         <div className={`notice ${status.omni === 'kavya' ? 'green' : ''}`}>
           {status.omni === 'kavya'
             ? <>Omni-Channel / Green Start Voice Calling campaigns are phoned by <b>Kavya</b>: she says the campaign&apos;s own script in her voice.</>

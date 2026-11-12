@@ -88,6 +88,7 @@ async function status(user) {
     problem: h.ok ? null : h.error,
     engine: await require('./engine').getEngine(), // eslint-disable-line global-require
     omni: (await require('./engine').omniOn()) ? 'kavya' : 'old', // eslint-disable-line global-require
+    notice: (await require('./engine').noticeOn()) ? 'kavya' : 'old', // eslint-disable-line global-require
     enginePurposes: require('./engine').PURPOSES, // eslint-disable-line global-require
     mode: s.mode, // the same Off / Test / Live switch as AI Calling
     testMode: s.mode === 'Test',

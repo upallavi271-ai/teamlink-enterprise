@@ -34,7 +34,8 @@ router.post('/engine', guard(async (req, res) => {
   const out = { ok: true };
   if (b.engine !== undefined) out.engine = await E.setEngine(b.engine);
   if (b.omni !== undefined) out.omni = await E.setOmni(b.omni); // Omni-Channel / Green Start script calls: 'kavya' | 'old'
-  await require('../utils/audit').logAudit({ userId: req.user.id, action: 'Kavya engine switch', entity: 'KavyaSetting', entityId: 'engine', toValue: JSON.stringify({ engine: out.engine, omni: out.omni }) }); // eslint-disable-line global-require
+  if (b.notice !== undefined) out.notice = await E.setNotice(b.notice); // interview notices / reminders, shortlist notices, AI interview pending: 'kavya' | 'old'
+  await require('../utils/audit').logAudit({ userId: req.user.id, action: 'Kavya engine switch', entity: 'KavyaSetting', entityId: 'engine', toValue: JSON.stringify({ engine: out.engine, omni: out.omni, notice: out.notice }) }); // eslint-disable-line global-require
   return res.json(out);
 }));
 router.post('/runs', guard(async (req, res) => send(res, await kavya.createRuns(req.user, req.body || {}))));
