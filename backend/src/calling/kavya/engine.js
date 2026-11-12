@@ -71,8 +71,9 @@ async function openRun(requirementId) {
 }
 
 // called by dispatch() and dialQueued() after every rule has passed. true = Kavya has the candidate; false = the old engine places the call.
-async function handOver(row, ctx, verdict) {
+async function handOver(row, ctx, verdict, opts = {}) {
   try {
+    if (!row) return false;
     if (!(await wants(row.purpose))) return false;
     const ph = P.phoneKey(verdict && verdict.e164);
     if (!ph || !ctx || !ctx.candidate || !ctx.requirement) return false;
@@ -109,10 +110,11 @@ async function handOver(row, ctx, verdict) {
       return true;
     });
     if (!ok) return false;
-    const n = (Number(row.attempts) || 0) + 1;
+    const n = opts.counted ? (Number(row.attempts) || 1) : (Number(row.attempts) || 0) + 1; // opts.counted: place() already made the row and counted the attempt
     const stamp = nowIso();
-    await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', svc.newId('aie'), row.id, `attempt:${row.id}:${n}`, 'attempt', 'attempt', stamp);
-    await svc.setRow(row.id, { attempts: n, lastAttemptAt: stamp, status: 'calling', nextAttemptAt: null, waitReason: null, failReason: null, startedAt: stamp, endedAt: null, providerStatus: 'kavya', callSid: `kavya:${row.id}` });
+    if (!opts.counted) await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', svc.newId('aie'), row.id, `attempt:${row.id}:${n}`, 'attempt', 'attempt', stamp);
+    // initiatedVia 'sip' rows are swept as "not answered" after 90 s by the old phone line: a Kavya call must not carry it
+    await svc.setRow(row.id, { attempts: n, lastAttemptAt: stamp, status: 'calling', nextAttemptAt: null, waitReason: null, failReason: null, startedAt: stamp, endedAt: null, providerStatus: 'kavya', callSid: `kavya:${row.id}`, initiatedVia: row.initiatedVia === 'sip' ? 'recruiter' : row.initiatedVia });
     log(`${row.purpose} call ${row.id} handed to Kavya`);
     return true;
   } catch (err) {

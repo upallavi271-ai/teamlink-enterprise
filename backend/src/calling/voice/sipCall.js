@@ -164,6 +164,10 @@ async function place(user, input, deps = {}) {
   // counts towards the daily limits like every AI call
   await DB.run('INSERT OR IGNORE INTO "AiCallEvent" ("id","callId","eventKey","kind","status","applied","receivedAt") VALUES (?,?,?,?,?,1,?)', svc.newId('aie'), id, `attempt:${id}:1`, 'attempt', 'attempt', stamp);
 
+  // KAVYA (2026-11-12): the ATS phone button. Every rule has passed and the row is made; when Kavya is the engine for this purpose she takes the candidate.
+  try {
+    if (await require('../kavya/engine').handOver(await svc.getCall(id), ctx, verdict, { counted: true })) return { ok: true, callId: id, status: 'calling', language: lang }; // eslint-disable-line global-require
+  } catch { /* the old line places the call */ }
   // the first sentences are made before dialling, so the candidate hears the assistant the moment they answer
   if (deps.prepare !== false) {
     try {
