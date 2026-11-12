@@ -775,8 +775,10 @@ async function employeeDetail(employeeId, from, to) {
   const repeats = ((await require('./monitoringInput').stretches([emp.id], a, b).catch(() => new Map())).get(emp.id)) || []; // eslint-disable-line global-require
   // how many times each key / button (agent 2.6): letter keys and number keys as one count each
   const keyCounts = ((await require('./monitoringInput').countsOf([emp.id], a, b).catch(() => new Map())).get(emp.id)) || null; // eslint-disable-line global-require
+  // active typing / mouse time and typing intensity (agent 2.8)
+  const activity = ((await require('./monitoringInput').activityOf([emp.id], a, b).catch(() => new Map())).get(emp.id)) || null; // eslint-disable-line global-require
   return {
-    employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay, repeats, keyCounts,
+    employee: emp, from: a, to: b, totals, apps, top10: apps.slice(0, 10), perDay, repeats, keyCounts, activity,
     // the timeline of one day: one bar, active / idle / break
     timeline: a === b ? (() => {
       let left = PERSONAL_BREAK_SECONDS * 1000; // the personal break: the first 15 minutes of idle (drawn as break, like the totals)

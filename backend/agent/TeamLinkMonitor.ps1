@@ -11,6 +11,8 @@
       arrow, left click ... one by one, but ALL letter keys as one count and all number keys as one count - so what was typed
       can never be rebuilt - and in which app / website and in which hour each of those counts happened. Letters are NEVER
       split one from another. Sent every two minutes.
+    * (2.8) a summary of that same activity: how many minutes the keyboard / the mouse were actually in use, and whether the
+      typing in each minute was light, moderate or heavy - by app and hour. Counts and minutes only, never a character.
   and only during work hours (HR sets them; the server throws away anything outside).
   It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
 
@@ -29,7 +31,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.7'
+$AgentVersion = '2.8'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -585,6 +587,29 @@ function Check-Input {
   if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { return }
   $keys = $p[0]; $top = [int]$p[1]; $topN = $p[2]; $clicks = $p[3]; $l = $p[4]; $r = $p[5]; $m = $p[6]; $wheel = $p[7]; $moves = $p[8]; $sx = $p[9]; $sy = $p[10]; $inj = $p[11]
   $all = $keys + $clicks + $wheel + $moves
+  # typing intensity + active keyboard / mouse minutes this minute (agent 2.8), by app and hour - counts only, never a character
+  if ($all -gt 0) {
+    $af = Get-Front
+    $aapp = [string]$af.app
+    if ($aapp -notin @('LockApp', 'LogonUI', 'Locked')) {
+      $asite = Site-Of $aapp $af.title
+      $ahour = [int]((Get-Date).ToUniversalTime().AddMinutes(330).ToString('HH'))
+      $aday = Today-Ist
+      if (-not $script:dayActivity.ContainsKey($aday)) { $script:dayActivity[$aday] = @{} }
+      $ad = $script:dayActivity[$aday]
+      $ak = "$aapp`t$asite`t$ahour"
+      if (-not $ad.ContainsKey($ak) -and $ad.Count -lt 600) { $ad[$ak] = @{ kbMin = 0; mouseMin = 0; light = 0; mod = 0; heavy = 0; keys = 0; clicks = 0 } }
+      if ($ad.ContainsKey($ak)) {
+        $a = $ad[$ak]
+        if ($keys -gt 0) {
+          $a.kbMin += 1; $a.keys += [int]$keys
+          if ($keys -ge 71) { $a.heavy += 1 } elseif ($keys -ge 26) { $a.mod += 1 } else { $a.light += 1 }
+        }
+        if (($clicks + $wheel + $moves) -gt 0) { $a.mouseMin += 1 }
+        $a.clicks += [int]($clicks + $wheel)
+      }
+    }
+  }
   $kind = $null; $name = ''; $count = 0
   if ($inj -ge 30 -and $inj -ge 0.8 * $all) { $kind = 'software'; $name = 'Input sent by a program'; $count = $inj }
   elseif ($keys -ge 30 -and $topN -ge 0.85 * $keys) { $kind = 'key'; $name = Key-Name $top; $count = $topN }
@@ -611,6 +636,7 @@ function Key-Group([int]$vk) {
 }
 $script:dayCounts = @{}   # 'yyyy-mm-dd' -> @{ 'Space' = 12; ... }  (the day's flat totals)
 $script:dayBuckets = @{}  # 'yyyy-mm-dd' -> @{ "<app>`t<site>`t<hour>" = @{ 'Space' = 4; ... } }  (the same counts, by app/site and hour)
+$script:dayActivity = @{} # 'yyyy-mm-dd' -> @{ "<app>`t<site>`t<hour>" = @{ kbMin; mouseMin; light; mod; heavy; keys; clicks } }  (agent 2.8: active minutes + intensity)
 $BrowserApps = @('chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi', 'iexplore', 'safari')
 # the website out of a browser's window title (the same idea as the page's siteOf); '' for a non-browser
 function Site-Of($app, $title) {
@@ -657,6 +683,19 @@ function Take-Counts {
     if ($n -gt 0) { $c[$m[0]] = [int]$c[$m[0]] + $n; if ($b) { $b[$m[0]] = [int]$b[$m[0]] + $n } }
   }
 }
+# active keyboard / mouse minutes and typing intensity, by app and hour (agent 2.8)
+function Send-Activity {
+  if ($script:inputOff -or $script:dayActivity.Count -eq 0) { return }
+  foreach ($day in @($script:dayActivity.Keys)) {
+    $ad = $script:dayActivity[$day]
+    if ($ad.Count -eq 0) { $script:dayActivity.Remove($day); continue }
+    $rows = @()
+    foreach ($ak in $ad.Keys) { $kp = $ak -split "`t"; $a = $ad[$ak]; $rows += @{ app = $kp[0]; site = $kp[1]; hour = [int]$kp[2]; kbMin = $a.kbMin; mouseMin = $a.mouseMin; light = $a.light; mod = $a.mod; heavy = $a.heavy; keys = $a.keys; clicks = $a.clicks } }
+    $r = Call-Api 'POST' '/input-activity' @{ day = $day; rows = $rows } $script:cfg.token
+    if ($r.status -eq 200) { $script:dayActivity.Remove($day) }
+    elseif ($r.status -eq 404) { $script:dayActivity.Clear(); return }   # an older TeamLink: it does not take these
+  }
+}
 # the same counts, by app/website and hour, sent so a click on a key shows where and when (agent 2.7)
 function Send-Buckets {
   if ($script:inputOff -or $script:dayBuckets.Count -eq 0) { return }
@@ -689,7 +728,7 @@ function Send-Input {
 }
 function Flush {
   try { Send-Input } catch {}
-  try { Take-Counts; Send-Counts; Send-Buckets } catch {}
+  try { Take-Counts; Send-Counts; Send-Buckets; Send-Activity } catch {}
   Close-Segment   # send what is done so far
   Sample          # and go straight on: a heartbeat right after this must still say what is in front
   if ($script:queue.Count -eq 0) { return }

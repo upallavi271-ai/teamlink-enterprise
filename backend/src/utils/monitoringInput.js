@@ -253,6 +253,84 @@ async function keyDetail(employeeId, fromDay, toDay, keyName) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// ACTIVE TYPING TIME + TYPING INTENSITY (agent 2.8, founder 2026-11-12, the privacy-safe spec): per app and hour, how many minutes
+// the keyboard / mouse were actually in use, and whether each typing minute was light / moderate / heavy, plus the key and click
+// totals to work out the typing speed. Minutes and counts only - never a character. Table MonitoringActivityBucket, added to.
+let readyActivity = null;
+function ensureActivity() {
+  if (!readyActivity) {
+    readyActivity = (async () => {
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "MonitoringActivityBucket" (
+        "employeeId" TEXT NOT NULL, "day" TEXT NOT NULL, "app" TEXT NOT NULL, "site" TEXT NOT NULL DEFAULT '', "hour" INTEGER NOT NULL,
+        "kbMin" INTEGER NOT NULL DEFAULT 0, "mouseMin" INTEGER NOT NULL DEFAULT 0, "light" INTEGER NOT NULL DEFAULT 0,
+        "mod" INTEGER NOT NULL DEFAULT 0, "heavy" INTEGER NOT NULL DEFAULT 0, "keys" INTEGER NOT NULL DEFAULT 0, "clicks" INTEGER NOT NULL DEFAULT 0,
+        "updatedAt" TEXT NOT NULL, PRIMARY KEY ("employeeId", "day", "app", "site", "hour")
+      )`);
+      await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "MonitoringActivityBucket_day" ON "MonitoringActivityBucket" ("employeeId", "day")');
+      return true;
+    })().catch((e) => { readyActivity = null; throw e; });
+  }
+  return readyActivity;
+}
+const NUMS = ['kbMin', 'mouseMin', 'light', 'mod', 'heavy', 'keys', 'clicks'];
+async function addActivity(device, day, rows) {
+  await ensureActivity();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return { status: 400, error: 'Which day?' };
+  const today = istDay(Date.now());
+  if (day > today || day < istDay(Date.now() - 14 * 86400000)) return { saved: 0 };
+  const now = new Date().toISOString();
+  let saved = 0;
+  for (const r of (Array.isArray(rows) ? rows : []).slice(0, 700)) {
+    const app = clip(r && r.app, 60); const site = clip(r && r.site, 60); const hour = Math.round(Number(r && r.hour));
+    if (!APP_NAME.test(app) || !(hour >= 0 && hour <= 23)) continue; // eslint-disable-line no-continue
+    const v = {}; NUMS.forEach((k) => { v[k] = Math.max(0, Math.min(100000, Math.round(Number(r[k]) || 0))); });
+    // eslint-disable-next-line no-await-in-loop
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "MonitoringActivityBucket" ("employeeId","day","app","site","hour",${NUMS.map((k) => `"${k}"`).join(',')},"updatedAt")
+       VALUES (?,?,?,?,?,${NUMS.map(() => '?').join(',')},?)
+       ON CONFLICT("employeeId","day","app","site","hour") DO UPDATE SET ${NUMS.map((k) => `"${k}" = "${k}" + excluded."${k}"`).join(', ')}, "updatedAt" = excluded."updatedAt"`,
+      device.employeeId, day, app, site, hour, ...NUMS.map((k) => v[k]), now,
+    );
+    saved += 1;
+  }
+  return { saved };
+}
+const speedOf = (keys, kbMin) => (kbMin > 0 ? Math.round(keys / kbMin) : 0);
+/** Map(employeeId -> { kbMin, mouseMin, light, mod, heavy, keys, clicks, speed, perApp:[...], perHour:[...] }) for the days given. */
+async function activityOf(employeeIds, fromDay, toDay = fromDay) {
+  await ensureActivity();
+  const ids = (employeeIds || []).filter(Boolean);
+  const out = new Map();
+  for (let i = 0; i < ids.length; i += 400) {
+    const part = ids.slice(i, i + 400);
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await prisma.$queryRawUnsafe(
+      `SELECT "employeeId", "app", "site", "hour", ${NUMS.map((k) => `SUM("${k}") AS "${k}"`).join(', ')} FROM "MonitoringActivityBucket" WHERE "day" >= ? AND "day" <= ? AND "employeeId" IN (${part.map(() => '?').join(',')}) GROUP BY "employeeId", "app", "site", "hour"`,
+      fromDay, toDay, ...part,
+    );
+    rows.forEach((r) => {
+      if (!out.has(r.employeeId)) out.set(r.employeeId, { kbMin: 0, mouseMin: 0, light: 0, mod: 0, heavy: 0, keys: 0, clicks: 0, _app: new Map(), _hour: new Map() });
+      const o = out.get(r.employeeId);
+      NUMS.forEach((k) => { o[k] += Number(r[k]) || 0; });
+      const ak = `${r.app}\t${r.site || ''}`;
+      const a = o._app.get(ak) || { app: r.app, site: r.site || '', kbMin: 0, mouseMin: 0, keys: 0, clicks: 0 };
+      a.kbMin += Number(r.kbMin) || 0; a.mouseMin += Number(r.mouseMin) || 0; a.keys += Number(r.keys) || 0; a.clicks += Number(r.clicks) || 0;
+      o._app.set(ak, a);
+      const h = o._hour.get(Number(r.hour)) || { hour: Number(r.hour), kbMin: 0, keys: 0 };
+      h.kbMin += Number(r.kbMin) || 0; h.keys += Number(r.keys) || 0;
+      o._hour.set(Number(r.hour), h);
+    });
+  }
+  out.forEach((o) => {
+    o.speed = speedOf(o.keys, o.kbMin);
+    o.perApp = [...o._app.values()].map((a) => ({ ...a, speed: speedOf(a.keys, a.kbMin) })).sort((x, y) => y.kbMin - x.kbMin || y.keys - x.keys);
+    o.perHour = [...o._hour.values()].sort((x, y) => x.hour - y.hour);
+    delete o._app; delete o._hour;
+  });
+  return out;
+}
+
 async function cleanup(retentionDays) {
   await ensure();
   await ensureCounts();
@@ -261,6 +339,8 @@ async function cleanup(retentionDays) {
   await prisma.$executeRawUnsafe('DELETE FROM "MonitoringKeyCount" WHERE "day" < ?', cutoff);
   await ensureBuckets();
   await prisma.$executeRawUnsafe('DELETE FROM "MonitoringKeyBucket" WHERE "day" < ?', cutoff);
+  await ensureActivity();
+  await prisma.$executeRawUnsafe('DELETE FROM "MonitoringActivityBucket" WHERE "day" < ?', cutoff);
 }
 
-module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, addBuckets, keyDetail, MIN_STRETCH, KINDS };
+module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, addBuckets, keyDetail, addActivity, activityOf, MIN_STRETCH, KINDS };

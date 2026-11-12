@@ -28,6 +28,7 @@ const dt = (iso) => (iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'As
 const h = (v) => { if (v == null) return '—'; const n = Number(v); if (!n) return '0 h'; return n < 1 ? `${Math.max(1, Math.round(n * 60))} min` : `${n.toFixed(1)} h`; };
 const dur = (sec) => (sec < 60 ? `${sec} sec` : sec < 3600 ? `${Math.round(sec / 60)} min` : `${(sec / 3600).toFixed(1)} h`);
 // 8.25 -> "8 h 15 min", 0.4 -> "24 min" (the work day line: "4 h active out of 8 h 15 min")
+const hmins = (mins) => { const m = Math.max(0, Math.round(Number(mins) || 0)); if (!m) return '0 min'; const a = Math.floor(m / 60); const b = m % 60; return a ? `${a} h${b ? ` ${b} min` : ''}` : `${b} min`; };
 const hm = (v) => { const m = Math.round(Number(v || 0) * 60); if (!m) return '0 min'; const a = Math.floor(m / 60); const b = m % 60; return a ? `${a} h${b ? ` ${b} min` : ''}` : `${b} min`; };
 const clock = (x) => { if (!x) return ''; const [a, b] = String(x).split(':').map(Number); return `${a % 12 || 12}${b ? `:${String(b).padStart(2, '0')}` : ''} ${a < 12 ? 'am' : 'pm'}`; };
 // One bar for the whole day from start to end of work: active, idle, break, away from the PC, and what is still to come.
@@ -781,8 +782,47 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
             </Panel>
           )}
+          {data.activity && data.activity.kbMin > 0 && (
+            <Panel title="Typing and activity" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · active keyboard ${hmins(data.activity.kbMin)} · active mouse ${hmins(data.activity.mouseMin)} · typing speed about ${data.activity.speed} keys a minute. Counts only, never what was typed.`}>
+              <KpiRow>
+                <KpiTile icon="clock" tone="green" label="Active typing time" value={hmins(data.activity.kbMin)} sub={`${Number(data.activity.keys).toLocaleString('en-IN')} key presses`} />
+                <KpiTile icon="clock" tone="blue" label="Active mouse time" value={hmins(data.activity.mouseMin)} sub={`${Number(data.activity.clicks).toLocaleString('en-IN')} clicks / scrolls`} />
+                <KpiTile icon="trend" tone="violet" label="Typing speed" value={`${data.activity.speed}/min`} sub="Keys a minute while typing" />
+                <KpiTile icon="pause" tone="amber" label="Heavy typing" value={hmins(data.activity.heavy)} sub={`Light ${data.activity.light} min · moderate ${data.activity.mod} min`} />
+              </KpiRow>
+              <div className="mon-tl-sum" style={{ marginTop: 8 }}>
+                <span><b>Light</b>{` ${data.activity.light} min`}</span>
+                <span><b>Moderate</b>{` ${data.activity.mod} min`}</span>
+                <span><b>Heavy</b>{` ${data.activity.heavy} min`}</span>
+                <span className="small-muted">(a minute counts as heavy at 70+ keys, light under 26)</span>
+              </div>
+              {data.activity.perApp && data.activity.perApp.length > 0 && (
+                <div className="mon-two" style={{ marginTop: 8 }}>
+                  <div>
+                    <div className="small-muted" style={{ marginBottom: 4 }}>Active typing time, by app / website</div>
+                    <BarList showShare rows={data.activity.perApp.slice(0, 10).map((a, i) => ({ key: `${a.app}|${a.site}`, label: `${appWord(a.app)}${a.site ? ` · ${a.site}` : ''}`, value: a.kbMin, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => hmins(n)} empty="No typing recorded." />
+                  </div>
+                  <div>
+                    <div className="small-muted" style={{ marginBottom: 4 }}>Typing speed, by app / website</div>
+                    <table className="mon-table">
+                      <thead><tr><th>App / website</th><th className="num">Speed</th><th className="num">Active</th></tr></thead>
+                      <tbody>
+                        {data.activity.perApp.slice(0, 10).map((a, i) => (
+                          <tr key={i}>
+                            <td><b>{appWord(a.app)}</b>{a.site && <div className="small-muted">{a.site}</div>}</td>
+                            <td className="num">{a.speed}/min</td>
+                            <td className="num">{hmins(a.kbMin)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </Panel>
+          )}
           {data.keyCounts && (data.keyCounts.keys.length > 0 || data.keyCounts.mouse.length > 0) && (
-            <Panel title="Keys and buttons pressed" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · ${Number(data.keyCounts.keyTotal).toLocaleString('en-IN')} key presses · ${Number(data.keyCounts.clickTotal).toLocaleString('en-IN')} clicks. Letter keys and number keys are counted together, never one by one. Click any key or button to see where and when.`}>
+            <Panel title="Keys and buttons pressed\" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · ${Number(data.keyCounts.keyTotal).toLocaleString('en-IN')} key presses · ${Number(data.keyCounts.clickTotal).toLocaleString('en-IN')} clicks. Letter keys and number keys are counted together, never one by one. Click any key or button to see where and when.`}>
               <div className="mon-two">
                 <BarList rows={data.keyCounts.keys.slice(0, 15).map((k, i) => ({ key: k.name, label: k.name, value: k.count, onClick: () => setKeyPick(keyPick === k.name ? null : k.name), tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No key presses recorded." />
                 <BarList rows={data.keyCounts.mouse.map((k, i) => ({ key: k.name, label: k.name, value: k.count, onClick: () => setKeyPick(keyPick === k.name ? null : k.name), tone: ['green', 'amber', 'slate', 'teal'][i % 4] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No clicks recorded." />

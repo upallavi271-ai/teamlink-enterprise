@@ -120,6 +120,24 @@ async function stop(code) {
   check('the page can read it: Enter 30, Excel, 2 pm', http.status === 200 && hj.total === 30 && hj.byApp[0].app === 'EXCEL' && hj.byHour[0].hour === 14, [http.status, hj]);
   check('the notice says by app and hour, never single letters', /in which app or website, and in which hour/.test((await M.settings()).policyText) && /single letters are never counted apart/.test((await M.settings()).policyText));
 
+  console.log('Active typing time + intensity (agent 2.8)');
+  const act = async (body) => { const r = await fetch(`${API}/monitoring/input-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${token}` }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json().catch(() => null) }; };
+  const a1 = await act({ day, rows: [
+    { app: 'claude', site: '', hour: 9, kbMin: 20, mouseMin: 12, light: 5, mod: 10, heavy: 5, keys: 900, clicks: 140 },
+    { app: 'chrome', site: 'WhatsApp', hour: 10, kbMin: 8, mouseMin: 6, light: 6, mod: 2, heavy: 0, keys: 160, clicks: 60 },
+    { app: 'chrome', site: 'WhatsApp', hour: 99, kbMin: 1, mouseMin: 1, light: 1, mod: 0, heavy: 0, keys: 5, clicks: 1 },
+  ] });
+  check('activity saved; a bad hour is refused', a1.status === 200 && a1.body.saved === 2, a1);
+  const a2 = await act({ day, rows: [{ app: 'claude', site: '', hour: 9, kbMin: 4, mouseMin: 0, light: 4, mod: 0, heavy: 0, keys: 100, clicks: 0 }] });
+  check('a second send adds to the same app-hour', a2.status === 200 && a2.body.saved === 1, a2);
+  const ac = (await MI.activityOf([emp.id], day)).get(emp.id);
+  check('active keyboard 32 min, active mouse 18 min', ac.kbMin === 32 && ac.mouseMin === 18, [ac && ac.kbMin, ac && ac.mouseMin]);
+  check('typing speed = all keys / active keyboard minutes', ac.keys === 1160 && ac.speed === Math.round(1160 / 32), [ac.keys, ac.speed]);
+  check('intensity: light 15, moderate 12, heavy 5 min', ac.light === 15 && ac.mod === 12 && ac.heavy === 5, [ac.light, ac.mod, ac.heavy]);
+  check('by app: Claude is the heaviest (24 active min), with its own speed', ac.perApp[0].app === 'claude' && ac.perApp[0].kbMin === 24 && ac.perApp[0].speed === Math.round(1000 / 24), ac.perApp);
+  const det3 = await M.employeeDetail(emp.id, day, day);
+  check('the day view carries the activity summary', det3.activity && det3.activity.kbMin === 32 && det3.activity.perApp.length === 2, det3.activity);
+
   console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });
