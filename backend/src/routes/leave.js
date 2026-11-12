@@ -1097,6 +1097,50 @@ router.get('/balances', async (req, res) => {
   }
 });
 
+// PER-EMPLOYEE ROLLUP (founder 2026-11-12): one row per person - ID, name, department, status, their leave counts by status
+// (Approved / Pending / Rejected / Cancelled), days taken, and the balance - so everything about one employee is in one place.
+// Same scoping and employee set as /balances; the screen filters by department / employee status / balance on top.
+router.get('/rollup', async (req, res) => {
+  try {
+    const includeRelieved = req.query.includeRelieved === '1' || req.query.includeRelieved === 'true';
+    const employees = await prisma.employee.findMany({
+      where: withoutSystemAccounts({ ...employeeWhere(req.user), ...(includeRelieved ? {} : { employmentStatus: { not: 'Relieved' } }) }),
+      orderBy: { name: 'asc' },
+      select: { id: true, employeeCode: true, name: true, department: true, team: true, designation: true, employmentStatus: true },
+    });
+    const ids = employees.map((e) => e.id);
+    await ensureBalances(employees.filter((e) => e.employmentStatus !== 'Relieved').map((e) => e.id));
+    const [reqs, balances] = await Promise.all([
+      prisma.leaveRequest.findMany({ where: { employeeId: { in: ids } }, select: { employeeId: true, status: true, days: true } }),
+      prisma.leaveBalance.findMany({ where: { employeeId: { in: ids } }, select: { employeeId: true, total: true, taken: true } }),
+    ]);
+    const agg = new Map();
+    const g = (id) => { if (!agg.has(id)) agg.set(id, { approved: 0, pending: 0, rejected: 0, cancelled: 0, requests: 0, daysTaken: 0 }); return agg.get(id); };
+    reqs.forEach((r) => {
+      const a = g(r.employeeId); a.requests += 1; const d = Number(r.days == null ? 1 : r.days); const st = String(r.status || '');
+      if (st === 'Approved') { a.approved += 1; a.daysTaken += d; }
+      else if (st === 'Pending' || st === 'Cancellation Requested') a.pending += 1;
+      else if (st === 'Rejected') a.rejected += 1;
+      else if (st === 'Cancelled') a.cancelled += 1;
+    });
+    const bal = new Map();
+    balances.forEach((b) => { const o = bal.get(b.employeeId) || { entitled: 0, taken: 0 }; o.entitled += Number(b.total || 0); o.taken += Number(b.taken || 0); bal.set(b.employeeId, o); });
+    const rows = employees.map((e) => {
+      const a = agg.get(e.id) || { approved: 0, pending: 0, rejected: 0, cancelled: 0, requests: 0, daysTaken: 0 };
+      const b = bal.get(e.id) || { entitled: 0, taken: 0 };
+      return {
+        employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, team: e.team, designation: e.designation, employmentStatus: e.employmentStatus,
+        approved: a.approved, pending: a.pending, rejected: a.rejected, cancelled: a.cancelled, requests: a.requests, daysTaken: Math.round(a.daysTaken * 100) / 100,
+        entitled: b.entitled, used: b.taken, balance: Math.max(0, b.entitled - b.taken),
+      };
+    });
+    res.json({ rows });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not build the leave rollup' });
+    console.error('[leave] rollup', err.message); // eslint-disable-line no-console
+  }
+});
+
 // Adjust an employee's entitlement for one leave type (e.g. an opening balance
 // carried over from last year).
 router.put('/balances/:employeeId', requirePerm(null, 'hrms', 'Leave & Holidays', 'configure'), async (req, res) => {

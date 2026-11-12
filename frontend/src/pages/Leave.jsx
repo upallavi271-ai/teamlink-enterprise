@@ -921,6 +921,92 @@ function ReportsTab({ reloadKey, canExport }) {
   );
 }
 
+// PER-EMPLOYEE ROLLUP (founder 2026-11-12): one row per employee - ID, name, department, status, their leave counts by status
+// (Approved / Pending / Rejected / Cancelled), days taken and the current balance - everything about one person in one place, with
+// the department / employee-status filters on top. Reads GET /leave/rollup.
+function RollupTab({ canExport }) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+  const [filters, setFilters] = useState({ code: '', name: '', department: '', empStatus: '' });
+  const [sortBy, setSortBy] = useState('name');
+  const [includeRelieved, setIncludeRelieved] = useState(false);
+  useEffect(() => {
+    let live = true; setLoading(true);
+    api.get('/leave/rollup', { params: includeRelieved ? { includeRelieved: 1 } : {} })
+      .then((r) => { if (live) { setRows(r.data.rows || []); setErr(''); } })
+      .catch((e) => { if (live) setErr(e?.response?.data?.error || 'Could not load the rollup.'); })
+      .finally(() => { if (live) setLoading(false); });
+    return () => { live = false; };
+  }, [includeRelieved]);
+  const departments = [...new Set(rows.map((r) => r.department).filter(Boolean))].sort();
+  const scoped = rows.filter((r) => leaveMatches(r, filters, { skipRequestFields: true }));
+  const sorted = [...scoped].sort((a, b) => {
+    if (sortBy === 'pending') return b.pending - a.pending || String(a.name).localeCompare(String(b.name));
+    if (sortBy === 'approved') return b.approved - a.approved || String(a.name).localeCompare(String(b.name));
+    if (sortBy === 'days') return b.daysTaken - a.daysTaken || String(a.name).localeCompare(String(b.name));
+    if (sortBy === 'balance') return a.balance - b.balance || String(a.name).localeCompare(String(b.name));
+    return String(a.name).localeCompare(String(b.name));
+  });
+  const tot = scoped.reduce((o, r) => ({ approved: o.approved + r.approved, pending: o.pending + r.pending, rejected: o.rejected + r.rejected, cancelled: o.cancelled + r.cancelled, days: o.days + r.daysTaken }), { approved: 0, pending: 0, rejected: 0, cancelled: 0, days: 0 });
+  const C = { textAlign: 'center' };
+  return (
+    <Panel>
+      <PanelPad>
+        <ScopeNote>One row per employee: their leave counts by status (approved, pending, rejected, cancelled), days taken and the current leave balance - everything about one person in one place. Filter by department or employee status.</ScopeNote>
+        <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={[]} requestFields={false}>
+          <Combo value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort by">
+            <option value="name">Sort: Name</option>
+            <option value="pending">Sort: Most pending</option>
+            <option value="approved">Sort: Most approved</option>
+            <option value="days">Sort: Most days taken</option>
+            <option value="balance">Sort: Lowest balance</option>
+          </Combo>
+          <label className="small-muted" style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={includeRelieved} onChange={(e) => setIncludeRelieved(e.target.checked)} style={{ width: 'auto' }} /> Include people who left
+          </label>
+        </LeaveFilterBar>
+        {err && <div className="notice red">{err}</div>}
+        {loading ? <EmptyMini>Loading…</EmptyMini> : (
+          <div className="tbl-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Employee ID</th><th>Employee</th><th>Department</th><th>Status</th>
+                  <th style={C} title="Approved leave requests">Approved</th>
+                  <th style={C} title="Waiting for a decision">Pending</th>
+                  <th style={C}>Rejected</th>
+                  <th style={C}>Cancelled</th>
+                  <th style={C} title="Approved leave days taken">Days taken</th>
+                  <th style={C} title="Remaining / entitled, across all leave types">Balance</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((r) => (
+                  <tr key={r.employeeId}>
+                    <td><b>{r.employeeCode}</b></td>
+                    <td>{r.name}{r.designation && <div className="cell-muted">{r.designation}</div>}</td>
+                    <td className="cell-muted">{r.department || '—'}{r.team ? <div className="cell-muted">{r.team}</div> : null}</td>
+                    <td><Status>{hrStatusOf(r.employmentStatus)}</Status></td>
+                    <td style={C}>{r.approved || '—'}</td>
+                    <td style={C}>{r.pending ? <b style={{ color: '#b45309' }}>{r.pending}</b> : '—'}</td>
+                    <td style={C}>{r.rejected || '—'}</td>
+                    <td style={C}>{r.cancelled || '—'}</td>
+                    <td style={C}>{r.daysTaken || '—'}</td>
+                    <td style={C}>{r.entitled ? `${r.balance} / ${r.entitled}` : '—'}</td>
+                  </tr>
+                ))}
+                {!sorted.length && <tr><td colSpan={10} className="small-muted" style={{ padding: 16 }}>No employees match these filters.</td></tr>}
+              </tbody>
+            </table>
+            <div className="small-muted" style={{ marginTop: 8 }}>{`${scoped.length} ${scoped.length === 1 ? 'employee' : 'employees'} · ${tot.approved} approved, ${tot.pending} pending, ${tot.rejected} rejected, ${tot.cancelled} cancelled · ${Math.round(tot.days * 100) / 100} days taken.`}</div>
+          </div>
+        )}
+      </PanelPad>
+    </Panel>
+  );
+}
+
 export default function Leave() {
   const { user } = useAuth();
   const isHR = hasHrmsAdmin(user);
@@ -969,6 +1055,7 @@ export default function Leave() {
           { key: 'requests', label: 'Requests', element: <RequestsTab isHR={isHR} canApprove={canApprove} reloadKey={reloadKey} onReload={() => setReloadKey((k) => k + 1)} /> },
           { key: 'monthly', label: 'Month-wise Balance', element: <LeaveBalancesTab canExport={canExport} /> },
           { key: 'reports', label: 'Reports', element: <ReportsTab reloadKey={reloadKey} canExport={canExport} /> },
+          { key: 'rollup', label: 'Per employee', element: <RollupTab canExport={canExport} /> },
           // Managing holidays is a WRITE, so it follows the create permission
           // and not a role name — HR manages holidays, a view-only Manager does not.
           { key: 'holidays', label: 'Holidays', element: <HolidayCalendar canManage={canManageHolidays} canEdit={canEditHolidays} canExport={canExport} /> },
