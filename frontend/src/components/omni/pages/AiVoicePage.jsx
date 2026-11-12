@@ -5,6 +5,7 @@ import { useOmni } from '../omniContext.js';
 import { Banner, Btn, Empty, Field, Kpi, Kpis, PageHead, Panel, Pill, Tabs } from '../ui.jsx';
 import { fmtDateTime } from '../ui.jsx';
 import AiCallDetail from '../../aicalling/AiCallDetail.jsx';
+import KavyaTab from '../../aicalling/KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
 
 // LIVE: what is being said on a call that is on the phone right now. The assistant saves every turn as it goes (voice/gateway.js keepTurns), so the
 // call is read again every 3 seconds while it is on the phone and the talk scrolls like a chat: the AI on one side, the candidate on the other.
@@ -117,10 +118,11 @@ export default function AiVoicePage({ embedded = false }) {
         <Kpi label="Failed" icon="!" value={t ? t.failed : '—'} tone={t && t.failed ? 'down' : undefined} />
         <Kpi label="Call-backs" icon="↺" value={t ? t.callbacks : '—'} />
       </Kpis>
-      <Tabs value={tab} onChange={(v) => { setTab(v); setOpenId(null); setMaking(false); }} tabs={[['campaigns', 'Campaigns'], ['agents', 'AI agents', agents.length || undefined]]} />
+      <Tabs value={tab} onChange={(v) => { setTab(v); setOpenId(null); setMaking(false); }} tabs={[['campaigns', 'Campaigns'], ['agents', 'AI agents', agents.length || undefined], ['kavya', 'Kavya']]} />
       {tab === 'campaigns' && making && <NewCampaign agents={agents} ready={ready} onClose={() => setMaking(false)} onCreated={(id) => { setMaking(false); load(); setOpenId(id); }} toast={toast} />}
       {tab === 'campaigns' && !making && !openId && <CampaignList data={data} onOpen={setOpenId} />}
       {tab === 'campaigns' && !making && openId && <CampaignDetail id={openId} onBack={() => { setOpenId(null); load(); }} onChanged={load} toast={toast} canCall={!!(status && status.canCall)} />}
+      {tab === 'kavya' && <KavyaTab source="omni" />}
       {tab === 'agents' && <Agents agents={agents} canCall={!!(status && status.canCall)} onChanged={load} toast={toast} />}
     </div>
   );

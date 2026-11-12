@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
+import Modal from '../Modal.jsx';
 import { when, errorOf } from './aiCallingShared.js';
 
 // KAVYA - the Telugu / Hindi / English AI caller on our own server (a tab of AI Calling).
@@ -15,7 +16,7 @@ const OUTCOME_WORD = {
 const outcomeWord = (o) => OUTCOME_WORD[o] || String(o || '—').replace(/_/g, ' ');
 const LANG_WORD = { te: 'Telugu', hi: 'Hindi', en: 'English' };
 
-export default function KavyaTab() {
+export default function KavyaTab({ source = 'ats' }) {
   const [status, setStatus] = useState(null);
   const [err, setErr] = useState('');
   const [openRun, setOpenRun] = useState(null);
@@ -29,13 +30,13 @@ export default function KavyaTab() {
       {status && status.mode === 'Off' && <div className="notice amber">AI calling is switched off, so nobody is handed to Kavya. An Admin turns it on in Administration &gt; Integrations &gt; AI Calling.</div>}
       {status && status.testMode && <div className="notice amber">Test mode: only the Admin&apos;s test phone numbers are called.</div>}
       {status && !status.canCall && <div className="notice">Your role can look at Kavya&apos;s runs but not hand candidates to her.</div>}
-      <GiveToKavya status={status} onStarted={(id) => { setTick((t) => t + 1); setOpenRun(id); }} />
+      <GiveToKavya status={status} source={source} onStarted={(id) => { setTick((t) => t + 1); setOpenRun(id); }} />
       <Runs tick={tick} openRun={openRun} setOpenRun={setOpenRun} />
     </div>
   );
 }
 
-function GiveToKavya({ status, onStarted }) {
+function GiveToKavya({ status, source, onStarted }) {
   const [jobs, setJobs] = useState([]);
   const [jobId, setJobId] = useState('');
   const [rows, setRows] = useState([]);
@@ -64,7 +65,7 @@ function GiveToKavya({ status, onStarted }) {
     if (!window.confirm(`Give ${ids.length} candidate${ids.length > 1 ? 's' : ''} to Kavya? She will phone them (Telugu / Hindi / English) between 9 am and 6 pm.`)) return;
     setBusy(true); setMsg(null); setErr('');
     try {
-      const r = await api.post('/kavya/runs', { applicationIds: ids, source: 'ats', extras: { interviewMode: mode, languagesRequired: langs } });
+      const r = await api.post('/kavya/runs', { applicationIds: ids, source, extras: { interviewMode: mode, languagesRequired: langs } });
       setMsg(`${r.data.started} candidate(s) given to Kavya.${r.data.skipped && r.data.skipped.length ? ` ${r.data.skipped.length} skipped: ${r.data.skipped.slice(0, 3).map((s) => `${s.name || 'someone'} (${s.reason})`).join('; ')}` : ''}${r.data.note ? ` ${r.data.note}` : ''}`);
       setPicked({}); load(); onStarted(r.data.id);
     } catch (e) {
@@ -225,5 +226,69 @@ function RunDetail({ id, onChanged }) {
       )}
       {!run && !err && <div className="small-muted">Loading…</div>}
     </div>
+  );
+}
+
+// A small confirm box for screens that already show a list of people (the Job Portal candidates): give the ones on that list to Kavya.
+// People of different requirements are split into one run each by the server; people who may not be called are skipped, with the reason.
+export function KavyaGiveDialog({ applicationIds, source = 'portal', onClose, onDone }) {
+  const [mode, setMode] = useState('');
+  const [langs, setLangs] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState('');
+  async function give() {
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post('/kavya/runs', { applicationIds, source, extras: { interviewMode: mode, languagesRequired: langs } });
+      setRes(r.data);
+      if (onDone) onDone();
+    } catch (e) {
+      const sk = e.response && e.response.data && e.response.data.skipped;
+      setErr(`${errorOf(e, 'Kavya could not start.')}${sk && sk.length ? ` ${sk.slice(0, 4).map((s) => `${s.name || 'someone'}: ${s.reason}`).join('; ')}` : ''}`);
+    } finally { setBusy(false); }
+  }
+  return (
+    <Modal
+      title="Call with Kavya"
+      onClose={onClose}
+      foot={res ? <button className="btn btn-primary" onClick={onClose}>Close</button> : (
+        <>
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy || !applicationIds.length} onClick={give}>{busy ? 'Please wait…' : `Give ${applicationIds.length} to Kavya`}</button>
+        </>
+      )}
+    >
+      {err && <div className="error-text">{err}</div>}
+      {!res && (
+        <>
+          <p>Kavya, the AI assistant who speaks Telugu, Hindi and English, will phone <b>{applicationIds.length}</b> candidate{applicationIds.length > 1 ? 's' : ''} between 9 am and 6 pm and tell them about the requirement. People who may not be called (no consent, Do Not Disturb, test mode, no phone number) are skipped and listed afterwards.</p>
+          <div className="grid-2">
+            <div className="field">
+              <label>Interview mode (optional)</label>
+              <Combo value={mode} onChange={(e) => setMode(e.target.value)}>
+                <option value="">Not said</option>
+                <option value="online">Online</option>
+                <option value="offline">Offline</option>
+                <option value="online or offline">Online or offline</option>
+              </Combo>
+            </div>
+            <div className="field">
+              <label>Languages the job needs (optional)</label>
+              <input value={langs} onChange={(e) => setLangs(e.target.value)} placeholder="Telugu and English" maxLength={80} />
+            </div>
+          </div>
+        </>
+      )}
+      {res && (
+        <>
+          <div className="notice green">{res.started} candidate(s) given to Kavya{res.runs && res.runs.length > 1 ? ` in ${res.runs.length} runs, one for each requirement` : ''}. Results appear in AI Calling &gt; Kavya and on each candidate&apos;s timeline.</div>
+          {res.note && <div className="small-muted">{res.note}</div>}
+          {res.skipped && res.skipped.length > 0 && (
+            <div className="small-muted" style={{ marginTop: 8 }}>Not handed over ({res.skipped.length}): {res.skipped.slice(0, 8).map((s) => `${s.name || 'someone'} (${s.reason})`).join('; ')}{res.skipped.length > 8 ? '…' : ''}</div>
+          )}
+        </>
+      )}
+    </Modal>
   );
 }

@@ -10,6 +10,7 @@ import AppOmniPanel from '../omni/AppOmniPanel.jsx'; // the shared template libr
 import SendManyDialog from '../messaging/SendMessage.jsx';
 import { DupChip, AlreadyInAtsChip } from '../duplicates/DupChip.jsx';
 import AiCallDialog from '../aicalling/AiCallDialog.jsx'; // JOB PORTAL AI calling (separate from the ATS one): AI interview pending
+import { KavyaGiveDialog } from '../aicalling/KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
 import JobMatchDialog from './JobMatchDialog.jsx'; // JOB PORTAL AI calling: another matching job
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,7 @@ export default function JobPortalCandidates({ onSentToAts }) {
   const [tab, setTab] = useState('all');
   const [msgApplicants, setMsgApplicants] = useState(false);
   const [aiCallIds, setAiCallIds] = useState(null); // application ids for the AI "AI interview pending" call
+  const [kavyaIds, setKavyaIds] = useState(null); // application ids given to Kavya (the people shown in the list)
   const [jobMatch, setJobMatch] = useState(null); // {} = pick a requirement first; { candidateId, name } = this person's matching jobs
   // ?source=Naukri (the Naukri card's "New from Naukri" link) opens this list already narrowed to that board.
   const [filters, setFilters] = useState(() => {
@@ -209,6 +211,8 @@ export default function JobPortalCandidates({ onSentToAts }) {
           <AppOmniPanel app="Job Portal" />
           {aiOwed.length > 0 && <button type="button" className="btn btn-sm" onClick={() => setAiCallIds(aiOwed.map((a) => a.id))} title="The AI assistant calls them and tells them how to take the AI interview on the Job Portal">{`📞 AI call: AI interview pending (${aiOwed.length})`}</button>}
           {aiCallIds && <AiCallDialog applicationIds={aiCallIds} purpose="AI Interview Pending" onClose={() => setAiCallIds(null)} onDone={load} />}
+          {filtered.length > 0 && <button type="button" className="btn btn-sm" disabled={filtered.length > 200} onClick={() => setKavyaIds(filtered.map((a) => a.id))} title={filtered.length > 200 ? 'Narrow the list to 200 people or fewer first.' : 'Kavya, the AI assistant (Telugu, Hindi, English), phones the people shown below about their requirement.'}>Call with Kavya ({filtered.length})</button>}
+          {kavyaIds && <KavyaGiveDialog applicationIds={kavyaIds} source="portal" onClose={() => setKavyaIds(null)} onDone={load} />}
           {applications.length > 0 && <button type="button" className="btn btn-sm" onClick={() => setJobMatch({})} title="Pick a requirement, see who from this list fits it, add them and let the AI assistant call them">📞 Job match</button>}
           {jobMatch && <JobMatchDialog person={jobMatch.candidateId ? jobMatch : null} onClose={() => setJobMatch(null)} onDone={load} />}
           {filtered.length > 0 && filtered.length <= 500 && <button type="button" className="btn btn-sm" onClick={() => setMsgApplicants(true)} title="Email, SMS or WhatsApp to the applicants shown below, or make it a campaign">Message these {filtered.length}</button>}

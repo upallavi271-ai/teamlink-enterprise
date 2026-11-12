@@ -161,6 +161,39 @@ async function createRun(user, input) {
   return { ok: true, id, kavyaJobId, status: state, started: people.length, skipped, note };
 }
 
+// People ticked on a screen that mixes requirements (the Job Portal list, Omni-Channel): one Kavya run per requirement.
+async function createRuns(user, input) {
+  const b = input || {};
+  const ids = [...new Set((Array.isArray(b.applicationIds) ? b.applicationIds : []).map((x) => clip(x, 60)).filter(Boolean))];
+  if (!ids.length) return fail(400, 'none', 'Tick at least one candidate.');
+  if (ids.length > MAX_PEOPLE) return fail(400, 'too_many', `Kavya takes up to ${MAX_PEOPLE} candidates at a time.`);
+  const groups = new Map();
+  const unknown = [];
+  for (const id of ids) { // eslint-disable-line no-restricted-syntax
+    // eslint-disable-next-line no-await-in-loop
+    const ctx = await svc.loadContext(id);
+    if (!ctx) { unknown.push({ applicationId: id, name: '', reason: 'Application not found.' }); continue; }
+    const k = ctx.requirement.id;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(id);
+  }
+  if (!groups.size) return fail(404, 'none', 'None of these applications was found.', { skipped: unknown });
+  if (groups.size === 1) {
+    const r = await createRun(user, { ...b, applicationIds: [...groups.values()][0] });
+    return r.ok ? { ...r, runs: [{ id: r.id, started: r.started }], skipped: [...unknown, ...(r.skipped || [])] } : r;
+  }
+  const runs = [];
+  const skipped = [...unknown];
+  let firstFail = null;
+  for (const list of groups.values()) { // eslint-disable-line no-restricted-syntax
+    // eslint-disable-next-line no-await-in-loop
+    const r = await createRun(user, { ...b, applicationIds: list });
+    if (r.ok) { runs.push({ id: r.id, started: r.started }); skipped.push(...(r.skipped || [])); } else { firstFail = firstFail || r; skipped.push(...(r.skipped || []), ...(r.skipped ? [] : list.map((id) => ({ applicationId: id, name: '', reason: r.error })))); }
+  }
+  if (!runs.length) return fail(firstFail ? firstFail.status : 422, firstFail ? firstFail.code : 'nobody', firstFail ? firstFail.error : 'Nobody could be handed to Kavya.', { skipped });
+  return { ok: true, id: runs[0].id, runs, started: runs.reduce((a, r) => a + r.started, 0), skipped, note: runs.length > 1 ? `${runs.length} runs were made, one for each requirement.` : '' };
+}
+
 // ---- reading ---------------------------------------------------------------------------------------------------------------------
 function shapeRun(r, calls) {
   const list = calls || [];
@@ -299,4 +332,4 @@ async function control(user, id, action) {
   return { ok: true, status: action === 'pause' ? 'paused' : 'preparing' };
 }
 
-module.exports = { status, createRun, listRuns, runDetail, control, sync, jobFor, sayExperience, saySalary, jobType, phone10 };
+module.exports = { status, createRun, createRuns, listRuns, runDetail, control, sync, jobFor, sayExperience, saySalary, jobType, phone10 };

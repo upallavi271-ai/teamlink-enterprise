@@ -26,7 +26,7 @@ const guard = (fn) => async (req, res) => {
 };
 
 router.get('/status', guard(async (req, res) => res.json(await kavya.status(req.user))));
-router.post('/runs', guard(async (req, res) => send(res, await kavya.createRun(req.user, req.body || {}))));
+router.post('/runs', guard(async (req, res) => send(res, await kavya.createRuns(req.user, req.body || {}))));
 router.get('/runs', guard(async (req, res) => send(res, await kavya.listRuns(req.user))));
 router.get('/runs/:id', guard(async (req, res) => send(res, await kavya.runDetail(req.user, req.params.id))));
 router.post('/runs/:id/pause', guard(async (req, res) => send(res, await kavya.control(req.user, req.params.id, 'pause'))));
