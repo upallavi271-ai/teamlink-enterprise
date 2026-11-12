@@ -143,9 +143,12 @@ function Overview({ onOpen }) {
     return () => { clearInterval(t); clearInterval(fast); };
   }, [live, reload]);
   const fresh = useMemo(() => new Map(((now && now.rows) || []).map((r) => [r.employeeId, r])), [now]);
-  const rows = useMemo(() => ((data && data.rows) || []).map((r) => ({ ...r, ...(fresh.get(r.employeeId) || {}) })).filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
+  const allRows = useMemo(() => ((data && data.rows) || []).map((r) => ({ ...r, ...(fresh.get(r.employeeId) || {}) })), [data, fresh]);
+  const rows = useMemo(() => allRows.filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
     && (!status || r.status === status)
-    && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [data, fresh, dept, team, status, q]);
+    && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [allRows, dept, team, status, q]);
+  // the statuses actually on the board now, in a sensible order, for the Status filter (founder 2026-11-12: "idle, break etc vetiki pettukovadaniki")
+  const statusOptions = useMemo(() => { const order = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave']; const present = new Set(allRows.map((r) => r.status).filter(Boolean)); return order.filter((x) => present.has(x)); }, [allRows]);
   const c = data && data.cards ? { ...data.cards, ...((now && now.cards) || {}) } : null;
   const first = ((data && data.rows) || []).find((r) => r.workHours > 0) || null;
   const card = (s) => ({ active: status === s, onClick: live ? () => setStatus(status === s ? '' : s) : undefined });
@@ -162,6 +165,12 @@ function Overview({ onOpen }) {
           <option value="">All teams</option>
           {((data && data.teams) || []).map((d) => <option key={d} value={d}>{d}</option>)}
         </Combo>
+        {live && (
+          <Combo value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
+            {statusOptions.map((x) => <option key={x} value={x}>{x}</option>)}
+          </Combo>
+        )}
         {live && <span className="small-muted" style={{ marginLeft: 'auto' }}>Live: updates within seconds</span>}
       </div>
       {error && <div className="notice red">{error}</div>}
