@@ -234,7 +234,7 @@ function Overview({ onOpen }) {
       {/* when a time-based status is filtered, that one time stands out (founder 2026-11-12: idle meedha click chesthey entha sepu idle lo vunnaro) */}
       {live && HI_OF[status] && <div className="small-muted" style={{ margin: '0 0 8px' }}>{HI_WORD[status]}</div>}
       <KpiRow>
-        <KpiTile icon="users" tone="blue" label="Tracked" value={c ? c.tracked : null} loading={loading && !c} sub="With a registered PC" />
+        <KpiTile icon="users" tone="blue" label="Tracked" value={c ? c.tracked : null} loading={loading && !c} sub={live && status ? 'Show all with a PC' : 'With a registered PC'} {...(live ? { active: !status, onClick: () => setStatus('') } : {})} />
         <KpiTile icon="check" tone="green" label="Online" value={live && c ? c.online : (live ? null : '—')} loading={loading && !c} sub="Using the PC now" {...card('Online')} />
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
         <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub={c && c.closed ? `No signal for 3 minutes · ${c.closed} laptop${c.closed === 1 ? '' : 's'} closed` : 'No signal for 3 minutes'} {...card('Offline')} />
