@@ -18,7 +18,8 @@
 //                       The password is NOT touched and none is made: a person with no login is told "needs a login".
 //   AppSetting          the person's "switch off former access" entry (utils/formerAccess.js) is removed.
 //   AuditLog            rejoin + department change + seat change (3 rows when all three apply).
-//   After the commit    a bell and an information task to every Super Admin. No e-mail, no SMS.
+//   After the commit    NOTHING is sent (founder 2026-11-12): a rejoin no longer pings the Super Admin or makes a task/timesheet -
+//                       it only shows in Employee Management (the employee's record and status). `notify:true` can still opt in.
 //
 // THE GAP. The days between the last working day of the earlier stint and the day before the rejoining date are stored as
 // `gap` in the REJOINING record's notes. The day engine (utils/attendanceDays.js loadDays) reads them as 'Left' (not
@@ -255,7 +256,7 @@ function changesOf(plan) {
 
 // ---- THE APPLY --------------------------------------------------------------------------
 const running = new Set();
-async function apply({ plan, actor, testFail = false, notify = true }) {
+async function apply({ plan, actor, testFail = false, notify = false }) {
   const { employee, user } = plan;
   if (running.has(employee.id)) throw Object.assign(new Error(`${employee.name} is already being saved. Please wait a moment.`), { status: 409, exitBlocked: true });
   running.add(employee.id);
@@ -362,7 +363,8 @@ async function apply({ plan, actor, testFail = false, notify = true }) {
       if (testFail) throw new Error('Forced failure (test)');
     }, { timeout: 20000, maxWait: 10000 });
 
-    // After the commit: the designation's role (when it changed and no role was named), the bell and the task.
+    // After the commit: the designation's role (when it changed and no role was named). The Super Admin bell and task are OFF by
+    // default (founder 2026-11-12: a rejoin must not notify the Super Admin or add a task/timesheet; it only shows in Employee Management).
     let roleSync = null;
     if (user && !plan.roleCode && plan.designation && !same(plan.designation, employee.designation)) {
       try {
