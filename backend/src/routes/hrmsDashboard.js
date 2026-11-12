@@ -105,7 +105,8 @@ router.get('/progress', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), asy
   const month = (period.to < today ? period.to : today).slice(0, 7);
   const people = await progress.load(prisma, progress.counted(employees, await activeDepartmentSet(), req.query), month);
   const level = new Set(people.map((p) => p.department)).size === 1 && (req.query.department || req.query.manager || req.query.q) ? 'employee' : 'department';
-  return res.json({ month, label: RJ.monthLabel(month), level, overall: progress.groupFigures('all', 'All', people), rows: progress.rowsFor(people, level) });
+  const teamMap = await require('../utils/vacancies').teamsByDepartment().catch(() => new Map()); // eslint-disable-line global-require
+  return res.json({ month, label: RJ.monthLabel(month), level, overall: progress.groupFigures('all', 'All', people), rows: progress.rowsFor(people, level, teamMap) });
 });
 
 // An employee's own month. Their own figures only, so the dashboard permission is not needed.
@@ -323,17 +324,36 @@ async function buildDashboard(req, period) {
       asOf,
       // THE ONE CHART (founder 2026-10-28: "HRMS dashboard clear ga, okka bar graph"): the same people as the tiles, on the same day,
       // per department - present / half day / on leave / absent / week off - so each bar adds up to that department's headcount.
-      byDepartment: (() => {
+      // A department the vacancy plan splits into teams (Education: Team A / Team B) also carries `teams`: the same figures per team (founder 2026-11-12:
+      // "graph lo kuda education teams wise ga kanipinchali"). The department's own figures still count everybody.
+      byDepartment: await (async () => {
+        const teamMap = await require('../utils/vacancies').teamsByDepartment().catch(() => new Map()); // eslint-disable-line global-require
+        const { teamNameOf, NO_TEAM } = require('../utils/teamNames'); // eslint-disable-line global-require
+        const blank = (name) => ({ department: name, present: 0, halfDay: 0, onLeave: 0, absent: 0, offDay: 0, noRecord: 0, notYet: 0, other: 0, total: 0 });
+        const add = (x, b) => { x[['present', 'halfDay', 'onLeave', 'absent', 'offDay', 'noRecord', 'notYet'].includes(b) ? b : 'other'] += 1; x.total += 1; };
         const m = new Map();
         dayRows.forEach(({ employee, day }) => {
           const name = employee.department || 'No department';
-          const x = m.get(name) || { department: name, present: 0, halfDay: 0, onLeave: 0, absent: 0, offDay: 0, noRecord: 0, notYet: 0, other: 0, total: 0 };
+          const x = m.get(name) || blank(name);
           const b = D.bucketOf(day);
-          x[['present', 'halfDay', 'onLeave', 'absent', 'offDay', 'noRecord', 'notYet'].includes(b) ? b : 'other'] += 1;
-          x.total += 1;
+          add(x, b);
+          const names = teamMap.get(name.toLowerCase());
+          if (names) {
+            x.teamRows = x.teamRows || new Map();
+            const tn = teamNameOf(names, employee.team);
+            const t = x.teamRows.get(tn) || blank(tn);
+            add(t, b);
+            x.teamRows.set(tn, t);
+          }
           m.set(name, x);
         });
-        return [...m.values()].sort((a, b) => b.total - a.total || a.department.localeCompare(b.department));
+        return [...m.values()].map((x) => {
+          if (x.teamRows) {
+            x.teams = [...teamMap.get(x.department.toLowerCase()), NO_TEAM].filter((n) => x.teamRows.has(n)).map((n) => x.teamRows.get(n));
+            delete x.teamRows;
+          }
+          return x;
+        }).sort((a, b) => b.total - a.total || a.department.localeCompare(b.department));
       })(),
       headcount: dayTally.headcount,
       present: dayTally.present,

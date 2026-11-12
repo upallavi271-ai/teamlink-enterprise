@@ -55,4 +55,16 @@ assert.deepStrictEqual(ids(P.counted(crowd, live, { status: 'Notice Period' }).f
 assert.deepStrictEqual(ids(P.counted(crowd, live, { department: 'Recruitment' })), ['ok', 'oldDept', 'hr'], 'a chosen department stays');
 assert.deepStrictEqual(ids(P.counted(crowd, new Set())), ['ok', 'oldDept', 'hr'], 'no department master: blanks still go');
 
+// THE JOINING COUNT and the TEAMS of a department (founder 2026-11-12: Education Team A / Team B)
+const T = require('../src/utils/teamNames');
+const rec = (id, team, target, joinings) => P.personFigures({ employee: { id, name: id, department: 'Education', team }, joining: target == null ? null : { target, joinings }, attendance: { worked: 5, days: 6 } });
+const crew = [rec('a1', 'Team-A', 4, 4), rec('a2', 'Team A', 4, 1), rec('b1', 'team b', 4, 0), rec('x1', '', 4, 2), rec('tl', 'Team-A', null, 0)];
+const edu = P.rowsFor(crew, 'department', new Map([['education', ['Team A', 'Team B']]]))[0];
+assert.deepStrictEqual([edu.joinings, edu.joiningTarget, edu.targetsPct], [7, 16, 25], 'the count is shown even when only one person reached the whole target');
+assert.deepStrictEqual(edu.teams.map((t) => [t.name, t.people, `${t.joinings}/${t.joiningTarget}`]), [['Team A', 3, '5/8'], ['Team B', 1, '0/4'], ['No team set', 1, '2/4']], 'Team-A and Team A are one team; a blank team is listed, not dropped');
+assert.strictEqual(edu.people, 5, 'the department row still counts everybody');
+assert.strictEqual(P.rowsFor(crew, 'department')[0].teams, undefined, 'no team plan, no team rows');
+assert.deepStrictEqual([T.teamKey('Team-A'), T.teamNameOf(['Team A', 'Team B'], 'TEAM B'), T.teamNameOf(['Team A'], ''), T.teamNameOf(['Team A'], 'Team C')], ['teama', 'Team B', T.NO_TEAM, T.NO_TEAM]);
+assert.strictEqual(P.groupFigures('m', 'm', [blank]).joiningTarget, null, 'nobody has a joining target: no count, not 0 of 0');
+
 console.log('employee progress: all passed');

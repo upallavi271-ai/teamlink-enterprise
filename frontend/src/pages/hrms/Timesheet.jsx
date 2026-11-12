@@ -159,7 +159,9 @@ export default function Timesheet({ standalone = false }) {
   const orderBy = (list, order) => [...list].sort((a, b) => (order.indexOf(a.value) < 0 ? 99 : order.indexOf(a.value)) - (order.indexOf(b.value) < 0 ? 99 : order.indexOf(b.value)));
   const taskDept = (t) => t.department || (t.assignee && t.assignee.department) || '';
   const shown = tasks.filter((t) => textMatches(`${t.name || ''} ${t.subTaskName || ''} ${t.description || ''} ${t.assigneeName || ''} ${t.assignedByName || ''}`, pf.q)
-    && peopleMatches(t, pf, assigneeOf) && (!pf.review || (t.reviewState || 'Not Submitted') === pf.review)
+    // The Status filter is applied below (Overdue = not finished and the date passed, which is not a stored status). peopleMatches must not compare it
+    // with t.status as well: "Overdue" is never a t.status, so the Overdue chip said 6 and the list was empty (founder 2026-11-12).
+    && peopleMatches(t, { ...pf, status: '' }, assigneeOf) && (!pf.review || (t.reviewState || 'Not Submitted') === pf.review)
     && (!pf.priority || (t.priority || 'Medium') === pf.priority)
     && (!pf.status || (pf.status === 'Overdue' ? t.overdue : (t.status === pf.status && !t.overdue)))
     && (!filters.assigneeId || t.assigneeId === filters.assigneeId)

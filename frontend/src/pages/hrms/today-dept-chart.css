@@ -29,6 +29,11 @@
 .tdc-row{display:grid;grid-template-columns:minmax(96px,180px) 1fr 96px;gap:12px;align-items:center;font-size:13px}
 .tdc-name{all:unset;cursor:pointer;color:var(--tlc-ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .tdc-name:hover,.tdc-name:focus-visible{text-decoration:underline}
+/* a team of a department (Education: Team A / Team B): a smaller row under it */
+.tdc-row.tdc-sub{margin-top:-4px}
+.tdc-row.tdc-sub .tdc-name{padding-left:18px;font-weight:400;color:var(--tlc-ink2)}
+.tdc-row.tdc-sub .tdc-bar{height:16px}
+.tdc-row.tdc-sub .tdc-total b{font-size:12.5px;font-weight:600}
 .tdc-track{min-width:0}
 /* 24px thick, 2px of surface between parts, 4px rounded end, square at the start. */
 .tdc-bar{display:flex;gap:2px;height:24px;min-width:4px}

@@ -30,6 +30,9 @@ function slotsFor(rows) {
 }
 const COLUMNS = [
   { key: 'targetsPct', name: 'Targets', title: (r, people) => (people ? `${r.targetsMet} of ${r.targetsPeople} targets${r.joiningTarget != null ? `, ${r.joinings} of ${r.joiningTarget} joinings` : ''}` : `${r.targetsMet} of ${r.targetsPeople} people met all targets`) },
+  // THE JOINING COUNT (founder 2026-11-12): Targets is the share of people who reached their WHOLE target, so a team part way shows 0%. This column is the
+  // count itself: joinings from the ATS (the Recruiter joinings rule) against the joining targets of the people who have one.
+  { key: 'joinings', name: 'Joinings', hint: 'ATS joinings this month out of the joining targets', fmt: (r) => (r.joiningTarget == null ? '—' : `${r.joinings} of ${r.joiningTarget}`), title: (r) => (r.joiningTarget == null ? 'No joining target this month' : `${r.joinings} joined in the ATS this month, against joining targets of ${r.joiningTarget}`) },
   { key: 'attendancePct', name: 'Attendance', title: (r) => `${r.daysWorked} of ${r.workingDays} working days` },
   { key: 'scorePct', name: 'Performance', title: (r, people) => (r.scorePct == null ? 'No review yet' : people ? `Review score ${r.scorePct} of 100` : `Average score of ${r.reviewed} reviewed`) },
   { key: 'trainingPct', name: 'Training', title: (r) => `${r.trainingDone} of ${r.trainingTotal} courses done` },
@@ -51,7 +54,7 @@ function Donut({ slices, total, word, active, setActive }) {
         const len = sum ? (s.value / sum) * c : 0;
         const gap = slices.filter((x) => x.value > 0).length > 1 ? 2.5 : 0;
         const el = (
-          <circle key={s.key} cx={size / 2} cy={size / 2} r={r} strokeWidth={width} fill="none" className={`epg-slice epg-s${s.slot}${active && active !== s.key ? ' epg-dim' : ''}`}
+          <circle key={s.key} cx={size / 2} cy={size / 2} r={r} strokeWidth={width} fill="none" className={`epg-slice epg-s${s.slot} epg-alt${s.alt || 0}${active && active !== s.key && active !== s.dept ? ' epg-dim' : ''}`}
             strokeDasharray={`${Math.max(len - gap, 0.5)} ${c}`} strokeDashoffset={-start} transform={`rotate(-90 ${size / 2} ${size / 2})`}
             onMouseEnter={(e) => { setActive(s.key); if (tip) tip.show(e, { title: s.name, rows: [{ name: `of ${sum} (${Math.round((s.value / sum) * 100)}%)`, value: s.value }] }); }}
             onMouseMove={(e) => tip && tip.show(e, { title: s.name, rows: [{ name: `of ${sum} (${Math.round((s.value / sum) * 100)}%)`, value: s.value }] })}
@@ -66,8 +69,12 @@ function Donut({ slices, total, word, active, setActive }) {
   );
 }
 
+const cell = (c, r) => (c.fmt ? c.fmt(r) : show(r[c.key]));
+
 function Details({ rows, people, overall, slotFor, active, setActive, onPickDept }) {
   const clickable = !people && !!onPickDept;
+  // a department the plan splits into teams (Education: Team A / Team B) is followed by one smaller row per team; the department row counts everybody
+  const list = people ? rows : rows.flatMap((r) => [r, ...(r.teams || []).map((t, i) => ({ ...t, sub: true, parent: r.key, alt: i }))]);
   return (
     <div className="epg-tablewrap">
       <table className="epg-table">
@@ -75,22 +82,22 @@ function Details({ rows, people, overall, slotFor, active, setActive, onPickDept
           <tr>
             <th>{people ? 'Employee' : 'Department'}</th>
             {!people && <th className="num">People</th>}
-            {COLUMNS.map((c) => <th key={c.key} className="num">{c.name}</th>)}
+            {COLUMNS.map((c) => <th key={c.key} className="num" title={c.hint}>{c.name}</th>)}
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
-            <tr key={r.key} className={active === r.key ? 'on' : ''} onMouseEnter={() => setActive(r.key)} onMouseLeave={() => setActive(null)}>
+          {list.map((r) => (
+            <tr key={r.key} className={`${active === r.key || (!r.sub && r.teams && (r.teams || []).some((t) => t.key === active)) ? 'on' : ''}${r.sub ? ' epg-sub' : ''}`} onMouseEnter={() => setActive(r.key)} onMouseLeave={() => setActive(null)}>
               <td>
                 <span className="epg-who">
-                  {slotFor(r) && <i className={`epg-s${slotFor(r)}`} />}
+                  {slotFor(r) && <i className={`epg-s${slotFor(r)} epg-alt${r.alt || 0}`} />}
                   {clickable
-                    ? <button type="button" title={`Show the people of ${r.name}`} onClick={() => onPickDept(r.key)}>{r.name}</button>
+                    ? <button type="button" title={`Show the people of ${r.sub ? r.parent : r.name}`} onClick={() => onPickDept(r.sub ? r.parent : r.key)}>{r.sub ? `↳ ${r.name}` : r.name}</button>
                     : <span>{r.name}</span>}
                 </span>
               </td>
               {!people && <td className="num">{r.people}</td>}
-              {COLUMNS.map((c) => <td key={c.key} className="num" title={c.title(r, people)}>{show(r[c.key])}</td>)}
+              {COLUMNS.map((c) => <td key={c.key} className="num" title={c.title(r, people)}>{cell(c, r)}</td>)}
             </tr>
           ))}
         </tbody>
@@ -99,7 +106,7 @@ function Details({ rows, people, overall, slotFor, active, setActive, onPickDept
             <tr>
               <td>All departments</td>
               <td className="num">{overall.people}</td>
-              {COLUMNS.map((c) => <td key={c.key} className="num" title={c.title(overall, false)}>{show(overall[c.key])}</td>)}
+              {COLUMNS.map((c) => <td key={c.key} className="num" title={c.title(overall, false)}>{cell(c, overall)}</td>)}
             </tr>
           </tfoot>
         )}
@@ -134,7 +141,10 @@ export default function EmployeeProgress({ params, onPickDept }) {
       { key: 'notYet', name: 'Not yet', value: o.targetsPeople - o.targetsMet, slot: 2 },
       { key: 'none', name: 'No target this month', value: noTargets, slot: 'n' },
     ]
-    : d.rows.map((r) => ({ key: r.key, name: r.name, value: r.people, slot: slots.get(r.key) }));
+    // a department the plan splits into teams (Education: Team A / Team B) is drawn as its teams, in the department's colour, one shade each
+    : d.rows.flatMap((r) => (r.teams && r.teams.length
+      ? r.teams.map((t, i) => ({ key: t.key, dept: r.key, name: `${r.name} · ${t.name}`, value: t.people, slot: slots.get(r.key), alt: i }))
+      : [{ key: r.key, name: r.name, value: r.people, slot: slots.get(r.key) }]));
   return (
     <div className="hd-epg">
       <ChartCard
@@ -150,7 +160,7 @@ export default function EmployeeProgress({ params, onPickDept }) {
             <Donut slices={slices} total={o.people} word={o.people === 1 ? 'person' : 'people'} active={people ? null : active} setActive={people ? () => {} : setActive} />
             {table && (
               <div className="epg-legend">
-                {slices.map((s) => <span key={s.key}><i className={`epg-s${s.slot}`} />{s.name} {s.value}</span>)}
+                {slices.map((s) => <span key={s.key}><i className={`epg-s${s.slot} epg-alt${s.alt || 0}`} />{s.name} {s.value}</span>)}
               </div>
             )}
           </div>
@@ -160,9 +170,9 @@ export default function EmployeeProgress({ params, onPickDept }) {
               <ul className="epg-key">
                 {slices.map((s) => (
                   <li key={s.key} className={active === s.key ? 'on' : ''} onMouseEnter={() => !people && setActive(s.key)} onMouseLeave={() => setActive(null)}>
-                    <i className={`epg-s${s.slot}`} />
+                    <i className={`epg-s${s.slot} epg-alt${s.alt || 0}`} />
                     {!people && onPickDept
-                      ? <button type="button" title={`Show the people of ${s.name}`} onClick={() => onPickDept(s.key)}>{s.name}</button>
+                      ? <button type="button" title={`Show the people of ${s.dept || s.name}`} onClick={() => onPickDept(s.dept || s.key)}>{s.name}</button>
                       : <span>{s.name}</span>}
                     <b>{s.value}</b>
                   </li>

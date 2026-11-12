@@ -11,6 +11,7 @@ const D = require('./attendanceDays');
 const RJ = require('./recruiterJoinings');
 const { hrStatusOf } = require('./hrStatus');
 const { filterActiveDepartments } = require('./masters');
+const { splitByTeam } = require('./teamNames');
 
 const pct = (n, d) => (d > 0 ? Math.round((n / d) * 100) : null);
 const WORKED = { present: 1, halfDay: 0.5, absent: 0, onLeave: 0 };
@@ -23,7 +24,7 @@ function personFigures({ employee, joining = null, targets = [], attendance = { 
   const joiningMet = !!joining && joining.target > 0 && joining.joinings >= joining.target;
   const targetsDone = targets.filter(targetDone).length + (joiningMet ? 1 : 0);
   return {
-    id: employee.id, name: employee.name, department: employee.department || 'No department',
+    id: employee.id, name: employee.name, department: employee.department || 'No department', team: employee.team || '',
     joinings: joining ? joining.joinings : null, joiningTarget: joining ? joining.target : null,
     targetItems, targetsDone, targetMet: targetItems > 0 && targetsDone === targetItems,
     daysWorked: attendance.worked, workingDays: attendance.days,
@@ -40,8 +41,14 @@ function groupFigures(key, name, people) {
   const trainingDone = people.reduce((n, p) => n + p.trainingDone, 0);
   const trainingTotal = people.reduce((n, p) => n + p.trainingTotal, 0);
   const met = withTargets.filter((p) => p.targetMet).length;
+  // THE JOINING COUNT (founder 2026-11-12: "targets close cheseru, ATS lo updates cheseru, count ekkada kanipinchali"): Targets % only says how many people
+  // reached their whole target, so a team that is part way shows 0%. The joinings themselves (Recruiter joinings rule: ATS, Joined in the month) against the
+  // joining targets of the people who have one are added up here, so the count is always visible.
+  const withJoin = people.filter((p) => p.joiningTarget != null);
   return {
     key, name, people: people.length,
+    joinings: withJoin.length ? withJoin.reduce((n, p) => n + (p.joinings || 0), 0) : null,
+    joiningTarget: withJoin.length ? withJoin.reduce((n, p) => n + (p.joiningTarget || 0), 0) : null,
     targetsMet: met, targetsPeople: withTargets.length, targetsPct: pct(met, withTargets.length),
     daysWorked: worked, workingDays: days, attendancePct: pct(worked, days),
     reviewed: scored.length, scorePct: scored.length ? Math.round(scored.reduce((n, p) => n + p.score, 0) / scored.length) : null,
@@ -62,11 +69,18 @@ function personRow(p) {
 }
 
 // Departments, or the people themselves once the list is down to one department.
-function rowsFor(people, level) {
+// teamMap (utils/vacancies.js teamsByDepartment): a department the plan splits into teams (Education: Team A / Team B) also carries `teams`, the same
+// figures per team, so the chart can show them under the department. The department row still counts everybody.
+function rowsFor(people, level, teamMap) {
   if (level === 'employee') return people.map(personRow).sort((a, b) => a.name.localeCompare(b.name));
   const by = new Map();
   people.forEach((p) => { if (!by.has(p.department)) by.set(p.department, []); by.get(p.department).push(p); });
-  return [...by.entries()].map(([d, list]) => groupFigures(d, d, list)).sort((a, b) => b.people - a.people || a.name.localeCompare(b.name));
+  return [...by.entries()].map(([d, list]) => {
+    const row = groupFigures(d, d, list);
+    const names = teamMap && teamMap.get(String(d).toLowerCase());
+    if (names) row.teams = splitByTeam(names, list, (p) => p.team).map((t) => groupFigures(`${d}|${t.name}`, t.name, t.items));
+    return row;
+  }).sort((a, b) => b.people - a.people || a.name.localeCompare(b.name));
 }
 
 // Who counts (founder 2026-11-06: "only active departments and active employees"): Active people of an active department. People who left, and the

@@ -41,24 +41,27 @@ function Bars({ rows, top, onPickDept }) {
 
   return (
     <div className="tdc-rows" ref={box}>
-      {rows.map((r) => {
+      {rows.flatMap((dept) => [dept, ...(dept.teams || []).map((t) => ({ ...t, parent: dept.department }))]).map((r) => {
+        // a team of a department (Education: Team A / Team B) is a smaller row under it; the department's own row still counts everybody
+        const sub = !!r.parent;
+        const label = sub ? `${r.parent} · ${r.department}` : r.department;
         const work = atWork(r);
         const hide = () => tip && tip.hide();
-        const all = { title: `${r.department} · ${work} at work`, rows: PARTS.map((p) => ({ name: `${p.name} (${pct(r[p.key], work)}%)`, value: r[p.key] || 0, slot: p.slot })) };
+        const all = { title: `${label} · ${work} at work`, rows: PARTS.map((p) => ({ name: `${p.name} (${pct(r[p.key], work)}%)`, value: r[p.key] || 0, slot: p.slot })) };
         return (
-          <div key={r.department} className="tdc-row" aria-label={`${r.department}: ${PARTS.map((p) => `${p.name} ${r[p.key] || 0}`).join(', ')}`}>
-            <button type="button" className="tdc-name" title={`Show only ${r.department}`} onClick={() => onPickDept && onPickDept(r.department)}
-              onPointerMove={(e) => tip && tip.show(e, all)} onPointerLeave={hide}>{r.department}</button>
+          <div key={label} className={`tdc-row${sub ? ' tdc-sub' : ''}`} aria-label={`${label}: ${PARTS.map((p) => `${p.name} ${r[p.key] || 0}`).join(', ')}`}>
+            <button type="button" className="tdc-name" title={`Show only ${r.parent || r.department}`} onClick={() => onPickDept && onPickDept(r.parent || r.department)}
+              onPointerMove={(e) => tip && tip.show(e, all)} onPointerLeave={hide}>{sub ? `↳ ${r.department}` : r.department}</button>
             <div className="tdc-track">
               {work === 0 ? <span className="tdc-none">{waitingWords(r) || (r.offDay ? 'Week off / holiday' : 'Nobody at work')}</span> : (
                 <div className="tdc-bar" style={{ width: `${Math.max(3, (work / top) * 100)}%` }}>
                   {PARTS.map((p) => {
                     const v = r[p.key] || 0;
                     if (!v) return null;
-                    const one = { title: r.department, rows: [{ name: `${p.name} (${pct(v, work)}%)`, value: v, slot: p.slot }] };
+                    const one = { title: label, rows: [{ name: `${p.name} (${pct(v, work)}%)`, value: v, slot: p.slot }] };
                     return (
                       <div key={p.key} className={`tdc-seg f${p.slot}`} style={{ flex: `${v} 1 0` }} tabIndex={0}
-                        aria-label={`${r.department}, ${p.name}: ${v}`}
+                        aria-label={`${label}, ${p.name}: ${v}`}
                         onPointerMove={(e) => tip && tip.show(e, one)} onPointerLeave={hide}
                         onFocus={(e) => tip && tip.show(e, all)} onBlur={hide}>
                         {fits((v / top) * trackPx, v) && <span>{v}</span>}
@@ -88,7 +91,10 @@ export default function TodayDeptChart({ rows, date, onPickDept }) {
     <DataTable
       headers={['Department', 'Present', 'Half day', 'On leave', 'Absent', 'Week off / holiday', 'No data yet', 'At work']}
       numeric={[1, 2, 3, 4, 5, 6, 7]}
-      rows={[...list.map((r) => [r.department, r.present, r.halfDay, r.onLeave, r.absent, r.offDay, (r.noRecord || 0) + (r.notYet || 0), atWork(r)]),
+      rows={[...list.flatMap((r) => [
+        [r.department, r.present, r.halfDay, r.onLeave, r.absent, r.offDay, (r.noRecord || 0) + (r.notYet || 0), atWork(r)],
+        ...(r.teams || []).map((t) => [`↳ ${t.department}`, t.present, t.halfDay, t.onLeave, t.absent, t.offDay, (t.noRecord || 0) + (t.notYet || 0), atWork(t)]),
+      ]),
         ['All departments', sum('present'), sum('halfDay'), sum('onLeave'), sum('absent'), sum('offDay'), sum('noRecord') + sum('notYet'), work]]}
     />
   );

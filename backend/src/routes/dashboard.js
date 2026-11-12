@@ -1986,7 +1986,7 @@ router.put('/vacancies/plan', async (req, res, next) => {
     const before = await V.readPlan();
     const r = await V.savePlan((req.body || {}).plan);
     if (r.error) return res.status(400).json({ error: r.error });
-    const brief = (pl) => pl.map((g) => `${g.name}: ${g.rows.map((x) => `${x.role} ${x.planned}`).join(', ')}`).join(' | ').slice(0, 480);
+    const brief = (pl) => pl.map((g) => `${g.name}: ${g.rows.map((x) => `${x.role} ${x.planned}`).join(', ')}${(g.teams || []).map((t) => ` [${t.name}: ${t.rows.map((x) => `${x.role} ${x.planned}`).join(', ')}]`).join('')}`).join(' | ').slice(0, 480);
     const { logAudit } = require('../utils/audit'); // eslint-disable-line global-require
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Changed the vacancy plan', entity: 'Settings', entityId: V.PLAN_KEY, fromValue: brief(before), toValue: brief(await V.readPlan()) }).catch(() => null);
     return res.json({ ...(await V.view()), canEdit: true });

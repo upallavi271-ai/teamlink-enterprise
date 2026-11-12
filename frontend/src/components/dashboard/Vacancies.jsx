@@ -53,6 +53,10 @@ export function VacanciesPopup({ d, setD, onClose }) {
     try { const r = await api.put('/dashboard/vacancies/plan', { plan: edit }); setD(r.data); setEdit(null); } catch (e) { setErr(e.response?.data?.error || 'It could not be saved.'); } finally { setBusy(false); }
   }
   const setNum = (gi, role, v) => setEdit(edit.map((g, i) => (i !== gi ? g : { ...g, rows: g.rows.map((r) => (r.role === role ? { ...r, planned: v === '' ? '' : Number(v) } : r)) })));
+  // the numbers of one team of a department (Education: Team A / Team B)
+  const setTeamNum = (gi, ti, role, v) => setEdit(edit.map((g, i) => (i !== gi ? g : { ...g, teams: g.teams.map((t, j) => (j !== ti ? t : { ...t, rows: t.rows.map((r) => (r.role === role ? { ...r, planned: v === '' ? '' : Number(v) } : r)) })) })));
+  const hasTeams = d.groups.some((g) => g.teams && g.teams.length);
+  const nameList = (people) => people.map((p) => `${p.name}${p.leaving ? ' (notice)' : ''}`).join(', ');
   const t = d.totals;
   return (
     <Modal title={`Vacancies: ${t.vacant}`} size="wide" onClose={onClose}>
@@ -67,15 +71,24 @@ export function VacanciesPopup({ d, setD, onClose }) {
           <div className="small-muted" style={{ marginBottom: 8 }}>How many people each department should have.</div>
           <div className="tbl-wrap"><table>
             <thead><tr><th>Department</th>{d.roles.map((r) => <th key={r}>{r}</th>)}</tr></thead>
-            <tbody>{edit.map((g, gi) => (
+            <tbody>{edit.flatMap((g, gi) => [
               <tr key={g.name}>
                 <td><b>{g.name}</b></td>
                 {d.roles.map((role) => {
                   const row = g.rows.find((r) => r.role === role);
                   return <td key={role}>{row ? <input type="number" min={0} max={500} value={row.planned} onChange={(e) => setNum(gi, role, e.target.value)} style={{ width: 70 }} aria-label={`${g.name} ${role}`} /> : <span className="small-muted">—</span>}</td>;
                 })}
-              </tr>
-            ))}</tbody>
+              </tr>,
+              ...(g.teams || []).map((t, ti) => (
+                <tr key={`${g.name}|${t.name}`}>
+                  <td style={{ paddingLeft: 22 }}><span className="small-muted">↳ {g.name} · </span>{t.name}</td>
+                  {d.roles.map((role) => {
+                    const row = t.rows.find((r) => r.role === role);
+                    return <td key={role}>{row ? <input type="number" min={0} max={500} value={row.planned} onChange={(e) => setTeamNum(gi, ti, role, e.target.value)} style={{ width: 70 }} aria-label={`${g.name} ${t.name} ${role}`} /> : <span className="small-muted">—</span>}</td>;
+                  })}
+                </tr>
+              )),
+            ])}</tbody>
           </table></div>
           <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
             <button type="button" className="btn btn-primary btn-sm" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
@@ -86,25 +99,52 @@ export function VacanciesPopup({ d, setD, onClose }) {
       ) : (
         <div className="tbl-wrap" style={{ marginTop: 12 }}><table>
           <thead><tr><th>Department</th><th>Role</th><th>Should have</th><th>Working now</th><th>Vacant</th></tr></thead>
-          <tbody>{d.groups.flatMap((g) => g.rows.map((r, i) => {
-            const k = `${g.name}|${r.role}`;
-            return (
-              <tr key={k}>
-                <td>{i === 0 ? <b>{g.name}</b> : ''}</td>
-                <td>{r.role}</td>
+          <tbody>{d.groups.flatMap((g) => [
+            ...g.rows.map((r, i) => {
+              const k = `${g.name}|${r.role}`;
+              return (
+                <tr key={k}>
+                  <td>{i === 0 ? <b>{g.name}</b> : ''}</td>
+                  <td>{r.role}</td>
+                  <td>{r.planned}</td>
+                  <td>
+                    {r.filled ? <button type="button" className="link-btn" onClick={() => setOpen({ ...open, [k]: !open[k] })} style={{ background: 'none', border: 0, padding: 0, color: 'var(--primary, #1a56db)', cursor: 'pointer' }}>{r.filled}</button> : 0}
+                    {r.leaving ? <span className="small-muted"> ({r.leaving} leaving)</span> : null}
+                    {r.over ? <span className="small-muted"> (+{r.over} more than planned)</span> : null}
+                    {open[k] ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(r.people)}</div> : null}
+                  </td>
+                  <td><b style={{ color: r.vacant ? red : green }}>{r.vacant}</b></td>
+                </tr>
+              );
+            }),
+            // the teams of the department (Education: Team A / Team B): a split of the rows above, with the names always shown
+            ...(g.teams || []).flatMap((t) => t.rows.map((r, i) => (
+              <tr key={`${g.name}|${t.name}|${r.role}`} style={{ background: 'var(--surface-2, #f8fafc)' }}>
+                <td />
+                <td style={{ paddingLeft: 22 }}>{i === 0 ? <><b>{t.name}</b><br /></> : null}<span className="small-muted">{r.role}</span></td>
                 <td>{r.planned}</td>
                 <td>
-                  {r.filled ? <button type="button" className="link-btn" onClick={() => setOpen({ ...open, [k]: !open[k] })} style={{ background: 'none', border: 0, padding: 0, color: 'var(--primary, #1a56db)', cursor: 'pointer' }}>{r.filled}</button> : 0}
+                  {r.filled}
                   {r.leaving ? <span className="small-muted"> ({r.leaving} leaving)</span> : null}
                   {r.over ? <span className="small-muted"> (+{r.over} more than planned)</span> : null}
-                  {open[k] ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{r.people.map((p) => `${p.name}${p.leaving ? ' (notice)' : ''}`).join(', ')}</div> : null}
+                  {r.people.length ? <div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>{nameList(r.people)}</div> : null}
                 </td>
                 <td><b style={{ color: r.vacant ? red : green }}>{r.vacant}</b></td>
               </tr>
-            );
-          }))}</tbody>
+            ))),
+            ...(g.teamless || []).map((x) => (
+              <tr key={`${g.name}|noteam|${x.role}`} style={{ background: 'var(--surface-2, #f8fafc)' }}>
+                <td />
+                <td style={{ paddingLeft: 22 }}><b>No team set</b><br /><span className="small-muted">{x.role}</span></td>
+                <td><span className="small-muted">—</span></td>
+                <td>{x.people.length}<div className="small-muted" style={{ fontSize: 12, marginTop: 2 }}>{nameList(x.people)} - set their team in Employee Management</div></td>
+                <td><span className="small-muted">—</span></td>
+              </tr>
+            )),
+          ])}</tbody>
         </table></div>
       )}
+      {hasTeams && !edit ? <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>Team rows are part of the department rows above them, so they are not added to the totals again.</div> : null}
     </Modal>
   );
 }

@@ -25,7 +25,11 @@
 .epg-donut{display:block;width:100%;max-width:250px;margin:0 auto}
 .epg-rail{stroke:var(--line)}
 .epg-slice{transition:opacity .12s;cursor:default}
-.epg-dim{opacity:.28}
+.epg-slice.epg-dim{opacity:.28}
+/* a department split into teams (Education: Team A / Team B): the department's colour, a lighter shade for each further team */
+circle.epg-alt1,i.epg-alt1{opacity:.62} circle.epg-alt2,i.epg-alt2{opacity:.42} circle.epg-alt3,i.epg-alt3{opacity:.3}
+.epg-table tbody tr.epg-sub td{font-size:12.5px;color:var(--tlc-ink2)}
+.epg-table tbody tr.epg-sub .epg-who button{font-weight:400;color:var(--tlc-ink2);padding-left:14px}
 circle.epg-s1{stroke:var(--s1)} circle.epg-s2{stroke:var(--s2)} circle.epg-s3{stroke:var(--s3)} circle.epg-s4{stroke:var(--s4)}
 circle.epg-s5{stroke:var(--s5)} circle.epg-s6{stroke:var(--s6)} circle.epg-s7{stroke:var(--s7)} circle.epg-s8{stroke:var(--s8)} circle.epg-sn{stroke:var(--sn)}
 i.epg-s1{background:var(--s1)} i.epg-s2{background:var(--s2)} i.epg-s3{background:var(--s3)} i.epg-s4{background:var(--s4)}
