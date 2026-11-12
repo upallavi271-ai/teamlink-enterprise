@@ -492,9 +492,20 @@ function TasksVsWork({ onOpen }) {
   const [from, setFrom] = useState(todayIst());
   const [to, setTo] = useState(todayIst());
   const [q, setQ] = useState('');
+  const [band, setBand] = useState('');
   const [open, setOpen] = useState({});
   const { data, error, loading } = useGet('/monitoring/task-match', { from, to });
-  const rows = ((data && data.rows) || []).filter((r) => !q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase()));
+  // filter by the match % (the same bands as the colour: 60+ good, 30-59 okay, under 30 poor, and No task open)
+  const inBand = (r) => {
+    if (!band) return true;
+    if (band === 'none') return r.matchPct == null;
+    if (r.matchPct == null) return false;
+    if (band === 'good') return r.matchPct >= 60;
+    if (band === 'ok') return r.matchPct >= 30 && r.matchPct < 60;
+    if (band === 'poor') return r.matchPct < 30;
+    return true;
+  };
+  const rows = ((data && data.rows) || []).filter((r) => (!q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase())) && inBand(r));
   const items = (list) => (list || []).map((x) => `${x.item} (${dur(x.seconds)})`).join(' · ');
   return (
     <>
@@ -505,6 +516,13 @@ function TasksVsWork({ onOpen }) {
       </div>
       <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo}>
         <input type="search" placeholder="Search a name, code or department" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Combo value={band} onChange={(e) => setBand(e.target.value)} aria-label="Match %">
+          <option value="">Any match</option>
+          <option value="good">Good — 60% and up</option>
+          <option value="ok">Okay — 30 to 59%</option>
+          <option value="poor">Poor — below 30%</option>
+          <option value="none">No task open</option>
+        </Combo>
       </RangeBar>
       {error && <div className="notice red">{error}</div>}
       {loading && !data && <div className="small-muted">Loading…</div>}
