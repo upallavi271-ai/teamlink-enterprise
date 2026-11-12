@@ -848,7 +848,8 @@ export function EmployeeDetail({ id, onBack, own = false }) {
   const { data, error, loading } = useGet(`/monitoring/employee/${id}`, { from, to });
   const t = data && data.totals;
   const [appKey, setAppKey] = useState(null);
-  const [keyPick, setKeyPick] = useState(null); // a key / button clicked in Keys and buttons pressed
+  const [keyPick, setKeyPick] = useState(null);
+  const [focus, setFocus] = useState(''); // a time card clicked: active / idle / break // a key / button clicked in Keys and buttons pressed
   const [appPick, setAppPick] = useState(null); // an app row clicked in the app-wise table
   const openApp = data && appKey ? data.apps.find((a) => a.key === appKey) : null;
   return (
@@ -866,11 +867,43 @@ export function EmployeeDetail({ id, onBack, own = false }) {
       {data && (
         <>
           <KpiRow>
-            <KpiTile icon="clock" tone="green" label="Active" value={h(t.activeHours)} sub={`First ${tm(t.first)} · last ${tm(t.last)}`} />
-            <KpiTile icon="pause" tone="amber" label="Idle" value={h(t.idleHours)} sub={`Break ${h(t.breakHours)}`} />
-            <KpiTile icon="trend" tone="blue" label="Productivity" value={pct(t.productivity)} sub="Productive apps, of the active time" />
-            <KpiTile icon="calendar" tone="violet" label="Days with activity" value={data.perDay.length} sub={`${data.from} to ${data.to}`} />
+            {(() => { const fc = (k) => (data.timeline ? { active: focus === k, onClick: () => setFocus(focus === k ? '' : k) } : {}); return (
+              <>
+                <KpiTile icon="clock" tone="green" label="Active" value={h(t.activeHours)} sub={data.timeline ? 'Click for the active times' : `First ${tm(t.first)} · last ${tm(t.last)}`} {...fc('active')} />
+                <KpiTile icon="pause" tone="amber" label="Idle" value={h(t.idleHours)} sub={data.timeline ? 'Click for the idle times' : 'PC on, not in use'} {...fc('idle')} />
+                <KpiTile icon="pause" tone="teal" label="Break" value={h(t.breakHours)} sub={data.timeline ? 'Click for the break times' : 'Lunch and personal break'} {...fc('break')} />
+                <KpiTile icon="trend" tone="blue" label="Productivity" value={pct(t.productivity)} sub="Productive apps, of the active time" />
+                <KpiTile icon="calendar" tone="violet" label="Days with activity" value={data.perDay.length} sub={`${data.from} to ${data.to}`} />
+              </>
+            ); })()}
           </KpiRow>
+          {focus && data.timeline && (() => {
+            const kept = data.timeline.filter((r) => (focus === 'break' ? r.break : focus === 'idle' ? (r.idle && !r.break) : (!r.idle && !r.break)));
+            const secs = (r) => Math.max(0, Math.round((new Date(r.end) - new Date(r.start)) / 1000));
+            const total = kept.reduce((n, r) => n + secs(r), 0);
+            const WORD = { active: 'Active', idle: 'Idle', break: 'Break' };
+            return (
+              <Panel title={`${WORD[focus]} periods`} sub={`${kept.length} on this day · ${dur(total)} in all. Click the card again to close.`}>
+                {kept.length ? (
+                  <table className="mon-table">
+                    <thead><tr><th>When</th><th className="num">How long</th><th>{focus === 'break' ? 'Kind' : 'App / website'}</th></tr></thead>
+                    <tbody>
+                      {kept.map((r, i) => {
+                        const { site } = siteOf(r.app, r.title);
+                        return (
+                          <tr key={i}>
+                            <td style={{ whiteSpace: 'nowrap' }}>{`${tm(r.start)} – ${tm(r.end)}`}</td>
+                            <td className="num">{dur(secs(r))}</td>
+                            <td>{focus === 'break' ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break / lunch') : <><b>{appWord(r.app)}</b>{site && <div className="small-muted">{site}</div>}</>}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : <div className="small-muted">{`No ${focus === 'break' ? 'break' : focus} time on this day.`}</div>}
+              </Panel>
+            );
+          })()}
           {data.timeline && (
             <Panel title="The day" sub={`Work hours ${data.workStart} – ${data.workEnd}`}>
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
@@ -951,10 +984,10 @@ export function EmployeeDetail({ id, onBack, own = false }) {
             </Panel>
           )}
           <div className="mon-two">
-            <Panel title="Top 10 apps and websites" sub="Active time">
+            <Panel title="Most-used apps and websites" sub="By active time · every app is in the full list beside this">
               <BarList showShare rows={data.top10.map((a, i) => ({ key: a.key, label: a.name, value: a.seconds, onClick: () => setAppKey(a.key), tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate', 'blue', 'violet', 'teal'][i] }))} format={dur} empty="No app used in this period." />
             </Panel>
-            <Panel title="All apps and websites" sub="Click one to see everything it was used for" flush>
+            <Panel title={`All apps and websites (${data.apps.length})`} sub="Everything used in work hours - scroll for all. Click one to see what it was used for." flush>
               <div className="mon-scroll">
                 <table className="mon-table">
                   <thead><tr><th>App / website</th><th className="num">Time</th><th>Category</th></tr></thead>
