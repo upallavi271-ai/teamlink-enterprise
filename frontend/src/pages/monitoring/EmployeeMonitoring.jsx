@@ -148,7 +148,8 @@ function Overview({ onOpen }) {
     && (!status || r.status === status)
     && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [allRows, dept, team, status, q]);
   // the statuses actually on the board now, in a sensible order, for the Status filter (founder 2026-11-12: "idle, break etc vetiki pettukovadaniki")
-  const statusOptions = useMemo(() => { const order = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave']; const present = new Set(allRows.map((r) => r.status).filter(Boolean)); return order.filter((x) => present.has(x)); }, [allRows]);
+  // every status is offered, so any one can be filtered on even when nobody is in it right now (founder 2026-11-12: "dropdown lo anni raavali")
+  const statusOptions = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave'];
   const c = data && data.cards ? { ...data.cards, ...((now && now.cards) || {}) } : null;
   const first = ((data && data.rows) || []).find((r) => r.workHours > 0) || null;
   const card = (s) => ({ active: status === s, onClick: live ? () => setStatus(status === s ? '' : s) : undefined });
