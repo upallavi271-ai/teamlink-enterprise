@@ -65,9 +65,9 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['agentver', 'Agent versions'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
     : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['misuse', 'Misuse'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
-      : it ? [['devices', 'Devices'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
+      : it ? [['devices', 'Devices'], ['agentver', 'Agent versions'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
   const employee = params.get('employee');
   const go = (t, extra = {}) => setParams({ tab: t, ...extra });
@@ -103,6 +103,7 @@ export default function EmployeeMonitoring() {
             {tab === 'alerts' && <Alerts onOpen={(id) => go('alerts', { employee: id })} />}
             {tab === 'misuse' && <Misuse onOpen={(id) => go('misuse', { employee: id })} />}
             {tab === 'devices' && <Devices manage />}
+            {tab === 'agentver' && <AgentVersions />}
             {tab === 'settings' && <Settings />}
             {tab === 'mine' && <Mine me={me} />}
           </>
@@ -1450,6 +1451,66 @@ function Reports({ onOpen, admin = false }) {
           </tbody>
         </table>
       </div>
+    </>
+  );
+}
+
+// ------------------------------------------------------------------------------------------------ Devices
+// ------------------------------------------------------------------------------------------------ Agent versions
+// Which TeamLink agent each office PC is on, who is behind the latest, and who has not reported one (founder 2026-11-12, a rating
+// follow-up: the "who is on which version" central view that was missing). PCs update themselves on the next connection; a restart
+// makes it happen now. Reuses GET /monitoring/devices (it already carries agentVersion, outdated and online).
+function AgentVersions() {
+  const { data, error, loading } = useGet('/monitoring/devices');
+  const latest = data && data.latestAgent;
+  const active = ((data && data.rows) || []).filter((d) => d.isActive !== false);
+  const withVer = active.filter((d) => d.agentVersion);
+  const upToDate = withVer.filter((d) => !d.outdated).length;
+  const behind = withVer.filter((d) => d.outdated);
+  const noReport = active.filter((d) => !d.agentVersion).length;
+  const online = active.filter((d) => d.online).length;
+  const byVer = new Map();
+  active.forEach((d) => { const v = d.agentVersion || 'Not reported'; byVer.set(v, (byVer.get(v) || 0) + 1); });
+  const verRows = [...byVer.entries()].sort((a, b) => {
+    if (a[0] === 'Not reported') return 1;
+    if (b[0] === 'Not reported') return -1;
+    return a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : 0; // newest version first
+  });
+  const behindSorted = [...behind].sort((a, b) => String(a.agentVersion).localeCompare(String(b.agentVersion)) || String((a.employee || {}).name || '').localeCompare(String((b.employee || {}).name || '')));
+  return (
+    <>
+      <div className="small-muted" style={{ marginBottom: 8 }}>Which TeamLink agent each office PC is on. The latest is <b>{latest || '—'}</b>. A PC updates itself the next time it connects; a restart makes it update now. The PCs behind the latest are listed below, so you know who to ask to restart.</div>
+      {error && <div className="notice red">{error}</div>}
+      {loading && !data && <div className="small-muted">Loading…</div>}
+      <KpiRow>
+        <KpiTile icon="check" tone="green" label="Up to date" value={upToDate} sub={`On the latest (${latest || '—'})`} />
+        <KpiTile icon="alert" tone="amber" label="Behind" value={behind.length} sub="An older agent - ask them to restart" />
+        <KpiTile icon="x" tone="slate" label="Not reported" value={noReport} sub="No version seen yet" />
+        <KpiTile icon="users" tone="blue" label="Online now" value={online} sub={`of ${active.length} PC${active.length === 1 ? '' : 's'}`} />
+      </KpiRow>
+      <Panel title="By version" sub="Every active PC, newest agent first">
+        <BarList rows={verRows.map(([v, n]) => ({ key: v, label: v === latest ? `${v} (latest)` : v, value: n, tone: v === latest ? 'green' : v === 'Not reported' ? 'slate' : 'amber' }))} format={(n) => `${n} PC${n === 1 ? '' : 's'}`} />
+      </Panel>
+      <Panel title={`PCs behind the latest (${behind.length})`} sub="They update on the next connection; a restart does it now">
+        {behindSorted.length ? (
+          <div className="tbl-wrap">
+            <table className="mon-table">
+              <thead><tr><th>Employee</th><th>PC</th><th>Agent</th><th>Last seen</th><th>Status</th></tr></thead>
+              <tbody>
+                {behindSorted.map((d) => (
+                  <tr key={d.id}>
+                    <td><b>{d.employee ? d.employee.name : '—'}</b>{d.employee && d.employee.employeeCode && <div className="small-muted">{d.employee.employeeCode}{d.employee.department ? ` · ${d.employee.department}` : ''}</div>}</td>
+                    <td>{d.deviceName || '—'}</td>
+                    <td><Pill tone="amber">{d.agentVersion || '—'}</Pill></td>
+                    <td style={{ whiteSpace: 'nowrap' }}>{d.lastSeenAt ? dt(d.lastSeenAt) : '—'}</td>
+                    <td>{d.online ? <Pill tone="green">Online</Pill> : <span className="small-muted">Offline</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : <div className="small-muted">{withVer.length ? 'Every PC is on the latest agent.' : 'No PC has reported a version yet.'}</div>}
+      </Panel>
     </>
   );
 }
