@@ -6,5 +6,5 @@
 [submodule "green-start-app"]
 	path = green-start-app
 	url = https://github.com/greenstart127-ui/Omni-channel---Greenstart.git
-	branch = main
+	branch = release
 	ignore = untracked
