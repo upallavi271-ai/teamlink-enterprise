@@ -26,9 +26,11 @@ const eng = ({ detect = null, te = '', hi = '', en = '', speechMs = 3000 }) => (
   check('V4 real Hindi words: switches', hi.changed && hi.lang === 'Hindi', hi);
   const proof = await V.hear(pcm, 'English', { engines: eng({ detect: 'Telugu', te: 'ల మక', hi: 'कि अ' }) });
   check('V5 the sound says Telugu but no real words: no proof, no switch', proof.ready && !proof.changed && proof.lang === 'English', proof);
-  const back = await V.hear(pcm, 'Telugu', { engines: eng({ detect: 'English', en: 'I worked as a nurse for five years', te: 'యెస్ ఐ' }) });
+  const back = await V.hear(pcm, 'Telugu', { engines: eng({ detect: 'English', en: 'I worked as a nurse for five years and I like it', te: 'ఐ వర్క్డ్ ఏజ్ అ నర్స్ ఫర్ ఫైవ్ ఇయర్స్ అండ్ ఐ లైక్ ఇట్ ఇన్ హాస్పిటల్' }) });
   check('V6 English in a Telugu interview: back to English', back.changed && back.lang === 'English' && /nurse/.test(back.text), back);
   const stay = await V.hear(pcm, 'Telugu', { engines: eng({ detect: 'English', te: 'నేను నర్సుగా పని చేశాను', en: 'My God Adam' }) });
+  const halluc = await V.hear(pcm, 'Telugu', { engines: eng({ detect: 'English', te: 'నేను హైదరాబాద్ లో టీచర్ గా పని చేస్తున్నాను', en: "I'm going to change that one. Thank you very much for watching." }) });
+  check('V7b Whisper writes a plausible English sentence over Telugu speech: stays in Telugu', !halluc.changed && halluc.lang === 'Telugu', halluc);
   check('V7 English-looking sound over real Telugu words: stays in Telugu', !stay.changed && stay.lang === 'Telugu', stay);
   const unsure = await V.hear(pcm, 'English', { engines: eng({ detect: null }) });
   check('V8 Whisper not sure: no switch', unsure.ready && !unsure.changed, unsure);

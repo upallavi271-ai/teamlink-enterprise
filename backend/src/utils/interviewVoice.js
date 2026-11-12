@@ -44,6 +44,17 @@ async function indicProof(en, pcm, G) {
   return {};
 }
 
+const EN_IN_TELUGU = ['అండ్', 'ఇన్', 'ఇస్', 'టు', 'ఆఫ్', 'మై', 'విత్', 'ఫర్', 'ఎట్', 'దట్', 'వాస్', 'హావ్', 'ఆర్', 'ఆఐ', 'ఎమ్', 'ద', 'ఇట్', 'బట్', 'అవర్', 'యు'];
+const EN_IN_HINDI = ['एंड', 'इन', 'इज', 'टू', 'ऑफ', 'माई', 'विद', 'फॉर', 'एट', 'दैट', 'वॉज़', 'हैव', 'आर', 'आई', 'इट', 'बट', 'यू'];
+function englishProof(own, english) {
+  const w = (t) => String(t || '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}' ]/gu, ' ').split(/\s+/).filter(Boolean);
+  const e = w(english);
+  if (e.length < 6 || !/[A-Za-z]/.test(String(english))) return false;
+  if (new Set(e).size < Math.ceil(e.length * 0.7)) return false;           // "going to be going to be going to be..." is Whisper talking to itself
+  const marks = w(own).filter((x) => EN_IN_TELUGU.includes(x) || EN_IN_HINDI.includes(x)).length;
+  return marks >= 2;
+}
+
 // numbers only (no audio): how long, how loud, how much of it the speech detector called speech - for the log
 function levels(pcm, speechMs) {
   let peak = 0; let sum = 0; const n = Math.floor(pcm.length / 2);
@@ -78,7 +89,11 @@ async function hearCore(pcm16k, current, deps = {}) {
     // the phone line's rule: English-looking sound over real words of the current language stays in that language
     const own = await en.stt(pcm, cur).catch(() => '');
     if (G.nativeScore(own, cur) >= 1) return { ready: true, lang: cur, changed: false, why: 'own words' };
-    return { ready: true, lang: 'English', changed: true, text: await en.stt(pcm, 'English').catch(() => '') };
+    // Whisper calls Telugu speech English and writes a plausible sentence ("I'm going to change that one." / "I'm going to be going to be...", 2026-11-12): it only wins when the
+    // clip really IS English - the Telugu / Hindi listener then writes English words in its own letters (అండ్, ఇన్, ఇస్, టు...) and the English listener's text is real, not repeated words
+    const english = await en.stt(pcm, 'English').catch(() => '');
+    if (englishProof(own, english)) return { ready: true, lang: 'English', changed: true, text: english };
+    return { ready: true, lang: cur, changed: false, why: 'not english', ...(own ? { text: own } : {}) };
   }
   // Telugu or Hindi: no real words = no proof = no switch
   const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null);
@@ -123,4 +138,4 @@ async function say(text, lang, deps = {}) {
   return { ready: true, wav: E.pcmToWav(pcm, 8000) };
 }
 
-module.exports = { hear, say, MIN_SPEECH_MS, scriptRun };
+module.exports = { hear, say, MIN_SPEECH_MS, scriptRun, englishProof };

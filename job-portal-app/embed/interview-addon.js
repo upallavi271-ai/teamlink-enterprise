@@ -687,7 +687,7 @@
       if (LG.proc && !LG.busy) {
         var due = LG.cur !== 'en'
           ? (LG.voicedMs >= 1200 && Date.now() - LG.lastAt >= 2500 && LG.voicedMs >= LG.lastVoiced + 600)
-          : (LG.checks < 6 && LG.voicedMs >= 3500 && LG.voicedMs >= LG.lastVoiced + 3500);
+          : (LG.checks < 6 && LG.voicedMs >= 2000 && LG.voicedMs >= LG.lastVoiced + 3000);
         if (due) check(key);
       }
     } else {
