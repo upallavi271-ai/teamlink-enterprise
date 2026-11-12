@@ -10,6 +10,7 @@ import AtsDataTools from '../components/AtsDataTools.jsx';
 import {
   ListToolbar, ListFooter, FacetSelect, useLocalFacets,
 } from '../components/ui/ListPageHeader.jsx';
+import Combo from '../components/Combo.jsx';
 import '../components/jobs/jobs.css';
 import ClientDuplicatesButton from '../components/ClientDuplicatesButton.jsx';
 import ColumnChooser, { useColumns } from '../components/jobs/ColumnChooser.jsx';
@@ -710,6 +711,16 @@ export default function Clients() {
                 && (k !== 'agreement' || !blind))
               .map(([k, [label]]) => [k, label])}
             onSort={setSortBy}
+            savedViews={allowedCols.includes('desk') ? (
+              <label className="lph-sort" title="Show only clients with this work status">
+                <span>Work status</span>
+                <Combo value={filters.desk} onChange={(e) => setFilter({ desk: e.target.value })}>
+                  <option value="">Any work status</option>
+                  {DESK_WORDS.map((w) => <option key={w} value={w}>{w}</option>)}
+                  <option value={DESK_NONE}>Not set</option>
+                </Combo>
+              </label>
+            ) : null}
             right={allowedCols.length > 0 ? (
               <ColumnChooser
                 columns={allowedCols.map((k) => ({ key: k, label: labelFor(k, role) }))}
