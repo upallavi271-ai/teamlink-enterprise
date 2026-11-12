@@ -388,6 +388,17 @@ async function askModel(conv, cfg, input) {
       // an answer that does not fit is not taken: the same question again until it is answered (founder 2026-11-09: "exact answer este ne next question")
       const tries = Number(now2.intakeTries) || 0;
       if (!T.answerFits(q, input) && !(now2.joinAsked && (T.isYes(input) || T.isNo(input)))) { // a yes / no to the joining-time request is an answer
+        // a working person says "already in job" to a joining or notice question: say so back and ask the useful follow-up, do not demand numbers again
+        if (T.questionKind(q) === 'number' && /how soon|notice/i.test(q)) {
+          if (T.employedStatement(input)) {
+            await remember({ intakeTries: tries + 1, employedAsked: true });
+            return { ctx, calls, reply: T.employedFollowUp(q), written: true };
+          }
+          if (now2.employedAsked && T.isYes(input)) {
+            await remember({ intakeTries: tries + 1 });
+            return { ctx, calls, reply: T.employedYesText(q), written: true };
+          }
+        }
         const same = T.nextQuestion(list, Number(now2.intakeAt), talkJob ? { ...talkJob, candidate: conv.name } : { candidate: conv.name }, answers);
         await remember({ intakeTries: tries + 1 });
         return { ctx, calls, reply: `${T.askAgainText(q)}\n${same ? same.text : q}`, written: true };

@@ -245,6 +245,14 @@ const check = (name, ok, info) => { if (ok) { pass += 1; console.log(`  PASS ${n
       && !Tg.answerFits('Which date and time would be convenient for you?', 'yes') && Tg.answerFits('Which date and time would be convenient for you?', 'tomorrow 11 am')
       && !Tg.answerFits('Have you already applied for this position, or are you exploring new opportunities?', 'yes') && Tg.answerFits('Have you already applied for this position, or are you exploring new opportunities?', 'exploring')
       && Tg.answerFits('Are you comfortable with the job shift and working hours?', 'yes') && Tg.answerFits('Are you currently working or not working?', 'no'));
+    check('a working person is not told "answer in numbers" again and again: "already in job" gets a follow-up about changing jobs and the notice period',
+      ['already im in job', 'im already doing job', 'I am currently working', 'i have a job'].every((x) => Tg.employedStatement(x) && !Tg.answerFits('If selected, how soon can you join?', x))
+      && !Tg.employedStatement('I have been working for 3 years') && !Tg.employedStatement('30 days') && !Tg.employedStatement('yes')
+      && /Are you looking to change your job/.test(Tg.employedFollowUp('If selected, how soon can you join?')) && /notice period/.test(Tg.employedFollowUp('What is your current notice period?'))
+      && /how soon you can join/.test(Tg.employedYesText('If selected, how soon can you join?')) && Tg.questionKind('If selected, how soon can you join?') === 'number');
+    check('"not looking" answers a joining or notice question; real answers and a bare yes behave as before',
+      ['not looking', 'Not interested in change', 'no plan to change'].every((x) => Tg.notLooking(x) && Tg.answerFits('If selected, how soon can you join?', x))
+      && Tg.answerFits('If selected, how soon can you join?', '30 days') && Tg.answerFits('What is your current notice period?', 'immediate') && !Tg.answerFits('If selected, how soon can you join?', 'yes'));
     check('a question is known without a "?"; an answer is not a question', Tg.isQuestion('what is the job role') && Tg.isQuestion('salary entha') && Tg.isQuestion('Is it full time?') && !Tg.isQuestion('exploring')
       && !Tg.isQuestion('Not working') && !Tg.isQuestion('3 years') && !Tg.isQuestion('Apollo Hospitals') && Tg.aboutThisJob('what is the job role') && !Tg.aboutThisJob('any nursing jobs'));
     check('joining time: days, weeks, months and immediate are read; later than the job is a gap', Tg.daysOf('30 days') === 30 && Tg.daysOf('2 weeks') === 14 && Tg.daysOf('1 month') === 30 && Tg.daysOf('immediate') === 0 && Tg.daysOf('Within 15 Days') === 15

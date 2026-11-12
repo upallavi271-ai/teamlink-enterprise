@@ -161,6 +161,20 @@ function questionKind(question) {
   if (/date and time|what time|\bwhen\b/.test(q)) return 'day';
   return 'words';
 }
+// A working person answers "how soon can you join?" / "notice period?" with "already in job", "im already doing job", "currently working" (founder 2026-11-12:
+// the bot only said "give a correct answer, in numbers" again and again). That is a real answer about their situation, not a wrong one: the bot
+// acknowledges it and asks the useful follow-up (do they want to change jobs, and what is the notice period), instead of repeating the demand.
+const EMPLOYED_RE = /\b(already|currently|presently|now)\b.{0,24}\b(job|jobs|work|working|employed|employee|company|serving)\b|\b(i\s*am|i'?m|im)\s+(already\s+)?(working|employed|doing\s+(a\s+)?job|in\s+(a\s+)?job|in\s+job)\b|\bdoing\s+(a\s+)?job\b|\bin\s+(a\s+)?job\b|\bhave\s+(a\s+)?job\b|\bserving\s+(my\s+)?notice\b/i;
+const employedStatement = (t) => EMPLOYED_RE.test(String(t || '')) && !/\d/.test(String(t || ''));
+// "not looking", "not interested in change", "no plan to change": an answer to a joining or notice question
+const NOT_LOOKING_RE = /\b(not\s+(looking|interested|planning|keen|ready)|no\s+(plan|plans|need|intention)|don'?t\s+want|do\s+not\s+want|not\s+now|not\s+(want|wanting)\s+to\s+(change|switch|leave))\b/i;
+const notLooking = (t) => NOT_LOOKING_RE.test(String(t || ''));
+const employedFollowUp = (question) => (/notice/i.test(String(question || ''))
+  ? 'Understood, you are working at present. What is your notice period with your current company? For example "30 days", "2 months" or "immediate". If you are serving notice, tell me how many days are left.'
+  : 'Understood, you are working at present. Are you looking to change your job? If yes, how soon can you join after selection, counting your notice period? For example "30 days", "2 months" or "immediate". If you are not looking to change, reply "not looking".');
+const employedYesText = (question) => (/notice/i.test(String(question || ''))
+  ? 'Thank you. Please tell me your notice period, for example "30 days" or "immediate".'
+  : 'Good. Please tell me how soon you can join, counting your notice period, for example "30 days" or "immediate".');
 function answerFits(question, text) {
   const t = String(text || '').trim();
   if (!t) return false;
@@ -168,7 +182,7 @@ function answerFits(question, text) {
   const kind = questionKind(question);
   if (kind === 'yesno') return true;
   if (kind === 'choice') return !bare;
-  if (kind === 'number') return /\d/.test(t) || NUMBER_WORDS.test(t);
+  if (kind === 'number') return /\d/.test(t) || NUMBER_WORDS.test(t) || NOT_LOOKING_RE.test(t);
   if (kind === 'day') return /\d/.test(t) || DAY_WORDS.test(t);
   return !bare && /[a-z\u0C00-\u0C7F\u0900-\u097F]{2,}/i.test(t);
 }
@@ -455,4 +469,4 @@ async function run(name, args, conv, ctx) {
 }
 
 const NAMES = ['get_candidate_profile', 'get_job_details', 'search_knowledge_base', 'save_candidate_data', 'send_apply_link', 'send_interview_link', 'handoff_to_recruiter'];
-module.exports = { isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
+module.exports = { isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, questionKind, employedStatement, notLooking, employedFollowUp, employedYesText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
