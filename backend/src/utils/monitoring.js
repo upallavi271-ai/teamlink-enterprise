@@ -740,9 +740,39 @@ async function misuseList(from, to, access = null, min = 2) {
   const events = await MI.misuse(allowed, from, to, { min }).catch(() => []);
   if (!events.length) return { from, to, min, events: [], people: 0 };
   const ids = [...new Set(events.map((e) => e.employeeId))];
-  const emps = await prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, employeeCode: true, department: true } });
+  const [emps, logs, catOf] = await Promise.all([
+    prisma.employee.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, employeeCode: true, department: true } }),
+    prisma.activityLog.findMany({ where: { employeeId: { in: ids }, day: { gte: from, lte: to }, isIdle: false, isBreak: false }, select: { employeeId: true, appName: true, windowTitle: true, startTime: true, endTime: true } }),
+    categoryIndex(),
+  ]);
   const by = new Map(emps.map((e) => [e.id, e]));
-  const withName = events.map((e) => { const emp = by.get(e.employeeId) || {}; return { ...e, name: emp.name || 'Employee', code: emp.employeeCode || '', department: emp.department || '' }; });
+  const segsByEmp = new Map();
+  logs.forEach((l) => { if (!segsByEmp.has(l.employeeId)) segsByEmp.set(l.employeeId, []); segsByEmp.get(l.employeeId).push(l); });
+  // which app / website was in front while the same button was pressed over and over - the one that overlapped the stretch most
+  // (founder 2026-11-12: "ey platform lo vundi chesthunnaro kuda telyalai ga, ey app or website ani"). Taken from the activity
+  // already recorded, so it shows even for rows from before this change. A browser tab shows the website only; chat / mail, the service.
+  const placeOf = (employeeId, fromISO, toISO, dept) => {
+    const a = Date.parse(fromISO); const b = Date.parse(toISO);
+    const segs = segsByEmp.get(employeeId) || [];
+    const over = new Map();
+    segs.forEach((l) => {
+      const s = new Date(l.startTime).getTime(); const e = new Date(l.endTime).getTime();
+      const ov = Math.min(b, e) - Math.max(a, s);
+      if (ov <= 0) return;
+      let c = catOf(l.appName, l.windowTitle, dept);
+      if (c.kind !== 'site') { const w = deriveSite(l.appName, cleanTitle(l.appName, l.windowTitle)); if (w) c = { label: w, kind: 'site' }; }
+      const cur = over.get(c.label) || { seconds: 0, kind: c.kind };
+      cur.seconds += ov; over.set(c.label, cur);
+    });
+    let best = null;
+    over.forEach((v, label) => { if (!best || v.seconds > best.seconds) best = { place: label, placeKind: v.kind }; });
+    return best || { place: '', placeKind: '' };
+  };
+  const withName = events.map((e) => {
+    const emp = by.get(e.employeeId) || {};
+    const p = placeOf(e.employeeId, e.from, e.to, emp.department || '');
+    return { ...e, name: emp.name || 'Employee', code: emp.employeeCode || '', department: emp.department || '', place: p.place, placeKind: p.placeKind };
+  });
   return { from, to, min, events: withName, people: ids.length };
 }
 async function employeeDetail(employeeId, from, to) {

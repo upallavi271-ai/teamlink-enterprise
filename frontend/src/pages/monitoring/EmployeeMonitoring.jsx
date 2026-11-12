@@ -166,7 +166,7 @@ function Misuse({ onOpen }) {
   const range = from !== to;
   const depts = useMemo(() => [...new Set(events.map((x) => x.department).filter(Boolean))].sort(), [events]);
   const rows = events.filter((x) => (!dept || x.department === dept) && (!kind || x.kind === kind)
-    && (!q.trim() || `${x.name} ${x.code || ''} ${x.label} ${x.note || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+    && (!q.trim() || `${x.name} ${x.code || ''} ${x.label} ${x.place || ''} ${x.note || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
   const saveNote = async (e, value) => {
     try { await api.post('/monitoring/misuse/note', { employeeId: e.employeeId, day: e.day, from: e.from, note: value }); e.note = value; } catch (_) { /* a transient save error: the next load shows the truth */ }
   };
@@ -194,19 +194,20 @@ function Misuse({ onOpen }) {
       </div>
       {error && <div className="notice red">{error}</div>}
       <table className="mon-table">
-        <thead><tr><th>Employee</th><th>What happened</th><th>When</th><th className="num">How long</th><th className="num">Times</th><th>Remark / name</th></tr></thead>
+        <thead><tr><th>Employee</th><th>What happened</th><th>Where (app / website)</th><th>When</th><th className="num">How long</th><th className="num">Times</th><th>Remark / name</th></tr></thead>
         <tbody>
           {rows.map((e) => (
             <tr key={e.id}>
               <td className="row-link" onClick={() => onOpen(e.employeeId)} title="Open this person's day"><b>{e.name}</b>{e.code && <div className="small-muted">{e.code}</div>}{e.department && <div className="small-muted">{e.department}</div>}</td>
               <td><Pill tone={MISUSE_TONE[e.kind] || 'slate'}>{MISUSE_WORD[e.kind] || e.kind}</Pill><div className="small-muted">{e.label}</div></td>
+              <td>{e.place ? <><b>{e.place}</b>{e.placeKind === 'site' && <span className="small-muted"> · website</span>}</> : <span className="small-muted">Not recorded</span>}</td>
               <td style={{ whiteSpace: 'nowrap' }}>{range && <div className="small-muted">{e.day}</div>}{`${e.fromTime} – ${e.toTime}`}</td>
               <td className="num"><b>{`${e.minutes} min`}</b></td>
               <td className="num">{Number(e.presses || 0).toLocaleString('en-IN')}</td>
               <td><NoteCell e={e} onSave={saveNote} /></td>
             </tr>
           ))}
-          {!rows.length && !loading && <tr><td colSpan={6} className="small-muted">{events.length ? 'None match these filters.' : 'No continuous single-button use in this period. PCs record this once they are on agent 3.0 or later.'}</td></tr>}
+          {!rows.length && !loading && <tr><td colSpan={7} className="small-muted">{events.length ? 'None match these filters.' : 'No continuous single-button use in this period. PCs record this once they are on agent 3.0 or later.'}</td></tr>}
         </tbody>
       </table>
       {events.length > 0 && <div className="small-muted" style={{ marginTop: 8 }}>{`${rows.length} of ${events.length} shown · ${data.people} ${data.people === 1 ? 'person' : 'people'}.`}</div>}
