@@ -106,3 +106,19 @@ main:has(.mon){max-width:1680px}
 .mon .mon-tl-detail.break{border-left-color:#0f766e}
 .mon .mon-tl-dhead{display:flex;align-items:center;gap:6px;margin-bottom:8px;font-size:14px}
 .mon .mon-tl-sum{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;margin-bottom:8px;color:#334155}
+
+/* ---- 2026-11-12: a calm, consistent look across every tab (no clumsiness) ---- */
+/* the filters read as one tidy strip, not loose controls */
+.mon .mon-bar{background:var(--surface-2,#f6f8fb);border:1px solid var(--line,#e7eaf0);border-radius:10px;padding:10px 12px}
+.mon .mon-bar .combo,.mon .mon-bar input{background:var(--card,#fff)}
+/* the intro line under a tab: one readable measure, never a full-width wall of text (a muted line right before the filter strip) */
+.mon .small-muted:has(+ .mon-bar){display:block;max-width:980px;margin:0 0 10px;line-height:1.5}
+/* tables read as proper tables: a soft header, a touch more room, rows line up on one baseline where they are single-line */
+.mon .mon-table thead th{background:var(--surface-2,#f8fafc);white-space:nowrap}
+.mon .mon-table thead th:first-child{border-top-left-radius:8px}
+.mon .mon-table thead th:last-child{border-top-right-radius:8px}
+.mon .mon-table td,.mon .mon-table th{padding:9px 12px}
+.mon .mon-table tbody tr:last-child td{border-bottom:0}
+/* a little breathing room between the panels on a tab */
+.mon .ak-panel{margin-bottom:14px}
+.mon .ak-panel:last-child{margin-bottom:0}
