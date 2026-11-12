@@ -44,14 +44,22 @@ async function indicProof(en, pcm, G) {
   return {};
 }
 
+// numbers only (no audio): how long, how loud, how much of it the speech detector called speech - for the log
+function levels(pcm, speechMs) {
+  let peak = 0; let sum = 0; const n = Math.floor(pcm.length / 2);
+  for (let i = 0; i < n; i++) { const v = Math.abs(pcm.readInt16LE(i * 2)); if (v > peak) peak = v; sum += v * v; }
+  return { secs: +(n / 8000).toFixed(1), peak, rms: Math.round(Math.sqrt(sum / (n || 1))), speechMs };
+}
+
 async function hearCore(pcm16k, current, deps = {}) {
   const en = Object.prototype.hasOwnProperty.call(deps, 'engines') ? deps.engines : engines();
   if (!en || !en.detect || !en.stt) return { ready: false };
   const cur = langOf(current);
-  const pcm = E.resample(pcm16k, 16000, 8000);
   const G = require('../calling/voice/gateway'); // eslint-disable-line global-require
+  // a laptop microphone is faint (the phone line has the same: gateway.louder brings the loudest moment up to a normal level, at most 4x): heard at that level
+  const pcm = G.louder(E.resample(pcm16k, 16000, 8000));
   const sp = en.speech ? await en.speech(pcm).catch(() => null) : null;
-  if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < MIN_SPEECH_MS) return { ready: true, lang: cur, changed: false, why: 'noise' };
+  if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < MIN_SPEECH_MS) return { ready: true, lang: cur, changed: false, why: 'noise', dbg: levels(pcm, sp.speechMs) };
   const found = await en.detect(pcm, 0.7).catch(() => null);
   if (!found) {
     // Whisper was not sure (Hindi after Telugu was never heard this way): somebody already speaking Telugu / Hindi is asked of both listeners, and only REAL everyday words of the other language switch

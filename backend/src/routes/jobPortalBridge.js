@@ -127,7 +127,7 @@ router.post('/interview-voice', express.raw({ type: 'application/octet-stream', 
   try {
     if (req.query.op === 'hear') {
       const out = await V.hear(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), req.query.lang);
-      console.log('[interview-voice] hear: was', req.query.lang, '->', out.lang, out.changed ? 'CHANGED' : 'same', out.why || '', out.text ? JSON.stringify(String(out.text).slice(0, 60)) : ''); // eslint-disable-line no-console
+      console.log('[interview-voice] hear: was', req.query.lang, '->', out.lang, out.changed ? 'CHANGED' : 'same', out.why || '', out.dbg ? JSON.stringify(out.dbg) : '', out.text ? JSON.stringify(String(out.text).slice(0, 60)) : ''); // eslint-disable-line no-console
       return res.json(out);
     }
     const out = await V.say(req.body && req.body.text, req.query.lang);
