@@ -823,9 +823,9 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               </div>
               {data.activity.perApp && data.activity.perApp.length > 0 && (
                 <>
-                  <div className="small-muted" style={{ margin: '10px 0 4px' }}>By app / website — click a row to see the keys and hours</div>
+                  <div className="small-muted" style={{ margin: '10px 0 4px' }}>By app / website — click a row to see the keys and hours. Hover a column title for what it means.</div>
                   <table className="mon-table">
-                    <thead><tr><th>App / website</th><th className="num">Key presses</th><th className="num">Active typing</th><th className="num">Clicks / scroll</th><th className="num">Active mouse</th><th className="num">Speed</th></tr></thead>
+                    <thead><tr><th>App / website</th><th className="num" title="How many keys were pressed in this app. Letters count as one group and numbers as one group - the amount of typing, never which letters.">Key presses</th><th className="num" title="Minutes actually spent typing in this app (minutes with at least one keystroke) - not just the app being open.">Active typing</th><th className="num" title="Mouse clicks plus wheel scrolls in this app.">Clicks / scroll</th><th className="num" title="Minutes actually spent using the mouse in this app.">Active mouse</th><th className="num" title="Keys a minute while typing (key presses divided by active typing minutes) - how fast they type here.">Speed</th></tr></thead>
                     <tbody>
                       {data.activity.perApp.map((a) => {
                         const open = appPick === `${a.app}|${a.site}`;
