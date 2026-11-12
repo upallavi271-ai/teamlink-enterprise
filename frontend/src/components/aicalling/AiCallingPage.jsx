@@ -4,6 +4,7 @@ import api from '../../api';
 import Combo from '../Combo.jsx';
 import AiCallDialog from './AiCallDialog.jsx';
 import AiCallDetail from './AiCallDetail.jsx';
+import KavyaTab from './KavyaTab.jsx'; // Kavya: the Telugu / Hindi / English AI caller on our own server (2026-11-12)
 import { CallbacksTab, QuestionsTab } from './AiCallbacks.jsx'; // 2026-10-30
 import {
   PURPOSES, purposeLabel, statusWord, STATUS_CLASS, when, minutes, errorOf,
@@ -22,7 +23,7 @@ export default function AiCallingPage() {
   useEffect(() => {
     api.get('/ai-calling/status').then((r) => setStatus(r.data)).catch((e) => setErr(errorOf(e, 'AI calling is not available to this login.')));
   }, []);
-  const tabs = [['new', 'Call candidates'], ['calls', 'Calls'], ['callbacks', 'Call-backs'], ['questions', 'Questions'], ['offers', 'Offers'], ['numbers', 'Numbers']];
+  const tabs = [['new', 'Call candidates'], ['calls', 'Calls'], ['kavya', 'Kavya'], ['callbacks', 'Call-backs'], ['questions', 'Questions'], ['offers', 'Offers'], ['numbers', 'Numbers']];
   return (
     <div>
       <div className="page-head">
@@ -46,6 +47,7 @@ export default function AiCallingPage() {
       </div>
       {tab === 'new' && <NewCalls status={status} />}
       {tab === 'calls' && <Calls />}
+      {tab === 'kavya' && <KavyaTab />}
       {tab === 'callbacks' && <CallbacksTab />}
       {tab === 'questions' && <QuestionsTab />}
       {tab === 'offers' && <Offers />}

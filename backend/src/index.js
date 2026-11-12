@@ -368,6 +368,8 @@ app.use('/api/admin/integration-health', require('./routes/integrationHealth'));
 app.use('/api/admin/logins', require('./routes/adminLogins')); // separate logins on one email: status, existing-logins panel, per-login activation / sign-out (2026-10-21)
 // EXOTEL AI CALLING (2026-10-22): admin settings, recruiter calls, offers, dashboard; /portal/* is the Job Portal's door (routes/aiCalling.js, calling/*).
 app.use('/api/ai-calling', require('./routes/aiCalling'));
+// KAVYA (2026-11-12): the Telugu / Hindi / English AI caller on this server - hand ATS candidates to it and read the results (routes/kavya.js, calling/kavya/*).
+app.use('/api/kavya', require('./routes/kavya'));
 // THE SALES CRM (2026-11-02): leads, accounts & contacts, deals pipeline, activities, follow-ups, dashboard (routes/crm.js, crm/*).
 app.use('/api/crm', require('./routes/crm'));
 app.use('/api/crm-public', require('./routes/crmPublic')); // the campaign email unsubscribe link (no login)
