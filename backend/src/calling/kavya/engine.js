@@ -199,24 +199,9 @@ async function noticeScript(ctx, row, s, language) {
   const sc = await svc.scriptFor(ctx, row.purpose, language, fields, { ...s, recording: false, keepTranscripts: false });
   if (sc.error) return null;
   const by = Object.fromEntries(sc.lines.map((l) => [l.key, l.text]));
-  const P = S.phrases(language);
-  const first = String((ctx.candidate && ctx.candidate.name) || '').trim().split(/\s+/)[0] || '';
-  const out = [`Opening: ${(OPENING[language] || OPENING.English)(first)}`];
-  const say = (k) => { if (by[k]) out.push(`Say: ${by[k]}`); };
-  if (row.purpose.startsWith('Interview')) {
-    if (!by.avail || !by.iv) return null;
-    ['iv', 'mode', 'instructions', 'note'].forEach(say);
-    out.push(`Interest: ${by.avail}`, `IfYes: ${by.close || P.ivConfirmed}`, `IfNo: ${P.ivNotAvail}`);
-  } else if (row.purpose === 'Shortlist Notification') {
-    ['news', 'iv', 'note'].forEach(say);
-    if (!by.proceed) return null;
-    out.push(`Interest: ${by.proceed}`, `IfYes: ${by.close || P.shortYes}`, `IfNo: ${P.closeNotInterested}`);
-  } else {
-    ['news', 'due', 'how', 'note'].forEach(say);
-    if (!by.proceed) return null;
-    out.push(`Interest: ${by.proceed}`, `IfYes: ${by.close || P.aiYes}`, `IfNo: ${P.closeNotInterested}`);
-  }
-  return out.join('\n');
+  // Kavya's own words (casual.js): the facts come from TeamLink's data, a recruiter's note / instructions are read as typed
+  const lines = require('./casual').build(row.purpose, language, sc.data, { note: by.note, instructions: by.instructions }); // eslint-disable-line global-require
+  return lines ? require('./casual').toText(lines) : null; // eslint-disable-line global-require
 }
 async function handOverNotice(row, ctx, verdict, opts = {}) {
   if (!(await noticeOn()) || !client.configured() || !(await kavyaUp())) return false;
