@@ -65,8 +65,8 @@ export default function EmployeeMonitoring() {
   const lead = !!(me.data && me.data.isLead);
   const it = !!(me.data && me.data.isIt);
   const tabs = admin
-    ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
-    : lead ? [['overview', 'Live Dashboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
+    ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['attendance', 'Attendance'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['devices', 'Devices'], ['audit', 'Audit log'], ['settings', 'Settings'], ['mine', 'My activity']]
+    : lead ? [['overview', 'Live Dashboard'], ['keyboard', 'Keyboard'], ['reports', 'Reports'], ['usage', 'App usage'], ['alerts', 'Alerts'], ['tasks', 'Tasks vs work'], ['categories', 'Productivity rules'], ['mine', 'My activity']]
       : it ? [['devices', 'Devices'], ['settings', 'Agent settings'], ['mine', 'My activity']] : [['mine', 'My activity']];
   const tab = tabs.some(([k]) => k === params.get('tab')) ? params.get('tab') : tabs[0][0];
   const employee = params.get('employee');
@@ -92,6 +92,7 @@ export default function EmployeeMonitoring() {
         : (
           <>
             {tab === 'overview' && <Overview onOpen={(id) => go('overview', { employee: id })} />}
+            {tab === 'keyboard' && <Keyboard onOpen={(id) => go('keyboard', { employee: id })} />}
             {tab === 'categories' && <Categories />}
             {tab === 'reports' && <Reports admin={admin} onOpen={(id) => go('reports', { employee: id })} />}
             {tab === 'attendance' && <AttendanceTab />}
@@ -116,6 +117,61 @@ function siteOf(app, title) {
   const parts = title.replace(/\s+[-–|]\s+(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi)$/i, '').split(/\s+[-–|]\s+/).filter(Boolean);
   const site = parts.pop() || null;
   return { site, page: parts.join(' - ') || null };
+}
+
+// which time column to highlight for a chosen status, and the one line that says what is shown
+const HI_OF = { Online: 'active', Idle: 'idle', 'On break': 'break', Offline: 'away' };
+const HI_WORD = { Online: 'Active people and how long each has been working.', Idle: 'Idle people and how long each has been idle.', 'On break': 'People on a break and how long each has been on it.', Offline: 'People off the PC and how long the PC has had no signal.' };
+// ------------------------------------------------------------------------------------------------ Keyboard (Keys . Clicks, its own tab)
+// How much each person used the keyboard and mouse - key presses and clicks in work hours - from the same per-person figures the Live
+// Dashboard had in its Keys . Clicks column (founder 2026-11-12: "keep this in a separate tab"). A click opens the person for each key.
+function Keyboard({ onOpen }) {
+  const [date, setDate] = useState(todayIst());
+  const [q, setQ] = useState('');
+  const [dept, setDept] = useState('');
+  const [team, setTeam] = useState('');
+  const { data, error, loading } = useGet('/monitoring/overview', { date });
+  const rows = useMemo(() => ((data && data.rows) || [])
+    .filter((r) => (!dept || r.department === dept) && (!team || r.team === team) && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase())))
+    .sort((a, b) => (b.keys || 0) - (a.keys || 0) || String(a.name).localeCompare(String(b.name))), [data, dept, team, q]);
+  const withData = rows.filter((r) => r.keys != null || r.clicks != null);
+  return (
+    <>
+      <div className="small-muted">How much each person used the keyboard and mouse in work hours: key presses and clicks. Open a person to see each key one by one, by app and by hour. Letter keys and number keys are counted as a group - never the letters themselves.</div>
+      <div className="mon-bar">
+        <label>Day <input type="date" value={date} max={todayIst()} onChange={(e) => setDate(e.target.value || todayIst())} /></label>
+        <input type="search" placeholder="Search a name or code" value={q} onChange={(e) => setQ(e.target.value)} />
+        <Combo value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department">
+          <option value="">All departments</option>
+          {((data && data.departments) || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </Combo>
+        <Combo value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
+          <option value="">All teams</option>
+          {((data && data.teams) || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </Combo>
+      </div>
+      {error && <div className="notice red">{error}</div>}
+      <table className="mon-table">
+        <thead><tr><th>Employee</th><th>Department</th><th className="num" title="Key presses in work hours. Letter keys and number keys are counted as a group.">Key presses</th><th className="num">Clicks</th><th>Most-used keys</th></tr></thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
+              <td>
+                <b>{r.name}</b>{r.code && <div className="small-muted">{r.code}</div>}
+                {r.repeat && <div title={r.repeat.top} style={{ marginTop: 3 }}><Pill tone="red">{`Same key / click over and over · ${r.repeat.minutes} min`}</Pill></div>}
+              </td>
+              <td>{r.department || '—'}{r.team && <div className="small-muted">{r.team}</div>}</td>
+              <td className="num">{r.keys == null ? <span className="small-muted">—</span> : <b>{Number(r.keys).toLocaleString('en-IN')}</b>}</td>
+              <td className="num">{r.clicks == null ? <span className="small-muted">—</span> : Number(r.clicks).toLocaleString('en-IN')}</td>
+              <td className="small-muted mon-item">{r.topKeys || '—'}</td>
+            </tr>
+          ))}
+          {!rows.length && !loading && <tr><td colSpan={5} className="small-muted">Nobody to show for this day.</td></tr>}
+          {rows.length > 0 && !withData.length && !loading && <tr><td colSpan={5} className="small-muted">No keyboard counts recorded for this day yet. PCs record these once they are on agent 2.6 or later.</td></tr>}
+        </tbody>
+      </table>
+    </>
+  );
 }
 
 // ------------------------------------------------------------------------------------------------ Overview
@@ -175,6 +231,8 @@ function Overview({ onOpen }) {
         {live && <span className="small-muted" style={{ marginLeft: 'auto' }}>Live: updates within seconds</span>}
       </div>
       {error && <div className="notice red">{error}</div>}
+      {/* when a time-based status is filtered, that one time stands out (founder 2026-11-12: idle meedha click chesthey entha sepu idle lo vunnaro) */}
+      {live && HI_OF[status] && <div className="small-muted" style={{ margin: '0 0 8px' }}>{HI_WORD[status]}</div>}
       <KpiRow>
         <KpiTile icon="users" tone="blue" label="Tracked" value={c ? c.tracked : null} loading={loading && !c} sub="With a registered PC" />
         <KpiTile icon="check" tone="green" label="Online" value={live && c ? c.online : (live ? null : '—')} loading={loading && !c} sub="Using the PC now" {...card('Online')} />
@@ -194,7 +252,7 @@ function Overview({ onOpen }) {
       )}
       <div className="tbl-wrap">
         <table className="mon-table">
-          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className="num" title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num" title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th><th className="num" title="How many key presses and mouse clicks today (letter keys and number keys counted together). Open the person for each key.">Keys · Clicks</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className={`num${HI_OF[status] === 'active' ? ' mon-hi' : ''}`} title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>Idle</th><th className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`}>Break</th><th className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`} title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
@@ -212,15 +270,14 @@ function Overview({ onOpen }) {
                 <td>{tm(r.firstSeen)}</td>
                 <td>{live && r.lastHeartbeat ? dt(r.lastHeartbeat) : tm(r.lastSeen)}</td>
                 <td className="mon-daycol"><DayBar r={r} /></td>
-                <td className="num"><b>{hm(r.activeHours)}</b>{r.workHours > 0 && <div className="small-muted">of {hm(r.workHours)}</div>}</td>
-                <td className="num">{hm(r.idleHours)}</td>
-                <td className="num">{hm(r.breakHours)}</td>
-                <td className="num">{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
+                <td className={`num${HI_OF[status] === 'active' ? ' mon-hi' : ''}`}><b>{hm(r.activeHours)}</b>{r.workHours > 0 && <div className="small-muted">of {hm(r.workHours)}</div>}</td>
+                <td className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>{hm(r.idleHours)}</td>
+                <td className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`}>{hm(r.breakHours)}</td>
+                <td className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`}>{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
                 <td className="num">{pct(r.productivity)}</td>
-                <td className="num" title={r.topKeys || undefined}>{r.keys == null && r.clicks == null ? <span className="small-muted">—</span> : <>{Number(r.keys || 0).toLocaleString('en-IN')}<div className="small-muted">{`${Number(r.clicks || 0).toLocaleString('en-IN')} clicks`}</div></>}</td>
               </tr>
             ))}
-            {!rows.length && !loading && <tr><td colSpan={live ? 13 : 11} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
+            {!rows.length && !loading && <tr><td colSpan={live ? 12 : 10} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
           </tbody>
         </table>
       </div>

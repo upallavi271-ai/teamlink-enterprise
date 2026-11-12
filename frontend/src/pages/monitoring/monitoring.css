@@ -122,3 +122,6 @@ main:has(.mon){max-width:1680px}
 /* a little breathing room between the panels on a tab */
 .mon .ak-panel{margin-bottom:14px}
 .mon .ak-panel:last-child{margin-bottom:0}
+/* when a status is filtered on the Live Dashboard, its time column stands out (2026-11-12) */
+.mon .mon-table td.mon-hi,.mon .mon-table th.mon-hi{background:#fff7ed}
+.mon .mon-table td.mon-hi{font-weight:700;color:#b45309}
