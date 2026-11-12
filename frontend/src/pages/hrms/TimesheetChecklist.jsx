@@ -26,6 +26,20 @@ function quickDays(today) {
   ];
 }
 
+// A plain hours:minutes box - 24-hour, no seconds and no AM/PM (founder 2026-11-12: "sec avasaramledhu, hours and minutes chaluu").
+// Type the four digits (e.g. 0910) and it becomes 09:10; it saves the same "HH:MM" string the time picker did.
+function TimeHM({ value, onChange, ariaLabel }) {
+  const onInput = (e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 4); onChange(d.length >= 3 ? `${d.slice(0, 2)}:${d.slice(2)}` : d); };
+  const onBlur = (e) => {
+    const d = e.target.value.replace(/\D/g, '');
+    if (!d) { onChange(''); return; }
+    const h = Math.min(23, parseInt(d.slice(0, 2) || '0', 10));
+    const m = Math.min(59, parseInt((d.slice(2, 4) || '0').padEnd(2, '0'), 10));
+    onChange(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+  };
+  return <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={value || ''} aria-label={ariaLabel} onChange={onInput} onBlur={onBlur} />;
+}
+
 function EntryForm({ statuses, initial, date, onSaved, onCancel }) {
   const [f, setF] = useState(initial || EMPTY);
   const [day, setDay] = useState(initial?.date || date);
@@ -44,8 +58,8 @@ function EntryForm({ statuses, initial, date, onSaved, onCancel }) {
   return (
     <div className="tcl-form">
       <label>Date<input type="date" value={day} max={new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)} onChange={(e) => setDay(e.target.value)} /></label>
-      <label>From<input type="time" value={f.fromTime} onChange={set('fromTime')} /></label>
-      <label>To<input type="time" value={f.toTime} onChange={set('toTime')} /></label>
+      <label>From<TimeHM value={f.fromTime} onChange={(v) => setF((x) => ({ ...x, fromTime: v }))} ariaLabel="From time, hours and minutes" /></label>
+      <label>To<TimeHM value={f.toTime} onChange={(v) => setF((x) => ({ ...x, toTime: v }))} ariaLabel="To time, hours and minutes" /></label>
       <label>Status
         <select value={f.status} onChange={set('status')}>{statuses.map((s) => <option key={s} value={s}>{s}</option>)}</select>
       </label>
