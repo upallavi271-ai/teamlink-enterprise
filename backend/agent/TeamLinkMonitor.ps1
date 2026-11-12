@@ -32,7 +32,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.9'
+$AgentVersion = '3.0'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -581,11 +581,50 @@ function Key-Name([int]$vk) {
   if ($vk -ge 112 -and $vk -le 135) { return "F$($vk - 111)" }
   return "Key code $vk"
 }
+# A gentle on-screen popup to the EMPLOYEE when they keep pressing one button, use an auto-clicker or a mouse mover (agent 3.0, founder
+# 2026-11-12: "okatey button meedha continuous ga press chesthey, vallaki popup display avvali screen meedha, admin ki, inka tls ki
+# kuda"). Non-blocking: it shows and closes itself, so recording never stops. One popup at a time, and it only comes back after the
+# run has gone on 10 more minutes - so it nudges without becoming a nuisance. The admin and team lead see the same run on the website.
+$script:misRun = @{ sig = ''; n = 0; warnedN = 0 }   # the single-button run going on now: its kind+key, minutes so far, minute last warned
+$script:misWin = $null
+function Warn-Misuse($phrase) {
+  try { $script:tray.ShowBalloonTip(9000, 'TeamLink', "$phrase - the same thing again and again. Please use your computer normally; this is recorded and your admin and team lead can see it.", 'Warning') } catch {}
+  if ($script:misWin) { return }   # one popup at a time
+  try {
+    $f = New-Object Windows.Forms.Form
+    $f.Text = 'TeamLink'; $f.Width = 470; $f.Height = 230; $f.StartPosition = 'CenterScreen'; $f.TopMost = $true; $f.FormBorderStyle = 'FixedDialog'; $f.MaximizeBox = $false; $f.MinimizeBox = $false; $f.ShowInTaskbar = $true; $f.BackColor = [Drawing.Color]::FromArgb(252, 246, 246)
+    $h = New-Object Windows.Forms.Label; $h.Text = 'Please use your computer normally'; $h.Font = New-Object Drawing.Font('Segoe UI', 12, [Drawing.FontStyle]::Bold); $h.ForeColor = [Drawing.Color]::FromArgb(168, 42, 42); $h.Left = 22; $h.Top = 18; $h.Width = 420; $h.Height = 28
+    $b = New-Object Windows.Forms.Label; $b.Text = "$phrase - the same thing over and over looks like fake activity (a key held down, an auto-clicker or a mouse mover).`r`nThis is recorded in work hours and your admin and team lead can see it."; $b.Left = 22; $b.Top = 54; $b.Width = 420; $b.Height = 84; $b.Font = New-Object Drawing.Font('Segoe UI', 10)
+    $ok = New-Object Windows.Forms.Button; $ok.Text = 'OK'; $ok.Width = 96; $ok.Left = 346; $ok.Top = 150; $ok.DialogResult = 'OK'
+    $f.Controls.AddRange(@($h, $b, $ok)); $f.AcceptButton = $ok
+    $close = New-Object Windows.Forms.Timer; $close.Interval = 15000
+    $close.Add_Tick({ try { $close.Stop(); if ($script:misWin) { $script:misWin.Close() } } catch {} }.GetNewClosure())
+    $f.Add_FormClosed({ try { $close.Dispose() } catch {}; $script:misWin = $null }.GetNewClosure())
+    $script:misWin = $f
+    [void]$f.Show(); $f.BringToFront(); $f.Activate(); $close.Start()
+  } catch { $script:misWin = $null }
+}
+# called every flagged minute: grow the run, and warn the employee once it is a continuous 2 minutes (then again every 10 more)
+function Note-Misuse($kind, $name) {
+  $sig = "$kind`t$name"
+  if ($script:misRun.sig -eq $sig) { $script:misRun.n += 1 } else { $script:misRun.sig = $sig; $script:misRun.n = 1; $script:misRun.warnedN = 0 }
+  if ($script:misRun.n -ge 2 -and ($script:misRun.warnedN -eq 0 -or ($script:misRun.n - $script:misRun.warnedN) -ge 10)) {
+    $script:misRun.warnedN = $script:misRun.n
+    $phrase = switch ($kind) {
+      'key'      { "Pressing `"$name`" again and again" }
+      'click'    { "$name again and again (like an auto-clicker)" }
+      'mouse'    { 'The mouse moving by itself in one small spot (like a mouse mover)' }
+      'software' { 'Keyboard / mouse input coming from a program, not from your hands' }
+      default    { 'The same input again and again' }
+    }
+    Warn-Misuse $phrase
+  }
+}
 function Check-Input {
   if (-not [TLInput]::Started) { return }
   $p = @(([TLInput]::TakeMinute()) -split '\|' | ForEach-Object { [double]$_ })
   if ($p.Count -lt 12) { return }
-  if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { return }
+  if ($script:paused -or $script:onBreak -or $script:clockedOutDay -or -not (In-WorkHours)) { $script:misRun.n = 0; $script:misRun.sig = ''; return }
   $keys = $p[0]; $top = [int]$p[1]; $topN = $p[2]; $clicks = $p[3]; $l = $p[4]; $r = $p[5]; $m = $p[6]; $wheel = $p[7]; $moves = $p[8]; $sx = $p[9]; $sy = $p[10]; $inj = $p[11]
   $all = $keys + $clicks + $wheel + $moves
   # typing intensity + active keyboard / mouse minutes this minute (agent 2.8), by app and hour - counts only, never a character
@@ -623,8 +662,9 @@ function Check-Input {
     $kind = 'click'; $name = $(if ($l -ge $r -and $l -ge $m) { 'Left click' } elseif ($r -ge $m) { 'Right click' } else { 'Middle click' }); $count = $clicks
   }
   elseif ($keys -eq 0 -and $clicks -eq 0 -and $wheel -eq 0 -and $moves -ge 5 -and $sx -le 40 -and $sy -le 40) { $kind = 'mouse'; $name = 'Mouse moving in one small spot'; $count = $moves }
-  if (-not $kind) { return }
+  if (-not $kind) { $script:misRun.n = 0; $script:misRun.sig = ''; return }
   [void]$script:inputQueue.Add(@{ at = (Get-Date).ToUniversalTime().AddSeconds(-60).ToString('o'); kind = $kind; key = $name; count = [int]$count })
+  Note-Misuse $kind $name
   if ($script:inputQueue.Count -gt 2000) { $script:inputQueue.RemoveRange(0, $script:inputQueue.Count - 2000) }
 }
 # THE KEYS AND BUTTONS OF THE DAY (agent 2.6, founder 2026-11-11: "evaru ey buttons enni times press chesthunnaro teliyali").

@@ -719,6 +719,19 @@ async function teamlinkWorkOf(employeeId, a, b) {
   return { total: rows.length, lines: [...map.values()].sort((x, y) => y.count - x.count) };
 }
 // One employee over a few days: the day's timeline (one day), the top apps, the usage table, the totals.
+// Every website looked at in a browser, out of its already-cleaned window title, so each one becomes its own row instead of all
+// being lumped under "chrome" (founder 2026-11-12: "use chetshunna anni tabs ikkada display avvali ... wtsp tho sahaa"). Chat and
+// mail keep their service name only. A tab only open in the background and never looked at cannot be known - the PC sees the tab in
+// front, nothing else - and that is said on screen.
+const BROWSER_SUFFIX = /\s[-\u2013\u2014|]\s(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi|Internet Explorer|Safari)\s*$/i;
+function deriveSite(app, shown) {
+  if (!shown || !BROWSERS.includes(String(app).toLowerCase())) return null;
+  const t = String(shown).replace(BROWSER_SUFFIX, '').trim();
+  if (!t) return null;
+  const segs = t.split(/\s[-\u2013\u2014|]\s/).map((x) => x.trim()).filter(Boolean);
+  const site = (segs[segs.length - 1] || '').slice(0, 60);
+  return site || null;
+}
 async function employeeDetail(employeeId, from, to) {
   const t = todayIst();
   let a = validDay(from) ? from : t;
@@ -735,11 +748,13 @@ async function employeeDetail(employeeId, from, to) {
   const totals = totalsOf(logs, catOf, dept);
   const usage = new Map();
   logs.filter((l) => !l.isIdle && !l.isBreak).forEach((l) => {
-    const c = catOf(l.appName, l.windowTitle, dept);
-    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
-    u.seconds += l.durationSeconds;
     // the same cleaning on the way out: records kept before a rule changed never show more than it allows
     const shown = cleanTitle(l.appName, l.windowTitle);
+    let c = catOf(l.appName, l.windowTitle, dept);
+    // a browser tab that did not already match a website rule: make the site from its title, so every site shows (never "chrome" only)
+    if (c.kind !== 'site') { const w = deriveSite(l.appName, shown); if (w) c = { key: `web:${w.toLowerCase()}`, label: w, kind: 'site', category: c.category }; }
+    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
+    u.seconds += l.durationSeconds;
     if (shown) u.titles.set(shown, (u.titles.get(shown) || 0) + l.durationSeconds);
     // WHAT IT WAS USED FOR (founder 2026-11-10: "claude meedha click chesthe, claude lo em use chesaro clear ga kanipinchali - complete work cover avvali"):
     // every page, file or chat the window showed, with its time, and the sittings in order
