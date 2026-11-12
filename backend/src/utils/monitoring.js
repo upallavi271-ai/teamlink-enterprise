@@ -31,6 +31,18 @@ const CHAT_NAMES = { whatsapp: 'WhatsApp', telegram: 'Telegram', signal: 'Signal
 const SECRET = /password|passcode|\bpin\b|otp|cvv|net ?banking/i;
 const MAIL_APP = /^(outlook|olk|hxoutlook|hxmail|thunderbird|mailbird|foxmail|mailclient)$/i;
 const MAIL_SITE = /\b(gmail|outlook|yahoo ?mail|zoho ?mail|rediff ?mail|proton ?mail)\b/i;
+// A VIDEO MEETING in front counts as active work even with no keyboard or mouse (founder 2026-11-12: "teams & google meets attend
+// avuthunnaru bde vallu ahh time lo kuda, break, idle ilaa vasthundhi" - BDEs in Teams / Meet calls were being marked idle / break).
+// A segment the agent marked idle, while Teams, Google Meet, Zoom or Webex was the window in front, is turned back to active here -
+// so the totals, the day timeline and the per-day numbers all count meeting time as work.
+const MEETING_APP = /^(ms-?teams|teams|teams-for-linux|zoom|zoommtg|zoomlauncher|webex|webexmta|gotomeeting|bluejeans|skype)$/i;
+const MEETING_TITLE = /(google meet|meet\.google|zoom meeting|microsoft teams|teams meeting|\bwebex\b|whereby|gotomeeting|bluejeans|^meet\s*[-–—]\s|[a-z]{3}-[a-z]{4}-[a-z]{3})/i;
+function isMeeting(app, title) {
+  const a = String(app || '').replace(/\.exe$/i, '').trim();
+  if (MEETING_APP.test(a)) return true;
+  return BROWSERS.includes(a.toLowerCase()) && MEETING_TITLE.test(String(title || ''));
+}
+const unmeet = (logs) => (logs || []).map((l) => ((l.isIdle && !l.isBreak && isMeeting(l.appName, l.windowTitle)) ? { ...l, isIdle: false } : l));
 const MAIL_NAMES = { gmail: 'Gmail', outlook: 'Outlook', yahoomail: 'Yahoo Mail', zohomail: 'Zoho Mail', rediffmail: 'Rediffmail', protonmail: 'Proton Mail' };
 
 const WHO_OLD = 'Who can see it: HR and Admin, and you yourself (HRMS -> Employee Monitoring -> My activity).';
@@ -552,7 +564,7 @@ async function overview(day, access = null) {
   const nowHm = hmOf(Date.now());
   const [devices, logs, catOf, leaves, rules] = await Promise.all([
     prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true } }),
-    prisma.activityLog.findMany({ where: { day: d, ...within(access) }, select: LOG_SELECT }),
+    prisma.activityLog.findMany({ where: { day: d, ...within(access) }, select: LOG_SELECT }).then(unmeet),
     categoryIndex(),
     prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: d }, toDate: { gte: d }, ...within(access) }, select: { employeeId: true } }),
     overrideIndex(),
@@ -783,7 +795,7 @@ async function employeeDetail(employeeId, from, to) {
   if (addDays(a, 92) < b) a = addDays(b, -92);
   const [emp, logs, catOf] = await Promise.all([
     prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, employeeCode: true, department: true, designation: true } }),
-    prisma.activityLog.findMany({ where: { employeeId, day: { gte: a, lte: b } }, orderBy: { startTime: 'asc' }, select: LOG_SELECT }),
+    prisma.activityLog.findMany({ where: { employeeId, day: { gte: a, lte: b } }, orderBy: { startTime: 'asc' }, select: LOG_SELECT }).then(unmeet),
     categoryIndex(),
   ]);
   if (!emp) return null;
@@ -871,7 +883,7 @@ async function reportRows(from, to, department, access = null, view = 'employee'
   if (view === 'payroll') return L.payrollRows(a, b, department, access);
   const WD = require('./workingDays'); // eslint-disable-line global-require
   await WD.ready().catch(() => {});
-  const logs = await prisma.activityLog.findMany({ where: { day: { gte: a, lte: b }, ...within(access) }, select: LOG_SELECT });
+  const logs = unmeet(await prisma.activityLog.findMany({ where: { day: { gte: a, lte: b }, ...within(access) }, select: LOG_SELECT }));
   const catOf = await categoryIndex();
   const ids = [...new Set(logs.map((l) => l.employeeId))];
   const emps = await employeesById(ids);
