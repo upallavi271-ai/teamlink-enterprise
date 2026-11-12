@@ -138,6 +138,18 @@ async function stop(code) {
   const det3 = await M.employeeDetail(emp.id, day, day);
   check('the day view carries the activity summary', det3.activity && det3.activity.kbMin === 32 && det3.activity.perApp.length === 2, det3.activity);
 
+  console.log('Longest typing session + per-app keys (agent 2.9)');
+  const al = await fetch(`${API}/monitoring/input-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${token}` }, body: JSON.stringify({ day, rows: [{ app: 'claude', site: '', hour: 9, kbMin: 5, mouseMin: 0, light: 5, mod: 0, heavy: 0, keys: 100, clicks: 0 }], longestTypingMin: 18 }) });
+  check('activity with a longest-session value is taken', al.status === 200);
+  await fetch(`${API}/monitoring/input-activity`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Device ${token}` }, body: JSON.stringify({ day, rows: [], longestTypingMin: 11 }) });
+  const acL = (await MI.activityOf([emp.id], day)).get(emp.id);
+  check('the longest session keeps the biggest (18, not 11)', acL.longestTypingMin === 18, acL.longestTypingMin);
+  // per-app keys: reuse the buckets sent earlier in this test (chrome/WhatsApp had Letter keys 300, Space 100, Left click 20)
+  const ak = await MI.appKeys(emp.id, day, day, 'chrome', 'WhatsApp');
+  check('an app drill-down shows its keys and clicks', ak.total === 425 && ak.keys.find((k) => k.name === 'Letter keys').count === 300 && ak.mouse.find((k) => k.name === 'Left click').count === 20, ak);
+  const http2 = await fetch(`${API}/monitoring/employee/${emp.id}/app-keys?from=${day}&to=${day}&app=chrome&site=WhatsApp`, { headers: { Authorization: `Bearer ${tok2}` } });
+  check('the page can read the app drill-down', http2.status === 200 && (await http2.json()).total === 425);
+
   console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

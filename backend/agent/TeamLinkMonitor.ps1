@@ -11,8 +11,9 @@
       arrow, left click ... one by one, but ALL letter keys as one count and all number keys as one count - so what was typed
       can never be rebuilt - and in which app / website and in which hour each of those counts happened. Letters are NEVER
       split one from another. Sent every two minutes.
-    * (2.8) a summary of that same activity: how many minutes the keyboard / the mouse were actually in use, and whether the
-      typing in each minute was light, moderate or heavy - by app and hour. Counts and minutes only, never a character.
+    * (2.8-2.9) a summary of that same activity: how many minutes the keyboard / the mouse were actually in use, whether the
+      typing in each minute was light, moderate or heavy (by app and hour), and the longest run of minutes typed without a
+      break. Counts and minutes only, never a character.
   and only during work hours (HR sets them; the server throws away anything outside).
   It NEVER records what is typed, passwords, the clipboard, files or screenshots. Chat apps are recorded by name only.
 
@@ -31,7 +32,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '2.8'
+$AgentVersion = '2.9'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -610,6 +611,11 @@ function Check-Input {
       }
     }
   }
+  # the longest run of minutes typed without a break (agent 2.9)
+  $lday = Today-Ist
+  if (-not $script:dayLongest.ContainsKey($lday)) { $script:dayLongest[$lday] = @{ run = 0; max = 0 } }
+  $lw = $script:dayLongest[$lday]
+  if ($keys -gt 0) { $lw.run += 1; if ($lw.run -gt $lw.max) { $lw.max = $lw.run } } else { $lw.run = 0 }
   $kind = $null; $name = ''; $count = 0
   if ($inj -ge 30 -and $inj -ge 0.8 * $all) { $kind = 'software'; $name = 'Input sent by a program'; $count = $inj }
   elseif ($keys -ge 30 -and $topN -ge 0.85 * $keys) { $kind = 'key'; $name = Key-Name $top; $count = $topN }
@@ -637,6 +643,7 @@ function Key-Group([int]$vk) {
 $script:dayCounts = @{}   # 'yyyy-mm-dd' -> @{ 'Space' = 12; ... }  (the day's flat totals)
 $script:dayBuckets = @{}  # 'yyyy-mm-dd' -> @{ "<app>`t<site>`t<hour>" = @{ 'Space' = 4; ... } }  (the same counts, by app/site and hour)
 $script:dayActivity = @{} # 'yyyy-mm-dd' -> @{ "<app>`t<site>`t<hour>" = @{ kbMin; mouseMin; light; mod; heavy; keys; clicks } }  (agent 2.8: active minutes + intensity)
+$script:dayLongest = @{}  # 'yyyy-mm-dd' -> @{ run = <minutes typed in a row now>; max = <longest run today> }  (agent 2.9)
 $BrowserApps = @('chrome', 'msedge', 'firefox', 'opera', 'brave', 'vivaldi', 'iexplore', 'safari')
 # the website out of a browser's window title (the same idea as the page's siteOf); '' for a non-browser
 function Site-Of($app, $title) {
@@ -691,7 +698,8 @@ function Send-Activity {
     if ($ad.Count -eq 0) { $script:dayActivity.Remove($day); continue }
     $rows = @()
     foreach ($ak in $ad.Keys) { $kp = $ak -split "`t"; $a = $ad[$ak]; $rows += @{ app = $kp[0]; site = $kp[1]; hour = [int]$kp[2]; kbMin = $a.kbMin; mouseMin = $a.mouseMin; light = $a.light; mod = $a.mod; heavy = $a.heavy; keys = $a.keys; clicks = $a.clicks } }
-    $r = Call-Api 'POST' '/input-activity' @{ day = $day; rows = $rows } $script:cfg.token
+    $longest = if ($script:dayLongest.ContainsKey($day)) { [int]$script:dayLongest[$day].max } else { 0 }
+    $r = Call-Api 'POST' '/input-activity' @{ day = $day; rows = $rows; longestTypingMin = $longest } $script:cfg.token
     if ($r.status -eq 200) { $script:dayActivity.Remove($day) }
     elseif ($r.status -eq 404) { $script:dayActivity.Clear(); return }   # an older TeamLink: it does not take these
   }

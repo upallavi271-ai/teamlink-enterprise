@@ -268,18 +268,30 @@ function ensureActivity() {
         "updatedAt" TEXT NOT NULL, PRIMARY KEY ("employeeId", "day", "app", "site", "hour")
       )`);
       await prisma.$executeRawUnsafe('CREATE INDEX IF NOT EXISTS "MonitoringActivityBucket_day" ON "MonitoringActivityBucket" ("employeeId", "day")');
+      await prisma.$executeRawUnsafe(`CREATE TABLE IF NOT EXISTS "MonitoringDayStat" (
+        "employeeId" TEXT NOT NULL, "day" TEXT NOT NULL, "longestTypingMin" INTEGER NOT NULL DEFAULT 0, "updatedAt" TEXT NOT NULL,
+        PRIMARY KEY ("employeeId", "day")
+      )`); // agent 2.9: longest run of minutes typed without a break, per day
       return true;
     })().catch((e) => { readyActivity = null; throw e; });
   }
   return readyActivity;
 }
 const NUMS = ['kbMin', 'mouseMin', 'light', 'mod', 'heavy', 'keys', 'clicks'];
-async function addActivity(device, day, rows) {
+async function addActivity(device, day, rows, longestTypingMin) {
   await ensureActivity();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || ''))) return { status: 400, error: 'Which day?' };
   const today = istDay(Date.now());
   if (day > today || day < istDay(Date.now() - 14 * 86400000)) return { saved: 0 };
   const now = new Date().toISOString();
+  const longest = Math.max(0, Math.min(1440, Math.round(Number(longestTypingMin) || 0)));
+  if (longest > 0) {
+    // keep the biggest run seen for the day (a restart resets the agent's running count, never the saved max)
+    await prisma.$executeRawUnsafe(
+      'INSERT INTO "MonitoringDayStat" ("employeeId","day","longestTypingMin","updatedAt") VALUES (?,?,?,?) ON CONFLICT("employeeId","day") DO UPDATE SET "longestTypingMin" = MAX("longestTypingMin", excluded."longestTypingMin"), "updatedAt" = excluded."updatedAt"',
+      device.employeeId, day, longest, now,
+    );
+  }
   let saved = 0;
   for (const r of (Array.isArray(rows) ? rows : []).slice(0, 700)) {
     const app = clip(r && r.app, 60); const site = clip(r && r.site, 60); const hour = Math.round(Number(r && r.hour));
@@ -326,9 +338,41 @@ async function activityOf(employeeIds, fromDay, toDay = fromDay) {
     o.speed = speedOf(o.keys, o.kbMin);
     o.perApp = [...o._app.values()].map((a) => ({ ...a, speed: speedOf(a.keys, a.kbMin) })).sort((x, y) => y.kbMin - x.kbMin || y.keys - x.keys);
     o.perHour = [...o._hour.values()].sort((x, y) => x.hour - y.hour);
+    o.longestTypingMin = 0;
     delete o._app; delete o._hour;
   });
+  if (out.size) {
+    const stat = await prisma.$queryRawUnsafe(
+      `SELECT "employeeId", MAX("longestTypingMin") AS "m" FROM "MonitoringDayStat" WHERE "day" >= ? AND "day" <= ? AND "employeeId" IN (${ids.map(() => '?').join(',')}) GROUP BY "employeeId"`,
+      fromDay, toDay, ...ids,
+    ).catch(() => []);
+    stat.forEach((r) => { if (out.has(r.employeeId)) out.get(r.employeeId).longestTypingMin = Number(r.m) || 0; });
+  }
   return out;
+}
+
+/** One app / website of one person: its key / button counts and hourly typing - a click on an app row in the app-wise table. */
+async function appKeys(employeeId, fromDay, toDay, app, site = '') {
+  await ensureBuckets();
+  const a = String(app || '');
+  if (!APP_NAME.test(a)) return { status: 400, error: 'Which app?' };
+  const rows = await prisma.$queryRawUnsafe(
+    'SELECT "keyName", "hour", SUM("cnt") AS "n" FROM "MonitoringKeyBucket" WHERE "employeeId" = ? AND "app" = ? AND "site" = ? AND "day" >= ? AND "day" <= ? GROUP BY "keyName", "hour"',
+    employeeId, a, String(site || ''), fromDay, toDay,
+  );
+  const byKey = new Map(); const byHour = new Map(); let total = 0;
+  rows.forEach((r) => {
+    const n = Number(r.n) || 0; total += n;
+    byKey.set(r.keyName, (byKey.get(r.keyName) || 0) + n);
+    byHour.set(Number(r.hour), (byHour.get(Number(r.hour)) || 0) + n);
+  });
+  const MOUSE = ['Left click', 'Right click', 'Middle click', 'Mouse wheel'];
+  return {
+    app: a, site: String(site || ''), total,
+    keys: [...byKey.entries()].filter(([k]) => !MOUSE.includes(k)).map(([name, count]) => ({ name, count })).sort((x, y) => y.count - x.count),
+    mouse: [...byKey.entries()].filter(([k]) => MOUSE.includes(k)).map(([name, count]) => ({ name, count })).sort((x, y) => MOUSE.indexOf(x.name) - MOUSE.indexOf(y.name)),
+    byHour: [...byHour.entries()].map(([hour, count]) => ({ hour, count })).sort((x, y) => x.hour - y.hour),
+  };
 }
 
 async function cleanup(retentionDays) {
@@ -341,6 +385,7 @@ async function cleanup(retentionDays) {
   await prisma.$executeRawUnsafe('DELETE FROM "MonitoringKeyBucket" WHERE "day" < ?', cutoff);
   await ensureActivity();
   await prisma.$executeRawUnsafe('DELETE FROM "MonitoringActivityBucket" WHERE "day" < ?', cutoff);
+  await prisma.$executeRawUnsafe('DELETE FROM "MonitoringDayStat" WHERE "day" < ?', cutoff);
 }
 
-module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, addBuckets, keyDetail, addActivity, activityOf, MIN_STRETCH, KINDS };
+module.exports = { ensure, save, stretches, summaryOf, cleanup, addCounts, countsOf, addBuckets, keyDetail, addActivity, activityOf, appKeys, MIN_STRETCH, KINDS };

@@ -144,7 +144,7 @@ router.post('/input-counts', agent, wrap(async (req, res) => { const b = req.bod
 // agent 2.7: the same counts by app / website and hour (letter and number keys still one count each)
 router.post('/input-breakdown', agent, wrap(async (req, res) => { const b = req.body || {}; const out = await require('../utils/monitoringInput').addBuckets(req.device, b.day, b.rows); return out.status ? res.status(out.status).json(out) : res.json(out); })); // eslint-disable-line global-require
 // agent 2.8: active keyboard / mouse minutes and typing intensity by app and hour (counts only)
-router.post('/input-activity', agent, wrap(async (req, res) => { const b = req.body || {}; const out = await require('../utils/monitoringInput').addActivity(req.device, b.day, b.rows); return out.status ? res.status(out.status).json(out) : res.json(out); })); // eslint-disable-line global-require
+router.post('/input-activity', agent, wrap(async (req, res) => { const b = req.body || {}; const out = await require('../utils/monitoringInput').addActivity(req.device, b.day, b.rows, b.longestTypingMin); return out.status ? res.status(out.status).json(out) : res.json(out); })); // eslint-disable-line global-require
 router.post('/live', agent, wrap(async (req, res) => { await M.liveUpdate(req.device, req.body || {}); res.json({ ok: true }); }));
 // auto-update: the agent script itself; the PC checks its hash against the heartbeat before using it
 router.get('/agent-script', agent, wrap(async (req, res) => {
@@ -196,6 +196,20 @@ router.get('/employee/:id/key-detail', wrap(async (req, res) => {
   const from = valid(req.query.from) ? req.query.from : today;
   const to = valid(req.query.to) ? req.query.to : from;
   const out = await require('../utils/monitoringInput').keyDetail(id, from, to, req.query.key); // eslint-disable-line global-require
+  return out.status ? res.status(out.status).json(out) : res.json(out);
+}));
+
+// one app / website of one person: its keys and hourly typing - a click on an app row (agent 2.9)
+router.get('/employee/:id/app-keys', wrap(async (req, res) => {
+  const id = req.params.id === 'me' ? req.user.employeeId : req.params.id;
+  if (!id) return fail(res, 404, 'Your login has no employee record.');
+  const access = await M.accessOf(req.user);
+  if (access.ids && !access.ids.includes(id)) return fail(res, 403, 'You can see only your own activity.');
+  const valid = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const from = valid(req.query.from) ? req.query.from : today;
+  const to = valid(req.query.to) ? req.query.to : from;
+  const out = await require('../utils/monitoringInput').appKeys(id, from, to, req.query.app, req.query.site || ''); // eslint-disable-line global-require
   return out.status ? res.status(out.status).json(out) : res.json(out);
 }));
 

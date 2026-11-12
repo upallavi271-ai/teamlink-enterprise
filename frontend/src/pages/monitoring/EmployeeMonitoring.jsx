@@ -749,6 +749,32 @@ function KeyDetail({ id, from, to, keyName, onClose }) {
   );
 }
 
+// ONE APP / WEBSITE, OPENED FROM THE APP-WISE TABLE (agent 2.9): its keys / buttons and hourly typing.
+function AppKeysDetail({ id, from, to, app, site, onClose }) {
+  const { data, error, loading } = useGet(`/monitoring/employee/${id}/app-keys`, { from, to, app, site });
+  return (
+    <tr>
+      <td colSpan={6} style={{ background: 'var(--surface-2, #f7f9fc)' }}>
+        <div style={{ padding: '4px 2px' }}>
+          <div className="mon-tl-dhead">
+            <b>{`${appWord(app)}${site ? ` · ${site}` : ''}`}</b>
+            {data && <span>{` · ${Number(data.total).toLocaleString('en-IN')} key presses`}</span>}
+            <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} style={{ marginLeft: 'auto' }}>Close</button>
+          </div>
+          {error && <div className="notice red">{error}</div>}
+          {loading && !data && <div className="small-muted">Loading…</div>}
+          {data && data.total > 0 && (
+            <div className="mon-two">
+              <BarList showShare rows={data.keys.slice(0, 12).map((k, i) => ({ key: k.name, label: k.name, value: k.count, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No keys." />
+              <BarList showShare rows={data.byHour.map((r) => ({ key: String(r.hour), label: hourWord(r.hour), value: r.count, tone: 'teal' }))} format={(n) => `${Number(n).toLocaleString('en-IN')} times`} empty="No hourly data." />
+            </div>
+          )}
+          {data && !data.total && <div className="small-muted">No app / time detail yet for this app (recorded from agent 2.7 on).</div>}
+        </div>
+      </td>
+    </tr>
+  );
+}
 export function EmployeeDetail({ id, onBack, own = false }) {
   const [from, setFrom] = useState(todayIst());
   const [to, setTo] = useState(todayIst());
@@ -756,6 +782,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
   const t = data && data.totals;
   const [appKey, setAppKey] = useState(null);
   const [keyPick, setKeyPick] = useState(null); // a key / button clicked in Keys and buttons pressed
+  const [appPick, setAppPick] = useState(null); // an app row clicked in the app-wise table
   const openApp = data && appKey ? data.apps.find((a) => a.key === appKey) : null;
   return (
     <>
@@ -783,41 +810,42 @@ export function EmployeeDetail({ id, onBack, own = false }) {
             </Panel>
           )}
           {data.activity && data.activity.kbMin > 0 && (
-            <Panel title="Typing and activity" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · active keyboard ${hmins(data.activity.kbMin)} · active mouse ${hmins(data.activity.mouseMin)} · typing speed about ${data.activity.speed} keys a minute. Counts only, never what was typed.`}>
-              <KpiRow>
-                <KpiTile icon="clock" tone="green" label="Active typing time" value={hmins(data.activity.kbMin)} sub={`${Number(data.activity.keys).toLocaleString('en-IN')} key presses`} />
-                <KpiTile icon="clock" tone="blue" label="Active mouse time" value={hmins(data.activity.mouseMin)} sub={`${Number(data.activity.clicks).toLocaleString('en-IN')} clicks / scrolls`} />
-                <KpiTile icon="trend" tone="violet" label="Typing speed" value={`${data.activity.speed}/min`} sub="Keys a minute while typing" />
-                <KpiTile icon="pause" tone="amber" label="Heavy typing" value={hmins(data.activity.heavy)} sub={`Light ${data.activity.light} min · moderate ${data.activity.mod} min`} />
-              </KpiRow>
-              <div className="mon-tl-sum" style={{ marginTop: 8 }}>
+            <Panel title="Typing and activity" sub={`${data.from === data.to ? 'This day' : `${data.from} to ${data.to}`} · active keyboard ${hmins(data.activity.kbMin)} · active mouse ${hmins(data.activity.mouseMin)} · typing speed about ${data.activity.speed} keys a minute${data.activity.longestTypingMin ? ` · longest unbroken typing ${hmins(data.activity.longestTypingMin)}` : ''}. Counts only, never what was typed.`}>
+              <div className="mon-tl-sum">
+                <span><b>Active typing</b>{` ${hmins(data.activity.kbMin)}`}</span>
+                <span><b>Active mouse</b>{` ${hmins(data.activity.mouseMin)}`}</span>
+                <span><b>Typing speed</b>{` ${data.activity.speed}/min`}</span>
+                {data.activity.longestTypingMin > 0 && <span><b>Longest session</b>{` ${hmins(data.activity.longestTypingMin)}`}</span>}
                 <span><b>Light</b>{` ${data.activity.light} min`}</span>
                 <span><b>Moderate</b>{` ${data.activity.mod} min`}</span>
                 <span><b>Heavy</b>{` ${data.activity.heavy} min`}</span>
-                <span className="small-muted">(a minute counts as heavy at 70+ keys, light under 26)</span>
+                <span className="small-muted">(heavy = 70+ keys a minute)</span>
               </div>
               {data.activity.perApp && data.activity.perApp.length > 0 && (
-                <div className="mon-two" style={{ marginTop: 8 }}>
-                  <div>
-                    <div className="small-muted" style={{ marginBottom: 4 }}>Active typing time, by app / website</div>
-                    <BarList showShare rows={data.activity.perApp.slice(0, 10).map((a, i) => ({ key: `${a.app}|${a.site}`, label: `${appWord(a.app)}${a.site ? ` · ${a.site}` : ''}`, value: a.kbMin, tone: ['blue', 'violet', 'teal', 'amber', 'green', 'pink', 'slate'][i % 7] }))} format={(n) => hmins(n)} empty="No typing recorded." />
-                  </div>
-                  <div>
-                    <div className="small-muted" style={{ marginBottom: 4 }}>Typing speed, by app / website</div>
-                    <table className="mon-table">
-                      <thead><tr><th>App / website</th><th className="num">Speed</th><th className="num">Active</th></tr></thead>
-                      <tbody>
-                        {data.activity.perApp.slice(0, 10).map((a, i) => (
-                          <tr key={i}>
-                            <td><b>{appWord(a.app)}</b>{a.site && <div className="small-muted">{a.site}</div>}</td>
-                            <td className="num">{a.speed}/min</td>
-                            <td className="num">{hmins(a.kbMin)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                <>
+                  <div className="small-muted" style={{ margin: '10px 0 4px' }}>By app / website — click a row to see the keys and hours</div>
+                  <table className="mon-table">
+                    <thead><tr><th>App / website</th><th className="num">Key presses</th><th className="num">Active typing</th><th className="num">Clicks / scroll</th><th className="num">Active mouse</th><th className="num">Speed</th></tr></thead>
+                    <tbody>
+                      {data.activity.perApp.map((a) => {
+                        const open = appPick === `${a.app}|${a.site}`;
+                        return (
+                          <Fragment key={`${a.app}|${a.site}`}>
+                            <tr className="row-link" onClick={() => setAppPick(open ? null : `${a.app}|${a.site}`)}>
+                              <td><b>{appWord(a.app)}</b>{a.site && <div className="small-muted">{a.site}</div>}</td>
+                              <td className="num">{Number(a.keys).toLocaleString('en-IN')}</td>
+                              <td className="num">{hmins(a.kbMin)}</td>
+                              <td className="num">{Number(a.clicks).toLocaleString('en-IN')}</td>
+                              <td className="num">{hmins(a.mouseMin)}</td>
+                              <td className="num">{a.speed}/min</td>
+                            </tr>
+                            {open && <AppKeysDetail id={id} from={from} to={to} app={a.app} site={a.site} onClose={() => setAppPick(null)} />}
+                          </Fragment>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </>
               )}
             </Panel>
           )}
