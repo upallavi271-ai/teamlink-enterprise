@@ -107,3 +107,9 @@ main:has(.ct){max-width:1680px}
 .ct-jd{display:grid;gap:12px;margin:0 0 14px}
 .ct-jd-box > *{margin:0}
 .ct-jd-loading{padding:14px;color:var(--ct-soft,#6b7280);margin:0 0 14px}
+
+/* Department filter for the joinings / drops / replacements sections (2026-11-12) */
+.ct-jd-filter{display:flex;gap:12px;align-items:center;margin:0 0 10px}
+.ct-jd-filter label{display:flex;gap:6px;align-items:center;font-size:13.5px;color:var(--ink-soft,#5b6577)}
+.ct-jd-filter select{padding:7px 10px;border:1px solid var(--line,#e4e7ec);border-radius:8px;background:var(--card,#fff);font-size:13.5px}
+.ct-jd-clear{border:0;background:none;color:#2563eb;cursor:pointer;font-size:13px;padding:0}

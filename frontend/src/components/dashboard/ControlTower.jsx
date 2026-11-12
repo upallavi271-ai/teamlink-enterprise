@@ -10,29 +10,49 @@ import './controlTower.css';
 // for a Super Admin / Admin), and every number opens its list of names in the same details panel.
 const ATS_LIST_URL = '/dashboard/ats/home/list';
 function JoinDrops() {
+  // a Department filter for the joinings / drops / replacements (founder 2026-11-12: "filters on dashboard"); the ATS home scopes these
+  // sections by department (utils/atsHome.js), and the section titles change from "All departments" to the one picked.
+  const [dept, setDept] = useState('');
   const [ws, setWs] = useState(null);
+  const [depts, setDepts] = useState([]);
   const [err, setErr] = useState('');
   const [setId, setSetId] = useState(null);
   useEffect(() => {
     let off = false;
-    api.get('/dashboard/ats/home').then((r) => {
+    setErr('');
+    api.get('/dashboard/ats/home', { params: dept ? { department: dept } : {} }).then((r) => {
       if (off) return;
       const all = (r.data && r.data.widgets) || [];
       setWs(['drops', 'drops-months'].map((id) => all.find((w) => w.id === id)).filter(Boolean));
+      const dc = (r.data && r.data.deptChoices) || [];
+      if (dc.length) setDepts(dc.filter((d) => d.value && d.value !== '__none__').map((d) => ({ value: d.value, label: d.label || d.value })));
     }).catch((e) => { if (!off) setErr(e.response?.data?.error || 'Joinings, drops and replacements could not be loaded.'); });
     return () => { off = true; };
-  }, []);
+  }, [dept]);
   if (err) return <div className="notice red" style={{ marginBottom: 12 }}><span>{err}</span></div>;
   if (!ws) return <div className="ct-card ct-jd-loading">Loading joinings, drops and replacements…</div>;
-  if (!ws.length) return null;
+  if (!ws.length && !depts.length) return null;
   return (
-    <div className="ct-jd ahome">
-      {ws.map((w) => {
-        const Draw = V3_WIDGETS[w.type];
-        return Draw ? <div key={w.id} className="ct-jd-box"><Draw w={w} onDrill={(id) => id && setSetId(id)} /></div> : null;
-      })}
-      {setId && <HomeDrill listUrl={ATS_LIST_URL} params={{}} setId={setId} onClose={() => setSetId(null)} />}
-    </div>
+    <>
+      {depts.length > 0 && (
+        <div className="ct-jd-filter">
+          <label>Department
+            <select value={dept} onChange={(e) => setDept(e.target.value)}>
+              <option value="">All departments</option>
+              {depts.map((d) => <option key={d.value} value={d.value}>{d.label}</option>)}
+            </select>
+          </label>
+          {dept && <button type="button" className="ct-jd-clear" onClick={() => setDept('')}>Show all departments</button>}
+        </div>
+      )}
+      <div className="ct-jd ahome">
+        {ws.map((w) => {
+          const Draw = V3_WIDGETS[w.type];
+          return Draw ? <div key={w.id} className="ct-jd-box"><Draw w={w} onDrill={(id) => id && setSetId(id)} /></div> : null;
+        })}
+        {setId && <HomeDrill listUrl={ATS_LIST_URL} params={dept ? { department: dept } : {}} setId={setId} onClose={() => setSetId(null)} />}
+      </div>
+    </>
   );
 }
 
