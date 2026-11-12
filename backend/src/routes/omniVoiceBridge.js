@@ -30,7 +30,7 @@ router.post('/prepare', async (req, res) => {
 // Recruiters Tokens in Omni-Channel: the people, who may see them, and their same-month joinings (outreach/creditUseBridge.js). Read only.
 router.get('/credit-use', async (req, res) => {
   try {
-    const out = await require('../outreach/creditUseBridge').forOmni(req.query.viewer, req.query.month); // eslint-disable-line global-require
+    const out = await require('../outreach/creditUseBridge').forOmni(req.query.viewer, req.query.month, { omniSuperAdmin: true }); // eslint-disable-line global-require
     return res.set('Cache-Control', 'no-store').json(out);
   } catch (err) {
     console.error('[omni-credit-use]', err && err.message); // eslint-disable-line no-console

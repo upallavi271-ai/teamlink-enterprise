@@ -99,15 +99,20 @@ async function aiCallsBy(from, to, known) {
   return { by, none };
 }
 
+// (owner 2026-11-12) A Green Start Super Admin who has no TeamLink login: Green Start sends this ONE viewer value and gets the whole-company Admin scope.
+// It is honoured only when the caller passes opts.omniSuperAdmin, which only the secret-signed /api/public/omni-voice/credit-use route does.
+const OMNI_SUPER_ADMIN = 'greenstart:super-admin';
+
 /** -> { ok:true, ... } or { ok:false, code, error } (never throws for an unknown login). */
-async function forOmni(viewerId, month) {
+async function forOmni(viewerId, month, opts = {}) {
   const id = String(viewerId || '').trim().slice(0, 80);
-  const user = id ? await resolveIdentity(id).catch(() => null) : null;
-  if (!user || (user.status && user.status !== 'Active') || require('../utils/leftLogin').hasLeft(user)) { // eslint-disable-line global-require
+  const omniAdmin = opts.omniSuperAdmin === true && id === OMNI_SUPER_ADMIN;
+  const user = omniAdmin ? { id: OMNI_SUPER_ADMIN } : (id ? await resolveIdentity(id).catch(() => null) : null);
+  if (!omniAdmin && (!user || (user.status && user.status !== 'Active') || require('../utils/leftLogin').hasLeft(user))) { // eslint-disable-line global-require
     return { ok: false, code: 'VIEWER_UNKNOWN', error: 'TeamLink does not know this login, or it is not active. Open Omni-Channel again from TeamLink.' };
   }
   try { await A.warm(); } catch { /* keep the last list */ }
-  const sc = await Ins.scopeOf(user);
+  const sc = omniAdmin ? { all: true, words: 'Everyone' } : await Ins.scopeOf(user);
   const scope = sc.all ? 'all' : (sc.departments ? 'department' : (sc.userIds ? 'team' : 'me'));
   const m = Cr.isMonth(month) ? month : Cr.thisMonth();
   const act = await Cr.activity(m, Ins.actOpts(sc));
