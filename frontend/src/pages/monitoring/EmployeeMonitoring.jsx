@@ -1234,24 +1234,11 @@ function AppWork({ app, who, range, total, onClose }) {
   const [openRow, setOpenRow] = useState({}); // the rows opened to their details
   const toggle = (k) => setOpenRow((o) => ({ ...o, [k]: !o[k] }));
   const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : (done.length ? 'done' : 'items'));
-  const [diag, setDiag] = useState('');
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
-  useEffect(() => {
-    const measure = () => {
-      const m = document.querySelector('.mon-modal');
-      if (!m) return;
-      const r = m.getBoundingClientRect(); const cs = getComputedStyle(m);
-      const traps = []; let e = m.parentElement;
-      while (e) { const s = getComputedStyle(e); if (s.transform !== 'none' || s.filter !== 'none' || s.perspective !== 'none' || (s.contain && !['normal', 'none', 'style'].includes(s.contain))) traps.push(`${e.tagName}.${String(e.className || '').slice(0, 16)}`); e = e.parentElement; }
-      setDiag(`${cs.position} ${Math.round(r.width)}x${Math.round(r.height)} @${Math.round(r.left)},${Math.round(r.top)} vw${window.innerWidth} parent:${m.parentElement && m.parentElement.tagName} inBody:${m.parentElement === document.body} traps:${traps.join(' | ') || 'none'}`);
-    };
-    const t = setTimeout(measure, 80);
-    return () => clearTimeout(t);
-  }, []);
   const items = app.items || [];
   const sittings = app.sittings || [];
   const named = items.filter((x) => x.item !== NOT_SHOWN);
@@ -1263,13 +1250,12 @@ function AppWork({ app, who, range, total, onClose }) {
   const when = (x) => (oneDay ? tm(x) : dt(x));
   return createPortal((
     <div className="mon-modal" role="dialog" aria-modal="true" aria-label={`${app.name}: what it was used for`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(15,23,42,.5)', zIndex: 10000, overflow: 'auto' }}>
-      <div className="mon-modal-box" style={{ width: 'min(960px, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100dvh - 32px)', margin: 'auto' }}>
+      style={{ position: 'fixed', inset: 0, width: '100vw', height: '100dvh', display: 'grid', placeItems: 'center', padding: 16, background: 'rgba(15,23,42,.5)', zIndex: 10000, overflow: 'auto' }}>
+      <div className="mon-modal-box" style={{ position: 'relative', margin: 'auto', width: 'min(960px, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100dvh - 32px)' }}>
         <div className="mon-modal-head">
           <div>
             <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
             <div className="small-muted">{who} · {range}</div>
-            {diag && <div style={{ fontSize: 10, color: '#dc2626', fontFamily: 'monospace', marginTop: 4, maxWidth: 460, wordBreak: 'break-all' }}>{diag}</div>}
           </div>
           <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
