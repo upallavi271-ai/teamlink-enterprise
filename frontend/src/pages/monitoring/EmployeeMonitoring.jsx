@@ -282,6 +282,7 @@ function Overview({ onOpen }) {
   const [dept, setDept] = useState('');
   const [team, setTeam] = useState('');
   const [status, setStatus] = useState('');
+  const [sortBy, setSortBy] = useState('');
   const { data, error, loading, reload } = useGet('/monitoring/overview', { date });
   const live = date === todayIst();
   // live: hours and scores every 30 seconds; who is doing what every 2 seconds, from the light /live (founder: "within sec lo updation jaragali")
@@ -301,9 +302,21 @@ function Overview({ onOpen }) {
   }, [live, reload]);
   const fresh = useMemo(() => new Map(((now && now.rows) || []).map((r) => [r.employeeId, r])), [now]);
   const allRows = useMemo(() => ((data && data.rows) || []).map((r) => ({ ...r, ...(fresh.get(r.employeeId) || {}) })), [data, fresh]);
-  const rows = useMemo(() => allRows.filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
-    && (!status || r.status === status)
-    && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase()))), [allRows, dept, team, status, q]);
+  const rows = useMemo(() => {
+    const out = allRows.filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
+      && (!status || r.status === status)
+      && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
+    const n = (r, k) => Number(r[k]) || 0;
+    const by = {
+      active: (a, b) => n(b, 'activeHours') - n(a, 'activeHours'),
+      idle: (a, b) => n(b, 'idleHours') - n(a, 'idleHours'),
+      break: (a, b) => n(b, 'breakHours') - n(a, 'breakHours'),
+      away: (a, b) => n(b, 'awayHours') - n(a, 'awayHours'),
+      prod: (a, b) => n(a, 'productivity') - n(b, 'productivity'),
+    }[sortBy];
+    if (by) out.sort((a, b) => by(a, b) || String(a.name || '').localeCompare(String(b.name || '')));
+    return out;
+  }, [allRows, dept, team, status, q, sortBy]);
   // the statuses actually on the board now, in a sensible order, for the Status filter (founder 2026-11-12: "idle, break etc vetiki pettukovadaniki")
   // every status is offered, so any one can be filtered on even when nobody is in it right now (founder 2026-11-12: "dropdown lo anni raavali")
   const statusOptions = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave'];
@@ -322,6 +335,14 @@ function Overview({ onOpen }) {
         <Combo value={team} onChange={(e) => setTeam(e.target.value)} aria-label="Team">
           <option value="">All teams</option>
           {((data && data.teams) || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </Combo>
+        <Combo value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort by">
+          <option value="">Sort: default</option>
+          <option value="idle">Most idle</option>
+          <option value="break">Most break</option>
+          <option value="away">Most off the PC</option>
+          <option value="active">Most active</option>
+          <option value="prod">Least productive</option>
         </Combo>
         {live && (
           <Combo value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Status">
