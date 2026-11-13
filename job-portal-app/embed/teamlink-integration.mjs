@@ -789,8 +789,9 @@ export function teamlinkFrontRouter({ root, express }) {
       `select id, name, exp, exp_years, relevant_exp_years, skills, title, current_company, education, location, notice_period, summary,
               resume_file, resume_uploaded_at, resume_parsed_at, resume_parser, resume_chars, resume_fields_detected, resume_parse_confidence, resume_parse_error,
               (select count(*) from candidate_experience e where e.candidate_id = c.id) as employment_rows,
-              (select count(*) from candidate_education d where d.candidate_id = c.id) as education_rows
-         from candidates c where name ilike $1 order by resume_uploaded_at desc nulls last limit 5`, [`%${q}%`])).rows);
+              (select count(*) from candidate_education d where d.candidate_id = c.id) as education_rows,
+              (case when $2 then left(resume_text, 6000) end) as text
+         from candidates c where name ilike $1 order by resume_uploaded_at desc nulls last limit 5`, [`%${q}%`, req.query.text === "1"])).rows);
     res.json({ candidates: rows });
   }));
 
