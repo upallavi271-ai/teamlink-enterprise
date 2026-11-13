@@ -76,8 +76,10 @@ const G = '/api/outreach/gs/marketing';
   const meta = await http('GET', `${G}/meta`, T.sa);
   // 2026-11-13: module 7 Content Calendar is live too (marketing/calendar.js); the five others are still planned
   const liveIds = (meta.body.modules || []).filter((m) => m.status === 'live').map((m) => m.id).sort().join(',');
-  check('B1 seven modules: AI Content and Content Calendar live, the other five planned', meta.status === 200 && meta.body.modules.length === 7 && liveIds === 'calendar,content' && meta.body.modules.filter((m) => m.status === 'planned').length === 5, meta.text.slice(0, 200));
-  check('B2 the other 24 names are on the menu', Array.isArray(meta.body.later) && meta.body.later.length === 24, meta.body.later && meta.body.later.length);
+  // module 8 AI Images is live too (marketing/images.js)
+  check('B1 eight modules: AI Content, Content Calendar and AI Images live, the other five planned', meta.status === 200 && meta.body.modules.length === 8 && liveIds === 'calendar,content,images' && meta.body.modules.filter((m) => m.status === 'planned').length === 5, meta.text.slice(0, 200));
+  // 'AI Images' left the later-menu when it became module 8 (2026-11-13)
+  check('B2 the other 23 names are on the menu (AI Images is built now)', Array.isArray(meta.body.later) && meta.body.later.length === 23 && !meta.body.later.includes('AI Images'), meta.body.later && meta.body.later.length);
   check('B3 text AI is the labelled sample writer in the sandbox; image / video / audio are "not connected"', meta.body.ai.text.demo === true && meta.body.ai.text.ready && ['image', 'video', 'audio'].every((c) => meta.body.ai[c].ready === false), meta.body.ai);
   check('B4 channels include RCS with its limit', meta.body.channels.some((c) => c.key === 'rcs' && c.limit === 1000) && meta.body.channels.length === 8);
 

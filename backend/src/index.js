@@ -137,6 +137,18 @@ app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
 app.use(require('./utils/webSecurity').corsMiddleware());
 // Employee Monitoring: an agent batch of activity can be larger than the site-wide 100 kB JSON limit.
 app.use('/api/monitoring/activity', express.json({ limit: '1mb' }));
+// AI Marketing > AI Images: the public link of an APPROVED picture (for posts and the Content Calendar). No login: the link carries an HMAC of
+// the picture's id, so it cannot be guessed, and it stops answering as soon as the picture is sent back or deleted (marketing/images.js).
+app.get('/api/mk-image/:id/:file', async (req, res, next) => {
+  try {
+    const f = await require('./marketing/images').publicFile(req.params.id, String(req.params.file || '').split('.')[0]);
+    if (!f) return res.status(404).type('text/plain').send('Not found');
+    res.setHeader('Content-Type', f.mime);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    return res.sendFile(f.path);
+  } catch (e) { return next(e); }
+});
 // AI Marketing brand logo: a picture of up to 300 KB arrives as base64 JSON (marketing/settings.js cleanLogo checks the real size and type)
 app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }));
 app.use(express.json());

@@ -3,7 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, GsModal, ConfirmModal, Kpi, Kpis, Tabs, fmtDateTime } from '../ui.jsx';
-import { useMkMeta, aiReady, AiBanner } from '../marketing/mk.jsx';
+import { useMkMeta, aiReady, AiBanner, MkImg } from '../marketing/mk.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > CONTENT CALENDAR: what goes out on which day (Facebook, Instagram, LinkedIn, X, WhatsApp, email), in India time.
@@ -195,6 +195,9 @@ function EntryModal({ ed, setEd, plats, busy, canWrite, onSave, onClose, onPoste
   const [srcs, setSrcs] = useState(null);
   const [srcErr, setSrcErr] = useState('');
   const [copied, setCopied] = useState(false);
+  const [pics, setPics] = useState(null); // approved AI pictures (marketing/images.js)
+  const loadPics = () => omni.get('/gs/marketing/images', { status: 'approved' }).then((d) => setPics((d.items || []).filter((p) => p.publicPath))).catch(() => setPics([]));
+  const picUrl = (p) => `${window.location.origin}${p.publicPath}`;
   const isOpen = OPEN.includes(ed.status) || !ed.id;
   const edit = canWrite && ed.canEdit !== false && isOpen;
   const chosen = plats.filter((p) => ed.platforms.includes(p.key));
@@ -248,7 +251,14 @@ function EntryModal({ ed, setEd, plats, busy, canWrite, onSave, onClose, onPoste
           <textarea style={{ minHeight: 140 }} value={ed.text} disabled={!edit} onChange={(e) => setEd({ ...ed, text: e.target.value })} placeholder="What the post says…" maxLength={6000} />
           <div className={`mk-count${over ? ' over' : ''}`}><span>{ed.text.length.toLocaleString('en-IN')} / {limit.toLocaleString('en-IN')} characters{strict ? ` (${strict.label} is the shortest)` : ''}{over ? ' · too long' : ''}</span><span><TinyBtn disabled={!ed.text.trim()} onClick={copy}>{copied ? '✓ Copied' : '⧉ Copy the words'}</TinyBtn></span></div>
         </Field>
-        <Field label="PICTURE OR VIDEO LINK (OPTIONAL)" full><input value={ed.mediaUrl} maxLength={500} disabled={!edit} onChange={(e) => setEd({ ...ed, mediaUrl: e.target.value })} placeholder="https://…" /></Field>
+        <Field label="PICTURE OR VIDEO LINK (OPTIONAL)" full>
+          <input value={ed.mediaUrl} maxLength={500} disabled={!edit} onChange={(e) => setEd({ ...ed, mediaUrl: e.target.value })} placeholder="https://…" />
+          {edit ? (
+            pics === null ? <div style={{ marginTop: 6 }}><TinyBtn onClick={loadPics}>◩ Pick an approved AI picture</TinyBtn></div>
+              : pics.length === 0 ? <small style={{ color: 'var(--muted)' }}>No approved AI pictures yet. Make one in AI Images and get it approved.</small>
+                : <div className="mki-pick" style={{ marginTop: 6 }}>{pics.map((p) => <button type="button" key={p.id} className={ed.mediaUrl === picUrl(p) ? 'on' : ''} title={p.title} onClick={() => setEd({ ...ed, mediaUrl: ed.mediaUrl === picUrl(p) ? '' : picUrl(p) })}><MkImg id={p.id} alt={p.title} style={{ height: '100%', borderRadius: 8 }} /></button>)}</div>
+          ) : null}
+        </Field>
         <Field label="NOTE (OPTIONAL)" full><input value={ed.note} maxLength={500} disabled={!(canWrite && ed.canEdit !== false)} onChange={(e) => setEd({ ...ed, note: e.target.value })} placeholder="For example: use the photo from the Hyderabad drive" /></Field>
       </div>
       {ed.id && isOpen ? (

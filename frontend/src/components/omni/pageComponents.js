@@ -43,6 +43,7 @@ export const PAGE_COMPONENTS = {
   // AI Marketing (2026-11-11)
   mkhome: lazy(() => import('./pages/MkHomePage.jsx')),
   mkcontent: lazy(() => import('./pages/MkContentPage.jsx')),
+  mkimages: lazy(() => import('./pages/MkImagesPage.jsx')),
   mkapprove: lazy(() => import('./pages/MkApprovePage.jsx')),
   mkcalendar: lazy(() => import('./pages/MkCalendarPage.jsx')),
   mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),

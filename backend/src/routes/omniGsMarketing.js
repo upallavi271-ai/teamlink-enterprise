@@ -9,6 +9,7 @@ const AI = require('../marketing/ai');
 const Cfg = require('../marketing/settings');
 const C = require('../marketing/content');
 const Cal = require('../marketing/calendar');
+const Img = require('../marketing/images');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -94,6 +95,24 @@ router.put('/calendar/:id', mustWrite, wrap(async (req, res) => send(res, await 
 router.delete('/calendar/:id', mustWrite, wrap(async (req, res) => send(res, await Cal.remove(req.user, req.params.id))));
 router.post('/calendar/:id/posted', mustWrite, wrap(async (req, res) => send(res, await Cal.markPosted(req.user, req.params.id, req.body || {}))));
 router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, await Cal.skip(req.user, req.params.id, req.body || {}))));
+
+// ---- AI images (marketing/images.js): Google Gemini pictures, approved before use --------------------------------------------------------------
+router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.user))));
+router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || '') }))));
+router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
+router.get('/images/:id/file', wrap(async (req, res) => {
+  const f = await Img.file(req.user, req.params.id);
+  if (!f) return res.status(404).json({ error: 'This picture was not found.' });
+  res.setHeader('Content-Type', f.mime);
+  res.setHeader('Cache-Control', 'private, max-age=600');
+  if (req.query.download === '1') res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(f.name)}"`);
+  return res.sendFile(f.path);
+}));
+router.put('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.update(req.user, req.params.id, req.body || {}))));
+router.delete('/images/:id', mustWrite, wrap(async (req, res) => send(res, await Img.remove(req.user, req.params.id))));
+router.post('/images/:id/submit', mustWrite, wrap(async (req, res) => send(res, await Img.submit(req.user, req.params.id))));
+router.post('/images/:id/approve', wrap(async (req, res) => send(res, await Img.approve(req.user, req.params.id, (req.body || {}).note))));
+router.post('/images/:id/reject', wrap(async (req, res) => send(res, await Img.reject(req.user, req.params.id, (req.body || {}).note))));
 
 // ---- AI usage + limits -----------------------------------------------------------------------------------------------------------------
 router.get('/usage', mustWrite, wrap(async (req, res) => {

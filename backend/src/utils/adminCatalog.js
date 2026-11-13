@@ -255,6 +255,13 @@ const INTEGRATION_CATALOG = [
     fields: [['Anthropic API key', 'sk-ant-...'], ['Model', 'claude-opus-5'],
       ['Max answer tokens', '1500'], ['Questions per user per hour', '30'],
       ['Bill reading model', 'claude-opus-5-5'], ['Bill reads per vendor per day', '30']] },
+  // REAL (2026-11-13). Google Gemini for Omni-Channel > AI Marketing > AI Images (marketing/images.js). The key is encrypted at rest and only
+  // the server calls Google. Test connection reads the model's details (free); a picture is made only when a person presses Create.
+  // Get a key: aistudio.google.com > Get API key. Picture models need billing switched on in Google AI Studio.
+  { id: 'ai-gemini', name: 'AI Images (Google Gemini)', group: 'AI', glyph: '\u{1F5BC}️',
+    desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it. Every picture needs approval before it is used. Key from aistudio.google.com (picture models need billing on).',
+    fields: [['Gemini API key', 'AIza...'], ['Image model', 'gemini-2.5-flash-image'], ['Pictures per person per day', '20']],
+    hints: ['Image model', 'Pictures per person per day'] },
   // AI Marketing (Omni-Channel / Green Start). FIELDS ONLY for now: the values are stored here (secrets encrypted at rest, never returned
   // to the browser) so TeamLink is the one place they are typed. Green Start's AI Marketing reads ANTHROPIC_API_KEY / OPENAI_API_KEY from
   // its own server settings today; handing these values over is a separate step (utils/greenStartIntegrations.js), so this card is not
@@ -274,7 +281,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

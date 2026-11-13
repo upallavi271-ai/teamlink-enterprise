@@ -2717,6 +2717,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
   }
 
+  // AI Images (Google Gemini): reads the model's details with the saved key. Free: no picture is made (marketing/images.js).
+  if (channel.id === 'ai-gemini') {
+    const probe = await require('../marketing/images').testConnection();
+    const result = probe.ok ? `Model ${probe.model} is reachable with this key` : `Failed — ${probe.error}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   if (channel.id === 'ai-claude') {
     const probe = await aiAgent.testConnection();
     const result = probe.ok ? `Model ${probe.model} answered` : `Failed — ${probe.error}`;

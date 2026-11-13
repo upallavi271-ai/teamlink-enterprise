@@ -81,6 +81,29 @@ export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf
   );
 }
 
+// an AI picture shown in the app: fetched with the login (an <img src> cannot carry it) and shown from a blob address that is freed afterwards
+export function MkImg({ id, alt, style, onClick }) {
+  const [src, setSrc] = useState('');
+  const [bad, setBad] = useState(false);
+  useEffect(() => {
+    let url = ''; let on = true;
+    setSrc(''); setBad(false);
+    omni.blob(`/gs/marketing/images/${id}/file`).then((b) => { if (!on) return; url = URL.createObjectURL(b); setSrc(url); }).catch(() => { if (on) setBad(true); });
+    return () => { on = false; if (url) URL.revokeObjectURL(url); };
+  }, [id]);
+  const box = { background: '#f1f5f2', borderRadius: 10, display: 'block', width: '100%', objectFit: 'cover', ...style };
+  if (bad) return <div style={{ ...box, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--muted)', minHeight: 80 }}>Picture not found</div>;
+  if (!src) return <div style={{ ...box, minHeight: 80 }} aria-busy="true" />;
+  return <img src={src} alt={alt || ''} style={box} onClick={onClick} />;
+}
+export async function downloadMkImg(id, name) {
+  const b = await omni.blob(`/gs/marketing/images/${id}/file`);
+  const url = URL.createObjectURL(b);
+  const a = document.createElement('a'); a.href = url; a.download = `${String(name || 'picture').replace(/[^\w\- ]+/g, '').slice(0, 60) || 'picture'}.${(b.type || 'image/png').split('/')[1].replace('jpeg', 'jpg')}`;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
 // a read-only look at the words of every channel (approvals, lists)
 export function TextsPreview({ chans, texts, subject }) {
   const have = chans.filter((c) => texts[c.key]);

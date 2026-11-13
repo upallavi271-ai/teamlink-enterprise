@@ -176,4 +176,4 @@ async function recent({ scopeUserId = null, limit = 50 } = {}) {
   return rows.map((r) => ({ id: r.id, at: S.iso(r.at), userName: r.userName || '—', module: r.module, task: r.task, provider: r.provider || '', model: r.model || '', ok: S.num(r.ok) === 1, chars: S.num(r.outChars), ms: S.num(r.ms), error: r.error || '' }));
 }
 
-module.exports = { AiMkError, ensure, register, status, generate, summary, recent, monthStart, dayStart, newKey: () => crypto.randomBytes(4).toString('hex') };
+module.exports = { AiMkError, ensure, register, status, generate, summary, recent, monthStart, dayStart, logUsage, newKey: () => crypto.randomBytes(4).toString('hex') };

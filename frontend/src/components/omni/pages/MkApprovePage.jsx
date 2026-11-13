@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Empty, GsModal, Tag, Tabs, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel } from '../marketing/mk.jsx';
+import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel, MkImg } from '../marketing/mk.jsx';
 
 // AI MARKETING > APPROVALS: what people wrote with AI and asked to have approved. An approver (an Admin, or a Team Lead / BDE TL of the department) reads the
 // words channel by channel, then approves (the words go into the Content Library), corrects small things and approves ("Edit & approve"), or sends it back
@@ -29,7 +29,11 @@ export default function MkApprovePage() {
   const [bulkAsk, setBulkAsk] = useState(null); // { ids, flagged }
   const [hist, setHist] = useState(''); // '' | 'approved' | 'changes'
   const [histN, setHistN] = useState(15);
-  const load = useCallback(() => omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))), []);
+  const [pics, setPics] = useState([]); // AI pictures waiting (marketing/images.js)
+  const [picBack, setPicBack] = useState(null);
+  const [picNote, setPicNote] = useState('');
+  const loadPics = useCallback(() => omni.get('/gs/marketing/images', { status: 'waiting' }).then((d) => setPics(d.items || [])).catch(() => setPics([])), []);
+  const load = useCallback(() => { loadPics(); return omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))); }, [loadPics]);
   useEffect(() => { load(); omni.get('/gs/marketing/brand').then((b) => { setAvoid(b.brand.avoidWords || []); setAvoidErr(false); }).catch(() => setAvoidErr(true)); }, [load]);
   if (err) return <Banner tone="error">{err}</Banner>;
   if (!meta || !data) return msg ? <Banner tone="error">{msg} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Try again</button></Banner> : <div className="card panel">Loading…</div>;
@@ -79,6 +83,9 @@ export default function MkApprovePage() {
     if (failed.length) setMsg(`Not approved: ${failed.join(' · ')}`);
   };
   const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const picsMine = pics.filter((p) => p.canApprove);
+  const approvePic = async (p) => { setBusy(p.id); try { const r = await omni.post(`/gs/marketing/images/${p.id}/approve`, {}); toast(r.ok); loadPics(); } catch (e) { toast(errOf(e, 'It could not be approved.')); } finally { setBusy(''); } };
+  const sendBackPic = async () => { const p = picBack; setBusy(p.id); try { const r = await omni.post(`/gs/marketing/images/${p.id}/reject`, { note: picNote }); toast(r.ok); setPicBack(null); setPicNote(''); loadPics(); } catch (e) { toast(errOf(e, 'It could not be sent back.')); } finally { setBusy(''); } };
 
   const card = (it, actions, pick) => {
     const fl = flagsFor(it);
@@ -123,6 +130,32 @@ export default function MkApprovePage() {
           </>
         ), true))}
       </Panel>
+      {picsMine.length > 0 && (
+        <Panel title="Pictures waiting for you" sub={`${picsMine.length} AI picture${picsMine.length === 1 ? '' : 's'} · check faces, hands and spelling before you approve`} style={{ marginTop: 14 }}>
+          <div className="mki-grid">
+            {picsMine.map((p) => (
+              <div key={p.id} className="card mki-card">
+                <MkImg id={p.id} alt={p.title} style={{ aspectRatio: p.aspect.replace(':', ' / ') }} />
+                <b style={{ fontSize: 11.5, marginTop: 6 }}>{p.title}</b>
+                <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>By {p.createdByName}{p.headline ? ` · “${p.headline}”` : ''}{p.demo ? ' · sandbox sample' : ''}</small>
+                <small style={{ fontSize: 9.5 }}>Asked for: {p.prompt}</small>
+                <div className="mk-acts" style={{ marginTop: 6 }}>
+                  <Btn small primary disabled={!!busy} onClick={() => approvePic(p)}>{busy === p.id ? 'Approving…' : '✔ Approve'}</Btn>
+                  <Btn small disabled={!!busy} onClick={() => { setPicBack(p); setPicNote(''); }}>↩ Send back</Btn>
+                </div>
+                {p.mine ? <small style={{ fontSize: 9, color: 'var(--muted)' }}>Your own picture: recorded as self-approved.</small> : null}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+      {picBack ? (
+        <GsModal title={`Send back "${picBack.title}"`} sub="Say what to change. They can make a new picture and ask again." width={460} onClose={() => setPicBack(null)}
+          foot={<><Btn onClick={() => setPicBack(null)}>Cancel</Btn><Btn primary disabled={picNote.trim().length < 5 || busy === picBack.id} onClick={sendBackPic}>Send back</Btn></>}>
+          <div className="mk-revise" style={{ marginBottom: 8 }}>{['The faces or hands look wrong.', 'The words on it are misspelt.', 'Not our brand colours.', 'Use a different scene.'].map((r) => <TinyBtn key={r} onClick={() => setPicNote((n) => (n.includes(r) ? n : `${n ? `${n.trim()} ` : ''}${r}`).slice(0, 300))}>{r.replace(/\.$/, '')}</TinyBtn>)}</div>
+          <textarea autoFocus style={{ width: '100%', minHeight: 90, border: '1px solid var(--line)', borderRadius: 10, padding: 11, font: 'inherit', fontSize: 12.5 }} value={picNote} maxLength={300} onChange={(e) => setPicNote(e.target.value)} />
+        </GsModal>
+      ) : null}
       {others.length > 0 && (
         <Panel title="Waiting for somebody else" sub="You can read these, but you cannot approve them." style={{ marginTop: 14 }}>
           {others.map((it) => card(it, <small style={{ color: 'var(--muted)' }}>{it.mine ? 'Your own content: another approver has to approve it.' : 'Another approver will decide.'}</small>))}
