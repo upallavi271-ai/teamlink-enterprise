@@ -23,6 +23,51 @@ const RESULT = {
   Visibility: 'Seen only (not needed)', Skipped: 'Skipped', Cancelled: 'Cancelled', Reassigned: 'Handed over',
 };
 
+// "Who approved, and when": every approval level with who did what, and the date and time. Used by the Chain screen below and by the one
+// leave screen (LeaveRequestScreen.jsx) that Open now leads to.
+export function ChainSteps({ steps }) {
+  if (!steps || steps.length === 0) return <EmptyMini>No approval chain on this request (decided in one step).</EmptyMini>;
+  return (
+    <div className="tbl-wrap lch">
+      <table className="table lch-steps">
+        <thead><tr><th>#</th><th>Level</th><th>Approver</th><th>Result</th><th>Done by</th><th>Date &amp; time</th><th>Comment</th></tr></thead>
+        <tbody>
+          {steps.map((s, i) => (
+            <tr key={s.id} className={`lch-${String(s.status).toLowerCase()}`}>
+              <td>{i + 1}</td>
+              <td>{s.label}{s.mode && s.mode !== 'required' && s.status !== 'Applied' ? <span className="cell-muted"> ({s.mode})</span> : null}</td>
+              <td>{s.approverName || <span className="cell-muted">-</span>}</td>
+              <td><b>{RESULT[s.status] || s.status}</b>{s.direct ? <span className="cell-muted"> (direct)</span> : null}{s.status === 'Pending' && s.pendingSince ? <div className="cell-muted">since {when(s.pendingSince)}{s.overdue ? ' · overdue' : ''}</div> : null}</td>
+              <td>{s.actedByName || (s.status === 'Applied' ? s.approverName : '') || <span className="cell-muted">-</span>}</td>
+              <td>{s.actedAt ? when(s.actedAt) : <span className="cell-muted">-</span>}</td>
+              <td className="lch-note">{s.note || <span className="cell-muted">-</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// "Everything that happened": every recorded event of the request, with who and when.
+export function ChainHistory({ history }) {
+  if (!history || history.length === 0) return <EmptyMini>Nothing recorded yet.</EmptyMini>;
+  return (
+    <ol className="lch-history lch">
+      {history.map((h, i) => (
+        // eslint-disable-next-line react/no-array-index-key
+        <li key={i}>
+          <span className="lch-when">{when(h.at)}</span>
+          <span><b>{h.action}</b>{h.by ? <> by {h.by}</> : null}
+            {(h.from || h.to) && <span className="cell-muted"> · {h.from || '-'} → {h.to || '-'}</span>}
+            {h.reason && <div className="cell-muted lch-reason">{h.reason}</div>}
+          </span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 export default function LeaveChainScreen({ requestId, onClose }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
@@ -56,42 +101,10 @@ export default function LeaveChainScreen({ requestId, onClose }) {
           </table>
 
           <SectionLabel style={{ marginTop: 16 }}>Who approved, and when</SectionLabel>
-          {steps.length === 0 ? <EmptyMini>No approval chain on this request (decided in one step).</EmptyMini> : (
-            <div className="tbl-wrap">
-              <table className="table lch-steps">
-                <thead><tr><th>#</th><th>Level</th><th>Approver</th><th>Result</th><th>Done by</th><th>Date &amp; time</th><th>Comment</th></tr></thead>
-                <tbody>
-                  {steps.map((s, i) => (
-                    <tr key={s.id} className={`lch-${String(s.status).toLowerCase()}`}>
-                      <td>{i + 1}</td>
-                      <td>{s.label}{s.mode && s.mode !== 'required' && s.status !== 'Applied' ? <span className="cell-muted"> ({s.mode})</span> : null}</td>
-                      <td>{s.approverName || <span className="cell-muted">-</span>}</td>
-                      <td><b>{RESULT[s.status] || s.status}</b>{s.direct ? <span className="cell-muted"> (direct)</span> : null}{s.status === 'Pending' && s.pendingSince ? <div className="cell-muted">since {when(s.pendingSince)}{s.overdue ? ' · overdue' : ''}</div> : null}</td>
-                      <td>{s.actedByName || (s.status === 'Applied' ? s.approverName : '') || <span className="cell-muted">-</span>}</td>
-                      <td>{s.actedAt ? when(s.actedAt) : <span className="cell-muted">-</span>}</td>
-                      <td className="lch-note">{s.note || <span className="cell-muted">-</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ChainSteps steps={steps} />
 
           <SectionLabel style={{ marginTop: 16 }}>{`Everything that happened (${history.length})`}</SectionLabel>
-          {history.length === 0 ? <EmptyMini>Nothing recorded yet.</EmptyMini> : (
-            <ol className="lch-history">
-              {history.map((h, i) => (
-                // eslint-disable-next-line react/no-array-index-key
-                <li key={i}>
-                  <span className="lch-when">{when(h.at)}</span>
-                  <span><b>{h.action}</b>{h.by ? <> by {h.by}</> : null}
-                    {(h.from || h.to) && <span className="cell-muted"> · {h.from || '-'} → {h.to || '-'}</span>}
-                    {h.reason && <div className="cell-muted lch-reason">{h.reason}</div>}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          )}
+          <ChainHistory history={history} />
         </div>
       )}
     </Modal>

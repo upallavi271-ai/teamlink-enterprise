@@ -3,9 +3,9 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import TabsPage from '../components/TabsPage.jsx';
-import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, ScopeNote, SectionLabel, TwoCol, Status, Modal } from '../components/proto.jsx';
-import ApprovalChain, { ApprovalChainLine } from '../components/ApprovalChain.jsx';
-import { ChainButton } from './leave/LeaveChainScreen.jsx'; // the Chain screen: who approved, when, the reason
+import { Panel, PanelPad, PanelHead, AssignRow, EmptyMini, ScopeNote, TwoCol, Status, Modal } from '../components/proto.jsx';
+import { ApprovalChainLine } from '../components/ApprovalChain.jsx';
+import LeaveRequestScreen from './leave/LeaveRequestScreen.jsx'; // the ONE leave screen: the leave, the chain, who approved and when, Approve / Reject
 import { isAdmin, isHR as hasHrmsAdmin, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
 import { HR_STATUSES, hrStatusOf } from '../hrStatus';
@@ -14,8 +14,9 @@ import DataIoBar from '../components/dataio/DataIoBar.jsx';
 // Requests list (team, designation, approved-by, comments), Approve · Reject ·
 // Reassign with the TL rule, month-wise balance + report, TL rule setting.
 import {
-  LeaveRequestsTable, LeaveFacts, LeaveDecidePanel, MonthlyBalance, MonthlyReport, TlRuleSetting,
+  LeaveRequestsTable, TlRuleSetting,
 } from './leave/LeaveExtras.jsx';
+import { MonthlyBalance, MonthlyReport } from './leave/LeaveMonthWise.jsx'; // month-wise leave: one view, the leave behind every number
 // Balances (one employee / all employees month-wise / all employees now) and
 // the holiday calendar with the full Add Holiday form.
 import LeaveBalancesTab from './leave/LeaveBalancesTab.jsx';
@@ -43,54 +44,9 @@ function OwnCancelButton({ r, onDone, onError }) {
   return <button className="btn btn-sm" onClick={() => cancelOwnLeave(r, onDone, onError)}>{r.canSelfCancel ? 'Cancel leave' : 'Request Cancellation'}</button>;
 }
 
-// ---------------------------------------------------------------------------
-// THE APPROVAL WORKFLOW (§15, spec item 2).
-//
-//   Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin
-//
-// The chain, the tracking facts (Submitted By / On, Current Approver,
-// Approval Level, Previous Approvers, Status, Approved/Rejected By / On,
-// Remarks, Direct Super Admin Approval) and the Approve / Reject controls are
-// the shared components/ApprovalChain.jsx — the same view Regularization,
-// Resignation, Rewards and Courses use. Nothing here decides who may act:
-// the server sends `canAct` (your turn) / `canDirect` (Super Admin), and
-// approving out of turn is answered 403 by the API.
-// ---------------------------------------------------------------------------
-function ApprovalWorkflowModal({ requestId, onClose, onActed }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-
-  function load() {
-    setError('');
-    api.get(`/leave/${requestId}/workflow`)
-      .then((res) => setData(res.data))
-      .catch((err) => setError(err.response?.data?.error || 'Could not load the approval workflow'));
-  }
-  useEffect(load, [requestId]);
-
-  const leave = data?.leave;
-  const wf = data?.workflow;
-
-  return (
-    <Modal title="Approve / Reject leave" onClose={onClose} wide footer={<button className="btn" onClick={onClose}>Close</button>}>
-      {error && <div className="error-text">{error}</div>}
-      {!data && !error && <EmptyMini>Loading…</EmptyMini>}
-      {leave && (
-        <>
-          <div className="wf-head">
-            <div><span className="cell-muted">Leave ID:</span> <b>LV-{String(leave.id).slice(-4).toUpperCase()}</b></div>
-          </div>
-          <LeaveFacts leave={leave} handoffs={data.handoffs} early={data.earlyLogout} source={data.source} pulse={data.pulse} handover={data.handover} />
-
-          {/* The chain is shown again (founder 2026-11-05: "leave management lo chain undali approvals cheyadaniki"): who approves, level by
-              level. Who may act has not changed. APPROVE · REJECT · REASSIGN — the TL rule is decided by the server. */}
-          {wf && <><SectionLabel style={{ marginTop: 14 }}>Approval chain</SectionLabel><ApprovalChain workflow={wf} recordStatus={leave.status} /></>}
-          <LeaveDecidePanel data={data} onDone={() => { load(); onActed(); }} />
-        </>
-      )}
-    </Modal>
-  );
-}
+// THE APPROVAL WORKFLOW (§15, spec item 2): Employee → TL → STL → HR → Assistant Manager → Manager → Super Admin. The chain, who approved
+// and when, and the Approve / Reject controls are the ONE leave screen (./leave/LeaveRequestScreen.jsx). Nothing there decides who may
+// act: the server sends `canAct` (your turn) / `canDirect` (Super Admin), and approving out of turn is answered 403 by the API.
 
 // "each level approval required aa / visibility-only aa separate ga define
 // cheyyali" — the chain is the MODEL, this panel is the POLICY. It applies to
@@ -613,7 +569,6 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
                   <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {/* It opens the request with its chain, the reason, the employee's comments, the TL rule, Approve / Reject and the reassign picker. */}
                     <button className={`btn btn-sm${mayDecide ? ' btn-primary' : ''}`} title={mayDecide ? (direct ? 'Approve or reject now - the levels still waiting are skipped' : 'Approve, reject or reassign') : 'See who approves this request'} onClick={() => setChainFor(r.id)}>{mayDecide ? 'Approve / Reject' : 'View'}</button>
-                    <ChainButton requestId={r.id} />
                     {mayDeleteRequest && <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteRequest(r)}>Delete</button>}
                   </span>
                 </AssignRow>
@@ -725,11 +680,10 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
         <LeaveRequestsTable
           requests={scoped}
           onOpen={setChainFor}
+          decidable={(r) => canApprove && r.status === 'Pending'}
           limit={10}
           renderActions={(r) => (
             <>
-              {canApprove && r.status === 'Pending' && <button className="btn btn-sm btn-primary" onClick={() => setChainFor(r.id)}>Approve / Reject</button>}
-              <ChainButton requestId={r.id} />
               {mayDeleteRequest && !['Approved', 'Cancellation Requested'].includes(r.status) && <button type="button" className="btn btn-sm btn-danger" onClick={() => deleteRequest(r)}>Delete</button>}
               {/* Confirming a cancellation is a DECISION, so it needs the
                   approve permission. */}
@@ -742,7 +696,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
       </Panel>
 
       {chainFor && (
-        <ApprovalWorkflowModal
+        <LeaveRequestScreen
           requestId={chainFor}
           onClose={() => setChainFor(null)}
           onActed={onReload}
@@ -794,10 +748,9 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
         <LeaveRequestsTable
           requests={scoped}
           onOpen={setOpenId}
+          decidable={(r) => canApprove && r.status === 'Pending'}
           renderActions={(r) => (
             <>
-              {canApprove && r.status === 'Pending' && <button className="btn btn-sm btn-primary" onClick={() => setOpenId(r.id)}>Approve / Reject</button>}
-              <ChainButton requestId={r.id} />
               {canApprove && r.status === 'Cancellation Requested' && <button className="btn btn-sm" onClick={() => confirmCancel(r)}>Confirm Cancel</button>}
               <OwnCancelButton r={r} onDone={onReload} onError={setError} />
               {!r.mine && !isHR && r.status === 'Approved' && <button className="btn btn-sm" onClick={() => requestCancel(r.id)}>Request Cancellation</button>}
@@ -806,7 +759,7 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
         />
         </div>
       </Panel>
-      {openId && <ApprovalWorkflowModal requestId={openId} onClose={() => setOpenId(null)} onActed={onReload} />}
+      {openId && <LeaveRequestScreen requestId={openId} onClose={() => setOpenId(null)} onActed={onReload} />}
     </div>
   );
 }

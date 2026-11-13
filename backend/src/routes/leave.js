@@ -1025,6 +1025,46 @@ router.get('/monthly-report', async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// THE LEAVES BEHIND A MONTH-WISE NUMBER (founder 2026-11-13: "planned leave 1 medha click chestey ahh leave yepudu thisukunaru, chain open
+// avali"): the requests that make up one person's Taken / Pending for one leave type in one month - the same requests and the same split
+// of a leave across months as the month-wise report (policy.allocate), so the list always adds up to the number that was clicked.
+// Who may ask: the person themselves, or anyone who may see them in Leave (balanceSubject). A read: nothing is written.
+router.get('/monthly-requests', async (req, res, next) => {
+  try {
+    const emp = await balanceSubject(req, res);
+    if (!emp) return undefined;
+    const month = String(req.query.month || '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: 'Pick a month, like 2026-10.' });
+    const [y, m] = month.split('-').map(Number);
+    const last = `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+    const type = req.query.type ? String(req.query.type) : null;
+    const rows = await prisma.leaveRequest.findMany({
+      where: { employeeId: emp.id, ...(type ? { type } : {}), status: { in: ['Approved', 'Pending'] }, fromDate: { lte: last }, toDate: { gte: `${month}-01` } },
+      orderBy: [{ fromDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    let charged = new Map();
+    try { charged = await leaveCharge.chargedMap(rows.filter((r) => r.status === 'Approved').map((r) => r.id)); } catch { charged = new Map(); }
+    const requests = rows.map((r) => {
+      const days = r.status === 'Approved' && charged.has(r.id) ? charged.get(r.id) : r.days;
+      const t = leaveText.parse(r.reason);
+      return {
+        id: r.id,
+        type: r.type,
+        status: r.status,
+        fromDate: r.fromDate,
+        toDate: r.toDate || r.fromDate,
+        days: r.days == null ? 1 : r.days,
+        inMonth: policy.allocate({ ...r, days })[month] || 0,
+        halfDay: leaveText.halfOf(r),
+        reasonText: t.reasonText || '',
+        decidedBy: r.decidedBy || null,
+        decidedAt: r.decidedAt ? new Date(r.decidedAt).toISOString() : null,
+      };
+    }).filter((r) => r.inMonth > 0);
+    return res.json({ month, type, employee: { id: emp.id, name: emp.name, employeeCode: emp.employeeCode }, requests });
+  } catch (err) { return next(err); }
+});
+
 // ---- Balances ----
 // remaining = total - taken, per active leave type. Employees see their own row.
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Panel, PanelHead, EmptyMini, Status } from '../../components/proto.jsx';
 import Combo from '../../components/Combo.jsx';
@@ -27,14 +27,6 @@ const daysLabel = (r) => {
   if (taken == null || r.status === 'Cancelled' || Number(taken) === Number(r.days ?? 1)) return applied;
   return `${applied} · ${taken} taken`;
 };
-
-function saveBlob(res, fallback) {
-  const name = /filename="([^"]+)"/.exec(res.headers['content-disposition'] || '')?.[1] || fallback;
-  const url = URL.createObjectURL(res.data);
-  const a = document.createElement('a');
-  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
 
 // "Approved by / Decided by" cell — approver, date, comment on hover.
 export function DecidedByCell({ r }) {
@@ -76,7 +68,9 @@ export function ReasonCell({ r }) {
 
 // THE REQUEST LIST — HR / TL / Manager see their scope, an employee their own
 // (the server scopes /api/leave).
-export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActions = null }) {
+// ONE BUTTON per leave (founder 2026-11-13): it opens the one leave screen (LeaveRequestScreen: the leave, the chain, who approved and
+// when, and Approve / Reject / Reassign). `decidable(r)` says this login has a decision to make on that leave, so the button says so.
+export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActions = null, decidable = null }) {
   const rows = limit ? requests.slice(0, limit) : requests;
   if (!rows.length) return <EmptyMini>No leave requests match.</EmptyMini>;
   return (
@@ -104,7 +98,9 @@ export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActio
               <td><DecidedByCell r={r} /></td>
               <td className="lvx-actions">
                 <span style={{ display: 'flex', gap: 6 }}>
-                  {onOpen && <button className="btn btn-sm" onClick={() => onOpen(r.id)}>Open</button>}
+                  {onOpen && (decidable && decidable(r)
+                    ? <button className="btn btn-sm btn-primary" title="The leave, who approves it and when, and your decision" onClick={() => onOpen(r.id)}>Approve / Reject</button>
+                    : <button className="btn btn-sm" title="The leave, who approved it and when, and the reason" onClick={() => onOpen(r.id)}>Open</button>)}
                   {renderActions && renderActions(r)}
                 </span>
               </td>
@@ -312,155 +308,7 @@ export function LeaveDecidePanel({ data, onDone }) {
   );
 }
 
-// MONTH-WISE BALANCE — one employee (own, or picked by HR / TL within scope).
-export function MonthlyBalance({ employees = null }) {
-  const [employeeId, setEmployeeId] = useState('');
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  useEffect(() => {
-    setError('');
-    if (employees && employees.length && !employeeId) return;
-    api.get('/leave/monthly', { params: { year, employeeId: employeeId || undefined } })
-      .then((r) => setData(r.data))
-      .catch((e) => { setData(null); setError(e.response?.data?.error || 'Could not load the month-wise balance.'); });
-  }, [employeeId, year, employees]);
-  const years = [];
-  for (let y = new Date().getFullYear(); y >= 2025; y -= 1) years.push(y);
-
-  return (
-    <Panel style={{ marginTop: 16 }}>
-      <PanelHead title="Month-wise balance">
-        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {employees && employees.length > 0 && (
-            <label className="lvx-muted" style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              Employee
-              <Combo value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} style={{ minWidth: 280 }}>
-                <option value="">Search employee by ID or name</option>
-                {employees.map((e) => <option key={e.employeeId} value={e.employeeId}>{`${e.employeeCode} · ${e.name}${e.department ? ` · ${e.department}` : ''}`}</option>)}
-              </Combo>
-            </label>
-          )}
-          <Combo value={String(year)} onChange={(e) => setYear(Number(e.target.value))} style={{ minWidth: 110 }}>
-            {years.map((y) => <option key={y} value={String(y)}>{`Leave year ${y}`}</option>)}
-          </Combo>
-        </span>
-      </PanelHead>
-      {error && <div className="error-text" style={{ margin: '8px 18px' }}>{error}</div>}
-      {employees && employees.length > 0 && !employeeId && <EmptyMini>Choose an employee to see their month-by-month balance.</EmptyMini>}
-      {data && (!employees || employeeId) && (
-        <div style={{ padding: '6px 18px 14px' }}>
-          <div className="lvx-muted" style={{ marginBottom: 8 }}>
-            <b>{data.employee.name}</b> ({data.employee.employeeCode}) · {data.employee.department || '—'}{data.employee.team ? ` · ${data.employee.team}` : ''} · {data.leaveYear}.
-            {' '}Taken = approved days in the month (a half day counts 0.5; a leave spanning two months is split by calendar days).
-            Pending is shown but not deducted. A yearly leave type is credited in the first month of the leave year.
-          </div>
-          {data.types.map((t) => (
-            <div key={t.type} className="lvx-month">
-              <div className="lvx-month-head">
-                <b>{t.type}</b> <span className="lvx-muted">{t.unit === 'month' ? `${t.cap} credited per month` : t.unit === 'unpaid' ? 'unpaid' : `yearly entitlement`}</span>
-                {t.onRecord && <span className="lvx-muted"> · balance on record: <b>{t.onRecord.remaining}</b> of {t.onRecord.total} ({t.onRecord.taken} taken)</span>}
-              </div>
-              {!t.creditKnown && <div className="lvx-note">The entitlement for {data.year} is not on record (the imported balances are for the current leave year), so nothing is credited — taken and pending days are still shown.</div>}
-              {t.reconcileNote && <div className="lvx-note">{t.reconcileNote}</div>}
-              <div className="tbl-wrap">
-                <table className="lvx-mtable">
-                  <thead><tr><th>Month</th><th>Opening</th><th>Credited</th><th>Taken</th><th>Pending</th><th>Closing</th></tr></thead>
-                  <tbody>
-                    {t.months.map((m) => (
-                      <tr key={m.month} className={m.taken || m.pending || m.credited ? '' : 'lvx-quiet'}>
-                        <td>{m.label}</td><td>{m.opening}</td><td>{m.credited || '—'}</td><td>{m.taken || '—'}</td><td>{m.pending || '—'}</td>
-                        <td className={m.closing < 0 ? 'lvx-neg' : ''}>{m.closing}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot><tr><td>Year</td><td /><td>{t.totals.credited}</td><td>{t.totals.taken}</td><td>{t.totals.pending}</td><td className={t.totals.closing < 0 ? 'lvx-neg' : ''}>{t.totals.closing}</td></tr></tfoot>
-                </table>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-// THE HR REPORT — taken per month for everyone in scope, with export.
-export function MonthlyReport({ canExport, allowRelieved = false }) {
-  const [year, setYear] = useState(new Date().getFullYear());
-  const [includeRelieved, setIncludeRelieved] = useState(false);
-  const [type, setType] = useState('Casual Leave');
-  const [data, setData] = useState(null);
-  const [q, setQ] = useState('');
-  const [error, setError] = useState('');
-  useEffect(() => {
-    api.get('/leave/monthly-report', { params: { year, type: type || undefined, includeRelieved: includeRelieved ? 1 : undefined } })
-      .then((r) => setData(r.data)).catch((e) => setError(e.response?.data?.error || 'Could not load the report.'));
-  }, [year, type, includeRelieved]);
-  const rows = useMemo(() => (data?.rows || []).filter((r) => !q || `${r.employeeCode} ${r.name} ${r.team || ''} ${r.department || ''}`.toLowerCase().includes(q.toLowerCase())), [data, q]);
-  async function exportXlsx() {
-    setError('');
-    try {
-      const res = await api.get('/leave/monthly-report', { params: { year, type: type || undefined, includeRelieved: includeRelieved ? 1 : undefined, format: 'xlsx' }, responseType: 'blob' });
-      saveBlob(res, `leave-monthly-${year}.xlsx`);
-    } catch { setError('Export is not included in your role’s permissions.'); }
-  }
-  const years = [];
-  for (let y = new Date().getFullYear(); y >= 2025; y -= 1) years.push(y);
-  const months = data?.rows?.[0]?.months?.map((m) => m.month) || [];
-  const mLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short' });
-  return (
-    <Panel style={{ marginTop: 16 }}>
-      <PanelHead title="Month-wise Leave Report">
-        <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input placeholder="Search employee / team" value={q} onChange={(e) => setQ(e.target.value)} />
-          <Combo value={type} onChange={(e) => setType(e.target.value)} style={{ minWidth: 150 }}>
-            <option value="">All leave types</option>
-            <option>Casual Leave</option>
-            <option>Planned Leave</option>
-            <option>Sick Leave</option>
-          </Combo>
-          <Combo value={String(year)} onChange={(e) => setYear(Number(e.target.value))} style={{ minWidth: 100 }}>
-            {years.map((y) => <option key={y} value={String(y)}>{String(y)}</option>)}
-          </Combo>
-          {allowRelieved && (
-          <label className="lvx-muted" style={{ display: 'flex', gap: 4, alignItems: 'center' }} title="Add employees who have left">
-            <input type="checkbox" style={{ width: 'auto' }} checked={includeRelieved} onChange={(e) => setIncludeRelieved(e.target.checked)} /> Relieved
-          </label>
-          )}
-          {canExport && <button className="btn btn-sm" onClick={exportXlsx}>Export Excel</button>}
-        </span>
-      </PanelHead>
-      {error && <div className="error-text" style={{ margin: '8px 18px' }}>{error}</div>}
-      {!data ? <EmptyMini>Loading…</EmptyMini> : (
-        <div className="tbl-wrap lvx-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Code</th><th>Employee</th><th>Team</th><th>Designation</th><th>Type</th><th>Credited</th>
-                {months.map((k) => <th key={k} style={{ textAlign: 'center' }}>{mLabel(k)}</th>)}
-                <th>Taken</th><th>Pending</th><th>Closing</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={`${r.id}-${r.type}`}>
-                  <td>{r.employeeCode}</td><td>{r.name}</td><td className="lvx-muted">{r.team || '—'}</td><td className="lvx-muted">{r.designation || '—'}</td>
-                  <td className="lvx-muted">{r.type}</td>
-                  <td>{r.creditKnown ? r.totals.credited : <span className="lvx-muted" title="Entitlement not on record for this year">n/a</span>}</td>
-                  {r.months.map((m) => <td key={m.month} style={{ textAlign: 'center' }} title={m.pending ? `${m.pending} pending` : undefined}>{m.taken || (m.pending ? <span className="lvx-muted">({m.pending})</span> : '')}</td>)}
-                  <td><b>{r.totals.taken}</b></td><td>{r.totals.pending || ''}</td>
-                  <td className={r.totals.closing < 0 ? 'lvx-neg' : ''}>{r.creditKnown ? r.totals.closing : ''}</td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={9 + months.length} className="small-muted" style={{ padding: 16 }}>No employees.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Panel>
-  );
-}
+// MONTH-WISE BALANCE and the month-wise report moved to ./LeaveMonthWise.jsx (one view, with the leave behind every number).
 
 // HR LEAVE SETTINGS — the TL approval rule.
 export function TlRuleSetting({ canConfigure }) {
