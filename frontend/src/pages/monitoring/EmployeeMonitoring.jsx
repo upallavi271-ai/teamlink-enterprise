@@ -119,8 +119,9 @@ export default function EmployeeMonitoring() {
 const BROWSER_APPS = ['chrome', 'msedge', 'firefox', 'opera', 'brave', 'iexplore', 'vivaldi', 'safari'];
 function siteOf(app, title) {
   if (!title || !BROWSER_APPS.includes(String(app || '').toLowerCase())) return { site: null, page: title || null };
-  // The ViciDial dialer by its own name, whatever the tab title around it (founder 2026-11-13: "vici use chesthunnattu raavali")
-  if (/vici\s*dial/i.test(title)) return { site: 'ViciDial', page: null };
+  // The ViciDial dialer by its own name, whatever the tab title around it (founder 2026-11-13). Its tab is titled "Agent web client"
+  // or "Campaign Login", not "ViciDial", so match those too.
+  if (/vici\s*dial|agent web client|campaign login|agent login|vicibox/i.test(title)) return { site: 'ViciDial', page: null };
   // an incognito / InPrivate / private window is still tracked (founder 2026-11-13): drop the marker so the real site shows, and flag it
   const incog = /(incognito|inprivate|private[ -]?browsing)/i.test(title);
   const cleaned = String(title).replace(/[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig, ' ');

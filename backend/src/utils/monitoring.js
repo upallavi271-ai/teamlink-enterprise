@@ -49,7 +49,9 @@ const unmeet = (logs) => (logs || []).map((l) => ((l.isIdle && !l.isBreak && (is
 // VICIDIAL, the call dialer (founder 2026-11-13: "vici dial & gmeet ... vici use chesthunnattu raavali"): a browser page whose
 // title carries "ViciDial" is shown by its own name - in the Live Dashboard, the day timeline and the app/website history - not
 // as a plain "chrome" or an unnamed website. A caller sits on it without touching the keyboard, so it counts as active, like a meeting.
-const VICIDIAL = /vici\s*dial/i;
+// ViciDial's agent interface titles its browser tab "Agent web client" (and "Campaign Login" / "Agent Login" for its sign-in), not
+// "ViciDial" (founder 2026-11-13, screenshot: it was showing as "Agent web client"). Match those, plus any title that does say vicidial.
+const VICIDIAL = /vici\s*dial|agent web client|campaign login|agent login|vicibox/i;
 const isVici = (app, title) => BROWSERS.includes(String(app || '').replace(/\.exe$/i, '').trim().toLowerCase()) && VICIDIAL.test(String(title || ''));
 const MAIL_NAMES = { gmail: 'Gmail', outlook: 'Outlook', yahoomail: 'Yahoo Mail', zohomail: 'Zoho Mail', rediffmail: 'Rediffmail', protonmail: 'Proton Mail' };
 
@@ -838,6 +840,8 @@ async function employeeDetail(employeeId, from, to) {
     let c = catOf(l.appName, l.windowTitle, dept);
     // a browser tab that did not already match a website rule: make the site from its title, so every site shows (never "chrome" only)
     if (c.kind !== 'site') { const w = deriveSite(l.appName, shown); if (w) c = { key: `web:${w.toLowerCase()}`, label: w, kind: 'site', category: c.category }; }
+    // ViciDial's tabs ("Agent web client", "Campaign Login") all roll up under one ViciDial, whatever a rule named them (founder 2026-11-13)
+    if (isVici(l.appName, l.windowTitle) || isVici(l.appName, shown)) c = { key: 'web:vicidial', label: 'ViciDial', kind: 'site', category: c.category };
     const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
     u.seconds += l.durationSeconds;
     if (shown) u.titles.set(shown, (u.titles.get(shown) || 0) + l.durationSeconds);
