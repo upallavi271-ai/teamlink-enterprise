@@ -208,9 +208,10 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
   const [includeRelieved, setIncludeRelieved] = useState(false);
   const [type, setType] = useState('Casual Leave');
   const [data, setData] = useState(null);
-  const [q, setQ] = useState('');
   const [department, setDepartment] = useState('');
+  const [employee, setEmployee] = useState(''); // an employee id ('' = everyone in the department)
   const [team, setTeam] = useState('');
+  const [month, setMonth] = useState(''); // '01'..'12' ('' = all months)
   const [error, setError] = useState('');
   const [reload, setReload] = useState(0);
   const [peek, setPeek] = useState(null); // a number: { employeeId, name, type, month }
@@ -222,8 +223,26 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
   const all = data?.rows || [];
   const departments = useMemo(() => [...new Set(all.map((r) => r.department).filter(Boolean))].sort(), [all]);
   const teams = useMemo(() => [...new Set(all.filter((r) => !department || r.department === department).map((r) => r.team).filter(Boolean))].sort(), [all, department]);
-  const rows = useMemo(() => all.filter((r) => (!q || `${r.employeeCode} ${r.name} ${r.team || ''} ${r.department || ''}`.toLowerCase().includes(q.toLowerCase()))
-    && (!department || r.department === department) && (!team || (r.team || '') === team)), [all, q, department, team]);
+  // The employee names: one entry per person (the rows repeat a person once per leave type), only those of the chosen department / team.
+  const employees = useMemo(() => {
+    const seen = new Map();
+    all.forEach((r) => {
+      if (department && r.department !== department) return;
+      if (team && (r.team || '') !== team) return;
+      if (!seen.has(String(r.id))) seen.set(String(r.id), { id: String(r.id), name: r.name, code: r.employeeCode });
+    });
+    return [...seen.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  }, [all, department, team]);
+  const employeeNow = employees.some((e) => e.id === employee) ? employee : ''; // a pick that the year / type / department no longer has counts as "everyone"
+  const monthKeys = data?.rows?.[0]?.months?.map((m) => m.month) || [];
+  const monthKey = month ? monthKeys.find((k) => k.endsWith(`-${month}`)) || '' : '';
+  const monthName = (mm) => new Date(`2000-${mm}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'long' });
+  const byPerson = useMemo(() => all.filter((r) => (!department || r.department === department) && (!team || (r.team || '') === team)
+    && (!employeeNow || String(r.id) === employeeNow)), [all, department, team, employeeNow]);
+  // One month picked: only the people who took (or have pending) leave in that month stay; the others had none.
+  const rows = useMemo(() => (monthKey
+    ? byPerson.filter((r) => { const m = r.months.find((x) => x.month === monthKey); return m && (m.taken || m.pending); })
+    : byPerson), [byPerson, monthKey]);
   async function exportXlsx() {
     setError('');
     try {
@@ -233,18 +252,21 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
   }
   const years = [];
   for (let y = new Date().getFullYear(); y >= 2025; y -= 1) years.push(y);
-  const months = data?.rows?.[0]?.months?.map((m) => m.month) || [];
+  const months = monthKey ? [monthKey] : monthKeys; // the month columns on screen
   const mLabel = (k) => new Date(`${k}-01T00:00:00`).toLocaleDateString('en-IN', { month: 'short' });
   return (
     <Panel style={{ marginTop: 16 }}>
       <PanelHead title="Month-wise Leave Report">
         <span style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <input placeholder="Search employee / team" value={q} onChange={(e) => setQ(e.target.value)} />
-          <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setTeam(''); }} style={{ minWidth: 150 }}>
+          <Combo value={department} onChange={(e) => { setDepartment(e.target.value); setTeam(''); setEmployee(''); }} style={{ minWidth: 150 }} title="Department">
             <option value="">All departments</option>
             {departments.map((d) => <option key={d}>{d}</option>)}
           </Combo>
-          <Combo value={team} onChange={(e) => setTeam(e.target.value)} style={{ minWidth: 130 }}>
+          <Combo value={employeeNow} onChange={(e) => setEmployee(e.target.value)} style={{ minWidth: 220 }} title="Employee names">
+            <option value="">{department ? `All employees of ${department}` : 'All employees'}</option>
+            {employees.map((e) => <option key={e.id} value={e.id}>{e.name}{e.code ? ` (${e.code})` : ''}</option>)}
+          </Combo>
+          <Combo value={team} onChange={(e) => { setTeam(e.target.value); setEmployee(''); }} style={{ minWidth: 130 }}>
             <option value="">All teams</option>
             {teams.map((t) => <option key={t}>{t}</option>)}
           </Combo>
@@ -256,6 +278,10 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
           </Combo>
           <Combo value={String(year)} onChange={(e) => setYear(Number(e.target.value))} style={{ minWidth: 100 }}>
             {years.map((y) => <option key={y} value={String(y)}>{String(y)}</option>)}
+          </Combo>
+          <Combo value={month} onChange={(e) => setMonth(e.target.value)} style={{ minWidth: 130 }} title="Month">
+            <option value="">All months</option>
+            {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map((mm) => <option key={mm} value={mm}>{monthName(mm)}</option>)}
           </Combo>
           {allowRelieved && (
           <label className="lvx-muted" style={{ display: 'flex', gap: 4, alignItems: 'center' }} title="Add employees who have left">
@@ -271,13 +297,22 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
           <div className="lvx-muted" style={{ margin: '0 18px 6px', fontSize: 12 }}>
             Click a number to see the leave: the dates, who approved it and the reason. Click a name for that person&apos;s month-by-month balance. <b>Balance now</b> is the balance on record today.
           </div>
+          {monthKey && (
+            <div className="lvx-muted" style={{ margin: '0 18px 6px', fontSize: 12 }}>
+              <b>{monthName(month)} {year}</b>: {rows.length} {rows.length === 1 ? 'person' : 'people'} took or have pending leave this month
+              {byPerson.length > rows.length ? `; the other ${byPerson.length - rows.length} had none` : ''}. Taken, Pending and Closing are for the whole year.
+            </div>
+          )}
           <div className="tbl-wrap lvx-table">
             <table>
               <thead>
                 <tr>
                   <th>Code</th><th>Employee</th><th>Team</th><th>Designation</th><th>Type</th><th>Credited</th>
                   {months.map((k) => <th key={k} style={{ textAlign: 'center' }}>{mLabel(k)}</th>)}
-                  <th>Taken</th><th>Pending</th><th>Closing</th><th title="The balance on record today (this leave year)">Balance now</th>
+                  <th title={monthKey ? 'The whole year, not only this month' : undefined}>{monthKey ? 'Taken (year)' : 'Taken'}</th>
+                  <th title={monthKey ? 'The whole year, not only this month' : undefined}>{monthKey ? 'Pending (year)' : 'Pending'}</th>
+                  <th title={monthKey ? 'At the end of the year' : undefined}>Closing</th>
+                  <th title="The balance on record today (this leave year)">Balance now</th>
                 </tr>
               </thead>
               <tbody>
@@ -288,7 +323,7 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
                     <td className="lvx-muted">{r.team || '—'}</td><td className="lvx-muted">{r.designation || '—'}</td>
                     <td className="lvx-muted">{r.type}</td>
                     <td>{r.creditKnown ? r.totals.credited : <span className="lvx-muted" title="Entitlement not on record for this year">n/a</span>}</td>
-                    {r.months.map((m) => (
+                    {r.months.filter((m) => !monthKey || m.month === monthKey).map((m) => (
                       <td key={m.month} style={{ textAlign: 'center' }} title={m.pending ? `${m.pending} pending` : undefined}>
                         <MonthNumber taken={m.taken} pending={m.pending} onClick={() => setPeek({ employeeId: r.id, name: r.name, type: r.type, month: m.month })} />
                       </td>
