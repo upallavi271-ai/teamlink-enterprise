@@ -1329,6 +1329,23 @@ router.patch('/applications/:id/hiring-type', requirePerm('ats', 'interviews', '
   res.json(shapeRow(fresh));
 });
 
+// On roll / Off roll on a joined candidate — set it straight from the joined list
+// (founder 2026-11-13). How the person sits on the client's books; shows in the
+// joinings drill and exports, and Accounts reads it when raising an invoice.
+const ROLL_STATUSES = ['On Roll', 'Off Roll'];
+router.patch('/applications/:id/roll-status', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
+  const app = await loadScoped(req, res);
+  if (!app) return;
+  const rollStatus = String((req.body || {}).rollStatus == null ? '' : req.body.rollStatus).trim();
+  if (rollStatus && !ROLL_STATUSES.includes(rollStatus)) return res.status(400).json({ error: 'Choose On Roll or Off Roll.' });
+  await prisma.application.update({ where: { id: app.id }, data: { rollStatus: rollStatus || null } });
+  await logAudit({
+    userId: req.user.id, action: rollStatus ? `Marked ${rollStatus}` : 'Cleared on roll / off roll',
+    entity: 'Application', entityId: app.id, fromValue: app.rollStatus || '', toValue: rollStatus || '',
+  });
+  res.json({ ok: true, rollStatus: rollStatus || null });
+});
+
 // ---------------------------------------------------------------------------
 // BOOK AN INTERVIEW — "like booking a cab" (change list §11, 2026-10-03).
 //   POST /ats/interviews/:id/book   (:id = the application)

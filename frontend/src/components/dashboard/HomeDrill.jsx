@@ -111,7 +111,27 @@ function DropRows({ rows, onClose }) {
   );
 }
 
-function Rows({ data, onClose }) {
+function RollCell({ r, onRoll, busy }) {
+  // On roll / Off roll on a joined candidate — pick it right here (founder 2026-11-13). Falls back to a chip when it cannot be edited.
+  if (!onRoll) return r.rollStatus ? <StatusChip tone={/off/i.test(r.rollStatus) ? 'grey' : 'green'} status={r.rollStatus} /> : <span className="hd-sub">—</span>;
+  const off = /off/i.test(r.rollStatus || '');
+  return (
+    <select
+      className="hd-roll"
+      value={r.rollStatus || ''}
+      disabled={busy}
+      onChange={(e) => onRoll(r.id, e.target.value)}
+      title="Set whether this joined candidate is on the client's rolls or off-roll"
+      style={{ fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--line, #d8dee4)', background: 'var(--surface, #fff)', color: r.rollStatus ? (off ? 'var(--muted, #667)' : '#1a7f37') : 'var(--muted, #889)', fontWeight: r.rollStatus ? 700 : 400, cursor: 'pointer' }}
+    >
+      <option value="">—</option>
+      <option value="On Roll">On Roll</option>
+      <option value="Off Roll">Off Roll</option>
+    </select>
+  );
+}
+
+function Rows({ data, onClose, onRoll, rollBusy }) {
   const rows = data.rows || [];
   const k = data.kind;
   if (k === 'app' && rows.some((r) => r.dropKind)) return <DropRows rows={rows} onClose={onClose} />;
@@ -128,7 +148,7 @@ function Rows({ data, onClose }) {
             <td>{r.client || '—'}</td>
             <td><StatusChip status={r.step} /></td>
             <td>{joinList ? <JoinCell r={r} /> : <DueCell r={r} />}</td>
-            {joinList && <td>{r.rollStatus ? <StatusChip tone={/off/i.test(r.rollStatus) ? 'grey' : 'green'} status={r.rollStatus} /> : <span className="hd-sub">—</span>}</td>}
+            {joinList && <td><RollCell r={r} onRoll={onRoll} busy={rollBusy === r.id} /></td>}
             <td className="hd-sub">{shortDate(r.updatedAt)}</td>
             <td><OpenLink to={`/candidates/${r.candidateId}`} onClose={onClose} /></td>
           </tr>
@@ -218,6 +238,19 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState(null);
   const [tick, setTick] = useState(0);
+  const [rollBusy, setRollBusy] = useState('');
+
+  // Set On roll / Off roll on a joined candidate straight from the list (founder 2026-11-13).
+  async function setRoll(appId, rollStatus) {
+    setRollBusy(appId); setMsg(null);
+    try {
+      await api.patch(`/ats/applications/${appId}/roll-status`, { rollStatus });
+      setData((d) => (d ? { ...d, rows: (d.rows || []).map((r) => (r.id === appId ? { ...r, rollStatus: rollStatus || null } : r)) } : d));
+      setMsg({ ok: true, text: rollStatus ? `Marked ${rollStatus}.` : 'Cleared on roll / off roll.' });
+    } catch (e) {
+      setMsg({ ok: false, text: e.response?.data?.error || 'Could not save on roll / off roll.' });
+    } finally { setRollBusy(''); }
+  }
 
   // A new number: start clean.
   useEffect(() => { setSearch(''); setQ(''); setPicked({}); setPage(1); setMsg(null); }, [setId]);
@@ -307,7 +340,7 @@ export default function HomeDrill({ listUrl, params, setId, onClose }) {
         {data && data.total > 0 && filtered === 0 && (
           <div className="hd-empty">Nothing matches your search or filters. <button type="button" className="link-btn" onClick={clearAll}>Clear all</button></div>
         )}
-        {data && rows.length > 0 && <div className="hd-wrap"><Rows data={data} onClose={onClose} /></div>}
+        {data && rows.length > 0 && <div className="hd-wrap"><Rows data={data} onClose={onClose} onRoll={setRoll} rollBusy={rollBusy} /></div>}
         {data && filtered > 0 && (
           <div className="hd-foot">
             <span>Showing {fmt(from)}–{fmt(to)} of {fmt(filtered)}</span>
