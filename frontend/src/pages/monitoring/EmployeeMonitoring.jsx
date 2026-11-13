@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import ListPageHeader from '../../components/ui/ListPageHeader.jsx';
@@ -1247,7 +1248,7 @@ function AppWork({ app, who, range, total, onClose }) {
   const max = items.length ? items[0].seconds : 1;
   const oneDay = !range.includes(' to ');
   const when = (x) => (oneDay ? tm(x) : dt(x));
-  return (
+  return createPortal((
     <div className="mon-modal" role="dialog" aria-modal="true" aria-label={`${app.name}: what it was used for`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="mon-modal-box">
         <div className="mon-modal-head">
@@ -1361,7 +1362,7 @@ function AppWork({ app, who, range, total, onClose }) {
         </div>
       </div>
     </div>
-  );
+  ), document.body);
 }
 
 // ------------------------------------------------------------------------------------------------ App categories
