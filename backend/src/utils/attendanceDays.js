@@ -1176,6 +1176,10 @@ function tally(dayRows) {
   c.headcount = 0;
   c.late = 0; c.missingCheckIn = 0; c.missingCheckOut = 0; c.checkedIn = 0; c.checkedOut = 0; c.punched = 0; c.biometric = 0;
   c.earlyLogout = 0; c.underReview = 0;
+  // PRESENT WITH NO CHECK-IN AT ALL (founder 2026-11-13: "check-in employee ani chupistundhi malli total present lo 35 chupistundhi, conflict
+  // kakunda mention chey"): a day HR marked Present (or Work from home) by hand with no punch and no time is honoured as marked, so Present
+  // can be larger than Checked in. These two counts say how much: Present = checked in + marked by HR + work from home. Information only.
+  c.presentMarked = 0; c.presentWfh = 0; c.presentNoIn = 0;
   // Late arrivals by the state of their late-coming request (utils/latePermission.js). late = everyone who came after the
   // Late-after time; approved ones are excused (not a policy late) but still listed here so the numbers add up.
   c.lateStates = { late: 0, approved: 0, pending: 0, rejected: 0, none: 0 };
@@ -1203,6 +1207,8 @@ function tally(dayRows) {
     if (d.checkOut) c.checkedOut += 1;
     if (d.punches) c.punched += 1;
     if (d.method === 'Biometric') c.biometric += 1;
+    if (b === 'present' && !d.checkIn) c.presentNoIn += 1; // every Present person with no check-in time (marked, work from home, or only a check-out)
+    if (b === 'present' && !d.checkIn && !d.checkOut && !d.punches) { if (d.note === 'WFH') c.presentWfh += 1; else c.presentMarked += 1; }
   });
   return c;
 }

@@ -170,6 +170,10 @@ function kpisOf(t) {
     checkedOut: t.checkedOut,
     punched: t.punched,
     biometric: t.biometric,
+    // Present people with no check-in at all: marked Present by HR / Work from home (so Present = Checked in + these)
+    presentMarked: t.presentMarked || 0,
+    presentWfh: t.presentWfh || 0,
+    presentNoIn: t.presentNoIn || 0,
   };
 }
 
@@ -1299,6 +1303,8 @@ router.get('/biometric', requirePerm(null, 'hrms', 'Attendance & Time', 'export'
     missingCheckIn: (x) => x.bucket === 'present' && x.notes.includes('missingCheckIn'),
     missingCheckOut: (x) => x.bucket === 'present' && x.notes.includes('missingCheckOut'),
     punched: (x) => x.punchRows > 0,
+    // Present by a hand mark (HR / work from home) with no check-in, no check-out, no punch
+    markedPresent: (x) => x.bucket === 'present' && !x.checkIn && !x.checkOut && !(x.punchRows > 0),
     checkedIn: (x) => !!x.checkIn,
     checkedOut: (x) => !!x.checkOut,
   };

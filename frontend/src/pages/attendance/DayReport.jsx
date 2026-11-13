@@ -125,9 +125,24 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [], lat
   const NOTE_WORDS = { late: 'Late', earlyLogout: 'Early logout', missingCheckIn: 'Missing check-in', missingCheckOut: 'Missing check-out', noPunches: 'No punches', punchOnLeave: 'Punch on a leave day', leaveRejected: 'Half-day leave rejected' };
   const tileChips = (tileKey) => Object.keys(NOTE_WORDS).filter((k) => ((kpis.tileNotes || {})[tileKey] || {})[k] > 0)
     .map((k) => ({ key: `${tileKey}:${k}`, label: NOTE_WORDS[k], value: kpis.tileNotes[tileKey][k] }));
+  // PRESENT vs CHECKED IN (founder 2026-11-13: "check-in employee ani chupistundhi malli total present lo 35 chupistundhi, conflict kakunda mention
+  // chey clear ga"): Present counts everyone who came to work, including people HR marked Present (or Work from home) by hand with no check-in
+  // time at all, and people with only a check-out punch (the Missing check-in note), so Present can be larger than Checked in. The split is said
+  // on the card, in the sum line and as its own card, and it always adds up: Present = checked in + marked by HR + work from home + only a check-out.
+  const marked = (kpis.presentMarked || 0) + (kpis.presentWfh || 0);
+  const noIn = Math.max(marked, kpis.presentNoIn ?? (marked + (kpis.missingCheckIn || 0))); // every Present person with no check-in time
+  const onlyOut = noIn - marked; // the rest: a check-out punch with no check-in
+  const withIn = Math.max(0, (kpis.present || 0) - noIn);
+  const presentParts = noIn ? [
+    `${withIn} checked in`,
+    kpis.presentMarked ? `${kpis.presentMarked} marked Present by HR` : null,
+    kpis.presentWfh ? `${kpis.presentWfh} work from home` : null,
+    onlyOut ? `${onlyOut} with only a check-out` : null,
+  ].filter(Boolean) : [];
   // Plain facts about the day (not statuses): who has a check-in / check-out on record.
   const info = [
-    { key: 'checkedIn', value: kpis.checkedIn, label: 'Checked in', hint: 'People with a check-in' },
+    { key: 'checkedIn', value: kpis.checkedIn, label: 'Checked in', hint: marked ? 'Everyone with a check-in time. Present is bigger by the people marked by HR with none (next card)' : 'People with a check-in' },
+    ...(marked ? [{ key: 'markedPresent', value: marked, label: 'Present, no check-in', hint: [kpis.presentMarked ? `${kpis.presentMarked} marked Present by HR` : null, kpis.presentWfh ? `${kpis.presentWfh} work from home` : null].filter(Boolean).join(' · ') }] : []),
     { key: 'checkedOut', value: kpis.checkedOut, label: 'Checked out', hint: 'People who pressed check-out' },
     { key: 'punched', value: kpis.punched, label: 'People with punches', hint: `Biometric device: ${kpis.biometric}` },
     ...extra,
@@ -145,7 +160,7 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [], lat
             <button type="button" className={`att-kpi${active === b.key ? ' on' : ''}`} onClick={() => pick(b.key)} title={`${b.hint}. Click to list them.`}>
               <div className="v">{kpis[b.key]}</div>
               <div className="l">{b.label}</div>
-              <div className="h">{b.hint}</div>
+              <div className="h">{b.key === 'present' && noIn ? `${b.hint}: ${presentParts.join(' + ')}` : b.hint}</div>
             </button>
             {b.key === 'halfDay' && kpis.halfDayLeave && <HalfLeaveSub c={kpis.halfDayLeave} />}
             {(b.key === 'halfDay' || b.key === 'onLeave' || b.key === 'absent') && tileChips(b.key).length > 0 && (
@@ -183,6 +198,14 @@ export function DayKpis({ kpis, date, headcount, active, onPick, extra = [], lat
         {' '}= Headcount <b>{kpis.headcount}</b>
         {shown.reduce((n, b) => n + (kpis[b.key] || 0), 0) === kpis.headcount ? '' : <> (these add up to <b>{shown.reduce((n, b) => n + (kpis[b.key] || 0), 0)}</b>)</>}.
         {' '}Late, Early logout, Missing check-in and Missing check-out are notes inside Present, not extra tiles.
+        {noIn > 0 && (
+          <> {' '}<b>Present</b> counts everyone who came to work: <b>{withIn}</b> checked in
+            {kpis.presentMarked ? <> + <b>{kpis.presentMarked}</b> marked Present by HR (no check-in time)</> : null}
+            {kpis.presentWfh ? <> + <b>{kpis.presentWfh}</b> work from home (no check-in time)</> : null}
+            {onlyOut ? <> + <b>{onlyOut}</b> with only a check-out (Missing check-in)</> : null}
+            . <b>Checked in</b> below counts everyone who has a check-in time, so it can be smaller than Present.
+          </>
+        )}
         {headcount && (
           <> {' '}Of the <b>{headcount.records}</b> employee record(s) in your scope
             {headcount.systemAccounts ? <>, <b>{headcount.systemAccounts}</b> Super Admin (system account) is not counted</> : null}
@@ -227,6 +250,8 @@ export function matchesKpi(row, key) {
   if (key === 'checkedOut') return 'checkOut' in row ? !!row.checkOut : !!(row.checkOutTimes && row.checkOutTimes.length);
   if (key === 'missingCheckOut') return row.bucket === 'present' && (row.dayStatus || row.status) === 'Missing Check-Out';
   if (key === 'punched') return (row.punchRows ?? row.punches ?? 0) > 0;
+  // Present by a hand mark (HR / work from home): no check-in, no check-out, no punch.
+  if (key === 'markedPresent') return row.bucket === 'present' && !row.checkIn && !row.checkOut && !((row.punchRows ?? row.punches ?? 0) > 0);
   // Range, per person.
   const any = { presentAny: 'present', halfDayAny: 'halfDay', absentAny: 'absent', onLeaveAny: 'onLeave', noRecordAny: 'noRecord', lateAny: 'late' }[key];
   if (any) return (row[any] || 0) > 0;
