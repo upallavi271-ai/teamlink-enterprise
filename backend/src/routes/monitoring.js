@@ -389,6 +389,27 @@ router.put('/devices/:id/deactivate', wrap(async (req, res) => {
   res.json({ ok: true, message: `${d.deviceName} no longer sends activity. It can be registered again from the agent.` });
 }));
 
+// Reassign a PC to the employee who uses it now (founder 2026-11-13: a laptop set up by one person is used by another, so activity
+// lands under the wrong name). Future activity records under the new person; past days stay as they are. The agent, on its next send,
+// asks the new person to accept the monitoring notice (consentRequired), so nothing records for them until they do.
+router.put('/devices/:id/reassign', wrap(async (req, res) => {
+  if (!(await M.canManageDevices(req.user))) return fail(res, 403, 'Only the Super Admin, Admin or IT Admin can reassign a PC.');
+  const employeeId = String((req.body || {}).employeeId || '');
+  if (!employeeId) return fail(res, 400, 'Pick the employee who uses this PC now.');
+  const [d, emp] = await Promise.all([
+    prisma.monitoringDevice.findUnique({ where: { id: req.params.id }, select: { id: true, deviceName: true, employeeId: true, employee: { select: { name: true } } } }),
+    prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, employeeCode: true } }),
+  ]);
+  if (!d) return fail(res, 404, 'PC not found.');
+  if (!emp) return fail(res, 404, 'Employee not found.');
+  if (d.employeeId === employeeId) return res.json({ ok: true, message: `${d.deviceName} is already set to ${emp.name}.` });
+  const was = d.employee ? d.employee.name : 'someone';
+  await prisma.monitoringDevice.update({ where: { id: d.id }, data: { employeeId, currentApp: null, currentTitle: null, currentIdle: false, pausedState: null } });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Monitoring: PC reassigned', entity: 'MonitoringDevice', entityId: d.id, fromValue: was, toValue: emp.name, reason: `${d.deviceName}: ${was} -> ${emp.name} (${emp.employeeCode})` }).catch(() => {});
+  const consented = await M.hasConsent(employeeId, (await M.settings()).policyVersion).catch(() => false);
+  return res.json({ ok: true, needsConsent: !consented, message: `${d.deviceName} now records under ${emp.name} (was ${was}). Past days are unchanged.${consented ? '' : ' They will be asked to accept the monitoring notice on this PC before anything records.'}` });
+}));
+
 router.put('/devices/:id/approve', wrap(async (req, res) => {
   if (!(await M.canManageDevices(req.user))) return fail(res, 403, 'Only the Super Admin, Admin or IT Admin approves a PC.');
   const d = await prisma.monitoringDevice.update({ where: { id: req.params.id }, data: { approved: true } }).catch(() => null);

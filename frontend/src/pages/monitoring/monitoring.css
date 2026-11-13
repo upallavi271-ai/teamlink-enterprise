@@ -135,3 +135,10 @@ main:has(.mon){max-width:1680px}
 .mon .mon-note input{width:100%;max-width:230px;padding:5px 8px;border:1px solid var(--line,#d9dee6);border-radius:6px;font-size:13px;background:#fff}
 .mon .mon-note input:focus{outline:none;border-color:#9bb3d6;box-shadow:0 0 0 2px #e7eefb}
 .mon .mon-note .ok{color:#15803d}
+
+/* reassign-a-PC modal (2026-11-13) */
+.mon .mon-modal-back, .mon-modal-back{position:fixed;inset:0;background:rgba(17,24,39,.45);display:flex;align-items:center;justify-content:center;z-index:1000;padding:16px}
+.mon-modal{background:#fff;border-radius:12px;padding:18px 20px;width:min(460px,100%);box-shadow:0 12px 40px rgba(0,0,0,.25);max-height:88vh;overflow:auto}
+.mon-pick{display:block;width:100%;text-align:left;padding:9px 11px;border:1px solid var(--line,#e4e7ec);border-radius:8px;background:#fff;margin-bottom:6px;cursor:pointer;font-size:13.5px}
+.mon-pick:hover{background:#f1f5fb;border-color:#9bb3d6}
+.mon-pick:disabled{opacity:.5;cursor:default}

@@ -1591,7 +1591,49 @@ function AgentVersions() {
 }
 
 // ------------------------------------------------------------------------------------------------ Devices
+// Reassign a PC to whoever uses it now (founder 2026-11-13): search the person, confirm; future activity records under them.
+function ReassignModal({ device, onClose, onDone }) {
+  const [q, setQ] = useState('');
+  const [rows, setRows] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    if (q.trim().length < 2) { setRows([]); return undefined; }
+    let live = true;
+    const t = setTimeout(() => { api.get('/monitoring/people', { params: { q: q.trim() } }).then((r) => { if (live) setRows(r.data.rows || []); }).catch(() => { if (live) setRows([]); }); }, 250);
+    return () => { live = false; clearTimeout(t); };
+  }, [q]);
+  const pick = async (emp) => {
+    if (!window.confirm(`Reassign ${device.deviceName} to ${emp.name}?
+
+From now its activity records under ${emp.name}, not ${device.employee ? device.employee.name : 'the current person'}. Past days stay as they are, and ${emp.name} is asked to accept the monitoring notice on the PC.`)) return;
+    setBusy(true); setErr('');
+    try { const r = await api.put(`/monitoring/devices/${device.id}/reassign`, { employeeId: emp.id }); onDone(r.data.message); } catch (e) { setErr(errOf(e, 'Could not reassign this PC.')); setBusy(false); }
+  };
+  return (
+    <div className="mon-modal-back" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="mon-modal" onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ margin: '0 0 6px' }}>Reassign {device.deviceName}</h3>
+        <div className="small-muted">Now recording under <b>{device.employee ? device.employee.name : '—'}</b>. Pick the person who uses this PC now - its future activity records under them. Past days are unchanged.</div>
+        <input autoFocus type="search" placeholder="Search a name or code" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: '100%', marginTop: 10, boxSizing: 'border-box' }} />
+        {err && <div className="notice red">{err}</div>}
+        <div className="mon-scroll" style={{ maxHeight: 240, marginTop: 8 }}>
+          {rows.map((emp) => (
+            <button type="button" key={emp.id} className="mon-pick" disabled={busy} onClick={() => pick(emp)}>
+              <b>{emp.name}</b> <span className="small-muted">{emp.employeeCode}{emp.department ? ` · ${emp.department}` : ''}</span>
+            </button>
+          ))}
+          {q.trim().length >= 2 && !rows.length && <div className="small-muted" style={{ padding: 8 }}>No one matches.</div>}
+          {q.trim().length < 2 && <div className="small-muted" style={{ padding: 8 }}>Type at least 2 letters to find the person.</div>}
+        </div>
+        <div style={{ marginTop: 10, textAlign: 'right' }}><button type="button" className="btn btn-sm" onClick={onClose}>Close</button></div>
+      </div>
+    </div>
+  );
+}
+
 function Devices({ manage = false }) {
+  const [reassign, setReassign] = useState(null);
   const { data, error, reload } = useGet('/monitoring/devices');
   const [msg, setMsg] = useState('');
   async function off(d) {
@@ -1623,7 +1665,8 @@ function Devices({ manage = false }) {
                 <td>{!d.isActive ? <Pill tone="slate">Switched off</Pill> : d.approved === false ? <Pill tone="amber">Waiting for approval</Pill> : d.online ? <Pill tone="green">Online</Pill> : <Pill tone="amber">Offline</Pill>}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {d.isActive && d.approved === false && data.canManage && <><button type="button" className="btn btn-sm btn-primary" onClick={() => approve(d)}>Approve</button>{' '}</>}
-                  {d.isActive && canAct && <button type="button" className="btn btn-sm" onClick={() => off(d)}>Deactivate</button>}
+                  {d.isActive && manage && data.canManage && <>{' '}<button type="button" className="btn btn-sm" onClick={() => setReassign(d)}>Reassign</button></>}
+                  {d.isActive && canAct && <>{' '}<button type="button" className="btn btn-sm" onClick={() => off(d)}>Deactivate</button></>}
                 </td>
               </tr>
             ))}
@@ -1631,6 +1674,7 @@ function Devices({ manage = false }) {
           </tbody>
         </table>
       </div>
+      {reassign && <ReassignModal device={reassign} onClose={() => setReassign(null)} onDone={(m) => { setReassign(null); setMsg(m); reload(); }} />}
     </>
   );
 }
