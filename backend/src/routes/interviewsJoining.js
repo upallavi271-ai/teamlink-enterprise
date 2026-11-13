@@ -1333,13 +1333,18 @@ router.patch('/applications/:id/hiring-type', requirePerm('ats', 'interviews', '
 // (founder 2026-11-13): how the person sits (dropped, full time, part time, on
 // roll or a replacement). Shows in the joinings drill and exports.
 const ROLL_STATUSES = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
-// A recruiter sets this on their own joined candidates, so it uses the application-edit right they
-// hold (not the Joining right, which is TL/onboarding only); loadScoped keeps them to their own area.
-router.patch('/applications/:id/roll-status', requirePerm('ats', 'candidates', 'Applications', 'edit'), async (req, res) => {
+// Both recruiters and team leads set this on their own candidates (founder 2026-11-13: "recruiters ki
+// vundali, tls ki vundali"), so it accepts EITHER the Applications-edit right recruiters hold OR the
+// Joining-edit right TLs / onboarding hold; loadScoped keeps everyone to their own area's candidates.
+router.patch('/applications/:id/roll-status', async (req, res) => {
   const app = await loadScoped(req, res);
   if (!app) return;
+  const P = require('../utils/permissions'); // eslint-disable-line global-require
+  const may = (await P.can(req.user, 'ats', 'candidates', 'Applications', 'edit'))
+    || (await P.can(req.user, 'ats', 'interviews', 'Joining', 'edit'));
+  if (!may) return res.status(403).json({ error: 'You can see this candidate but not change the roll status. Ask your team lead.' });
   const rollStatus = String((req.body || {}).rollStatus == null ? '' : req.body.rollStatus).trim();
-  if (rollStatus && !ROLL_STATUSES.includes(rollStatus)) return res.status(400).json({ error: 'Choose On Roll or Off Roll.' });
+  if (rollStatus && !ROLL_STATUSES.includes(rollStatus)) return res.status(400).json({ error: `Pick one of: ${ROLL_STATUSES.join(', ')}.` });
   await prisma.application.update({ where: { id: app.id }, data: { rollStatus: rollStatus || null } });
   await logAudit({
     userId: req.user.id, action: rollStatus ? `Marked ${rollStatus}` : 'Cleared on roll / off roll',

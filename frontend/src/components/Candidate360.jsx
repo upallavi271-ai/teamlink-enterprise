@@ -1026,7 +1026,7 @@ export function CurrentApplication({
   const fu = app.followUp;
   // The recruiter sets how this candidate sits (full time / part time / on roll / …) on the current application; it stays
   // with the application through to joining (founder 2026-11-13). Same field and endpoint as the joined list's roll status.
-  const canRoll = !!(user && onChanged && app.id && can(user, 'ats', 'candidates', 'Applications', 'edit'));
+  const canRoll = !!(user && onChanged && app.id && (can(user, 'ats', 'candidates', 'Applications', 'edit') || can(user, 'ats', 'interviews', 'Joining', 'edit')));
   const setRoll = async (v) => {
     setRollBusy(true);
     try { await api.patch(`/ats/applications/${app.id}/roll-status`, { rollStatus: v }); if (onChanged) onChanged(); } catch { /* left as-is on error */ } finally { setRollBusy(false); }
