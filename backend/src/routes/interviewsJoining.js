@@ -1333,7 +1333,9 @@ router.patch('/applications/:id/hiring-type', requirePerm('ats', 'interviews', '
 // (founder 2026-11-13): how the person sits (dropped, full time, part time, on
 // roll or a replacement). Shows in the joinings drill and exports.
 const ROLL_STATUSES = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
-router.patch('/applications/:id/roll-status', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
+// A recruiter sets this on their own joined candidates, so it uses the application-edit right they
+// hold (not the Joining right, which is TL/onboarding only); loadScoped keeps them to their own area.
+router.patch('/applications/:id/roll-status', requirePerm('ats', 'candidates', 'Applications', 'edit'), async (req, res) => {
   const app = await loadScoped(req, res);
   if (!app) return;
   const rollStatus = String((req.body || {}).rollStatus == null ? '' : req.body.rollStatus).trim();
