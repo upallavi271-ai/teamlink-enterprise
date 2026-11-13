@@ -1021,6 +1021,13 @@ export function CurrentApplication({
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
   const [rollBusy, setRollBusy] = useState(false);
+  // What the dropdown shows now. We move it the moment they pick, so a save that
+  // works stays put even if the parent is slow to refetch (founder 2026-11-13:
+  // "full time pedthuntey save avatledhu") — the old code only had app.rollStatus,
+  // so a controlled <select> snapped back on any refresh lag and looked unsaved.
+  const [rollVal, setRollVal] = useState((app && app.rollStatus) || '');
+  const [rollErr, setRollErr] = useState('');
+  useEffect(() => { setRollVal((app && app.rollStatus) || ''); setRollErr(''); }, [app && app.id, app && app.rollStatus]);
   const mayEdit = !!(user && onChanged && app && app.id && can(user, 'ats', 'recruiterbde', 'Team View', 'assign'));
   if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
   const fu = app.followUp;
@@ -1028,8 +1035,16 @@ export function CurrentApplication({
   // with the application through to joining (founder 2026-11-13). Same field and endpoint as the joined list's roll status.
   const canRoll = !!(user && onChanged && app.id && (can(user, 'ats', 'candidates', 'Applications', 'edit') || can(user, 'ats', 'interviews', 'Joining', 'edit')));
   const setRoll = async (v) => {
-    setRollBusy(true);
-    try { await api.patch(`/ats/applications/${app.id}/roll-status`, { rollStatus: v }); if (onChanged) onChanged(); } catch { /* left as-is on error */ } finally { setRollBusy(false); }
+    const prev = rollVal;
+    setRollVal(v); setRollErr(''); setRollBusy(true);
+    try {
+      const res = await api.patch(`/ats/applications/${app.id}/roll-status`, { rollStatus: v });
+      setRollVal((res && res.data && res.data.rollStatus) || v || '');
+      if (onChanged) onChanged();
+    } catch (e) {
+      setRollVal(prev);
+      setRollErr((e && e.response && e.response.data && e.response.data.error) || 'Could not save — try again.');
+    } finally { setRollBusy(false); }
   };
   return (
     <>
@@ -1043,10 +1058,13 @@ export function CurrentApplication({
         {(canRoll || app.rollStatus) && (
           <div className="cdw-kv"><span>Status</span>
             {canRoll ? (
-              <select value={app.rollStatus || ''} disabled={rollBusy} onChange={(e) => setRoll(e.target.value)} style={{ width: 'auto', padding: '2px 6px', fontSize: 13 }} title="How this candidate sits: full time, part time, on roll, dropped or a replacement. It stays until they join.">
-                <option value="">— set status —</option>
-                {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
-              </select>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                <select value={rollVal} disabled={rollBusy} onChange={(e) => setRoll(e.target.value)} style={{ width: 'auto', padding: '2px 6px', fontSize: 13 }} title="How this candidate sits: full time, part time, on roll, dropped or a replacement. It stays until they join.">
+                  <option value="">— set status —</option>
+                  {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
+                {rollErr && <span className="small-muted" style={{ color: '#b42318' }}>{rollErr}</span>}
+              </span>
             ) : <b>{app.rollStatus}</b>}
           </div>
         )}
