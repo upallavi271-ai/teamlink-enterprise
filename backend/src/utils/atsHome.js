@@ -2727,7 +2727,18 @@ async function setRows(user, b, set) {
   const w = set.world || b.world; // the drops / month lists of a department TL read the company copy
   if (set.kind === 'app') {
     const extra = set.extra || new Map();
-    return set.ids.map((id) => w.byId.get(id)).filter(Boolean).map((x) => appRowOf(x, extra.get(x.a.id), b.clientDesk));
+    let get = (id) => w.byId.get(id);
+    const missing = set.ids.filter((id) => !w.byId.has(id));
+    if (missing.length) {
+      // A joining credited to this person by name (utils/workers CONFIRMED_NAMES)
+      // can sit outside the board's own scope (worldOf(applicationWhere(user))),
+      // so it is counted but not in w.byId. Load just those apps on their own —
+      // without touching the shared cached world — so the drill lists the same
+      // rows the tile counts. (founder: "3 ani chupisthundhi but open chesthey empty")
+      const ew = await loadWorld({ id: { in: missing.slice(0, 2000) } }, { id: { in: [] } }, w.today || NA.todayIst());
+      get = (id) => w.byId.get(id) || ew.byId.get(id);
+    }
+    return set.ids.map(get).filter(Boolean).map((x) => appRowOf(x, extra.get(x.a.id), b.clientDesk));
   }
   if (set.kind === 'req') {
     const missing = set.ids.filter((id) => !w.reqById.has(id));
