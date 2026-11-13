@@ -32,7 +32,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '3.2'
+$AgentVersion = '3.3'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -94,7 +94,7 @@ public class TLInput : NativeWindow {
   static int dayLeft, dayRight, dayMiddle, dayWheel;
   static int keyTotal, clicks, left, right, middle, wheel, moves, injected;
   static long px, py, minX, maxX, minY, maxY;
-  static long lastKeyTick, lastMouseTick;   // agent 3.2: when a key / the mouse was last used, for the live "typing / reading" signal
+  static long lastKeyTick, lastMouseTick, lastGenuineTick;   // when a key / the mouse / GENUINE input (key, click or scroll - never a bare move) was last seen
   public static bool Started;
   public static bool Start() {
     if (me != null) return Started;
@@ -105,6 +105,7 @@ public class TLInput : NativeWindow {
     d[1].UsagePage = 1; d[1].Usage = 2; d[1].Flags = 0x100; d[1].Target = me.Handle;   // mouse
     Started = RegisterRawInputDevices(d, 2, (uint)Marshal.SizeOf(typeof(RAWINPUTDEVICE)));
     Reset();
+    lastGenuineTick = DateTime.UtcNow.Ticks;
     return Started;
   }
   static void Reset() { Array.Clear(keys, 0, 256); keyTotal = clicks = left = right = middle = wheel = moves = injected = 0; px = py = minX = maxX = minY = maxY = 0; }
@@ -125,7 +126,7 @@ public class TLInput : NativeWindow {
       if (type == 1 && b.Length >= hs + 12) {
         ushort vk = BitConverter.ToUInt16(b, hs + 6);
         uint msg = BitConverter.ToUInt32(b, hs + 8);
-        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; lastKeyTick = DateTime.UtcNow.Ticks; if (dev == 0) injected++; if (!down[vk]) { down[vk] = true; dayKeys[vk]++; } }
+        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; lastKeyTick = DateTime.UtcNow.Ticks; lastGenuineTick = lastKeyTick; if (dev == 0) injected++; if (!down[vk]) { down[vk] = true; dayKeys[vk]++; } }
         else if ((msg == 0x101 || msg == 0x105) && vk > 0 && vk < 255) { down[vk] = false; }
       } else if (type == 0 && b.Length >= hs + 20) {
         ushort fl = BitConverter.ToUInt16(b, hs);
@@ -140,6 +141,7 @@ public class TLInput : NativeWindow {
         bool moved = (dx != 0 || dy != 0) && (fl & 1) == 0;
         if (moved) { moves++; px += dx; py += dy; if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py; }
         if (c > 0 || moved || (bf & 0xC00) != 0) lastMouseTick = DateTime.UtcNow.Ticks;
+        if (c > 0 || (bf & 0xC00) != 0) lastGenuineTick = DateTime.UtcNow.Ticks;   // a real click or scroll is activity; a bare move is NOT
         if (dev == 0 && (c > 0 || moved)) injected++;
       }
     }
@@ -168,9 +170,11 @@ public class TLInput : NativeWindow {
   public static string Doing() {
     long now = DateTime.UtcNow.Ticks;
     if (lastKeyTick > 0 && (now - lastKeyTick) <= 60000000L) return "typing";
-    if (lastMouseTick > 0 && (now - lastMouseTick) <= 60000000L) return "reading";
+    if (lastGenuineTick > 0 && (now - lastGenuineTick) <= 60000000L) return "reading";   // a click or scroll; a bare move does not count
     return "";
   }
+  // seconds since the last GENUINE activity (key, click or scroll) - a bare mouse move does not reset it, so a nudged-but-idle mouse goes idle
+  public static double GenuineIdleSeconds() { return lastGenuineTick == 0 ? 0 : (DateTime.UtcNow.Ticks - lastGenuineTick) / 10000000.0; }
 }
 '@
 } catch { Write-Log "key and click counting is not available on this PC: $($_.Exception.Message)" }
@@ -522,6 +526,8 @@ function Get-Front {
   }
   return @{ app = $app; title = $title }
 }
+# idle = no GENUINE activity (key, click, scroll) for the threshold - a bare mouse move (a nudge) does not count any more (founder 2026-11-13)
+function Idle-Seconds { if ([TLInput]::Started) { return [double][TLInput]::GenuineIdleSeconds() } else { return [double][TLWin]::IdleSeconds() } }
 function Sample {
   $now = (Get-Date).ToUniversalTime()
   # the timer stopped for a while: the PC was asleep. That time is nobody's work, so the open piece ends where the PC last looked.
@@ -538,7 +544,7 @@ function Sample {
     Write-Open
     return
   }
-  $inputAgo = [double][TLWin]::IdleSeconds()
+  $inputAgo = Idle-Seconds
   $idle = $inputAgo -ge ([int]$settings.idleThresholdMinutes * 60)
   $front = Get-Front
   $app = $front.app; $title = $front.title
@@ -565,7 +571,7 @@ function Watch-Front {
   if ($now -lt $script:nextLive) { return }
   $f = Get-Front
   $app = $f.app; $title = $f.title
-  $idle = [double][TLWin]::IdleSeconds() -ge ([int]$settings.idleThresholdMinutes * 60)
+  $idle = (Idle-Seconds) -ge ([int]$settings.idleThresholdMinutes * 60)
   if ($app -in @('LockApp', 'LogonUI')) { $idle = $true; $app = 'Locked' }
   if ($idle) { $title = '' }
   $doing = if (-not $idle -and [TLInput]::Started) { [TLInput]::Doing() } else { '' }
@@ -623,7 +629,7 @@ function Note-Misuse($kind, $name) {
     $phrase = switch ($kind) {
       'key'      { "Pressing `"$name`" again and again" }
       'click'    { "$name again and again (like an auto-clicker)" }
-      'mouse'    { 'The mouse moving by itself in one small spot (like a mouse mover)' }
+      'mouse'    { 'Only the mouse moving - no typing, clicks or scrolling (it can look like someone is at the PC when they are not)' }
       'software' { 'Keyboard / mouse input coming from a program, not from your hands' }
       default    { 'The same input again and again' }
     }
@@ -671,7 +677,7 @@ function Check-Input {
   elseif ($clicks -ge 20 -and $keys -le 3 -and [math]::Max($l, [math]::Max($r, $m)) -ge 0.95 * $clicks) {
     $kind = 'click'; $name = $(if ($l -ge $r -and $l -ge $m) { 'Left click' } elseif ($r -ge $m) { 'Right click' } else { 'Middle click' }); $count = $clicks
   }
-  elseif ($keys -eq 0 -and $clicks -eq 0 -and $wheel -eq 0 -and $moves -ge 5 -and $sx -le 40 -and $sy -le 40) { $kind = 'mouse'; $name = 'Mouse moving in one small spot'; $count = $moves }
+  elseif ($keys -eq 0 -and $clicks -eq 0 -and $wheel -eq 0 -and $moves -ge 5) { $kind = 'mouse'; $name = 'Only the mouse moved - no typing, clicks or scrolling'; $count = $moves }
   if (-not $kind) { $script:misRun.n = 0; $script:misRun.sig = ''; return }
   [void]$script:inputQueue.Add(@{ at = (Get-Date).ToUniversalTime().AddSeconds(-60).ToString('o'); kind = $kind; key = $name; count = [int]$count })
   Note-Misuse $kind $name

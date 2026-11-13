@@ -136,7 +136,7 @@ const HI_WORD = { Online: 'Active people and how long each has been working.', I
 // - across the people the viewer may see, with a remark the admin / team lead can add (founder 2026-11-12: "ilaanti unwanted misuse
 // chesnavi anni, oka tab lo remark or else edhaina oka name tho ... and at the same time popup avvali"). The employee sees a popup on
 // their own screen while it happens (agent 3.0). A red banner above every tab says how many there are today. Nothing typed is kept.
-const MISUSE_WORD = { key: 'Key held / tapped', click: 'Auto-clicker', mouse: 'Mouse mover', software: 'Program input' };
+const MISUSE_WORD = { key: 'Key held / tapped', click: 'Auto-clicker', mouse: 'Mouse only (fake?)', software: 'Program input' };
 const MISUSE_TONE = { key: 'red', click: 'red', mouse: 'amber', software: 'violet' };
 function MisuseBanner({ onGo }) {
   const { data } = useGet('/monitoring/misuse', { from: todayIst(), to: todayIst(), min: 2 });

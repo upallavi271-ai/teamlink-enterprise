@@ -69,7 +69,7 @@ async function save(device, minutes) {
 const LABEL = {
   key: (k) => `"${k || 'One key'}" pressed again and again`,
   click: (k) => `${k || 'One mouse button'} again and again (like an auto-clicker)`,
-  mouse: () => 'Mouse moving by itself in one small spot (like a mouse mover)',
+  mouse: () => 'Only the mouse moved - no typing, clicks or scrolling (possible fake presence)',
   software: () => 'Keyboard / mouse input sent by a program, not by hand (auto-clicker, mover app or remote control)',
 };
 
