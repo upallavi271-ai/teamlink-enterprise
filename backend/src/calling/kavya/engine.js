@@ -267,10 +267,13 @@ async function handOverOmni(row, input, e164) {
     const sj = (input && input.scriptJson) || {};
     const a = sj.agentScript || {};
     if (!a.text) return false;
+    // {greet} ("Good morning" ...) is filled here, in the language of each version, as TeamLink's own engine does for these scripts
+    const vac = require('../vacancyScript'); // eslint-disable-line global-require
+    const greetIn = (t, lang) => String(t || '').replace(/{greet}/gi, (vac.greeting && vac.greeting(lang)) || '');
     const scripts = {};
-    Object.entries(a.texts || {}).forEach(([k, v]) => { if (v) scripts[k] = v; });
+    Object.entries(a.texts || {}).forEach(([k, v]) => { if (v) scripts[k] = greetIn(v, k); });
     const r = await client.request('POST', '/api/v1/script-calls', {
-      externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: a.text, scriptLanguage: a.language || 'English', scripts, agentName: clip(a.name || 'Kavya', 60),
+      externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: greetIn(a.text, a.language || 'English'), scriptLanguage: a.language || 'English', scripts, agentName: clip(a.name || 'Kavya', 60),
     }, 30000);
     if (!r.ok || !r.data || !r.data.id) return false;
     await svc.setRow(row.id, { providerStatus: 'kavya-script', callSid: `kavya-script:${r.data.id}`, initiatedVia: 'kavya' });
