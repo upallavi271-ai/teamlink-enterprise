@@ -262,9 +262,10 @@ async function handoff(conv, reason, now = Date.now()) {
   if (conv.ownerUserId) await require('../utils/notify').pushNotification({ userId: conv.ownerUserId, title: `${conv.name || 'A person'} needs you on WhatsApp`, message: `${clip(reason, 120)}. Open Omni-Channel > Inbox & Replies > WhatsApp.` }).catch(() => null); // eslint-disable-line global-require
   Live.changed();
 }
-async function humanSentSince(conv) {
+// anyAge false: only a person who wrote in the last HUMAN_HOLD_MS is "answering this chat now" (founder 2026-11-13: a message from two hours earlier paused the AI when the candidate said Yes)
+async function humanSentSince(conv, anyAge = false) {
   if (!conv.candidateId) return null;
-  const since = Math.max(Number(conv.createdAt) || 0, Number(conv.resumedAt) || 0);
+  const since = Math.max(Number(conv.createdAt) || 0, Number(conv.resumedAt) || 0, anyAge ? 0 : Date.now() - HUMAN_HOLD_MS);
   // a person ANSWERING: typed words (a chat reply is labelled "Message"). An approved template sent to one candidate from Send Message is a
   // promotion, not an answer (founder 2026-11-09: his campaign to one number paused the AI as "Developer Team is answering this chat").
   return prisma.candidateMessage.findFirst({
@@ -532,7 +533,7 @@ async function runTurn(row, defaults, now = Date.now()) {
   // paused by a send that was not a person answering (the rule above was wider before): the AI takes the chat back. A Pause pressed by hand stays.
   if (conv.mode === 'paused') {
     const last = (await S.q('SELECT outcome FROM "OmniWaAiRun" WHERE convId = ? ORDER BY at DESC LIMIT 1', conv.id))[0];
-    const h = await humanSentSince(conv);
+    const h = await humanSentSince(conv, true);
     if (last && ((last.outcome === 'paused' && !h) || (h && now - new Date(h.createdAt).getTime() > HUMAN_HOLD_MS))) {
       await resume(conv, now);
       Object.assign(conv, { mode: 'ai', state: conv.state === 'stopped' ? 'stopped' : 'active', pausedByName: null, aiTurns: 0, resumedAt: now });
