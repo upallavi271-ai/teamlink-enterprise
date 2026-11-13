@@ -1234,11 +1234,20 @@ function AppWork({ app, who, range, total, onClose }) {
   const [openRow, setOpenRow] = useState({}); // the rows opened to their details
   const toggle = (k) => setOpenRow((o) => ({ ...o, [k]: !o[k] }));
   const [tab, setTab] = useState(app.teamlinkWork && app.teamlinkWork.total ? 'work' : (done.length ? 'done' : 'items'));
+  const [diag, setDiag] = useState('');
   useEffect(() => {
     const k = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
+  useEffect(() => {
+    const m = document.querySelector('.mon-modal');
+    if (!m) return;
+    const r = m.getBoundingClientRect(); const cs = getComputedStyle(m);
+    const traps = []; let e = m.parentElement;
+    while (e) { const s = getComputedStyle(e); if (s.transform !== 'none' || s.filter !== 'none' || s.perspective !== 'none' || (s.contain && !['normal', 'none', 'style'].includes(s.contain))) traps.push(`${e.tagName}.${String(e.className || '').slice(0, 18)}`); e = e.parentElement; }
+    setDiag(`${cs.position} ${Math.round(r.width)}x${Math.round(r.height)} parent:${m.parentElement && m.parentElement.tagName} inBody:${m.parentElement === document.body} traps:${traps.join(' | ') || 'none'}`);
+  }, []);
   const items = app.items || [];
   const sittings = app.sittings || [];
   const named = items.filter((x) => x.item !== NOT_SHOWN);
@@ -1256,6 +1265,7 @@ function AppWork({ app, who, range, total, onClose }) {
           <div>
             <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
             <div className="small-muted">{who} · {range}</div>
+            {diag && <div style={{ fontSize: 10, color: '#dc2626', fontFamily: 'monospace', marginTop: 4, maxWidth: 460, wordBreak: 'break-all' }}>{diag}</div>}
           </div>
           <button type="button" className="btn btn-sm" onClick={onClose} style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a', fontWeight: 700 }}>✓ Close (v2)</button>
         </div>
