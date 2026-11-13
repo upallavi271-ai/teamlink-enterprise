@@ -21,7 +21,8 @@ export default function CampaignsPage() {
   const view = sp.get('v');
   const [wizard, setWizard] = useState(null); // null | { editKey }
   const [logs, setLogs] = useState(null); // null | { key }
-  useEffect(() => { if (sp.get('new') || sp.get('segment')) setWizard({ segment: sp.get('segment') || undefined }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // ?content=<Content Library id> (Content Studio / AI Content "Use in a campaign"): the wizard opens with those words filled in
+  useEffect(() => { if (sp.get('new') || sp.get('segment') || sp.get('content')) setWizard({ segment: sp.get('segment') || undefined, content: sp.get('content') || undefined }); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [tick, setTick] = useState(0); // makes the list load again after the wizard
 
   const open = (k) => go('campaigns', { c: k });
@@ -38,7 +39,7 @@ export default function CampaignsPage() {
   return (
     <div>
       {body}
-      {wizard && <CampaignWizard key={wizard.editKey || 'new'} editKey={wizard.editKey} initialSegment={wizard.segment} onClose={() => setWizard(null)} onDone={done} />}
+      {wizard && <CampaignWizard key={wizard.editKey || 'new'} editKey={wizard.editKey} initialSegment={wizard.segment} initialContent={wizard.content} onClose={() => setWizard(null)} onDone={done} />}
       {logs && <MessageLogsModal campaignKey={logs.key} onClose={() => setLogs(null)} />}
     </div>
   );

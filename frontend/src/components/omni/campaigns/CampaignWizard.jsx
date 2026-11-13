@@ -9,6 +9,7 @@ import { useWaSender } from '../../messaging/WaSender.jsx';
 
 const STEPS = ['1 · Basics', '2 · Audience', '3 · Content', '4 · Channels', '5 · Review'];
 const TEXT = ['whatsapp', 'sms', 'email'];
+const WIZ_VOICES = ['Warm & confident', 'Professional', 'Playful']; // the brand voices the wizard offers (gsCampaigns.js options.brandVoices)
 const TODAY_IST = () => new Date(Date.now() + 5.5 * 3600000).toISOString().slice(0, 10);
 const tomorrowIst = () => new Date(Date.now() + 86400000 + 5.5 * 3600000).toISOString().slice(0, 10);
 const blank = () => ({ name: '', objective: 'recruitment', tag: '', goal: '', job: null, segmentIds: [], channels: [], templates: {}, masterMessage: '', cta: '', brandVoice: 'Warm & confident', when: 'now', date: tomorrowIst(), time: '10:00', approvalMode: 'auto', perMinute: '' });
@@ -43,7 +44,7 @@ function JobPicker({ job, onPick }) {
 }
 
 // the Create campaign wizard: Basics, Audience, Content, Channels, Review. editKey = change a campaign that was not sent yet.
-export default function CampaignWizard({ editKey, initialSegment, onClose, onDone }) {
+export default function CampaignWizard({ editKey, initialSegment, initialContent, onClose, onDone }) {
   const { go, toast } = useOmni();
   const [step, setStep] = useState(1);
   const [f, setF] = useState(() => ({ ...blank(), segmentIds: initialSegment ? [initialSegment] : [] }));
@@ -71,6 +72,21 @@ export default function CampaignWizard({ editKey, initialSegment, onClose, onDon
       setF(next); setInit(JSON.stringify(next));
     }).catch((e) => setErr(errOf(e, 'This campaign cannot be changed.'))).finally(() => setLoadingEdit(false));
   }, [editKey]);
+
+  // "Use in a campaign" from the Content Library (Content Studio / approved AI Content): its name, master words, CTA and voice are filled in.
+  // The channel messages stay templates (WhatsApp needs a Meta-approved one, SMS a DLT one), so step 3 says how to make them from these words.
+  const [fromContent, setFromContent] = useState(null); // { name } | { error }
+  useEffect(() => {
+    if (!initialContent || editKey) return;
+    omni.get(`/gs/studio/content/${encodeURIComponent(initialContent)}`).then(({ content: c }) => {
+      setF((x) => {
+        const nx = { ...x, name: x.name || String(c.name || '').slice(0, 80), masterMessage: x.masterMessage || String(c.master || '').slice(0, 2000), cta: x.cta || String(c.cta || '').slice(0, 80), brandVoice: WIZ_VOICES.includes(c.voice) ? c.voice : x.brandVoice };
+        setInit(JSON.stringify(nx)); // filled in for you: closing without a change asks nothing
+        return nx;
+      });
+      setFromContent({ name: c.name });
+    }).catch((e) => setFromContent({ error: errOf(e, 'The content could not be read, so nothing was filled in.') }));
+  }, [initialContent, editKey]);
 
   const dirty = JSON.stringify(f) !== init;
   const close = () => { if (dirty) setConfirmClose(true); else onClose(); };
@@ -143,6 +159,8 @@ export default function CampaignWizard({ editKey, initialSegment, onClose, onDon
         <div className="wizard-steps">{STEPS.map((s, i) => <div key={s} className={`wizard-step${step === i + 1 ? ' active' : ''}${step > i + 1 ? ' done' : ''}`}>{s}</div>)}</div>
         {!opts && !err && <div style={{ fontSize: 11 }}>Loading…</div>}
         {opts && !opts.canCreate && <Banner tone="warn">You can look at campaigns, but only the BDE team, Team Leads and Admins can make them.</Banner>}
+        {fromContent && fromContent.error && <Banner tone="error">{fromContent.error}</Banner>}
+        {fromContent && fromContent.name && (step === 1 || step === 3) && <Banner tone="info"><b>Filled in from “{fromContent.name}”:</b> the name, the master message{f.cta ? ', the CTA' : ''} and the brand voice. WhatsApp and SMS still send an approved template: in step 3 pick one, or press “Edit messages” to make one from these words.</Banner>}
         {opts && (
           <div className="cmp-wiz-body">
             {step === 1 && (
