@@ -125,9 +125,20 @@ async function raiseJoiningInvoice({
   const { gst, tds, gstPercent, tdsPercent } = tax;
 
   const joiningDate = application.joiningDate || new Date().toISOString().slice(0, 10);
+  // Joined IS the billing step (founder 2026-11-13: "join avuthey challu malli raise invoice endhuku"): the invoice takes its number now, in the client's own
+  // series, so it is in the invoice register at once and nobody has to press "Raise invoice" afterwards. A failure here leaves it numberless, as before.
+  let invoiceNumber;
+  try {
+    // eslint-disable-next-line global-require
+    invoiceNumber = await require('../routes/invoices').numberForNewInvoice(client.id, offsetDate(joiningDate, 6));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[joining] could not number the invoice:', err.message);
+  }
   const invoice = await prisma.invoice.create({
     data: {
       clientId: client.id,
+      ...(invoiceNumber ? { invoiceNumber } : {}),
       candidateId: existing.candidateId,
       requirementId: existing.requirementId,
       amount,
