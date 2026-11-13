@@ -1687,7 +1687,7 @@ function Devices({ manage = false }) {
                 <td>{!d.isActive ? <Pill tone="slate">Switched off</Pill> : d.approved === false ? <Pill tone="amber">Waiting for approval</Pill> : d.online ? <Pill tone="green">Online</Pill> : <Pill tone="amber">Offline</Pill>}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
                   {d.isActive && d.approved === false && data.canManage && <><button type="button" className="btn btn-sm btn-primary" onClick={() => approve(d)}>Approve</button>{' '}</>}
-                  {d.isActive && manage && data.canManage && <>{' '}<button type="button" className="btn btn-sm" onClick={() => setReassign(d)}>Reassign</button></>}
+                  {manage && data.canManage && <>{' '}<button type="button" className="btn btn-sm" onClick={() => setReassign(d)}>Reassign</button></>}
                   {d.isActive && canAct && <>{' '}<button type="button" className="btn btn-sm" onClick={() => off(d)}>Deactivate</button></>}
                 </td>
               </tr>

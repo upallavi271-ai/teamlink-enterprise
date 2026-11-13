@@ -2781,11 +2781,19 @@ router.get('/:id', async (req, res) => {
   // OWNERSHIP of the current application: Department · Section · TL ·
   // Recruiter · BDE (+ the seat). Client users are not served our staffing.
   const sections = await sectionMap();
+  // The Team lead follows the recruiter's CURRENT seat, the same way Section does - not the requirement's stale stamp (founder
+  // 2026-11-13: EDU-9 is in Team B under Sirisha, but the panel showed the requirement's old Team-A TL). Fall back to the stored TL
+  // when the recruiter has no seat in the org chart.
+  let ownershipTl = decorated.tlName || null;
+  if (latest && kind === 'internal' && decorated.positionCode) {
+    const leads = await require('../utils/positionScope').leadsOfPosition({ positionCode: decorated.positionCode }).catch(() => null); // eslint-disable-line global-require
+    if (leads && leads.tlName) ownershipTl = leads.tlName;
+  }
   const ownership = latest && kind === 'internal' ? {
     department: decorated.requirementDepartment || null,
     section: sectionOfCode(sections, decorated.positionCode),
     positionCode: decorated.positionCode || null,
-    tl: decorated.tlName || null,
+    tl: ownershipTl,
     recruiter: decorated.recruiterName || null,
     bde: decorated.bdeName || null,
   } : null;
