@@ -410,6 +410,17 @@ router.put('/devices/:id/reassign', wrap(async (req, res) => {
   return res.json({ ok: true, needsConsent: !consented, message: `${d.deviceName} now records under ${emp.name} (was ${was}), and is switched on. Past days are unchanged.${consented ? '' : ' They will be asked to accept the monitoring notice on this PC before anything records.'}` });
 }));
 
+// Switch a PC back on (founder 2026-11-13: a PC is switched off but the person is working). Future activity records again; the agent
+// (3.1+) comes out of its paused state on the next heartbeat, and the person accepts the notice once if needed.
+router.put('/devices/:id/reactivate', wrap(async (req, res) => {
+  if (!(await M.canManageDevices(req.user))) return fail(res, 403, 'Only the Super Admin, Admin or IT Admin can switch a PC back on.');
+  const d = await prisma.monitoringDevice.findUnique({ where: { id: req.params.id }, select: { id: true, deviceName: true } });
+  if (!d) return fail(res, 404, 'PC not found.');
+  await prisma.monitoringDevice.update({ where: { id: d.id }, data: { isActive: true, approved: true } });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Monitoring: PC switched on', entity: 'MonitoringDevice', entityId: d.id, toValue: d.deviceName }).catch(() => {});
+  return res.json({ ok: true, message: `${d.deviceName} is switched on again. It records from the next heartbeat; the person accepts the monitoring notice once if asked.` });
+}));
+
 router.put('/devices/:id/approve', wrap(async (req, res) => {
   if (!(await M.canManageDevices(req.user))) return fail(res, 403, 'Only the Super Admin, Admin or IT Admin approves a PC.');
   const d = await prisma.monitoringDevice.update({ where: { id: req.params.id }, data: { approved: true } }).catch(() => null);

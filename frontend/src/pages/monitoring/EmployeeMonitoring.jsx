@@ -1643,6 +1643,9 @@ function Devices({ manage = false }) {
   async function approve(d) {
     try { const r = await api.put(`/monitoring/devices/${d.id}/approve`); setMsg(r.data.message); reload(); } catch (e) { setMsg(errOf(e, 'Could not approve it.')); }
   }
+  async function switchOn(d) {
+    try { const r = await api.put(`/monitoring/devices/${d.id}/reactivate`); setMsg(r.data.message); reload(); } catch (e) { setMsg(errOf(e, 'Could not switch it on.')); }
+  }
   const rows = (data && data.rows) || [];
   const canAct = !manage || (data && data.canManage);
   const [q, setQ] = useState('');
@@ -1686,6 +1689,7 @@ function Devices({ manage = false }) {
                 <td>{dt(d.lastSeenAt)}</td>
                 <td>{!d.isActive ? <Pill tone="slate">Switched off</Pill> : d.approved === false ? <Pill tone="amber">Waiting for approval</Pill> : d.online ? <Pill tone="green">Online</Pill> : <Pill tone="amber">Offline</Pill>}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>
+                  {!d.isActive && manage && data.canManage && <><button type="button" className="btn btn-sm btn-primary" onClick={() => switchOn(d)}>Switch on</button>{' '}</>}
                   {d.isActive && d.approved === false && data.canManage && <><button type="button" className="btn btn-sm btn-primary" onClick={() => approve(d)}>Approve</button>{' '}</>}
                   {manage && data.canManage && <>{' '}<button type="button" className="btn btn-sm" onClick={() => setReassign(d)}>Reassign</button></>}
                   {d.isActive && canAct && <>{' '}<button type="button" className="btn btn-sm" onClick={() => off(d)}>Deactivate</button></>}
