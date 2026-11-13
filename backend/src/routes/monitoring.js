@@ -404,10 +404,10 @@ router.put('/devices/:id/reassign', wrap(async (req, res) => {
   if (!emp) return fail(res, 404, 'Employee not found.');
   if (d.employeeId === employeeId) return res.json({ ok: true, message: `${d.deviceName} is already set to ${emp.name}.` });
   const was = d.employee ? d.employee.name : 'someone';
-  await prisma.monitoringDevice.update({ where: { id: d.id }, data: { employeeId, currentApp: null, currentTitle: null, currentIdle: false, pausedState: null } });
+  await prisma.monitoringDevice.update({ where: { id: d.id }, data: { employeeId, isActive: true, approved: true, currentApp: null, currentTitle: null, currentIdle: false, pausedState: null } });
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Monitoring: PC reassigned', entity: 'MonitoringDevice', entityId: d.id, fromValue: was, toValue: emp.name, reason: `${d.deviceName}: ${was} -> ${emp.name} (${emp.employeeCode})` }).catch(() => {});
   const consented = await M.hasConsent(employeeId, (await M.settings()).policyVersion).catch(() => false);
-  return res.json({ ok: true, needsConsent: !consented, message: `${d.deviceName} now records under ${emp.name} (was ${was}). Past days are unchanged.${consented ? '' : ' They will be asked to accept the monitoring notice on this PC before anything records.'}` });
+  return res.json({ ok: true, needsConsent: !consented, message: `${d.deviceName} now records under ${emp.name} (was ${was}), and is switched on. Past days are unchanged.${consented ? '' : ' They will be asked to accept the monitoring notice on this PC before anything records.'}` });
 }));
 
 router.put('/devices/:id/approve', wrap(async (req, res) => {

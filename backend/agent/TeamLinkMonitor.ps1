@@ -32,7 +32,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '3.0'
+$AgentVersion = '3.1'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -838,6 +838,8 @@ function Heartbeat {
     # a new notice: shown at once, and nothing more is recorded until it is accepted
     if ($r.data.consentRequired) { Ask-Consent @{ policyText = $r.data.policyText; policyVersion = $s.policyVersion } }
     elseif ($r.data.update -and -not $script:stopping) { Apply-Update $r.data.update }
+    # the PC is registered and consented again (for example HR switched it back on or reassigned it): come back from a paused state
+    if (-not $r.data.consentRequired -and $script:paused) { $script:paused = $false; Write-Log 'recording resumed (the PC is on in TeamLink again)' }
   } elseif ($r.status -eq 401) { $script:paused = $true }
 }
 
