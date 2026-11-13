@@ -288,8 +288,10 @@ async function upsertJob(c, requirementId, body) {
   const before = await c.query(`select status from jobs where id=$1`, [id]);
   const was = before.rows[0] ? before.rows[0].status : null;
 
-  // A closed requirement that never reached the portal has nothing to close.
-  if (!was && j.status !== 'open') return { id, status: null, opened: false, skipped: true };
+  // A closed requirement that never reached the portal has nothing to close - unless it is an IMPORT STUB: a requirement that is not on the public portal but
+  // that a recruiter must be able to pick when importing a list (founder 2026-11-13: "show all requirements to the recruiters"). Stubs are created closed,
+  // so nobody sees them on the portal.
+  if (!was && j.status !== 'open' && !(body && body.importStub === true)) return { id, status: null, opened: false, skipped: true };
 
   const cols = Object.keys(j);
   const vals = cols.map((k) => j[k]);

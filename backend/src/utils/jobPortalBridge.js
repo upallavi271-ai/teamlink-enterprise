@@ -627,13 +627,30 @@ async function fullSync({ requirementIds = null, pullDays = 90, actor = 'system'
     const known = await prisma.requirement.findMany({
       where: { OR: [{ portalPublished: true }, { portalPublishedAt: { not: null } }] }, select: { id: true },
     });
+    // IMPORT STUBS: every requirement that is still being worked but is not live on the portal gets a CLOSED, hidden portal job, so the Job Portal's import
+    // can offer ALL requirements to a recruiter (not only the published ones). They are in knownIds, so the prune keeps them.
+    const liveIds = new Set(live.map((r) => r.id));
+    const stubRows = await prisma.requirement.findMany({
+      where: { status: { notIn: ['CLOSED'] } },
+      select: { id: true, reqCode: true, title: true, location: true, department: true, client: { select: { name: true } } },
+    });
+    const stubs = stubRows.filter((r) => !liveIds.has(r.id) && r.title).map((r) => ({
+      requirementId: r.id,
+      reqCode: r.reqCode || null,
+      title: `${r.title}${r.client && r.client.name ? ` - ${r.client.name}` : ''}${r.reqCode ? ` (${r.reqCode})` : ''}`.slice(0, 160),
+      location: r.location || null,
+      department: r.department || null,
+      status: 'closed',
+      importStub: true,
+    }));
     const res = await portalFetch('/integrations/teamlink/jobs/sync', {
       method: 'POST',
-      timeoutMs: 30000,
-      body: { jobs: live.map(jobPayload), closeOthers: true, pruneMissing: true, knownIds: known.map((k) => k.id) },
+      timeoutMs: 60000,
+      body: { jobs: live.map(jobPayload).concat(stubs), closeOthers: true, pruneMissing: true, knownIds: known.map((k) => k.id).concat(stubs.map((x) => x.requirementId)) },
     });
     out.pruned = ((res && res.pruned) || []).length;
-    const results = (res && res.results) || [];
+    // only the live requirements are counted / marked Synced here: the import stubs are not published
+    const results = ((res && res.results) || []).filter((x) => liveIds.has(x.requirementId));
     const okIds = results.filter((x) => !x.error).map((x) => x.requirementId);
     const badIds = results.filter((x) => x.error).map((x) => x.requirementId);
     out.jobs = okIds.length;
