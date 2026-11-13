@@ -349,7 +349,7 @@ async function askModel(conv, cfg, input) {
   }
   // an answer inside the questions is an answer, whatever words it has ("job change" is not a search)
   // a question from them ("what is the job role", no "?") is not an answer (founder 2026-11-09: "nenu emaina questions adigithey reply evadam ledhu")
-  const answering = mem.intakeOn && !T.isQuestion(input);
+  const answering = mem.intakeOn && !T.isQuestion(input) && !T.asksResume(input);
   if (!answering && !conv.promoAt && T.isGreeting(input)) return { ctx, calls, reply: T.GREETING_TEXT, written: true }; // "hi" with no promotion behind it: TeamLink's own words, at once
   if (promoJob && asksOther && !answering) return { ctx, calls, reply: T.onlyThisJobText(job), written: true };
   // the job of our message ("what is the job role", "shift timings?"): answered below, not searched (a search found "Shift Production supervisor")
@@ -377,7 +377,7 @@ async function askModel(conv, cfg, input) {
     const n = T.nextQuestion(list, Number(now2.intakeAt), talkJob ? { ...talkJob, candidate: conv.name } : { candidate: conv.name }, now2.answers || {});
     return n ? `\n\nNow my question again: ${n.text}` : '';
   };
-  if (startIntake || (now2.intakeOn && !T.isQuestion(input))) {
+  if (startIntake || (now2.intakeOn && !T.isQuestion(input) && !T.asksResume(input))) {
     const { list, closing } = await Cfg.questions();
     const answers = { ...(now2.answers || {}) };
     let from = 0;
@@ -443,6 +443,13 @@ async function askModel(conv, cfg, input) {
     const link = (talkJob || conv.campaignId) ? await T.run('send_apply_link', {}, conv, ctx) : null;
     if (link) calls.push({ tool: 'send_apply_link', args: {}, result: link });
     return { ctx, calls, reply: link && link.sent ? `${closing}\n${T.applyWords(link, 'You can also apply here:')}` : closing, written: true };
+  }
+  // "for which number do we send the resume" / "where to send my CV" (founder 2026-11-13): nobody sends a resume to a number - they apply on the link
+  if (T.asksResume(input) && (conv.promoAt || conv.campaignId || now2.intakeOn || job.available)) {
+    await T.run('save_candidate_data', { interested: true }, conv, ctx);
+    const link = await T.run('send_apply_link', {}, conv, ctx);
+    calls.push({ tool: 'send_apply_link', args: {}, result: link });
+    if (link && link.sent) return { ctx, calls, reply: `You do not need to send your resume to a number. ${T.applyWords(link, 'Please apply here:')}`, again: await again(), written: true };
   }
   // a question about this chat's job: answered from the ATS requirement, the model is not asked
   if (job.available) {

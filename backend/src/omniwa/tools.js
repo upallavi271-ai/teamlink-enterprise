@@ -148,6 +148,14 @@ function nextQuestion(list, i, job, answers = {}) {
   }
   return null;
 }
+// a question about WHERE / HOW TO SEND the resume: "ok for which number we have to send resume", "where to send cv", "email id to send my resume", "resume ela pampali"
+const asksResume = (t) => {
+  const s = String(t || '');
+  const doc = /\b(resumes?|cvs?|bio-?data|profile)\b|రెజ్యూమే|रिज़्यूमे/i;
+  const how = /\b(send|share|submit|upload|forward|mail|email|e-mail|whatsapp|where|which|what|how|pampali|pampandi|bhejna|kahan)\b/i;
+  const where = /\b(number|no\.?|email|e-?mail|id|address|whatsapp|link|portal|website|where|ekkada|kahan|ela|how)\b/i;
+  return doc.test(s) && how.test(s) && where.test(s);
+};
 // WHAT THE PERSON SAID ABOUT THE LATER QUESTIONS (founder 2026-11-13: "IAM WORKING IN NIIMS HOSPITAL, i have 3 years of experience as doctor" and the bot still asked the
 // designation and the experience). Only what is plainly in the words: years of experience, "as <designation>", "working in/at <company>", "notice period <time>".
 // -> { answers: { <question line without 'If working,'>: value }, fields: { <saved field>: value } } for the questions after position `from` not answered yet.
@@ -500,4 +508,4 @@ async function run(name, args, conv, ctx) {
 }
 
 const NAMES = ['get_candidate_profile', 'get_job_details', 'search_knowledge_base', 'save_candidate_data', 'send_apply_link', 'send_interview_link', 'handoff_to_recruiter'];
-module.exports = { volunteered, isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, questionKind, employedStatement, notLooking, employedFollowUp, employedYesText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
+module.exports = { asksResume, volunteered, isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, questionKind, employedStatement, notLooking, employedFollowUp, employedYesText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
