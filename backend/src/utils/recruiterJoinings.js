@@ -417,6 +417,12 @@ async function monthBoard(month, { fresh = false } = {}) {
     if (!tenure && !employed) return;
     addPerson(`u:${u.id}`, { userId: u.id, name: u.name, employee: e });
   });
+  // The login for an employee, so a joining credited by NAME ONLY (no recruiterUserId — common on
+  // imported / legacy follow-ups) still lands on that recruiter's OWN row instead of a separate
+  // name bucket (founder 2026-11-13: P.Tejasri had joinings but her own login showed zero).
+  const userByEmp = new Map();
+  dir.users.forEach((u) => { const e = dir.empByUser.get(u.id); if (e && (!userByEmp.has(e.id) || u.atsRole === 'RECRUITER')) userByEmp.set(e.id, u); });
+
   // 2. Anybody credited with a joining that month.
   const skipped = [];
   apps.forEach((r) => {
@@ -425,11 +431,13 @@ async function monthBoard(month, { fresh = false } = {}) {
       return;
     }
     if (isTest(r.recruiterName)) return;
-    let p = people.get(r.recruiterKey);
-    if (!p) {
-      const e = r.recruiterUserId ? dir.empByUser.get(r.recruiterUserId) : dir.empByName.get(String(r.recruiterName || '').trim().toLowerCase());
-      p = addPerson(r.recruiterKey, { userId: r.recruiterUserId, name: r.recruiterName, employee: e || null });
-    }
+    const emp = r.recruiterUserId ? dir.empByUser.get(r.recruiterUserId) : dir.empByName.get(String(r.recruiterName || '').trim().toLowerCase());
+    // Resolve the credit to a login — by its own userId, or by the employee the credited name matches —
+    // and key the joining under that login (u:<id>) so it merges with the recruiter's own row.
+    const login = r.recruiterUserId ? { id: r.recruiterUserId } : (emp ? userByEmp.get(emp.id) : null);
+    const key = login ? `u:${login.id}` : r.recruiterKey;
+    let p = people.get(key);
+    if (!p) p = addPerson(key, { userId: login ? login.id : null, name: r.recruiterName, employee: emp || null });
     (r.counted ? p.apps : p.notCounted).push(r);
   });
 
