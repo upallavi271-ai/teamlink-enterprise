@@ -140,6 +140,9 @@ function shortFormOf(typed, names) {
 const CONFIRMED_NAMES = new Map([
   ['bhavana', 'gandrathi bhavana'],
   ['d.usha', 'd.leela usha sri'],
+  //   2026-11-13 "P.Tejasri" (surname-initial · first name) is the recruiter Teja sri Palavalasa — her joinings
+  //   were credited under "P.Tejasri" and so read zero on her own login until this alias linked the two.
+  ['p.tejasri', 'teja sri palavalasa'],
 ]);
 
 // EDUCATION'S TWO TEAMS GO BY THE SEAT (founder 2026-11-10: "edu1 to edu5 usha team - edu team a, edu6 to edu10 sirisha team -
