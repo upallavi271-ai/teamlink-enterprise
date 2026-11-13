@@ -558,6 +558,9 @@ const PUNCH_STATUS_CHOICES = [
 // The short word on each punch time: where the punch came from.
 const PUNCH_FROM = { web: 'Web', biometric: 'Device', bioimport: 'Import', pulse: 'Import', hr: 'HR' };
 const hhmm = (t) => (t ? String(t).slice(0, 5) : '—');
+// What each time is on the day (server: utils/punchIntervals.js): the day's check-in / check-out, an interval punch in between, or outside them.
+const PUNCH_KIND = { checkin: 'Check-in', checkout: 'Check-out', interval: 'Interval', extra: 'Outside the day' };
+const minsText = (m) => (m == null ? '' : m >= 60 ? `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m` : `${m} min`);
 
 // Search · Department · Employee | More: Punch status · Day status · Role · Method.
 // All sent to GET /attendance/punch-log, so the rows and the exports follow them.
@@ -677,7 +680,9 @@ function PunchLogTab({ isHR = false }) {
         <NoDataNotice data={data} to={range.to} />
         <div className="small-muted" style={{ fontSize: 12, margin: '0 0 8px' }}>
           <b>Punches</b> = how many times the person punched that day. Each time says where it came from:
-          <b> Device</b> (biometric machine), <b>Web</b> (web / mobile check-in), <b>Import</b> (old HRMS file) or <b>HR</b> (typed by HR).
+          <b> Device</b> (biometric machine), <b>Web</b> (web / mobile check-in), <b>Import</b> (old HRMS file) or <b>HR</b> (typed or set by HR).
+          <b> Time interval</b> = every punch between the check-in and the check-out, out → back, with the time away: even when HR checked the person in by hand,
+          a later device punch counts as an interval. Every punch stays in the list.
         </div>
         {data && totals.rows > 0 && (
           <div style={{ margin: '0 0 8px', fontSize: 13 }}>
@@ -691,7 +696,7 @@ function PunchLogTab({ isHR = false }) {
       <ScrollTable>
         <table>
           <thead>
-            <tr><th>Employee</th><th>Department</th><th>Date</th><th style={{ textAlign: 'center' }}>Punches</th><th>Punch times</th><th>First in</th><th>Last out</th></tr>
+            <tr><th>Employee</th><th>Department</th><th>Date</th><th style={{ textAlign: 'center' }}>Punches</th><th>Punch times</th><th title="Every punch between the check-in and the check-out: out → back, and the time away. A manual check-in by HR does not stop a later device punch counting as an interval.">Time interval</th><th>First in</th><th>Last out</th></tr>
           </thead>
           <tbody>
             {rows.map((r) => {
@@ -708,7 +713,7 @@ function PunchLogTab({ isHR = false }) {
                       ? (
                         <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 4 }}>
                           {list.map((p, i) => (
-                            <span key={`${p.time}-${i}`} className={`psc-chip psc-${p.source}`} title={`${p.time} · ${p.direction === 'Out' ? 'Out' : 'In'} · ${p.from}`}>
+                            <span key={`${p.time}-${i}`} className={`psc-chip psc-${p.source}`} title={`${p.time} · ${PUNCH_KIND[p.kind] || (p.direction === 'Out' ? 'Out' : 'In')} · ${p.from}`}>
                               {hhmm(p.time)} <span style={{ fontWeight: 400 }}>{PUNCH_FROM[p.source] || p.from}</span>
                             </span>
                           ))}
@@ -717,18 +722,34 @@ function PunchLogTab({ isHR = false }) {
                       : <span className="cell-muted">{r.dayStatus || 'No punch'}</span>}
                     {(r.rawPunches || []).length > 0 && <div><PunchToggle open={openRow === rk} count={r.rawPunches.length} onClick={() => setOpenRow(openRow === rk ? null : rk)} /></div>}
                   </td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {(r.intervals || []).length
+                      ? (
+                        <>
+                          {r.intervals.map((iv, i) => (
+                            <div key={`${iv.from}-${i}`} title={iv.to ? `${hhmm(iv.from)} (${iv.fromSource}) → ${hhmm(iv.to)} (${iv.toSource})` : `${hhmm(iv.from)} (${iv.fromSource}): no later punch`}>
+                              {hhmm(iv.from)} → {iv.to ? hhmm(iv.to) : <span className="cell-muted">no return</span>}
+                              {iv.minutes != null && <span className="cell-muted"> · {minsText(iv.minutes)}</span>}
+                            </div>
+                          ))}
+                          {r.intervals.length > 1 && r.intervalMinutes > 0 && <div className="small-muted">Total {minsText(r.intervalMinutes)}</div>}
+                        </>
+                      )
+                      : <span className="cell-muted">{list.length ? 'No interval' : '—'}</span>}
+                    {r.hrSetTimes && <div className="small-muted" title="HR set the check-in / check-out by hand in Marked attendance; they stand over the device punches">HR set times</div>}
+                  </td>
                   <td style={{ whiteSpace: 'nowrap' }}>{hhmm(r.firstInTime)}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>{r.lastOutTime ? hhmm(r.lastOutTime) : <span className="cell-muted">{list.length ? 'No check-out' : '—'}</span>}</td>
                 </tr>,
-                openRow === rk && <tr key={`${rk}-d`}><td colSpan="7"><PunchDetails list={r.rawPunches} /></td></tr>,
+                openRow === rk && <tr key={`${rk}-d`}><td colSpan="8"><PunchDetails list={r.rawPunches} /></td></tr>,
               ];
             })}
             {data && rows.length === 0 && (
               lf.activeCount > 0
-                ? <tr><td colSpan="7"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
-                : <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>No punches in these dates.</td></tr>
+                ? <tr><td colSpan="8"><ListEmpty lf={lf} noun="punch rows" /></td></tr>
+                : <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>No punches in these dates.</td></tr>
             )}
-            {!data && !error && <tr><td colSpan="7" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
+            {!data && !error && <tr><td colSpan="8" className="small-muted" style={{ padding: 16 }}>Loading…</td></tr>}
           </tbody>
         </table>
       </ScrollTable>

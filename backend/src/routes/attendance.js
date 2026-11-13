@@ -1047,6 +1047,7 @@ const TILE_KEYS = ['present', 'absent', 'halfDay', 'onLeave', 'offDay', 'noData'
 const TILE_LABEL = { present: 'Present', absent: 'Absent', halfDay: 'Half day', onLeave: 'On leave', offDay: 'Week off / Holiday', noData: 'No device data', notYet: 'Not checked in yet' };
 const dayKpi = require('../utils/attendanceDays');
 const PSRC = require('../utils/punchSources'); // where each punch came from: Web check-in / Biometric device / Biometric import / Pulse import / Typed by HR
+const PIV = require('../utils/punchIntervals'); // the Punch log's Time interval: every time, HR's manual times included, the in-between punches paired out -> back
 const halfLeave = require('../utils/halfDayLeave');
 // The tile filter: ?tile=present|absent|halfDay|onLeave|offDay|noData|notYet and, inside
 // Present only, ?note=late|earlyLogout|missingCheckIn|missingCheckOut.
@@ -1427,6 +1428,11 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'view'),
     const lout = day.checkOut;
     const mins = fin && lout ? toMinutes(lout.time) - toMinutes(fin.time) : null;
     const spanSec = fin && lout ? toSeconds(clockOf(lout)) - toSeconds(clockOf(fin)) : null;
+    // TIME INTERVAL (founder 2026-11-13): every time of the day in order, the times HR set by hand included, and the in-between
+    // punches paired out -> back. A manual HR check-in does not stop a later device punch counting: it is an interval.
+    // Display only (utils/punchIntervals.js); the day's check-in / check-out / status are still the day engine's.
+    const pc = punchCountOf(srcs.rawPunches, fin, lout, h);
+    const iv = PIV.build({ rawPunches: srcs.rawPunches, record: facts.record.get(key) || null, firstInTime: pc.firstInTime, lastOutTime: pc.lastOutTime });
     rows.push({
       // The old Bio-Metric Logs columns.
       employeeLabel: e ? `${e.employeeCode} - ${e.name}` : '',
@@ -1465,7 +1471,17 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'view'),
       method: ps.length ? (dayKpi.methodOfPunch(fin || ps[0]) || methodLabel(fin || ps[0])) : dayKpi.HOW.IMPORTED,
       source: sourceOf(ps, null, h),
       ...srcs,
-      ...punchCountOf(srcs.rawPunches, fin, lout, h),
+      ...pc,
+      // the list the screen draws: the punches plus HR's own times, each tagged check-in / check-out / interval
+      punchList: iv.entries.map((x) => ({ time: x.time, direction: x.direction, from: x.from, source: x.source, group: x.group, kind: x.kind })),
+      // HR's manual times stand over the punches, so the punch log reads the same First in / Last out as Marked attendance
+      firstInTime: iv.hrSet && iv.dayIn ? iv.dayIn : pc.firstInTime,
+      lastOutTime: iv.hrSet && iv.dayOut ? iv.dayOut : pc.lastOutTime,
+      hrSetTimes: iv.hrSet,
+      intervals: iv.intervals,
+      intervalCount: iv.intervalCount,
+      intervalMinutes: iv.intervalMinutes,
+      intervalText: PIV.intervalsText(iv.intervals),
       location: (fin && fin.location) || '—',
       // HRMS-24 §5 — how the first check-in was verified, and where it was.
       verification: fin ? (fin.verificationStatus || (fin.method === 'Biometric' ? 'Device' : 'Not verified')) : '—',
@@ -1492,6 +1508,7 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'view'),
           notes: dayKpi.NOTE_TILES.includes(bucket) ? dayKpi.notesOf(d, bucket) : [],
           punches: 0, punchRows: 0, imported: false, rawPunches: [], sourceCounts: { web: 0, biometric: 0, pulse: 0, hr: 0 },
           punchCount: 0, punchList: [], firstInTime: null, lastOutTime: null,
+          hrSetTimes: false, intervals: [], intervalCount: 0, intervalMinutes: 0, intervalText: '',
           checkInTimes: d.checkIn ? [d.checkIn] : [], checkOutTimes: d.checkOut ? [d.checkOut] : [], importedTimes: null,
           firstIn: '—', lastOut: '—', firstInClock: null, lastOutClock: null, workedSpan: null, hours: null,
           method: d.how || '—', methodOut: d.howOut || '', methodText: d.howText || '—', _day: bucket === 'halfDay' ? d : null,
@@ -1549,10 +1566,12 @@ router.get('/punch-log', requirePerm(null, 'hrms', 'Attendance & Time', 'view'),
     // The punch log's columns, every row filled in, for Excel. Employee /
     // Attendance Date / Time Interval keep the old Bio-Metric Logs names, so
     // the file still reads back through Import History.
+    // "Time Interval" keeps its old HRMS meaning and format (every punch time joined with |, so the file still imports back);
+    // "Intervals (out -> back)" is the new column: the in-between punches paired, with the minutes away.
     const headers = ['Employee', 'Department', 'Designation', 'Attendance Date', 'Number of punches', 'Punch times (where from)', 'First in', 'Last out',
-      'Time Interval', 'Punches by source'];
+      'Time Interval', 'Intervals (out → back)', 'Punches by source'];
     const data = shown.map((x) => [x.employeeLabel, x.department || '', x.designation || '', x.dateLabel, x.punchCount, punchTimesText(x.punchList),
-      hhmmOf(x.firstInTime), hhmmOf(x.lastOutTime), x.timeInterval, sourceCountsText(x.sourceCounts)]);
+      hhmmOf(x.firstInTime), hhmmOf(x.lastOutTime), x.timeInterval, x.intervalText || '', sourceCountsText(x.sourceCounts)]);
     return sendTabular(res, format, `punch-log-${from}_to_${to}`, headers, data, 'Punch log');
   }
 
