@@ -55,6 +55,7 @@ const PATHS = {
   arrow: 'M5 12h14M13 6l6 6-6 6',
   bolt: 'M13 2L4 14h7l-1 8 9-12h-7z',
   refresh: 'M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7',
+  coffee: 'M4 9h13v4a5 5 0 0 1-5 5H9a5 5 0 0 1-5-5zM17 10h2a2 2 0 0 1 0 4h-2M7 3v2.5M11 3v2.5',
 };
 export function Icon({ name, size = 18, className = '' }) {
   const d = PATHS[name] || PATHS.list;

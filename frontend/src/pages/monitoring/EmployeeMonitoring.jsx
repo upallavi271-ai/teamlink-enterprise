@@ -36,8 +36,8 @@ const clock = (x) => { if (!x) return ''; const [a, b] = String(x).split(':').ma
 function DayBar({ r }) {
   const day = Number(r.dayHours) || 0;
   if (!day) return null;
-  const parts = [['active', r.activeHours], ['idle', r.idleHours], ['break', r.breakHours], ['away', r.awayHours], ['rest', Math.max(0, day - (Number(r.elapsedHours) || 0))]];
-  const tip = `Active ${hm(r.activeHours)} · Idle ${hm(r.idleHours)} · Break ${hm(r.breakHours)} · Not on the PC ${hm(r.awayHours)}`;
+  const parts = [['active', r.activeHours], ['idle', r.idleHours], ['break', r.breakHours], ['lunch', r.lunchHours], ['away', r.awayHours], ['rest', Math.max(0, day - (Number(r.elapsedHours) || 0))]];
+  const tip = `Active ${hm(r.activeHours)} · Idle ${hm(r.idleHours)} · Break ${hm(r.breakHours)} · Lunch ${hm(r.lunchHours)} · Not on the PC ${hm(r.awayHours)}`;
   return <div className="mon-day" title={tip}>{parts.map(([k, v]) => (Number(v) > 0 ? <i key={k} className={k} style={{ width: `${Math.min(100, (Number(v) / day) * 100)}%` }} /> : null))}</div>;
 }
 const pct = (v) => (v == null ? '—' : `${v}%`);
@@ -371,12 +371,12 @@ function Overview({ onOpen }) {
           {first.lunchStart && <> · lunch {clock(first.lunchStart)} – {clock(first.lunchEnd)}</>}
           {first.personalBreakMinutes > 0 && <> · {first.personalBreakMinutes} min personal break</>}
           {' '}· <b>{hm(first.workHours)}</b> of work{live && first.elapsedHours < first.dayHours && <> · {hm(first.elapsedHours)} of the day has passed</>}
-          <span className="mon-day-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i className="away" /> Not on the PC</span>{live && <span><i className="rest" /> Still to come</span>}</span>
+          <span className="mon-day-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i className="lunch" /> Lunch</span><span><i className="away" /> Not on the PC</span>{live && <span><i className="rest" /> Still to come</span>}</span>
         </div>
       )}
       <div className="tbl-wrap">
         <table className="mon-table">
-          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className={`num${HI_OF[status] === 'active' ? ' mon-hi' : ''}`} title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>Idle</th><th className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`}>Break</th><th className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`} title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
+          <thead><tr><th>Employee</th><th>Department</th>{live && <th>Status</th>}{live && <th>Using now</th>}<th>First seen</th><th>Last seen</th><th className="mon-daycol">Work day</th><th className={`num${HI_OF[status] === 'active' ? ' mon-hi' : ''}`} title="Time the PC was in use, out of the work time (the day without the lunch break)">Active</th><th className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>Idle</th><th className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`} title="Short breaks: the Pause icon and the 15-minute personal break out of idle. The lunch break is the separate Lunch column.">Break</th><th className="num" title="The fixed lunch break window (e.g. 12:30–13:15). Counted apart from short breaks so the two are never mixed.">Lunch</th><th className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`} title="Work time that has passed with no signal from the PC: away, PC off, or not yet in">Not on PC</th><th className="num" title="Time in apps marked Productive, out of the active time">Productivity</th></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.employeeId} className="row-link" onClick={() => onOpen(r.employeeId)}>
@@ -397,11 +397,12 @@ function Overview({ onOpen }) {
                 <td className={`num${HI_OF[status] === 'active' ? ' mon-hi' : ''}`}><b>{hm(r.activeHours)}</b>{r.workHours > 0 && <div className="small-muted">of {hm(r.workHours)}</div>}</td>
                 <td className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>{hm(r.idleHours)}</td>
                 <td className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`}>{hm(r.breakHours)}</td>
+                <td className="num">{hm(r.lunchHours)}</td>
                 <td className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`}>{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
                 <td className="num">{pct(r.productivity)}</td>
               </tr>
             ))}
-            {!rows.length && !loading && <tr><td colSpan={live ? 12 : 10} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
+            {!rows.length && !loading && <tr><td colSpan={live ? 13 : 11} className="small-muted">{(data && data.rows && data.rows.length) ? 'Nobody matches these filters.' : 'No PC is registered yet. Settings has the steps to set one up.'}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -808,6 +809,8 @@ function Audit() {
 // under the bar, everything that was in front in it: when, how long, the app or website, and the page / file (the window title).
 const kindOf = (r) => (r.break ? 'break' : r.idle ? 'idle' : 'active');
 const KIND_WORD = { active: 'Active', idle: 'Idle (no mouse or keyboard)', break: 'Break' };
+// Lunch is kept apart from short breaks (founder 2026-11-13): a lunch-window row is stored as the app 'Break'.
+const breakWord = (r) => (r.app === 'Break' ? 'Lunch' : r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break');
 function blocksOf(rows) {
   const sorted = [...rows].sort((x, y) => new Date(x.start) - new Date(y.start));
   const out = [];
@@ -843,7 +846,7 @@ function BlockDetail({ block, onClose }) {
         <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} style={{ marginLeft: 'auto' }}>Close</button>
       </div>
       {block.kind === 'break' ? (
-        <div className="small-muted">{block.rows.some((r) => r.app === 'Personal break') ? 'Personal break: the first 15 minutes of idle time in the day count as a break.' : 'On a break (the TeamLink icon was set to Pause, or the lunch break). Nothing is recorded in a break.'}</div>
+        <div className="small-muted">{block.rows.some((r) => r.app === 'Break') ? 'Lunch break (the fixed lunch window). Counted apart from short breaks. Nothing is recorded in it.' : block.rows.some((r) => r.app === 'Personal break') ? 'Personal break: the first 15 minutes of idle time in the day count as a break.' : 'On a short break (the TeamLink icon was set to Pause). Nothing is recorded in a break.'}</div>
       ) : (
         <>
           {block.kind === 'idle' && <div className="small-muted" style={{ marginBottom: 6 }}>Nobody touched the mouse or keyboard in this time. This is what was left open on the screen:</div>}
@@ -893,7 +896,7 @@ function Timeline({ rows, workStart, workEnd, day }) {
               type="button" key={i}
               className={`mon-tl-seg ${kindOf(r)}${pick === bi ? ' on' : ''}`}
               style={{ left: `${l}%`, width: `${w}%` }}
-              title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break') : r.idle ? 'Idle' : `${appWord(r.app)}${r.title ? ` · ${r.title}` : ''}`} - click to see this stretch`}
+              title={`${tm(r.start)} – ${tm(r.end)} · ${r.break ? breakWord(r) : r.idle ? 'Idle' : `${appWord(r.app)}${r.title ? ` · ${r.title}` : ''}`} - click to see this stretch`}
               aria-label={`${tm(r.start)} to ${tm(r.end)}: ${KIND_WORD[kindOf(r)]}. Show what was open`}
               onClick={() => setPick(pick === bi ? null : bi)}
             />
@@ -1015,9 +1018,10 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               <>
                 <KpiTile icon="clock" tone="green" label="Active" value={h(t.activeHours)} sub={data.timeline ? 'Click for the active times' : `First ${tm(t.first)} · last ${tm(t.last)}`} {...fc('active')} />
                 <KpiTile icon="pause" tone="amber" label="Idle" value={h(t.idleHours)} sub={data.timeline ? 'Click for the idle times' : 'PC on, not in use'} {...fc('idle')} />
-                <KpiTile icon="pause" tone="teal" label="Break" value={h(t.breakHours)} sub={data.timeline ? 'Click for the break times' : 'Lunch and personal break'} {...fc('break')} />
+                <KpiTile icon="pause" tone="teal" label="Break" value={h(t.breakHours)} sub={data.timeline ? 'Click for the break times' : 'Pause icon + 15-min personal break'} {...fc('break')} />
+                <KpiTile icon="coffee" tone="violet" label="Lunch" value={h(t.lunchHours)} sub="The fixed lunch break window" />
                 <KpiTile icon="trend" tone="blue" label="Productivity" value={pct(t.productivity)} sub="Productive apps, of the active time" />
-                <KpiTile icon="calendar" tone="violet" label="Days with activity" value={data.perDay.length} sub={`${data.from} to ${data.to}`} />
+                <KpiTile icon="calendar" tone="slate" label="Days with activity" value={data.perDay.length} sub={`${data.from} to ${data.to}`} />
               </>
             ); })()}
           </KpiRow>
@@ -1067,7 +1071,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
                           <tr key={i}>
                             <td style={{ whiteSpace: 'nowrap' }}>{`${tm(r.start)} – ${tm(r.end)}`}</td>
                             <td className="num">{dur(secs(r))}</td>
-                            <td>{focus === 'break' ? (r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break / lunch') : <><b>{appWord(r.app)}</b>{site && <div className="small-muted">{site}</div>}</>}</td>
+                            <td>{focus === 'break' ? breakWord(r) : <><b>{appWord(r.app)}</b>{site && <div className="small-muted">{site}</div>}</>}</td>
                           </tr>
                         );
                       })}
@@ -1473,11 +1477,11 @@ function Reports({ onOpen, admin = false }) {
   const rows = (data && data.rows) || [];
   const nums = (r) => (
     <>
-      <td className="num">{h(r.activeHours)}</td><td className="num">{h(r.idleHours)}</td><td className="num">{h(r.breakHours)}</td>
+      <td className="num">{h(r.activeHours)}</td><td className="num">{h(r.idleHours)}</td><td className="num">{h(r.breakHours)}</td><td className="num">{h(r.lunchHours)}</td>
       <td className="num">{h(r.productiveHours)}</td><td className="num">{h(r.unproductiveHours)}</td><td className="num">{pct(r.productivity)}</td>
     </>
   );
-  const heads = <><th className="num">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num">Productive</th><th className="num">Unproductive</th><th className="num">Score</th></>;
+  const heads = <><th className="num">Active</th><th className="num">Idle</th><th className="num">Break</th><th className="num">Lunch</th><th className="num">Productive</th><th className="num">Unproductive</th><th className="num">Score</th></>;
   return (
     <>
       <RangeBar from={from} to={to} setFrom={setFrom} setTo={setTo}>
@@ -1880,8 +1884,8 @@ function Overrides() {
       <div className="mon-grid mon-grid-4" style={{ marginTop: 8 }}>
         <label>Work starts <input type="time" value={form.workStart} onChange={set('workStart')} /></label>
         <label>Work ends <input type="time" value={form.workEnd} onChange={set('workEnd')} /></label>
-        <label>Break starts <input type="time" value={form.breakStart} onChange={set('breakStart')} /></label>
-        <label>Break ends <input type="time" value={form.breakEnd} onChange={set('breakEnd')} /></label>
+        <label>Lunch break starts <input type="time" value={form.breakStart} onChange={set('breakStart')} /></label>
+        <label>Lunch break ends <input type="time" value={form.breakEnd} onChange={set('breakEnd')} /></label>
         <label>Idle after (minutes) <input type="number" min={1} max={60} value={form.idleThresholdMinutes} onChange={set('idleThresholdMinutes')} /></label>
       </div>
       {night && <div className="notice">This is a night shift: it ends the next morning.</div>}
@@ -1893,7 +1897,7 @@ function Overrides() {
       <button type="button" className="btn" style={{ marginTop: 8 }} disabled={!form.target} onClick={save}>Save these rules</button>
       {rows.length > 0 && (
         <table className="mon-table" style={{ marginTop: 12 }}>
-          <thead><tr><th>For</th><th>Work</th><th>Break</th><th>Idle after</th><th>Other</th><th /></tr></thead>
+          <thead><tr><th>For</th><th>Work</th><th>Lunch</th><th>Idle after</th><th>Other</th><th /></tr></thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.id}>

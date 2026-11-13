@@ -453,7 +453,7 @@ function workDayOf(day, c, now = Date.now()) {
 // minutes of a PC that is on have simply not arrived yet. While the PC is online now, the time since its last piece counts as what
 // it is doing now (active / idle / break). And the lunch window with nothing recorded is the lunch break, not "not on the PC".
 function gapFill(logs, wd, status, live, now = Date.now()) {
-  const out = { active: 0, idle: 0, brk: 0 };
+  const out = { active: 0, idle: 0, brk: 0, lunch: 0 };
   if (!wd || !wd.ws) return out;
   const end = Math.min(live ? now : wd.we, wd.we);
   const overlap = (a, b, c, d) => Math.max(0, Math.min(b, d) - Math.max(a, c));
@@ -462,7 +462,7 @@ function gapFill(logs, wd, status, live, now = Date.now()) {
     const lt = Math.min(wd.lunchTo, end);
     const covered = (logs || []).reduce((n, l) => n + overlap(new Date(l.startTime).getTime(), new Date(l.endTime).getTime(), wd.lunchFrom, lt), 0);
     lunchGap = Math.max(0, (lt - wd.lunchFrom) - covered);
-    out.brk += Math.round(lunchGap / 1000);
+    out.lunch += Math.round(lunchGap / 1000); // the lunch window with nothing recorded is Lunch, kept apart from Break (founder 2026-11-13)
   }
   if (live && ['Online', 'Idle', 'On break'].includes(status)) {
     const lastEnd = (logs || []).reduce((m, l) => Math.max(m, new Date(l.endTime).getTime()), 0);
@@ -480,10 +480,13 @@ const hrs = (sec) => Math.round((sec / 3600) * 100) / 100;
 // 15 min break consider cheskovali, aa 15 min tharvatha kuda idle vuntey appudu idle"): each day, the first 15 minutes of idle are Break; only the
 // idle after them is Idle. (The work day of 8 h already leaves these 15 minutes out - workDayOf.)
 function totalsOf(logs, catOf, department = '') {
-  let active = 0; let idle = 0; let breaks = 0; let productive = 0; let unproductive = 0; let first = null; let last = null;
+  let active = 0; let idle = 0; let breaks = 0; let lunch = 0; let productive = 0; let unproductive = 0; let first = null; let last = null;
   const idleByDay = new Map();
   logs.forEach((l) => {
-    if (l.isBreak) breaks += l.durationSeconds;
+    // LUNCH AND BREAK ARE KEPT APART (founder 2026-11-13: "lunch time & break separate cheyyu, andharu confuse avuthunnaru"):
+    // the fixed lunch window is stored as the app 'Break' (ingest), everything else that is a break - the Pause icon and the
+    // 15-minute personal break out of idle - is Break.
+    if (l.isBreak) { if (l.appName === 'Break') lunch += l.durationSeconds; else breaks += l.durationSeconds; }
     else if (l.isIdle) { idle += l.durationSeconds; idleByDay.set(l.day || '', (idleByDay.get(l.day || '') || 0) + l.durationSeconds); }
     else {
       active += l.durationSeconds;
@@ -499,8 +502,8 @@ function totalsOf(logs, catOf, department = '') {
   idle -= personal; breaks += personal;
   return {
     personalBreakSeconds: personal,
-    activeSeconds: active, idleSeconds: idle, breakSeconds: breaks, productiveSeconds: productive, unproductiveSeconds: unproductive,
-    activeHours: hrs(active), idleHours: hrs(idle), breakHours: hrs(breaks), productivity: active ? Math.round((productive / active) * 100) : null, first, last,
+    activeSeconds: active, idleSeconds: idle, breakSeconds: breaks, lunchSeconds: lunch, productiveSeconds: productive, unproductiveSeconds: unproductive,
+    activeHours: hrs(active), idleHours: hrs(idle), breakHours: hrs(breaks), lunchHours: hrs(lunch), productivity: active ? Math.round((productive / active) * 100) : null, first, last,
   };
 }
 async function employeesById(ids) {
@@ -596,15 +599,15 @@ async function overview(day, access = null) {
     const mine = rulesOf(id);
     if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
     const wd = workDayOf(d, mine, now);
-    const fill = status === 'On leave' ? { active: 0, idle: 0, brk: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
-    t.activeSeconds += fill.active; t.idleSeconds += fill.idle; t.breakSeconds += fill.brk;
-    t.activeHours = hrs(t.activeSeconds); t.idleHours = hrs(t.idleSeconds); t.breakHours = hrs(t.breakSeconds);
-    const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds);
+    const fill = status === 'On leave' ? { active: 0, idle: 0, brk: 0, lunch: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
+    t.activeSeconds += fill.active; t.idleSeconds += fill.idle; t.breakSeconds += fill.brk; t.lunchSeconds += fill.lunch;
+    t.activeHours = hrs(t.activeSeconds); t.idleHours = hrs(t.idleSeconds); t.breakHours = hrs(t.breakSeconds); t.lunchHours = hrs(t.lunchSeconds);
+    const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds - t.lunchSeconds);
     return {
       workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
       dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), personalBreakMinutes: Math.round(wd.personalSeconds / 60), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
       employeeId: id, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
-      firstSeen: t.first, lastSeen: t.last, activeHours: t.activeHours, idleHours: t.idleHours, breakHours: t.breakHours, productivity: t.productivity,
+      firstSeen: t.first, lastSeen: t.last, activeHours: t.activeHours, idleHours: t.idleHours, breakHours: t.breakHours, lunchHours: t.lunchHours, productivity: t.productivity,
       status, currentApp: live && dev && ['Online', 'Idle'].includes(status) ? dev.currentApp || null : null, currentTitle: live && dev && status === 'Online' ? dev.currentTitle || null : null,
       lastHeartbeat: dev ? dev.lastSeenAt : null, online: status === 'Online' || status === 'Idle',
       repeat: MI.summaryOf(repeatsOf.get(id)), // the same key / button over and over today, 10+ minutes at a time
@@ -624,7 +627,7 @@ async function overview(day, access = null) {
     // the work day of everybody on the board together (founder 2026-11-10: "mottham annitiki")
     total: (() => {
       const sum = (k) => Math.round(rows.reduce((n, r) => n + (Number(r[k]) || 0), 0) * 100) / 100;
-      return { people: rows.length, activeHours: sum('activeHours'), idleHours: sum('idleHours'), breakHours: sum('breakHours'), awayHours: sum('awayHours'), workHours: sum('workHours'), dayHours: sum('dayHours'), elapsedHours: sum('elapsedHours') };
+      return { people: rows.length, activeHours: sum('activeHours'), idleHours: sum('idleHours'), breakHours: sum('breakHours'), lunchHours: sum('lunchHours'), awayHours: sum('awayHours'), workHours: sum('workHours'), dayHours: sum('dayHours'), elapsedHours: sum('elapsedHours') };
     })(),
     rows,
     departments: [...new Set(rows.map((r) => r.department).filter(Boolean))].sort(),
@@ -905,7 +908,7 @@ async function reportRows(from, to, department, access = null, view = 'employee'
   const base = (list, dept) => {
     const x = totalsOf(list, catOf, dept);
     return {
-      days: new Set(list.map((l) => l.day)).size, login: x.first, logout: x.last, activeHours: x.activeHours, idleHours: x.idleHours, breakHours: x.breakHours,
+      days: new Set(list.map((l) => l.day)).size, login: x.first, logout: x.last, activeHours: x.activeHours, idleHours: x.idleHours, breakHours: x.breakHours, lunchHours: x.lunchHours,
       productiveHours: hrs(x.productiveSeconds), unproductiveHours: hrs(x.unproductiveSeconds), productivity: x.productivity,
     };
   };
@@ -917,7 +920,7 @@ async function reportRows(from, to, department, access = null, view = 'employee'
       const sum = (k) => Math.round(parts.reduce((n, p) => n + p[k], 0) * 100) / 100;
       const active = sum('activeHours'); const productive = sum('productiveHours');
       return {
-        key: name, name, employees: parts.length, activeHours: active, idleHours: sum('idleHours'), breakHours: sum('breakHours'),
+        key: name, name, employees: parts.length, activeHours: active, idleHours: sum('idleHours'), breakHours: sum('breakHours'), lunchHours: sum('lunchHours'),
         productiveHours: productive, unproductiveHours: sum('unproductiveHours'), productivity: active ? Math.round((productive / active) * 100) : null,
       };
     }).sort((p, q) => String(p.name).localeCompare(String(q.name)));
