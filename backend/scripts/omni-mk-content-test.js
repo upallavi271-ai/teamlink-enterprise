@@ -74,7 +74,9 @@ const G = '/api/outreach/gs/marketing';
 
   // ============================================================ B: meta
   const meta = await http('GET', `${G}/meta`, T.sa);
-  check('B1 six modules, AI Content live, the other five planned', meta.status === 200 && meta.body.modules.length === 6 && meta.body.modules[0].status === 'live' && meta.body.modules.slice(1).every((m) => m.status === 'planned'), meta.text.slice(0, 200));
+  // 2026-11-13: module 7 Content Calendar is live too (marketing/calendar.js); the five others are still planned
+  const liveIds = (meta.body.modules || []).filter((m) => m.status === 'live').map((m) => m.id).sort().join(',');
+  check('B1 seven modules: AI Content and Content Calendar live, the other five planned', meta.status === 200 && meta.body.modules.length === 7 && liveIds === 'calendar,content' && meta.body.modules.filter((m) => m.status === 'planned').length === 5, meta.text.slice(0, 200));
   check('B2 the other 24 names are on the menu', Array.isArray(meta.body.later) && meta.body.later.length === 24, meta.body.later && meta.body.later.length);
   check('B3 text AI is the labelled sample writer in the sandbox; image / video / audio are "not connected"', meta.body.ai.text.demo === true && meta.body.ai.text.ready && ['image', 'video', 'audio'].every((c) => meta.body.ai[c].ready === false), meta.body.ai);
   check('B4 channels include RCS with its limit', meta.body.channels.some((c) => c.key === 'rcs' && c.limit === 1000) && meta.body.channels.length === 8);

@@ -249,8 +249,9 @@ function pagesFor(u) {
   add(['admin', 'depthead', 'teamlead'].includes(l), 'team', 'audit');
   add(l === 'admin', 'superadmin', 'settings', 'waai'); // waai = Settings > WhatsApp AI
   // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page and the Approvals tab
-  add(has('mayAiMarketing')(u), 'mkhome', 'mkcontent', 'mkapprove', 'mkbrand', 'mkusage');
-  add(!has('mayAiMarketing')(u) && has('mayAiApprove')(u), 'mkhome', 'mkapprove');
+  add(has('mayAiMarketing')(u), 'mkhome', 'mkcontent', 'mkapprove', 'mkcalendar', 'mkbrand', 'mkusage');
+  // approvers also see the Content Calendar of their department (read only: marketing/calendar.js)
+  add(!has('mayAiMarketing')(u) && has('mayAiApprove')(u), 'mkhome', 'mkapprove', 'mkcalendar');
   return out;
 }
 function me(u) {

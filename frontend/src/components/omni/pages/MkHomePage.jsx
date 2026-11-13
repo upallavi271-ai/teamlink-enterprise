@@ -26,7 +26,7 @@ export default function MkHomePage() {
   ].filter(Boolean);
   return (
     <div>
-      <PageHead eyebrow="AI Marketing OS" title="AI Marketing" lead="Six modules, built one phase at a time. Nothing is sent, posted or spent by AI Marketing without a person's approval.">
+      <PageHead eyebrow="AI Marketing OS" title="AI Marketing" lead="The AI Marketing modules, built one phase at a time. Nothing is sent, posted or spent by AI Marketing without a person's approval.">
         {meta.canWrite && <Btn primary onClick={() => go('mkcontent')}>✦ Write with AI</Btn>}
       </PageHead>
       <AiBanner ai={meta.ai} />
@@ -43,7 +43,7 @@ export default function MkHomePage() {
           ))}
         </ul>
       </Panel>
-      <div className="panel-title" style={{ margin: '18px 0 8px' }}>The six modules</div>
+      <div className="panel-title" style={{ margin: '18px 0 8px' }}>The modules</div>
       <div className="mk-mods">
         {meta.modules.map((m) => (
           <div key={m.id} className={`card mk-mod${m.status === 'live' ? ' live' : ''}`}>

@@ -539,6 +539,8 @@ const server = app.listen(PORT, () => {
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)
   require('./utils/dayNudges').start();
+  // AI Marketing Content Calendar: one notice to the owner an hour before a planned post (marketing/calendar.js; MK_CALENDAR_SWEEP_MS=0 = off)
+  require('./marketing/calendar').startSweep();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).

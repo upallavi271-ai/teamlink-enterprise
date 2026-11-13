@@ -14,6 +14,8 @@ const MODULES = [
   { id: 'leads', no: 4, label: 'Lead Generation to CRM', phase: 3, status: 'planned', page: null, blurb: 'Score form, website and ad leads hot / warm / cold, give each an owner, send the first reply.' },
   { id: 'workflow', no: 5, label: 'Workflow Automation', phase: 4, status: 'planned', page: null, blurb: 'If / then branching and event triggers for marketing-to-sales journeys, with an AI-writes-person-approves step.' },
   { id: 'reports', no: 6, label: 'Analytics & Reporting', phase: 5, status: 'planned', page: null, blurb: 'One report from content made to joinings, per module, with AI usage and CSV download.' },
+  // 2026-11-13 (founder's list item 6): what goes out on which day, with "Plan a week with AI"; posted by hand until the social apps are approved
+  { id: 'calendar', no: 7, label: 'Content Calendar', phase: 1, status: 'live', page: 'mkcalendar', blurb: 'Plan Facebook, Instagram, LinkedIn, X, WhatsApp and email posts on a calendar. The AI suggests a week of ideas; you post and mark them done.' },
 ];
 // the other 24 names of the AI Marketing OS list: the menu to pick from later (nothing here is built)
 const LATER = ['Social Media Marketing', 'AI Images', 'AI Videos', 'AI Audio', 'SEO', 'GEO', 'AEO', 'LLMO', 'Competitor Intelligence', 'Paid Advertising', 'Website Optimization', 'CRM (marketing view)', 'Sales Automation (marketing view)', 'Influencer', 'Affiliate', 'Reputation Management', 'Local Marketing', 'E-commerce', 'Customer Engagement', 'Trend Intelligence', 'Brand Management (full brand kit)', 'Marketing Administration (billing, plans)', 'Email deliverability tools', 'Website landing pages'];

@@ -8,6 +8,7 @@ const Reg = require('../marketing/registry');
 const AI = require('../marketing/ai');
 const Cfg = require('../marketing/settings');
 const C = require('../marketing/content');
+const Cal = require('../marketing/calendar');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -81,6 +82,18 @@ router.delete('/items/:id', mustWrite, wrap(async (req, res) => send(res, await 
 router.post('/items/:id/submit', mustWrite, wrap(async (req, res) => send(res, await C.submit(req.user, req.params.id))));
 router.post('/items/:id/approve', wrap(async (req, res) => send(res, await C.approve(req.user, req.params.id, (req.body || {}).note, (req.body || {}).edits))));
 router.post('/items/:id/reject', wrap(async (req, res) => send(res, await C.reject(req.user, req.params.id, (req.body || {}).note))));
+
+// ---- content calendar (marketing/calendar.js): planned posts per day; nothing is published from here --------------------------------------------
+router.get('/calendar', wrap(async (req, res) => send(res, await Cal.list(req.user, { from: req.query.from, to: req.query.to }))));
+router.get('/calendar/platforms', wrap(async (req, res) => res.json({ platforms: await Cal.platformState(), statuses: Cal.STATUSES, canWrite: Cal.mayWrite(req.user) })));
+router.get('/calendar/sources', mustWrite, wrap(async (req, res) => res.json(await Cal.sources(req.user))));
+router.post('/calendar/plan', mustWrite, wrap(async (req, res) => send(res, await Cal.plan(req.user, req.body || {}))));
+router.post('/calendar/bulk', mustWrite, wrap(async (req, res) => send(res, await Cal.addMany(req.user, (req.body || {}).entries))));
+router.post('/calendar', mustWrite, wrap(async (req, res) => send(res, await Cal.create(req.user, req.body || {}))));
+router.put('/calendar/:id', mustWrite, wrap(async (req, res) => send(res, await Cal.update(req.user, req.params.id, req.body || {}))));
+router.delete('/calendar/:id', mustWrite, wrap(async (req, res) => send(res, await Cal.remove(req.user, req.params.id))));
+router.post('/calendar/:id/posted', mustWrite, wrap(async (req, res) => send(res, await Cal.markPosted(req.user, req.params.id, req.body || {}))));
+router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, await Cal.skip(req.user, req.params.id, req.body || {}))));
 
 // ---- AI usage + limits -----------------------------------------------------------------------------------------------------------------
 router.get('/usage', mustWrite, wrap(async (req, res) => {
