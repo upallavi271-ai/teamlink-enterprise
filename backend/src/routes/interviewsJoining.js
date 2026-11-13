@@ -1329,10 +1329,10 @@ router.patch('/applications/:id/hiring-type', requirePerm('ats', 'interviews', '
   res.json(shapeRow(fresh));
 });
 
-// On roll / Off roll on a joined candidate — set it straight from the joined list
-// (founder 2026-11-13). How the person sits on the client's books; shows in the
-// joinings drill and exports, and Accounts reads it when raising an invoice.
-const ROLL_STATUSES = ['On Roll', 'Off Roll'];
+// Roll status on a joined candidate — set it straight from the joined list
+// (founder 2026-11-13): how the person sits (dropped, full time, part time, on
+// roll or a replacement). Shows in the joinings drill and exports.
+const ROLL_STATUSES = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
 router.patch('/applications/:id/roll-status', requirePerm('ats', 'interviews', 'Joining', 'edit'), async (req, res) => {
   const app = await loadScoped(req, res);
   if (!app) return;

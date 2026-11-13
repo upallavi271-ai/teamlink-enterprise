@@ -111,22 +111,30 @@ function DropRows({ rows, onClose }) {
   );
 }
 
+// How a joined candidate sits (founder 2026-11-13): Dropped / Full time / Part time / On Roll / Replacement.
+const ROLL_OPTS = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
+function rollTone(v) {
+  const s = String(v || '').toLowerCase();
+  if (s.includes('drop')) return 'red';
+  if (s.includes('replace')) return 'yellow';
+  if (s.includes('part')) return 'blue';
+  return 'green'; // On Roll, Full time
+}
+const ROLL_HEX = { red: '#b42318', yellow: '#b45309', blue: '#1d4ed8', green: '#1a7f37' };
 function RollCell({ r, onRoll, busy }) {
-  // On roll / Off roll on a joined candidate — pick it right here (founder 2026-11-13). Falls back to a chip when it cannot be edited.
-  if (!onRoll) return r.rollStatus ? <StatusChip tone={/off/i.test(r.rollStatus) ? 'grey' : 'green'} status={r.rollStatus} /> : <span className="hd-sub">—</span>;
-  const off = /off/i.test(r.rollStatus || '');
+  // Pick the roll status right here (founder 2026-11-13). Falls back to a chip when it cannot be edited.
+  if (!onRoll) return r.rollStatus ? <StatusChip tone={rollTone(r.rollStatus)} status={r.rollStatus} /> : <span className="hd-sub">—</span>;
   return (
     <select
       className="hd-roll"
       value={r.rollStatus || ''}
       disabled={busy}
       onChange={(e) => onRoll(r.id, e.target.value)}
-      title="Set whether this joined candidate is on the client's rolls or off-roll"
-      style={{ fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--line, #d8dee4)', background: 'var(--surface, #fff)', color: r.rollStatus ? (off ? 'var(--muted, #667)' : '#1a7f37') : 'var(--muted, #889)', fontWeight: r.rollStatus ? 700 : 400, cursor: 'pointer' }}
+      title="How this joined candidate sits: dropped, full time, part time, on roll or a replacement"
+      style={{ fontSize: 12, padding: '3px 6px', borderRadius: 6, border: '1px solid var(--line, #d8dee4)', background: 'var(--surface, #fff)', color: r.rollStatus ? (ROLL_HEX[rollTone(r.rollStatus)] || 'var(--text)') : 'var(--muted, #889)', fontWeight: r.rollStatus ? 700 : 400, cursor: 'pointer' }}
     >
       <option value="">—</option>
-      <option value="On Roll">On Roll</option>
-      <option value="Off Roll">Off Roll</option>
+      {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
     </select>
   );
 }
@@ -140,7 +148,7 @@ function Rows({ data, onClose, onRoll, rollBusy }) {
     const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th>{joinList && <th>On roll / Off roll</th>}<th>Updated</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th>{joinList && <th>Roll status</th>}<th>Updated</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
             <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}</td>

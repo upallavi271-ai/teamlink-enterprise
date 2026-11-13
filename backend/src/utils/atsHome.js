@@ -2802,7 +2802,7 @@ const DAYF = (v) => { if (!v) return ''; const d = new Date(v); return Number.is
 const EXPORT_COLUMNS = {
   app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],
-    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['On roll / Off roll', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)]],
+    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Roll status', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)]],
   req: [['Requirement', (r) => r.title], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
   client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open requirements', (r) => r.openJobs ?? '']],
   inv: [['Invoice', (r) => r.invoiceNumber || ''], ['Client', (r) => r.client], ['Invoice date', (r) => DAYF(r.invoiceDate)], ['Due', (r) => DAYF(r.dueDate)], ['Status', (r) => r.status], ['Amount (before GST)', (r) => r.amount], ['Unpaid', (r) => r.outstanding]],
