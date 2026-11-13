@@ -797,6 +797,18 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json({ candidates: rows });
   }));
 
+  /* READ ONLY: how many TeamLink jobs the portal holds (by status) - what the import's role picker can offer.  GET /api/integrations/teamlink/import-jobs-check */
+  r.get('/api/integrations/teamlink/import-jobs-check', wrap(async (_req, res) => {
+    const { withUser } = await portal();
+    const out = await withUser(SYSTEM, async (c) => {
+      const byStatus = (await c.query(`select status, count(*)::int as n from jobs where id like 'tl\\_%' group by 1 order by 2 desc`)).rows;
+      const stubs = (await c.query(`select count(*)::int as n from jobs where id like 'tl\\_%' and status='closed' and published_at is not null`)).rows[0];
+      const sample = (await c.query(`select id, title, status from jobs where id like 'tl\\_%' order by (status='open') desc, published_at desc nulls last limit 5`)).rows;
+      return { byStatus, closedWithDate: stubs && stubs.n, sample };
+    });
+    res.json(out);
+  }));
+
   /* One more attempt for ONE suspended interview, on the founder's word (2026-11-11: "Yes, grant retake"): the same control a recruiter has
      (interview_retake_control 'extra_attempt'), audited as retake.extra_attempt.  POST { interviewId, reason } */
   r.post('/api/integrations/teamlink/interview-retake', wrap(async (req, res) => {
