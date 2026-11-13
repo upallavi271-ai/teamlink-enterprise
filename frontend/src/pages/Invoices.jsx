@@ -45,7 +45,7 @@ import PeriodPicker, { periodText } from '../components/accounts/PeriodPicker.js
 import MultiPick from './invoices/MultiPick.jsx';
 import ScrollSync from '../components/accounts/ScrollSync.jsx';
 import {
-  NONE, APPLY_TO, PERIOD_PRESETS, ALL_PERIOD, periodOn, STATUS_OPTS, statusLabel, GST_OPTS, GST_HISTORY,
+  NONE, APPLY_TO, ALL_PERIOD, periodOn, STATUS_OPTS, statusLabel, GST_OPTS, GST_HISTORY,
   BLANK_FILTERS, normFilters, normPeriod, passes, facetCounts, resolveClients,
   DUE_OPTS, TDS_STATUS_OPTS, GST_TYPE_OPTS, rateLabel,
 } from './invoices/invFilters';
@@ -812,8 +812,6 @@ export default function Invoices() {
               <PeriodPicker
                 value={period}
                 onChange={(v) => setPeriod(normPeriod(v))}
-                presets={PERIOD_PRESETS}
-                twoMonths
                 applyTo={APPLY_TO}
                 label=""
               />
