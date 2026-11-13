@@ -45,7 +45,12 @@ function isMeeting(app, title) {
   if (MEETING_APP.test(a)) return true;
   return BROWSERS.includes(a.toLowerCase()) && MEETING_TITLE.test(String(title || ''));
 }
-const unmeet = (logs) => (logs || []).map((l) => ((l.isIdle && !l.isBreak && isMeeting(l.appName, l.windowTitle)) ? { ...l, isIdle: false } : l));
+const unmeet = (logs) => (logs || []).map((l) => ((l.isIdle && !l.isBreak && (isMeeting(l.appName, l.windowTitle) || isVici(l.appName, l.windowTitle))) ? { ...l, isIdle: false } : l));
+// VICIDIAL, the call dialer (founder 2026-11-13: "vici dial & gmeet ... vici use chesthunnattu raavali"): a browser page whose
+// title carries "ViciDial" is shown by its own name - in the Live Dashboard, the day timeline and the app/website history - not
+// as a plain "chrome" or an unnamed website. A caller sits on it without touching the keyboard, so it counts as active, like a meeting.
+const VICIDIAL = /vici\s*dial/i;
+const isVici = (app, title) => BROWSERS.includes(String(app || '').replace(/\.exe$/i, '').trim().toLowerCase()) && VICIDIAL.test(String(title || ''));
 const MAIL_NAMES = { gmail: 'Gmail', outlook: 'Outlook', yahoomail: 'Yahoo Mail', zohomail: 'Zoho Mail', rediffmail: 'Rediffmail', protonmail: 'Proton Mail' };
 
 const WHO_OLD = 'Who can see it: HR and Admin, and you yourself (HRMS -> Employee Monitoring -> My activity).';
@@ -382,7 +387,11 @@ async function ingest(device, records) {
 // What is on screen now, for the Live Dashboard: the same cleaning as a record, so no chat, mail or password title, and none at all
 // for someone on app names only.
 async function liveTitle(device, body) {
-  if (!body.title || body.idle === true) return null;
+  if (!body.title) return null;
+  // A meeting or the ViciDial dialer keeps its title even while idle, so Live can show it and count it as active, not idle
+  // (founder 2026-11-13). Every other window still keeps nothing while idle.
+  const working = isMeeting(cleanApp(body.currentApp), body.title) || isVici(cleanApp(body.currentApp), body.title);
+  if (body.idle === true && !working) return null;
   const cfg = effective(await settings(), await overrideIndex(), device.employee || { id: device.employeeId });
   return cfg.trackTitles && !cfg.excluded ? cleanTitle(cleanApp(body.currentApp), body.title) : null;
 }
@@ -521,7 +530,11 @@ function liveStatus(dev, onLeave, now) {
     if (dev.pausedState === 'clockout') return 'Clocked out';
     if (dev.pausedState === 'stopped') return 'Stopped';
     if (dev.pausedState === 'sleep') return 'Laptop closed';
-    return dev.currentIdle || dev.pausedState === 'locked' ? 'Idle' : 'Online';
+    if (dev.pausedState === 'locked') return 'Idle';
+    // In a video call or on the ViciDial dialer the person is working even with no mouse / keyboard, so Live says Online, not Idle
+    // (founder 2026-11-13: "gmeet lo vuntey active lo vundali", "vici use chesthunnappudu active"). The totals already do this via unmeet.
+    if (dev.currentIdle) return (isMeeting(dev.currentApp, dev.currentTitle) || isVici(dev.currentApp, dev.currentTitle)) ? 'Online' : 'Idle';
+    return 'Online';
   }
   if (onLeave) return 'On leave';
   // the person closed the agent (Stop recording and close) or clocked out: that stays on the board until the PC reports again,
@@ -652,7 +665,7 @@ function itemOf(title, appLabel) {
 // which file, page, folder or chat was in front. Nothing typed is known, only what was open.
 const OFFICE = { excel: ['Excel files', 'Worked on'], winword: ['Word documents', 'Worked on'], powerpnt: ['PowerPoint files', 'Worked on'], acrord32: ['PDF files', 'Read'], acrobat: ['PDF files', 'Read'], notepad: ['Text files', 'Worked on'], 'notepad++': ['Text files', 'Worked on'], mspaint: ['Pictures', 'Edited'], photos: ['Pictures', 'Looked at'], code: ['Code', 'Edited'] };
 const TERMINALS = ['powershell', 'pwsh', 'cmd', 'windowsterminal', 'wt', 'conhost'];
-const SITE_WORD = /^(YouTube|Gmail|LinkedIn|GitHub|Claude|ChatGPT|Google (Docs|Sheets|Slides|Drive|Search|Meet|Forms)|Naukri|Indeed|Facebook|Instagram|X|Twitter|Outlook|Zoom|Teams|Microsoft Teams|Canva|Notion|Wikipedia|Stack Overflow|WhatsApp)$/i;
+const SITE_WORD = /^(YouTube|Gmail|LinkedIn|GitHub|Claude|ChatGPT|Google (Docs|Sheets|Slides|Drive|Search|Meet|Forms)|Naukri|Indeed|Facebook|Instagram|X|Twitter|Outlook|Zoom|Teams|Microsoft Teams|Canva|Notion|Wikipedia|Stack Overflow|WhatsApp|Vici\s?Dial)$/i;
 function doneOf(appName, appLabel, kind, item) {
   const a = String(appName || '').toLowerCase();
   const raw = String(appLabel || appName || 'App');
@@ -668,6 +681,7 @@ function doneOf(appName, appLabel, kind, item) {
   if (TERMINALS.includes(a)) return { area: 'Command window', action: item };
   if (item.toLowerCase() === label.toLowerCase() || item.toLowerCase() === a) return { area: label, action: NONE };
   if (BROWSERS.includes(a) || kind === 'site') {
+    if (VICIDIAL.test(item)) return { area: 'ViciDial', action: 'On the dialer' };
     if (/^[\w.-]+\/[\w.-]+$/.test(item)) return { area: 'GitHub', action: `Repository ${item}` };
     const m = /^(.*\S)\s+[-\u2013\u2014|\u00b7:]\s+([^-\u2013\u2014|\u00b7]{2,32})$/.exec(item);
     if (m && (SITE_WORD.test(m[2].trim()) || kind !== 'site')) return { area: m[2].trim(), action: m[1].trim() };
@@ -751,6 +765,7 @@ const INCOGNITO = /(incognito|inprivate|private[ -]?browsing)/i;
 const INCOG_STRIP = /[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig;
 function deriveSite(app, shown) {
   if (!shown || !BROWSERS.includes(String(app).toLowerCase())) return null;
+  if (VICIDIAL.test(shown)) return INCOGNITO.test(shown) ? 'ViciDial (incognito)' : 'ViciDial';
   const incog = INCOGNITO.test(shown);
   const t = String(shown).replace(INCOG_STRIP, ' ').replace(BROWSER_SUFFIX, '').trim();
   if (!t) return incog ? 'Incognito page' : null;
