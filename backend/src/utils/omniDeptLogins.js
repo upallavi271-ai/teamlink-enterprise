@@ -263,6 +263,26 @@ async function ensureAdminLogin(email, name, externalUserId) {
   adminChecked.set(email, Date.now());
 }
 
+/** A staff member's own Omni-Channel account: Team Leader in ONLY their department's workspace(s). Throws when Green Start will not have it. */
+const staffChecked = new Map(); // email -> when
+async function ensureStaffLogin(email, name, externalUserId, wsIds) {
+  const at = staffChecked.get(email);
+  if (at && Date.now() - at < ADMIN_CHECK_MS) return;
+  const GI = require('./greenStartIntegrations'); // eslint-disable-line global-require
+  const SSO = require('./greenStartSso'); // eslint-disable-line global-require
+  const { token } = await GI.signIn();
+  const wss = await GI.workspacesOf(token);
+  const ids = wsIds.filter(Boolean);
+  for (const id of ids) {
+    // eslint-disable-next-line no-await-in-loop
+    await ensureLogin(token, id, email, 'Staff', { name, externalUserId });
+  }
+  await removeElsewhere(token, wss.filter((x) => !ids.includes(x.id)), email); // a person who changed department leaves the old workspace
+  // Green Start can refuse an address (waiting for approval, suspended): find out here, so the person is told why
+  await GI.call('POST', '/auth/teamlink', { body: { ticket: SSO.greenStartTicket({ email, name, externalUserId }) } });
+  staffChecked.set(email, Date.now());
+}
+
 /**
  * Which Omni-Channel account this TeamLink person opens. -> { email } | { blocked: true, reason }
  * Super Admin / Admin / developer: their own email, seeing every workspace (the company account only if theirs cannot be used, with why).
@@ -290,6 +310,18 @@ async function loginFor(reqUser) {
   const mine = new Set([...WN.departmentsOfUser(u), ...WN.departmentsOfUser(reqUser)]);
   const logins = (await getSetting(KEY, {})).departments || {};
   const hit = Object.entries(logins).find(([k, row]) => mine.has(k) && row.state === 'ready' && row.email);
+  // INDIVIDUAL LOGINS (owner 2026-11-10): the person opens with THEIR OWN email, a Team Leader of only their department's workspace(s);
+  // the shared department login stays as the fallback until every person has moved (then the owner retires it in Green Start).
+  const own = String(u.email || '').trim().toLowerCase();
+  if (hit && SSO.EMAIL_RE.test(own) && own !== String(hit[1].email).toLowerCase()) {
+    try {
+      await ensureStaffLogin(own, u.name || 'TeamLink', String(u.id), hit[1].workspaceIds || [hit[1].workspaceId]);
+      return { email: own, own: true, dept: hit[1].dept, workspace: hit[1].workspace };
+    } catch (err) {
+      console.error('[omni] own staff login:', err && err.message); // eslint-disable-line no-console
+      if (/approval/i.test(String(err && err.message))) return { blocked: true, reason: 'Get approval from the Super Admin: your Omni-Channel account is waiting for approval.' };
+    }
+  }
   if (hit) return { email: hit[1].email, dept: hit[1].dept, workspace: hit[1].workspace };
   const names = [...mine].map(title).join(', ');
   return {
