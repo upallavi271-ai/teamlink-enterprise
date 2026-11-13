@@ -1336,13 +1336,37 @@ const ROLL_STATUSES = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacem
 // Both recruiters and team leads set this on their own candidates (founder 2026-11-13: "recruiters ki
 // vundali, tls ki vundali"), so it accepts EITHER the Applications-edit right recruiters hold OR the
 // Joining-edit right TLs / onboarding hold; loadScoped keeps everyone to their own area's candidates.
+// Is this joined application one of the user's OWN joinings? A joining credited
+// to a recruiter BY NAME (utils/workers CONFIRMED_NAMES) sits outside their seat
+// scope (utils/scope seatApplicationWhere), yet it is shown in their joinings
+// drill and is theirs to mark. ownFigure(appIds) is the exact same source the
+// drill uses, so "it's in your joinings" is the rule here too.
+async function ownsJoining(user, raw) {
+  if (!user || !user.id || !raw) return false;
+  const RJ = require('../utils/recruiterJoinings'); // eslint-disable-line global-require
+  const d = /^\d{4}-\d{2}/.test(String(raw.joiningDate || '')) ? String(raw.joiningDate) : String(raw.joinedAt || '');
+  const m = /^(\d{4})-(\d{2})/.exec(d);
+  const months = [...new Set([RJ.thisMonth(), ...(m ? [`${m[1]}-${m[2]}`] : [])])];
+  for (const month of months) {
+    // eslint-disable-next-line no-await-in-loop
+    const own = await RJ.ownFigure(user, month).catch(() => null);
+    if (own && own.appIds.includes(raw.id)) return true;
+  }
+  return false;
+}
 router.patch('/applications/:id/roll-status', async (req, res) => {
-  const app = await loadScoped(req, res);
-  if (!app) return;
   const P = require('../utils/permissions'); // eslint-disable-line global-require
   const may = (await P.can(req.user, 'ats', 'candidates', 'Applications', 'edit'))
     || (await P.can(req.user, 'ats', 'interviews', 'Joining', 'edit'));
   if (!may) return res.status(403).json({ error: 'You can see this candidate but not change the roll status. Ask your team lead.' });
+  // Strict seat scope first; then the own-joinings fallback for name-credited joinings.
+  let app = await prisma.application.findFirst({ where: { id: req.params.id, ...applicationWhere(req.user) }, select: { id: true, rollStatus: true } });
+  if (!app) {
+    const raw = await prisma.application.findUnique({ where: { id: req.params.id }, select: { id: true, rollStatus: true, joiningDate: true, joinedAt: true } });
+    if (!raw) return res.status(404).json({ error: 'Application not found' });
+    if (!(await ownsJoining(req.user, raw))) return res.status(403).json(OUT_OF_SCOPE);
+    app = raw;
+  }
   const rollStatus = String((req.body || {}).rollStatus == null ? '' : req.body.rollStatus).trim();
   if (rollStatus && !ROLL_STATUSES.includes(rollStatus)) return res.status(400).json({ error: `Pick one of: ${ROLL_STATUSES.join(', ')}.` });
   await prisma.application.update({ where: { id: app.id }, data: { rollStatus: rollStatus || null } });
