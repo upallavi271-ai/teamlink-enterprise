@@ -1241,12 +1241,16 @@ function AppWork({ app, who, range, total, onClose }) {
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   useEffect(() => {
-    const m = document.querySelector('.mon-modal');
-    if (!m) return;
-    const r = m.getBoundingClientRect(); const cs = getComputedStyle(m);
-    const traps = []; let e = m.parentElement;
-    while (e) { const s = getComputedStyle(e); if (s.transform !== 'none' || s.filter !== 'none' || s.perspective !== 'none' || (s.contain && !['normal', 'none', 'style'].includes(s.contain))) traps.push(`${e.tagName}.${String(e.className || '').slice(0, 18)}`); e = e.parentElement; }
-    setDiag(`${cs.position} ${Math.round(r.width)}x${Math.round(r.height)} parent:${m.parentElement && m.parentElement.tagName} inBody:${m.parentElement === document.body} traps:${traps.join(' | ') || 'none'}`);
+    const measure = () => {
+      const m = document.querySelector('.mon-modal');
+      if (!m) return;
+      const r = m.getBoundingClientRect(); const cs = getComputedStyle(m);
+      const traps = []; let e = m.parentElement;
+      while (e) { const s = getComputedStyle(e); if (s.transform !== 'none' || s.filter !== 'none' || s.perspective !== 'none' || (s.contain && !['normal', 'none', 'style'].includes(s.contain))) traps.push(`${e.tagName}.${String(e.className || '').slice(0, 16)}`); e = e.parentElement; }
+      setDiag(`${cs.position} ${Math.round(r.width)}x${Math.round(r.height)} @${Math.round(r.left)},${Math.round(r.top)} vw${window.innerWidth} parent:${m.parentElement && m.parentElement.tagName} inBody:${m.parentElement === document.body} traps:${traps.join(' | ') || 'none'}`);
+    };
+    const t = setTimeout(measure, 80);
+    return () => clearTimeout(t);
   }, []);
   const items = app.items || [];
   const sittings = app.sittings || [];
@@ -1259,15 +1263,15 @@ function AppWork({ app, who, range, total, onClose }) {
   const when = (x) => (oneDay ? tm(x) : dt(x));
   return createPortal((
     <div className="mon-modal" role="dialog" aria-modal="true" aria-label={`${app.name}: what it was used for`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 24px', background: 'rgba(15,23,42,.5)', zIndex: 10000, overflow: 'auto' }}>
-      <div className="mon-modal-box" style={{ width: 'min(1040px, 100%)', maxWidth: '1040px', maxHeight: 'calc(100vh - 64px)', margin: '0 auto' }}>
+      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(15,23,42,.5)', zIndex: 10000, overflow: 'auto' }}>
+      <div className="mon-modal-box" style={{ width: 'min(960px, calc(100vw - 32px))', maxWidth: 'calc(100vw - 32px)', maxHeight: 'calc(100dvh - 32px)', margin: 'auto' }}>
         <div className="mon-modal-head">
           <div>
             <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
             <div className="small-muted">{who} · {range}</div>
             {diag && <div style={{ fontSize: 10, color: '#dc2626', fontFamily: 'monospace', marginTop: 4, maxWidth: 460, wordBreak: 'break-all' }}>{diag}</div>}
           </div>
-          <button type="button" className="btn btn-sm" onClick={onClose} style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a', fontWeight: 700 }}>✓ Close (v2)</button>
+          <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
         </div>
         <div className="mon-summary">
           <b>{dur(app.seconds)}</b> in {app.name}{total ? ` (${Math.round((app.seconds / total) * 100)}% of the active time)` : ''}, in <b>{sittings.length}</b> {sittings.length === 1 ? 'sitting' : 'sittings'}{first && <> from {when(first)} to {when(last)}</>}.
