@@ -118,8 +118,13 @@ export default function EmployeeMonitoring() {
 const BROWSER_APPS = ['chrome', 'msedge', 'firefox', 'opera', 'brave', 'iexplore', 'vivaldi', 'safari'];
 function siteOf(app, title) {
   if (!title || !BROWSER_APPS.includes(String(app || '').toLowerCase())) return { site: null, page: title || null };
-  const parts = title.replace(/\s+[-–|]\s+(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi)$/i, '').split(/\s+[-–|]\s+/).filter(Boolean);
-  const site = parts.pop() || null;
+  // an incognito / InPrivate / private window is still tracked (founder 2026-11-13): drop the marker so the real site shows, and flag it
+  const incog = /(incognito|inprivate|private[ -]?browsing)/i.test(title);
+  const cleaned = String(title).replace(/[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig, ' ');
+  const parts = cleaned.replace(/\s+[-–|]\s+(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi)$/i, '').split(/\s+[-–|]\s+/).filter(Boolean);
+  let site = parts.pop() || null;
+  if (site) site = site.replace(/^[\s–—|-]+/, '').trim() || null;
+  if (incog) site = site ? `${site} (incognito)` : 'Incognito page';
   return { site, page: parts.join(' - ') || null };
 }
 
@@ -334,6 +339,7 @@ function Overview({ onOpen }) {
         <KpiTile icon="check" tone="green" label="Online" value={live && c ? c.online : (live ? null : '—')} loading={loading && !c} sub="Using the PC now" {...card('Online')} />
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
         <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub={c && c.closed ? `No signal for 3 minutes · ${c.closed} laptop${c.closed === 1 ? '' : 's'} closed` : 'No signal for 3 minutes'} {...card('Offline')} />
+        <KpiTile icon="pause" tone="violet" label="Away" value={live && c ? Math.max(0, (c.tracked || 0) - (c.online || 0) - (c.idle || 0) - (c.offline || 0) - (c.onLeave || 0)) : (live ? null : '—')} loading={loading && !c} sub={c ? `Break ${c.onBreak || 0} · Laptop closed ${c.closed || 0}` : 'On break or laptop closed'} title="On break, clocked out or laptop closed - so Online + Idle + Offline + Away + On leave add up to Tracked. Pick a status in the filter to see who." />
         <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub="Approved leave today" {...card('On leave')} />
         <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h${first && first.workHours ? ` · out of ${hm(first.workHours)}` : ''}`} />
       </KpiRow>

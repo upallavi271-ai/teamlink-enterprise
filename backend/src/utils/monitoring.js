@@ -553,7 +553,7 @@ async function liveRows(access = null) {
     rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, lastHeartbeat: dev.lastSeenAt, online: using });
   });
   const count = (s) => rows.filter((r) => r.status === s).length;
-  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out') } };
+  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') } };
 }
 
 // The Live Dashboard / Overview of one day: every employee this login may see who has a registered PC.
@@ -736,13 +736,19 @@ async function teamlinkWorkOf(employeeId, a, b) {
 // mail keep their service name only. A tab only open in the background and never looked at cannot be known - the PC sees the tab in
 // front, nothing else - and that is said on screen.
 const BROWSER_SUFFIX = /\s[-\u2013\u2014|]\s(Google Chrome|Microsoft.*Edge|Mozilla Firefox|Brave|Opera|Vivaldi|Internet Explorer|Safari)\s*$/i;
+// A private / incognito window is still tracked (founder 2026-11-13): the OS gives us the window title either way - incognito only
+// hides the browser's own history - so we strip the Incognito / InPrivate / Private Browsing marker to show the REAL site, and flag it.
+const INCOGNITO = /(incognito|inprivate|private[ -]?browsing)/i;
+const INCOG_STRIP = /[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig;
 function deriveSite(app, shown) {
   if (!shown || !BROWSERS.includes(String(app).toLowerCase())) return null;
-  const t = String(shown).replace(BROWSER_SUFFIX, '').trim();
-  if (!t) return null;
+  const incog = INCOGNITO.test(shown);
+  const t = String(shown).replace(INCOG_STRIP, ' ').replace(BROWSER_SUFFIX, '').trim();
+  if (!t) return incog ? 'Incognito page' : null;
   const segs = t.split(/\s[-\u2013\u2014|]\s/).map((x) => x.trim()).filter(Boolean);
-  const site = (segs[segs.length - 1] || '').slice(0, 60);
-  return site || null;
+  const site = (segs[segs.length - 1] || '').replace(/^[\s–—|-]+/, '').trim().slice(0, 60);
+  if (!site) return incog ? 'Incognito page' : null;
+  return incog ? `${site} (incognito)` : site;
 }
 // The misuse list for a viewer (founder 2026-11-12): every continuous single-button stretch the viewer may see, with the person's
 // name and a remark. HR / Admin see everyone; a team lead sees their team. The agent warns the employee on their own screen as it happens.
