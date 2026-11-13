@@ -172,13 +172,14 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
   const [f, setF] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
+  const [waNums, setWaNums] = useState(null); // our WhatsApp numbers, for the "Send from" picker
   const bodyRef = useRef(null);
 
   useEffect(() => {
     if (isNew) {
       setF({
         purpose: purposes[0] ? purposes[0].purpose : 'CUSTOM', purposeLabel: '', audience: 'candidate', channel: 'Email', language: 'English', name: '', subject: '', body: '', active: true,
-        waTemplateName: '', waLanguageCode: '', waStatus: 'None', waVars: [], dltTemplateId: '', senderId: '', changeNote: '',
+        waTemplateName: '', waLanguageCode: '', waStatus: 'None', waVars: [], dltTemplateId: '', senderId: '', waNumberId: '', changeNote: '',
       });
       return;
     }
@@ -187,6 +188,13 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
       setF({ ...r.data, changeNote: '' });
     }).catch((e) => setErr(e.response?.data?.error || 'Could not open this template.'));
   }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Our WhatsApp numbers, so a WhatsApp template can be set to go out from a chosen one (founder 2026-11-13).
+  useEffect(() => {
+    let live = true;
+    api.get('/wa-numbers/my-numbers').then((r) => { if (live) setWaNums(r.data); }).catch(() => { if (live) setWaNums(null); });
+    return () => { live = false; };
+  }, []);
 
   if (err && !f) return <div className="mt-editor msg-box red">{err}</div>;
   if (!f) return <div className="mt-editor small-muted">Loading…</div>;
@@ -202,7 +210,7 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
   const used = [...pvBody.text].length;
   const bodyTokens = (() => { const out = []; String(f.body || '').replace(/\{\{\s*(\w+)\s*\}\}|\{(\w+)\}/g, (m, a, b) => { const k = a || b; const tk = (tokens && tokens.tokens || []).find((x) => x.key === k || (x.aliases || []).includes(k)); if (tk && !out.includes(tk.key)) out.push(tk.key); return m; }); return out; })();
   const vars = (f.waVars && f.waVars.length ? f.waVars : bodyTokens);
-  const dirty = t && (['name', 'subject', 'body', 'active', 'waTemplateName', 'waLanguageCode', 'waStatus', 'dltTemplateId', 'senderId'].some((k) => (f[k] || '') !== (t[k] || '') && !(typeof f[k] === 'boolean' && f[k] === t[k])) || JSON.stringify(f.waVars || []) !== JSON.stringify(t.waVars || []));
+  const dirty = t && (['name', 'subject', 'body', 'active', 'waTemplateName', 'waLanguageCode', 'waStatus', 'dltTemplateId', 'senderId', 'waNumberId'].some((k) => (f[k] || '') !== (t[k] || '') && !(typeof f[k] === 'boolean' && f[k] === t[k])) || JSON.stringify(f.waVars || []) !== JSON.stringify(t.waVars || []));
 
   async function save() {
     setBusy(true); setErr('');
@@ -212,7 +220,7 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
         onSaved(r.data, `Saved “${r.data.name}” (${r.data.channel}).`);
       } else {
         const body = {
-          name: f.name, subject: f.subject, body: f.body, active: f.active, changeNote: f.changeNote, waVars: f.waVars,
+          name: f.name, subject: f.subject, body: f.body, active: f.active, changeNote: f.changeNote, waVars: f.waVars, waNumberId: f.waNumberId || '',
           ...(adminFields ? { waTemplateName: f.waTemplateName, waLanguageCode: f.waLanguageCode, waStatus: f.waStatus, dltTemplateId: f.dltTemplateId, senderId: f.senderId } : {}),
         };
         const r = await api.put(`/messaging/templates/${id}`, body);
@@ -298,6 +306,16 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
         <div className="mt-card">
           <h4>WhatsApp (Meta)</h4>
           <div className="small-muted">WhatsApp can only start a chat with a template that Meta approved. Create it in the Meta console (WhatsApp Manager → Message templates) with the same words, then type its exact name here. Set <b>Approved</b> only after Meta says so.</div>
+          {waNums && !waNums.legacy && (waNums.numbers || []).length > 0 && (
+            <div className="field" style={{ marginTop: 8 }}>
+              <label>Send from which of our numbers</label>
+              <Combo value={f.waNumberId || ''} disabled={!editable} onChange={(e) => set('waNumberId', e.target.value)}>
+                <option value="">Pick automatically (the number for the sender / department)</option>
+                {(waNums.numbers || []).map((n) => <option key={n.id} value={n.id}>{n.label}{n.displayNumber ? ` · ${n.displayNumber}` : ''}{n.usable ? '' : ' (switched off)'}</option>)}
+              </Combo>
+              <div className="small-muted">Every message from this template goes out from this WhatsApp number. Leave it on “Pick automatically” to use the usual number for whoever sends it.</div>
+            </div>
+          )}
           <div className="mt-row2" style={{ marginTop: 8 }}>
             <div className="field"><label>Template name in Meta</label>
               <input value={f.waTemplateName || ''} disabled={!adminFields} placeholder="e.g. interview_scheduled" onChange={(e) => set('waTemplateName', e.target.value)} /></div>

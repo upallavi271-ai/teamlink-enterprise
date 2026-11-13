@@ -206,6 +206,7 @@ function shape(row) {
     waVars: parseJson(row.waVars, []),
     dltTemplateId: row.dltTemplateId || '',
     senderId: row.senderId || '',
+    waNumberId: row.waNumberId || '',
     updatedByName: row.updatedByName || row.createdByName || null,
     updatedAt: row.updatedAt,
     createdAt: row.createdAt,
@@ -285,7 +286,7 @@ async function resolve({ purpose, channel, language = 'English', templateId } = 
   if (!d) return null;
   return {
     source: 'built-in', id: null, version: 1, name: d.label, purpose: d.purpose, purposeLabel: d.label, channel, language: 'English',
-    subject: d.channel === 'Email' ? d.subject : '', body: d.body, active: true, waTemplateName: '', waStatus: 'None', waLanguageCode: '', waVars: [], dltTemplateId: '', senderId: '',
+    subject: d.channel === 'Email' ? d.subject : '', body: d.body, active: true, waTemplateName: '', waStatus: 'None', waLanguageCode: '', waVars: [], dltTemplateId: '', senderId: '', waNumberId: '',
   };
 }
 
@@ -388,6 +389,7 @@ async function create(user, input) {
     waVars: channel === 'WhatsApp' && Array.isArray(input.waVars) ? JSON.stringify(input.waVars.map(canonOf).filter(Boolean)) : null,
     dltTemplateId: channel === 'SMS' && admin ? String(input.dltTemplateId || '').trim().slice(0, 60) || null : null,
     senderId: channel === 'SMS' && admin ? String(input.senderId || '').trim().slice(0, 30) || null : null,
+    waNumberId: channel === 'WhatsApp' ? String(input.waNumberId || '').trim().slice(0, 60) || null : null,
     createdById: user.id, createdByName: user.name, updatedById: user.id, updatedByName: user.name,
   };
   const row = await prisma.$transaction(async (tx) => {
@@ -395,7 +397,7 @@ async function create(user, input) {
     return tx.messageTemplate.create({
       data: {
         ...data,
-        versions: { create: [{ version: 1, subject: data.subject, body: data.body, active: data.active, waTemplateName: data.waTemplateName, waStatus: data.waStatus, waVars: data.waVars, dltTemplateId: data.dltTemplateId, senderId: data.senderId, changeNote: 'Created', changedById: user.id, changedByName: user.name }] },
+        versions: { create: [{ version: 1, subject: data.subject, body: data.body, active: data.active, waTemplateName: data.waTemplateName, waStatus: data.waStatus, waVars: data.waVars, dltTemplateId: data.dltTemplateId, senderId: data.senderId, waNumberId: data.waNumberId, changeNote: 'Created', changedById: user.id, changedByName: user.name }] },
       },
     });
   });
@@ -403,7 +405,7 @@ async function create(user, input) {
   return { template: shape(row) };
 }
 
-const EDITABLE = ['name', 'subject', 'body', 'active', 'waTemplateName', 'waLanguageCode', 'waStatus', 'waVars', 'dltTemplateId', 'senderId'];
+const EDITABLE = ['name', 'subject', 'body', 'active', 'waTemplateName', 'waLanguageCode', 'waStatus', 'waVars', 'dltTemplateId', 'senderId', 'waNumberId'];
 const ADMIN_ONLY = ['waTemplateName', 'waLanguageCode', 'waStatus', 'dltTemplateId', 'senderId'];
 
 async function update(user, id, input) {
@@ -443,7 +445,7 @@ async function update(user, id, input) {
         ...(makeDefault ? { isDefault: true } : {}),
         waTemplateName: next.waTemplateName || null, waLanguageCode: next.waLanguageCode || null, waStatus: next.waStatus || 'None',
         waVars: next.waVars && next.waVars.length ? JSON.stringify(next.waVars) : null,
-        dltTemplateId: next.dltTemplateId || null, senderId: next.senderId || null,
+        dltTemplateId: next.dltTemplateId || null, senderId: next.senderId || null, waNumberId: next.waNumberId || null,
         version, updatedById: user.id, updatedByName: user.name,
       },
     });
@@ -451,7 +453,7 @@ async function update(user, id, input) {
       await tx.messageTemplateVersion.create({
         data: {
           templateId: id, version, subject: upd.subject, body: upd.body, active: upd.active, waTemplateName: upd.waTemplateName, waStatus: upd.waStatus,
-          waVars: upd.waVars, dltTemplateId: upd.dltTemplateId, senderId: upd.senderId,
+          waVars: upd.waVars, dltTemplateId: upd.dltTemplateId, senderId: upd.senderId, waNumberId: upd.waNumberId,
           changeNote: String(input.changeNote || '').trim().slice(0, 200) || `Changed: ${changed.join(', ')}`, changedById: user.id, changedByName: user.name,
         },
       });

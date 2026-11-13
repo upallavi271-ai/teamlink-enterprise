@@ -271,11 +271,14 @@ function sendSpecFor(tpl, channel, tokens = {}) {
   const val = (k) => { const v = tokens[k]; return v === undefined || v === null || String(v).trim() === '' ? '-' : String(v); };
   if (channel === 'WhatsApp' && tpl.waStatus === 'Approved' && tpl.waTemplateName) {
     const keys = Array.isArray(tpl.waVars) ? tpl.waVars.map(T.canonOf).filter(Boolean) : [];
-    return JSON.stringify({ wa: { name: tpl.waTemplateName, language: tpl.waLanguageCode || undefined }, vars: keys.map(val) });
+    // numberId: the one WhatsApp number this template is set to send from (founder 2026-11-13); mailWorker passes it to the sender.
+    return JSON.stringify({ wa: { name: tpl.waTemplateName, language: tpl.waLanguageCode || undefined }, vars: keys.map(val), numberId: tpl.waNumberId || undefined });
   }
   if (channel === 'SMS' && tpl.dltTemplateId) {
     return JSON.stringify({ dlt: { templateId: String(tpl.dltTemplateId), senderId: tpl.senderId || undefined }, vars: T.waVarList(tpl).map(val) });
   }
+  // No approved Meta template, but the template still names a WhatsApp number to send from: carry just the number (plain-text send, window permitting).
+  if (channel === 'WhatsApp' && tpl.waNumberId) return JSON.stringify({ numberId: String(tpl.waNumberId) });
   return null;
 }
 

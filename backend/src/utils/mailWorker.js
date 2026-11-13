@@ -88,6 +88,8 @@ async function processRow(row, summary) {
     senderName: row.senderName,
   };
   if (spec && row.channel === 'WhatsApp' && spec.wa && spec.wa.name) { opts.template = spec.wa; opts.vars = Array.isArray(spec.vars) ? spec.vars : []; }
+  // The template's own WhatsApp number, if it was set (founder 2026-11-13): the sender routes to it (utils/waNumbers.resolveSender).
+  if (spec && row.channel === 'WhatsApp' && spec.numberId) opts.numberId = spec.numberId;
   if (spec && row.channel === 'SMS' && spec.dlt && spec.dlt.templateId) {
     opts.templateId = spec.dlt.templateId;
     if (spec.dlt.senderId) opts.senderId = spec.dlt.senderId;

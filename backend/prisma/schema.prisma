@@ -4650,6 +4650,7 @@ model MessageTemplate {
   waVars         String?  // JSON array of token keys for {{1}} {{2}} ...
   dltTemplateId  String?  // SMS (India DLT)
   senderId       String?  // SMS sender / header id
+  waNumberId     String?  // WhatsApp: which of our numbers this template sends from (WaNumber.id); null = pick as usual (founder 2026-11-13)
   createdById    String?
   createdByName  String?
   updatedById    String?
@@ -4674,6 +4675,7 @@ model MessageTemplateVersion {
   waVars         String?
   dltTemplateId  String?
   senderId       String?
+  waNumberId     String?
   changeNote     String?
   changedById    String?
   changedByName  String?
