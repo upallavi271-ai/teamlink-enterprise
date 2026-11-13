@@ -142,7 +142,7 @@ async function undo(manifestFile) {
       const client = r.clientRaw ? findClient(r.clientRaw) : null;
       if (!client) why.push(`no client matches "${r.clientRaw}"`);
       const rec = r.recruiter ? person(null, r.recruiter) : null;
-      let cand = null; let req = null; let app = null; let done = false; let otherJoin = null; let ambiguous = false;
+      let cand = null; let req = null; let app = null; let done = false; let otherJoin = null; let ambiguous = false; let joinedApp = null;
       if (client) {
         // the candidate: by phone when there is one, else by name (normalised)
         let cands = [];
@@ -161,6 +161,7 @@ async function undo(manifestFile) {
           const apps = await prisma.application.findMany({ where: { candidateId: cand.id }, select: { id: true, stage: true, requirementId: true, requirement: { select: { clientId: true, department: true, reqCode: true, title: true } } } });
           done = (await prisma.applicationFollowUp.count({ where: { candidateId: cand.id, notes: { contains: MARK } } })) > 0;
           const joinedHere = apps.find((a) => ['JOINED', 'HIRED'].includes(a.stage) && a.requirement && a.requirement.clientId === client.id);
+          joinedApp = joinedHere || null;
           if (joinedHere && !done) otherJoin = `already Joined at this client on ${joinedHere.requirement.reqCode || joinedHere.requirement.title} (${joinedHere.requirement.department || 'no department'})`;
         }
         const title = `${titleCase(r.desig || r.spec || 'Doctor')}${r.desig && r.spec ? ` — ${titleCase(r.spec)}` : ''}`;
@@ -171,7 +172,7 @@ async function undo(manifestFile) {
       }
       if (ambiguous) why.push(`more than one candidate is named "${r.name}" - not imported, check by hand`);
       if (otherJoin) why.push(otherJoin);
-      plan.push({ r, client, rec, cand, req, app, done, skip: why.length ? why : null });
+      plan.push({ r, client, rec, cand, req, app, joinedApp, done, skip: why.length ? why : null });
     }
 
     console.log(`${rows.length} row(s) in ${path.basename(FILE)} - all go to ${DEPT} (team lead ${tlUser.label || 'Keerthana'}).`);
@@ -214,9 +215,9 @@ async function undo(manifestFile) {
       }
       let app = p.app;
       if (app) {
-        await prisma.application.update({ where: { id: app.id }, data: { stage: 'JOINED', joiningDate: r.join, joiningStatus: 'Joined', offeredCtc: ctc || undefined } });
+        await prisma.application.update({ where: { id: app.id }, data: { stage: 'JOINED', joiningDate: r.join, joiningStatus: 'Joined', rollStatus: r.jstatus || undefined, offeredCtc: ctc || undefined } });
       } else {
-        app = await prisma.application.create({ data: { candidateId: cand.id, requirementId: req.id, stage: 'JOINED', joiningDate: r.join, joiningStatus: 'Joined', offeredCtc: ctc || null, ownerRecruiterId: p.rec && p.rec.userId ? p.rec.userId : null, source: 'Joinings sheet', createdAt: at } });
+        app = await prisma.application.create({ data: { candidateId: cand.id, requirementId: req.id, stage: 'JOINED', joiningDate: r.join, joiningStatus: 'Joined', rollStatus: r.jstatus || null, offeredCtc: ctc || null, ownerRecruiterId: p.rec && p.rec.userId ? p.rec.userId : null, source: 'Joinings sheet', createdAt: at } });
         made.applications.push(app.id);
       }
       const ev = await prisma.applicationStageEvent.create({ data: { applicationId: app.id, candidateId: cand.id, fromStage: p.app ? p.app.stage : null, toStage: 'JOINED', action: 'Joined (joinings sheet)', comment: `Joined ${r.join} at ${p.client.name} - Medical joinings sheet, Keerthana Nov 2026${r.ctcRaw ? `, offered ${r.ctcRaw}${ctc ? ` (= ${ctc.toLocaleString('en-IN')}/yr)` : ''}` : ''}${r.invoice ? `, invoice ${r.invoice}` : ''}.`, actorUserId: p.rec && p.rec.userId ? p.rec.userId : null, actorName: p.rec ? p.rec.label : (r.recruiter || ACTOR), actorRole: 'Recruiter', createdAt: at } });
@@ -231,6 +232,13 @@ async function undo(manifestFile) {
       made.followUps.push(fu.id);
       await logAudit({ userId: null, actorName: ACTOR, action: 'Joining imported (Medical sheet - Keerthana)', entity: 'Application', entityId: app.id, toValue: `${r.name} · ${p.client.name} · ${r.join}`, reason: `Joining sheet.csv row ${r.row}` });
     }
+    // backfill the On roll / Off roll on rows already joined (so re-running fills the column for data imported before this field existed)
+    let rollSet = 0;
+    for (const p of plan) {
+      const target = p.joinedApp || p.app;
+      if (p.r.jstatus && target && target.id) { await prisma.application.update({ where: { id: target.id }, data: { rollStatus: p.r.jstatus } }).catch(() => {}); rollSet += 1; }
+    }
+    if (rollSet) console.log(`On roll / Off roll set on ${rollSet} application(s).`);
     const manifest = path.join(bakDir, 'undo-manifest.json');
     fs.writeFileSync(manifest, JSON.stringify(made, null, 1));
     console.log(`DONE: ${todo.length} joining(s) imported under ${DEPT} (TL ${tlUser.label || 'Keerthana'}). Backup and undo manifest: ${bakDir}`);

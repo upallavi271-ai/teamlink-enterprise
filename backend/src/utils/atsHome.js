@@ -199,7 +199,7 @@ const APP_SELECT = {
   source: true, portalImportedAt: true, hiringType: true, interviewAt: true, interviewStatus: true,
   interviewResult: true, interviewCompletedAt: true, joiningDate: true, joinedAt: true,
   // Drops & replacements: "Dropped" on a step that is not Joined = did not join
-  joiningStatus: true,
+  joiningStatus: true, rollStatus: true,
   // v3 dashboard: "Today's interviews" shows the round and the mode.
   interviewRound: true, interviewMode: true,
 };
@@ -2664,6 +2664,7 @@ function appRowOf(x, extra, clientDesk) {
     stageLabel: V.stageLabelFor(x.a.stage, { internal: x.internal }),
     interviewAt: x.a.interviewAt,
     joiningDate: x.a.joiningDate,
+    rollStatus: x.a.rollStatus || null,
     updatedAt: x.a.updatedAt,
     createdAt: x.a.createdAt,
     ...(x.na ? dueExtra(x.na) : { dueKey: 'closed' }),
@@ -2801,7 +2802,7 @@ const DAYF = (v) => { if (!v) return ''; const d = new Date(v); return Number.is
 const EXPORT_COLUMNS = {
   app: [['Candidate', (r) => r.candidate], ['Requirement', (r) => r.requirement], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''],
     ['Recruiter', (r) => r.recruiter || ''], ['Team lead', (r) => r.tl || ''], ['Step', (r) => r.step], ['Due', (r) => (r.note ? r.note : `${DUE_WORDS[r.dueKey || 'no_due']}${r.due ? ` · ${r.due}` : ''}`)],
-    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['Updated', (r) => DAYF(r.updatedAt)]],
+    ['Interview', (r) => DAYF(r.interviewAt)], ['Joining date', (r) => DAYF(r.joiningDate)], ['On roll / Off roll', (r) => r.rollStatus || ''], ['Updated', (r) => DAYF(r.updatedAt)]],
   req: [['Requirement', (r) => r.title], ['Requirement code', (r) => r.reqCode || ''], ['Client', (r) => r.client || ''], ['Department', (r) => r.department || ''], ['Recruiter', (r) => r.recruiter || 'No recruiter'], ['Status', (r) => r.status], ['Openings', (r) => r.openings ?? ''], ['Created', (r) => DAYF(r.createdAt)]],
   client: [['Client', (r) => r.name], ['Agreement', (r) => r.agreement || ''], ['Client manager (BDE)', (r) => r.owner || ''], ['Open requirements', (r) => r.openJobs ?? '']],
   inv: [['Invoice', (r) => r.invoiceNumber || ''], ['Client', (r) => r.client], ['Invoice date', (r) => DAYF(r.invoiceDate)], ['Due', (r) => DAYF(r.dueDate)], ['Status', (r) => r.status], ['Amount (before GST)', (r) => r.amount], ['Unpaid', (r) => r.outstanding]],

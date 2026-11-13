@@ -620,6 +620,7 @@ model Application {
   offerAcceptedAt    DateTime?
   documentsStatus    String? // Pending | Submitted | Verified
   joiningStatus      String? // Not Scheduled | Joining Scheduled | Joined | Dropped
+  rollStatus         String? // On roll | Off roll - how the joined candidate is on the client's books (founder 2026-11-13)
   joinedAt           DateTime?
   billingStatus      String? // Not Applicable | Billing Pending | Invoiced
   hrmsEmployeeId     String? // Employee row created for a TeamLink internal hire

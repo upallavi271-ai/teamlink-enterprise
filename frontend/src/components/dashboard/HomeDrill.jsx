@@ -120,7 +120,7 @@ function Rows({ data, onClose }) {
     const bdeView = rows.some((r) => 'bde' in r);
     return (
       <table className="hd-tbl">
-        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th><th>Updated</th><th aria-label="Open" /></tr></thead>
+        <thead><tr><th>Candidate</th><th>Requirement</th><th>Client</th><th>Step</th><th>{joinList ? 'Joining date' : 'Due'}</th>{joinList && <th>On roll / Off roll</th>}<th>Updated</th><th aria-label="Open" /></tr></thead>
         <tbody>{rows.map((r) => (
           <tr key={r.id}>
             <td><b className="hd-name">{r.candidate}</b>{(r.recruiter || (bdeView && r.bde)) && <div className="hd-sub">{r.recruiter || r.bde}</div>}</td>
@@ -128,6 +128,7 @@ function Rows({ data, onClose }) {
             <td>{r.client || '—'}</td>
             <td><StatusChip status={r.step} /></td>
             <td>{joinList ? <JoinCell r={r} /> : <DueCell r={r} />}</td>
+            {joinList && <td>{r.rollStatus ? <StatusChip tone={/off/i.test(r.rollStatus) ? 'grey' : 'green'} status={r.rollStatus} /> : <span className="hd-sub">—</span>}</td>}
             <td className="hd-sub">{shortDate(r.updatedAt)}</td>
             <td><OpenLink to={`/candidates/${r.candidateId}`} onClose={onClose} /></td>
           </tr>
