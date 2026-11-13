@@ -469,5 +469,6 @@ function greeting(lang, now = new Date()) {
 }
 
 module.exports = {
+  Q,
   callbackQuestion, callbackOk, languagesIn, languageOverlap, parseFacts, inferFacts, factsFrom, build, startLanguage, answer, near, words, stepOf, languageChoice, topic, asksWhere, notInterested, hostile, overBudget, needsYears, maxNotice, greeting, KEYS,
 };

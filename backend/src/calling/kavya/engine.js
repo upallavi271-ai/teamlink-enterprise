@@ -272,8 +272,17 @@ async function handOverOmni(row, input, e164) {
     const greetIn = (t, lang) => String(t || '').replace(/{greet}/gi, (vac.greeting && vac.greeting(lang)) || '');
     const scripts = {};
     Object.entries(a.texts || {}).forEach(([k, v]) => { if (v) scripts[k] = greetIn(v, k); });
+    // what a candidate may ask (pay, place, qualification, experience, role): answered from the vacancy facts only, in every language; the patterns are the vacancy engine's own
+    const faq = [];
+    if (a.facts && vac.Q && vac.answer) {
+      ['salary', 'location', 'qualification', 'experience', 'role'].forEach((key) => {
+        const answers = {};
+        ['English', 'Telugu', 'Hindi'].forEach((L) => { const t = vac.answer(a.facts, key, L); if (t) answers[L] = t; });
+        if (vac.Q[key] && Object.keys(answers).length) faq.push({ key, pattern: vac.Q[key].source, answers });
+      });
+    }
     const r = await client.request('POST', '/api/v1/script-calls', {
-      externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: greetIn(a.text, a.language || 'English'), scriptLanguage: a.language || 'English', scripts, agentName: clip(a.name || 'Kavya', 60),
+      externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: greetIn(a.text, a.language || 'English'), scriptLanguage: a.language || 'English', scripts, faq, agentName: clip(a.name || 'Kavya', 60),
     }, 30000);
     if (!r.ok || !r.data || !r.data.id) return false;
     await svc.setRow(row.id, { providerStatus: 'kavya-script', callSid: `kavya-script:${r.data.id}`, initiatedVia: 'kavya' });
