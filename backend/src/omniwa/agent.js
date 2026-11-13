@@ -426,6 +426,10 @@ async function askModel(conv, cfg, input) {
       const field = T.fieldOf(q);
       if (field) await T.run('save_candidate_data', { [field]: said }, conv, ctx);
       from = Number(now2.intakeAt) + 1;
+      // what the same message already says about the questions still to come is taken now, and those are not asked again
+      const vol = T.volunteered(list, from, said, answers);
+      Object.assign(answers, vol.answers);
+      if (Object.keys(vol.fields).length) await T.run('save_candidate_data', vol.fields, conv, ctx);
     }
     const next = T.nextQuestion(list, from, talkJob ? { ...talkJob, candidate: conv.name } : { candidate: conv.name }, answers);
     if (next) {

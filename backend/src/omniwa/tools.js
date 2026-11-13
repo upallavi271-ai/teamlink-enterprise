@@ -137,14 +137,45 @@ function nextQuestion(list, i, job, answers = {}) {
   for (let n = i; n < list.length; n += 1) {
     const line = String(list[n]);
     const skipForWork = /^if working\b/i.test(line) && notWorking;
+    // a question the person already answered inside an earlier message ("working in NIIMS, 3 years as doctor") is not asked again
+    const answeredAlready = answers[line.replace(/^if working,?\s*/i, '')] !== undefined;
     const holes = [...line.matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].toLowerCase());
-    if (!skipForWork && holes.every((h) => vals[h])) {
+    if (!skipForWork && !answeredAlready && holes.every((h) => vals[h])) {
       let text = line.replace(/\[([^\]]+)\]/g, (m, h) => vals[h.toLowerCase()]);
       if (/^if working\b/i.test(text)) { text = text.replace(/^if working,?\s*/i, ''); text = text.charAt(0).toUpperCase() + text.slice(1); }
       return { index: n, text };
     }
   }
   return null;
+}
+// WHAT THE PERSON SAID ABOUT THE LATER QUESTIONS (founder 2026-11-13: "IAM WORKING IN NIIMS HOSPITAL, i have 3 years of experience as doctor" and the bot still asked the
+// designation and the experience). Only what is plainly in the words: years of experience, "as <designation>", "working in/at <company>", "notice period <time>".
+// -> { answers: { <question line without 'If working,'>: value }, fields: { <saved field>: value } } for the questions after position `from` not answered yet.
+function volunteered(list, from, text, answers = {}) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim();
+  const out = { answers: {}, fields: {} };
+  const take = (re) => { const m = re.exec(t); return m ? m[1].trim().replace(/[.,;:]+$/, '') : null; };
+  const found = {
+    experience: () => { const y = take(/(\d+(?:\.\d+)?)\s*\+?\s*(?:years?|yrs?)\b/i); return y ? `${y} years` : null; },
+    designation: () => take(/\bas\s+(?:an?\s+|the\s+)?([a-z][a-z .\/&-]{2,40}?)(?=[,.;]|\s+(?:in|at|with|for|from|and)\b|$)/i),
+    company: () => take(/\b(?:working|work|employed)\s+(?:in|at|with|for)\s+([a-z0-9][a-z0-9&.' -]{1,40}?)(?=[,.;]|\s+(?:and|since|as|for|from|i)\b|$)/i),
+    notice: () => take(/notice(?:\s+period)?\s*(?:is|of|:)?\s*(\d+\s*(?:days?|weeks?|months?)|immediate(?:ly)?)/i),
+  };
+  for (let n = Math.max(0, from); n < list.length; n += 1) {
+    const line = String(list[n]); const key = line.replace(/^if working,?\s*/i, '');
+    if (answers[key] !== undefined || /\[[^\]]+\]/.test(line)) continue;
+    const q = line.toLowerCase();
+    let kind = null;
+    if (/total work experience|years of experience/.test(q)) kind = 'experience';
+    else if (/current designation/.test(q)) kind = 'designation';
+    else if (/which company/.test(q)) kind = 'company';
+    else if (/notice period/.test(q)) kind = 'notice';
+    const v = kind ? found[kind]() : null;
+    if (!v) continue;
+    out.answers[key] = v.slice(0, 300);
+    const f = fieldOf(line); if (f) out.fields[f] = v;
+  }
+  return out;
 }
 // which saved field of the person an answer also fills
 // DOES THE ANSWER FIT THE QUESTION? (founder 2026-11-09: "yes" to "Which company are you working with?" moved on to the next question.)
@@ -469,4 +500,4 @@ async function run(name, args, conv, ctx) {
 }
 
 const NAMES = ['get_candidate_profile', 'get_job_details', 'search_knowledge_base', 'save_candidate_data', 'send_apply_link', 'send_interview_link', 'handoff_to_recruiter'];
-module.exports = { isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, questionKind, employedStatement, notLooking, employedFollowUp, employedYesText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
+module.exports = { volunteered, isQuestion, aboutThisJob, asksDetail, promoAnswer, sentBodies, contactNumber, applyWords, templateLink, withApply, daysOf, isJoiningQuestion, joiningGap, joiningNudgeText, answerFits, askAgainText, questionKind, employedStatement, notLooking, employedFollowUp, employedYesText, GREETING_TEXT, isGreeting, isClosing, mentionsJobs, isYes, isNo, nextQuestion, fieldOf, jobOfCampaign, onlyThisJobText, jobCardText, quickAnswer, run, jobFacts, searchJobs, offerJobs, selectJob, jobListText, NO_MATCH_TEXT, askedAboutJob, pickedNumber, titleHas, collectedView, NAMES, TOOL_HELP };
