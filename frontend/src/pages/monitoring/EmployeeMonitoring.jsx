@@ -1645,16 +1645,38 @@ function Devices({ manage = false }) {
   }
   const rows = (data && data.rows) || [];
   const canAct = !manage || (data && data.canManage);
+  const [q, setQ] = useState('');
+  const [dept, setDept] = useState('');
+  const [stat, setStat] = useState('');
+  const statusOf = (d) => (!d.isActive ? 'Switched off' : d.approved === false ? 'Waiting for approval' : d.online ? 'Online' : 'Offline');
+  const depts = [...new Set(rows.map((d) => d.employee && d.employee.department).filter(Boolean))].sort();
+  const shown = rows.filter((d) => (!q.trim() || `${(d.employee && d.employee.name) || ''} ${(d.employee && d.employee.employeeCode) || ''} ${d.deviceName || ''} ${(d.employee && d.employee.department) || ''}`.toLowerCase().includes(q.trim().toLowerCase())) && (!dept || (d.employee && d.employee.department) === dept) && (!stat || statusOf(d) === stat));
   return (
     <>
       {msg && <div className="notice">{msg}</div>}
       {error && <div className="notice red">{error}</div>}
       {data && manage && <div className="small-muted" style={{ marginBottom: 8 }}>{`Latest agent: ${data.latestAgent}. PCs update themselves unless that is switched off in Settings.`}{!data.canManage && ' You can look at PCs here; the Super Admin, Admin or IT Admin act on them.'}</div>}
+      {manage && rows.length > 0 && (
+        <div className="mon-bar">
+          <input type="search" placeholder="Search a name, code or PC" value={q} onChange={(e) => setQ(e.target.value)} />
+          {depts.length > 1 && (
+            <Combo value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Department">
+              <option value="">All departments</option>
+              {depts.map((d) => <option key={d} value={d}>{d}</option>)}
+            </Combo>
+          )}
+          <Combo value={stat} onChange={(e) => setStat(e.target.value)} aria-label="Status">
+            <option value="">All statuses</option>
+            {['Online', 'Offline', 'Waiting for approval', 'Switched off'].map((x) => <option key={x} value={x}>{x}</option>)}
+          </Combo>
+          <span className="small-muted">{`${shown.length} of ${rows.length} PC${rows.length === 1 ? '' : 's'}`}</span>
+        </div>
+      )}
       <div className="tbl-wrap">
         <table className="mon-table">
           <thead><tr>{manage && <th>Employee</th>}<th>PC</th><th>System</th><th>Agent</th><th>Registered</th><th>Last seen</th><th>Status</th><th /></tr></thead>
           <tbody>
-            {rows.map((d) => (
+            {shown.map((d) => (
               <tr key={d.id}>
                 {manage && <td><b>{d.employee ? d.employee.name : '—'}</b>{d.employee && d.employee.department && <div className="small-muted">{d.employee.department}</div>}</td>}
                 <td>{d.deviceName}</td>
@@ -1670,7 +1692,7 @@ function Devices({ manage = false }) {
                 </td>
               </tr>
             ))}
-            {data && !rows.length && <tr><td colSpan={manage ? 8 : 7} className="small-muted">No PC registered yet.</td></tr>}
+            {data && !shown.length && <tr><td colSpan={manage ? 8 : 7} className="small-muted">{rows.length ? 'No PC matches these filters.' : 'No PC registered yet.'}</td></tr>}
           </tbody>
         </table>
       </div>
