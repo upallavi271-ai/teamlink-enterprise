@@ -358,8 +358,7 @@ async function publishToLibrary(r, maker) {
   await St.ensure();
   const texts = parse(r.texts, {});
   const adaptations = {};
-  // every channel AI Content writes for, RCS included (RCS is not one of the Studio's own channels, so St.CHANNELS alone dropped its approved words)
-  CHANNELS.forEach((c) => { if (texts[c.key]) adaptations[c.key] = String(texts[c.key]).slice(0, c.limit); });
+  St.CHANNELS.forEach((c) => { if (texts[c.key]) adaptations[c.key] = String(texts[c.key]).slice(0, c.limit); });
   const master = texts.whatsapp || texts.email || texts.sms || texts.linkedin || texts.facebook || Object.values(texts)[0] || '';
   const dept = r.department || null;
   const now = Date.now();
