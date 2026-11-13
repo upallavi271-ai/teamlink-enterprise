@@ -27,14 +27,25 @@ function kind(user) {
 }
 // the people an Admin gave the Marketing capability (AppSetting 'omni.permissions'); kept in memory, refreshed by warm() on each request
 let marketingIds = new Set();
+// WHO OPENS OMNI-CHANNEL THE GREEN START WAY (founder 2026-11-13: "employees ki kuda superadmin ki ela open avuthundho alane open avale, kani konni permissions matrame"):
+// an Admin switches, per kind of login, whether "Omni-Channel" in the sidebar opens Green Start in its own tab (the person's department login: Green Start's "Team Leader" role,
+// no integrations, billing or workspace settings) or the native pages. AppSetting 'omni.gsAccess' { kinds: [...] }; never saved = every kind below is on. Admin / Super Admin always open Green Start.
+const GS_KINDS = ['tl', 'view', 'hr', 'recruiter', 'bde', 'bdetl', 'marketing'];
+let gsKinds = null; // null = never saved = GS_KINDS
+const gsKindsNow = () => (gsKinds || GS_KINDS);
+function setGsKinds(list) { gsKinds = Array.isArray(list) ? list.filter((k) => GS_KINDS.includes(k)) : null; warmAt = Date.now(); }
 let warmAt = 0;
 async function warm() {
   if (Date.now() - warmAt < 10000) return;
   warmAt = Date.now();
   try {
-    const row = await require('../db').appSetting.findUnique({ where: { key: 'omni.permissions' } }); // eslint-disable-line global-require
+    const db = require('../db'); // eslint-disable-line global-require
+    const row = await db.appSetting.findUnique({ where: { key: 'omni.permissions' } });
     const v = row ? JSON.parse(row.value) : {};
     marketingIds = new Set(Array.isArray(v.marketingUserIds) ? v.marketingUserIds : []);
+    const g = await db.appSetting.findUnique({ where: { key: 'omni.gsAccess' } });
+    const gv = g ? JSON.parse(g.value) : null;
+    gsKinds = gv && Array.isArray(gv.kinds) ? gv.kinds.filter((k) => GS_KINDS.includes(k)) : null;
   } catch { /* keep the last list */ }
 }
 function setMarketingIds(ids) { marketingIds = new Set(ids || []); warmAt = Date.now(); }
@@ -78,7 +89,7 @@ const mayUse = (u) => kind(u) !== 'none';
 // GREEN START (the founder's own Omni-Channel product, green-start-app/): it has NO phone / email masking, so by default only the logins that
 // already see real contact details may open it (Admin, Manager / AM, TL / STL, HR). BDE, BDE TL, Recruiter and Marketing keep the native
 // Omni-Channel. GREENSTART_ALL_ROLES=1 (backend/.env) opens it for everybody who may use Omni-Channel (founder's decision).
-const mayGreenStart = (u) => mayUse(u) && (/^(1|true|yes|on)$/i.test(String(process.env.GREENSTART_ALL_ROLES || '').trim()) || ['admin', 'tl', 'view', 'hr'].includes(kind(u)));
+const mayGreenStart = (u) => mayUse(u) && (/^(1|true|yes|on)$/i.test(String(process.env.GREENSTART_ALL_ROLES || '').trim()) || kind(u) === 'admin' || gsKindsNow().includes(kind(u)));
 const mayRun = has('mayRun');
 const mayRunInternal = has('mayRunInternal');
 const seesInternal = has('seesInternal');
@@ -277,4 +288,4 @@ function me(u) {
   };
 }
 
-module.exports = { mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };
+module.exports = { GS_KINDS, gsKindsNow, setGsKinds, KIND_WORDS, mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };

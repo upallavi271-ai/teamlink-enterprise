@@ -19,7 +19,7 @@ const router = express.Router();
 router.use(requireAuth);
 router.use(async (req, res, next) => {
   try { await A.warm(); } catch { /* keep the last list */ }
-  if (!A.mayGreenStart(req.user)) return res.status(403).json({ error: 'Green Start is for Admin, Manager, Team Lead and HR logins.' });
+  if (!A.mayGreenStart(req.user)) return res.status(403).json({ error: 'Green Start is not switched on for your kind of login. An Admin can switch it on in Administration > Integrations > Omni-Channel.' });
   return next();
 });
 
@@ -104,6 +104,56 @@ router.put('/sso-settings', adminOnly, async (req, res) => {
   await prisma.appSetting.upsert({ where: { key: SSO_EMAIL_KEY }, create: { key: SSO_EMAIL_KEY, value }, update: { value } });
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel company Green Start account set', entity: 'AppSetting', entityId: SSO_EMAIL_KEY, toValue: email || '(none - login page)' });
   res.json({ email });
+});
+
+// ---- WHO OPENS OMNI-CHANNEL THE GREEN START WAY (Admin only; founder 2026-11-13) ---------------------------------------------------------------
+// A login whose kind is switched on here opens Green Start in its own tab as its DEPARTMENT's login (Green Start's "Team Leader" role: campaigns, conversations, templates, customers;
+// no integrations, billing or workspace settings), seeing only its department's workspace. A login whose kind is off, or whose department has no ready Omni-Channel login yet,
+// keeps the native Omni-Channel pages. Admin / Super Admin always open Green Start with every workspace.
+const GS_ACCESS_KEY = 'omni.gsAccess';
+const accessView = () => {
+  const on = A.gsKindsNow();
+  return {
+    kinds: A.GS_KINDS.map((k) => ({ kind: k, words: A.KIND_WORDS[k], on: on.includes(k), masked: A.RULES.masked.includes(k) })),
+    role: 'Green Start\'s "Team Leader" role in the person\'s department workspace: campaigns, conversations, templates and customers; no integrations, billing or workspace settings.',
+  };
+};
+router.get('/access', adminOnly, (req, res) => res.set('Cache-Control', 'no-store').json(accessView()));
+router.put('/access', adminOnly, async (req, res) => {
+  const given = Array.isArray(req.body && req.body.kinds) ? req.body.kinds.map(String) : null;
+  if (!given || given.some((k) => !A.GS_KINDS.includes(k))) return res.status(400).json({ error: 'Pick from the list of kinds of login.' });
+  const kinds = A.GS_KINDS.filter((k) => given.includes(k));
+  const value = JSON.stringify({ kinds });
+  const before = A.gsKindsNow().slice();
+  await prisma.appSetting.upsert({ where: { key: GS_ACCESS_KEY }, create: { key: GS_ACCESS_KEY, value }, update: { value } });
+  A.setGsKinds(kinds);
+  const words = (list) => (list.length ? list.map((k) => A.KIND_WORDS[k]).join(', ') : 'nobody but Admin');
+  if (before.join() !== kinds.join()) await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel: who opens Green Start changed', entity: 'OmniGsAccess', entityId: 'kinds', fromValue: words(before).slice(0, 400), toValue: words(kinds).slice(0, 400) });
+  return res.set('Cache-Control', 'no-store').json({ ok: 'Saved.', ...accessView() });
+});
+// a name search for the check below (Admin only; names and role words, nothing else)
+router.get('/access/people', adminOnly, async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (q.length < 2) return res.json({ people: [] });
+  const rows = await prisma.user.findMany({ where: { status: 'Active', name: { contains: q }, NOT: { email: { contains: 'example.test' } } }, select: { id: true, name: true, atsRole: true, atsDepartment: true, role: true }, take: 12 });
+  return res.json({ people: rows.map((r) => ({ id: r.id, name: r.name, role: r.atsRole || r.role, department: r.atsDepartment || '' })) });
+});
+// "Why does this person see this?": plain words about ONE login (nothing is changed)
+router.get('/access/check', adminOnly, async (req, res) => {
+  const id = String(req.query.userId || '');
+  const u = id ? await prisma.user.findUnique({ where: { id }, select: { id: true, name: true } }).catch(() => null) : null;
+  if (!u) return res.status(404).json({ error: 'That person was not found.' });
+  let ident = null;
+  try { ident = await require('../utils/identity').resolveIdentity(u.id); } catch { ident = null; } // eslint-disable-line global-require
+  if (!ident) return res.status(404).json({ error: 'That login could not be read.' });
+  const k = A.kind(ident);
+  const out = { name: u.name, kind: k, kindWords: A.KIND_WORDS[k] || (k === 'none' ? 'No Omni-Channel role' : k) };
+  if (!A.mayUse(ident)) return res.json({ ...out, opens: 'nothing', why: 'This login has no Omni-Channel access at all.' });
+  if (A.isAdmin(ident)) return res.json({ ...out, opens: 'green-start', why: 'Super Admin / Admin always open Green Start with every department.' });
+  if (!A.mayGreenStart(ident)) return res.json({ ...out, opens: 'native', why: `${out.kindWords} is not switched on for Green Start above, so this person sees the native Omni-Channel pages. Tick it to change that.` });
+  const who = await require('../utils/omniDeptLogins').loginFor(ident).catch(() => null); // eslint-disable-line global-require
+  if (!who || who.blocked) return res.json({ ...out, opens: 'native', why: `${out.kindWords} is switched on, but ${who && who.reason ? who.reason : 'this person has no Omni-Channel login yet'} Until then this person sees the native Omni-Channel pages.` });
+  return res.json({ ...out, opens: 'green-start', department: who.dept || '', why: `Opens Green Start in its own tab as the ${who.dept || 'department'} login: only that department's workspace, with the "Team Leader" role (no integrations, billing or workspace settings).` });
 });
 
 router.post('/session', (req, res) => {
