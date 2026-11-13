@@ -1257,7 +1257,7 @@ function AppWork({ app, who, range, total, onClose }) {
             <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
             <div className="small-muted">{who} · {range}</div>
           </div>
-          <button type="button" className="btn btn-sm" onClick={onClose}>Close</button>
+          <button type="button" className="btn btn-sm" onClick={onClose} style={{ background: '#16a34a', color: '#fff', borderColor: '#16a34a', fontWeight: 700 }}>✓ Close (v2)</button>
         </div>
         <div className="mon-summary">
           <b>{dur(app.seconds)}</b> in {app.name}{total ? ` (${Math.round((app.seconds / total) * 100)}% of the active time)` : ''}, in <b>{sittings.length}</b> {sittings.length === 1 ? 'sitting' : 'sittings'}{first && <> from {when(first)} to {when(last)}</>}.
