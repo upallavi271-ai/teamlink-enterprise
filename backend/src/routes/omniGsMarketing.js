@@ -41,13 +41,27 @@ router.get('/overview', wrap(async (req, res) => {
 }));
 
 // ---- brand voice ---------------------------------------------------------------------------------------------------------------
-router.get('/brand', wrap(async (req, res) => res.json({ brand: await Cfg.getBrand(), tones: St.VOICES, languages: Cfg.LANGUAGES, canEdit: A.has('mayAiMarketing')(req.user) })));
+router.get('/brand', wrap(async (req, res) => res.json({ brand: await Cfg.getBrand(), tones: St.VOICES, languages: Cfg.LANGUAGES, emoji: Cfg.EMOJI, limits: Cfg.LIMITS, canEdit: A.has('mayAiMarketing')(req.user) })));
 router.put('/brand', mustWrite, wrap(async (req, res) => {
   const c = Cfg.cleanBrand(req.body || {}, St.VOICES);
   if (c.error) return res.status(400).json({ error: c.error });
   await Cfg.saveBrand(c.value, req.user);
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: brand voice changed', entity: 'OmniMkBrand', entityId: 'brand', toValue: `${c.value.brandName}; tone ${c.value.tone}; language ${c.value.language}; ${c.value.avoidWords.length} avoid word(s)` });
-  return res.json({ ok: 'Brand voice saved. The AI uses it from the next request.', brand: await Cfg.getBrand() });
+  return res.json({ ok: 'Brand voice saved. The AI uses it from the next request.', notes: c.notes || [], brand: await Cfg.getBrand() });
+}));
+// the brand logo (used by the brand kit preview and, later, by the AI image and video makers)
+router.get('/brand/logo', wrap(async (req, res) => { const l = await Cfg.getLogo(); return res.json({ logo: l ? { dataUrl: l.dataUrl, name: l.name || '', at: l.at || null } : null }); }));
+router.put('/brand/logo', mustWrite, wrap(async (req, res) => {
+  const c = Cfg.cleanLogo(req.body || {});
+  if (c.error) return res.status(400).json({ error: c.error });
+  await Cfg.saveLogo(c.value);
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: brand logo changed', entity: 'OmniMkBrand', entityId: 'logo', toValue: `${c.value.name || 'logo'}; ${Math.round(c.value.bytes / 1024)} KB` });
+  return res.json({ ok: 'Logo saved.', logo: { dataUrl: c.value.dataUrl, name: c.value.name, at: c.value.at } });
+}));
+router.delete('/brand/logo', mustWrite, wrap(async (req, res) => {
+  await Cfg.removeLogo();
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: brand logo removed', entity: 'OmniMkBrand', entityId: 'logo' });
+  return res.json({ ok: 'Logo removed.' });
 }));
 
 // ---- AI writing ----------------------------------------------------------------------------------------------------------------

@@ -137,6 +137,8 @@ app.use('/api/crm/leads/public', require('./routes/crmWebsite'));
 app.use(require('./utils/webSecurity').corsMiddleware());
 // Employee Monitoring: an agent batch of activity can be larger than the site-wide 100 kB JSON limit.
 app.use('/api/monitoring/activity', express.json({ limit: '1mb' }));
+// AI Marketing brand logo: a picture of up to 300 KB arrives as base64 JSON (marketing/settings.js cleanLogo checks the real size and type)
+app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }));
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

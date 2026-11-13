@@ -85,8 +85,15 @@ function promptFor(f, brand) {
     brand.doWords.length ? `Use these words or phrases where they fit naturally: ${brand.doWords.join(', ')}.` : '',
     brand.avoidWords.length ? `Never use these words or phrases: ${brand.avoidWords.join(', ')}.` : '',
     brand.samples.length ? `Examples of on-brand writing:\n${brand.samples.map((s) => `"${s}"`).join('\n')}` : '',
+    // the brand kit (Brand voice screen): who we talk to, what we always say, how we use emoji, our own details
+    brand.audience ? `The company usually talks to: ${brand.audience}.` : '',
+    brand.industries && brand.industries.length ? `Industries the company hires for: ${brand.industries.join(', ')}.` : '',
+    brand.keyMessages && brand.keyMessages.length ? `Key brand messages (use one only when it fits the brief, in natural words):\n${brand.keyMessages.map((k) => `- ${k}`).join('\n')}` : '',
+    brand.emoji === 'none' ? 'Use no emoji at all.' : brand.emoji === 'many' ? 'Emoji are welcome in WhatsApp, RCS and social posts; never in SMS or email.' : 'Use at most one or two emoji, only in WhatsApp, RCS and social posts; none in SMS or email.',
+    brand.website || brand.contact ? `When the message needs the company's own details, use only these (no other link or number): ${[brand.website ? `website ${brand.website}` : '', brand.contact ? `contact ${brand.contact}` : ''].filter(Boolean).join('; ')}.` : '',
     brand.signOff ? `Sign emails off with: ${brand.signOff}.` : '',
-    'Rules: use only facts that are in the brief. Never invent prices, discounts, dates, phone numbers, links or promises. Use {{name}} where the person\'s first name belongs. Do not add opt-out or unsubscribe lines (they are added automatically). No hashtags except on Instagram. Keep every message inside its character limit and short: an SMS under 300 characters, a social post under 600.',
+    brand.disclaimer ? `End every email with this line, word for word: "${brand.disclaimer}"` : '',
+    `Rules: use only facts that are in the brief. Never invent prices, discounts, dates, phone numbers, links or promises. Use {{name}} where the person's first name belongs. Do not add opt-out or unsubscribe lines (they are added automatically). ${brand.hashtags && brand.hashtags.length ? `Hashtags only on Instagram and LinkedIn: two or three of these brand hashtags, ${brand.hashtags.join(' ')}.` : 'No hashtags except on Instagram.'} Keep every message inside its character limit and short: an SMS under 300 characters, a social post under 600.`,
     'Answer with ONLY a JSON object, no other words: {"variants":[{"angle":"<two to four words that name this version>","subject":"<email subject, or empty>","texts":{"<channel>":"<the message>"}}]}',
   ].filter(Boolean).join('\n');
   const prompt = [
