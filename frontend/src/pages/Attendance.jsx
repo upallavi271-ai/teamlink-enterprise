@@ -12,7 +12,6 @@ import { ApprovalChainModal, ApprovalChainLine } from '../components/ApprovalCha
 // HRMS-24 §4/§5/§10/§11 — My Attendance (live face + location check-in), team
 // attendance, the monthly summary and the check-in settings live in their own files.
 import MyAttendance, { downloadFrom } from './attendance/MyAttendance.jsx';
-import { usePcActivity, PcLine } from '../components/monitoring/PcActivity.jsx'; // Employee Monitoring: PC activity beside the times
 // The Monthly Summary also carries the old "Reports (Monthly)" figures; the
 // Team Attendance tab is gone — the Biometric list is the day-by-day view.
 import { MonthlySummaryTab, PunchImageButton } from './attendance/TeamAttendance.jsx';
@@ -113,7 +112,6 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
   });
   const single = range.from === range.to;
   const date = range.to;
-  const pc = usePcActivity(date, date); // the office PC's first / last activity that day (never changes the marks)
 
   // Only the latest request may land (a quick ◀ ▶ must not show an older day).
   const seq = useRef(0);
@@ -313,8 +311,8 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
                     <td className="cell-muted">{r.department || '—'}</td>
                     <td>{r.dayStatus ? <DayStatus status={r.bucket === 'noRecord' ? 'No device data' : r.dayStatus} /> : '—'}</td>
                     <td><StatusPill status={r.status} /></td>
-                    <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}<PcLine pc={pc[`${r.employeeId}|${date}`]} which="first" /></td>
-                    <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}<PcLine pc={pc[`${r.employeeId}|${date}`]} which="last" /></td>
+                    <td className="cell-muted">{r.checkIn ? to12h(r.checkIn) : '—'}</td>
+                    <td className="cell-muted">{r.checkOut ? to12h(r.checkOut) : '—'}</td>
                     <td className="cell-muted">{r.location || '—'}</td>
                     <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {canMark ? [['Present', 'Present'], ['Absent', 'Absent'], ['Half Day', 'Half Day'], ['On Leave', 'Leave']].map(([s, label]) => (
