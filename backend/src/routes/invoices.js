@@ -713,9 +713,17 @@ async function buildRegister(user, query) {
   // Only what the card shows and filters on — there can be hundreds.
   noInvoice.rows = waitingAll.map((r) => ({
     applicationId: r.applicationId,
+    candidateId: r.candidateId,
     name: r.name,
     client: r.client,
     clientId: r.clientId,
+    // The full history Accounts needs to raise the invoice (founder 2026-11-13): role, recruiter, TL, department, CTC, fee.
+    role: r.role || null,
+    requirement: r.requirement || null,
+    recruiter: r.recruiter || null,
+    tl: r.tl || null,
+    offeredCtc: r.offeredCtc ?? null,
+    feePercent: r.feePercent ?? null,
     joiningDate: r.joiningDate,
     billing: r.billing,
     billable: r.billable,

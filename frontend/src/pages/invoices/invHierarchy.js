@@ -223,7 +223,7 @@ export const hierarchyActive = (f) => clientsOf(f).length > 0 || (Array.isArray(
 // The "joinings have no invoice number yet" card under the filters. With no
 // Client / Department / Section / Employee filter it is the server's own.
 export function waitingUnder(ni, f) {
-  if (!ni || !hierarchyActive(f) || !Array.isArray(ni.rows)) return { ...ni, filtered: false };
+  if (!ni || !hierarchyActive(f) || !Array.isArray(ni.rows)) return { ...ni, filtered: false, allRows: (ni && ni.rows) || [] };
   const rows = ni.rows.filter((r) => matchesJoining(r, f));
   const round = (n) => Math.round(n * 100) / 100;
   const billing = round(rows.reduce((s, r) => s + (r.billing != null ? Number(r.billing) : 0), 0));
@@ -238,6 +238,7 @@ export function waitingUnder(ni, f) {
     billing,
     invoiceValue: round(billing + gst),
     recent: rows.slice(0, 12),
+    allRows: rows,
     notBillable: rows.filter((r) => !r.billable),
     groups,
   };

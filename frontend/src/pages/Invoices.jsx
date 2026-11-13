@@ -1024,6 +1024,41 @@ export default function Invoices() {
           <div className="inv-mini"><span>Would invoice for</span><strong>{money(ni.invoiceValue || 0)}</strong></div>
           <div className="inv-mini"><span>Next number in series</span><strong className="inv-mono">{ni.nextNumber || '—'}</strong></div>
         </div>
+        {ni.waiting > 0 && (ni.allRows || []).length > 0 && (
+          <details open className="inv-joinhist">
+            <summary>Joined candidates waiting — full history ({ni.allRows.length})</summary>
+            <div className="tbl-wrap" style={{ maxHeight: 440, overflow: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Candidate</th><th>Client</th><th>Position</th><th>Recruiter</th><th>Team lead</th><th>Department</th>
+                    <th>Joined</th><th className="num">CTC</th><th className="num">Fee</th><th className="num">Fee amount</th><th>Raise</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ni.allRows.map((r) => (
+                    <tr key={r.applicationId}>
+                      <td><b>{r.name}</b></td>
+                      <td>{r.client || '—'}</td>
+                      <td>{r.role || r.requirement || '—'}</td>
+                      <td>{r.recruiter || '—'}</td>
+                      <td>{r.tl || '—'}</td>
+                      <td>{r.department || '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : '—'}</td>
+                      <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>
+                      <td className="num">{r.feePercent != null ? `${r.feePercent}%` : '—'}</td>
+                      <td className="num">{r.billing != null ? money(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {canCreate ? <button type="button" className="btn btn-sm btn-primary" onClick={() => setJoinFor(r.applicationId)}>Raise invoice</button> : '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="small-muted" style={{ marginTop: 8 }}>Every joined candidate still to be billed, with the client, who sourced them (recruiter / team lead / department), the CTC and the fee. “Raise invoice” opens the invoice with the CTC, fee %, GST and TDS ready to confirm.</div>
+          </details>
+        )}
         {ni.groups.length > 0 && (
           <details>
             <summary>Ready to invoice — {ni.groups.length} client / joining-month group(s)</summary>
