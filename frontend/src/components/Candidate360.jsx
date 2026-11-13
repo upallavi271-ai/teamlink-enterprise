@@ -1013,14 +1013,24 @@ function EditOwner({ app, ownership, onClose, onDone }) {
   );
 }
 
+const ROLL_OPTS = ['Dropped', 'Full time', 'Part time', 'On Roll', 'Replacement'];
+
 export function CurrentApplication({
   app, ownership, clientName, linkTo, user = null, onChanged = null,
 }) {
   const [editing, setEditing] = useState(false);
   const [note, setNote] = useState('');
+  const [rollBusy, setRollBusy] = useState(false);
   const mayEdit = !!(user && onChanged && app && app.id && can(user, 'ats', 'recruiterbde', 'Team View', 'assign'));
   if (!app) return <div className="small-muted">Not on any requirement yet. Add them to a requirement to start.</div>;
   const fu = app.followUp;
+  // The recruiter sets how this candidate sits (full time / part time / on roll / …) on the current application; it stays
+  // with the application through to joining (founder 2026-11-13). Same field and endpoint as the joined list's roll status.
+  const canRoll = !!(user && onChanged && app.id && can(user, 'ats', 'candidates', 'Applications', 'edit'));
+  const setRoll = async (v) => {
+    setRollBusy(true);
+    try { await api.patch(`/ats/applications/${app.id}/roll-status`, { rollStatus: v }); if (onChanged) onChanged(); } catch { /* left as-is on error */ } finally { setRollBusy(false); }
+  };
   return (
     <>
       {/* One aligned label / value list; then who is on this. */}
@@ -1030,6 +1040,16 @@ export function CurrentApplication({
         <div className="cdw-kv"><span>Applied</span><b>{dt(app.createdAt)}</b></div>
         <div className="cdw-kv"><span>At this step since</span><b>{dt(app.stageSince)}</b></div>
         <div className="cdw-kv"><span>Whose move</span><b>{(fu && !fu.completedAt && fu.ownerName) || app.owner || '—'}</b></div>
+        {(canRoll || app.rollStatus) && (
+          <div className="cdw-kv"><span>Status</span>
+            {canRoll ? (
+              <select value={app.rollStatus || ''} disabled={rollBusy} onChange={(e) => setRoll(e.target.value)} style={{ width: 'auto', padding: '2px 6px', fontSize: 13 }} title="How this candidate sits: full time, part time, on roll, dropped or a replacement. It stays until they join.">
+                <option value="">— set status —</option>
+                {ROLL_OPTS.map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : <b>{app.rollStatus}</b>}
+          </div>
+        )}
         {app.interviewStatus && (
           <div className="cdw-kv"><span>Interview</span><b>{`${app.interviewStatusLabel || interviewStatusLabel(app.interviewStatus)}${app.interviewAt ? ` · ${dt(app.interviewAt)}` : ''}`}</b></div>
         )}

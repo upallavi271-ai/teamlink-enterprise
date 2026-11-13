@@ -2694,6 +2694,7 @@ router.get('/:id', async (req, res) => {
     })(),
     stageSince: stageSince.get(a.id) || a.updatedAt || a.createdAt,
     stageMoves: stageMoves.get(a.id) || 0,
+    rollStatus: a.rollStatus || null, // full time / part time / on roll / … set by the recruiter on the current application (founder 2026-11-13)
     // "Joined on <date>" beside the Joined step (one rule: utils/joinDayShared.js). Only a joined application carries it.
     ...(JL.isJoined(a.stage) ? { joiningDay: JL.dayOfApp(a, null, joinedMoveAt.get(a.id)) } : {}),
     stageLabel: stageLabelFor(a.stage, { internal: isInternalApp(a, a.requirement) }),
