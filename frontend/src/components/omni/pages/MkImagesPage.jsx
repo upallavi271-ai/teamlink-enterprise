@@ -82,7 +82,8 @@ export default function MkImagesPage() {
     <div>
       <PageHead eyebrow="AI Marketing" title="AI Images" lead="Describe a picture; Google Gemini makes it in your brand colours, with your logo when the model can. A picture is used only after it is approved." />
       {ai.demo ? <Banner tone="test"><b>Test sandbox.</b> No picture is asked from Google here: a plain sample in your brand colours is made instead.</Banner> : null}
-      {!ai.ready ? <Banner tone="error"><b>AI pictures are not ready.</b> {ai.reason}</Banner> : null}
+      {!ai.ready ? <Banner tone="error"><b>AI pictures are not ready.</b> {ai.reason} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Check again</button></Banner> : null}
+      {ai.ready && ai.note ? <Banner tone="warn">{ai.note}</Banner> : null}
       {msg ? <Banner tone="error">{msg}</Banner> : null}
 
       {meta.canWrite ? (

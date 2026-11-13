@@ -59,24 +59,26 @@ async function config() {
   try { c = await require('../utils/integrationStore').readConfig(CHANNEL); } catch { /* not configured */ } // eslint-disable-line global-require
   const v = c.values || {};
   const key = String(v['Gemini API key'] || '').trim();
-  const model = String(v['Image model'] || '').trim() || DEFAULT_MODEL;
+  const saved = String(v['Image model'] || '').trim();
+  // a Gemini TEXT model typed by mistake (e.g. gemini-2.5-flash) can never make a picture: the picture model is used instead, and the screens say so
+  const swapped = !!saved && !canDraw(saved);
+  const model = !saved || swapped ? DEFAULT_MODEL : saved;
   // empty = the default 20 (the Integrations screen saves the greyed "20" hint as empty); only a typed 0 switches pictures off
   const raw = String(v['Pictures per person per day'] || '').trim();
   const per = raw === '' ? 20 : Number(raw);
-  return { key, model, perDay: Number.isFinite(per) && per >= 0 ? Math.min(Math.floor(per), 500) : 20, missingKey: !!c.missingKey };
+  return { key, model, savedModel: saved, swapped, perDay: Number.isFinite(per) && per >= 0 ? Math.min(Math.floor(per), 500) : 20, missingKey: !!c.missingKey };
 }
-const isImagen = (model) => /^imagen/i.test(model);
+function isImagen(model) { return /^imagen/i.test(model); }
 // Gemini picture models carry "image" in their name (gemini-2.5-flash-image, gemini-3-pro-image-preview ...). A text model such as gemini-2.5-flash
-// exists (so the free check passes) but never returns a picture: say so plainly instead of failing at every press.
-const canDraw = (model) => isImagen(model) || /image/i.test(model);
-const NOT_DRAW = (model) => `"${model}" is a text model: it cannot make pictures. In Administration > Integrations > AI Images (Google Gemini) leave "Image model" empty (it then uses ${DEFAULT_MODEL}) or type a picture model such as ${DEFAULT_MODEL}.`;
+// exists (so the free check passes) but never returns a picture.
+function canDraw(model) { return isImagen(model) || /image/i.test(model); }
+const SWAP_NOTE = (c) => `"${c.savedModel}" (saved in Integrations) is a text model and cannot make pictures, so ${c.model} is used. You can type ${c.model} there, or leave "Image model" empty.`;
 async function status() {
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ready: true, demo: true, model: 'sample picture maker (test sandbox)', reason: '', logoInput: true };
   const c = await config();
   if (c.missingKey) return { ready: false, model: c.model, reason: 'The saved Gemini key cannot be read on this server (the encryption key changed). An Admin must enter it again in Administration > Integrations > AI Images (Google Gemini).' };
   if (!c.key) return { ready: false, model: c.model, reason: 'No Gemini key yet. An Admin adds it in Administration > Integrations > AI Images (Google Gemini).' };
-  if (!canDraw(c.model)) return { ready: false, model: c.model, reason: NOT_DRAW(c.model) };
-  return { ready: true, model: c.model, reason: '', logoInput: !isImagen(c.model), perDay: c.perDay };
+  return { ready: true, model: c.model, reason: '', note: c.swapped ? SWAP_NOTE(c) : '', logoInput: !isImagen(c.model), perDay: c.perDay };
 }
 
 // ---- Google calls (fixed host; key in a header, never in the address or a log) --------------------------------------------------------------
@@ -88,8 +90,13 @@ async function call(url, key, body, ms = 120000) {
     const text = await r.text();
     let json = null; try { json = JSON.parse(text); } catch { json = null; }
     if (!r.ok) {
-      const msg = (json && json.error && json.error.message) || text.slice(0, 200) || `HTTP ${r.status}`;
-      const err = new AI.AiMkError(`Google said: ${msg}`, r.status === 429 ? 429 : 502, r.status === 429 ? 'provider_rate' : 'provider');
+      const full = (json && json.error && json.error.message) || text.slice(0, 200) || `HTTP ${r.status}`;
+      // Google's quota answer is a page of text: say the one thing that matters. "free_tier ... limit: 0" = the key's project has no billing,
+      // and Google's free tier makes no pictures at all.
+      const msg = r.status === 429 && /free_?tier|limit: 0\b/i.test(full)
+        ? 'Google\'s free tier makes no pictures (its limit is 0). Switch on billing for this key\'s project in Google AI Studio (aistudio.google.com > Billing / Set up billing), wait a few minutes, then try again. The key itself is fine.'
+        : r.status === 429 ? `Google's limit for this key was reached. Try again later. (${full.slice(0, 160)})` : full.slice(0, 300);
+      const err = new AI.AiMkError(r.status === 429 ? msg : `Google said: ${msg}`, r.status === 429 ? 429 : 502, r.status === 429 ? 'provider_rate' : 'provider');
       err.httpStatus = r.status;
       throw err;
     }
@@ -103,8 +110,10 @@ async function testConnection() {
   const c = await config();
   if (!c.key) return { ok: false, model: c.model, error: c.missingKey ? 'the saved key cannot be read on this server; enter it again' : 'no Gemini API key saved' };
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ok: false, model: c.model, error: 'the test sandbox makes no outside calls' };
-  if (!canDraw(c.model)) return { ok: false, model: c.model, error: NOT_DRAW(c.model) };
-  try { const m = await call(`${API}/models/${encodeURIComponent(c.model)}`, c.key, null, 20000); return { ok: true, model: m.displayName || c.model }; } catch (e) { return { ok: false, model: c.model, error: e.message }; }
+  try {
+    const m = await call(`${API}/models/${encodeURIComponent(c.model)}`, c.key, null, 20000);
+    return { ok: true, model: `${m.displayName || c.model}${c.swapped ? ` (used instead of "${c.savedModel}", a text model that cannot make pictures)` : ''}` };
+  } catch (e) { return { ok: false, model: c.model, error: e.message }; }
 }
 const refused = (why) => new AI.AiMkError(`Google would not make this picture${why ? ` (${String(why).toLowerCase().replace(/_/g, ' ')})` : ''}. Change the description and try again.`, 422, 'refused');
 async function geminiOne(c, prompt, aspect, logo) {
