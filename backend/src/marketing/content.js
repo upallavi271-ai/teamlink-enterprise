@@ -388,11 +388,13 @@ async function publishToLibrary(r, maker) {
     id, name, r.tone || null, r.cta || null, master, r.subject || null, JSON.stringify(adaptations), '[]', dept, maker.id, maker.name, now, now);
   return id;
 }
-async function decide(u, id, approve, note) {
+// edits (approve only): { texts, subject } an approver corrected before approving ("Edit & approve"). The same limits as a save apply; the channels stay.
+async function decide(u, id, approve, note, edits) {
   await ensure();
   const g = await getRow(u, id);
   if (!g) return { error: 'This content was not found.', status: 404 };
-  const { r, set } = g;
+  const { set } = g;
+  let { r } = g;
   if (r.status !== 'waiting') return { error: 'This content is not waiting for approval.', status: 409 };
   if (!canApprove(u, r, set)) {
     return { error: r.createdById === u.id ? 'You cannot approve your own content. Another approver (a Team Lead of the department, or an Admin) has to do it.' : 'Only an Admin, or a Team Lead of this department, can approve this content.', status: 403 };
@@ -401,6 +403,17 @@ async function decide(u, id, approve, note) {
   if (!approve && words.length < 5) return { error: 'Write a few words so the person knows what to change.', status: 400 };
   const now = Date.now();
   const self = r.createdById === u.id;
+  let edited = false;
+  if (approve && edits && typeof edits === 'object' && (edits.texts !== undefined || edits.subject !== undefined)) {
+    const f = cleanItem({ texts: edits.texts, subject: edits.subject }, r);
+    if (f.error) return f;
+    const before = JSON.stringify([parse(r.texts, {}), r.subject || '']);
+    if (JSON.stringify([f.texts, f.subject || '']) !== before) {
+      await S.run(`UPDATE "${TABLE}" SET texts = ?, subject = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(f.texts), f.subject || null, now, r.id);
+      r = { ...r, texts: JSON.stringify(f.texts), subject: f.subject || null };
+      edited = true;
+    }
+  }
   if (approve) {
     const libraryId = await publishToLibrary(r, { id: r.createdById || u.id, name: r.createdByName || u.name });
     await S.run(`UPDATE "${TABLE}" SET status = 'approved', note = ?, decidedAt = ?, decidedById = ?, decidedByName = ?, selfApproved = ?, libraryId = ?, updatedAt = ? WHERE id = ?`, words || null, now, u.id, S.clip(u.name, 80), self ? 1 : 0, libraryId, now, r.id);
@@ -409,11 +422,11 @@ async function decide(u, id, approve, note) {
   }
   if (r.createdById && !self) {
     await notifyUsers([r.createdById], approve
-      ? { title: `AI content "${S.clip(r.title, 60)}" was approved`, message: `${S.clip(u.name, 60)} approved it${words ? `: ${words}` : ''}. It is now in the Content Library for campaigns.` }
+      ? { title: `AI content "${S.clip(r.title, 60)}" was approved${edited ? ' with changes' : ''}`, message: `${S.clip(u.name, 60)} approved it${edited ? ' after changing some words (open it to see the final text)' : ''}${words ? `: ${words}` : ''}. It is now in the Content Library for campaigns.` }
       : { title: `AI content "${S.clip(r.title, 60)}" needs changes`, message: `${S.clip(u.name, 60)} sent it back: ${words}` });
   }
-  await logAudit({ userId: u.id, actorName: u.name, action: approve ? (self ? 'Omni-Channel AI Marketing: content self-approved by an Admin' : 'Omni-Channel AI Marketing: content approved') : 'Omni-Channel AI Marketing: content sent back', entity: TABLE, entityId: r.id, toValue: approve ? `${r.title}; now in the Content Library` : `${r.title}: ${words}` });
-  return { ok: approve ? 'Approved. It is now in the Content Library, ready for campaigns.' : 'Sent back with your note.', item: view(u, await row(r.id), set) };
+  await logAudit({ userId: u.id, actorName: u.name, action: approve ? (self ? 'Omni-Channel AI Marketing: content self-approved by an Admin' : (edited ? 'Omni-Channel AI Marketing: content edited and approved by the approver' : 'Omni-Channel AI Marketing: content approved')) : 'Omni-Channel AI Marketing: content sent back', entity: TABLE, entityId: r.id, toValue: approve ? `${r.title}; now in the Content Library${edited ? '; words changed by the approver' : ''}` : `${r.title}: ${words}` });
+  return { ok: approve ? (edited ? 'Approved with your changes. It is now in the Content Library, ready for campaigns.' : 'Approved. It is now in the Content Library, ready for campaigns.') : 'Sent back with your note.', edited, item: view(u, await row(r.id), set) };
 }
 
-module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), getRow, view, mayWrite, finish, flagsOf };
+module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n, e) => decide(u, id, true, n, e), reject: (u, id, n) => decide(u, id, false, n), getRow, view, mayWrite, finish, flagsOf };
