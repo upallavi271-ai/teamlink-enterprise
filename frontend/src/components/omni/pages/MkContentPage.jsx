@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, Tag, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { useMkMeta, MkStatus, AiBanner, TextsEditor, aiLabel } from '../marketing/mk.jsx';
+import { useMkMeta, MkStatus, AiBanner, TextsEditor, aiLabel, aiReady } from '../marketing/mk.jsx';
 
 // AI MARKETING > AI CONTENT (module 1): a short brief -> up to three versions per channel in the brand voice -> pick / edit / rewrite one message ->
 // save -> ask for approval. Only approved words reach the Content Library (and so the campaign screens). Nothing is sent or posted from here.
@@ -27,10 +27,16 @@ export default function MkContentPage() {
   const [del, setDel] = useState(null);
   const edRef = useRef(null);
 
-  const load = useCallback(() => omni.get('/gs/marketing/items').then(setList).catch((e) => setMsg(errOf(e, 'The saved content could not be read.'))), []);
-  useEffect(() => { load(); omni.get('/gs/marketing/brand').then((b) => setBrand(b.brand)).catch(() => setBrand({ brandName: '', avoidWords: [] })); }, [load]);
+  const [loadErr, setLoadErr] = useState('');
+  const load = useCallback(() => omni.get('/gs/marketing/items').then((l) => { setList(l); setLoadErr(''); }).catch((e) => setLoadErr(errOf(e, 'The saved content could not be read.'))), []);
+  // a failed read is said as a failure: it is never shown as "the brand voice is not set" or as an empty list
+  const loadBrand = useCallback(() => omni.get('/gs/marketing/brand').then((b) => setBrand(b.brand)).catch((e) => setLoadErr(errOf(e, 'The brand voice could not be read.'))), []);
+  useEffect(() => { load(); loadBrand(); }, [load, loadBrand]);
   if (err) return <Banner tone="error">{err}</Banner>;
-  if (!meta || !brand || !list) return <div className="card panel">Loading…</div>;
+  if (!meta || !brand || !list) {
+    if (loadErr) return <Banner tone="error">{loadErr} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => { setLoadErr(''); if (!list) load(); if (!brand) loadBrand(); }}>Try again</button></Banner>;
+    return <div className="card panel">Loading…</div>;
+  }
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const toggle = (k) => setForm({ ...form, channels: form.channels.includes(k) ? form.channels.filter((x) => x !== k) : [...form.channels, k] });
@@ -102,6 +108,7 @@ export default function MkContentPage() {
       <AiBanner ai={meta.ai} />
       {!brand.brandName && <Banner tone="warn"><b>The brand voice is not set yet.</b> The AI writes in it, so set it first. <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => go('mkbrand')}>Set up the brand voice →</button></Banner>}
       {msg ? <Banner tone="error">{msg}</Banner> : null}
+      {loadErr ? <Banner tone="error">{loadErr} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => { setLoadErr(''); load(); }}>Try again</button></Banner> : null}
 
       <div className="mk-two">
         <Panel title="1 · The brief" sub={brand.brandName ? `Writing for ${brand.brandName}` : undefined}>
@@ -118,8 +125,8 @@ export default function MkContentPage() {
             </Field>
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <Btn primary disabled={busyGen || !meta.canWrite || form.brief.trim().length < 10 || !form.channels.length || !brand.brandName} onClick={write}>{busyGen ? 'Writing…' : '✦ Write with AI'}</Btn>
-            <span style={{ fontSize: 10, color: 'var(--muted)' }}>{form.brief.trim().length < 10 ? 'Write at least a sentence.' : !form.channels.length ? 'Pick at least one channel.' : ''}</span>
+            <Btn primary disabled={busyGen || !meta.canWrite || form.brief.trim().length < 10 || !form.channels.length || !brand.brandName || !aiReady(meta.ai)} onClick={write}>{busyGen ? 'Writing…' : '✦ Write with AI'}</Btn>
+            <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!meta.canWrite ? 'Your login can read AI content, not write it.' : !brand.brandName ? 'Set up the brand voice first.' : !aiReady(meta.ai) ? 'The AI is not ready: see the red note above.' : form.brief.trim().length < 10 ? 'Write at least a sentence.' : !form.channels.length ? 'Pick at least one channel.' : ''}</span>
           </div>
         </Panel>
 

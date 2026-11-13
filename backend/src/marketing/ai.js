@@ -51,7 +51,14 @@ register('text', {
   },
   async json(system, prompt) {
     const aiLib = require('../utils/ai'); // eslint-disable-line global-require
-    try { return await aiLib.chatJson(system, [{ role: 'user', content: prompt }], { maxTokens: 4000 }); } catch (e) { throw new AiMkError(e.message || 'The AI model did not answer.', e.status || 503, e.code || 'unavailable'); }
+    let out;
+    try { out = await aiLib.chatJson(system, [{ role: 'user', content: prompt }], { maxTokens: 4000 }); } catch (e) { throw new AiMkError(e.message || 'The AI model did not answer.', e.status || 503, e.code || 'unavailable'); }
+    // utils/ai.js answers an unreadable reply with the assistant's "clarify" object instead of throwing. No marketing prompt asks for an `action`,
+    // so that object here means the model's words could not be read: a failed call (logged as failed, not counted against the daily limit).
+    if (!out || (out.action === 'clarify' && Object.keys(out).every((k) => ['action', 'params', 'summary'].includes(k)))) {
+      throw new AiMkError('The AI answer could not be read. Try again: if it keeps happening, make the brief shorter.', 502, 'unreadable');
+    }
+    return out;
   },
   async text(system, prompt) {
     const aiLib = require('../utils/ai'); // eslint-disable-line global-require

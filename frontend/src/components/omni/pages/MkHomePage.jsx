@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import omni from '../omniApi.js';
+import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, Kpi, Kpis, Panel, Pill, Banner, fmtNum } from '../ui.jsx';
 import { useMkMeta, AiBanner } from '../marketing/mk.jsx';
@@ -9,8 +9,12 @@ export default function MkHomePage() {
   const { go } = useOmni();
   const { meta, err } = useMkMeta();
   const [ov, setOv] = useState(null);
-  useEffect(() => { omni.get('/gs/marketing/overview').then(setOv).catch(() => setOv({ counts: {}, usage: {}, brandReady: false })); }, []);
+  const [ovErr, setOvErr] = useState('');
+  // a failed read is shown as a failure, never as a page of zeros
+  const loadOv = () => { setOvErr(''); omni.get('/gs/marketing/overview').then(setOv).catch((e) => setOvErr(errOf(e, 'The AI Marketing numbers could not be read.'))); };
+  useEffect(loadOv, []); // eslint-disable-line react-hooks/exhaustive-deps
   if (err) return <Banner tone="error">{err}</Banner>;
+  if (ovErr && !ov) return <Banner tone="error">{ovErr} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={loadOv}>Try again</button></Banner>;
   if (!meta || !ov) return <div className="card panel">Loading…</div>;
   const c = ov.counts || {}; const u = ov.usage || {};
   const started = (c.draft || 0) + (c.waiting || 0) + (c.changes || 0) + (c.approved || 0) > 0;

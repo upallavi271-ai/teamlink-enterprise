@@ -28,9 +28,17 @@ export function AiBanner({ ai }) {
   const t = ai && (ai.text || ai);
   if (!t) return null;
   if (t.demo) return <Banner tone="test"><b>Test sandbox.</b> The AI here is an offline sample writer: it builds simple example messages from your brief and sends nothing anywhere. The live app uses the real AI model.</Banner>;
-  if (!t.ready) return <Banner tone="error"><b>AI is not ready.</b> {t.reason || 'The AI model is not connected.'} An Admin can connect it in Administration &gt; Integrations &gt; AI Assistant.</Banner>;
+  if (!t.ready) {
+    // the advice depends on which model the server uses: Claude's own reason already says where its key goes
+    const how = t.provider === 'claude' ? ''
+      : t.provider === 'ollama' ? ' The server uses the local AI (Ollama): start it on the server, or an Admin can switch the server to Claude (AI_PROVIDER=claude) and add the key in Administration > Integrations > AI Assistant.'
+        : ' An Admin can connect it in Administration > Integrations > AI Assistant.';
+    return <Banner tone="error"><b>AI is not ready.</b> {t.reason || 'The AI model is not connected.'}{how}</Banner>;
+  }
   return null;
 }
+// true when "Write with AI" can work: a real model is ready, or the sandbox sample writer is in use
+export const aiReady = (ai) => { const t = ai && (ai.text || ai); return !t || !!t.ready || !!t.demo; };
 export const aiLabel = (ai) => (!ai ? '' : ai.demo ? 'Sample writer (test sandbox)' : `${ai.provider || 'AI'}${ai.model ? ` · ${ai.model}` : ''}`);
 
 // one editable text per channel (texts = { channel: text }); `channels` come from the meta (key, label, icon, color, limit, hint)
