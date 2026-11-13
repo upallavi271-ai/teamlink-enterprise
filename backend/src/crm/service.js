@@ -97,7 +97,7 @@ async function pickOwner(user, r, wanted) {
 // fields a person may write, with their kind ('s' text, 'n' number, 'i' integer, 'd' date, 'L' long text)
 const KINDS = {
   lead: { table: 'CrmLead', label: 'Lead', name: 'company', fields: { company: 's', contactName: 's', designation: 's', phone: 's', email: 's', industry: 's', city: 's', source: 's', status: 's', rating: 's', notes: 'L', expectedValue: 'n' } },
-  account: { table: 'CrmAccount', label: 'Account', name: 'name', fields: { name: 's', industry: 's', city: 's', website: 's', phone: 's', email: 's', source: 's', notes: 'L' } },
+  account: { table: 'CrmAccount', label: 'Account', name: 'name', fields: { name: 's', industry: 's', city: 's', website: 's', phone: 's', email: 's', source: 's', gstin: 's', address: 'L', state: 's', pincode: 's', tags: 's', notes: 'L' } },
   contact: { table: 'CrmContact', label: 'Contact', name: 'name', fields: { accountId: 's', name: 's', designation: 's', role: 's', phone: 's', email: 's', notes: 'L' } },
   deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', discountPercent: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
 };
@@ -168,6 +168,39 @@ async function update(table, id, data) {
   return DB.one(`SELECT * FROM "${table}" WHERE "id" = ?`, id);
 }
 const audit = (user, action, entity, entityId, toValue, reason) => logAudit({ userId: user.id, actorName: user.name || null, action, entity, entityId, toValue: toValue ? String(toValue).slice(0, 300) : undefined, reason }).catch(() => {});
+
+// ---- human-readable codes (founder 2026-11-13): L-0001 lead, D-0001 deal, C-0001 customer -------------
+// The running number is kept in AppSetting 'crm.seq'; old rows get a code once (backfillCodes).
+const CODE_PREFIX = { lead: 'L', deal: 'D', account: 'C' };
+const SEQ_KEY = 'crm.seq';
+async function nextCodes(kind, n = 1) {
+  const prefix = CODE_PREFIX[kind];
+  if (!prefix || n < 1) return [];
+  const row = await prisma.appSetting.findUnique({ where: { key: SEQ_KEY } }).catch(() => null);
+  let seq = {}; try { seq = row && row.value ? JSON.parse(row.value) : {}; } catch { seq = {}; }
+  const start = Number(seq[kind]) || 0;
+  const out = [];
+  for (let i = 1; i <= n; i += 1) out.push(`${prefix}-${String(start + i).padStart(4, '0')}`);
+  seq[kind] = start + n;
+  const v = JSON.stringify(seq);
+  await prisma.appSetting.upsert({ where: { key: SEQ_KEY }, create: { key: SEQ_KEY, value: v }, update: { value: v } });
+  return out;
+}
+let codesBackfilled = false;
+async function backfillCodes() {
+  if (codesBackfilled) return;
+  for (const kind of ['lead', 'deal', 'account']) {
+    const table = KINDS[kind].table;
+    // eslint-disable-next-line no-await-in-loop
+    const rows = await DB.all(`SELECT "id" FROM "${table}" WHERE "code" IS NULL ORDER BY "createdAt", "id"`).catch(() => []);
+    if (!rows.length) continue; // eslint-disable-line no-continue
+    // eslint-disable-next-line no-await-in-loop
+    const codes = await nextCodes(kind, rows.length);
+    // eslint-disable-next-line no-await-in-loop
+    for (let i = 0; i < rows.length; i += 1) await DB.run(`UPDATE "${table}" SET "code" = ? WHERE "id" = ?`, codes[i], rows[i].id);
+  }
+  codesBackfilled = true;
+}
 
 // ---- duplicate check ----------------------------------------------------------------------------------
 const normCo = (s) => String(s || '').toLowerCase().replace(/\b(private|pvt|limited|ltd|llp|inc|india|technologies|technology|solutions|services|the)\b/g, '').replace(/[^a-z0-9]/g, '');
@@ -311,8 +344,9 @@ async function create(user, kind, body = {}) {
     row.finalValue = finalValueOf(row);
     row.approvalStatus = await approvalFor(row, null);
   }
+  if (CODE_PREFIX[kind]) { const [code] = await nextCodes(kind, 1); if (code) row.code = code; }
   const saved = await insert(KINDS[kind].table, row);
-  await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, saved[KINDS[kind].name]);
+  await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, `${saved.code ? `${saved.code} · ` : ''}${saved[KINDS[kind].name]}`);
   return okBody({ ok: true, [kind]: saved });
 }
 
@@ -642,6 +676,7 @@ function ticketLists() {
 async function me(user) {
   const r = roleOf(user);
   if (!r) return fail(403, 'The CRM is for the sales team. Ask an Admin to add you to the sales team (CRM settings).');
+  await backfillCodes().catch(() => {}); // old records get their L-/D-/C- code once
   const st = await SETTINGS.load();
   return okBody({
     userId: user.id, name: user.name || '',

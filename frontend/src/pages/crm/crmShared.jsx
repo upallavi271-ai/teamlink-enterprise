@@ -93,6 +93,9 @@ function fieldsFor(kind, me) {
     return [
       { k: 'name', label: 'Company name *' }, { k: 'industry', label: 'Industry' }, { k: 'city', label: 'City' }, { k: 'website', label: 'Website' },
       { k: 'phone', label: 'Phone', type: 'tel' }, { k: 'email', label: 'Email', type: 'email' }, { k: 'source', label: 'Source', type: 'select', options: L.sources },
+      { k: 'gstin', label: 'GSTIN' }, { k: 'state', label: 'State' }, { k: 'pincode', label: 'Pincode' },
+      { k: 'address', label: 'Address', type: 'textarea', wide: true },
+      { k: 'tags', label: 'Tags', hint: 'Comma-separated, e.g. VIP, Repeat' },
       { k: 'notes', label: 'Notes', type: 'textarea', wide: true },
     ];
   }
@@ -613,7 +616,8 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           ...(row.approvalStatus && row.approvalStatus !== 'None' ? [['Discount approval', <Pill v={row.approvalStatus} />]] : []),
           ['Probability', `${row.probability}%`],
           ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : [])]
-        : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['Type', row.kind === 'Client' ? 'Customer' : 'Prospect']];
+        : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['GSTIN', row.gstin], ['State', row.state], ['Pincode', row.pincode], ['Address', row.address],
+          ['Tags', row.tags ? row.tags.split(',').map((t) => t.trim()).filter(Boolean).map((t, i) => <Pill key={i} v={t} />) : null], ['Type', row.kind === 'Client' ? 'Customer' : 'Prospect']];
     const info = [
       ...about,
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
@@ -628,6 +632,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           <div style={{ flex: 1, minWidth: 200 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <h2 className="crm-rec-title">{name}</h2>
+              {row.code && <span className="small-muted" style={{ fontWeight: 700, fontFamily: 'monospace' }}>{row.code}</span>}
               <Pill v={kindPill} />
               {kind === 'deal' && stale > 0 && <span className="status overdue" title={`Nothing logged for ${stale} days`}>💤 {stale} days quiet</span>}
             </div>

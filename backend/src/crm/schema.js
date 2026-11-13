@@ -183,6 +183,9 @@ const COLUMNS = [
   // Deal commercials + discount approval (founder 2026-11-13, the 5-module CRM blueprint)
   ['CrmDeal', 'discountPercent', 'REAL'], ['CrmDeal', 'finalValue', 'REAL'],
   ['CrmDeal', 'approvalStatus', 'TEXT'], ['CrmDeal', 'approvalByName', 'TEXT'], ['CrmDeal', 'approvalAt', 'TEXT'], ['CrmDeal', 'approvalNote', 'TEXT'],
+  // Customer master fields + human-readable codes (founder 2026-11-13, the 5-module blueprint)
+  ['CrmAccount', 'gstin', 'TEXT'], ['CrmAccount', 'address', 'TEXT'], ['CrmAccount', 'state', 'TEXT'], ['CrmAccount', 'pincode', 'TEXT'], ['CrmAccount', 'tags', 'TEXT'],
+  ['CrmLead', 'code', 'TEXT'], ['CrmDeal', 'code', 'TEXT'], ['CrmAccount', 'code', 'TEXT'],
 ];
 const INDEXES = [
   'CREATE INDEX IF NOT EXISTS "CrmLead_phone" ON "CrmLead"("phone")', 'CREATE INDEX IF NOT EXISTS "CrmLead_email" ON "CrmLead"("email")', 'CREATE INDEX IF NOT EXISTS "CrmLead_stage" ON "CrmLead"("stage")',
