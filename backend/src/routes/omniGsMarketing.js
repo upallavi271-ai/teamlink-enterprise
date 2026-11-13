@@ -98,7 +98,9 @@ router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, 
 
 // ---- AI images (marketing/images.js): Google Gemini pictures, approved before use --------------------------------------------------------------
 router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.user))));
-router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || '') }))));
+router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' }))));
+// AI Video: the slideshow made in the browser arrives as raw MP4 / WebM bytes (up to 40 MB); the details come in the address
+router.post('/images/video', mustWrite, express.raw({ type: ['video/mp4', 'video/webm'], limit: '41mb' }), wrap(async (req, res) => send(res, await Img.saveVideo(req.user, req.body, req.headers['content-type'], req.query || {}))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
 // the background job of one "Make pictures" press (marketing/images.js create): the screen asks every few seconds until it is done
 router.get('/images/jobs/:id', mustWrite, wrap(async (req, res) => send(res, Img.getJob(req.user, req.params.id))));

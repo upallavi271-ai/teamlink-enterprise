@@ -131,11 +131,11 @@ export default function MkApprovePage() {
         ), true))}
       </Panel>
       {picsMine.length > 0 && (
-        <Panel title="Pictures waiting for you" sub={`${picsMine.length} AI picture${picsMine.length === 1 ? '' : 's'} · check faces, hands and spelling before you approve`} style={{ marginTop: 14 }}>
+        <Panel title="Pictures and videos waiting for you" sub={`${picsMine.length} waiting · check faces, hands, spelling and watermarks before you approve`} style={{ marginTop: 14 }}>
           <div className="mki-grid">
             {picsMine.map((p) => (
               <div key={p.id} className="card mki-card">
-                <MkImg id={p.id} alt={p.title} style={{ aspectRatio: p.aspect.replace(':', ' / ') }} />
+                <MkImg id={p.id} alt={p.title} video={p.kind === 'video'} style={{ aspectRatio: p.aspect.replace(':', ' / '), ...(p.kind === 'video' ? { objectFit: 'contain', background: '#000' } : {}) }} />
                 <b style={{ fontSize: 11.5, marginTop: 6 }}>{p.title}</b>
                 <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>By {p.createdByName}{p.headline ? ` · “${p.headline}”` : ''}{p.demo ? ' · sandbox sample' : ''}</small>
                 <small style={{ fontSize: 9.5 }}>Asked for: {p.prompt}</small>
@@ -152,7 +152,7 @@ export default function MkApprovePage() {
       {picBack ? (
         <GsModal title={`Send back "${picBack.title}"`} sub="Say what to change. They can make a new picture and ask again." width={460} onClose={() => setPicBack(null)}
           foot={<><Btn onClick={() => setPicBack(null)}>Cancel</Btn><Btn primary disabled={picNote.trim().length < 5 || busy === picBack.id} onClick={sendBackPic}>Send back</Btn></>}>
-          <div className="mk-revise" style={{ marginBottom: 8 }}>{['The faces or hands look wrong.', 'The words on it are misspelt.', 'Not our brand colours.', 'Use a different scene.'].map((r) => <TinyBtn key={r} onClick={() => setPicNote((n) => (n.includes(r) ? n : `${n ? `${n.trim()} ` : ''}${r}`).slice(0, 300))}>{r.replace(/\.$/, '')}</TinyBtn>)}</div>
+          <div className="mk-revise" style={{ marginBottom: 8 }}>{['The faces or hands look wrong.', 'The words on it are misspelt.', 'It has a watermark or a stock-site mark.', 'Not our brand colours.', 'Use a different scene.'].map((r) => <TinyBtn key={r} onClick={() => setPicNote((n) => (n.includes(r) ? n : `${n ? `${n.trim()} ` : ''}${r}`).slice(0, 300))}>{r.replace(/\.$/, '')}</TinyBtn>)}</div>
           <textarea autoFocus style={{ width: '100%', minHeight: 90, border: '1px solid var(--line)', borderRadius: 10, padding: 11, font: 'inherit', fontSize: 12.5 }} value={picNote} maxLength={300} onChange={(e) => setPicNote(e.target.value)} />
         </GsModal>
       ) : null}

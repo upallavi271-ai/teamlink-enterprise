@@ -82,7 +82,8 @@ export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf
 }
 
 // an AI picture shown in the app: fetched with the login (an <img src> cannot carry it) and shown from a blob address that is freed afterwards
-export function MkImg({ id, alt, style, onClick }) {
+// video = true for an AI Video slideshow (shown with the player's controls; `muted` thumbnails in pickers)
+export function MkImg({ id, alt, style, onClick, video, controls = true }) {
   const [src, setSrc] = useState('');
   const [bad, setBad] = useState(false);
   useEffect(() => {
@@ -94,6 +95,7 @@ export function MkImg({ id, alt, style, onClick }) {
   const box = { background: '#f1f5f2', borderRadius: 10, display: 'block', width: '100%', objectFit: 'cover', ...style };
   if (bad) return <div style={{ ...box, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--muted)', minHeight: 80 }}>Picture not found</div>;
   if (!src) return <div style={{ ...box, minHeight: 80 }} aria-busy="true" />;
+  if (video) return <video src={src} style={box} controls={controls} muted={!controls} playsInline preload="metadata" aria-label={alt || 'Video'} onClick={onClick} />; // eslint-disable-line jsx-a11y/media-has-caption
   return <img src={src} alt={alt || ''} style={box} onClick={onClick} />;
 }
 export async function downloadMkImg(id, name) {

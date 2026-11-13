@@ -37,7 +37,11 @@ async function ensure() {
   try { for (const sql of DDL) await S.run(sql); await AI.ensure(); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] images schema:', e.message); return false; } // eslint-disable-line no-await-in-loop, no-console
 }
 const dir = () => path.join(process.env.UPLOAD_DIR || path.join(os.homedir() || os.tmpdir(), '.teamlink-uploads'), 'mk-images');
-const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
+// AI Video (2026-11-13) keeps its slideshow videos in this same table and flow (approval, public link, calendar): the kind is told by the mime type
+const EXT = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'video/mp4': 'mp4', 'video/webm': 'webm' };
+const isVideo = (r) => /^video\//.test(String(r && r.mime || ''));
+const what = (r) => (isVideo(r) ? 'video' : 'AI picture');
+const VIDEO_MAX_BYTES = 40 * 1024 * 1024;
 
 // ---- choices ------------------------------------------------------------------------------------------------------------------------
 const STYLES = {
@@ -287,6 +291,7 @@ const publicPath = (r) => `/api/mk-image/${r.id}/${sign(r.id)}.${EXT[r.mime] || 
 function view(u, r, set) {
   return {
     id: r.id, title: r.title, prompt: r.prompt, headline: r.headline || '', style: r.style || '', aspect: r.aspect || '1:1', model: r.model || '', withLogo: S.num(r.withLogo) === 1,
+    mime: r.mime, kind: isVideo(r) ? 'video' : 'image',
     bytes: S.num(r.bytes), demo: S.num(r.demo) === 1, status: r.status, note: r.note || '', department: r.department || '', createdByName: r.createdByName || '', mine: r.createdById === u.id,
     createdAt: S.iso(r.createdAt), submittedAt: S.iso(r.submittedAt), decidedAt: S.iso(r.decidedAt), decidedByName: r.decidedByName || '', selfApproved: S.num(r.selfApproved) === 1,
     publicPath: r.status === 'approved' ? publicPath(r) : null,
@@ -297,10 +302,12 @@ function view(u, r, set) {
 const row = async (id) => (await S.q(`SELECT * FROM "${TABLE}" WHERE id = ?`, String(id || '')))[0] || null;
 async function getRow(u, id) { await ensure(); const r = await row(id); const set = await Cfg.getSettings(); return r && visible(u, r, set) ? { r, set } : null; }
 
-async function list(u, { status: st = '' } = {}) {
+// kind: '' = pictures and videos, 'image' = AI pictures only, 'video' = slideshow videos only
+async function list(u, { status: st = '', kind = '' } = {}) {
   await ensure();
   const set = await Cfg.getSettings();
-  const rows = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT 600`)).filter((r) => visible(u, r, set) && (!st || r.status === st));
+  const rows = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT 600`))
+    .filter((r) => visible(u, r, set) && (!st || r.status === st) && (!kind || (kind === 'video') === isVideo(r)));
   return { items: rows.map((r) => view(u, r, set)), canWrite: mayWrite(u) };
 }
 async function meta(u) {
@@ -439,6 +446,32 @@ async function produce(u, x) {
   return { items: rows.map((r) => view(u, r, set)), demo: !!st.demo, ms: Date.now() - t0, note };
 }
 
+// ---- AI Video: a slideshow video made in the browser (MkVideosPage.jsx) and saved here; from then on it is approved and linked like a picture ----------
+// q: { title, aspect, scenes (how many pictures), seconds, logo ('1' = carries the logo), department }. Only MP4 / WebM, checked by its first bytes.
+async function saveVideo(u, buf, mime, q = {}) {
+  await ensure();
+  if (!mayWrite(u)) return { error: 'Your login can look at videos but not make them.', status: 403 };
+  const type = String(mime || '').split(';')[0].trim().toLowerCase();
+  if (!['video/mp4', 'video/webm'].includes(type)) return { error: 'Only MP4 or WebM videos can be saved.', status: 400 };
+  if (!Buffer.isBuffer(buf) || buf.length < 1000) return { error: 'The video is empty. Make it again.', status: 400 };
+  if (buf.length > VIDEO_MAX_BYTES) return { error: `The video is too big (${Math.round(buf.length / 1048576)} MB). Use fewer pictures or a shorter time per picture.`, status: 413 };
+  const looks = type === 'video/mp4' ? buf.slice(4, 8).toString('ascii') === 'ftyp' : buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
+  if (!looks) return { error: 'That file is not really an MP4 / WebM video.', status: 400 };
+  const aspect = ASPECTS.some((a) => a.key === q.aspect) ? q.aspect : '1:1';
+  const title = S.clip(q.title, 80) || 'Slideshow video';
+  const scenes = Math.max(0, Math.min(20, Number(q.scenes) || 0));
+  const seconds = Math.max(0, Math.min(300, Number(q.seconds) || 0));
+  const dept = S.clip(q.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
+  fs.mkdirSync(dir(), { recursive: true });
+  const id = S.newId('vid'); const file = `${id}.${EXT[type]}`; const ts = Date.now();
+  fs.writeFileSync(path.join(dir(), file), buf);
+  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'draft',?,?,?,?,?)`,
+    id, title, `Slideshow of ${scenes} picture${scenes === 1 ? '' : 's'}, ${seconds} seconds`, S.clip(q.headline, 80) || null, 'video', aspect, 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${scenes} picture(s); ${seconds}s; ${Math.round(buf.length / 1024)} KB` });
+  const set = await Cfg.getSettings();
+  return { item: view(u, await row(id), set) };
+}
+
 // ---- the file (signed-in, any status the person may see) ----------------------------------------------------------------------------------
 async function file(u, id) {
   const g = await getRow(u, id);
@@ -474,7 +507,7 @@ async function remove(u, id) {
   if (r.status === 'waiting') return { error: 'It is waiting for approval. Ask the approver to send it back first.', status: 409 };
   await S.run(`UPDATE "${TABLE}" SET deletedAt = ? WHERE id = ?`, Date.now(), r.id);
   try { fs.unlinkSync(path.join(dir(), path.basename(r.file))); } catch { /* already gone */ }
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI picture deleted', entity: TABLE, entityId: r.id, toValue: r.title });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: ${what(r)} deleted`, entity: TABLE, entityId: r.id, toValue: r.title });
   return { ok: true };
 }
 async function submit(u, id) {
@@ -491,8 +524,8 @@ async function submit(u, id) {
     const users = await prisma.user.findMany({ where: { status: 'Active', OR: [{ role: { in: ['SUPER_ADMIN', 'ADMIN', 'TL', 'STL'] } }, { atsRole: { in: ['SUPER_ADMIN', 'ADMIN', 'TL', 'STL'] } }] }, select: { id: true }, take: 120 });
     for (const x of users.filter((y) => y.id !== u.id)) { let ident = null; try { ident = await resolveIdentity(x.id); } catch { ident = null; } if (ident && canApprove(ident, r, set)) ids.push(x.id); } // eslint-disable-line no-await-in-loop
   } catch { ids = []; }
-  if (ids.length) await notifyUsers(ids, { title: `AI picture "${S.clip(r.title, 60)}" needs your approval`, message: `${S.clip(u.name, 60)} asked for approval. Open Omni-Channel > AI Marketing > Approvals.` });
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI picture sent for approval', entity: TABLE, entityId: r.id, toValue: `${r.title}; ${ids.length} approver(s) told` });
+  if (ids.length) await notifyUsers(ids, { title: `${isVideo(r) ? 'Video' : 'AI picture'} "${S.clip(r.title, 60)}" needs your approval`, message: `${S.clip(u.name, 60)} asked for approval. Open Omni-Channel > AI Marketing > Approvals.` });
+  await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: ${what(r)} sent for approval`, entity: TABLE, entityId: r.id, toValue: `${r.title}; ${ids.length} approver(s) told` });
   return { ok: ids.length ? 'Sent for approval. The approvers have been told.' : 'Sent for approval. No approver could be told by notice: ask an Admin to open Approvals.', item: view(u, await row(r.id), set) };
 }
 async function decide(u, id, approve, note) {
@@ -504,12 +537,13 @@ async function decide(u, id, approve, note) {
   if (!approve && words.length < 5) return { error: 'Write a few words so the person knows what to change.', status: 400 };
   const now = Date.now(); const self = r.createdById === u.id;
   await S.run(`UPDATE "${TABLE}" SET status = ?, note = ?, decidedAt = ?, decidedById = ?, decidedByName = ?, selfApproved = ?, updatedAt = ? WHERE id = ?`, approve ? 'approved' : 'changes', words || null, now, u.id, S.clip(u.name, 80), approve && self ? 1 : 0, now, r.id);
-  if (r.createdById && !self) await notifyUsers([r.createdById], approve ? { title: `AI picture "${S.clip(r.title, 60)}" was approved`, message: `${S.clip(u.name, 60)} approved it${words ? `: ${words}` : ''}. It can now be used in the Content Calendar and downloaded for posts.` } : { title: `AI picture "${S.clip(r.title, 60)}" needs changes`, message: `${S.clip(u.name, 60)} sent it back: ${words}` });
-  await logAudit({ userId: u.id, actorName: u.name, action: approve ? (self ? 'Omni-Channel AI Marketing: AI picture self-approved by an Admin' : 'Omni-Channel AI Marketing: AI picture approved') : 'Omni-Channel AI Marketing: AI picture sent back', entity: TABLE, entityId: r.id, toValue: approve ? r.title : `${r.title}: ${words}` });
+  const W = isVideo(r) ? 'Video' : 'AI picture';
+  if (r.createdById && !self) await notifyUsers([r.createdById], approve ? { title: `${W} "${S.clip(r.title, 60)}" was approved`, message: `${S.clip(u.name, 60)} approved it${words ? `: ${words}` : ''}. It can now be used in the Content Calendar and downloaded for posts.` } : { title: `${W} "${S.clip(r.title, 60)}" needs changes`, message: `${S.clip(u.name, 60)} sent it back: ${words}` });
+  await logAudit({ userId: u.id, actorName: u.name, action: approve ? (self ? `Omni-Channel AI Marketing: ${what(r)} self-approved by an Admin` : `Omni-Channel AI Marketing: ${what(r)} approved`) : `Omni-Channel AI Marketing: ${what(r)} sent back`, entity: TABLE, entityId: r.id, toValue: approve ? r.title : `${r.title}: ${words}` });
   return { ok: approve ? 'Approved. It can now be used in the Content Calendar.' : 'Sent back with your note.', item: view(u, await row(r.id), set) };
 }
 
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, file, publicFile, update, remove, submit,
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng,
 };

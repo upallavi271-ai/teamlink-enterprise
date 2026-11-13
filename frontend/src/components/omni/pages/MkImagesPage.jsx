@@ -35,7 +35,7 @@ export default function MkImagesPage() {
   const load = useCallback(() => {
     setErr('');
     omni.get('/gs/marketing/images/meta').then(setMeta).catch((e) => setErr(errOf(e, 'AI Images could not be opened.')));
-    omni.get('/gs/marketing/images').then((d) => setList(d.items || [])).catch((e) => setErr(errOf(e, 'The pictures could not be read.')));
+    omni.get('/gs/marketing/images', { kind: 'image' }).then((d) => setList(d.items || [])).catch((e) => setErr(errOf(e, 'The pictures could not be read.')));
   }, []);
   useEffect(() => { load(); }, [load]);
   if (err && (!meta || !list)) return <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Try again</button></Banner>;

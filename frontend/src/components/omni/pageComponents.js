@@ -44,6 +44,7 @@ export const PAGE_COMPONENTS = {
   mkhome: lazy(() => import('./pages/MkHomePage.jsx')),
   mkcontent: lazy(() => import('./pages/MkContentPage.jsx')),
   mkimages: lazy(() => import('./pages/MkImagesPage.jsx')),
+  mkvideos: lazy(() => import('./pages/MkVideosPage.jsx')),
   mkapprove: lazy(() => import('./pages/MkApprovePage.jsx')),
   mkcalendar: lazy(() => import('./pages/MkCalendarPage.jsx')),
   mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),

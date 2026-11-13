@@ -254,9 +254,9 @@ function EntryModal({ ed, setEd, plats, busy, canWrite, onSave, onClose, onPoste
         <Field label="PICTURE OR VIDEO LINK (OPTIONAL)" full>
           <input value={ed.mediaUrl} maxLength={500} disabled={!edit} onChange={(e) => setEd({ ...ed, mediaUrl: e.target.value })} placeholder="https://…" />
           {edit ? (
-            pics === null ? <div style={{ marginTop: 6 }}><TinyBtn onClick={loadPics}>◩ Pick an approved AI picture</TinyBtn></div>
+            pics === null ? <div style={{ marginTop: 6 }}><TinyBtn onClick={loadPics}>◩ Pick an approved AI picture or video</TinyBtn></div>
               : pics.length === 0 ? <small style={{ color: 'var(--muted)' }}>No approved AI pictures yet. Make one in AI Images and get it approved.</small>
-                : <div className="mki-pick" style={{ marginTop: 6 }}>{pics.map((p) => <button type="button" key={p.id} className={ed.mediaUrl === picUrl(p) ? 'on' : ''} title={p.title} onClick={() => setEd({ ...ed, mediaUrl: ed.mediaUrl === picUrl(p) ? '' : picUrl(p) })}><MkImg id={p.id} alt={p.title} style={{ height: '100%', borderRadius: 8 }} /></button>)}</div>
+                : <div className="mki-pick" style={{ marginTop: 6 }}>{pics.map((p) => <button type="button" key={p.id} className={ed.mediaUrl === picUrl(p) ? 'on' : ''} title={`${p.kind === 'video' ? 'Video: ' : ''}${p.title}`} onClick={() => setEd({ ...ed, mediaUrl: ed.mediaUrl === picUrl(p) ? '' : picUrl(p) })}><MkImg id={p.id} alt={p.title} video={p.kind === 'video'} controls={false} style={{ height: '100%', borderRadius: 8, ...(p.kind === 'video' ? { background: '#000' } : {}) }} /></button>)}</div>
           ) : null}
         </Field>
         <Field label="NOTE (OPTIONAL)" full><input value={ed.note} maxLength={500} disabled={!(canWrite && ed.canEdit !== false)} onChange={(e) => setEd({ ...ed, note: e.target.value })} placeholder="For example: use the photo from the Hyderabad drive" /></Field>
