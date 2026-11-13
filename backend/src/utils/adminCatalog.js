@@ -262,6 +262,13 @@ const INTEGRATION_CATALOG = [
     desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it. Every picture needs approval before it is used. Key from aistudio.google.com (picture models need billing on).',
     fields: [['Gemini API key', 'AIza...'], ['Image model', 'gemini-2.5-flash-image'], ['Pictures per person per day', '20']],
     hints: ['Image model', 'Pictures per person per day'] },
+  // REAL (2026-11-13). Cloudflare Workers AI for AI Marketing > AI Images, on Cloudflare's FREE daily allowance (no card). When both picture
+  // cards are set, this one is used (marketing/images.js). Test connection checks the token and the account (free). Get it: dash.cloudflare.com >
+  // the account ID is on the right of the account home; My Profile > API Tokens > Create Token > "Workers AI" template.
+  { id: 'ai-cloudflare', name: 'AI Images (Cloudflare Workers AI · free)', group: 'AI', glyph: '\u{2601}️',
+    desc: 'Free AI pictures for AI Marketing > AI Images from Cloudflare Workers AI (FLUX), inside Cloudflare\'s free daily allowance: no card needed. Used instead of Google Gemini when both are set. Account ID from the Cloudflare dashboard; token from My Profile > API Tokens > "Workers AI" template.',
+    fields: [['Cloudflare account ID', '32 letters and numbers'], ['Workers AI API token', ''], ['Image model', '@cf/black-forest-labs/flux-1-schnell'], ['Pictures per person per day', '20']],
+    hints: ['Cloudflare account ID', 'Image model', 'Pictures per person per day'] },
   // AI Marketing (Omni-Channel / Green Start). FIELDS ONLY for now: the values are stored here (secrets encrypted at rest, never returned
   // to the browser) so TeamLink is the one place they are typed. Green Start's AI Marketing reads ANTHROPIC_API_KEY / OPENAI_API_KEY from
   // its own server settings today; handing these values over is a separate step (utils/greenStartIntegrations.js), so this card is not
@@ -281,7 +288,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

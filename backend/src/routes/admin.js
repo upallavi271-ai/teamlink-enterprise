@@ -2718,8 +2718,8 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
   }
 
   // AI Images (Google Gemini): reads the model's details with the saved key. Free: no picture is made (marketing/images.js).
-  if (channel.id === 'ai-gemini') {
-    const probe = await require('../marketing/images').testConnection();
+  if (channel.id === 'ai-gemini' || channel.id === 'ai-cloudflare') {
+    const probe = await require('../marketing/images').testConnection(channel.id === 'ai-cloudflare' ? 'cloudflare' : 'gemini');
     const result = probe.ok ? `Model ${probe.model} is reachable with this key` : `Failed — ${probe.error}`;
     const nextRow = await prisma.integration.update({
       where: { id: channel.id },

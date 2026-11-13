@@ -53,20 +53,37 @@ const ASPECTS = [
 ];
 const IMAGEN_ASPECTS = ['1:1', '3:4', '4:3', '9:16', '16:9'];
 
-// ---- the key and the model (Administration > Integrations) ---------------------------------------------------------------------------
-async function config() {
-  let c = { values: {}, missingKey: false };
-  try { c = await require('../utils/integrationStore').readConfig(CHANNEL); } catch { /* not configured */ } // eslint-disable-line global-require
+// ---- the services and their keys (Administration > Integrations) ----------------------------------------------------------------------
+// Two picture services. Cloudflare Workers AI (free daily allowance, card 'ai-cloudflare') is used when it is set; otherwise Google Gemini ('ai-gemini').
+const CF_CHANNEL = 'ai-cloudflare';
+const CF_DEFAULT_MODEL = '@cf/black-forest-labs/flux-1-schnell';
+const CF_API = 'https://api.cloudflare.com/client/v4';
+async function readCard(id) {
+  try { return await require('../utils/integrationStore').readConfig(id); } catch { return { values: {}, missingKey: false }; } // eslint-disable-line global-require
+}
+// empty = the default 20 (the Integrations screen saves the greyed "20" hint as empty); only a typed 0 switches pictures off
+const perDayOf = (v) => { const raw = String(v['Pictures per person per day'] || '').trim(); const per = raw === '' ? 20 : Number(raw); return Number.isFinite(per) && per >= 0 ? Math.min(Math.floor(per), 500) : 20; };
+async function geminiConfig() {
+  const c = await readCard(CHANNEL);
   const v = c.values || {};
   const key = String(v['Gemini API key'] || '').trim();
   const saved = String(v['Image model'] || '').trim();
   // a Gemini TEXT model typed by mistake (e.g. gemini-2.5-flash) can never make a picture: the picture model is used instead, and the screens say so
   const swapped = !!saved && !canDraw(saved);
   const model = !saved || swapped ? DEFAULT_MODEL : saved;
-  // empty = the default 20 (the Integrations screen saves the greyed "20" hint as empty); only a typed 0 switches pictures off
-  const raw = String(v['Pictures per person per day'] || '').trim();
-  const per = raw === '' ? 20 : Number(raw);
-  return { key, model, savedModel: saved, swapped, perDay: Number.isFinite(per) && per >= 0 ? Math.min(Math.floor(per), 500) : 20, missingKey: !!c.missingKey };
+  return { provider: 'gemini', key, model, savedModel: saved, swapped, perDay: perDayOf(v), missingKey: !!c.missingKey };
+}
+async function cloudflareConfig() {
+  const c = await readCard(CF_CHANNEL);
+  const v = c.values || {};
+  const account = String(v['Cloudflare account ID'] || '').trim();
+  const key = String(v['Workers AI API token'] || '').trim();
+  const model = String(v['Image model'] || '').trim() || CF_DEFAULT_MODEL;
+  return { provider: 'cloudflare', key, account, model, perDay: perDayOf(v), missingKey: !!c.missingKey, set: !!(key || account) };
+}
+async function config() {
+  const cf = await cloudflareConfig();
+  return cf.set ? cf : geminiConfig();
 }
 function isImagen(model) { return /^imagen/i.test(model); }
 // Gemini picture models carry "image" in their name (gemini-2.5-flash-image, gemini-3-pro-image-preview ...). A text model such as gemini-2.5-flash
@@ -76,9 +93,16 @@ const SWAP_NOTE = (c) => `"${c.savedModel}" (saved in Integrations) is a text mo
 async function status() {
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ready: true, demo: true, model: 'sample picture maker (test sandbox)', reason: '', logoInput: true };
   const c = await config();
+  if (c.provider === 'cloudflare') {
+    const card = 'Administration > Integrations > AI Images (Cloudflare Workers AI · free)';
+    if (c.missingKey) return { ready: false, model: c.model, reason: `The saved Cloudflare token cannot be read on this server (the encryption key changed). An Admin must enter it again in ${card}.` };
+    if (!c.key || !c.account) return { ready: false, model: c.model, reason: `The Cloudflare card needs both the account ID and the Workers AI API token (${card}).` };
+    // the logo is put on the picture here (sharp), so every Cloudflare model can carry it
+    return { ready: true, provider: 'cloudflare', model: `${c.model.split('/').pop()} (Cloudflare, free)`, reason: '', note: '', logoInput: true, perDay: c.perDay };
+  }
   if (c.missingKey) return { ready: false, model: c.model, reason: 'The saved Gemini key cannot be read on this server (the encryption key changed). An Admin must enter it again in Administration > Integrations > AI Images (Google Gemini).' };
-  if (!c.key) return { ready: false, model: c.model, reason: 'No Gemini key yet. An Admin adds it in Administration > Integrations > AI Images (Google Gemini).' };
-  return { ready: true, model: c.model, reason: '', note: c.swapped ? SWAP_NOTE(c) : '', logoInput: !isImagen(c.model), perDay: c.perDay };
+  if (!c.key) return { ready: false, model: c.model, reason: 'No picture service yet. An Admin adds the free "AI Images (Cloudflare Workers AI · free)" card, or "AI Images (Google Gemini)", in Administration > Integrations.' };
+  return { ready: true, provider: 'gemini', model: c.model, reason: '', note: c.swapped ? SWAP_NOTE(c) : '', logoInput: !isImagen(c.model), perDay: c.perDay };
 }
 
 // ---- Google calls (fixed host; key in a header, never in the address or a log) --------------------------------------------------------------
@@ -106,8 +130,9 @@ async function call(url, key, body, ms = 120000) {
     throw new AI.AiMkError(e.name === 'AbortError' ? 'Google did not answer in time. Try again.' : `Google could not be reached: ${e.message}`, 503, 'unreachable');
   } finally { clearTimeout(t); }
 }
-async function testConnection() {
-  const c = await config();
+async function testConnection(which) {
+  if (which === 'cloudflare') return cfTest();
+  const c = await geminiConfig();
   if (!c.key) return { ok: false, model: c.model, error: c.missingKey ? 'the saved key cannot be read on this server; enter it again' : 'no Gemini API key saved' };
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ok: false, model: c.model, error: 'the test sandbox makes no outside calls' };
   try {
@@ -115,6 +140,82 @@ async function testConnection() {
     return { ok: true, model: `${m.displayName || c.model}${c.swapped ? ` (used instead of "${c.savedModel}", a text model that cannot make pictures)` : ''}` };
   } catch (e) { return { ok: false, model: c.model, error: e.message }; }
 }
+// ---- Cloudflare Workers AI (fixed host; token in the Authorization header, never logged) ---------------------------------------------------------
+async function cfCall(url, token, body, ms = 120000) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(url, { method: body ? 'POST' : 'GET', headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined, signal: ctl.signal });
+    const type = String((r.headers && r.headers.get && r.headers.get('content-type')) || '');
+    if (r.ok && /^image\//i.test(type)) return { image: Buffer.from(await r.arrayBuffer()), mime: type.split(';')[0] };
+    const text = await r.text();
+    let json = null; try { json = JSON.parse(text); } catch { json = null; }
+    if (!r.ok || (json && json.success === false)) {
+      const e0 = (json && Array.isArray(json.errors) && json.errors[0]) || {};
+      const full = String(e0.message || text.slice(0, 200) || `HTTP ${r.status}`);
+      // the free daily allowance (10,000 "neurons") is used up: plain words, it comes back by itself
+      const daily = /neuron|daily free allocation|allocation/i.test(full) || e0.code === 4006;
+      const msg = daily ? 'Cloudflare\'s free daily allowance is used up for today. It starts again tomorrow (05:30 India time); nothing is charged.'
+        : r.status === 401 || r.status === 403 || /auth/i.test(full) ? `Cloudflare refused the token or the account (${full.slice(0, 140)}). Check the account ID and that the token was made from the "Workers AI" template.`
+          : `Cloudflare said: ${full.slice(0, 300)}`;
+      const err = new AI.AiMkError(msg, daily || r.status === 429 ? 429 : (r.status === 401 || r.status === 403 ? 403 : 502), daily ? 'provider_daily' : 'provider');
+      err.httpStatus = r.status;
+      throw err;
+    }
+    return json || {};
+  } catch (e) {
+    if (e instanceof AI.AiMkError) throw e;
+    throw new AI.AiMkError(e.name === 'AbortError' ? 'Cloudflare did not answer in time. Try again.' : `Cloudflare could not be reached: ${e.message}`, 503, 'unreachable');
+  } finally { clearTimeout(t); }
+}
+const CF_SIZES = { '1:1': [1024, 1024], '4:5': [768, 960], '9:16': [576, 1024], '16:9': [1024, 576], '3:4': [768, 1024] };
+async function cfTest() {
+  const c = await cloudflareConfig();
+  if (!c.key || !c.account) return { ok: false, model: c.model, error: c.missingKey ? 'the saved token cannot be read on this server; enter it again' : 'both the Cloudflare account ID and the Workers AI API token are needed' };
+  if (!/^[a-f0-9]{32}$/i.test(c.account)) return { ok: false, model: c.model, error: 'the account ID should be 32 letters and numbers (dash.cloudflare.com: on the right of the account home page)' };
+  if (sandbox.isSandbox() && !sandbox.allowAi()) return { ok: false, model: c.model, error: 'the test sandbox makes no outside calls' };
+  try {
+    const j = await cfCall(`${CF_API}/accounts/${c.account}/ai/models/search?search=${encodeURIComponent(c.model.split('/').pop())}&per_page=5`, c.key, null, 20000);
+    const found = Array.isArray(j.result) && j.result.some((m) => m && m.name === c.model);
+    return found ? { ok: true, model: `${c.model} (Cloudflare Workers AI, free daily allowance)` } : { ok: false, model: c.model, error: `the token and account work, but the model "${c.model}" was not found on Workers AI. Leave "Image model" empty for ${CF_DEFAULT_MODEL}.` };
+  } catch (e) { return { ok: false, model: c.model, error: e.message }; }
+}
+async function cfOne(c, prompt, aspect) {
+  const [w, h] = CF_SIZES[aspect] || CF_SIZES['1:1'];
+  // FLUX schnell takes only the words and the number of steps (always square); other models take the size
+  const body = /flux-1-schnell/i.test(c.model) ? { prompt: prompt.slice(0, 2000), steps: 4 } : { prompt: prompt.slice(0, 2000), width: w, height: h };
+  const r = await cfCall(`${CF_API}/accounts/${c.account}/ai/run/${c.model}`, c.key, body);
+  if (r.image) return { buf: r.image, mime: r.mime };
+  const b64 = r.result && (r.result.image || r.result.images && r.result.images[0]);
+  if (!b64) throw new AI.AiMkError('Cloudflare sent no picture back. Change the description and try again.', 422, 'refused');
+  return { buf: Buffer.from(String(b64), 'base64'), mime: 'image/jpeg' };
+}
+// the picture made ready: cut to the asked size (a square model still gives a 4:5 or 16:9 picture) and the brand logo put small in a corner
+async function finishPic(buf, aspect, logo) {
+  const sharp = require('sharp'); // eslint-disable-line global-require
+  const [aw, ah] = String(aspect || '1:1').split(':').map(Number);
+  const want = aw / ah;
+  const meta = await sharp(buf).metadata();
+  let w = meta.width; let h = meta.height;
+  let img = sharp(buf);
+  if (w && h && Math.abs(w / h - want) > 0.02) {
+    if (w / h > want) { const nw = Math.round(h * want); img = img.extract({ left: Math.round((w - nw) / 2), top: 0, width: nw, height: h }); w = nw; } else { const nh = Math.round(w / want); img = img.extract({ left: 0, top: Math.round((h - nh) / 2), width: w, height: nh }); h = nh; }
+  }
+  let out = await img.toBuffer();
+  let withLogo = false;
+  if (logo) {
+    const side = Math.max(24, Math.round(Math.min(w, h) * 0.16));
+    const lb = await sharp(Buffer.from(logo.b64, 'base64')).resize({ width: side, height: side, fit: 'inside' }).png().toBuffer();
+    const lm = await sharp(lb).metadata();
+    const pad = Math.max(6, Math.round(Math.min(w, h) * 0.025));
+    // a soft white plate behind the logo, so it reads on any picture
+    const plate = await sharp({ create: { width: lm.width + pad, height: lm.height + pad, channels: 4, background: { r: 255, g: 255, b: 255, alpha: 0.9 } } }).composite([{ input: lb, gravity: 'center' }]).png().toBuffer();
+    out = await sharp(out).composite([{ input: plate, left: Math.max(0, w - lm.width - pad * 2), top: Math.max(0, h - lm.height - pad * 2) }]).toBuffer();
+    withLogo = true;
+  }
+  return { buf: await sharp(out).jpeg({ quality: 90 }).toBuffer(), mime: 'image/jpeg', withLogo };
+}
+
 const refused = (why) => new AI.AiMkError(`Google would not make this picture${why ? ` (${String(why).toLowerCase().replace(/_/g, ' ')})` : ''}. Change the description and try again.`, 422, 'refused');
 async function geminiOne(c, prompt, aspect, logo) {
   const parts = [];
@@ -264,12 +365,14 @@ async function create(u, b = {}, opts = {}) {
   const brand = await Cfg.getBrand();
   const logoRow = b.withLogo && st.logoInput ? await Cfg.getLogo() : null;
   const logo = logoRow ? (() => { const m = /^data:([^;]+);base64,(.+)$/.exec(logoRow.dataUrl); return m ? { mime: m[1], b64: m[2] } : null; })() : null;
-  const text = promptFor({ ...b, prompt, headline }, brand, !!logo);
+  // only a Gemini picture model is SENT the logo (it draws it in); for Cloudflare, Imagen and the sandbox it is put on the finished picture here
+  const modelGetsLogo = !!logo && !st.demo && c.provider === 'gemini' && !isImagen(c.model);
+  const text = promptFor({ ...b, prompt, headline }, brand, modelGetsLogo);
   const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
   const title = S.clip(b.title, 80) || S.clip(prompt.replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' '), 80);
   const job = { id: S.newId('job'), userId: u.id, status: 'running', n, startedAt: Date.now() };
   jobs.set(job.id, job);
-  const run = produce(u, { st, c, n, aspect, style, headline, prompt, text, logo, brand, dept, title })
+  const run = produce(u, { st, c, n, aspect, style, headline, prompt, text, logo, modelGetsLogo, brand, dept, title })
     .then((r) => {
       Object.assign(job, r.error ? { status: 'failed', error: r.error, errStatus: r.status, code: r.code } : { status: 'done', items: r.items, demo: r.demo, ms: r.ms, note: r.note });
       // a request Google refused or failed does not count against the minute limit (only the daily count of pictures really made does)
@@ -286,35 +389,48 @@ async function create(u, b = {}, opts = {}) {
 
 // the slow part of create(), run in the background: ask Google (the pictures of one request in PARALLEL), save every picture that came back
 async function produce(u, x) {
-  const { st, c, n, aspect, style, headline, prompt, text, logo, brand, dept, title } = x;
+  const { st, c, n, aspect, style, headline, prompt, text, logo, modelGetsLogo, brand, dept, title } = x;
   const t0 = Date.now();
   let pics = []; let note = null;
+  const provider = st.demo ? 'demo' : c.provider;
+  // several pictures of one request are asked at the same time; the ones that came back are kept, and a note says if some did not
+  const settle = async (fn) => {
+    const res = await Promise.allSettled(Array.from({ length: n }, fn));
+    const ok = res.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
+    const bad = res.filter((r) => r.status === 'rejected');
+    if (!ok.length) throw bad[0].reason;
+    if (bad.length) note = `${ok.length} of ${n} pictures were made. ${bad[0].reason.message}`;
+    return ok;
+  };
   try {
-    if (st.demo) pics = Array.from({ length: n }, () => ({ mime: 'image/png', b64: samplePng(aspect, brand.colors.primary, brand.colors.accent).toString('base64') }));
-    else if (isImagen(c.model)) pics = await imagenMany(c, text, aspect, n);
-    else {
-      const res = await Promise.allSettled(Array.from({ length: n }, () => geminiOne(c, text, aspect, logo)));
-      pics = res.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
-      const bad = res.filter((r) => r.status === 'rejected');
-      if (!pics.length) throw bad[0].reason;
-      if (bad.length) note = `${pics.length} of ${n} pictures were made. ${bad[0].reason.message}`;
-    }
+    if (st.demo) pics = Array.from({ length: n }, () => ({ buf: samplePng(aspect, brand.colors.primary, brand.colors.accent), mime: 'image/png' }));
+    else if (c.provider === 'cloudflare') pics = await settle(() => cfOne(c, text, aspect));
+    else if (isImagen(c.model)) pics = (await imagenMany(c, text, aspect, n)).map((p) => ({ buf: Buffer.from(p.b64, 'base64'), mime: p.mime }));
+    else pics = (await settle(() => geminiOne(c, text, aspect, logo))).map((p) => ({ buf: Buffer.from(p.b64, 'base64'), mime: p.mime }));
   } catch (e) {
-    await AI.logUsage({ user: u, module: 'images', task: 'create', provider: 'gemini', model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message });
+    await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message });
     return { error: e.message, status: e.status || 502, code: e.code };
   }
+  // Gemini drew the logo and the size itself; for the others the picture is cut to the size and the logo is put on here
+  const finish = !modelGetsLogo && (provider !== 'gemini' || isImagen(c.model));
+  if (finish) {
+    for (const p of pics) {
+      try { const f = await finishPic(p.buf, aspect, logo); p.buf = f.buf; p.mime = f.mime; p.withLogo = f.withLogo; } // eslint-disable-line no-await-in-loop
+      catch (e) { note = `${note ? `${note} ` : ''}The size or the logo could not be applied (${e.message}); the picture is kept as it came.`; }
+    }
+  } else pics.forEach((p) => { p.withLogo = !!modelGetsLogo; });
   fs.mkdirSync(dir(), { recursive: true });
   const made = [];
   for (const p of pics) {
     const mime = EXT[p.mime] ? p.mime : 'image/png';
-    const buf = Buffer.from(p.b64, 'base64');
+    const { buf } = p;
     const id = S.newId('img');
     const file = `${id}.${EXT[mime]}`;
     fs.writeFileSync(path.join(dir(), file), buf);
     const ts = Date.now();
     await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'draft',?,?,?,?,?)`, // eslint-disable-line no-await-in-loop
-      id, title, prompt, headline || null, style, aspect, st.demo ? 'sample' : c.model, logo ? 1 : 0, file, mime, buf.length, st.demo ? 1 : 0, dept || null, u.id, S.clip(u.name, 80), ts, ts);
-    await AI.logUsage({ user: u, module: 'images', task: 'create', provider: st.demo ? 'demo' : 'gemini', model: st.demo ? 'sample' : c.model, ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
+      id, title, prompt, headline || null, style, aspect, st.demo ? 'sample' : c.model, p.withLogo ? 1 : 0, file, mime, buf.length, st.demo ? 1 : 0, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+    await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: st.demo ? 'sample' : c.model, ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
     made.push(id);
   }
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI pictures made', entity: TABLE, entityId: made[0], toValue: `${made.length} picture(s); ${title}${st.demo ? '; sandbox sample' : `; ${c.model}`}` });
