@@ -991,6 +991,8 @@ export function EmployeeDetail({ id, onBack, own = false }) {
   const [appKey, setAppKey] = useState(null);
   const [keyPick, setKeyPick] = useState(null);
   const [focus, setFocus] = useState(''); // a time card clicked: active / idle / break // a key / button clicked in Keys and buttons pressed
+  const [periodQ, setPeriodQ] = useState(''); // founder 2026-11-13: pick Active/Idle/Break on the person's page and filter the periods
+  const [periodMin, setPeriodMin] = useState(0);
   const [appPick, setAppPick] = useState(null); // an app row clicked in the app-wise table
   const openApp = data && appKey ? data.apps.find((a) => a.key === appKey) : null;
   return (
@@ -1018,13 +1020,42 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               </>
             ); })()}
           </KpiRow>
+          {data.timeline && (
+            <div className="mon-bar" style={{ marginBottom: 8 }}>
+              <label>Show periods
+                <Combo value={focus} onChange={(e) => setFocus(e.target.value)} aria-label="Show periods">
+                  <option value="">— pick one —</option>
+                  <option value="active">Active periods</option>
+                  <option value="idle">Idle periods</option>
+                  <option value="break">Break periods</option>
+                </Combo>
+              </label>
+              {focus && focus !== 'break' && <input type="search" placeholder="Filter by app or website" value={periodQ} onChange={(e) => setPeriodQ(e.target.value)} />}
+              {focus && (
+                <Combo value={periodMin} onChange={(e) => setPeriodMin(Number(e.target.value))} aria-label="Least length">
+                  <option value={0}>Any length</option>
+                  <option value={1}>1 min or more</option>
+                  <option value={5}>5 min or more</option>
+                  <option value={15}>15 min or more</option>
+                  <option value={30}>30 min or more</option>
+                </Combo>
+              )}
+            </div>
+          )}
           {focus && data.timeline && (() => {
-            const kept = data.timeline.filter((r) => (focus === 'break' ? r.break : focus === 'idle' ? (r.idle && !r.break) : (!r.idle && !r.break)));
             const secs = (r) => Math.max(0, Math.round((new Date(r.end) - new Date(r.start)) / 1000));
+            const q = periodQ.trim().toLowerCase();
+            const kept = data.timeline.filter((r) => {
+              const isFocus = focus === 'break' ? r.break : focus === 'idle' ? (r.idle && !r.break) : (!r.idle && !r.break);
+              if (!isFocus) return false;
+              if (periodMin && secs(r) < periodMin * 60) return false;
+              if (q && focus !== 'break') { const { site } = siteOf(r.app, r.title); if (!`${appWord(r.app)} ${site || ''} ${r.title || ''}`.toLowerCase().includes(q)) return false; }
+              return true;
+            });
             const total = kept.reduce((n, r) => n + secs(r), 0);
             const WORD = { active: 'Active', idle: 'Idle', break: 'Break' };
             return (
-              <Panel title={`${WORD[focus]} periods`} sub={`${kept.length} on this day · ${dur(total)} in all. Click the card again to close.`}>
+              <Panel title={`${WORD[focus]} periods`} sub={`${kept.length} on this day · ${dur(total)} in all.${periodMin || q ? ' (filtered)' : ''}`}>
                 {kept.length ? (
                   <table className="mon-table">
                     <thead><tr><th>When</th><th className="num">How long</th><th>{focus === 'break' ? 'Kind' : 'App / website'}</th></tr></thead>
