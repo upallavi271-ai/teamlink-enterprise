@@ -472,6 +472,46 @@ async function saveVideo(u, buf, mime, q = {}) {
   return { item: view(u, await row(id), set) };
 }
 
+// ---- a person's own picture (phone, Canva, the Gemini app ...) uploaded into AI Images: from then on it is approved and used like an AI picture ---------
+// Checked by its first bytes (PNG / JPEG / WebP), turned upright, made at most 2048 px and saved WITHOUT its metadata (no GPS place, no camera
+// details). It is not an AI request, so it never counts against the AI picture limits. q: { title, department }.
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
+const nearestAspect = (w, h) => {
+  const r = w / h;
+  return ASPECTS.map((a) => { const [x, y] = a.key.split(':').map(Number); return { key: a.key, d: Math.abs(Math.log(r / (x / y))) }; }).sort((a, b) => a.d - b.d)[0].key;
+};
+async function saveUpload(u, buf, mime, q = {}) {
+  await ensure();
+  if (!mayWrite(u)) return { error: 'Your login can look at pictures but not add them.', status: 403 };
+  const type = String(mime || '').split(';')[0].trim().toLowerCase();
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(type)) return { error: 'Upload a PNG, JPG or WebP picture.', status: 400 };
+  if (!Buffer.isBuffer(buf) || buf.length < 100) return { error: 'The picture is empty.', status: 400 };
+  if (buf.length > UPLOAD_MAX_BYTES) return { error: `The picture is too big (${Math.round(buf.length / 1048576)} MB). Use one under 10 MB.`, status: 413 };
+  const sig = { 'image/png': (x) => x[0] === 0x89 && x[1] === 0x50 && x[2] === 0x4e && x[3] === 0x47, 'image/jpeg': (x) => x[0] === 0xff && x[1] === 0xd8 && x[2] === 0xff, 'image/webp': (x) => x.slice(0, 4).toString('ascii') === 'RIFF' && x.slice(8, 12).toString('ascii') === 'WEBP' };
+  if (!sig[type](buf)) return { error: 'That file is not really a PNG, JPG or WebP picture.', status: 400 };
+  let out; let outMime; let w; let h;
+  try {
+    const sharp = require('sharp'); // eslint-disable-line global-require
+    const img = sharp(buf, { limitInputPixels: 60e6 }).rotate().resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true });
+    const meta = await sharp(buf).metadata();
+    const keepPng = type === 'image/png' && meta.hasAlpha;
+    out = keepPng ? await img.png().toBuffer() : await img.jpeg({ quality: 90 }).toBuffer(); // sharp leaves the metadata out unless asked
+    outMime = keepPng ? 'image/png' : 'image/jpeg';
+    const m2 = await sharp(out).metadata(); w = m2.width; h = m2.height;
+  } catch (e) { return { error: `The picture could not be read (${e.message}).`, status: 400 }; }
+  const aspect = nearestAspect(w, h);
+  const title = S.clip(q.title, 80).replace(/\.(png|jpe?g|webp)$/i, '') || 'Uploaded picture';
+  const dept = S.clip(q.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
+  fs.mkdirSync(dir(), { recursive: true });
+  const id = S.newId('img'); const file = `${id}.${EXT[outMime]}`; const ts = Date.now();
+  fs.writeFileSync(path.join(dir(), file), out);
+  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,NULL,?,?,?,0,?,?,?,0,'draft',?,?,?,?,?)`,
+    id, title, `Uploaded by ${S.clip(u.name, 60)} (${w}×${h})`, 'upload', aspect, 'upload', file, outMime, out.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: picture uploaded', entity: TABLE, entityId: id, toValue: `${title}; ${w}x${h}; ${Math.round(out.length / 1024)} KB` });
+  const set = await Cfg.getSettings();
+  return { item: view(u, await row(id), set) };
+}
+
 // ---- the file (signed-in, any status the person may see) ----------------------------------------------------------------------------------
 async function file(u, id) {
   const g = await getRow(u, id);
@@ -544,6 +584,6 @@ async function decide(u, id, approve, note) {
 }
 
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, file, publicFile, update, remove, submit,
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng,
 };

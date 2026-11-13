@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
@@ -8,7 +8,8 @@ import '../marketing/marketing.css';
 
 // AI MARKETING > AI IMAGES: marketing pictures from a short description with Google Gemini, in the brand colours and with the logo when the model can.
 // Every picture is saved here; it is used (calendar, posts) only after approval, and only approved pictures get a public link. Server: marketing/images.js.
-const STYLE_WORDS = { photo: 'Photo', illustration: 'Illustration', graphic: 'Social graphic', poster: 'Minimal poster', '3d': '3D' };
+const STYLE_WORDS = { photo: 'Photo', illustration: 'Illustration', graphic: 'Social graphic', poster: 'Minimal poster', '3d': '3D', upload: 'Uploaded' };
+const UPLOAD_MAX = 10 * 1024 * 1024;
 const STARTERS = [
   { label: 'Hiring poster', prompt: 'A confident young professional at a modern office desk, smiling, ready for a new job', headline: 'We are hiring', style: 'photo' },
   { label: 'Walk-in drive', prompt: 'A friendly crowd of job seekers with folders waiting at a bright office reception for interviews', headline: 'Walk-in drive this Saturday', style: 'photo' },
@@ -31,6 +32,24 @@ export default function MkImagesPage() {
   const [del, setDel] = useState(null);
   const [rename, setRename] = useState(null);
   const [waitSec, setWaitSec] = useState(0);
+  const fileRef = useRef(null);
+  // the person's own pictures (phone, Canva, the Gemini app): up to 5 at a time, each saved like an AI picture and approved before use
+  const upload = async (e) => {
+    const files = [...(e.target.files || [])]; e.target.value = '';
+    if (!files.length) return;
+    if (files.length > 5) { toast('Upload at most 5 pictures at a time'); return; }
+    const bad = files.find((x) => !/^image\/(png|jpeg|webp)$/.test(x.type) || x.size > UPLOAD_MAX);
+    if (bad) { toast(`"${bad.name}": use a PNG, JPG or WebP under 10 MB`); return; }
+    setBusy('upload'); setMsg('');
+    let ok = 0; const failed = [];
+    for (const x of files) {
+      try { await omni.post('/gs/marketing/images/upload', x, { headers: { 'Content-Type': x.type }, params: { title: x.name, ...(getState().dept ? { department: getState().dept } : {}) }, timeout: 120000 }); ok += 1; } // eslint-disable-line no-await-in-loop
+      catch (er) { failed.push(`${x.name}: ${errOf(er, 'not saved')}`); }
+    }
+    setBusy(''); setTab(''); load();
+    toast(`${ok} picture${ok === 1 ? '' : 's'} uploaded${failed.length ? `, ${failed.length} not` : ''}. Ask for approval to use them.`);
+    if (failed.length) setMsg(`Not uploaded: ${failed.join(' · ')}`);
+  };
 
   const load = useCallback(() => {
     setErr('');
@@ -80,7 +99,14 @@ export default function MkImagesPage() {
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI Images" lead="Describe a picture; the AI makes it in your brand colours, with your logo. A picture is used only after it is approved." />
+      <PageHead eyebrow="AI Marketing" title="AI Images" lead="Describe a picture and the AI makes it in your brand colours, with your logo, or upload your own. A picture is used only after it is approved.">
+        {meta.canWrite ? (
+          <>
+            <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: 'none' }} onChange={upload} />
+            <Btn disabled={busy === 'upload'} onClick={() => fileRef.current && fileRef.current.click()} title="PNG, JPG or WebP, under 10 MB each, up to 5 at a time. Only pictures you own or may use.">{busy === 'upload' ? 'Uploading…' : '⬆ Upload pictures'}</Btn>
+          </>
+        ) : null}
+      </PageHead>
       {ai.demo ? <Banner tone="test"><b>Test sandbox.</b> No picture is asked from any AI service here: a plain sample in your brand colours is made instead.</Banner> : null}
       {!ai.ready ? <Banner tone="error"><b>AI pictures are not ready.</b> {ai.reason} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Check again</button></Banner> : null}
       {ai.ready && ai.note ? <Banner tone="warn">{ai.note}</Banner> : null}
@@ -117,8 +143,9 @@ export default function MkImagesPage() {
               <li>Describe the picture, pick a size for where it will go.</li>
               <li>Keep the ones you like; delete the rest.</li>
               <li>Press <b>Ask for approval</b>. A Team Lead or an Admin approves it in <b>Approvals</b>.</li>
-              <li>An approved picture can be downloaded, gets a public link, and can be picked in the <b>Content Calendar</b>.</li>
+              <li>An approved picture can be downloaded, gets a public link, and can be picked in the <b>Content Calendar</b> and in <b>AI Video</b>.</li>
             </ol>
+            <div style={{ fontSize: 10.5, marginTop: 10 }}><b>Your own pictures:</b> press <b>⬆ Upload pictures</b> (phone, Canva, the Gemini app). Only upload pictures you own or may use; the place and camera details are removed.</div>
             <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>Pictures are made by the AI service set in Administration &gt; Integrations ({ai.provider === 'cloudflare' ? 'Cloudflare Workers AI, free daily allowance' : ai.provider === 'gemini' ? 'Google Gemini' : 'none yet'}). Check every picture before you use it: AI can get hands, faces and spelling wrong.</div>
           </Panel>
         </div>

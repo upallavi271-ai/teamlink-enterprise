@@ -99,6 +99,8 @@ router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, 
 // ---- AI images (marketing/images.js): Google Gemini pictures, approved before use --------------------------------------------------------------
 router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.user))));
 router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' }))));
+// a person's own picture (PNG / JPEG / WebP, up to 10 MB) as raw bytes; the name comes in the address
+router.post('/images/upload', mustWrite, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '11mb' }), wrap(async (req, res) => send(res, await Img.saveUpload(req.user, req.body, req.headers['content-type'], req.query || {}))));
 // AI Video: the slideshow made in the browser arrives as raw MP4 / WebM bytes (up to 40 MB); the details come in the address
 router.post('/images/video', mustWrite, express.raw({ type: ['video/mp4', 'video/webm'], limit: '41mb' }), wrap(async (req, res) => send(res, await Img.saveVideo(req.user, req.body, req.headers['content-type'], req.query || {}))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
