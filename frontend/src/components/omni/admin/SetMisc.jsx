@@ -77,7 +77,7 @@ export function WebhooksTab({ toast }) {
             <div className="adm-note">{hook.note}</div>
             <div className="adm-note">Keep the secret on your server only. It is read from the server settings; it cannot be changed here.</div>
           </>
-        ) : <div className="adm-note">Loading…</div>}
+        ) : <div className="adm-note">{snd.err ? 'Not shown: the settings could not be read (see the red note above).' : 'Loading…'}</div>}
       </Panel>
       <Panel title="WhatsApp replies and delivery (Meta)" sub="Meta calls this address when someone replies or a message is delivered.">
         {wa ? (

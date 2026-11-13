@@ -14,10 +14,13 @@ export default function ConnectionsPage() {
   const [c, setC] = useState(null);
   const [h, setH] = useState(null);
   const [err, setErr] = useState('');
+  const [hErr, setHErr] = useState('');
   const [busy, setBusy] = useState(false);
+  // each part says its own failure: a failed check is never left on "Loading…"
   const load = useCallback(() => {
+    setErr(''); setHErr('');
     shared.get('/connections').then(setC).catch((e) => setErr(errOf(e, 'The channels could not be checked.')));
-    shared.get('/sync-health').then(setH).catch(() => {});
+    shared.get('/sync-health').then(setH).catch((e) => setHErr(errOf(e, 'Sync health could not be read.')));
   }, []);
   useEffect(() => { load(); }, [load]);
   const retry = async () => {
@@ -34,7 +37,7 @@ export default function ConnectionsPage() {
       {err && <Banner tone="error">{err}</Banner>}
       {c && <Banner tone={c.rehearsal ? 'test' : 'ok'}>{c.rehearsal ? (c.sendingOn ? 'Test mode is ON: every campaign is only a rehearsal and nothing is sent to anybody.' : '"Outreach sending" is switched OFF: nothing is sent to anybody.') : 'Sending is ON: real messages go out on the channels marked Connected.'}</Banner>}
       <div className="conn-grid">
-        {!c ? <div className="card panel">Loading…</div> : c.channels.map((ch) => {
+        {!c ? <div className="card panel">{err ? 'The channels could not be checked. Press "Check again".' : 'Loading…'}</div> : c.channels.map((ch) => {
           const [tone, word] = TONE[ch.state] || ['draft', ch.state];
           return (
             <div className="card conn-card" key={ch.id}>
@@ -48,7 +51,7 @@ export default function ConnectionsPage() {
         })}
       </div>
       <Panel title="Sync health" sub="Replies and delivery reports that come from the providers, and what happened to them." right={h && <Pill tone={h.state === 'ok' ? 'live' : 'warn'} dot>{h.words}</Pill>}>
-        {!h ? 'Loading…' : (
+        {!h ? (hErr ? <span style={{ color: '#9b1c1c' }}>{hErr} Press “Check again”.</span> : 'Loading…') : (
           <>
             <Kpis>
               <Kpi label="Provider events" icon="⇅" value={fmtNum(ev.total)} meta={`${fmtNum(ev.routed)} matched and delivered to their record`} />
