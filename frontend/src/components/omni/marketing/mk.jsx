@@ -45,10 +45,17 @@ export const aiLabel = (ai) => (!ai ? '' : ai.demo ? 'Sample writer (test sandbo
 export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf, readOnly, onRevise, reviseBusy }) {
   const [active, setActive] = useState(chans[0] && chans[0].key);
   const [instr, setInstr] = useState('');
+  const [copied, setCopied] = useState('');
   useEffect(() => { if (!chans.some((c) => c.key === active)) setActive(chans[0] && chans[0].key); }, [chans]); // eslint-disable-line react-hooks/exhaustive-deps
   const ch = chans.find((c) => c.key === active) || chans[0];
   if (!ch) return null;
   const text = texts[ch.key] || '';
+  // copy the words of this channel (email: the subject line first), e.g. to paste into a template or a social post
+  const copy = async () => {
+    const words = ch.key === 'email' && subject ? `${subject}\n\n${text}` : text;
+    try { await navigator.clipboard.writeText(words); setCopied(ch.key); } catch { setCopied('fail'); }
+    setTimeout(() => setCopied(''), 2000);
+  };
   const over = text.length > ch.limit;
   const flags = flagsOf ? flagsOf(ch.key, text) : [];
   const chips = ['Shorter', 'More urgent', 'Friendlier', 'More formal'];
@@ -61,7 +68,7 @@ export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf
         <div className="field" style={{ marginBottom: 8 }}><label>EMAIL SUBJECT</label><input value={subject || ''} disabled={readOnly} maxLength={200} onChange={(e) => onSubject(e.target.value)} placeholder="Subject line" /></div>
       )}
       <textarea style={{ width: '100%', minHeight: 150, border: '1px solid var(--line)', borderRadius: 10, padding: 11, font: 'inherit', fontSize: 12.5 }} value={text} disabled={readOnly} onChange={(e) => onTexts({ ...texts, [ch.key]: e.target.value })} placeholder={`The ${ch.label} message…`} aria-label={`${ch.label} message`} />
-      <div className={`mk-count${over ? ' over' : ''}`}><span>{text.length.toLocaleString('en-IN')} / {ch.limit.toLocaleString('en-IN')} characters{over ? ' · too long' : ''}</span><span>{ch.hint}{ch.send ? '' : ' · saved text only, nothing is posted from here'}</span></div>
+      <div className={`mk-count${over ? ' over' : ''}`}><span>{text.length.toLocaleString('en-IN')} / {ch.limit.toLocaleString('en-IN')} characters{over ? ' · too long' : ''}</span><span>{ch.hint}{ch.send ? '' : ' · saved text only, nothing is posted from here'} <TinyBtn disabled={!text.trim()} onClick={copy} aria-label={`Copy the ${ch.label} message`}>{copied === ch.key ? '✓ Copied' : copied === 'fail' ? 'Copy blocked' : '⧉ Copy'}</TinyBtn></span></div>
       {flags.length > 0 && <div className="mk-flag">Your brand voice says never to use: <b>{flags.join(', ')}</b>. Change the words before you ask for approval.</div>}
       {!readOnly && onRevise && (
         <div className="mk-revise">
