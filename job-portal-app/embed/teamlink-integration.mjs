@@ -779,6 +779,21 @@ export function teamlinkFrontRouter({ root, express }) {
     res.json(out);
   }));
 
+  /* READ ONLY: what a candidate's profile holds after a resume was matched (founder 2026-11-13: "srikanth reddy ni chudu"). Names only the profile columns a resume fills.
+     GET /api/integrations/teamlink/candidate-resume-check?name=<part of the name> -> { candidates: [...up to 5] } */
+  r.get('/api/integrations/teamlink/candidate-resume-check', wrap(async (req, res) => {
+    const q = String(req.query.name || '').trim().slice(0, 60);
+    if (q.length < 3) return res.status(422).json({ error: { code: 'VALIDATION_FAILED', message: 'name (3+ letters) is required' } });
+    const { withUser } = await portal();
+    const rows = await withUser(SYSTEM, async (c) => (await c.query(
+      `select id, name, exp, exp_years, relevant_exp_years, skills, title, current_company, education, location, notice_period, summary,
+              resume_file, resume_uploaded_at, resume_parsed_at, resume_parser, resume_chars, resume_fields_detected, resume_parse_confidence, resume_parse_error,
+              (select count(*) from candidate_experience e where e.candidate_id = c.id) as employment_rows,
+              (select count(*) from candidate_education d where d.candidate_id = c.id) as education_rows
+         from candidates c where name ilike $1 order by resume_uploaded_at desc nulls last limit 5`, [`%${q}%`])).rows);
+    res.json({ candidates: rows });
+  }));
+
   /* One more attempt for ONE suspended interview, on the founder's word (2026-11-11: "Yes, grant retake"): the same control a recruiter has
      (interview_retake_control 'extra_attempt'), audited as retake.extra_attempt.  POST { interviewId, reason } */
   r.post('/api/integrations/teamlink/interview-retake', wrap(async (req, res) => {
