@@ -267,7 +267,11 @@ async function deptFor(u, b) {
   const given = S.clip(b.department, 60);
   if (given) return A.mayDepartment(u, given) ? given : null;
   const own = A.departmentsOf(u);
-  return Array.isArray(own) && own.length === 1 ? own[0] : '';
+  if (Array.isArray(own) && own.length === 1) return own[0];
+  // several departments (or all of them): the writer's own employee department, so a Team Lead of that department can approve it.
+  // Without any department only an Admin could approve, and the TL approval path would never be used.
+  const home = S.clip(u.department, 60);
+  return home && A.mayDepartment(u, home) ? home : '';
 }
 async function create(u, b) {
   await ensure();
@@ -354,7 +358,8 @@ async function publishToLibrary(r, maker) {
   await St.ensure();
   const texts = parse(r.texts, {});
   const adaptations = {};
-  St.CHANNELS.forEach((c) => { if (texts[c.key]) adaptations[c.key] = String(texts[c.key]).slice(0, c.limit); });
+  // every channel AI Content writes for, RCS included (RCS is not one of the Studio's own channels, so St.CHANNELS alone dropped its approved words)
+  CHANNELS.forEach((c) => { if (texts[c.key]) adaptations[c.key] = String(texts[c.key]).slice(0, c.limit); });
   const master = texts.whatsapp || texts.email || texts.sms || texts.linkedin || texts.facebook || Object.values(texts)[0] || '';
   const dept = r.department || null;
   const now = Date.now();

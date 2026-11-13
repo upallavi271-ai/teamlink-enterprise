@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
+import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, Tag, ConfirmModal, fmtDateTime } from '../ui.jsx';
 import { useMkMeta, MkStatus, AiBanner, TextsEditor, aiLabel, aiReady } from '../marketing/mk.jsx';
@@ -79,7 +80,8 @@ export default function MkContentPage() {
     if (andSubmit && withFlags && !window.confirm(`The ${withFlags.label} message has words your brand voice says never to use. Ask for approval anyway?`)) return;
     setBusy(andSubmit ? 'submit' : 'save'); setMsg('');
     try {
-      const body = { title: ed.title.trim(), brief: form.brief, goal: form.goal, audience: form.audience, cta: form.cta, tone: ed.tone || form.tone, language: ed.language || form.language, channels: ed.channels, texts: ed.texts, subject: ed.subject || '', variants: ed.variants || [], ai: ed.ai };
+      // the workspace (department) picked in the switcher goes with new content, so that department's Team Lead can approve it
+      const body = { title: ed.title.trim(), brief: form.brief, goal: form.goal, audience: form.audience, cta: form.cta, tone: ed.tone || form.tone, language: ed.language || form.language, channels: ed.channels, texts: ed.texts, subject: ed.subject || '', variants: ed.variants || [], ai: ed.ai, ...(!ed.id && getState().dept ? { department: getState().dept } : {}) };
       const r = ed.id ? await omni.put(`/gs/marketing/items/${ed.id}`, body) : await omni.post('/gs/marketing/items', body);
       let item = r.item;
       if (andSubmit) { const s = await omni.post(`/gs/marketing/items/${item.id}/submit`); item = s.item; toast(s.ok); } else toast(r.withdrawn ? 'Saved. The earlier approval was withdrawn: ask for approval again.' : 'Saved');
