@@ -454,20 +454,24 @@ async function saveVideo(u, buf, mime, q = {}) {
   const type = String(mime || '').split(';')[0].trim().toLowerCase();
   if (!['video/mp4', 'video/webm'].includes(type)) return { error: 'Only MP4 or WebM videos can be saved.', status: 400 };
   if (!Buffer.isBuffer(buf) || buf.length < 1000) return { error: 'The video is empty. Make it again.', status: 400 };
-  if (buf.length > VIDEO_MAX_BYTES) return { error: `The video is too big (${Math.round(buf.length / 1048576)} MB). Use fewer pictures or a shorter time per picture.`, status: 413 };
+  if (buf.length > VIDEO_MAX_BYTES) return { error: `The video is too big (${Math.round(buf.length / 1048576)} MB). ${q.kind === 'clip' ? 'Use a clip under 40 MB (a few seconds is enough).' : 'Use fewer scenes or a shorter time per picture.'}`, status: 413 };
   const looks = type === 'video/mp4' ? buf.slice(4, 8).toString('ascii') === 'ftyp' : buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3;
   if (!looks) return { error: 'That file is not really an MP4 / WebM video.', status: 400 };
+  // q.kind === 'clip': a person's own short video clip (made with the Gemini app, a phone ...) uploaded as RAW FOOTAGE for AI Video to join into a
+  // video; it is approved like a picture before it can be used. Otherwise it is a finished slideshow video made in the browser.
+  const clip = q.kind === 'clip';
   const aspect = ASPECTS.some((a) => a.key === q.aspect) ? q.aspect : '1:1';
-  const title = S.clip(q.title, 80) || 'Slideshow video';
+  const title = (S.clip(q.title, 80) || (clip ? 'Uploaded clip' : 'Slideshow video')).replace(/\.(mp4|webm)$/i, '');
   const scenes = Math.max(0, Math.min(20, Number(q.scenes) || 0));
   const seconds = Math.max(0, Math.min(300, Number(q.seconds) || 0));
   const dept = S.clip(q.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
   fs.mkdirSync(dir(), { recursive: true });
-  const id = S.newId('vid'); const file = `${id}.${EXT[type]}`; const ts = Date.now();
+  const id = S.newId(clip ? 'clp' : 'vid'); const file = `${id}.${EXT[type]}`; const ts = Date.now();
   fs.writeFileSync(path.join(dir(), file), buf);
+  const about = clip ? `Uploaded clip, ${seconds} seconds` : `Video of ${scenes} scene${scenes === 1 ? '' : 's'} (pictures and clips), ${seconds} seconds`;
   await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'draft',?,?,?,?,?)`,
-    id, title, `Slideshow of ${scenes} picture${scenes === 1 ? '' : 's'}, ${seconds} seconds`, S.clip(q.headline, 80) || null, 'video', aspect, 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
-  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${scenes} picture(s); ${seconds}s; ${Math.round(buf.length / 1024)} KB` });
+    id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await logAudit({ userId: u.id, actorName: u.name, action: clip ? 'Omni-Channel AI Marketing: video clip uploaded' : 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${clip ? '' : `${scenes} scene(s); `}${seconds}s; ${Math.round(buf.length / 1024)} KB` });
   const set = await Cfg.getSettings();
   return { item: view(u, await row(id), set) };
 }
