@@ -66,11 +66,16 @@ async function config() {
   return { key, model, perDay: Number.isFinite(per) && per >= 0 ? Math.min(Math.floor(per), 500) : 20, missingKey: !!c.missingKey };
 }
 const isImagen = (model) => /^imagen/i.test(model);
+// Gemini picture models carry "image" in their name (gemini-2.5-flash-image, gemini-3-pro-image-preview ...). A text model such as gemini-2.5-flash
+// exists (so the free check passes) but never returns a picture: say so plainly instead of failing at every press.
+const canDraw = (model) => isImagen(model) || /image/i.test(model);
+const NOT_DRAW = (model) => `"${model}" is a text model: it cannot make pictures. In Administration > Integrations > AI Images (Google Gemini) leave "Image model" empty (it then uses ${DEFAULT_MODEL}) or type a picture model such as ${DEFAULT_MODEL}.`;
 async function status() {
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ready: true, demo: true, model: 'sample picture maker (test sandbox)', reason: '', logoInput: true };
   const c = await config();
   if (c.missingKey) return { ready: false, model: c.model, reason: 'The saved Gemini key cannot be read on this server (the encryption key changed). An Admin must enter it again in Administration > Integrations > AI Images (Google Gemini).' };
   if (!c.key) return { ready: false, model: c.model, reason: 'No Gemini key yet. An Admin adds it in Administration > Integrations > AI Images (Google Gemini).' };
+  if (!canDraw(c.model)) return { ready: false, model: c.model, reason: NOT_DRAW(c.model) };
   return { ready: true, model: c.model, reason: '', logoInput: !isImagen(c.model), perDay: c.perDay };
 }
 
@@ -98,6 +103,7 @@ async function testConnection() {
   const c = await config();
   if (!c.key) return { ok: false, model: c.model, error: c.missingKey ? 'the saved key cannot be read on this server; enter it again' : 'no Gemini API key saved' };
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ok: false, model: c.model, error: 'the test sandbox makes no outside calls' };
+  if (!canDraw(c.model)) return { ok: false, model: c.model, error: NOT_DRAW(c.model) };
   try { const m = await call(`${API}/models/${encodeURIComponent(c.model)}`, c.key, null, 20000); return { ok: true, model: m.displayName || c.model }; } catch (e) { return { ok: false, model: c.model, error: e.message }; }
 }
 const refused = (why) => new AI.AiMkError(`Google would not make this picture${why ? ` (${String(why).toLowerCase().replace(/_/g, ' ')})` : ''}. Change the description and try again.`, 422, 'refused');
@@ -210,8 +216,24 @@ function promptFor(b, brand, withLogo) {
     'Real-looking, respectful, diverse Indian people where people appear. No celebrities, no real brands other than the given logo, no watermarks.',
   ].filter(Boolean).join('\n');
 }
-async function create(u, b = {}) {
+// Making pictures takes Google 10-40 seconds each, longer than the live web server waits for an answer (about 60 s). So create() checks the request
+// and the limits at once, then makes the pictures in the BACKGROUND and answers { job } straight away; the screen asks GET /images/jobs/:id until
+// the job is done. One job at a time per person (a second press while one runs is refused, so nothing is made twice). opts.wait = finish first
+// (tests). Jobs live in memory for 30 minutes; the pictures themselves are saved as soon as they arrive, so a restart loses only the job note.
+const jobs = new Map(); // id -> { id, userId, status: running|done|failed, n, startedAt, items, error, errStatus, demo, ms, made }
+const JOB_KEEP_MS = 30 * 60000;
+function sweepJobs(now = Date.now()) { for (const [id, j] of jobs) if (now - j.startedAt > JOB_KEEP_MS) jobs.delete(id); }
+function jobView(j) { return { id: j.id, status: j.status, n: j.n, startedAt: new Date(j.startedAt).toISOString(), seconds: Math.round(((j.endedAt || Date.now()) - j.startedAt) / 1000), items: j.items || null, error: j.error || null, note: j.note || null, demo: !!j.demo }; }
+function getJob(u, id) {
+  sweepJobs();
+  const j = jobs.get(String(id || ''));
+  if (!j || j.userId !== u.id) return { error: 'This picture job was not found. The pictures that were made are in the list.', status: 404 };
+  return { job: jobView(j) };
+}
+async function create(u, b = {}, opts = {}) {
   await ensure();
+  sweepJobs();
+  if ([...jobs.values()].some((j) => j.userId === u.id && j.status === 'running')) return { error: 'Your last pictures are still being made. Wait for them to finish first.', status: 409, code: 'busy' };
   if (!mayWrite(u)) return { error: 'Your login can look at AI pictures but not make them.', status: 403 };
   const prompt = S.clip(b.prompt, 1000);
   if (prompt.length < 8) return { error: 'Describe the picture in a sentence first.', status: 400 };
@@ -234,19 +256,45 @@ async function create(u, b = {}) {
   const logoRow = b.withLogo && st.logoInput ? await Cfg.getLogo() : null;
   const logo = logoRow ? (() => { const m = /^data:([^;]+);base64,(.+)$/.exec(logoRow.dataUrl); return m ? { mime: m[1], b64: m[2] } : null; })() : null;
   const text = promptFor({ ...b, prompt, headline }, brand, !!logo);
+  const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
+  const title = S.clip(b.title, 80) || S.clip(prompt.replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' '), 80);
+  const job = { id: S.newId('job'), userId: u.id, status: 'running', n, startedAt: Date.now() };
+  jobs.set(job.id, job);
+  const run = produce(u, { st, c, n, aspect, style, headline, prompt, text, logo, brand, dept, title })
+    .then((r) => {
+      Object.assign(job, r.error ? { status: 'failed', error: r.error, errStatus: r.status, code: r.code } : { status: 'done', items: r.items, demo: r.demo, ms: r.ms, note: r.note });
+      // a request Google refused or failed does not count against the minute limit (only the daily count of pictures really made does)
+      if (r.error) { const h = minute.get(u.id) || []; const i = h.indexOf(now); if (i >= 0) { h.splice(i, 1); minute.set(u.id, h); } }
+    })
+    .catch((e) => { Object.assign(job, { status: 'failed', error: e.message || 'The pictures could not be made.', errStatus: 502 }); })
+    .finally(() => { job.endedAt = Date.now(); });
+  if (opts.wait) {
+    await run;
+    return job.status === 'done' ? { items: job.items, demo: !!job.demo, ms: job.ms, note: job.note } : { error: job.error, status: job.errStatus || 502, code: job.code };
+  }
+  return { job: jobView(job) };
+}
+
+// the slow part of create(), run in the background: ask Google (the pictures of one request in PARALLEL), save every picture that came back
+async function produce(u, x) {
+  const { st, c, n, aspect, style, headline, prompt, text, logo, brand, dept, title } = x;
   const t0 = Date.now();
-  let pics = [];
+  let pics = []; let note = null;
   try {
     if (st.demo) pics = Array.from({ length: n }, () => ({ mime: 'image/png', b64: samplePng(aspect, brand.colors.primary, brand.colors.accent).toString('base64') }));
     else if (isImagen(c.model)) pics = await imagenMany(c, text, aspect, n);
-    else { for (let i = 0; i < n; i += 1) pics.push(...(await geminiOne(c, text, aspect, logo))); } // eslint-disable-line no-await-in-loop
+    else {
+      const res = await Promise.allSettled(Array.from({ length: n }, () => geminiOne(c, text, aspect, logo)));
+      pics = res.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value);
+      const bad = res.filter((r) => r.status === 'rejected');
+      if (!pics.length) throw bad[0].reason;
+      if (bad.length) note = `${pics.length} of ${n} pictures were made. ${bad[0].reason.message}`;
+    }
   } catch (e) {
     await AI.logUsage({ user: u, module: 'images', task: 'create', provider: 'gemini', model: c.model, ok: false, inChars: text.length, ms: Date.now() - t0, error: e.message });
     return { error: e.message, status: e.status || 502, code: e.code };
   }
   fs.mkdirSync(dir(), { recursive: true });
-  const dept = S.clip(b.department, 60) || (A.departmentsOf(u).length === 1 ? A.departmentsOf(u)[0] : S.clip(u.department, 60));
-  const title = S.clip(b.title, 80) || S.clip(prompt.replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' '), 80);
   const made = [];
   for (const p of pics) {
     const mime = EXT[p.mime] ? p.mime : 'image/png';
@@ -263,7 +311,7 @@ async function create(u, b = {}) {
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI pictures made', entity: TABLE, entityId: made[0], toValue: `${made.length} picture(s); ${title}${st.demo ? '; sandbox sample' : `; ${c.model}`}` });
   const set = await Cfg.getSettings();
   const rows = await Promise.all(made.map((id) => row(id)));
-  return { items: rows.map((r) => view(u, r, set)), demo: !!st.demo, ms: Date.now() - t0 };
+  return { items: rows.map((r) => view(u, r, set)), demo: !!st.demo, ms: Date.now() - t0, note };
 }
 
 // ---- the file (signed-in, any status the person may see) ----------------------------------------------------------------------------------
@@ -337,6 +385,6 @@ async function decide(u, id, approve, note) {
 }
 
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, file, publicFile, update, remove, submit,
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng,
 };

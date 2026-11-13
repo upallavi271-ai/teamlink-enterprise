@@ -100,6 +100,8 @@ router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, 
 router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.user))));
 router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || '') }))));
 router.post('/images', mustWrite, wrap(async (req, res) => send(res, await Img.create(req.user, req.body || {}))));
+// the background job of one "Make pictures" press (marketing/images.js create): the screen asks every few seconds until it is done
+router.get('/images/jobs/:id', mustWrite, wrap(async (req, res) => send(res, Img.getJob(req.user, req.params.id))));
 router.get('/images/:id/file', wrap(async (req, res) => {
   const f = await Img.file(req.user, req.params.id);
   if (!f) return res.status(404).json({ error: 'This picture was not found.' });

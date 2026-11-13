@@ -30,6 +30,7 @@ export default function MkImagesPage() {
   const [view, setView] = useState(null); // the picture opened large
   const [del, setDel] = useState(null);
   const [rename, setRename] = useState(null);
+  const [waitSec, setWaitSec] = useState(0);
 
   const load = useCallback(() => {
     setErr('');
@@ -43,12 +44,23 @@ export default function MkImagesPage() {
   const ai = meta.ai || {};
   const left = Math.max(0, (meta.perDay || 0) - (meta.usedToday || 0));
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  // the server makes the pictures in the background (Google can take longer than the web server waits); this asks every 3 seconds until done
   const create = async () => {
-    setBusy('create'); setMsg('');
+    setBusy('create'); setMsg(''); setWaitSec(0);
     try {
-      const r = await omni.post('/gs/marketing/images', { ...f, ...(getState().dept ? { department: getState().dept } : {}) }, { timeout: 300000 });
-      toast(`${r.items.length} picture${r.items.length === 1 ? '' : 's'} made${r.demo ? ' (sandbox samples)' : ''}`); setTab(''); load();
-    } catch (e) { const m = errOf(e, 'The pictures could not be made.'); setMsg(m); toast(m); } finally { setBusy(''); }
+      const r = await omni.post('/gs/marketing/images', { ...f, ...(getState().dept ? { department: getState().dept } : {}) });
+      let job = r.job;
+      const t0 = Date.now();
+      while (job && job.status === 'running') {
+        await new Promise((res) => { setTimeout(res, 3000); }); // eslint-disable-line no-await-in-loop
+        setWaitSec(Math.round((Date.now() - t0) / 1000));
+        if (Date.now() - t0 > 6 * 60000) { setMsg('This is taking very long. The pictures are saved in the list below as soon as Google sends them: look again in a minute.'); break; }
+        try { job = (await omni.get(`/gs/marketing/images/jobs/${job.id}`)).job; } catch (e) { if (e.response && e.response.status === 404) { job = null; load(); break; } } // eslint-disable-line no-await-in-loop
+      }
+      if (job && job.status === 'done') { toast(`${job.items.length} picture${job.items.length === 1 ? '' : 's'} made${job.demo ? ' (sandbox samples)' : ''}`); if (job.note) setMsg(job.note); setTab(''); }
+      if (job && job.status === 'failed') { setMsg(job.error || 'The pictures could not be made.'); toast(job.error || 'The pictures could not be made.'); }
+      load();
+    } catch (e) { const m = errOf(e, 'The pictures could not be made.'); setMsg(m); toast(m); load(); } finally { setBusy(''); }
   };
   const act = async (it, what) => {
     setBusy(it.id);
@@ -95,7 +107,7 @@ export default function MkImagesPage() {
               </Field>
             </div>
             <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Btn primary disabled={busy === 'create' || !ai.ready || f.prompt.trim().length < 8 || (!ai.demo && left < f.count)} onClick={create}>{busy === 'create' ? 'Making the pictures…' : `✦ Make ${f.count} picture${f.count === 1 ? '' : 's'}`}</Btn>
+              <Btn primary disabled={busy === 'create' || !ai.ready || f.prompt.trim().length < 8 || (!ai.demo && left < f.count)} onClick={create}>{busy === 'create' ? `Making the pictures… ${waitSec ? `${waitSec}s` : ''}` : `✦ Make ${f.count} picture${f.count === 1 ? '' : 's'}`}</Btn>
               <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!ai.ready ? 'Not ready: see the red note.' : f.prompt.trim().length < 8 ? 'Describe the picture in a sentence.' : !ai.demo && left < f.count ? `Only ${left} left today.` : busy === 'create' ? 'This can take up to a minute.' : 'Each picture counts against today’s limit.'}</span>
             </div>
           </Panel>
