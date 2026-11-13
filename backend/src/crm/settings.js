@@ -17,6 +17,8 @@ const DEFAULTS = {
   stageProbability: { Prospecting: 10, Contacted: 20, Meeting: 40, 'Requirement discussed': 50, 'Proposal sent': 60, Negotiation: 80, Won: 100, Lost: 0 },
   staleDays: 14,
   proposalValidityDays: 30,
+  // A deal discount above this % needs a Sales manager's approval before the deal can be won (founder 2026-11-13).
+  discountApprovalLimit: 10,
   salesTeam: [],
   // the company's own details for CRM invoices (crm/invoices.js)
   invoiceFrom: { name: 'TeamLink Consultants', address: '', gstin: '', email: '', phone: '', bank: '', terms: 'Payment within 15 days of the invoice date.' },
@@ -101,6 +103,7 @@ function normalize(raw = {}) {
   if (!lostReasons.includes('Other')) lostReasons.push('Other');
   const stale = Math.round(Number(raw.staleDays));
   const valid = Math.round(Number(raw.proposalValidityDays));
+  const discLimit = Number(raw.discountApprovalLimit);
   const seen = new Set();
   const salesTeam = (Array.isArray(raw.salesTeam) ? raw.salesTeam : []).map(cleanMember)
     .filter((m) => m.userId && !seen.has(m.userId) && seen.add(m.userId)).slice(0, 300);
@@ -117,6 +120,7 @@ function normalize(raw = {}) {
     defaultRemindBefore: [0, 15, 60, 1440].includes(Number(raw.defaultRemindBefore)) ? Number(raw.defaultRemindBefore) : DEFAULTS.defaultRemindBefore,
     staleDays: Number.isFinite(stale) && stale >= 1 && stale <= 365 ? stale : DEFAULTS.staleDays,
     proposalValidityDays: Number.isFinite(valid) && valid >= 1 && valid <= 365 ? valid : DEFAULTS.proposalValidityDays,
+    discountApprovalLimit: Number.isFinite(discLimit) && discLimit >= 0 && discLimit <= 100 ? discLimit : DEFAULTS.discountApprovalLimit,
   };
 }
 

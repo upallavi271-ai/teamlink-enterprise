@@ -99,7 +99,7 @@ const KINDS = {
   lead: { table: 'CrmLead', label: 'Lead', name: 'company', fields: { company: 's', contactName: 's', designation: 's', phone: 's', email: 's', industry: 's', city: 's', source: 's', status: 's', rating: 's', notes: 'L', expectedValue: 'n' } },
   account: { table: 'CrmAccount', label: 'Account', name: 'name', fields: { name: 's', industry: 's', city: 's', website: 's', phone: 's', email: 's', source: 's', notes: 'L' } },
   contact: { table: 'CrmContact', label: 'Contact', name: 'name', fields: { accountId: 's', name: 's', designation: 's', role: 's', phone: 's', email: 's', notes: 'L' } },
-  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
+  deal: { table: 'CrmDeal', label: 'Deal', name: 'title', fields: { title: 's', accountId: 's', contactId: 's', value: 'n', discountPercent: 'n', probability: 'i', expectedClose: 'd', nextStep: 's', notes: 'L' } },
 };
 
 function cleanFields(kind, body, { partial }) {
@@ -126,6 +126,7 @@ function cleanFields(kind, body, { partial }) {
   if (kind === 'deal') {
     if (out.probability != null && out.probability > 100) return { error: 'Probability is a percent (0 to 100).' };
     if (out.feePercent != null && out.feePercent > 100) return { error: 'The fee is a percent (0 to 100).' };
+    if (out.discountPercent != null && (out.discountPercent < 0 || out.discountPercent > 100)) return { error: 'Discount is a percent (0 to 100).' };
   }
   if (!partial && !out[k.name]) return { error: `${k.label === 'Lead' ? 'Company name' : k.label === 'Deal' ? 'Deal name' : 'Name'} is needed.` };
   if (partial && k.name in out && !out[k.name]) return { error: `${k.label} name cannot be empty.` };
@@ -135,6 +136,21 @@ function cleanFields(kind, body, { partial }) {
 // A deal's value is the amount typed (the CRM sells anything; nothing is worked out from hiring numbers any more).
 function dealValue(d) {
   return d.value || 0;
+}
+// The amount after the discount — what the invoice will be for (founder 2026-11-13).
+function finalValueOf(d) {
+  const v = Number(d.value) || 0;
+  const disc = Number(d.discountPercent) || 0;
+  return Math.round((v - (v * disc) / 100) * 100) / 100;
+}
+// Does this deal's discount need a manager's approval? A discount above the CRM limit is 'Pending' until a manager approves it;
+// an already-approved deal whose discount is unchanged stays 'Approved'; at or under the limit needs nothing ('None').
+async function approvalFor(d, prev) {
+  const limit = (await SETTINGS.load()).discountApprovalLimit;
+  const disc = Number(d.discountPercent) || 0;
+  if (disc <= limit) return 'None';
+  if (prev && prev.approvalStatus === 'Approved' && (Number(prev.discountPercent) || 0) === disc) return 'Approved';
+  return 'Pending';
 }
 
 async function getRow(kind, id) {
@@ -292,6 +308,8 @@ async function create(user, kind, body = {}) {
     row.stage = STAGES.includes(body.stage) && !['Won', 'Lost'].includes(body.stage) ? body.stage : 'Prospecting';
     if (row.probability == null) row.probability = (await SETTINGS.load()).stageProbability[row.stage];
     row.value = dealValue(row);
+    row.finalValue = finalValueOf(row);
+    row.approvalStatus = await approvalFor(row, null);
   }
   const saved = await insert(KINDS[kind].table, row);
   await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, saved[KINDS[kind].name]);
@@ -323,7 +341,15 @@ async function edit(user, kind, id, body = {}) {
       const acc = await getRow('account', data.accountId);
       if (!canSeeRow(user, r, acc)) return fail(400, 'Pick one of your accounts.');
     }
-    data.value = dealValue({ ...row, ...data });
+    const merged = { ...row, ...data };
+    data.value = dealValue(merged);
+    if ('value' in data || 'discountPercent' in data) {
+      data.finalValue = finalValueOf(merged);
+      const was = row.approvalStatus;
+      data.approvalStatus = await approvalFor(merged, row);
+      // Discount changed in a way that needs fresh approval: clear who approved it before.
+      if (data.approvalStatus === 'Pending' && was !== 'Pending') { data.approvalByName = null; data.approvalAt = null; data.approvalNote = null; }
+    }
   }
   data.updatedAt = DB.nowIso();
   const saved = await update(KINDS[kind].table, row.id, data);
@@ -340,12 +366,29 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   if (stage === row.stage) return okBody({ ok: true, deal: row });
   const reason = clip(lostReason, 300);
   if (stage === 'Lost' && !reason) return fail(400, 'Why was the deal lost? Please pick the reason.');
+  if (stage === 'Won' && row.approvalStatus === 'Pending') return fail(409, `The ${row.discountPercent || 0}% discount on this deal is over the limit and needs a Sales manager's approval before it can be won.`);
   const now = DB.nowIso();
   const data = { stage, probability: (await SETTINGS.load()).stageProbability[stage], updatedAt: now, wonAt: stage === 'Won' ? now : null, lostAt: stage === 'Lost' ? now : null, lostReason: stage === 'Lost' ? reason : null };
   const saved = await update('CrmDeal', row.id, data);
   if (stage === 'Won' && row.accountId) await update('CrmAccount', row.accountId, { kind: 'Client', updatedAt: now });
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Stage: ${row.stage} → ${stage}`, note: stage === 'Lost' ? `Lost: ${reason}` : null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await audit(user, stage === 'Won' ? 'CRM deal won' : stage === 'Lost' ? 'CRM deal lost' : 'CRM deal stage changed', 'CrmDeal', row.id, `${row.title}: ${row.stage} -> ${stage}`, reason || undefined);
+  return okBody({ ok: true, deal: saved });
+}
+
+// A Sales manager / Admin approves or rejects a deal's over-limit discount (founder 2026-11-13).
+async function decideDeal(user, id, { decision, note } = {}) {
+  const r = roleOf(user);
+  const row = await getRow('deal', id);
+  if (!row || !canSeeRow(user, r, row)) return fail(404, 'This deal is not there.');
+  if (!mayAssign(r)) return fail(403, 'Only a Sales manager or an Admin can approve a discount.');
+  if (!['approve', 'reject'].includes(decision)) return fail(400, 'Approve or reject the discount?');
+  if (row.approvalStatus !== 'Pending') return fail(400, 'This deal is not waiting for a discount approval.');
+  const now = DB.nowIso();
+  const status = decision === 'approve' ? 'Approved' : 'Rejected';
+  const saved = await update('CrmDeal', row.id, { approvalStatus: status, approvalByName: user.name || null, approvalAt: now, approvalNote: clip(note, 300) || null, updatedAt: now });
+  await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Discount ${status.toLowerCase()} (${row.discountPercent || 0}%)`, note: clip(note, 300) || null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
+  await audit(user, `CRM deal discount ${status.toLowerCase()}`, 'CrmDeal', row.id, `${row.title}: ${row.discountPercent || 0}%`, note || undefined);
   return okBody({ ok: true, deal: saved });
 }
 
@@ -606,13 +649,13 @@ async function me(user) {
     owners: mayAssign(r) || seesAll(r) ? await ownerOptions() : [],
     salesTeam: mayAssign(r) ? st.salesTeam : [], // the CRM's own team: who may open it, and each one's rights
     team: mayAssign(r) ? { roles: SETTINGS.ROLES, rights: SETTINGS.RIGHTS, roleRights: SETTINGS.ROLE_RIGHTS } : null,
-    invoiceFrom: st.invoiceFrom, invoiceTaxPercent: st.invoiceTaxPercent, invoiceDueDays: st.invoiceDueDays, meetingLink: st.meetingLink, bookingHours: st.bookingHours,
+    invoiceFrom: st.invoiceFrom, invoiceTaxPercent: st.invoiceTaxPercent, invoiceDueDays: st.invoiceDueDays, meetingLink: st.meetingLink, bookingHours: st.bookingHours, discountApprovalLimit: st.discountApprovalLimit,
     lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'Email', 'WhatsApp', 'Other'], defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
   });
 }
 
 module.exports = {
-  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
+  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
   ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,

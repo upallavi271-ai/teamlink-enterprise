@@ -255,7 +255,7 @@ function WebsiteForm() {
 export function CrmSettings({ onClose, onSaved }) {
   const { me, toast } = useCrm();
   const L = me.lists;
-  const [f, setF] = useState({ sources: L.sources.join('\n'), lostReasons: L.lostReasons.join('\n'), stageProbability: { ...L.stageProbability }, staleDays: L.staleDays, proposalValidityDays: L.proposalValidityDays, salesTeam: (me.salesTeam || []).map((m) => ({ ...m, rights: { ...(m.rights || {}) } })),
+  const [f, setF] = useState({ sources: L.sources.join('\n'), lostReasons: L.lostReasons.join('\n'), stageProbability: { ...L.stageProbability }, staleDays: L.staleDays, proposalValidityDays: L.proposalValidityDays, discountApprovalLimit: me.discountApprovalLimit ?? 10, salesTeam: (me.salesTeam || []).map((m) => ({ ...m, rights: { ...(m.rights || {}) } })),
     invoiceFrom: { ...(me.invoiceFrom || {}) }, invoiceTaxPercent: me.invoiceTaxPercent ?? 18, invoiceDueDays: me.invoiceDueDays ?? 15, meetingLink: me.meetingLink || '', bookingHours: { ...(me.bookingHours || { from: '10:00', to: '18:00', minutes: 30 }) } });
   const RIGHT_WORDS = { create: 'Add', edit: 'Change', delete: 'Delete', import: 'Import', export: 'Download', reports: 'Team reports' };
   const roleRights = (me.team && me.team.roleRights) || {};
@@ -367,6 +367,7 @@ export function CrmSettings({ onClose, onSaved }) {
       <div className="grid-2">
         <div className="field"><label>A deal is "going cold" after this many days with nothing logged</label><input type="number" min={1} max={365} value={f.staleDays} onChange={(e) => setF({ ...f, staleDays: e.target.value })} /></div>
         <div className="field"><label>A proposal is valid for (days)</label><input type="number" min={1} max={365} value={f.proposalValidityDays} onChange={(e) => setF({ ...f, proposalValidityDays: e.target.value })} /></div>
+        <div className="field"><label>A deal discount above this % needs a manager&#39;s approval</label><input type="number" min={0} max={100} value={f.discountApprovalLimit} onChange={(e) => setF({ ...f, discountApprovalLimit: e.target.value })} /></div>
       </div>
       <div className="small-muted">"Other" is always kept in both lists. The deal stages stay as they are, so the board and the reports keep working. A new probability applies the next time a deal moves.</div>
     </Modal>

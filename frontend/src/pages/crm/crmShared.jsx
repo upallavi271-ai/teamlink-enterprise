@@ -106,6 +106,7 @@ function fieldsFor(kind, me) {
   return [
     { k: 'title', label: 'Deal name *' }, { k: 'accountId', label: 'Account *', type: 'account' }, { k: 'contactId', label: 'Contact', type: 'contact' },
     { k: 'value', label: 'Deal value (₹)', type: 'number' },
+    { k: 'discountPercent', label: 'Discount %', type: 'number', hint: 'Over the CRM limit, a manager has to approve it before the deal can be won' },
     { k: 'expectedClose', label: 'Expected close', type: 'date' },
     { k: 'nextStep', label: 'Next step', hint: 'For example: send the proposal, meet the HR head' },
   ];
@@ -582,6 +583,10 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
   async function saveNotes() {
     try { await api.put(`/crm/${kind}s/${row.id}`, { notes }); toast('Notes saved.'); setNotes(null); changed(); } catch (e) { toast(errOf(e, 'The notes could not be saved.')); }
   }
+  // Approve / reject an over-limit discount on a deal (Sales manager / Admin) — founder 2026-11-13.
+  async function decideDiscount(decision) {
+    try { await api.post(`/crm/deals/${row.id}/approval`, { decision }); toast(decision === 'approve' ? 'Discount approved — the deal can be won now.' : 'Discount rejected.'); changed(); } catch (e) { toast(errOf(e, 'This could not be saved.')); }
+  }
 
 
   let body = null;
@@ -603,7 +608,10 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
     const about = kind === 'lead'
       ? [['Lead source', row.source], ['Stage', row.stage], ['Expected value', row.expectedValue ? `₹${Number(row.expectedValue).toLocaleString('en-IN')}` : null], ['Lost reason', row.lostReason], ['Industry', row.industry], ['Rating', row.rating && <Pill v={row.rating} />], ['Came from', [row.utmSource, row.utmMedium, row.utmCampaign].filter(Boolean).join(' / ')], ['Page', row.pageUrl]]
       : kind === 'deal'
-        ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}</b>], ['Probability', `${row.probability}%`],
+        ? [['Account', d.account ? <RecLink kind="account" id={d.account.id}>{d.account.name}</RecLink> : '—'], ['Deal value', <b>{money(row.value)}</b>],
+          ...(row.discountPercent ? [['Discount', `${row.discountPercent}%`], ['Final value', <b>{money(row.finalValue)}</b>]] : []),
+          ...(row.approvalStatus && row.approvalStatus !== 'None' ? [['Discount approval', <Pill v={row.approvalStatus} />]] : []),
+          ['Probability', `${row.probability}%`],
           ['Expected close', dateOf(row.expectedClose)], ['Next step', row.nextStep], ...(row.stage === 'Lost' ? [['Lost because', row.lostReason]] : [])]
         : [['Industry', row.industry], ['Website', row.website], ['Source', row.source], ['Type', row.kind === 'Client' ? 'Customer' : 'Prospect']];
     const info = [
@@ -636,6 +644,12 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <QuickContact phone={contactLine && contactLine.phone ? contactLine.phone : row.phone} email={contactLine && contactLine.email ? contactLine.email : row.email} />
             {d.canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind, row })}>Edit</button>}
+            {kind === 'deal' && row.approvalStatus === 'Pending' && me.canAssign && (
+              <>
+                <button type="button" className="btn btn-primary btn-sm" title={`Approve the ${row.discountPercent || 0}% discount`} onClick={() => decideDiscount('approve')}>Approve discount</button>
+                <button type="button" className="btn btn-sm" onClick={() => decideDiscount('reject')}>Reject</button>
+              </>
+            )}
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && (
               <select value={row.stage || ''} onChange={(e) => moveLead(row, e.target.value)} aria-label="Stage" style={{ width: 'auto' }}>
                 {L.leadStages.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}

@@ -138,6 +138,8 @@ router.post('/proposals/:id/send', wrap((req) => X.sendProposal(req.user, req.pa
 router.post('/proposals/:id/status', wrap((req) => X.decideProposal(req.user, req.params.id, req.body || {})));
 router.post('/leads/:id/convert', wrap((req) => CRM.convertLead(req.user, req.params.id, req.body || {})));
 router.post('/deals/:id/stage', wrap((req) => CRM.moveDeal(req.user, req.params.id, req.body || {})));
+// Approve / reject a deal's over-limit discount (Sales manager / Admin) — founder 2026-11-13
+router.post('/deals/:id/approval', wrap((req) => CRM.decideDeal(req.user, req.params.id, req.body || {})));
 
 router.get('/:kind(leads|accounts|contacts|deals)', wrap(async (req) => ({ status: 200, body: { rows: await CRM.list(req.user, kindOf(req), req.query || {}) } })));
 router.post('/:kind(leads|accounts|contacts|deals)', wrap((req) => CRM.create(req.user, kindOf(req), req.body || {})));

@@ -180,6 +180,9 @@ const COLUMNS = [
   ['CrmTask', 'type', 'TEXT'], ['CrmTask', 'notifyApp', 'INTEGER'], ['CrmTask', 'notifyWhatsapp', 'INTEGER'], ['CrmTask', 'notifySms', 'INTEGER'], ['CrmTask', 'notifyLead', 'INTEGER'],
   ['CrmTask', 'remindBefore', 'INTEGER'], ['CrmTask', 'reminderSentAt', 'TEXT'], ['CrmTask', 'reminderNote', 'TEXT'],
   ['CrmLead', 'autoPaused', 'INTEGER'], // somebody pressed Stop on the automatic follow-through (crm/autopilot.js)
+  // Deal commercials + discount approval (founder 2026-11-13, the 5-module CRM blueprint)
+  ['CrmDeal', 'discountPercent', 'REAL'], ['CrmDeal', 'finalValue', 'REAL'],
+  ['CrmDeal', 'approvalStatus', 'TEXT'], ['CrmDeal', 'approvalByName', 'TEXT'], ['CrmDeal', 'approvalAt', 'TEXT'], ['CrmDeal', 'approvalNote', 'TEXT'],
 ];
 const INDEXES = [
   'CREATE INDEX IF NOT EXISTS "CrmLead_phone" ON "CrmLead"("phone")', 'CREATE INDEX IF NOT EXISTS "CrmLead_email" ON "CrmLead"("email")', 'CREATE INDEX IF NOT EXISTS "CrmLead_stage" ON "CrmLead"("stage")',
