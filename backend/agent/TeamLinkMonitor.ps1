@@ -32,7 +32,7 @@ param(
   [switch]$Keeper            # started by the keeper task (the PC woke or was unlocked): takes over only from a dead or stuck copy
 )
 $ErrorActionPreference = 'Stop'
-$AgentVersion = '3.1'
+$AgentVersion = '3.2'
 # older Windows would otherwise try an old, refused kind of secure connection
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing, System.Security
@@ -94,6 +94,7 @@ public class TLInput : NativeWindow {
   static int dayLeft, dayRight, dayMiddle, dayWheel;
   static int keyTotal, clicks, left, right, middle, wheel, moves, injected;
   static long px, py, minX, maxX, minY, maxY;
+  static long lastKeyTick, lastMouseTick;   // agent 3.2: when a key / the mouse was last used, for the live "typing / reading" signal
   public static bool Started;
   public static bool Start() {
     if (me != null) return Started;
@@ -124,7 +125,7 @@ public class TLInput : NativeWindow {
       if (type == 1 && b.Length >= hs + 12) {
         ushort vk = BitConverter.ToUInt16(b, hs + 6);
         uint msg = BitConverter.ToUInt32(b, hs + 8);
-        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; if (dev == 0) injected++; if (!down[vk]) { down[vk] = true; dayKeys[vk]++; } }
+        if ((msg == 0x100 || msg == 0x104) && vk > 0 && vk < 255) { keys[vk]++; keyTotal++; lastKeyTick = DateTime.UtcNow.Ticks; if (dev == 0) injected++; if (!down[vk]) { down[vk] = true; dayKeys[vk]++; } }
         else if ((msg == 0x101 || msg == 0x105) && vk > 0 && vk < 255) { down[vk] = false; }
       } else if (type == 0 && b.Length >= hs + 20) {
         ushort fl = BitConverter.ToUInt16(b, hs);
@@ -138,6 +139,7 @@ public class TLInput : NativeWindow {
         if ((bf & 0xC00) != 0) { wheel++; dayWheel++; }
         bool moved = (dx != 0 || dy != 0) && (fl & 1) == 0;
         if (moved) { moves++; px += dx; py += dy; if (px < minX) minX = px; if (px > maxX) maxX = px; if (py < minY) minY = py; if (py > maxY) maxY = py; }
+        if (c > 0 || moved || (bf & 0xC00) != 0) lastMouseTick = DateTime.UtcNow.Ticks;
         if (dev == 0 && (c > 0 || moved)) injected++;
       }
     }
@@ -161,6 +163,13 @@ public class TLInput : NativeWindow {
       Reset();
       return s;
     }
+  }
+  // agent 3.2: what the person is doing RIGHT NOW in the front app - "typing" (a key in the last 6s), "reading" (only the mouse), or ""
+  public static string Doing() {
+    long now = DateTime.UtcNow.Ticks;
+    if (lastKeyTick > 0 && (now - lastKeyTick) <= 60000000L) return "typing";
+    if (lastMouseTick > 0 && (now - lastMouseTick) <= 60000000L) return "reading";
+    return "";
   }
 }
 '@
@@ -559,9 +568,10 @@ function Watch-Front {
   $idle = [double][TLWin]::IdleSeconds() -ge ([int]$settings.idleThresholdMinutes * 60)
   if ($app -in @('LockApp', 'LogonUI')) { $idle = $true; $app = 'Locked' }
   if ($idle) { $title = '' }
-  $key = "$app|$title|$idle"
+  $doing = if (-not $idle -and [TLInput]::Started) { [TLInput]::Doing() } else { '' }
+  $key = "$app|$title|$idle|$doing"
   if ($key -eq $script:lastLive) { return }
-  $r = Call-Api 'POST' '/live' @{ currentApp = $app; title = $title; idle = [bool]$idle } $script:cfg.token 5
+  $r = Call-Api 'POST' '/live' @{ currentApp = $app; title = $title; idle = [bool]$idle; doing = $doing } $script:cfg.token 5
   if ($r.status -eq 200) { $script:lastLive = $key; $script:nextLive = $now.AddSeconds(2) } else { $script:nextLive = $now.AddSeconds(30) }  # no line: try again later, quietly
 }
 # ONE MINUTE OF INPUT, LOOKED AT (agent 2.5). A minute is kept only when nearly all of it is ONE thing over and over:

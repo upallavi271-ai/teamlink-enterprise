@@ -388,7 +388,7 @@ function Overview({ onOpen }) {
                 {live && <td title={STATUS_TIP[r.status] || undefined}><Pill tone={STATUS_TONE[r.status] || 'slate'}>{r.status || '—'}</Pill>{r.status === 'Old agent' && <div className="small-muted">Restart the PC once</div>}</td>}
                 {live && (() => {
                   const { site, page } = siteOf(r.currentApp, r.currentTitle);
-                  return <td className="mon-now">{r.currentApp || <span className="small-muted">—</span>}{site && <> · <b>{site}</b></>}{page && <div className="small-muted" title={r.currentTitle}>{page}</div>}</td>;
+                  return <td className="mon-now">{r.currentApp || <span className="small-muted">—</span>}{site && <> · <b>{site}</b></>}{r.doing && <> <Pill tone={r.doing === 'typing' ? 'green' : 'blue'}>{r.doing}</Pill></>}{page && <div className="small-muted" title={r.currentTitle}>{page}</div>}</td>;
                 })()}
                 <td>{tm(r.firstSeen)}</td>
                 <td>{live && r.lastHeartbeat ? dt(r.lastHeartbeat) : tm(r.lastSeen)}</td>

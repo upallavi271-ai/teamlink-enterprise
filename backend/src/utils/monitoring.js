@@ -23,6 +23,9 @@ const IST = 330 * 60000;
 const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
 const CATEGORIES = ['productive', 'neutral', 'unproductive'];
 const ONLINE_MS = 3 * 60000; // a PC that sent a heartbeat in the last 3 minutes is online (the agent sends one every minute)
+// What each person is doing in the front app RIGHT NOW - "typing" / "reading" - from the 2-second /live tick (agent 3.2). Live-only and
+// ephemeral, so it is kept in memory (no column): employeeId -> { doing, at }.
+const liveDoing = new Map();
 const MAX_RECORD_MS = 60 * 60000; // one record covers at most an hour
 const MAX_BATCH = 500;
 const BROWSERS = ['chrome', 'msedge', 'firefox', 'opera', 'brave', 'iexplore', 'vivaldi', 'safari'];
@@ -385,6 +388,7 @@ async function liveTitle(device, body) {
 }
 // The moment the app or tab changes (founder 2026-11-05: "within sec lo updation jaragali"). The live picture only: records are unchanged.
 async function liveUpdate(device, body = {}) {
+  liveDoing.set(device.employeeId, { doing: body.idle ? '' : String(body.doing || '').slice(0, 12), at: Date.now() });
   await prisma.monitoringDevice.update({
     where: { id: device.id },
     data: { lastSeenAt: new Date(), currentApp: body.currentApp ? cleanApp(body.currentApp) || null : null, currentIdle: body.idle === true, currentTitle: await liveTitle(device, body) },
@@ -550,7 +554,9 @@ async function liveRows(access = null) {
     let status = liveStatus(dev, onLeave.has(id), now);
     if (mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break';
     const using = ['Online', 'Idle'].includes(status);
-    rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, lastHeartbeat: dev.lastSeenAt, online: using });
+    const ld = liveDoing.get(id);
+    const doing = status === 'Online' && ld && (now - ld.at) < ONLINE_MS ? (ld.doing || null) : null;
+    rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, doing, lastHeartbeat: dev.lastSeenAt, online: using });
   });
   const count = (s) => rows.filter((r) => r.status === s).length;
   return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') } };
