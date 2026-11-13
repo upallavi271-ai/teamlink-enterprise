@@ -279,6 +279,22 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
         <label>Name (only you see this)</label>
         <input value={f.name} disabled={!editable} onChange={(e) => set('name', e.target.value)} />
       </div>
+      {channel === 'WhatsApp' && (
+        waNums && !waNums.legacy && (waNums.numbers || []).length > 0 ? (
+          <div className="field">
+            <label>Send from which of our WhatsApp numbers</label>
+            <Combo value={f.waNumberId || ''} disabled={!editable} onChange={(e) => set('waNumberId', e.target.value)}>
+              <option value="">Pick automatically (the number for the sender / department)</option>
+              {(waNums.numbers || []).map((n) => <option key={n.id} value={n.id}>{n.label}{n.displayNumber ? ` · ${n.displayNumber}` : ''}{n.usable ? '' : ' (switched off)'}</option>)}
+            </Combo>
+            <div className="small-muted">Every WhatsApp message from this template goes out from this number. “Pick automatically” uses the usual number for whoever sends it.</div>
+          </div>
+        ) : (
+          <div className="field"><label>Send from which of our WhatsApp numbers</label>
+            <div className="small-muted">{waNums && waNums.legacy ? 'Only one WhatsApp number is connected. Add more in Administration → Integrations → WhatsApp numbers and they will appear here to choose from.' : 'No WhatsApp number is assigned to you yet. Ask an Admin (Integrations → WhatsApp numbers → Assign).'}</div>
+          </div>
+        )
+      )}
       {channel === 'Email' && (
         <div className="field"><label>Subject</label>
           <input value={f.subject} disabled={!editable} onChange={(e) => set('subject', e.target.value)} />
@@ -306,16 +322,6 @@ function TemplateEditor({ id, tokens, canEdit, isAdmin, purposes, languages, onS
         <div className="mt-card">
           <h4>WhatsApp (Meta)</h4>
           <div className="small-muted">WhatsApp can only start a chat with a template that Meta approved. Create it in the Meta console (WhatsApp Manager → Message templates) with the same words, then type its exact name here. Set <b>Approved</b> only after Meta says so.</div>
-          {waNums && !waNums.legacy && (waNums.numbers || []).length > 0 && (
-            <div className="field" style={{ marginTop: 8 }}>
-              <label>Send from which of our numbers</label>
-              <Combo value={f.waNumberId || ''} disabled={!editable} onChange={(e) => set('waNumberId', e.target.value)}>
-                <option value="">Pick automatically (the number for the sender / department)</option>
-                {(waNums.numbers || []).map((n) => <option key={n.id} value={n.id}>{n.label}{n.displayNumber ? ` · ${n.displayNumber}` : ''}{n.usable ? '' : ' (switched off)'}</option>)}
-              </Combo>
-              <div className="small-muted">Every message from this template goes out from this WhatsApp number. Leave it on “Pick automatically” to use the usual number for whoever sends it.</div>
-            </div>
-          )}
           <div className="mt-row2" style={{ marginTop: 8 }}>
             <div className="field"><label>Template name in Meta</label>
               <input value={f.waTemplateName || ''} disabled={!adminFields} placeholder="e.g. interview_scheduled" onChange={(e) => set('waTemplateName', e.target.value)} /></div>
