@@ -19,23 +19,50 @@ export function useVacancies() {
   return [d, setD];
 }
 
+// WHICH POSITIONS ARE VACANT, DEPARTMENT BY DEPARTMENT (founder 2026-11-13: "dashboard lo vacancies card lo positions wise vacancies em unai,
+// ahh department lo kavali"): one line per department (or per team of a department that is split into teams), listing only the positions
+// (STL / TL / Employee) that still have a vacancy, e.g. "Medical: TL 1 · Employee 2". The same numbers as the table in the popup.
+export function vacantByDepartment(d) {
+  const out = [];
+  ((d && d.groups) || []).forEach((g) => {
+    const parts = (rows) => (rows || []).filter((r) => r.vacant > 0).map((r) => ({ role: r.role, n: r.vacant }));
+    // a department split into teams: its TL / Employee rows are the teams added together, so show the teams (and the roles the teams do not plan, the STL)
+    const split = new Set((g.teams || []).flatMap((t) => t.rows.map((r) => r.role)));
+    const own = parts((g.rows || []).filter((r) => !split.has(r.role)));
+    if (own.length) out.push({ label: g.name, parts: own });
+    (g.teams || []).forEach((t) => { const p = parts(t.rows); if (p.length) out.push({ label: `${g.name} · ${t.name}`, parts: p }); });
+  });
+  return out;
+}
+
 // the small card (the Super Admin / Admin home); the HRMS dashboard shows the same number as a tile in its Attendance row
 export default function Vacancies() {
   const [d, setD] = useVacancies();
   const [show, setShow] = useState(false);
   if (!d) return null;
   const t = d.totals;
+  const lines = vacantByDepartment(d);
   return (
     <>
       {/* founder 2026-11-02: "vacancies okka card evvu dani medha click chestey ahh table open avali" */}
       <button
         type="button" className="card" onClick={() => setShow(true)} aria-label={`Vacancies: ${t.vacant}. Open the table`}
-        style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '14px 18px', margin: '16px 0', minWidth: 220, textAlign: 'left', cursor: 'pointer', border: '1px solid var(--line, #e5e7eb)' }}
+        style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4, padding: '14px 18px', margin: '16px 0', minWidth: 220, maxWidth: 560, textAlign: 'left', cursor: 'pointer', border: '1px solid var(--line, #e5e7eb)' }}
       >
         <span className="small-muted" style={{ fontSize: 12 }}>Vacancies</span>
         <b style={{ fontSize: 28, lineHeight: 1.1, color: t.vacant ? red : green }}>{t.vacant}</b>
         <span className="small-muted" style={{ fontSize: 12 }}>Should have {t.planned} · Working {t.filled}</span>
-        <span style={{ fontSize: 12, color: 'var(--primary, #1a56db)' }}>See by department →</span>
+        {lines.length ? (
+          <span style={{ display: 'block', width: '100%', marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--line, #e5e7eb)' }} aria-label="Vacant positions by department">
+            {lines.map((l) => (
+              <span key={l.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 13, lineHeight: 1.6 }}>
+                <b>{l.label}</b>
+                <span>{l.parts.map((p, i) => <span key={p.role}>{i ? ' · ' : ''}{p.role} <b style={{ color: red }}>{p.n}</b></span>)}</span>
+              </span>
+            ))}
+          </span>
+        ) : <span style={{ fontSize: 12, color: green }}>No position is vacant</span>}
+        <span style={{ fontSize: 12, color: 'var(--primary, #1a56db)' }}>See the full table →</span>
       </button>
       {show ? <VacanciesPopup d={d} setD={setD} onClose={() => setShow(false)} /> : null}
     </>

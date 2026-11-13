@@ -27,11 +27,14 @@ router.use(requireAuth);
 // /pulse/... never meets the /:id/... routes below.
 router.use('/pulse', require('./leavePulse'));
 
-// An existing Pending / Approved request of the SAME type on overlapping dates (opposite half days do not clash).
-async function duplicateOf({ employeeId, type, fromDate, toDate, halfDay = null, ignoreId = null }) {
+// An existing Pending / Approved request of ANY leave type on overlapping dates (opposite half days do not clash).
+// Founder 2026-11-13: "leave okka employee apply chestey ahh roju malli apply chesukokudadhu, duplicate ani ravali" - a day already
+// applied for (Casual, Sick, Planned, ...) cannot be applied for again under another type either. Rejected / Cancelled ones do not count.
+async function duplicateOf({ employeeId, fromDate, toDate, halfDay = null, ignoreId = null }) {
   const rows = await prisma.leaveRequest.findMany({
-    where: { employeeId, type, status: { in: ['Pending', 'Approved', 'Cancellation Requested'] }, fromDate: { lte: String(toDate).slice(0, 10) }, toDate: { gte: String(fromDate).slice(0, 10) }, ...(ignoreId ? { id: { not: ignoreId } } : {}) },
-    select: { id: true, type: true, status: true, reason: true },
+    where: { employeeId, status: { in: ['Pending', 'Approved', 'Cancellation Requested'] }, fromDate: { lte: String(toDate).slice(0, 10) }, toDate: { gte: String(fromDate).slice(0, 10) }, ...(ignoreId ? { id: { not: ignoreId } } : {}) },
+    select: { id: true, type: true, status: true, reason: true, fromDate: true, toDate: true },
+    orderBy: { fromDate: 'asc' },
   });
   return rows.find((r) => {
     const h = leaveText.halfOf(r);
@@ -487,10 +490,19 @@ router.post('/', async (req, res, next) => {
     // Super Admin is a system account: never a requester on the chain.
     const sys = await systemRequesterError(employee, 'leave');
     if (sys) return res.status(403).json({ error: sys });
-    // NO DUPLICATES (HRMS item 8): the same person cannot have the same leave type twice on overlapping dates.
+    // NO DUPLICATES (HRMS item 8): the same person cannot apply again for a day that already has a leave (any type) waiting or approved.
     {
-      const clash = await duplicateOf({ employeeId, type, fromDate, toDate, halfDay });
-      if (clash) return res.status(409).json({ error: `You already have ${/leave$/i.test(clash.type) ? clash.type : `${clash.type} leave`} on these dates (${clash.status === 'Cancellation Requested' ? 'Approved' : clash.status}).`, duplicateOf: clash.id });
+      const clash = await duplicateOf({ employeeId, fromDate, toDate, halfDay });
+      if (clash) {
+        const ex = require('../utils/exitDate'); // eslint-disable-line global-require
+        const when = clash.fromDate === clash.toDate ? ex.dmy(clash.fromDate) : `${ex.dmy(clash.fromDate)} to ${ex.dmy(clash.toDate)}`;
+        const half = leaveText.halfOf(clash);
+        return res.status(409).json({
+          error: `Duplicate leave: you already applied for ${/leave$/i.test(clash.type) ? clash.type : `${clash.type} leave`}${half ? ` (${half})` : ''} on ${when} (${clash.status === 'Cancellation Requested' ? 'Approved' : clash.status}). You cannot apply again for the same day.`,
+          code: 'DUPLICATE_LEAVE',
+          duplicateOf: clash.id,
+        });
+      }
     }
     // A REMINDER, NOT A BLOCK (founder 2026-10-26: "employee apply cheyochu, leave apply avali, valla department lo leave lo unna kuda"):
     // the employee may apply even when colleagues are away; the cap is only said back with the saved request.
