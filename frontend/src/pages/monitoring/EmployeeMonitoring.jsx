@@ -1250,8 +1250,8 @@ function AppWork({ app, who, range, total, onClose }) {
   const when = (x) => (oneDay ? tm(x) : dt(x));
   return createPortal((
     <div className="mon-modal" role="dialog" aria-modal="true" aria-label={`${app.name}: what it was used for`} onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'center', padding: '40px 16px', background: 'rgba(15,23,42,.45)', zIndex: 10000, overflow: 'auto' }}>
-      <div className="mon-modal-box" style={{ width: 'min(900px, 100%)', maxWidth: '900px', margin: '0 auto' }}>
+      style={{ position: 'fixed', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 24px', background: 'rgba(15,23,42,.5)', zIndex: 10000, overflow: 'auto' }}>
+      <div className="mon-modal-box" style={{ width: 'min(1040px, 100%)', maxWidth: '1040px', maxHeight: 'calc(100vh - 64px)', margin: '0 auto' }}>
         <div className="mon-modal-head">
           <div>
             <h3>{app.name}{app.kind === 'site' && <span className="small-muted"> · website</span>} {app.category && <Pill tone={CAT_TONE[app.category]}>{CAT_WORD[app.category]}</Pill>}</h3>
