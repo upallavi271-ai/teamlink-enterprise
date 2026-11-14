@@ -189,9 +189,15 @@ async function remove(user) {
   await DB.run(`DELETE FROM "CrmTicketComment" WHERE ${inList('ticketId', tktIds)}`, ...tktIds);
   await DB.run(`DELETE FROM "CrmProposal" WHERE ${inList('dealId', dealIds)}`, ...dealIds);
   await DB.run(`DELETE FROM "CrmContact" WHERE ${inList('accountId', accIds)}`, ...accIds);
+  // an invoice (and its payment lines) raised on a sample deal or sample customer goes too: left behind it would count in Invoiced / Collected / Still to collect
+  const invs = await DB.all(`SELECT "id" FROM "CrmInvoice" WHERE ${inList('dealId', dealIds)} OR ${inList('accountId', accIds)}`, ...dealIds, ...accIds).catch(() => []);
+  const invIds = invs.map((x) => x.id);
+  await DB.run(`DELETE FROM "CrmPayment" WHERE ${inList('invoiceId', invIds)} OR ${inList('dealId', dealIds)} OR ${inList('accountId', accIds)}`, ...invIds, ...dealIds, ...accIds);
+  await DB.run(`DELETE FROM "CrmInvoice" WHERE ${inList('id', invIds)}`, ...invIds);
+  const freed = await S.resetCodeCounters().catch(() => ({}));
   await prisma.appSetting.delete({ where: { key: KEY } }).catch(() => null);
-  await S.audit(user, 'CRM sample data removed', 'Crm', 'sample', `${n} rows`);
-  return S.okBody({ ok: true, removed: n });
+  await S.audit(user, 'CRM sample data removed', 'Crm', 'sample', `${n} rows, ${invIds.length} invoices`);
+  return S.okBody({ ok: true, removed: n, invoicesRemoved: invIds.length, numbersFreed: freed });
 }
 
 module.exports = { status, load, remove };

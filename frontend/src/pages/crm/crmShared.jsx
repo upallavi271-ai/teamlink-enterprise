@@ -480,6 +480,24 @@ export function InvoiceStatusSelect({ inv, onSaved }) {
     </select>
   );
 }
+// The invoice on WhatsApp: TeamLink sends nothing. It makes a link to the PDF (the customer needs no login) and opens WhatsApp with the message
+// and the customer's number filled in; the person presses Send. The window is opened first and filled when the link is ready (a window opened
+// after a wait is blocked by the browser).
+export async function shareInvoiceWhatsApp(inv, toast, after) {
+  const w = window.open('', '_blank');
+  try {
+    const r = await api.post(`/crm/invoices/${inv.id}/share`);
+    if (w) w.location.href = r.data.waUrl; else window.open(r.data.waUrl, '_blank');
+    toast(r.data.number ? `WhatsApp is open for +${r.data.number}. Press Send there.` : 'This customer has no number on the account: choose the chat in WhatsApp, the message is ready.');
+    if (inv.status === 'Draft' && window.confirm(`Mark ${inv.code} as Sent?\n\n(It is a Draft until you do; only sent invoices count as Invoiced.)`)) {
+      await api.post(`/crm/invoices/${inv.id}/status`, { status: 'Sent' });
+      if (after) after();
+    }
+  } catch (e) {
+    if (w) w.close();
+    toast(errOf(e, 'The WhatsApp message could not be made.'));
+  }
+}
 export const openInvoicePdf = (inv, toast) => download(`/crm/invoices/${inv.id}/pdf`, `${inv.code || 'invoice'}.pdf`, { open: true }).catch(() => toast('The PDF could not be opened.'));
 // ---- the PAYMENT LOG of an invoice (founder 2026-11-14: every amount received is a line - date, amount, mode; Partly paid / Paid follow from it) ----
 export const PAYMENT_MODES = ['Bank transfer', 'UPI', 'Cheque', 'Cash', 'Card', 'Other'];
@@ -538,22 +556,16 @@ function PaymentLog({ inv, canEdit, onChanged }) {
       </div>
       {!pays.length && <div className="small-muted" style={{ fontSize: 12.5, marginTop: 6 }}>No payment recorded yet.</div>}
       {pays.length > 0 && (
-        <div className="tbl-wrap" style={{ marginTop: 6 }}>
-          <table>
-            <thead><tr><th>Date</th><th style={{ textAlign: 'right' }}>Amount</th><th>Mode</th><th>Reference / note</th><th>By</th>{canEdit && <th />}</tr></thead>
-            <tbody>
-              {pays.map((p) => (
-                <tr key={p.id}>
-                  <td>{dateOf(p.paidOn)}</td>
-                  <td style={{ textAlign: 'right' }}><b>{money(p.amount)}</b></td>
-                  <td>{p.mode || '—'}</td>
-                  <td>{[p.reference, p.note].filter(Boolean).join(' · ') || '—'}</td>
-                  <td>{p.byName || '—'}</td>
-                  {canEdit && <td><button type="button" className="btn btn-sm" aria-label={`Remove the payment of ${money(p.amount)}`} onClick={() => remove(p)}>Remove</button></td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div style={{ marginTop: 6 }}>
+          {pays.map((p) => (
+            <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '7px 0', borderTop: '1px solid var(--line, #eef0f4)' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}><b style={{ fontSize: 14 }}>{money(p.amount)}</b><span>{p.mode || '—'}</span><span className="small-muted">{dateOf(p.paidOn)}</span></div>
+                {([p.reference, p.note].some(Boolean) || p.byName) && <div className="small-muted" style={{ fontSize: 12, overflowWrap: 'anywhere' }}>{[p.reference, p.note].filter(Boolean).join(' · ')}{p.byName ? `${[p.reference, p.note].some(Boolean) ? ' · ' : ''}by ${p.byName}` : ''}</div>}
+              </div>
+              {canEdit && <button type="button" className="btn btn-sm" aria-label={`Remove the payment of ${money(p.amount)}`} onClick={() => remove(p)}>Remove</button>}
+            </div>
+          ))}
         </div>
       )}
       {adding && <PaymentDialog inv={inv} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); onChanged(); }} />}
@@ -586,6 +598,7 @@ function InvoiceBox({ deal, onChanged }) {
             <span className="small-muted" style={{ fontSize: 11.5 }}>issued {dateOf(inv.issueDate)}{inv.dueDate ? ` · due ${dateOf(inv.dueDate)}` : ''}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
               <button type="button" className="btn btn-sm" onClick={() => openInvoicePdf(inv, toast)}>PDF</button>
+              {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" onClick={() => shareInvoiceWhatsApp(inv, toast, () => { load(); if (onChanged) onChanged(); })}>💬 WhatsApp</button>}
               {me.canEdit && <InvoiceStatusSelect inv={inv} onSaved={() => { load(); if (onChanged) onChanged(); }} />}
             </span>
           </div>

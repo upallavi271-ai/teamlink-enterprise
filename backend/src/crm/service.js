@@ -187,6 +187,21 @@ async function nextCodes(kind, n = 1) {
   await prisma.appSetting.upsert({ where: { key: SEQ_KEY }, create: { key: SEQ_KEY, value: v }, update: { value: v } });
   return out;
 }
+// After sample data is removed the numbers it used are free again: the counters go back to the highest code that is still there, so the first
+// REAL invoice is INV-0001 (an accountant does not want invoice numbers that start after a gap made by test records), the first real lead L-0001, ...
+async function resetCodeCounters() {
+  const tables = { lead: 'CrmLead', deal: 'CrmDeal', account: 'CrmAccount', invoice: 'CrmInvoice' };
+  const row = await prisma.appSetting.findUnique({ where: { key: SEQ_KEY } }).catch(() => null);
+  let seq = {}; try { seq = row && row.value ? JSON.parse(row.value) : {}; } catch { seq = {}; }
+  const out = {};
+  for (const [kind, table] of Object.entries(tables)) {
+    const codes = await DB.all(`SELECT "code" FROM "${table}" WHERE "code" IS NOT NULL`).catch(() => []); // eslint-disable-line no-await-in-loop
+    const max = codes.reduce((m, x) => Math.max(m, Number(String(x.code).split('-')[1]) || 0), 0);
+    if ((Number(seq[kind]) || 0) > max) { seq[kind] = max; out[kind] = max; }
+  }
+  if (Object.keys(out).length) await prisma.appSetting.upsert({ where: { key: SEQ_KEY }, create: { key: SEQ_KEY, value: JSON.stringify(seq) }, update: { value: JSON.stringify(seq) } });
+  return out;
+}
 let codesBackfilled = false;
 async function backfillCodes() {
   if (codesBackfilled) return;
@@ -971,5 +986,5 @@ module.exports = {
   roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, hasLoggedWork, NEEDS_LOGGED_WORK, backfillInvoices, invoiceForDeal, addPayment, deletePayment, PAYMENT_MODES, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
-  ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
+  resetCodeCounters, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
 };

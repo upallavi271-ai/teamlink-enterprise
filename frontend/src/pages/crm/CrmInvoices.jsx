@@ -4,7 +4,7 @@
 // (`embedded`), not a module of its own: the CRM stays at five (founder 2026-11-14).
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
-import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, INVOICE_STATUSES } from './crmShared.jsx';
+import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, INVOICE_STATUSES } from './crmShared.jsx';
 
 export default function CrmInvoices({ embedded = false }) {
   const { me, toast, openRecord, version } = useCrm();
@@ -81,7 +81,7 @@ export default function CrmInvoices({ embedded = false }) {
                   <td style={{ textAlign: 'right' }}>{money(x.paidAmount)}</td>
                   <td>{me.canEdit ? <><InvoiceStatusSelect inv={x} onSaved={replace} />{x.overdue && <> <Pill v="Overdue" /></>}</> : <Pill v={invoicePill(x)} />}</td>
                   {me.seesAll && <td>{x.ownerName || '—'}</td>}
-                  <td><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button></td>
+                  <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button>{me.canEdit && x.status !== 'Cancelled' && <> <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" aria-label={`Send ${x.code} on WhatsApp`} onClick={(e) => { e.stopPropagation(); shareInvoiceWhatsApp(x, toast, () => load()); }}>💬</button></>}</td>
                 </tr>
               ))}
             </tbody>

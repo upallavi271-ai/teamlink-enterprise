@@ -124,6 +124,8 @@ const near = (a, b) => Math.abs(a - b) < 0.01;
   check('B cannot open the invoice, its PDF, or its payments', (await call('GET', `/crm/invoices/${inv.id}`, null, tk.B)).status === 404 && (await call('GET', `/crm/invoices/${inv.id}/pdf`, null, tk.B)).status === 404);
   check('B cannot record a payment on it', (await call('POST', `/crm/invoices/${inv.id}/payments`, { amount: 100 }, tk.B)).status === 404);
   check('B cannot change its status', (await call('POST', `/crm/invoices/${inv.id}/status`, { status: 'Sent' }, tk.B)).status === 404);
+  check('B cannot make a WhatsApp link for it, and the Viewer cannot send it either', (await call('POST', `/crm/invoices/${inv.id}/share`, null, tk.B)).status === 404 && (await call('POST', `/crm/invoices/${inv.id}/share`, null, tk.V)).status === 403);
+  check('A can send their own invoice on WhatsApp', (await call('POST', `/crm/invoices/${inv.id}/share`, null, tk.A)).status === 200);
   check('the Viewer sees it but cannot record a payment or change it', (await call('GET', `/crm/invoices/${inv.id}`, null, tk.V)).status === 200 && (await call('POST', `/crm/invoices/${inv.id}/payments`, { amount: 100 }, tk.V)).status === 403 && (await call('POST', `/crm/invoices/${inv.id}/status`, { status: 'Sent' }, tk.V)).status === 403);
   await call('POST', `/crm/invoices/${inv.id}/status`, { status: 'Sent' }, tk.A);
   const pay = await call('POST', `/crm/invoices/${inv.id}/payments`, { amount: 40000, mode: 'UPI', reference: 'UTR-ROLE' }, tk.A);

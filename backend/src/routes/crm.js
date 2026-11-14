@@ -149,6 +149,7 @@ router.post('/invoices/backfill', wrap((req) => CRM.backfillInvoices(req.user)))
 router.get('/invoices/:id', wrap((req) => CRM.invoiceDetail(req.user, req.params.id)));
 router.post('/invoices/:id/status', wrap((req) => CRM.setInvoiceStatus(req.user, req.params.id, req.body || {})));
 router.post('/invoices/:id/payments', wrap((req) => CRM.addPayment(req.user, req.params.id, req.body || {}))); // the payment log
+router.post('/invoices/:id/share', wrap((req) => X.shareInvoice(req.user, req.params.id, req))); // WhatsApp click-to-chat: a signed PDF link + the message
 router.delete('/invoices/:id/payments/:pid', wrap((req) => CRM.deletePayment(req.user, req.params.id, req.params.pid)));
 router.get('/invoices/:id/pdf', async (req, res, next) => {
   try {

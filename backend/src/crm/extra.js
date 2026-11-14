@@ -443,10 +443,11 @@ async function proposalPdf(user, id) {
 }
 
 // The CRM's own invoice as a PDF (A4): from / bill-to, the amount, tax, total, due date, bank and terms. Self-contained (founder 2026-11-13).
-async function invoicePdf(user, id) {
+// `signed` is only ever passed by the public link route AFTER it has checked the signed, unexpired token (shareInvoice below).
+async function invoicePdf(user, id, { signed } = {}) {
   const r = S.roleOf(user);
   const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
-  if (!inv || !S.canSeeRow(user, r, inv)) return S.fail(404, 'This invoice is not there.');
+  if (!inv || (!signed && !S.canSeeRow(user, r, inv))) return S.fail(404, 'This invoice is not there.');
   let from = {}; let to = {};
   try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
   try { to = JSON.parse(inv.billToJson || '{}'); } catch { to = {}; }
@@ -494,6 +495,64 @@ async function invoicePdf(user, id) {
     doc.end();
   });
   return { status: 200, pdf: buf, name: `${inv.code || 'invoice'}.pdf` };
+}
+
+// ---- the invoice on WhatsApp (founder 2026-11-14, build order: "WhatsApp click-to-chat easy, PDF link tho") --------------------------------------
+// TeamLink sends NOTHING: this makes a signed link to the invoice PDF (valid 30 days, no login for the customer) and the message text with the
+// customer's number, and the person presses Send in their own WhatsApp. The link is the invoice id signed with the server secret, so it cannot
+// be made for another invoice; it only ever opens that one PDF.
+const SHARE_DAYS = 30;
+const shareSecret = () => String(process.env.JWT_SECRET || 'teamlink-crm');
+const shareSig = (v) => require('crypto').createHmac('sha256', shareSecret()).update(`crm-invoice-link:${v}`).digest('base64url').slice(0, 24); // eslint-disable-line global-require
+function shareToken(invoiceId, days = SHARE_DAYS) {
+  const exp = Math.floor(Date.now() / 1000) + days * 86400;
+  const body = `${invoiceId}.${exp}`;
+  return `${Buffer.from(body).toString('base64url')}.${shareSig(body)}`;
+}
+/** The invoice id a link opens, or null (wrong signature, tampered, expired). */
+function invoiceOfToken(token) {
+  const [b, sig] = String(token || '').split('.');
+  if (!b || !sig) return null;
+  let body = '';
+  try { body = Buffer.from(b, 'base64url').toString('utf8'); } catch { return null; }
+  const a = Buffer.from(shareSig(body)); const c = Buffer.from(sig);
+  if (a.length !== c.length || !require('crypto').timingSafeEqual(a, c)) return null; // eslint-disable-line global-require
+  const [id, exp] = body.split('.');
+  if (!id || !(Number(exp) > Math.floor(Date.now() / 1000))) return null;
+  return id;
+}
+async function shareInvoice(user, id, req) {
+  const r = S.roleOf(user);
+  const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
+  if (!inv || !S.canSeeRow(user, r, inv)) return S.fail(404, 'This invoice is not there.');
+  if (!S.canEditRow(user, r, inv)) return S.fail(403, 'You cannot send this invoice.');
+  if (inv.status === 'Cancelled') return S.fail(400, 'This invoice is cancelled. It is not sent to the customer.');
+  const W = require('../utils/waLink'); // eslint-disable-line global-require
+  let billTo = {}; try { billTo = JSON.parse(inv.billToJson || '{}'); } catch { billTo = {}; }
+  // the number: the customer's own, else the contact who decides on this account
+  let number = W.cleanNumber(billTo.phone);
+  let contactName = '';
+  if (inv.accountId) {
+    const ct = await DB.one('SELECT "name", "phone" FROM "CrmContact" WHERE "accountId" = ? ORDER BY CASE "role" WHEN \'Decision maker\' THEN 0 WHEN \'HR\' THEN 1 ELSE 2 END LIMIT 1', inv.accountId).catch(() => null);
+    if (ct) { contactName = ct.name || ''; if (!number.valid) number = W.cleanNumber(ct.phone); }
+  }
+  const base = require('../utils/offerLink').publicBase(req); // eslint-disable-line global-require
+  const url = `${base}/api/crm-public/invoice/${shareToken(inv.id)}`;
+  let from = {}; try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
+  const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  const left = Math.max(0, inv.total - inv.paidAmount);
+  const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+  const text = [
+    `Hello${contactName ? ` ${String(contactName).split(/\s+/)[0]}` : ''},`,
+    `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}: ${inr(left > 0 && inv.paidAmount > 0 ? left : inv.total)}${inv.paidAmount > 0 && left > 0 ? ' balance' : ''}${due ? `, due ${due}` : ''}.`,
+    `You can open the invoice (PDF) here: ${url}`,
+    'Thank you.',
+  ].join('\n');
+  const waUrl = `https://wa.me/${number.valid ? number.digits : ''}?text=${encodeURIComponent(text)}`;
+  const now = DB.nowIso();
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'whatsapp', subject: `Invoice ${inv.code || ''} sent on WhatsApp (link opened)`, note: number.valid ? `to ${number.digits}` : 'no number on the customer: the person picked the chat', at: now, dealId: inv.dealId, accountId: inv.accountId, byId: user.id, byName: user.name || null, createdAt: now });
+  await S.audit(user, 'CRM invoice shared on WhatsApp', 'CrmInvoice', inv.id, `${inv.code || inv.id}: link made for 30 days`);
+  return S.okBody({ ok: true, url, waUrl, text, number: number.valid ? number.digits : null, contactName: contactName || billTo.name || '', status: inv.status, expiresInDays: SHARE_DAYS });
 }
 
 async function sendProposal(user, id, { to, message } = {}) {
@@ -666,4 +725,4 @@ async function activities(user, { kind, from, to, owner, q } = {}) {
   return S.okBody({ rows, byKind });
 }
 
-module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, sendProposal, decideProposal, monthRange };
+module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, shareInvoice, invoiceOfToken, sendProposal, decideProposal, monthRange };

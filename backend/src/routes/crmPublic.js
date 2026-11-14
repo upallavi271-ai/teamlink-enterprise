@@ -25,4 +25,23 @@ router.get('/unsubscribe', async (req, res) => {
   }
 });
 
+// The invoice PDF a customer opens from the WhatsApp message (no login): the link is signed and expires after 30 days (crm/extra.js shareInvoice).
+router.get('/invoice/:token', async (req, res) => {
+  const X = require('../crm/extra'); // eslint-disable-line global-require
+  const id = X.invoiceOfToken(req.params.token);
+  if (!id) { res.set('Content-Type', 'text/html; charset=utf-8'); return res.status(404).send(page('This link has expired', 'Please ask us to send the invoice again.')); }
+  try {
+    const out = await X.invoicePdf(null, id, { signed: true });
+    if (!out.pdf) { res.set('Content-Type', 'text/html; charset=utf-8'); return res.status(404).send(page('This invoice is not available', 'Please ask us to send it again.')); }
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${out.name}"`);
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Robots-Tag', 'noindex');
+    return res.send(out.pdf);
+  } catch (e) {
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    return res.status(500).send(page('Something went wrong', 'Please try the link again in a minute.'));
+  }
+});
+
 module.exports = router;
