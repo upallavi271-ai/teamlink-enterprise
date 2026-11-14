@@ -14,8 +14,9 @@ export default function MkUsagePage() {
   const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
   const [busy, setBusy] = useState(false);
   const [ways, setWays] = useState(null); // is WhatsApp / email connected (what the "tell the client" switch can really use)
+  const [roles, setRoles] = useState(null); // the Admin's table: who sees what in AI Marketing (a non-Admin gets a refusal and sees nothing here)
   const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
-  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); }, [load]);
+  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); omni.get('/gs/marketing/roles').then((x) => setRoles(x.roles)).catch(() => setRoles(null)); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
   const s = d.summary;
@@ -33,7 +34,21 @@ export default function MkUsagePage() {
         <Kpi label="Failed this month" icon="!" value={fmtNum(s.failed)} tone={s.failed > 0 ? 'warn' : 'neutral'} meta="Not ready, over a limit, or unreadable" />
         <Kpi label="Company limit" icon="∑" value={d.settings.aiMonthlyCap ? fmtNum(d.settings.aiMonthlyCap) : 'None'} meta="AI requests a month" />
       </Kpis>
-      <Panel title="What is connected" sub="The shared AI layer has one slot per kind of AI. Only text is built so far; images, videos and audio are on the menu for later." style={{ marginTop: 14 }}>
+      {d.canEdit && roles ? (
+        <Panel title="Who sees what in AI Marketing" sub="Every login sees only its own part. This table is made from the real rules, so it is always right. Marketing = logins you tick as Marketing in Omni-Channel > Settings." style={{ marginTop: 14 }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="mk-table"><thead><tr><th>LOGIN</th><th>SEES IN AI MARKETING</th><th>MAY</th></tr></thead>
+              <tbody>{roles.map((r) => (
+                <tr key={r.kind}>
+                  <td style={{ whiteSpace: 'nowrap' }}><b>{r.who}</b></td>
+                  <td style={{ fontSize: 12 }}>{r.sees.length ? r.sees.join(' · ') : <span style={{ color: 'var(--muted)' }}>Nothing: AI Marketing is not shown</span>}</td>
+                  <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{r.settings ? 'Everything, and the settings' : r.writes ? 'Write and make; an approver approves' : r.approves ? 'Approve or send back' : r.outside ? 'Approve their own work' : 'Nothing here'}</td>
+                </tr>
+              ))}</tbody></table>
+          </div>
+        </Panel>
+      ) : null}
+      <Panel title="What is connected" sub="The shared AI layer has one slot per kind of AI: text, pictures, video clips and audio. A slot that is not connected says so; nothing is faked." style={{ marginTop: 14 }}>
         <div className="mk-prov">
           {Object.keys(SLOT).map((k) => { const a = d.ai[k] || {}; return (
             <div key={k}><b>{SLOT[k]} {a.ready ? <Pill tone={a.demo ? 'warn' : 'live'} dot>{a.demo ? 'Sample writer' : 'Ready'}</Pill> : <Pill tone="draft">Not connected</Pill>}</b>
