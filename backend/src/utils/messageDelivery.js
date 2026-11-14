@@ -239,6 +239,11 @@ async function applyCall(info) {
     }).catch(() => {});
     matched += 1;
   }
+  // a call started from the CRM (crm/contact.js): the result is written on that call's timeline line
+  if (!rows.length && info.ref && /^crm:/.test(info.ref)) {
+    const text = `${detail}${info.recordingUrl ? ` · recording: ${info.recordingUrl}` : ''}`;
+    matched += await require('../crm/contact').applyCallResult(info.ref, text).catch(() => 0); // eslint-disable-line global-require
+  }
   if (!rows.length && info.ref && /^(clients|employees):/.test(info.ref)) {
     const [audience, id] = info.ref.split(':');
     await require('./audit').logAudit({ // eslint-disable-line global-require

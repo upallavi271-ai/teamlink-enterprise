@@ -35,6 +35,7 @@ const CRM = require('../crm/service');
 const X = require('../crm/extra');
 const SUP = require('../crm/support');
 const CMP = require('../crm/campaigns');
+const CONTACT = require('../crm/contact'); // Call / WhatsApp / Email from a record, through the connected integrations
 const AI = require('../crm/ai');
 const SALES = require('../crm/sales');
 const AUTO = require('../crm/autopilot');
@@ -105,6 +106,12 @@ router.get('/ai/insight/:kind/:id', wrap((req) => AI.insight(req.user, req.param
 router.post('/ai/summary/:kind/:id', wrap((req) => AI.summary(req.user, req.params.kind, req.params.id)));
 router.post('/ai/draft/:kind/:id', wrap((req) => AI.draftEmail(req.user, req.params.kind, req.params.id, req.body || {})));
 router.post('/ai/ask', wrap((req) => AI.ask(req.user, req.body || {})));
+// Call, WhatsApp and Email from a lead / deal / customer (crm/contact.js): what is connected, the first words, the real send, the call, and "opened my own app"
+router.get('/contact/ready', wrap((req) => CONTACT.ready(req.user)));
+router.get('/contact/draft', wrap((req) => CONTACT.draftFor(req.user, String(req.query.kind || ''), String(req.query.id || ''))));
+router.post('/contact/send', require('../channels/rateLimit').limiter(), wrap((req) => CONTACT.send(req.user, req.body || {})));
+router.post('/contact/call', require('../channels/rateLimit').limiter(), wrap((req) => CONTACT.call(req.user, req.body || {})));
+router.post('/contact/opened', wrap((req) => CONTACT.opened(req.user, req.body || {})));
 router.get('/overview', wrap((req) => X.overview(req.user, { period: String(req.query.period || ''), mine: String(req.query.mine || '') === '1' })));
 router.get('/activities', wrap((req) => X.activities(req.user, req.query || {})));
 router.get('/reports', wrap((req) => X.reports(req.user, { month: String(req.query.month || '') })));

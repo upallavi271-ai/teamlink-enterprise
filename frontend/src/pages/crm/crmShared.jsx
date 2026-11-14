@@ -13,6 +13,7 @@ import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
 import { useMoveLead } from './CrmLeadBoard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
+import CrmContactDialog from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -153,10 +154,23 @@ export async function download(url, name, { open } = {}) {
   const a = document.createElement('a'); a.href = href; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(href), 10000);
 }
-// Call / WhatsApp / Email straight from a record (the phone's dialer, WhatsApp, the mail app)
-export function QuickContact({ phone, email }) {
+// Call / WhatsApp / Email from a record (founder 2026-11-14: they must really work, through what Administration -> Integrations has connected).
+// With `record` ({ kind, id, name }) each button opens the contact window (CrmContact.jsx): the real send / click-to-call when the integration is connected,
+// the person's own app when it is not, and the timeline line either way. Without `record` (older callers) it is the plain tel: / wa.me / mailto: links.
+export function QuickContact({ phone, email, record, onDone }) {
+  const [open, setOpen] = useState(null);
   const digits = String(phone || '').replace(/\D/g, '');
   const wa = digits.length === 10 ? `91${digits}` : digits;
+  if (record && record.id) {
+    return (
+      <span style={{ display: 'inline-flex', gap: 4 }}>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen('Call')} title={phone ? `Call ${phone}` : 'Call'}>📞 Call</button>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen('WhatsApp')} title="WhatsApp">💬 WhatsApp</button>
+        <button type="button" className="btn btn-sm" onClick={() => setOpen('Email')} title={email ? `Email ${email}` : 'Email'}>✉️ Email</button>
+        {open && <CrmContactDialog record={record} channel={open} onClose={() => setOpen(null)} onDone={onDone} />}
+      </span>
+    );
+  }
   if (!digits && !email) return null;
   return (
     <span style={{ display: 'inline-flex', gap: 4 }}>
@@ -909,7 +923,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            <QuickContact phone={contactLine && contactLine.phone ? contactLine.phone : row.phone} email={contactLine && contactLine.email ? contactLine.email : row.email} />
+            <QuickContact phone={contactLine && contactLine.phone ? contactLine.phone : row.phone} email={contactLine && contactLine.email ? contactLine.email : row.email} record={d.canEdit ? { kind, id: row.id, name: row.contactName || row.name || row.company || row.title } : null} onDone={changed} />
             {d.canEdit && <button type="button" className="btn btn-sm" onClick={() => setEditing({ kind, row })}>Edit</button>}
             {kind === 'deal' && row.approvalStatus === 'Pending' && me.canAssign && (
               <>
