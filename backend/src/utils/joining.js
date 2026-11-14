@@ -91,6 +91,43 @@ function feeOverrideFor(user, value) {
   return mayHandleFee(user) ? Math.round(n * 100) / 100 : null;
 }
 
+// The note on an invoice whose fee waits for the candidate's CTC in the ATS.
+const FEE_TBD = 'FEE TO BE FILLED: the ATS has no CTC for this joining yet. It fills by itself when the CTC is entered in the ATS.';
+
+// Invoices made without a CTC get their fee as soon as the application has one: fee = CTC x the invoice's fee %, GST / TDS from the client's rates.
+// Run whenever the invoice register is built (cheap: it only looks at invoices carrying the note). Never throws.
+async function fillFeePlaceholders() {
+  let filled = 0;
+  try {
+    const open = await prisma.invoice.findMany({ where: { notes: { startsWith: 'FEE TO BE FILLED' }, amount: 0, candidateId: { not: null }, requirementId: { not: null } }, include: { client: true } });
+    if (!open.length) return 0;
+    // eslint-disable-next-line global-require
+    const TAX = require('./invoiceTax');
+    const company = (await prisma.company.findFirst()) || {};
+    for (const inv of open) { // eslint-disable-line no-restricted-syntax
+      // eslint-disable-next-line no-await-in-loop
+      const app = await prisma.application.findFirst({ where: { candidateId: inv.candidateId, requirementId: inv.requirementId }, select: { offeredCtc: true } });
+      if (!app || !(Number(app.offeredCtc) > 0)) continue; // eslint-disable-line no-continue
+      const pct = inv.feePercent != null ? Number(inv.feePercent) : (inv.client && inv.client.agreementFeePercent != null ? Number(inv.client.agreementFeePercent) : 8.33);
+      const amount = Math.round((Number(app.offeredCtc) * pct) / 100);
+      const def = TAX.defaultsFor(inv.client, company, { gst: 18, tds: 10 });
+      const tax = TAX.calcTax({ base: amount, ...def });
+      // eslint-disable-next-line no-await-in-loop
+      await prisma.invoice.update({
+        where: { id: inv.id },
+        data: { ...TAX.writeData(tax, {}), offeredCtc: Number(app.offeredCtc), feePercent: pct, notes: `Fee filled from the ATS CTC on ${new Date().toISOString().slice(0, 10)}` },
+      });
+      // eslint-disable-next-line no-await-in-loop
+      await logAudit({ userId: null, action: 'Invoice fee filled from the ATS CTC', entity: 'Invoice', entityId: inv.id, toValue: String(amount) }).catch(() => {});
+      filled += 1;
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[joining] could not fill fee placeholders:', err.message);
+  }
+  return filled;
+}
+
 async function raiseJoiningInvoice({
   application, existing, userId, feePercent: feeOverride = null,
 }) {
@@ -112,9 +149,11 @@ async function raiseJoiningInvoice({
   // The Joined popup may record the commission actually agreed for THIS
   // placement; the agreement's fee % otherwise.
   const feePercent = feeOverride != null && Number(feeOverride) > 0 ? Number(feeOverride) : agreed;
-  const bandLakhs = Number(String(requirement.salary || '').match(/(\d+(?:\.\d+)?)/)?.[1]) || 12;
-  const ctc = Number(application.offeredCtc) > 0 ? Number(application.offeredCtc) : bandLakhs * 100000;
-  const amount = Math.round((ctc * feePercent) / 100);
+  // No CTC in the ATS yet (founder 2026-11-14: "salary lekapoyina invoices lo ravali"): the invoice is made anyway, with a fee of 0 and a note, so the joining is in
+  // Accounts at once; the fee is filled by itself as soon as the ATS has the CTC (fillFeePlaceholders). Never a guessed salary.
+  const hasCtc = Number(application.offeredCtc) > 0;
+  const ctc = hasCtc ? Number(application.offeredCtc) : null;
+  const amount = hasCtc ? Math.round((ctc * feePercent) / 100) : 0;
   // GST / TDS (P4): the client's rates (18% / 10% when it has none) and its
   // GST / TDS Applicable flags; CGST + SGST or IGST from the two states;
   // amounts to 2 decimals — the one calculation in utils/invoiceTax.js.
@@ -155,6 +194,7 @@ async function raiseJoiningInvoice({
       dueDate: offsetDate(joiningDate, 12),
       feePercent,
       offeredCtc: ctc,
+      ...(hasCtc ? {} : { notes: FEE_TBD }),
       paymentTerms: client.paymentTerms || 'Invoice 6 days after joining; payment due within 6 days of invoice',
     },
   });
@@ -455,6 +495,8 @@ function dateYearProblem(value, label = 'date') {
 }
 
 module.exports = {
+  fillFeePlaceholders,
+  FEE_TBD,
   didNotJoin,
   dateYearProblem,
   OFFER_STAGES,

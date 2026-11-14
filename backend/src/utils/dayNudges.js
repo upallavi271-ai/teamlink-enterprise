@@ -47,6 +47,38 @@ async function people() {
   return emps.filter((e) => e.user && (e.user.status || 'Active') === 'Active' && !TEST_RE.test(`${e.name} ${e.email || ''} ${e.user.email || ''}`));
 }
 
+// JOINED candidates (client placements) whose CTC is not in the ATS: the BDE of the requirement gets a popup, in every slot of every working day, until the CTC is
+// filled (founder 2026-11-14: "aa pop up BDE vallaki ravali, fill CTC to these candidates, vallu fill chese varaku"). Their invoices wait at a fee of 0 until then.
+async function ctcPending(slot, now = new Date()) {
+  const J = require('./joining'); // eslint-disable-line global-require
+  const apps = await prisma.application.findMany({
+    where: { stage: 'JOINED', OR: [{ offeredCtc: null }, { offeredCtc: 0 }], requirement: { bdeId: { not: null } } },
+    select: { hiringType: true, joiningDate: true, candidate: { select: { name: true } }, requirement: { select: { bdeId: true, hiringType: true, internal: true, client: { select: { name: true } } } } },
+  });
+  const byBde = new Map();
+  apps.filter((a) => !J.isInternalHire(a, a.requirement)).forEach((a) => {
+    const k = a.requirement.bdeId; if (!byBde.has(k)) byBde.set(k, []);
+    byBde.get(k).push(a);
+  });
+  let sent = 0;
+  for (const [userId, list] of byBde) { // eslint-disable-line no-restricted-syntax
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { status: true, email: true, name: true } }); // eslint-disable-line no-await-in-loop
+    if (!user || (user.status || 'Active') !== 'Active' || TEST_RE.test(`${user.name} ${user.email || ''}`)) continue; // eslint-disable-line no-continue
+    const title = `Fill the CTC for ${list.length} joined candidate${list.length === 1 ? '' : 's'} - ${slot.label.toLowerCase()} ${dmy(localDate(now))}`;
+    const names = list.slice(0, 10).map((a) => `${a.candidate ? a.candidate.name : '?'} (${a.requirement.client ? a.requirement.client.name : ''}${a.joiningDate ? `, joined ${dmy(String(a.joiningDate).slice(0, 10))}` : ''})`);
+    const message = [
+      'These candidates have joined, but the ATS has no CTC for them. Accounts cannot work out the invoice fee until you enter it.',
+      ...names, list.length > 10 ? `... and ${list.length - 10} more` : '',
+      'Open ATS > Joining and fill the CTC of each candidate. This reminder comes three times a day until every CTC is filled.',
+      'Open: /ats/joining',
+    ].filter(Boolean).join('\n');
+    try {
+      if (await popup(userId, title, message, now)) sent += 1; // eslint-disable-line no-await-in-loop
+    } catch (err) { console.error('[day-nudges] ctc', err.message); } // eslint-disable-line no-console
+  }
+  return { sent };
+}
+
 // one slot for everybody -> { sent }
 async function runSlot(slot, now = new Date()) {
   const day = localDate(now);
@@ -82,6 +114,7 @@ async function runSlot(slot, now = new Date()) {
       if (await popup(e.userId, title, message, now)) sent += 1; // eslint-disable-line no-await-in-loop
     } catch (err) { console.error('[day-nudges]', err.message); } // eslint-disable-line no-console
   }
+  try { const c = await ctcPending(slot, now); sent += c.sent; } catch (err) { console.error('[day-nudges] ctc', err.message); } // eslint-disable-line no-console
   return { sent };
 }
 
@@ -133,4 +166,4 @@ function start() {
   if (first.unref) first.unref();
 }
 
-module.exports = { SLOTS, runSlot, coursesGiven, tick, start, popup };
+module.exports = { SLOTS, runSlot, ctcPending, coursesGiven, tick, start, popup };

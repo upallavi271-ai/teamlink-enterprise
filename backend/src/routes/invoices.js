@@ -560,6 +560,8 @@ function payDateFilter(query) {
 }
 
 async function buildRegister(user, query) {
+  // invoices made while the ATS had no CTC get their fee now, if the CTC has been entered since
+  try { await require('../utils/joining').fillFeePlaceholders(); } catch (e) { /* the register still opens */ } // eslint-disable-line global-require
   const where = invoiceWhere(user);
   const invoices = await prisma.invoice.findMany({
     where,
