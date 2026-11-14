@@ -554,6 +554,8 @@ const server = app.listen(PORT, () => {
   require('./utils/dayNudges').start();
   // AI Marketing Content Calendar: one notice to the owner an hour before a planned post (marketing/calendar.js; MK_CALENDAR_SWEEP_MS=0 = off)
   require('./marketing/calendar').startSweep();
+  // AI clips: finish every Veo clip Google already accepted before the last restart (marketing/aiclips.js); one that never reached Google is closed
+  setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
   require('./utils/taskDayUpdate').start();
   // Requests waiting since before 2026-11-02 whose own TL was skipped as "below the requester's level" go back to that TL (once, at start).

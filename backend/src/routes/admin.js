@@ -2720,7 +2720,9 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
   // AI Images (Google Gemini): reads the model's details with the saved key. Free: no picture is made (marketing/images.js).
   if (channel.id === 'ai-gemini' || channel.id === 'ai-cloudflare') {
     const probe = await require('../marketing/images').testConnection(channel.id === 'ai-cloudflare' ? 'cloudflare' : 'gemini');
-    const result = probe.ok ? `Model ${probe.model} is reachable with this key` : `Failed — ${probe.error}`;
+    let result = probe.ok ? `Model ${probe.model} is reachable with this key` : `Failed — ${probe.error}`;
+    // the same Gemini key also makes AI clips (Veo): say whether its video model is listed (a free check; the clip itself is billed when made)
+    if (probe.ok && channel.id === 'ai-gemini') { try { const v = await require('../marketing/aiclips').testModel(); result += ` · ${v.text}`; } catch { /* the picture check stands alone */ } }
     const nextRow = await prisma.integration.update({
       where: { id: channel.id },
       data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },

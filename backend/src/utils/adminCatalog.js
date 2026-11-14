@@ -259,9 +259,10 @@ const INTEGRATION_CATALOG = [
   // the server calls Google. Test connection reads the model's details (free); a picture is made only when a person presses Create.
   // Get a key: aistudio.google.com > Get API key. Picture models need billing switched on in Google AI Studio.
   { id: 'ai-gemini', name: 'AI Images (Google Gemini)', group: 'AI', glyph: '\u{1F5BC}️',
-    desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it. Every picture needs approval before it is used. Key from aistudio.google.com (picture models need billing on).',
-    fields: [['Gemini API key', 'AIza...'], ['Image model', 'gemini-2.5-flash-image'], ['Pictures per person per day', '20']],
-    hints: ['Image model', 'Pictures per person per day'] },
+    desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it, and (with the same key) real-motion video clips with Google Veo in AI Video. Every picture and clip needs approval before it is used. Key from aistudio.google.com. Pictures and video need billing on in Google AI Studio; video is billed by the second.',
+    fields: [['Gemini API key', 'AIza...'], ['Image model', 'gemini-2.5-flash-image'], ['Pictures per person per day', '20'],
+      ['Video model', 'veo-3.1-fast-generate-preview'], ['Clips per person per day', '3'], ['Video cost per second in US$ (for the estimate)', '0.12']],
+    hints: ['Image model', 'Pictures per person per day', 'Video model', 'Clips per person per day', 'Video cost per second in US$ (for the estimate)'] },
   // REAL (2026-11-13). Cloudflare Workers AI for AI Marketing > AI Images, on Cloudflare's FREE daily allowance (no card). When both picture
   // cards are set, this one is used (marketing/images.js). Test connection checks the token and the account (free). Get it: dash.cloudflare.com >
   // the account ID is on the right of the account home; My Profile > API Tokens > Create Token > "Workers AI" template.
