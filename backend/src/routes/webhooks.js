@@ -80,6 +80,8 @@ async function handleWhatsApp(body, ctx) {
       }
       for (const st of (Array.isArray(v.statuses) ? v.statuses : [])) {
         const err = Array.isArray(st.errors) && st.errors[0] ? st.errors[0] : null;
+        // one short line per delivery report (who it was for: last 4 digits only), so "sent but never received" can be read from the log: status, Meta's error code and title
+        console.log(`[wa-status] ${st.status} to ...${String(st.recipient_id || '').slice(-4)} ref ...${String(st.id || '').slice(-8)}${st.conversation && st.conversation.origin ? ` origin ${st.conversation.origin.type}` : ''}${st.pricing ? ` category ${st.pricing.category}` : ''}${err ? ` ERROR ${err.code} ${err.title || err.message || ''}` : ''}`); // eslint-disable-line no-console
         // eslint-disable-next-line no-await-in-loop
         const out = await delivery.applyStatus({
           channel: 'WhatsApp', providerRef: st.id, status: st.status, at: st.timestamp ? new Date(Number(st.timestamp) * 1000) : new Date(),
