@@ -40,6 +40,7 @@ export default function AiClipPanel({ pictures, toast, onMade }) {
 
   if (!meta) return err ? <Banner tone="error">{err}</Banner> : null;
   const running = job && job.status === 'running';
+  if (!meta.ready && !running) return null; // paid AI clips stay out of sight until an Admin switches them on (free clips are in "Free stock clips")
   const cost = Math.round(meta.costPerSec * seconds * 100) / 100;
   const okPrompt = prompt.trim().length >= 10;
   const can = meta.ready && !running && okPrompt && meta.left > 0;

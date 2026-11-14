@@ -6,6 +6,7 @@ import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
+import StockClipPanel from '../marketing/StockClipPanel.jsx';
 import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame } from '../marketing/slideshow.js';
 import '../marketing/marketing.css';
 
@@ -199,7 +200,8 @@ export default function MkVideosPage() {
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
       {canWrite ? (
         <>
-          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>✦ Make a clip with AI</b> below (paid by Google, cost shown first), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
+          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
+          <StockClipPanel toast={toast} onMade={load} />
           <AiClipPanel pictures={pics} toast={toast} onMade={load} />
           <Panel title="1 · Pick the pictures and clips" sub={sources.length ? `Tap them in the order they should play (up to 8). ${pick.length} picked.` : undefined}>
             {sources.length === 0 ? <Empty title="Nothing approved yet" action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}><Btn onClick={() => go('mkimages')}>Pictures: AI Images</Btn><Btn onClick={() => fileRef.current && fileRef.current.click()}>⬆ Upload a clip</Btn></div>}>A video is made from approved pictures and approved clips. Make or upload some, ask for approval, then come back.</Empty> : (

@@ -13,6 +13,7 @@ const Img = require('../marketing/images');
 const CR = require('../marketing/clientReview');
 const Rep = require('../marketing/reports');
 const Clips = require('../marketing/aiclips');
+const Stock = require('../marketing/stockclips');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -158,6 +159,10 @@ router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => se
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
+// ---- free stock clips (marketing/stockclips.js): search Pexels, use a clip (saved as a draft clip) ---------------------------------------------------
+router.get('/stock/meta', mustWrite, wrap(async (req, res) => res.json(await Stock.meta(req.user))));
+router.get('/stock/search', mustWrite, wrap(async (req, res) => send(res, await Stock.search(req.user, req.query || {}))));
+router.post('/stock/import', mustWrite, wrap(async (req, res) => send(res, await Stock.importClip(req.user, req.body || {}))));
 router.get('/clip-ai/meta', mustWrite, wrap(async (req, res) => res.json(await Clips.meta(req.user))));
 router.post('/clip-ai', mustWrite, wrap(async (req, res) => send(res, await Clips.create(req.user, req.body || {}))));
 router.get('/clip-ai/jobs/:id', mustWrite, wrap(async (req, res) => send(res, await Clips.getJob(req.user, req.params.id))));

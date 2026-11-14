@@ -2717,6 +2717,19 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
   }
 
+  // Stock video clips (Pexels): one free search with the saved key (marketing/stockclips.js).
+  if (channel.id === 'stock-pexels') {
+    const probe = await require('../marketing/stockclips').testKey();
+    const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
+    const nextRow = await prisma.integration.update({
+      where: { id: channel.id },
+      data: { lastTest: new Date(), lastTestResult: result.slice(0, 480), error: probe.ok ? null : result.slice(0, 480), ...(probe.ok ? { state: 'Connected' } : { state: 'Reconnect Required' }) },
+    });
+    await recordEvent(channel.id, { action: 'Test Connection', by: req.user.name, result: result.slice(0, 480) });
+    await logAudit({ userId: req.user.id, action: 'Integration test connection', entity: 'Integration', entityId: channel.id, toValue: probe.ok ? 'OK' : 'Failed' });
+    return res.json({ ...shapeIntegration(channel, nextRow), result });
+  }
+
   // AI Images (Google Gemini): reads the model's details with the saved key. Free: no picture is made (marketing/images.js).
   if (channel.id === 'ai-gemini' || channel.id === 'ai-cloudflare') {
     const probe = await require('../marketing/images').testConnection(channel.id === 'ai-cloudflare' ? 'cloudflare' : 'gemini');

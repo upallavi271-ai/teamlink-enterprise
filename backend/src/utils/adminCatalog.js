@@ -259,10 +259,15 @@ const INTEGRATION_CATALOG = [
   // the server calls Google. Test connection reads the model's details (free); a picture is made only when a person presses Create.
   // Get a key: aistudio.google.com > Get API key. Picture models need billing switched on in Google AI Studio.
   { id: 'ai-gemini', name: 'AI Images (Google Gemini)', group: 'AI', glyph: '\u{1F5BC}️',
-    desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it, and (with the same key) real-motion video clips with Google Veo in AI Video. Every picture and clip needs approval before it is used. Key from aistudio.google.com. Pictures and video need billing on in Google AI Studio; video is billed by the second.',
+    desc: 'Makes marketing pictures for AI Marketing > AI Images in your brand colours, with your logo when the model allows it, and (with the same key) real-motion video clips with Google Veo in AI Video. Every picture and clip needs approval before it is used. Key from aistudio.google.com. Pictures and video need billing on in Google AI Studio; video is billed by the second, so AI clips stay OFF until "Clips per person per day" is set above 0 (free real clips: see the Pexels card).',
     fields: [['Gemini API key', 'AIza...'], ['Image model', 'gemini-2.5-flash-image'], ['Pictures per person per day', '20'],
-      ['Video model', 'veo-3.1-fast-generate-preview'], ['Clips per person per day', '3'], ['Video cost per second in US$ (for the estimate)', '0.12']],
+      ['Video model', 'veo-3.1-fast-generate-preview'], ['Clips per person per day', '0'], ['Video cost per second in US$ (for the estimate)', '0.12']],
     hints: ['Image model', 'Pictures per person per day', 'Video model', 'Clips per person per day', 'Video cost per second in US$ (for the estimate)'] },
+  // REAL (2026-11-14). Free real stock footage for AI Marketing > AI Video (marketing/stockclips.js). Free key: pexels.com/api. Test searches one word (free).
+  { id: 'stock-pexels', name: 'Stock video clips (Pexels · free)', group: 'AI', glyph: '\u{1F39E}️',
+    desc: 'Free real-motion video clips (people, offices, hospitals, cities) for AI Marketing > AI Video > "Free stock clips". Make a free account on pexels.com, open pexels.com/api, copy the key and paste it here. No card needed. Every clip is saved as a draft with the photographer credited and needs approval before it is used.',
+    fields: [['Pexels API key', ''], ['Clips per person per day', '30']],
+    hints: ['Clips per person per day'] },
   // REAL (2026-11-13). Cloudflare Workers AI for AI Marketing > AI Images, on Cloudflare's FREE daily allowance (no card). When both picture
   // cards are set, this one is used (marketing/images.js). Test connection checks the token and the account (free). Get it: dash.cloudflare.com >
   // the account ID is on the right of the account home; My Profile > API Tokens > Create Token > "Workers AI" template.
@@ -289,7 +294,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

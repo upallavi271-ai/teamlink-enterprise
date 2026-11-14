@@ -44,7 +44,7 @@ async function config() {
   return {
     key: String(v['Gemini API key'] || '').trim(), missingKey: !!c.missingKey,
     model: String(v['Video model'] || '').trim() || DEFAULT_MODEL,
-    perDay: Math.min(50, Math.floor(num(v['Clips per person per day'], 3))),
+    perDay: Math.min(50, Math.floor(num(v['Clips per person per day'], 0))), // OFF until an Admin sets it (video is paid; free clips come from Pexels)
     costPerSec: num(v['Video cost per second in US$ (for the estimate)'], 0.12),
   };
 }
@@ -61,7 +61,7 @@ async function status() {
   if (sandbox.isSandbox() && !sandbox.allowAi()) return { ...base, ready: false, reason: 'The test sandbox makes no outside calls, so no clip is asked from Google here.' };
   if (c.missingKey) return { ...base, ready: false, reason: 'The saved Gemini key cannot be read on this server. An Admin enters it again in Administration > Integrations > AI Images (Google Gemini).' };
   if (!c.key) return { ...base, ready: false, reason: 'No Gemini key yet. An Admin adds it in Administration > Integrations > AI Images (Google Gemini); the same key makes clips (Google bills video separately, see the cost below).' };
-  if (c.perDay === 0) return { ...base, ready: false, reason: 'AI clips are switched off (0 a day). An Admin can change it in Administration > Integrations.' };
+  if (c.perDay === 0) return { ...base, ready: false, off: true, reason: 'Paid AI clips are switched off. An Admin can switch them on in Administration > Integrations (Clips per person per day), but Google bills them.' };
   return { ...base, ready: true, reason: '' };
 }
 async function meta(u) {

@@ -165,4 +165,12 @@ async function importClip(u, b = {}) {
   return saved;
 }
 
-module.exports = { status, meta, search, importClip, testKey, CHANNEL };
+// a Pexels / download problem is returned as plain words and a status, never thrown into the route
+const safe = (fn) => async (...a) => {
+  try { return await fn(...a); } catch (e) {
+    if (e instanceof AI.AiMkError) return { error: e.message, status: e.status || 502, code: e.code };
+    console.error('[omni-mk] stock clips:', e.message); // eslint-disable-line no-console
+    return { error: 'Stock clips could not be reached just now. Try again in a minute.', status: 502 };
+  }
+};
+module.exports = { status, meta, search: safe(search), importClip: safe(importClip), testKey, CHANNEL };
