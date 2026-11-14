@@ -61,6 +61,16 @@ module.exports = async function secHarden(ctx) {
     }
     check('middleware: /api/health, non-API paths and OPTIONS are never limited', skipped === 900, skipped);
     RL.limiter.reset();
+    // the client pages of AI Marketing (project link, approval link, "Our work") have their own limits: a client on a shared connection must not see "Too many requests"
+    let clientOk = 0;
+    for (let i = 0; i < 400; i += 1) {
+      for (const p of ['/api/public/mk-project/abc.def', '/api/public/mk-project/abc.def/option/1', '/api/public/mk-review/abc.def/file', '/api/public/mk-work', '/api/public/mk-work/file/k1']) RL.apiRateLimit(mk(p), res(), () => { clientOk += 1; });
+    }
+    check('middleware: the client project / approval / "Our work" pages are not counted in the general per-address limit', clientOk === 2000, clientOk);
+    let other = 0;
+    for (let i = 0; i < 130; i += 1) RL.apiRateLimit(mk('/api/public/mk-projectx/abc'), res(), () => { other += 1; });
+    check('middleware: a look-alike public path is still limited (only the three exact prefixes are exempt)', other === 120, other);
+    RL.limiter.reset();
   }
 
   // ---------------- tokens: expiry, disable, role change ----------------

@@ -6,7 +6,7 @@ const { rateLimit } = require('../utils/publicRateLimit');
 const R = require('../marketing/clientReview');
 
 const router = express.Router();
-const lim = rateLimit({ bucket: 'mk-review', max: 240, windowMs: 10 * 60000 });
+const lim = rateLimit({ bucket: 'mk-review', max: 900, windowMs: 10 * 60000, message: 'Many people are using this page at once. Please wait a minute and try again.' });
 const limPost = rateLimit({ bucket: 'mk-review-post', max: 20, windowMs: 10 * 60000 });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const send = (res, out) => (out && out.error ? res.status(out.status || 400).json({ error: out.error }) : res.json(out));

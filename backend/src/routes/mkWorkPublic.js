@@ -6,7 +6,7 @@ const { rateLimit } = require('../utils/publicRateLimit');
 const P = require('../marketing/projects');
 
 const router = express.Router();
-const lim = rateLimit({ bucket: 'mk-work', max: 300, windowMs: 10 * 60000 });
+const lim = rateLimit({ bucket: 'mk-work', max: 900, windowMs: 10 * 60000, message: 'Many people are using this page at once. Please wait a minute and try again.' });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 router.use((req, res, next) => { res.set({ 'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex', 'Referrer-Policy': 'no-referrer' }); next(); });
 router.get('/', lim, wrap(async (req, res) => res.json(await P.publicWork())));

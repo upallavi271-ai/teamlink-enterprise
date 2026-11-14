@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../../../api';
 
@@ -12,6 +12,7 @@ export default function ClientReviewPage() {
   const { token } = useParams();
   const [d, setD] = useState(null);
   const [gone, setGone] = useState('');
+  const [temp, setTemp] = useState(false); // the site was busy / updating (not a dead link)
   const [name, setName] = useState('');
   const [comment, setComment] = useState('');
   const [mode, setMode] = useState(''); // '' | 'changes'
@@ -19,8 +20,19 @@ export default function ClientReviewPage() {
   const [err, setErr] = useState('');
   const [done, setDone] = useState('');
   const [tab, setTab] = useState('');
-  const load = () => api.get(`/public/mk-review/${encodeURIComponent(token)}`).then((r) => { setD(r.data); document.title = `Please review: ${r.data.review.itemTitle}`; const ch = r.data.item && r.data.item.channels; if (ch && ch.length) setTab(ch[0].key); }).catch((e) => setGone(errOf(e, 'This link does not work any more. Please ask the sender for a new one.')));
+  const load = () => api.get(`/public/mk-review/${encodeURIComponent(token)}`).then((r) => { setD(r.data); document.title = `Please review: ${r.data.review.itemTitle}`; const ch = r.data.item && r.data.item.channels; if (ch && ch.length) setTab(ch[0].key); }).catch((e) => {
+    const s = e && e.response && e.response.status;
+    // a busy site (429), an updating site (5xx) or no connection is NOT a dead link: say so kindly and open the page again by itself
+    if (!s || s >= 500 || s === 429) { setTemp(true); setGone(s === 429 ? 'Many people are using this page right now. It will open again by itself in a few seconds. If it does not, press the button below.' : 'The page could not be opened just now: our site may be updating. It will try again by itself. If it does not open, press the button below.'); return; }
+    setTemp(false); setGone(errOf(e, 'This link does not work any more. Please ask the sender for a new one.'));
+  });
   useEffect(() => { document.title = 'Please review'; load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  const tries = useRef(0);
+  useEffect(() => { // automatic re-try (up to 6 times, 10 seconds apart) while the problem is only temporary
+    if (!temp || !gone || tries.current >= 6) return undefined;
+    const t = setTimeout(() => { tries.current += 1; setGone(''); setTemp(false); load(); }, 10000);
+    return () => clearTimeout(t);
+  }, [temp, gone]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const P = (d && d.brand && d.brand.colors && d.brand.colors.primary) || '#0f766e';
   const S2 = (d && d.brand && d.brand.colors && d.brand.colors.secondary) || '#134e4a';
@@ -29,7 +41,7 @@ export default function ClientReviewPage() {
   const btn = (bg, fg = '#fff') => ({ border: 'none', borderRadius: 10, padding: '12px 18px', fontSize: 15, fontWeight: 800, background: bg, color: fg, cursor: busy ? 'default' : 'pointer', flex: '1 1 160px', opacity: busy ? 0.6 : 1 });
   const input = { width: '100%', boxSizing: 'border-box', border: '1px solid #cfd8d3', borderRadius: 10, padding: '11px 12px', font: 'inherit', fontSize: 15 };
 
-  if (gone) return <div style={page}><div style={{ ...card, marginTop: 40 }}><h1 style={{ fontSize: 20, margin: '0 0 8px' }}>This link does not work</h1><p style={{ margin: 0, lineHeight: 1.6 }}>{gone}</p></div></div>;
+  if (gone) return <div style={page}><div style={{ ...card, marginTop: 40 }}><h1 style={{ fontSize: 20, margin: '0 0 8px' }}>{temp ? 'One moment, please' : 'This link does not work'}</h1><p style={{ margin: 0, lineHeight: 1.6 }}>{gone}</p>{temp ? <button type="button" style={{ ...btn('#15803d'), marginTop: 14, width: '100%' }} onClick={() => { setGone(''); setTemp(false); load(); }}>Try again</button> : null}</div></div>;
   if (!d) return <div style={page}><div style={{ ...card, marginTop: 40 }}><p style={{ margin: 0 }}>Loading…</p></div></div>;
 
   const { review: r, brand, item } = d;

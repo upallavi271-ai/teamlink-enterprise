@@ -7,7 +7,7 @@ const { rateLimit } = require('../utils/publicRateLimit');
 const P = require('../marketing/projects');
 
 const router = express.Router();
-const lim = rateLimit({ bucket: 'mk-project', max: 300, windowMs: 10 * 60000 });
+const lim = rateLimit({ bucket: 'mk-project', max: 900, windowMs: 10 * 60000, message: 'Many people are using this page at once. Please wait a minute and try again.' }); // GETs only (pages and pictures); answers (POST) stay strict below
 const limPost = rateLimit({ bucket: 'mk-project-post', max: 20, windowMs: 10 * 60000 });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const send = (res, out) => (out && out.error ? res.status(out.status || 400).json({ error: out.error }) : res.json(out));

@@ -89,6 +89,10 @@ function apiRateLimit(req, res, next) {
   if (req.method === 'OPTIONS' || !enabled()) return next();
   const path = String(req.originalUrl || req.url || '').split('?')[0];
   if (!/^\/api(\/|$)/i.test(path) || /^\/api\/health\/?$/i.test(path)) return next();
+  // The CLIENT pages of AI Marketing (a client's private project / approval link and the public "Our work" page) are opened by people who are not signed in, often on a shared
+  // phone or office connection. They have their own per-caller limits (routes/mkProjectPublic.js, mkClientReviewPublic.js, mkWorkPublic.js), so they are not also counted in the
+  // general 120-a-minute-per-address bucket, which made a client see "Too many requests" on a link that was fine (2026-11-14).
+  if (/^\/api\/public\/mk-(project|review|work)(\/|$)/i.test(path)) return next();
   const ip = require('./clientIp').ipOf(req); // eslint-disable-line global-require
   const over = limiter.check({ method: req.method, path, userId: userIdOf(req), ip });
   if (!over) return next();
