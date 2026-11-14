@@ -1,6 +1,8 @@
 // ---------------------------------------------------------------------------
 // AI MARKETING SETTINGS + BRAND VOICE (two AppSetting rows, no migration):
-//   omni.mk.settings  { aiDailyPerUser, aiMonthlyCap, selfApprove }   set by an Admin
+//   omni.mk.settings  { aiDailyPerUser, aiMonthlyCap, selfApprove, clientRequired, clientFor[] }   set by an Admin
+//     clientRequired (2026-11-14): when ON, only a CLIENT can approve the kinds listed in clientFor ('words', 'pictures', 'videos'; raw clips are never included):
+//     the team's Approve / "Ask for approval" are refused for them and the item goes to the client ("Ask the client to approve", clientReview.js mode 'decide').
 //   omni.mk.brand     { brandName, about, voice, tone, language, cta, signOff, doWords[], avoidWords[], samples[] }   set by an Admin or Marketing
 // ---------------------------------------------------------------------------
 const prisma = require('../db');
@@ -8,7 +10,8 @@ const prisma = require('../db');
 const SETTINGS_KEY = 'omni.mk.settings';
 const BRAND_KEY = 'omni.mk.brand';
 const LOGO_KEY = 'omni.mk.brand.logo'; // { dataUrl, name, at } kept apart: it is large and only the brand screen and the image / video makers need it
-const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true };
+const CLIENT_KINDS = ['words', 'pictures', 'videos'];
+const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice() };
 const DEFAULT_COLORS = { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
 const DEFAULT_BRAND = {
   brandName: '', about: '', voice: '', tone: 'Warm & confident', language: 'English', cta: '', signOff: '', doWords: [], avoidWords: [], samples: [],
@@ -37,14 +40,21 @@ async function getSettings() {
     aiDailyPerUser: Number.isFinite(Number(s.aiDailyPerUser)) && Number(s.aiDailyPerUser) >= 0 ? Math.floor(Number(s.aiDailyPerUser)) : DEFAULT_SETTINGS.aiDailyPerUser,
     aiMonthlyCap: Number.isFinite(Number(s.aiMonthlyCap)) && Number(s.aiMonthlyCap) >= 0 ? Math.floor(Number(s.aiMonthlyCap)) : DEFAULT_SETTINGS.aiMonthlyCap,
     selfApprove: s.selfApprove !== false,
+    clientRequired: s.clientRequired === true,
+    clientFor: Array.isArray(s.clientFor) ? CLIENT_KINDS.filter((k) => s.clientFor.includes(k)) : CLIENT_KINDS.slice(),
   };
 }
+// does the company require a CLIENT to approve this kind ('words' | 'pictures' | 'videos')?
+const clientNeeded = (set, kind) => !!set && set.clientRequired === true && Array.isArray(set.clientFor) && set.clientFor.includes(kind);
 // -> { value } or { error }
 function cleanSettings(b, cur) {
   const next = { ...cur };
   if (b.aiDailyPerUser !== undefined) { const n = Number(b.aiDailyPerUser); if (!Number.isFinite(n) || n < 0 || n > 2000) return { error: 'Daily AI requests per person must be a number from 0 to 2000 (0 = nobody can use AI).' }; next.aiDailyPerUser = Math.floor(n); }
   if (b.aiMonthlyCap !== undefined) { const n = Number(b.aiMonthlyCap); if (!Number.isFinite(n) || n < 0 || n > 1000000) return { error: 'The monthly AI limit must be a number (0 = no limit).' }; next.aiMonthlyCap = Math.floor(n); }
   if (b.selfApprove !== undefined) next.selfApprove = b.selfApprove === true;
+  if (b.clientRequired !== undefined) next.clientRequired = b.clientRequired === true;
+  if (b.clientFor !== undefined) next.clientFor = (Array.isArray(b.clientFor) ? b.clientFor : []).map(String).filter((k, i, a) => CLIENT_KINDS.includes(k) && a.indexOf(k) === i);
+  if (next.clientRequired && !(next.clientFor || []).length) return { error: 'Tick at least one thing the client must approve (words, pictures or videos), or switch the rule off.' };
   return { value: next };
 }
 async function saveSettings(v) { await write(SETTINGS_KEY, v); }
