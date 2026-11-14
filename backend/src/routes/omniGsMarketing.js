@@ -16,6 +16,7 @@ const Clips = require('../marketing/aiclips');
 const Stock = require('../marketing/stockclips');
 const Prj = require('../marketing/projects');
 const Msg = require('../marketing/messaging');
+const Eml = require('../marketing/emailmk');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -176,6 +177,18 @@ router.delete('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, aw
 router.post('/campaigns/:id/templates', mustWrite, wrap(async (req, res) => send(res, await Msg.makeTemplates(req.user, req.params.id))));
 router.post('/campaigns/:id/sms-ids', mustWrite, wrap(async (req, res) => send(res, await Msg.setSmsIds(req.user, req.params.id, req.body || {}))));
 router.post('/campaigns/:id/campaign', mustWrite, wrap(async (req, res) => send(res, await Msg.makeCampaign(req.user, req.params.id, req.body || {}))));
+
+// ---- email marketing (marketing/emailmk.js): the AI writes subject lines and the email of a job campaign; an A/B subject test; a template and a campaign that is saved, NEVER sent from here -----
+router.get('/email/options', mustWrite, wrap(async (req, res) => send(res, await Eml.options(req.user, { q: String(req.query.q || '') }))));
+router.post('/email/write', mustWrite, wrap(async (req, res) => send(res, await Eml.write(req.user, req.body || {}))));
+router.post('/email/check', mustWrite, wrap(async (req, res) => send(res, await Eml.check(req.user, req.body || {}))));
+router.get('/email', mustWrite, wrap(async (req, res) => send(res, await Eml.list(req.user))));
+router.post('/email', mustWrite, wrap(async (req, res) => send(res, await Eml.save(req.user, { ...(req.body || {}), id: undefined }))));
+router.get('/email/:id', mustWrite, wrap(async (req, res) => send(res, await Eml.get(req.user, req.params.id))));
+router.put('/email/:id', mustWrite, wrap(async (req, res) => send(res, await Eml.save(req.user, { ...(req.body || {}), id: req.params.id }))));
+router.delete('/email/:id', mustWrite, wrap(async (req, res) => send(res, await Eml.remove(req.user, req.params.id))));
+router.post('/email/:id/template', mustWrite, wrap(async (req, res) => send(res, await Eml.makeTemplate(req.user, req.params.id))));
+router.post('/email/:id/campaign', mustWrite, wrap(async (req, res) => send(res, await Eml.makeCampaign(req.user, req.params.id, req.body || {}))));
 
 // ---- client projects (marketing/projects.js): a client's request -> accepted -> options shown -> the client picks one -> posted ----------------------------
 router.get('/projects/meta', mustWrite, wrap(async (req, res) => res.json({ sources: Prj.SOURCES, deliverables: Prj.DELIVERABLES, platforms: Prj.PLATFORM_KEYS.map((k) => ({ key: k, label: Prj.PLATFORM_LABEL[k] })) })));

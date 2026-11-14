@@ -50,6 +50,7 @@ export const PAGE_COMPONENTS = {
   mkreports: lazy(() => import('./pages/MkReportsPage.jsx')),
   mkprojects: lazy(() => import('./pages/MkProjectsPage.jsx')),
   mkcampaigns: lazy(() => import('./pages/MkCampaignsPage.jsx')),
+  mkemail: lazy(() => import('./pages/MkEmailPage.jsx')),
   mkourwork: lazy(() => import('./pages/MkOurWorkPage.jsx')),
   mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),
   mkusage: lazy(() => import('./pages/MkUsagePage.jsx')),

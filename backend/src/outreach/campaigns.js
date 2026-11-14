@@ -75,11 +75,15 @@ function renderFor(snapshot, { contact, requirement, message, settings }, channe
     const order = Array.isArray(snapshot.varMap) && snapshot.varMap.length ? snapshot.varMap : varOrder(snapshot.body);
     return { subject: '', body: out.body, vars: order.map((v) => String(values[v] == null ? '' : values[v])) };
   }
-  const t = { channel: 'email', subject: snapshot.subject, body: snapshot.body };
+  // A/B SUBJECT TEST (2026-11-14, AI Marketing > Email marketing): a campaign whose snapshot carries `subjectB` sends subject A to one half of the people and subject B to the other half.
+  // The half is decided by the message id alone (a fixed coin), so nothing extra is stored and the report works it out again. A preview ('sample') is always A. No subjectB = exactly as before.
+  const variant = snapshot.subjectB && message && message.id ? abVariant(message.id) : '';
+  const t = { channel: 'email', subject: variant === 'B' ? snapshot.subjectB : snapshot.subject, body: snapshot.body };
   const unsub = L.unsubscribeUrl(base(), L.mintUnsubscribe(contact.id, 'email', message && message.id));
   const out = T.render(t, { ...values, unsubscribe: unsub });
-  return { subject: out.subject, body: out.body, unsubscribeUrl: unsub };
+  return { subject: out.subject, body: out.body, unsubscribeUrl: unsub, variant };
 }
+const abVariant = (messageId) => (String(messageId) === 'sample' ? 'A' : (crypto.createHash('sha1').update(String(messageId || '')).digest()[0] % 2 === 0 ? 'A' : 'B'));
 // the {{words}} of a text in the order they first appear, without {{unsubscribe}} (that one is a fixed line, not a Meta variable)
 function varOrder(body) {
   const seen = [];
@@ -718,5 +722,5 @@ async function resolveClick(token, { ua, method = 'GET', now = Date.now() } = {}
 
 module.exports = {
   KINDS, TABS, CH_WORDS, ensureKind, STATUS_WORDS, list, get, messages, jobs, plan, create, update, send, control, removeDraft, resendFailed, callTasks, markCall, testSend, materialize, finishPreparing,
-  renderFor, varOrder, shortLink, targetUrl, resolveClick, uaClass, validate, canSee, canControl, abilities, rowFor, reqRows, countsFor, view, visibleRows, creditsFor, groupRows, patchMeta, metaOf, chanOf, dbChannel,
+  renderFor, abVariant, varOrder, shortLink, targetUrl, resolveClick, uaClass, validate, canSee, canControl, abilities, rowFor, reqRows, countsFor, view, visibleRows, creditsFor, groupRows, patchMeta, metaOf, chanOf, dbChannel,
 };

@@ -9,7 +9,8 @@
 // ---------------------------------------------------------------------------
 const MODULES = [
   { id: 'content', no: 1, label: 'AI Content', phase: 1, status: 'live', page: 'mkcontent', blurb: 'Write WhatsApp, SMS, email, RCS and social messages with AI in your brand voice. Nothing is used until a person approves it.' },
-  { id: 'email', no: 2, label: 'Email Marketing', phase: 2, status: 'planned', page: null, blurb: 'AI subject lines, A/B subject test, open and click report, approval before a mass email.' },
+  // 2026-11-14: live (marketing/emailmk.js). Clicks are counted; opens are NOT (plain-text emails carry no tracking picture), and the page says so.
+  { id: 'email', no: 2, label: 'Email Marketing', phase: 2, status: 'live', page: 'mkemail', blurb: 'The AI writes subject lines and the email for one open job; an A/B subject test sends A to half and B to half and reports the clicks; approval before the campaign goes out. Nothing is sent from here: you press Send in Campaigns.' },
   // 2026-11-14: WhatsApp and SMS are live (marketing/messaging.js): the AI writes the words of a job campaign, a person picks them, they become draft templates and a campaign that is NEVER sent from here.
   // RCS is not part of it yet: RCS sends from Administration > Integrations > RCS and is not in the Omni campaign sender.
   { id: 'messaging', no: 3, label: 'WhatsApp & SMS campaigns', phase: 2, status: 'live', page: 'mkcampaigns', blurb: 'The AI writes the WhatsApp and SMS words for one open job in your brand voice; you pick and edit them, make the templates (Meta / DLT approval) and save the campaign. Nothing is sent from here: you press Send in Campaigns. RCS comes later.' },
