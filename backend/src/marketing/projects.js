@@ -905,4 +905,5 @@ module.exports = {
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
+  event, tellTeam, siteFor, firstWord, // marketing/clientChat.js: the timeline line, the team's bell, the https site address, the first name
 };
