@@ -11,7 +11,8 @@ const SETTINGS_KEY = 'omni.mk.settings';
 const BRAND_KEY = 'omni.mk.brand';
 const LOGO_KEY = 'omni.mk.brand.logo'; // { dataUrl, name, at } kept apart: it is large and only the brand screen and the image / video makers need it
 const CLIENT_KINDS = ['words', 'pictures', 'videos'];
-const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice() };
+// autoPostAllowed (2026-11-14): the company-wide switch for AUTOMATIC posting of approved client projects to the clients' connected Facebook Pages / Instagram accounts. OFF until an Admin turns it on.
+const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false };
 const DEFAULT_COLORS = { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
 const DEFAULT_BRAND = {
   brandName: '', about: '', voice: '', tone: 'Warm & confident', language: 'English', cta: '', signOff: '', doWords: [], avoidWords: [], samples: [],
@@ -42,6 +43,7 @@ async function getSettings() {
     selfApprove: s.selfApprove !== false,
     clientRequired: s.clientRequired === true,
     clientFor: Array.isArray(s.clientFor) ? CLIENT_KINDS.filter((k) => s.clientFor.includes(k)) : CLIENT_KINDS.slice(),
+    autoPostAllowed: s.autoPostAllowed === true,
   };
 }
 // does the company require a CLIENT to approve this kind ('words' | 'pictures' | 'videos')?
@@ -52,6 +54,7 @@ function cleanSettings(b, cur) {
   if (b.aiDailyPerUser !== undefined) { const n = Number(b.aiDailyPerUser); if (!Number.isFinite(n) || n < 0 || n > 2000) return { error: 'Daily AI requests per person must be a number from 0 to 2000 (0 = nobody can use AI).' }; next.aiDailyPerUser = Math.floor(n); }
   if (b.aiMonthlyCap !== undefined) { const n = Number(b.aiMonthlyCap); if (!Number.isFinite(n) || n < 0 || n > 1000000) return { error: 'The monthly AI limit must be a number (0 = no limit).' }; next.aiMonthlyCap = Math.floor(n); }
   if (b.selfApprove !== undefined) next.selfApprove = b.selfApprove === true;
+  if (b.autoPostAllowed !== undefined) next.autoPostAllowed = b.autoPostAllowed === true;
   if (b.clientRequired !== undefined) next.clientRequired = b.clientRequired === true;
   if (b.clientFor !== undefined) next.clientFor = (Array.isArray(b.clientFor) ? b.clientFor : []).map(String).filter((k, i, a) => CLIENT_KINDS.includes(k) && a.indexOf(k) === i);
   if (next.clientRequired && !(next.clientFor || []).length) return { error: 'Tick at least one thing the client must approve (words, pictures or videos), or switch the rule off.' };

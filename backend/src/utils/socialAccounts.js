@@ -293,4 +293,9 @@ async function edit(user, id, { name, token } = {}, { saveFacebook } = {}) {
   return { ok: !result || result.ok !== false, account: shape(acc), tokenChanged: !!t, result };
 }
 
-module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, PLATFORMS };
+// one connected account with its token (for server-side posting only: the token never goes to a screen or a log)
+async function withToken(id) {
+  const a = (await readAll()).find((x) => x.id === id && x.status !== 'Removed');
+  return a ? { account: shape(a), token: tokenOf(a) } : null;
+}
+module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, withToken, PLATFORMS };

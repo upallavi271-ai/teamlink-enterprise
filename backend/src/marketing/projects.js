@@ -36,6 +36,8 @@ async function ensure() {
   try {
     for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
     // the portfolio flags (2026-11-14): "the client agrees we show this work", its public title, and whether the client's name may be shown
+    // automatic posting (2026-11-14): on/off, the client's accounts [{accountId, platform, name}], when, its state, what happened per account, the https site address Meta fetches the media from
+    for (const col of ['"autoPost" INTEGER NOT NULL DEFAULT 0', '"autoTargets" TEXT', '"autoAt" DATETIME', '"autoState" TEXT', '"autoResult" TEXT', '"autoBase" TEXT']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     for (const col of ['"showcase" INTEGER NOT NULL DEFAULT 0', '"showcaseTitle" TEXT', '"showcaseClient" INTEGER NOT NULL DEFAULT 0']) { try { await S.run(`ALTER TABLE "${T}" ADD COLUMN ${col}`); } catch { /* the column is already there */ } } // eslint-disable-line no-await-in-loop
     await AI.ensure(); okAt = Date.now(); return true;
   } catch (e) { console.error('[omni-mk] projects schema:', e.message); return false; } // eslint-disable-line no-console
@@ -69,7 +71,15 @@ function visible(u, r) {
   if (A.isAdmin(u) || r.createdById === u.id || r.ownerId === u.id) return true;
   return A.mayDepartment(u, r.department || '');
 }
-const row = async (id) => (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, String(id || '')))[0] || null;
+// The newest columns are added with ALTER TABLE on first use. Right after that, the database layer can still hand back "SELECT *" rows with the OLD column list
+// (found 2026-11-14: a fresh test database returned 46 of 51 fields, so automatic posting looked switched off). So when they are missing they are read by name.
+const NEWEST = 'autoPost, autoTargets, autoAt, autoState, autoResult, autoBase, showcase, showcaseTitle, showcaseClient';
+const row = async (id) => {
+  const r = (await S.q(`SELECT * FROM "${T}" WHERE id = ?`, String(id || '')))[0] || null;
+  if (!r || 'autoPost' in r) return r;
+  const x = (await S.q(`SELECT ${NEWEST} FROM "${T}" WHERE id = ?`, r.id))[0];
+  return x ? { ...r, ...x } : r;
+};
 const optionRows = async (projectId) => S.q(`SELECT * FROM "${TO}" WHERE projectId = ? ORDER BY round ASC, sortNo ASC, createdAt ASC`, projectId);
 async function event(projectId, kind, byName, text) {
   await S.run(`INSERT INTO "${TE}" (id, projectId, at, kind, byName, text) VALUES (?,?,?,?,?,?)`, S.newId('pe'), projectId, Date.now(), kind, S.clip(byName, 80) || null, S.clip(text, 800) || null);
@@ -83,6 +93,7 @@ const short = (r) => ({
   chosenOptionId: r.chosenOptionId || '', decidedAt: S.iso(r.decidedAt), decidedByName: r.decidedByName || '', decisionNote: r.decisionNote || '', scheduledFor: r.scheduledFor || '',
   postUrl: r.postUrl || '', postedAt: S.iso(r.postedAt), postedByName: r.postedByName || '', declinedNote: r.declinedNote || '', views: S.num(r.views), viewedAt: S.iso(r.viewedAt),
   showcase: S.num(r.showcase) === 1, showcaseTitle: r.showcaseTitle || '', showcaseClient: S.num(r.showcaseClient) === 1,
+  autoPost: S.num(r.autoPost) === 1, autoTargets: parse(r.autoTargets, []), autoAt: S.iso(r.autoAt), autoState: r.autoState || '', autoResult: parse(r.autoResult, []),
   link: `/client-project/${tokenOf(r.id)}`,
 });
 
@@ -339,6 +350,182 @@ async function heldIds() {
   return new Set(rows.map((x) => x.itemId));
 }
 
+// ---- AUTOMATIC POSTING to the client's connected Facebook Page / Instagram account (marketing/publisher.js) ------------------------------------------------
+// Safety, because this publishes in public: (1) an Admin must switch "Allow automatic posting" on (settings.autoPostAllowed, off by default); (2) a project posts only
+// after the CLIENT approved it; (3) if the client added SUGGESTIONS with the pick, nothing is posted by itself: the team reads them and presses "Post now";
+// (4) the team chooses the exact accounts per project; (5) a failure never marks the project posted: it says why, per account, and "Retry" posts only the ones that failed;
+// (6) only https site addresses are accepted, because Meta fetches the picture / video from our public link. LinkedIn, X and WhatsApp stay "post by hand".
+const running = new Set();
+// the approved picture / video the client chose, as the publisher needs it: public https links (Facebook, Instagram fetch them) and the local file (X uploads it)
+async function mediaOf(r, base) {
+  const Img = require('./images'); // eslint-disable-line global-require
+  const o = (await S.q(`SELECT * FROM "${TO}" WHERE id = ? AND projectId = ?`, r.chosenOptionId, r.id))[0];
+  const it = o ? await Img.rawRow(o.itemId) : null;
+  if (!it || it.deletedAt || it.status !== 'approved') return { error: 'The approved picture or video is not available any more.', status: 409 };
+  const video = Img.isVideoRow(it);
+  const file = Img.rawFile(it);
+  const url = base ? `${base}${Img.publicPathOf(it)}` : '';
+  return { media: { type: video ? 'video' : 'image', url, jpgUrl: base && !video && /^image\/(png|webp)$/.test(it.mime || '') ? `${base}${Img.publicJpegPath(it)}` : url, path: file ? file.path : '', mime: it.mime } };
+}
+const HTTPS_BASE = /^https:\/\/[A-Za-z0-9.-]+(:\d+)?$/;
+const baseOk = (b) => HTTPS_BASE.test(String(b || '')) || (process.env.MK_PUBLISH_ALLOW_HTTP === '1' && /^http:\/\/[A-Za-z0-9.-]+(:\d+)?$/.test(String(b || '')));
+async function accounts(u) {
+  if (!mayWrite(u)) return { error: 'Your login cannot open client projects.', status: 403 };
+  const SA = require('../utils/socialAccounts'); // eslint-disable-line global-require
+  const all = await SA.list();
+  const set = await Cfg.getSettings();
+  const pick = (p) => (all[p] || []).filter((a) => a.status !== 'Removed').map((a) => ({ id: a.id, platform: a.platform, name: a.name, username: a.username || '', parentName: a.parentName || '', status: a.status, error: a.error || '' }));
+  return { allowed: set.autoPostAllowed === true, accounts: [...pick('facebook'), ...pick('instagram'), ...pick('x')] };
+}
+async function setAutopost(u, id, b = {}, base = '') {
+  const g = await getVisible(u, id); if (g.error) return g;
+  const { r } = g;
+  if (!['working', 'awaiting_client', 'approved'].includes(r.status)) return { error: r.status === 'posted' ? 'It is already posted.' : 'Automatic posting can be set for a project that is being worked on, with the client, or approved.', status: 409 };
+  if (b.enabled !== true) {
+    await S.run(`UPDATE "${T}" SET autoPost = 0, autoState = NULL, updatedAt = ? WHERE id = ?`, Date.now(), r.id);
+    await event(r.id, 'autopost_off', u.name, 'Automatic posting switched off for this project');
+    return { ok: 'Automatic posting is off for this project.', project: short(await row(r.id)) };
+  }
+  const set = await Cfg.getSettings();
+  if (!set.autoPostAllowed) return { error: 'An Admin has to allow automatic posting first (AI Marketing > AI usage).', status: 409, code: 'auto_off' };
+  const SA = require('../utils/socialAccounts'); // eslint-disable-line global-require
+  const ids = (Array.isArray(b.accountIds) ? b.accountIds : []).map(String).filter((x, i, a) => a.indexOf(x) === i).slice(0, 12);
+  if (!ids.length) return { error: 'Pick at least one of the client\'s accounts to post on.', status: 400 };
+  const targets = [];
+  for (const aid of ids) { // eslint-disable-line no-restricted-syntax
+    const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
+    if (!got) return { error: 'One of those accounts is not connected any more. Connect it in Administration > Integrations > Social Media.', status: 404 };
+    if (!['facebook', 'instagram', 'x'].includes(got.account.platform)) return { error: `${got.account.name}: only Facebook Pages, Instagram and X accounts can be posted to from here. Post the others by hand.`, status: 400 };
+    targets.push({ accountId: aid, platform: got.account.platform, name: got.account.name });
+  }
+  let at = null;
+  if (b.date) {
+    at = Date.parse(`${S.clip(b.date, 10)}T${/^\d{2}:\d{2}$/.test(String(b.time || '')) ? b.time : '10:00'}:00+05:30`);
+    if (!Number.isFinite(at)) return { error: 'Pick a valid day and time.', status: 400 };
+    if (at < Date.now() - 60000) return { error: 'That time has already passed. Pick a time ahead, or leave it empty to post as soon as the client approves.', status: 400 };
+  }
+  const site = baseOk(base) ? base : (baseOk(r.autoBase) ? r.autoBase : '');
+  if (!site) return { error: 'Automatic posting needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
+  const state = r.status === 'approved' && r.decisionNote ? 'review' : 'scheduled';
+  await S.run(`UPDATE "${T}" SET autoPost = 1, autoTargets = ?, autoAt = ?, autoState = ?, autoBase = ?, autoResult = NULL, updatedAt = ? WHERE id = ?`, JSON.stringify(targets), at, state, site, Date.now(), r.id);
+  await event(r.id, 'autopost_on', u.name, `Will be posted automatically on ${targets.map((t) => `${t.name} (${t.platform === 'instagram' ? 'Instagram' : 'Facebook'})`).join(', ')}${at ? ` at ${new Date(at + 19800000).toISOString().slice(0, 16).replace('T', ' ')} IST` : ' as soon as the client approves'}`);
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: automatic posting set for a client project', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}${at ? `; ${new Date(at).toISOString()}` : ''}` });
+  return { ok: 'Done. It will be posted automatically after the client approves.', project: short(await row(r.id)) };
+}
+// the post itself. force = a person pressed "Post now" (also for a project not set to post by itself, and after the client's suggestions were read)
+async function autoRun(id, { by = null, force = false } = {}) {
+  await ensure();
+  if (running.has(id)) return { error: 'It is being posted right now.', status: 409 };
+  running.add(id);
+  try {
+    const r = await row(id);
+    if (!r || r.deletedAt) return { error: 'This project was not found.', status: 404 };
+    if (r.status !== 'approved') return { error: r.status === 'posted' ? 'It is already posted.' : 'Only a project the client approved can be posted.', status: 409 };
+    if (!force && (S.num(r.autoPost) !== 1 || r.autoState !== 'scheduled')) return { skipped: true, why: `id=${String(id)} rowId=${String(r.id)} keys=${Object.keys(r).length} autoPost=${String(r.autoPost)} (${typeof r.autoPost}), autoState=${String(r.autoState)}, status=${r.status}` };
+    const set = await Cfg.getSettings();
+    if (!set.autoPostAllowed) return { error: 'Automatic posting is switched off. An Admin can allow it in AI usage.', status: 409, code: 'auto_off' };
+    const targets = parse(r.autoTargets, []);
+    if (!targets.length) return { error: 'Pick the client\'s accounts to post on first.', status: 400 };
+    if (!baseOk(r.autoBase)) return { error: 'Automatic posting needs the site\'s https address: set it again from the project page on the live site.', status: 400 };
+    const mo = await mediaOf(r, r.autoBase);
+    if (mo.error) return mo;
+    const { media } = mo;
+    const prev = parse(r.autoResult, []).filter((x) => x.ok); // a retry posts only the accounts that did not work
+    const todo = targets.filter((t) => !prev.some((x) => x.accountId === t.accountId));
+    await S.run(`UPDATE "${T}" SET autoState = 'posting', updatedAt = ? WHERE id = ?`, Date.now(), r.id);
+    const results = todo.length ? await require('./publisher').publish(todo, media, r.caption || '') : []; // eslint-disable-line global-require
+    const all = [...prev, ...results];
+    const okAll = targets.every((t) => all.some((x) => x.accountId === t.accountId && x.ok));
+    const now = Date.now();
+    await S.run(`UPDATE "${T}" SET autoResult = ?, autoState = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(all), okAll ? 'done' : 'failed', now, r.id);
+    const who = by ? by.name : 'Automatic posting';
+    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', who, x.ok ? `Posted on ${x.name} (${x.platform === 'instagram' ? 'Instagram' : 'Facebook'})${x.url ? `: ${x.url}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
+    if (okAll) {
+      const first = (all.find((x) => x.url) || {}).url || null;
+      await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, updatedAt = ? WHERE id = ?`, first, now, S.clip(who, 80), now, r.id);
+      await event(r.id, 'posted', who, `Posted on ${targets.length} account${targets.length === 1 ? '' : 's'}`);
+      await tellTeam(r, `Posted: "${S.clip(r.title, 60)}"`, `It is live on ${targets.map((t) => t.name).join(', ')}.`);
+      await logAudit({ userId: by ? by.id : r.createdById, actorName: who, action: 'Omni-Channel AI Marketing: client project posted automatically', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}` });
+    } else {
+      const bad = results.filter((x) => !x.ok);
+      await tellTeam(r, `Posting needs you: "${S.clip(r.title, 60)}"`, `${bad.map((x) => `${x.name}: ${x.error}`).join(' ').slice(0, 300)} Open Client projects to retry.`);
+      await logAudit({ userId: by ? by.id : r.createdById, actorName: who, action: 'Omni-Channel AI Marketing: automatic posting failed', entity: T, entityId: r.id, toValue: `${r.clientName}: ${bad.map((x) => x.name).join(', ')}` });
+    }
+    return { ok: okAll ? 'Posted.' : 'Some accounts could not be posted. See why, then retry.', results: all, posted: okAll };
+  } finally { running.delete(id); }
+}
+async function postNow(u, id, b = {}, base = '') {
+  const g = await getVisible(u, id); if (g.error) return g;
+  const { r } = g;
+  if (r.status !== 'approved') return { error: r.status === 'posted' ? 'It is already posted.' : 'Only a project the client approved can be posted.', status: 409 };
+  if (b.confirm !== true) return { error: 'Confirm that you want to post it now: it goes public on the client\'s accounts.', status: 400, code: 'confirm' };
+  if (!parse(r.autoTargets, []).length) return { error: 'Pick the client\'s accounts to post on first.', status: 400 };
+  if (!baseOk(r.autoBase) && baseOk(base)) await S.run(`UPDATE "${T}" SET autoBase = ? WHERE id = ?`, base, r.id);
+  await event(r.id, 'post_now', u.name, 'Post now pressed');
+  const out = await autoRun(r.id, { by: u, force: true });
+  return out.error ? out : { ...out, project: short(await row(r.id)) };
+}
+// THE "SEND" BUTTONS: post the approved picture / video on ONE platform now (Facebook, Instagram or X), on the accounts the person picked. A person presses it, after the client
+// approved: that click is the decision (with a confirmation: it goes public on the client's account). The project becomes Posted once every platform the client asked for
+// (that can be posted from here) has a post; anything else (LinkedIn, WhatsApp) is posted by hand and finished with "Mark as posted".
+async function postTo(u, id, b = {}, base = '') {
+  const g = await getVisible(u, id); if (g.error) return g;
+  const { r } = g;
+  if (r.status !== 'approved') return { error: r.status === 'posted' ? 'It is already posted.' : 'Only a project the client approved can be posted.', status: 409 };
+  const platform = String(b.platform || '');
+  if (!['facebook', 'instagram', 'x'].includes(platform)) return { error: 'Pick Facebook, Instagram or X. The others are posted by hand.', status: 400 };
+  if (b.confirm !== true) return { error: 'Confirm that you want to post it now: it goes public on the client\'s account.', status: 400, code: 'confirm' };
+  const set = await Cfg.getSettings();
+  if (!set.autoPostAllowed) return { error: 'An Admin has to allow posting from TeamLink first (AI Marketing > AI usage).', status: 409, code: 'auto_off' };
+  const SA = require('../utils/socialAccounts'); // eslint-disable-line global-require
+  const ids = (Array.isArray(b.accountIds) ? b.accountIds : []).map(String).filter((x, i, a) => a.indexOf(x) === i).slice(0, 12);
+  if (!ids.length) return { error: 'Pick the account to post on.', status: 400 };
+  const targets = [];
+  for (const aid of ids) { // eslint-disable-line no-restricted-syntax
+    const got = await SA.withToken(aid); // eslint-disable-line no-await-in-loop
+    if (!got) return { error: 'That account is not connected any more. Connect it in Administration > Integrations > Social Media.', status: 404 };
+    if (got.account.platform !== platform) return { error: `${got.account.name} is not a ${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'} account.`, status: 400 };
+    targets.push({ accountId: aid });
+  }
+  const site = baseOk(base) ? base : (baseOk(r.autoBase) ? r.autoBase : '');
+  if (platform !== 'x' && !site) return { error: 'Posting to Facebook or Instagram needs this page opened on the site\'s https address (Meta fetches the picture or video from it).', status: 400 };
+  if (running.has(r.id)) return { error: 'It is being posted right now.', status: 409 };
+  running.add(r.id);
+  try {
+    const mo = await mediaOf(r, site);
+    if (mo.error) return mo;
+    await event(r.id, 'post_click', u.name, `Posting on ${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'}`);
+    const results = await require('./publisher').publish(targets, mo.media, r.caption || ''); // eslint-disable-line global-require
+    const all = [...parse(r.autoResult, []).filter((x) => !results.some((n) => n.accountId === x.accountId)), ...results];
+    const now = Date.now();
+    await S.run(`UPDATE "${T}" SET autoResult = ?, autoBase = ?, updatedAt = ? WHERE id = ?`, JSON.stringify(all), site || r.autoBase || null, now, r.id);
+    for (const x of results) await event(r.id, x.ok ? 'autoposted' : 'autopost_failed', u.name, x.ok ? `Posted on ${x.name} (${platform === 'x' ? 'X' : platform === 'instagram' ? 'Instagram' : 'Facebook'})${x.url ? `: ${x.url}` : ''}` : `${x.name}: ${x.error}`); // eslint-disable-line no-await-in-loop
+    const needed = parse(r.platforms, []).filter((k) => ['facebook', 'instagram', 'x'].includes(k));
+    const have = new Set(all.filter((x) => x.ok).map((x) => x.platform));
+    const finished = needed.length > 0 && needed.every((k) => have.has(k));
+    if (finished) {
+      const first = (all.find((x) => x.ok && x.url) || {}).url || null;
+      await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, autoState = 'done', updatedAt = ? WHERE id = ?`, first, now, S.clip(u.name, 80), now, r.id);
+      await event(r.id, 'posted', u.name, `Posted on ${needed.length} platform${needed.length === 1 ? '' : 's'}`);
+    }
+    await logAudit({ userId: u.id, actorName: u.name, action: results.every((x) => x.ok) ? 'Omni-Channel AI Marketing: client project posted by a click' : 'Omni-Channel AI Marketing: posting by a click failed', entity: T, entityId: r.id, toValue: `${r.clientName}: ${results.map((x) => `${x.name} ${x.ok ? 'ok' : 'failed'}`).join(', ')}` });
+    return { ok: results.every((x) => x.ok) ? (finished ? 'Posted. The project is finished.' : 'Posted.') : 'It could not be posted. See why below, then try again.', results, posted: finished, project: short(await row(r.id)) };
+  } finally { running.delete(r.id); }
+}
+async function autoSweep() {
+  await ensure();
+  const rows = await S.q(`SELECT id FROM "${T}" WHERE deletedAt IS NULL AND status = 'approved' AND autoPost = 1 AND autoState = 'scheduled' AND (autoAt IS NULL OR autoAt <= ?) ORDER BY updatedAt ASC LIMIT 20`, Date.now());
+  let n = 0;
+  for (const x of rows) { try { const out = await autoRun(x.id); if (out && !out.skipped) n += 1; } catch (e) { console.error('[omni-mk] auto post:', e.message); } } // eslint-disable-line no-await-in-loop, no-console
+  return n;
+}
+let sweeping = null;
+function startAutoPost() {
+  if (sweeping || require('../utils/sandbox').isSandbox()) return; // eslint-disable-line global-require
+  sweeping = setInterval(() => { autoSweep().catch((e) => console.error('[omni-mk] auto post sweep:', e.message)); }, 120000); // eslint-disable-line no-console
+  if (sweeping.unref) sweeping.unref();
+}
+
 // ---- OUR WORK: the track record and the portfolio that new and existing clients can see (no login) -----------------------------------------------------
 // What is shown: (1) numbers over ALL finished projects, with no names: how fast the first options came, how often the client chose from the first set
 // (our "accuracy"), how often we posted by the date the client needed it; a percentage appears only once there are 3 projects behind it. (2) the projects the
@@ -502,7 +689,14 @@ async function publicChoose(token, b = {}, ip = '') {
   }
   await S.run(`UPDATE "${T}" SET status = 'approved', chosenOptionId = ?, decidedAt = ?, decidedByName = ?, decisionNote = ?, updatedAt = ? WHERE id = ? AND status = 'awaiting_client'`, chosen.id, now, name, comment || null, now, r.id);
   await event(r.id, 'client_chose', `${name} (client: ${r.clientName})`, `Chose ${chosen.label}${comment ? `. Suggestions: ${comment}` : ''}`);
-  await tellTeam(r, `Client approved "${S.clip(r.title, 60)}"`, `${name} (${S.clip(r.clientName, 60)}) chose ${chosen.label}${comment ? `: ${S.clip(comment, 200)}` : ''}. It is Approved: schedule and post it from Client projects.`);
+  // automatic posting: with suggestions the team reads them first ("Post now"); without, it goes out now or at the time set (the sweep posts a later time)
+  let autoNote = '';
+  if (S.num(r.autoPost) === 1) {
+    if (comment) { await S.run(`UPDATE "${T}" SET autoState = 'review' WHERE id = ?`, r.id); autoNote = ' The client added suggestions, so it is NOT posted by itself: read them, then press Post now.'; }
+    else if (!r.autoAt || S.num(r.autoAt) <= Date.now()) { setImmediate(() => { autoRun(r.id).then((out) => { if (out && (out.error || out.skipped)) console.error('[omni-mk] auto post did not run:', out.error || out.why || 'skipped'); }).catch((e) => console.error('[omni-mk] auto post:', e.message)); }); autoNote = ' It is being posted automatically.'; } // eslint-disable-line no-console
+    else autoNote = ' It will be posted automatically at the time you set.';
+  }
+  await tellTeam(r, `Client approved "${S.clip(r.title, 60)}"`, `${name} (${S.clip(r.clientName, 60)}) chose ${chosen.label}${comment ? `: ${S.clip(comment, 200)}` : ''}. It is Approved.${autoNote || ' Schedule and post it from Client projects.'}`);
   await logAudit({ userId: r.createdById, actorName: `${name} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client chose an option (approved)', entity: T, entityId: r.id, toValue: `${r.title}; ${chosen.label}${comment ? `: ${S.clip(comment, 200)}` : ''}; ${S.clip(ip, 60)}` });
   return { ok: 'Thank you. Your choice has been recorded and we will go ahead.' };
 }
@@ -527,5 +721,5 @@ async function publicChanges(token, b = {}, ip = '') {
 module.exports = {
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite,
-  setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile,
+  setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
 };

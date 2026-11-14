@@ -571,15 +571,26 @@ async function file(u, id) {
   return fs.existsSync(p) ? { path: p, mime: g.r.mime, name: `${g.r.title || 'picture'}.${EXT[g.r.mime] || 'png'}` } : null;
 }
 // the public link: approved pictures only, signature checked in constant time
-async function publicFile(id, sig) {
+async function publicFile(id, sig, ext = '') {
   await ensure();
   const r = await row(id);
   if (!r || r.deletedAt || r.status !== 'approved') return null;
   const want = Buffer.from(sign(r.id)); const got = Buffer.from(String(sig || ''));
   if (want.length !== got.length || !crypto.timingSafeEqual(want, got)) return null;
   const p = path.join(dir(), path.basename(r.file));
-  return fs.existsSync(p) ? { path: p, mime: r.mime } : null;
+  if (!fs.existsSync(p)) return null;
+  // ".jpg" of a PNG / WebP picture: Instagram takes JPEG only, so the picture is converted once (on a white background) and kept beside the original
+  if (/^jpe?g$/i.test(ext) && /^image\/(png|webp)$/.test(r.mime || '')) {
+    const jp = path.join(dir(), `${path.basename(r.file).replace(/\.[^.]+$/, '')}.ig.jpg`);
+    if (!fs.existsSync(jp)) {
+      try { fs.writeFileSync(jp, await require('sharp')(p).flatten({ background: '#ffffff' }).jpeg({ quality: 92 }).toBuffer()); } catch { return null; } // eslint-disable-line global-require
+    }
+    return { path: jp, mime: 'image/jpeg' };
+  }
+  return { path: p, mime: r.mime };
 }
+// the public link of a picture as a JPEG (for Instagram), and of any item as stored
+const publicJpegPath = (r) => `/api/mk-image/${r.id}/${sign(r.id)}.jpg`;
 
 // ---- rename / delete / approval ----------------------------------------------------------------------------------------------------------
 async function update(u, id, b = {}) {
@@ -662,5 +673,5 @@ async function decide(u, id, approve, note) {
 
 module.exports = {
   ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
-  approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision,
+  approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision, publicPathOf: publicPath, publicJpegPath, isVideoRow: isVideo,
 };

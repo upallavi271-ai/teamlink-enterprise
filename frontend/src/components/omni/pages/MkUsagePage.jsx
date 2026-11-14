@@ -11,9 +11,9 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'] });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false });
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'] }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
   useEffect(() => { load(); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
@@ -67,6 +67,15 @@ export default function MkUsagePage() {
                 {lim.clientFor.includes('pictures') ? <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>Note: a picture you want to use inside a video must be approved first, so with Pictures ticked the client approves each picture and then the video. Untick Pictures to let your team approve pictures.</div> : null}
               </Field>
             ) : null}
+          </div>
+        </Panel>
+      )}
+      {d.canEdit && (
+        <Panel title="Posting to client accounts" sub="Let your team post an approved project on the client's Facebook Page, Instagram and X with one click." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+          <div className="form-grid">
+            <Field label="POST FROM TEAMLINK" full hint="Off: the team copies the words, downloads the file and posts by hand. On: an approved project shows Facebook, Instagram and X buttons; the accounts are the ones connected in Administration > Integrations > Social Media. Posting is public, so each click asks to confirm.">
+              <select value={lim.autoPostAllowed ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, autoPostAllowed: e.target.value === 'yes' })}><option value="no">Off: post by hand</option><option value="yes">On: the team can post with a click</option></select>
+            </Field>
           </div>
         </Panel>
       )}

@@ -16,6 +16,7 @@ const STATUS = {
 const TABS = [['', 'All'], ['request', 'New requests'], ['working', 'In progress'], ['awaiting_client', 'With the client'], ['approved', 'Approved'], ['posted', 'Posted'], ['invited', 'Invited'], ['declined', 'Declined']];
 const STEPS = [['request', 'Request'], ['working', 'Accepted'], ['awaiting_client', 'With the client'], ['approved', 'Client chose'], ['posted', 'Posted']];
 const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓' };
+const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram', '◎', '#d62976'], ['x', 'X', '𝕏', '#111111']]; // the send buttons of an approved project
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const origin = () => window.location.origin;
 const statusPill = (s) => { const [tone, words] = STATUS[s] || ['draft', s]; return <Pill tone={tone} dot>{words}</Pill>; };
@@ -190,6 +191,10 @@ function Detail({ id, meta, onBack, onChanged }) {
   const [staged, setStaged] = useState([]); // [{ itemId, label, item }]
   const [caption, setCaption] = useState('');
   const [approvedList, setApprovedList] = useState([]);
+  const [accts, setAccts] = useState({ allowed: false, accounts: [] }); // the client's connected Facebook / Instagram / X accounts (for the send buttons)
+  const [postFor, setPostFor] = useState(''); // 'facebook' | 'instagram' | 'x': the platform whose send button was pressed
+  const [postSel, setPostSel] = useState([]);
+  const [postErr, setPostErr] = useState([]);
   const [sendF, setSendF] = useState({ days: 14, message: '' });
   const [reason, setReason] = useState('');
   const [postUrl, setPostUrl] = useState('');
@@ -198,7 +203,10 @@ function Detail({ id, meta, onBack, onChanged }) {
   const load = useCallback(() => omni.get(`/gs/marketing/projects/${id}`).then((x) => {
     setD(x); setCaption(x.project.caption || '');
     setStaged(x.options.filter((o) => o.stage === 'staged').map((o) => ({ itemId: o.itemId, label: o.label, item: o.item })));
-    if (['approved', 'posted'].includes(x.project.status)) omni.get('/gs/marketing/images', { status: 'approved' }).then((l) => setApprovedList(l.items || [])).catch(() => setApprovedList([]));
+    if (['approved', 'posted'].includes(x.project.status)) {
+      omni.get('/gs/marketing/images', { status: 'approved' }).then((l) => setApprovedList(l.items || [])).catch(() => setApprovedList([]));
+      omni.get('/gs/marketing/projects/accounts').then(setAccts).catch(() => setAccts({ allowed: false, accounts: [] }));
+    }
   }).catch((e) => setErr(errOf(e, 'The project could not be opened.'))), [id]);
   useEffect(() => { load(); }, [load]);
   if (err && !d) return <Banner tone="error">{err} <button type="button" className="tiny-btn" onClick={onBack}>Back</button></Banner>;
@@ -321,6 +329,30 @@ function Detail({ id, meta, onBack, onChanged }) {
                 <textarea style={{ minHeight: 70 }} value={caption} maxLength={3000} onChange={(e) => setCaption(e.target.value)} onBlur={() => { if (caption !== (p.caption || '')) omni.put(`/gs/marketing/projects/${id}`, { caption }).then(() => load()).catch((e) => setErr(errOf(e, 'The caption could not be saved.'))); }} />
               </Field>
               <div style={{ fontSize: 11, margin: '8px 0', color: 'var(--muted)' }}>Post on: {p.platforms.length ? p.platforms.map((k) => (meta.platforms.find((x) => x.key === k) || {}).label || k).join(', ') : 'no page chosen yet (edit the request)'}{p.handles ? ` · ${p.handles.replace(/\n/g, ', ')}` : ''}</div>
+              <div style={{ margin: '10px 0 12px' }}>
+                <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 6 }}>Send it</div>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                  {SEND.map(([key, label, icon, color]) => {
+                    const list = accts.accounts.filter((a) => a.platform === key);
+                    const res = (p.autoResult || []).filter((x) => x.platform === key);
+                    const ok = res.find((x) => x.ok); const bad = res.filter((x) => !x.ok).slice(-1)[0];
+                    const asked = p.platforms.includes(key);
+                    return (
+                      <div key={key} style={{ width: 168 }}>
+                        <button type="button" disabled={!accts.allowed || !list.length || !!ok || !!busy} onClick={() => { setPostFor(key); setPostSel(list.length === 1 ? [list[0].id] : []); setPostErr([]); }}
+                          style={{ width: '100%', border: 'none', borderRadius: 10, padding: '10px 12px', fontWeight: 800, fontSize: 12.5, cursor: (!accts.allowed || !list.length || ok) ? 'default' : 'pointer', background: ok ? '#e8f7ef' : color, color: ok ? '#087844' : '#fff', opacity: (!accts.allowed || !list.length) && !ok ? 0.5 : 1, display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
+                          <span aria-hidden="true" style={{ fontSize: 15 }}>{icon}</span>{ok ? `${label}: posted ✓` : bad ? `Try ${label} again` : `Post to ${label}`}
+                        </button>
+                        <small style={{ display: 'block', fontSize: 10, marginTop: 4, color: bad && !ok ? '#9b1c1c' : 'var(--muted)', lineHeight: 1.4 }}>
+                          {ok ? (ok.url ? <a href={ok.url} target="_blank" rel="noopener noreferrer">Open the post</a> : 'Posted') : bad ? bad.error : !list.length ? `No ${label} account connected` : asked ? 'The client asked for this one' : 'Not asked for by the client'}
+                        </small>
+                      </div>
+                    );
+                  })}
+                </div>
+                {!accts.allowed ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>An Admin has to allow posting from TeamLink first: AI Marketing → AI usage → “Posting to client accounts”. Until then, post by hand with the buttons below.</div> : null}
+                {accts.allowed && !accts.accounts.length ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>No accounts are connected yet. An Admin connects the client's Facebook Page (and its Instagram) or X account in Administration → Integrations → Social Media. The client first makes your Facebook login an admin of their Page.</div> : null}
+              </div>
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <Btn small onClick={async () => { try { await navigator.clipboard.writeText(caption); toast('Words copied'); } catch { window.prompt('Copy the words:', caption); } }}>⧉ Copy the words</Btn>
                 {chosen ? <Btn small onClick={() => downloadMkImg(chosen.itemId, `${p.clientName} ${chosen.label}`).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download the file</Btn> : null}
@@ -370,6 +402,32 @@ function Detail({ id, meta, onBack, onChanged }) {
         </div>
       </div>
 
+      {postFor ? (() => {
+        const info = SEND.find((s) => s[0] === postFor); const list = accts.accounts.filter((a) => a.platform === postFor);
+        return (
+          <GsModal title={`Post to ${info[1]}?`} sub="This goes public on the client's account as soon as you press the button." width={520} onClose={() => setPostFor('')}
+            foot={<><Btn onClick={() => setPostFor('')}>Cancel</Btn><Btn primary disabled={!!busy || !postSel.length} onClick={async () => {
+              setBusy('post'); setPostErr([]);
+              try {
+                const r = await omni.post(`/gs/marketing/projects/${id}/post`, { platform: postFor, accountIds: postSel, confirm: true });
+                if (r.results && r.results.some((x) => !x.ok)) { setPostErr(r.results.filter((x) => !x.ok)); } else { toast(r.ok || 'Posted'); setPostFor(''); }
+                onChanged(); await load();
+              } catch (e) { const m = errOf(e, 'It could not be posted.'); setPostErr([{ name: info[1], error: m }]); } finally { setBusy(''); }
+            }}>{busy === 'post' ? 'Posting…' : `Post to ${info[1]} now`}</Btn></>}>
+            {postErr.length ? <Banner tone="error">{postErr.map((x) => <div key={x.name}><b>{x.name}:</b> {x.error}</div>)}</Banner> : null}
+            {chosen ? <div style={{ maxWidth: 180, marginBottom: 10 }}><MkImg id={chosen.itemId} alt={chosen.label} video={chosen.item && chosen.item.kind === 'video'} controls={false} style={{ aspectRatio: String((chosen.item && chosen.item.aspect) || '1:1').replace(':', ' / '), objectFit: 'contain', background: '#000' }} /></div> : null}
+            <div style={{ fontSize: 12, whiteSpace: 'pre-wrap', background: '#f4f6f5', borderRadius: 8, padding: '8px 10px', marginBottom: 10 }}>{caption || 'No words: only the picture or video is posted.'}</div>
+            {postFor === 'x' && caption.length > 280 ? <Banner tone="warn">The words are {caption.length} characters; X allows 280. Shorten them first.</Banner> : null}
+            <div style={{ fontSize: 11, fontWeight: 800, marginBottom: 4 }}>POST ON</div>
+            {list.map((a) => (
+              <label key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, padding: '4px 0' }}>
+                <input type="checkbox" checked={postSel.includes(a.id)} disabled={a.status === 'Expired'} onChange={() => setPostSel((s) => (s.includes(a.id) ? s.filter((x) => x !== a.id) : [...s, a.id]))} />
+                <span><b>{a.name}</b>{a.parentName ? ` · ${a.parentName}` : ''}{a.status !== 'Connected' ? ` · ${a.status}` : ''}</span>
+              </label>
+            ))}
+          </GsModal>
+        );
+      })() : null}
       {modal === 'edit' ? <RequestModal meta={meta} project={p} onClose={() => setModal('')} onDone={() => { setModal(''); onChanged(); load(); }} toast={toast} /> : null}
       {modal === 'pick' ? <PickModal project={p} taken={staged.map((s) => s.itemId)} onClose={() => setModal('')} onPick={async (ids) => { setModal(''); await saveStaged([...staged, ...ids.map((itemId) => ({ itemId, label: '' }))].map((s, i) => ({ ...s, label: s.label || `Option ${String.fromCharCode(65 + i)}` }))); }} /> : null}
       {modal === 'send' ? (

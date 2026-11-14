@@ -141,7 +141,8 @@ app.use('/api/monitoring/activity', express.json({ limit: '1mb' }));
 // the picture's id, so it cannot be guessed, and it stops answering as soon as the picture is sent back or deleted (marketing/images.js).
 app.get('/api/mk-image/:id/:file', async (req, res, next) => {
   try {
-    const f = await require('./marketing/images').publicFile(req.params.id, String(req.params.file || '').split('.')[0]);
+    const parts = String(req.params.file || '').split('.');
+    const f = await require('./marketing/images').publicFile(req.params.id, parts[0], parts[1] || '');
     if (!f) return res.status(404).type('text/plain').send('Not found');
     res.setHeader('Content-Type', f.mime);
     res.setHeader('Cache-Control', 'public, max-age=300');
@@ -560,6 +561,7 @@ const server = app.listen(PORT, () => {
   require('./utils/dayNudges').start();
   // AI Marketing Content Calendar: one notice to the owner an hour before a planned post (marketing/calendar.js; MK_CALENDAR_SWEEP_MS=0 = off)
   require('./marketing/calendar').startSweep();
+  require('./marketing/projects').startAutoPost(); // posts approved client projects whose time has come (only when an Admin allowed it; never in the sandbox)
   // AI clips: finish every Veo clip Google already accepted before the last restart (marketing/aiclips.js); one that never reached Google is closed
   setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();
   // Timesheet daily tracking: 18:00 "not finished today - what happened?", 19:00 to whoever gave it - utils/taskDayUpdate.js (2026-11-10)
