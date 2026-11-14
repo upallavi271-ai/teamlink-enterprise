@@ -273,7 +273,8 @@ async function tellClient(r, kind, opts = {}) {
         const tpl = require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
         res = await messaging.send('WhatsApp', tpl
           ? { to: nm.e164, kind: 'text', text: msg.text, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name } }
-          : { to: nm.e164, kind: 'text', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, meta }); // eslint-disable-line no-await-in-loop
+          // no template of its own for this kind: the company's ONE general template ("bulk / general", Administration > Integrations > WhatsApp Business: its blank {{1}} is the whole message) carries it, if an Admin saved one; with none, free text as before
+          : { to: nm.e164, kind: 'bulk', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, vars: [msg.text], meta }); // eslint-disable-line no-await-in-loop
       } else {
         if (!String(r.contactEmail || '').trim()) { if (by) out.sent.push({ way: label, ok: false, local: true, to: '', error: 'No email address is saved for this client. Add it in Edit.' }); continue; } // eslint-disable-line no-continue
         to = core.maskEmail(r.contactEmail);
@@ -282,7 +283,7 @@ async function tellClient(r, kind, opts = {}) {
       const ok = !!(res && res.ok);
       const why = ok ? '' : plainWhy(res);
       out.sent.push({ way: label, ok, to, error: why });
-      const viaTpl = way === 'whatsapp' && ok && !!require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
+      const viaTpl = way === 'whatsapp' && ok && (!!require('./waTemplates').payload(set.waTemplates, kind, msg.values) || (res && res.mode === 'template')); // eslint-disable-line global-require
       await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label}${viaTpl ? ' (approved template)' : ''} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
     }
     const bad = out.sent.filter((x) => !x.ok);
