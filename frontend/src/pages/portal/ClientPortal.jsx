@@ -16,6 +16,7 @@ import ClientOffers from './ClientOffers.jsx';
 import ClientJoinDrop from './ClientJoinDrop.jsx'; // Joinings and drops: who joined, who dropped, the replacement answer
 import Combo from '../../components/Combo.jsx';
 import { ViewAgreementButton } from '../../components/agreements/SignedAgreementFiles.jsx'; // the one shared "View agreement" button
+import ClientCreative from './ClientCreative.jsx'; // AI Marketing in the client's own login: see our creative work, choose one (the approval), send a new request (2026-11-14)
 
 // ---------------------------------------------------------------------------
 // THE CLIENT PORTAL (user notes #4, point 3) — what a client login sees.
@@ -84,7 +85,7 @@ export default function ClientPortal() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [tab, setTab] = useState(() => { try { return new URLSearchParams(window.location.search).get('tab') === 'joindrop' ? 'joindrop' : 'overview'; } catch { return 'overview'; } });
+  const [tab, setTab] = useState(() => { try { const t = new URLSearchParams(window.location.search).get('tab'); return t === 'joindrop' || t === 'creative' ? t : 'overview'; } catch { return 'overview'; } });
   const [jdWaiting, setJdWaiting] = useState(0); // dropped candidates still waiting for this client's replacement answer
   const [deciding, setDeciding] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -92,6 +93,7 @@ export default function ClientPortal() {
   const [reqFilter, setReqFilter] = useState('');
   const [show, setShow] = useState('waiting');
   const [feedbackFor, setFeedbackFor] = useState(null); // { c, recommendation, comment }
+  const [creativeWaiting, setCreativeWaiting] = useState(0); // creative options waiting for this client's choice (the tab's number)
 
   const load = useCallback(() => {
     api.get('/portal/client')
@@ -103,6 +105,8 @@ export default function ClientPortal() {
   useEffect(() => { if (data && !data.limited && !data.permissions?.decide) setShow('all'); }, [data]);
   const loadJd = useCallback(() => { api.get('/portal/client/join-drop').then((r) => setJdWaiting(r.data.counts?.waiting || 0)).catch(() => setJdWaiting(0)); }, []);
   useEffect(() => { if (data && !data.limited) loadJd(); }, [data, loadJd]);
+  // the number on the "Creative work" tab: how many options wait for this client's choice (the server answers 403 to a login without that tick)
+  useEffect(() => { if (data && !data.limited && (!data.portalCaps || data.portalCaps.includes('CREATIVE'))) api.get('/portal/client/creative').then((r) => setCreativeWaiting(r.data.waiting || 0)).catch(() => setCreativeWaiting(0)); }, [data]);
 
   const candidates = data?.candidates || [];
   const shownCandidates = useMemo(() => candidates.filter((c) => {
@@ -192,7 +196,8 @@ export default function ClientPortal() {
             </table>
           </div>
         ) : <EmptyState icon="🧾" title="No invoices yet" hint="When TeamLink raises an invoice for your company, it shows here." />)}
-        {!data.invoices && !data.agreement && (
+        {lcaps.includes('CREATIVE') && <div style={{ margin: '0 0 14px' }}><ClientCreative userName={user && user.name} /></div>}
+        {!data.invoices && !data.agreement && !lcaps.includes('CREATIVE') && (
           <EmptyState
             icon="📝"
             title={mayAsk ? 'You can ask for a new requirement here' : 'Nothing to show on this page'}
@@ -276,6 +281,7 @@ export default function ClientPortal() {
           { id: 'interviews', label: 'Interviews', count: interviews.length },
           { id: 'hires', label: 'Selected & Joined', count: hires.length },
           { id: 'joindrop', label: 'Joinings and drops', count: jdWaiting || undefined },
+          capOn('CREATIVE') ? { id: 'creative', label: 'Creative work', count: creativeWaiting || undefined } : null,
           agreement || capOn('AGREEMENT') ? { id: 'agreement', label: 'Agreement' } : null,
           invoices ? { id: 'invoices', label: 'Invoices', count: invoices.length } : null,
           mayReports ? { id: 'reports', label: 'Reports' } : null,
@@ -489,6 +495,7 @@ export default function ClientPortal() {
       )}
 
       {tab === 'joindrop' && <ClientJoinDrop onChanged={loadJd} />}
+      {tab === 'creative' && capOn('CREATIVE') && <ClientCreative userName={user && user.name} onCount={setCreativeWaiting} />}
       {tab === 'hires' && (data.offers || []).length > 0 && (
         <ClientOffers offers={data.offers} onChanged={(msg) => { setNotice(msg || 'Saved.'); setError(''); load(); }} />
       )}

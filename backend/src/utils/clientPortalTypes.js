@@ -15,6 +15,8 @@
 //   OFFERS     Release the offer letter and the joining letter, confirm the candidate's acceptance and
 //              the joining (2026-10-13). OFF unless a login is given it: an older login with no ticks
 //              does NOT get it (routes/portal.js offersTick). Needs VIEW.
+//   CREATIVE   AI Marketing (2026-11-14): see the videos / pictures TeamLink makes for the client, choose one (that choice IS the approval) and send a new creative request
+//              (routes/portalCreative.js). Stands alone (no VIEW needed). OFF for a login that has ticks and not this one; an older login with no ticks keeps full access.
 //   AGREEMENT  See our agreement (and sign it by its secure link)
 //   INVOICES   See invoices and payments
 //
@@ -41,6 +43,7 @@ const CAPS = [
   { key: 'INTERVIEW', group: 'Do', label: 'Ask for an interview', hint: 'Tell us you want to meet a candidate and suggest days and times.' },
   { key: 'FEEDBACK', group: 'Do', label: 'Give feedback after an interview', hint: 'Tell us how the interview went: selected, hold or rejected.' },
   { key: 'OFFERS', group: 'Do', label: 'Send offer and joining letters', hint: 'Upload your offer letter and joining letter for a selected candidate, and confirm when they accept or join.' },
+  { key: 'CREATIVE', group: 'Do', label: 'Approve our creative work and send us requests', hint: 'See the videos and pictures TeamLink makes for you, choose the one you like, and send a new request for a post or a video.' },
 ];
 const CAP_KEYS = CAPS.map((c) => c.key);
 const NEEDS_VIEW = ['DECIDE', 'INTERVIEW', 'FEEDBACK', 'OFFERS'];
@@ -101,7 +104,7 @@ function hasCap(user, key) {
 // Short words for the list / mail: "See jobs · Ask for a job · …"
 const CHIP_WORDS = {
   VIEW: 'See requirements and candidates', AGREEMENT: 'See agreement', INVOICES: 'See invoices',
-  REQUEST: 'Ask for a requirement', DECIDE: 'Shortlist / reject', INTERVIEW: 'Ask for interviews', FEEDBACK: 'Give feedback', OFFERS: 'Send offer / joining letters',
+  REQUEST: 'Ask for a requirement', DECIDE: 'Shortlist / reject', INTERVIEW: 'Ask for interviews', FEEDBACK: 'Give feedback', OFFERS: 'Send offer / joining letters', CREATIVE: 'Approve creative work',
 };
 const chipsOf = (caps) => normalise(caps).map((k) => CHIP_WORDS[k]);
 const TYPE_WORDS = { REVIEWER: 'Reviewer', VIEWER: 'Viewer', BILLING: 'Billing', CUSTOM: 'Custom' };

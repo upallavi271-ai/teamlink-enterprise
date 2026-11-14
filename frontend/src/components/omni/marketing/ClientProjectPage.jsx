@@ -19,13 +19,15 @@ const readLogo = (file) => new Promise((resolve, reject) => {
   const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => reject(new Error('The logo could not be read.')); r.readAsDataURL(file);
 });
 
-export default function ClientProjectPage() {
-  const { token } = useParams();
+// `embedded` (the Client Portal, a signed-in client): the same page inside the portal, with the token handed over, the person's own name filled in and no full-screen frame.
+export default function ClientProjectPage({ token: tokenProp = '', embedded = false, defaultName = '', onChanged = null } = {}) {
+  const { token: routeToken } = useParams();
+  const token = tokenProp || routeToken;
   const [d, setD] = useState(null);
   const [gone, setGone] = useState('');
   const [temp, setTemp] = useState(false); // the site was busy / updating (not a dead link)
   const [pick, setPick] = useState('');
-  const [name, setName] = useState('');
+  const [name, setName] = useState(defaultName || '');
   const [comment, setComment] = useState('');
   const [mode, setMode] = useState(''); // '' | 'changes'
   const [busy, setBusy] = useState(false);
@@ -34,13 +36,13 @@ export default function ClientProjectPage() {
   const [f, setF] = useState({ occasion: '', brief: '', deliverable: 'video', platforms: ['instagram'], handles: '', dueDate: '', contactName: '', contactEmail: '', contactPhone: '', colors: {} });
   const [logo, setLogo] = useState('');
   const base = `/public/mk-project/${encodeURIComponent(token)}`;
-  const load = useCallback(() => api.get(base).then((r) => { setD(r.data); document.title = r.data.project.status === 'invited' ? 'Tell us what you need' : r.data.project.status === 'awaiting_client' ? 'Please choose' : 'Your request'; setF((x) => ({ ...x, contactName: x.contactName || r.data.project.contactName || '', contactEmail: x.contactEmail || r.data.project.contactEmail || '', contactPhone: x.contactPhone || r.data.project.contactPhone || '' })); }).catch((e) => {
+  const load = useCallback(() => api.get(base).then((r) => { setD(r.data); if (!embedded) document.title = r.data.project.status === 'invited' ? 'Tell us what you need' : r.data.project.status === 'awaiting_client' ? 'Please choose' : 'Your request'; setF((x) => ({ ...x, contactName: x.contactName || r.data.project.contactName || '', contactEmail: x.contactEmail || r.data.project.contactEmail || '', contactPhone: x.contactPhone || r.data.project.contactPhone || '' })); }).catch((e) => {
     const s = e && e.response && e.response.status;
     // a busy site (429), an updating site (5xx) or no connection is NOT a dead link: say so kindly and open the page again by itself
     if (!s || s >= 500 || s === 429) { setTemp(true); setGone(s === 429 ? 'Many people are using this page right now. It will open again by itself in a few seconds. If it does not, press the button below.' : 'The page could not be opened just now: our site may be updating. It will try again by itself. If it does not open, press the button below.'); return; }
     setTemp(false); setGone(errOf(e, 'This link does not work any more. Please ask the sender for a new one.'));
   }), [base]);
-  useEffect(() => { document.title = 'Your request'; load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (!embedded) document.title = 'Your request'; setD(null); setGone(''); setDone(''); setErr(''); setPick(''); setMode(''); load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
   const tries = useRef(0);
   useEffect(() => { // automatic re-try (up to 6 times, 10 seconds apart) while the problem is only temporary
     if (!temp || !gone || tries.current >= 6) return undefined;
@@ -50,7 +52,7 @@ export default function ClientProjectPage() {
 
   const P = (d && d.brand && d.brand.colors && d.brand.colors.primary) || '#0f766e';
   const S2 = (d && d.brand && d.brand.colors && d.brand.colors.secondary) || '#134e4a';
-  const page = { minHeight: '100vh', background: '#f4f6f5', fontFamily: '"Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#1c2a24', paddingBottom: 40 };
+  const page = { minHeight: embedded ? 0 : '100vh', background: embedded ? 'transparent' : '#f4f6f5', fontFamily: '"Segoe UI", Roboto, Helvetica, Arial, sans-serif', color: '#1c2a24', paddingBottom: embedded ? 8 : 40, borderRadius: embedded ? 14 : 0, overflow: embedded ? 'hidden' : 'visible' };
   const card = { maxWidth: 680, margin: '0 auto', background: '#fff', borderRadius: 14, padding: '20px 18px', boxShadow: '0 1px 6px rgba(0,0,0,.08)' };
   const btn = (bg, fg = '#fff') => ({ border: 'none', borderRadius: 10, padding: '12px 18px', fontSize: 15, fontWeight: 800, background: bg, color: fg, cursor: busy ? 'default' : 'pointer', flex: '1 1 180px', opacity: busy ? 0.6 : 1 });
   const input = { width: '100%', boxSizing: 'border-box', border: '1px solid #cfd8d3', borderRadius: 10, padding: '11px 12px', font: 'inherit', fontSize: 15 };
@@ -77,7 +79,7 @@ export default function ClientProjectPage() {
     try {
       const body = { ...f, colors: f.colors && (f.colors.primary || f.colors.secondary) ? f.colors : null };
       if (logo) body.logoDataUrl = logo;
-      const res = await api.post(`${base}/request`, body); setDone(res.data.ok || 'Thank you.'); load();
+      const res = await api.post(`${base}/request`, body); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged();
     } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
   const answer = async (kind) => {
@@ -86,7 +88,7 @@ export default function ClientProjectPage() {
     if (kind === 'choose' && !pick) { setErr('Please tap the option you like first.'); return; }
     if (kind === 'changes' && comment.trim().length < 5) { setMode('changes'); setErr('Please tell us what you would like changed (a few words).'); return; }
     setBusy(true);
-    try { const res = await api.post(`${base}/${kind}`, { name: name.trim(), comment: comment.trim(), optionId: pick }); setDone(res.data.ok || 'Thank you.'); load(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
+    try { const res = await api.post(`${base}/${kind}`, { name: name.trim(), comment: comment.trim(), optionId: pick }); setDone(res.data.ok || 'Thank you.'); load(); if (onChanged) onChanged(); } catch (e) { setErr(errOf(e, 'It could not be sent. Please try again.')); } finally { setBusy(false); }
   };
 
   return (

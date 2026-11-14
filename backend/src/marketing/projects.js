@@ -767,7 +767,8 @@ async function publicSubmitRequest(token, b = {}) {
   const r = await load(token);
   if (!r) return GONE;
   if (r.status !== 'invited') return { error: 'This request was already sent. Thank you.', status: 409 };
-  const c = cleanFields({ ...b, clientName: r.clientName, source: 'link' }, r);
+  const via = r.source === 'portal' ? 'portal' : 'link'; // a request started from the client's own login stays "Client portal"
+  const c = cleanFields({ ...b, clientName: r.clientName, source: via }, r);
   if (c.error) return c;
   const v = c.value;
   if (v.occasion.length < 2) return { error: 'Say what it is for (for example Diwali offer).', status: 400 };
@@ -775,8 +776,8 @@ async function publicSubmitRequest(token, b = {}) {
   if (v.contactName.length < 2) return { error: 'Please write your name.', status: 400 };
   if (!v.platforms.length) return { error: 'Pick where it will be posted.', status: 400 };
   const now = Date.now();
-  await S.run(`UPDATE "${T}" SET title = ?, contactName = ?, contactEmail = ?, contactPhone = ?, occasion = ?, brief = ?, deliverable = ?, platforms = ?, handles = ?, dueDate = ?, logoData = ?, colors = ?, source = 'link', status = 'request', createdAt = ?, updatedAt = ? WHERE id = ? AND status = 'invited'`,
-    `${r.clientName}: ${v.occasion}`, v.contactName, v.contactEmail || null, v.contactPhone || null, v.occasion, v.brief, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null, now, now, r.id);
+  await S.run(`UPDATE "${T}" SET title = ?, contactName = ?, contactEmail = ?, contactPhone = ?, occasion = ?, brief = ?, deliverable = ?, platforms = ?, handles = ?, dueDate = ?, logoData = ?, colors = ?, source = ?, status = 'request', createdAt = ?, updatedAt = ? WHERE id = ? AND status = 'invited'`,
+    `${r.clientName}: ${v.occasion}`, v.contactName, v.contactEmail || null, v.contactPhone || null, v.occasion, v.brief, v.deliverable, JSON.stringify(v.platforms), v.handles || null, v.dueDate || null, v.logoData, v.colors ? JSON.stringify(v.colors) : null, via, now, now, r.id);
   await event(r.id, 'request', `${v.contactName} (client: ${r.clientName})`, `Request sent by the client: ${v.occasion}`);
   await tellTeam(r, `New client request: ${S.clip(r.clientName, 60)}`, `${v.contactName} asked for "${S.clip(v.occasion, 80)}". Open Omni-Channel > AI Marketing > Client projects to accept it.`);
   await logAudit({ userId: r.createdById, actorName: `${v.contactName} (client: ${r.clientName})`, action: 'Omni-Channel AI Marketing: client sent a request', entity: T, entityId: r.id, toValue: v.occasion });
@@ -833,7 +834,57 @@ async function publicChanges(token, b = {}, ip = '') {
   return { ok: 'Thank you. We will make the changes and show you again.' };
 }
 
+// ---- the client's LOGIN (the Client Portal, 2026-11-14) ---------------------------------------------------------------------------------------------------
+// A client person who signs in to TeamLink (a login with the CLIENT role and the "Approve our creative work and send us requests" tick) sees the creative projects of THEIR company, and
+// starts a new one from their own account: it opens the same request form as the private link, then waits for the team to accept it. The private link of each project is handed out
+// here only, to a login that belongs to that company (a project matches by the client record, or by the company name when it was made before a record was picked). The page the
+// client works in is the same one the private link opens (ClientProjectPage), so choosing the option you like IS the approval, signed by the person's own login name.
+const STATUS_WORDS = { invited: 'Tell us what you need', request: 'We have your request', working: 'We are working on it', awaiting_client: 'Waiting for your choice', approved: 'You chose: we will post it', posted: 'Posted', declined: 'Not taken up' };
+async function clientRecordOf(u) {
+  if (!u || !u.clientId) return null;
+  const prisma = require('../db'); // eslint-disable-line global-require
+  return prisma.client.findUnique({ where: { id: u.clientId }, select: { id: true, name: true } }).catch(() => null);
+}
+async function portalList(u) {
+  await ensure();
+  const c = await clientRecordOf(u);
+  if (!c) return { error: 'Your company record was not found: contact TeamLink.', status: 404 };
+  const rows = await S.q(`SELECT * FROM "${T}" WHERE deletedAt IS NULL AND (clientId = ? OR (clientId IS NULL AND LOWER(clientName) = LOWER(?))) ORDER BY updatedAt DESC LIMIT 100`, c.id, c.name);
+  const projects = rows.map((r) => ({
+    id: r.id, title: r.occasion ? `${r.occasion}` : 'New request', occasion: r.occasion || '', status: r.status, words: STATUS_WORDS[r.status] || r.status,
+    needsYou: ['invited', 'awaiting_client'].includes(r.status) && !(r.status === 'awaiting_client' && S.num(r.linkExpiresAt) < Date.now()),
+    dueDate: r.dueDate || '', updatedAt: S.iso(r.updatedAt), token: tokenOf(r.id), decidedByName: r.decidedByName || '',
+  }));
+  // words / pictures / videos the team sent this company for approval one by one (marketing/clientReview.js): the same private pages, handed out here to a login of the company
+  let reviews = [];
+  try {
+    const CR = require('./clientReview'); // eslint-disable-line global-require
+    await CR.ensure();
+    const rr = await S.q(`SELECT * FROM "OmniMkClientReview" WHERE (clientId = ? OR (clientId IS NULL AND LOWER(clientName) = LOWER(?))) ORDER BY createdAt DESC LIMIT 40`, c.id, c.name);
+    reviews = rr.map((r) => {
+      const status = r.status === 'sent' && S.num(r.expiresAt) < Date.now() ? 'expired' : r.status;
+      return { id: r.id, title: r.itemTitle || 'For your approval', kind: r.kind === 'content' ? 'words' : 'picture or video', status, needsYou: status === 'sent', decide: r.mode === 'decide', decidedByName: r.decidedByName || '', decidedAt: S.iso(r.decidedAt), sentAt: S.iso(r.createdAt), token: CR.tokenOf(r.id) };
+    });
+  } catch (e) { console.error('[omni-mk] portal reviews:', e.message); } // eslint-disable-line no-console
+  return { company: c.name, projects, reviews, waiting: projects.filter((p) => p.needsYou).length + reviews.filter((x) => x.needsYou).length };
+}
+// "New request" from the client's own account: the request form (status 'invited') opens at once. A request that was started and not sent is reused, never piled up.
+async function portalStart(u) {
+  await ensure();
+  const c = await clientRecordOf(u);
+  if (!c) return { error: 'Your company record was not found: contact TeamLink.', status: 404 };
+  const open = (await S.q(`SELECT * FROM "${T}" WHERE deletedAt IS NULL AND status = 'invited' AND source = 'portal' AND clientId = ? ORDER BY createdAt DESC LIMIT 1`, c.id))[0];
+  if (open) return { token: tokenOf(open.id), id: open.id, reused: true };
+  const id = S.newId('prj'); const now = Date.now();
+  await S.run(`INSERT INTO "${T}" (id, title, clientId, clientName, contactName, contactEmail, source, status, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?, 'portal', 'invited', ?, ?, ?)`,
+    id, `${c.name}: new request`, c.id, c.name, S.clip(u.name, 120) || null, S.clip(u.email, 160) || null, `${S.clip(u.name, 70)} (client login)`, now, now);
+  await event(id, 'invited', `${S.clip(u.name, 60)} (client: ${c.name})`, 'Request started from the client\'s own account');
+  await logAudit({ userId: u.id, actorName: `${S.clip(u.name, 60)} (client: ${c.name})`, action: 'Omni-Channel AI Marketing: client started a request from their login', entity: T, entityId: id, toValue: c.name });
+  return { token: tokenOf(id), id, reused: false };
+}
+
 module.exports = {
+  portalList, portalStart,
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
   publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
