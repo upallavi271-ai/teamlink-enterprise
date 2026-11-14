@@ -40,9 +40,10 @@ export async function placeCampaign(req, deps) {
   if (!ROLES.includes(session.role)) return { status: 403, body: { error: 'Your role may not place AI calls.', code: 'FORBIDDEN' } };
   if (!deps.secret) return { status: 503, body: { error: 'The link to TeamLink is not set up on this server (bridge secret missing).', code: 'NOT_CONNECTED' } };
 
-  const { email, rows } = await deps.withUser({ userId: '', role: 'admin', profileId: null }, async (c) => ({
+  const { email, rows, jobRow } = await deps.withUser({ userId: '', role: 'admin', profileId: null }, async (c) => ({
     email: ((await c.query('select email from users where id = $1', [session.userId])).rows[0] || {}).email,
-    rows: (await c.query('select id, name, phone, email, do_not_contact from candidates where id = any($1)', [ids])).rows,
+    rows: (await c.query('select id, name, phone, email, do_not_contact, to_jsonb(c) as raw from candidates c where id = any($1)', [ids])).rows,
+    jobRow: ((await c.query('select to_jsonb(j) as raw from jobs j where id = $1', [jobId])).rows[0] || {}).raw || null,
   }));
   if (!email) return { status: 403, body: { error: 'Your portal login has no e-mail, so TeamLink cannot tell who you are.', code: 'FORBIDDEN' } };
 
@@ -53,7 +54,7 @@ export async function placeCampaign(req, deps) {
     if (!c) skipped.push({ candidateId: id, reason: 'not visible to you' });
     else if (c.do_not_contact) skipped.push({ candidateId: id, reason: 'do not contact' });
     else if (!c.phone) skipped.push({ candidateId: id, reason: 'no phone number' });
-    else send.push({ id: c.id, name: c.name, phone: c.phone, email: c.email });
+    else send.push({ id: c.id, name: c.name, phone: c.phone, email: c.email, location: (c.raw || {}).location, title: (c.raw || {}).title || (c.raw || {}).current_title });
   }
   const mk = (campaign, queued, more) => ({ campaign: { ...campaign, jobId, queued: queued.length, skipped: skipped.length + (more || []).length }, queued, skipped: [...skipped, ...(more || [])] });
   if (!send.length) return { status: 422, body: { ...mk({ id: null }, []), error: `Nobody on the list can be called. ${why(skipped)}` } };
@@ -66,7 +67,7 @@ export async function placeCampaign(req, deps) {
     res = await doFetch(`${String(deps.api).replace(/\/+$/, '')}/api/ai-calling/portal/kavya-campaign`, {
       method: 'POST', signal: ctl.signal,
       headers: { 'content-type': 'application/json', 'x-job-portal-secret': deps.secret, 'x-portal-user-email': email },
-      body: JSON.stringify({ jobId, candidates: send }),
+      body: JSON.stringify({ jobId, candidates: send, job: jobRow ? { title: jobRow.title, location: jobRow.location, experience: jobRow.exp_label, salary: jobRow.pay_label, employmentType: jobRow.employment_type, skills: jobRow.skills, education: jobRow.education, description: jobRow.description } : {} }),
     });
     out = await res.json().catch(() => ({}));
   } catch (err) {
