@@ -41,7 +41,27 @@ router.get('/overview', wrap(async (req, res) => {
   const u = req.user;
   const brand = await Cfg.getBrand();
   const usage = await AI.summary({ scopeUserId: A.isAdmin(u) ? null : u.id });
-  res.json({ counts: await C.counts(u), usage, brandReady: !!brand.brandName, brandName: brand.brandName, ai: (await AI.status()).text });
+  const counts = await C.counts(u);
+  // "needs your attention": what is waiting for THIS login right now (each part is optional: a failure in one never breaks the page)
+  const attention = { words: counts.waitingForMe || 0, pictures: 0, overdue: 0, today: 0, clientWaiting: 0, clientChanges: 0 };
+  const have = { pictures: false, videos: false, posts: false }; // for the "next steps" list: has this login started each part
+  try {
+    const all = (await Img.list(u, {})).items;
+    attention.pictures = all.filter((i) => i.status === 'waiting' && i.canApprove).length;
+    have.pictures = all.some((i) => i.kind === 'image'); have.videos = all.some((i) => i.kind === 'video' && i.style !== 'clip');
+  } catch (e) { console.error('[omni-mk] overview pictures:', e.message); } // eslint-disable-line no-console
+  try {
+    const todayIst = new Date(Date.now() + 19800000).toISOString().slice(0, 10);
+    const open = ['idea', 'planned', 'ready'];
+    const entries = (await Cal.list(u, {})).entries || [];
+    have.posts = entries.length > 0;
+    entries.forEach((e) => { if (!open.includes(e.status)) return; if (e.overdue) attention.overdue += 1; else if (e.date === todayIst) attention.today += 1; });
+  } catch (e) { console.error('[omni-mk] overview calendar:', e.message); } // eslint-disable-line no-console
+  try {
+    const since = Date.now() - 14 * 86400000;
+    ((await CR.list(u, {})).reviews || []).forEach((r) => { if (r.status === 'sent') attention.clientWaiting += 1; else if (r.status === 'changes' && Date.parse(r.decidedAt) >= since) attention.clientChanges += 1; });
+  } catch (e) { console.error('[omni-mk] overview client reviews:', e.message); } // eslint-disable-line no-console
+  res.json({ counts, usage, attention, have, brandReady: !!brand.brandName, brandName: brand.brandName, ai: (await AI.status()).text });
 }));
 
 // ---- brand voice ---------------------------------------------------------------------------------------------------------------
