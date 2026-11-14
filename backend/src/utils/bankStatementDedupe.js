@@ -172,6 +172,9 @@ function similar(a, b) {
   return inter / (A.size + B.size - inter) >= 0.6;
 }
 
+// "SGST2026100773697774280", "CGST...", "IGST...": the bank's tax line of a charge -> its leg, else ''.
+const taxLeg = (d) => { const m = /^\s*(SGST|CGST|IGST|UTGST)(?![A-Za-z])/i.exec(String(d || '')); return m ? m[1].toUpperCase() : ''; };
+
 // What identifies a line, whichever side it came from (an uploaded row or a BankTransaction row).
 function profile(r) {
   const ids = [];
@@ -185,7 +188,9 @@ function profile(r) {
     narr: normText(r.description),
     ids,
     bal,
-    base: `${String(r.date || '').slice(0, 10)}|${r.type}|${paise}`,
+    // The bank prints ONE charge as separate tax lines (SGST, CGST) with the SAME reference, date and amount. They are different
+    // transactions, so the tax leg is part of the identity (founder 2026-11-14: "adhi miss avakunda": the CGST line of a charge was held back as a repeat of the SGST one).
+    base: `${String(r.date || '').slice(0, 10)}|${r.type}|${paise}${taxLeg(r.description) ? `|${taxLeg(r.description)}` : ''}`,
   };
 }
 
