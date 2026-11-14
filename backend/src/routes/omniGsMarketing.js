@@ -17,6 +17,7 @@ const Stock = require('../marketing/stockclips');
 const Prj = require('../marketing/projects');
 const Msg = require('../marketing/messaging');
 const Eml = require('../marketing/emailmk');
+const Lead = require('../marketing/leadgen');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -177,6 +178,15 @@ router.delete('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, aw
 router.post('/campaigns/:id/templates', mustWrite, wrap(async (req, res) => send(res, await Msg.makeTemplates(req.user, req.params.id))));
 router.post('/campaigns/:id/sms-ids', mustWrite, wrap(async (req, res) => send(res, await Msg.setSmsIds(req.user, req.params.id, req.body || {}))));
 router.post('/campaigns/:id/campaign', mustWrite, wrap(async (req, res) => send(res, await Msg.makeCampaign(req.user, req.params.id, req.body || {}))));
+
+// ---- lead generation to the CRM (marketing/leadgen.js): every new lead is scored Hot / Warm / Cold with reasons, given an owner, and the owner is told; nothing here messages anyone -----------------
+router.get('/leads', mustWrite, wrap(async (req, res) => send(res, await Lead.overview(req.user))));
+router.put('/leads/settings', mustWrite, wrap(async (req, res) => send(res, await Lead.saveSettings(req.user, req.body || {}))));
+router.post('/leads/score', mustWrite, wrap(async (req, res) => send(res, await Lead.scoreNow(req.user, req.body || {}))));
+router.post('/leads/import', mustWrite, express.raw({ type: () => true, limit: '8mb' }), wrap(async (req, res) => {
+  const out = await Lead.importAds(req.user, Buffer.isBuffer(req.body) ? req.body : null, { fileName: String(req.query.name || ''), source: String(req.query.source || ''), ownerId: String(req.query.ownerId || ''), dryRun: String(req.query.dryRun || '') === '1' });
+  return out.body !== undefined ? res.status(out.status).json(out.body) : send(res, out);
+}));
 
 // ---- email marketing (marketing/emailmk.js): the AI writes subject lines and the email of a job campaign; an A/B subject test; a template and a campaign that is saved, NEVER sent from here -----
 router.get('/email/options', mustWrite, wrap(async (req, res) => send(res, await Eml.options(req.user, { q: String(req.query.q || '') }))));
