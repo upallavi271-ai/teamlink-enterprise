@@ -79,7 +79,10 @@ const INTEGRATION_CATALOG = [
       [WA_FIELDS.otpTpl, 'authentication template, {{1}} code'],
       [WA_FIELDS.bulkTpl, 'body {{1}} = the message'],
       [WA_FIELDS.appSecret, 'Meta app → Settings → Basic → App secret'],
-      [WA_FIELDS.verifyToken, 'type any text; paste the same in Meta → Webhooks']] },
+      [WA_FIELDS.verifyToken, 'type any text; paste the same in Meta → Webhooks']],
+    // greyed examples, never saved as a value. Before 2026-11-14 this card had none, so opening it and pressing Save stored the example text as the
+    // "template name" and every bulk / agreement-link WhatsApp went out under a template that does not exist (utils/whatsappCloud.js tplName()).
+    hints: [WA_FIELDS.phoneId, WA_FIELDS.namespace, WA_FIELDS.linkTpl, WA_FIELDS.otpTpl, WA_FIELDS.bulkTpl] },
   { id: 'whatsapp-qr', name: 'WhatsApp QR-link (prototype)', group: 'Messaging', glyph: '📲',
     desc: 'PROTOTYPE, unofficial: link a spare WhatsApp number by scanning a QR code. Zero cost, but WhatsApp can ban the number. Set up on Integrations > WhatsApp & SMS.',
     fields: [[QR_FIELDS.label, 'e.g. Spare number']] },

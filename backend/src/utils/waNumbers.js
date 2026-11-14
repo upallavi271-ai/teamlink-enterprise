@@ -283,7 +283,7 @@ async function configOf(ref) {
       appSecret: sec.appSecret || legacy.appSecret,
       verifyToken: sec.verifyToken || legacy.verifyToken,
       language: row.language || legacy.language || 'en',
-      templates: { link: row.tplLink || legacy.templates.link, otp: row.tplOtp || legacy.templates.otp, bulk: row.tplBulk || legacy.templates.bulk },
+      templates: { link: wa().tplName(row.tplLink) || legacy.templates.link, otp: wa().tplName(row.tplOtp) || legacy.templates.otp, bulk: wa().tplName(row.tplBulk) || legacy.templates.bulk },
       base: legacy.base,
       testMode: legacy.testMode,
       configured: problems.length === 0,

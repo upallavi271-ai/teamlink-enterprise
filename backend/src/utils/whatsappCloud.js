@@ -34,6 +34,12 @@ const core = require('./messagingCore');
 const GRAPH = 'https://graph.facebook.com';
 const VERSION = process.env.WHATSAPP_GRAPH_VERSION || 'v25.0';
 
+// A Meta template name is lowercase letters, digits and underscores, nothing else. Anything else in a "template name" box is not a template
+// (2026-11-13: the form saved its grey example text "body {{1}} = the message" there, and Meta answered "template does not exist" to every
+// bulk message): it is treated as no template, so the message goes as plain text and, outside the 24-hour window, Meta's clear answer shows.
+const TPL_NAME = /^[a-z0-9_]{1,512}$/;
+const tplName = (x) => { const t = String(x == null ? '' : x).trim(); return TPL_NAME.test(t) ? t : ''; };
+
 // THE OLD SINGLE CONNECTION (Administration > Integrations > WhatsApp Business). With no row in the WhatsApp numbers list this is the only
 // connection and every function below behaves exactly as it always did. See utils/waNumbers.js for the list of numbers.
 async function legacyConfig() {
@@ -48,9 +54,9 @@ async function legacyConfig() {
     verifyToken: String(v[F.verifyToken] || '').trim(),
     language: String(v[F.language] || '').trim() || 'en',
     templates: {
-      link: String(v[F.linkTpl] || '').trim(),
-      otp: String(v[F.otpTpl] || '').trim(),
-      bulk: String(v[F.bulkTpl] || '').trim(),
+      link: tplName(v[F.linkTpl]),
+      otp: tplName(v[F.otpTpl]),
+      bulk: tplName(v[F.bulkTpl]),
     },
     base: core.providerBase(GRAPH, v),
     testMode: !!core.devOverride(v),
@@ -262,4 +268,4 @@ async function testConnection(opts) {
   return { ok: false, result: `Failed — ${failure(res).error}` };
 }
 
-module.exports = { whatsappConfig, legacyConfig, sendWhatsApp, testConnection, failure, simulated, route, blockedResult, templateAccountProblem, templateAccountCheck, GRAPH, VERSION };
+module.exports = { whatsappConfig, legacyConfig, sendWhatsApp, testConnection, failure, simulated, route, blockedResult, templateAccountProblem, templateAccountCheck, tplName, GRAPH, VERSION };
