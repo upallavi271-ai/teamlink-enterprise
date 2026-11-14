@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // AI MARKETING > AI VIDEO > "FREE STOCK CLIPS" (2026-11-14): real moving footage of people, offices, hospitals, cities ... for FREE, from Pixabay or Pexels.
 //   key     a free key typed in Administration > Integrations: "Stock video clips (Pixabay, free)" or "(Pexels, free)". Pexels has PAUSED new keys (Nov 2026),
-//           so Pixabay is the one to get; a Pexels key that already exists still works. If both are set, Pexels is used first. Only the server calls them.
+//           so Pixabay is the one to get; a Pexels key that already exists still works. If both are set, Pixabay is used first. Only the server calls them.
 //   use     a person searches in plain words, sees thumbnails, presses "Use this clip": the server downloads that clip and saves it EXACTLY like an uploaded
 //           clip (a draft: ask for approval, then mix it into a video in AI Video). The author's name and the source page are kept on the clip.
 //   safety  the browser never sends an address: only a video id. The server asks the source for that id, picks one of ITS files, and downloads only from the
@@ -69,10 +69,11 @@ async function configOf(p) {
 }
 const overridden = (p) => !!String(process.env[p.env] || '').trim();
 const sandboxBlocked = (p) => sandbox.isSandbox() && !sandbox.allowAi() && !overridden(p);
-// the source in use: the first one with a key (Pexels first, as an existing key is already working), else the first with a saved-but-unreadable key, else Pixabay (the one to get)
+// the source in use: Pixabay first (its keys can still be had; a wrong or old key in the Pexels card must never block it), then Pexels; else the first with a
+// saved-but-unreadable key; else Pixabay (the one to get)
 async function active() {
-  const cs = []; for (const p of PROVIDERS) cs.push(await configOf(p)); // eslint-disable-line no-await-in-loop
-  return cs.find((c) => c.key) || cs.find((c) => c.missingKey) || cs[1];
+  const cs = []; for (const p of [PROVIDERS[1], PROVIDERS[0]]) cs.push(await configOf(p)); // eslint-disable-line no-await-in-loop
+  return cs.find((c) => c.key) || cs.find((c) => c.missingKey) || cs[0];
 }
 async function status() {
   const c = await active(); const p = c.p;
@@ -104,7 +105,7 @@ async function call(p, url, headers) {
   } finally { clearTimeout(t); }
 }
 const fail = (p, r, text, json) => {
-  if (r.status === 401 || r.status === 403 || (r.status === 400 && /key/i.test(text))) return new AI.AiMkError(`${p.name} did not accept the key. An Admin checks it in Administration > Integrations > Stock video clips (${p.name}).`, 502, 'provider');
+  if (r.status === 401 || r.status === 403 || (r.status === 400 && /key/i.test(text))) return new AI.AiMkError(`${p.name} did not accept the key. Check that it is pasted in the ${p.name} card (a Pixabay key does not work in the Pexels card, and the other way round), without spaces.`, 502, 'provider');
   if (r.status === 429) return new AI.AiMkError(`${p.name} says too many searches for now. Try again in a few minutes.`, 429, 'provider');
   if (r.status === 404) return new AI.AiMkError('That stock clip is not there any more.', 404, 'gone');
   return new AI.AiMkError(`${p.name} said: ${S.clip(String((json && (json.error || json.message)) || text || `HTTP ${r.status}`).replace(/key=[^&\s]+/gi, 'key=…'), 160)}`, 502, 'provider');
@@ -123,9 +124,11 @@ async function pbGet(p, pathAndQuery, key) {
   if (r.ok) return json || {};
   throw fail(p, r, text, json);
 }
-async function testKey() {
-  const c = await active(); const p = c.p;
-  if (!c.key) return { ok: false, text: 'no key' };
+// the Test button of a card checks THAT card's own key (channel = 'stock-pixabay' or 'stock-pexels'); with no channel, the source in use
+async function testKey(channel) {
+  const own = PROVIDERS.find((x) => x.channel === channel);
+  const c = own ? await configOf(own) : await active(); const p = c.p;
+  if (!c.key) return { ok: false, text: `no ${p.name} key saved in this card` };
   if (sandboxBlocked(p)) return { ok: false, text: 'the test sandbox makes no outside calls' };
   try { const x = await p.search('office', '', 1, c.key); return { ok: true, text: `${p.name} answered (${x.total} office clips found)` }; } catch (e) { return { ok: false, text: e.message }; }
 }

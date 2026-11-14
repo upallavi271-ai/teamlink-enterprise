@@ -2719,7 +2719,7 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
 
   // Stock video clips (Pixabay / Pexels): one free search with the saved key (marketing/stockclips.js).
   if (channel.id === 'stock-pexels' || channel.id === 'stock-pixabay') {
-    const probe = await require('../marketing/stockclips').testKey();
+    const probe = await require('../marketing/stockclips').testKey(channel.id);
     const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
     const nextRow = await prisma.integration.update({
       where: { id: channel.id },

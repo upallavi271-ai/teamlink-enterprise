@@ -270,7 +270,7 @@ const INTEGRATION_CATALOG = [
     fields: [['Pixabay API key', ''], ['Clips per person per day', '30']],
     hints: ['Clips per person per day'] },
   { id: 'stock-pexels', name: 'Stock video clips (Pexels · free)', group: 'AI', glyph: '\u{1F39E}️',
-    desc: 'The same free stock clips from Pexels, for anyone who already has a Pexels key (pexels.com/api). Pexels has paused NEW keys, so use the Pixabay card above if you do not have one. If both are filled in, Pexels is used first.',
+    desc: 'The same free stock clips from Pexels, for anyone who already has a Pexels key (pexels.com/api). Pexels has paused NEW keys, so use the Pixabay card above if you do not have one, and do NOT paste a Pixabay key here. If both are filled in, Pixabay is used first.',
     fields: [['Pexels API key', ''], ['Clips per person per day', '30']],
     hints: ['Clips per person per day'] },
   // REAL (2026-11-13). Cloudflare Workers AI for AI Marketing > AI Images, on Cloudflare's FREE daily allowance (no card). When both picture
