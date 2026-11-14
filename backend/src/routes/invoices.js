@@ -142,6 +142,40 @@ async function numberForNewInvoice(clientId, invoiceDate) {
 // often carries after an em dash ("Assistant Professor — Physiology").
 const roleOf = (title) => (title ? String(title).split(/\s+[—–]\s+/)[0].trim() || null : null);
 
+// Candidates the ATS has SELECTED but who have not joined yet: read only, no invoice until they join.
+const SELECTED_STAGES = { SELECTED: 'Selected', OFFER: 'Offer', OFFER_ACCEPTED: 'Offer accepted' };
+async function selectedNotJoined() {
+  const apps = await prisma.application.findMany({
+    where: { stage: { in: Object.keys(SELECTED_STAGES) } },
+    include: { candidate: true, requirement: { include: { client: true, recruiter: true } } },
+    orderBy: { updatedAt: 'desc' },
+    take: 800,
+  });
+  return apps.filter((a) => a.requirement && !isInternalHire(a, a.requirement)).map((a) => {
+    const cli = a.requirement.client;
+    const fee = cli && cli.agreementFeePercent != null ? Number(cli.agreementFeePercent) : null;
+    const billing = a.offeredCtc != null && fee != null ? ROUND(Number(a.offeredCtc) * fee / 100) : null;
+    return {
+      applicationId: a.id,
+      name: a.candidate ? a.candidate.name : '—',
+      phone: a.candidate ? a.candidate.phone || null : null,
+      client: cli ? cli.name : '—',
+      role: roleOf(a.requirement.title),
+      reqCode: a.requirement.reqCode || null,
+      recruiter: a.requirement.recruiter ? a.requirement.recruiter.name : null,
+      department: a.requirement.department || null,
+      stage: a.stage,
+      stageLabel: SELECTED_STAGES[a.stage],
+      since: a.updatedAt,
+      joiningDate: a.joiningDate || null,
+      offeredCtc: a.offeredCtc ?? null,
+      feePercent: fee,
+      gstPercent: cli && cli.gstPercent != null ? Number(cli.gstPercent) : 0,
+      billing,
+    };
+  });
+}
+
 // Waiting = the ATS says JOINED (or HIRED), billing is not marked Invoiced, it
 // is a client placement (an internal hire is never billed), and no invoice
 // exists for that candidate + requirement. An older invoice that carries no
@@ -739,7 +773,15 @@ async function buildRegister(user, query) {
     sectionKey: r.sectionKey || null,
     seat: r.seat || null,
     tlSeat: tlSeatOf(hier, r),
+    // what the ATS knows about the joining, shown beside it in Accounts (founder 2026-11-14)
+    joiningStatus: r.joiningStatus || null,
+    rollStatus: r.rollStatus || null,
+    reqCode: r.reqCode || null,
+    phone: r.phone || null,
   }));
+  // EVERY CANDIDATE THE ATS HAS SELECTED, from the moment of selection (founder 2026-11-14: "every time a candidate got selected, they should be visible in Accounts"):
+  // Selected, Offer, Offer accepted - not billed until they join, but Accounts sees them coming, with the expected joining date and the fee.
+  noInvoice.selected = await selectedNotJoined();
   // The card reads only the count and the first few names.
   noInvoice.notBillable = noInvoice.notBillable.map((r) => ({ applicationId: r.applicationId, name: r.name }));
 

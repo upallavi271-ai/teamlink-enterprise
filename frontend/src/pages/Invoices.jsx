@@ -216,6 +216,7 @@ export default function Invoices() {
   const [payFor, setPayFor] = useState(null); // null | { id }
   const [accountFor, setAccountFor] = useState(null); // null | { clientId, client }
   const [joinFor, setJoinFor] = useState(null); // null | '' | applicationId
+  const [showOldJoins, setShowOldJoins] = useState(false); // the ATS joinings of 2022 to 2025 that were loaded as history
   const [newInvoice, setNewInvoice] = useState(false); // manual invoice (client picked from the central list)
   const [addClient, setAddClient] = useState(false); // "+ Add client" (a draft client in the central list)
   const [menu, setMenu] = useState(null); // null | 'bell'
@@ -471,6 +472,15 @@ export default function Invoices() {
   const ni = waitingUnder(data.noInvoice || {
     waiting: 0, groups: [], notBillable: [], recent: [],
   }, filters);
+  // ATS joinings with no invoice: since 1 January 2026 by default (the ATS also holds years of loaded history), and the candidates the ATS has selected but not yet joined
+  const JOIN_FROM = '2026-01-01';
+  const joinAll = ni.allRows || [];
+  const joinShown = joinAll.filter((r) => showOldJoins || !r.joiningDate || String(r.joiningDate).slice(0, 10) >= JOIN_FROM);
+  const joinOlder = joinAll.length - joinAll.filter((r) => !r.joiningDate || String(r.joiningDate).slice(0, 10) >= JOIN_FROM).length;
+  const sumOf = (f) => joinShown.reduce((t, r) => t + (Number(f(r)) || 0), 0);
+  const joinFee = sumOf((r) => r.billing);
+  const joinValue = sumOf((r) => (r.billing != null ? r.billing + Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : 0));
+  const selectedRows = (data.noInvoice && data.noInvoice.selected) || [];
 
   // ONE reading of the money for the six cards and the age chips (invoices/invSummary.js).
   const st = cardsOf(rows, invGroups);
@@ -971,66 +981,114 @@ export default function Invoices() {
 
       {/* Joinings that are on the register and in every total, but carry no
           invoice number yet — so they cannot appear in the table below. */}
-      {/* ATS-joined candidates that have NO invoice in Accounts (read only: nothing is raised from here; founder 2026-11-14: "ATS lo join ayina candidates info accounts lo kanipinchali"). */}
-      {ni.waiting > 0 && (
+      {/* ATS candidates in Accounts, read only (founder 2026-11-14): joined with no invoice yet, and selected / offered but not joined. Nothing is raised from here. */}
+      {joinShown.length > 0 && (
         <section className="inv-notice" ref={noticeRef} aria-live="polite">
           <div className="inv-notice-head">
             <div>
               <strong>
                 <span className="inv-notice-icon">!</span>
-                {ni.waiting} candidate(s) joined in the ATS but have no invoice in Accounts{ni.filtered ? ' — under these filters' : ''}
+                {joinShown.length} candidate(s) joined in the ATS{showOldJoins ? '' : ' since 1 January 2026'} and have no invoice in Accounts yet
               </strong>
               <p>
-                Their details are shown here as the ATS has them. Nothing is raised from this screen: an invoice that already exists (for example in the
-                accounts sheet) is brought in with Import, and every new joining gets its invoice and number by itself.
+                This is what the ATS holds for each of them. An invoice that already exists (for example in the accounts sheet) is brought in with Import, and
+                a candidate who joins from now on gets the invoice and its number by itself.
+                {joinOlder > 0 && !showOldJoins ? ` ${joinOlder} older joinings (2022 to 2025, history that was loaded into the ATS) are hidden.` : ''}
+              </p>
+            </div>
+            {joinOlder > 0 && (
+              <button type="button" className="btn btn-sm" onClick={() => setShowOldJoins(!showOldJoins)}>
+                {showOldJoins ? 'Hide the older joinings' : `Show the ${joinOlder} older joinings`}
+              </button>
+            )}
+          </div>
+          <div className="inv-minis">
+            <div className="inv-mini"><span>Joined, not in Accounts</span><strong>{joinShown.length}</strong></div>
+            <div className="inv-mini"><span>Fee (before GST)</span><strong>{money(joinFee)}</strong></div>
+            <div className="inv-mini"><span>Invoice value (after GST)</span><strong>{money(joinValue)}</strong></div>
+          </div>
+          <details open className="inv-joinhist">
+            <summary>Joined in the ATS, no invoice yet ({joinShown.length})</summary>
+            <div className="tbl-wrap" style={{ maxHeight: 440, overflow: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Candidate</th><th>Phone</th><th>Client</th><th>Position</th><th>Req ID</th><th>Recruiter</th><th>Team lead</th><th>Department</th>
+                    <th>Joining status</th><th>Roll</th><th>Joined on</th><th className="num">CTC</th><th className="num">Fee</th><th className="num">Fee amount</th><th className="num">GST</th><th className="num">With GST</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {joinShown.map((r) => {
+                    const gstAmt = r.billing != null ? Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : null;
+                    return (
+                      <tr key={r.applicationId}>
+                        <td><b>{r.name}</b></td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{r.phone || '—'}</td>
+                        <td>{r.client || '—'}</td>
+                        <td>{r.role || r.requirement || '—'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{r.reqCode || '—'}</td>
+                        <td>{r.recruiter || '—'}</td>
+                        <td>{r.tl || '—'}</td>
+                        <td>{r.department || '—'}</td>
+                        <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
+                        <td>{r.rollStatus || '—'}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : 'date not recorded'}</td>
+                        <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>
+                        <td className="num">{r.feePercent != null ? `${r.feePercent}%` : '—'}</td>
+                        <td className="num">{r.billing != null ? money(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
+                        <td className="num">{gstAmt != null ? money(gstAmt) : '—'}</td>
+                        <td className="num">{r.billing != null ? money(r.billing + gstAmt) : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </details>
+        </section>
+      )}
+      {selectedRows.length > 0 && (
+        <section className="inv-notice calm">
+          <div className="inv-notice-head">
+            <div>
+              <strong>{selectedRows.length} candidate(s) selected in the ATS and not joined yet</strong>
+              <p>
+                Accounts sees every candidate from the moment the ATS marks them Selected. They are not billed until they join; the expected fee is shown from the
+                client agreement and the CTC. The invoice and its number are made by themselves on the day the ATS marks them Joined.
               </p>
             </div>
           </div>
-          <div className="inv-minis">
-            <div className="inv-mini"><span>Joined, not in Accounts</span><strong>{ni.waiting}</strong></div>
-            <div className="inv-mini"><span>Fee (before GST)</span><strong>{money(ni.billing || 0)}</strong></div>
-            <div className="inv-mini"><span>Invoice value (after GST)</span><strong>{money(ni.invoiceValue || 0)}</strong></div>
-          </div>
-          {(ni.allRows || []).length > 0 && (
-            <details open className="inv-joinhist">
-              <summary>Joined in the ATS, no invoice yet ({ni.allRows.length})</summary>
-              <div className="tbl-wrap" style={{ maxHeight: 440, overflow: 'auto' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Candidate</th><th>Phone</th><th>Client</th><th>Position</th><th>Req ID</th><th>Recruiter</th><th>Team lead</th><th>Department</th>
-                      <th>Joining status</th><th>Roll</th><th>Joined</th><th className="num">CTC</th><th className="num">Fee</th><th className="num">Fee amount</th><th className="num">GST</th><th className="num">With GST</th>
+          <details className="inv-joinhist">
+            <summary>Selected, offer and offer accepted ({selectedRows.length})</summary>
+            <div className="tbl-wrap" style={{ maxHeight: 440, overflow: 'auto' }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Candidate</th><th>Phone</th><th>Client</th><th>Position</th><th>Req ID</th><th>Recruiter</th><th>Department</th>
+                    <th>ATS step</th><th>Expected joining</th><th className="num">CTC</th><th className="num">Fee</th><th className="num">Expected fee</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {selectedRows.map((r) => (
+                    <tr key={r.applicationId}>
+                      <td><b>{r.name}</b></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{r.phone || '—'}</td>
+                      <td>{r.client || '—'}</td>
+                      <td>{r.role || '—'}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{r.reqCode || '—'}</td>
+                      <td>{r.recruiter || '—'}</td>
+                      <td>{r.department || '—'}</td>
+                      <td><span className="status priority-medium">{r.stageLabel}</span></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : 'not fixed yet'}</td>
+                      <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>
+                      <td className="num">{r.feePercent != null ? `${r.feePercent}%` : '—'}</td>
+                      <td className="num">{r.billing != null ? money(r.billing) : <span className="small-muted">CTC needed</span>}</td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {ni.allRows.map((r) => {
-                      const gstAmt = r.billing != null ? Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : null;
-                      return (
-                        <tr key={r.applicationId}>
-                          <td><b>{r.name}</b></td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{r.phone || '—'}</td>
-                          <td>{r.client || '—'}</td>
-                          <td>{r.role || r.requirement || '—'}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{r.reqCode || '—'}</td>
-                          <td>{r.recruiter || '—'}</td>
-                          <td>{r.tl || '—'}</td>
-                          <td>{r.department || '—'}</td>
-                          <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
-                          <td>{r.rollStatus || '—'}</td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : '—'}</td>
-                          <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>
-                          <td className="num">{r.feePercent != null ? `${r.feePercent}%` : '—'}</td>
-                          <td className="num">{r.billing != null ? money(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
-                          <td className="num">{gstAmt != null ? money(gstAmt) : '—'}</td>
-                          <td className="num">{r.billing != null ? money(r.billing + gstAmt) : '—'}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </details>
-          )}
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
         </section>
       )}
 
