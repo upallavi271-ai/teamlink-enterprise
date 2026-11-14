@@ -203,7 +203,7 @@ const HEAD = {
 };
 const normHead = (h) => String(h || '').toLowerCase().replace(/[^a-z]/g, '');
 
-async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}) {
+async function importLeads(user, buf, { fileName, ownerId, dryRun, source, map } = {}) {
   const r = S.roleOf(user);
   if (!S.mayEdit(r) || !S.can(user, 'import')) return S.fail(403, 'Your CRM rights do not allow importing. Ask a Sales manager.');
   if (!buf || !buf.length) return S.fail(400, 'Choose an Excel or CSV file.');
@@ -219,7 +219,16 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}
   const heads = Object.keys(rows[0]);
   const col = {};
   Object.entries(HEAD).forEach(([field, names]) => { const h = heads.find((x) => names.includes(normHead(x))); if (h) col[field] = h; });
-  if (!col.company) return S.fail(400, `No "Company" column found. The headings read: ${heads.slice(0, 12).join(', ')}.`);
+  // COLUMN MAPPING (founder 2026-11-14): the person can say which column is which when the file's own headings are not the usual ones.
+  // map = { company: 'Org name', phone: 'Cell', email: '' } - a heading of this file, or '' for "this file has none".
+  if (map && typeof map === 'object') {
+    Object.keys(HEAD).forEach((field) => {
+      if (!(field in map)) return;
+      const h = String(map[field] == null ? '' : map[field]);
+      if (!h) delete col[field]; else if (heads.includes(h)) col[field] = h;
+    });
+  }
+  if (!col.company) return S.fail(400, `No "Company" column found. Pick which column is the company.`, { headings: heads, columns: col });
   let own = { id: user.id, name: user.name || null };
   if (ownerId && ownerId !== user.id) {
     if (!S.mayAssign(r)) return S.fail(403, 'Only a Sales manager or an Admin can import leads for another salesperson.');
@@ -258,13 +267,13 @@ async function importLeads(user, buf, { fileName, ownerId, dryRun, source } = {}
     remember(c.data.company, c.data.phone, c.data.email, `row ${i + 2} of this file`);
     ready.push(c.data);
   });
-  if (dryRun) return S.okBody({ ok: true, dryRun: true, rows: rows.length, ready: ready.length, skipped, columns: col, sample: ready.slice(0, 5), owner: own.name });
+  if (dryRun) return S.okBody({ ok: true, dryRun: true, rows: rows.length, ready: ready.length, skipped, columns: col, headings: heads, sample: ready.slice(0, 5), owner: own.name });
   const now = DB.nowIso();
   for (const x of ready) {
     // eslint-disable-next-line no-await-in-loop
     await S.insert('CrmLead', { id: S.newId('lead'), ...x, status: 'New', ownerId: own.id, ownerName: own.name, createdById: user.id, createdAt: now, updatedAt: now });
   }
-  await S.audit(user, 'CRM leads imported', 'CrmLead', String(fileName || 'file').slice(0, 80), `${ready.length} added, ${skipped.length} skipped, owner ${own.name}`);
+  await S.audit(user, 'CRM leads imported', 'CrmLead', String(fileName || 'file').slice(0, 80), `${ready.length} added, ${skipped.length} skipped (${skipped.filter((x) => /Already in TeamLink|of this file/.test(x.reason)).length} duplicates), owner ${own.name}`);
   return S.okBody({ ok: true, created: ready.length, skipped, owner: own.name });
 }
 

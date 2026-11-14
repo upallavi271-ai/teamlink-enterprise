@@ -17,11 +17,23 @@ function ImportLeads({ onClose, onDone }) {
   const [preview, setPreview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const send = (dryRun) => api.post('/crm/leads/import', file, { params: { name: file.name, ownerId: ownerId || undefined, dryRun: dryRun ? 1 : undefined }, headers: { 'Content-Type': 'application/octet-stream' } });
-  async function check() {
+  const [map, setMap] = useState(null); // { field: heading } the person chose; null = the file's own headings, read automatically
+  const [headings, setHeadings] = useState(null);
+  const [detected, setDetected] = useState(null); // which heading is read as which field right now
+  const send = (dryRun, m = map) => api.post('/crm/leads/import', file, { params: { name: file.name, ownerId: ownerId || undefined, dryRun: dryRun ? 1 : undefined, map: m ? JSON.stringify(m) : undefined }, headers: { 'Content-Type': 'application/octet-stream' } });
+  async function check(m = map) {
     setBusy(true); setErr(''); setPreview(null);
-    try { setPreview((await send(true)).data); } catch (e) { setErr(errOf(e, 'The file could not be read.')); } finally { setBusy(false); }
+    try { const d = (await send(true, m)).data; setPreview(d); setHeadings(d.headings || null); setDetected(d.columns || null); } catch (e) {
+      setErr(errOf(e, 'The file could not be read.'));
+      if (e.response && e.response.data && e.response.data.headings) { setHeadings(e.response.data.headings); setDetected(e.response.data.columns || null); } // no company column found: let the person pick it
+    } finally { setBusy(false); }
   }
+  const pick = (field, heading) => { const m = { ...(map || {}), [field]: heading }; setMap(m); check(m); };
+  const skippedCsv = () => {
+    const esc = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`;
+    const text = `\ufeff${['Row,Company,Why it was left out', ...preview.skipped.map((s) => [s.row, s.company, s.reason].map(esc).join(','))].join('\r\n')}`;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })); a.download = 'leads-not-imported.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  };
   async function go() {
     setBusy(true); setErr('');
     try { const r = await send(false); toast(`${r.data.created} lead(s) added${r.data.skipped.length ? `, ${r.data.skipped.length} skipped` : ''}.`); onDone(); } catch (e) { setErr(errOf(e, 'The leads could not be imported.')); } finally { setBusy(false); }
@@ -34,14 +46,14 @@ function ImportLeads({ onClose, onDone }) {
       foot={(
         <>
           <button type="button" className="btn" onClick={onClose}>Cancel</button>
-          {!preview && <button type="button" className="btn btn-primary" disabled={!file || busy} onClick={check}>{busy ? 'Reading…' : 'Check the file'}</button>}
+          {!preview && <button type="button" className="btn btn-primary" disabled={!file || busy} onClick={() => check()}>{busy ? 'Reading…' : 'Check the file'}</button>}
           {preview && <button type="button" className="btn btn-primary" disabled={busy || !preview.ready} onClick={go}>{busy ? 'Importing…' : `Import ${preview.ready} lead${preview.ready === 1 ? '' : 's'}`}</button>}
         </>
       )}
     >
       <p className="small-muted" style={{ marginTop: 0 }}>The first sheet, one lead per row. Headings it understands: <b>Company</b> (needed), Contact person, Designation, Phone / Mobile, Email, Industry, City, Source, Rating (Hot / Warm / Cold), Notes. A company, phone or email already in TeamLink is skipped and you see why. At most 2000 rows.</p>
       <div className="grid-2">
-        <div className="field"><label>File</label><input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => { setFile(e.target.files[0] || null); setPreview(null); setErr(''); }} /></div>
+        <div className="field"><label>File</label><input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => { setFile(e.target.files[0] || null); setPreview(null); setErr(''); setMap(null); setHeadings(null); setDetected(null); }} /></div>
         {me.canAssign && (
           <div className="field">
             <label>Give the leads to</label>
@@ -50,10 +62,27 @@ function ImportLeads({ onClose, onDone }) {
         )}
       </div>
       {err && <div className="notice" role="alert" style={{ color: 'var(--red)' }}>{err}</div>}
+      {headings && (
+        <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+          <div style={{ fontSize: 13, marginBottom: 6 }}><b>Which column is which?</b> <span className="small-muted">It is read from the headings; change a column here if it picked wrong or found none.</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 8 }}>
+            {[['company', 'Company *'], ['contactName', 'Contact person'], ['phone', 'Phone / Mobile'], ['email', 'Email'], ['designation', 'Designation'], ['industry', 'Industry'], ['city', 'City'], ['source', 'Source'], ['rating', 'Rating'], ['notes', 'Notes']].map(([f, label]) => (
+              <div key={f} className="field" style={{ margin: 0 }}>
+                <label style={{ fontSize: 12 }}>{label}</label>
+                <select value={(detected && detected[f]) || ''} disabled={busy} onChange={(e) => pick(f, e.target.value)} aria-label={`Column for ${label}`}>
+                  <option value="">— not in this file —</option>
+                  {headings.map((h) => <option key={h} value={h}>{h}</option>)}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {preview && (
         <div className="card" style={{ padding: 12 }}>
           <div style={{ fontSize: 13, marginBottom: 6 }}><b>{preview.rows}</b> rows read · <b style={{ color: 'var(--teal)' }}>{preview.ready} ready</b> · {preview.skipped.length} skipped · owner {preview.owner}</div>
           <div className="small-muted" style={{ fontSize: 11.5, marginBottom: 6 }}>Columns found: {Object.entries(preview.columns).map(([k, v]) => `${v} → ${k}`).join(', ')}</div>
+          {preview.skipped.length > 0 && <div style={{ marginBottom: 6 }}><button type="button" className="btn btn-sm" onClick={skippedCsv}>Download the {preview.skipped.length} left-out row{preview.skipped.length === 1 ? '' : 's'} (CSV)</button> <span className="small-muted" style={{ fontSize: 11.5 }}>duplicates say whose lead it already is, so nobody calls the same person twice</span></div>}
           {preview.skipped.length > 0 && (
             <div style={{ maxHeight: 200, overflow: 'auto', fontSize: 12.5 }}>
               {preview.skipped.slice(0, 200).map((s) => <div key={`${s.row}${s.reason}`} style={{ padding: '2px 0' }}>Row {s.row}{s.company ? ` · ${s.company}` : ''}: <span className="small-muted">{s.reason}</span></div>)}

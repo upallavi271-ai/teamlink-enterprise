@@ -115,6 +115,7 @@ router.post('/leads/bulk', wrap((req) => X.bulkLeads(req.user, req.body || {})))
 const rawUpload = express.raw({ type: () => true, limit: '8mb' }); // the Excel / CSV file itself (the JSON parser stops at 100 kb)
 router.post('/leads/import', rawUpload, wrap((req) => X.importLeads(req.user, Buffer.isBuffer(req.body) ? req.body : null, {
   fileName: String(req.query.name || ''), ownerId: String(req.query.ownerId || ''), source: String(req.query.source || ''), dryRun: String(req.query.dryRun || '') === '1',
+  map: (() => { try { return req.query.map ? JSON.parse(String(req.query.map)) : null; } catch { return null; } })(),
 })));
 router.get('/export/:kind', async (req, res, next) => {
   try {
