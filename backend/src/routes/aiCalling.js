@@ -352,6 +352,13 @@ staff.get('/campaigns', async (req, res) => {
   res.json({ rows: rows.map((r) => ({ id: r.id, name: r.name, purpose: r.purpose, requirementId: r.requirementId, total: r.total, createdByName: r.createdByName, createdAt: r.createdAt })) });
 });
 
+// The Job Portal's own bulk button (portal door only): Kavya rings the ticked people (calling/kavya/portalCampaign.js).
+staff.post('/kavya-campaign', async (req, res) => {
+  if (req.aiCallingVia !== 'portal') return res.status(403).json({ error: 'Only the Job Portal uses this door.' });
+  try { const r = await require('../calling/kavya/portalCampaign').placeCampaign(req.user, req.body || {}); return r.ok === false ? res.status(r.status || 400).json({ error: r.error, code: r.code, skipped: r.skipped || [] }) : res.json(r); } // eslint-disable-line global-require
+  catch (err) { console.error('[kavya-campaign]', err); return res.status(500).json({ error: 'Kavya could not take the list. Please try again.' }); } // eslint-disable-line no-console
+});
+
 // ============================================================ the Job Portal's door ===
 // The portal sends the existing bridge secret and the e-mail of the signed-in portal recruiter. The recruiter must be a TeamLink
 // login; from then on the request is an ordinary TeamLink request by THAT person (same roles, same scope, same rules).

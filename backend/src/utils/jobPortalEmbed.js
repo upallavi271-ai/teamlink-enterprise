@@ -318,7 +318,8 @@ const CONFIG_TAG = `<script>window.TL_API_BASE=${JSON.stringify(`${BASE}/api`)};
 const INTEGRATION_TAG = '<script src="teamlink-integration.js"></script>';
 const ADDON_TAG = `<script src="${BASE}/tl-addon/interview.js" defer></script>\n<script src="${BASE}/tl-addon/apply-link.js" defer></script>
 <script src="${BASE}/tl-addon/resume-import.js" defer></script>
-<script src="${BASE}/tl-addon/quick-add.js" defer></script>`;
+<script src="${BASE}/tl-addon/quick-add.js" defer></script>
+<script src="${BASE}/tl-addon/kavya-bulk.js" defer></script>`;
 const CHARSET = '<meta charset="UTF-8">';
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 

@@ -657,6 +657,24 @@ export function teamlinkFrontRouter({ root, express }) {
   /*
    * ADD CANDIDATE: the email is optional in the quick-add dialog (embed/quick-add-addon.js, added to the portal's pages by the TeamLink proxy).
    */
+  /*
+   * THE BULK "Start AI Calls" BUTTON: Kavya places the calls (embed/kavya-campaign.mjs). The portal's own dialer is switched off
+   * (OUTBOUND_CALLS_ENABLED stays off); this route answers the page's POST /api/ai-calling/campaign in the portal's own shape.
+   */
+  r.get('/tl-addon/kavya-bulk.js', (_req, res) => {
+    res.set('Content-Type', 'application/javascript; charset=utf-8');
+    res.set('Cache-Control', 'no-cache');
+    res.sendFile(join(import.meta.dirname, 'kavya-bulk-addon.js'));
+  });
+  r.post('/api/ai-calling/campaign', json, wrap(async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const K = await import(pathToFileURL(join(import.meta.dirname, 'kavya-campaign.mjs')).href);
+    const { withUser } = await portal();
+    const { resolveSession } = await import(pathToFileURL(join(ROOT, 'api', 'src', 'auth.js')).href);
+    const out = await K.placeCampaign(req, { resolveSession, withUser, api: teamlinkApi(), secret: pushSecret() });
+    res.status(out.status).json(out.body.error ? { ...out.body, error: { code: out.body.code || 'ERROR', message: out.body.error } , message: out.body.error } : out.body);
+  }));
+
   r.get('/tl-addon/quick-add.js', (_req, res) => {
     res.set('Content-Type', 'application/javascript; charset=utf-8');
     res.set('Cache-Control', 'no-cache');
