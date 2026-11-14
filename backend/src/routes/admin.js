@@ -2717,8 +2717,8 @@ router.post('/integrations/:id/test', requirePerm(null, 'administration', 'Integ
     return res.json({ ...shapeIntegration(channel, nextRow), result: probe.result });
   }
 
-  // Stock video clips (Pexels): one free search with the saved key (marketing/stockclips.js).
-  if (channel.id === 'stock-pexels') {
+  // Stock video clips (Pixabay / Pexels): one free search with the saved key (marketing/stockclips.js).
+  if (channel.id === 'stock-pexels' || channel.id === 'stock-pixabay') {
     const probe = await require('../marketing/stockclips').testKey();
     const result = probe.ok ? probe.text : `Failed — ${probe.text}`;
     const nextRow = await prisma.integration.update({

@@ -36,7 +36,7 @@ export default function StockClipPanel({ toast, onMade }) {
   if (!meta) return err ? <Banner tone="error">{err}</Banner> : null;
   const ready = meta.ready;
   return (
-    <Panel title="🎞 Free stock clips" sub="Real moving video of people, offices, hospitals and cities from Pexels. Free. Search, press Use this clip, get it approved, then mix it into your video." style={{ marginBottom: 14 }}>
+    <Panel title="🎞 Free stock clips" sub={`Real moving video of people, offices, hospitals and cities${meta.source ? ` from ${meta.source}` : ''}. Free. Search, press Use this clip, get it approved, then mix it into your video.`} style={{ marginBottom: 14 }}>
       {!ready ? <Banner tone="warn">{meta.reason}</Banner> : null}
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
       <form onSubmit={(e) => { e.preventDefault(); search(1); }} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -64,7 +64,7 @@ export default function StockClipPanel({ toast, onMade }) {
                     {v.thumb ? <img src={v.thumb} alt={`Stock clip by ${v.author}`} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} /> : null}
                     <span style={{ position: 'absolute', right: 6, bottom: 6, background: 'rgba(0,0,0,.7)', color: '#fff', fontSize: 10, padding: '2px 6px', borderRadius: 6 }}>{v.seconds}s</span>
                   </div>
-                  <div style={{ fontSize: 11, margin: '6px 0' }}>by {v.author}{v.pageUrl ? <> · <a href={v.pageUrl} target="_blank" rel="noopener noreferrer">preview on Pexels</a></> : null}</div>
+                  <div style={{ fontSize: 11, margin: '6px 0' }}>by {v.author}{v.pageUrl ? <> · <a href={v.pageUrl} target="_blank" rel="noopener noreferrer">preview on {res.source || meta.source || 'the source'}</a></> : null}</div>
                   {added[v.id] ? <span className="pill live">Saved</span> : <TinyBtn disabled={!!busy || meta.left <= 0} onClick={() => use(v)}>{busy === v.id ? 'Saving…' : '＋ Use this clip'}</TinyBtn>}
                 </div>
               ))}

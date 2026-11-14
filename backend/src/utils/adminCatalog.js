@@ -264,8 +264,13 @@ const INTEGRATION_CATALOG = [
       ['Video model', 'veo-3.1-fast-generate-preview'], ['Clips per person per day', '0'], ['Video cost per second in US$ (for the estimate)', '0.12']],
     hints: ['Image model', 'Pictures per person per day', 'Video model', 'Clips per person per day', 'Video cost per second in US$ (for the estimate)'] },
   // REAL (2026-11-14). Free real stock footage for AI Marketing > AI Video (marketing/stockclips.js). Free key: pexels.com/api. Test searches one word (free).
+  // Pixabay is the one to use (Pexels paused NEW keys in Nov 2026). Free account on pixabay.com; the key is shown on pixabay.com/api/docs once logged in.
+  { id: 'stock-pixabay', name: 'Stock video clips (Pixabay · free)', group: 'AI', glyph: '\u{1F39E}️',
+    desc: 'Free real-motion video clips (people, offices, hospitals, cities) for AI Marketing > AI Video > "Free stock clips". Make a free account on pixabay.com, open pixabay.com/api/docs while logged in, copy your API key and paste it here. No card needed. Every clip is saved as a draft with its author credited and needs approval before it is used.',
+    fields: [['Pixabay API key', ''], ['Clips per person per day', '30']],
+    hints: ['Clips per person per day'] },
   { id: 'stock-pexels', name: 'Stock video clips (Pexels · free)', group: 'AI', glyph: '\u{1F39E}️',
-    desc: 'Free real-motion video clips (people, offices, hospitals, cities) for AI Marketing > AI Video > "Free stock clips". Make a free account on pexels.com, open pexels.com/api, copy the key and paste it here. No card needed. Every clip is saved as a draft with the photographer credited and needs approval before it is used.',
+    desc: 'The same free stock clips from Pexels, for anyone who already has a Pexels key (pexels.com/api). Pexels has paused NEW keys, so use the Pixabay card above if you do not have one. If both are filled in, Pexels is used first.',
     fields: [['Pexels API key', ''], ['Clips per person per day', '30']],
     hints: ['Clips per person per day'] },
   // REAL (2026-11-13). Cloudflare Workers AI for AI Marketing > AI Images, on Cloudflare's FREE daily allowance (no card). When both picture
@@ -294,7 +299,7 @@ const INTEGRATION_GROUPS = ['Messaging', 'Email', 'AI', 'Calling', 'Scheduling',
 
 // Channels this app really talks to. Everything else on the Integrations
 // screen is still Demo / Simulated and keeps saying so.
-const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
+const LIVE_CHANNELS = ['social', 'email', 'ai-claude', 'ai-gemini', 'ai-cloudflare', 'stock-pixabay', 'stock-pexels', 'biometric', 'jobportal', 'sms', 'whatsapp', 'sms-android', 'whatsapp-qr', 'telephony', 'naukri', 'indeed', 'shine', 'linkedin', 'google-jobs', 'turnstile'];
 // The job boards Save & Post really posts to (utils/jobConnectors.js).
 const JOB_BOARD_CHANNELS = ['naukri', 'indeed', 'shine', 'linkedin', 'google-jobs'];
 

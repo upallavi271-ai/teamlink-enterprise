@@ -471,7 +471,7 @@ async function saveVideo(u, buf, mime, q = {}) {
   const veo = clip && q.model === 'veo'; // a clip made by Google Veo (marketing/aiclips.js), not uploaded by a person
   const about = q.about ? S.clip(q.about, 400) : clip ? `Uploaded clip, ${seconds} seconds` : `Video of ${scenes} scene${scenes === 1 ? '' : 's'} (pictures and clips), ${seconds} seconds`;
   await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'draft',?,?,?,?,?)`,
-    id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, veo ? 'veo' : clip && q.model === 'pexels' ? 'pexels' : clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+    id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, veo ? 'veo' : clip && q.model === 'stock' ? 'stock' : clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
   if (!veo) await logAudit({ userId: u.id, actorName: u.name, action: clip ? 'Omni-Channel AI Marketing: video clip uploaded' : 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${clip ? '' : `${scenes} scene(s); `}${seconds}s; ${Math.round(buf.length / 1024)} KB` });
   const set = await Cfg.getSettings();
   return { item: view(u, await row(id), set) };
