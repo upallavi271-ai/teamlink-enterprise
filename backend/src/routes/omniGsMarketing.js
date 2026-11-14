@@ -264,6 +264,8 @@ router.get('/reports/csv', mustWrite, wrap(async (req, res) => {
 }));
 
 // ---- AI usage + limits -----------------------------------------------------------------------------------------------------------------
+// the Admin's table "who sees what in AI Marketing" (outreach/access.js mkRoleTable: made from the rules, never typed by hand)
+router.get('/roles', mustAdmin, wrap(async (req, res) => res.json({ roles: A.mkRoleTable() })));
 router.get('/usage', mustWrite, wrap(async (req, res) => {
   const scopeUserId = A.isAdmin(req.user) ? null : req.user.id;
   const set = await Cfg.getSettings();

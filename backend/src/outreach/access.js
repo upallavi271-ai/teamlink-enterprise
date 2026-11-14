@@ -259,11 +259,24 @@ function pagesFor(u) {
   add(true, 'billing');
   add(['admin', 'depthead', 'teamlead'].includes(l), 'team', 'audit');
   add(l === 'admin', 'superadmin', 'settings', 'waai'); // waai = Settings > WhatsApp AI
-  // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page and the Approvals tab
-  add(has('mayAiMarketing')(u), 'mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage');
-  // approvers also see the Content Calendar of their department (read only: marketing/calendar.js)
-  add(!has('mayAiMarketing')(u) && has('mayAiApprove')(u), 'mkhome', 'mkapprove', 'mkcalendar');
+  // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page, the Approvals tab and the Content Calendar of their department (read only: marketing/calendar.js)
+  add(true, ...mkPagesOf(has('mayAiMarketing')(u), has('mayAiApprove')(u)));
   return out;
+}
+// AI Marketing: which tabs each kind of login has (pagesFor above and the Admin's "Who sees what" table read this ONE place)
+const MK_WRITER_PAGES = ['mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'];
+const MK_APPROVER_PAGES = ['mkhome', 'mkapprove', 'mkcalendar'];
+const MK_PAGE_WORDS = { mkhome: 'Overview', mkprojects: 'Client projects', mkourwork: 'Our work', mkcontent: 'AI Content', mkleads: 'Lead generation', mkjourneys: 'Workflow automation', mkemail: 'Email marketing', mkcampaigns: 'Campaign messages', mkimages: 'AI Images', mkvideos: 'AI Video', mkapprove: 'Approvals', mkcalendar: 'Content calendar', mkreports: 'Reports', mkbrand: 'Brand voice', mkusage: 'AI usage' };
+const mkPagesOf = (writer, approver) => (writer ? MK_WRITER_PAGES : (approver ? MK_APPROVER_PAGES : []));
+// the Admin's table: for each kind of login, what it sees and may do in AI Marketing, made from the rules above (never typed by hand)
+function mkRoleTable() {
+  const rows = KINDS.map((k) => {
+    const writer = RULES.mayAiMarketing.includes(k); const approver = RULES.mayAiApprove.includes(k);
+    const pages = mkPagesOf(writer, approver);
+    return { kind: k, who: KIND_WORDS[k], pages, sees: pages.map((p) => MK_PAGE_WORDS[p]), writes: writer, approves: approver, settings: k === 'admin' };
+  });
+  rows.push({ kind: 'client', who: 'Client login (Client Portal)', pages: [], sees: ['Client Portal > Creative work: approve the work shown to them, send a new request, follow their projects'], writes: false, approves: false, settings: false, outside: true });
+  return rows;
 }
 function me(u) {
   const k = kind(u);
@@ -288,4 +301,4 @@ function me(u) {
   };
 }
 
-module.exports = { GS_KINDS, gsKindsNow, setGsKinds, KIND_WORDS, mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };
+module.exports = { mkRoleTable, mkPagesOf, GS_KINDS, gsKindsNow, setGsKinds, KIND_WORDS, mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };
