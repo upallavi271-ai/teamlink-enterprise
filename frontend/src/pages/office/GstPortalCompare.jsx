@@ -81,7 +81,7 @@ export default function GstPortalCompare({ period, canManage, reloadKey }) {
             <b>As per the GST portal · month by month</b>
             <div className="gp-hd-s">
               What was filed on the GST portal against what our invoices and bills say. The portal figures are typed in from the filed returns
-              {d.updatedBy ? ` (last changed by ${d.updatedBy})` : ''}; nothing is fetched from the portal. Sales follow the invoice date.
+              {d.updatedBy ? ` (last changed by ${d.updatedBy})` : ''}; nothing is fetched from the portal. Sales follow the month of joining.
             </div>
           </div>
         </div>

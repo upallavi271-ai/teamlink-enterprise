@@ -342,6 +342,7 @@ async function vendorMapOf() {
   return m;
 }
 
+const joinMonthDay = (i) => String(i.joiningDate || i.invoiceDate || '').slice(0, 10);
 async function officeScope(query) {
   const range = officeRange(query.period);
   const [expenses, invoices, payments, vendorMap] = await Promise.all([
@@ -368,6 +369,7 @@ async function officeScope(query) {
     inPeriod: all.filter((r) => range.all || inRange(r.expenseDate, range)),
     invoices: live,
     invoicesInPeriod: live.filter((i) => range.all || inRange(i.invoiceDate, range)),
+    gstInvoices: live.filter((i) => range.all || inRange(joinMonthDay(i), range)),
     payments,
   };
 }
@@ -1512,15 +1514,17 @@ router.get('/ledger/export.xlsx', requirePerm('accounts', 'accounts', 'Office & 
 // Live = not REJECTED and not a hand loan; invoices = not Cancelled.
 // ===========================================================================
 function officeFacts({
-  inPeriod, invoicesInPeriod, invoices, all,
+  inPeriod, invoicesInPeriod, gstInvoices, invoices, all,
 }, company) {
   const gstin = cleanId(company.gstin);
   const gc = gstin ? checkGstin(gstin) : null;
+  // GST follows the month the candidate JOINED (founder 2026-11-14: "aa month loo join avuthey adhey month loo ravali"), as the Invoices page does.
+  const gstInv = gstInvoices || invoicesInPeriod;
 
-  const taxable = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.billedOf(i), 0));
-  const charged = ROUND(invoicesInPeriod.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
+  const taxable = ROUND(gstInv.reduce((s, i) => s + CNU.billedOf(i), 0));
+  const charged = ROUND(gstInv.reduce((s, i) => s + CNU.gstBilledOf(i), 0));
   const cli = new Map();
-  invoicesInPeriod.forEach((i) => {
+  gstInv.forEach((i) => {
     const k = i.client?.name || '—';
     const c = cli.get(k) || {
       name: k, n: 0, taxable: 0, gst: 0, value: 0,
@@ -1551,7 +1555,7 @@ function officeFacts({
   const taxableExp = ROUND(inPeriod.reduce((s, r) => s + r.base, 0));
   const gstOnBills = ROUND(inPeriod.reduce((s, r) => s + r.gst, 0));
   const outstandingOf = (i) => Math.max(0, invoiceOutstanding(i));
-  const outstanding = ROUND(invoicesInPeriod.reduce((s, i) => s + outstandingOf(i), 0));
+  const outstanding = ROUND(gstInv.reduce((s, i) => s + outstandingOf(i), 0));
 
   return {
     overview: {
@@ -1564,7 +1568,7 @@ function officeFacts({
       netGst: ROUND(charged - claimable),
       outstanding,
       counts: {
-        bills: inPeriod.length, invoices: invoicesInPeriod.length, billsWithGst: withGst.length, atRiskBills: riskRows.length,
+        bills: inPeriod.length, invoices: gstInv.length, billsWithGst: withGst.length, atRiskBills: riskRows.length,
       },
     },
     recon: {
@@ -1572,7 +1576,7 @@ function officeFacts({
         taxable,
         charged,
         value: ROUND(taxable + charged),
-        invoices: invoicesInPeriod.length,
+        invoices: gstInv.length,
         clients: [...cli.values()].sort((a, b) => b.value - a.value),
       },
       inward: {
@@ -1679,7 +1683,7 @@ router.get('/gst-portal', async (req, res) => {
   const { months: stored, by, at } = await gstPortalLoad();
   const books = new Map();
   const slot = (k) => { if (!books.has(k)) books.set(k, { sTaxable: 0, sGst: 0, invoices: 0, pTaxable: 0, pGst: 0, bills: 0 }); return books.get(k); };
-  scope.invoices.forEach((i) => { const s = slot(String(i.invoiceDate || '').slice(0, 7)); s.sTaxable += CNU.billedOf(i); s.sGst += CNU.gstBilledOf(i); s.invoices += 1; });
+  scope.invoices.forEach((i) => { const s = slot(joinMonthDay(i).slice(0, 7)); s.sTaxable += CNU.billedOf(i); s.sGst += CNU.gstBilledOf(i); s.invoices += 1; });
   scope.all.filter((r) => r.gst > 0.5).forEach((r) => { const s = slot(String(r.expenseDate || '').slice(0, 7)); s.pTaxable += r.base; s.pGst += r.gst; s.bills += 1; });
   const { range } = scope;
   let keys;
