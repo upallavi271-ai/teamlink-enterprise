@@ -26,6 +26,11 @@
 const prisma = require('../db');
 const leftLogin = require('./leftLogin');
 
+// WIRED IN 2026-11-14 (founder: "exited / relieved logins are not closed permanently: they open only to download their attendance,
+// leaves, offer letter and joining letter - no other service"). Until then sign-in refused a person who had left (utils/leftLogin.js).
+// Now: Exited and Relieved get this limited login; Terminated stays closed exactly as before. The allow-list below is the whole of it.
+const ELIGIBLE = ['Exited', 'Relieved'];
+
 const KEY = 'former-access';
 const LIMITS = [
   { months: 0, label: 'Forever' },
@@ -33,10 +38,10 @@ const LIMITS = [
   { months: 24, label: '2 years after the last working day' },
   { months: 36, label: '3 years after the last working day' },
 ];
-const MESSAGE = 'Your access has ended. You can only download your payslips and offer letters.';
+const MESSAGE = 'Your access has ended. You can only download your attendance, leave records, offer letter and joining letter.';
 const ENDED_MESSAGE = 'Your access has ended. Please contact HR if you think this is a mistake.';
-const LETTER_TYPES = ['Offer Letter', 'Joining Letter', 'Experience Certificate'];
-const LETTER_NAME = /letter|appointment|relieving|experience|offer|joining/i;
+// Only these two kinds of file, by the type HR filed them under. No guessing from the file's name (a "letter" could be a warning).
+const LETTER_TYPES = ['Offer Letter', 'Joining Letter'];
 const iso = (v) => { try { return v ? new Date(v).toISOString().slice(0, 10) : null; } catch { return null; } };
 
 function clean(v) {
@@ -68,6 +73,8 @@ async function save(next, user) {
 // identity (resolveIdentity) -> { former, allowed, code, message, lastWorkingDate, accessUntil }
 async function evaluate(identity) {
   if (!leftLogin.hasLeft(identity)) return { former: false, allowed: true };
+  // Terminated (and anything else that is not Exited / Relieved) keeps the old closed login.
+  if (!ELIGIBLE.includes(identity.employmentStatus)) return { former: true, allowed: false, reason: 'not-eligible', code: leftLogin.CODE, message: leftLogin.MESSAGE };
   const cfg = await settings();
   const out = { former: true, allowed: true, limitMonths: cfg.limitMonths, lastWorkingDate: null, accessUntil: null };
   const off = cfg.off.find((x) => x.userId === identity.id);
@@ -96,7 +103,11 @@ function pathAllowed(method, fullPath) {
   const p = String(fullPath || '').split('?')[0].replace(/\/+$/, '') || '/';
   if (m === 'GET' && p === '/api/auth/me') return true;
   if (m === 'POST' && p === '/api/auth/change-password') return true;
-  if (m === 'GET' && /^\/api\/former(\/|$)/.test(p)) return true;
+  // exactly these four, nothing else under /api/former (the admin side of that router is not for them)
+  if (m === 'GET' && p === '/api/former/me') return true;
+  if (m === 'GET' && /^\/api\/former\/letters\/[A-Za-z0-9_-]+\/file$/.test(p)) return true;
+  if (m === 'GET' && p === '/api/former/attendance/export') return true;
+  if (m === 'GET' && p === '/api/former/leaves/export') return true;
   return false;
 }
 
@@ -111,6 +122,7 @@ function limit(identity, info) {
   identity.scopeRoles = {};
   identity.workspaces = [];
   identity.hrSuper = undefined;
+  identity.internalHr = undefined;
   return identity;
 }
 
@@ -136,8 +148,8 @@ async function sessionPayload(identity) {
   };
 }
 
-const isLetter = (d) => LETTER_TYPES.includes(d.docType) || (d.docType === 'Other Documents' && LETTER_NAME.test(d.docName || d.fileName || ''));
+const isLetter = (d) => LETTER_TYPES.includes(d.docType);
 
 module.exports = {
-  KEY, LIMITS, MESSAGE, ENDED_MESSAGE, LETTER_TYPES, settings, save, clean, evaluate, pathAllowed, limit, sessionPayload, isLetter,
+  KEY, LIMITS, ELIGIBLE, MESSAGE, ENDED_MESSAGE, LETTER_TYPES, settings, save, clean, evaluate, pathAllowed, limit, sessionPayload, isLetter,
 };

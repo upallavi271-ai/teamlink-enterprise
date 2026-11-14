@@ -119,14 +119,20 @@ import PartnerJobs from './pages/partner/PartnerJobs.jsx';
 import Partners from './pages/admin/Partners.jsx'; // Admin → Company Setup → Partners
 import MessageTemplates from './pages/admin/MessageTemplates.jsx'; // Admin → Company Setup → Message templates
 import { usePartnerRedirect } from './pages/partner/partnerGate.js';
+import { useAuth } from './context/AuthContext.jsx';
+// SOMEONE WHO HAS LEFT (Exited / Relieved): one limited page, nothing else (founder 2026-11-14) - their own attendance, leave records, offer and joining letter.
+import FormerShell from './pages/FormerShell.jsx';
 
 export default function App() {
   // A vendor signed in on this browser is kept inside the Vendor Portal: any
   // other address lands on /vendor/assets (the server refuses the APIs anyway).
   const vendorRedirect = useVendorRedirect();
   const partnerRedirect = usePartnerRedirect();
+  const { user: signedIn } = useAuth();
   if (vendorRedirect) return <Navigate to={vendorRedirect} replace />;
   if (partnerRedirect) return <Navigate to={partnerRedirect} replace />;
+  // before anything else loads: the staff screens would only be refused by the server
+  if (signedIn && signedIn.role === 'FORMER_EMPLOYEE') return <FormerShell />;
   return (
     <>
     <ViewAsBanner />

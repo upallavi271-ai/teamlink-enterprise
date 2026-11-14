@@ -237,6 +237,8 @@ app.use([
   '/api/clients', '/api/rejections', '/api/candidate-resumes', '/api/ats-io', '/api/candidate-duplicates',
 ], require('./utils/clientRedact').atsPrivacyGuard);
 app.use('/api/auth', authRoutes);
+// FORMER EMPLOYEES (Exited / Relieved): the limited page - own attendance, leave records, offer letter, joining letter (utils/formerAccess.js).
+app.use('/api/former', require('./routes/former'));
 app.use('/api/clients', clientRoutes);
 // AGREEMENT PREPARATION WORKFLOW (2026-10-13): BDE > Purna Sir (HR) > BDE TL > client. Its own door so the HR step never opens the client routes.
 app.use('/api/agreement-flow', require('./routes/agreementFlow'));

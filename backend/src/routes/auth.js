@@ -143,27 +143,33 @@ async function finishSignIn(req, res, user) {
   }
 
   const identity = await resolveIdentity(user.id, user);
-  if (!identity.products.hrms && !identity.products.ats && !identity.products.accounts
+  // A person who has left (utils/leftLogin.js): Exited / Relieved sign in to a LIMITED page only (utils/formerAccess.js: their own
+  // attendance, leave records, offer letter and joining letter). Terminated, a switched-off person, or one whose access period has
+  // passed is refused, as before.
+  let former = null;
+  if (require('../utils/leftLogin').hasLeft(identity)) { // eslint-disable-line global-require
+    former = await require('../utils/formerAccess').evaluate(identity); // eslint-disable-line global-require
+    if (!former.allowed) {
+      await logAudit({ userId: user.id, action: 'Sign-in refused (employment ended)', entity: 'User', entityId: user.id, toValue: identity.employmentStatus, reason: `IP ${ipOf(req)}` });
+      return res.status(403).json({ error: former.message || require('../utils/leftLogin').MESSAGE, code: 'EMPLOYMENT_ENDED' }); // eslint-disable-line global-require
+    }
+  }
+  if (!former && !identity.products.hrms && !identity.products.ats && !identity.products.accounts
       && !['CLIENT', 'CANDIDATE'].includes(identity.role)) {
     // No product names: this is a login screen, and the message is read
     // before we know anything about who is reading it.
     return res.status(403).json({ error: 'This login has no access yet — ask an administrator to grant it' });
   }
 
-  // A person who has left (Exited / Relieved) cannot sign in (utils/leftLogin.js).
-  if (require('../utils/leftLogin').hasLeft(identity)) { // eslint-disable-line global-require
-    await logAudit({ userId: user.id, action: 'Sign-in refused (employment ended)', entity: 'User', entityId: user.id, toValue: identity.employmentStatus, reason: `IP ${ipOf(req)}` });
-    return res.status(403).json({ error: require('../utils/leftLogin').MESSAGE, code: 'EMPLOYMENT_ENDED' }); // eslint-disable-line global-require
-  }
-
   // Stamps the Users screen's "Last Login" column, and clears the failed
   // sign-in counter.
   await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null } });
 
-  await logAudit({ userId: user.id, action: 'Signed in', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
+  await logAudit({ userId: user.id, action: former ? 'Signed in (former employee, limited access)' : 'Signed in', entity: 'User', entityId: user.id, reason: `IP ${ipOf(req)}` });
+  if (former) require('../utils/formerAccess').limit(identity, former); // eslint-disable-line global-require
   // tms = the exact millisecond, so "sign this login out" (utils/loginAccounts.js revokeSessions) can tell an old token from a new one.
   const token = jwt.sign({ ...tokenPayload(identity), tms: Date.now() }, process.env.JWT_SECRET, { expiresIn: '8h' });
-  return res.json({ token, user: await sessionPayload(identity) });
+  return res.json({ token, user: former ? await require('../utils/formerAccess').sessionPayload(identity) : await sessionPayload(identity) }); // eslint-disable-line global-require
 }
 
 const lockedBody = (until) => ({
@@ -325,6 +331,8 @@ router.post('/login/choose', async (req, res) => {
 // The resolved identity plus the permission matrix the frontend renders its
 // nav and its action buttons from — the SAME matrix the server enforces.
 router.get('/me', requireAuth, async (req, res) => {
+  // a former employee (Exited / Relieved): the small limited payload, no nav and no permission matrix (utils/formerAccess.js)
+  if (req.user.formerAccess) return res.json(await require('../utils/formerAccess').sessionPayload(req.user)); // eslint-disable-line global-require
   const payload = await sessionPayload(req.user);
   // Super Admin "View as" (utils/viewAs.js): the target's normal payload,
   // plus who is really looking and when the read-only session ends.

@@ -74,8 +74,29 @@ async function requireAuth(req, res, next) {
     if (await require('../utils/loginAccounts').tokenIsRevoked(claims)) { // eslint-disable-line global-require
       return res.status(401).json({ error: 'This login was signed out by an administrator. Please sign in again.', code: 'LOGIN_REVOKED' });
     }
-    // A person who has left is signed out on their next request (utils/leftLogin.js).
-    if (require('../utils/leftLogin').hasLeft(identity)) return res.status(401).json({ error: require('../utils/leftLogin').MESSAGE, code: 'EMPLOYMENT_ENDED' }); // eslint-disable-line global-require
+    // A person who has left (utils/leftLogin.js): Exited / Relieved keep a LIMITED login - only to download their own attendance,
+    // leave records, offer letter and joining letter (utils/formerAccess.js, an exact allow-list; every other request is refused
+    // here, before any role or scope check). Anyone else who has left (Terminated), an Admin-switched-off person, or a person whose
+    // access period has passed is signed out as before. View-as / Act-as of a person who has left stays refused.
+    if (require('../utils/leftLogin').hasLeft(identity)) { // eslint-disable-line global-require
+      const FA = require('../utils/formerAccess'); // eslint-disable-line global-require
+      const endedBody = { error: require('../utils/leftLogin').MESSAGE, code: 'EMPLOYMENT_ENDED' }; // eslint-disable-line global-require
+      if (claims.viewAs || claims.actAs) return res.status(401).json(endedBody);
+      const info = await FA.evaluate(identity);
+      if (!info.allowed) return res.status(401).json({ error: info.message || endedBody.error, code: info.code || endedBody.code });
+      if (identity.status && identity.status !== 'Active') return res.status(403).json({ error: `This login is ${identity.status.toLowerCase()}` });
+      if (!FA.pathAllowed(req.method, req.originalUrl || req.url)) return res.status(403).json({ error: FA.MESSAGE, code: 'FORMER_ACCESS_ONLY' });
+      FA.limit(identity, info);
+      // a starting password must still be changed before anything but /api/auth (same rule as everyone)
+      if (!/^\/api\/auth(\/|\?|$)/.test(String(req.originalUrl || req.url || ''))) {
+        if (await require('../utils/seedPasswords').mustChange(identity.id)) { // eslint-disable-line global-require
+          return res.status(403).json({ error: 'Change your password now. This account still uses a starting password.', code: 'PASSWORD_CHANGE_REQUIRED' });
+        }
+      }
+      identity.caps = { hrmsManage: false, hrmsSelfOnly: true, payrollManage: false, atsAct: false, atsOversight: false, accountsManage: false, clientDetail: false, candidateContact: false, contact: false };
+      req.user = identity;
+      return next();
+    }
     if (identity.status && identity.status !== 'Active') {
       return res.status(403).json({ error: `This login is ${identity.status.toLowerCase()}` });
     }
