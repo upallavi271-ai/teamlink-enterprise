@@ -41,6 +41,8 @@ export default function MkVideosPage() {
   const [mine, setMine] = useState(null); // every clip and made video this login may see
   const [canWrite, setCanWrite] = useState(false);
   const [brand, setBrand] = useState(null);
+  const [proj, setProj] = useState(null); // a client project this video is made for (?project=<id>): its logo, colours and name are used (marketing/projects.js)
+  const projectId = useMemo(() => { try { return new URLSearchParams(window.location.search).get('project') || ''; } catch { return ''; } }, []);
   const [logo, setLogo] = useState(null); // HTMLImageElement
   const [err, setErr] = useState('');
   const [pick, setPick] = useState([]); // [{ id, kind: 'image' | 'clip', caption }] in video order
@@ -70,7 +72,14 @@ export default function MkVideosPage() {
       const b = d.brand; setBrand(b);
       setF((x) => ({ ...x, headline: x.headline || b.tagline || 'We are hiring', tagline: x.tagline || b.brandName || '', cta: x.cta || b.cta || 'Apply now', footer1: x.footer1 || b.website || '', footer2: x.footer2 || b.contact || '' }));
     }).catch(() => setBrand({ brandName: '', colors: { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' } }));
-    omni.get('/gs/marketing/brand/logo').then((r) => (r.logo ? loadImg(r.logo.dataUrl).then(setLogo) : null)).catch(() => setLogo(null));
+    if (!projectId) omni.get('/gs/marketing/brand/logo').then((r) => (r.logo ? loadImg(r.logo.dataUrl).then(setLogo) : null)).catch(() => setLogo(null));
+    else {
+      omni.get(`/gs/marketing/projects/${projectId}`).then((x) => {
+        const p = x.project; setProj({ id: p.id, clientName: p.clientName, occasion: p.occasion, colors: p.colors, status: p.status });
+        setF((cur) => ({ ...cur, headline: p.occasion || cur.headline, tagline: p.clientName, cta: cur.cta || 'Contact us', footer1: (p.handles || '').split('\n')[0] || cur.footer1, footer2: p.contactPhone || cur.footer2, title: cur.title || `${p.clientName}: ${p.occasion || 'video'}`.slice(0, 80) }));
+        if (x.logo) loadImg(x.logo).then(setLogo).catch(() => setLogo(null)); else setLogo(null);
+      }).catch(() => { toast('That client project could not be opened. The usual brand is used.'); omni.get('/gs/marketing/brand/logo').then((r) => (r.logo ? loadImg(r.logo.dataUrl).then(setLogo) : null)).catch(() => setLogo(null)); });
+    }
     return () => { if (stopRef.current) stopRef.current(); urls.current.forEach((u) => URL.revokeObjectURL(u)); };
   }, [load]);
 
@@ -88,12 +97,15 @@ export default function MkVideosPage() {
   const fmt = FORMATS[f.format];
   const hasClip = pick.some((p) => p.kind === 'clip');
   const data = useMemo(() => brand && ({
-    brand: { ...brand, colors: brand.colors || { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' } },
+    brand: (() => {
+      const base = brand.colors || { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
+      return proj ? { ...brand, brandName: proj.clientName, colors: { ...base, primary: (proj.colors && proj.colors.primary) || base.primary, secondary: (proj.colors && proj.colors.secondary) || base.secondary } } : { ...brand, colors: base };
+    })(),
     logo: f.useLogo ? logo : null, headline: f.headline, tagline: f.tagline, cta: f.cta, footer: [f.footer1, f.footer2], motion: f.motion, sound: f.keepSound,
     pics: pick.map((p) => ({ caption: p.caption, kind: p.kind, len: p.kind === 'clip' && vids[p.id] ? vids[p.id].duration : undefined })),
     images: pick.map((p) => (p.kind === 'image' ? imgs[p.id] || null : null)),
     videos: pick.map((p) => (p.kind === 'clip' ? vids[p.id] || null : null)),
-  }), [brand, logo, f, pick, imgs, vids]);
+  }), [brand, proj, logo, f, pick, imgs, vids]);
   const tl = timeline(data ? data.pics : [], Number(f.secPer), Number(f.clipSec));
   const ready = pick.length > 0 && pick.every((p) => (p.kind === 'clip' ? vids[p.id] : imgs[p.id]));
 
@@ -131,7 +143,7 @@ export default function MkVideosPage() {
     try {
       const r = await omni.post('/gs/marketing/images/video', made.blob, {
         headers: { 'Content-Type': made.type.split(';')[0] },
-        params: { title: f.title || f.headline || 'Video', aspect: f.format, scenes: pick.length, seconds: Math.round(tl.total), logo: f.useLogo && logo ? '1' : '0', headline: f.headline, ...(getState().dept ? { department: getState().dept } : {}) },
+        params: { title: f.title || f.headline || 'Video', aspect: f.format, scenes: pick.length, seconds: Math.round(tl.total), logo: f.useLogo && logo ? '1' : '0', headline: f.headline, ...(proj ? { projectId: proj.id } : {}), ...(getState().dept ? { department: getState().dept } : {}) },
         timeout: 300000,
       });
       if (andSubmit) { const s = await omni.post(`/gs/marketing/images/${r.item.id}/submit`); toast(s.ok); } else toast('Video saved');
@@ -200,6 +212,12 @@ export default function MkVideosPage() {
           </>
         ) : null}
       </PageHead>
+      {proj ? (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: '#eef6ff', border: '1px solid #c9defa', borderRadius: 10, padding: '9px 12px', margin: '0 0 12px', fontSize: 12, color: '#1d4fa8' }}>
+          <span><b>Making a video for {proj.clientName}</b>{proj.occasion ? ` · ${proj.occasion}` : ''}. Their logo and colours are used. Save it, then go back to the project and pick it as an option.</span>
+          <Btn small onClick={() => go('mkprojects', { open: proj.id })}>← Back to the project</Btn>
+        </div>
+      ) : null}
       {!type ? <Banner tone="error">This browser cannot record video. Use a recent Chrome or Edge on a computer.</Banner> : !type.includes('mp4') ? <Banner tone="warn">This browser records WebM, not MP4. WhatsApp and Facebook take WebM; for Instagram use Chrome or Edge, which make MP4.</Banner> : null}
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
       {canWrite ? (
@@ -264,7 +282,7 @@ export default function MkVideosPage() {
                       <Btn onClick={download}>⬇ Download</Btn>
                       <Btn disabled={!!busy} onClick={() => save(false)}>{busy === 'save' ? 'Saving…' : '💾 Save'}</Btn>
                       {clientVideos
-                        ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Save it, then press “➤ Ask client to approve” on its card below: in your company only the client approves videos.</span>
+                        ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Next: press “➤ Ask client to approve” on its card below.</span>
                         : <Btn primary disabled={!!busy} onClick={() => save(true)}>{busy === 'submit' ? 'Saving…' : 'Save and ask for approval →'}</Btn>}
                     </div>
                   </div>

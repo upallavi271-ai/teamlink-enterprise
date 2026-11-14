@@ -21,6 +21,8 @@ const MODULES = [
   { id: 'images', no: 8, label: 'AI Images', phase: 1, status: 'live', page: 'mkimages', blurb: 'Make marketing pictures with AI (free with Cloudflare, or Google Gemini) in your brand colours, with your logo. Approved pictures get a link for posts and the Content Calendar.' },
   // 2026-11-13 (founder's list item 4): a slideshow video made in the browser from approved pictures, with the brand intro and outro (free)
   { id: 'videos', no: 9, label: 'AI Video', phase: 1, status: 'live', page: 'mkvideos', blurb: 'Turn approved pictures into a short MP4 video with your logo, colours, captions and a call to action. Square, Instagram, Reel and banner sizes; approved like pictures.' },
+  // 2026-11-14: the agency workflow: a client asks, the team accepts and works, shows options, the client picks one, it is posted (marketing/projects.js)
+  { id: 'projects', no: 10, label: 'Client Projects', phase: 1, status: 'live', page: 'mkprojects', blurb: 'A client asks for a creative (a festive video with their logo). Accept it, make options with AI, show them on a private link, the client picks one and adds suggestions, then post it.' },
 ];
 // the other names of the AI Marketing OS list: the menu to pick from later (nothing here is built)
 const LATER = ['Social Media Marketing', 'AI Audio', 'SEO', 'GEO', 'AEO', 'LLMO', 'Competitor Intelligence', 'Paid Advertising', 'Website Optimization', 'CRM (marketing view)', 'Sales Automation (marketing view)', 'Influencer', 'Affiliate', 'Reputation Management', 'Local Marketing', 'E-commerce', 'Customer Engagement', 'Trend Intelligence', 'Brand Management (full brand kit)', 'Marketing Administration (billing, plans)', 'Email deliverability tools', 'Website landing pages'];

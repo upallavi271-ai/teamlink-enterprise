@@ -14,6 +14,7 @@ const CR = require('../marketing/clientReview');
 const Rep = require('../marketing/reports');
 const Clips = require('../marketing/aiclips');
 const Stock = require('../marketing/stockclips');
+const Prj = require('../marketing/projects');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -159,6 +160,24 @@ router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => se
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
+// ---- client projects (marketing/projects.js): a client's request -> accepted -> options shown -> the client picks one -> posted ----------------------------
+router.get('/projects/meta', mustWrite, wrap(async (req, res) => res.json({ sources: Prj.SOURCES, deliverables: Prj.DELIVERABLES, platforms: Prj.PLATFORM_KEYS.map((k) => ({ key: k, label: Prj.PLATFORM_LABEL[k] })) })));
+router.get('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.list(req.user, { status: String(req.query.status || ''), q: String(req.query.q || '') }))));
+router.post('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.create(req.user, req.body || {}))));
+router.post('/projects/invite', mustWrite, wrap(async (req, res) => send(res, await Prj.invite(req.user, req.body || {}))));
+router.get('/projects/:id', mustWrite, wrap(async (req, res) => send(res, await Prj.get(req.user, req.params.id))));
+router.put('/projects/:id', mustWrite, wrap(async (req, res) => send(res, await Prj.update(req.user, req.params.id, req.body || {}))));
+router.post('/projects/:id/accept', mustWrite, wrap(async (req, res) => send(res, await Prj.accept(req.user, req.params.id))));
+router.post('/projects/:id/decline', mustWrite, wrap(async (req, res) => send(res, await Prj.decline(req.user, req.params.id, (req.body || {}).note))));
+router.post('/projects/:id/options', mustWrite, wrap(async (req, res) => send(res, await Prj.setOptions(req.user, req.params.id, req.body || {}))));
+router.post('/projects/:id/send', mustWrite, wrap(async (req, res) => send(res, await Prj.send(req.user, req.params.id, req.body || {}))));
+router.post('/projects/:id/cancel', mustWrite, wrap(async (req, res) => send(res, await Prj.cancelPresentation(req.user, req.params.id))));
+router.post('/projects/:id/extend', mustWrite, wrap(async (req, res) => send(res, await Prj.extend(req.user, req.params.id, (req.body || {}).days))));
+router.post('/projects/:id/scheduled', mustWrite, wrap(async (req, res) => send(res, await Prj.scheduled(req.user, req.params.id, req.body || {}))));
+router.post('/projects/:id/showcase', mustWrite, wrap(async (req, res) => send(res, await Prj.setShowcase(req.user, req.params.id, req.body || {}))));
+router.get('/portfolio', mustWrite, wrap(async (req, res) => res.json({ stats: await Prj.trackRecord(), items: await Prj.showcaseItems() })));
+router.post('/projects/:id/posted', mustWrite, wrap(async (req, res) => send(res, await Prj.posted(req.user, req.params.id, req.body || {}))));
+
 // ---- free stock clips (marketing/stockclips.js): search Pexels, use a clip (saved as a draft clip) ---------------------------------------------------
 router.get('/stock/meta', mustWrite, wrap(async (req, res) => res.json(await Stock.meta(req.user))));
 router.get('/stock/search', mustWrite, wrap(async (req, res) => send(res, await Stock.search(req.user, req.query || {}))));

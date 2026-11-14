@@ -227,7 +227,7 @@ export default function MkContentPage() {
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
               <Btn disabled={!!busy || locked || !meta.canWrite} onClick={() => save(false)}>{busy === 'save' ? 'Saving…' : '💾 Save'}</Btn>
               {meta.limits && meta.limits.clientRequired && (meta.limits.clientFor || []).includes('words')
-                ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Save it, then press “➤ Ask client to approve” on its card in the list: in your company only the client approves words.</span>
+                ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Next: press “➤ Ask client to approve” on its card.</span>
                 : <Btn primary disabled={!!busy || locked || !meta.canWrite || ed.status === 'approved'} onClick={() => save(true)}>{busy === 'submit' ? 'Sending…' : 'Save and ask for approval →'}</Btn>}
               {ed.status === 'approved' && ed.libraryId && acc && acc.pages && acc.pages.includes('campaigns') ? <Btn onClick={() => go('campaigns', { content: ed.libraryId })}>Use in a campaign →</Btn> : null}
             </div>

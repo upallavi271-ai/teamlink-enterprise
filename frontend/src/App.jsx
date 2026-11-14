@@ -84,6 +84,8 @@ import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candida
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
 import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
+import OurWorkPage from './components/omni/marketing/OurWorkPage.jsx'; // AI Marketing: the public "Our work" page (track record and portfolio, no login)
+import ClientProjectPage from './components/omni/marketing/ClientProjectPage.jsx'; // AI Marketing: the client's project page: request form, progress, options to choose from (private link, no login)
 import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
@@ -208,6 +210,8 @@ export default function App() {
       <Route path="/forms-public/:token" element={<PublicForm />} />
       {/* AI Marketing client approval: the client opens a private link, no login (marketing/clientReview.js) */}
       <Route path="/client-review/:token" element={<ClientReviewPage />} />
+      <Route path="/client-project/:token" element={<ClientProjectPage />} />
+      <Route path="/our-work" element={<OurWorkPage />} />
 
       {/* New employee sign-in link — single-use, expiring, no login required */}
       <Route path="/set-password/:token" element={<SetPassword />} />

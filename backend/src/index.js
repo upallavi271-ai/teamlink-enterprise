@@ -151,6 +151,8 @@ app.get('/api/mk-image/:id/:file', async (req, res, next) => {
 });
 // AI Marketing brand logo: a picture of up to 300 KB arrives as base64 JSON (marketing/settings.js cleanLogo checks the real size and type)
 app.use('/api/outreach/gs/marketing/brand/logo', express.json({ limit: '600kb' }));
+app.use('/api/outreach/gs/marketing/projects', express.json({ limit: '700kb' })); // a client's logo travels with the project (a picture of up to 300 KB)
+app.use('/api/public/mk-project', express.json({ limit: '700kb' })); // the client's request form can carry their logo
 app.use(express.json());
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -271,6 +273,8 @@ app.use('/api/job-broadcast', require('./routes/jobBroadcast'));
 app.use('/api/outreach', require('./routes/outreach'));
 app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API for the app screens: template library, app campaigns, replies, connections (own checks per route)
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
+app.use('/api/public/mk-work', require('./routes/mkWorkPublic')); // AI Marketing "Our work": track record and portfolio (no login; marketing/projects.js)
+app.use('/api/public/mk-project', require('./routes/mkProjectPublic')); // AI Marketing client projects: the client's private page (signed token, no login; marketing/projects.js)
 app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
 app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)

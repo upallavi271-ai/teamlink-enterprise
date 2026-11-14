@@ -34,7 +34,31 @@ const DDL = [
 let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
-  try { for (const sql of DDL) await S.run(sql); await AI.ensure(); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] images schema:', e.message); return false; } // eslint-disable-line no-await-in-loop, no-console
+  try {
+    for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
+    try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "projectId" TEXT`); } catch { /* the column is already there */ } // 2026-11-14: made for a client project (marketing/projects.js)
+    await AI.ensure(); okAt = Date.now(); return true;
+  } catch (e) { console.error('[omni-mk] images schema:', e.message); return false; } // eslint-disable-line no-console
+}
+// the look of a client project (its logo and brand colours), when the id is a real project
+async function projectLook(projectId) {
+  const pid = S.clip(projectId, 40);
+  if (!pid) return null;
+  try {
+    const r = (await S.q('SELECT clientName, logoData, colors FROM "OmniMkProject" WHERE id = ? AND deletedAt IS NULL', pid))[0];
+    if (!r) return null;
+    let colors = null; try { colors = r.colors ? JSON.parse(r.colors) : null; } catch { colors = null; }
+    return { clientName: r.clientName, logoData: r.logoData || null, colors };
+  } catch { return null; }
+}
+// marks pictures / videos as made for a client project (only when that project exists)
+async function tagProject(ids, projectId) {
+  const pid = S.clip(projectId, 40);
+  if (!pid || !ids.length) return;
+  try {
+    if (!(await S.q('SELECT id FROM "OmniMkProject" WHERE id = ? AND deletedAt IS NULL', pid))[0]) return;
+    for (const id of ids) await S.run(`UPDATE "${TABLE}" SET projectId = ? WHERE id = ?`, pid, id); // eslint-disable-line no-await-in-loop
+  } catch { /* the project table is not there yet: nothing to tag */ }
 }
 const dir = () => path.join(process.env.UPLOAD_DIR || path.join(os.homedir() || os.tmpdir(), '.teamlink-uploads'), 'mk-images');
 // AI Video (2026-11-13) keeps its slideshow videos in this same table and flow (approval, public link, calendar): the kind is told by the mime type
@@ -294,7 +318,7 @@ const gated = (set, r) => { const k = clientKind(r); return !!k && Cfg.clientNee
 const GATED_WORDS = (r) => `Your company requires the CLIENT to approve ${isVideo(r) ? 'videos' : 'pictures'}`;
 function view(u, r, set) {
   return {
-    needsClient: gated(set, r), canClient: mayWrite(u) && mine(u, r) && r.style !== 'clip',
+    needsClient: gated(set, r), canClient: mayWrite(u) && mine(u, r) && r.style !== 'clip', projectId: r.projectId || '',
     id: r.id, title: r.title, prompt: r.prompt, headline: r.headline || '', style: r.style || '', aspect: r.aspect || '1:1', model: r.model || '', withLogo: S.num(r.withLogo) === 1,
     mime: r.mime, kind: isVideo(r) ? 'video' : 'image',
     bytes: S.num(r.bytes), demo: S.num(r.demo) === 1, status: r.status, note: r.note || '', department: r.department || '', createdByName: r.createdByName || '', mine: r.createdById === u.id,
@@ -375,8 +399,14 @@ async function create(u, b = {}, opts = {}) {
   const used = S.num(((await S.q('SELECT COUNT(*) AS n FROM "OmniMkAiUsage" WHERE userId = ? AND module = ? AND at >= ? AND ok = 1', u.id, 'images', AI.dayStart(now)))[0] || {}).n);
   if (!st.demo && used + n > c.perDay) return { error: c.perDay === 0 ? 'AI pictures are switched off (0 a day). An Admin can change it in Administration > Integrations.' : `That would pass your ${c.perDay} pictures for today (${used} made). Make fewer, or ask an Admin to raise the limit.`, status: 429 };
 
-  const brand = await Cfg.getBrand();
-  const logoRow = b.withLogo && st.logoInput ? await Cfg.getLogo() : null;
+  let brand = await Cfg.getBrand();
+  let logoRow = b.withLogo && st.logoInput ? await Cfg.getLogo() : null;
+  // made for a client project (marketing/projects.js): that client's logo and colours instead of ours
+  const pj = await projectLook(b.projectId);
+  if (pj) {
+    brand = { ...brand, brandName: pj.clientName, colors: { ...(brand.colors || {}), ...(pj.colors && pj.colors.primary ? { primary: pj.colors.primary } : {}), ...(pj.colors && pj.colors.secondary ? { secondary: pj.colors.secondary } : {}) } };
+    if (b.withLogo && st.logoInput) logoRow = pj.logoData ? { dataUrl: pj.logoData } : null;
+  }
   const logo = logoRow ? (() => { const m = /^data:([^;]+);base64,(.+)$/.exec(logoRow.dataUrl); return m ? { mime: m[1], b64: m[2] } : null; })() : null;
   // only a Gemini picture model is SENT the logo (it draws it in); for Cloudflare, Imagen and the sandbox it is put on the finished picture here
   const modelGetsLogo = !!logo && !st.demo && c.provider === 'gemini' && !isImagen(c.model);
@@ -446,6 +476,7 @@ async function produce(u, x) {
     await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: st.demo ? 'sample' : c.model, ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
     made.push(id);
   }
+  await tagProject(made, b.projectId);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI pictures made', entity: TABLE, entityId: made[0], toValue: `${made.length} picture(s); ${title}${st.demo ? '; sandbox sample' : `; ${c.model}`}` });
   const set = await Cfg.getSettings();
   const rows = await Promise.all(made.map((id) => row(id)));
@@ -478,6 +509,7 @@ async function saveVideo(u, buf, mime, q = {}) {
   const about = q.about ? S.clip(q.about, 400) : clip ? `Uploaded clip, ${seconds} seconds` : `Video of ${scenes} scene${scenes === 1 ? '' : 's'} (pictures and clips), ${seconds} seconds`;
   await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'draft',?,?,?,?,?)`,
     id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, veo ? 'veo' : clip && q.model === 'stock' ? 'stock' : clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await tagProject([id], q.projectId);
   if (!veo) await logAudit({ userId: u.id, actorName: u.name, action: clip ? 'Omni-Channel AI Marketing: video clip uploaded' : 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${clip ? '' : `${scenes} scene(s); `}${seconds}s; ${Math.round(buf.length / 1024)} KB` });
   const set = await Cfg.getSettings();
   return { item: view(u, await row(id), set) };
@@ -518,6 +550,7 @@ async function saveUpload(u, buf, mime, q = {}) {
   fs.writeFileSync(path.join(dir(), file), out);
   await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,NULL,?,?,?,0,?,?,?,0,'draft',?,?,?,?,?)`,
     id, title, `Uploaded by ${S.clip(u.name, 60)} (${w}×${h})`, 'upload', aspect, 'upload', file, outMime, out.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  await tagProject([id], q.projectId);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: picture uploaded', entity: TABLE, entityId: id, toValue: `${title}; ${w}x${h}; ${Math.round(out.length / 1024)} KB` });
   const set = await Cfg.getSettings();
   return { item: view(u, await row(id), set) };

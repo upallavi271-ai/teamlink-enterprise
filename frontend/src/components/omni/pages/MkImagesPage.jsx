@@ -34,6 +34,9 @@ export default function MkImagesPage() {
   const [rename, setRename] = useState(null);
   const [waitSec, setWaitSec] = useState(0);
   const [toClient, setToClient] = useState(null); // the picture being sent to a client
+  const [proj, setProj] = useState(null); // a client project these pictures are made for (?project=<id>): its logo and colours are used (marketing/projects.js)
+  const projectId = (() => { try { return new URLSearchParams(window.location.search).get('project') || ''; } catch { return ''; } })();
+  useEffect(() => { if (projectId) omni.get(`/gs/marketing/projects/${projectId}`).then((x) => setProj({ id: x.project.id, clientName: x.project.clientName, occasion: x.project.occasion, hasLogo: x.project.hasLogo })).catch(() => setProj(null)); }, [projectId]);
   const fileRef = useRef(null);
   // the person's own pictures (phone, Canva, the Gemini app): up to 5 at a time, each saved like an AI picture and approved before use
   const upload = async (e) => {
@@ -45,7 +48,7 @@ export default function MkImagesPage() {
     setBusy('upload'); setMsg('');
     let ok = 0; const failed = [];
     for (const x of files) {
-      try { await omni.post('/gs/marketing/images/upload', x, { headers: { 'Content-Type': x.type }, params: { title: x.name, ...(getState().dept ? { department: getState().dept } : {}) }, timeout: 120000 }); ok += 1; } // eslint-disable-line no-await-in-loop
+      try { await omni.post('/gs/marketing/images/upload', x, { headers: { 'Content-Type': x.type }, params: { title: x.name, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) }, timeout: 120000 }); ok += 1; } // eslint-disable-line no-await-in-loop
       catch (er) { failed.push(`${x.name}: ${errOf(er, 'not saved')}`); }
     }
     setBusy(''); setTab(''); load();
@@ -69,7 +72,7 @@ export default function MkImagesPage() {
   const create = async () => {
     setBusy('create'); setMsg(''); setWaitSec(0);
     try {
-      const r = await omni.post('/gs/marketing/images', { ...f, ...(getState().dept ? { department: getState().dept } : {}) });
+      const r = await omni.post('/gs/marketing/images', { ...f, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
       let job = r.job;
       const t0 = Date.now();
       while (job && job.status === 'running') {
@@ -109,6 +112,12 @@ export default function MkImagesPage() {
           </>
         ) : null}
       </PageHead>
+      {proj ? (
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: '#eef6ff', border: '1px solid #c9defa', borderRadius: 10, padding: '9px 12px', margin: '0 0 12px', fontSize: 12, color: '#1d4fa8' }}>
+          <span><b>Making pictures for {proj.clientName}</b>{proj.occasion ? ` · ${proj.occasion}` : ''}. {proj.hasLogo ? 'Their logo and colours are used.' : 'No logo is saved for this client yet: add one in the project.'} Then go back to the project and pick them as options.</span>
+          <Btn small onClick={() => go('mkprojects', { open: proj.id })}>← Back to the project</Btn>
+        </div>
+      ) : null}
       {ai.demo ? <Banner tone="test"><b>Test sandbox.</b> No picture is asked from any AI service here: a plain sample in your brand colours is made instead.</Banner> : null}
       {!ai.ready ? <Banner tone="error"><b>AI pictures are not ready.</b> {ai.reason} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Check again</button></Banner> : null}
       {ai.ready && ai.note ? <Banner tone="warn">{ai.note}</Banner> : null}

@@ -120,7 +120,13 @@ export default function MkApprovePage() {
     <div>
       <PageHead eyebrow="AI Marketing" title="Approvals" lead="AI-written words are used only after a person approves them. Approved words go into the Content Library, where the campaign screens find them." />
       {msg ? <Banner tone="error">{msg}</Banner> : null}
-      {meta.limits && meta.limits.clientRequired ? <Banner tone="info"><b>Company rule: only the client approves</b> {(meta.limits.clientFor || []).map((k) => ({ words: 'words', pictures: 'pictures', videos: 'finished videos' }[k])).join(', ')}. The team cannot approve those: send them to the client (the client's answer is the approval) or send them back. {meta.isAdmin ? 'You can change this rule in AI usage.' : ''}</Banner> : null}
+      {meta.limits && meta.limits.clientRequired ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 11.5, color: 'var(--muted)', margin: '0 0 12px' }}>
+          <span aria-hidden="true" style={{ width: 7, height: 7, borderRadius: 4, background: '#0f766e', display: 'inline-block' }} />
+          <span>Client sign-off is on for {(meta.limits.clientFor || []).map((k) => ({ words: 'words', pictures: 'pictures', videos: 'finished videos' }[k])).join(', ')}.</span>
+          {meta.isAdmin ? <button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={() => go('mkusage')}>Change</button> : null}
+        </div>
+      ) : null}
       {avoidErr ? <Banner tone="warn">The never-use word list could not be read, so those words are not highlighted here. Read the words carefully.</Banner> : null}
       <Panel title="Waiting for you" sub={`${mine.length} item${mine.length === 1 ? '' : 's'}${late ? ` · ${late} waiting more than a day` : ''} · oldest first`}
         right={pickable.length > 1 ? (
@@ -132,8 +138,8 @@ export default function MkApprovePage() {
         {mine.length === 0 ? <Empty title="Nothing is waiting for you">When somebody asks for approval of AI content you can approve, it appears here and you get a notice.</Empty> : mine.map((it) => card(it, (
           it.needsClient ? (
             <>
-              <small style={{ fontSize: 10.5, color: '#1d4fa8' }}>Your company requires the CLIENT to approve words: the team cannot approve this.</small>
-              {it.canClient ? <Btn primary disabled={!!busy} onClick={() => setToClient({ kind: 'content', item: it })}>➤ Send to the client</Btn> : <small style={{ fontSize: 10, color: 'var(--muted)' }}>Ask the writer or an Admin to send it to the client.</small>}
+              <small style={{ fontSize: 10.5, color: 'var(--muted)' }}>Needs the client's sign-off.</small>
+              {it.canClient ? <Btn primary disabled={!!busy} onClick={() => setToClient({ kind: 'content', item: it })}>➤ Send to the client</Btn> : <small style={{ fontSize: 10, color: 'var(--muted)' }}>The writer or an Admin sends it.</small>}
               <Btn disabled={!!busy} onClick={() => { setBack(it); setNote(''); }}>↩ Send back</Btn>
             </>
           ) : (
@@ -148,7 +154,7 @@ export default function MkApprovePage() {
         ), true))}
       </Panel>
       {heldWords.length + heldPics.length > 0 && (
-        <Panel title="Waiting for the client" sub="The client is the approver of these: only the client's answer approves them, and nobody on the team can. Their private links are under Client approvals below. If a client does not answer, cancel the link there and the item goes back to Drafts." style={{ marginTop: 14 }} right={<span className="pill live">{heldWords.length + heldPics.length}</span>}>
+        <Panel title="Waiting for the client" sub="Only the client's answer approves these. Their private links are under Client approvals below." style={{ marginTop: 14 }} right={<span className="pill live">{heldWords.length + heldPics.length}</span>}>
           {heldWords.map((it) => card(it, <><ClientChip cr={it.clientReview} /><small style={{ color: 'var(--muted)' }}>Only the client can approve this.</small></>))}
           {heldPics.length > 0 && (
             <div className="mki-grid" style={{ marginTop: heldWords.length ? 10 : 0 }}>
@@ -176,7 +182,7 @@ export default function MkApprovePage() {
                 <small style={{ fontSize: 9.5 }}>Asked for: {p.prompt}</small>
                 <div className="mk-acts" style={{ marginTop: 6 }}>
                   {p.needsClient
-                    ? (p.canClient ? <Btn small primary disabled={!!busy} onClick={() => setToClient({ kind: 'image', item: p, isVideo: p.kind === 'video' })}>➤ Send to the client</Btn> : <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>Only the client approves {p.kind === 'video' ? 'videos' : 'pictures'}: ask the maker or an Admin to send it.</small>)
+                    ? (p.canClient ? <Btn small primary disabled={!!busy} onClick={() => setToClient({ kind: 'image', item: p, isVideo: p.kind === 'video' })}>➤ Send to the client</Btn> : <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>Needs the client's sign-off. The maker or an Admin sends it.</small>)
                     : <Btn small primary disabled={!!busy} onClick={() => approvePic(p)}>{busy === p.id ? 'Approving…' : '✔ Approve'}</Btn>}
                   <Btn small disabled={!!busy} onClick={() => { setPicBack(p); setPicNote(''); }}>↩ Send back</Btn>
                 </div>

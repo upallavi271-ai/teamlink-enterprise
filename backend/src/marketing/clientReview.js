@@ -90,7 +90,9 @@ const moduleOf = (kind) => (kind === 'image' ? require('./images') : require('./
 async function heldIds(kind) {
   await ensure();
   const rows = await S.q(`SELECT itemId FROM "${TABLE}" WHERE kind = ? AND mode = 'decide' AND status = 'sent' AND expiresAt > ? AND deletedAt IS NULL`, kind, Date.now());
-  return new Set(rows.map((r) => r.itemId));
+  const held = new Set(rows.map((r) => r.itemId));
+  if (kind === 'image') { try { (await require('./projects').heldIds()).forEach((id) => held.add(id)); } catch { /* the projects tables are not there yet */ } } // pictures / videos the client is choosing between // eslint-disable-line global-require
+  return held;
 }
 
 // ---- staff: send, list, revoke, extend ----------------------------------------------------------------------------------------------------
