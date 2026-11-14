@@ -429,4 +429,4 @@ async function decide(u, id, approve, note, edits) {
   return { ok: approve ? (edited ? 'Approved with your changes. It is now in the Content Library, ready for campaigns.' : 'Approved. It is now in the Content Library, ready for campaigns.') : 'Sent back with your note.', edited, item: view(u, await row(r.id), set) };
 }
 
-module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n, e) => decide(u, id, true, n, e), reject: (u, id, n) => decide(u, id, false, n), getRow, view, mayWrite, finish, flagsOf };
+module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n, e) => decide(u, id, true, n, e), reject: (u, id, n) => decide(u, id, false, n), getRow, rawRow: async (id) => { await ensure(); return row(id); }, view, mayWrite, finish, flagsOf };

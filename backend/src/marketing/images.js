@@ -516,6 +516,13 @@ async function saveUpload(u, buf, mime, q = {}) {
   return { item: view(u, await row(id), set) };
 }
 
+// ---- for the client approval link (marketing/clientReview.js): the raw row and its file, with no login and no status rule of their own ---------------------
+async function rawRow(id) { await ensure(); return row(id); }
+function rawFile(r) {
+  const p = path.join(dir(), path.basename(r.file));
+  return fs.existsSync(p) ? { path: p, mime: r.mime } : null;
+}
+
 // ---- the file (signed-in, any status the person may see) ----------------------------------------------------------------------------------
 async function file(u, id) {
   const g = await getRow(u, id);
@@ -588,6 +595,6 @@ async function decide(u, id, approve, note) {
 }
 
 module.exports = {
-  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, file, publicFile, update, remove, submit,
+  ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
   approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng,
 };

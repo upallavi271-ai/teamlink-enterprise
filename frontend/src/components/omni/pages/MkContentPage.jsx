@@ -3,7 +3,8 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, Tag, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { useMkMeta, MkStatus, AiBanner, TextsEditor, TextsPreview, aiLabel, aiReady } from '../marketing/mk.jsx';
+import { useMkMeta, MkStatus, AiBanner, TextsEditor, TextsPreview, aiLabel, aiReady, ClientChip } from '../marketing/mk.jsx';
+import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 
 // AI MARKETING > AI CONTENT (module 1): a short brief -> up to three versions per channel in the brand voice -> pick / edit / rewrite one message ->
 // save -> ask for approval. Only approved words reach the Content Library (and so the campaign screens). Nothing is sent or posted from here.
@@ -41,6 +42,7 @@ export default function MkContentPage() {
   const [undo, setUndo] = useState(null); // { channel, text } before the last AI rewrite
   const [leave, setLeave] = useState(null); // { go: fn } waiting for "leave without saving?"
   const [flagAsk, setFlagAsk] = useState(''); // channel label with never-use words, waiting for "ask for approval anyway?"
+  const [toClient, setToClient] = useState(null); // the item being sent to a client
   const [q, setQ] = useState('');
   const [onlyMine, setOnlyMine] = useState(false);
   const edRef = useRef(null);
@@ -240,7 +242,7 @@ export default function MkContentPage() {
         {shown.length === 0 ? <Empty title="Nothing here yet">{!items.length ? 'Write a brief above and press “Write with AI”.' : (needle || onlyMine) ? 'Nothing matches the search.' : 'Nothing with that status.'}</Empty> : shown.map((it) => (
           <div className="mk-row" key={it.id}>
             <div>
-              <b>{it.title}</b> <MkStatus status={it.status} />{it.inLibrary ? <> <Tag green title="Approved words are in the Content Library for campaigns">In the Content Library</Tag></> : null}
+              <b>{it.title}</b> <MkStatus status={it.status} /> <ClientChip cr={it.clientReview} />{it.inLibrary ? <> <Tag green title="Approved words are in the Content Library for campaigns">In the Content Library</Tag></> : null}
               <small>{chansOf(it.channels).map((c) => c.label).join(' · ')} · saved {fmtDateTime(it.updatedAt)}{!it.mine && it.createdByName ? ` · by ${it.createdByName}` : ''}{it.department ? ` · ${it.department}` : ''}{it.ai && it.ai.demo ? ' · sample writer' : ''}</small>
               {it.status === 'changes' && it.note ? <div className="mk-note">Sent back by {it.decidedByName}: {it.note}</div> : null}
             </div>
@@ -248,11 +250,13 @@ export default function MkContentPage() {
               <TinyBtn onClick={() => open(it)}>{it.canEdit ? '✎ Open' : '👁 Look'}</TinyBtn>
               {it.canSubmit ? <TinyBtn disabled={busy === it.id} onClick={() => submitFromList(it)}>Ask for approval</TinyBtn> : null}
               {meta.canWrite ? <TinyBtn onClick={() => copyItem(it)} title="Make a new draft from these words" aria-label={`Make a copy of ${it.title}`}>⧉ Copy</TinyBtn> : null}
+              {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
               {it.canDelete ? <TinyBtn onClick={() => setDel(it)} title="Delete" aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}
             </div>
           </div>
         ))}
       </Panel>
+      {toClient ? <ClientReviewModal kind="content" item={toClient} onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
       {leave ? <ConfirmModal danger title="Leave without saving?" text="The changes in the editor are not saved and will be lost." yes="Leave without saving" onNo={() => setLeave(null)} onYes={() => { const fn = leave.go; setLeave(null); fn(); }} /> : null}
       {flagAsk ? <ConfirmModal title="Never-use words found" text={`The ${flagAsk} message has words your brand voice says never to use. Ask for approval anyway?`} yes="Ask for approval anyway" onNo={() => setFlagAsk('')} onYes={() => { setFlagAsk(''); save(true, true); }} /> : null}
       {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'It is also taken out of the Content Library. Campaigns already made from it keep their words.' : 'It is removed from your AI content.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}

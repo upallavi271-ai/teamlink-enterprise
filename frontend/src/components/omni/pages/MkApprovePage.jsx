@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Empty, GsModal, Tag, Tabs, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel, MkImg } from '../marketing/mk.jsx';
+import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel, MkImg, ClientChip } from '../marketing/mk.jsx';
 
 // AI MARKETING > APPROVALS: what people wrote with AI and asked to have approved. An approver (an Admin, or a Team Lead / BDE TL of the department) reads the
 // words channel by channel, then approves (the words go into the Content Library), corrects small things and approves ("Edit & approve"), or sends it back
@@ -32,8 +32,10 @@ export default function MkApprovePage() {
   const [pics, setPics] = useState([]); // AI pictures waiting (marketing/images.js)
   const [picBack, setPicBack] = useState(null);
   const [picNote, setPicNote] = useState('');
+  const [crs, setCrs] = useState([]); // client approvals: sent to a client, answered (marketing/clientReview.js)
   const loadPics = useCallback(() => omni.get('/gs/marketing/images', { status: 'waiting' }).then((d) => setPics(d.items || [])).catch(() => setPics([])), []);
-  const load = useCallback(() => { loadPics(); return omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))); }, [loadPics]);
+  const loadCrs = useCallback(() => omni.get('/gs/marketing/client-reviews').then((d) => setCrs((d.reviews || []).filter((r) => r.status !== 'revoked'))).catch(() => setCrs([])), []);
+  const load = useCallback(() => { loadPics(); loadCrs(); return omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))); }, [loadPics, loadCrs]);
   useEffect(() => { load(); omni.get('/gs/marketing/brand').then((b) => { setAvoid(b.brand.avoidWords || []); setAvoidErr(false); }).catch(() => setAvoidErr(true)); }, [load]);
   if (err) return <Banner tone="error">{err}</Banner>;
   if (!meta || !data) return msg ? <Banner tone="error">{msg} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Try again</button></Banner> : <div className="card panel">Loading…</div>;
@@ -83,6 +85,8 @@ export default function MkApprovePage() {
     if (failed.length) setMsg(`Not approved: ${failed.join(' · ')}`);
   };
   const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const crAct = async (r, what) => { setBusy(what + r.id); try { const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/${what}`, what === 'extend' ? { days: 14 } : {}); toast(res.ok); loadCrs(); } catch (e) { toast(errOf(e, 'That did not work.')); } finally { setBusy(''); } };
+  const crCopy = async (r) => { const url = `${window.location.origin}${r.link}`; try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { window.prompt('Copy the link:', url); } };
   const picsMine = pics.filter((p) => p.canApprove);
   const approvePic = async (p) => { setBusy(p.id); try { const r = await omni.post(`/gs/marketing/images/${p.id}/approve`, {}); toast(r.ok); loadPics(); } catch (e) { toast(errOf(e, 'It could not be approved.')); } finally { setBusy(''); } };
   const sendBackPic = async () => { const p = picBack; setBusy(p.id); try { const r = await omni.post(`/gs/marketing/images/${p.id}/reject`, { note: picNote }); toast(r.ok); setPicBack(null); setPicNote(''); loadPics(); } catch (e) { toast(errOf(e, 'It could not be sent back.')); } finally { setBusy(''); } };
@@ -159,6 +163,25 @@ export default function MkApprovePage() {
       {others.length > 0 && (
         <Panel title="Waiting for somebody else" sub="You can read these, but you cannot approve them." style={{ marginTop: 14 }}>
           {others.map((it) => card(it, <small style={{ color: 'var(--muted)' }}>{it.mine ? 'Your own content: another approver has to approve it.' : 'Another approver will decide.'}</small>))}
+        </Panel>
+      )}
+      {crs.length > 0 && (
+        <Panel title="Client approvals" sub="Items sent to a client after your team approved them. The client answers on a private link." style={{ marginTop: 14 }} right={<span className="pill live">{crs.length}</span>}>
+          {crs.slice(0, 20).map((r) => (
+            <div className="mk-row" key={r.id}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <b>{r.itemTitle}</b> <small style={{ display: 'inline' }}>({r.kind === 'content' ? 'words' : 'picture / video'})</small> <ClientChip cr={r} />
+                <small>For {r.clientName}{r.contactName ? ` · ${r.contactName}` : ''} · sent {fmtDateTime(r.createdAt)} by {r.createdByName || '—'}{r.status === 'sent' ? ` · ${r.views ? `opened ${r.views}×` : 'not opened yet'} · valid until ${fmtDateTime(r.expiresAt)}` : ''}</small>
+                {r.status === 'approved' ? <div className="mk-note ok">Approved by {r.decidedByName} on {fmtDateTime(r.decidedAt)}.{r.comment ? ` “${r.comment}”` : ''}</div> : null}
+                {r.status === 'changes' ? <div className="mk-note">{r.decidedByName} asked for changes: “{r.comment}”</div> : null}
+              </div>
+              <div className="mk-acts" style={{ flexDirection: 'column', alignItems: 'stretch', minWidth: 150 }}>
+                {['sent', 'expired'].includes(r.status) ? <Btn small onClick={() => crCopy(r)}>⧉ Copy link</Btn> : null}
+                {meta.canWrite && r.status === 'sent' ? <TinyBtn disabled={!!busy} onClick={() => crAct(r, 'extend')}>Extend 14 days</TinyBtn> : null}
+                {meta.canWrite && r.status === 'sent' ? <TinyBtn disabled={!!busy} onClick={() => crAct(r, 'revoke')}>Cancel the link</TinyBtn> : null}
+              </div>
+            </div>
+          ))}
         </Panel>
       )}
       <Panel title="Recently decided" sub="Approvals and send-backs you can see, newest first" style={{ marginTop: 14 }}>

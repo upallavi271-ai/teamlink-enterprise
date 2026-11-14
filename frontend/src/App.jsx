@@ -83,6 +83,7 @@ import TalkLink from './pages/TalkLink.jsx'; // 2026-10-28: the candidate's free
 import JoiningLink from './pages/JoiningLink.jsx'; // client hiring: the candidate's joining-letter link (public)
 import InterviewPrepPage from './pages/InterviewPrepPage.jsx'; // the candidate's How-to-prepare page (public, signed link)
 import PublicForm from './components/omni/crm/PublicForm.jsx'; // Omni-Channel Web Forms: the public capture form (no login)
+import ClientReviewPage from './components/omni/marketing/ClientReviewPage.jsx'; // AI Marketing: the client's approval page (private link, no login)
 import AgreementView from './pages/AgreementView.jsx';
 import SetPassword from './pages/SetPassword.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
@@ -199,6 +200,8 @@ export default function App() {
       <Route path="/joining/:token" element={<JoiningLink />} />
       <Route path="/prep/:token" element={<InterviewPrepPage />} />
       <Route path="/forms-public/:token" element={<PublicForm />} />
+      {/* AI Marketing client approval: the client opens a private link, no login (marketing/clientReview.js) */}
+      <Route path="/client-review/:token" element={<ClientReviewPage />} />
 
       {/* New employee sign-in link — single-use, expiring, no login required */}
       <Route path="/set-password/:token" element={<SetPassword />} />

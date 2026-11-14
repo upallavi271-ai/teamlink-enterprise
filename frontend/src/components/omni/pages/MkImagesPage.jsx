@@ -3,7 +3,8 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, GsModal, fmtDateTime } from '../ui.jsx';
-import { MkStatus, MkImg, downloadMkImg } from '../marketing/mk.jsx';
+import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
+import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > AI IMAGES: marketing pictures from a short description with Google Gemini, in the brand colours and with the logo when the model can.
@@ -32,6 +33,7 @@ export default function MkImagesPage() {
   const [del, setDel] = useState(null);
   const [rename, setRename] = useState(null);
   const [waitSec, setWaitSec] = useState(0);
+  const [toClient, setToClient] = useState(null); // the picture being sent to a client
   const fileRef = useRef(null);
   // the person's own pictures (phone, Canva, the Gemini app): up to 5 at a time, each saved like an AI picture and approved before use
   const upload = async (e) => {
@@ -159,13 +161,14 @@ export default function MkImagesPage() {
               <div key={it.id} className="card mki-card">
                 <div style={{ aspectRatio: ratio(it.aspect), overflow: 'hidden', borderRadius: 10, cursor: 'zoom-in' }}><MkImg id={it.id} alt={it.title} style={{ height: '100%' }} onClick={() => setView(it)} /></div>
                 <b style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 8 }} title={it.title}>{it.title}</b>
-                <div style={{ margin: '3px 0' }}><MkStatus status={it.status} /></div>
+                <div style={{ margin: '3px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}><MkStatus status={it.status} /><ClientChip cr={it.clientReview} /></div>
                 <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>{STYLE_WORDS[it.style] || it.style} · {it.aspect}{it.withLogo ? ' · logo' : ''}{it.demo ? ' · sample' : ''} · {fmtDateTime(it.createdAt)}{!it.mine ? ` · ${it.createdByName}` : ''}</small>
                 {it.status === 'changes' && it.note ? <div className="mk-note">Sent back by {it.decidedByName}: {it.note}</div> : null}
                 <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
                   <TinyBtn onClick={() => download(it)}>⬇ Download</TinyBtn>
                   {it.canSubmit ? <TinyBtn disabled={busy === it.id} onClick={() => act(it, 'submit')}>Ask for approval</TinyBtn> : null}
                   {it.publicPath ? <TinyBtn onClick={() => copyLink(it)}>🔗 Copy link</TinyBtn> : null}
+                  {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
                   {it.canEdit ? <TinyBtn onClick={() => setRename({ id: it.id, title: it.title })} aria-label={`Rename ${it.title}`}>✎</TinyBtn> : null}
                   {it.canDelete ? <TinyBtn onClick={() => setDel(it)} aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}
                 </div>
@@ -182,6 +185,7 @@ export default function MkImagesPage() {
           <div style={{ fontSize: 11, marginTop: 8 }}><b>Asked for:</b> {view.prompt}{view.headline ? <> · <b>Headline:</b> “{view.headline}”</> : null}</div>
         </GsModal>
       ) : null}
+      {toClient ? <ClientReviewModal kind="image" item={toClient} onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
       {rename ? (
         <GsModal title="Rename the picture" width={420} onClose={() => setRename(null)} foot={<><Btn onClick={() => setRename(null)}>Cancel</Btn><Btn primary disabled={!rename.title.trim()} onClick={saveName}>Save</Btn></>}>
           <Field label="NAME"><input autoFocus value={rename.title} maxLength={80} onChange={(e) => setRename({ ...rename, title: e.target.value })} /></Field>

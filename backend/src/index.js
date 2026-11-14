@@ -269,6 +269,7 @@ app.use('/api/job-broadcast', require('./routes/jobBroadcast'));
 app.use('/api/outreach', require('./routes/outreach'));
 app.use('/api/omni', require('./routes/omniShared')); // Omni-Channel shared API for the app screens: template library, app campaigns, replies, connections (own checks per route)
 app.use('/api/omni-gs', require('./routes/greenStartEmbed')); // status + session cookie for the embedded Green Start app
+app.use('/api/public/mk-review', require('./routes/mkClientReviewPublic')); // AI Marketing client approval link (signed token in the address, no login; marketing/clientReview.js)
 app.use('/api/public/outreach', require('./routes/outreachLibraryPublic')); // Library share links (token in the address, no login)
 app.use('/api/public/outreach', require('./routes/outreachFormsPublic')); // public capture forms: GET / POST /forms/:token (no login, honeypot + rate limit)
 app.use('/api/public/outreach', require('./routes/outreachPublic'));

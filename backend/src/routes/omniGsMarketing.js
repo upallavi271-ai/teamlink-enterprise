@@ -10,6 +10,7 @@ const Cfg = require('../marketing/settings');
 const C = require('../marketing/content');
 const Cal = require('../marketing/calendar');
 const Img = require('../marketing/images');
+const CR = require('../marketing/clientReview');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -71,7 +72,11 @@ router.post('/generate', mustWrite, wrap(async (req, res) => send(res, await C.g
 router.post('/revise', mustWrite, wrap(async (req, res) => send(res, await C.revise(req.user, req.body || {}))));
 
 // ---- content items (drafts, approval) ---------------------------------------------------------------------------------------------
-router.get('/items', wrap(async (req, res) => res.json(await C.list(req.user, { status: String(req.query.status || ''), q: req.query.q, mine: req.query.mine === '1' }))));
+router.get('/items', wrap(async (req, res) => {
+  const out = await C.list(req.user, { status: String(req.query.status || ''), q: req.query.q, mine: req.query.mine === '1' });
+  out.items = await CR.attach('content', out.items); // each item carries its latest client review (marketing/clientReview.js)
+  res.json(out);
+}));
 router.get('/items/:id', wrap(async (req, res) => {
   const g = await C.getRow(req.user, req.params.id);
   if (!g) return res.status(404).json({ error: 'This content was not found.' });
@@ -98,7 +103,11 @@ router.post('/calendar/:id/skip', mustWrite, wrap(async (req, res) => send(res, 
 
 // ---- AI images (marketing/images.js): Google Gemini pictures, approved before use --------------------------------------------------------------
 router.get('/images/meta', wrap(async (req, res) => res.json(await Img.meta(req.user))));
-router.get('/images', wrap(async (req, res) => res.json(await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' }))));
+router.get('/images', wrap(async (req, res) => {
+  const out = await Img.list(req.user, { status: String(req.query.status || ''), kind: ['image', 'video'].includes(req.query.kind) ? req.query.kind : '' });
+  out.items = await CR.attach('image', out.items);
+  res.json(out);
+}));
 // a person's own picture (PNG / JPEG / WebP, up to 10 MB) as raw bytes; the name comes in the address
 router.post('/images/upload', mustWrite, express.raw({ type: ['image/png', 'image/jpeg', 'image/webp'], limit: '11mb' }), wrap(async (req, res) => send(res, await Img.saveUpload(req.user, req.body, req.headers['content-type'], req.query || {}))));
 // AI Video: the slideshow made in the browser arrives as raw MP4 / WebM bytes (up to 40 MB); the details come in the address
@@ -119,6 +128,12 @@ router.delete('/images/:id', mustWrite, wrap(async (req, res) => send(res, await
 router.post('/images/:id/submit', mustWrite, wrap(async (req, res) => send(res, await Img.submit(req.user, req.params.id))));
 router.post('/images/:id/approve', wrap(async (req, res) => send(res, await Img.approve(req.user, req.params.id, (req.body || {}).note))));
 router.post('/images/:id/reject', wrap(async (req, res) => send(res, await Img.reject(req.user, req.params.id, (req.body || {}).note))));
+
+// ---- client approval (marketing/clientReview.js): after the team approves, the client approves on a private link --------------------------------------
+router.get('/client-reviews', wrap(async (req, res) => send(res, await CR.list(req.user, { kind: String(req.query.kind || ''), itemId: String(req.query.itemId || '') }))));
+router.post('/client-reviews', mustWrite, wrap(async (req, res) => send(res, await CR.create(req.user, req.body || {}))));
+router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => send(res, await CR.revoke(req.user, req.params.id))));
+router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 
 // ---- AI usage + limits -----------------------------------------------------------------------------------------------------------------
 router.get('/usage', mustWrite, wrap(async (req, res) => {

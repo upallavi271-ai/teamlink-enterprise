@@ -106,6 +106,18 @@ export async function downloadMkImg(id, name) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
+// the client approval badge on a card (marketing/clientReview.js); nothing for an item that was never sent or whose link was cancelled
+export function ClientChip({ cr }) {
+  if (!cr || cr.status === 'revoked') return null;
+  const stale = cr.outdated && cr.status !== 'sent';
+  const [tone, words] = stale ? ['warn', 'Changed after the client saw it']
+    : cr.status === 'approved' ? ['live', `✔ Client approved${cr.decidedByName ? `: ${cr.decidedByName}` : ''}`]
+      : cr.status === 'changes' ? ['red', '↩ Client asked for changes']
+        : cr.status === 'expired' ? ['draft', 'Client link expired']
+          : ['warn', cr.outdated ? 'Changed after the link was made' : '⏳ Waiting for the client'];
+  return <Pill tone={tone} dot title={`${cr.clientName}${cr.comment ? `: ${cr.comment}` : ''}`}>{words}</Pill>;
+}
+
 // a read-only look at the words of every channel (approvals, lists)
 export function TextsPreview({ chans, texts, subject }) {
   const have = chans.filter((c) => texts[c.key]);

@@ -3,7 +3,8 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { MkStatus, MkImg, downloadMkImg } from '../marketing/mk.jsx';
+import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
+import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame } from '../marketing/slideshow.js';
 import '../marketing/marketing.css';
 
@@ -48,6 +49,7 @@ export default function MkVideosPage() {
   const [busy, setBusy] = useState('');
   const [tab, setTab] = useState('');
   const [del, setDel] = useState(null);
+  const [toClient, setToClient] = useState(null); // the video being sent to a client
   const canvasRef = useRef(null);
   const stopRef = useRef(null);
   const urls = useRef([]);
@@ -168,13 +170,14 @@ export default function MkVideosPage() {
     <div key={v.id} className="card mki-card">
       <div style={{ aspectRatio: ratio(v.aspect), overflow: 'hidden', borderRadius: 10, background: '#000' }}><MkImg id={v.id} alt={v.title} video style={{ height: '100%', objectFit: 'contain', background: '#000' }} /></div>
       <b style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 8 }} title={v.title}>{v.title}</b>
-      <div style={{ margin: '3px 0' }}><MkStatus status={v.status} /></div>
+      <div style={{ margin: '3px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}><MkStatus status={v.status} /><ClientChip cr={v.clientReview} /></div>
       <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>{v.prompt} · {v.aspect} · {(v.bytes / 1048576).toFixed(1)} MB · {fmtDateTime(v.createdAt)}{!v.mine ? ` · ${v.createdByName}` : ''}</small>
       {v.status === 'changes' && v.note ? <div className="mk-note">Sent back by {v.decidedByName}: {v.note}</div> : null}
       <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
         <TinyBtn onClick={() => downloadMkImg(v.id, v.title).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download</TinyBtn>
         {v.canSubmit ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
+        {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setToClient(v)}>{v.clientReview && v.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
         {v.canDelete ? <TinyBtn onClick={() => setDel(v)} aria-label={`Delete ${v.title}`}>🗑</TinyBtn> : null}
       </div>
       {isClip && v.status === 'approved' ? <small style={{ fontSize: 9.5, color: '#166534' }}>Ready: pick it in step 1.</small> : null}
@@ -272,6 +275,7 @@ export default function MkVideosPage() {
         <Tabs value={tab} onChange={setTab} tabs={[['', 'All', videosAll.length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
         {shown.length === 0 ? <Empty title="No videos here yet">{videosAll.length ? 'Nothing with that status.' : 'Pick pictures or clips above and press Make the video.'}</Empty> : <div className="mki-grid">{shown.map((v) => card(v, false))}</div>}
       </Panel>
+      {toClient ? <ClientReviewModal kind="image" item={toClient} isVideo onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
       {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working and calendar posts that use it lose it.' : 'It is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
     </div>
   );
