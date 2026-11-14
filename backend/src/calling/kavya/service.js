@@ -283,7 +283,7 @@ async function sync(run) {
       await DB.run(
         'INSERT OR IGNORE INTO "KavyaCall" ("id","runId","kavyaCallId","applicationId","candidateId","phone","name","outcome","language","seconds","slot","reasonType","reason","area","distanceKm","answersJson","calledAt","createdAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
         id, run.id, c.call_id, person && person.applicationId, person && person.candidateId, ph, clip(c.name || (person && person.name), 80), row.outcome, row.language, row.seconds, row.slot, row.reasonType, row.reason, row.area, row.distanceKm,
-        JSON.stringify(c.answers || {}).slice(0, 20000), c.ts || null, DB.nowIso(),
+        JSON.stringify({ ...(c.answers || {}), _turns: (Array.isArray(c.turns) ? c.turns : []).slice(0, 80).map((t) => ({ who: t.who === 'ai' ? 'ai' : 'person', text: clip(t.text, 400) })) }).slice(0, 30000), c.ts || null, DB.nowIso(),
       );
       // eslint-disable-next-line no-await-in-loop
       if (run.source !== 'engine') await timelineLine(run, person, row); // engine runs: applyResult writes the timeline line
@@ -313,7 +313,7 @@ async function runDetail(user, id) {
   return {
     ok: true,
     run: shapeRun(r, calls),
-    calls: calls.map((c) => ({ id: c.id, applicationId: c.applicationId, name: c.name, phone: `xxxxxx${String(c.phone || '').slice(-4)}`, outcome: c.outcome, language: c.language, seconds: c.seconds, slot: c.slot, reasonType: c.reasonType, reason: c.reason, area: c.area, distanceKm: c.distanceKm, calledAt: c.calledAt })),
+    calls: calls.map((c) => ({ id: c.id, applicationId: c.applicationId, name: c.name, phone: `xxxxxx${String(c.phone || '').slice(-4)}`, outcome: c.outcome, language: c.language, seconds: c.seconds, slot: c.slot, reasonType: c.reasonType, reason: c.reason, area: c.area, distanceKm: c.distanceKm, calledAt: c.calledAt, turns: json(c.answersJson, {})._turns || [] })),
     waiting: people.filter((p) => !called.has(p.phone)).map((p) => ({ applicationId: p.applicationId, name: p.name })),
   };
 }

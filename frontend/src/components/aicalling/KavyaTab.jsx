@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Combo from '../Combo.jsx';
 import Modal from '../Modal.jsx';
@@ -238,7 +238,8 @@ function RunDetail({ id, onChanged }) {
               <thead><tr><th>Name</th><th>Phone</th><th>Result</th><th>Language</th><th>Seconds</th><th>Interview time asked</th><th>Why not</th><th>Stays in</th></tr></thead>
               <tbody>
                 {(d.calls || []).map((c) => (
-                  <tr key={c.id}>
+                  <Fragment key={c.id}>
+                  <tr>
                     <td style={{ whiteSpace: 'normal', minWidth: 120 }}><b>{c.name || '—'}</b></td>
                     <td>{c.phone}</td>
                     <td>{outcomeWord(c.outcome)}</td>
@@ -248,6 +249,16 @@ function RunDetail({ id, onChanged }) {
                     <td style={{ whiteSpace: 'normal' }}>{c.reasonType ? `${c.reasonType}${c.reason ? `: ${c.reason}` : ''}` : (c.reason || '—')}</td>
                     <td style={{ whiteSpace: 'normal' }}>{c.area ? `${c.area}${c.distanceKm !== '' && c.distanceKm != null ? ` (${c.distanceKm} km)` : ''}` : '—'}</td>
                   </tr>
+                  {c.turns && c.turns.length > 0 && (
+                    <tr><td colSpan={8} style={{ whiteSpace: 'normal' }}>
+                      <details><summary className="small-muted" style={{ cursor: 'pointer' }}>Conversation ({c.turns.length} lines)</summary>
+                        <div style={{ marginTop: 6 }}>{c.turns.map((t, i) => (
+                          <div key={i} style={{ margin: '3px 0' }}><b>{t.who === 'ai' ? 'Kavya' : (c.name || 'Candidate')}:</b> {t.text}</div>
+                        ))}</div>
+                      </details>
+                    </td></tr>
+                  )}
+                  </Fragment>
                 ))}
                 {d.waiting && d.waiting.map((w) => (
                   <tr key={w.applicationId}><td style={{ whiteSpace: 'normal' }}>{w.name}</td><td colSpan={7} className="small-muted">Waiting for Kavya&apos;s call</td></tr>
