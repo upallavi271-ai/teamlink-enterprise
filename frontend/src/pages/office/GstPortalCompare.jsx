@@ -129,6 +129,16 @@ export default function GstPortalCompare({ period, canManage, reloadKey }) {
             </tbody>
           </table>
         </div>
+        {d.unfiled && d.unfiled.list.length > 0 && (
+          <div className="notice" style={{ marginTop: 10 }}>
+            <span>
+              <b>Not in any portal figure yet: {d.unfiled.list.length} invoice{d.unfiled.list.length === 1 ? '' : 's'}</b>
+              {' '}— fee {money(d.unfiled.taxable)}, GST {money(d.unfiled.gst)}. These are billed, so the GST is owed, but the filed returns do not hold them:{' '}
+              {d.unfiled.list.map((u) => `${u.no} ${u.client.split(',')[0]} (${money(u.taxable)} + GST ${money(u.gst)})`).join(' · ')}.
+              {' '}They are left out of the month rows above so every filed month can match its return.
+            </span>
+          </div>
+        )}
         <div className="small-muted" style={{ marginTop: 6 }}>
           Diff = books − portal. A plus means our books show more than was filed (an invoice may be missing from the return, or filed in another month);
           a minus means the portal shows more than the books.

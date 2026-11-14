@@ -1666,6 +1666,14 @@ const GST_PORTAL_SEED = {
   '2026-08': { sTaxable: 962904, sIgst: 79017.12, sCgst: 47152.8, sSgst: 47152.8, pTaxable: 275686.38, pIgst: 13709.51, pCgst: 17901.98, pSgst: 17901.98 },
   '2026-09': { sTaxable: 614568, sIgst: 45736, sCgst: 32443, sSgst: 32443, pTaxable: 267948.21, pIgst: 17608.52, pCgst: 13013.6, pSgst: 17608.52 },
 };
+// Which invoices are NOT in the month their joining date says: { 'invoiceNumber': 'YYYY-MM' (filed in that month's return) | 'none' (in no return yet) }.
+// Seeded with the three invoices the May return does not hold (1854 Sharad, 1858 and 1858-1 Mamatha): in no portal figure, so owed, not filed.
+const GST_MONTH_KEY = 'gst.invoice.month';
+async function gstMonthOverrides() {
+  const row = await prisma.appSetting.findUnique({ where: { key: GST_MONTH_KEY } }).catch(() => null);
+  if (!row) return { 1854: 'none', 1858: 'none', '1858-1': 'none' };
+  try { return JSON.parse(row.value) || {}; } catch { return {}; }
+}
 async function gstPortalLoad() {
   const row = await prisma.appSetting.findUnique({ where: { key: GST_PORTAL_KEY } }).catch(() => null);
   if (!row) return { months: JSON.parse(JSON.stringify(GST_PORTAL_SEED)), seeded: true };
@@ -1683,7 +1691,13 @@ router.get('/gst-portal', async (req, res) => {
   const { months: stored, by, at } = await gstPortalLoad();
   const books = new Map();
   const slot = (k) => { if (!books.has(k)) books.set(k, { sTaxable: 0, sGst: 0, invoices: 0, pTaxable: 0, pGst: 0, bills: 0 }); return books.get(k); };
-  scope.invoices.forEach((i) => { const s = slot(joinMonthDay(i).slice(0, 7)); s.sTaxable += CNU.billedOf(i); s.sGst += CNU.gstBilledOf(i); s.invoices += 1; });
+  const ov = await gstMonthOverrides();
+  const unfiled = [];
+  scope.invoices.forEach((i) => {
+    const o = ov[i.invoiceNumber];
+    if (o === 'none') { unfiled.push({ no: i.invoiceNumber, client: i.client?.name || '', joined: i.joiningDate || null, taxable: ROUND(CNU.billedOf(i)), gst: ROUND(CNU.gstBilledOf(i)) }); return; }
+    const s = slot(/^\d{4}-\d{2}$/.test(o || '') ? o : joinMonthDay(i).slice(0, 7)); s.sTaxable += CNU.billedOf(i); s.sGst += CNU.gstBilledOf(i); s.invoices += 1;
+  });
   scope.all.filter((r) => r.gst > 0.5).forEach((r) => { const s = slot(String(r.expenseDate || '').slice(0, 7)); s.pTaxable += r.base; s.pGst += r.gst; s.bills += 1; });
   const { range } = scope;
   let keys;
@@ -1713,6 +1727,7 @@ router.get('/gst-portal', async (req, res) => {
     period: { all: !!range.all, label: range.label },
     updatedBy: by || null,
     updatedAt: at || null,
+    unfiled: { list: unfiled, taxable: ROUND(unfiled.reduce((x, u) => x + u.taxable, 0)), gst: ROUND(unfiled.reduce((x, u) => x + u.gst, 0)) },
     totals: {
       portal: { sTaxable: sumF((r) => r.portal.sTaxable), sGst: sumF((r) => r.portal.sGst), pTaxable: sumF((r) => r.portal.pTaxable), pGst: sumF((r) => r.portal.pGst) },
       booksFiledMonths: { sTaxable: sumF((r) => r.books.sTaxable), sGst: sumF((r) => r.books.sGst), pTaxable: sumF((r) => r.books.pTaxable), pGst: sumF((r) => r.books.pGst) },
@@ -1744,6 +1759,26 @@ router.put('/gst-portal', async (req, res) => {
     update: { value: JSON.stringify(months), updatedById: req.user.id, updatedByName: who },
   });
   await logAudit({ userId: req.user.id, action: req.body.clear === true ? 'GST portal figures removed' : 'GST portal figures entered', entity: 'GstPortalMonthly', toValue: month });
+  return res.json({ ok: true });
+});
+
+// Move one invoice to the month's return it was filed in, or mark it as in no return yet ('none'); clear = back to its joining month.
+router.put('/gst-invoice-month', async (req, res) => {
+  const no = String(req.body.no || '').trim();
+  const month = req.body.clear === true ? null : String(req.body.month || '');
+  if (!no) return res.status(400).json({ error: 'Invoice number is needed' });
+  if (month !== null && month !== 'none' && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "Month must look like 2026-07, or 'none'" });
+  const inv = await prisma.invoice.findUnique({ where: { invoiceNumber: no }, select: { id: true } });
+  if (!inv) return res.status(404).json({ error: 'No such invoice' });
+  const ov = await gstMonthOverrides();
+  if (month === null) delete ov[no]; else ov[no] = month;
+  const who = req.user.name || req.user.email || null;
+  await prisma.appSetting.upsert({
+    where: { key: GST_MONTH_KEY },
+    create: { key: GST_MONTH_KEY, value: JSON.stringify(ov), updatedById: req.user.id, updatedByName: who },
+    update: { value: JSON.stringify(ov), updatedById: req.user.id, updatedByName: who },
+  });
+  await logAudit({ userId: req.user.id, action: 'GST month of an invoice set', entity: 'Invoice', entityId: inv.id, toValue: `${no}: ${month === null ? 'joining month' : month}` });
   return res.json({ ok: true });
 });
 
