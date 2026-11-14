@@ -203,6 +203,8 @@ const COLUMNS = [
   // Customer master fields + human-readable codes (founder 2026-11-13, the 5-module blueprint)
   ['CrmAccount', 'gstin', 'TEXT'], ['CrmAccount', 'address', 'TEXT'], ['CrmAccount', 'state', 'TEXT'], ['CrmAccount', 'pincode', 'TEXT'], ['CrmAccount', 'tags', 'TEXT'],
   ['CrmLead', 'code', 'TEXT'], ['CrmDeal', 'code', 'TEXT'], ['CrmAccount', 'code', 'TEXT'],
+  // Follow-ups upgrade (founder 2026-11-14): priority, what came of it, and the one-time overdue alert to the managers
+  ['CrmTask', 'priority', 'TEXT'], ['CrmTask', 'outcome', 'TEXT'], ['CrmTask', 'escalatedAt', 'TEXT'],
 ];
 const INDEXES = [
   'CREATE INDEX IF NOT EXISTS "CrmLead_phone" ON "CrmLead"("phone")', 'CREATE INDEX IF NOT EXISTS "CrmLead_email" ON "CrmLead"("email")', 'CREATE INDEX IF NOT EXISTS "CrmLead_stage" ON "CrmLead"("stage")',

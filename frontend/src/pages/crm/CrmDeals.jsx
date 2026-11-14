@@ -1,10 +1,12 @@
 // CRM > DEALS (2026-11-02): the pipeline board - one column per stage (Prospecting ... Negotiation, Won, Lost) with the
 // count and value; drag a deal to move it (Lost asks the reason), or open it to log calls, set follow-ups and, once Won,
-// Won / Lost show the last 90 days. A list view is there too (sortable by value / close date).
+// Won / Lost show the last 90 days. A list view is there too (sortable by value / close date). Its third view is Invoices (the invoice
+// made when a deal is Won): the CRM stays at five modules (founder 2026-11-14: "4 to 5 modules kantey ekkuva vundakudadhu"), so money lives with deals.
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import { useCrm, errOf, money, moneyShort, dateOf, istToday, RecordForm, useMoveDeal, staleDays, download } from './crmShared.jsx';
+import CrmInvoices from './CrmInvoices.jsx';
 
 export default function CrmDeals() {
   const { me, toast, openRecord, version } = useCrm();
@@ -15,7 +17,7 @@ export default function CrmDeals() {
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
   const [owner, setOwner] = useState('');
-  const [view, setView] = useState('board');
+  const [view, setView] = useState(sp.get('view') === 'invoices' ? 'invoices' : 'board'); // ?view=invoices: the old /crm/invoices address
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
   const load = () => api.get('/crm/deals', { params: { q: q || undefined, owner: owner || undefined } })
@@ -64,18 +66,22 @@ export default function CrmDeals() {
           <div className="btn-group" role="group" aria-label="View">
             <button type="button" className={`btn btn-sm${view === 'board' ? ' btn-primary' : ''}`} onClick={() => setView('board')}>Board</button>
             <button type="button" className={`btn btn-sm${view === 'list' ? ' btn-primary' : ''}`} onClick={() => setView('list')}>List</button>
+            <button type="button" className={`btn btn-sm${view === 'invoices' ? ' btn-primary' : ''}`} onClick={() => setView('invoices')}>Invoices</button>
           </div>
-          {me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/deals', `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
-          {me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
+          {view !== 'invoices' && me.rights && me.rights.export && <button type="button" className="btn" onClick={() => download('/crm/export/deals', `crm-deals-${today}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}
+          {view !== 'invoices' && me.canCreate && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Deal</button>}
         </div>
       </div>
-      <div className="filter-row">
-        <input type="text" placeholder="Search deal or account" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search deals" />
-        {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
-        {me.canEdit && view === 'board' && <span className="small-muted">Drag a deal to its new stage.</span>}
-      </div>
-      {err && <div className="notice" role="alert">{err}</div>}
-      {rows == null && !err && <div className="small-muted">Loading…</div>}
+      {view !== 'invoices' && (
+        <div className="filter-row">
+          <input type="text" placeholder="Search deal or account" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 240 }} aria-label="Search deals" />
+          {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
+          {me.canEdit && view === 'board' && <span className="small-muted">Drag a deal to its new stage.</span>}
+        </div>
+      )}
+      {view === 'invoices' && <CrmInvoices embedded />}
+      {err && view !== 'invoices' && <div className="notice" role="alert">{err}</div>}
+      {rows == null && !err && view !== 'invoices' && <div className="small-muted">Loading…</div>}
       {rows && view === 'board' && (
         <div className="crm-board">
           {me.lists.stages.map((s) => {

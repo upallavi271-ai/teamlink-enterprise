@@ -15,7 +15,10 @@ const S = require('./service');
 const SETTINGS = require('./settings');
 
 const WEBSITE_KEY = 'crm.website';
-const TASK_TYPES = ['Call', 'Meeting', 'Email', 'WhatsApp', 'Other'];
+const TASK_TYPES = ['Call', 'Meeting', 'WhatsApp', 'Visit', 'Email', 'Other'];
+const PRIORITIES = ['High', 'Medium', 'Low'];
+// what came of a follow-up, picked when it is marked done (written on the timeline with the note)
+const OUTCOMES = ['Spoke', 'No answer', 'Meeting held', 'Sent details', 'Not interested'];
 const REMIND_BEFORE = [0, 15, 60, 1440]; // minutes
 
 // ---- the stage of a lead ---------------------------------------------------------------------------------
@@ -134,6 +137,7 @@ async function capture(body = {}, headerKey = '') {
   if (own) {
     await websiteWrite({ ...v, lastOwnerId: own.id });
     await prisma.notification.create({ data: { userId: own.id, title: `New website lead: ${saved.company}`, message: `Open: /crm/leads?open=lead:${saved.id}`, channel: 'In-App', recipient: `crm-web|${saved.id}`, status: 'Sent' } }).catch(() => {});
+    await firstFollowUp(saved).catch(() => null); // the first call, two hours on
   }
   return S.okBody({ ok: true, id: saved.id });
 }
@@ -144,6 +148,7 @@ async function taskExtras(body = {}) {
   const before = Number(body.remindBefore);
   return {
     type: TASK_TYPES.includes(body.type) ? body.type : 'Call',
+    priority: PRIORITIES.includes(body.priority) ? body.priority : 'Medium',
     notifyApp: body.notifyApp === false ? 0 : 1,
     notifyWhatsapp: body.notifyWhatsapp === true ? 1 : 0,
     notifySms: body.notifySms === true ? 1 : 0,
@@ -234,6 +239,71 @@ async function runDue({ now = Date.now(), deps = {} } = {}) {
   return sent;
 }
 
+// ---- the first call of a new lead (founder 2026-11-14: "lead create ayyaka first follow-up task auto ravali, 2 hrs lo call cheyyi") ------------
+// A lead typed in by hand or arriving from the website form with an owner gets "First call" as a High follow-up two hours from now (moved to
+// 10:00 when that falls outside 9 am - 7 pm India time). An Excel import and a lead nobody owns yet get none. CRM settings > First call can switch it off.
+async function firstFollowUp(lead, { now = Date.now() } = {}) {
+  if (!lead || !lead.id || !lead.ownerId) return null;
+  const st = await SETTINGS.load();
+  if (st.autoFirstFollowUp === false) return null;
+  const ist = new Date(now + 5.5 * 3600000 + 2 * 3600000); // two hours on, in India time
+  let dueDate = ist.toISOString().slice(0, 10);
+  let dueTime = ist.toISOString().slice(11, 16);
+  const h = ist.getUTCHours();
+  if (h >= 19) { dueDate = new Date(Date.parse(`${dueDate}T00:00:00Z`) + 86400000).toISOString().slice(0, 10); dueTime = '10:00'; } else if (h < 9) dueTime = '10:00';
+  const stamp = DB.nowIso();
+  return S.insert('CrmTask', {
+    id: S.newId('task'), title: `First call: ${lead.company}`, dueDate, dueTime, ...(await taskExtras({ type: 'Call', priority: 'High' })),
+    status: 'Open', leadId: lead.id, accountId: null, dealId: null, ownerId: lead.ownerId, ownerName: lead.ownerName || null, createdById: lead.createdById || null, createdAt: stamp, updatedAt: stamp,
+  });
+}
+
+// ---- overdue -> the managers (founder 2026-11-14: "overdue ayithe red mark, manager ki alert") ----------------------------------------------
+// A follow-up that is a day late (the red "Overdue" tab) is told to the Sales managers ONCE, one bell notice per salesperson listing what is late
+// (so ten late calls are one notice, not ten). Admins hear it only when no Sales manager is on the team. Switched off by CRM settings > Overdue alert.
+async function managersToTell() {
+  const st = await SETTINGS.load();
+  const managers = (st.salesTeam || []).filter((m) => m.role === 'manager' && m.userId).map((m) => m.userId);
+  if (managers.length) return [...new Set(managers)];
+  const admins = await prisma.user.findMany({ where: { role: { in: ['SUPER_ADMIN', 'ADMIN'] }, status: 'Active' }, select: { id: true }, take: 5 }).catch(() => []);
+  return admins.map((u) => u.id);
+}
+/** One pass: the follow-ups that became overdue since the last pass are told to the managers once. -> the number of follow-ups told. */
+async function escalateOverdue({ now = Date.now(), notify } = {}) {
+  const st = await SETTINGS.load();
+  if (st.overdueAlertManagers === false) return 0;
+  const today = new Date(now + 5.5 * 3600000).toISOString().slice(0, 10);
+  const rows = await DB.all(`SELECT t.*, COALESCE(d."title", l."company", a."name") AS "recordName",
+      CASE WHEN t."dealId" IS NOT NULL THEN 'deal' WHEN t."leadId" IS NOT NULL THEN 'lead' ELSE 'account' END AS "recordKind", COALESCE(t."dealId", t."leadId", t."accountId") AS "recordId"
+    FROM "CrmTask" t LEFT JOIN "CrmDeal" d ON d."id" = t."dealId" LEFT JOIN "CrmLead" l ON l."id" = t."leadId" LEFT JOIN "CrmAccount" a ON a."id" = t."accountId"
+    WHERE t."status" = 'Open' AND t."dueDate" < ? AND t."escalatedAt" IS NULL AND t."ownerId" IS NOT NULL ORDER BY t."dueDate" ASC LIMIT 500`, today);
+  if (!rows.length) return 0;
+  const managers = await managersToTell();
+  if (!managers.length) return 0; // nobody to tell: they stay un-alerted, and are told when a manager is added
+  const send = notify || require('../utils/notify').notifyUsers; // eslint-disable-line global-require
+  const byOwner = new Map();
+  for (const t of rows) {
+    // claimed first: two passes can never both tell
+    // eslint-disable-next-line no-await-in-loop
+    const claimed = await DB.run('UPDATE "CrmTask" SET "escalatedAt" = ? WHERE "id" = ? AND "escalatedAt" IS NULL', new Date(now).toISOString(), t.id);
+    if (Number(claimed) !== 1) continue; // eslint-disable-line no-continue
+    byOwner.set(t.ownerId, [...(byOwner.get(t.ownerId) || []), t]);
+  }
+  let told = 0;
+  for (const [ownerId, list] of byOwner) {
+    const to = managers.filter((id) => id !== ownerId);
+    if (!to.length) continue; // eslint-disable-line no-continue
+    const days = (t) => Math.max(1, Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${t.dueDate}T00:00:00Z`)) / 86400000));
+    const lines = list.slice(0, 6).map((t) => `- ${t.priority === 'High' ? '[High] ' : ''}${t.type || 'Call'}: ${t.title}${t.recordName ? ` (${t.recordName})` : ''}, ${days(t)} day${days(t) === 1 ? '' : 's'} late`);
+    if (list.length > 6) lines.push(`- and ${list.length - 6} more`);
+    const who = list[0].ownerName || 'A salesperson';
+    // eslint-disable-next-line no-await-in-loop
+    await send(to, { title: `⚠️ Overdue CRM follow-ups: ${who} has ${list.length}`, message: `${lines.join('\n')}\nOpen: /crm/followups` }).catch(() => null);
+    told += list.length;
+  }
+  return told;
+}
+
 module.exports = {
-  TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
+  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
 };

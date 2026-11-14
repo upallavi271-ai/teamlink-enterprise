@@ -57,11 +57,13 @@ router.post('/duplicates', wrap(async (req) => ({ status: 200, body: { duplicate
 
 router.get('/tasks', wrap(async (req) => {
   await CRM.remind({ userId: req.user.id }).catch(() => 0);
-  return { status: 200, body: { tasks: await CRM.tasks(req.user, { when: String(req.query.when || 'open'), mine: String(req.query.mine || '') === '1', all: String(req.query.all || '') === '1', from: req.query.from, to: req.query.to, owner: req.query.owner }) } };
+  return { status: 200, body: { tasks: await CRM.tasks(req.user, { when: String(req.query.when || 'open'), mine: String(req.query.mine || '') === '1', all: String(req.query.all || '') === '1', from: req.query.from, to: req.query.to, owner: req.query.owner, priority: String(req.query.priority || ''), type: String(req.query.type || '') }) } };
 }));
+router.get('/tasks/counts', wrap((req) => CRM.taskCounts(req.user, { owner: String(req.query.owner || '') })));
 router.post('/tasks', wrap((req) => CRM.addTask(req.user, req.body || {})));
-router.post('/tasks/:id/done', wrap((req) => CRM.finishTask(req.user, req.params.id, req.body && req.body.note)));
+router.post('/tasks/:id/done', wrap((req) => CRM.finishTask(req.user, req.params.id, req.body || {})));
 router.post('/tasks/:id/cancel', wrap((req) => SALES.cancelTask(req.user, req.params.id)));
+router.post('/tasks/:id/snooze', wrap((req) => CRM.snoozeTask(req.user, req.params.id, req.body || {})));
 // the lead pipeline, the website form and the on-screen reminders (crm/sales.js)
 router.post('/leads/:id/stage', wrap((req) => SALES.moveLead(req.user, req.params.id, req.body || {})));
 router.get('/website', wrap((req) => SALES.websiteGet(req.user)));
@@ -168,7 +170,11 @@ if (!process.env.TEST_MODE) setTimeout(() => CMP.resume().catch(() => {}), 30000
 if (!process.env.TEST_MODE && process.env.NODE_ENV !== 'test') {
   setInterval(() => {
     const h = new Date(Date.now() + 5.5 * 3600 * 1000).getUTCHours();
-    if (h >= 9 && h < 20) CRM.remind().catch((e) => console.error('[crm] reminders:', e.message)); // eslint-disable-line no-console
+    if (h >= 9 && h < 20) {
+      CRM.remind().catch((e) => console.error('[crm] reminders:', e.message)); // eslint-disable-line no-console
+      // a follow-up that went a day overdue is told to the Sales managers, once (crm/sales.js escalateOverdue)
+      SALES.escalateOverdue().catch((e) => console.error('[crm] overdue alert:', e.message)); // eslint-disable-line no-console
+    }
   }, 60 * 60 * 1000).unref();
   // the timed reminders: every minute, each sent once (crm/sales.js)
   setInterval(() => { SALES.runDue().catch((e) => console.error('[crm] timed reminders:', e.message)); }, 60 * 1000).unref(); // eslint-disable-line no-console

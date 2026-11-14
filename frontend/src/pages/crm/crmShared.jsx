@@ -29,6 +29,8 @@ export const moneyShort = (n) => {
 export const dateOf = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }); };
 export const dateTimeOf = (iso) => { if (!iso) return ''; const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); };
 export const istToday = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+// how many whole days a due date (yyyy-mm-dd) is behind today, at least 1 (only asked of a late follow-up)
+export const daysLate = (due) => Math.max(1, Math.round((Date.parse(`${istToday()}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86400000));
 export const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 // a deal still open with nothing logged for N days (CRM settings) is "going cold": the number of days, or 0
 export function staleDays(deal, lastActivity, limit) {
@@ -75,6 +77,9 @@ export function QuickContact({ phone, email }) {
   );
 }
 export const Pill = ({ v }) => (v ? <span className={`status ${STATUS_CLASS[v] || 'review'}`}>{v}</span> : null);
+// A follow-up's priority (2026-11-14): High is a red chip, Low a grey chip, Medium (also any follow-up from before priorities) plain quiet text
+const PRIORITY_STYLE = { High: { background: 'rgba(220, 38, 38, 0.12)', color: '#b42318' }, Low: { background: 'rgba(100, 116, 139, 0.14)', color: '#475569' } };
+export const PriorityPill = ({ v }) => (PRIORITY_STYLE[v] ? <span className="status" style={{ ...PRIORITY_STYLE[v], fontWeight: 700 }}>{v}</span> : <span className="small-muted" style={{ fontSize: 12 }}>{v === 'Medium' || !v ? 'Medium' : v}</span>);
 
 // ---- the forms -------------------------------------------------------------------------------------------
 function fieldsFor(kind, me) {
@@ -273,6 +278,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
   const [due, setDue] = useState(istToday());
   const [time, setTime] = useState('');
   const [type, setType] = useState('Call');
+  const [priority, setPriority] = useState('Medium');
   const [before, setBefore] = useState(String(me.lists.defaultRemindBefore));
   const [inApp, setInApp] = useState(true);
   const [wa, setWa] = useState(false);
@@ -282,7 +288,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
   const today = istToday();
   async function add() {
     setBusy(true);
-    try { await api.post('/crm/tasks', { title, dueDate: due, dueTime: time || undefined, type, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, ...link }); setTitle(''); setTime(''); toast('Follow-up added.'); onChanged(); } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); } finally { setBusy(false); }
+    try { await api.post('/crm/tasks', { title, dueDate: due, dueTime: time || undefined, type, priority, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, ...link }); setTitle(''); setTime(''); toast('Follow-up added.'); onChanged(); } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); } finally { setBusy(false); }
   }
   return (
     <div>
@@ -290,6 +296,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
         <div style={{ marginBottom: 8 }}>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
             <select value={type} onChange={(e) => setType(e.target.value)} style={{ width: 110 }} aria-label="Type">{me.lists.taskTypes.map((x) => <option key={x}>{x}</option>)}</select>
+            <select value={priority} onChange={(e) => setPriority(e.target.value)} style={{ width: 105 }} aria-label="Priority">{me.lists.priorities.map((x) => <option key={x} value={x}>{x} priority</option>)}</select>
             <input type="text" placeholder="New follow-up" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: '1 1 160px' }} />
             <input type="date" value={due} min={today} onChange={(e) => setDue(e.target.value)} style={{ width: 150 }} aria-label="Due date" />
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 110 }} aria-label="Due time" />
@@ -313,12 +320,17 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
               ? <input type="checkbox" checked={false} aria-label={`Mark "${t.title}" done`} onChange={() => setDoing(t)} style={{ marginTop: 3, width: 'auto' }} />
               : <span aria-hidden="true" style={{ width: 13 }}>{t.status === 'Done' ? '✓' : ''}</span>}
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: 13, textDecoration: t.status === 'Done' ? 'line-through' : undefined }}>{t.title}</div>
+              <div style={{ fontSize: 13 }}>
+                <span style={{ textDecoration: t.status === 'Done' ? 'line-through' : undefined }}>{t.title}</span>
+                {t.type && t.type !== 'Call' && <span className="small-muted"> · {t.type}</span>}
+                {t.status === 'Open' && (t.priority === 'High' || t.priority === 'Low') && <> <PriorityPill v={t.priority} /></>}
+              </div>
               <div className="small-muted" style={{ fontSize: 11.5 }}>
-                <span style={{ color: late ? 'var(--red)' : undefined, fontWeight: late ? 600 : undefined }}>{t.dueDate === today ? 'Today' : dateOf(t.dueDate)}{t.dueTime ? ` ${t.dueTime}` : ''}{late ? ' · late' : ''}</span>
+                <span style={{ color: late ? 'var(--red)' : undefined, fontWeight: late ? 600 : undefined }}>{t.dueDate === today ? 'Today' : dateOf(t.dueDate)}{t.dueTime ? ` ${t.dueTime}` : ''}{late ? ` · ${daysLate(t.dueDate)} day${daysLate(t.dueDate) === 1 ? '' : 's'} late` : ''}</span>
                 {showRecord && t.recordName && <> · <RecLink kind={t.recordKind} id={t.recordId}>{t.recordName}</RecLink></>}
                 {t.ownerName && showRecord ? ` · ${t.ownerName}` : ''}
               </div>
+              {t.status === 'Done' && (t.outcome || t.doneNote) && <div className="small-muted" style={{ fontSize: 11.5 }}>{[t.outcome, t.doneNote].filter(Boolean).join(' · ')}</div>}
             </div>
           </div>
         );

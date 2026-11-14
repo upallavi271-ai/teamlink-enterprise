@@ -19,10 +19,9 @@ import CrmLeads from './CrmLeads.jsx';
 import CrmDeals from './CrmDeals.jsx';
 import CrmAccounts from './CrmAccounts.jsx';
 import CrmFollowups from './CrmFollowups.jsx';
-import CrmInvoices from './CrmInvoices.jsx';
 import './crm.css';
 
-const PAGES = { dashboard: CrmDashboard, leads: CrmLeads, followups: CrmFollowups, deals: CrmDeals, invoices: CrmInvoices, accounts: CrmAccounts };
+const PAGES = { dashboard: CrmDashboard, leads: CrmLeads, followups: CrmFollowups, deals: CrmDeals, accounts: CrmAccounts };
 
 export default function CrmPage() {
   const { page } = useParams();
@@ -56,6 +55,7 @@ export default function CrmPage() {
   const ctx = useMemo(() => ({ me, toast, reloadMe, openRecord, version, changed }), [me, toast, reloadMe, openRecord, version, changed]);
 
   const Page = PAGES[page];
+  if (page === 'invoices') return <Navigate to="/crm/deals?view=invoices" replace />; // invoices are a view of Deals, not a module (the CRM stays at five)
   if (!Page) return <Navigate to="/crm/dashboard" replace />; // the old CRM addresses (forms, data tables ...) land on the dashboard
   if (err) return <div className="page"><div className="page-head"><div><h1>CRM</h1></div></div><div className="notice" role="alert">{err}</div></div>;
   if (!me) return <div className="page"><div className="small-muted">Loading the CRM…</div></div>;

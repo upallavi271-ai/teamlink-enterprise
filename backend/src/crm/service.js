@@ -348,7 +348,10 @@ async function create(user, kind, body = {}) {
   if (CODE_PREFIX[kind]) { const [code] = await nextCodes(kind, 1); if (code) row.code = code; }
   const saved = await insert(KINDS[kind].table, row);
   await audit(user, `CRM ${KINDS[kind].label.toLowerCase()} added`, KINDS[kind].table, saved.id, `${saved.code ? `${saved.code} · ` : ''}${saved[KINDS[kind].name]}`);
-  return okBody({ ok: true, [kind]: saved });
+  // a new lead gets its first call as a follow-up straight away (crm/sales.js firstFollowUp); an Excel import does not come through here
+  let firstFollowUp = null;
+  if (kind === 'lead') firstFollowUp = await require('./sales').firstFollowUp(saved).catch(() => null); // eslint-disable-line global-require
+  return okBody({ ok: true, [kind]: saved, ...(firstFollowUp ? { firstFollowUp } : {}) });
 }
 
 async function edit(user, kind, id, body = {}) {
@@ -615,21 +618,60 @@ async function addTask(user, body = {}) {
   return okBody({ ok: true, task: t.task });
 }
 
-async function finishTask(user, id, note) {
+// A follow-up done = what happened + what came of it + (optionally) the next follow-up, all at once (founder 2026-11-14). The outcome and the
+// note go on the record's timeline as a call / meeting / email / WhatsApp, so the timeline is the one history of every contact. `input` is a
+// plain note (older callers) or { note, outcome, next: { dueDate, dueTime, title, type, priority } }.
+const TASK_ACTIVITY = { Call: 'call', Meeting: 'meeting', Visit: 'meeting', Email: 'email', WhatsApp: 'whatsapp' };
+async function finishTask(user, id, input) {
+  const body = input && typeof input === 'object' ? input : { note: input };
   const r = roleOf(user);
   const row = await getRow('CrmTask', id);
   if (!canEditRow(user, r, row)) return fail(404, 'This follow-up is not there, or it is not yours.');
   if (row.status === 'Done') return okBody({ ok: true, task: row });
+  const SALES = require('./sales'); // eslint-disable-line global-require
+  const outcome = SALES.OUTCOMES.includes(body.outcome) ? body.outcome : null;
+  const note = clip(body.note, 1000);
+  const nx = body.next && body.next.dueDate ? body.next : null;
+  if (nx && !YMD.test(clip(nx.dueDate, 10))) return fail(400, 'Pick a proper date for the next follow-up.'); // checked first: nothing is saved on a bad date
+  if (nx && nx.dueTime && !HM.test(clip(nx.dueTime, 5))) return fail(400, 'Pick a proper time for the next follow-up.');
   const now = DB.nowIso();
-  const task = await update('CrmTask', row.id, { status: 'Done', doneAt: now, doneNote: clip(note, 1000), updatedAt: now });
-  return okBody({ ok: true, task });
+  const task = await update('CrmTask', row.id, { status: 'Done', doneAt: now, doneNote: note, outcome, updatedAt: now });
+  const kind = TASK_ACTIVITY[row.type] || 'note';
+  const what = outcome || note;
+  let activity = null;
+  if (what) {
+    activity = await insert('CrmActivity', {
+      id: newId('act'), kind, subject: `${row.type || 'Follow-up'} done: ${row.title}`, note: [outcome ? `Outcome: ${outcome}` : '', note].filter(Boolean).join('. ') || null, at: now,
+      leadId: row.leadId || null, accountId: row.accountId || null, dealId: row.dealId || null, byId: user.id, byName: user.name || null, createdAt: now,
+    });
+  }
+  // the record was touched (it is not "quiet" any more); a New lead that was reached is Contacted
+  const table = row.dealId ? 'CrmDeal' : row.leadId ? 'CrmLead' : row.accountId ? 'CrmAccount' : null;
+  const recId = row.dealId || row.leadId || row.accountId;
+  if (table) await update(table, recId, { updatedAt: now });
+  if (!row.dealId && row.leadId && kind !== 'note' && outcome !== 'No answer') {
+    await DB.run('UPDATE "CrmLead" SET "status" = ? WHERE "id" = ? AND "status" = ?', 'Contacted', row.leadId, 'New');
+  }
+  let next = null;
+  if (nx) {
+    next = await insert('CrmTask', {
+      id: newId('task'), title: clip(nx.title, 200) || row.title, dueDate: clip(nx.dueDate, 10), dueTime: nx.dueTime ? clip(nx.dueTime, 5) : null,
+      ...(await SALES.taskExtras({ type: nx.type || row.type, priority: nx.priority || row.priority, remindBefore: row.remindBefore, notifyApp: row.notifyApp !== 0, notifyWhatsapp: row.notifyWhatsapp === 1, notifySms: row.notifySms === 1, notifyLead: row.notifyLead === 1 })),
+      status: 'Open', leadId: row.leadId || null, accountId: row.accountId || null, dealId: row.dealId || null,
+      ownerId: row.ownerId, ownerName: row.ownerName, createdById: user.id, createdAt: now, updatedAt: now,
+    });
+  }
+  return okBody({ ok: true, task, next, activity });
 }
 
 // Follow-ups in my scope: overdue, today, upcoming (7 days), or done (last 30 days). mine=1: only mine.
-async function tasks(user, { when = 'open', mine, all, from, to, owner } = {}) {
+async function tasks(user, { when = 'open', mine, all, from, to, owner, priority, type } = {}) {
   const r = roleOf(user);
   const s = (mine || !seesAll(r)) ? { sql: 't."ownerId" = ?', params: [user.id] } : { sql: '1=1', params: [] };
   if (owner && seesAll(r)) { s.sql += ' AND t."ownerId" = ?'; s.params.push(clip(owner, 60)); }
+  // High / Medium / Low (a follow-up from before priorities counts as Medium)
+  if (['High', 'Medium', 'Low'].includes(priority)) { s.sql += priority === 'Medium' ? ' AND COALESCE(t."priority", \'Medium\') = ?' : ' AND t."priority" = ?'; s.params.push(priority); }
+  if (type) { s.sql += ' AND COALESCE(t."type", \'Call\') = ?'; s.params.push(clip(type, 20)); }
   if (from && YMD.test(from)) { s.sql += ' AND t."dueDate" >= ?'; s.params.push(from); }
   if (to && YMD.test(to)) { s.sql += ' AND t."dueDate" <= ?'; s.params.push(to); }
   const today = istToday();
@@ -645,7 +687,36 @@ async function tasks(user, { when = 'open', mine, all, from, to, owner } = {}) {
       CASE WHEN t."dealId" IS NOT NULL THEN 'deal' WHEN t."leadId" IS NOT NULL THEN 'lead' ELSE 'account' END AS "recordKind",
       COALESCE(t."dealId", t."leadId", t."accountId") AS "recordId"
     FROM "CrmTask" t LEFT JOIN "CrmDeal" d ON d."id" = t."dealId" LEFT JOIN "CrmLead" l ON l."id" = t."leadId" LEFT JOIN "CrmAccount" a ON a."id" = t."accountId"
-    WHERE ${s.sql} AND ${cond[0]} ORDER BY t."dueDate" ${when === 'done' ? 'DESC' : 'ASC'}, t."dueTime" ASC LIMIT 300`, ...s.params, ...cond[1]);
+    WHERE ${s.sql} AND ${cond[0]} ORDER BY t."dueDate" ${when === 'done' ? 'DESC' : 'ASC'}, CASE COALESCE(t."priority", 'Medium') WHEN 'High' THEN 0 WHEN 'Low' THEN 2 ELSE 1 END ASC, t."dueTime" ASC LIMIT 300`, ...s.params, ...cond[1]);
+}
+// Move an open follow-up to another day (and time): "snooze". It reminds again and, if it is late again, tells the managers again (founder 2026-11-14).
+async function snoozeTask(user, id, { dueDate, dueTime } = {}) {
+  const r = roleOf(user);
+  const row = await getRow('CrmTask', id);
+  if (!canEditRow(user, r, row)) return fail(404, 'This follow-up is not there, or it is not yours.');
+  if (row.status !== 'Open') return fail(409, 'Only an open follow-up can be moved.');
+  const date = clip(dueDate, 10);
+  if (!date || !YMD.test(date)) return fail(400, 'Pick the new date.');
+  if (date < istToday()) return fail(400, 'Pick today or a later day.');
+  const time = dueTime === undefined ? row.dueTime : (clip(dueTime, 5) || null);
+  if (time && !HM.test(time)) return fail(400, 'Pick a proper time.');
+  const now = DB.nowIso();
+  const task = await update('CrmTask', row.id, { dueDate: date, dueTime: time || null, reminderSentAt: null, remindedOn: null, escalatedAt: null, reminderNote: null, updatedAt: now });
+  await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Follow-up moved: ${row.title}`, note: `${row.dueDate}${row.dueTime ? ` ${row.dueTime}` : ''} → ${date}${time ? ` ${time}` : ''}`, at: now, leadId: row.leadId || null, accountId: row.accountId || null, dealId: row.dealId || null, byId: user.id, byName: user.name || null, createdAt: now });
+  return okBody({ ok: true, task });
+}
+// The numbers on the Follow-ups tabs: how many are overdue, due today and still to come, in the viewer's scope.
+async function taskCounts(user, { owner } = {}) {
+  const r = roleOf(user);
+  const s = !seesAll(r) ? { sql: 't."ownerId" = ?', params: [user.id] } : { sql: '1=1', params: [] };
+  if (owner && seesAll(r)) { s.sql += ' AND t."ownerId" = ?'; s.params.push(clip(owner, 60)); }
+  const today = istToday();
+  const one = await DB.one(`SELECT
+      SUM(CASE WHEN t."dueDate" < ? THEN 1 ELSE 0 END) AS "overdue",
+      SUM(CASE WHEN t."dueDate" = ? THEN 1 ELSE 0 END) AS "today",
+      SUM(CASE WHEN t."dueDate" > ? THEN 1 ELSE 0 END) AS "upcoming"
+    FROM "CrmTask" t WHERE t."status" = 'Open' AND ${s.sql}`, today, today, today, ...s.params);
+  return okBody({ counts: { overdue: Number(one && one.overdue) || 0, today: Number(one && one.today) || 0, upcoming: Number(one && one.upcoming) || 0 } });
 }
 
 // ---- reminders: a bell notice (and an email) to the owner the day a follow-up is due, and once a day while it is late --
@@ -771,12 +842,12 @@ async function me(user) {
     salesTeam: mayAssign(r) ? st.salesTeam : [], // the CRM's own team: who may open it, and each one's rights
     team: mayAssign(r) ? { roles: SETTINGS.ROLES, rights: SETTINGS.RIGHTS, roleRights: SETTINGS.ROLE_RIGHTS } : null,
     invoiceFrom: st.invoiceFrom, invoiceTaxPercent: st.invoiceTaxPercent, invoiceDueDays: st.invoiceDueDays, meetingLink: st.meetingLink, bookingHours: st.bookingHours, discountApprovalLimit: st.discountApprovalLimit,
-    lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'Email', 'WhatsApp', 'Other'], defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
+    lists: { leadStages: st.leadStages, taskTypes: ['Call', 'Meeting', 'WhatsApp', 'Visit', 'Email', 'Other'], priorities: ['High', 'Medium', 'Low'], outcomes: ['Spoke', 'No answer', 'Meeting held', 'Sent details', 'Not interested'], overdueAlertManagers: st.overdueAlertManagers !== false, autoFirstFollowUp: st.autoFirstFollowUp !== false, defaultRemindBefore: st.defaultRemindBefore, stages: STAGES, stageProbability: st.stageProbability, leadStatuses: LEAD_STATUSES, sources: st.sources, contactRoles: CONTACT_ROLES, activityKinds: ACTIVITY_KINDS, lostReasons: st.lostReasons, ratings: RATINGS, staleDays: st.staleDays, proposalValidityDays: st.proposalValidityDays, ...ticketLists() },
   });
 }
 
 module.exports = {
-  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, invoiceForDeal, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
+  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, invoiceForDeal, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
   ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,

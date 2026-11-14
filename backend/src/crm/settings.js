@@ -30,6 +30,8 @@ const DEFAULTS = {
   // the stages of a LEAD (crm/sales.js); a deal keeps its own stages, above. Won and Lost always stay, last.
   leadStages: [{ name: 'New', color: '#64748b' }, { name: 'Contacted', color: '#2563eb' }, { name: 'Qualified', color: '#7c3aed' }, { name: 'Proposal', color: '#d97706' }, { name: 'Negotiation', color: '#ea580c' }, { name: 'Won', color: '#16a34a' }, { name: 'Lost', color: '#dc2626' }],
   defaultRemindBefore: 15,
+  overdueAlertManagers: true, // a follow-up a day late is told to the Sales managers once (crm/sales.js escalateOverdue)
+  autoFirstFollowUp: true, // a new lead with an owner gets "First call" as a follow-up two hours on (crm/sales.js firstFollowUp)
 };
 
 // THE CRM IS ITS OWN MODULE (founder 2026-11-11: "crm completely separate, dhenitho combine cheyyoddhu"): who may open it and what they
@@ -119,6 +121,8 @@ function normalize(raw = {}) {
     meetingLink: /^https?:\/\//i.test(String(raw.meetingLink || '').trim()) ? String(raw.meetingLink).trim().slice(0, 300) : '', bookingHours,
     defaultRemindBefore: [0, 15, 60, 1440].includes(Number(raw.defaultRemindBefore)) ? Number(raw.defaultRemindBefore) : DEFAULTS.defaultRemindBefore,
     staleDays: Number.isFinite(stale) && stale >= 1 && stale <= 365 ? stale : DEFAULTS.staleDays,
+    overdueAlertManagers: raw.overdueAlertManagers !== false && raw.overdueAlertManagers !== 0 && raw.overdueAlertManagers !== 'false',
+    autoFirstFollowUp: raw.autoFirstFollowUp !== false && raw.autoFirstFollowUp !== 0 && raw.autoFirstFollowUp !== 'false',
     proposalValidityDays: Number.isFinite(valid) && valid >= 1 && valid <= 365 ? valid : DEFAULTS.proposalValidityDays,
     discountApprovalLimit: Number.isFinite(discLimit) && discLimit >= 0 && discLimit <= 100 ? discLimit : DEFAULTS.discountApprovalLimit,
   };

@@ -272,13 +272,15 @@ export function CrmSettings({ onClose, onSaved }) {
   const addMember = (p) => { setF((x) => (x.salesTeam.some((m) => m.userId === p.id) ? x : { ...x, salesTeam: [...x.salesTeam, { userId: p.id, name: p.name, role: 'rep', seeAll: false, rights: { ...(roleRights.rep || {}) } }] })); setQ(''); setFound([]); };
   const [stages, setStages] = useState(L.leadStages.map((s) => ({ ...s })));
   const [before, setBefore] = useState(String(L.defaultRemindBefore));
+  const [overdueAlert, setOverdueAlert] = useState(L.overdueAlertManagers !== false);
+  const [firstCall, setFirstCall] = useState(L.autoFirstFollowUp !== false);
   const open = stages.filter((s) => !['Won', 'Lost'].includes(s.name));
   const setOpen = (list) => setStages([...list, ...stages.filter((s) => ['Won', 'Lost'].includes(s.name))]);
   const [busy, setBusy] = useState(false);
   async function save() {
     setBusy(true);
     try {
-      await api.put('/crm/settings', { ...f, sources: f.sources.split('\n'), lostReasons: f.lostReasons.split('\n'), leadStages: stages, defaultRemindBefore: Number(before) });
+      await api.put('/crm/settings', { ...f, sources: f.sources.split('\n'), lostReasons: f.lostReasons.split('\n'), leadStages: stages, defaultRemindBefore: Number(before), overdueAlertManagers: overdueAlert, autoFirstFollowUp: firstCall });
       toast('CRM settings saved.'); onSaved();
     } catch (e) { toast(errOf(e, 'The settings could not be saved.')); } finally { setBusy(false); }
   }
@@ -356,6 +358,8 @@ export function CrmSettings({ onClose, onSaved }) {
       ))}
       <button type="button" className="btn btn-sm" style={{ marginBottom: 14 }} onClick={() => setOpen([...open, { name: '', color: '#64748b' }])}>+ Stage</button>
       <div className="field" style={{ maxWidth: 260 }}><label>Default reminder for a new follow-up</label><select value={before} onChange={(e) => setBefore(e.target.value)}><option value="0">At the time</option><option value="15">15 minutes before</option><option value="60">1 hour before</option><option value="1440">1 day before</option></select></div>
+      <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '6px 0 10px', fontWeight: 500 }}><input type="checkbox" checked={overdueAlert} onChange={(e) => setOverdueAlert(e.target.checked)} style={{ width: 'auto' }} /> Tell the Sales managers when a follow-up is a day overdue (one notice per salesperson, sent once)</label>
+      <label style={{ display: 'flex', gap: 6, alignItems: 'center', margin: '0 0 10px', fontWeight: 500 }}><input type="checkbox" checked={firstCall} onChange={(e) => setFirstCall(e.target.checked)} style={{ width: 'auto' }} /> Make a &quot;First call&quot; follow-up two hours after a new lead is added (typed in or from the website form, not an Excel import)</label>
       <WebsiteForm />
       <CrmAutoSettings />
       <div className="section-label">Probability of each stage (%)</div>

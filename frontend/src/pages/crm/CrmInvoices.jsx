@@ -1,11 +1,12 @@
-// CRM > INVOICES (founder 2026-11-13, the 5-module blueprint: "Won -> Customer + invoice -> Payment"). The CRM's OWN invoices,
+// CRM > DEALS > INVOICES (founder 2026-11-13, the 5-module blueprint: "Won -> Customer + invoice -> Payment"). The CRM's OWN invoices,
 // raised when a deal is Won: what is owed, what is overdue and what is paid. Self-contained - never the ATS Accounts invoices
-// ("crm mottham separate application"). A salesperson sees their own, a manager / Admin everyone's.
+// ("crm mottham separate application"). A salesperson sees their own, a manager / Admin everyone's. It is a view of the Deals page
+// (`embedded`), not a module of its own: the CRM stays at five (founder 2026-11-14).
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, INVOICE_STATUSES } from './crmShared.jsx';
 
-export default function CrmInvoices() {
+export default function CrmInvoices({ embedded = false }) {
   const { me, toast, openRecord, version } = useCrm();
   const [rows, setRows] = useState(null);
   const [err, setErr] = useState('');
@@ -23,13 +24,17 @@ export default function CrmInvoices() {
   const replace = (inv) => setRows((list) => (list || []).map((x) => (x.id === inv.id ? inv : x)));
 
   return (
-    <div className="page">
-      <div className="page-head">
-        <div>
-          <h1>Invoices</h1>
-          <div className="page-sub">{rows ? `${rows.length} invoice${rows.length === 1 ? '' : 's'} · raised automatically when a deal is Won` : 'Raised when a deal is Won'}</div>
-        </div>
-      </div>
+    <div className={embedded ? undefined : 'page'}>
+      {embedded
+        ? <div className="small-muted" style={{ margin: '0 0 10px' }}>{rows ? `${rows.length} invoice${rows.length === 1 ? '' : 's'} · each is raised automatically when a deal is Won` : 'Raised when a deal is Won'}</div>
+        : (
+          <div className="page-head">
+            <div>
+              <h1>Invoices</h1>
+              <div className="page-sub">{rows ? `${rows.length} invoice${rows.length === 1 ? '' : 's'} · raised automatically when a deal is Won` : 'Raised when a deal is Won'}</div>
+            </div>
+          </div>
+        )}
       {rows && (
         <div className="crm-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
           <div className="card" style={{ padding: 12 }}><div className="small-muted">Yet to be received</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(owed)}</div></div>
