@@ -8,7 +8,7 @@ import '../marketing/marketing.css';
 // Server: marketing/reports.js. Read only.
 const RANGES = [['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['month', 'This month'], ['lastmonth', 'Last month'], ['custom', 'Pick dates']];
 const PLAT = { facebook: 'Facebook', instagram: 'Instagram', linkedin: 'LinkedIn', x: 'X', whatsapp: 'WhatsApp', email: 'Email', sms: 'SMS', rcs: 'RCS' };
-const TASK = { 'content/draft': 'AI Content: write versions', 'content/revise': 'AI Content: rewrite', 'calendar/plan': 'Calendar: plan a week', 'images/create': 'AI Images: make pictures', 'clips/create': 'AI clips: make a clip' };
+const TASK = { 'content/draft': 'AI Content: write versions', 'content/revise': 'AI Content: rewrite', 'calendar/plan': 'Calendar: plan a week', 'images/create': 'AI Images: make pictures', 'clips/create': 'AI clips: make a clip', 'studio/video': 'Create from a prompt: video plan', 'studio/post': 'Create from a prompt: post plan' };
 const today = () => new Date(Date.now() + 19800000).toISOString().slice(0, 10);
 const hrs = (h) => (h == null ? '—' : h < 1 ? 'under 1 hour' : h < 48 ? `${h} h` : `${Math.round(h / 24)} days`);
 

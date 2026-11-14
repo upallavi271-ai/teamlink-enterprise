@@ -6,7 +6,7 @@ import { AiBanner, aiLabel } from '../marketing/mk.jsx';
 
 // AI MARKETING > AI USAGE: every AI request (who, which module, which model, how big, how long), the limits, and which AI parts are connected.
 const SLOT = { text: 'Text', image: 'Images', video: 'Videos', audio: 'Audio' };
-const TASK = { draft: 'Wrote versions', revise: 'Rewrote one message' };
+const TASK = { draft: 'Wrote versions', revise: 'Rewrote one message', video: 'Planned a video from a prompt', post: 'Planned a post from a prompt' };
 export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);

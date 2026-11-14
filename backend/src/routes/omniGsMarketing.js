@@ -160,6 +160,9 @@ router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => se
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
+// ---- create from a prompt (marketing/autostudio.js): one sentence -> the plan of a video / picture post (pictures and the video are then made by the screen) ------------------
+router.post('/studio/plan', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/autostudio').plan(req.user, req.body || {}))));
+
 // ---- client projects (marketing/projects.js): a client's request -> accepted -> options shown -> the client picks one -> posted ----------------------------
 router.get('/projects/meta', mustWrite, wrap(async (req, res) => res.json({ sources: Prj.SOURCES, deliverables: Prj.DELIVERABLES, platforms: Prj.PLATFORM_KEYS.map((k) => ({ key: k, label: Prj.PLATFORM_LABEL[k] })) })));
 router.get('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.list(req.user, { status: String(req.query.status || ''), q: String(req.query.q || '') }))));

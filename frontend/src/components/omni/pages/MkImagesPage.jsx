@@ -5,6 +5,7 @@ import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, GsModal, fmtDateTime } from '../ui.jsx';
 import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
+import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > AI IMAGES: marketing pictures from a short description with Google Gemini, in the brand colours and with the logo when the model can.
@@ -112,6 +113,7 @@ export default function MkImagesPage() {
           </>
         ) : null}
       </PageHead>
+      {meta.canWrite ? <AutoStudioPanel kind="post" projectId={projectId} onMade={load} toast={toast} /> : null}
       {proj ? (
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', background: '#eef6ff', border: '1px solid #c9defa', borderRadius: 10, padding: '9px 12px', margin: '0 0 12px', fontSize: 12, color: '#1d4fa8' }}>
           <span><b>Making pictures for {proj.clientName}</b>{proj.occasion ? ` · ${proj.occasion}` : ''}. {proj.hasLogo ? 'Their logo and colours are used.' : 'No logo is saved for this client yet: add one in the project.'} Then go back to the project and pick them as options.</span>

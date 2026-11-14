@@ -7,6 +7,7 @@ import { MkStatus, MkImg, downloadMkImg, ClientChip, useMkMeta } from '../market
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
 import StockClipPanel from '../marketing/StockClipPanel.jsx';
+import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
 import { FORMATS, MOTIONS, recordType, timeline, play, drawFrame } from '../marketing/slideshow.js';
 import '../marketing/marketing.css';
 
@@ -109,6 +110,21 @@ export default function MkVideosPage() {
   const tl = timeline(data ? data.pics : [], Number(f.secPer), Number(f.clipSec));
   const ready = pick.length > 0 && pick.every((p) => (p.kind === 'clip' ? vids[p.id] : imgs[p.id]));
 
+  // "Create from a prompt": its pictures become the scenes of the video and the video is made at once (the person then watches it and presses Save)
+  const [autoGo, setAutoGo] = useState(false);
+  const runRef = useRef(null);
+  const startAuto = (plan, ids) => {
+    setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3 }));
+    setPick(ids.map((id, i) => ({ id, kind: 'image', caption: (plan.scenes[i] && plan.scenes[i].caption) || '' })));
+    setAutoGo(true);
+  };
+  useEffect(() => {
+    if (!autoGo || !ready || mode || !recordType(false)) return;
+    setAutoGo(false);
+    if (canvasRef.current && canvasRef.current.scrollIntoView) canvasRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    if (runRef.current) runRef.current(true);
+  }, [autoGo, ready, mode]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // a still of the first scene after the intro whenever something changes and nothing is playing
   useEffect(() => {
     const c = canvasRef.current; if (!c || !data || mode) return;
@@ -136,6 +152,7 @@ export default function MkVideosPage() {
       },
     });
   };
+  runRef.current = run;
   const stop = () => { if (stopRef.current) stopRef.current(); };
   const download = () => { const a = document.createElement('a'); a.href = made.url; a.download = `${(f.title || 'video').replace(/[^\w\- ]+/g, '').slice(0, 60) || 'video'}.${made.type.includes('mp4') ? 'mp4' : 'webm'}`; document.body.appendChild(a); a.click(); a.remove(); };
   const save = async (andSubmit) => {
@@ -223,6 +240,7 @@ export default function MkVideosPage() {
       {canWrite ? (
         <>
           <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
+          <AutoStudioPanel kind="video" projectId={projectId} onVideo={startAuto} onMade={load} toast={toast} />
           <StockClipPanel toast={toast} onMade={load} />
           <AiClipPanel pictures={pics} toast={toast} onMade={load} />
           <Panel title="1 · Pick the pictures and clips" sub={sources.length ? `Tap them in the order they should play (up to 8). ${pick.length} picked.` : undefined}>
