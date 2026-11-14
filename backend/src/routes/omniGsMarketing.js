@@ -35,7 +35,7 @@ router.get('/meta', wrap(async (req, res) => {
     channels: C.CHANNELS, goals: C.GOALS, tones: St.VOICES, languages: Cfg.LANGUAGES,
     ai: await AI.status(),
     canWrite: A.has('mayAiMarketing')(u), canApproveAny: A.has('mayAiApprove')(u) || A.isAdmin(u), isAdmin: A.isAdmin(u),
-    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove },
+    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove, clientRequired: set.clientRequired, clientFor: set.clientFor },
   });
 }));
 
@@ -188,7 +188,10 @@ router.put('/settings', mustAdmin, wrap(async (req, res) => {
   const c = Cfg.cleanSettings(req.body || {}, cur);
   if (c.error) return res.status(400).json({ error: c.error });
   await Cfg.saveSettings(c.value);
-  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: AI limits changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `${c.value.aiDailyPerUser} per person per day; company month limit ${c.value.aiMonthlyCap || 'none'}; Admin may approve own content: ${c.value.selfApprove ? 'yes' : 'no'}` });
+  await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: AI limits changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `${c.value.aiDailyPerUser} per person per day; company month limit ${c.value.aiMonthlyCap || 'none'}; Admin may approve own content: ${c.value.selfApprove ? 'yes' : 'no'}; client must approve: ${c.value.clientRequired ? `ON for ${c.value.clientFor.join(', ')}` : 'off'}` });
+  if (c.value.clientRequired !== cur.clientRequired || JSON.stringify(c.value.clientFor) !== JSON.stringify(cur.clientFor)) {
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: c.value.clientRequired ? 'Omni-Channel AI Marketing: rule switched ON - only a client can approve' : 'Omni-Channel AI Marketing: rule "only a client can approve" switched off', entity: 'OmniMkSettings', entityId: 'settings', toValue: c.value.clientRequired ? c.value.clientFor.join(', ') : 'off' });
+  }
   return res.json({ ok: 'Saved.', settings: await Cfg.getSettings() });
 }));
 

@@ -288,8 +288,13 @@ const secret = () => process.env.MK_IMAGE_SECRET || process.env.JWT_SECRET || 't
 const sign = (id) => crypto.createHmac('sha256', secret()).update(`mk-image:${id}`).digest('base64url').slice(0, 32);
 const publicPath = (r) => `/api/mk-image/${r.id}/${sign(r.id)}.${EXT[r.mime] || 'png'}`;
 
+// the Admin rule "only a client can approve this kind" (settings.js clientRequired / clientFor): pictures and finished videos; a raw clip never needs a client
+const clientKind = (r) => (isVideo(r) ? (r.style === 'clip' ? null : 'videos') : 'pictures');
+const gated = (set, r) => { const k = clientKind(r); return !!k && Cfg.clientNeeded(set, k); };
+const GATED_WORDS = (r) => `Your company requires the CLIENT to approve ${isVideo(r) ? 'videos' : 'pictures'}`;
 function view(u, r, set) {
   return {
+    needsClient: gated(set, r), canClient: mayWrite(u) && mine(u, r) && r.style !== 'clip',
     id: r.id, title: r.title, prompt: r.prompt, headline: r.headline || '', style: r.style || '', aspect: r.aspect || '1:1', model: r.model || '', withLogo: S.num(r.withLogo) === 1,
     mime: r.mime, kind: isVideo(r) ? 'video' : 'image',
     bytes: S.num(r.bytes), demo: S.num(r.demo) === 1, status: r.status, note: r.note || '', department: r.department || '', createdByName: r.createdByName || '', mine: r.createdById === u.id,
@@ -568,6 +573,7 @@ async function submit(u, id) {
   const { r, set } = g;
   if (!mayWrite(u) || !mine(u, r)) return { error: 'Only the person who made it, or an Admin, can ask for approval.', status: 403 };
   if (!['draft', 'changes'].includes(r.status)) return { error: r.status === 'waiting' ? 'It is already waiting for approval.' : 'It is already approved.', status: 409 };
+  if (gated(set, r)) return { error: `${GATED_WORDS(r)}. Use "Ask client to approve" instead: the client's answer is the approval.`, status: 409, code: 'client_required' };
   const now = Date.now();
   await S.run(`UPDATE "${TABLE}" SET status = 'waiting', note = NULL, submittedAt = ?, updatedAt = ? WHERE id = ?`, now, now, r.id);
   // the same approvers AI Content tells (marketing/content.js), checked one by one with the picture's own rule
@@ -609,6 +615,7 @@ async function decide(u, id, approve, note) {
   const { r, set } = g;
   if (r.status !== 'waiting') return { error: 'This picture is not waiting for approval.', status: 409 };
   if ((await heldSet()).has(r.id)) return { error: 'This is waiting for the CLIENT to approve it: only the client can. To decide as a team instead, cancel the client link (it goes back to Drafts).', status: 409, code: 'client_holds' };
+  if (approve && gated(set, r)) return { error: `${GATED_WORDS(r)}, so the team cannot approve them. Send it to the client ("Send to the client"), or send it back. An Admin can switch the rule off in AI usage.`, status: 409, code: 'client_required' };
   if (!canApprove(u, r, set)) return { error: r.createdById === u.id ? 'You cannot approve your own picture. Another approver has to do it.' : 'Only an Admin, or a Team Lead of this department, can approve this picture.', status: 403 };
   const words = S.clip(note, 300);
   if (!approve && words.length < 5) return { error: 'Write a few words so the person knows what to change.', status: 400 };
