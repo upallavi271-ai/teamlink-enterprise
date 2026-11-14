@@ -23,6 +23,7 @@ export default function ClientProjectPage() {
   const { token } = useParams();
   const [d, setD] = useState(null);
   const [gone, setGone] = useState('');
+  const [temp, setTemp] = useState(false); // the site was busy / updating (not a dead link)
   const [pick, setPick] = useState('');
   const [name, setName] = useState('');
   const [comment, setComment] = useState('');
@@ -33,7 +34,11 @@ export default function ClientProjectPage() {
   const [f, setF] = useState({ occasion: '', brief: '', deliverable: 'video', platforms: ['instagram'], handles: '', dueDate: '', contactName: '', contactEmail: '', contactPhone: '', colors: {} });
   const [logo, setLogo] = useState('');
   const base = `/public/mk-project/${encodeURIComponent(token)}`;
-  const load = useCallback(() => api.get(base).then((r) => { setD(r.data); document.title = r.data.project.status === 'invited' ? 'Tell us what you need' : r.data.project.status === 'awaiting_client' ? 'Please choose' : 'Your request'; setF((x) => ({ ...x, contactName: x.contactName || r.data.project.contactName || '', contactEmail: x.contactEmail || r.data.project.contactEmail || '', contactPhone: x.contactPhone || r.data.project.contactPhone || '' })); }).catch((e) => setGone(errOf(e, 'This link does not work any more. Please ask the sender for a new one.'))), [base]);
+  const load = useCallback(() => api.get(base).then((r) => { setD(r.data); document.title = r.data.project.status === 'invited' ? 'Tell us what you need' : r.data.project.status === 'awaiting_client' ? 'Please choose' : 'Your request'; setF((x) => ({ ...x, contactName: x.contactName || r.data.project.contactName || '', contactEmail: x.contactEmail || r.data.project.contactEmail || '', contactPhone: x.contactPhone || r.data.project.contactPhone || '' })); }).catch((e) => {
+    const s = e && e.response && e.response.status;
+    if (!s || s >= 500) { setTemp(true); setGone('The page could not be opened just now: our site may be updating. Please wait a minute, then press the button below.'); return; } // a busy / updating site is not a dead link
+    setTemp(false); setGone(errOf(e, 'This link does not work any more. Please ask the sender for a new one.'));
+  }), [base]);
   useEffect(() => { document.title = 'Your request'; load(); }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const P = (d && d.brand && d.brand.colors && d.brand.colors.primary) || '#0f766e';
@@ -45,7 +50,7 @@ export default function ClientProjectPage() {
   const label = { display: 'block', fontSize: 13, fontWeight: 700, margin: '14px 0 4px' };
   const box = (bg, fg) => ({ background: bg, color: fg, borderRadius: 10, padding: '12px 14px', lineHeight: 1.55 });
 
-  if (gone) return <div style={page}><div style={{ ...card, marginTop: 40 }}><h1 style={{ fontSize: 20, margin: '0 0 8px' }}>This link does not work</h1><p style={{ margin: 0, lineHeight: 1.6 }}>{gone}</p></div></div>;
+  if (gone) return <div style={page}><div style={{ ...card, marginTop: 40 }}><h1 style={{ fontSize: 20, margin: '0 0 8px' }}>{temp ? 'Please try again in a minute' : 'This link does not work'}</h1><p style={{ margin: 0, lineHeight: 1.6 }}>{gone}</p>{temp ? <button type="button" style={{ ...btn('#15803d'), marginTop: 14, width: '100%' }} onClick={() => { setGone(''); setTemp(false); load(); }}>Try again</button> : null}</div></div>;
   if (!d) return <div style={page}><div style={{ ...card, marginTop: 40 }}><p style={{ margin: 0 }}>Loading…</p></div></div>;
 
   const { project: r, brand, options, suggestions } = d;
