@@ -212,8 +212,117 @@ async function update(u, id, b = {}) {
   return { project: short(await row(r.id)) };
 }
 
+// ---- telling the CLIENT (2026-11-14) -----------------------------------------------------------------------------------------------------------------------
+// The client's private link, and each step of their project, reach them by WhatsApp and email through the platform's ONE sender (utils/messaging.js: the WhatsApp / mail
+// connection an Admin set up in Administration > Integrations). Before this, TeamLink only OPENED the team's own WhatsApp with the words typed in, so a message reached the client
+// only when a person also pressed Send there. Steps that tell the client by themselves (an Admin can switch it off, AI usage): accepted, options ready, declined, posted.
+// The "invite" link is sent by a person's click. Every try, sent or not, is written on the project's timeline with the client's number masked and the reason when it failed;
+// a failed automatic notice also tells the team, so nobody waits for a message that never went. Nothing here can stop the step itself.
+const NOTICE_MANUAL = ['invite', 'accepted', 'options'];
+const firstWord = (n) => String(n || '').trim().split(/\s+/)[0] || '';
+const dayWords = (ms) => { try { return new Date(Number(ms)).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' }); } catch { return ''; } };
+const siteFor = (base) => { const b = String(base || '').replace(/\/+$/, ''); if (baseOk(b)) return b; const e = String(process.env.APP_BASE_URL || '').replace(/\/+$/, ''); return baseOk(e) ? e : ''; };
+async function noticeFor(kind, r, { base = '', urls = [] } = {}) {
+  const brand = (await Cfg.getBrand()).brandName || 'TeamLink';
+  const hi = firstWord(r.contactName) ? `Hello ${firstWord(r.contactName)},` : 'Hello,';
+  const occ = r.occasion ? ` for ${S.clip(r.occasion, 80)}` : '';
+  const site = siteFor(base);
+  const link = site ? `${site}/client-project/${tokenOf(r.id)}` : '';
+  const need = (what) => (link ? null : { error: `The ${what} needs the site's https address: open this page on the live site and try again.` });
+  if (kind === 'invite') {
+    const n = need('request link'); if (n) return n;
+    return { subject: `${brand}: please tell us what you need`, text: `${hi} this is ${brand}. Please tell us what you need${occ} (it takes about two minutes) on your private page: ${link}` };
+  }
+  if (kind === 'accepted') return { subject: `${brand}: we have started your request`, text: `${hi} thank you for your request${occ}. ${brand} has accepted it and our team has started work. We will message you again as soon as your options are ready.${link ? ` You can follow it here: ${link}` : ''}` };
+  if (kind === 'options') {
+    const n = need('options link'); if (n) return n;
+    const till = S.num(r.linkExpiresAt) > Date.now() ? ` The link works until ${dayWords(r.linkExpiresAt)}.` : '';
+    return { subject: `${brand}: your options are ready`, text: `${hi} your options${occ} are ready. Please open your private page, choose the one you like and add any suggestions: ${link}${till}` };
+  }
+  if (kind === 'declined') return { subject: `${brand}: about your request`, text: `${hi} thank you for your request${occ}. We are sorry, we cannot take it up this time: ${S.clip(r.declinedNote, 300)}${link ? ` Details: ${link}` : ''}` };
+  if (kind === 'posted') {
+    const shown = urls.filter((x) => /^https:\/\//i.test(x)).slice(0, 4);
+    return { subject: `${brand}: your post is live`, text: `${hi} your post${occ} is live${shown.length ? `: ${shown.join(' ')}` : ''}. Thank you for working with ${brand}.` };
+  }
+  return { error: 'Unknown message.' };
+}
+// -> { sent: [{ way, ok, to, error }], note }   never throws. opts: { by (a person: their click) | null (automatic), base, urls, ways: ['whatsapp','email'] (manual choice), auto: true }
+async function tellClient(r, kind, opts = {}) {
+  const out = { sent: [], note: '' };
+  try {
+    const set = await Cfg.getSettings();
+    const cn = set.clientNotify || { auto: true, whatsapp: true, email: true };
+    const by = opts.by || null;
+    if (!by && cn.auto !== true) return { ...out, note: 'Telling the client by itself is switched off.' };
+    const ways = (Array.isArray(opts.ways) && opts.ways.length ? opts.ways : ['whatsapp', 'email']).filter((w) => ['whatsapp', 'email'].includes(w) && (by || cn[w] !== false));
+    const msg = await noticeFor(kind, r, opts);
+    if (msg.error) return { ...out, note: msg.error };
+    const messaging = require('../utils/messaging'); // eslint-disable-line global-require
+    const core = require('../utils/messagingCore'); // eslint-disable-line global-require
+    const who = by ? by.name : 'TeamLink';
+    const meta = { audience: 'client', personName: S.clip(r.contactName || r.clientName, 80), purpose: `AI Marketing client project: ${kind}`, module: 'AI Marketing', senderUserId: by ? by.id : undefined, senderName: by ? S.clip(by.name, 80) : undefined, automatic: !by };
+    for (const way of ways) { // eslint-disable-line no-restricted-syntax
+      const label = way === 'whatsapp' ? 'WhatsApp' : 'Email';
+      let res; let to = '';
+      if (way === 'whatsapp') {
+        if (!String(r.contactPhone || '').trim()) { if (by) out.sent.push({ way: label, ok: false, local: true, to: '', error: 'No WhatsApp number is saved for this client. Add it in Edit.' }); continue; } // eslint-disable-line no-continue
+        const nm = core.normalizeMobile(r.contactPhone);
+        if (!nm.ok) { out.sent.push({ way: label, ok: false, local: true, to: '', error: 'The client\'s number does not look right. Fix it in Edit.' }); continue; } // eslint-disable-line no-continue
+        to = core.maskMobile(nm.e164);
+        res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, meta }); // eslint-disable-line no-await-in-loop
+      } else {
+        if (!String(r.contactEmail || '').trim()) { if (by) out.sent.push({ way: label, ok: false, local: true, to: '', error: 'No email address is saved for this client. Add it in Edit.' }); continue; } // eslint-disable-line no-continue
+        to = core.maskEmail(r.contactEmail);
+        res = await messaging.send('Email', { to: String(r.contactEmail).trim(), subject: msg.subject, text: msg.text, meta }); // eslint-disable-line no-await-in-loop
+      }
+      const ok = !!(res && res.ok);
+      const why = ok ? '' : plainWhy(res);
+      out.sent.push({ way: label, ok, to, error: why });
+      await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
+    }
+    const bad = out.sent.filter((x) => !x.ok);
+    if (!by && bad.length) await tellTeam(r, `The client was not told: "${S.clip(r.title, 60)}"`, `${bad.map((x) => `${x.way}: ${x.error}`).join(' ').slice(0, 300)} Send them the link yourself from Client projects.`);
+    const good = out.sent.filter((x) => x.ok);
+    out.note = good.length ? `The client was told by ${good.map((x) => x.way).join(' and ')}.` : (bad.length ? `The client could not be told: ${bad.map((x) => `${x.way}: ${x.error}`).join(' ')}` : '');
+  } catch (e) { console.error('[omni-mk] tell client:', e.message); } // eslint-disable-line no-console
+  return out;
+}
+// the sender's own words, made plain (a provider answer is never shown as it came)
+function plainWhy(res) {
+  if (!res) return 'No answer from the sender.';
+  if (res.notConfigured || res.outcome === 'Not configured') return `It is not connected: ${S.clip(res.error || 'ask an Admin to connect it in Administration > Integrations', 160)}`;
+  return S.clip(String(res.error || 'The sender refused it.').replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number'), 200);
+}
+// the manual buttons: the team presses "Send the link" / "Tell the client" (a person's click: it may use any way the client has)
+async function tell(u, id, b = {}, base = '') {
+  const g = await getVisible(u, id); if (g.error) return g;
+  const { r } = g;
+  const kind = String(b.kind || '');
+  if (!NOTICE_MANUAL.includes(kind)) return { error: 'Pick what to send: the request link, "we have started", or the options link.', status: 400 };
+  if (kind === 'invite' && r.status !== 'invited') return { error: 'The request link is only for a client who has not sent the request yet.', status: 409 };
+  if (kind === 'accepted' && !['working', 'awaiting_client'].includes(r.status)) return { error: 'The team has not started this project yet.', status: 409 };
+  if (kind === 'options' && r.status !== 'awaiting_client') return { error: 'The options are not with the client.', status: 409 };
+  const ways = (Array.isArray(b.ways) ? b.ways : []).map(String).filter((w, i, a) => ['whatsapp', 'email'].includes(w) && a.indexOf(w) === i);
+  if (!ways.length) return { error: 'Pick WhatsApp or Email.', status: 400 };
+  const told = await tellClient(r, kind, { by: u, base, ways });
+  if (!told.sent.length) return { error: told.note || 'Nothing could be sent: add the client\'s number or email in Edit.', status: 400 };
+  const any = told.sent.some((x) => x.ok);
+  if (!any && told.sent.every((x) => x.local)) return { error: told.sent.map((x) => x.error).join(' '), status: 400 }; // nothing was tried: the client has no such number / address on file
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client told', entity: T, entityId: r.id, toValue: `${r.clientName}: ${kind}; ${told.sent.map((x) => `${x.way} ${x.ok ? 'sent' : 'failed'}`).join(', ')}` });
+  return { ok: any ? told.note : '', error: any ? undefined : told.note, sent: told.sent, project: short(await row(r.id)), ...(any ? {} : { status: 502 }) };
+}
+// what the Admin switch and the buttons need: is each way connected, and is telling by itself on
+async function notifyStatus() {
+  const set = await Cfg.getSettings();
+  const cn = set.clientNotify || { auto: true, whatsapp: true, email: true };
+  let st = {};
+  try { st = await require('../utils/messaging').channelStatus(); } catch { st = {}; } // eslint-disable-line global-require
+  const way = (k, on) => ({ on: on !== false, ready: !!(st[k] && st[k].configured), via: (st[k] && (st[k].via || st[k].detail)) || '', reason: st[k] && !st[k].configured ? (st[k].reason || 'Not connected') : '' });
+  return { auto: cn.auto === true, whatsapp: way('WhatsApp', cn.whatsapp), email: way('Email', cn.email) };
+}
+
 // ---- accept / decline ------------------------------------------------------------------------------------------------------------------------------
-async function accept(u, id) {
+async function accept(u, id, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
   const { r } = g;
   if (r.status !== 'request') return { error: r.status === 'invited' ? 'The client has not sent the request yet.' : 'This request was already handled.', status: 409 };
@@ -221,9 +330,10 @@ async function accept(u, id) {
   await S.run(`UPDATE "${T}" SET status = 'working', ownerId = ?, ownerName = ?, acceptedAt = ?, acceptedByName = ?, updatedAt = ? WHERE id = ?`, u.id, S.clip(u.name, 80), now, S.clip(u.name, 80), now, r.id);
   await event(r.id, 'accepted', u.name, 'Accepted: the team starts work');
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project accepted', entity: T, entityId: r.id, toValue: `${r.clientName}: ${r.occasion}` });
-  return { ok: 'Accepted. You own this project now.', project: short(await row(r.id)) };
+  const told = await tellClient(await row(r.id), 'accepted', { base });
+  return { ok: `Accepted. You own this project now.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
 }
-async function decline(u, id, note) {
+async function decline(u, id, note, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
   const { r } = g;
   if (!['request', 'working'].includes(r.status)) return { error: 'Only a new request, or one being worked on, can be declined.', status: 409 };
@@ -233,7 +343,8 @@ async function decline(u, id, note) {
   await S.run(`UPDATE "${T}" SET status = 'declined', declinedNote = ?, updatedAt = ? WHERE id = ?`, why, Date.now(), r.id);
   await event(r.id, 'declined', u.name, why);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project declined', entity: T, entityId: r.id, toValue: `${r.clientName}: ${why}` });
-  return { ok: 'Declined. The client sees the reason on their page.', project: short(await row(r.id)) };
+  const told = await tellClient(await row(r.id), 'declined', { base });
+  return { ok: `Declined. The client sees the reason on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
 }
 
 // ---- options: pick what to show the client, then present it ----------------------------------------------------------------------------------------
@@ -279,7 +390,7 @@ async function releaseItems(r, to = 'draft') {
     if (it && it.status === 'waiting' && to === 'draft') await Img.backToDraft(o.itemId); // eslint-disable-line no-await-in-loop
   }
 }
-async function send(u, id, b = {}) {
+async function send(u, id, b = {}, base = '') {
   const g = await getVisible(u, id); if (g.error) return g;
   const { r } = g;
   if (r.status !== 'working') return { error: r.status === 'awaiting_client' ? 'The options are already with the client.' : 'Options can be sent only while the team is working on it.', status: 409 };
@@ -297,7 +408,8 @@ async function send(u, id, b = {}) {
   await S.run(`UPDATE "${T}" SET status = 'awaiting_client', round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
   await event(r.id, 'options_sent', u.name, `${opts.length} option${opts.length === 1 ? '' : 's'} sent to the client (round ${round})${message ? `: ${message}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options sent to the client', entity: T, entityId: r.id, toValue: `${r.clientName}: ${opts.length} option(s); link valid ${days} day(s)` });
-  return { ok: 'The options are with the client. Share the private link.', project: short(await row(r.id)) };
+  const told = await tellClient(await row(r.id), 'options', { base });
+  return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: short(await row(r.id)) };
 }
 async function cancelPresentation(u, id) {
   const g = await getVisible(u, id); if (g.error) return g;
@@ -340,7 +452,8 @@ async function posted(u, id, b = {}) {
   await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, updatedAt = ? WHERE id = ?`, url || null, now, S.clip(u.name, 80), now, r.id);
   await event(r.id, 'posted', u.name, `Posted on the client's page${url ? `: ${url}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client project posted', entity: T, entityId: r.id, toValue: `${r.clientName}: ${r.occasion}${url ? `; ${url}` : ''}` });
-  return { ok: 'Marked as posted. The client sees it on their page.', project: short(await row(r.id)) };
+  const told = await tellClient(await row(r.id), 'posted', { urls: url ? [url] : [] });
+  return { ok: `Marked as posted. The client sees it on their page.${told.note ? ` ${told.note}` : ''}`, told: told.sent, project: short(await row(r.id)) };
 }
 
 // items the client is deciding on right now (marketing/clientReview.js adds them to the "only the client can approve" set)
@@ -445,6 +558,7 @@ async function autoRun(id, { by = null, force = false } = {}) {
       await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, updatedAt = ? WHERE id = ?`, first, now, S.clip(who, 80), now, r.id);
       await event(r.id, 'posted', who, `Posted on ${targets.length} account${targets.length === 1 ? '' : 's'}`);
       await tellTeam(r, `Posted: "${S.clip(r.title, 60)}"`, `It is live on ${targets.map((t) => t.name).join(', ')}.`);
+      await tellClient(await row(r.id), 'posted', { urls: all.filter((x) => x.ok && x.url).map((x) => x.url), base: r.autoBase || '' });
       await logAudit({ userId: by ? by.id : r.createdById, actorName: who, action: 'Omni-Channel AI Marketing: client project posted automatically', entity: T, entityId: r.id, toValue: `${r.clientName}: ${targets.map((t) => t.name).join(', ')}` });
     } else {
       const bad = results.filter((x) => !x.ok);
@@ -507,6 +621,7 @@ async function postTo(u, id, b = {}, base = '') {
       const first = (all.find((x) => x.ok && x.url) || {}).url || null;
       await S.run(`UPDATE "${T}" SET status = 'posted', postUrl = ?, postedAt = ?, postedByName = ?, autoState = 'done', updatedAt = ? WHERE id = ?`, first, now, S.clip(u.name, 80), now, r.id);
       await event(r.id, 'posted', u.name, `Posted on ${needed.length} platform${needed.length === 1 ? '' : 's'}`);
+      await tellClient(await row(r.id), 'posted', { urls: all.filter((x) => x.ok && x.url).map((x) => x.url), base: site });
     }
     await logAudit({ userId: u.id, actorName: u.name, action: results.every((x) => x.ok) ? 'Omni-Channel AI Marketing: client project posted by a click' : 'Omni-Channel AI Marketing: posting by a click failed', entity: T, entityId: r.id, toValue: `${r.clientName}: ${results.map((x) => `${x.name} ${x.ok ? 'ok' : 'failed'}`).join(', ')}` });
     return { ok: results.every((x) => x.ok) ? (finished ? 'Posted. The project is finished.' : 'Posted.') : 'It could not be posted. See why below, then try again.', results, posted: finished, project: short(await row(r.id)) };
@@ -720,6 +835,6 @@ async function publicChanges(token, b = {}, ip = '') {
 
 module.exports = {
   ensure, SOURCES, DELIVERABLES, PLATFORM_KEYS, PLATFORM_LABEL, create, invite, list, get, update, accept, decline, setOptions, send, cancelPresentation, extend, scheduled, posted, heldIds,
-  publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite,
+  publicView, publicOptionFile, publicLogo, publicSubmitRequest, publicChoose, publicChanges, tokenOf, idOfToken, mayWrite, tell, tellClient, notifyStatus,
   setShowcase, trackRecord, showcaseItems, publicWork, publicWorkFile, accounts, setAutopost, postNow, postTo, autoRun, autoSweep, startAutoPost,
 };

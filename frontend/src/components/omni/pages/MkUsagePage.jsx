@@ -11,10 +11,11 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, clientNotify: { auto: true, whatsapp: true, email: true } });
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
-  useEffect(() => { load(); }, [load]);
+  const [ways, setWays] = useState(null); // is WhatsApp / email connected (what the "tell the client" switch can really use)
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true } }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
   const s = d.summary;
@@ -67,6 +68,19 @@ export default function MkUsagePage() {
                 {lim.clientFor.includes('pictures') ? <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>Note: a picture you want to use inside a video must be approved first, so with Pictures ticked the client approves each picture and then the video. Untick Pictures to let your team approve pictures.</div> : null}
               </Field>
             ) : null}
+          </div>
+        </Panel>
+      )}
+      {d.canEdit && (
+        <Panel title="Telling the client" sub="TeamLink sends the client a WhatsApp message and an email at each step of their project, through the connections in Administration > Integrations." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+          <div className="form-grid">
+            <Field label="TELL THE CLIENT BY ITSELF" full hint="On: the client is messaged when their request is accepted, when their options are ready, when a request is declined and when the post is live. Off: nothing goes by itself; the team uses the Send buttons on the project. A message that cannot go is written on the project's timeline and the team is told.">
+              <select value={lim.clientNotify.auto ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, auto: e.target.value === 'yes' } })}><option value="yes">On: tell the client at each step</option><option value="no">Off: the team sends by hand</option></select>
+            </Field>
+            <Field label="WAYS" full>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, margin: '2px 0' }}><input type="checkbox" checked={lim.clientNotify.whatsapp} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, whatsapp: e.target.checked } })} />WhatsApp {ways ? (ways.whatsapp.ready ? <Pill tone="live" dot>Connected</Pill> : <Pill tone="warn" dot>Not connected: {ways.whatsapp.reason}</Pill>) : null}</label>
+              <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, margin: '2px 0' }}><input type="checkbox" checked={lim.clientNotify.email} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, email: e.target.checked } })} />Email {ways ? (ways.email.ready ? <Pill tone="live" dot>Connected</Pill> : <Pill tone="warn" dot>Not connected: {ways.email.reason}</Pill>) : null}</label>
+            </Field>
           </div>
         </Panel>
       )}

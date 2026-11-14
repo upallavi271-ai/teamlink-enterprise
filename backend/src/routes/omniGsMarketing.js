@@ -36,7 +36,7 @@ router.get('/meta', wrap(async (req, res) => {
     channels: C.CHANNELS, goals: C.GOALS, tones: St.VOICES, languages: Cfg.LANGUAGES,
     ai: await AI.status(),
     canWrite: A.has('mayAiMarketing')(u), canApproveAny: A.has('mayAiApprove')(u) || A.isAdmin(u), isAdmin: A.isAdmin(u),
-    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove, clientRequired: set.clientRequired, clientFor: set.clientFor, autoPostAllowed: set.autoPostAllowed },
+    limits: { aiDailyPerUser: set.aiDailyPerUser, aiMonthlyCap: set.aiMonthlyCap, selfApprove: set.selfApprove, clientRequired: set.clientRequired, clientFor: set.clientFor, autoPostAllowed: set.autoPostAllowed, clientNotify: set.clientNotify },
   });
 }));
 
@@ -169,12 +169,14 @@ router.get('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.
 router.post('/projects', mustWrite, wrap(async (req, res) => send(res, await Prj.create(req.user, req.body || {}))));
 router.post('/projects/invite', mustWrite, wrap(async (req, res) => send(res, await Prj.invite(req.user, req.body || {}))));
 router.get('/projects/accounts', mustWrite, wrap(async (req, res) => send(res, await Prj.accounts(req.user)))); // before /projects/:id
+router.get('/projects/notify', mustWrite, wrap(async (req, res) => send(res, await Prj.notifyStatus()))); // before /projects/:id
 router.get('/projects/:id', mustWrite, wrap(async (req, res) => send(res, await Prj.get(req.user, req.params.id))));
 router.put('/projects/:id', mustWrite, wrap(async (req, res) => send(res, await Prj.update(req.user, req.params.id, req.body || {}))));
-router.post('/projects/:id/accept', mustWrite, wrap(async (req, res) => send(res, await Prj.accept(req.user, req.params.id))));
-router.post('/projects/:id/decline', mustWrite, wrap(async (req, res) => send(res, await Prj.decline(req.user, req.params.id, (req.body || {}).note))));
+router.post('/projects/:id/accept', mustWrite, wrap(async (req, res) => send(res, await Prj.accept(req.user, req.params.id, siteOf(req)))));
+router.post('/projects/:id/decline', mustWrite, wrap(async (req, res) => send(res, await Prj.decline(req.user, req.params.id, (req.body || {}).note, siteOf(req)))));
 router.post('/projects/:id/options', mustWrite, wrap(async (req, res) => send(res, await Prj.setOptions(req.user, req.params.id, req.body || {}))));
-router.post('/projects/:id/send', mustWrite, wrap(async (req, res) => send(res, await Prj.send(req.user, req.params.id, req.body || {}))));
+router.post('/projects/:id/send', mustWrite, wrap(async (req, res) => send(res, await Prj.send(req.user, req.params.id, req.body || {}, siteOf(req)))));
+router.post('/projects/:id/tell', mustWrite, wrap(async (req, res) => send(res, await Prj.tell(req.user, req.params.id, req.body || {}, siteOf(req))))); // WhatsApp / email the client: a person's click
 router.post('/projects/:id/cancel', mustWrite, wrap(async (req, res) => send(res, await Prj.cancelPresentation(req.user, req.params.id))));
 router.post('/projects/:id/extend', mustWrite, wrap(async (req, res) => send(res, await Prj.extend(req.user, req.params.id, (req.body || {}).days))));
 router.post('/projects/:id/scheduled', mustWrite, wrap(async (req, res) => send(res, await Prj.scheduled(req.user, req.params.id, req.body || {}))));
@@ -217,6 +219,9 @@ router.put('/settings', mustAdmin, wrap(async (req, res) => {
   if (c.error) return res.status(400).json({ error: c.error });
   await Cfg.saveSettings(c.value);
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: AI limits changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `${c.value.aiDailyPerUser} per person per day; company month limit ${c.value.aiMonthlyCap || 'none'}; Admin may approve own content: ${c.value.selfApprove ? 'yes' : 'no'}; client must approve: ${c.value.clientRequired ? `ON for ${c.value.clientFor.join(', ')}` : 'off'}` });
+  if (JSON.stringify(c.value.clientNotify) !== JSON.stringify(cur.clientNotify)) {
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: telling the client by WhatsApp / email changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `by itself: ${c.value.clientNotify.auto ? 'on' : 'off'}; WhatsApp: ${c.value.clientNotify.whatsapp ? 'on' : 'off'}; email: ${c.value.clientNotify.email ? 'on' : 'off'}` });
+  }
   if (c.value.autoPostAllowed !== cur.autoPostAllowed) {
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: c.value.autoPostAllowed ? 'Omni-Channel AI Marketing: automatic posting to client accounts ALLOWED' : 'Omni-Channel AI Marketing: automatic posting to client accounts switched off', entity: 'OmniMkSettings', entityId: 'settings', toValue: c.value.autoPostAllowed ? 'on' : 'off' });
   }

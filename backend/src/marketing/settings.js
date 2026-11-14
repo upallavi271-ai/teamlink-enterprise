@@ -12,7 +12,10 @@ const BRAND_KEY = 'omni.mk.brand';
 const LOGO_KEY = 'omni.mk.brand.logo'; // { dataUrl, name, at } kept apart: it is large and only the brand screen and the image / video makers need it
 const CLIENT_KINDS = ['words', 'pictures', 'videos'];
 // autoPostAllowed (2026-11-14): the company-wide switch for AUTOMATIC posting of approved client projects to the clients' connected Facebook Pages / Instagram accounts. OFF until an Admin turns it on.
-const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false };
+// clientNotify (2026-11-14): TeamLink tells the CLIENT by itself at each step of their project (accepted, options ready, declined, posted) by WhatsApp and email, through the connections an Admin
+// set up in Administration > Integrations. { auto, whatsapp, email }: auto = the steps tell the client by themselves; whatsapp / email = which ways it may use. The team's "Send the link" buttons always work.
+const DEFAULT_NOTIFY = { auto: true, whatsapp: true, email: true };
+const DEFAULT_SETTINGS = { aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: CLIENT_KINDS.slice(), autoPostAllowed: false, clientNotify: { ...DEFAULT_NOTIFY } };
 const DEFAULT_COLORS = { primary: '#0f766e', secondary: '#134e4a', accent: '#f59e0b' };
 const DEFAULT_BRAND = {
   brandName: '', about: '', voice: '', tone: 'Warm & confident', language: 'English', cta: '', signOff: '', doWords: [], avoidWords: [], samples: [],
@@ -44,6 +47,7 @@ async function getSettings() {
     clientRequired: s.clientRequired === true,
     clientFor: Array.isArray(s.clientFor) ? CLIENT_KINDS.filter((k) => s.clientFor.includes(k)) : CLIENT_KINDS.slice(),
     autoPostAllowed: s.autoPostAllowed === true,
+    clientNotify: { auto: !s.clientNotify || s.clientNotify.auto !== false, whatsapp: !s.clientNotify || s.clientNotify.whatsapp !== false, email: !s.clientNotify || s.clientNotify.email !== false },
   };
 }
 // does the company require a CLIENT to approve this kind ('words' | 'pictures' | 'videos')?
@@ -55,6 +59,10 @@ function cleanSettings(b, cur) {
   if (b.aiMonthlyCap !== undefined) { const n = Number(b.aiMonthlyCap); if (!Number.isFinite(n) || n < 0 || n > 1000000) return { error: 'The monthly AI limit must be a number (0 = no limit).' }; next.aiMonthlyCap = Math.floor(n); }
   if (b.selfApprove !== undefined) next.selfApprove = b.selfApprove === true;
   if (b.autoPostAllowed !== undefined) next.autoPostAllowed = b.autoPostAllowed === true;
+  if (b.clientNotify !== undefined && b.clientNotify && typeof b.clientNotify === 'object') {
+    const cur0 = { ...DEFAULT_NOTIFY, ...(cur.clientNotify || {}) };
+    next.clientNotify = { auto: b.clientNotify.auto !== undefined ? b.clientNotify.auto === true : cur0.auto, whatsapp: b.clientNotify.whatsapp !== undefined ? b.clientNotify.whatsapp === true : cur0.whatsapp, email: b.clientNotify.email !== undefined ? b.clientNotify.email === true : cur0.email };
+  }
   if (b.clientRequired !== undefined) next.clientRequired = b.clientRequired === true;
   if (b.clientFor !== undefined) next.clientFor = (Array.isArray(b.clientFor) ? b.clientFor : []).map(String).filter((k, i, a) => CLIENT_KINDS.includes(k) && a.indexOf(k) === i);
   if (next.clientRequired && !(next.clientFor || []).length) return { error: 'Tick at least one thing the client must approve (words, pictures or videos), or switch the rule off.' };

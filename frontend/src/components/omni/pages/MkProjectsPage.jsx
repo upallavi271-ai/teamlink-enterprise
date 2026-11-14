@@ -15,7 +15,7 @@ const STATUS = {
 };
 const TABS = [['', 'All'], ['request', 'New requests'], ['working', 'In progress'], ['awaiting_client', 'With the client'], ['approved', 'Approved'], ['posted', 'Posted'], ['invited', 'Invited'], ['declined', 'Declined']];
 const STEPS = [['request', 'Request'], ['working', 'Accepted'], ['awaiting_client', 'With the client'], ['approved', 'Client chose'], ['posted', 'Posted']];
-const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓' };
+const KIND_ICON = { request: '✉', invited: '🔗', accepted: '✔', declined: '✖', options_sent: '➤', client_chose: '★', client_changes: '✎', cancelled: '↩', extended: '⏱', scheduled: '🗓', posted: '✓', told: '💬', told_failed: '⚠' };
 const SEND = [['facebook', 'Facebook', 'f', '#1877f2'], ['instagram', 'Instagram', '◎', '#d62976'], ['x', 'X', '𝕏', '#111111']]; // the send buttons of an approved project
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const origin = () => window.location.origin;
@@ -27,19 +27,45 @@ const readLogo = (file) => new Promise((resolve, reject) => {
   const r = new FileReader(); r.onload = () => resolve(String(r.result)); r.onerror = () => reject(new Error('The logo could not be read.')); r.readAsDataURL(file);
 });
 
-// a private link with Copy, WhatsApp and Email (TeamLink does not send it: no email / WhatsApp is connected for this)
-function ShareBox({ url, phone, email, text, subject, toast, caption }) {
+// a private link: TeamLink SENDS it to the client by WhatsApp / email (the connections set up in Administration > Integrations), or the person copies it / opens their own WhatsApp or email app.
+// `projectId` + `kind` ('invite' | 'accepted' | 'options') make the "Send from TeamLink" buttons; the result (sent, or why not) is shown and also written on the project's timeline.
+function ShareBox({ url, phone, email, text, subject, toast, caption, projectId, kind, onSent }) {
+  const [nt, setNt] = useState(null); // is each way connected: { whatsapp: { ready, reason }, email: { ... } }
+  const [busy, setBusy] = useState('');
+  const [res, setRes] = useState(null); // { ok, text }
+  useEffect(() => { if (projectId) omni.get('/gs/marketing/projects/notify').then(setNt).catch(() => setNt(null)); }, [projectId]);
   const copy = async () => { try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { window.prompt('Copy the link:', url); } };
+  const tell = async (way) => {
+    setBusy(way); setRes(null);
+    try {
+      const r = await omni.post(`/gs/marketing/projects/${projectId}/tell`, { kind, ways: [way] });
+      setRes({ ok: true, text: r.ok || 'Sent.' }); toast(r.ok || 'Sent'); if (onSent) onSent();
+    } catch (e) { const m = errOf(e, 'It could not be sent.'); setRes({ ok: false, text: m }); if (onSent) onSent(); } finally { setBusy(''); }
+  };
+  const wa = nt && nt.whatsapp; const em = nt && nt.email;
+  const waWhy = !phone ? 'No WhatsApp number is saved for this client (use Edit).' : (wa && !wa.ready ? `WhatsApp is not connected: ${wa.reason || 'ask an Admin'}` : '');
+  const emWhy = !email ? 'No email address is saved for this client (use Edit).' : (em && !em.ready ? `Email is not connected: ${em.reason || 'ask an Admin'}` : '');
   return (
     <div style={{ background: '#f3fbf7', border: '1px solid #cfe9dc', borderRadius: 10, padding: 12 }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: '#166534' }}>{caption || 'PRIVATE LINK FOR THE CLIENT'}</div>
       <input readOnly value={url} onFocus={(e) => e.target.select()} aria-label="The private link" style={{ width: '100%', boxSizing: 'border-box', margin: '6px 0', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
+      {projectId ? (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, fontWeight: 800, color: '#166534', marginBottom: 4 }}>SEND FROM TEAMLINK</div>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <Btn small primary disabled={!!busy || !!waWhy} title={waWhy || 'TeamLink sends the message to the client\'s WhatsApp'} onClick={() => tell('whatsapp')}>{busy === 'whatsapp' ? 'Sending…' : '✆ Send by WhatsApp'}</Btn>
+            <Btn small primary disabled={!!busy || !!emWhy} title={emWhy || 'TeamLink sends the message to the client\'s email'} onClick={() => tell('email')}>{busy === 'email' ? 'Sending…' : '✉ Send by email'}</Btn>
+          </div>
+          {waWhy || emWhy ? <div style={{ fontSize: 10.5, color: '#92400e', marginTop: 4, lineHeight: 1.45 }}>{[waWhy, emWhy].filter(Boolean).join(' ')}</div> : null}
+          {res ? <div role="status" style={{ marginTop: 6, fontSize: 11.5, lineHeight: 1.5, color: res.ok ? '#166534' : '#b91c1c', fontWeight: 600 }}>{res.ok ? '✓ ' : '✗ '}{res.text}</div> : null}
+        </div>
+      ) : null}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <Btn small primary onClick={copy}>⧉ Copy link</Btn>
-        <Btn small onClick={() => window.open(`https://wa.me/${digits(phone)}?text=${encodeURIComponent(`${text} ${url}`)}`, '_blank', 'noopener')} title={phone ? '' : 'No number saved: WhatsApp will ask for one'}>WhatsApp ↗</Btn>
-        <Btn small onClick={() => { window.location.href = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text} ${url}`)}`; }}>Email ↗</Btn>
+        <Btn small primary={!projectId} onClick={copy}>⧉ Copy link</Btn>
+        <Btn small onClick={() => window.open(`https://wa.me/${digits(phone)}?text=${encodeURIComponent(`${text} ${url}`)}`, '_blank', 'noopener')} title={phone ? 'Opens WhatsApp on your own phone or computer: you press Send there' : 'No number saved: WhatsApp will ask for one'}>Open my WhatsApp ↗</Btn>
+        <Btn small onClick={() => { window.location.href = `mailto:${encodeURIComponent(email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(`${text} ${url}`)}`; }} title="Opens your own email app: you press Send there">Open my email ↗</Btn>
       </div>
-      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>TeamLink does not send it for you: press a button, then send the message yourself. The client needs no login.</div>
+      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>{projectId ? '"Send from TeamLink" sends it for you. "Open my WhatsApp / email" only opens your own app with the words ready: nothing reaches the client until you press Send there.' : 'Press a button, then send the message yourself.'} The client needs no login.</div>
     </div>
   );
 }
@@ -114,7 +140,7 @@ function InviteModal({ onClose, onDone, toast }) {
   return (
     <GsModal title="Invite a client to send a request" sub="The client opens a private page, writes what they need, adds their logo and the pages we post on. No login." width={560} onClose={onClose} foot={<Btn onClick={onClose}>{made ? 'Done' : 'Cancel'}</Btn>}>
       {err ? <Banner tone="error">{err}</Banner> : null}
-      {made ? <ShareBox url={`${origin()}${made.link}`} phone={made.contactPhone} email={made.contactEmail} subject="Please tell us what you need" text={`Hello${made.contactName ? ` ${made.contactName}` : ''}, please tell us what you need and add your logo here:`} toast={toast} caption={`REQUEST LINK FOR ${made.clientName.toUpperCase()}`} /> : (
+      {made ? <ShareBox url={`${origin()}${made.link}`} phone={made.contactPhone} email={made.contactEmail} subject="Please tell us what you need" text={`Hello${made.contactName ? ` ${made.contactName}` : ''}, please tell us what you need and add your logo here:`} toast={toast} caption={`REQUEST LINK FOR ${made.clientName.toUpperCase()}`} projectId={made.id} kind="invite" onSent={onDone} /> : (
         <div className="form-grid">
           <Field label="CLIENT (COMPANY)" full><input list="mkp-inv-clients" value={f.clientName} maxLength={120} onChange={(e) => pick(e.target.value)} placeholder="Pick or type the client's name" /><datalist id="mkp-inv-clients">{clients.map((c) => <option key={c.id || c.name} value={c.name} />)}</datalist></Field>
           <Field label="CONTACT PERSON"><input value={f.contactName} maxLength={120} onChange={(e) => setF({ ...f, contactName: e.target.value })} /></Field>
@@ -223,7 +249,8 @@ function Detail({ id, meta, onBack, onChanged }) {
   const chosenItem = chosen && approvedList.find((i) => i.id === chosen.itemId);
   const stepIdx = STEPS.findIndex((s) => s[0] === p.status);
   const presented = d.options.filter((o) => o.stage === 'presented');
-  const share = (text, subject) => <ShareBox url={url} phone={p.contactPhone} email={p.contactEmail} text={text} subject={subject} toast={toast} />;
+  const tellKind = p.status === 'invited' ? 'invite' : p.status === 'awaiting_client' ? 'options' : p.status === 'working' ? 'accepted' : '';
+  const share = (text, subject) => <ShareBox url={url} phone={p.contactPhone} email={p.contactEmail} text={text} subject={subject} toast={toast} projectId={tellKind ? p.id : ''} kind={tellKind} onSent={() => { onChanged(); load(); }} />;
   const listText = (s) => `${d.options.length}`;
   void listText;
 
