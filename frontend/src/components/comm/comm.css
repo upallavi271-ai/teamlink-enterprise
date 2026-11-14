@@ -82,6 +82,10 @@
 .wn-chip { display: inline-block; font-size: 12px; background: #eef1f5; color: #344054; border-radius: 10px; padding: 1px 9px; word-break: break-word; }
 .wn-chip-warn { background: #fff4e5; color: #7a4100; }
 .wn-chip-more { background: #dfe5ee; cursor: help; }
+.wn-chip-port { background: #e8f5ee; color: #14532d; font-weight: 600; }
+.wn-port .link-btn { margin-top: 2px; font-size: 12.5px; }
+.wn-table tr.wn-grouprow td { background: #f4f7fb; border-top: 2px solid #dfe5ee; padding: 8px 10px; font-size: 13.5px; }
+.wn-grouphead { margin: 14px 2px 6px; font-size: 13.5px; }
 .wn-status .wn-why { max-width: 300px; line-height: 1.35; }
 .wn-actions { display: flex; gap: 5px; flex-wrap: wrap; }
 .wn-table td.wn-actions { display: table-cell; }

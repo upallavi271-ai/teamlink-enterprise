@@ -4,7 +4,7 @@
 //   GET    /my-numbers          ANY staff login: the numbers it may send from (label + number + switched on?). No ids of credentials, no tokens.
 //   -- everything below: Admin / Super Admin ONLY (403 for everybody else, checked here on the server) --
 //   GET    /                    the list (Main number shown as "Main number (default)" until moved), counts, settings, departments, roles
-//   POST   /                    Add a WhatsApp number { label, displayNumber, phoneNumberId, wabaId, tokenMode, token, appSecret, verifyToken, language,
+//   POST   /                    Add a WhatsApp number { label, displayNumber, phoneNumberId, wabaId, portfolio (a label: which Meta business portfolio owns the account), tokenMode, token, appSecret, verifyToken, language,
 //                               tplLink, tplOtp, tplBulk, makeDefault, access: { departments, userIds, roles, everyone } }  -> saves, then checks with Meta
 //   PUT    /:id                 Edit (a blank token / secret keeps the saved one; "-" clears it)
 //   POST   /move-main           put the old single connection into the list ("Main number", credentials stay in the WhatsApp Business form)

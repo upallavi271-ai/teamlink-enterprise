@@ -71,6 +71,7 @@ const DDL = [
     "qualityRating" TEXT,
     "verifiedName" TEXT,
     "webhookNote" TEXT,
+    "portfolio" TEXT,
     "removedAt" TEXT,
     "removedByName" TEXT,
     "createdById" TEXT,
@@ -127,6 +128,9 @@ function ensure() {
   if (ensured) return ensured;
   ensured = (async () => {
     for (const sql of DDL) await run(sql); // eslint-disable-line no-await-in-loop
+    // "Business portfolio" label (founder 2026-11-14): a table made before it existed gets the one new column; nothing else changes
+    const have = await q('PRAGMA table_info("WaNumber")');
+    if (!have.some((c) => c.name === 'portfolio')) await run('ALTER TABLE "WaNumber" ADD COLUMN "portfolio" TEXT');
     tableCache = { at: 0, val: false }; bust();
     return true;
   })().catch((e) => { ensured = null; console.error('[wa-numbers] ensure:', e.message); throw e; }); // eslint-disable-line no-console
@@ -1057,6 +1061,11 @@ function validate(b, { editing = false, legacyRow = false } = {}) {
     if (w && !/^\d{6,25}$/.test(w)) return bad('The WhatsApp Business Account ID is only digits. Copy it from Meta > WhatsApp > API Setup.');
     v.wabaId = w || null;
   }
+  if (b.portfolio !== undefined) { // only a label for the Admin (which Meta business portfolio owns this number's account and pays for it); it changes nothing in Meta
+    if (b.portfolio !== null && typeof b.portfolio !== 'string') return bad('The business portfolio is a name, typed as text.');
+    const p = clip(b.portfolio, 60).replace(/\s+/g, ' ');
+    v.portfolio = p || null;
+  }
   if (b.language !== undefined) {
     const l = String(b.language || '').trim();
     if (l && !/^[a-z]{2,3}([_-][A-Za-z]{2})?$/.test(l)) return bad('The language code looks like "en" or "en_US".');
@@ -1156,8 +1165,8 @@ async function create(user, b) {
     }
   } catch (e) { if (e.code === 'NO_SECRET_KEY') return { error: e.message, status: 400 }; throw e; }
   try {
-    await run('INSERT INTO "WaNumber" ("id","label","displayNumber","displayDigits","phoneNumberId","wabaId","credSource","tokenMode","language","tplLink","tplOtp","tplBulk","active","isDefault","statusCode","createdById","createdByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-      id, v.label, v.displayNumber, v.displayDigits, v.phoneNumberId, v.wabaId || null, 'own', tokenMode, v.language || null, v.tplLink || null, v.tplOtp || null, v.tplBulk || null, 1, 0, 'unchecked', user.id, user.name, t, t);
+    await run('INSERT INTO "WaNumber" ("id","label","displayNumber","displayDigits","phoneNumberId","wabaId","credSource","tokenMode","language","tplLink","tplOtp","tplBulk","portfolio","active","isDefault","statusCode","createdById","createdByName","createdAt","updatedAt") VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      id, v.label, v.displayNumber, v.displayDigits, v.phoneNumberId, v.wabaId || null, 'own', tokenMode, v.language || null, v.tplLink || null, v.tplOtp || null, v.tplBulk || null, v.portfolio || null, 1, 0, 'unchecked', user.id, user.name, t, t);
   } catch (e) {
     await dropSecrets(id);
     if (/UNIQUE/i.test(String(e.message))) return { error: 'This number or Phone number ID is already added.', status: 409 };
@@ -1184,6 +1193,7 @@ async function update(user, id, b) {
   const vv = validate(b || {}, { editing: true, legacyRow });
   if (vv.error) return vv;
   const v = vv.v;
+  if (v.portfolio !== undefined) await ensure(); // a table made before the "Business portfolio" label gets its column first
   const dup = await duplicateOf(v, id);
   if (dup) return { error: dup, status: 409 };
   const patch = legacyRow ? {} : secretPatch(b);
@@ -1197,7 +1207,7 @@ async function update(user, id, b) {
   }
   try { if (Object.keys(patch).length) await writeSecrets(id, patch); } catch (e) { if (e.code === 'NO_SECRET_KEY') return { error: e.message, status: 400 }; throw e; }
   const sets = []; const vals = []; const changed = [];
-  const cols = ['label', 'displayNumber', 'displayDigits', 'phoneNumberId', 'wabaId', 'language', 'tplLink', 'tplOtp', 'tplBulk', 'tokenMode'];
+  const cols = ['label', 'displayNumber', 'displayDigits', 'phoneNumberId', 'wabaId', 'portfolio', 'language', 'tplLink', 'tplOtp', 'tplBulk', 'tokenMode'];
   cols.forEach((c) => {
     if (v[c] === undefined) return;
     if (String(v[c] == null ? '' : v[c]) === String(row[c] == null ? '' : row[c])) return;
@@ -1368,7 +1378,7 @@ async function shapeRows(rows, access) {
     const secRow = r.credSource === 'legacy' || r.tokenMode === 'shared' ? null : await prisma.appSetting.findUnique({ where: { key: `${SEC_PREFIX}${r.id}` } }).catch(() => null);
     const useForm = r.credSource === 'legacy' || r.tokenMode === 'shared';
     out.push({
-      id: r.id, label: r.label, displayNumber: r.displayNumber, phoneNumberId: r.phoneNumberId, wabaId: r.wabaId || '',
+      id: r.id, label: r.label, displayNumber: r.displayNumber, phoneNumberId: r.phoneNumberId, wabaId: r.wabaId || '', portfolio: r.portfolio || '',
       isMain: r.credSource === 'legacy', isDefault: r.isDefault, active: r.active,
       tokenMode: r.tokenMode, tokenSaved: r.credSource === 'legacy' ? !!(legacy && legacy.token) : (r.tokenMode === 'shared' ? !!(legacy && legacy.token) : !!(sec && sec.has.token)),
       tokenSource: useForm ? (r.credSource === 'legacy' ? 'The WhatsApp Business form' : 'The shared token (WhatsApp Business form)') : "This number's own token",
@@ -1404,6 +1414,7 @@ async function adminList() {
   } : null;
   return {
     numbers: virtualMain ? [virtualMain, ...numbers] : numbers,
+    portfolios: [...new Set(numbers.map((n) => n.portfolio).filter(Boolean))].sort((a, b) => a.localeCompare(b)), // the names already used (suggestions in the Edit window)
     listed: rows.length > 0,
     counts, unknownMessages: await unknownCount(),
     settings: st,

@@ -26,6 +26,15 @@ Already built. Steps (also shown in Message templates > Channels):
 6. Create the templates in Meta, then mark them Approved in Message templates (Admin only).
 7. Press Test. Delivery ticks and replies now reach TeamLink.
 
+### Several numbers, several Meta business portfolios
+
+Billing follows the **WhatsApp Business Account** that owns a number, not the Meta app or the token. Numbers of two portfolios (for example Medical
+and Nonit, each with its own payment method) are kept apart by giving each number its own **WhatsApp Business Account ID** and a token that can open
+that account (Administration > Integrations > WhatsApp & SMS > WhatsApp numbers > Edit: "This number's own token"). The optional **Business portfolio**
+label on each number (column `WaNumber.portfolio`, added on the first save by `utils/waNumbers.js ensure()`) only groups the list by portfolio so an Admin
+sees what bills where; it changes nothing in Meta and nothing in sending, and it is not shown to normal logins. Two numbers of the same account under
+different portfolios show a warning (one account belongs to one portfolio). Test: `node scripts/wa-portfolio-test.js` (copy database only).
+
 The Contact dialog says "WhatsApp via company number (Official)". Outside the 24-hour window only approved templates can be sent: the dialog
 shows the plain reason and the template picker. With "try the other one" on and the QR number connected, plain text is routed there instead.
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
 import Combo from '../Combo.jsx';
@@ -36,8 +36,55 @@ const LANG_CHOICES = [
   { value: 'hi', label: 'Hindi (hi)' },
 ];
 const BLANK = {
-  label: '', displayNumber: '', phoneNumberId: '', wabaId: '', tokenMode: 'own', token: '', appSecret: '', verifyToken: '', language: '', tplLink: '', tplOtp: '', tplBulk: '', makeDefault: false, departments: [],
+  label: '', displayNumber: '', phoneNumberId: '', wabaId: '', portfolio: '', tokenMode: 'own', token: '', appSecret: '', verifyToken: '', language: '', tplLink: '', tplOtp: '', tplBulk: '', makeDefault: false, departments: [],
 };
+
+// ---- Business portfolio (founder 2026-11-14) --------------------------------------------------------------------------------
+// A plain label: which Meta business portfolio owns this number's WhatsApp Business Account (and so pays for its messages).
+// It changes nothing in Meta and nothing in how messages are sent; it only lets the Admin see, at a glance, what bills where.
+const NO_PORTFOLIO = '__none__';
+// Numbers under their portfolio. Until at least one number has a portfolio there is one group and no header: the list looks as it always did.
+export function groupByPortfolio(rows) {
+  const any = rows.some((n) => n.portfolio);
+  if (!any) return [{ key: 'all', name: '', items: rows, header: false }];
+  const by = new Map();
+  rows.forEach((n) => { const k = n.portfolio || ''; if (!by.has(k)) by.set(k, []); by.get(k).push(n); });
+  const named = [...by.keys()].filter(Boolean).sort((a, b) => a.localeCompare(b)).map((k) => ({ key: `p:${k}`, name: k, items: by.get(k), header: true }));
+  return by.has('') ? [...named, { key: 'none', name: '', items: by.get(''), header: true }] : named;
+}
+// One WhatsApp Business Account belongs to one portfolio. Two numbers of the same account under different portfolios = one label is wrong.
+export function portfolioClashes(numbers) {
+  const byWaba = new Map();
+  numbers.forEach((n) => { if (n.wabaId && n.portfolio && !n.virtual) { if (!byWaba.has(n.wabaId)) byWaba.set(n.wabaId, []); byWaba.get(n.wabaId).push(n); } });
+  const out = [];
+  byWaba.forEach((list, wabaId) => {
+    const names = [...new Set(list.map((n) => n.portfolio))];
+    if (names.length > 1) out.push({ wabaId, portfolios: names, numbers: list.map((n) => n.label) });
+  });
+  return out;
+}
+const groupSummary = (items) => {
+  const on = items.filter((n) => n.status && n.status.code === 'connected').length;
+  return `${items.length} number${items.length === 1 ? '' : 's'} · ${on} connected`;
+};
+function PortfolioCell({ n, onSet }) {
+  if (n.virtual) return <span className="cm-sub">—</span>;
+  return (
+    <div className="wn-port">
+      {n.portfolio ? <span className="wn-chip wn-chip-port">{n.portfolio}</span> : <span className="cm-sub">Not set</span>}
+      {n.wabaId ? <div className="cm-sub" title="Messages are billed to the WhatsApp Business Account that owns the number">Account {n.wabaId}</div> : <div className="cm-sub">No account ID saved</div>}
+      <button type="button" className="link-btn" onClick={() => onSet(n)}>{n.portfolio ? 'Change' : 'Set'}</button>
+    </div>
+  );
+}
+function GroupHead({ g }) {
+  return (
+    <>
+      <b>{g.name || 'No portfolio set'}</b> <span className="cm-sub">· {groupSummary(g.items)}</span>
+      {!g.name && <span className="cm-sub"> · press Set to say which portfolio pays for each of these</span>}
+    </>
+  );
+}
 
 export function StatusBadge({ status }) {
   if (!status) return null;
@@ -75,6 +122,7 @@ export default function WaNumbers() {
   const [fDept, setFDept] = useState('');
   const [fUser, setFUser] = useState('');
   const [fStatus, setFStatus] = useState('');
+  const [fPortfolio, setFPortfolio] = useState('');
 
   const load = useCallback(async () => {
     try { const r = await api.get('/wa-numbers'); setData(r.data); setErr(''); clearMyWaNumbers(); } catch (e) { setErr(errOf(e, 'The numbers could not be loaded.')); }
@@ -101,13 +149,19 @@ export default function WaNumbers() {
       if (fDept && !(n.departments || []).includes(fDept) && !n.everyone) return false;
       if (fUser && !(n.users || []).some((u) => u.id === fUser)) return false;
       if (fStatus && n.status.code !== fStatus) return false;
+      if (fPortfolio === NO_PORTFOLIO ? !!n.portfolio : (fPortfolio && n.portfolio !== fPortfolio)) return false;
       if (s) {
-        const hay = `${n.label} ${n.displayNumber} ${(n.departments || []).join(' ')} ${(n.users || []).map((u) => u.name).join(' ')} ${n.status.label}`.toLowerCase();
+        const hay = `${n.label} ${n.displayNumber} ${n.portfolio || ''} ${(n.departments || []).join(' ')} ${(n.users || []).map((u) => u.name).join(' ')} ${n.status.label}`.toLowerCase();
         if (!hay.includes(s)) return false;
       }
       return true;
     });
-  }, [data, q, fDept, fUser, fStatus]);
+  }, [data, q, fDept, fUser, fStatus, fPortfolio]);
+
+  // numbers shown under their Business portfolio (only once at least one number has a portfolio; before that the list looks exactly as it did)
+  const groups = useMemo(() => groupByPortfolio(rows), [rows]);
+  // one WhatsApp Business Account belongs to ONE portfolio: two numbers of the same account with different portfolios is a slip
+  const clashes = useMemo(() => portfolioClashes((data && data.numbers) || []), [data]);
 
   if (!data) return <div className="cm-help">{err || 'Loading…'}</div>;
   const c = data.counts || {};
@@ -132,9 +186,27 @@ export default function WaNumbers() {
         </div>
       )}
 
+      {clashes.map((c) => (
+        <div className="cm-line cm-orange" key={c.wabaId} role="alert" data-portfolio-clash>
+          <b>{c.numbers.join(' and ')}</b> use the same WhatsApp Business Account (ID {c.wabaId}) but are under different portfolios ({c.portfolios.join(' / ')}). One account belongs to one portfolio, so one of these labels is wrong.
+        </div>
+      ))}
+      {data.listed && data.numbers.length > 1 && !data.numbers.some((n) => n.portfolio) && (
+        <div className="cm-line cm-blue" data-portfolio-tip>
+          <b>Tip: set the Business portfolio of each number.</b> Messages are billed to the portfolio that owns the number&apos;s WhatsApp Business Account. Press <b>Set</b> in the Business portfolio column and the list is grouped by portfolio, so you can see which payment method each number uses. It is only a label here; it changes nothing in Meta.
+        </div>
+      )}
+
       <div className="wn-toolbar">
         <button type="button" className="btn btn-primary" onClick={() => setModal({ type: 'edit', n: null })}>Add WhatsApp Number</button>
-        <input className="wn-search" type="search" placeholder="Search a number, name, department or person" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search WhatsApp numbers" />
+        <input className="wn-search" type="search" placeholder="Search a number, name, portfolio, department or person" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search WhatsApp numbers" />
+        {(data.portfolios || []).length > 0 && (
+          <Combo value={fPortfolio} onChange={(e) => setFPortfolio(e.target.value)} aria-label="Business portfolio" className="wn-filter">
+            <option value="">All portfolios</option>
+            {data.portfolios.map((p) => <option key={p} value={p}>{p}</option>)}
+            <option value={NO_PORTFOLIO}>No portfolio set</option>
+          </Combo>
+        )}
         <Combo value={fDept} onChange={(e) => setFDept(e.target.value)} aria-label="Department" className="wn-filter">
           <option value="">All departments</option>
           {data.departments.map((d) => <option key={d} value={d}>{d}</option>)}
@@ -156,31 +228,43 @@ export default function WaNumbers() {
         <>
           <div className="wn-tablewrap">
             <table className="cm-table wn-table">
-              <thead><tr><th>Number</th><th>Display name</th><th>Department</th><th>Assigned users</th><th>Connection status</th><th>Actions</th></tr></thead>
+              <thead><tr><th>Number</th><th>Display name</th><th>Business portfolio</th><th>Department</th><th>Assigned users</th><th>Connection status</th><th>Actions</th></tr></thead>
               <tbody>
-                {rows.map((n) => (
-                  <tr key={n.id} data-number-row={n.label}>
-                    <td className="wn-num"><b>{fmtNumber(n.displayNumber) || '—'}</b>{n.isDefault && <span className="wn-star" title="Default number">★ Default</span>}</td>
-                    <td className="wn-name">{n.label}{n.isMain && <span className="wn-tag">Main number</span>}</td>
-                    <td><Chips n={n} part="departments" /></td>
-                    <td><Chips n={n} part="people" /></td>
-                    <td><StatusCell n={n} /></td>
-                    <td className="wn-actions"><Actions n={n} busy={busy} setModal={setModal} act={act} data={data} /></td>
-                  </tr>
+                {groups.map((g) => (
+                  <Fragment key={g.key}>
+                    {g.header && <tr className="wn-grouprow" data-portfolio-group={g.name || 'none'}><td colSpan={7}><GroupHead g={g} /></td></tr>}
+                    {g.items.map((n) => (
+                      <tr key={n.id} data-number-row={n.label}>
+                        <td className="wn-num"><b>{fmtNumber(n.displayNumber) || '—'}</b>{n.isDefault && <span className="wn-star" title="Default number">★ Default</span>}</td>
+                        <td className="wn-name">{n.label}{n.isMain && <span className="wn-tag">Main number</span>}</td>
+                        <td><PortfolioCell n={n} onSet={(x) => setModal({ type: 'portfolio', n: x })} /></td>
+                        <td><Chips n={n} part="departments" /></td>
+                        <td><Chips n={n} part="people" /></td>
+                        <td><StatusCell n={n} /></td>
+                        <td className="wn-actions"><Actions n={n} busy={busy} setModal={setModal} act={act} data={data} /></td>
+                      </tr>
+                    ))}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="wn-cards">
-            {rows.map((n) => (
-              <div className="cm-card wn-card" key={n.id}>
-                <div className="wn-card-head"><b className="wn-name">{n.label}</b>{n.isMain && <span className="wn-tag">Main number</span>}{n.isDefault && <span className="wn-star">★ Default</span>}</div>
-                <div className="wn-num"><b>{fmtNumber(n.displayNumber) || '—'}</b></div>
-                <StatusCell n={n} />
-                <div className="wn-lab">Department</div><Chips n={n} part="departments" />
-                <div className="wn-lab">Assigned users</div><Chips n={n} part="people" />
-                <div className="wn-actions"><Actions n={n} busy={busy} setModal={setModal} act={act} data={data} /></div>
-              </div>
+            {groups.map((g) => (
+              <Fragment key={g.key}>
+                {g.header && <div className="wn-grouphead"><GroupHead g={g} /></div>}
+                {g.items.map((n) => (
+                  <div className="cm-card wn-card" key={n.id}>
+                    <div className="wn-card-head"><b className="wn-name">{n.label}</b>{n.isMain && <span className="wn-tag">Main number</span>}{n.isDefault && <span className="wn-star">★ Default</span>}</div>
+                    <div className="wn-num"><b>{fmtNumber(n.displayNumber) || '—'}</b></div>
+                    <StatusCell n={n} />
+                    <div className="wn-lab">Business portfolio</div><PortfolioCell n={n} onSet={(x) => setModal({ type: 'portfolio', n: x })} />
+                    <div className="wn-lab">Department</div><Chips n={n} part="departments" />
+                    <div className="wn-lab">Assigned users</div><Chips n={n} part="people" />
+                    <div className="wn-actions"><Actions n={n} busy={busy} setModal={setModal} act={act} data={data} /></div>
+                  </div>
+                ))}
+              </Fragment>
             ))}
           </div>
         </>
@@ -200,6 +284,7 @@ export default function WaNumbers() {
       </details>
 
       {modal && modal.type === 'edit' && <EditModal data={data} n={modal.n} onClose={() => setModal(null)} onSaved={async (text, ok) => { await load(); setNote({ ok, text }); }} />}
+      {modal && modal.type === 'portfolio' && <PortfolioModal data={data} n={modal.n} onClose={() => setModal(null)} onSaved={async (text) => { setModal(null); await load(); setNote({ ok: true, text }); }} />}
       {modal && modal.type === 'assign' && <AssignModal data={data} n={modal.n} onClose={() => setModal(null)} onSaved={async (text) => { setModal(null); await load(); setNote({ ok: true, text }); }} />}
       {modal && modal.type === 'remove' && <RemoveModal n={modal.n} onClose={() => setModal(null)} onDone={async (text) => { setModal(null); await load(); setNote({ ok: true, text }); }} />}
       {modal && modal.type === 'settings' && <SettingsModal data={data} onClose={() => setModal(null)} onSaved={async (text) => { setModal(null); await load(); setNote({ ok: true, text }); }} />}
@@ -269,7 +354,7 @@ function EditModal({ data, n, onClose, onSaved }) {
   const liveDepts = useActiveDepartments(); // only switched-on Department & Team names (+ ones already ticked)
   const editing = !!n;
   const main = !!(n && n.isMain);
-  const [f, setF] = useState(() => (n ? { ...BLANK, label: n.label, displayNumber: n.displayNumber, phoneNumberId: n.phoneNumberId, wabaId: n.wabaId, tokenMode: n.tokenMode || 'own', language: n.language, tplLink: n.tplLink, tplOtp: n.tplOtp, tplBulk: n.tplBulk, departments: n.departments || [] } : { ...BLANK }));
+  const [f, setF] = useState(() => (n ? { ...BLANK, label: n.label, displayNumber: n.displayNumber, phoneNumberId: n.phoneNumberId, wabaId: n.wabaId, portfolio: n.portfolio || '', tokenMode: n.tokenMode || 'own', language: n.language, tplLink: n.tplLink, tplOtp: n.tplOtp, tplBulk: n.tplBulk, departments: n.departments || [] } : { ...BLANK }));
   const [adv, setAdv] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -282,6 +367,8 @@ function EditModal({ data, n, onClose, onSaved }) {
     try {
       const body = { ...f };
       delete body.departments;
+      // the Main number's connection details live in the WhatsApp Business form: send only what this window may change (the server refuses the rest)
+      if (main) ['displayNumber', 'phoneNumberId', 'wabaId', 'tokenMode', 'token', 'appSecret', 'verifyToken'].forEach((k) => { delete body[k]; });
       if (!f.token) delete body.token;
       if (!f.appSecret) delete body.appSecret;
       if (!f.verifyToken) delete body.verifyToken;
@@ -314,6 +401,12 @@ function EditModal({ data, n, onClose, onSaved }) {
       {result && <div className={`cm-line ${result.ok ? 'cm-green' : 'cm-orange'}`}>{result.text}</div>}
       <div className="cm-form wn-form">
         <div><label htmlFor="wn-label">Display name</label><input id="wn-label" value={f.label} maxLength={60} placeholder="For example: Education desk" onChange={(e) => set('label', e.target.value)} /></div>
+        <div>
+          <label htmlFor="wn-port">Business portfolio <span className="cm-sub">optional</span></label>
+          <input id="wn-port" list="wn-portfolios" value={f.portfolio} maxLength={60} placeholder="For example: TeamLink Medical Consultancy" onChange={(e) => set('portfolio', e.target.value)} />
+          <datalist id="wn-portfolios">{(data.portfolios || []).map((p) => <option key={p} value={p} />)}</datalist>
+          <div className="cm-sub">The Meta business portfolio that owns this number&apos;s WhatsApp Business Account and pays for its messages. Only a label here: it changes nothing in Meta.</div>
+        </div>
         {!main && <div><label htmlFor="wn-num">WhatsApp number</label><input id="wn-num" value={f.displayNumber} inputMode="tel" placeholder="+91 98xxxxxxx" onChange={(e) => set('displayNumber', e.target.value)} /></div>}
         {!main && <div><label htmlFor="wn-pid">Phone number ID</label><input id="wn-pid" value={f.phoneNumberId} inputMode="numeric" placeholder="from Meta > WhatsApp > API Setup" onChange={(e) => set('phoneNumberId', e.target.value)} /></div>}
         {!main && <div><label htmlFor="wn-waba">WhatsApp Business Account ID</label><input id="wn-waba" value={f.wabaId} inputMode="numeric" placeholder="from Meta > WhatsApp > API Setup" onChange={(e) => set('wabaId', e.target.value)} /></div>}
@@ -371,6 +464,44 @@ function EditModal({ data, n, onClose, onSaved }) {
           <div><label htmlFor="wn-to">Different template for the OTP <span className="cm-sub">optional</span></label><input id="wn-to" value={f.tplOtp} placeholder="Empty = same template as every number" onChange={(e) => set('tplOtp', e.target.value)} /></div>
           <div><label htmlFor="wn-tb">Different template for bulk / general messages <span className="cm-sub">optional</span></label><input id="wn-tb" value={f.tplBulk} placeholder="Empty = same template as every number" onChange={(e) => set('tplBulk', e.target.value)} /></div>
         </div>
+      )}
+    </Modal>
+  );
+}
+
+// ---- Business portfolio (quick label, no check with Meta) ---------------------------------------------------------------------
+function PortfolioModal({ data, n, onClose, onSaved }) {
+  const [value, setValue] = useState(n.portfolio || '');
+  // numbers of the same WhatsApp Business Account are under the same portfolio, so they are offered together (ticked, the Admin can untick)
+  const sameAccount = useMemo(() => (n.wabaId ? data.numbers.filter((x) => x.id !== n.id && !x.virtual && x.wabaId === n.wabaId) : []), [data, n]);
+  const [also, setAlso] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function save() {
+    setBusy(true); setErr('');
+    try {
+      const targets = [n, ...(also ? sameAccount : [])].filter((x) => (x.portfolio || '') !== value.trim());
+      for (const t of targets) await api.put(`/wa-numbers/${t.id}`, { portfolio: value, check: false }); // eslint-disable-line no-await-in-loop
+      const names = targets.map((t) => t.label).join(', ');
+      onSaved(!targets.length ? 'Nothing changed.' : value.trim() ? `Saved: ${names} ${targets.length === 1 ? 'is' : 'are'} under "${value.trim()}".` : `The portfolio label was cleared for ${names}.`);
+    } catch (e) { setErr(errOf(e, 'It could not be saved.')); } finally { setBusy(false); }
+  }
+  return (
+    <Modal
+      title={`Business portfolio of ${n.label}`}
+      note={fmtNumber(n.displayNumber)}
+      onClose={onClose}
+      foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}
+    >
+      {err && <div className="cm-line cm-red" role="alert">{err}</div>}
+      <div className="field">
+        <label htmlFor="wn-port2">Business portfolio</label>
+        <input id="wn-port2" list="wn-portfolios2" value={value} maxLength={60} autoFocus placeholder="For example: TeamLink Medical Consultancy" onChange={(e) => setValue(e.target.value)} />
+        <datalist id="wn-portfolios2">{(data.portfolios || []).map((p) => <option key={p} value={p} />)}</datalist>
+        <div className="cm-sub">Messages are billed to the Meta business portfolio that owns this number&apos;s WhatsApp Business Account{n.wabaId ? ` (ID ${n.wabaId})` : ''}. This is only a label so you can see what bills where. It changes nothing in Meta and nothing in how messages are sent. Leave it empty to clear it.</div>
+      </div>
+      {sameAccount.length > 0 && (
+        <label className="wn-tick"><input type="checkbox" checked={also} onChange={(e) => setAlso(e.target.checked)} /> Also set it for {sameAccount.map((x) => x.label).join(', ')} (same WhatsApp Business Account, so the same portfolio)</label>
       )}
     </Modal>
   );
