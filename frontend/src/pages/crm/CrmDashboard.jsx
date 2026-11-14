@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, download, istToday } from './crmShared.jsx';
+import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday } from './crmShared.jsx';
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { TicketList } from './CrmSupport.jsx';
 
@@ -129,9 +129,12 @@ function Overview({ mine, period, onTab }) {
   const [o, setO] = useState(null);
   const [d, setD] = useState(null);
   const [sup, setSup] = useState(null);
+  const [sample, setSample] = useState(null);
   const [err, setErr] = useState('');
+  const { toast } = useCrm();
   const load = () => {
     const params = mine ? { mine: 1 } : {};
+    api.get('/crm/sample').then((r) => setSample(r.data)).catch(() => setSample(null)); // only a manager / Admin may ask; anyone else just gets no banner
     api.get('/crm/tickets', { params: { status: 'open' } }).then((r) => setSup(r.data.stats)).catch(() => setSup(null));
     api.get('/crm/overview', { params: { ...params, period } }).then((r) => { setO(r.data); setErr(''); }).catch((e) => setErr(errOf(e, 'The dashboard could not be read.')));
     api.get('/crm/dashboard', { params }).then((r) => setD(r.data)).catch(() => {});
@@ -139,11 +142,11 @@ function Overview({ mine, period, onTab }) {
   useEffect(() => { load(); }, [mine, period, version]); // eslint-disable-line react-hooks/exhaustive-deps
   const own = mine ? { owner: me.userId } : {};
   const W = {
-    leads: { title: 'Leads (newest first)', source: 'leads', params: { status: 'all', ...own } },
+    leads: { title: 'All leads (newest first)', source: 'leads', params: { status: 'all', ...own } },
     customers: { title: 'Customers', source: 'accounts', params: { kind: 'Client', ...own } },
-    won: { title: 'Won deals', source: 'deals', params: own, keep: (x) => x.stage === 'Won' },
+    won: { title: 'Won deals (last 12 months)', source: 'deals', params: { ...own, closedDays: 366 }, keep: (x) => x.stage === 'Won' },
     open: { title: 'Open deals', source: 'deals', params: own, keep: (x) => !['Won', 'Lost'].includes(x.stage) },
-    deals: { title: 'All deals (closed: last 90 days)', source: 'deals', params: own },
+    deals: { title: 'All deals (closed: last 30 days)', source: 'deals', params: own },
     tasks: { title: 'Follow-ups due (late and today)', source: 'tasks' },
     tickets: { title: 'Customer support tickets', source: 'tickets' },
     flow_leads: { title: 'Lead generation: new and contacted leads', source: 'leads', params: own, keep: (l) => ['New', 'Contacted'].includes(l.status) },
@@ -158,12 +161,23 @@ function Overview({ mine, period, onTab }) {
   const c = o.cards;
   const maxTrend = Math.max(1, ...o.trend.map((t) => t.value));
   const top = Math.max(1, o.funnel[0].count);
+  const total = sample && sample.counts ? Object.values(sample.counts).reduce((a, n) => a + n, 0) : 0;
+  const removeSample = async () => {
+    if (!window.confirm(`Remove the ${total} sample records (leads, deals, accounts, follow-ups ...) from the CRM? Your own records stay.`)) return;
+    try { await api.delete('/crm/sample'); toast('The sample data is removed.'); load(); } catch (e) { toast(errOf(e, 'The sample data could not be removed.')); }
+  };
   return (
     <>
+      {sample && sample.loaded && (
+        <div className="notice" role="status" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderColor: 'var(--amber, #d97706)' }}>
+          <span><b>This CRM still has sample data</b> ({total} records, every owner shown as the sample team). Remove it before the team starts, or these numbers are not real.</span>
+          <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={removeSample}>Remove sample data</button>
+        </div>
+      )}
       <div className="crm-kpis">
-        <Kpi icon="users" color="var(--crm-blue)" label="Total leads" value={c.leads.value.toLocaleString('en-IN')} onOpen={() => setWin(W.leads)}><Delta v={c.leads.delta} /> <span className="crm-sub">{c.leads.open} open</span></Kpi>
+        <Kpi icon="users" color="var(--crm-blue)" label={`New leads · ${o.periodLabel.toLowerCase()}`} value={c.leads.value.toLocaleString('en-IN')} onOpen={() => setWin(W.leads)}><Delta v={c.leads.delta} /> <span className="crm-sub">{c.leads.open} open in all</span></Kpi>
         <Kpi icon="hand" color="var(--crm-green)" label="Total customers" value={c.customers.value.toLocaleString('en-IN')} onOpen={() => setWin(W.customers)}><span className="crm-sub">+{c.customers.newInPeriod} won {o.periodLabel.toLowerCase()}</span></Kpi>
-        <Kpi icon="rupee" color="var(--crm-violet)" label="Revenue (won)" value={moneyShort(c.revenue.value)} onOpen={() => setWin(W.won)}><Delta v={c.revenue.delta} /> <span className="crm-sub">{c.revenue.deals} deal{c.revenue.deals === 1 ? '' : 's'}</span></Kpi>
+        <Kpi icon="rupee" color="var(--crm-violet)" label={`Won value · ${o.periodLabel.toLowerCase()}`} value={moneyShort(c.revenue.value)} onOpen={() => setWin(W.won)}><Delta v={c.revenue.delta} /> <span className="crm-sub">{c.revenue.deals} deal{c.revenue.deals === 1 ? '' : 's'}</span></Kpi>
         <Kpi icon="target" color="var(--crm-orange)" label="Sales target" value={c.target.value ? moneyShort(c.target.value) : 'Not set'} onOpen={() => onTab('team')}>
           {c.target.value ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
@@ -179,7 +193,7 @@ function Overview({ mine, period, onTab }) {
 
       <div className="crm-grid3">
         <div className="crm-card">
-          <Head title="Sales pipeline" onClick={() => setWin(W.open)} link="View deals" />
+          <Head title={`Lead funnel · leads added ${o.periodLabel.toLowerCase()}`} onClick={() => setWin(W.leads)} link="View leads" />
           <div className="crm-funnel-wrap">
             <div className="crm-funnel">
               {o.funnel.map((f, i) => (
@@ -198,7 +212,9 @@ function Overview({ mine, period, onTab }) {
               <div className="small-muted" style={{ fontSize: 10.5 }}>won value, 6 months</div>
             </div>
           </div>
-          <div className="small-muted" style={{ fontSize: 11.5, marginTop: 8 }}>Open pipeline {moneyShort(c.pipeline.value)} in {c.pipeline.open} deal{c.pipeline.open === 1 ? '' : 's'} · likely {moneyShort(c.pipeline.weighted)}</div>
+          {/* the funnel above is only the leads ADDED in the period; this is every lead as it stands now, so the two never look like a mismatch */}
+          {d && <div className="small-muted" style={{ fontSize: 11.5, marginTop: 8 }}><b>All leads right now:</b> {['New', 'Contacted', 'Qualified'].map((k) => `${k} ${(d.leads.byStatus.find((x) => x.name === k) || {}).count || 0}`).join(' · ')}</div>}
+          <div className="small-muted" style={{ fontSize: 11.5, marginTop: 4 }}><b>Deal pipeline:</b> open {moneyShort(c.pipeline.value)} in {c.pipeline.open} deal{c.pipeline.open === 1 ? '' : 's'} · likely {moneyShort(c.pipeline.weighted)}</div>
         </div>
 
         <div className="crm-card">
@@ -268,13 +284,25 @@ function Overview({ mine, period, onTab }) {
               <span style={{ marginLeft: 'auto', color: 'var(--crm-blue)', fontWeight: 600 }}>Tickets →</span>
             </button>
           )}
+          {/* a close date that has passed is not "closing in the next 30 days": it is its own list, to be updated (founder 2026-11-14) */}
+          {d && d.overdueClose && d.overdueClose.length > 0 && (
+            <>
+              <div className="section-label" style={{ color: 'var(--red)' }}>Close date passed · {d.overdueCloseCount} deal{d.overdueCloseCount === 1 ? '' : 's'} - update the date or move the deal</div>
+              {d.overdueClose.slice(0, 5).map((x) => (
+                <div key={x.id} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--line-soft)', fontSize: 13 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}><RecLink kind="deal" id={x.id}>{x.title}</RecLink><div className="small-muted" style={{ fontSize: 11.5 }}>{x.accountName || ''} · {x.stage}</div></div>
+                  <div style={{ textAlign: 'right' }}><b>{moneyShort(x.value)}</b><div className="small-muted" style={{ fontSize: 11.5, color: 'var(--red)' }}>was {dateOf(x.expectedClose)}</div></div>
+                </div>
+              ))}
+            </>
+          )}
           {d && d.closingSoon.length > 0 && (
             <>
               <div className="section-label">Closing in the next 30 days</div>
               {d.closingSoon.slice(0, 5).map((x) => (
                 <div key={x.id} style={{ display: 'flex', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--line-soft)', fontSize: 13 }}>
                   <div style={{ flex: 1, minWidth: 0 }}><RecLink kind="deal" id={x.id}>{x.title}</RecLink><div className="small-muted" style={{ fontSize: 11.5 }}>{x.accountName || ''} · {x.stage}</div></div>
-                  <div style={{ textAlign: 'right' }}><b>{moneyShort(x.value)}</b><div className="small-muted" style={{ fontSize: 11.5, color: x.late ? 'var(--red)' : undefined }}>{x.late ? 'late · ' : ''}{dateOf(x.expectedClose)}</div></div>
+                  <div style={{ textAlign: 'right' }}><b>{moneyShort(x.value)}</b><div className="small-muted" style={{ fontSize: 11.5 }}>{dateOf(x.expectedClose)}</div></div>
                 </div>
               ))}
             </>
@@ -291,7 +319,7 @@ function Overview({ mine, period, onTab }) {
           </div>
           <div className="crm-card">
             <Head title="Pipeline by stage" onClick={() => setWin(W.open)} link="Open deals" />
-            <Bars rows={d.byStage} label={(r) => r.stage} value={(r) => r.value || 0} right={(r) => `${r.count} · ${moneyShort(r.value)}`} />
+            <Bars rows={d.byStage} label={(r) => (['Won', 'Lost'].includes(r.stage) ? `${r.stage} · this month` : r.stage)} value={(r) => r.value || 0} right={(r) => `${r.count} · ${moneyShort(r.value)}`} />
             {d.lostReasons.length > 0 && (<><div className="section-label">Why deals were lost (90 days)</div><Bars rows={d.lostReasons} value={(r) => r.count} /></>)}
           </div>
         </div>
@@ -324,8 +352,8 @@ function Activities({ mine }) {
             {k ? `${ACT_ICON[k]} ` : ''}{l}{d && k && d.byKind[k] ? ` · ${d.byKind[k]}` : ''}
           </button>
         ))}
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" style={{ width: 150 }} />
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" style={{ width: 150 }} />
+        <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />
+        <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />
         {me.seesAll && !mine && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Salesperson"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
         <input type="text" placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} style={{ minWidth: 180 }} aria-label="Search activities" />
         {me.rights && me.rights.export && <button type="button" className="btn btn-sm" style={{ marginLeft: 'auto' }} onClick={() => download('/crm/export/activities', `crm-activities-${istToday()}.csv`).catch(() => toast('The download did not work.'))}>Download</button>}

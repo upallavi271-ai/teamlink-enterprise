@@ -14,7 +14,32 @@ const timeOf = (v) => {
   return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' });
 };
 
+// Inside the CRM the top bar's Today is the CRM's own: follow-ups due today plus overdue ones (the recruitment list below is candidates, interviews
+// and ATS tasks - on a CRM page it made "Today 5" with nothing in Follow-ups; founder 2026-11-14). Clicking it opens the CRM Follow-ups.
+function CrmToday() {
+  const [c, setC] = useState(null);
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const load = () => api.get('/crm/tasks/counts').then((r) => setC(r.data.counts)).catch(() => setC(null));
+  useEffect(() => { load(); }, [pathname]);
+  useEffect(() => { const t = setInterval(load, REFRESH_MS); return () => clearInterval(t); }, []);
+  if (!c) return null;
+  const total = c.today + c.overdue;
+  return (
+    <div className="tt">
+      <button type="button" className="tt-btn" onClick={() => navigate('/crm/followups')} title={`CRM follow-ups: ${c.overdue} overdue and ${c.today} due today. Click to open them.`}>
+        <span aria-hidden="true">🗓️</span> Today{total ? <> <b className={c.overdue ? 't-red' : 't-amber'}>{total}</b></> : null}
+      </button>
+    </div>
+  );
+}
+
 export default function TodayTasks() {
+  const { pathname } = useLocation();
+  return pathname.startsWith('/crm') ? <CrmToday /> : <RecruitmentToday />;
+}
+
+function RecruitmentToday() {
   const [data, setData] = useState(null);
   const [open, setOpen] = useState(false);
   const ref = useRef(null);

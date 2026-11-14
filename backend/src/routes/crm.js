@@ -144,6 +144,7 @@ router.post('/deals/:id/stage', wrap((req) => CRM.moveDeal(req.user, req.params.
 router.post('/deals/:id/approval', wrap((req) => CRM.decideDeal(req.user, req.params.id, req.body || {})));
 // The CRM's own invoices (Won -> invoice; self-contained, never the ATS Accounts invoices) — founder 2026-11-13
 router.get('/invoices', wrap((req) => CRM.invoices(req.user, req.query || {})));
+router.post('/invoices/backfill', wrap((req) => CRM.backfillInvoices(req.user))); // before /invoices/:id
 router.get('/invoices/:id', wrap((req) => CRM.invoiceDetail(req.user, req.params.id)));
 router.post('/invoices/:id/status', wrap((req) => CRM.setInvoiceStatus(req.user, req.params.id, req.body || {})));
 router.get('/invoices/:id/pdf', async (req, res, next) => {

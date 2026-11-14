@@ -6,7 +6,7 @@
 //   money / ago / ...    small formatters
 // Everything is read from and written to /api/crm (backend/src/crm/service.js holds the rules).
 // ---------------------------------------------------------------------------
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
@@ -29,6 +29,42 @@ export const moneyShort = (n) => {
 export const dateOf = (iso) => { if (!iso) return ''; const d = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' }); };
 export const dateTimeOf = (iso) => { if (!iso) return ''; const d = new Date(iso); return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }); };
 export const istToday = () => new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+// A DATE AS dd/mm/yyyy (founder 2026-11-14: the browser's own date box shows mm/dd/yyyy, the US order). Typed (the slashes come by themselves) or
+// picked from the calendar button; the value that goes in and comes out is always yyyy-mm-dd, '' while it is empty, unfinished or not a real day,
+// so every screen that held a native date value works unchanged. `min` (yyyy-mm-dd) refuses earlier days like the native box did.
+const isoToDisplay = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v || '') ? `${v.slice(8)}/${v.slice(5, 7)}/${v.slice(0, 4)}` : '');
+function displayToIso(t) {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(t || '');
+  if (!m) return '';
+  const d = new Date(Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])));
+  return d.getUTCFullYear() === Number(m[3]) && d.getUTCMonth() === Number(m[2]) - 1 && d.getUTCDate() === Number(m[1]) ? `${m[3]}-${m[2]}-${m[1]}` : '';
+}
+export function DateField({ value, onChange, min, style, 'aria-label': ariaLabel, placeholder = 'dd/mm/yyyy' }) {
+  const [text, setText] = useState(isoToDisplay(value));
+  const [bad, setBad] = useState(false);
+  const pick = useRef(null);
+  // a value changed from outside (a form reset, a preset) replaces what is typed - but never fights the person while they type
+  useEffect(() => { if (displayToIso(text) !== (value || '')) { setText(isoToDisplay(value)); setBad(false); } }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+  const type = (raw) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 8);
+    let t = digits;
+    if (digits.length > 2) t = `${digits.slice(0, 2)}/${digits.slice(2)}`;
+    if (digits.length > 4) t = `${t.slice(0, 5)}/${digits.slice(4)}`;
+    setText(t);
+    const iso = displayToIso(t);
+    const tooEarly = !!(iso && min && iso < min);
+    setBad(tooEarly || (t.length === 10 && !iso)); // a finished date that is not a real day, or before `min`
+    onChange(tooEarly ? '' : iso);
+  };
+  const openCalendar = () => { const el = pick.current; if (!el) return; if (el.showPicker) { try { el.showPicker(); return; } catch { /* fall through */ } } el.click(); };
+  return (
+    <span style={{ position: 'relative', display: 'inline-block', width: (style && style.width) || '100%', ...(style || {}) }}>
+      <input type="text" inputMode="numeric" autoComplete="off" placeholder={placeholder} maxLength={10} value={text} onChange={(e) => type(e.target.value)} aria-label={ariaLabel} aria-invalid={bad || undefined} style={{ width: '100%', paddingRight: 30, ...(bad ? { borderColor: 'var(--red)' } : {}) }} />
+      <button type="button" onClick={openCalendar} aria-label="Pick the date from a calendar" title="Pick from a calendar" style={{ position: 'absolute', right: 4, top: '50%', transform: 'translateY(-50%)', border: 0, background: 'transparent', cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 2 }}>📅</button>
+      <input ref={pick} type="date" tabIndex={-1} aria-hidden="true" min={min} value={value || ''} onChange={(e) => { setText(isoToDisplay(e.target.value)); setBad(false); onChange(e.target.value); }} style={{ position: 'absolute', right: 0, bottom: 0, width: 1, height: 1, opacity: 0, pointerEvents: 'none', border: 0, padding: 0 }} />
+    </span>
+  );
+}
 // how many whole days a due date (yyyy-mm-dd) is behind today, at least 1 (only asked of a late follow-up)
 export const daysLate = (due) => Math.max(1, Math.round((Date.parse(`${istToday()}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86400000));
 export const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
@@ -245,7 +281,7 @@ function LogActivity({ link, onDone }) {
         {[['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]].map(([l, n]) => (
           <button key={l} type="button" className={`btn btn-sm${next === addDays(today, n) ? ' btn-primary' : ''}`} onClick={() => setNext(addDays(today, n))}>{l}</button>
         ))}
-        <input type="date" value={next} min={today} onChange={(e) => setNext(e.target.value)} style={{ width: 150 }} aria-label="Follow-up date" />
+        <DateField value={next} min={today} onChange={setNext} style={{ width: 150 }} aria-label="Follow-up date" />
         {next && <button type="button" className="btn btn-sm" onClick={() => setNext('')} aria-label="No follow-up">×</button>}
         {next && <input type="text" placeholder="Follow-up: what to do" value={nextTitle} onChange={(e) => setNextTitle(e.target.value)} style={{ flex: 1, minWidth: 160 }} />}
         <button type="button" className="btn btn-primary btn-sm" style={{ marginLeft: 'auto' }} disabled={busy || (!subject.trim() && !note.trim())} onClick={save}>{busy ? 'Saving…' : 'Log it'}</button>
@@ -298,7 +334,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
             <select value={type} onChange={(e) => setType(e.target.value)} style={{ width: 110 }} aria-label="Type">{me.lists.taskTypes.map((x) => <option key={x}>{x}</option>)}</select>
             <select value={priority} onChange={(e) => setPriority(e.target.value)} style={{ width: 105 }} aria-label="Priority">{me.lists.priorities.map((x) => <option key={x} value={x}>{x} priority</option>)}</select>
             <input type="text" placeholder="New follow-up" value={title} onChange={(e) => setTitle(e.target.value)} style={{ flex: '1 1 160px' }} />
-            <input type="date" value={due} min={today} onChange={(e) => setDue(e.target.value)} style={{ width: 150 }} aria-label="Due date" />
+            <DateField value={due} min={today} onChange={setDue} style={{ width: 150 }} aria-label="Due date" />
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} style={{ width: 110 }} aria-label="Due time" />
             <button type="button" className="btn btn-sm" disabled={busy || !title.trim() || !due} onClick={add}>Add</button>
           </div>
@@ -359,7 +395,7 @@ function ConvertLead({ lead, onClose, onDone }) {
         <div className="grid-2">
           <div className="field" style={{ gridColumn: '1 / -1' }}><label>Deal name</label><input type="text" value={f.dealTitle} onChange={(e) => set('dealTitle', e.target.value)} /></div>
           <div className="field"><label>Deal value (₹)</label><input type="number" min={0} value={f.value} onChange={(e) => set('value', e.target.value)} /></div>
-          <div className="field"><label>Expected close</label><input type="date" value={f.expectedClose} onChange={(e) => set('expectedClose', e.target.value)} /></div>
+          <div className="field"><label>Expected close</label><DateField value={f.expectedClose} onChange={(v) => set("expectedClose", v)} aria-label="Expected close" /></div>
         </div>
       )}
       {err && <div className="small-muted" role="alert" style={{ color: 'var(--red)' }}>{err}</div>}
@@ -442,6 +478,8 @@ export function useMoveDeal(onMoved) {
     try {
       const r = await api.post(`/crm/deals/${deal.id}/stage`, { stage, lostReason });
       toast(stage === 'Won' ? (r.data.invoice ? `🎉 Won! Invoice ${r.data.invoice.code} is ready.` : '🎉 Won!') : `Moved to ${stage}.`);
+      // the customer's GSTIN / address are copied onto the invoice when it is made: say so now, while it can still be put right on the account
+      if (stage === 'Won' && r.data.invoice && r.data.invoice.missing && r.data.invoice.missing.length) setTimeout(() => toast(`Heads up: this customer has no ${r.data.invoice.missing.join(' and ')} on its account, so the invoice shows it blank. Add it on the account before sending the invoice.`), 700);
       onMoved(r.data.deal);
     } catch (e) { toast(errOf(e, 'The deal could not be moved.')); }
   }

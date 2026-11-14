@@ -179,6 +179,8 @@ async function bulkLeads(user, { ids, ownerId, status, rating } = {}) {
     const row = await S.getRow('lead', id); // eslint-disable-line no-await-in-loop
     if (!S.canEditRow(user, r, row)) { skipped.push({ id, reason: 'not yours' }); continue; } // eslint-disable-line no-continue
     if (row.status === 'Converted' && data.status) { skipped.push({ id, name: row.company, reason: 'already converted' }); continue; } // eslint-disable-line no-continue
+    // Contacted / Qualified only for a lead that has something logged on it (a call, meeting, email, WhatsApp or note)
+    if (['Contacted', 'Qualified'].includes(data.status) && data.status !== row.status && !(await S.hasLoggedWork(row.id))) { skipped.push({ id, name: row.company, reason: 'nothing logged on it yet' }); continue; } // eslint-disable-line no-continue, no-await-in-loop
     await S.update('CrmLead', row.id, data); // eslint-disable-line no-await-in-loop
     changed += 1;
   }

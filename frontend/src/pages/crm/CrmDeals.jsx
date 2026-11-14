@@ -55,6 +55,23 @@ export default function CrmDeals() {
     </div>
   );
 
+  const column = (s) => {
+    const ds = (rows || []).filter((d) => d.stage === s);
+    return (
+      <div
+        key={s}
+        className={`crm-col${over === s ? ' drop' : ''}${s === 'Won' ? ' won' : ''}${s === 'Lost' ? ' lost' : ''}`}
+        onDragOver={(e) => { if (dragId) { e.preventDefault(); setOver(s); } }}
+        onDragLeave={() => setOver((o) => (o === s ? null : o))}
+        onDrop={(e) => { e.preventDefault(); const d = (rows || []).find((x) => x.id === dragId); setOver(null); setDragId(null); if (d && d.stage !== s) move(d, s); }}
+      >
+        <div className="crm-col-head"><span>{s} · {ds.length}</span><span className="sum">{moneyShort(ds.reduce((a, d) => a + (d.value || 0), 0))}</span></div>
+        {ds.map(card)}
+        {!ds.length && <div className="small-muted" style={{ fontSize: 11.5, padding: '4px 4px 10px' }}>{s === 'Won' || s === 'Lost' ? 'None in the last 30 days.' : 'No deals.'}</div>}
+      </div>
+    );
+  };
+
   return (
     <div className="page">
       <div className="page-head">
@@ -83,24 +100,16 @@ export default function CrmDeals() {
       {err && view !== 'invoices' && <div className="notice" role="alert">{err}</div>}
       {rows == null && !err && view !== 'invoices' && <div className="small-muted">Loading…</div>}
       {rows && view === 'board' && (
-        <div className="crm-board">
-          {me.lists.stages.map((s) => {
-            const ds = rows.filter((d) => d.stage === s);
-            return (
-              <div
-                key={s}
-                className={`crm-col${over === s ? ' drop' : ''}${s === 'Won' ? ' won' : ''}${s === 'Lost' ? ' lost' : ''}`}
-                onDragOver={(e) => { if (dragId) { e.preventDefault(); setOver(s); } }}
-                onDragLeave={() => setOver((o) => (o === s ? null : o))}
-                onDrop={(e) => { e.preventDefault(); const d = rows.find((x) => x.id === dragId); setOver(null); setDragId(null); if (d && d.stage !== s) move(d, s); }}
-              >
-                <div className="crm-col-head"><span>{s} · {ds.length}</span><span className="sum">{moneyShort(ds.reduce((a, d) => a + (d.value || 0), 0))}</span></div>
-                {ds.map(card)}
-                {!ds.length && <div className="small-muted" style={{ fontSize: 11.5, padding: '4px 4px 10px' }}>{s === 'Won' || s === 'Lost' ? 'None in the last 90 days.' : 'No deals.'}</div>}
-              </div>
-            );
-          })}
-        </div>
+        <>
+          {/* the open stages across the page; Won and Lost are a closed strip underneath, so they are never pushed off the right edge */}
+          <div className="crm-board crm-board-open">
+            {me.lists.stages.filter((s) => !['Won', 'Lost'].includes(s)).map(column)}
+          </div>
+          <div className="section-label" style={{ margin: '14px 0 6px' }}>Closed · last 30 days <span className="small-muted" style={{ fontWeight: 400 }}>(drop a deal here to win or lose it; older ones stay on their account)</span></div>
+          <div className="crm-board crm-board-closed">
+            {me.lists.stages.filter((s) => ['Won', 'Lost'].includes(s)).map(column)}
+          </div>
+        </>
       )}
       {rows && view === 'list' && (
         <div className="tbl-wrap">

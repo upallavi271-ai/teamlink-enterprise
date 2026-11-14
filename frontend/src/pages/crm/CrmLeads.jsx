@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, dateOf, istToday, Pill, RecordForm, download } from './crmShared.jsx';
+import { useCrm, errOf, dateOf, istToday, Pill, DateField, RecordForm, download } from './crmShared.jsx';
 import CrmCampaigns from './CrmCampaigns.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 
@@ -118,8 +118,8 @@ export default function CrmLeads() {
           <option value="all">All leads</option>
         </select>
         <select value={stage} onChange={(e) => setStage(e.target.value)} aria-label="Stage"><option value="">Any stage</option>{me.lists.leadStages.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}</select>
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="Added from" style={{ width: 145 }} />
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="Added to" style={{ width: 145 }} />
+        <DateField value={from} onChange={setFrom} aria-label="Added from" style={{ width: 145 }} />
+        <DateField value={to} onChange={setTo} aria-label="Added to" style={{ width: 145 }} />
         <select value={rating} onChange={(e) => setRating(e.target.value)} aria-label="Rating"><option value="">Any rating</option>{me.lists.ratings.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         <select value={source} onChange={(e) => setSource(e.target.value)} aria-label="Source"><option value="">Any source</option>{me.lists.sources.map((s) => <option key={s} value={s}>{s}</option>)}</select>
         {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}

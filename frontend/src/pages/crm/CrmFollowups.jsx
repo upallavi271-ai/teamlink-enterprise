@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill } from './crmShared.jsx';
+import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField } from './crmShared.jsx';
 
 const TABS = [['overdue', 'Overdue'], ['today', 'Today'], ['upcoming', 'Upcoming'], ['done', 'Completed']];
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
@@ -42,7 +42,7 @@ export function DoneDialog({ task, onClose, onDone }) {
       <div className="small-muted" style={{ marginBottom: 8 }}>This is written on the timeline of the record.</div>
       <div className="section-label" style={{ marginTop: 4 }}>Next follow-up (optional)</div>
       <div className="grid-2">
-        <div className="field"><label>Date</label><input type="date" min={istToday()} value={next} onChange={(e) => setNext(e.target.value)} /></div>
+        <div className="field"><label>Date</label><DateField min={istToday()} value={next} onChange={setNext} aria-label="Next follow-up date" /></div>
         <div className="field"><label>Time</label><input type="time" value={nextTime} disabled={!next} onChange={(e) => setNextTime(e.target.value)} /></div>
       </div>
       <div className="field"><label>What to do then</label><input type="text" value={nextTitle} disabled={!next} onChange={(e) => setNextTitle(e.target.value)} placeholder={task.title} /></div>
@@ -106,8 +106,8 @@ export default function CrmFollowups() {
         })}
       </div>
       <div className="filter-row">
-        <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From" style={{ width: 150 }} />
-        <input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To" style={{ width: 150 }} />
+        <DateField value={from} onChange={setFrom} aria-label="From" style={{ width: 150 }} />
+        <DateField value={to} onChange={setTo} aria-label="To" style={{ width: 150 }} />
         <select value={priority} onChange={(e) => setPriority(e.target.value)} aria-label="Priority"><option value="">Any priority</option>{me.lists.priorities.map((p) => <option key={p}>{p}</option>)}</select>
         <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Type"><option value="">Any type</option>{me.lists.taskTypes.map((p) => <option key={p}>{p}</option>)}</select>
         {me.seesAll && <select value={owner} onChange={(e) => setOwner(e.target.value)} aria-label="Owner"><option value="">Everyone</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}

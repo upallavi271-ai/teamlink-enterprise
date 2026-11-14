@@ -46,6 +46,8 @@ async function moveLead(user, id, { stage, lostReason } = {}) {
   const reason = S.clip(lostReason, 300);
   if (stage === 'Lost' && !reason) return S.fail(400, 'Please say why it was lost.');
   const i = names.indexOf(stage);
+  // past the first stage (and not Lost) needs something logged on the lead: a call, meeting, email, WhatsApp or note
+  if (i >= 1 && stage !== 'Lost' && !(await S.hasLoggedWork(row.id))) return S.fail(409, S.NEEDS_LOGGED_WORK);
   const status = row.status === 'Junk' ? 'Junk' : (i === 0 ? 'New' : (i === 1 ? 'Contacted' : 'Qualified'));
   const lead = await S.update('CrmLead', row.id, { stage, status: stage === 'Lost' ? status : (row.status === 'Junk' ? 'Qualified' : status), lostReason: stage === 'Lost' ? reason : null, updatedAt: DB.nowIso() });
   await S.addActivity(user, { kind: 'note', leadId: row.id, subject: `Stage: ${from} → ${stage}`, note: stage === 'Lost' ? `Lost reason: ${reason}` : null }).catch(() => null);

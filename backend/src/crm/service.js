@@ -263,8 +263,10 @@ async function list(user, kind, q = {}) {
   if (kind === 'deal') {
     if (text) { where.push('(x."title" LIKE ? OR a."name" LIKE ?)'); params.push(`%${text}%`, `%${text}%`); }
     if (q.owner && seesAll(r)) { where.push('x."ownerId" = ?'); params.push(clip(q.owner, 60)); }
-    // closed deals: the last 90 days only on the board (older ones stay on their account)
-    const since = new Date(Date.now() - 90 * 86400000).toISOString();
+    // closed deals: the last 30 days only on the board, so Won / Lost stay readable (older ones stay on their account); a list that needs more
+    // (the Revenue card's Won deals) asks with ?closedDays=
+    const closedDays = Math.max(1, Math.min(3650, Math.round(Number(q.closedDays)) || 30));
+    const since = new Date(Date.now() - closedDays * 86400000).toISOString();
     where.push('(x."stage" NOT IN (\'Won\', \'Lost\') OR COALESCE(x."wonAt", x."lostAt", x."updatedAt") >= ?)'); params.push(since);
     return DB.all(`SELECT x.*, a."name" AS "accountName", c."name" AS "contactName", ${LAST_ACT('dealId')}, ${NEXT_TASK('dealId')}
       FROM "CrmDeal" x LEFT JOIN "CrmAccount" a ON a."id" = x."accountId" LEFT JOIN "CrmContact" c ON c."id" = x."contactId"
@@ -354,6 +356,15 @@ async function create(user, kind, body = {}) {
   return okBody({ ok: true, [kind]: saved, ...(firstFollowUp ? { firstFollowUp } : {}) });
 }
 
+// A lead may be called Contacted / Qualified, or stand on a later stage, only once somebody has LOGGED something on it - a call, meeting, email,
+// WhatsApp, note, or a follow-up finished with an outcome (founder 2026-11-14: a Qualified lead "never touched" for 24 days). Lines the system writes
+// (stage moves, moved follow-ups, reminders, the website form) do not count.
+async function hasLoggedWork(leadId) {
+  const n = await DB.one('SELECT COUNT(*) AS "n" FROM "CrmActivity" WHERE "leadId" = ? AND "byId" IS NOT NULL AND COALESCE("subject", \'\') NOT LIKE \'Stage:%\' AND COALESCE("subject", \'\') NOT LIKE \'Follow-up moved:%\'', leadId);
+  return Number(n && n.n) > 0;
+}
+const NEEDS_LOGGED_WORK = 'Log a call, meeting, email, WhatsApp or note on this lead first - then you can mark it Contacted or Qualified.';
+
 async function edit(user, kind, id, body = {}) {
   const r = roleOf(user);
   const row = await getRow(kind, id);
@@ -362,6 +373,7 @@ async function edit(user, kind, id, body = {}) {
   if (c.error) return fail(400, c.error);
   const data = { ...c.data };
   if (kind === 'lead' && data.status === 'Converted' && row.status !== 'Converted') return fail(400, 'Use "Convert" to turn a lead into an account and a deal.');
+  if (kind === 'lead' && ['Contacted', 'Qualified'].includes(data.status) && data.status !== row.status && !(await hasLoggedWork(row.id))) return fail(409, NEEDS_LOGGED_WORK);
   if (kind === 'lead' && data.source && !(await SETTINGS.load()).sources.includes(data.source)) data.source = 'Other';
   if ('ownerId' in body && body.ownerId && body.ownerId !== row.ownerId) {
     if (!mayAssign(r)) return fail(403, 'Only a Sales manager or an Admin can give a record to another salesperson.');
@@ -441,7 +453,8 @@ function invoiceAmounts(net, taxPercent) {
   return { amount, taxAmount: tax, total: Math.round((amount + tax) * 100) / 100 };
 }
 // Raise the invoice for a Won deal. Idempotent: one per deal (returns the existing one). Called from moveDeal on Won, and by hand.
-async function createInvoiceForDeal(user, deal, { byHand = false } = {}) {
+// `issueDate` (yyyy-mm-dd) is for a backfill: the invoice of an old Won deal is dated the day it was won, not today.
+async function createInvoiceForDeal(user, deal, { byHand = false, issueDate } = {}) {
   if (!deal || !deal.id) return null;
   const existing = await DB.one('SELECT * FROM "CrmInvoice" WHERE "dealId" = ?', deal.id).catch(() => null);
   if (existing) return existing;
@@ -450,7 +463,7 @@ async function createInvoiceForDeal(user, deal, { byHand = false } = {}) {
   const net = finalValueOf(deal);
   const { amount, taxAmount, total } = invoiceAmounts(net, st.invoiceTaxPercent);
   const now = DB.nowIso();
-  const issue = istToday();
+  const issue = issueDate && YMD.test(issueDate) ? issueDate : istToday();
   const due = st.invoiceDueDays ? addDaysIso(issue, st.invoiceDueDays) : null;
   const [code] = await nextCodes('invoice', 1);
   const billTo = account ? { name: account.name, gstin: account.gstin || '', address: account.address || '', state: account.state || '', pincode: account.pincode || '', email: account.email || '', phone: account.phone || '' } : {};
@@ -483,14 +496,34 @@ async function invoices(user, q = {}) {
   if (q.accountId) { where.push('x."accountId" = ?'); params.push(clip(q.accountId, 60)); }
   if (q.dealId) { where.push('x."dealId" = ?'); params.push(clip(q.dealId, 60)); }
   const rows = await DB.all(`SELECT x.* FROM "CrmInvoice" x WHERE ${where.join(' AND ')} ORDER BY x."createdAt" DESC LIMIT 1000`, ...params);
-  return okBody({ invoices: rows.map(invoiceOut) });
+  // Won deals (in the viewer's scope) that have no invoice yet - the ones won before invoices existed; "Create missing invoices" makes them
+  const ds = scopeSql(user, r, 'd.');
+  const miss = await DB.one(`SELECT COUNT(*) AS "n" FROM "CrmDeal" d WHERE d."stage" = 'Won' AND ${ds.sql} AND NOT EXISTS (SELECT 1 FROM "CrmInvoice" i WHERE i."dealId" = d."id")`, ...ds.params);
+  return okBody({ invoices: rows.map(invoiceOut), missing: Number(miss && miss.n) || 0 });
+}
+// One press: an invoice for every Won deal of the viewer's that has none, dated the day it was won. Idempotent (one invoice per deal).
+async function backfillInvoices(user) {
+  const r = roleOf(user);
+  if (!mayEdit(r) || !can(user, 'edit')) return fail(403, 'Your CRM rights do not allow raising invoices. Ask a Sales manager.');
+  const ds = scopeSql(user, r, 'd.');
+  const deals = await DB.all(`SELECT d.* FROM "CrmDeal" d WHERE d."stage" = 'Won' AND ${ds.sql} AND NOT EXISTS (SELECT 1 FROM "CrmInvoice" i WHERE i."dealId" = d."id") ORDER BY COALESCE(d."wonAt", d."updatedAt") ASC LIMIT 500`, ...ds.params);
+  let created = 0; const skipped = [];
+  for (const deal of deals) {
+    if (!canEditRow(user, r, deal)) { skipped.push({ id: deal.id, name: deal.title, reason: 'not yours' }); continue; } // eslint-disable-line no-continue
+    const won = deal.wonAt ? new Date(Date.parse(deal.wonAt) + 5.5 * 3600000).toISOString().slice(0, 10) : null;
+    try { await createInvoiceForDeal(user, deal, { byHand: true, issueDate: won }); created += 1; } catch (e) { skipped.push({ id: deal.id, name: deal.title, reason: e.message }); } // eslint-disable-line no-await-in-loop
+  }
+  await audit(user, 'CRM missing invoices raised', 'CrmInvoice', `${created} invoices`, `${created} created, ${skipped.length} skipped`);
+  return okBody({ ok: true, created, skipped });
 }
 function invoiceOut(row) {
   let from = {}; let billTo = {};
   try { from = row.fromJson ? JSON.parse(row.fromJson) : {}; } catch { from = {}; }
   try { billTo = row.billToJson ? JSON.parse(row.billToJson) : {}; } catch { billTo = {}; }
   const overdue = row.status !== 'Paid' && row.status !== 'Cancelled' && row.dueDate && row.dueDate < istToday();
-  return { ...row, from, billTo, overdue };
+  // what is blank on the customer's side of the invoice (the account had no GSTIN / address when it was made): said on Won, shown on the invoice
+  const missing = [!billTo.gstin && 'GSTIN', !billTo.address && 'address'].filter(Boolean);
+  return { ...row, from, billTo, overdue, missing };
 }
 async function invoiceDetail(user, id) {
   const r = roleOf(user);
@@ -763,7 +796,12 @@ async function dashboard(user, { mine } = {}) {
   const today = istToday();
   const in30 = new Date(Date.parse(`${today}T00:00:00Z`) + 30 * 86400000).toISOString().slice(0, 10);
   const accName = new Map((await DB.all('SELECT "id", "name" FROM "CrmAccount"')).map((a) => [a.id, a.name]));
-  const closingSoon = open.filter((d) => d.expectedClose && d.expectedClose <= in30).sort((a, b) => a.expectedClose.localeCompare(b.expectedClose)).slice(0, 8).map((d) => ({ ...d, accountName: accName.get(d.accountId) || null, late: d.expectedClose < today }));
+  // "Closing in the next 30 days" is only what is still to come; a close date that has already passed is its own list, "Close date passed"
+  // (founder 2026-11-14: a heading that says 30 days must not hold dates from last month)
+  const withClose = open.filter((d) => d.expectedClose).sort((a, b) => a.expectedClose.localeCompare(b.expectedClose)).map((d) => ({ ...d, accountName: accName.get(d.accountId) || null, late: d.expectedClose < today }));
+  const closingSoon = withClose.filter((d) => !d.late && d.expectedClose <= in30).slice(0, 8);
+  const overdueClose = withClose.filter((d) => d.late).slice(0, 8);
+  const overdueCloseCount = withClose.filter((d) => d.late).length;
   const leads = await DB.all(`SELECT "status", "source", "createdAt" FROM "CrmLead" WHERE ${s.sql}`, ...s.params);
   const countBy = (rows, key) => Object.entries(rows.reduce((m, x) => { const k = x[key] || 'Not given'; m[k] = (m[k] || 0) + 1; return m; }, {})).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   const lostReasons = countBy(deals.filter((d) => d.stage === 'Lost' && (d.lostAt || '') >= new Date(Date.now() - 90 * 86400000).toISOString()), 'lostReason');
@@ -789,6 +827,8 @@ async function dashboard(user, { mine } = {}) {
     },
     byStage,
     closingSoon,
+    overdueClose,
+    overdueCloseCount,
     lostReasons,
     followUps: {
       overdue: await tasks(user, { when: 'overdue', mine }),
@@ -847,7 +887,7 @@ async function me(user) {
 }
 
 module.exports = {
-  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, invoiceForDeal, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
+  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, hasLoggedWork, NEEDS_LOGGED_WORK, backfillInvoices, invoiceForDeal, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
   ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,

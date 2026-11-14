@@ -128,6 +128,7 @@ const NIGHT = Date.parse('2026-11-10T18:00:00Z'); // 11:30 pm in India
   const g = await lead('Moved Ltd');
   await backdate(g.id, NOON + 86400000 + 2 * HOUR);
   await tick(NOON + 86400000 + 2 * HOUR + 60000); // queued; both first steps sent
+  await require('../src/crm/service').addActivity(admin, { kind: 'call', leadId: g.id, subject: 'Spoke to them' }); // a person moves a lead on only after working it (Phase 1 rule)
   await SALES.moveLead(admin, g.id, { stage: 'Proposal' });
   const n3 = sent.length;
   await tick(NOON + 86400000 + 7 * HOUR);

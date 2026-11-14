@@ -12,7 +12,13 @@ export default function CrmInvoices({ embedded = false }) {
   const [err, setErr] = useState('');
   const [q, setQ] = useState('');
   const [status, setStatus] = useState('');
-  const load = () => api.get('/crm/invoices').then((r) => { setRows(r.data.invoices); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
+  const [missing, setMissing] = useState(0); // Won deals with no invoice yet (won before invoices existed)
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get('/crm/invoices').then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
+  async function backfill() {
+    setBusy(true);
+    try { const r = await api.post('/crm/invoices/backfill'); toast(`${r.data.created} invoice${r.data.created === 1 ? '' : 's'} made, each dated the day its deal was won.`); await load(); } catch (e) { toast(errOf(e, 'The invoices could not be made.')); } finally { setBusy(false); }
+  }
   useEffect(() => { load(); }, [version]); // eslint-disable-line react-hooks/exhaustive-deps
   const live = (rows || []).filter((x) => x.status !== 'Cancelled');
   const sum = (list, f) => list.reduce((a, x) => a + (f(x) || 0), 0);
@@ -35,6 +41,12 @@ export default function CrmInvoices({ embedded = false }) {
             </div>
           </div>
         )}
+      {missing > 0 && me.canEdit && (
+        <div className="notice" role="status" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span><b>{missing} Won deal{missing === 1 ? ' has' : 's have'} no invoice</b> (won before invoices existed). They are not in the totals below.</span>
+          <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} disabled={busy} onClick={backfill}>{busy ? 'Making…' : 'Create missing invoices'}</button>
+        </div>
+      )}
       {rows && (
         <div className="crm-kpis" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 12 }}>
           <div className="card" style={{ padding: 12 }}><div className="small-muted">Yet to be received</div><div style={{ fontSize: 20, fontWeight: 700 }}>{money(owed)}</div></div>
@@ -61,7 +73,7 @@ export default function CrmInvoices({ embedded = false }) {
               {shown.map((x) => (
                 <tr key={x.id} className="row-link" onClick={() => x.dealId && openRecord('deal', x.dealId)}>
                   <td><b>{x.code}</b></td>
-                  <td>{x.accountName || '—'}</td>
+                  <td>{x.accountName || '—'}{x.missing && x.missing.length > 0 && <div className="small-muted" style={{ fontSize: 11.5, color: 'var(--amber, #b45309)' }} title="Add it on the customer's account; invoices made later will carry it">⚠ no {x.missing.join(' / ')}</div>}</td>
                   <td>{x.title || '—'}</td>
                   <td>{dateOf(x.issueDate)}</td>
                   <td style={{ color: x.overdue ? 'var(--red)' : undefined }}>{x.dueDate ? dateOf(x.dueDate) : '—'}</td>

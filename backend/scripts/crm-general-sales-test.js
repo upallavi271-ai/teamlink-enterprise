@@ -69,10 +69,12 @@ async function stop(code) {
   const dup = await call('POST', '/crm/leads', { company: 'Other Co', phone: '9000011111' }, auth);
   check('the same phone is caught as a duplicate', dup.status === 409 && dup.body.duplicates.length > 0, dup.body);
   const stage = async (s, extra = {}) => call('POST', `/crm/leads/${id}/stage`, { stage: s, ...extra }, auth);
+  check('a lead nobody has touched cannot move past the first stage (Phase 1 rule)', (await stage('Proposal')).status === 409);
+  await call('POST', '/crm/activities', { kind: 'call', leadId: id, subject: 'First call' }, auth);
   const m1 = await stage('Proposal');
   check('a lead moves to a stage', m1.status === 200 && m1.body.lead.stage === 'Proposal', m1.body);
   const det = await call('GET', `/crm/leads/${id}`, null, auth);
-  check('the move is on the timeline, with the user', det.body.activities.some((a) => a.subject === 'Stage: New → Proposal' && a.byName), det.body.activities);
+  check('the move is on the timeline, with the user', det.body.activities.some((a) => a.subject === 'Stage: Contacted → Proposal' && a.byName), det.body.activities);
   check('the older status follows', det.body.lead.status === 'Qualified' && det.body.lead.stage === 'Proposal');
   check('a stage that does not exist is refused', (await stage('Nonsense')).status === 400);
   check('Lost needs a reason', (await stage('Lost')).status === 400);
