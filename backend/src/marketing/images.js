@@ -415,7 +415,7 @@ async function create(u, b = {}, opts = {}) {
   const title = S.clip(b.title, 80) || S.clip(prompt.replace(/\s+/g, ' ').split(' ').slice(0, 7).join(' '), 80);
   const job = { id: S.newId('job'), userId: u.id, status: 'running', n, startedAt: Date.now() };
   jobs.set(job.id, job);
-  const run = produce(u, { st, c, n, aspect, style, headline, prompt, text, logo, modelGetsLogo, brand, dept, title })
+  const run = produce(u, { st, c, n, aspect, style, headline, prompt, text, logo, modelGetsLogo, brand, dept, title, projectId: b.projectId })
     .then((r) => {
       Object.assign(job, r.error ? { status: 'failed', error: r.error, errStatus: r.status, code: r.code } : { status: 'done', items: r.items, demo: r.demo, ms: r.ms, note: r.note });
       // a request Google refused or failed does not count against the minute limit (only the daily count of pictures really made does)
@@ -476,7 +476,7 @@ async function produce(u, x) {
     await AI.logUsage({ user: u, module: 'images', task: 'create', provider, model: st.demo ? 'sample' : c.model, ok: true, inChars: text.length, outChars: buf.length, ms: Date.now() - t0, department: dept, itemId: id }); // eslint-disable-line no-await-in-loop
     made.push(id);
   }
-  await tagProject(made, b.projectId);
+  await tagProject(made, x.projectId);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: AI pictures made', entity: TABLE, entityId: made[0], toValue: `${made.length} picture(s); ${title}${st.demo ? '; sandbox sample' : `; ${c.model}`}` });
   const set = await Cfg.getSettings();
   const rows = await Promise.all(made.map((id) => row(id)));
