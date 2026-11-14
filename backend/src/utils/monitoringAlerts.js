@@ -52,7 +52,8 @@ async function scan(now = Date.now(), s = null) {
   const [devices, logs, leaves, catOf, rules] = await Promise.all([
     prisma.monitoringDevice.findMany({ where: { isActive: true, approved: true, employee: { employmentStatus: { notIn: ['Exited', 'Relieved', 'Terminated'] } } }, select: { employeeId: true, lastSeenAt: true, pausedState: true, employee: { select: { id: true, department: true } } } }),
     prisma.activityLog.findMany({ where: { day: { in: [yesterday, today] } }, orderBy: { startTime: 'asc' }, select: { employeeId: true, appName: true, windowTitle: true, durationSeconds: true, isIdle: true, isBreak: true, startTime: true, endTime: true, day: true } }),
-    prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: today }, toDate: { gte: yesterday } }, select: { employeeId: true, fromDate: true, toDate: true } }),
+    // leave still waiting for approval counts too: somebody who applied for today is not "missing" (founder 2026-11-14)
+    prisma.leaveRequest.findMany({ where: { status: { in: ['Approved', 'Pending'] }, fromDate: { lte: today }, toDate: { gte: yesterday } }, select: { employeeId: true, fromDate: true, toDate: true } }),
     M.categoryIndex(), M.overrideIndex(),
   ]);
   const banned = String(cfg.unauthorizedApps || '').split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);

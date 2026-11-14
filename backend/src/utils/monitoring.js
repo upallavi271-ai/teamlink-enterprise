@@ -525,7 +525,10 @@ const LOG_SELECT = { employeeId: true, appName: true, windowTitle: true, startTi
 const within = (access) => (access && access.ids ? { employeeId: { in: access.ids } } : {});
 
 // What a PC is doing now, from its last heartbeat (a heartbeat comes every minute).
-function liveStatus(dev, onLeave, now) {
+// leaveWaiting: leave applied for today but not approved yet - shown as "Leave pending", never as Offline
+// (founder 2026-11-14: Navya applied sick leave for today, HRMS has the record, the board said Offline).
+const LEAVE_STATUSES = ['On leave', 'Leave pending'];
+function liveStatus(dev, onLeave, now, leaveWaiting = false) {
   const fresh = dev && dev.lastSeenAt && now - new Date(dev.lastSeenAt).getTime() < ONLINE_MS;
   if (fresh) {
     if (dev.pausedState === 'break') return 'On break';
@@ -539,6 +542,7 @@ function liveStatus(dev, onLeave, now) {
     return 'Online';
   }
   if (onLeave) return 'On leave';
+  if (leaveWaiting) return 'Leave pending';
   // the person closed the agent (Stop recording and close) or clocked out: that stays on the board until the PC reports again,
   // instead of turning into a plain Offline after 3 minutes (founder 2026-11-09: two people working, both shown Offline)
   if (dev && dev.pausedState === 'stopped') return 'Stopped';
@@ -559,17 +563,18 @@ async function liveRows(access = null) {
   const nowHm = hmOf(now);
   const [devices, leaves, rules] = await Promise.all([
     prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true, employee: { select: { id: true, department: true } } } }),
-    prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: today }, toDate: { gte: today }, ...within(access) }, select: { employeeId: true } }),
+    prisma.leaveRequest.findMany({ where: { status: { in: ['Approved', 'Pending'] }, fromDate: { lte: today }, toDate: { gte: today }, ...within(access) }, select: { employeeId: true, status: true } }),
     overrideIndex(),
   ]);
-  const onLeave = new Set(leaves.map((l) => l.employeeId));
+  const onLeave = new Set(leaves.filter((l) => l.status === 'Approved').map((l) => l.employeeId));
+  const leaveWaiting = new Set(leaves.filter((l) => l.status === 'Pending').map((l) => l.employeeId));
   const latest = new Map();
   devices.forEach((x) => { const cur = latest.get(x.employeeId); if (!cur || new Date(x.lastSeenAt || 0) > new Date(cur.lastSeenAt || 0)) latest.set(x.employeeId, x); });
   const rows = [];
   latest.forEach((dev, id) => {
     const mine = effective(cfg, rules, dev.employee);
     if (mine.excluded) return;
-    let status = liveStatus(dev, onLeave.has(id), now);
+    let status = liveStatus(dev, onLeave.has(id), now, leaveWaiting.has(id));
     if (mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break';
     const using = ['Online', 'Idle'].includes(status);
     const ld = liveDoing.get(id);
@@ -577,7 +582,7 @@ async function liveRows(access = null) {
     rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, doing, lastHeartbeat: dev.lastSeenAt, online: using });
   });
   const count = (s) => rows.filter((r) => r.status === s).length;
-  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') } };
+  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending') } };
 }
 
 // The Live Dashboard / Overview of one day: every employee this login may see who has a registered PC.
@@ -590,10 +595,11 @@ async function overview(day, access = null) {
     prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true } }),
     prisma.activityLog.findMany({ where: { day: d, ...within(access) }, select: LOG_SELECT }).then(unmeet),
     categoryIndex(),
-    prisma.leaveRequest.findMany({ where: { status: 'Approved', fromDate: { lte: d }, toDate: { gte: d }, ...within(access) }, select: { employeeId: true } }),
+    prisma.leaveRequest.findMany({ where: { status: { in: ['Approved', 'Pending'] }, fromDate: { lte: d }, toDate: { gte: d }, ...within(access) }, select: { employeeId: true, status: true } }),
     overrideIndex(),
   ]);
-  const onLeave = new Set(leaves.map((l) => l.employeeId));
+  const onLeave = new Set(leaves.filter((l) => l.status === 'Approved').map((l) => l.employeeId));
+  const leaveWaiting = new Set(leaves.filter((l) => l.status === 'Pending').map((l) => l.employeeId));
   const seen = [...new Set([...devices.map((x) => x.employeeId), ...logs.map((l) => l.employeeId)])];
   const emps = await employeesById(seen);
   const rulesOf = (id) => effective(cfg, rules, emps.get(id) || { id });
@@ -610,14 +616,14 @@ async function overview(day, access = null) {
     const e = emps.get(id) || { id, name: 'Employee', department: null };
     const t = totalsOf(byEmp.get(id), catOf, e.department || '');
     const dev = latest.get(id) || null;
-    let status = live ? liveStatus(dev, onLeave.has(id), now) : (onLeave.has(id) ? 'On leave' : null);
+    let status = live ? liveStatus(dev, onLeave.has(id), now, leaveWaiting.has(id)) : (onLeave.has(id) ? 'On leave' : (leaveWaiting.has(id) ? 'Leave pending' : null));
     const mine = rulesOf(id);
     if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
     const wd = workDayOf(d, mine, now);
-    const fill = status === 'On leave' ? { active: 0, idle: 0, brk: 0, lunch: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
+    const fill = LEAVE_STATUSES.includes(status) ? { active: 0, idle: 0, brk: 0, lunch: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
     t.activeSeconds += fill.active; t.idleSeconds += fill.idle; t.breakSeconds += fill.brk; t.lunchSeconds += fill.lunch;
     t.activeHours = hrs(t.activeSeconds); t.idleHours = hrs(t.idleSeconds); t.breakHours = hrs(t.breakSeconds); t.lunchHours = hrs(t.lunchSeconds);
-    const away = status === 'On leave' ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds - t.lunchSeconds);
+    const away = LEAVE_STATUSES.includes(status) ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds - t.lunchSeconds);
     return {
       workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
       dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), personalBreakMinutes: Math.round(wd.personalSeconds / 60), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
@@ -636,7 +642,7 @@ async function overview(day, access = null) {
   return {
     day: d, live,
     cards: {
-      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onLeave: count('On leave'),
+      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending'),
       onBreak: count('On break') + count('Clocked out'), avgActiveHours: avg('activeHours'), avgIdleHours: avg('idleHours'),
     },
     // the work day of everybody on the board together (founder 2026-11-10: "mottham annitiki")

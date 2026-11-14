@@ -43,8 +43,8 @@ function DayBar({ r }) {
 const pct = (v) => (v == null ? '—' : `${v}%`);
 const CAT_TONE = { productive: 'green', neutral: 'slate', unproductive: 'red' };
 const CAT_WORD = { productive: 'Productive', neutral: 'Neutral', unproductive: 'Unproductive' };
-const STATUS_TONE = { Online: 'green', Idle: 'amber', 'On break': 'teal', 'Clocked out': 'slate', Stopped: 'red', 'On leave': 'violet', Offline: 'slate', 'Laptop closed': 'blue', 'Old agent': 'red' };
-const STATUS_TIP = { 'Laptop closed': 'The laptop was closed (asleep). It shows Online again the moment it is opened.', 'Old agent': 'This PC runs an agent older than 2.1, which does not come back after sleep. Restart the PC once: it then updates itself.' };
+const STATUS_TONE = { Online: 'green', Idle: 'amber', 'On break': 'teal', 'Clocked out': 'slate', Stopped: 'red', 'On leave': 'violet', 'Leave pending': 'violet', Offline: 'slate', 'Laptop closed': 'blue', 'Old agent': 'red' };
+const STATUS_TIP = { 'Leave pending': 'Leave is applied for today and is waiting for approval. It shows On leave once approved. If it is rejected, this person shows Offline again.', 'Laptop closed': 'The laptop was closed (asleep). It shows Online again the moment it is opened.', 'Old agent': 'This PC runs an agent older than 2.1, which does not come back after sleep. Restart the PC once: it then updates itself.' };
 
 function useGet(url, params, deps = []) {
   const [st, setSt] = useState({ data: null, error: '', loading: true });
@@ -308,7 +308,7 @@ function Overview({ onOpen }) {
   const allRows = useMemo(() => ((data && data.rows) || []).map((r) => ({ ...r, ...(fresh.get(r.employeeId) || {}) })), [data, fresh]);
   const rows = useMemo(() => {
     const out = allRows.filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
-      && (!status || r.status === status)
+      && (!status || r.status === status || (status === 'On leave' && r.status === 'Leave pending'))
       && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
     const n = (r, k) => Number(r[k]) || 0;
     const by = {
@@ -323,7 +323,7 @@ function Overview({ onOpen }) {
   }, [allRows, dept, team, status, q, sortBy]);
   // the statuses actually on the board now, in a sensible order, for the Status filter (founder 2026-11-12: "idle, break etc vetiki pettukovadaniki")
   // every status is offered, so any one can be filtered on even when nobody is in it right now (founder 2026-11-12: "dropdown lo anni raavali")
-  const statusOptions = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave'];
+  const statusOptions = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave', 'Leave pending'];
   const c = data && data.cards ? { ...data.cards, ...((now && now.cards) || {}) } : null;
   const first = ((data && data.rows) || []).find((r) => r.workHours > 0) || null;
   const card = (s) => ({ active: status === s, onClick: live ? () => setStatus(status === s ? '' : s) : undefined });
@@ -365,7 +365,7 @@ function Overview({ onOpen }) {
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
         <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub={c && c.closed ? `No signal for 3 minutes · ${c.closed} laptop${c.closed === 1 ? '' : 's'} closed` : 'No signal for 3 minutes'} {...card('Offline')} />
         <KpiTile icon="pause" tone="violet" label="Away" value={live && c ? Math.max(0, (c.tracked || 0) - (c.online || 0) - (c.idle || 0) - (c.offline || 0) - (c.onLeave || 0)) : (live ? null : '—')} loading={loading && !c} sub={c ? `Break ${c.onBreak || 0} · Laptop closed ${c.closed || 0}` : 'On break or laptop closed'} title="On break, clocked out or laptop closed - so Online + Idle + Offline + Away + On leave add up to Tracked. Pick a status in the filter to see who." />
-        <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub="Approved leave today" {...card('On leave')} />
+        <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub={c && c.leavePending ? `Approved ${Math.max(0, (c.onLeave || 0) - c.leavePending)} · waiting for approval ${c.leavePending}` : 'Approved leave today'} {...card('On leave')} />
         <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h${first && first.workHours ? ` · out of ${hm(first.workHours)}` : ''}`} />
       </KpiRow>
       {first && first.workHours > 0 && (
@@ -401,7 +401,7 @@ function Overview({ onOpen }) {
                 <td className={`num${HI_OF[status] === 'idle' ? ' mon-hi' : ''}`}>{hm(r.idleHours)}</td>
                 <td className={`num${HI_OF[status] === 'break' ? ' mon-hi' : ''}`}>{hm(r.breakHours)}</td>
                 <td className="num">{hm(r.lunchHours)}</td>
-                <td className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`}>{r.status === 'On leave' ? '—' : hm(r.awayHours)}</td>
+                <td className={`num${HI_OF[status] === 'away' ? ' mon-hi' : ''}`}>{r.status === 'On leave' || r.status === 'Leave pending' ? '—' : hm(r.awayHours)}</td>
                 <td className="num">{pct(r.productivity)}</td>
               </tr>
             ))}

@@ -30,6 +30,12 @@ check('a break that went quiet: Offline (the PC went off)', M.liveStatus(dev(30,
 check('just went quiet: Offline', M.liveStatus(dev(10), false, now) === 'Offline');
 check('on approved leave: On leave, even if it was stopped', M.liveStatus(dev(40, { pausedState: 'stopped' }), true, now) === 'On leave');
 check('no PC at all: Offline', M.liveStatus(null, false, now) === 'Offline');
+console.log('Leave applied but not approved yet (founder 2026-11-14: Navya, sick leave, board said Offline)');
+check('leave waiting, PC quiet: Leave pending, not Offline', M.liveStatus(dev(60 * 20), false, now, true) === 'Leave pending', M.liveStatus(dev(60 * 20), false, now, true));
+check('leave waiting, no PC at all: Leave pending', M.liveStatus(null, false, now, true) === 'Leave pending');
+check('leave waiting but the PC is in use: Online (she came in)', M.liveStatus(dev(1), false, now, true) === 'Online');
+check('approved beats waiting', M.liveStatus(dev(60 * 20), true, now, true) === 'On leave');
+check('leave waiting, was stopped: Leave pending', M.liveStatus(dev(40, { pausedState: 'stopped' }), false, now, true) === 'Leave pending');
 
 console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
 process.exit(failed ? 1 : 0);
