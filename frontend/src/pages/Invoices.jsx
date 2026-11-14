@@ -128,8 +128,8 @@ const loadViews = () => {
 };
 const loadGroup = () => {
   const g = readStore(GROUP_KEY);
-  // Default: the invoice list, one row per client invoice (Group by Client is one click away).
-  return GROUP_BY.some(([v]) => v === g) ? g : 'inv';
+  // Default: ONE ROW PER CLIENT, its invoices inside it (founder 2026-11-14: the same client name showed twice for two invoice dates). Group by Invoice is one click away.
+  return GROUP_BY.some(([v]) => v === g) ? g : 'client';
 };
 
 // The Sort dropdown over the invoice table (newest first by default).
