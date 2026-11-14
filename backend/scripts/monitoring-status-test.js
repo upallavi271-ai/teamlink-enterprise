@@ -37,5 +37,23 @@ check('leave waiting but the PC is in use: Online (she came in)', M.liveStatus(d
 check('approved beats waiting', M.liveStatus(dev(60 * 20), true, now, true) === 'On leave');
 check('leave waiting, was stopped: Leave pending', M.liveStatus(dev(40, { pausedState: 'stopped' }), false, now, true) === 'Leave pending');
 
+// ABSENT: founder 2026-11-14, "After 4 hours" - no signal at all today, no leave, a working day, 4 hours of the work day gone
+console.log('Absent (no signal all day, 4 hours into the work day)');
+const H = 3600 * 1000;
+const day1 = Date.parse('2026-11-14T09:00:00Z'); // 2:30 pm IST, a Saturday (a working day)
+const wd = (hoursIn) => ({ ws: day1 - hoursIn * H, elapsedSeconds: hoursIn * 3600 });
+const absent = (o) => M.absentNow({ status: 'Offline', workingDay: true, wd: wd(5), lastSeenAt: new Date(day1 - 20 * H), now: day1, ...o });
+check('nothing today, 5 h into the day: Absent', absent({}) === true);
+check('exactly 4 h into the day: Absent', absent({ wd: wd(4) }) === true);
+check('3 h 59 min into the day: not yet', absent({ wd: { ws: day1 - 4 * H, elapsedSeconds: 4 * 3600 - 60 } }) === false);
+check('never seen at all (no PC signal ever): Absent', absent({ lastSeenAt: null }) === true);
+check('seen today, then went quiet: Offline, not Absent', absent({ lastSeenAt: new Date(day1 - 3 * H) }) === false);
+check('has activity records today: not Absent', absent({ hasLogs: true }) === false);
+check('a day off (Sunday / holiday): not Absent', absent({ workingDay: false }) === false);
+check('laptop closed since yesterday: Absent', absent({ status: 'Laptop closed' }) === true);
+check('Stopped stays Stopped', absent({ status: 'Stopped' }) === false);
+check('Old agent stays Old agent', absent({ status: 'Old agent' }) === false);
+check('On leave / Leave pending / Online are never Absent', ['On leave', 'Leave pending', 'Online', 'Idle', 'On break', 'Clocked out'].every((s) => absent({ status: s }) === false));
+
 console.log(failed ? `\n${failed} of ${total} checks FAILED` : `\nAll ${total} checks passed`);
 process.exit(failed ? 1 : 0);

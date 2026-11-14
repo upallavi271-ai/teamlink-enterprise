@@ -384,7 +384,8 @@ function LeaveFilterBar({ filters, setFilters, departments, types, children, req
         <>
           <Combo value={filters.type} onChange={(e) => set('type', e.target.value)}>
             <option value="">All leave types</option>
-            {types.map((t) => <option key={t.id || t.name} value={t.name}>{t.code ? `${t.name} (${t.code})` : t.name}</option>)}
+            {/* only the leave types in use: a paused one is not offered (founder 2026-11-14) */}
+            {types.filter((t) => t.active !== false).map((t) => <option key={t.id || t.name} value={t.name}>{t.code ? `${t.name} (${t.code})` : t.name}</option>)}
           </Combo>
           <input type="date" aria-label="From" title="From" value={filters.from} onChange={(e) => set('from', e.target.value)} />
           <input type="date" aria-label="To" title="To" value={filters.to} onChange={(e) => set('to', e.target.value)} />

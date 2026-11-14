@@ -555,12 +555,29 @@ function liveStatus(dev, onLeave, now, leaveWaiting = false) {
   return 'Offline';
 }
 
+// ABSENT (founder 2026-11-14, "After 4 hours"): a working day, no leave (approved or waiting), NO signal from the PC at all today
+// (no heartbeat, no activity) and 4 hours of the work day already gone. Only a plain Offline / Laptop closed turns into Absent -
+// Stopped and Old agent stay as they are (the agent itself is the news there), and anybody who showed up today is never Absent.
+// It is a label from the PC alone: HR attendance is separate and unchanged.
+const ABSENT_AFTER_SECONDS = 4 * 3600;
+function absentNow({ status, workingDay, wd, lastSeenAt, hasLogs = false, now = Date.now() }) {
+  if (!workingDay || !wd || !wd.ws) return false;
+  if (!['Offline', 'Laptop closed'].includes(status)) return false;
+  if (wd.elapsedSeconds < ABSENT_AFTER_SECONDS) return false;
+  if (hasLogs) return false;
+  const seen = lastSeenAt ? new Date(lastSeenAt).getTime() : 0;
+  return !seen || istDay(seen) < istDay(now);
+}
+
 // Only what changes by the second, for the Live Dashboard's fast refresh: no activity records, so it stays light.
 async function liveRows(access = null) {
   const cfg = await settings();
   const today = todayIst();
   const now = Date.now();
   const nowHm = hmOf(now);
+  const WD = require('./workingDays'); // eslint-disable-line global-require
+  await WD.ready().catch(() => {});
+  const workingToday = WD.isWorking(today);
   const [devices, leaves, rules] = await Promise.all([
     prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true, employee: { select: { id: true, department: true } } } }),
     prisma.leaveRequest.findMany({ where: { status: { in: ['Approved', 'Pending'] }, fromDate: { lte: today }, toDate: { gte: today }, ...within(access) }, select: { employeeId: true, status: true } }),
@@ -576,13 +593,14 @@ async function liveRows(access = null) {
     if (mine.excluded) return;
     let status = liveStatus(dev, onLeave.has(id), now, leaveWaiting.has(id));
     if (mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break';
+    if (absentNow({ status, workingDay: workingToday, wd: workDayOf(today, mine, now), lastSeenAt: dev.lastSeenAt, now })) status = 'Absent';
     const using = ['Online', 'Idle'].includes(status);
     const ld = liveDoing.get(id);
     const doing = status === 'Online' && ld && (now - ld.at) < ONLINE_MS ? (ld.doing || null) : null;
     rows.push({ employeeId: id, status, currentApp: using ? dev.currentApp || null : null, currentTitle: using && status === 'Online' ? dev.currentTitle || null : null, doing, lastHeartbeat: dev.lastSeenAt, online: using });
   });
   const count = (s) => rows.filter((r) => r.status === s).length;
-  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending') } };
+  return { rows, cards: { online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onBreak: count('On break') + count('Clocked out'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending'), absent: count('Absent') } };
 }
 
 // The Live Dashboard / Overview of one day: every employee this login may see who has a registered PC.
@@ -591,6 +609,9 @@ async function overview(day, access = null) {
   const live = d === todayIst();
   const cfg = await settings();
   const nowHm = hmOf(Date.now());
+  const WD = require('./workingDays'); // eslint-disable-line global-require
+  await WD.ready().catch(() => {});
+  const workingDay = WD.isWorking(d);
   const [devices, logs, catOf, leaves, rules] = await Promise.all([
     prisma.monitoringDevice.findMany({ where: { isActive: true, ...within(access) }, select: { employeeId: true, lastSeenAt: true, currentApp: true, currentTitle: true, currentIdle: true, pausedState: true, agentVersion: true } }),
     prisma.activityLog.findMany({ where: { day: d, ...within(access) }, select: LOG_SELECT }).then(unmeet),
@@ -620,6 +641,7 @@ async function overview(day, access = null) {
     const mine = rulesOf(id);
     if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
     const wd = workDayOf(d, mine, now);
+    if (live && absentNow({ status, workingDay, wd, lastSeenAt: dev ? dev.lastSeenAt : null, hasLogs: (byEmp.get(id) || []).length > 0, now })) status = 'Absent';
     const fill = LEAVE_STATUSES.includes(status) ? { active: 0, idle: 0, brk: 0, lunch: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
     t.activeSeconds += fill.active; t.idleSeconds += fill.idle; t.breakSeconds += fill.brk; t.lunchSeconds += fill.lunch;
     t.activeHours = hrs(t.activeSeconds); t.idleHours = hrs(t.idleSeconds); t.breakHours = hrs(t.breakSeconds); t.lunchHours = hrs(t.lunchSeconds);
@@ -642,7 +664,7 @@ async function overview(day, access = null) {
   return {
     day: d, live,
     cards: {
-      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending'),
+      tracked: new Set(devices.map((x) => x.employeeId).filter((id) => ids.includes(id))).size, online: count('Online'), idle: count('Idle'), offline: count('Offline') + count('Stopped') + count('Old agent'), closed: count('Laptop closed'), onLeave: count('On leave') + count('Leave pending'), leavePending: count('Leave pending'), absent: count('Absent'),
       onBreak: count('On break') + count('Clocked out'), avgActiveHours: avg('activeHours'), avgIdleHours: avg('idleHours'),
     },
     // the work day of everybody on the board together (founder 2026-11-10: "mottham annitiki")
@@ -1118,6 +1140,6 @@ function startSweep() {
 }
 
 module.exports = {
-  liveUpdate, liveRows, liveStatus, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, dataSecurity, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
+  liveUpdate, liveRows, liveStatus, absentNow, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, dataSecurity, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };
