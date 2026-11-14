@@ -7,7 +7,7 @@
 // A salesperson sees their own; a sales manager / Admin / Manager see the whole team, or "Only mine". Period: this month,
 // last month, this quarter, this year.
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday } from './crmShared.jsx';
@@ -124,6 +124,7 @@ const Head = ({ title, onClick, link = 'View all' }) => (
 const FUNNEL_COLORS = ['var(--crm-blue)', 'var(--crm-green)', 'var(--crm-orange)', 'var(--crm-violet)', 'var(--crm-navy)'];
 
 function Overview({ mine, period, onTab }) {
+  const navigate = useNavigate();
   const { me, version } = useCrm();
   const [win, setWin] = useState(null); // the list window open on this page
   const [o, setO] = useState(null);
@@ -190,6 +191,22 @@ function Overview({ mine, period, onTab }) {
           {c.followUps.late ? <span className="crm-delta down">{c.followUps.late} late</span> : <span className="crm-sub">all on time</span>}
         </Kpi>
       </div>
+      {o.cash && (
+        <>
+          <div className="small-muted" style={{ fontSize: 12, margin: '10px 2px 4px' }}><b>Money · {o.periodLabel.toLowerCase()}</b>: booked is deals won, invoiced is invoices sent out (with tax), collected is money that actually came in.</div>
+          <div className="crm-kpis">
+            <Kpi icon="rupee" color="var(--crm-violet)" label="Booked (deals won)" value={moneyShort(o.cash.booked.value)} onOpen={() => setWin(W.won)}><Delta v={o.cash.booked.delta} /> <span className="crm-sub">{o.cash.booked.deals} deal{o.cash.booked.deals === 1 ? '' : 's'}</span></Kpi>
+            <Kpi icon="check" color="var(--crm-blue)" label="Invoiced (sent, with tax)" value={moneyShort(o.cash.invoiced.value)} onOpen={() => navigate('/crm/deals?view=invoices')}>
+              <span className="crm-sub">{o.cash.invoiced.invoices} invoice{o.cash.invoiced.invoices === 1 ? '' : 's'}{o.cash.drafts.invoices ? ` · ${moneyShort(o.cash.drafts.value)} in ${o.cash.drafts.invoices} draft${o.cash.drafts.invoices === 1 ? '' : 's'} not sent` : ''}</span>
+            </Kpi>
+            <Kpi icon="rupee" color="var(--crm-green)" label="Collected (money received)" value={moneyShort(o.cash.collected.value)} onOpen={() => navigate('/crm/deals?view=invoices')}><Delta v={o.cash.collected.delta} /> <span className="crm-sub">{o.cash.collected.payments} payment{o.cash.collected.payments === 1 ? '' : 's'}</span></Kpi>
+            <Kpi icon="target" color="var(--crm-orange)" label="Still to collect (all invoices)" value={moneyShort(o.cash.toCollect.value)} onOpen={() => navigate('/crm/deals?view=invoices')}>
+              {o.cash.toCollect.overdueInvoices ? <span className="crm-delta down">{moneyShort(o.cash.toCollect.overdueValue)} overdue · {o.cash.toCollect.overdueInvoices} invoice{o.cash.toCollect.overdueInvoices === 1 ? '' : 's'}</span> : <span className="crm-sub">nothing overdue</span>}
+            </Kpi>
+            {o.cash.wonNoInvoice > 0 && <Kpi icon="hand" color="var(--crm-teal)" label="Won, no invoice yet" value={o.cash.wonNoInvoice} onOpen={() => navigate('/crm/deals?view=invoices')}><span className="crm-sub">open Invoices, then Create missing invoices</span></Kpi>}
+          </div>
+        </>
+      )}
 
       <div className="crm-grid3">
         <div className="crm-card">

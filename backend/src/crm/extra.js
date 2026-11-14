@@ -564,6 +564,29 @@ async function overview(user, { period, mine } = {}) {
     pipeline: { open: pipe.n, value: pipe.v, weighted: Math.round(pipe.w) },
   };
 
+  // MONEY: BOOKED, INVOICED, COLLECTED (founder 2026-11-14, build order 2 - the three are different things and must not be mixed):
+  //   booked = the value of the deals WON in the period; invoiced = invoices that went out (Sent / Partly paid / Paid, not Draft or Cancelled) dated in the period, WITH tax;
+  //   collected = money that actually CAME in the period (the payment log, by the date it came, whichever month the invoice is from);
+  //   still to collect = what is owed right now on the invoices that went out, of which overdue = past the due date. Drafts are said apart, they have not gone out.
+  const ymd = (iso) => new Date(Date.parse(iso) + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
+  const dFrom = ymd(R.from); const dTo = ymd(R.to); const dPrevFrom = ymd(R.prevFrom); const dPrevTo = ymd(R.prevTo);
+  const sumRow = async (sql, ...args) => { const x = (await DB.one(sql, ...args)) || {}; return { n: Number(x.n) || 0, v: Math.round((Number(x.v) || 0) * 100) / 100 }; };
+  const invoicedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" NOT IN ('Draft', 'Cancelled') AND "issueDate" >= ? AND "issueDate" < ?`, ...p, dFrom, dTo);
+  const collectedNow = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dFrom, dTo);
+  const collectedBefore = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("amount"), 0) AS "v" FROM "CrmPayment" WHERE ${own} AND "paidOn" >= ? AND "paidOn" < ?`, ...p, dPrevFrom, dPrevTo);
+  const owed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total" - "paidAmount"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND "total" - "paidAmount" > 0.004`, ...p);
+  const overdueOwed = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total" - "paidAmount"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" IN ('Sent', 'Partly paid') AND "total" - "paidAmount" > 0.004 AND "dueDate" IS NOT NULL AND "dueDate" < ?`, ...p, today);
+  const drafts = await sumRow(`SELECT COUNT(*) AS "n", COALESCE(SUM("total"), 0) AS "v" FROM "CrmInvoice" WHERE ${own} AND "status" = 'Draft'`, ...p);
+  const wonNoInvoice = await count(`SELECT COUNT(*) AS "n" FROM "CrmDeal" d WHERE ${all ? '1=1' : 'd."ownerId" = ?'} AND d."stage" = 'Won' AND NOT EXISTS (SELECT 1 FROM "CrmInvoice" i WHERE i."dealId" = d."id")`, ...p);
+  const cash = {
+    booked: { value: wonNow.v, deals: wonNow.n, delta: delta(wonNow.v, wonBefore.v) },
+    invoiced: { value: invoicedNow.v, invoices: invoicedNow.n },
+    collected: { value: collectedNow.v, payments: collectedNow.n, delta: delta(collectedNow.v, collectedBefore.v) },
+    toCollect: { value: owed.v, invoices: owed.n, overdueValue: overdueOwed.v, overdueInvoices: overdueOwed.n },
+    drafts: { value: drafts.v, invoices: drafts.n },
+    wonNoInvoice,
+  };
+
   // the sales funnel of the leads added in the period
   const fl = await DB.all(`SELECT l."status", d."stage" FROM "CrmLead" l LEFT JOIN "CrmDeal" d ON d."id" = l."dealId" WHERE ${all ? '1=1' : 'l."ownerId" = ?'} AND l."createdAt" >= ? AND l."createdAt" < ?`, ...p, R.from, R.to);
   const atLeast = (st) => SETTINGS.STAGES.indexOf(st) >= SETTINGS.STAGES.indexOf('Proposal sent') && st !== 'Lost';
@@ -611,7 +634,7 @@ async function overview(user, { period, mine } = {}) {
     { key: 'customer', label: 'Customer', sub: 'Won accounts', count: customers, to: '/crm/accounts' },
   ];
 
-  return S.okBody({ period: period || 'month', periodLabel: R.label, scope: all ? 'all' : 'mine', today, cards, funnel, conversion, trend, todayList, recentDeals, flow });
+  return S.okBody({ period: period || 'month', periodLabel: R.label, scope: all ? 'all' : 'mine', today, cards, cash, funnel, conversion, trend, todayList, recentDeals, flow });
 }
 
 // ---- every call, meeting, email, WhatsApp and note in one list (Dashboard > Activities) -----------------------------------
