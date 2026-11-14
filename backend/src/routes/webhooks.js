@@ -139,18 +139,24 @@ router.post('/whatsapp', async (req, res) => {
     (Array.isArray(req.body && req.body.entry) ? req.body.entry : []).forEach((e) => (Array.isArray(e.changes) ? e.changes : []).forEach((c) => {
       const id = c && c.value && c.value.metadata && c.value.metadata.phone_number_id; if (id) phoneIds.add(String(id));
     }));
+    const all = await WN.allAppSecrets();
+    if (!all.length) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
+    // ONE COMPANY, SEVERAL META APPS (founder 2026-11-14: "use that same app secret for the Nonit webhook"; replies on the BDE / Nonit number
+    // were refused as "Bad signature" because the number's own / shared secret is for another Meta app than the one now sending its calls).
+    // A number is checked with its own secret, else the shared one, as before; if that does not sign the call, ANY other app secret saved in
+    // TeamLink may sign it. Only the holder of one of the company's own app secrets (Meta, for that app) can make that signature, so a call
+    // that passes is genuine; it is still routed by the phone_number_id it names, to that number only.
+    const signedByKnownApp = all.some((sec) => safeEq(sent, sigOf(sec)));
     const valid = new Set(); let knownReferenced = 0;
     for (const id of phoneIds) { // eslint-disable-line no-restricted-syntax
       const row = await WN.rowByPhoneId(id); // eslint-disable-line no-await-in-loop
       if (!row) continue; // eslint-disable-line no-continue
       knownReferenced += 1;
       const secret = await WN.appSecretOf(row); // eslint-disable-line no-await-in-loop
-      if (secret && safeEq(sent, sigOf(secret))) valid.add(row.id);
+      if ((secret && safeEq(sent, sigOf(secret))) || signedByKnownApp) valid.add(row.id);
     }
-    const all = await WN.allAppSecrets();
-    if (!all.length) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
     let anyValid = valid.size > 0;
-    if (!anyValid && knownReferenced === 0) anyValid = all.some((sec) => safeEq(sent, sigOf(sec)));
+    if (!anyValid && knownReferenced === 0) anyValid = signedByKnownApp;
     if (!anyValid) {
       // WHY it was refused, without showing any secret: which numbers the call was for and whether ANY saved app secret signs it
       // (founder 2026-11-14: NonIt and BDE replies never arrived - those numbers belong to another Meta app than the one the saved secret is for).
