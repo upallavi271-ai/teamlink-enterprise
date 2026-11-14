@@ -223,6 +223,34 @@ export function JoiningPeople({ month, rowKey, allowed = true }) {
   if (!allowed) return <p className="rj-hint">Candidate names and details are in ATS. Your login shows the counts only.</p>;
   if (error) return <div className="rj-error">{error}</div>;
   if (!d) return <div className="rj-empty">Loading who joined…</div>;
+  // A BDE's month: the new clients whose agreement was signed (each one is that BDE's joining).
+  if (d.kind === 'agreements') {
+    return (
+      <div className="rj-people">
+        {!d.joined.length ? <p className="rj-hint">No client agreement was signed in {d.label}.</p> : (
+          <>
+            <h4>Agreements signed in {d.label} ({d.joined.length})</h4>
+            <div className="tbl-wrap">
+              <table className="rj-mini">
+                <thead><tr><th>Client</th><th>Client code</th><th>Signed on</th><th>Status</th></tr></thead>
+                <tbody>
+                  {d.joined.map((x) => (
+                    <tr key={x.id}>
+                      <td><b>{x.client}</b></td>
+                      <td>{x.jobCode || '—'}</td>
+                      <td>{dayLabel(x.joiningDate)}</td>
+                      <td><span className="rj-tag green">{x.status}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="rj-hint">A new client whose agreement is signed is one joining for the BDE who owns the client. A later cancel or expiry does not change a past month.</p>
+          </>
+        )}
+      </div>
+    );
+  }
   const none = !d.joined.length && !d.dropouts.length && !d.waiting.length;
   const unrecorded = d.dropouts.filter((x) => !x.reasonRecorded).length;
   return (
@@ -394,7 +422,9 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
   const v = board.viewer || {};
   const canDecide = !!v.decide;
   const hasCarry = rows.some((r) => r.completed !== undefined);
-  const cols = 8 + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
+  // A table of BDEs counts signed client agreements, not candidates: no "generated" / "not counted" / drop-out columns (founder 2026-11-14).
+  const bde = rows.length > 0 && rows.every((r) => r.kind === 'BDE');
+  const cols = (bde ? 5 : 8) + (hasCarry ? 1 : 0) + (showDecision && v.decisions ? 1 : 0);
 
   async function undo(row) {
     if (!window.confirm(`Undo the decision for ${row.name}?`)) return;
@@ -419,7 +449,7 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
         <table>
           <thead>
             <tr>
-              <th>Recruiter</th><th>Seat</th><th>Team lead</th><th title="Candidates this recruiter generated (sourced / added) in the month">Candidates generated</th><th>Joinings / required</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}<th>Not counted</th><th>Drop-outs</th>
+              <th>{bde ? 'BDE' : 'Recruiter'}</th><th>Seat</th>{!bde && <th>Team lead</th>}{!bde && <th title="Candidates this recruiter generated (sourced / added) in the month">Candidates generated</th>}<th title={bde ? 'New clients whose agreement was signed this month, out of the target' : undefined}>{bde ? 'Agreements signed / required' : 'Joinings / required'}</th><th>Completion</th>{hasCarry && <th>Incentive for the month</th>}{!bde && <th>Not counted</th>}{!bde && <th>Drop-outs</th>}
               {showDecision && v.decisions && <th>Decision</th>}
             </tr>
           </thead>
@@ -434,17 +464,19 @@ export function JoiningsTable({ board, rows, onChanged, showDecision = true }) {
                     <div className="rj-sub">{[r.employeeCode, r.department, r.statusGroup && r.statusGroup !== 'Active' ? r.statusGroup : null].filter(Boolean).join(' · ') || '—'}</div>
                   </td>
                   <td>{r.seat || '—'}</td>
-                  <td>{r.tlName || '—'}</td>
-                  <td>{r.generated == null ? '—' : r.generated}</td>
+                  {!bde && <td>{r.tlName || '—'}</td>}
+                  {!bde && <td>{r.generated == null ? '—' : r.generated}</td>}
                   <td><Score row={r} /></td>
                   <td><b>{pct(r.joinings, r.target)}</b>{r.completed !== undefined && <div className="rj-sub">{r.completed ? 'Target completed' : 'Not completed yet'}</div>}</td>
                   {hasCarry && <td>{r.completed !== undefined ? <IncentiveCell row={r} mayDecide={v.decide} /> : <span className="rj-sub">No rule</span>}</td>}
-                  <td>{r.notCountedCount ? <span className="rj-tag orange">{r.notCountedCount}</span> : <span className="rj-sub">None</span>}</td>
-                  <td>
-                    {(r.droppedCount || 0) + (r.didNotJoinCount || 0)
-                      ? <span className="rj-tag red" title={`${r.droppedCount || 0} left after joining, ${r.didNotJoinCount || 0} did not join`}>{(r.droppedCount || 0) + (r.didNotJoinCount || 0)}</span>
-                      : <span className="rj-sub">None</span>}
-                  </td>
+                  {!bde && <td>{r.notCountedCount ? <span className="rj-tag orange">{r.notCountedCount}</span> : <span className="rj-sub">None</span>}</td>}
+                  {!bde && (
+                    <td>
+                      {(r.droppedCount || 0) + (r.didNotJoinCount || 0)
+                        ? <span className="rj-tag red" title={`${r.droppedCount || 0} left after joining, ${r.didNotJoinCount || 0} did not join`}>{(r.droppedCount || 0) + (r.didNotJoinCount || 0)}</span>
+                        : <span className="rj-sub">None</span>}
+                    </td>
+                  )}
                   {showDecision && v.decisions && (
                     <td>
                       {r.decision ? <DecisionLine d={r.decision} /> : (r.needsDecision ? <span className="rj-wait">{board.ended ? 'Waiting for decision' : 'Month not over yet'}</span> : <span className="rj-sub">{r.employeeId ? 'Not needed (left)' : 'No HRMS record'}</span>)}

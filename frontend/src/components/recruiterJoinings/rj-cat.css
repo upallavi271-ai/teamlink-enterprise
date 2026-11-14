@@ -8,3 +8,9 @@
 .rj-card.grey b { color: #6b7280; }
 .rj-check { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 12px; font-size: 12.5px; line-height: 1.45; cursor: pointer; }
 .rj-check input { margin-top: 3px; }
+/* One section per department in Recruiter joinings */
+.rj-dept { margin: 0 0 22px; }
+.rj-dept-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px 16px; flex-wrap: wrap; border-bottom: 2px solid var(--line, #e3e7ee); padding-bottom: 6px; margin-bottom: 10px; }
+.rj-dept-head h3 { margin: 0; font-size: 16px; }
+.rj-dept-sum { color: var(--muted, #5b6472); font-size: 12.5px; }
+.rj-dept-sum b { color: var(--text, #1b2330); }

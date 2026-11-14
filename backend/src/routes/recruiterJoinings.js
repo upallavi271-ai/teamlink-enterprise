@@ -160,6 +160,8 @@ function shapeBoard(user, viewer, board, cp = null) {
     // only HOW MANY - who they are is in ATS.
     skipped: [],
     skippedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.skipped.length : 0,
+    // signed client agreements whose owner BDE matches no employee: counted for nobody (company-wide viewers only, a count)
+    bdeSkippedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.bdeSkipped || 0 : 0,
     // company-wide viewers only: candidates generated that month by people who are not on the list
     generatedElsewhere: viewer.level === 'sa' || viewer.level === 'all' ? board.generatedElsewhere : null,
     undatedCount: viewer.level === 'sa' || viewer.level === 'all' ? board.undatedCount : 0,
@@ -189,7 +191,7 @@ const guarded = (fn) => async (req, res) => {
 router.get('/board', guarded(async (req, res) => {
   const month = monthOf(req.query, RJ.thisMonth());
   const viewer = viewerOf(req.user);
-  const board = await RJ.monthBoard(month, { fresh: req.query.fresh === '1' });
+  const board = await RJ.monthBoard(month, { fresh: req.query.fresh === '1', bde: true });
   res.json(shapeBoard(req.user, viewer, board, await carryPlanFor(board)));
 }));
 
@@ -209,11 +211,11 @@ router.get('/history/:employeeId', guarded(async (req, res) => {
   const id = req.params.employeeId;
   // In scope? Their row must be visible to this viewer in this or last month,
   // or (TL) they must sit in the team; self is always fine.
-  const [cur, prev] = await Promise.all([RJ.monthBoard(RJ.thisMonth()), RJ.monthBoard(RJ.prevMonth())]);
+  const [cur, prev] = await Promise.all([RJ.monthBoard(RJ.thisMonth(), { bde: true }), RJ.monthBoard(RJ.prevMonth(), { bde: true })]);
   const visible = [...scopeRows(req.user, viewer, cur.rows), ...scopeRows(req.user, viewer, prev.rows)].some((r) => r.employeeId === id);
   if (!visible && viewer.level !== 'sa' && viewer.level !== 'all') return err(res, 403, 'You can only see the people in your own area.');
   const months = Math.min(24, Math.max(3, Number(req.query.months) || 12));
-  const hist = await RJ.personHistory(id, months);
+  const hist = await RJ.personHistory(id, months, { bde: true });
   const emp = await prisma.employee.findUnique({ where: { id }, select: { id: true, name: true, employeeCode: true } });
   // The carried-forward target month by month (counts only), when a rule applies.
   let carry = [];
@@ -237,7 +239,7 @@ router.get('/details', guarded(async (req, res) => {
     return err(res, 403, 'Candidate names and details are in ATS, and your login does not include ATS. Here you see the counts only.', { countsOnly: true });
   }
   const viewer = viewerOf(req.user);
-  const board = await RJ.monthBoard(month);
+  const board = await RJ.monthBoard(month, { bde: true });
   const row = board.rows.find((r) => r.key === key || (r.employeeId && r.employeeId === key));
   if (!row || !scopeRows(req.user, viewer, [row]).length) return err(res, 403, 'You can only see the people in your own area.');
   const detail = await RJ.personMonthDetail(month, row.key);
@@ -329,7 +331,7 @@ router.get('/popup', guarded(async (req, res) => {
   const viewer = viewerOf(req.user);
   if (viewer.level !== 'sa') return res.json({ show: false });
   const month = RJ.prevMonth();
-  const rawBoard = await RJ.monthBoard(month);
+  const rawBoard = await RJ.monthBoard(month, { bde: true });
   const board = shapeBoard(req.user, viewer, rawBoard, await carryPlanFor(rawBoard));
   const snoozed = await snoozedToday(req.user.id);
   const pending = board.summary.pending || 0;
@@ -381,7 +383,7 @@ router.post('/decisions', guarded(async (req, res) => {
   if (!RJ.isMonth(month)) return err(res, 400, 'Pick the month.');
   if (month >= RJ.thisMonth()) return err(res, 400, `${RJ.monthLabel(month)} has not ended yet — decide after the month is over.`);
   if (!DECISIONS[decision]) return err(res, 400, 'Choose Give incentive, Raise salary or No action.');
-  const board = await RJ.monthBoard(month, { fresh: true });
+  const board = await RJ.monthBoard(month, { fresh: true, bde: true });
   const row = board.rows.find((r) => r.employeeId === employeeId);
   if (!row) return err(res, 404, 'This person is not on the recruiter list for that month.');
   const emp = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, name: true, employmentStatus: true } });
@@ -521,7 +523,7 @@ router.delete('/targets/:id', guarded(async (req, res) => {
 router.get('/export', guarded(async (req, res) => {
   const month = monthOf(req.query, RJ.thisMonth());
   const viewer = viewerOf(req.user);
-  const rawB = await RJ.monthBoard(month);
+  const rawB = await RJ.monthBoard(month, { bde: true });
   const b = shapeBoard(req.user, viewer, rawB, await carryPlanFor(rawB));
   const f = { department: s(req.query.department), tl: s(req.query.tl), recruiter: s(req.query.recruiter), status: s(req.query.status) };
   const rows = b.rows.filter((r) => (!f.department || r.department === f.department)

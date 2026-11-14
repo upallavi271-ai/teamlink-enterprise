@@ -11,7 +11,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import api from '../../api';
 import { Modal } from '../../components/proto.jsx';
 import { FacetSelect, useLocalFacets } from '../../components/ui/ListPageHeader.jsx';
-import Pager, { usePaged } from '../../components/Pager.jsx';
 import {
   JoiningsTable, RuleBox, DeptRules, SummaryCards, errText, nowMonth, addMonths,
 } from '../../components/recruiterJoinings/RjParts.jsx';
@@ -29,6 +28,19 @@ const FIELDS = [
 // (their status is written under their name). The month's totals and the cards above always count everybody.
 const EMPTY = { department: '', tl: '', recruiter: '', status: 'Active' };
 const STATUS_ORDER = ['Active', 'Exited', 'Relieved'];
+// DEPARTMENT BY DEPARTMENT (founder 2026-11-14): Medical (its own policy: targets by category), Education and Manufacturing (4 joinings a month each),
+// BDE (4 a month each, where a joining is a new client whose agreement is signed). Any other department follows.
+const DEPT_ORDER = ['Medical', 'Education', 'Manufacturing', 'BDE'];
+const deptRank = (d) => { const i = DEPT_ORDER.findIndex((x) => x.toLowerCase() === String(d).toLowerCase()); return i < 0 ? 99 : i; };
+const isBdeName = (d) => String(d).toLowerCase() === 'bde';
+// What a department did this month: the people who are still here plus anyone who joined somebody, against their targets.
+function deptFigures(rows, name) {
+  const here = rows.filter((r) => r.department === name && ((r.statusGroup || 'Active') === 'Active' || r.joinings > 0));
+  const joined = here.reduce((n, r) => n + r.joinings, 0);
+  const target = here.reduce((n, r) => n + (r.target || 0), 0);
+  const each = [...new Set(here.map((r) => r.target))];
+  return { people: here.length, joined, target, each: each.length === 1 ? each[0] : null, pct: target > 0 ? Math.round((joined * 100) / target) : null };
+}
 
 // Super Admin: the joinings target for everyone / a department / one person.
 function TargetDialog({ board, onClose, onSaved }) {
@@ -160,7 +172,13 @@ export default function RecruiterJoinings() {
     && (!f.status || (r.statusGroup || 'Active') === f.status)
     && (!f.tl || r.tlName === f.tl) && (!f.recruiter || r.key === f.recruiter)
     && (!q || `${r.name} ${r.seat || ''} ${r.employeeCode || ''}`.toLowerCase().includes(q.toLowerCase()))), [rows, f, q]);
-  const page = usePaged(shown);
+  // one section per department, in the order above; Medical is always there (when the month has Medical people) because its category panel is
+  const sections = useMemo(() => {
+    const by = new Map();
+    shown.forEach((r) => { const d = r.department || 'No department'; if (!by.has(d)) by.set(d, []); by.get(d).push(r); });
+    if ((!f.department || f.department === 'Medical') && rows.some((r) => r.department === 'Medical') && !by.has('Medical')) by.set('Medical', []);
+    return [...by.entries()].sort(([a], [b]) => deptRank(a) - deptRank(b) || a.localeCompare(b)).map(([name, list]) => ({ name, list }));
+  }, [shown, rows, f.department]);
   const v = board?.viewer || {};
 
   async function exportXlsx() {
@@ -179,7 +197,8 @@ export default function RecruiterJoinings() {
   return (
     <div className="rj">
       <p className="rj-lead">
-        How many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed), how many candidates they <b>generated</b>, and how many <b>dropped</b>.
+        Department by department: how many people each recruiter got <b>joined</b> in a month, against their target ({board?.defaultTarget || 4} a month unless changed), how many candidates they <b>generated</b>, and how many <b>dropped</b>.
+        Medical has its own targets by category; for a BDE a joining is a <b>new client whose agreement is signed</b>.
         {v.details ? ' Open a recruiter to see who joined, who dropped and the reason.' : ''}
         {v.decide ? ' After a month ends, decide per person: give an incentive, raise the salary, or no action.' : ''}
         {v.level === 'team' ? ' You see your team.' : ''}{v.level === 'self' ? ' You see your own joinings.' : ''}
@@ -208,11 +227,36 @@ export default function RecruiterJoinings() {
           <SummaryCards s={board.summary} decisions={v.decisions && board.ended} />
           <DeptRules rules={board.rules} example={board.example} />
           <RuleBox rule={board.rule} />
-          {/* Category targets (Medical: six categories, 15 a month): the same joinings, sorted into categories (founder 2026-11-14) */}
-          <CategoryTargets month={month} department={f.department} filters={f} q={q} reloadKey={rk} onChanged={load} />
           {board.current && <p className="rj-hint">{board.label} is still going — these are the joinings so far. Decisions open after the month ends.</p>}
-          <JoiningsTable board={board} rows={page.slice} onChanged={load} />
-          {page.total > 0 && <Pager page={page} noun="recruiters" />}
+          {sections.map(({ name, list }) => {
+            const g = deptFigures(rows, name);
+            const bde = isBdeName(name);
+            const med = name === 'Medical';
+            return (
+              <section key={name} className="rj-dept">
+                <div className="rj-dept-head">
+                  <h3>{name}</h3>
+                  <span className="rj-dept-sum">
+                    <b>{g.joined}</b> {bde ? 'client agreements signed' : 'joined'}
+                    {!med && g.target > 0 ? <> of <b>{g.target}</b> target · <b>{g.pct}%</b></> : null}
+                    {' · '}{g.people} {bde ? 'BDEs' : 'recruiters'}{!med && g.each ? ` · ${g.each} a month each` : ''}
+                    {med ? ' · target by category below' : ''}
+                  </span>
+                </div>
+                {bde && (
+                  <p className="rj-hint">
+                    A BDE&apos;s joining is a <b>new client</b>: when a client the BDE took signs the agreement, the client process is complete and that is one joining for that BDE
+                    (counted on the day it is signed). Open a BDE to see which clients.
+                    {board.bdeSkippedCount > 0 ? ` ${board.bdeSkippedCount} signed agreement(s) have an owner BDE who matches no employee, so they are counted for nobody.` : ''}
+                  </p>
+                )}
+                {/* Category targets (Medical: six categories, 15 a month): the same joinings, sorted into categories (founder 2026-11-14) */}
+                {med && <CategoryTargets month={month} department="Medical" filters={f} q={q} reloadKey={rk} onChanged={load} />}
+                <JoiningsTable board={board} rows={list} onChanged={load} />
+              </section>
+            );
+          })}
+          {!sections.length && <div className="rj-empty">No recruiters to show for {board.label} with these filters.</div>}
           {f.status === 'Active' && rows.some((r) => (r.statusGroup || 'Active') !== 'Active') && (
             <p className="rj-hint">
               Showing the people who are still here. {rows.filter((r) => (r.statusGroup || 'Active') !== 'Active').length} exited or relieved recruiter(s) have a row for {board.label} too:

@@ -77,6 +77,7 @@ function rowsFor(people, level, teamMap) {
   people.forEach((p) => { if (!by.has(p.department)) by.set(p.department, []); by.get(p.department).push(p); });
   return [...by.entries()].map(([d, list]) => {
     const row = groupFigures(d, d, list);
+    if (/^bde$/i.test(String(d).trim())) row.joinUnit = 'client agreements signed'; // a BDE's joining is a new client whose agreement is signed
     const names = teamMap && teamMap.get(String(d).toLowerCase());
     if (names) row.teams = splitByTeam(names, list, (p) => p.team).map((t) => groupFigures(`${d}|${t.name}`, t.name, t.items));
     return row;
@@ -98,7 +99,7 @@ async function load(prisma, employees, month) {
   const to = monthEnd < today ? monthEnd : today;
   const ids = employees.map((e) => e.id);
   const [board, targets, reviews, courses, cfg, roll] = await Promise.all([
-    RJ.monthBoard(month).catch(() => ({ rows: [] })),
+    RJ.monthBoard(month, { bde: true }).catch(() => ({ rows: [] })), // the BDE team's joinings are the client agreements they got signed
     prisma.employeeRecord.findMany({ where: { type: 'TARGET', employeeId: { in: ids }, date: { startsWith: month } }, select: { employeeId: true, status: true, amount: true, achieved: true } }),
     prisma.performanceReview.findMany({ where: { employeeId: { in: ids }, approvalStatus: 'Approved' }, orderBy: { createdAt: 'asc' }, select: { employeeId: true, score: true } }),
     prisma.courseAssignment.findMany({ where: { employeeId: { in: ids } }, select: { employeeId: true, completed: true } }),

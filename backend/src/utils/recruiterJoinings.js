@@ -373,6 +373,98 @@ function toneOf(n, t) {
 }
 const TONE_WORD = { green: 'Reached', orange: 'Close', red: 'Low', grey: '—' };
 
+// --- BDE CLOSINGS (founder 2026-11-14) -----------------------------------------------------------------------------------------------
+// "Education, Manufacturing and BDE have the same 4 joinings a month, but a BDE's closing is a NEW CLIENT: when the BDE (BDE-EDU-1 ...) takes a client
+// and the client's agreement is signed, the client process is completed, and that is that BDE's one joining."
+//   COUNTED   a client whose service agreement was SIGNED on a day of the month (Client.agreementSignedAt, India day), credited to the BDE named as the
+//             client's owner (Client.bdeOwner, matched to an employee by name). A later cancel / expiry never changes a past count, like a drop after
+//             joining. Test clients are left out.
+//   SKIPPED   a signed agreement whose owner BDE matches no employee: shown as a count, counted for nobody.
+//   WHO       the BDE team: people of the BDE department or a BDE seat, or a BDE login, who worked that month, plus anybody credited. The BDE team lead
+//             does not carry the target. Target = the same joinings target as everybody (4 a month unless Super Admin set another).
+// Only the board asked with { bde: true } carries these rows (the Recruiter joinings screen, its decisions, the HRMS progress chart): every other user of
+// monthBoard (Accounts' placements, recruiters' own figures, the incentive rules) keeps the candidate joinings exactly as before.
+const isBdeDept = (d) => String(d || '').trim().toLowerCase() === 'bde';
+async function bdeBoardRows(month, ctx) {
+  const {
+    dir, seats, rules, decisionOf, codeOf, from, to, taken,
+  } = ctx;
+  const clients = await prisma.client.findMany({
+    where: { agreementSignedAt: { gte: new Date(`${from}T00:00:00+05:30`), lt: new Date(`${addDays(to, 1)}T00:00:00+05:30`) } },
+    select: {
+      id: true, name: true, clientCode: true, bdeOwner: true, agreementStatus: true, agreementSignedAt: true,
+    },
+  }).catch(() => []);
+  const desig = new Map((await prisma.employee.findMany({ where: { department: { in: ['BDE', 'bde', 'Bde'] } }, select: { id: true, designation: true } }).catch(() => [])).map((e) => [e.id, e.designation]));
+  const userByEmp = new Map();
+  dir.users.forEach((u) => { const e = dir.empByUser.get(u.id); if (e && (!userByEmp.has(e.id) || u.atsRole === 'BDE')) userByEmp.set(e.id, u); });
+  const people = new Map(); // employeeId -> { e, items }
+  const add = (e) => { if (!people.has(e.id)) people.set(e.id, { e, items: [] }); return people.get(e.id); };
+  const isTl = (e, seat) => String(desig.get(e.id) || '').toUpperCase() === 'TL' || !!(seat && /-TL$/i.test(seat.code));
+  // 1. the BDE team that worked that month
+  dir.employees.forEach((e) => {
+    if (taken.has(e.id)) return;
+    const u = userByEmp.get(e.id) || null;
+    const seat = seatInMonth(seats, e.id, month);
+    const bde = (u && u.atsRole === 'BDE') || isBdeDept(e.department) || (seat && isBdeDept(seat.department));
+    if (!bde || isTl(e, seat)) return;
+    const tenure = seats.assignments.some((a) => a.employeeId === e.id && overlaps(a, from, to));
+    const employed = PAYABLE.includes(e.employmentStatus) && (!u || u.status === 'Active');
+    if (tenure || employed) add(e);
+  });
+  // 2. whoever the signed agreements are credited to
+  const skipped = [];
+  clients.forEach((c) => {
+    if (isTest(c.name)) return;
+    const key = String(c.bdeOwner || '').trim().toLowerCase();
+    const e = key ? dir.empByName.get(key) : null;
+    if (!e || taken.has(e.id)) { skipped.push(c); return; }
+    add(e).items.push({
+      id: c.id, client: c.name, clientCode: c.clientCode || null, signedOn: istDay(c.agreementSignedAt), status: c.agreementStatus,
+    });
+  });
+  const rows = [...people.values()].map(({ e, items }) => {
+    const u = userByEmp.get(e.id) || null;
+    const seat = seatInMonth(seats, e.id, month);
+    const t = targetOf(rules, { employeeId: e.id, department: 'BDE' }, month);
+    const joinings = items.length;
+    const tone = toneOf(joinings, t.target);
+    const d = decisionOf.get(e.id) || null;
+    const left = !PAYABLE.includes(e.employmentStatus);
+    items.sort((a, b) => String(a.signedOn).localeCompare(String(b.signedOn)));
+    return {
+      key: u ? `u:${u.id}` : `e:${e.id}`,
+      userId: u ? u.id : null,
+      employeeId: e.id,
+      employeeCode: codeOf.get(e.id) || null,
+      name: e.name,
+      employmentStatus: e.employmentStatus,
+      left,
+      seat: seat ? seat.code : null,
+      department: 'BDE',
+      team: null,
+      tlName: null,
+      tlUserId: null,
+      tlSeat: null,
+      target: t.target,
+      targetSource: t.source,
+      joinings,
+      notCountedCount: 0,
+      generated: null,
+      droppedCount: 0,
+      didNotJoinCount: 0,
+      tone,
+      toneWord: TONE_WORD[tone],
+      needsDecision: !left || joinings > 0,
+      decision: d,
+      kind: 'BDE', // the joinings of this row are signed client agreements, not candidates
+      joiningList: items,
+      notCountedList: [],
+    };
+  });
+  return { rows, skipped };
+}
+
 async function loadDecisions(month) {
   try {
     return await prisma.recruiterJoiningDecision.findMany({ where: { month } });
@@ -380,7 +472,7 @@ async function loadDecisions(month) {
 }
 
 // The whole company for one month (no role scope — routes apply it).
-async function monthBoard(month, { fresh = false } = {}) {
+async function monthBoard(month, { fresh = false, bde = false } = {}) {
   if (!isMonth(month)) throw Object.assign(new Error('Pick a month.'), { status: 400 });
   const [{ apps, undated, dir }, seats, rules, decisions, emps, gen] = await Promise.all([
     monthApplications(month, { fresh }), loadSeats(), loadTargetRules(), loadDecisions(month),
@@ -441,7 +533,7 @@ async function monthBoard(month, { fresh = false } = {}) {
     (r.counted ? p.apps : p.notCounted).push(r);
   });
 
-  const rows = [...people.values()].map((p) => {
+  let rows = [...people.values()].map((p) => {
     const e = p.employee;
     let seat = e ? seatInMonth(seats, e.id, month) : null;
     // No seat on file for the month: the seat stamped on their joinings.
@@ -492,6 +584,18 @@ async function monthBoard(month, { fresh = false } = {}) {
     };
   });
   rows.sort((a, b) => b.joinings - a.joinings || String(a.name).localeCompare(String(b.name)));
+  // BDE closings (signed client agreements): the BDE department rows are replaced by the BDE team's own rows. A BDE-department row that does carry
+  // candidate joinings is a recruiter's work and stays as it is (and that person is not listed twice).
+  let bdeSkipped = 0;
+  if (bde) {
+    const taken = new Set(rows.filter((r) => isBdeDept(r.department) && (r.joinings > 0 || r.notCountedCount > 0)).map((r) => r.employeeId).filter(Boolean));
+    const extra = await bdeBoardRows(month, {
+      dir, seats, rules, decisionOf, codeOf, from, to, taken,
+    });
+    bdeSkipped = extra.skipped.length;
+    rows = rows.filter((r) => !(isBdeDept(r.department) && !r.joinings && !r.notCountedCount)).concat(extra.rows);
+    rows.sort((a, b) => b.joinings - a.joinings || String(a.name).localeCompare(String(b.name)));
+  }
   // generated by people who are not on this list (a creator named only by a first name that matches no employee record, or no creator on record)
   const generatedElsewhere = gen ? Math.max(0, gen.total - rows.reduce((n, r) => n + (r.generated || 0), 0)) : null;
   return {
@@ -511,6 +615,7 @@ async function monthBoard(month, { fresh = false } = {}) {
     rows,
     skipped,
     undatedCount: undated.length,
+    bdeSkipped,
   };
 }
 
@@ -528,12 +633,12 @@ async function undatedJoinings(month = thisMonth()) {
 }
 
 // One person, month by month (newest first).
-async function personHistory(employeeId, months = 12) {
+async function personHistory(employeeId, months = 12, { bde = false } = {}) {
   const out = [];
   let m = thisMonth();
   for (let i = 0; i < months; i += 1) {
     // eslint-disable-next-line no-await-in-loop
-    const b = await monthBoard(m);
+    const b = await monthBoard(m, { bde });
     const r = b.rows.find((x) => x.employeeId === employeeId);
     out.push({
       month: m,
@@ -560,9 +665,20 @@ async function personHistory(employeeId, months = 12) {
 // Names, clients and jobs are ATS data: the route that calls this only answers a login that holds the ATS and may see this
 // recruiter (routes/recruiterJoinings.js /details). -> { month, label, key, name, target, joinings, joined[], dropouts[], waiting[] }
 async function personMonthDetail(month, key) {
-  const b = await monthBoard(month);
+  const b = await monthBoard(month, { bde: true });
   const row = b.rows.find((r) => r.key === key || (r.employeeId && r.employeeId === key));
   if (!row) return null;
+  // A BDE's month is the clients whose agreement was signed (BDE closings above): the same answer shape, the list is of clients.
+  if (row.kind === 'BDE') {
+    const joined = row.joiningList.map((x) => ({
+      id: x.id, candidateId: null, candidate: x.client, client: x.client, job: 'Service agreement', jobCode: x.clientCode, joiningDate: x.signedOn,
+      status: `Agreement signed${x.status && x.status !== 'SIGNED' ? ` · ${String(x.status).toLowerCase()}` : ''}`, tone: 'green', counted: true, kind: 'joined',
+      droppedOn: null, lastWorkingDay: null, withinGuarantee: null, afterIncentive: false, reason: '', reasonRecorded: false, guaranteeEnd: null, signedOn: x.signedOn,
+    }));
+    return {
+      month, label: monthLabel(month), key: row.key, employeeId: row.employeeId, name: row.name, target: row.target, joinings: row.joinings, kind: 'agreements', joined, dropouts: [], waiting: [],
+    };
+  }
   const all = [...row.joiningList, ...row.notCountedList];
   const ids = all.filter((r) => dropKind(r) || r.stage === 'REJECTED').map((r) => r.id);
   // why a person who never joined (or left) was moved to Rejected: the reason on that step, latest first
@@ -662,5 +778,5 @@ module.exports = {
   countedPlacements,
   DEFAULT_TARGET, PAYABLE, isMonth, thisMonth, prevMonth, nextMonth, monthLabel, todayIst, lastDay,
   guaranteeDays, targetOf, loadTargetRules, monthApplications, monthBoard, undatedJoinings, personHistory, personMonthDetail,
-  ownFigure, targetFor, invalidate, toneOf, TONE_WORD,
+  ownFigure, targetFor, invalidate, toneOf, TONE_WORD, isBdeDept,
 };

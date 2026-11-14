@@ -45,6 +45,7 @@ const COLUMNS = [
         return `${jc.achieved} of the team's ${jc.target} category joinings this month (each category counted up to its target): ${jc.items.map((i) => `${i.label} ${i.achieved}${i.covered ? ` + ${i.covered} from Full Time` : ''} of ${i.target}`).join(', ')}.`
           + `${jc.above ? ` ${jc.above} more joined above a category target.` : ''}${jc.other ? ` ${jc.other} joined in posts that have no target.` : ''}${jc.check ? ` ${jc.check} need a check.` : ''}`;
       }
+      if (r.joiningTarget != null && r.joinUnit) return `${r.joinings} ${r.joinUnit} this month, against targets of ${r.joiningTarget} (a new client whose agreement is signed is one joining for its BDE)`;
       return r.joiningTarget == null ? 'No joining target this month' : `${r.joinings} joined in the ATS this month, against joining targets of ${r.joiningTarget}`;
     },
   },
