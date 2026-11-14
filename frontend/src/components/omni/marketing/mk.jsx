@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { Pill, Banner, TinyBtn, Btn } from '../ui.jsx';
 import './marketing.css';
@@ -83,18 +83,28 @@ export function TextsEditor({ chans, texts, subject, onTexts, onSubject, flagsOf
 
 // an AI picture shown in the app: fetched with the login (an <img src> cannot carry it) and shown from a blob address that is freed afterwards
 // video = true for an AI Video slideshow (shown with the player's controls; `muted` thumbnails in pickers)
-export function MkImg({ id, alt, style, onClick, video, controls = true }) {
+// lazy: the file is fetched only when the tile scrolls into view (a page with many video clips must not download every clip at once)
+export function MkImg({ id, alt, style, onClick, video, controls = true, lazy = false }) {
   const [src, setSrc] = useState('');
   const [bad, setBad] = useState(false);
+  const [seen, setSeen] = useState(!lazy || typeof IntersectionObserver === 'undefined');
+  const holder = useRef(null);
   useEffect(() => {
+    if (seen) return undefined;
+    const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { setSeen(true); io.disconnect(); } }, { rootMargin: '300px' });
+    if (holder.current) io.observe(holder.current);
+    return () => io.disconnect();
+  }, [seen]);
+  useEffect(() => {
+    if (!seen) return undefined;
     let url = ''; let on = true;
     setSrc(''); setBad(false);
     omni.blob(`/gs/marketing/images/${id}/file`).then((b) => { if (!on) return; url = URL.createObjectURL(b); setSrc(url); }).catch(() => { if (on) setBad(true); });
     return () => { on = false; if (url) URL.revokeObjectURL(url); };
-  }, [id]);
+  }, [id, seen]);
   const box = { background: '#f1f5f2', borderRadius: 10, display: 'block', width: '100%', objectFit: 'cover', ...style };
   if (bad) return <div style={{ ...box, display: 'grid', placeItems: 'center', fontSize: 10, color: 'var(--muted)', minHeight: 80 }}>Picture not found</div>;
-  if (!src) return <div style={{ ...box, minHeight: 80 }} aria-busy="true" />;
+  if (!src) return <div ref={holder} style={{ ...box, minHeight: 80 }} aria-busy="true" />;
   if (video) return <video src={src} style={box} controls={controls} muted={!controls} playsInline preload="metadata" aria-label={alt || 'Video'} onClick={onClick} />; // eslint-disable-line jsx-a11y/media-has-caption
   return <img src={src} alt={alt || ''} style={box} onClick={onClick} />;
 }

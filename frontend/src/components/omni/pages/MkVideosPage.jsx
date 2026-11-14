@@ -170,7 +170,7 @@ export default function MkVideosPage() {
 
   const card = (v, isClip) => (
     <div key={v.id} className="card mki-card">
-      <div style={{ aspectRatio: ratio(v.aspect), overflow: 'hidden', borderRadius: 10, background: '#000' }}><MkImg id={v.id} alt={v.title} video style={{ height: '100%', objectFit: 'contain', background: '#000' }} /></div>
+      <div style={{ aspectRatio: ratio(v.aspect), overflow: 'hidden', borderRadius: 10, background: '#000' }}><MkImg id={v.id} alt={v.title} video lazy style={{ height: '100%', objectFit: 'contain', background: '#000' }} /></div>
       <b style={{ fontSize: 11.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 8 }} title={v.title}>{v.title}</b>
       <div style={{ margin: '3px 0', display: 'flex', gap: 4, flexWrap: 'wrap' }}><MkStatus status={v.status} /><ClientChip cr={v.clientReview} /></div>
       <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>{v.prompt} · {v.aspect} · {(v.bytes / 1048576).toFixed(1)} MB · {fmtDateTime(v.createdAt)}{!v.mine ? ` · ${v.createdByName}` : ''}</small>
@@ -208,7 +208,7 @@ export default function MkVideosPage() {
               <div className="mki-pick" style={{ maxHeight: 260 }}>
                 {sources.map((p) => { const n = pick.findIndex((x) => x.id === p.id); return (
                   <button type="button" key={p.id} className={n >= 0 ? 'on' : ''} title={`${p.kind === 'clip' ? 'Clip: ' : ''}${p.title}`} onClick={() => toggle(p)} style={{ position: 'relative' }}>
-                    <MkImg id={p.id} alt={p.title} video={p.kind === 'clip'} controls={false} style={{ height: '100%', borderRadius: 8, ...(p.kind === 'clip' ? { background: '#000' } : {}) }} />
+                    <MkImg id={p.id} alt={p.title} video={p.kind === 'clip'} lazy controls={false} style={{ height: '100%', borderRadius: 8, ...(p.kind === 'clip' ? { background: '#000' } : {}) }} />
                     {p.kind === 'clip' ? <span style={{ position: 'absolute', bottom: 4, left: 4, background: 'rgba(0,0,0,.65)', color: '#fff', borderRadius: 8, fontSize: 9, fontWeight: 800, padding: '1px 6px' }}>▶ clip</span> : null}
                     {n >= 0 ? <span style={{ position: 'absolute', top: 4, left: 4, background: '#0f766e', color: '#fff', borderRadius: 10, fontSize: 10, fontWeight: 800, padding: '1px 6px' }}>{n + 1}</span> : null}
                   </button>
