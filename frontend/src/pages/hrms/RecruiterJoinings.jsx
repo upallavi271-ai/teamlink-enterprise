@@ -25,7 +25,9 @@ const FIELDS = [
   { key: 'tl', get: (r) => r.tlName || '' },
   { key: 'recruiter', get: (r) => r.key, label: (v, r) => `${r.name}${r.seat ? ` · ${r.seat}` : ''}` },
 ];
-const EMPTY = { department: '', tl: '', recruiter: '', status: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the list opens with the people who are still here; Employee status shows the Exited / Relieved ones
+// (their status is written under their name). The month's totals and the cards above always count everybody.
+const EMPTY = { department: '', tl: '', recruiter: '', status: 'Active' };
 const STATUS_ORDER = ['Active', 'Exited', 'Relieved'];
 
 // Super Admin: the joinings target for everyone / a department / one person.
@@ -188,7 +190,7 @@ export default function RecruiterJoinings() {
         </label>
         {v.level !== 'self' && (
           <>
-            <FacetSelect label="Employee status" allLabel="Active, Exited and Relieved" value={f.status}
+            <FacetSelect label="Employee status" allLabel="All: Active, Exited and Relieved" value={f.status}
               options={[...facets.status].sort((a, b) => STATUS_ORDER.indexOf(a.value) - STATUS_ORDER.indexOf(b.value))} onChange={(x) => setFilter('status', x)} />
             <FacetSelect label="Department" allLabel="All departments" value={f.department} options={facets.department} onChange={(x) => setFilter('department', x)} />
             <FacetSelect label="Team lead" allLabel="All team leads" value={f.tl} options={facets.tl} onChange={(x) => setFilter('tl', x)} />
@@ -207,10 +209,16 @@ export default function RecruiterJoinings() {
           <DeptRules rules={board.rules} example={board.example} />
           <RuleBox rule={board.rule} />
           {/* Category targets (Medical: six categories, 15 a month): the same joinings, sorted into categories (founder 2026-11-14) */}
-          <CategoryTargets month={month} department={f.department} reloadKey={rk} onChanged={load} />
+          <CategoryTargets month={month} department={f.department} filters={f} q={q} reloadKey={rk} onChanged={load} />
           {board.current && <p className="rj-hint">{board.label} is still going — these are the joinings so far. Decisions open after the month ends.</p>}
           <JoiningsTable board={board} rows={page.slice} onChanged={load} />
           {page.total > 0 && <Pager page={page} noun="recruiters" />}
+          {f.status === 'Active' && rows.some((r) => (r.statusGroup || 'Active') !== 'Active') && (
+            <p className="rj-hint">
+              Showing the people who are still here. {rows.filter((r) => (r.statusGroup || 'Active') !== 'Active').length} exited or relieved recruiter(s) have a row for {board.label} too:
+              choose <b>Employee status → All</b> (or Exited / Relieved) to see them. They are counted in the cards above.
+            </p>
+          )}
           {board.generatedElsewhere > 0 && (
             <p className="rj-hint">
               <b>{board.generatedElsewhere}</b> more candidate(s) were generated in {board.label} by people who are not on this list: a creator recorded only by a first name

@@ -262,7 +262,7 @@ function shapeCategoryBoard(user, viewer, b, partial) {
     // a TL / recruiter sees only their own area's rows, so a "department closing %" built from them would mislead
     total: { ...b.total, closingPct: partial ? null : b.total.closingPct, incentive: money ? b.total.incentive : null, amountsSet: money ? b.total.amountsSet : null },
     recruiters: b.recruiters.map((r) => ({
-      ...r, decision: decisionFor(viewer, r.decision), incentive: money ? r.incentive : null, incentiveComplete: money ? r.incentiveComplete : null, hasAmounts: money ? r.hasAmounts : null,
+      ...r, statusGroup: statusGroupOf(r.employmentStatus), decision: decisionFor(viewer, r.decision), incentive: money ? r.incentive : null, incentiveComplete: money ? r.incentiveComplete : null, hasAmounts: money ? r.hasAmounts : null,
     })),
     otherCount: b.otherCount, checkCount: b.checkCount, assumedCount: b.assumedCount, fullCoversPart: b.fullCoversPart, joinings: b.joinings,
   };

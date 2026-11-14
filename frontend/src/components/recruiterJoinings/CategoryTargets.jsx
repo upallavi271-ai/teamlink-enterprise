@@ -142,7 +142,9 @@ function TargetsDialog({ dept, month, onClose, onSaved }) {
   );
 }
 
-function DeptPanel({ dept, month, viewer, ended, onChanged }) {
+function DeptPanel({
+  dept, month, viewer, ended, onChanged, filters = null, q = '',
+}) {
   const [edit, setEdit] = useState(false);
   const [give, setGive] = useState(null);
   const [msg, setMsg] = useState('');
@@ -151,6 +153,13 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
   const t = dept.total;
   const partial = !!dept.partial;
   const amountsNote = money && live.some((c) => c.incentive == null);
+  // The recruiter list follows the filters of the screen; ACTIVE EMPLOYEES FIRST (founder 2026-11-14): Exited / Relieved appear when Employee status asks for them.
+  // The team figures above always count every joining of the month.
+  const fl = filters || {};
+  const shownRecruiters = dept.recruiters.filter((r) => (!fl.status || (r.statusGroup || 'Active') === fl.status)
+    && (!fl.tl || r.tlName === fl.tl) && (!fl.recruiter || r.key === fl.recruiter)
+    && (!q || `${r.name} ${r.seat || ''} ${r.employeeCode || ''}`.toLowerCase().includes(q.toLowerCase())));
+  const notHere = dept.recruiters.filter((r) => (r.statusGroup || 'Active') !== 'Active').length;
 
   function saved(data) {
     setGive(null);
@@ -244,9 +253,9 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
                 </tr>
               </thead>
               <tbody>
-                {dept.recruiters.map((r) => (
+                {shownRecruiters.map((r) => (
                   <tr key={r.key}>
-                    <td><b>{r.name}</b>{r.left ? <div className="rj-sub">{r.employmentStatus}</div> : null}</td>
+                    <td><b>{r.name}</b>{(r.statusGroup || 'Active') !== 'Active' ? <div className="rj-sub">{r.statusGroup}</div> : null}</td>
                     <td>{r.seat || '—'}</td>
                     {live.map((c) => {
                       const cell = r.cells[c.key];
@@ -279,10 +288,15 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
                     )}
                   </tr>
                 ))}
-                {!dept.recruiters.length && <tr><td colSpan={5 + live.length} className="rj-sub">No {dept.department} recruiters on the list for {dept.label}.</td></tr>}
+                {!shownRecruiters.length && <tr><td colSpan={5 + live.length} className="rj-sub">No {dept.department} recruiters to show for {dept.label} with these filters.</td></tr>}
               </tbody>
             </table>
           </div>
+          {fl.status === 'Active' && notHere > 0 && (
+            <p className="rj-hint">
+              Showing the people who are still here. {notHere} exited or relieved {dept.department} recruiter(s) are on the list for {dept.label}: choose <b>Employee status → All</b> (or Exited / Relieved) above to see them. Their joinings are in the figures above.
+            </p>
+          )}
           {money && !ended && <p className="rj-hint">Giving the incentive opens after {dept.label} ends, in the same step as every other recruiter incentive (it is paid with the next salary).</p>}
         </>
       )}
@@ -299,7 +313,9 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
 }
 
 // month: the month picked in Recruiter joinings. department: the filter there ('' = all). reloadKey changes after a decision elsewhere.
-export default function CategoryTargets({ month, department = '', reloadKey = 0, onChanged }) {
+export default function CategoryTargets({
+  month, department = '', reloadKey = 0, onChanged, filters = null, q = '',
+}) {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const load = useCallback(() => {
@@ -317,7 +333,7 @@ export default function CategoryTargets({ month, department = '', reloadKey = 0,
   const changed = () => { if (onChanged) onChanged(); else load(); };
   return (
     <div>
-      {depts.map((d) => <DeptPanel key={d.department} dept={d} month={month} viewer={data.viewer} ended={data.ended} onChanged={changed} />)}
+      {depts.map((d) => <DeptPanel key={d.department} dept={d} month={month} viewer={data.viewer} ended={data.ended} onChanged={changed} filters={filters} q={q} />)}
     </div>
   );
 }

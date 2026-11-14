@@ -125,7 +125,8 @@ export default function Targets() {
   const [done, setDone] = useState('');
   const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, month: '' });
   const [sort, setSort] = useState('month');
-  const [sg, setSg] = useState('');
+  // Active employees first (founder 2026-11-14); Employee status shows the Exited / Relieved ones, each with its status under the name.
+  const [sg, setSg] = useState('Active');
   const [histFor, setHistFor] = useState('');
   // ATS joinings per month (founder 2026-11-11): who joined that month, how many dropped and why, beside each target.
   // One board per month on screen (the server scopes it: your own row, your team, or everyone); a month is asked once.
@@ -178,7 +179,7 @@ export default function Targets() {
     const b = boards[r.date];
     return b && typeof b === 'object' && r.employeeId ? (b.rows || []).find((x) => x.employeeId === r.employeeId) || null : null;
   };
-  const clearPf = () => { setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, '']))); setSg(''); };
+  const clearPf = () => { setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, '']))); setSg('Active'); };
 
   return (
     <div>
@@ -209,7 +210,7 @@ export default function Targets() {
             search="Goal" labels={{ month: 'Month' }}
           >
             <input type="month" aria-label="Month" title="Month" value={pf.month} onChange={(e) => setPf((f) => ({ ...f, month: e.target.value }))} />
-            <FacetSelect label="Employee status" allLabel="Active, Exited and Relieved" value={sg} onChange={setSg}
+            <FacetSelect label="Employee status" allLabel="All: Active, Exited and Relieved" value={sg} onChange={setSg}
               options={[...(sgFacets.sg || [])].sort((a, b) => SG_ORDER.indexOf(a.value) - SG_ORDER.indexOf(b.value))} />
             <label className="lf-sort">
               Sort
@@ -221,7 +222,7 @@ export default function Targets() {
             </label>
           </PeopleFilterBar>
         </div>
-        {shown.length === 0 ? <ListEmpty lf={{ activeCount: Object.values(pf).some(Boolean) ? 1 : 0, clear: clearPf }} noun="targets" title="No targets set yet." /> : (
+        {shown.length === 0 ? <ListEmpty lf={{ activeCount: (Object.values(pf).some(Boolean) || sg) ? 1 : 0, clear: clearPf }} noun="targets" title="No targets set yet." /> : (
           <div className="tbl-wrap">
             <table>
               <thead><tr><th>Employee</th><th>Month</th><th>Target</th><th>Achieved</th><th>Progress</th><th title="From ATS: the people who joined that month and the drop-outs, with the reason">ATS joinings</th></tr></thead>
