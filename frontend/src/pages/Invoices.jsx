@@ -477,9 +477,10 @@ export default function Invoices() {
   const joinAll = ni.allRows || [];
   const joinShown = joinAll.filter((r) => showOldJoins || !r.joiningDate || String(r.joiningDate).slice(0, 10) >= JOIN_FROM);
   const joinOlder = joinAll.length - joinAll.filter((r) => !r.joiningDate || String(r.joiningDate).slice(0, 10) >= JOIN_FROM).length;
-  const sumOf = (f) => joinShown.reduce((t, r) => t + (Number(f(r)) || 0), 0);
-  const joinFee = sumOf((r) => r.billing);
-  const joinValue = sumOf((r) => (r.billing != null ? r.billing + Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : 0));
+  // (its own name: the module-level sumOf(list, f) below must not be shadowed - that was the "is not a function" crash)
+  const joinSum = (f) => joinShown.reduce((t, r) => t + (Number(f(r)) || 0), 0);
+  const joinFee = joinSum((r) => r.billing);
+  const joinValue = joinSum((r) => (r.billing != null ? r.billing + Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : 0));
   const selectedRows = (data.noInvoice && data.noInvoice.selected) || [];
 
   // ONE reading of the money for the six cards and the age chips (invoices/invSummary.js).
