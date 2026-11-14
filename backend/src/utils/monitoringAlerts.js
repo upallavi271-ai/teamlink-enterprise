@@ -70,7 +70,7 @@ async function scan(now = Date.now(), s = null) {
     const we = M.atShift(day, mineRules.workEnd, mineRules).getTime();
     if (now < ws) return;
     const hm = M.hmOf(now);
-    const lunch = !!mineRules.breakStart && mineRules.breakStart <= hm && hm < mineRules.breakEnd;
+    const lunch = M.inBreakNow(mineRules, day, hm); // the lunch break, or the weekly (Saturday) break: no stopped / offline / idle alert while it lasts
     const mine = logs.filter((l) => l.employeeId === employeeId && l.day === day);
     const seen = d.lastSeenAt ? new Date(d.lastSeenAt).getTime() : 0;
     const seenToday = seen >= ws;

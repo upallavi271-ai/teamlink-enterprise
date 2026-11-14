@@ -21,6 +21,36 @@ const prisma = require('../db');
 
 const IST = 330 * 60000;
 const HM = /^([01]\d|2[0-3]):([0-5]\d)$/;
+// WEEKLY BREAKS (founder 2026-11-14: "every Saturday 4 to 4:20 pm 20 mins break vuntadhi, only Saturday"): a break at a fixed time on ONE weekday, like
+// the lunch break but not every day. It is a Break (never idle, never "not on the PC"), it comes off the work hours that day, and the PC reads
+// "On break" while it lasts. Company-wide, kept in the AppSetting 'monitoring.weeklyBreaks' (no database change); weekday: 0 Sunday ... 6 Saturday.
+const WEEKLY_KEY = 'monitoring.weeklyBreaks';
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const DEFAULT_WEEKLY_BREAKS = [{ weekday: 6, start: '16:00', end: '16:20', label: 'Saturday break' }];
+function cleanWeeklyBreaks(v) {
+  const out = [];
+  (Array.isArray(v) ? v : []).forEach((b) => {
+    const weekday = Math.round(Number(b && b.weekday));
+    const start = String((b && b.start) || ''); const end = String((b && b.end) || '');
+    if (!(weekday >= 0 && weekday <= 6) || !HM.test(start) || !HM.test(end) || start >= end) return;
+    out.push({ weekday, start, end, label: String((b && b.label) || '').trim().slice(0, 40) || `${WEEKDAYS[weekday]} break` });
+  });
+  return out.slice(0, 14);
+}
+// the day name is the calendar date's own, so it needs no time zone: 2026-11-14 is a Saturday everywhere
+const weekdayOf = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
+/** The weekly break that falls on this day (yyyy-mm-dd) for the rules `c` (from effective() / settings()), or null. */
+function weeklyBreakOn(c, ymd) {
+  if (!c || !ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+  const d = weekdayOf(ymd);
+  return (Array.isArray(c.weeklyBreaks) ? c.weeklyBreaks : []).find((b) => b.weekday === d && HM.test(b.start) && HM.test(b.end) && b.start < b.end) || null;
+}
+/** Is it break time right now (IST `nowHm`, on `day`): the lunch window, or the weekly break of this weekday. */
+function inBreakNow(c, day, nowHm) {
+  if (c && c.breakStart && c.breakStart <= nowHm && nowHm < c.breakEnd) return true;
+  const w = weeklyBreakOn(c, day);
+  return !!w && w.start <= nowHm && nowHm < w.end;
+}
 const CATEGORIES = ['productive', 'neutral', 'unproductive'];
 const ONLINE_MS = 3 * 60000; // a PC that sent a heartbeat in the last 3 minutes is online (the agent sends one every minute)
 // What each person is doing in the front app RIGHT NOW - "typing" / "reading" - from the 2-second /live tick (agent 3.2). Live-only and
@@ -131,7 +161,10 @@ async function settings() {
   if (!row) row = await prisma.monitoringSetting.create({ data: { id: 'default', policyText: DEFAULT_POLICY } }).catch(() => null);
   if (row && (row.policyText === FIRST_POLICY || row.policyText === BEFORE_INPUT_POLICY || row.policyText === INPUT_25_POLICY || row.policyText === INPUT_26_POLICY)) row = await prisma.monitoringSetting.update({ where: { id: 'default' }, data: { policyText: DEFAULT_POLICY, policyVersion: (row.policyVersion || 1) + 1 } }).catch(() => row);
   const s = row || { workStart: '09:30', workEnd: '18:30', breakStart: '12:30', breakEnd: '13:15', idleThresholdMinutes: 5, retentionDays: 90, screenshotsEnabled: false, policyVersion: 1, policyText: DEFAULT_POLICY, trackTitles: true, autoUpdate: true };
-  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshotsEnabled: false };
+  // the weekly breaks: the Saturday break until somebody changes the list (an empty list is "none", on purpose)
+  let weeklyBreaks = DEFAULT_WEEKLY_BREAKS;
+  try { const w = await prisma.appSetting.findUnique({ where: { key: WEEKLY_KEY } }); if (w && w.value) weeklyBreaks = cleanWeeklyBreaks(JSON.parse(w.value)); } catch { /* the default list */ }
+  return { ...s, policyText: s.policyText || DEFAULT_POLICY, screenshotsEnabled: false, weeklyBreaks };
 }
 async function saveSettings(user, body = {}) {
   const cur = await settings();
@@ -190,6 +223,12 @@ async function saveSettings(user, body = {}) {
     // a changed notice is a new version: everybody accepts it again before more is recorded
     if (t !== cur.policyText) { data.policyText = t; data.policyVersion = (cur.policyVersion || 1) + 1; }
   }
+  if (body.weeklyBreaks !== undefined) {
+    const list = cleanWeeklyBreaks(body.weeklyBreaks);
+    if (!Array.isArray(body.weeklyBreaks) || body.weeklyBreaks.length !== list.length) return { status: 400, error: 'Each weekly break needs a day, a start and an end (like 16:00 to 16:20, the start before the end).' };
+    const value = JSON.stringify(list);
+    await prisma.appSetting.upsert({ where: { key: WEEKLY_KEY }, create: { key: WEEKLY_KEY, value, updatedById: user ? user.id : null, updatedByName: user ? user.name || null : null }, update: { value, updatedById: user ? user.id : null, updatedByName: user ? user.name || null : null } });
+  }
   data.updatedBy = user ? user.name || null : null;
   await prisma.monitoringSetting.upsert({ where: { id: 'default' }, create: { id: 'default', policyText: DEFAULT_POLICY, ...data }, update: data });
   await require('./audit').logAudit({ userId: user && user.id, action: 'Employee monitoring settings changed', entity: 'MonitoringSetting', entityId: 'default', toValue: JSON.stringify(data).slice(0, 400) }).catch(() => {}); // eslint-disable-line global-require
@@ -209,6 +248,7 @@ function effective(s, index, emp) {
   return {
     workStart: pick('workStart'), workEnd: pick('workEnd'), breakStart: pick('breakStart') || '', breakEnd: pick('breakEnd') || '', idleThresholdMinutes: pick('idleThresholdMinutes'),
     trackTitles: s.trackTitles !== false && pick('trackTitles') !== false, excluded: pick('excluded') === true,
+    weeklyBreaks: s.weeklyBreaks || [], // company-wide (the Saturday break); everybody has it
   };
 }
 async function saveOverride(user, body = {}) {
@@ -357,13 +397,25 @@ async function ingest(device, records) {
     // THE LUNCH BREAK (founder 2026-11-05: "break 12:30 - 1:15 consider cheyyu"): the part inside it is Break - not idle, and no app or title kept
     const bs = HM.test(cfg.breakStart) && HM.test(cfg.breakEnd) && atShift(day, cfg.breakStart, cfg) < atShift(day, cfg.breakEnd, cfg) ? atShift(day, cfg.breakStart, cfg).getTime() : null;
     const be = bs ? atShift(day, cfg.breakEnd, cfg).getTime() : null;
-    const parts = bs && a < be && b > bs
-      ? [[a, bs, false], [Math.max(a, bs), Math.min(b, be), true], [be, b, false]]
-      : [[a, b, false]];
-    parts.filter(([x, y]) => y - x >= 1000).forEach(([x, y, lunch]) => rows.push({
-      deviceId: device.id, employeeId: device.employeeId, appName: lunch ? 'Break' : app, windowTitle: lunch || !cfg.trackTitles ? null : cleanTitle(app, r.windowTitle),
+    // THE WEEKLY BREAK (founder 2026-11-14: every Saturday 4:00 - 4:20 pm): the same, on its weekday only; stored as "Scheduled break" so it counts as Break, not as Lunch
+    const windows = [];
+    if (bs && a < be && b > bs) windows.push([bs, be, 'lunch']);
+    const wb = weeklyBreakOn(cfg, day);
+    if (wb) { const wx = atShift(day, wb.start, cfg).getTime(); const wy = atShift(day, wb.end, cfg).getTime(); if (a < wy && b > wx) windows.push([wx, wy, 'weekly']); }
+    windows.sort((p, q) => p[0] - q[0]);
+    const parts = []; let cur = a;
+    windows.forEach(([wx, wy, kind]) => {
+      const x = Math.max(wx, cur); const y = Math.min(wy, b);
+      if (y <= x) return;
+      if (x > cur) parts.push([cur, x, null]);
+      parts.push([x, y, kind]);
+      cur = y;
+    });
+    if (cur < b) parts.push([cur, b, null]);
+    parts.filter(([x, y]) => y - x >= 1000).forEach(([x, y, kind]) => rows.push({
+      deviceId: device.id, employeeId: device.employeeId, appName: kind === 'lunch' ? 'Break' : kind === 'weekly' ? 'Scheduled break' : app, windowTitle: kind || !cfg.trackTitles ? null : cleanTitle(app, r.windowTitle),
       startTime: new Date(x), endTime: new Date(y), durationSeconds: Math.round((y - x) / 1000),
-      isIdle: !lunch && r.isBreak !== true && (r.isIdle === true || r.idle === true), isBreak: lunch || r.isBreak === true, day,
+      isIdle: !kind && r.isBreak !== true && (r.isIdle === true || r.idle === true), isBreak: !!kind || r.isBreak === true, day,
     }));
   }
   // A batch can come twice (the answer was lost on a bad line, or the PC restarted right after sending): the same piece counts once.
@@ -455,9 +507,17 @@ function workDayOf(day, c, now = Date.now()) {
     const be = Math.min(we, atShift(day, c.breakEnd, c).getTime());
     if (be > bs) { lunch = Math.round((be - bs) / 1000); lunchFrom = bs; lunchTo = be; }
   }
+  // the weekly break of this weekday (the Saturday 4:00 - 4:20 pm break), if the day has one: it comes off the work hours like lunch does
+  let weekly = 0; let weeklyFrom = null; let weeklyTo = null; let weeklyLabel = null;
+  const wb = weeklyBreakOn(c, day);
+  if (wb) {
+    const x = Math.max(ws, atShift(day, wb.start, c).getTime());
+    const y = Math.min(we, atShift(day, wb.end, c).getTime());
+    if (y > x) { weekly = Math.round((y - x) / 1000); weeklyFrom = x; weeklyTo = y; weeklyLabel = wb.label; }
+  }
   const elapsed = Math.max(0, Math.round((Math.min(Math.max(now, ws), we) - ws) / 1000));
-  const personal = Math.min(PERSONAL_BREAK_SECONDS, Math.max(0, daySec - lunch));
-  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch - personal), elapsedSeconds: elapsed, personalSeconds: personal, ws, we, lunchFrom, lunchTo };
+  const personal = Math.min(PERSONAL_BREAK_SECONDS, Math.max(0, daySec - lunch - weekly));
+  return { daySeconds: daySec, workSeconds: Math.max(0, daySec - lunch - weekly - personal), elapsedSeconds: elapsed, personalSeconds: personal, ws, we, lunchFrom, lunchTo, weeklySeconds: weekly, weeklyFrom, weeklyTo, weeklyLabel };
 }
 // NOT ON PC ONLY WHEN IT REALLY WAS NOT (founder 2026-11-10: "nenu asalu laptop close cheyyaledhu, not on pc ani endhuku vasthundhi"):
 // the agent keeps one piece open while the same window stays in front (up to 30 minutes) and sends every 2 minutes, so the newest
@@ -475,11 +535,18 @@ function gapFill(logs, wd, status, live, now = Date.now()) {
     lunchGap = Math.max(0, (lt - wd.lunchFrom) - covered);
     out.lunch += Math.round(lunchGap / 1000); // the lunch window with nothing recorded is Lunch, kept apart from Break (founder 2026-11-13)
   }
+  // the weekly break (Saturday 4:00 - 4:20 pm) with nothing recorded in it is a Break, not "not on the PC"
+  if (wd.weeklyFrom && end > wd.weeklyFrom) {
+    const wt = Math.min(wd.weeklyTo, end);
+    const covered = (logs || []).reduce((n, l) => n + overlap(new Date(l.startTime).getTime(), new Date(l.endTime).getTime(), wd.weeklyFrom, wt), 0);
+    out.brk += Math.round(Math.max(0, (wt - wd.weeklyFrom) - covered) / 1000);
+  }
   if (live && ['Online', 'Idle', 'On break'].includes(status)) {
     const lastEnd = (logs || []).reduce((m, l) => Math.max(m, new Date(l.endTime).getTime()), 0);
     const from = Math.max(lastEnd || wd.ws, wd.ws);
     if (end > from && lastEnd) {
-      const pending = (end - from) - (wd.lunchFrom ? overlap(from, end, wd.lunchFrom, wd.lunchTo) : 0); // the lunch part is counted above
+      // the lunch and weekly-break parts of that stretch are counted above
+      const pending = (end - from) - (wd.lunchFrom ? overlap(from, end, wd.lunchFrom, wd.lunchTo) : 0) - (wd.weeklyFrom ? overlap(from, end, wd.weeklyFrom, wd.weeklyTo) : 0);
       const sec = Math.max(0, Math.round(pending / 1000));
       if (status === 'Online') out.active += sec; else if (status === 'Idle') out.idle += sec; else out.brk += sec;
     }
@@ -592,7 +659,7 @@ async function liveRows(access = null) {
     const mine = effective(cfg, rules, dev.employee);
     if (mine.excluded) return;
     let status = liveStatus(dev, onLeave.has(id), now, leaveWaiting.has(id));
-    if (mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break';
+    if (inBreakNow(mine, today, nowHm) && ['Online', 'Idle'].includes(status)) status = 'On break'; // lunch, or the weekly (Saturday) break
     if (absentNow({ status, workingDay: workingToday, wd: workDayOf(today, mine, now), lastSeenAt: dev.lastSeenAt, now })) status = 'Absent';
     const using = ['Online', 'Idle'].includes(status);
     const ld = liveDoing.get(id);
@@ -639,7 +706,7 @@ async function overview(day, access = null) {
     const dev = latest.get(id) || null;
     let status = live ? liveStatus(dev, onLeave.has(id), now, leaveWaiting.has(id)) : (onLeave.has(id) ? 'On leave' : (leaveWaiting.has(id) ? 'Leave pending' : null));
     const mine = rulesOf(id);
-    if (live && mine.breakStart && mine.breakStart <= nowHm && nowHm < mine.breakEnd && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break
+    if (live && inBreakNow(mine, d, nowHm) && ['Online', 'Idle'].includes(status)) status = 'On break'; // the lunch break, or the weekly (Saturday) break
     const wd = workDayOf(d, mine, now);
     if (live && absentNow({ status, workingDay, wd, lastSeenAt: dev ? dev.lastSeenAt : null, hasLogs: (byEmp.get(id) || []).length > 0, now })) status = 'Absent';
     const fill = LEAVE_STATUSES.includes(status) ? { active: 0, idle: 0, brk: 0, lunch: 0 } : gapFill(byEmp.get(id), wd, status, live, now);
@@ -648,6 +715,7 @@ async function overview(day, access = null) {
     const away = LEAVE_STATUSES.includes(status) ? 0 : Math.max(0, wd.elapsedSeconds - t.activeSeconds - t.idleSeconds - t.breakSeconds - t.lunchSeconds);
     return {
       workStart: mine.workStart, workEnd: mine.workEnd, lunchStart: mine.breakStart || null, lunchEnd: mine.breakEnd || null,
+      weeklyBreak: (() => { const w = weeklyBreakOn(mine, d); return w ? { label: w.label, start: w.start, end: w.end } : null; })(), // the Saturday break, on its day
       dayHours: hrs(wd.daySeconds), workHours: hrs(wd.workSeconds), personalBreakMinutes: Math.round(wd.personalSeconds / 60), elapsedHours: hrs(wd.elapsedSeconds), awayHours: hrs(away),
       employeeId: id, name: e.name, code: e.employeeCode || null, department: e.department || null, team: e.team || null,
       firstSeen: t.first, lastSeen: t.last, activeHours: t.activeHours, idleHours: t.idleHours, breakHours: t.breakHours, lunchHours: t.lunchHours, productivity: t.productivity,
@@ -682,9 +750,12 @@ async function overview(day, access = null) {
 const NO_TITLE = 'Not shown (the app does not say)';
 const SITTING_GAP_MS = 2 * 60000; // back in the same app within 2 minutes: the same sitting
 const APP_SUFFIX = /\s*[-–—|]\s*(Google Chrome|Microsoft​? Edge|Microsoft Edge|Mozilla Firefox|Brave|Opera|Excel|Word|PowerPoint|Outlook|File Explorer|Visual Studio Code|Notepad|Paint|Adobe Acrobat[^-]*)\s*$/i;
+// An editor puts a mark in front of the file name while it has changes that are not saved: "*Log-14-11-2026 - Notepad", "● app.js - Visual Studio Code".
+// It is the SAME file before and after a save, so the mark is not part of its name (it was counted as two files, founder 2026-11-14) - it is the history.
+const UNSAVED_MARK = /^\s*[*●•]\s*/;
 function itemOf(title, appLabel) {
   if (!title) return NO_TITLE;
-  let t = String(title);
+  let t = String(title).replace(UNSAVED_MARK, '');
   for (let i = 0; i < 2; i += 1) t = t.replace(APP_SUFFIX, '');
   t = t.replace(/\s*[\u00b7|-]\s*TeamLink\.Enterprise$/i, '');
   t = t.replace(/\s*\[(Protected View|Read-Only|Compatibility Mode|Group|Shared)\]/gi, '').replace(/\s*-\s*Personal\s*-\s*Microsoft.*$/i, '').replace(/\s*-\s*Profile \d+$/i, '').trim();
@@ -744,6 +815,32 @@ function workDone(appName, appLabel, kind, items) {
     ...y, first: new Date(y.first), last: new Date(y.last),
     times: y.times.sort((p, q) => p.start - q.start).slice(0, 60).map((t) => ({ start: new Date(t.start), end: new Date(t.end), seconds: Math.round(t.seconds) })),
   }));
+}
+// THE HISTORY OF AN APP, STEP BY STEP (founder 2026-11-14: "em em chesaro kuda ravali, history raavali"): every stretch in order, in words, with the time -
+// which file or page was in front, whether a text editor had unsaved changes ("*" in front of the name) and when it was saved. The same file in a row (within 2
+// minutes) is one step. Only what the window shows: what was typed is never recorded (the key COUNTS per hour are shown beside it, from the agent).
+const EDITORS = new Set(['notepad', 'notepad++', 'notepad3', 'code', 'sublime_text', 'atom', 'wordpad']);
+function historyOf(appName, appLabel, kind, segs) {
+  const a = String(appName || '').toLowerCase().replace(/\.exe$/i, '');
+  const editor = EDITORS.has(a);
+  const steps = [];
+  const lastUnsaved = new Map(); // file -> was it unsaved the last time it was seen
+  [...(segs || [])].sort((p, q) => p.start - q.start).forEach((g) => {
+    const item = itemOf(g.shown, appLabel);
+    const unsaved = editor && UNSAVED_MARK.test(String(g.shown || ''));
+    const prev = steps[steps.length - 1];
+    if (prev && prev.item === item && prev.unsaved === unsaved && g.start - prev.endMs <= SITTING_GAP_MS) { prev.endMs = Math.max(prev.endMs, g.end); prev.seconds += g.seconds; return; }
+    steps.push({ item, unsaved, saved: editor && !unsaved && lastUnsaved.get(item) === true, startMs: g.start, endMs: g.end, seconds: g.seconds });
+    lastUnsaved.set(item, unsaved);
+  });
+  return steps.slice(0, 400).map((s) => {
+    const name = s.item === NO_TITLE ? null : `“${s.item}”`;
+    let label;
+    if (!name) label = 'Used it (the window does not say for what)';
+    else if (editor) label = s.unsaved ? `Editing ${name} (changes not saved yet)` : s.saved ? `Saved ${name}` : `Had ${name} open`;
+    else label = doneOf(appName, appLabel, kind, s.item).action;
+    return { start: new Date(s.startMs), end: new Date(s.endMs), seconds: Math.round(s.seconds), item: s.item, label, unsaved: s.unsaved, saved: s.saved };
+  });
 }
 // The saves a person made in TeamLink in a period, from the audit history: one line per kind of work, with how many and when.
 const ENTITY_WORD = { Application: 'Candidate pipeline', Candidate: 'Candidates', Requirement: 'Requirements', Client: 'Clients', Task: 'Tasks', FollowUp: 'Follow-ups', Interview: 'Interviews', Employee: 'Employees', LeaveRequest: 'Leave', User: 'Sign-in', AttendancePunch: 'Attendance' };
@@ -928,7 +1025,7 @@ async function employeeDetail(employeeId, from, to) {
     if (isVici(l.appName, l.windowTitle) || isVici(l.appName, shown)) c = { key: 'web:vicidial', label: 'ViciDial', kind: 'site', category: c.category };
     // a website rule an admin typed in lower case ("youtube", "google sheets") is shown under the service's own name; the rule (and its category) stays
     else if (c.kind === 'site') { const sv = serviceOf(l.appName, shown); if (sv && sv.name.toLowerCase() === String(c.label).toLowerCase()) c = { ...c, label: sv.name }; }
-    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
+    const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [], segs: [] };
     u.seconds += l.durationSeconds;
     if (shown) u.titles.set(shown, (u.titles.get(shown) || 0) + l.durationSeconds);
     // WHAT IT WAS USED FOR (founder 2026-11-10: "claude meedha click chesthe, claude lo em use chesaro clear ga kanipinchali - complete work cover avvali"):
@@ -936,6 +1033,7 @@ async function employeeDetail(employeeId, from, to) {
     const item = itemOf(shown, c.label);
     const st = new Date(l.startTime).getTime(); const en = new Date(l.endTime).getTime();
     if (!u.appName) u.appName = l.appName;
+    u.segs.push({ start: st, end: en, seconds: l.durationSeconds, shown }); // every stretch, in order: the History tab is built from these
     const it = u.items.get(item) || { item, seconds: 0, first: st, last: en, pieces: 0, times: [] };
     it.seconds += l.durationSeconds; it.first = Math.min(it.first, st); it.last = Math.max(it.last, en); it.pieces += 1;
     const lastT = it.times[it.times.length - 1];
@@ -946,7 +1044,8 @@ async function employeeDetail(employeeId, from, to) {
     usage.set(c.key, u);
   });
   const apps = [...usage.values()].sort((x, y) => y.seconds - x.seconds).map((u) => ({
-    key: u.key, name: u.name, kind: u.kind, category: u.category, seconds: u.seconds, hours: hrs(u.seconds),
+    key: u.key, name: u.name, kind: u.kind, category: u.category, seconds: u.seconds, hours: hrs(u.seconds), appName: u.appName || null,
+    history: historyOf(u.appName, u.name, u.kind, u.segs),
     topTitles: [...u.titles.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([title, sec]) => ({ title, minutes: Math.round(sec / 60) })),
     done: workDone(u.appName, u.name, u.kind, [...u.items.values()]),
     items: [...u.items.values()].sort((x, y) => y.seconds - x.seconds).map((x) => ({ item: x.item, what: x.item === NO_TITLE ? null : doneOf(u.appName, u.name, u.kind, x.item).action, seconds: x.seconds, first: new Date(x.first), last: new Date(x.last), opened: x.pieces })),
@@ -985,6 +1084,7 @@ async function employeeDetail(employeeId, from, to) {
       return out;
     })() : null,
     workStart: s.workStart, workEnd: s.workEnd,
+    weeklyBreak: a === b ? (() => { const w = weeklyBreakOn(s, a); return w ? { label: w.label, start: w.start, end: w.end } : null; })() : null, // the Saturday break, on its day
   };
 }
 
@@ -1198,7 +1298,7 @@ function startSweep() {
 }
 
 module.exports = {
-  serviceOf, doneOf, deriveSite, itemOf, workDone,
+  serviceOf, doneOf, deriveSite, itemOf, workDone, historyOf, inBreakNow, weeklyBreakOn, cleanWeeklyBreaks, DEFAULT_WEEKLY_BREAKS,
   liveUpdate, liveRows, liveStatus, absentNow, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, dataSecurity, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };

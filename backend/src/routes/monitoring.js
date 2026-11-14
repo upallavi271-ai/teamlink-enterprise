@@ -43,7 +43,7 @@ const router = express.Router();
 const fail = (res, status, error, extra = {}) => res.status(status).json({ error, ...extra });
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 const publicSettings = (s) => ({
-  workStart: s.workStart, workEnd: s.workEnd, breakStart: s.breakStart, breakEnd: s.breakEnd, idleThresholdMinutes: s.idleThresholdMinutes, retentionDays: s.retentionDays,
+  workStart: s.workStart, workEnd: s.workEnd, breakStart: s.breakStart, breakEnd: s.breakEnd, weeklyBreaks: s.weeklyBreaks || [], idleThresholdMinutes: s.idleThresholdMinutes, retentionDays: s.retentionDays,
   screenshotsEnabled: false, policyVersion: s.policyVersion,
   alertsEnabled: !!s.alertsEnabled, longIdleMinutes: s.longIdleMinutes, offlineMinutes: s.offlineMinutes, lowActivityHours: s.lowActivityHours,
 });

@@ -67,5 +67,34 @@ const wd = M.workDone('chrome', 'Google Meet', 'site', [
 ]);
 check('three sittings of the same meeting are one line with the total', wd.length === 1 && wd[0].seconds === 240 && wd[0].area === 'Google Meet', wd);
 
+console.log('History: a file saved while it was open is ONE file, step by step (the Notepad case)');
+const T = (hm) => Date.parse(`2026-11-14T${hm}:00+05:30`);
+const sg = (title, startMs, endMs) => ({ start: startMs, end: endMs, seconds: (endMs - startMs) / 1000, shown: title });
+check('the unsaved mark is not part of the file name', M.itemOf('*Log-14-11-2026 - Notepad', 'notepad') === 'Log-14-11-2026' && M.itemOf('Log-14-11-2026 - Notepad', 'notepad') === 'Log-14-11-2026', M.itemOf('*Log-14-11-2026 - Notepad', 'notepad'));
+check('VS Code\'s dot is not either', M.itemOf('● app.js - Visual Studio Code', 'code') === 'app.js', M.itemOf('● app.js - Visual Studio Code', 'code'));
+const pad = [
+  sg('*Log-14-11-2026 - Notepad', T('10:18'), T('10:22')),
+  sg('Log-14-11-2026 - Notepad', T('10:22'), T('10:22') + 15000),
+  sg('*Log-14-11-2026 - Notepad', T('10:47'), T('10:48')),
+  sg('*Log-14-11-2026 - Notepad', T('11:42'), T('11:46')),
+];
+const h = M.historyOf('notepad', 'notepad', 'app', pad);
+check('four steps, in time order', h.length === 4 && h.every((s, i, a) => i === 0 || a[i - 1].start <= s.start), h.map((s) => s.label));
+check('the first is editing, not saved yet', h[0].label === 'Editing “Log-14-11-2026” (changes not saved yet)' && h[0].unsaved === true && h[0].seconds === 240, h[0]);
+check('then it is saved (the mark went away)', h[1].label === 'Saved “Log-14-11-2026”' && h[1].saved === true && h[1].unsaved === false, h[1]);
+check('then edited again, later', /^Editing/.test(h[2].label) && /^Editing/.test(h[3].label), [h[2].label, h[3].label]);
+check('all of it is one file, so the list says one thing was open', new Set(h.map((s) => s.item)).size === 1);
+const wd2 = M.workDone('notepad', 'notepad', 'app', [{ item: 'Log-14-11-2026', seconds: 555, pieces: 4, first: T('10:18'), last: T('11:46'), times: [] }]);
+check('and Work done has one line for it, not two', wd2.length === 1 && wd2[0].action === 'Worked on Log-14-11-2026', wd2.map((x) => x.action));
+const merged = M.historyOf('notepad', 'notepad', 'app', [sg('*a.txt - Notepad', T('09:00'), T('09:02')), sg('*a.txt - Notepad', T('09:02') + 30000, T('09:05'))]);
+check('the same file in a row (within two minutes) is one step', merged.length === 1 && merged[0].seconds === 270, merged.map((x) => x.seconds));
+const other = M.historyOf('notepad', 'notepad', 'app', [sg('*a.txt - Notepad', T('09:00'), T('09:01')), sg('*b.txt - Notepad', T('09:01'), T('09:02')), sg('a.txt - Notepad', T('09:02'), T('09:03'))]);
+check('switching file is a new step, and a save is only said for the file that was unsaved', other.length === 3 && other[2].saved === true && other[1].saved === false, other.map((s) => s.label));
+const xl = M.historyOf('excel', 'excel', 'app', [sg('joinings - Excel', T('14:10'), T('14:40'))]);
+check('another app says what was done, in words', xl.length === 1 && xl[0].label === 'Worked on joinings', xl);
+const mt = M.historyOf('chrome', 'Google Meet', 'site', [sg('Meet – abc-defg-hij - Google Chrome', T('10:44'), T('10:46')), sg('Candidate tracker - Google Sheets - Google Chrome', T('10:46'), T('10:50')), sg('Meet – abc-defg-hij - Google Chrome', T('11:00'), T('11:02'))]);
+check('a browser history keeps each stretch in order, in words', mt.length === 3 && /Google Meet video call/.test(mt[0].label) && /spreadsheet/.test(mt[1].label), mt.map((s) => s.label));
+check('a window that says nothing is said so', M.historyOf('chrome', 'chrome', 'app', [sg('', T('10:00'), T('10:01'))])[0].label === 'Used it (the window does not say for what)');
+
 console.log(`\n${total - failed}/${total} passed`);
 process.exit(failed ? 1 : 0);

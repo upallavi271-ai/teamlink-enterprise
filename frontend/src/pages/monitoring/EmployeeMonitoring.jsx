@@ -375,6 +375,7 @@ function Overview({ onOpen }) {
         <div className="mon-dayline">
           <b>Work day {clock(first.workStart)} – {clock(first.workEnd)}</b>
           {first.lunchStart && <> · lunch {clock(first.lunchStart)} – {clock(first.lunchEnd)}</>}
+          {first.weeklyBreak && <> · {first.weeklyBreak.label} {clock(first.weeklyBreak.start)} – {clock(first.weeklyBreak.end)}</>}
           {first.personalBreakMinutes > 0 && <> · {first.personalBreakMinutes} min personal break</>}
           {' '}· <b>{hm(first.workHours)}</b> of work{live && first.elapsedHours < first.dayHours && <> · {hm(first.elapsedHours)} of the day has passed</>}
           <span className="mon-day-legend"><span><i className="active" /> Active</span><span><i className="idle" /> Idle</span><span><i className="break" /> Break</span><span><i className="lunch" /> Lunch</span><span><i className="away" /> Not on the PC</span>{live && <span><i className="rest" /> Still to come</span>}</span>
@@ -816,7 +817,8 @@ function Audit() {
 const kindOf = (r) => (r.break ? 'break' : r.idle ? 'idle' : 'active');
 const KIND_WORD = { active: 'Active', idle: 'Idle (no mouse or keyboard)', break: 'Break' };
 // Lunch is kept apart from short breaks (founder 2026-11-13): a lunch-window row is stored as the app 'Break'.
-const breakWord = (r) => (r.app === 'Break' ? 'Lunch' : r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break');
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const breakWord = (r) => (r.app === 'Break' ? 'Lunch' : r.app === 'Scheduled break' ? 'Weekly break (like the Saturday 4:00 - 4:20 pm break)' : r.app === 'Personal break' ? 'Personal break (first 15 min of idle)' : 'Break');
 function blocksOf(rows) {
   const sorted = [...rows].sort((x, y) => new Date(x.start) - new Date(y.start));
   const out = [];
@@ -852,7 +854,7 @@ function BlockDetail({ block, onClose }) {
         <button type="button" className="btn btn-sm btn-ghost" onClick={onClose} style={{ marginLeft: 'auto' }}>Close</button>
       </div>
       {block.kind === 'break' ? (
-        <div className="small-muted">{block.rows.some((r) => r.app === 'Break') ? 'Lunch break (the fixed lunch window). Counted apart from short breaks. Nothing is recorded in it.' : block.rows.some((r) => r.app === 'Personal break') ? 'Personal break: the first 15 minutes of idle time in the day count as a break.' : 'On a short break (the TeamLink icon was set to Pause). Nothing is recorded in a break.'}</div>
+        <div className="small-muted">{block.rows.some((r) => r.app === 'Break') ? 'Lunch break (the fixed lunch window). Counted apart from short breaks. Nothing is recorded in it.' : block.rows.some((r) => r.app === 'Scheduled break') ? 'The weekly break (like the Saturday 4:00 - 4:20 pm break), set in Settings. It counts as a Break; nothing is recorded in it.' : block.rows.some((r) => r.app === 'Personal break') ? 'Personal break: the first 15 minutes of idle time in the day count as a break.' : 'On a short break (the TeamLink icon was set to Pause). Nothing is recorded in a break.'}</div>
       ) : (
         <>
           {block.kind === 'idle' && <div className="small-muted" style={{ marginBottom: 6 }}>Nobody touched the mouse or keyboard in this time. This is what was left open on the screen:</div>}
@@ -1088,7 +1090,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
             );
           })()}
           {data.timeline && (
-            <Panel title="The day" sub={`Work hours ${data.workStart} – ${data.workEnd}`}>
+            <Panel title="The day" sub={`Work hours ${data.workStart} – ${data.workEnd}${data.weeklyBreak ? ` · ${data.weeklyBreak.label} ${clock(data.weeklyBreak.start)} – ${clock(data.weeklyBreak.end)}` : ''}`}>
               {data.timeline.length ? <Timeline rows={data.timeline} workStart={data.workStart} workEnd={data.workEnd} day={data.from} /> : <div className="ak-empty">No activity on this day.</div>}
             </Panel>
           )}
@@ -1188,7 +1190,7 @@ export function EmployeeDetail({ id, onBack, own = false }) {
               </div>
             </Panel>
           </div>
-          {openApp && <AppWork app={openApp} who={data.employee.name} range={data.from === data.to ? data.from : `${data.from} to ${data.to}`} total={t.activeSeconds} onClose={() => setAppKey(null)} />}
+          {openApp && <AppWork app={openApp} who={data.employee.name} range={data.from === data.to ? data.from : `${data.from} to ${data.to}`} total={t.activeSeconds} id={id} from={from} to={to} onClose={() => setAppKey(null)} />}
         </>
       )}
     </>
@@ -1239,7 +1241,20 @@ function WorkSummary({ app, done, when, total }) {
   );
 }
 
-function AppWork({ app, who, range, total, onClose }) {
+// How much was typed / clicked in one app, by hour: COUNTS only, from the agent (what was typed is never recorded). Shown at the top of an app's History.
+function AppTyping({ id, from, to, app, site }) {
+  const { data } = useGet(`/monitoring/employee/${id}/app-keys`, { from, to, app, site });
+  if (!data || !data.total) return null;
+  const clicks = (data.mouse || []).reduce((n, m) => n + m.count, 0);
+  const presses = (data.keys || []).reduce((n, k) => n + k.count, 0);
+  return (
+    <div style={{ padding: '10px 12px', margin: '0 0 10px', border: '1px solid var(--line, #e3e7ee)', borderRadius: 8 }}>
+      <div style={{ marginBottom: 6 }}><b>Typing in this app:</b> {presses.toLocaleString('en-IN')} key presses{clicks ? <> and {clicks.toLocaleString('en-IN')} mouse clicks</> : null}. <span className="small-muted">Counted only - what was typed is never recorded.</span></div>
+      <BarList rows={data.byHour.map((r) => ({ key: String(r.hour), label: hourWord(r.hour), value: r.count, tone: 'teal' }))} format={(n) => `${Number(n).toLocaleString('en-IN')} presses / clicks`} empty="No hour detail." />
+    </div>
+  );
+}
+function AppWork({ app, who, range, total, onClose, id, from, to }) {
   const done = app.done || [];
   const [openRow, setOpenRow] = useState({}); // the rows opened to their details
   const toggle = (k) => setOpenRow((o) => ({ ...o, [k]: !o[k] }));
@@ -1251,6 +1266,7 @@ function AppWork({ app, who, range, total, onClose }) {
   }, [onClose]);
   const items = app.items || [];
   const sittings = app.sittings || [];
+  const history = app.history || []; // every step in order: which file / page was in front, unsaved changes, saves (backend historyOf)
   const named = items.filter((x) => x.item !== NOT_SHOWN);
   const first = sittings.length ? sittings[0].start : null;
   const last = sittings.length ? sittings[sittings.length - 1].end : null;
@@ -1280,6 +1296,7 @@ function AppWork({ app, who, range, total, onClose }) {
         <div className="mon-tabs">
           {app.teamlinkWork && <button type="button" className={tab === 'work' ? 'on' : ''} onClick={() => setTab('work')}>Work done in TeamLink ({app.teamlinkWork.total})</button>}
           {!app.teamlinkWork && done.length > 0 && <button type="button" className={tab === 'done' ? 'on' : ''} onClick={() => setTab('done')}>Work done ({done.length})</button>}
+          {history.length > 0 && <button type="button" className={tab === 'history' ? 'on' : ''} onClick={() => setTab('history')}>History ({history.length})</button>}
           <button type="button" className={tab === 'items' ? 'on' : ''} onClick={() => setTab('items')}>What was opened ({items.length})</button>
           <button type="button" className={tab === 'sittings' ? 'on' : ''} onClick={() => setTab('sittings')}>Hour by hour ({sittings.length})</button>
         </div>
@@ -1340,6 +1357,28 @@ function AppWork({ app, who, range, total, onClose }) {
                       </Fragment>
                     );
                   })}
+                </tbody>
+              </table>
+            </>
+          )}
+          {tab === 'history' && (
+            <>
+              {id && app.appName && <AppTyping id={id} from={from} to={to} app={app.appName} site="" />}
+              <div className="small-muted" style={{ padding: '0 2px 8px' }}>Every step in order, read from the window: which file or page was in front, and for a text editor whether it had changes not saved yet and when it was saved. What was typed is never recorded.</div>
+              <table className="mon-table">
+                <thead><tr><th>When</th><th>What was done</th><th className="num">How long</th></tr></thead>
+                <tbody>
+                  {history.map((s, i) => (
+                    <tr key={`${s.start}|${i}`}>
+                      <td style={{ whiteSpace: 'nowrap' }}>{when(s.start)}{tm(s.end) !== tm(s.start) ? ` – ${tm(s.end)}` : ''}</td>
+                      <td className="mon-item">
+                        {s.label}
+                        {s.unsaved && <> <Pill tone="amber">not saved</Pill></>}
+                        {s.saved && <> <Pill tone="green">saved</Pill></>}
+                      </td>
+                      <td className="num">{dur(s.seconds)}</td>
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </>
@@ -1932,7 +1971,7 @@ function Settings() {
   const [msg, setMsg] = useState('');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  useEffect(() => { if (data) setForm(data.canEdit ? { workStart: data.workStart, workEnd: data.workEnd, breakStart: data.breakStart || '', breakEnd: data.breakEnd || '', idleThresholdMinutes: data.idleThresholdMinutes, retentionDays: data.retentionDays, policyText: data.policyText, alertsEnabled: !!data.alertsEnabled, longIdleMinutes: data.longIdleMinutes, offlineMinutes: data.offlineMinutes, lowActivityHours: data.lowActivityHours, unauthorizedApps: data.unauthorizedApps || '', alertEmail: !!data.alertEmail, trackTitles: data.trackTitles !== false, reportEnabled: !!data.reportEnabled, reportFrequency: data.reportFrequency || 'daily', reportEmails: data.reportEmails || '', autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval, itAdminIds: data.itAdminIds || '' } : { autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval }); }, [data]);
+  useEffect(() => { if (data) setForm(data.canEdit ? { workStart: data.workStart, workEnd: data.workEnd, breakStart: data.breakStart || '', breakEnd: data.breakEnd || '', weeklyBreaks: data.weeklyBreaks || [], idleThresholdMinutes: data.idleThresholdMinutes, retentionDays: data.retentionDays, policyText: data.policyText, alertsEnabled: !!data.alertsEnabled, longIdleMinutes: data.longIdleMinutes, offlineMinutes: data.offlineMinutes, lowActivityHours: data.lowActivityHours, unauthorizedApps: data.unauthorizedApps || '', alertEmail: !!data.alertEmail, trackTitles: data.trackTitles !== false, reportEnabled: !!data.reportEnabled, reportFrequency: data.reportFrequency || 'daily', reportEmails: data.reportEmails || '', autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval, itAdminIds: data.itAdminIds || '' } : { autoUpdate: data.autoUpdate !== false, deviceApproval: !!data.deviceApproval }); }, [data]);
   const [itPeople, setItPeople] = useState([]);
   useEffect(() => { if (data && data.itAdmins) setItPeople(data.itAdmins); }, [data]);
   if (error) return <div className="notice red">{error}</div>;
@@ -1984,6 +2023,23 @@ function Settings() {
         </div>
         {check('trackTitles', 'Record window titles (off: app names only, and websites cannot be told apart)')}
         <div className="small-muted">Only work hours (India time) are recorded; anything outside them is thrown away. The lunch break counts as Break, not idle, and keeps no app details. Older records are deleted by themselves. Screenshots: <b>off</b> - TeamLink never takes screenshots or reads what is typed.</div>
+      </Panel>
+      <Panel title="Weekly breaks" sub="A break at a fixed time on one weekday, like the Saturday 4:00 - 4:20 pm break. It counts as a Break (never idle, never 'not on the PC'), the PC shows 'On break' while it lasts, and it comes off that day's work hours.">
+        {(form.weeklyBreaks || []).map((b, i) => {
+          const upd = (patch) => setForm({ ...form, weeklyBreaks: form.weeklyBreaks.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+          return (
+            <div key={i} style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+              <select value={b.weekday} onChange={(e) => upd({ weekday: Number(e.target.value) })} aria-label="Day">{WEEKDAY_NAMES.map((d, n) => <option key={d} value={n}>{d}</option>)}</select>
+              <input type="time" value={b.start} onChange={(e) => upd({ start: e.target.value })} aria-label="Starts" />
+              <span>to</span>
+              <input type="time" value={b.end} onChange={(e) => upd({ end: e.target.value })} aria-label="Ends" />
+              <input type="text" value={b.label || ''} maxLength={40} placeholder="Name (like Saturday break)" onChange={(e) => upd({ label: e.target.value })} aria-label="Name" style={{ minWidth: 180 }} />
+              <button type="button" className="btn btn-sm" onClick={() => setForm({ ...form, weeklyBreaks: form.weeklyBreaks.filter((_, j) => j !== i) })}>Remove</button>
+            </div>
+          );
+        })}
+        {!(form.weeklyBreaks || []).length && <div className="small-muted" style={{ marginBottom: 6 }}>No weekly break is set.</div>}
+        <button type="button" className="btn btn-sm" onClick={() => setForm({ ...form, weeklyBreaks: [...(form.weeklyBreaks || []), { weekday: 6, start: '16:00', end: '16:20', label: 'Saturday break' }] })}>+ Add a weekly break</button>
       </Panel>
       <Panel title="Alerts" sub="Sent to the team lead and HR by the bell, each kind at most once a day per person. Never on leave, holidays, or during lunch.">
         <label className="mon-check"><input type="checkbox" checked={form.alertsEnabled} onChange={(e) => setForm({ ...form, alertsEnabled: e.target.checked })} /> Send alerts</label>
