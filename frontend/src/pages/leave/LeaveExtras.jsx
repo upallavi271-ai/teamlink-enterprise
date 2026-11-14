@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Panel, PanelHead, EmptyMini, Status } from '../../components/proto.jsx';
 import Combo from '../../components/Combo.jsx';
+import EmployeeStatusTag from '../../components/EmployeeStatusTag.jsx';
 import './LeaveExtras.css';
 
 // ---------------------------------------------------------------------------
@@ -86,7 +87,7 @@ export function LeaveRequestsTable({ requests, onOpen, limit = null, renderActio
           {rows.map((r) => (
             <tr key={r.id}>
               <td>{r.employee?.employeeCode || '—'}</td>
-              <td>{r.employee?.name || 'You'}<div className="lvx-muted">{r.employee?.department || ''}</div></td>
+              <td>{r.employee?.name || 'You'}<EmployeeStatusTag employee={r.employee} /><div className="lvx-muted">{r.employee?.department || ''}</div></td>
               <td className="lvx-muted">{r.employee?.team || '—'}</td>
               <td className="lvx-muted">{r.employee?.designation || '—'}</td>
               <td className="lvx-muted">{r.type}{r.earlyLogout?.chip && <div><span className="lvx-chip lvx-chip-warn" title={r.earlyLogout.text}>{'⏰'} {r.earlyLogout.chip}</span></div>}{r.pendingState && r.pendingState !== 'genuine' && <div><span className="lvx-chip lvx-chip-grey" title="Not counted in Pending Approvals">{r.pendingState === 'leaver' ? 'Employee has left' : r.pendingState === 'duplicate' ? 'Duplicate' : 'Old request'}</span></div>}{r.source && r.source !== 'TeamLink' && <div><span className="lvx-chip lvx-chip-blue" title="Came from Pulse HRMS">From Pulse</span></div>}</td>

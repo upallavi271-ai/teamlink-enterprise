@@ -26,7 +26,8 @@ import {
   ComposeModal, Field, Row, AiAssist, ResultNote, useSubmit,
 } from '../../components/ComposeForm.jsx';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
@@ -53,8 +54,8 @@ const CRITERIA = [
 // placeholder digit — an unscored idea prints an em dash.
 const score = (v) => (v == null ? <span className="cell-muted">—</span> : v);
 
-function EmployeeCell({ name, code }) {
-  return <>{name} <span className="cell-muted">({code})</span></>;
+function EmployeeCell({ name, code, employee }) {
+  return <>{name} <span className="cell-muted">({code})</span><EmployeeStatusTag employee={employee} /></>;
 }
 
 // --- Log KT Session (/api/kt) ------------------------------------------------
@@ -202,23 +203,26 @@ function SubmitIdeaModal({ ai, onClose, onSaved }) {
 // --- Tab 1: Weekly Compliance ----------------------------------------------
 function WeeklyCompliance({ data }) {
   const all = (data && data.rows) || [];
-  const [pf, setPf] = useState(EMPTY_PEOPLE_FILTERS);
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the four KT lists open with the people who are still here; Employee status shows the rest.
+  const [pf, setPf] = useState(OPENING_PEOPLE_FILTERS);
   // This week's standing is the row's status: Met or Short of the quota.
   const statusOf = (r) => (r.met ? 'Met' : 'Short');
-  const rows = all.filter((r) => peopleMatches(r, pf, undefined, statusOf));
-  const opts = peopleOptions(all);
   const many = manyPeople(all, (r) => r.employeeId);
+  // the Employee status control is drawn only when the list holds more than one person (so it is applied only then)
+  const rows = all.filter((r) => peopleMatches(r, many ? pf : { ...pf, empStatus: '' }, undefined, statusOf));
+  const opts = peopleOptions(all);
   const page = usePaged(rows);
   return (
     <Panel>
       <PanelHead title={`Weekly quota — ${(data && data.quota) || 3} unique ideas`} />
       <div style={{ padding: '0 18px' }}>
         <PeopleFilterBar
-          filters={pf} setFilters={setPf} people={many}
+          filters={pf} setFilters={setPf} people={many} activeFirst
           departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
           statuses={['Met', 'Short']} shown={rows.length} total={all.length}
         />
       </div>
+      <div style={{ padding: '0 18px' }}><HiddenLeftNote filters={pf} rows={all} active={many} noun="employees" extra=" (the Met N / M card above counts everybody)" /></div>
       {rows.length === 0 ? <ListEmpty lf={lfOf(pf, setPf)} noun="employees" title="No employees in your scope." /> : (
         <div className="tbl-wrap">
           <table>
@@ -226,7 +230,7 @@ function WeeklyCompliance({ data }) {
             <tbody>
               {page.slice.map((r) => (
                 <tr key={r.employeeId}>
-                  <td><EmployeeCell name={r.name} code={r.employeeCode} /></td>
+                  <td><EmployeeCell name={r.name} code={r.employeeCode} employee={r} /></td>
                   <td className="cell-muted">{r.department}</td>
                   <td>{r.count} / {r.quota}</td>
                   <td><Status cls={r.met ? 'active' : 'pending'}>{r.met ? 'Met' : 'Short'}</Status></td>
@@ -247,23 +251,24 @@ function WeeklyCompliance({ data }) {
 // ideas contributed — a real figure rather than an invented score.
 function Leaderboard({ data }) {
   const all = (data && data.rows) || [];
-  // A ranking has no status of its own, so only the person filters apply.
-  const [pf, setPf] = useState(EMPTY_PEOPLE_FILTERS);
-  const rows = all.filter((r) => peopleMatches(r, pf));
+  // A ranking has no status of its own, so only the person filters apply (Employee status opens on Active).
+  const [pf, setPf] = useState(OPENING_PEOPLE_FILTERS);
+  const many = manyPeople(all, (r) => r.employeeId);
+  const rows = all.filter((r) => peopleMatches(r, many ? pf : { ...pf, empStatus: '' }));
   const opts = peopleOptions(all);
   const scored = rows.some((r) => r.totalScore != null);
-  const many = manyPeople(all, (r) => r.employeeId);
   const page = usePaged(rows);
   return (
     <Panel>
       <PanelHead title={scored ? 'Top contributors — by AI score' : 'Top contributors — by unique ideas'} />
       <div style={{ padding: '0 18px' }}>
         <PeopleFilterBar
-          filters={pf} setFilters={setPf} people={many}
+          filters={pf} setFilters={setPf} people={many} activeFirst
           departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
           shown={rows.length} total={all.length}
         />
       </div>
+      <div style={{ padding: '0 18px' }}><HiddenLeftNote filters={pf} rows={all} active={many} noun="contributors" extra=" (the # column keeps each rank among everybody)" /></div>
       {rows.length === 0 ? <ListEmpty lf={lfOf(pf, setPf)} noun="contributors" title="No ideas submitted yet." /> : (
         <div className="tbl-wrap">
           <table>
@@ -278,7 +283,7 @@ function Leaderboard({ data }) {
               {page.slice.map((r) => (
                 <tr key={r.employeeId}>
                   <td>{r.rank}</td>
-                  <td><EmployeeCell name={r.name} code={r.employeeCode} /></td>
+                  <td><EmployeeCell name={r.name} code={r.employeeCode} employee={r} /></td>
                   <td className="cell-muted">{r.department}</td>
                   <td>{r.unique}</td>
                   <td className="cell-muted">{r.duplicates}</td>
@@ -305,15 +310,15 @@ function Leaderboard({ data }) {
 // --- Tab 3: All Ideas -------------------------------------------------------
 function AllIdeas({ ideas: all }) {
   // An idea's status is its screening result: Unique or Duplicate.
-  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, week: '' });
+  const [pf, setPf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, week: '' });
   const [sort, setSort] = useState('new');
   const statusOf = (i) => (i.aiDuplicate ? 'Duplicate' : 'Unique');
   const weekOf = (i) => i.weekStart || i.date || '';
+  const many = manyPeople(all, (i) => i.employee?.id || i.employeeId);
   const ideas = all.filter((i) => textMatches(`${i.title || ''} ${i.detail || ''}`, pf.q)
-    && peopleMatches(i, pf, undefined, statusOf) && (!pf.week || weekOf(i) === pf.week));
+    && peopleMatches(i, many ? pf : { ...pf, empStatus: '' }, undefined, statusOf) && (!pf.week || weekOf(i) === pf.week));
   const opts = peopleOptions(all);
   const weeks = [...new Set(all.map(weekOf).filter(Boolean))].sort().reverse();
-  const many = manyPeople(all, (i) => i.employee?.id || i.employeeId);
   const SORTS = {
     new: (a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
     score: (a, b) => (b.scoreTotal ?? -1) - (a.scoreTotal ?? -1),
@@ -324,7 +329,7 @@ function AllIdeas({ ideas: all }) {
       <PanelHead title={`All ideas on file (${all.length})`} />
       <div style={{ padding: '0 18px' }}>
         <PeopleFilterBar
-          filters={pf} setFilters={setPf} people={many} search="Idea"
+          filters={pf} setFilters={setPf} people={many} activeFirst search="Idea"
           departments={many ? opts.departments : undefined} roles={many ? opts.roles : undefined}
           statuses={['Unique', 'Duplicate']} statusLabel="All screening results" shown={ideas.length} total={all.length}
           labels={{ week: 'Week', status: 'Screening' }}
@@ -355,7 +360,7 @@ function AllIdeas({ ideas: all }) {
             <tbody>
               {page.slice.map((i) => (
                 <tr key={i.id}>
-                  <td>{i.employee ? <EmployeeCell name={i.employee.name} code={i.employee.employeeCode} /> : '—'}</td>
+                  <td>{i.employee ? <EmployeeCell name={i.employee.name} code={i.employee.employeeCode} employee={i.employee} /> : '—'}</td>
                   <td>
                     {i.title}
                     {i.detail && <div className="small-muted">{i.detail}</div>}
@@ -407,7 +412,7 @@ export default function KT() {
   const [ideaOpen, setIdeaOpen] = useState(false);
   // KT sessions filter by the person handing over (the record's employee) and
   // the session's own status.
-  const [kf, setKf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, from: '', to: '' });
+  const [kf, setKf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, from: '', to: '' });
 
   function load() {
     api.get('/weekly-ideas/compliance').then((res) => setCompliance(res.data)).catch(() => setCompliance(null));
@@ -422,9 +427,10 @@ export default function KT() {
     load();
   }
 
-  const sessions = records.filter((r) => textMatches(`${r.title} ${r.fromName || ''} ${r.toName || ''} ${r.detail || ''}`, kf.q) && peopleMatches(r, kf));
-  const ktOpts = peopleOptions(records);
   const ktMany = manyPeople(records, (r) => r.employeeId);
+  const sessions = records.filter((r) => textMatches(`${r.title} ${r.fromName || ''} ${r.toName || ''} ${r.detail || ''}`, kf.q) && peopleMatches(r, ktMany ? kf : { ...kf, empStatus: '' }));
+  const ktOpts = peopleOptions(records);
+  const openLeft = ktMany && kf.empStatus === 'Active' ? records.filter((r) => r.status !== 'Completed' && ['Exited', 'Relieved'].includes(r.employee?.employmentStatus)).length : 0;
   const ktPage = usePaged(sessions);
 
   const ai = compliance ? compliance.ai : null;
@@ -497,12 +503,13 @@ export default function KT() {
         </div>
         <div style={{ padding: '0 18px' }}>
           <PeopleFilterBar
-            filters={kf} setFilters={setKf} search="Topic, from or to" people={ktMany}
+            filters={kf} setFilters={setKf} search="Topic, from or to" people={ktMany} activeFirst
             departments={ktMany ? ktOpts.departments : undefined} roles={ktMany ? ktOpts.roles : undefined}
             statuses={statusOptions(records, ['Open', 'Completed'])} shown={sessions.length} total={records.length}
             dates="Date"
           />
         </div>
+        <div style={{ padding: '0 18px' }}><HiddenLeftNote filters={kf} rows={records} active={ktMany} noun="KT sessions" extra={openLeft ? ' (' + openLeft + ' still open, waiting to be marked completed)' : ''} /></div>
         {sessions.length === 0 ? <ListEmpty lf={lfOf(kf, setKf)} noun="KT sessions" title="No KT sessions logged yet." /> : (
           <div className="tbl-wrap">
             <table>

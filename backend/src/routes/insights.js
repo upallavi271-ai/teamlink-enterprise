@@ -46,7 +46,7 @@ const workflow = require('../utils/approvalWorkflow');
 const chain = require('../utils/chainRoute');
 const { formatOf, sendTable } = require('../utils/exportKit');
 const { groupOfStage } = require('../utils/pipelineView');
-const { hrStatusOf } = require('../utils/hrStatus');
+const { employeeStatusMatches } = require('../utils/hrStatus');
 const { NOT_SYSTEM_EMPLOYEE } = require('../utils/systemAccounts');
 
 const router = express.Router();
@@ -407,7 +407,7 @@ async function leaveRequests(req, reach, period) {
   // matched here, on the server, over the full scoped set.
   const hr = str(req.query.empStatus);
   const role = str(req.query.role);
-  return list.filter((l) => (!hr || hrStatusOf(l.employee?.employmentStatus, l.employee?.user?.status) === hr)
+  return list.filter((l) => (!hr || employeeStatusMatches(hr, l.employee?.employmentStatus, l.employee?.user?.status))
     && (!role || l.employee?.designation === role));
 }
 
@@ -490,7 +490,7 @@ async function regularizationExport(req, reach, period) {
     orderBy: { date: 'desc' },
   });
   const hr = str(q.empStatus);
-  const list = hr ? all.filter((r) => hrStatusOf(r.employee?.employmentStatus) === hr) : all;
+  const list = hr ? all.filter((r) => employeeStatusMatches(hr, r.employee?.employmentStatus)) : all;
   return {
     headers: ['Employee ID', 'Name', 'Department', 'Date', 'Requested Check-In', 'Requested Check-Out', 'Reason', 'Status', 'Requested On', 'Decided On'],
     rows: list.map((r) => [r.employee?.employeeCode, r.employee?.name, r.employee?.department, r.date, r.requestedCheckIn, r.requestedCheckOut, r.reason, r.status, ymd(r.createdAt), ymd(r.decidedAt)]),
@@ -523,11 +523,14 @@ async function payslips(req, reach, period) {
     const pm = str(req.query.payMode);
     and.push(pm === 'Package' ? { OR: [{ payMode: 'Package' }, { payMode: null }] } : { payMode: pm });
   }
-  return prisma.payslip.findMany({
+  const rows = await prisma.payslip.findMany({
     where: { AND: and },
-    include: { employee: { select: { employeeCode: true, name: true, department: true } } },
+    include: { employee: { select: { employeeCode: true, name: true, department: true, employmentStatus: true } } },
     orderBy: [{ month: 'desc' }],
   });
+  // The Payslips tab's Employee status choice (Active / Exited / Relieved ...) - only when the bar sends it; the insight tiles never do.
+  const hr = str(req.query.empStatus);
+  return hr ? rows.filter((p) => employeeStatusMatches(hr, p.employee?.employmentStatus)) : rows;
 }
 
 async function payrollInsights(req, reach, period) {

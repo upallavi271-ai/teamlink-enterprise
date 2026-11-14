@@ -55,6 +55,11 @@ import './ListFilters.css';
 //   server     true -> rows are NOT filtered here (the page sends lf.params to
 //              the API); the search value is debounced in lf.params.
 //   initial    starting values, e.g. seeded from the URL
+//   opening    the values the list OPENS on and "Clear All" returns to, e.g.
+//              { status: EMPLOYEE_OPENING } - ACTIVE EMPLOYEES FIRST (founder
+//              2026-11-14). They count as active filters (chip, "x of y"), but
+//              lf.changed stays false until the person moves off them, and
+//              lf.showAll() blanks everything (every value '' = everybody).
 //   sorts / defaultSort   Sort dropdown (first sort is the default)
 //   keep       optional key, e.g. 'bank.recon': the values and the sort
 //              survive leaving the screen (utils/useKeptState.js). A non-empty
@@ -89,7 +94,8 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   const fields = (fieldsIn || []).filter((f) => f && f.show !== false);
   const blank = useMemo(() => Object.fromEntries(keysOf(fieldsIn || []).map((k) => [k, ''])), [fieldsIn && fieldsIn.map((f) => f && f.key).join('|')]);
   const linked = Object.values(opts.initial || {}).some((v) => !EMPTY(v));
-  const [values, setValues] = useKeptState(opts.keep && `${opts.keep}.filters`, () => ({ ...blank, ...(opts.initial || {}) }), linked);
+  const opening = opts.opening || {};
+  const [values, setValues] = useKeptState(opts.keep && `${opts.keep}.filters`, () => ({ ...blank, ...opening, ...(opts.initial || {}) }), linked);
   const sorts = opts.sorts || [];
   const [sort, setSort] = useKeptState(opts.keep && `${opts.keep}.sort`, opts.defaultSort || (sorts[0] && sorts[0].key) || '');
 
@@ -103,7 +109,8 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   }, [values, opts.server]);
 
   const setValue = (key, v) => setValues((cur) => ({ ...cur, [key]: v }));
-  const clear = () => setValues({ ...blank });
+  const clear = () => setValues({ ...blank, ...opening });
+  const showAll = () => setValues({ ...blank });
 
   // Options: given, or the distinct values present in the rows.
   const resolved = useMemo(() => fields.map((f) => {
@@ -152,6 +159,8 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
 
   const isOn = (f) => (f.type === 'daterange' ? !!(values[`${f.key}From`] || values[`${f.key}To`]) : !EMPTY(values[f.key]));
   const activeCount = resolved.filter(isOn).length;
+  // Has the person moved off the opening view? (Without an `opening` this is just "is any filter on".)
+  const changed = keysOf(fieldsIn || []).some((k) => String(values[k] ?? '') !== String(opening[k] ?? ''));
   const moreActive = resolved.filter((f) => f.type !== 'search' && !f.primary && isOn(f)).length;
 
   const chips = resolved.filter(isOn).map((f) => {
@@ -184,7 +193,7 @@ export function useListFilters(rows, fieldsIn, opts = {}) {
   });
 
   return {
-    values, setValue, setValues, clear, fields: resolved, sig: `${JSON.stringify(values)}|${sort}`,
+    values, setValue, setValues, clear, showAll, changed, fields: resolved, sig: `${JSON.stringify(values)}|${sort}`,
     rows: sorted, filtered: sorted, total: list.length,
     activeCount, moreActive, chips, params, paramsKey: JSON.stringify(params),
     sorts, sort, setSort,
@@ -267,7 +276,7 @@ export default function ListFilterBar({ lf, storageKey, extra, noun, className =
       <MoreFilters
         storageKey={storageKey}
         activeMore={lf.moreActive}
-        onClearAll={lf.activeCount ? lf.clear : undefined}
+        onClearAll={lf.changed ? lf.clear : undefined}
         primary={<>{primary.map((f) => <Control key={f.key} f={f} lf={lf} />)}{children}</>}
         extra={(
           <>
@@ -284,13 +293,25 @@ export default function ListFilterBar({ lf, storageKey, extra, noun, className =
       >
         {more.length ? more.map((f) => <Control key={f.key} f={f} lf={lf} />) : null}
       </MoreFilters>
-      <FilterChips filters={lf.chips} onClearAll={lf.activeCount ? lf.clear : undefined} />
+      <FilterChips filters={lf.chips} onClearAll={lf.changed ? lf.clear : undefined} />
     </div>
   );
 }
 
 // "No X match these filters — Clear filters" / "No X yet."
 export function ListEmpty({ lf, noun = 'records', title, hint, icon, compact = true }) {
+  if (lf && lf.activeCount && lf.changed === false) {
+    // Only the opening view is on (Active employees first): say what is hidden instead of "no match".
+    return (
+      <EmptyState
+        compact={compact}
+        icon={icon}
+        title={title || `No ${noun} for the people who are still here.`}
+        hint="People who have left (Exited / Relieved) are not shown. Choose Employee status → All to include them."
+        action={<button type="button" className="btn btn-sm" onClick={lf.showAll}>Show everybody</button>}
+      />
+    );
+  }
   if (lf && lf.activeCount) {
     return (
       <EmptyState

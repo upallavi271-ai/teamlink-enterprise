@@ -4,7 +4,8 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { Panel, PanelHead, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { ComposeModal, Field, AiAssist, useSubmit } from '../../components/ComposeForm.jsx';
@@ -218,7 +219,9 @@ export default function Disciplinary() {
   const [records, setRecords] = useState([]);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState('');
-  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, category: '', from: '', to: '' });
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the cases open with the people who are still here; Employee status shows the Exited / Relieved ones
+  // (a case of someone who has left can still be open: the note under the bar says how many).
+  const [pf, setPf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, category: '', from: '', to: '' });
 
   function load() {
     api.get('/disciplinary').then((res) => setRecords(res.data));
@@ -231,9 +234,10 @@ export default function Disciplinary() {
   }
 
   const shown = records.filter((r) => textMatches(`${r.detail || ''} ${r.raisedBy || ''}`, pf.q)
-    && peopleMatches(r, pf) && (!pf.category || r.category === pf.category));
+    && peopleMatches(r, hrView ? pf : { ...pf, empStatus: '' }) && (!pf.category || r.category === pf.category));
   const opts = peopleOptions(records);
   const page = usePaged(shown);
+  const openLeft = hrView && pf.empStatus === 'Active' ? records.filter((r) => r.status === 'Open' && ['Exited', 'Relieved'].includes(r.employee?.employmentStatus)).length : 0;
   const clearPf = () => setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
   const categories = [...new Set([...CATEGORIES, ...records.map((r) => r.category).filter(Boolean)])];
 
@@ -263,7 +267,7 @@ export default function Disciplinary() {
         <PanelHead title="Cases" />
         <div style={{ padding: '0 18px' }}>
           <PeopleFilterBar
-            filters={pf} setFilters={setPf} people={hrView}
+            filters={pf} setFilters={setPf} people={hrView} activeFirst
             departments={hrView ? opts.departments : undefined} roles={hrView ? opts.roles : undefined}
             statuses={statusOptions(records, CASE_STATUSES)} shown={shown.length} total={records.length}
             search="Description or raised by" dates="Date" labels={{ category: 'Category' }}
@@ -274,6 +278,7 @@ export default function Disciplinary() {
             </Combo>
           </PeopleFilterBar>
         </div>
+        <div style={{ padding: '0 18px' }}><HiddenLeftNote filters={pf} rows={records} active={hrView} noun="cases" extra={openLeft ? ' (' + openLeft + ' still Open)' : ''} /></div>
         {shown.length === 0 ? <ListEmpty lf={{ activeCount: Object.values(pf).some(Boolean) ? 1 : 0, clear: clearPf }} noun="cases" title="No disciplinary cases on file." /> : (
           <div className="tbl-wrap">
             <table>
@@ -281,7 +286,7 @@ export default function Disciplinary() {
               <tbody>
                 {page.slice.map((r) => (
                   <tr key={r.id}>
-                    <td>{r.employee?.name}</td>
+                    <td>{r.employee?.name}<EmployeeStatusTag employee={r.employee} /></td>
                     <td><span className={`status ${r.category === 'Warning' ? 'pending' : r.category === 'Other' ? 'review' : 'rejected'}`}>{r.category || '—'}</span></td>
                     <td>{r.detail || '—'}</td>
                     <td className="cell-muted">{r.raisedBy || '—'}</td>

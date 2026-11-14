@@ -12,6 +12,7 @@ import EmployeePhoto from '../../components/EmployeePhoto.jsx';
 import ExportMenu from '../../components/ExportMenu.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
+import { employeeStatusField, EMPLOYEE_OPENING } from '../../hrStatus';
 import ReferPanel from '../../components/referrals/ReferPanel.jsx'; // ATS-100 B6.1
 
 // Only STL/TL are restricted to their own department — Manager/Assistant
@@ -59,9 +60,11 @@ export default function MyProfile() {
   const teamLf = useListFilters(team, [
     { key: 'q', type: 'search', placeholder: 'Search name or employee ID…', get: (e) => `${e.name || ''} ${e.employeeCode || ''}` },
     { key: 'role', label: 'Role', primary: true, get: (e) => e.designation },
-    { key: 'status', label: 'Status', primary: true, get: (e) => e.employmentStatus },
+    // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): opens on the people who are still here; the Status column already writes everybody's status.
+    employeeStatusField({ key: 'status', get: (e) => e.employmentStatus }),
     { key: 'profile', label: 'Profile status', primary: true, allLabel: 'All profile statuses', get: (e) => (e.profileStatus ? statusLabel(e.profileStatus) : '') },
   ], {
+    opening: EMPLOYEE_OPENING,
     sorts: [
       { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
       { key: 'code', label: 'Employee ID', cmp: (a, b) => String(a.employeeCode || '').localeCompare(String(b.employeeCode || ''), undefined, { numeric: true }) },

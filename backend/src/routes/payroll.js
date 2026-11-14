@@ -125,7 +125,8 @@ router.get('/structure', requirePerm(null, 'hrms', 'Payroll & Compensation', 'ed
   res.json(
     employees.map((e) => {
       const ss = e.salaryStructure;
-      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, structure: ss, breakup: breakupOf(ss, cfg) };
+      // employmentStatus: so the list can open on the people who are still here (ACTIVE EMPLOYEES FIRST, founder 2026-11-14); nothing else changes
+      return { employeeId: e.id, employeeCode: e.employeeCode, name: e.name, department: e.department, employmentStatus: e.employmentStatus, structure: ss, breakup: breakupOf(ss, cfg) };
     })
   );
 });

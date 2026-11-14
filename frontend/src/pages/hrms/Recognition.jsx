@@ -4,7 +4,9 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { PanelPad, AssignRow, EmptyMini, TwoCol, QaRow } from '../../components/proto.jsx';
 import { isHR as hasHrmsAdmin, canManageServices } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag from '../../components/EmployeeStatusTag.jsx';
+import { employeeStatusMatches, DEFAULT_EMPLOYEE_STATUS } from '../../hrStatus';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, audienceReady } from '../../components/AudiencePicker.jsx';
@@ -75,7 +77,8 @@ export default function Recognition() {
   const [done, setDone] = useState('');
   // A recognition has no workflow status, so it filters by the person
   // recognised and the award given instead.
-  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, award: '', from: '', to: '' });
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the feed and the leaderboard open with the people who are still here; Employee status shows the rest.
+  const [pf, setPf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, award: '', from: '', to: '' });
 
   function load() {
     api.get('/recognition').then((res) => setRecords(res.data));
@@ -86,6 +89,7 @@ export default function Recognition() {
     && peopleMatches(r, pf) && (!pf.award || r.title === pf.award));
   const opts = peopleOptions(records);
   const page = usePaged(shown);
+  const hiddenLeft = pf.empStatus === DEFAULT_EMPLOYEE_STATUS ? records.filter((r) => !employeeStatusMatches(DEFAULT_EMPLOYEE_STATUS, r.employee?.employmentStatus)).length : 0;
   const clearPf = () => setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
   const awards = [...new Set([...AWARD_TYPES.map((a) => a.name), ...records.map((r) => r.title).filter(Boolean)])];
 
@@ -133,7 +137,7 @@ export default function Recognition() {
       />
 
       <PeopleFilterBar
-        filters={pf} setFilters={setPf}
+        filters={pf} setFilters={setPf} activeFirst
         departments={opts.departments} roles={opts.roles} shown={shown.length} total={records.length}
         search="Message or sender" dates="Date" labels={{ award: 'Award' }}
       >
@@ -143,13 +147,18 @@ export default function Recognition() {
         </Combo>
       </PeopleFilterBar>
 
+      {hiddenLeft > 0 && (
+        <p className="small-muted" style={{ margin: '0 0 8px' }}>
+          Showing the people who are still here. {hiddenLeft} recognition(s) of people who have left are not shown, in the feed or on the leaderboard: choose <b>Employee status → All</b> (or Exited / Relieved). The KPI tiles and the export above count everybody.
+        </p>
+      )}
       <TwoCol>
         <PanelPad>
           <h3 style={{ fontSize: 14, marginBottom: 10 }}>Recognition Feed</h3>
           {shown.length === 0 ? <ListEmpty lf={{ activeCount: Object.values(pf).some(Boolean) ? 1 : 0, clear: clearPf }} noun="recognitions" /> : page.slice.map((r) => (
             <div key={r.id}>
               <AssignRow flush>
-                <span>{r.fromName || 'HR'} → {r.employee?.name} · {r.title} (+{r.points ?? 0})</span>
+                <span>{r.fromName || 'HR'} → {r.employee?.name}<EmployeeStatusTag employee={r.employee} /> · {r.title} (+{r.points ?? 0})</span>
                 <span className="cell-muted" style={{ fontSize: 11.5 }}>{r.date || ''}</span>
               </AssignRow>
               <div className="small-muted" style={{ margin: '-4px 0 8px' }}>{r.detail || '—'}</div>

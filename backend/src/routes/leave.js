@@ -1010,7 +1010,9 @@ router.get('/monthly-report', async (req, res, next) => {
       return res.status(403).json({ error: "Export isn't included in your role's permissions" });
     }
     const includeRelieved = req.query.includeRelieved === '1' || req.query.includeRelieved === 'true';
-    const where = withoutSystemAccounts({ ...employeeWhere(req.user), ...(includeRelieved ? {} : { employmentStatus: { not: 'Relieved' } }) });
+    // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the report opens with the people who are still here; Exited and Relieved come back with includeRelieved=1.
+    // Every figure is per person, so nothing else on the sheet moves.
+    const where = withoutSystemAccounts({ ...employeeWhere(req.user), ...(includeRelieved ? {} : { employmentStatus: { notIn: ['Relieved', 'Exited'] } }) });
     if (req.query.department) where.department = String(req.query.department);
     const employees = await prisma.employee.findMany({ where, orderBy: { name: 'asc' } });
     const data = await monthlyData(employees, year);

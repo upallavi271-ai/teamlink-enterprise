@@ -10,7 +10,9 @@ import Combo from '../../components/Combo.jsx';
 import CourseManage, { CourseFormModal, AssignModal } from './CourseManage.jsx';
 import LearnCourse from './LearnCourse.jsx';
 import CertificateModal, { downloadCertificate } from './Certificate.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
+import { employeeStatusField } from '../../hrStatus';
 import ListFilterBar, { useListFilters, ListEmpty } from '../../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
@@ -182,11 +184,14 @@ function HistoryPanel() {
     { key: 'status', label: 'Status', primary: true, get: (r) => r.status },
     { key: 'course', label: 'Course', primary: true, get: (r) => r.course },
     { key: 'department', label: 'Department', primary: true, show: manyPeople, get: (r) => r.department },
+    // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the History opens with the people who are still here; their Exited / Relieved colleagues are one choice away.
+    { ...employeeStatusField({ key: 'empStatus', get: (r) => r.employmentStatus }), show: manyPeople },
     { key: 'date', type: 'daterange', label: 'Assigned on', primary: true, get: (r) => r.assignedAt },
     { key: 'by', label: 'Assigned by', allLabel: 'Assigned by anyone', get: (r) => r.assignedBy },
     { key: 'result', label: 'Result', allLabel: 'Any result', get: (r) => r.result },
     { key: 'overdue', label: 'Due', allLabel: 'Overdue or not', options: ['Overdue', 'Not overdue'], get: (r) => (r.overdue ? 'Overdue' : 'Not overdue') },
   ], {
+    opening: { empStatus: 'Active' },
     sorts: [
       { key: 'new', label: 'Newest first', cmp: (a, b) => String(b.assignedAt || '').localeCompare(String(a.assignedAt || '')) },
       { key: 'old', label: 'Oldest first', cmp: (a, b) => String(a.assignedAt || '').localeCompare(String(b.assignedAt || '')) },
@@ -224,7 +229,7 @@ function HistoryPanel() {
               <td>{r.assignedBy || '—'}</td>
               <td>{r.assignedTo || '—'}</td>
               <td>{r.department || '—'}</td>
-              <td>{r.employee}<span className="lms-sub" style={{ display: 'block' }}>{r.employeeCode || ''}</span></td>
+              <td>{r.employee}<EmployeeStatusTag employmentStatus={r.employmentStatus} /><span className="lms-sub" style={{ display: 'block' }}>{r.employeeCode || ''}</span></td>
               <td>{fmtD(r.assignedAt)}</td>
               <td>{r.assignedAt ? new Date(r.assignedAt).toLocaleTimeString() : '—'}</td>
               <td>{fmtD(r.dueDate)}{r.overdue && <span className="status rejected" style={{ marginLeft: 6 }}>Overdue</span>}</td>
@@ -240,7 +245,7 @@ function HistoryPanel() {
           rows={rows.map((r) => (
             <tr key={r.id}>
               <td>{r.course}</td>
-              <td>{r.employee}</td>
+              <td>{r.employee}<EmployeeStatusTag employmentStatus={r.employmentStatus} /></td>
               <td>{fmtDT(r.startedAt)}</td>
               <td>{fmtDT(r.lastAccessedAt)}</td>
               <td>{r.videoPct != null ? `${r.videoPct}%` : '—'}</td>
@@ -642,7 +647,8 @@ const ENROLLMENT_STATUSES = ['In Progress', 'Completed'];
 const learnerOf = (e) => ({ employeeCode: e.employeeCode, name: e.employee, department: e.department, designation: e.designation, employmentStatus: e.employmentStatus });
 const enrollmentStatusOf = (e) => (e.completed ? 'Completed' : 'In Progress');
 
-const EMPTY_ENROLMENT_FILTERS = { ...EMPTY_PEOPLE_FILTERS, course: '', from: '', to: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): enrollments and certificates open with the people who are still here; the company figures above count everybody.
+const EMPTY_ENROLMENT_FILTERS = { ...OPENING_PEOPLE_FILTERS, course: '', from: '', to: '' };
 function useEnrollmentFilters(rows, { withStatus }) {
   const [f, setF] = useState(EMPTY_ENROLMENT_FILTERS);
   // Enrollments are dated by when they were assigned, certificates by when
@@ -655,7 +661,7 @@ function useEnrollmentFilters(rows, { withStatus }) {
   const courses = [...new Set(rows.map((e) => e.course).filter(Boolean))].sort();
   const bar = (
     <PeopleFilterBar
-      filters={f} setFilters={setF} departments={opts.departments} roles={opts.roles}
+      filters={f} setFilters={setF} activeFirst departments={opts.departments} roles={opts.roles}
       statuses={withStatus ? ENROLLMENT_STATUSES : undefined} shown={shown.length} total={rows.length}
       dates={withStatus ? 'Enrolled on' : 'Certified on'} labels={{ course: 'Course' }}
     >
@@ -665,8 +671,8 @@ function useEnrollmentFilters(rows, { withStatus }) {
       </Combo>
     </PeopleFilterBar>
   );
-  const lfLike = { activeCount: Object.values(f).filter(Boolean).length, clear: () => setF(EMPTY_ENROLMENT_FILTERS) };
-  return { shown, bar, page, lfLike };
+  const lfLike = { activeCount: Object.values(f).filter(Boolean).length, clear: () => setF({ ...EMPTY_ENROLMENT_FILTERS, empStatus: '' }) };
+  return { shown, bar: <>{bar}<HiddenLeftNote filters={f} rows={rows} getEmployee={learnerOf} noun={withStatus ? 'enrollments' : 'certificates'} /></>, page, lfLike };
 }
 
 function EnrollmentTable({ enrollments }) {
@@ -679,7 +685,7 @@ function EnrollmentTable({ enrollments }) {
         empty={<ListEmpty lf={lfLike} noun="enrollments" title="No enrollments inside your scope yet." />}
         rows={page.slice.map((e) => (
           <tr key={e.id}>
-            <td>{e.employee}</td>
+            <td>{e.employee}<EmployeeStatusTag employmentStatus={e.employmentStatus} /></td>
             <td>{e.course}</td>
             <td>{e.department}</td>
             <td>{e.team}</td>
@@ -704,7 +710,7 @@ function CertificationsTable({ enrollments, onView }) {
         empty={<ListEmpty lf={lfLike} noun="certificates" title="No certificates earned inside your scope yet." />}
         rows={page.slice.map((e) => (
           <tr key={e.id}>
-            <td>{e.employee}</td>
+            <td>{e.employee}<EmployeeStatusTag employmentStatus={e.employmentStatus} /></td>
             <td>{e.course}</td>
             <td>{e.department}</td>
             <td>{e.score != null ? `${e.score}%` : '—'} <span className="cell-muted">/ {e.passMark}%</span></td>

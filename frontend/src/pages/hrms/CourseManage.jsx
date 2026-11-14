@@ -4,7 +4,8 @@ import { PanelPad, EmptyMini, Modal } from '../../components/proto.jsx';
 import Combo from '../../components/Combo.jsx';
 import { SecureVideo, SecureDocument, VIEW_ONLY_NOTE } from './MaterialViewer.jsx';
 import CertificateModal from './Certificate.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import FilterChips from '../../components/FilterChips.jsx';
@@ -16,7 +17,8 @@ import CourseFilesPicker, { uploadMaterial } from './CourseFiles.jsx';
 // row words it.
 const ENROL_STATUSES = ['Completed', 'Not yet completed'];
 const enrolStatusOf = (row) => (row.completed ? 'Completed' : 'Not yet completed');
-const EMPTY_ENROL_FILTERS = { ...EMPTY_PEOPLE_FILTERS, from: '', to: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the enrolled list opens with the people who are still here (the "Enrolled Employees (N)" count stays everybody).
+const EMPTY_ENROL_FILTERS = { ...OPENING_PEOPLE_FILTERS, from: '', to: '' };
 
 // ---------------------------------------------------------------------------
 // COURSE MANAGEMENT — the three panels behind "View & Enroll" on a course:
@@ -693,7 +695,7 @@ export default function CourseManage({ courseId, onBack }) {
     .filter((row) => peopleMatches(row, ef, undefined, enrolStatusOf, (r) => r.assignedAt))
     .sort((a, b) => String(b.assignedAt || '').localeCompare(String(a.assignedAt || '')));
   const enrolPage = usePaged(enrolledShown);
-  const efLike = { activeCount: Object.values(ef).filter(Boolean).length, clear: () => setEf(EMPTY_ENROL_FILTERS) };
+  const efLike = { activeCount: Object.values(ef).filter(Boolean).length, clear: () => setEf({ ...EMPTY_ENROL_FILTERS, empStatus: '' }) };
 
   const load = useCallback(() => {
     api.get(`/lms/courses/${courseId}/manage`)
@@ -920,18 +922,19 @@ export default function CourseManage({ courseId, onBack }) {
 
           {data.enrolled.length > 0 && (
             <PeopleFilterBar
-              filters={ef} setFilters={setEf}
+              filters={ef} setFilters={setEf} activeFirst
               departments={peopleOptions(data.enrolled).departments} roles={peopleOptions(data.enrolled).roles}
               statuses={ENROL_STATUSES} shown={enrolledShown.length} total={data.enrolled.length}
               dates="Assigned on"
             />
           )}
+          <HiddenLeftNote filters={ef} rows={data.enrolled} noun="enrolled employees" />
           {enrolledShown.length === 0
             ? <ListEmpty lf={efLike} noun="enrolled employees" title="Nobody is enrolled yet." />
             : enrolPage.slice.map((row) => (
               <div className="enrol-row" key={row.id}>
                 <div className="enrol-top">
-                  <b>{row.name}</b>
+                  <b>{row.name}</b><EmployeeStatusTag employmentStatus={row.employmentStatus} />
                   <span className={`status ${row.completed ? 'approved' : row.stage === 'Failed' ? 'rejected' : 'pending'}`}>
                     {row.completed ? 'Completed' : (row.stage || 'Not yet completed')}
                   </span>

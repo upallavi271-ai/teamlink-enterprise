@@ -10,7 +10,8 @@ import Combo from '../../components/Combo.jsx';
 import DateRangePicker, { RANGE_PRESETS, rangeParams } from '../../components/DateRangePicker.jsx';
 
 const HELPDESK_PRESETS = [['all', 'All Time'], ...RANGE_PRESETS];
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { ComposeModal, Field, Row, AiAssist, useSubmit } from '../../components/ComposeForm.jsx';
@@ -22,7 +23,9 @@ const CLOSED = ['Resolved', 'Closed'];
 // THE TICKET FILTERS (filter standard): Search (code, subject, description,
 // category, employee, assignee) · Employee · Department · Status · Category ·
 // Sort | More: Employee ID · Role · Employee status · Raised on · Priority.
-const HD_EMPTY = { ...EMPTY_PEOPLE_FILTERS, q: '', category: '', priority: '', from: '', to: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the ticket list opens with the people who are still here; Employee status shows the Exited / Relieved ones.
+// The Open / In Progress / Resolved cards keep counting everybody's tickets (they are figures, not a view).
+const HD_EMPTY = { ...OPENING_PEOPLE_FILTERS, q: '', category: '', priority: '', from: '', to: '' };
 const PRIORITY_RANK = { Urgent: 0, High: 1, Medium: 2, Low: 3 };
 const newest = (a, b) => String(b.createdAt).localeCompare(String(a.createdAt));
 const HD_SORTS = [
@@ -175,11 +178,16 @@ export default function Helpdesk({ view, onOpen, onBack }) {
   // One set of filters for the ticket list and every ticket screen. The
   // employee half is for those who see other people's tickets; an employee
   // looking at their own gets search, status, category, priority and dates.
-  const shown = tickets.filter((t) => peopleMatches(t, pf, undefined, undefined, (r) => r.createdAt)
-    && textMatches(`${t.id.slice(-8)} ${t.title} ${t.detail || ''} ${t.category || ''} ${t.employee?.name || ''} ${t.assignedToName || ''}`, pf.q)
-    && (!pf.category || t.category === pf.category)
-    && (!pf.priority || t.priority === pf.priority))
+  const ticketMatches = (t, f) => peopleMatches(t, f, undefined, undefined, (r) => r.createdAt)
+    && textMatches(`${t.id.slice(-8)} ${t.title} ${t.detail || ''} ${t.category || ''} ${t.employee?.name || ''} ${t.assignedToName || ''}`, f.q)
+    && (!f.category || t.category === f.category)
+    && (!f.priority || t.priority === f.priority);
+  // the Employee status control is drawn only for the people who see other people's tickets (so it is applied only then)
+  const pfm = hrView ? pf : { ...pf, empStatus: '' };
+  const shown = tickets.filter((t) => ticketMatches(t, pfm))
     .sort((HD_SORTS.find(([k]) => k === sort) || HD_SORTS[0])[2]);
+  // The cards above the list count the tickets of everybody while Employee status is on its opening choice (Active).
+  const cardRows = pfm.empStatus === 'Active' ? tickets.filter((t) => ticketMatches(t, { ...pfm, empStatus: '' })) : shown;
   // The rows the current screen lists — paged 25 / 50 / 100.
   const viewRows = view === 'resolution' || view === 'csat' ? shown.filter((t) => CLOSED.includes(t.status))
     : view === 'escalation' ? shown.filter((t) => ['Urgent', 'High'].includes(t.priority))
@@ -187,7 +195,7 @@ export default function Helpdesk({ view, onOpen, onBack }) {
         // Closed tickets drop off the tab's list — unless the status filter asks for them.
         : shown.filter((t) => pf.status || !CLOSED.includes(t.status));
   const page = usePaged(viewRows);
-  const lfLike = { activeCount: Object.values(pf).filter(Boolean).length, clear: () => setPf(HD_EMPTY) };
+  const lfLike = { activeCount: Object.values(pf).filter(Boolean).length, clear: () => setPf({ ...HD_EMPTY, empStatus: '' }) };
   const emptyRow = (title) => <ListEmpty lf={lfLike} noun="tickets" title={title} />;
 
   if (!meta) return <div className="small-muted">Loading…</div>;
@@ -198,7 +206,7 @@ export default function Helpdesk({ view, onOpen, onBack }) {
   const setF = (k, v) => setPf((f) => ({ ...f, [k]: v }));
   const bar = (statuses = TICKET_STATUSES) => (
     <PeopleFilterBar
-      filters={pf} setFilters={setPf} people={hrView} search="Tickets"
+      filters={pf} setFilters={setPf} people={hrView} activeFirst search="Tickets"
       departments={hrView ? opts.departments : undefined} roles={hrView ? opts.roles : undefined}
       statuses={statuses} shown={shown.length} total={tickets.length}
       dates="Raised on" labels={{ category: 'Category', priority: 'Priority' }} moreKeys={['priority']}
@@ -235,7 +243,7 @@ export default function Helpdesk({ view, onOpen, onBack }) {
             rows={page.slice.map((t) => (
               <tr key={t.id}>
                 <td><b>{t.id.slice(-8).toUpperCase()}</b></td>
-                <td>{t.employee?.name}</td>
+                <td>{t.employee?.name}<EmployeeStatusTag employee={t.employee} /></td>
                 <td>{t.title}</td>
                 <td className="cell-muted">{t.category}</td>
                 <td className="cell-muted">
@@ -410,9 +418,9 @@ export default function Helpdesk({ view, onOpen, onBack }) {
   }
 
   // ---- Tab body --------------------------------------------------------
-  const open = shown.filter((t) => t.status === 'Open').length;
-  const prog = shown.filter((t) => t.status === 'In Progress').length;
-  const done = shown.filter((t) => CLOSED.includes(t.status)).length;
+  const open = cardRows.filter((t) => t.status === 'Open').length;
+  const prog = cardRows.filter((t) => t.status === 'In Progress').length;
+  const done = cardRows.filter((t) => CLOSED.includes(t.status)).length;
 
   return (
     <div>
@@ -447,7 +455,7 @@ export default function Helpdesk({ view, onOpen, onBack }) {
             <div key={t.id} style={{ padding: '12px 0', borderBottom: '1px solid var(--line-soft)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                 <b>{t.title}</b>
-                <span className="cell-muted">— {t.employee?.name}</span>
+                <span className="cell-muted">— {t.employee?.name}<EmployeeStatusTag employee={t.employee} /></span>
                 <span className="status pending">{t.category}</span>
                 <span className={`status ${['Urgent', 'High'].includes(t.priority) ? 'rejected' : 'pending'}`}>{t.priority}</span>
               </div>

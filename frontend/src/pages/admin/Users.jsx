@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import GeneratePassword from '../../components/GeneratePassword.jsx';
 import { PasswordBadge } from '../../components/PasswordStatus.jsx';
-import { HR_STATUSES, EXIT_EMPLOYMENT, hrStatusOf } from '../../hrStatus';
+import { EXIT_EMPLOYMENT, employeeStatusField, EMPLOYEE_OPENING } from '../../hrStatus';
 import { Link, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
@@ -209,8 +209,9 @@ export default function Users() {
       get: (u) => `${u.name} ${u.email} ${u.employeeId || ''} ${u.username || ''}` },
     { key: 'role', label: 'Role', allLabel: 'All roles', options: roleOptions, primary: true,
       match: (u, v) => u.role === v || Object.values(u.productRoles || {}).includes(v) },
-    { key: 'status', label: 'Status', allLabel: 'All statuses', options: HR_STATUSES, primary: true,
-      match: (u, v) => hrStatusOf(u.employmentStatus, u.status) === v },
+    // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): opens on Active; Exited / Relieved are one choice away (the row already writes
+    // the employment status of a person who has left beside the login status). Logins with no employee record (admins, clients, partners) count as Active.
+    employeeStatusField({ key: 'status', get: (u) => u.employmentStatus, getLogin: (u) => u.status }),
     { key: 'department', label: 'Department', allLabel: 'All departments', primary: true, get: (u) => u.department },
     { key: 'product', label: 'Product access', allLabel: 'Any product',
       options: [{ value: 'hrms', label: 'HRMS' }, { value: 'ats', label: 'ATS' }, { value: 'accounts', label: 'Accounts' }],
@@ -221,6 +222,7 @@ export default function Users() {
       options: [{ value: 'never', label: 'Never changed' }, { value: 'changed', label: 'Changed' }],
       match: (u, v) => (v === 'never' ? !u.passwordStatus?.passwordChangedAt : !!u.passwordStatus?.passwordChangedAt) },
   ], {
+    opening: EMPLOYEE_OPENING,
     sorts: [
       { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
       { key: 'code', label: 'Employee ID', cmp: (a, b) => String(a.employeeId || '~').localeCompare(String(b.employeeId || '~'), undefined, { numeric: true }) },
@@ -334,6 +336,8 @@ export default function Users() {
   }
 
   const neverChanged = users.filter((u) => u.status === 'Active' && !u.passwordStatus?.passwordChangedAt).length;
+  // People who have left but whose login still works: hidden by the opening view (Active employees first), so say so - this is the row HR must not miss.
+  const leftWithLogin = users.filter((u) => hasExited(u) && u.status === 'Active').length;
   const blockUser = blockId ? users.find((u) => u.id === blockId) : null;
 
   async function submitReset(e) {
@@ -478,7 +482,14 @@ export default function Users() {
         <div className="small-muted" style={{ margin: '0 0 8px' }}>
           {neverChanged} active login{neverChanged === 1 ? ' has' : 's have'} never changed the first password.{' '}
           <button type="button" className="link-btn" style={{ background: 'none', border: 0, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-            onClick={() => lf.setValue('pw', 'never')}>Show them</button>
+            onClick={() => lf.setValues((c) => ({ ...c, pw: 'never', status: '' }))}>Show them</button>
+        </div>
+      )}
+      {leftWithLogin > 0 && lf.values.status === 'Active' && (
+        <div className="small-muted" style={{ margin: '0 0 8px' }}>
+          {leftWithLogin} {leftWithLogin === 1 ? 'person who has' : 'people who have'} left still {leftWithLogin === 1 ? 'has' : 'have'} a working login and {leftWithLogin === 1 ? 'is' : 'are'} not in this list (it opens with the people who are still here).{' '}
+          <button type="button" className="link-btn" style={{ background: 'none', border: 0, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
+            onClick={() => lf.setValues((c) => ({ ...c, status: '' }))}>Show them</button>
         </div>
       )}
 

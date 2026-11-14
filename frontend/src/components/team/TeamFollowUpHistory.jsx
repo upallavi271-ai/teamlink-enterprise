@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import ExportMenu from '../ExportMenu.jsx';
+import EmployeeStatusTag from '../EmployeeStatusTag.jsx';
+import { STATUS_GROUPS, ALL_EMPLOYEE_STATUSES, DEFAULT_EMPLOYEE_STATUS, statusGroupOf } from '../../hrStatus';
 import '../clients/followUpLog.css';
 
 // THE TEAM'S FOLLOW-UP HISTORY (founder 2026-11-03: "ah history antha respective tls ki kanipinchali"). Reports & Team -> Team
@@ -27,6 +29,9 @@ export default function TeamFollowUpHistory() {
   const [personId, setPersonId] = useState('');
   const [kind, setKind] = useState(''); // 'Candidate' | 'Client' (set from the login when the list first comes)
   const [q, setQ] = useState('');
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the people table and the Person list open with the people who are still here.
+  // The follow-up log below always shows every follow-up written in the days chosen, whoever wrote it.
+  const [status, setStatus] = useState(DEFAULT_EMPLOYEE_STATUS);
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -52,11 +57,14 @@ export default function TeamFollowUpHistory() {
   const today = data ? data.today : '';
   const quick = (days) => setRange({ from: minus(today, days - 1), to: today });
   const mine = data && data.scope === 'mine';
+  const inStatus = (x) => !status || statusGroupOf(x.employmentStatus) === status;
   const side = SIDES.find((t) => t.key === kind) || null;
   // the people of this tab: that side's people, and anyone else who wrote a follow-up of this kind
   const cand = kind === 'Candidate';
-  const sideSummary = data ? data.summary.filter((s) => (side ? s.side === side.side : true) || (cand ? s.candidates : s.clients) > 0) : [];
-  const sidePeople = data ? data.people.filter((p) => !side || p.side === side.side || sideSummary.some((s) => s.id === p.id)) : [];
+  const sideSummaryAll = data ? data.summary.filter((s) => (side ? s.side === side.side : true) || (cand ? s.candidates : s.clients) > 0) : [];
+  const sideSummary = sideSummaryAll.filter(inStatus);
+  const sidePeople = data ? data.people.filter((p) => (!side || p.side === side.side || sideSummaryAll.some((s) => s.id === p.id)) && inStatus(p)) : [];
+  const hiddenLeft = sideSummaryAll.length - sideSummary.length;
 
   return (
     <div className="card section flog">
@@ -98,6 +106,12 @@ export default function TeamFollowUpHistory() {
       </div>
       <div className="flog-filters">
         {!mine && data && (
+          <select value={status} onChange={(e) => { setStatus(e.target.value); setPersonId(''); }} aria-label="Employee status" title="Employee status: Active = everybody who has not left">
+            <option value="">{ALL_EMPLOYEE_STATUSES}</option>
+            {STATUS_GROUPS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        )}
+        {!mine && data && (
           <select value={personId} onChange={(e) => setPersonId(e.target.value)} aria-label="Person">
             <option value="">Everyone in my team</option>
             {sidePeople.map((p) => <option key={p.id} value={p.id}>{`${p.name}${p.role ? ` (${p.role})` : ''}`}</option>)}
@@ -116,7 +130,7 @@ export default function TeamFollowUpHistory() {
             <tbody>
               {sideSummary.map((s) => (
                 <tr key={s.id} style={{ cursor: 'pointer' }} onClick={() => setPersonId(personId === s.id ? '' : s.id)} title="Show only this person (click again for everyone)">
-                  <td><b>{s.name}</b>{s.role ? <span className="small-muted">{` · ${s.role}`}</span> : null}</td>
+                  <td><b>{s.name}</b><EmployeeStatusTag employmentStatus={s.employmentStatus} />{s.role ? <span className="small-muted">{` · ${s.role}`}</span> : null}</td>
                   <td>{cand ? s.candidates : s.clients}</td>
                   <td>{cand ? s.candidateDays : s.clientDays}</td>
                   <td>{(cand ? s.candidateLast : s.clientLast) ? fmtDay(cand ? s.candidateLast : s.clientLast) : <span className="flog-none">None in these days</span>}</td>
@@ -124,6 +138,11 @@ export default function TeamFollowUpHistory() {
               ))}
             </tbody>
           </table>
+          {hiddenLeft > 0 && status === DEFAULT_EMPLOYEE_STATUS && (
+            <div className="small-muted" style={{ padding: '6px 2px' }}>
+              Showing the people who are still here. {hiddenLeft} {hiddenLeft === 1 ? 'person who has' : 'people who have'} left {hiddenLeft === 1 ? 'is' : 'are'} not listed: choose <b>Employee status → All</b> (or Exited / Relieved). Their follow-ups, if any, are in the log below.
+            </div>
+          )}
         </div>
       )}
 

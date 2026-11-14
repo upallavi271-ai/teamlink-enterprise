@@ -181,6 +181,9 @@ router.get('/org', guarded(async (req, res) => {
   ]);
   const people = users.filter((u) => viewerIsTest || !isTest(u));
   const LEFT = ['Relieved', 'Exited', 'Exit Process'];
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the Move / Set-departments lists are for the people who are still here; an Exited / Relieved
+  // person whose login still says Active is not offered (a left person cannot be moved: positions/assign refuses them).
+  const stillHere = (u) => !(u.employee && ['Relieved', 'Exited'].includes(u.employee.employmentStatus));
   const seatOf = (u) => {
     const a = u.employee && (u.employee.positionAssignments || [])[0];
     return a && a.position ? { ...a.position, since: a.fromDate } : null;
@@ -204,7 +207,7 @@ router.get('/org', guarded(async (req, res) => {
   ].filter(Boolean))].sort();
   return res.json({
     departments: deptNames,
-    leads: people.filter((u) => ['TL', 'STL'].includes(u.atsRole)).map((u) => ({
+    leads: people.filter((u) => ['TL', 'STL'].includes(u.atsRole) && stillHere(u)).map((u) => ({
       userId: u.id,
       employeeId: u.employee ? u.employee.id : null,
       name: u.name,
@@ -213,7 +216,7 @@ router.get('/org', guarded(async (req, res) => {
       departments: csvList(u.atsScopeDepartments),
       seat: seatOf(u),
     })),
-    recruiters: people.filter((u) => u.atsRole === 'RECRUITER').map((u) => ({
+    recruiters: people.filter((u) => u.atsRole === 'RECRUITER' && stillHere(u)).map((u) => ({
       userId: u.id,
       employeeId: u.employee ? u.employee.id : null,
       name: u.name,

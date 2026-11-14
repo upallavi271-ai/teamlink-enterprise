@@ -1386,3 +1386,10 @@ tbody tr:nth-child(even) td{background:#FAFBFD}
 /* THE LOGO STAYS PUT (founder 2026-11-10: "move avuthundhi, constant ga fix ayyi undatledhu"): the logo was inside the sidebar's
    scrolling list, so scrolling the menu carried it away. It is pinned to the top of the sidebar now; the menu scrolls under it. */
 .sidebar-brand{position:sticky;top:0;z-index:3;background:inherit}
+
+/* ACTIVE EMPLOYEES FIRST (founder 2026-11-14): a person who is not Active is marked with their status next to the name
+   (components/EmployeeStatusTag.jsx): "Exited" / "Relieved". Active people carry no mark, so the opening list stays clean. */
+.emp-status-tag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;line-height:18px;vertical-align:middle;white-space:nowrap;border:1px solid var(--line,#d5dae3);background:var(--line-soft,#f1f3f7);color:var(--ink-soft,#5b6472)}
+.emp-status-tag.emp-status-exited{border-color:var(--red,#B02318);background:var(--red-tint,#fbebea);color:var(--red,#B02318)}
+.emp-status-tag.emp-status-relieved{border-color:var(--amber,#8A5206);background:var(--amber-tint,#fbf0de);color:var(--amber,#8A5206)}
+.emp-status-tag.block{display:table;margin:2px 0 0}

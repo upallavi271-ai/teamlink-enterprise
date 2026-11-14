@@ -126,6 +126,8 @@ router.get('/people', superAdminOnly, async (req, res) => {
       // it lists only logins that hold the ATS and have not left (a left login is closed).
       ats: !!(identity.products && identity.products.ats),
       left: require('../utils/leftLogin').hasLeft(identity), // eslint-disable-line global-require
+      // The word, so the picker can open on the people who are still here and write Exited / Relieved beside the others (founder 2026-11-14).
+      employmentStatus: identity.employmentStatus || null,
     });
   }
   res.json({ groups: GROUPS.map(([code, label]) => ({ code, label })), people });

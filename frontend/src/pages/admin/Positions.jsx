@@ -312,7 +312,7 @@ export default function Positions() {
                 onChange={(e) => setAssignForm((f) => ({ ...f, employeeId: e.target.value }))}
               >
                 <option value="">— Select —</option>
-                {employees.map((e) => (
+                {employees.filter((e) => !['Relieved', 'Exited'].includes(e.employmentStatus)).map((e) => (
                   <option key={e.id} value={e.id}>
                     {`${e.name}${e.employeeCode ? ` (${e.employeeCode})` : ''}${e.department ? ` — ${e.department}` : ''}`}
                   </option>

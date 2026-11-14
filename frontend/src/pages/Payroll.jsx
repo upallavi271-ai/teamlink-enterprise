@@ -19,6 +19,8 @@ import CompliancePanel from '../components/payroll/CompliancePanel.jsx';
 import { ReconciliationPanel } from './accounts/JournalLedger.jsx';
 import ListFilterBar, { useListFilters, ListEmpty } from '../components/ui/ListFilters.jsx';
 import Pager, { usePaged } from '../components/Pager.jsx';
+import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
+import { employeeStatusField } from '../hrStatus';
 // Payroll cycle (2026-10-12): a payroll month is shown with its NAME and its DATES.
 import PayrollCycleCard from '../components/payroll/PayrollCycleCard.jsx';
 import PayrollPrecheck from '../components/payroll/PayrollPrecheck.jsx';
@@ -340,6 +342,8 @@ const STRUCTURE_FIELDS = [
   { key: 'q', type: 'search', placeholder: 'Search employee name or ID…', get: (r) => `${r.employeeCode || ''} ${r.name || ''}` },
   { key: 'department', label: 'Department', get: (r) => r.department, primary: true },
   { key: 'payType', label: 'Pay type', allLabel: 'All pay types', options: ['Package', 'Stipend', 'Not set'], get: payTypeOf, primary: true },
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the list opens with the people who are still here; a leaver's structure is one choice away.
+  employeeStatusField({ key: 'empStatus', get: (r) => r.employmentStatus }),
 ];
 const STRUCTURE_SORTS = [
   { key: 'name', label: 'Name A–Z', cmp: (a, b) => String(a.name || '').localeCompare(String(b.name || '')) },
@@ -354,7 +358,7 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
   function load() { api.get('/payroll/structure').then((res) => setRows(res.data)); }
   useEffect(load, []);
 
-  const lf = useListFilters(rows, STRUCTURE_FIELDS, { sorts: STRUCTURE_SORTS });
+  const lf = useListFilters(rows, STRUCTURE_FIELDS, { sorts: STRUCTURE_SORTS, opening: { empStatus: 'Active' } });
   const filtered = lf.rows;
   const page = usePaged(filtered);
 
@@ -389,7 +393,7 @@ function SalaryStructuresTable({ canEdit, defaultBonus }) {
               return (
                 <tr key={r.employeeId}>
                   <td><b>{r.employeeCode}</b></td>
-                  <td>{r.name}</td>
+                  <td>{r.name}<EmployeeStatusTag employmentStatus={r.employmentStatus} /></td>
                   <td className="cell-muted">{s ? (s.payMode || 'Package') : '—'}</td>
                   {isStipend ? (
                     <td colSpan="10" className="cell-muted" style={{ textAlign: 'center', fontStyle: 'italic' }}>Fixed stipend {inr(s?.stipend)} — no components, no PF/PT</td>
@@ -848,6 +852,9 @@ function PayslipsTab({ seesOthers }) {
     { key: 'department', label: 'Department', get: (p) => p.employee?.department, primary: true, show: seesOthers },
     { key: 'month', label: 'Month', options: months.map((m) => ({ value: m, label: monthHeading(m) })), get: (p) => p.month, primary: true },
     { key: 'payMode', label: 'Pay type', allLabel: 'All pay types', get: (p) => p.payMode || 'Package' },
+    // Employee status: on offer, but the register keeps opening on everybody - a payslip belongs to a month the person worked, and the
+    // payroll desk looks months up by the month (founder 2026-11-14: payroll of a month in which someone left is left as it was).
+    { ...employeeStatusField({ key: 'empStatus', get: (p) => p.employee?.employmentStatus }), show: seesOthers },
   ], {
     sorts: [
       { key: 'month', label: 'Newest month first', cmp: (a, b) => String(b.month || '').localeCompare(String(a.month || '')) || String(a.employee?.name || '').localeCompare(String(b.employee?.name || '')) },
@@ -887,7 +894,7 @@ function PayslipsTab({ seesOthers }) {
                 <tr key={p.id}>
                   <td>{monthHeading(p.month)}</td>
                   <td><b>{p.employee?.employeeCode || '—'}</b></td>
-                  <td>{p.employee?.name}</td>
+                  <td>{p.employee?.name}<EmployeeStatusTag employee={p.employee} /></td>
                   <td className="cell-muted">{p.payMode || 'Package'}</td>
                   <td className="cell-muted">{inr(p.gross)}</td>
                   <td className="cell-muted">{inr(totalDed(p))}</td>

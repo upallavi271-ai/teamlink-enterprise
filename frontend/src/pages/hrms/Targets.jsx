@@ -204,7 +204,7 @@ export default function Targets() {
         <PanelHead title="Monthly Targets" />
         <div style={{ padding: '0 18px' }}>
           <PeopleFilterBar
-            filters={pf} setFilters={setPf} people={hrView}
+            filters={pf} setFilters={setPf} people={hrView} employeeStatus={false}
             departments={hrView ? opts.departments : undefined} roles={hrView ? opts.roles : undefined}
             statuses={TARGET_STATUSES} shown={shown.length} total={records.length}
             search="Goal" labels={{ month: 'Month' }}

@@ -1,7 +1,7 @@
 import Combo from './Combo.jsx';
 import MoreFilters from './ui/MoreFilters.jsx';
 import FilterChips from './FilterChips.jsx';
-import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+import { STATUS_GROUPS, DEFAULT_EMPLOYEE_STATUS, ALL_EMPLOYEE_STATUSES, employeeStatusMatches } from '../hrStatus';
 import './ui/ListFilters.css';
 
 // ---------------------------------------------------------------------------
@@ -28,10 +28,26 @@ import './ui/ListFilters.css';
 //             options and, when the row's status is not `row.status`, how to
 //             read it.
 //
-//   Employee status = the PERSON's HRMS status — Active, Inactive, Notice
-//             Period, Suspended, Exit (hrStatus.js) — on every list of
-//             people, next to the record's own status: "the open tickets
-//             of people who have left".
+//   Employee status = the PERSON's status, on every list of people, next to
+//             the record's own status: "the open tickets of people who have
+//             left". ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the list
+//             OPENS on Active (everybody who has not left: Active, On
+//             Probation, Notice Period ...); Exited and Relieved are one
+//             choice away, and "All" shows everybody. Write the status next
+//             to the name with components/EmployeeStatusTag.jsx. The choices
+//             are the three groups of hrStatus.js (Active / Exited /
+//             Relieved) plus the finer HR statuses (Notice Period, Inactive,
+//             Suspended). It is on screen, not under More Filters, and it is
+//             a chip like every other filter, so nothing narrows silently.
+//             "Clear All" returns to the opening view (Active), not to All.
+//             A page OPTS IN to "Active first": its state starts from
+//             OPENING_PEOPLE_FILTERS (empStatus 'Active') and the bar gets
+//             activeFirst, so "Clear All" goes back to Active. A page that
+//             keeps EMPTY_PEOPLE_FILTERS still opens on All (screens where
+//             hiding the people who left would hide pending money or work).
+//             A bar with no Employee status control (people={false}, or a
+//             login that sees one person) ignores the key - and the page must
+//             too: call peopleMatches with { ...pf, empStatus: '' } there.
 //
 //   Date range (optional, `dates="Raised on"`) = filters.from / filters.to,
 //             matched by peopleMatches() against the row's date (5th
@@ -46,6 +62,8 @@ import './ui/ListFilters.css';
 // a key with no label is shown with its own name capitalised.
 // ---------------------------------------------------------------------------
 export const EMPTY_PEOPLE_FILTERS = { code: '', name: '', department: '', role: '', empStatus: '', status: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the same filters, opening on the people who are still here. Pass activeFirst to the bar too.
+export const OPENING_PEOPLE_FILTERS = { ...EMPTY_PEOPLE_FILTERS, empStatus: DEFAULT_EMPLOYEE_STATUS };
 
 const employeeOfRow = (r) => r.employee || r;
 const statusOfRow = (r) => r.status;
@@ -71,7 +89,7 @@ export function peopleMatches(row, f, getEmployee = employeeOfRow, getStatus = s
   if (f.name && !has(e.name, f.name)) return false;
   if (f.department && e.department !== f.department) return false;
   if (f.role && e.designation !== f.role) return false;
-  if (f.empStatus && hrStatusOf(e.employmentStatus, e.loginStatus ?? e.user?.status) !== f.empStatus) return false;
+  if (f.empStatus && !employeeStatusMatches(f.empStatus, e.employmentStatus, e.loginStatus ?? e.user?.status)) return false;
   if (f.status && getStatus(row) !== f.status) return false;
   if (f.from || f.to) {
     const d = isoDay(getDate(row));
@@ -102,12 +120,17 @@ const BUILT_IN = {
   empStatus: 'Employee status', status: 'Status',
 };
 const cap = (k) => String(k).replace(/([A-Z])/g, ' $1').replace(/^./, (c) => c.toUpperCase());
-const HIDDEN = ['code', 'role', 'empStatus'];
+const HIDDEN = ['code', 'role'];
+// Finer HR statuses that stay on offer after the three groups (they were always here).
+const FINER_STATUSES = ['Notice Period', 'Inactive', 'Suspended'];
 
 export default function PeopleFilterBar({
   filters, setFilters,
   people = true, // Employee ID + Employee name
-  employeeStatus = people, // the five HRMS statuses of the person
+  employeeStatus = people, // the Employee status of the person (Active / Exited / Relieved, and the finer HR statuses)
+  statusChoices, // override the Employee status choices (a page whose rows only carry the five HR statuses passes HR_STATUSES)
+  statusAllLabel = ALL_EMPLOYEE_STATUSES, // the "no filter" choice's wording
+  activeFirst = false, // the page opens on Active (state from OPENING_PEOPLE_FILTERS): "Clear All" returns to Active, not to All
   search, // placeholder for a free-text box bound to filters.q
   departments, roles, statuses,
   statusLabel = 'All statuses',
@@ -118,17 +141,21 @@ export default function PeopleFilterBar({
   children, more, style,
 }) {
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const on = Object.values(filters).some(Boolean);
-  // Clears every key the page keeps in this state, its own extras included.
-  const clear = () => setFilters((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
+  // empStatus only counts where this bar draws the Employee status filter; its opening value is Active.
+  const val = (k, v) => (k === 'empStatus' && !employeeStatus ? '' : v);
+  const opening = (k) => (k === 'empStatus' && employeeStatus && activeFirst ? DEFAULT_EMPLOYEE_STATUS : '');
+  const on = Object.entries(filters).some(([k, v]) => val(k, v));
+  const changed = Object.entries(filters).some(([k, v]) => (val(k, v) || '') !== opening(k));
+  // Clears every key the page keeps in this state, its own extras included - back to the OPENING view (Employee status Active when activeFirst).
+  const clear = () => setFilters((f) => Object.fromEntries(Object.keys(f).map((k) => [k, opening(k)])));
 
   const moreOn = Object.entries(filters).filter(([k, v]) => v && (HIDDEN.includes(k) || moreKeys.includes(k))).length
     + (filters.from || filters.to ? 1 : 0);
-  const hasMore = people || roles || employeeStatus || dates || more;
+  const hasMore = people || roles || dates || more;
 
   const chips = [];
   Object.entries(filters).forEach(([k, v]) => {
-    if (!v || k === 'from' || k === 'to') return;
+    if (!val(k, v) || k === 'from' || k === 'to') return;
     chips.push({ key: k, label: labels[k] || BUILT_IN[k] || cap(k), value: v, onRemove: () => set(k, '') });
   });
   if (filters.from || filters.to) {
@@ -144,7 +171,7 @@ export default function PeopleFilterBar({
     <div className="pfb lf" style={{ marginTop: 14, marginBottom: 12, ...style }}>
       <MoreFilters
         activeMore={moreOn}
-        onClearAll={on ? clear : undefined}
+        onClearAll={changed ? clear : undefined}
         primary={(
           <>
             {search && <input type="search" placeholder={`Search ${String(search).replace(/^[A-Z](?![A-Z])/, (c) => c.toLowerCase())}…`} value={filters.q || ''} onChange={(e) => set('q', e.target.value)} aria-label="Search" style={{ minWidth: 200 }} />}
@@ -164,6 +191,12 @@ export default function PeopleFilterBar({
                 {statuses.map((s) => <option key={s}>{s}</option>)}
               </Combo>
             )}
+            {employeeStatus && (
+              <Combo value={filters.empStatus || ''} title="Employee status: Active = everybody who has not left (including probation and notice period); Exited and Relieved have left" onChange={(e) => set('empStatus', e.target.value)}>
+                <option value="">{statusAllLabel}</option>
+                {(statusChoices || [...STATUS_GROUPS, ...FINER_STATUSES]).map((st) => <option key={st}>{st}</option>)}
+              </Combo>
+            )}
             {children}
           </>
         )}
@@ -178,12 +211,6 @@ export default function PeopleFilterBar({
                 {roles.map((r) => <option key={r}>{r}</option>)}
               </Combo>
             )}
-            {employeeStatus && (
-              <Combo value={filters.empStatus || ''} title="Employee status" onChange={(e) => set('empStatus', e.target.value)}>
-                <option value="">All employee statuses</option>
-                {HR_STATUSES.map((st) => <option key={st}>{st}</option>)}
-              </Combo>
-            )}
             {dates && (
               <span className="lf-dates" title={dates}>
                 <span className="lf-dates-lbl">{dates}</span>
@@ -196,7 +223,7 @@ export default function PeopleFilterBar({
           </>
         ) : null}
       </MoreFilters>
-      <FilterChips filters={chips} onClearAll={on ? clear : undefined} />
+      <FilterChips filters={chips} onClearAll={changed ? clear : undefined} />
     </div>
   );
 }

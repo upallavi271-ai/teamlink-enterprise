@@ -7,7 +7,8 @@ import { Panel, PanelPad, PanelHead, StatRow, AssignRow, EmptyMini, TwoCol, QaRo
 import { can, isAdmin, isSuperAdmin, isHR as hasHrmsAdmin, canEditAttendance, canDecideAttendance } from '../permissions';
 import HistoryImport from './attendance/HistoryImport.jsx';
 import Combo from '../components/Combo.jsx';
-import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+import { HR_STATUSES, hrStatusOf, employeeStatusMatches, DEFAULT_EMPLOYEE_STATUS } from '../hrStatus';
+import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
 import { ApprovalChainModal, ApprovalChainLine } from '../components/ApprovalChain.jsx';
 // HRMS-24 §4/§5/§10/§11 — My Attendance (live face + location check-in), team
 // attendance, the monthly summary and the check-in settings live in their own files.
@@ -275,7 +276,7 @@ function DashboardTab({ isHR, canMark, goTab, canImportHistory = false }) {
         <Panel style={{ marginTop: 16 }}>
           <PanelHead title={`Daily marking — ${fmtDay(data.date)}${kpi ? ` · ${KPI_NAME[kpi] || kpi}` : ''}`} />
           <PeopleFilterBar
-            filters={mf} setFilters={setMf} people={false} employeeStatus search="employee name or ID"
+            filters={mf} setFilters={setMf} people={false} employeeStatus statusChoices={HR_STATUSES} statusAllLabel="All employee statuses" search="employee name or ID"
             departments={markDepts.length > 1 ? markDepts : undefined} statuses={MARK_STATUSES}
             shown={marking.length} total={markingAll.length} style={{ margin: '12px 18px' }}
           >
@@ -1026,12 +1027,14 @@ function MethodsTab({ canEdit, canAssign, canAlerts }) {
 
 const REG_STATUSES = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
 const EMPTY_REG = { code: '', name: '', department: '', empStatus: '', date: '', status: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the HR / admin view opens on the people who are still here; Exited / Relieved are one choice away.
+const OPENING_REG = { ...EMPTY_REG, empStatus: DEFAULT_EMPLOYEE_STATUS };
 
 function RegularizationTab({ isHR, canDecide }) {
   const { user } = useAuth();
   const [requests, setRequests] = useState([]);
   const [form, setForm] = useState({ date: today(), requestedCheckIn: '', requestedCheckOut: '', reason: '' });
-  const [rf, setRf] = useState(EMPTY_REG);
+  const [rf, setRf] = useState(isHR ? OPENING_REG : EMPTY_REG);
   const [error, setError] = useState('');
   const [chainFor, setChainFor] = useState(null);
 
@@ -1055,12 +1058,17 @@ function RegularizationTab({ isHR, canDecide }) {
     if (rf.code && !String(e.employeeCode || '').toLowerCase().includes(rf.code.trim().toLowerCase())) return false;
     if (rf.name && !String(e.name || '').toLowerCase().includes(rf.name.trim().toLowerCase())) return false;
     if (rf.department && e.department !== rf.department) return false;
-    if (rf.empStatus && hrStatusOf(e.employmentStatus) !== rf.empStatus) return false;
+    // the Employee status filter only exists for the HR view (the bar draws no control for anybody else)
+    if (isHR && rf.empStatus && !employeeStatusMatches(rf.empStatus, e.employmentStatus)) return false;
     if (rf.date && r.date !== rf.date) return false;
     if (rf.status && r.status !== rf.status) return false;
     return true;
   });
   const regPage = usePaged(shown);
+  // Requests of people who have left, hidden while Employee status is Active: a pending one can still be decided, so say so.
+  const leftRequests = isHR && rf.empStatus === DEFAULT_EMPLOYEE_STATUS
+    ? requests.filter((r) => !employeeStatusMatches(DEFAULT_EMPLOYEE_STATUS, r.employee?.employmentStatus)) : [];
+  const leftPending = leftRequests.filter((r) => r.status === 'Pending').length;
 
   async function submit(e) {
     e.preventDefault();
@@ -1099,7 +1107,7 @@ function RegularizationTab({ isHR, canDecide }) {
       <Panel>
         <PanelHead title="Regularization requests" />
         <PeopleFilterBar
-          filters={rf} setFilters={setRf} people={isHR} employeeStatus={isHR}
+          filters={rf} setFilters={setRf} people={isHR} employeeStatus={isHR} activeFirst={isHR}
           departments={isHR ? regDepts : undefined} statuses={REG_STATUSES}
           labels={{ date: 'Date' }} shown={shown.length} total={requests.length}
           style={{ margin: '12px 18px' }}
@@ -1112,6 +1120,11 @@ function RegularizationTab({ isHR, canDecide }) {
           </span>
         </PeopleFilterBar>
         {error && <div className="notice red" style={{ margin: '0 18px 10px' }}>{error}</div>}
+        {leftRequests.length > 0 && (
+          <p className="small-muted" style={{ margin: '0 18px 8px' }}>
+            Showing the people who are still here. {leftRequests.length} request(s) of people who have left are not shown{leftPending ? ' (' + leftPending + ' still pending)' : ''}: choose <b>Employee status → All</b> (or Exited / Relieved).
+          </p>
+        )}
         <div className="tbl-wrap">
           <table>
             <thead><tr>{isHR && <th>Code</th>}{isHR && <th>Employee</th>}{isHR && <th>Department</th>}<th>Date</th><th>Requested In</th><th>Requested Out</th><th>Reason</th><th>Status</th><th></th></tr></thead>
@@ -1121,7 +1134,7 @@ function RegularizationTab({ isHR, canDecide }) {
                 return (
                   <tr key={r.id}>
                     {isHR && <td><b>{r.employee?.employeeCode || '—'}</b></td>}
-                    {isHR && <td>{r.employee?.name}</td>}
+                    {isHR && <td>{r.employee?.name}<EmployeeStatusTag employee={r.employee} /></td>}
                     {isHR && <td className="cell-muted">{r.employee?.department || '—'}</td>}
                     <td>{r.date}</td>
                     <td className="cell-muted">{r.requestedCheckIn || '—'}</td>

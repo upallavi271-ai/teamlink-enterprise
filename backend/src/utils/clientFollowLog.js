@@ -651,16 +651,19 @@ async function teamHistory(user, q, { maxDays = 92, maxRows = 3000 } = {}) {
     return m;
   };
   const byKind = { Candidate: sumOf('Candidate'), Client: sumOf('Client') };
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): each person carries the employment status (Exited / Relieved ...), so the screen can open on the people
+  // who are still here and write the status beside the others. Nothing is dropped here: every number and row is as before.
+  const pEmp = Object.fromEntries(people.map((p) => [p.id, (p.employee && p.employee.employmentStatus) || null]));
   const summary = people.map((p) => sum[p.id] || { id: p.id, name: p.name, role: pRole[p.id], total: 0, candidates: 0, clients: 0, days: new Set(), last: null })
     .filter((s) => !q.personId || s.id === String(q.personId))
     .map((s) => ({
-      ...s, days: s.days.size, side: pSide[s.id] || 'candidate',
+      ...s, days: s.days.size, side: pSide[s.id] || 'candidate', employmentStatus: pEmp[s.id] || null,
       candidateDays: byKind.Candidate[s.id] ? byKind.Candidate[s.id].days.size : 0, candidateLast: byKind.Candidate[s.id] ? byKind.Candidate[s.id].last : null,
       clientDays: byKind.Client[s.id] ? byKind.Client[s.id].days.size : 0, clientLast: byKind.Client[s.id] ? byKind.Client[s.id].last : null,
     })).sort((a, b) => b.total - a.total || String(a.name).localeCompare(String(b.name)));
   return {
     status: 200,
-    body: { from, to, today, scope: ['recruiter', 'bde'].includes(role.key) ? 'mine' : 'team', viewerSide: ['bde', 'bdetl'].includes(role.key) ? 'client' : 'candidate', people: people.map((p) => ({ id: p.id, name: p.name, role: pRole[p.id], side: pSide[p.id] })).sort((a, b) => String(a.name).localeCompare(String(b.name))), rows, summary },
+    body: { from, to, today, scope: ['recruiter', 'bde'].includes(role.key) ? 'mine' : 'team', viewerSide: ['bde', 'bdetl'].includes(role.key) ? 'client' : 'candidate', people: people.map((p) => ({ id: p.id, name: p.name, role: pRole[p.id], side: pSide[p.id], employmentStatus: pEmp[p.id] || null })).sort((a, b) => String(a.name).localeCompare(String(b.name))), rows, summary },
   };
 }
 

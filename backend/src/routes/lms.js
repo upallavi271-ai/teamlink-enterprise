@@ -2330,7 +2330,7 @@ router.get('/history', VIEW, async (req, res) => {
     where,
     include: {
       course: true,
-      employee: { select: { id: true, name: true, employeeCode: true, department: true, designation: true } },
+      employee: { select: { id: true, name: true, employeeCode: true, department: true, designation: true, employmentStatus: true } },
     },
     orderBy: { assignedAt: 'desc' },
     take: 5000,
@@ -2365,6 +2365,7 @@ router.get('/history', VIEW, async (req, res) => {
       employeeId: a.employeeId,
       employee: a.employee.name,
       employeeCode: a.employee.employeeCode,
+      employmentStatus: a.employee.employmentStatus || null, // Active first (founder 2026-11-14): the History list opens on the people who are still here
       department: a.department || a.employee.department || null,
       currentDepartment: a.employee.department || null,
       assignedBy: a.assignedByName || null,

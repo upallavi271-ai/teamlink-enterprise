@@ -25,4 +25,15 @@ function hrStatusOf(employmentStatus, loginStatus) {
   return 'Active';
 }
 
-module.exports = { HR_STATUSES, EXIT_EMPLOYMENT, hrStatusOf };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the Employee status choice of a people list is one of the three groups
+// Active (everybody who has not left) / Exited / Relieved, or one of the finer HR statuses above. Keep in step with
+// frontend/src/hrStatus.js and routes/recruiterJoinings.js (statusGroupOf).
+const STATUS_GROUPS = ['Active', 'Exited', 'Relieved'];
+const statusGroupOf = (employmentStatus) => (employmentStatus === 'Relieved' ? 'Relieved' : employmentStatus === 'Exited' ? 'Exited' : 'Active');
+function employeeStatusMatches(choice, employmentStatus, loginStatus) {
+  if (!choice) return true;
+  if (STATUS_GROUPS.includes(choice)) return statusGroupOf(employmentStatus) === choice;
+  return hrStatusOf(employmentStatus, loginStatus) === choice;
+}
+
+module.exports = { HR_STATUSES, EXIT_EMPLOYMENT, hrStatusOf, STATUS_GROUPS, statusGroupOf, employeeStatusMatches };

@@ -4,6 +4,8 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { ActAsButton, ViewAsButton, ViewAsNotice } from '../../components/ViewAs.jsx';
 import '../../components/ViewAs.css';
 import Combo from '../../components/Combo.jsx';
+import EmployeeStatusTag from '../../components/EmployeeStatusTag.jsx';
+import { STATUS_GROUPS, ALL_EMPLOYEE_STATUSES, DEFAULT_EMPLOYEE_STATUS, statusGroupOf } from '../../hrStatus';
 
 // Administration -> View as (Super Admin only). Every active login a Super
 // Admin may view as, grouped by role, with department / section / seat, so
@@ -17,6 +19,8 @@ export default function ViewAsPicker() {
   const [group, setGroup] = useState('');
   const [dept, setDept] = useState('');
   const [section, setSection] = useState('');
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the picker opens with the people who are still here; Exited / Relieved logins are one choice away.
+  const [status, setStatus] = useState(DEFAULT_EMPLOYEE_STATUS);
   const allowed = !!(user && user.role === 'SUPER_ADMIN' && !user.viewAs);
 
   useEffect(() => {
@@ -32,9 +36,10 @@ export default function ViewAsPicker() {
     .filter((p) => !dept || p.department === dept)
     .map((p) => p.section).filter(Boolean))].sort(), [people, dept]);
 
+  const byStatus = useMemo(() => people.filter((p) => !status || statusGroupOf(p.employmentStatus) === status), [people, status]);
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    return people.filter((p) => {
+    return byStatus.filter((p) => {
       if (group && p.group !== group) return false;
       if (dept && p.department !== dept) return false;
       if (section && p.section !== section) return false;
@@ -43,7 +48,7 @@ export default function ViewAsPicker() {
         ...(p.seats || []).map((s) => `${s.code} ${s.name || ''}`)].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(needle);
     });
-  }, [people, q, group, dept, section]);
+  }, [byStatus, q, group, dept, section]);
 
   if (!allowed) {
     return (
@@ -55,7 +60,7 @@ export default function ViewAsPicker() {
   }
 
   const counts = {};
-  people.forEach((p) => { counts[p.group] = (counts[p.group] || 0) + 1; });
+  byStatus.forEach((p) => { counts[p.group] = (counts[p.group] || 0) + 1; });
   const groups = data ? data.groups.filter((g) => shown.some((p) => p.group === g.code)) : [];
 
   return (
@@ -82,14 +87,18 @@ export default function ViewAsPicker() {
             <option value="">All sections / teams</option>
             {sections.map((s) => <option key={s} value={s}>{s}</option>)}
           </Combo>
-          {(q || dept || section || group) && (
-            <button type="button" className="btn btn-sm" onClick={() => { setQ(''); setDept(''); setSection(''); setGroup(''); }}>Clear</button>
+          <Combo value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Employee status" title="Employee status: Active = everybody who has not left">
+            <option value="">{ALL_EMPLOYEE_STATUSES}</option>
+            {STATUS_GROUPS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </Combo>
+          {(q || dept || section || group || status !== DEFAULT_EMPLOYEE_STATUS) && (
+            <button type="button" className="btn btn-sm" onClick={() => { setQ(''); setDept(''); setSection(''); setGroup(''); setStatus(DEFAULT_EMPLOYEE_STATUS); }}>Clear</button>
           )}
         </div>
 
         {data && (
           <div className="tl-va-chips" role="group" aria-label="Role">
-            <button type="button" className={'tl-va-chip' + (group === '' ? ' on' : '')} onClick={() => setGroup('')}>All roles ({people.length})</button>
+            <button type="button" className={'tl-va-chip' + (group === '' ? ' on' : '')} onClick={() => setGroup('')}>All roles ({byStatus.length})</button>
             {data.groups.filter((g) => counts[g.code]).map((g) => (
               <button type="button" key={g.code} className={'tl-va-chip' + (group === g.code ? ' on' : '')} onClick={() => setGroup(group === g.code ? '' : g.code)}>
                 {g.label} ({counts[g.code]})
@@ -100,7 +109,7 @@ export default function ViewAsPicker() {
 
         {error && <div className="error-text">{error}</div>}
         {!data && !error && <div className="page-sub">Loading…</div>}
-        {data && !shown.length && <div className="page-sub">Nobody matches these filters.</div>}
+        {data && !shown.length && <div className="page-sub">Nobody matches these filters.{status === DEFAULT_EMPLOYEE_STATUS ? ' (People who have left are not shown: choose Employee status → All.)' : ''}</div>}
 
         {groups.map((g) => {
           const rows = shown.filter((p) => p.group === g.code);
@@ -111,7 +120,7 @@ export default function ViewAsPicker() {
                 {rows.map((p) => (
                   <div className="tl-va-person" key={p.id}>
                     <div className="who">
-                      <div className="nm">{p.name}</div>
+                      <div className="nm">{p.name}<EmployeeStatusTag employmentStatus={p.employmentStatus} /></div>
                       <div className="meta">
                         {[p.designation, p.employeeCode, p.client ? `Client: ${p.client}` : null].filter(Boolean).join(' · ') || p.email}
                       </div>

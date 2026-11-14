@@ -284,8 +284,8 @@ export function MonthlyReport({ canExport, allowRelieved = false }) {
             {Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, '0')).map((mm) => <option key={mm} value={mm}>{monthName(mm)}</option>)}
           </Combo>
           {allowRelieved && (
-          <label className="lvx-muted" style={{ display: 'flex', gap: 4, alignItems: 'center' }} title="Add employees who have left">
-            <input type="checkbox" style={{ width: 'auto' }} checked={includeRelieved} onChange={(e) => setIncludeRelieved(e.target.checked)} /> Relieved
+          <label className="lvx-muted" style={{ display: 'flex', gap: 4, alignItems: 'center' }} title="The report opens with the people who are still here. Tick to add the employees who have left (Exited and Relieved).">
+            <input type="checkbox" style={{ width: 'auto' }} checked={includeRelieved} onChange={(e) => setIncludeRelieved(e.target.checked)} /> Include people who left
           </label>
           )}
           {canExport && <button className="btn btn-sm" onClick={exportXlsx}>Export Excel</button>}

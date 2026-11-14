@@ -3,7 +3,8 @@ import api from '../api';
 import { useAuth } from '../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canDecideServices, canManageServices } from '../permissions';
 import Combo from './Combo.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from './PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from './PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from './EmployeeStatusTag.jsx';
 import Pager, { usePaged } from './Pager.jsx';
 import { ListEmpty } from './ui/ListFilters.jsx';
 import AudiencePicker, { DeliverVia, EMPTY_AUDIENCE, audienceReady } from './AudiencePicker.jsx';
@@ -106,7 +107,9 @@ export default function SimpleRecordPage({
   // Filters (PeopleFilterBar): title search, the employee, status, the
   // record's category / priority when the page has them, and a date range on
   // the record's own date (or the day it was created when it has none).
-  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, category: '', priority: '', from: '', to: '' });
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the list opens with the people who are still here; Employee status shows the Exited / Relieved ones
+  // (a note under the bar says how many of their records are not shown, and how many are still open - a claim not yet paid is still owed).
+  const [pf, setPf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, category: '', priority: '', from: '', to: '' });
   const [sort, setSort] = useState('new');
 
   function load() {
@@ -262,7 +265,7 @@ export default function SimpleRecordPage({
   // The list's filters: the record's own title, the employee (for those who
   // see other people's records) and the record's status — the configured
   // `statuses` plus any other value actually on file.
-  const shown = records.filter((r) => textMatches(`${r.title} ${r.detail || ''}`, pf.q) && peopleMatches(r, pf)
+  const shown = records.filter((r) => textMatches(`${r.title} ${r.detail || ''}`, pf.q) && peopleMatches(r, hrView ? pf : { ...pf, empStatus: '' })
     && (!pf.category || r.category === pf.category)
     && (!pf.priority || r.priority === pf.priority));
   const opts = peopleOptions(records);
@@ -279,6 +282,9 @@ export default function SimpleRecordPage({
   const sorted = [...shown].sort((SORTS.find((x) => x.key === sort) || SORTS[0]).cmp);
   const page = usePaged(sorted);
   const pfOn = Object.values(pf).some(Boolean);
+  const FINISHED = ['Rejected', 'Reimbursed', 'Completed', 'Closed', 'Cancelled'];
+  const openLeft = hrView && pf.empStatus === 'Active'
+    ? records.filter((r) => ['Exited', 'Relieved'].includes(r.employee?.employmentStatus) && !FINISHED.includes(r.status)).length : 0;
   const clearPf = () => setPf((f) => Object.fromEntries(Object.keys(f).map((k) => [k, ''])));
   const noun = /claim/i.test(title) ? 'claims' : 'records';
 
@@ -398,7 +404,7 @@ export default function SimpleRecordPage({
       {!open && error && <div className="error-text" style={{ marginBottom: 8 }}>{error}</div>}
 
       <PeopleFilterBar
-        filters={pf} setFilters={setPf} search={titleLabel} people={hrView}
+        filters={pf} setFilters={setPf} search={titleLabel} people={hrView} activeFirst
         departments={hrView ? opts.departments : undefined} roles={hrView ? opts.roles : undefined}
         statuses={statusOptions(records, statuses)} shown={shown.length} total={records.length}
         dates={showDate ? dateLabel : 'Created on'}
@@ -424,6 +430,7 @@ export default function SimpleRecordPage({
           </Combo>
         </label>
       </PeopleFilterBar>
+      <HiddenLeftNote filters={pf} rows={records} active={hrView} noun={noun} extra={openLeft ? ' (' + openLeft + ' still open: not yet paid or completed)' : ''} />
 
       <div className="tbl-wrap">
         <table>
@@ -448,7 +455,7 @@ export default function SimpleRecordPage({
           <tbody>
             {page.slice.map((r) => (
               <tr key={r.id}>
-                {hrView && <td>{r.employee?.name}</td>}
+                {hrView && <td>{r.employee?.name}<EmployeeStatusTag employee={r.employee} /></td>}
                 <td>{r.title}</td>
                 <td>{r.detail || '—'}</td>
                 {showCategory && <td>{r.category || '—'}</td>}

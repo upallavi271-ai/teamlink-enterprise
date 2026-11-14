@@ -10,12 +10,17 @@ import AudiencePicker, { DeliverVia, audienceReady } from '../../components/Audi
 import {
   ComposeModal, Field, Row, CheckLine, ResultNote, useSubmit,
 } from '../../components/ComposeForm.jsx';
+import EmployeeStatusTag from '../../components/EmployeeStatusTag.jsx';
 
 // A project's own states (schema: Active | Completed | On Hold). The person
 // filters read its assignments: a project stays when anyone on it matches, and
 // only the matching people are listed under it.
 const PROJECT_STATUSES = ['Active', 'Completed', 'On Hold'];
-const EMPTY_PROJECT_FILTERS = { q: '', code: '', name: '', department: '', role: '', status: '', from: '', to: '' };
+const EMPTY_PROJECT_FILTERS = { q: '', code: '', name: '', department: '', role: '', empStatus: '', status: '', from: '', to: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): each project lists the people who are still on it; Employee status brings back the Exited / Relieved
+// assignees (their status is written beside the name). Employee status only shapes the people listed under a project: every project stays on the
+// page, and the counts are unchanged.
+const OPENING_PROJECT_FILTERS = { ...EMPTY_PROJECT_FILTERS, empStatus: 'Active' };
 const PROJECT_SORTS = [
   ['new', 'Newest first', (a, b) => String(b.createdAt).localeCompare(String(a.createdAt))],
   ['name', 'Name A–Z', (a, b) => String(a.name || '').localeCompare(String(b.name || ''))],
@@ -105,7 +110,7 @@ export default function Projects() {
   const [creating, setCreating] = useState(false);
   const [assigning, setAssigning] = useState(null);
   const [done, setDone] = useState('');
-  const [pf, setPf] = useState(EMPTY_PROJECT_FILTERS);
+  const [pf, setPf] = useState(OPENING_PROJECT_FILTERS);
 
   function load() {
     api.get('/projects').then((res) => setProjects(res.data));
@@ -117,12 +122,19 @@ export default function Projects() {
     : '');
 
   const personOn = pf.code || pf.name || pf.department || pf.role;
-  const personFilters = { ...pf, status: '' };
+  // Employee status is drawn only for a login that sees other people on projects (and then it only shapes the assignee lines).
+  const personFilters = { ...pf, status: '', empStatus: seesOthers ? pf.empStatus : '' };
+  const sameButStatus = { ...personFilters, empStatus: '' };
   const shown = projects
     .filter((p) => textMatches(p.name, pf.q) && (!pf.status || p.status === pf.status)
       && peopleMatches(p, { from: pf.from, to: pf.to }, undefined, undefined, (r) => r.createdAt))
-    .map((p) => (personOn ? { ...p, assignments: p.assignments.filter((a) => peopleMatches(a, personFilters)) } : p))
-    .filter((p) => !personOn || p.assignments.length)
+    .map((p) => ({
+      ...p,
+      assignments: p.assignments.filter((a) => peopleMatches(a, personFilters)),
+      // assignees kept out only because of Employee status (people who have left)
+      leftHidden: p.assignments.filter((a) => peopleMatches(a, sameButStatus) && !peopleMatches(a, personFilters)).length,
+    }))
+    .filter((p) => !personOn || p.assignments.length || p.leftHidden)
     .sort((PROJECT_SORTS.find(([k]) => k === sort) || PROJECT_SORTS[0])[2]);
   const page = usePaged(shown);
   const opts = peopleOptions(projects.flatMap((p) => p.assignments));
@@ -153,7 +165,7 @@ export default function Projects() {
       )}
 
       <PeopleFilterBar
-        filters={pf} setFilters={setPf} search="Project name" people={seesOthers}
+        filters={pf} setFilters={setPf} search="Project name" people={seesOthers} activeFirst
         departments={seesOthers ? opts.departments : undefined} roles={seesOthers ? opts.roles : undefined}
         statuses={statusOptions(projects, PROJECT_STATUSES)} shown={shown.length} total={projects.length}
         dates="Created on"
@@ -170,9 +182,12 @@ export default function Projects() {
         <div className="card section" key={p.id}>
           <h3>{p.name} <span className="status">{p.status}</span></h3>
           {p.assignments.map((a) => (
-            <div className="kv" key={a.id}><span className="k">{a.employee?.name}</span><span>{a.role || '—'}</span></div>
+            <div className="kv" key={a.id}><span className="k">{a.employee?.name}<EmployeeStatusTag employee={a.employee} /></span><span>{a.role || '—'}</span></div>
           ))}
-          {p.assignments.length === 0 && <div className="small-muted">No one assigned yet.</div>}
+          {p.assignments.length === 0 && !p.leftHidden && <div className="small-muted">No one assigned yet.</div>}
+          {p.leftHidden > 0 && (
+            <div className="small-muted">{p.assignments.length === 0 ? 'No one who is still here is assigned. ' : ''}{p.leftHidden} {p.leftHidden === 1 ? 'person who has' : 'people who have'} left {p.leftHidden === 1 ? 'is' : 'are'} not listed: choose Employee status → All.</div>
+          )}
           {canStaff && (
             <div className="qa-row" style={{ marginTop: 10 }}>
               <button className="btn btn-sm" onClick={() => setAssigning(p)}>+ Assign people</button>

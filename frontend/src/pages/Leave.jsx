@@ -8,7 +8,8 @@ import { ApprovalChainLine } from '../components/ApprovalChain.jsx';
 import LeaveRequestScreen from './leave/LeaveRequestScreen.jsx'; // the ONE leave screen: the leave, the chain, who approved and when, Approve / Reject
 import { isAdmin, isHR as hasHrmsAdmin, can } from '../permissions';
 import Combo from '../components/Combo.jsx';
-import { HR_STATUSES, hrStatusOf } from '../hrStatus';
+import EmployeeStatusTag from '../components/EmployeeStatusTag.jsx';
+import { hrStatusOf, employeeStatusMatches, EMPLOYEE_STATUS_CHOICES, ALL_EMPLOYEE_STATUSES, DEFAULT_EMPLOYEE_STATUS } from '../hrStatus';
 import ExportMenu from '../components/ExportMenu.jsx';
 import DataIoBar from '../components/dataio/DataIoBar.jsx';
 // Requests list (team, designation, approved-by, comments), Approve · Reject ·
@@ -337,6 +338,10 @@ function ApplyLeaveModal({ types, employees, isHR, canOverride, onClose, onSaved
 // status — all working together over whatever the server already scoped.
 const LEAVE_STATUSES = ['Pending', 'Approved', 'Rejected', 'Cancellation Requested', 'Cancelled'];
 const EMPTY_LEAVE_FILTERS = { code: '', name: '', department: '', empStatus: '', type: '', from: '', to: '', status: '' };
+// ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the request lists open on the people who are still here (Active = everybody who has not left,
+// notice period included); Exited / Relieved are one choice away and their status is written beside the name. The Reports and Per employee
+// tabs keep opening on everybody: their cards and footer totals are sums of the very rows on screen.
+const OPENING_LEAVE_FILTERS = { ...EMPTY_LEAVE_FILTERS, empStatus: DEFAULT_EMPLOYEE_STATUS };
 
 // hrms-24 §3 — the filter bar, as the server-side export's query. The export
 // runs the Leave list's own scoped query with these narrowing it, so the file
@@ -353,8 +358,8 @@ function leaveMatches(r, f, { skipRequestFields = false } = {}) {
   if (f.code && !String(e.employeeCode || '').toLowerCase().includes(f.code.trim().toLowerCase())) return false;
   if (f.name && !String(e.name || '').toLowerCase().includes(f.name.trim().toLowerCase())) return false;
   if (f.department && e.department !== f.department) return false;
-  // The person's HRMS status — Active, Inactive, Notice Period, Suspended, Exit.
-  if (f.empStatus && hrStatusOf(e.employmentStatus) !== f.empStatus) return false;
+  // The person's status: Active / Exited / Relieved (hrStatus.js groups), or Notice Period / Inactive / Suspended.
+  if (f.empStatus && !employeeStatusMatches(f.empStatus, e.employmentStatus)) return false;
   if (skipRequestFields) return true;
   if (f.type && r.type !== f.type) return false;
   if (f.status && r.status !== f.status) return false;
@@ -365,9 +370,10 @@ function leaveMatches(r, f, { skipRequestFields = false } = {}) {
   return true;
 }
 
-function LeaveFilterBar({ filters, setFilters, departments, types, children, requestFields = true }) {
+function LeaveFilterBar({ filters, setFilters, departments, types, children, requestFields = true, opening = EMPTY_LEAVE_FILTERS }) {
   const set = (k, v) => setFilters((f) => ({ ...f, [k]: v }));
-  const on = Object.values(filters).some(Boolean);
+  // "Clear" returns to the opening view of the tab (Active employees first where the tab opens on Active), not to everybody.
+  const on = Object.keys(opening).some((k) => String(filters[k] || '') !== String(opening[k] || ''));
   return (
     <div className="filter-row" style={{ marginTop: 14, marginBottom: 12 }}>
       <input placeholder="Employee ID" value={filters.code} onChange={(e) => set('code', e.target.value)} />
@@ -376,9 +382,9 @@ function LeaveFilterBar({ filters, setFilters, departments, types, children, req
         <option value="">All departments</option>
         {departments.map((d) => <option key={d}>{d}</option>)}
       </Combo>
-      <Combo value={filters.empStatus} onChange={(e) => set('empStatus', e.target.value)}>
-        <option value="">All employee statuses</option>
-        {HR_STATUSES.map((s) => <option key={s}>{s}</option>)}
+      <Combo value={filters.empStatus} title="Employee status: Active = everybody who has not left (including probation and notice period)" onChange={(e) => set('empStatus', e.target.value)}>
+        <option value="">{ALL_EMPLOYEE_STATUSES}</option>
+        {EMPLOYEE_STATUS_CHOICES.map((s) => <option key={s}>{s}</option>)}
       </Combo>
       {requestFields && (
         <>
@@ -395,7 +401,7 @@ function LeaveFilterBar({ filters, setFilters, departments, types, children, req
           </Combo>
         </>
       )}
-      {on && <button className="btn btn-sm" onClick={() => setFilters(EMPTY_LEAVE_FILTERS)}>Clear</button>}
+      {on && <button className="btn btn-sm" onClick={() => setFilters(opening)}>Clear</button>}
       {children}
     </div>
   );
@@ -408,7 +414,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
   const [reasons, setReasons] = useState([]);
   const [caps, setCaps] = useState(null);
   const [onLeave, setOnLeave] = useState(null);
-  const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
+  const [filters, setFilters] = useState(OPENING_LEAVE_FILTERS);
   const [error, setError] = useState('');
 
   // The person's own leave cards on top of the page (founder 2026-10-26); a login with no employee record gets none.
@@ -523,7 +529,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
         </Panel>
       )}
 
-      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>
+      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types} opening={OPENING_LEAVE_FILTERS}>
         <span className="small-muted" style={{ alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
         <span style={{ marginLeft: 'auto' }}>
           <ExportMenu url="/insights/leave/export" params={leaveExportParams(filters)} note="The requests matching these filters" />
@@ -714,7 +720,7 @@ function DashboardTab({ user, isHR, canEditPolicy, canApprove, canConfigure, rel
 function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
   const [requests, setRequests] = useState([]);
   const [types, setTypes] = useState([]);
-  const [filters, setFilters] = useState(EMPTY_LEAVE_FILTERS);
+  const [filters, setFilters] = useState(OPENING_LEAVE_FILTERS);
   // A notice / email link opens the approval card straight away: /leave?tab=requests&open=<id>
   const [urlParams] = useSearchParams();
   const [openId, setOpenId] = useState(urlParams.get('open') || null);
@@ -732,8 +738,13 @@ function RequestsTab({ isHR, canApprove, reloadKey, onReload }) {
   async function requestCancel(id) { await api.patch('/leave/' + id + '/cancel-request'); onReload(); }
   return (
     <div>
-      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types}>
+      <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={types} opening={OPENING_LEAVE_FILTERS}>
         <span className="small-muted" style={{ alignSelf: 'center' }}>{scoped.length} of {requests.length}</span>
+        {filters.empStatus === DEFAULT_EMPLOYEE_STATUS && requests.some((r) => !employeeStatusMatches(DEFAULT_EMPLOYEE_STATUS, r.employee?.employmentStatus)) && (
+          <span className="small-muted" style={{ alignSelf: 'center' }}>
+            · {requests.filter((r) => !employeeStatusMatches(DEFAULT_EMPLOYEE_STATUS, r.employee?.employmentStatus)).length} request(s) of people who have left are not shown — choose Employee status → All
+          </span>
+        )}
         <span style={{ marginLeft: 'auto' }}>
           {/* Export all (these filters) · Export one employee · Import leave
               history with the compulsory sample (backend src/io/leaveHistory.js).
@@ -843,7 +854,7 @@ function ReportsTab({ reloadKey, canExport }) {
       </Panel>
 
       {/* MONTH-WISE — taken per month for everyone in scope, with export. */}
-      <MonthlyReport canExport={canExport} />
+      <MonthlyReport canExport={canExport} allowRelieved />
 
       <Panel style={{ marginTop: 16 }}>
         <PanelHead title={<>Leave Balances <span className="cell-muted" style={{ fontSize: 12 }}>(remaining / total — paused leave types are hidden)</span></>}>
@@ -882,7 +893,9 @@ function RollupTab({ canExport }) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
-  const [filters, setFilters] = useState({ code: '', name: '', department: '', empStatus: '' });
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): the list opens on the people who are still here; the footer totals still count everybody listed
+  // (they are figures, not a view), and a line says how many exited / relieved people are not shown.
+  const [filters, setFilters] = useState({ code: '', name: '', department: '', empStatus: DEFAULT_EMPLOYEE_STATUS });
   const [sortBy, setSortBy] = useState('name');
   const [includeRelieved, setIncludeRelieved] = useState(false);
   useEffect(() => {
@@ -895,6 +908,7 @@ function RollupTab({ canExport }) {
   }, [includeRelieved]);
   const departments = [...new Set(rows.map((r) => r.department).filter(Boolean))].sort();
   const scoped = rows.filter((r) => leaveMatches(r, filters, { skipRequestFields: true }));
+  const scopedAll = rows.filter((r) => leaveMatches(r, { ...filters, empStatus: '' }, { skipRequestFields: true }));
   const sorted = [...scoped].sort((a, b) => {
     if (sortBy === 'pending') return b.pending - a.pending || String(a.name).localeCompare(String(b.name));
     if (sortBy === 'approved') return b.approved - a.approved || String(a.name).localeCompare(String(b.name));
@@ -902,13 +916,13 @@ function RollupTab({ canExport }) {
     if (sortBy === 'balance') return a.balance - b.balance || String(a.name).localeCompare(String(b.name));
     return String(a.name).localeCompare(String(b.name));
   });
-  const tot = scoped.reduce((o, r) => ({ approved: o.approved + r.approved, pending: o.pending + r.pending, rejected: o.rejected + r.rejected, cancelled: o.cancelled + r.cancelled, days: o.days + r.daysTaken }), { approved: 0, pending: 0, rejected: 0, cancelled: 0, days: 0 });
+  const tot = scopedAll.reduce((o, r) => ({ approved: o.approved + r.approved, pending: o.pending + r.pending, rejected: o.rejected + r.rejected, cancelled: o.cancelled + r.cancelled, days: o.days + r.daysTaken }), { approved: 0, pending: 0, rejected: 0, cancelled: 0, days: 0 });
   const C = { textAlign: 'center' };
   return (
     <Panel>
       <PanelPad>
         <ScopeNote>One row per employee: their leave counts by status (approved, pending, rejected, cancelled), days taken and the current leave balance - everything about one person in one place. Filter by department or employee status.</ScopeNote>
-        <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={[]} requestFields={false}>
+        <LeaveFilterBar filters={filters} setFilters={setFilters} departments={departments} types={[]} requestFields={false} opening={OPENING_LEAVE_FILTERS}>
           <Combo value={sortBy} onChange={(e) => setSortBy(e.target.value)} aria-label="Sort by">
             <option value="name">Sort: Name</option>
             <option value="pending">Sort: Most pending</option>
@@ -939,7 +953,7 @@ function RollupTab({ canExport }) {
                 {sorted.map((r) => (
                   <tr key={r.employeeId}>
                     <td><b>{r.employeeCode}</b></td>
-                    <td>{r.name}{r.designation && <div className="cell-muted">{r.designation}</div>}</td>
+                    <td>{r.name}<EmployeeStatusTag employmentStatus={r.employmentStatus} />{r.designation && <div className="cell-muted">{r.designation}</div>}</td>
                     <td className="cell-muted">{r.department || '—'}{r.team ? <div className="cell-muted">{r.team}</div> : null}</td>
                     <td><Status>{hrStatusOf(r.employmentStatus)}</Status></td>
                     <td style={C}>{r.approved || '—'}</td>
@@ -953,7 +967,8 @@ function RollupTab({ canExport }) {
                 {!sorted.length && <tr><td colSpan={10} className="small-muted" style={{ padding: 16 }}>No employees match these filters.</td></tr>}
               </tbody>
             </table>
-            <div className="small-muted" style={{ marginTop: 8 }}>{`${scoped.length} ${scoped.length === 1 ? 'employee' : 'employees'} · ${tot.approved} approved, ${tot.pending} pending, ${tot.rejected} rejected, ${tot.cancelled} cancelled · ${Math.round(tot.days * 100) / 100} days taken.`}</div>
+            <div className="small-muted" style={{ marginTop: 8 }}>{`${scoped.length} ${scoped.length === 1 ? 'employee' : 'employees'} shown · ${tot.approved} approved, ${tot.pending} pending, ${tot.rejected} rejected, ${tot.cancelled} cancelled · ${Math.round(tot.days * 100) / 100} days taken.`}
+              {scopedAll.length !== scoped.length ? ` These figures count all ${scopedAll.length} people on the list, including ${scopedAll.length - scoped.length} who left (choose Employee status → All to see them).` : ''}</div>
           </div>
         )}
       </PanelPad>

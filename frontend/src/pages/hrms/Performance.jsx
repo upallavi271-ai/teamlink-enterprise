@@ -3,7 +3,8 @@ import api from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { isHR as hasHrmsAdmin, canManageDevelopment } from '../../permissions';
 import Combo from '../../components/Combo.jsx';
-import PeopleFilterBar, { EMPTY_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import PeopleFilterBar, { OPENING_PEOPLE_FILTERS, peopleMatches, peopleOptions, statusOptions, textMatches } from '../../components/PeopleFilterBar.jsx';
+import EmployeeStatusTag, { HiddenLeftNote } from '../../components/EmployeeStatusTag.jsx';
 import Pager, { usePaged } from '../../components/Pager.jsx';
 import { ListEmpty } from '../../components/ui/ListFilters.jsx';
 import { ComposeModal, Field, Row, AiAssist, useSubmit } from '../../components/ComposeForm.jsx';
@@ -27,7 +28,8 @@ export default function Performance() {
   const [reviews, setReviews] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [form, setForm] = useState({ employeeId: '', period: '', score: '', notes: '' });
-  const [pf, setPf] = useState({ q: '', ...EMPTY_PEOPLE_FILTERS, band: '', recommendation: '', from: '', to: '' });
+  // ACTIVE EMPLOYEES FIRST (founder 2026-11-14): reviews open with the people who are still here; Employee status shows the Exited / Relieved ones.
+  const [pf, setPf] = useState({ q: '', ...OPENING_PEOPLE_FILTERS, band: '', recommendation: '', from: '', to: '' });
   const [sort, setSort] = useState('new');
   const [open, setOpen] = useState(false);
   const [chainFor, setChainFor] = useState(null);
@@ -55,7 +57,7 @@ export default function Performance() {
 
   const hrView = hasHrmsAdmin(user);
   const shown = reviews.filter((r) => textMatches(`${r.period} ${r.notes || ''}`, pf.q)
-    && peopleMatches(r, pf, undefined, reviewStatusOf)
+    && peopleMatches(r, hrView ? pf : { ...pf, empStatus: '' }, undefined, reviewStatusOf)
     && (!pf.band || r.band === pf.band)
     && (!pf.recommendation || r.recommendation === pf.recommendation));
   const opts = peopleOptions(reviews);
@@ -114,7 +116,7 @@ export default function Performance() {
       )}
 
       <PeopleFilterBar
-        filters={pf} setFilters={setPf} people={hrView}
+        filters={pf} setFilters={setPf} people={hrView} activeFirst
         departments={hrView ? opts.departments : undefined} roles={hrView ? opts.roles : undefined}
         statuses={statusOptions(reviews, REVIEW_STATUSES, reviewStatusOf)} statusLabel="All approval statuses"
         shown={shown.length} total={reviews.length}
@@ -142,13 +144,14 @@ export default function Performance() {
         </label>
       </PeopleFilterBar>
 
+      <HiddenLeftNote filters={pf} rows={reviews} active={hrView} noun="reviews" extra={(() => { const n = hrView && pf.empStatus === 'Active' ? reviews.filter((r) => ['Exited', 'Relieved'].includes(r.employee?.employmentStatus) && !['Approved', 'Rejected'].includes(r.approvalStatus)).length : 0; return n ? ' (' + n + ' waiting for approval)' : ''; })()} />
       <div className="tbl-wrap">
         <table>
           <thead><tr>{isHR && <th>Employee</th>}<th>Period</th><th>Score</th><th>Band</th><th>Recommendation</th><th>Notes</th><th>Approval</th></tr></thead>
           <tbody>
             {page.slice.map((r) => (
               <tr key={r.id}>
-                {isHR && <td>{r.employee?.name}</td>}
+                {isHR && <td>{r.employee?.name}<EmployeeStatusTag employee={r.employee} /></td>}
                 <td>{r.period}</td>
                 <td>{r.score}%</td>
                 <td><span className={`status ${r.band === 'High' ? 'priority-low' : r.band === 'Low' ? 'priority-high' : ''}`}>{r.band}</span></td>

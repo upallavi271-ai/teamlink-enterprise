@@ -17,6 +17,7 @@ import InsightsPanel from '../../components/charts/InsightsPanel.jsx';
 import DataIoBar from '../../components/dataio/DataIoBar.jsx';
 import AssetComplaintModal from './AssetComplaintModal.jsx';
 import { SendRepairModal, BackRepairModal, RepairHistoryModal, repairEntries } from './AssetRepair.jsx';
+import EmployeeStatusTag from '../../components/EmployeeStatusTag.jsx'; // an asset still held by somebody who has left shows Exited / Relieved beside the name
 import AssetReplacements from './AssetReplacements.jsx'; // replacement requests from repair vendors / approved tickets (Stage C, 28 Oct 2026)
 // Accounts spec S2: the fields Accounts needs + the repair log.
 import { AccountsFields, DisposalFields, AssetRepairsModal, accountsDefaults, accountsNote } from './AssetAccountsFields.jsx';
@@ -369,7 +370,7 @@ export default function Assets({ view, onOpen, onBack }) {
             <tr key={a.id}>
               <td><b>{a.assetCode}</b></td><td>{a.name}{a.assetType ? <div className="small-muted">{a.assetType}</div> : null}</td>
               <td className="cell-muted">{a.category || '—'}</td>
-              <td className="cell-muted">{a.assignedTo ? <>{a.assignedToName}{a.assignedTo.employeeCode ? <div className="small-muted">{a.assignedTo.employeeCode}</div> : null}</> : 'In stock'}</td>
+              <td className="cell-muted">{a.assignedTo ? <>{a.assignedToName}<EmployeeStatusTag employee={a.assignedTo} />{a.assignedTo.employeeCode ? <div className="small-muted">{a.assignedTo.employeeCode}</div> : null}</> : 'In stock'}</td>
               <td className="cell-muted">{a.seatDepartment ? <b>{a.location}</b> : '—'}</td>
               <td className="cell-muted">{a.department || '—'}{a.assignedTo && a.seatDepartment && a.seatDepartment !== a.assignedTo.department ? <div className="small-muted">seat is {a.seatDepartment}</div> : null}</td>
               <td><span className={`status ${a.status === 'Available' ? 'active' : OUT_OF_USE.includes(a.status) ? 'rejected' : 'pending'}`}>{a.status}</span></td>
