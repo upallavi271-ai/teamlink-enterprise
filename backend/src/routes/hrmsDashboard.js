@@ -106,7 +106,23 @@ router.get('/progress', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), asy
   const people = await progress.load(prisma, progress.counted(employees, await activeDepartmentSet(), req.query), month);
   const level = new Set(people.map((p) => p.department)).size === 1 && (req.query.department || req.query.manager || req.query.q) ? 'employee' : 'department';
   const teamMap = await require('../utils/vacancies').teamsByDepartment().catch(() => new Map()); // eslint-disable-line global-require
-  return res.json({ month, label: RJ.monthLabel(month), level, overall: progress.groupFigures('all', 'All', people), rows: progress.rowsFor(people, level, teamMap) });
+  const rows = progress.rowsFor(people, level, teamMap);
+  // A department whose monthly joining target is split by category (Medical, founder 2026-11-14) carries that count on its row: the joinings of the
+  // six categories against the team target (utils/joiningCategories.js). The department's own figures above are unchanged.
+  if (level === 'department') {
+    try {
+      const JC = require('../utils/joiningCategories'); // eslint-disable-line global-require
+      (await JC.monthBoards(month)).filter((b) => b.set).forEach((b) => {
+        const row = rows.find((r) => String(r.name).toLowerCase() === String(b.department).toLowerCase());
+        if (!row) return;
+        row.joiningCategories = {
+          target: b.total.target, achieved: b.total.achieved, above: b.total.above, closingPct: b.total.closingPct, other: b.otherCount, check: b.checkCount,
+          items: b.categories.filter((c) => c.target != null).map((c) => ({ label: c.short, target: c.target, achieved: c.achieved })),
+        };
+      });
+    } catch { /* the category count is a bonus: the chart never depends on it */ }
+  }
+  return res.json({ month, label: RJ.monthLabel(month), level, overall: progress.groupFigures('all', 'All', people), rows });
 });
 
 // An employee's own month. Their own figures only, so the dashboard permission is not needed.

@@ -1,0 +1,10 @@
+/* Category targets (Medical: six categories) inside Recruiter joinings */
+.rj-cat { border: 1px solid var(--line, #e3e7ee); border-radius: 12px; padding: 12px 14px; margin: 0 0 16px; background: #fff; }
+.rj-cat-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.rj-cat-head h3 { margin: 0; font-size: 15px; }
+.rj-cat-sub { font-size: 12.5px; margin: 14px 0 6px; }
+.rj-cat table th { white-space: nowrap; }
+.rj-cat-total td { background: #fafbfd; border-top: 2px solid var(--line, #e3e7ee); }
+.rj-card.grey b { color: #6b7280; }
+.rj-check { display: flex; gap: 8px; align-items: flex-start; margin: 4px 0 12px; font-size: 12.5px; line-height: 1.45; cursor: pointer; }
+.rj-check input { margin-top: 3px; }

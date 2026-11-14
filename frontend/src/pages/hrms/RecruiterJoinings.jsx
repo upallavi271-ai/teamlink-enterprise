@@ -17,6 +17,7 @@ import {
 } from '../../components/recruiterJoinings/RjParts.jsx';
 import '../../components/recruiterJoinings/rj.css';
 import Combo from '../../components/Combo.jsx';
+import CategoryTargets from '../../components/recruiterJoinings/CategoryTargets.jsx';
 
 const FIELDS = [
   { key: 'status', get: (r) => r.statusGroup || 'Active' },
@@ -140,9 +141,11 @@ export default function RecruiterJoinings() {
   const [targets, setTargets] = useState(false);
   const [skipped, setSkipped] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [rk, setRk] = useState(0); // bumps when the table reloads, so the category panel follows
 
   const load = useCallback(() => {
     setError('');
+    setRk((n) => n + 1);
     api.get('/recruiter-joinings/board', { params: { month } })
       .then((r) => setBoard(r.data))
       .catch((e) => setError(errText(e, 'Could not load recruiter joinings.')));
@@ -203,6 +206,8 @@ export default function RecruiterJoinings() {
           <SummaryCards s={board.summary} decisions={v.decisions && board.ended} />
           <DeptRules rules={board.rules} example={board.example} />
           <RuleBox rule={board.rule} />
+          {/* Category targets (Medical: six categories, 15 a month): the same joinings, sorted into categories (founder 2026-11-14) */}
+          <CategoryTargets month={month} department={f.department} reloadKey={rk} onChanged={load} />
           {board.current && <p className="rj-hint">{board.label} is still going — these are the joinings so far. Decisions open after the month ends.</p>}
           <JoiningsTable board={board} rows={page.slice} onChanged={load} />
           {page.total > 0 && <Pager page={page} noun="recruiters" />}

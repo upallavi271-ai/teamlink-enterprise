@@ -22,6 +22,7 @@ const { logAudit } = require('../utils/audit');
 const { toXlsxBook } = require('../utils/tabularExport');
 const RJ = require('../utils/recruiterJoinings');
 const SV = require('../utils/salaryVersions');
+const JC = require('../utils/joiningCategories');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -240,7 +241,69 @@ router.get('/details', guarded(async (req, res) => {
   const row = board.rows.find((r) => r.key === key || (r.employeeId && r.employeeId === key));
   if (!row || !scopeRows(req.user, viewer, [row]).length) return err(res, 403, 'You can only see the people in your own area.');
   const detail = await RJ.personMonthDetail(month, row.key);
+  // Which category each counted joining falls in (Medical), so a joining that is "not in the six" or "needs a check" can be seen and fixed.
+  if (detail && JC.hasCategories(row.department)) {
+    const cats = await JC.categoriesOfApplications(row.department, detail.joined.map((x) => x.id)).catch(() => new Map());
+    detail.joined.forEach((x) => { x.category = cats.get(x.id) || null; });
+  }
   res.json({ ...detail, ended: board.ended, current: board.current });
+}));
+
+// ---- Category targets (Medical: six categories, 15 a month) ------------------------------------------------------------------------
+// The joinings are the ones in the board above (one count); utils/joiningCategories.js tells which category each belongs to and adds them
+// up against the department's category targets. Counts for every viewer who sees the board (only the rows they may see); the rupee
+// amounts (per joining, earned, a recruiter's incentive) for Super Admin only, like every other amount here.
+function shapeCategoryBoard(user, viewer, b, partial) {
+  const money = !!viewer.money;
+  const cat = (c) => ({ ...c, incentive: money ? c.incentive : null, earned: money ? c.earned : null });
+  return {
+    department: b.department, month: b.month, label: b.label, set: b.set, fromMonth: b.fromMonth, partial,
+    categories: b.categories.map(cat),
+    // a TL / recruiter sees only their own area's rows, so a "department closing %" built from them would mislead
+    total: { ...b.total, closingPct: partial ? null : b.total.closingPct, incentive: money ? b.total.incentive : null, amountsSet: money ? b.total.amountsSet : null },
+    recruiters: b.recruiters.map((r) => ({
+      ...r, decision: decisionFor(viewer, r.decision), incentive: money ? r.incentive : null, incentiveComplete: money ? r.incentiveComplete : null, hasAmounts: money ? r.hasAmounts : null,
+    })),
+    otherCount: b.otherCount, checkCount: b.checkCount, assumedCount: b.assumedCount, joinings: b.joinings,
+  };
+}
+router.get('/category-board', guarded(async (req, res) => {
+  const month = monthOf(req.query, RJ.thisMonth());
+  const viewer = viewerOf(req.user);
+  const board = await RJ.monthBoard(month, { fresh: req.query.fresh === '1' });
+  const partial = !['sa', 'all'].includes(viewer.level);
+  const visible = { ...board, rows: scopeRows(req.user, viewer, board.rows) };
+  const boards = await JC.monthBoards(month, visible);
+  res.json({
+    month, label: board.label, ended: board.ended, current: board.current,
+    viewer: { level: viewer.level, money: viewer.money, setTarget: viewer.level === 'sa', decide: viewer.decide && board.ended, details: !!(req.user.products && req.user.products.ats) },
+    departments: boards.map((b) => shapeCategoryBoard(req.user, viewer, b, partial)),
+  });
+}));
+router.get('/category-targets', guarded(async (req, res) => {
+  const viewer = viewerOf(req.user);
+  if (!['sa', 'all'].includes(viewer.level)) return err(res, 403, 'Only Super Admin, Admin and HR can see the category target settings.');
+  const department = s(req.query.department) || 'Medical';
+  const def = JC.departmentDef(department);
+  if (!def) return err(res, 404, 'That department has no categories.');
+  const hist = await JC.history(def.department);
+  res.json({
+    department: def.department, canEdit: viewer.level === 'sa', money: viewer.money, maxAmount: JC.MAX_AMOUNT, maxTarget: JC.MAX_TARGET,
+    categories: def.categories, settings: await JC.loadSettings(),
+    history: hist.map((h) => ({ ...h, items: h.items.map((i) => ({ ...i, incentive: viewer.money ? i.incentive : null })) })),
+  });
+}));
+router.post('/category-targets', guarded(async (req, res) => {
+  if (!isSuperAdmin(req.user)) return err(res, 403, 'Only Super Admin can change the category targets and amounts.');
+  const b = req.body || {};
+  const r = await JC.saveTargets({ department: s(b.department) || 'Medical', fromMonth: s(b.fromMonth), items: b.items, note: b.note }, req.user);
+  if (typeof b.facultyImpliesMdMs === 'boolean') await JC.saveSettings({ facultyImpliesMdMs: b.facultyImpliesMdMs }, req.user);
+  res.json({ ok: true, message: `Saved - the ${r.saved} category targets apply from ${RJ.monthLabel(r.fromMonth)}.` });
+}));
+router.delete('/category-targets', guarded(async (req, res) => {
+  if (!isSuperAdmin(req.user)) return err(res, 403, 'Only Super Admin can change the category targets and amounts.');
+  const r = await JC.removeTargets({ department: s(req.query.department) || 'Medical', fromMonth: s(req.query.fromMonth) }, req.user);
+  res.json({ ok: true, message: `Removed (${r.removed} rows). The earlier targets apply again.` });
 }));
 
 // Joined applications that belong to no month (no usable joining date).
@@ -474,6 +537,33 @@ router.get('/export', guarded(async (req, res) => {
   });
   // Summary counts only (no candidate / client / job): those stay in ATS.
   const sheets = [{ name: `${b.label}`, headers: head, rows: main }];
+  // The category targets (Medical): the department's closing and each recruiter's share. Company-wide viewers only; amounts for Super Admin.
+  if (['sa', 'all'].includes(viewer.level)) {
+    const cboards = (await JC.monthBoards(month, rawB)).filter((x) => x.set);
+    cboards.forEach((c) => {
+      const ch = ['Category', 'Target', 'Joined', 'Closing %', 'Still to go', 'Above target'];
+      if (viewer.money) ch.push('Incentive per joining (₹)', 'Incentive earned (₹)');
+      const crow = c.categories.filter((k) => k.target != null).map((k) => {
+        const out = [k.short, k.target, k.achieved, k.closingPct == null ? '' : k.closingPct, k.left, k.above];
+        if (viewer.money) out.push(k.incentive, k.earned);
+        return out;
+      });
+      const tot = ['Total (each category counted up to its target)', c.total.target, c.total.achieved, c.total.closingPct == null ? '' : c.total.closingPct, Math.max(0, c.total.target - c.total.achieved), c.total.above];
+      if (viewer.money) tot.push('', c.total.incentive);
+      crow.push(tot);
+      crow.push([`Joinings not in the six: ${c.otherCount}`, '', '', '', '', '']);
+      crow.push([`Joinings that need a check: ${c.checkCount}`, '', '', '', '', '']);
+      sheets.push({ name: `${c.department} categories`.slice(0, 31), headers: ch, rows: crow });
+      const rh = ['Recruiter', 'Seat', ...c.categories.filter((k) => k.target != null).map((k) => k.short), 'Not in the six', 'Needs a check', 'Joined in the six', 'Share of team target %'];
+      if (viewer.money) rh.push('Incentive (₹)');
+      const rrows = c.recruiters.map((r) => {
+        const out = [r.name, r.seat, ...c.categories.filter((k) => k.target != null).map((k) => r.cells[k.key].count), r.other, r.check, r.inSix, r.sharePct == null ? '' : r.sharePct];
+        if (viewer.money) out.push(r.hasAmounts ? r.incentive : '');
+        return out;
+      });
+      sheets.push({ name: `${c.department} by recruiter`.slice(0, 31), headers: rh, rows: rrows });
+    });
+  }
   await logAudit({
     userId: req.user.id, actorName: req.user.name, action: 'Recruiter joinings exported (XLSX)', entity: 'RecruiterJoiningDecision',
     toValue: `${b.label} · ${rows.length} recruiter(s)`,

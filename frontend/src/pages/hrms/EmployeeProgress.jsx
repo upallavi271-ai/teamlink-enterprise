@@ -32,7 +32,22 @@ const COLUMNS = [
   { key: 'targetsPct', name: 'Targets', title: (r, people) => (people ? `${r.targetsMet} of ${r.targetsPeople} targets${r.joiningTarget != null ? `, ${r.joinings} of ${r.joiningTarget} joinings` : ''}` : `${r.targetsMet} of ${r.targetsPeople} people met all targets`) },
   // THE JOINING COUNT (founder 2026-11-12): Targets is the share of people who reached their WHOLE target, so a team part way shows 0%. This column is the
   // count itself: joinings from the ATS (the Recruiter joinings rule) against the joining targets of the people who have one.
-  { key: 'joinings', name: 'Joinings', hint: 'ATS joinings this month out of the joining targets', fmt: (r) => (r.joiningTarget == null ? '—' : `${r.joinings} of ${r.joiningTarget}`), title: (r) => (r.joiningTarget == null ? 'No joining target this month' : `${r.joinings} joined in the ATS this month, against joining targets of ${r.joiningTarget}`) },
+  // A department whose monthly target is split by category (Medical: 15 a month in six categories, founder 2026-11-14) shows that instead: the joinings of
+  // the six categories against the team target (each category counted up to its target); the hover lists each category.
+  {
+    key: 'joinings',
+    name: 'Joinings',
+    hint: 'ATS joinings this month out of the joining targets',
+    fmt: (r) => (r.joiningCategories ? `${r.joiningCategories.achieved} of ${r.joiningCategories.target}${r.joiningCategories.above ? ` (+${r.joiningCategories.above})` : ''}` : r.joiningTarget == null ? '—' : `${r.joinings} of ${r.joiningTarget}`),
+    title: (r) => {
+      const jc = r.joiningCategories;
+      if (jc) {
+        return `${jc.achieved} of the team's ${jc.target} category joinings this month (each category counted up to its target): ${jc.items.map((i) => `${i.label} ${i.achieved} of ${i.target}`).join(', ')}.`
+          + `${jc.above ? ` ${jc.above} more joined above a category target.` : ''}${jc.other ? ` ${jc.other} joined in posts that have no target.` : ''}${jc.check ? ` ${jc.check} need a check.` : ''}`;
+      }
+      return r.joiningTarget == null ? 'No joining target this month' : `${r.joinings} joined in the ATS this month, against joining targets of ${r.joiningTarget}`;
+    },
+  },
   { key: 'attendancePct', name: 'Attendance', title: (r) => `${r.daysWorked} of ${r.workingDays} working days` },
   { key: 'scorePct', name: 'Performance', title: (r, people) => (r.scorePct == null ? 'No review yet' : people ? `Review score ${r.scorePct} of 100` : `Average score of ${r.reviewed} reviewed`) },
   { key: 'trainingPct', name: 'Training', title: (r) => `${r.trainingDone} of ${r.trainingTotal} courses done` },

@@ -87,9 +87,12 @@ function DialogShell({ title, onClose, onSave, busy, error, saveLabel, children 
 }
 const who = (row, label) => `${row.name}${row.seat ? ` · ${row.seat}` : ''} · ${label}: ${row.joinings} / ${row.target} joinings`;
 
-export function IncentiveDialog({ row, month, onClose, onSaved }) {
-  const [amount, setAmount] = useState(row.decision?.decision === 'INCENTIVE' && row.decision.amount ? String(row.decision.amount) : '');
-  const [note, setNote] = useState(row.decision?.decision === 'INCENTIVE' ? row.decision.note || '' : '');
+// suggested / suggestedNote: the amount worked out from the category targets (Medical), put in for Super Admin to confirm or change.
+export function IncentiveDialog({
+  row, month, onClose, onSaved, suggested = null, suggestedNote = '',
+}) {
+  const [amount, setAmount] = useState(row.decision?.decision === 'INCENTIVE' && row.decision.amount ? String(row.decision.amount) : (suggested > 0 ? String(suggested) : ''));
+  const [note, setNote] = useState(row.decision?.decision === 'INCENTIVE' ? row.decision.note || '' : suggestedNote);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   async function save() {
@@ -104,6 +107,7 @@ export function IncentiveDialog({ row, month, onClose, onSaved }) {
   return (
     <DialogShell title="Give incentive" onClose={onClose} onSave={save} busy={busy} error={error} saveLabel="Give incentive">
       <p className="rj-hint">{who(row, monthLabel(month))}</p>
+      {suggested > 0 && <p className="rj-hint">Worked out from the category amounts: <b>{inr(suggested)}</b>{suggestedNote ? ` (${suggestedNote})` : ''}. You can change it.</p>}
       <div className="field"><label>Amount (₹)</label><input type="number" min="1" step="100" autoFocus value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="e.g. 2000" /></div>
       <div className="field"><label>Note (optional)</label><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Why — e.g. 3 joinings in September" /></div>
       <p className="rj-hint">It is paid with the next salary as a separate <b>Incentive</b> line on the payslip (counted in gross pay and tax like any other earning). Only Super Admin and the employee (on their payslip) see the amount.</p>
@@ -229,13 +233,19 @@ export function JoiningPeople({ month, rowKey, allowed = true }) {
           <h4>Joined in {d.label} ({d.joined.length})</h4>
           <div className="tbl-wrap">
             <table className="rj-mini">
-              <thead><tr><th>Candidate</th><th>Client</th><th>Job</th><th>Joining date</th><th>Status</th></tr></thead>
+              <thead><tr><th>Candidate</th><th>Client</th><th>Job</th>{d.joined.some((x) => x.category) && <th>Target category</th>}<th>Joining date</th><th>Status</th></tr></thead>
               <tbody>
                 {d.joined.map((x) => (
                   <tr key={x.id}>
                     <td><b>{x.candidate}</b></td>
                     <td>{x.client}</td>
                     <td>{x.job}{x.jobCode ? <span className="rj-sub"> · {x.jobCode}</span> : null}</td>
+                    {d.joined.some((y) => y.category) && (
+                      <td>
+                        {x.category ? <span className={`rj-tag ${x.category.bucket === 'six' ? 'green' : x.category.bucket === 'check' ? 'red' : 'orange'}`} title={x.category.reason}>{x.category.label}</span> : <span className="rj-sub">—</span>}
+                        {x.category && x.category.bucket !== 'six' ? <div className="rj-sub">{x.category.reason}</div> : null}
+                      </td>
+                    )}
                     <td>{dayLabel(x.joiningDate)}</td>
                     <td>
                       <span className={`rj-tag ${x.kind === 'left' ? 'red' : x.tone === 'orange' ? 'orange' : 'green'}`}>{x.kind === 'left' ? 'Dropped after joining' : x.status}</span>

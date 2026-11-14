@@ -4213,6 +4213,25 @@ model RecruiterJoiningTarget {
   @@unique([scope, scopeKey, fromMonth])
 }
 
+// JOINING CATEGORY TARGETS (founder 2026-11-14): a department's monthly joining target split by category (Medical: MD/MS Doctors Full Time ...
+// Staff Nurses = 15 a month), with the rupees per counted joining in that category (null = not decided yet). One row per department +
+// category + from-month; the latest from-month on or before the month asked applies. The logic is utils/joiningCategories.js.
+model JoiningCategoryTarget {
+  id         String   @id @default(cuid())
+  department String
+  category   String // a key from utils/joiningCategories.js
+  fromMonth  String // YYYY-MM
+  target     Int
+  incentive  Float? // rupees per counted joining; null = Super Admin has not decided it yet
+  note       String?
+  setById    String?
+  setByName  String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([department, category, fromMonth])
+}
+
 // One decision per recruiter (Employee) per month of joinings.
 model RecruiterJoiningDecision {
   id              String   @id @default(cuid())
