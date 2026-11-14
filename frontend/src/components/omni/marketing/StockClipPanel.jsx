@@ -3,7 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { Panel, Btn, Banner, Field, TinyBtn } from '../ui.jsx';
 
 // "🎞 Free stock clips": real moving footage from Pexels, free. Search in plain words, press "Use this clip": it is saved as a draft clip
-// (credit kept), then approved like any clip and mixed into a video below.
+// (credit kept), then ready to mix into a video below (raw footage needs no approval).
 export default function StockClipPanel({ toast, onMade }) {
   const [meta, setMeta] = useState(null);
   const [q, setQ] = useState('');
@@ -28,7 +28,7 @@ export default function StockClipPanel({ toast, onMade }) {
   const use = (v) => {
     setErr(''); setBusy(v.id);
     omni.post('/gs/marketing/stock/import', { id: v.id, query: res ? res.query : q.trim() })
-      .then(() => { if (!alive.current) return; setAdded((a) => ({ ...a, [v.id]: true })); toast('Clip saved under Your clips. Ask for approval, then mix it into a video.'); loadMeta(); if (onMade) onMade(); })
+      .then(() => { if (!alive.current) return; setAdded((a) => ({ ...a, [v.id]: true })); toast('Clip saved under Your clips. It is ready: mix it into a video.'); loadMeta(); if (onMade) onMade(); })
       .catch((e) => alive.current && setErr(errOf(e, 'The clip could not be saved.')))
       .finally(() => alive.current && setBusy(''));
   };
@@ -36,7 +36,7 @@ export default function StockClipPanel({ toast, onMade }) {
   if (!meta) return err ? <Banner tone="error">{err}</Banner> : null;
   const ready = meta.ready;
   return (
-    <Panel title="🎞 Free stock clips" sub={`Real moving video of people, offices, hospitals and cities${meta.source ? ` from ${meta.source}` : ''}. Free. Search, press Use this clip, get it approved, then mix it into your video.`} style={{ marginBottom: 14 }}>
+    <Panel title="🎞 Free stock clips" sub={`Real moving video of people, offices, hospitals and cities${meta.source ? ` from ${meta.source}` : ''}. Free. Search, press Use this clip, then mix it into your video. Raw footage needs no approval; the finished video does.`} style={{ marginBottom: 14 }}>
       {!ready ? <Banner tone="warn">{meta.reason}</Banner> : null}
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
       <form onSubmit={(e) => { e.preventDefault(); search(1); }} style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>

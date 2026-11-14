@@ -107,6 +107,7 @@ async function create(u, b = {}) {
   if (!got) return { error: 'This item was not found.', status: 404 };
   const it = got.r;
   if (!(A.isAdmin(u) || it.createdById === u.id)) return { error: 'Only the person who made it, or an Admin, can send it to a client.', status: 403 };
+  if (kind === 'image' && it.style === 'clip') return { error: 'A clip is raw footage: make a video from it first, then send the video.', status: 400 }; // checked first: a raw clip is always "approved" (ready to use)
   if (decide) {
     if (it.status === 'approved') return { error: 'It is already approved. Use "Send to client" to show the client what was approved.', status: 409 };
     if (!['draft', 'changes', 'waiting'].includes(it.status)) return { error: 'This item cannot be sent to the client now.', status: 409 };

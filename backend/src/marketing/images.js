@@ -32,11 +32,14 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS "${TABLE}_status" ON "${TABLE}"("status", "createdAt")`,
 ];
 let okAt = 0;
+const RAW_OK = 'Raw footage: no approval needed';
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
   try {
     for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
     try { await S.run(`ALTER TABLE "${TABLE}" ADD COLUMN "projectId" TEXT`); } catch { /* the column is already there */ } // 2026-11-14: made for a client project (marketing/projects.js)
+    // raw clips no longer wait for anybody's approval: the ones already waiting (or saved as drafts) become ready (idempotent)
+    try { const now = Date.now(); await S.run(`UPDATE "${TABLE}" SET status = 'approved', decidedAt = ?, decidedByName = ?, updatedAt = ? WHERE style = 'clip' AND status IN ('draft', 'waiting', 'changes') AND deletedAt IS NULL`, now, RAW_OK, now); } catch { /* the table is not ready yet */ }
     await AI.ensure(); okAt = Date.now(); return true;
   } catch (e) { console.error('[omni-mk] images schema:', e.message); return false; } // eslint-disable-line no-console
 }
@@ -507,8 +510,10 @@ async function saveVideo(u, buf, mime, q = {}) {
   fs.writeFileSync(path.join(dir(), file), buf);
   const veo = clip && q.model === 'veo'; // a clip made by Google Veo (marketing/aiclips.js), not uploaded by a person
   const about = q.about ? S.clip(q.about, 400) : clip ? `Uploaded clip, ${seconds} seconds` : `Video of ${scenes} scene${scenes === 1 ? '' : 's'} (pictures and clips), ${seconds} seconds`;
-  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,'draft',?,?,?,?,?)`,
-    id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, veo ? 'veo' : clip && q.model === 'stock' ? 'stock' : clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, dept || null, u.id, S.clip(u.name, 80), ts, ts);
+  // RAW FOOTAGE needs no approval (2026-11-14, founder: the team must not be asked to "approve" ingredients): a clip is ready to use at once. What is approved is the FINISHED video made from it, and
+  // by the client when the company rule says so. A finished video is still a draft until somebody (team or client) approves it.
+  await S.run(`INSERT INTO "${TABLE}" (id, title, prompt, headline, style, aspect, model, withLogo, file, mime, bytes, demo, status, decidedAt, decidedByName, department, createdById, createdByName, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?,?)`,
+    id, title, about, S.clip(q.headline, 80) || null, clip ? 'clip' : 'video', aspect, veo ? 'veo' : clip && q.model === 'stock' ? 'stock' : clip ? 'clip' : 'slideshow', q.logo === '1' ? 1 : 0, file, type, buf.length, clip ? 'approved' : 'draft', clip ? ts : null, clip ? RAW_OK : null, dept || null, u.id, S.clip(u.name, 80), ts, ts);
   await tagProject([id], q.projectId);
   if (!veo) await logAudit({ userId: u.id, actorName: u.name, action: clip ? 'Omni-Channel AI Marketing: video clip uploaded' : 'Omni-Channel AI Marketing: video made', entity: TABLE, entityId: id, toValue: `${title}; ${clip ? '' : `${scenes} scene(s); `}${seconds}s; ${Math.round(buf.length / 1024)} KB` });
   const set = await Cfg.getSettings();

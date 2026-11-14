@@ -187,7 +187,7 @@ export default function MkVideosPage() {
       } catch (er) { failed.push(`${x.name}: ${errOf(er, er.message || 'not saved')}`); }
     }
     setBusy(''); load();
-    toast(`${ok} clip${ok === 1 ? '' : 's'} uploaded${failed.length ? `, ${failed.length} not` : ''}. Ask for approval to use ${ok === 1 ? 'it' : 'them'}.`);
+    toast(`${ok} clip${ok === 1 ? '' : 's'} uploaded${failed.length ? `, ${failed.length} not` : ''}. ${ok === 1 ? 'It is' : 'They are'} ready to use.`);
     if (failed.length) setErr(`Not uploaded: ${failed.join(' · ')}`);
   };
   const act = async (it) => { setBusy(it.id); try { const r = await omni.post(`/gs/marketing/images/${it.id}/submit`); toast(r.ok); load(); } catch (e) { toast(errOf(e, 'That did not work.')); } finally { setBusy(''); } };
@@ -209,7 +209,7 @@ export default function MkVideosPage() {
       {v.status === 'changes' && v.note ? <div className="mk-note">Sent back by {v.decidedByName}: {v.note}</div> : null}
       <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
         <TinyBtn onClick={() => downloadMkImg(v.id, v.title).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download</TinyBtn>
-        {v.canSubmit && !v.needsClient ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
+        {v.canSubmit && !v.needsClient && !isClip ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
         {!isClip && v.canSubmit && v.canEdit ? <TinyBtn onClick={() => setToClient(v)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
         {!isClip && v.clientHold ? <TinyBtn onClick={() => setToClient(v)}>Client…</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
@@ -222,7 +222,7 @@ export default function MkVideosPage() {
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI Video" lead="Join approved pictures and your own video clips into one short video with your logo, colours, captions and a call to action. It is made in this browser: free, nothing is sent anywhere until you save it.">
+      <PageHead eyebrow="AI Marketing" title="AI Video" lead="Type your idea (and your own title, heading and words) and TeamLink makes the pictures and the video by itself, free. Or join pictures and your own video clips by hand. It is made in this browser: nothing is sent anywhere until you save it.">
         {canWrite ? (
           <>
             <input ref={fileRef} type="file" accept="video/mp4,video/webm" multiple style={{ display: 'none' }} onChange={uploadClips} />
@@ -241,11 +241,11 @@ export default function MkVideosPage() {
       {canWrite ? (
         <>
           <AutoStudioPanel kind="video" projectId={projectId} onVideo={startAuto} onMade={load} toast={toast} />
-          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
+          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, then mix them with pictures below (raw footage needs no approval). Clips from the Gemini app often carry sound: you can keep it.</Banner>
           <StockClipPanel toast={toast} onMade={load} />
           <AiClipPanel pictures={pics} toast={toast} onMade={load} />
           <Panel title="1 · Pick the pictures and clips" sub={sources.length ? `Tap them in the order they should play (up to 8). ${pick.length} picked.` : undefined}>
-            {sources.length === 0 ? <Empty title="Nothing approved yet" action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}><Btn onClick={() => go('mkimages')}>Pictures: AI Images</Btn><Btn onClick={() => fileRef.current && fileRef.current.click()}>⬆ Upload a clip</Btn></div>}>A video is made from approved pictures and approved clips. Make or upload some, ask for approval, then come back.</Empty> : (
+            {sources.length === 0 ? <Empty title="Nothing to join yet" action={<div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}><Btn onClick={() => go('mkimages')}>Pictures: AI Images</Btn><Btn onClick={() => fileRef.current && fileRef.current.click()}>⬆ Upload a clip</Btn></div>}>A video is made from approved pictures and your clips. Use Create from your content above, make pictures in AI Images, or upload some clips.</Empty> : (
               <div className="mki-pick" style={{ maxHeight: 260 }}>
                 {sources.map((p) => { const n = pick.findIndex((x) => x.id === p.id); return (
                   <button type="button" key={p.id} className={n >= 0 ? 'on' : ''} title={`${p.kind === 'clip' ? 'Clip: ' : ''}${p.title}`} onClick={() => toggle(p)} style={{ position: 'relative' }}>
@@ -313,7 +313,7 @@ export default function MkVideosPage() {
       ) : <Banner tone="info">You can watch the videos of your department and approve them in Approvals. Only Marketing and Admins make videos.</Banner>}
 
       {clipsAll.length > 0 ? (
-        <Panel title="Your clips" sub="Raw footage you uploaded. A clip needs approval before it can go into a video." style={{ marginTop: 14 }} right={<span className="pill live">{clipsAll.length}</span>}>
+        <Panel title="Your clips" sub="Raw footage you uploaded or saved from the free stock clips. It is ready to use: no approval needed. The finished video is what gets approved." style={{ marginTop: 14 }} right={<span className="pill live">{clipsAll.length}</span>}>
           <div className="mki-grid">{clipsAll.map((v) => card(v, true))}</div>
         </Panel>
       ) : null}

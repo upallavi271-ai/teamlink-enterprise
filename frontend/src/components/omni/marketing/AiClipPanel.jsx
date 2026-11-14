@@ -31,7 +31,7 @@ export default function AiClipPanel({ pictures, toast, onMade }) {
       omni.get(`/gs/marketing/clip-ai/jobs/${job.id}`).then((d) => {
         if (!alive.current) return;
         setJob(d.job);
-        if (d.job.status === 'done') { toast('Your AI clip is ready. Find it under Your clips, then ask for approval.'); loadMeta(); if (onMade) onMade(); }
+        if (d.job.status === 'done') { toast('Your AI clip is ready. Find it under Your clips: it is ready to use.'); loadMeta(); if (onMade) onMade(); }
         if (d.job.status === 'failed') loadMeta();
       }).catch(() => { if (alive.current) setJob((j) => (j ? { ...j } : j)); }); // a short network hiccup: just look again
     }, 4000);
@@ -92,14 +92,14 @@ export default function AiClipPanel({ pictures, toast, onMade }) {
           {job ? (
             <div style={{ marginTop: 12 }}>
               {job.status === 'running' ? <Banner tone="info">Making your clip… {job.seconds}s so far. It takes 1 to 5 minutes. You can leave this page: it keeps going, and the clip appears under Your clips.</Banner> : null}
-              {job.status === 'done' ? <Banner tone="ok">Done. The clip is under <b>Your clips</b> below. Ask for approval, then use it in a video.</Banner> : null}
+              {job.status === 'done' ? <Banner tone="ok">Done. The clip is under <b>Your clips</b> below. It is ready to use in a video.</Banner> : null}
               {job.status === 'failed' ? <Banner tone="error">{job.error || 'The clip could not be made.'}</Banner> : null}
             </div>
           ) : null}
         </div>
       ) : null}
       {ask ? <ConfirmModal title="Pay Google for this clip?" yes={`Yes, make it (${usd(cost)})`} onNo={() => setAsk(false)} onYes={send}
-        text={`This clip (${seconds} seconds) is billed by Google, about ${usd(cost)} (≈ ${inr(cost)}). It starts now and cannot be cancelled. The clip is saved as a draft: it needs approval like any other clip.`} /> : null}
+        text={`This clip (${seconds} seconds) is billed by Google, about ${usd(cost)} (≈ ${inr(cost)}). It starts now and cannot be cancelled. The clip is raw footage: it needs no approval, the finished video does.`} /> : null}
     </Panel>
   );
 }
