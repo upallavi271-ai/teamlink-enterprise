@@ -17,6 +17,7 @@ import { money, money2, fmtD } from './invFormat';
 import WaButton from '../../components/wa/WaButton.jsx'; // free WhatsApp quick chat (payment reminder)
 import './clientInvoice.css';
 import StatementView from '../bank/StatementView.jsx';
+import BankLineView from './BankLineView.jsx'; // the one bank line behind a payment: narration, description, date, reference
 
 // Founder spec 2026-10-15: 24 columns, Invoice No pinned left, Actions pinned right.
 export const CI_HEADS = [
@@ -92,6 +93,7 @@ function Panel({
   const row = (k, v, cls) => (<div className={`ci-kv${cls ? ` ${cls}` : ''}`}><span>{k}</span><b>{v}</b></div>);
   // Bank statement opens ON this page (founder 2026-11-09): closing it leaves the list exactly where it was - no page change, no Back.
   const [stmtOf, setStmtOf] = useState(null);
+  const [lineOf, setLineOf] = useState(null); // payment id whose bank line is open under its row
   return (
     <div className="ci-panel-in">
       <section className="ci-sec">
@@ -175,7 +177,8 @@ function Panel({
               <thead><tr><th>Date</th><th className="num">Amount</th><th>Mode</th><th>Reference</th><th>Proof</th></tr></thead>
               <tbody>
                 {g.payments.map((p) => (
-                  <tr key={p.id} title={p.lines > 1 ? `One payment shared across ${p.lines} candidate lines` : undefined}>
+                  <Fragment key={p.id}>
+                  <tr title={p.lines > 1 ? `One payment shared across ${p.lines} candidate lines` : undefined}>
                     <td>{p.date ? fmtD(p.date) : 'date not recorded'}</td>
                     <td className="num">{money2(p.amount)}</td>
                     <td>{p.method || '—'}</td>
@@ -183,11 +186,19 @@ function Panel({
                     <td>
                       {p.proof === 'bank statement'
                         ? (p.bankTxnId
-                          ? <button type="button" className="link-btn" onClick={(e) => { e.stopPropagation(); setStmtOf(p.bankTxnId); }}>Bank statement</button>
+                          ? <>
+                            <button type="button" className="link-btn" aria-expanded={lineOf === p.id} onClick={(e) => { e.stopPropagation(); setLineOf(lineOf === p.id ? null : p.id); }}>{lineOf === p.id ? 'Hide bank line' : 'Bank line'}</button>
+                            {' · '}
+                            <button type="button" className="link-btn" onClick={(e) => { e.stopPropagation(); setStmtOf(p.bankTxnId); }}>Bank statement</button>
+                          </>
                           : <Link to={`/invoices/${p.invoiceId}#proof`}>Bank statement</Link>)
                         : (p.proof || <span className="small-muted">—</span>)}
                     </td>
                   </tr>
+                  {lineOf === p.id && p.bankTxnId && (
+                    <tr><td colSpan={5}><BankLineView invoiceId={p.invoiceId} txnId={p.bankTxnId} /></td></tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
