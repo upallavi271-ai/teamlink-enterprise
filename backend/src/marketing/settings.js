@@ -141,4 +141,4 @@ function cleanLogo(b) {
 async function saveLogo(v) { await write(LOGO_KEY, v); }
 async function removeLogo() { try { await prisma.appSetting.delete({ where: { key: LOGO_KEY } }); } catch { /* nothing to remove */ } }
 
-module.exports = { getSettings, cleanSettings, saveSettings, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };
+module.exports = { getSettings, cleanSettings, saveSettings, clientNeeded, CLIENT_KINDS, getBrand, cleanBrand, saveBrand, getLogo, cleanLogo, saveLogo, removeLogo, DEFAULT_SETTINGS, LANGUAGES, EMOJI, LIMITS, clip };

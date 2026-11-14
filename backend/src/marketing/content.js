@@ -217,6 +217,7 @@ const view = (u, r, set) => ({
   status: r.status, note: r.note || '', submittedAt: S.iso(r.submittedAt), submittedByName: r.submittedByName || '', decidedAt: S.iso(r.decidedAt), decidedByName: r.decidedByName || '',
   selfApproved: S.num(r.selfApproved) === 1, inLibrary: !!r.libraryId && r.status === 'approved', libraryId: r.status === 'approved' ? (r.libraryId || null) : null,
   department: r.department || '', createdByName: r.createdByName || '', mine: r.createdById === u.id, createdAt: S.iso(r.createdAt), updatedAt: S.iso(r.updatedAt),
+  needsClient: Cfg.clientNeeded(set, 'words'), canClient: mayWrite(u) && (A.isAdmin(u) || r.createdById === u.id), // the Admin rule "only a client can approve words" (settings.js)
   canEdit: mayEdit(u, r), canSubmit: mayWrite(u) && (A.isAdmin(u) || r.createdById === u.id) && ['draft', 'changes'].includes(r.status),
   canApprove: r.status === 'waiting' && canApprove(u, r, set), canDelete: mayWrite(u) && (A.isAdmin(u) || r.createdById === u.id) && r.status !== 'waiting',
 });
@@ -352,6 +353,7 @@ async function submit(u, id) {
   if (!mayWrite(u) || !(A.isAdmin(u) || r.createdById === u.id)) return { error: 'Only the person who wrote it, or an Admin, can ask for approval.', status: 403 };
   if (r.status === 'waiting') return { error: 'It is already waiting for approval.', status: 409 };
   if (r.status === 'approved') return { error: 'It is already approved.', status: 409 };
+  if (Cfg.clientNeeded(set, 'words')) return { error: 'Your company requires the CLIENT to approve words. Use "Ask client to approve" instead: the client\'s answer is the approval.', status: 409, code: 'client_required' };
   const t = parse(r.texts, {});
   if (!Object.keys(t).length) return { error: 'Write at least one channel version first.', status: 400 };
   const now = Date.now();
@@ -431,6 +433,7 @@ async function decide(u, id, approve, note, edits) {
   let { r } = g;
   if (r.status !== 'waiting') return { error: 'This content is not waiting for approval.', status: 409 };
   if ((await heldSet()).has(r.id)) return { error: 'This is waiting for the CLIENT to approve it: only the client can. To decide as a team instead, cancel the client link (the content goes back to Drafts).', status: 409, code: 'client_holds' };
+  if (approve && Cfg.clientNeeded(set, 'words')) return { error: 'Your company requires the CLIENT to approve words, so the team cannot approve them. Send it to the client ("Send to the client"), or send it back. An Admin can switch the rule off in AI usage.', status: 409, code: 'client_required' };
   if (!canApprove(u, r, set)) {
     return { error: r.createdById === u.id ? 'You cannot approve your own content. Another approver (a Team Lead of the department, or an Admin) has to do it.' : 'Only an Admin, or a Team Lead of this department, can approve this content.', status: 403 };
   }
