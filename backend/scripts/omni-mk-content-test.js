@@ -68,8 +68,8 @@ const G = '/api/outreach/gs/marketing';
   const me = async (k) => (await http('GET', '/api/outreach/me', T[k])).body || {};
   const meSa = await me('sa'); const meM = await me('m1');
   const pSa = meSa.pages || []; const pM = meM.pages || []; const pTl = (await me('tl')).pages || [];
-  check('A3 Super Admin and Marketing get all AI Marketing tabs (home, Client projects, Content, Approvals, Brand voice, AI usage ...)', ['mkhome', 'mkprojects', 'mkcontent', 'mkapprove', 'mkbrand', 'mkusage'].every((p) => pSa.includes(p) && pM.includes(p)), { sa: meSa.error || pSa.length, m: meM.error || pM.length, kind: meM.kind });
-  check('A4 a Team Lead gets only the home and Approvals tabs', pTl.includes('mkhome') && pTl.includes('mkapprove') && !pTl.includes('mkcontent') && !pTl.includes('mkbrand') && !pTl.includes('mkusage') && !pTl.includes('mkprojects'), pTl);
+  check('A3 Super Admin and Marketing get all AI Marketing tabs (home, Client projects, Content, Approvals, Brand voice, AI usage ...)', ['mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkapprove', 'mkbrand', 'mkusage'].every((p) => pSa.includes(p) && pM.includes(p)), { sa: meSa.error || pSa.length, m: meM.error || pM.length, kind: meM.kind });
+  check('A4 a Team Lead gets only the home and Approvals tabs', pTl.includes('mkhome') && pTl.includes('mkapprove') && !pTl.includes('mkcontent') && !pTl.includes('mkbrand') && !pTl.includes('mkusage') && !pTl.includes('mkprojects') && !pTl.includes('mkourwork'), pTl);
   check('A5 a Team Lead cannot write with AI (403) and cannot read usage (403)', (await http('POST', `${G}/generate`, T.tl, { brief: 'x'.repeat(30), channels: ['sms'] })).status === 403 && (await http('GET', `${G}/usage`, T.tl)).status === 403);
 
   // ============================================================ B: meta

@@ -54,6 +54,7 @@ export const PAGES = {
   mkcalendar: { label: 'Calendar', icon: '▦', title: 'Content Calendar' },
   mkreports: { label: 'Reports', icon: '▤', title: 'AI Marketing reports' },
   mkprojects: { label: 'Client projects', icon: '❖', title: 'Client projects' },
+  mkourwork: { label: 'Our work', icon: '★', title: 'Our work: track record and finished projects' },
   mkbrand: { label: 'Brand voice', icon: '❝', title: 'Brand voice' },
   mkusage: { label: 'AI usage', icon: '◔', title: 'AI usage and limits' },
 };
@@ -69,7 +70,7 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkcontent', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);
