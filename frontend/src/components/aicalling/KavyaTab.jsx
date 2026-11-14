@@ -8,7 +8,7 @@ import { when, errorOf } from './aiCallingShared.js';
 //   Give to Kavya : pick a requirement, tick candidates, Kavya phones them (same roles, consent, DND and test-number rules as AI Calling)
 //   Runs          : what Kavya has finished so far - outcome, language, the interview time the candidate asked for, why not interested, area + distance
 // The server decides who may do what; this page only shows the reasons. Kavya keeps her own calling hours (9 am - 6 pm).
-const RUN_WORD = { draft: 'Saved', preparing: 'Getting ready', running: 'Calling', paused: 'Paused', completed: 'Finished' };
+const RUN_WORD = { draft: 'Saved', preparing: 'Getting ready', running: 'Calling', paused: 'Paused', completed: 'Finished', failed: 'Could not start' };
 const OUTCOME_WORD = {
   interested: 'Interested', not_interested: 'Not interested', not_relevant: 'Not relevant', no_answer_from_caller: 'No answer', wants_other_opening: 'Wants another opening',
   callback: 'Call back', no_clear_response: 'No clear response', keep_profile: 'Keep profile', wants_higher_package: 'Wants higher package',

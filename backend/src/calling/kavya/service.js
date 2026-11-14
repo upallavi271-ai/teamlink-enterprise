@@ -295,7 +295,11 @@ async function sync(run) {
     const left = Object.entries(st.data.candidates_by_status || {}).filter(([k]) => ['queued', 'calling'].includes(k)).reduce((a, [, n]) => a + n, 0);
     if (js === 'running' && left === 0) status = 'completed';
     else if (['running', 'preparing', 'paused', 'draft'].includes(js)) status = js;
-    if (js === 'draft' && run.status === 'preparing' && st.data.job.msg && /could not/i.test(st.data.job.msg)) run.note = clip(st.data.job.msg, 300);
+    if (js === 'draft' && run.status === 'preparing' && st.data.job.msg && /could not/i.test(st.data.job.msg)) {
+      // Kavya could not start this job (her voice clips need the job's location, experience and salary): the run is over, so its people are free again
+      status = 'failed';
+      run.note = clip(`Kavya could not start this job. Add the location, experience and salary to the requirement and try again. (${String(st.data.job.msg).split(String.fromCharCode(10)).pop()})`, 300);
+    }
   }
   await DB.run('UPDATE "KavyaRun" SET "status" = ?, "note" = ?, "lastSyncAt" = ? WHERE "id" = ?', status, run.note || '', DB.nowIso(), run.id);
   return { ...run, status, lastSyncAt: DB.nowIso() };
