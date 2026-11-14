@@ -2,7 +2,7 @@
 import { useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, dateOf, istToday } from './crmShared.jsx';
+import { useCrm, errOf, dateOf, istToday, QuickLog } from './crmShared.jsx';
 
 const short = (n) => { const v = Number(n) || 0; if (v >= 10000000) return `₹${(v / 10000000).toFixed(1)}Cr`; if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`; return v ? `₹${v.toLocaleString('en-IN')}` : '₹0'; };
 
@@ -11,6 +11,7 @@ export function useMoveLead(onMoved) {
   const { me, toast, openRecord } = useCrm();
   const [asking, setAsking] = useState(null);
   const [reason, setReason] = useState('');
+  const [logging, setLogging] = useState(null); // a move was refused: nothing is logged on this lead yet - log it here, then the move is tried again
   async function move(lead, stage, lostReason) {
     if (stage === 'Lost' && !lostReason) { setAsking(lead); setReason(''); return; }
     try {
@@ -18,14 +19,22 @@ export function useMoveLead(onMoved) {
       toast(`Moved to ${stage}.`);
       onMoved(r.data.lead);
       if (r.data.needsDeal) { toast('Won! Press "Convert to deal" on the lead to make the deal.'); openRecord('lead', lead.id); }
-    } catch (e) { toast(errOf(e, 'The lead could not be moved.')); }
+    } catch (e) {
+      if (e.response && e.response.data && e.response.data.needsLog) { setLogging({ lead, stage, lostReason }); return; }
+      toast(errOf(e, 'The lead could not be moved.'));
+    }
   }
-  const dialog = asking && (
-    <Modal title={`Why was "${asking.company}" lost?`} onClose={() => setAsking(null)} foot={<><button type="button" className="btn" onClick={() => setAsking(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!reason} onClick={() => { const l = asking; setAsking(null); move(l, 'Lost', reason); }}>Move to Lost</button></>}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        {me.lists.lostReasons.map((r) => <button key={r} type="button" className={`btn btn-sm${reason === r ? ' btn-primary' : ''}`} onClick={() => setReason(r)}>{r}</button>)}
-      </div>
-    </Modal>
+  const dialog = (
+    <>
+      {asking && (
+        <Modal title={`Why was "${asking.company}" lost?`} onClose={() => setAsking(null)} foot={<><button type="button" className="btn" onClick={() => setAsking(null)}>Cancel</button><button type="button" className="btn btn-primary" disabled={!reason} onClick={() => { const l = asking; setAsking(null); move(l, 'Lost', reason); }}>Move to Lost</button></>}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {me.lists.lostReasons.map((r) => <button key={r} type="button" className={`btn btn-sm${reason === r ? ' btn-primary' : ''}`} onClick={() => setReason(r)}>{r}</button>)}
+          </div>
+        </Modal>
+      )}
+      {logging && <QuickLog record={logging.lead} intro={`To move ${logging.lead.company} to ${logging.stage}, log what happened with them first. It moves as soon as you save.`} onClose={() => setLogging(null)} onLogged={() => { const l = logging; setLogging(null); move(l.lead, l.stage, l.lostReason); }} />}
+    </>
   );
   return { move, dialog };
 }
@@ -35,9 +44,11 @@ export default function CrmLeadBoard({ rows, onMoved }) {
   const { move, dialog } = useMoveLead(onMoved);
   const [dragId, setDragId] = useState(null);
   const [over, setOver] = useState(null);
+  const [logging, setLogging] = useState(null); // 📞 Log on a card
   const today = istToday();
   return (
     <>
+      {logging && <QuickLog record={logging} onClose={() => setLogging(null)} onLogged={() => { setLogging(null); onMoved(); }} />}
       <div className="crm-board">
         {me.lists.leadStages.map((s) => {
           const ls = rows.filter((l) => l.stage === s.name);
@@ -66,6 +77,7 @@ export default function CrmLeadBoard({ rows, onMoved }) {
                   {l.contactName && l.contactName !== l.company && <div className="small-muted" style={{ fontSize: 12 }}>{l.company}</div>}
                   <div className="small-muted" style={{ fontSize: 12 }}>{[l.expectedValue ? short(l.expectedValue) : '', l.ownerName || 'No owner'].filter(Boolean).join(' · ')}</div>
                   {l.nextTaskDue && <div style={{ fontSize: 12, color: l.nextTaskDue < today ? 'var(--red)' : undefined }}>{`Next: ${l.nextTaskDue === today ? 'Today' : dateOf(l.nextTaskDue)}`}</div>}
+                  {me.canEdit && l.status !== 'Converted' && <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={(e) => { e.stopPropagation(); setLogging(l); }} aria-label={`Log a call on ${l.company}`}>📞 Log</button>}
                 </div>
               ))}
               {!ls.length && <div className="small-muted" style={{ fontSize: 11.5, padding: '4px 4px 10px' }}>No leads.</div>}

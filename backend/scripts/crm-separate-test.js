@@ -65,14 +65,15 @@ const mkUser = (tag, data) => prisma.user.create({ data: { name: `ZZ ${tag}`, em
 
   console.log('1. The CRM has its own team; ATS roles open nothing');
   const meBde = await call('GET', '/crm/me', null, tk.bde);
-  check('a BDE who used the CRM before keeps it (put on the CRM list once, as a Salesperson)', meBde.status === 200 && meBde.body.role === 'bde', meBde.body);
+  check('a BDE who used the CRM before no longer has it: the list the old access filled was narrowed once (founder 2026-11-14), so a BDE is shut out until an Admin adds them', meBde.status === 403, meBde.body);
   check('a recruiter (ATS role) cannot open the CRM', (await call('GET', '/crm/me', null, tk.rec)).status === 403);
   check('a login not on the list cannot open the CRM', (await call('GET', '/crm/me', null, tk.fresh)).status === 403);
   const meAdmin = await call('GET', '/crm/me', null, tk.admin);
   check('Super Admin opens it with every right', meAdmin.status === 200 && meAdmin.body.role === 'admin' && Object.values(meAdmin.body.rights || {}).every(Boolean), { status: meAdmin.status, body: meAdmin.body });
   const team = meAdmin.body.salesTeam.filter((m) => m.userId !== fresh.id && m.userId !== viewer.id);
-  const put = await call('PUT', '/crm/settings', { salesTeam: [...team, { userId: fresh.id, name: fresh.name, role: 'rep', rights: { create: true, edit: true, delete: false, import: false, export: false, reports: false } }, { userId: viewer.id, name: viewer.name, role: 'viewer' }] }, tk.admin);
-  check('Admin adds a person as a Salesperson and another as a Viewer', put.status === 200, put.body);
+  const put = await call('PUT', '/crm/settings', { salesTeam: [...team, { userId: fresh.id, name: fresh.name, role: 'rep', rights: { create: true, edit: true, delete: false, import: false, export: false, reports: false } }, { userId: viewer.id, name: viewer.name, role: 'viewer' }, { userId: bde.id, name: bde.name, role: 'rep' }] }, tk.admin);
+  check('Admin adds a person as a Salesperson, another as a Viewer, and the BDE back as a Salesperson on purpose', put.status === 200, put.body);
+  check('the BDE the Admin added opens it, as a Salesperson', (await call('GET', '/crm/me', null, tk.bde)).body.role === 'bde');
   await new Promise((r) => { setTimeout(r, 300); });
   const meFresh = await call('GET', '/crm/me', null, tk.fresh);
   check('the new Salesperson opens the CRM, with only the rights given', meFresh.status === 200 && meFresh.body.rights.create && !meFresh.body.rights.export && !meFresh.body.rights.delete && !meFresh.body.rights.import, meFresh.body.rights);

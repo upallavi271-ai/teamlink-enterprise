@@ -68,6 +68,60 @@ export function DateField({ value, onChange, min, style, 'aria-label': ariaLabel
 // how many whole days a due date (yyyy-mm-dd) is behind today, at least 1 (only asked of a late follow-up)
 export const daysLate = (due) => Math.max(1, Math.round((Date.parse(`${istToday()}T00:00:00Z`) - Date.parse(`${due}T00:00:00Z`)) / 86400000));
 export const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
+
+// LOG A CALL FROM ANYWHERE (founder 2026-11-14: a lead needs something logged before it is Contacted / Qualified, "extra clicks vaddu"): a small
+// window - what it was, what came of it, a note, and optionally the next follow-up - opened from a row of the Leads table, a card on the board, or by
+// itself when a move was refused for want of a log (then the move is tried again). `record` is a lead.
+const LOG_KINDS = [['call', 'Call'], ['whatsapp', 'WhatsApp'], ['email', 'Email'], ['meeting', 'Meeting'], ['note', 'Note']];
+export function QuickLog({ record, intro, onClose, onLogged }) {
+  const { me, toast } = useCrm();
+  const [kind, setKind] = useState('call');
+  const [outcome, setOutcome] = useState('');
+  const [note, setNote] = useState('');
+  const [next, setNext] = useState('');
+  const [nextTime, setNextTime] = useState('');
+  const [busy, setBusy] = useState(false);
+  const label = LOG_KINDS.find((k) => k[0] === kind)[1];
+  async function save() {
+    if (!outcome && !note.trim()) { toast('Pick what came of it or write a line about it.'); return; }
+    setBusy(true);
+    try {
+      await api.post('/crm/activities', {
+        kind, leadId: record.id, subject: `${label}${outcome ? `: ${outcome}` : ''}`, note: note.trim() || undefined, outcome: outcome || undefined,
+        followUp: next ? { dueDate: next, dueTime: nextTime || undefined, title: `Follow up: ${record.company}` } : undefined,
+      });
+      toast(`Logged on ${record.company}.`);
+      onLogged();
+    } catch (e) { toast(errOf(e, 'This could not be saved.')); setBusy(false); }
+  }
+  const today = istToday();
+  return (
+    <Modal title={`Log: ${record.company}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
+      {intro && <div className="notice" style={{ marginBottom: 10 }}>{intro}</div>}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+        {LOG_KINDS.map(([k, l]) => <button key={k} type="button" className={`btn btn-sm${kind === k ? ' btn-primary' : ''}`} aria-pressed={kind === k} onClick={() => setKind(k)}>{l}</button>)}
+      </div>
+      {kind !== 'note' && (
+        <div className="field">
+          <label>What came of it?</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {me.lists.outcomes.map((o) => <button key={o} type="button" className={`btn btn-sm${outcome === o ? ' btn-primary' : ''}`} aria-pressed={outcome === o} onClick={() => setOutcome(outcome === o ? '' : o)}>{o}</button>)}
+          </div>
+          {outcome === 'No answer' && <div className="small-muted" style={{ marginTop: 4 }}>A call nobody picked up is logged, but the lead does not become Contacted.</div>}
+        </div>
+      )}
+      <div className="field"><label>What happened?</label><textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Spoke to the owner, wants a quote by Friday" /></div>
+      <div className="section-label" style={{ marginTop: 4 }}>Next follow-up (optional)</div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+        {[['Tomorrow', 1], ['In 3 days', 3], ['Next week', 7]].map(([l, n]) => <button key={l} type="button" className={`btn btn-sm${next === addDays(today, n) ? ' btn-primary' : ''}`} onClick={() => setNext(addDays(today, n))}>{l}</button>)}
+      </div>
+      <div className="grid-2">
+        <div className="field"><label>Date</label><DateField min={today} value={next} onChange={setNext} aria-label="Next follow-up date" /></div>
+        <div className="field"><label>Time</label><input type="time" value={nextTime} disabled={!next} onChange={(e) => setNextTime(e.target.value)} /></div>
+      </div>
+    </Modal>
+  );
+}
 // a deal still open with nothing logged for N days (CRM settings) is "going cold": the number of days, or 0
 export function staleDays(deal, lastActivity, limit) {
   if (!deal || ['Won', 'Lost'].includes(deal.stage)) return 0;

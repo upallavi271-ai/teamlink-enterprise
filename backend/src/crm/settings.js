@@ -55,6 +55,27 @@ function cleanMember(m) {
 }
 
 let cached = null; let cachedAt = 0;
+// WHO MAY OPEN THE CRM, ONE MORE TIME (founder 2026-11-14: "bde ki crm kanipinchakudadhu - only Super Admin (Vasu), HR Purna and the developer
+// logins, evariki kanipinchakudadhu"). The list the seeding below filled with every BDE, BDE TL, manager and record owner is emptied ONCE. Who
+// keeps the CRM: Super Admin / Admin logins (by their role - they never need a place on the list), and the HR approver(s) of the agreement
+// workflow (Purna Sir, employee TL309 - read from that setting, so it follows if the approver is changed), who join as Sales manager. After
+// this the list is the Admin's alone to edit in CRM settings; nothing puts anybody back.
+async function hrApproverMembers() {
+  let codes = ['TL309'];
+  try {
+    const row = await prisma.appSetting.findUnique({ where: { key: 'agreementWorkflow' } });
+    const o = row ? JSON.parse(row.value) : {};
+    if (Array.isArray(o.approvers) && o.approvers.length) codes = o.approvers.map((c) => String(c || '').trim()).filter(Boolean);
+  } catch { /* the default approver */ }
+  const wanted = [...new Set(codes.flatMap((c) => [c, c.toUpperCase()]))];
+  const emps = await prisma.employee.findMany({ where: { employeeCode: { in: wanted } }, select: { userId: true } }).catch(() => []);
+  const ids = emps.map((e) => e.userId).filter(Boolean);
+  if (!ids.length) return [];
+  const users = await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, status: true, clientId: true, candidateId: true } }).catch(() => []);
+  return users
+    .filter((u) => !u.clientId && !u.candidateId && !/inactive|disabled|deleted|left|relieved|exit|suspended/i.test(String(u.status || '')))
+    .map((u) => cleanMember({ userId: u.id, name: u.name, role: 'manager' }));
+}
 // ONCE, when the CRM stops reading ATS roles: everybody who could open it before is put on the list as they were (a BDE a
 // Salesperson, a BDE TL a Sales manager, an ATS Manager / Assistant Manager a Viewer, anyone who owns CRM records a Salesperson),
 // so nobody loses the CRM on the day of the change. After that only this list counts.
@@ -116,7 +137,7 @@ function normalize(raw = {}) {
   const bh = raw.bookingHours || {}; const HM = /^\d{2}:\d{2}$/;
   const bookingHours = { from: HM.test(bh.from) ? bh.from : DEFAULTS.bookingHours.from, to: HM.test(bh.to) ? bh.to : DEFAULTS.bookingHours.to, minutes: [15, 30, 45, 60].includes(Number(bh.minutes)) ? Number(bh.minutes) : 30 };
   return {
-    sources, lostReasons, stageProbability: prob, salesTeam, leadStages: cleanStages(raw.leadStages), teamSeeded: raw.teamSeeded === true,
+    sources, lostReasons, stageProbability: prob, salesTeam, leadStages: cleanStages(raw.leadStages), teamSeeded: raw.teamSeeded === true, accessSet: raw.accessSet === true,
     invoiceFrom, invoiceTaxPercent: Number.isFinite(tax) && tax >= 0 && tax <= 50 ? tax : DEFAULTS.invoiceTaxPercent, invoiceDueDays: Number.isFinite(due) && due >= 0 && due <= 180 ? due : DEFAULTS.invoiceDueDays,
     meetingLink: /^https?:\/\//i.test(String(raw.meetingLink || '').trim()) ? String(raw.meetingLink).trim().slice(0, 300) : '', bookingHours,
     defaultRemindBefore: [0, 15, 60, 1440].includes(Number(raw.defaultRemindBefore)) ? Number(raw.defaultRemindBefore) : DEFAULTS.defaultRemindBefore,
@@ -136,6 +157,13 @@ async function load({ fresh = false } = {}) {
   if (raw.teamSeeded !== true) {
     raw.salesTeam = await seedTeam(raw);
     raw.teamSeeded = true;
+    const norm = normalize(raw);
+    await prisma.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: JSON.stringify(norm) }, update: { value: JSON.stringify(norm) } }).catch(() => {});
+  }
+  // the one-time narrowing of who may open the CRM (see hrApproverMembers): done at the first read after this change, never again
+  if (raw.accessSet !== true) {
+    raw.salesTeam = await hrApproverMembers();
+    raw.accessSet = true;
     const norm = normalize(raw);
     await prisma.appSetting.upsert({ where: { key: KEY }, create: { key: KEY, value: JSON.stringify(norm) }, update: { value: JSON.stringify(norm) } }).catch(() => {});
   }

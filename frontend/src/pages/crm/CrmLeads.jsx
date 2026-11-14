@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, dateOf, istToday, Pill, DateField, RecordForm, download } from './crmShared.jsx';
+import { useCrm, errOf, dateOf, istToday, Pill, DateField, QuickLog, RecordForm, download } from './crmShared.jsx';
 import CrmCampaigns from './CrmCampaigns.jsx';
 import CrmLeadBoard from './CrmLeadBoard.jsx';
 
@@ -84,6 +84,7 @@ export default function CrmLeads() {
   const [to, setTo] = useState('');
   const [layout, setLayout] = useState('table'); // table | board (the board shows won and lost leads too)
   const [picked, setPicked] = useState(() => new Set());
+  const [logging, setLogging] = useState(null); // 📞 Log on a row
   const load = () => api.get('/crm/leads', { params: { q: q || undefined, status: (layout === 'board' ? 'all' : status) || undefined, stage: stage || undefined, from: from || undefined, to: to || undefined, source: source || undefined, rating: rating || undefined, owner: owner || undefined } })
     .then((r) => { setRows(r.data.rows); setErr(''); setPicked(new Set()); }).catch((e) => setErr(errOf(e, 'The leads could not be read.')));
   useEffect(() => { const t = setTimeout(load, q ? 300 : 0); return () => clearTimeout(t); }, [q, status, stage, from, to, layout, source, rating, owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -92,7 +93,14 @@ export default function CrmLeads() {
   const toggle = (id) => setPicked((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const allPicked = rows && rows.length > 0 && rows.every((l) => picked.has(l.id));
   async function bulk(change) {
-    try { const r = await api.post('/crm/leads/bulk', { ids: [...picked], ...change }); toast(`${r.data.changed} lead(s) changed${r.data.skipped.length ? `, ${r.data.skipped.length} skipped` : ''}.`); load(); } catch (e) { toast(errOf(e, 'The leads could not be changed.')); }
+    try {
+      const r = await api.post('/crm/leads/bulk', { ids: [...picked], ...change });
+      const sk = r.data.skipped || [];
+      const why = [...new Set(sk.map((s) => s.reason))];
+      // say WHY some were left out: a lead with nothing logged cannot be marked Contacted / Qualified (log a call on it first, from its row)
+      toast(`${r.data.changed} lead(s) changed${sk.length ? `, ${sk.length} skipped: ${why.join('; ')}${why.includes('nothing logged on it yet') ? ' - press 📞 Log on each of those first' : ''}` : ''}.`);
+      load();
+    } catch (e) { toast(errOf(e, 'The leads could not be changed.')); }
   }
 
   return (
@@ -149,12 +157,12 @@ export default function CrmLeads() {
           <thead>
             <tr>
               {me.canEdit && <th style={{ width: 28 }}><input type="checkbox" aria-label="Tick all" checked={!!allPicked} onChange={() => setPicked(allPicked ? new Set() : new Set((rows || []).map((l) => l.id)))} style={{ width: 'auto' }} /></th>}
-              <th>Company</th><th>Contact</th><th>Source</th><th>Rating</th><th>Stage</th><th>Value</th><th>Added</th><th>Last touched</th><th>Next follow-up</th>{me.seesAll && <th>Owner</th>}
+              <th>Company</th><th>Contact</th><th>Source</th><th>Rating</th><th>Stage</th><th>Value</th><th>Added</th><th>Last touched</th><th>Next follow-up</th>{me.seesAll && <th>Owner</th>}{me.canEdit && <th />}
             </tr>
           </thead>
           <tbody>
-            {rows == null && <tr><td colSpan={11} className="small-muted">Loading…</td></tr>}
-            {rows && !rows.length && <tr><td colSpan={11}><div className="empty"><h3>No leads here</h3>{me.canEdit ? 'Add a lead with "+ Lead", or bring many in with "Import Excel".' : 'Nothing matches.'}</div></td></tr>}
+            {rows == null && <tr><td colSpan={12} className="small-muted">Loading…</td></tr>}
+            {rows && !rows.length && <tr><td colSpan={12}><div className="empty"><h3>No leads here</h3>{me.canEdit ? 'Add a lead with "+ Lead", or bring many in with "Import Excel".' : 'Nothing matches.'}</div></td></tr>}
             {(rows || []).map((l) => (
               <tr key={l.id} className="row-link" onClick={() => setOpen({ kind: 'lead', id: l.id })}>
                 {me.canEdit && <td onClick={(e) => e.stopPropagation()}><input type="checkbox" aria-label={`Tick ${l.company}`} checked={picked.has(l.id)} onChange={() => toggle(l.id)} style={{ width: 'auto' }} /></td>}
@@ -168,6 +176,7 @@ export default function CrmLeads() {
                 <td className="small-muted">{l.lastActivityAt ? dateOf(l.lastActivityAt) : 'Never'}</td>
                 <td style={{ color: l.nextTaskDue && l.nextTaskDue < today ? 'var(--red)' : undefined, fontWeight: l.nextTaskDue && l.nextTaskDue <= today ? 600 : undefined }}>{l.nextTaskDue ? (l.nextTaskDue === today ? 'Today' : dateOf(l.nextTaskDue)) : '—'}</td>
                 {me.seesAll && <td>{l.ownerName || '—'}</td>}
+                {me.canEdit && <td onClick={(e) => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>{l.status !== 'Converted' && <button type="button" className="btn btn-sm" onClick={() => setLogging(l)} aria-label={`Log a call on ${l.company}`} title="Log a call, WhatsApp, email, meeting or note, and set the next follow-up">📞 Log</button>}</td>}
               </tr>
             ))}
           </tbody>
@@ -176,6 +185,7 @@ export default function CrmLeads() {
       </>)}
       {adding && <RecordForm kind="lead" preset={{ source: '' }} onClose={() => setAdding(false)} onSaved={(row) => { setAdding(false); load(); setOpen({ kind: 'lead', id: row.id }); }} />}
       {importing && <ImportLeads onClose={() => setImporting(false)} onDone={() => { setImporting(false); load(); }} />}
+      {logging && <QuickLog record={logging} onClose={() => setLogging(null)} onLogged={() => { setLogging(null); load(); }} />}
     </div>
   );
 }

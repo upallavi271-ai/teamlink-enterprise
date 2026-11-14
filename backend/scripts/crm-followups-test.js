@@ -184,6 +184,15 @@ const ymd = (offset) => new Date(Date.now() + 5.5 * 3600000 + offset * 86400000)
   check('switched off, a new lead gets no first follow-up', nl2.status === 200 && !nl2.body.firstFollowUp, nl2.body);
   await call('PUT', '/crm/settings', { autoFirstFollowUp: true }, auth);
 
+  console.log('Needs action = today + overdue');
+  const needAct = await call('GET', '/crm/tasks?when=action&all=1', null, auth);
+  const todayStr = ymd(0);
+  check('Needs action holds only what is due today or late', needAct.status === 200 && needAct.body.tasks.length > 0 && needAct.body.tasks.every((t) => t.dueDate <= todayStr && t.status === 'Open'), needAct.body.tasks && needAct.body.tasks.map((t) => t.dueDate));
+  check('it is in date order, so the late ones come first', needAct.body.tasks.every((t, i, a) => i === 0 || a[i - 1].dueDate <= t.dueDate));
+  check('nothing due later is in it', !needAct.body.tasks.some((t) => t.dueDate > todayStr));
+  const ca = await call('GET', '/crm/tasks/counts', null, auth);
+  check('the count for the tab is overdue + today', ca.body.counts.needsAction === ca.body.counts.overdue + ca.body.counts.today && ca.body.counts.needsAction === needAct.body.tasks.length, [ca.body.counts, needAct.body.tasks.length]);
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

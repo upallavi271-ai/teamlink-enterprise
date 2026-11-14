@@ -373,7 +373,7 @@ async function edit(user, kind, id, body = {}) {
   if (c.error) return fail(400, c.error);
   const data = { ...c.data };
   if (kind === 'lead' && data.status === 'Converted' && row.status !== 'Converted') return fail(400, 'Use "Convert" to turn a lead into an account and a deal.');
-  if (kind === 'lead' && ['Contacted', 'Qualified'].includes(data.status) && data.status !== row.status && !(await hasLoggedWork(row.id))) return fail(409, NEEDS_LOGGED_WORK);
+  if (kind === 'lead' && ['Contacted', 'Qualified'].includes(data.status) && data.status !== row.status && !(await hasLoggedWork(row.id))) return fail(409, NEEDS_LOGGED_WORK, { needsLog: true, leadId: row.id });
   if (kind === 'lead' && data.source && !(await SETTINGS.load()).sources.includes(data.source)) data.source = 'Other';
   if ('ownerId' in body && body.ownerId && body.ownerId !== row.ownerId) {
     if (!mayAssign(r)) return fail(403, 'Only a Sales manager or an Admin can give a record to another salesperson.');
@@ -628,8 +628,8 @@ async function addActivity(user, body = {}) {
   const now = DB.nowIso();
   const lk = linksOf(link.kind, link.row);
   const activity = await insert('CrmActivity', { id: newId('act'), kind, subject, note, at, leadId: lk.leadId || null, accountId: lk.accountId || null, dealId: lk.dealId || null, contactId: lk.contactId || clip(body.contactId, 60), byId: user.id, byName: user.name || null, createdAt: now });
-  // a New lead that was called / mailed / met is Contacted now
-  if (link.kind === 'lead' && link.row.status === 'New' && kind !== 'note') await update('CrmLead', link.row.id, { status: 'Contacted', updatedAt: now });
+  // a New lead that was called / mailed / met is Contacted now - unless the call was only an attempt (outcome 'No answer')
+  if (link.kind === 'lead' && link.row.status === 'New' && kind !== 'note' && body.outcome !== 'No answer') await update('CrmLead', link.row.id, { status: 'Contacted', updatedAt: now });
   else await update(KINDS[link.kind].table, link.row.id, { updatedAt: now });
   // "next follow-up" given with the activity
   let task = null;
@@ -710,6 +710,8 @@ async function tasks(user, { when = 'open', mine, all, from, to, owner, priority
   const today = istToday();
   const week = new Date(Date.parse(`${today}T00:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
   const cond = {
+    // Needs action = everything open that is due today or already late (overdue first: the list is ordered by date)
+    action: ['t."status" = \'Open\' AND t."dueDate" <= ?', [today]],
     overdue: ['t."status" = \'Open\' AND t."dueDate" < ?', [today]],
     today: ['t."status" = \'Open\' AND t."dueDate" = ?', [today]],
     upcoming: all ? ['t."status" = \'Open\' AND t."dueDate" > ?', [today]] : ['t."status" = \'Open\' AND t."dueDate" > ? AND t."dueDate" <= ?', [today, week]],
@@ -749,7 +751,8 @@ async function taskCounts(user, { owner } = {}) {
       SUM(CASE WHEN t."dueDate" = ? THEN 1 ELSE 0 END) AS "today",
       SUM(CASE WHEN t."dueDate" > ? THEN 1 ELSE 0 END) AS "upcoming"
     FROM "CrmTask" t WHERE t."status" = 'Open' AND ${s.sql}`, today, today, today, ...s.params);
-  return okBody({ counts: { overdue: Number(one && one.overdue) || 0, today: Number(one && one.today) || 0, upcoming: Number(one && one.upcoming) || 0 } });
+  const overdue = Number(one && one.overdue) || 0; const dueToday = Number(one && one.today) || 0;
+  return okBody({ counts: { overdue, today: dueToday, needsAction: overdue + dueToday, upcoming: Number(one && one.upcoming) || 0 } });
 }
 
 // ---- reminders: a bell notice (and an email) to the owner the day a follow-up is due, and once a day while it is late --

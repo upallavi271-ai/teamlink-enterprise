@@ -134,6 +134,34 @@ const isoAgo = (days) => new Date(Date.now() - days * 86400000).toISOString();
   const wonNow = await call('POST', `/crm/deals/${dFar.id}/stage`, { stage: 'Won' }, auth);
   check('Won now says what is blank on the customer', wonNow.body.invoice && wonNow.body.invoice.missing.length === 2, wonNow.body.invoice && wonNow.body.invoice.missing);
 
+  console.log('The logged-work rule and data that is already there');
+  const old1 = await mk('Zz Old Qualified One', '9000122201'); const old2 = await mk('Zz Old Qualified Two', '9000122202');
+  for (const l of [old1, old2]) await DB.run('UPDATE "CrmLead" SET "status" = ?, "stage" = ? WHERE "id" = ?', 'Qualified', 'Qualified', l.id); // as the old data is: Qualified with nothing logged
+  check('another field of an old Qualified lead can be edited', (await call('PUT', `/crm/leads/${old1.id}`, { notes: 'phoned last month' }, auth)).status === 200);
+  check('saving it with the status it already has works (a form sends it back)', (await call('PUT', `/crm/leads/${old1.id}`, { status: 'Qualified', notes: 'again' }, auth)).status === 200);
+  check('an old Qualified lead can be converted to a deal', (await call('POST', `/crm/leads/${old1.id}/convert`, {}, auth)).status === 200);
+  check('an old lead can be moved back to the first stage', (await call('POST', `/crm/leads/${old2.id}/stage`, { stage: 'New' }, auth)).status === 200);
+  const csv = 'Company,Phone\nZz Import One,9000133301\nZz Import Two,9000133302\n';
+  const imp = await fetch(`${API}/crm/leads/import?name=zz.csv`, { method: 'POST', headers: { ...auth, 'Content-Type': 'text/csv' }, body: csv }).then((r) => r.json());
+  check('an Excel / CSV import still works', imp.created === 2, imp);
+  const impRows = await DB.all('SELECT "id", "status" FROM "CrmLead" WHERE "company" LIKE ?', 'Zz Import %');
+  check('imported leads are New, and the rule does not touch them', impRows.length === 2 && impRows.every((x) => x.status === 'New'), impRows);
+  const tcount = await DB.one(`SELECT COUNT(*) AS "n" FROM "CrmTask" WHERE "leadId" IN (${impRows.map(() => '?').join(',')})`, ...impRows.map((x) => x.id));
+  check('an import makes no automatic first-call follow-ups (500 rows would be 500 tasks)', Number(tcount.n) === 0, tcount);
+  const lf = await mk('Zz Flag Lead', '9000122203');
+  const refused = await call('PUT', `/crm/leads/${lf.id}`, { status: 'Contacted' }, auth);
+  check('the refusal says it needs a log, so the screen can offer "Log call"', refused.status === 409 && refused.body.needsLog === true && refused.body.leadId === lf.id, refused.body);
+  const refusedMove = await call('POST', `/crm/leads/${lf.id}/stage`, { stage: 'Qualified' }, auth);
+  check('a refused stage move says so the same way', refusedMove.status === 409 && refusedMove.body.needsLog === true, refusedMove.body);
+  await call('POST', '/crm/activities', { kind: 'call', leadId: lf.id, subject: 'Call: No answer', outcome: 'No answer' }, auth);
+  check('a call that was only "No answer" does not make the lead Contacted', (await call('GET', `/crm/leads/${lf.id}`, null, auth)).body.lead.status === 'New');
+  check('but it is logged work: the lead can now be moved on by hand', (await call('POST', `/crm/leads/${lf.id}/stage`, { stage: 'Contacted' }, auth)).status === 200);
+  const lg = await mk('Zz Spoke Lead', '9000122204');
+  await call('POST', '/crm/activities', { kind: 'call', leadId: lg.id, subject: 'Call: Spoke', outcome: 'Spoke', followUp: { dueDate: ymd(2), title: 'Send brochure' } }, auth);
+  const dg = await call('GET', `/crm/leads/${lg.id}`, null, auth);
+  check('a call that reached them makes the lead Contacted', dg.body.lead.status === 'Contacted', dg.body.lead.status);
+  check('and the next follow-up given with the call is made', dg.body.tasks.some((t) => t.title === 'Send brochure' && t.dueDate === ymd(2)), dg.body.tasks.map((t) => t.title));
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

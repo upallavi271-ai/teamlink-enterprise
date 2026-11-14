@@ -1,5 +1,5 @@
-// CRM > FOLLOW-UPS (founder 2026-11-06, upgraded 2026-11-14): Today, Overdue, Upcoming and Completed, each with a count (Overdue in red), and a date range,
-// an owner, a priority and a type filter. A late follow-up is a red row that says how many days late it is, and whether the managers were told.
+// CRM > FOLLOW-UPS (founder 2026-11-06, upgraded 2026-11-14): opens on NEEDS ACTION (due today + overdue, late first); Upcoming and Completed are the other tabs. "+ Follow-up" adds one for a lead, deal or account;
+// filters by date range, owner, priority and type; each count is in its tab (late ones in red). A late follow-up is a red row that says how many days late it is, and whether the managers were told.
 // Done asks what came of it (an outcome), what happened, and the next follow-up with its date, time, type and priority - the outcome and note go on the
 // record's timeline. Follow-ups are added from a lead, a deal or an account (crmShared.jsx TaskList); the reminders are crm/sales.js runDue(), the
 // overdue alert to the managers is crm/sales.js escalateOverdue().
@@ -8,7 +8,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField } from './crmShared.jsx';
 
-const TABS = [['overdue', 'Overdue'], ['today', 'Today'], ['upcoming', 'Upcoming'], ['done', 'Completed']];
+const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed']];
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
 
 // "Done": what came of it, what happened, and optionally the next follow-up (used here and in TaskList)
@@ -54,9 +54,117 @@ export function DoneDialog({ task, onClose, onDone }) {
   );
 }
 
+// "+ Follow-up": pick WHAT it is for (search a lead, a deal or an account by name), then say what to do and when (founder 2026-11-14).
+function NewFollowUp({ onClose, onAdded }) {
+  const { me, toast } = useCrm();
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState(null);
+  const [rec, setRec] = useState(null); // { kind, id, name, sub }
+  const [title, setTitle] = useState('');
+  const [type, setType] = useState('Call');
+  const [priority, setPriority] = useState('Medium');
+  const [due, setDue] = useState(istToday());
+  const [time, setTime] = useState('');
+  const [before, setBefore] = useState(String(me.lists.defaultRemindBefore));
+  const [inApp, setInApp] = useState(true);
+  const [wa, setWa] = useState(false);
+  const [sms, setSms] = useState(false);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    const text = q.trim();
+    if (text.length < 2) { setFound(null); return undefined; }
+    let alive = true;
+    const t = setTimeout(() => {
+      const get = (path, params) => api.get(`/crm/${path}`, { params: { q: text, ...params } }).then((r) => r.data.rows || []).catch(() => []);
+      Promise.all([get('leads', { status: 'all' }), get('deals', {}), get('accounts', {})]).then(([ls, ds, as]) => {
+        if (!alive) return;
+        setFound([
+          ...ls.slice(0, 6).map((l) => ({ kind: 'lead', id: l.id, name: l.company, sub: `Lead · ${[l.contactName, l.stage].filter(Boolean).join(' · ')}` })),
+          ...ds.slice(0, 6).map((d) => ({ kind: 'deal', id: d.id, name: d.title, sub: `Deal · ${[d.accountName, d.stage].filter(Boolean).join(' · ')}` })),
+          ...as.slice(0, 6).map((a) => ({ kind: 'account', id: a.id, name: a.name, sub: `${a.kind === 'Client' ? 'Customer' : 'Account'}${a.city ? ` · ${a.city}` : ''}` })),
+        ]);
+      });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [q]);
+  async function save() {
+    setBusy(true);
+    try {
+      await api.post('/crm/tasks', { title: title.trim(), dueDate: due, dueTime: time || undefined, type, priority, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, [`${rec.kind}Id`]: rec.id });
+      toast('Follow-up added.');
+      onAdded();
+    } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); setBusy(false); }
+  }
+  const ready = rec && title.trim() && due;
+  return (
+    <Modal title="New follow-up" onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={save}>{busy ? 'Saving…' : 'Add follow-up'}</button></>}>
+      <div className="field">
+        <label>For which lead, deal or account?</label>
+        {rec ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', border: '1px solid var(--line)', borderRadius: 8 }}>
+            <span style={{ flex: 1, minWidth: 0 }}><b>{rec.name}</b><div className="small-muted" style={{ fontSize: 11.5 }}>{rec.sub}</div></span>
+            <button type="button" className="btn btn-sm" onClick={() => { setRec(null); setQ(''); }}>Change</button>
+          </div>
+        ) : (
+          <>
+            <input type="text" autoFocus placeholder="Type a company, person or deal name" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search leads, deals and accounts" />
+            {found && !found.length && <div className="small-muted" style={{ marginTop: 6 }}>Nothing found. Add the lead first from Leads.</div>}
+            {found && found.length > 0 && (
+              <div style={{ border: '1px solid var(--line)', borderRadius: 8, marginTop: 6, maxHeight: 220, overflowY: 'auto' }}>
+                {found.map((x) => (
+                  <button key={`${x.kind}${x.id}`} type="button" onClick={() => setRec(x)} style={{ display: 'block', width: '100%', textAlign: 'left', padding: '7px 10px', border: 0, borderBottom: '1px solid var(--line-soft)', background: 'transparent', cursor: 'pointer' }}>
+                    <b>{x.name}</b><div className="small-muted" style={{ fontSize: 11.5 }}>{x.sub}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+      <div className="field"><label>What to do</label><input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Call about the revised quote" /></div>
+      <div className="grid-2">
+        <div className="field"><label>Type</label><select value={type} onChange={(e) => setType(e.target.value)}>{me.lists.taskTypes.map((x) => <option key={x}>{x}</option>)}</select></div>
+        <div className="field"><label>Priority</label><select value={priority} onChange={(e) => setPriority(e.target.value)}>{me.lists.priorities.map((x) => <option key={x}>{x}</option>)}</select></div>
+      </div>
+      <div className="grid-2">
+        <div className="field"><label>Date</label><DateField value={due} onChange={setDue} aria-label="Due date" /></div>
+        <div className="field"><label>Time</label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+      </div>
+      <div className="small-muted" style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', fontSize: 12 }}>
+        <span>Remind:</span>
+        <select value={before} onChange={(e) => setBefore(e.target.value)} style={{ width: 150 }} aria-label="Remind before">{Object.entries(REMIND_WORDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+        <label><input type="checkbox" checked={inApp} onChange={(e) => setInApp(e.target.checked)} style={{ width: 'auto' }} /> In app</label>
+        <label><input type="checkbox" checked={wa} onChange={(e) => setWa(e.target.checked)} style={{ width: 'auto' }} /> WhatsApp</label>
+        <label><input type="checkbox" checked={sms} onChange={(e) => setSms(e.target.checked)} style={{ width: 'auto' }} /> SMS</label>
+      </div>
+    </Modal>
+  );
+}
+
+// Reschedule: any day and time (Snooze has the quick ones)
+function RescheduleDialog({ task, onClose, onDone }) {
+  const { toast } = useCrm();
+  const [date, setDate] = useState(task.dueDate < istToday() ? istToday() : task.dueDate);
+  const [time, setTime] = useState(task.dueTime || '');
+  const [busy, setBusy] = useState(false);
+  async function save() {
+    setBusy(true);
+    try { await api.post(`/crm/tasks/${task.id}/snooze`, { dueDate: date, dueTime: time }); toast(`Moved to ${dateOf(date)}${time ? ` at ${time}` : ''}.`); onDone(); } catch (e) { toast(errOf(e, 'This could not be moved.')); setBusy(false); }
+  }
+  return (
+    <Modal title={`Move: ${task.title}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || !date} onClick={save}>{busy ? 'Saving…' : 'Move it'}</button></>}>
+      <div className="grid-2">
+        <div className="field"><label>New date</label><DateField min={istToday()} value={date} onChange={setDate} aria-label="New date" /></div>
+        <div className="field"><label>New time (optional)</label><input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></div>
+      </div>
+      <div className="small-muted">It reminds again at the new time, and the managers are told again if it goes late again.</div>
+    </Modal>
+  );
+}
+
 export default function CrmFollowups() {
-  const { me, toast, version } = useCrm();
-  const [tab, setTab] = useState('today');
+  const { me, toast, version, changed } = useCrm();
+  const [tab, setTab] = useState('action'); // Needs action = due today + overdue
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [owner, setOwner] = useState('');
@@ -66,41 +174,41 @@ export default function CrmFollowups() {
   const [counts, setCounts] = useState(null);
   const [err, setErr] = useState('');
   const [doing, setDoing] = useState(null);
+  const [moving, setMoving] = useState(null);
+  const [adding, setAdding] = useState(false);
   const loadCounts = () => api.get('/crm/tasks/counts', { params: { owner: owner || undefined } }).then((r) => setCounts(r.data.counts)).catch(() => setCounts(null));
-  // `current()` says whether this answer is still the one wanted: a slow answer for a tab already left (the page opens on Today, then jumps to Overdue)
-  // must never replace the newer list
+  // `current()` says whether this answer is still the one wanted: a slow answer for a tab already left must never replace the newer list
   const fetchRows = (current = () => true) => api.get('/crm/tasks', { params: { when: tab, all: 1, from: from || undefined, to: to || undefined, owner: owner || undefined, priority: priority || undefined, type: type || undefined } })
     .then((r) => { if (current()) { setRows(r.data.tasks); setErr(''); } }).catch((e) => { if (current()) setErr(errOf(e, 'The follow-ups could not be read.')); });
   const load = () => fetchRows();
-  // open on Overdue when there is something late, so it is never missed: decided once, from the first counts
-  const [picked, setPicked] = useState(false);
   useEffect(() => { loadCounts(); }, [owner, version]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!picked && counts) { setPicked(true); if (counts.overdue > 0) setTab('overdue'); } }, [counts, picked]);
   useEffect(() => { let alive = true; setRows(null); fetchRows(() => alive); return () => { alive = false; }; }, [tab, from, to, owner, priority, type, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  const refresh = () => { load(); loadCounts(); };
   async function cancel(t) {
-    try { await api.post(`/crm/tasks/${t.id}/cancel`); toast('Cancelled.'); load(); loadCounts(); } catch (e) { toast(errOf(e, 'This could not be cancelled.')); }
+    try { await api.post(`/crm/tasks/${t.id}/cancel`); toast('Cancelled.'); refresh(); } catch (e) { toast(errOf(e, 'This could not be cancelled.')); }
   }
   // Snooze: move to another day, keeping its time; it reminds again, and a managers' alert can fire again if it goes late again
   async function snooze(t, days) {
     const d = new Date(Date.parse(`${istToday()}T00:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
-    try { await api.post(`/crm/tasks/${t.id}/snooze`, { dueDate: d }); toast(`Moved to ${dateOf(d)}.`); load(); loadCounts(); } catch (e) { toast(errOf(e, 'This could not be moved.')); }
+    try { await api.post(`/crm/tasks/${t.id}/snooze`, { dueDate: d }); toast(`Moved to ${dateOf(d)}.`); refresh(); } catch (e) { toast(errOf(e, 'This could not be moved.')); }
   }
   const today = istToday();
-  const countOf = (k) => (counts && counts[k] != null ? counts[k] : null);
+  const canTick = me.canEdit && tab !== 'done';
+  const cols = 7 + (canTick ? 1 : 0) + (me.seesAll ? 1 : 0);
   return (
     <div className="page">
-      <div className="page-head"><div><h1>Follow-ups</h1><div className="page-sub">Calls, meetings, visits and messages due, with their reminders. Add one from a lead, a deal or an account.</div></div></div>
-      {counts && counts.overdue > 0 && tab !== 'overdue' && (
-        <div className="notice" role="button" tabIndex={0} onClick={() => setTab('overdue')} onKeyDown={(e) => { if (e.key === 'Enter') setTab('overdue'); }} style={{ cursor: 'pointer', borderColor: 'var(--red)', color: 'var(--red)' }}>
-          <b>{counts.overdue} follow-up{counts.overdue === 1 ? ' is' : 's are'} overdue.</b> Click to see {counts.overdue === 1 ? 'it' : 'them'}.
-        </div>
-      )}
+      <div className="page-head">
+        <div><h1>Follow-ups</h1><div className="page-sub">What needs doing: calls, meetings, visits and messages that are due today or late come first, with their reminders.</div></div>
+        {me.canEdit && <button type="button" className="btn btn-primary" onClick={() => setAdding(true)}>+ Follow-up</button>}
+      </div>
       <div className="tabs" role="tablist">
         {TABS.map(([k, l]) => {
-          const n = k === 'done' ? null : countOf(k);
+          const n = k === 'action' ? (counts ? counts.needsAction : null) : (k === 'upcoming' && counts ? counts.upcoming : null);
+          const late = k === 'action' && counts ? counts.overdue : 0;
           return (
             <div key={k} role="tab" tabIndex={0} aria-selected={tab === k} className={`tab${tab === k ? ' active' : ''}`} onClick={() => setTab(k)} onKeyDown={(e) => { if (e.key === 'Enter') setTab(k); }}>
-              {l}{n != null && <span style={{ marginLeft: 6, padding: '0 7px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, background: k === 'overdue' && n > 0 ? 'var(--red)' : 'var(--line-soft, #e8ebf0)', color: k === 'overdue' && n > 0 ? '#fff' : 'inherit' }}>{n}</span>}
+              {l}{n != null && <span style={{ marginLeft: 6, padding: '0 7px', borderRadius: 10, fontSize: 11.5, fontWeight: 700, background: late > 0 ? 'var(--red)' : 'var(--line-soft, #e8ebf0)', color: late > 0 ? '#fff' : 'inherit' }}>{n}</span>}
+              {late > 0 && <span style={{ marginLeft: 6, fontSize: 11.5, color: 'var(--red)', fontWeight: 600 }}>{late} late</span>}
             </div>
           );
         })}
@@ -115,14 +223,15 @@ export default function CrmFollowups() {
       {err && <div className="notice" role="alert">{err}</div>}
       <div className="tbl-wrap">
         <table>
-          <thead><tr><th>Due</th><th>Priority</th><th>Type</th><th>Follow-up</th><th>For</th>{me.seesAll && <th>Owner</th>}<th>Reminder</th><th>{tab === 'done' ? 'What came of it' : ''}</th></tr></thead>
+          <thead><tr>{canTick && <th style={{ width: 28 }} aria-label="Done" />}<th>Due</th><th>Priority</th><th>Type</th><th>Follow-up</th><th>For</th>{me.seesAll && <th>Owner</th>}<th>Reminder</th><th>{tab === 'done' ? 'What came of it' : ''}</th></tr></thead>
           <tbody>
-            {rows == null && !err && <tr><td colSpan={8} className="small-muted">Loading…</td></tr>}
-            {rows && !rows.length && <tr><td colSpan={8}><div className="empty"><h3>Nothing here</h3>{tab === 'overdue' ? 'Nothing is overdue. Well done.' : 'No follow-ups in this view.'}</div></td></tr>}
+            {rows == null && !err && <tr><td colSpan={cols + 1} className="small-muted">Loading…</td></tr>}
+            {rows && !rows.length && <tr><td colSpan={cols + 1}><div className="empty"><h3>{tab === 'action' ? 'Nothing needs action' : 'Nothing here'}</h3>{tab === 'action' ? 'No follow-up is due today or late. Well done.' : 'No follow-ups in this view.'}</div></td></tr>}
             {(rows || []).map((t) => {
               const late = t.status === 'Open' && t.dueDate < today;
               return (
                 <tr key={t.id} style={late ? { background: 'rgba(220, 38, 38, 0.06)' } : undefined}>
+                  {canTick && <td><input type="checkbox" checked={false} onChange={() => setDoing(t)} aria-label={`Mark "${t.title}" done`} title="Done: say what came of it and set the next follow-up" style={{ width: 'auto' }} /></td>}
                   <td style={{ color: late ? 'var(--red)' : undefined, fontWeight: t.status === 'Open' && t.dueDate <= today ? 600 : undefined, whiteSpace: 'nowrap' }}>
                     {t.dueDate === today ? 'Today' : dateOf(t.dueDate)}{t.dueTime ? ` · ${t.dueTime}` : ''}
                     {late && <div style={{ fontSize: 11.5 }}>{daysLate(t.dueDate)} day{daysLate(t.dueDate) === 1 ? '' : 's'} late{t.escalatedAt ? ' · manager told' : ''}</div>}
@@ -140,9 +249,8 @@ export default function CrmFollowups() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {tab === 'done' ? <span className="small-muted">{[t.outcome, t.doneNote].filter(Boolean).join(' · ') || '—'}</span> : (me.canEdit && (
                       <span style={{ display: 'flex', gap: 6 }}>
-                        <button type="button" className="btn btn-sm btn-primary" onClick={() => setDoing(t)}>Done</button>
-                        <select value="" onChange={(e) => { if (e.target.value) snooze(t, Number(e.target.value)); }} aria-label={`Snooze "${t.title}"`} style={{ width: 'auto', padding: '2px 6px', fontSize: 12.5 }}>
-                          <option value="">Snooze…</option><option value="1">Tomorrow</option><option value="3">In 3 days</option><option value="7">Next week</option>
+                        <select value="" onChange={(e) => { const v = e.target.value; if (v === 'pick') setMoving(t); else if (v) snooze(t, Number(v)); }} aria-label={`Snooze or move "${t.title}"`} style={{ width: 'auto', padding: '2px 6px', fontSize: 12.5 }}>
+                          <option value="">Snooze…</option><option value="1">Tomorrow</option><option value="3">In 3 days</option><option value="7">Next week</option><option value="pick">Pick a date…</option>
                         </select>
                         <button type="button" className="btn btn-sm" onClick={() => cancel(t)}>Cancel</button>
                       </span>
@@ -154,7 +262,9 @@ export default function CrmFollowups() {
           </tbody>
         </table>
       </div>
-      {doing && <DoneDialog task={doing} onClose={() => setDoing(null)} onDone={() => { setDoing(null); load(); loadCounts(); }} />}
+      {doing && <DoneDialog task={doing} onClose={() => setDoing(null)} onDone={() => { setDoing(null); refresh(); if (changed) changed(); }} />}
+      {moving && <RescheduleDialog task={moving} onClose={() => setMoving(null)} onDone={() => { setMoving(null); refresh(); }} />}
+      {adding && <NewFollowUp onClose={() => setAdding(false)} onAdded={() => { setAdding(false); refresh(); }} />}
     </div>
   );
 }
