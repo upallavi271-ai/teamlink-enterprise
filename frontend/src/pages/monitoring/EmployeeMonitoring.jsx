@@ -121,7 +121,9 @@ function siteOf(app, title) {
   if (!title || !BROWSER_APPS.includes(String(app || '').toLowerCase())) return { site: null, page: title || null };
   // The ViciDial dialer by its own name, whatever the tab title around it (founder 2026-11-13). Its tab is titled "Agent web client"
   // or "Campaign Login", not "ViciDial", so match those too.
-  if (/vici\s*dial|agent web client|campaign login|agent login|vicibox/i.test(title)) return { site: 'ViciDial', page: null };
+  if (/vici\s*dial|agent web client|campaign login|agent login|vicibox/i.test(title)) return { site: 'ViciDial', page: 'on the dialer' };
+  // Google Meet: "Meet - abc-defg-hij" is the service Google Meet in a call, not a site called after the meeting code (founder 2026-11-14)
+  if (/^(\(\d+\)\s*)?meet(\s*[-–—|]\s|$)/i.test(title) || /google meet/i.test(title)) { const code = (/\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b/i.exec(title) || [])[0]; return { site: 'Google Meet', page: code ? `in a video call (${code})` : 'on Google Meet' }; }
   // an incognito / InPrivate / private window is still tracked (founder 2026-11-13): drop the marker so the real site shows, and flag it
   const incog = /(incognito|inprivate|private[ -]?browsing)/i.test(title);
   const cleaned = String(title).replace(/[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig, ' ');
@@ -541,7 +543,7 @@ function TasksVsWork({ onOpen }) {
     return true;
   };
   const rows = ((data && data.rows) || []).filter((r) => (!q.trim() || `${r.name} ${r.code || ''} ${r.department || ''}`.toLowerCase().includes(q.trim().toLowerCase())) && inBand(r));
-  const items = (list) => (list || []).map((x) => `${x.item} (${dur(x.seconds)})`).join(' · ');
+  const items = (list) => (list || []).map((x) => `${x.what || x.item} (${dur(x.seconds)})`).join(' · '); // in words where the service is known
   return (
     <>
       <div className="small-muted" style={{ marginBottom: 8 }}>
@@ -1252,7 +1254,10 @@ function AppWork({ app, who, range, total, onClose }) {
   const named = items.filter((x) => x.item !== NOT_SHOWN);
   const first = sittings.length ? sittings[0].start : null;
   const last = sittings.length ? sittings[sittings.length - 1].end : null;
-  const top = named.slice(0, 3).map((x) => `${x.item} (${dur(x.seconds)})`);
+  // in words ("in a Google Meet video call ..."), not the raw tab title; the first letter small so it reads inside the sentence
+  // (only the sentences TeamLink writes get a small first letter; a page's own title keeps its capitals)
+  const SENTENCE = /^(In|On|Watched|Worked|Chat|Used|Searched|Browsed|Looked|Logging|Using|Took|Read|Edited|Opened)\b/;
+  const top = named.slice(0, 3).map((x) => `${x.what ? (SENTENCE.test(x.what) ? x.what.charAt(0).toLowerCase() + x.what.slice(1) : x.what) : x.item} (${dur(x.seconds)})`);
   const max = items.length ? items[0].seconds : 1;
   const oneDay = !range.includes(' to ');
   const when = (x) => (oneDay ? tm(x) : dt(x));
@@ -1269,7 +1274,7 @@ function AppWork({ app, who, range, total, onClose }) {
         </div>
         <div className="mon-summary">
           <b>{dur(app.seconds)}</b> in {app.name}{total ? ` (${Math.round((app.seconds / total) * 100)}% of the active time)` : ''}, in <b>{sittings.length}</b> {sittings.length === 1 ? 'sitting' : 'sittings'}{first && <> from {when(first)} to {when(last)}</>}.
-          {app.titlesKnown && named.length > 0 && <> <b>{named.length}</b> different {named.length === 1 ? 'page, file or chat' : 'pages, files or chats'}{top.length ? <>; most time on {top.join(', ')}{named.length > 3 ? <>, and {named.length - 3} more</> : ''}.</> : '.'}</>}
+          {app.titlesKnown && named.length > 0 && <> <b>{named.length}</b> different {named.length === 1 ? 'page, file or chat' : 'pages, files or chats'}{top.length ? <>; most time: {top.join(', ')}{named.length > 3 ? <>, and {named.length - 3} more</> : ''}.</> : '.'}</>}
           {!app.titlesKnown && <div className="notice" style={{ marginTop: 8 }}>This app&apos;s window always shows only its own name, so only the time is known, not what was open in it.{/claude/i.test(app.name) ? ' The same work on claude.ai in the browser shows the name of each chat.' : ''}</div>}
         </div>
         <div className="mon-tabs">
@@ -1345,7 +1350,7 @@ function AppWork({ app, who, range, total, onClose }) {
               <tbody>
                 {items.map((x) => (
                   <tr key={x.item}>
-                    <td><div className="mon-item">{x.item}</div><div className="mon-item-bar"><i style={{ width: `${Math.max(2, (x.seconds / max) * 100)}%` }} /></div></td>
+                    <td><div className="mon-item">{x.what || x.item}</div>{x.what && x.what !== x.item && x.item !== NOT_SHOWN && <div className="small-muted" style={{ fontSize: 11.5 }} title="The title of the window, as it was">{x.item}</div>}<div className="mon-item-bar"><i style={{ width: `${Math.max(2, (x.seconds / max) * 100)}%` }} /></div></td>
                     <td className="num">{dur(x.seconds)}</td>
                     <td className="small-muted" style={{ whiteSpace: 'nowrap' }}>{when(x.first)} – {when(x.last)}</td>
                     <td className="num">{x.opened}</td>

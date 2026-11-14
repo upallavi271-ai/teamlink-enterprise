@@ -709,13 +709,22 @@ function doneOf(appName, appLabel, kind, item) {
   if (OFFICE[a]) return { area: OFFICE[a][0], action: `${OFFICE[a][1]} ${item}` };
   if (a === 'explorer') return { area: 'Folders', action: `Opened ${item}` };
   if (TERMINALS.includes(a)) return { area: 'Command window', action: item };
+  // a video-call app on the PC (Teams, Zoom, Webex ...): the time in it is the time in a call
+  if (MEETING_APP.test(a.replace(/\.exe$/i, '').trim())) return { area: label, action: `In a ${label} meeting or call` };
+  // a well-known service is named as such and said in words ("In a Google Meet video call (meeting code abc-defg-hij)"); before the "same as its
+  // own name" rule below, so a tab that says only "ChatGPT" or "Meet" still reads as the service
+  if (BROWSERS.includes(a) || kind === 'site') {
+    const sv = serviceOf(a, item);
+    if (sv) return { area: sv.name, action: sv.action };
+  }
   if (item.toLowerCase() === label.toLowerCase() || item.toLowerCase() === a) return { area: label, action: NONE };
   if (BROWSERS.includes(a) || kind === 'site') {
-    if (VICIDIAL.test(item)) return { area: 'ViciDial', action: 'On the dialer' };
     if (/^[\w.-]+\/[\w.-]+$/.test(item)) return { area: 'GitHub', action: `Repository ${item}` };
     const m = /^(.*\S)\s+[-\u2013\u2014|\u00b7:]\s+([^-\u2013\u2014|\u00b7]{2,32})$/.exec(item);
     if (m && (SITE_WORD.test(m[2].trim()) || kind !== 'site')) return { area: m[2].trim(), action: m[1].trim() };
-    return { area: kind === 'site' ? label : 'Websites', action: item };
+    // an ordinary site: the page, without the site's own name repeated after it ("Pricing plans", under the area "Acme CRM")
+    const bare = item.replace(new RegExp(`\\s*[-\\u2013\\u2014|\\u00b7:]\\s*${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i'), '').trim();
+    return { area: kind === 'site' ? label : 'Websites', action: bare || item };
   }
   return { area: label, action: item };
 }
@@ -793,9 +802,56 @@ const BROWSER_SUFFIX = /\s[-\u2013\u2014|]\s(Google Chrome|Microsoft.*Edge|Mozil
 // hides the browser's own history - so we strip the Incognito / InPrivate / Private Browsing marker to show the REAL site, and flag it.
 const INCOGNITO = /(incognito|inprivate|private[ -]?browsing)/i;
 const INCOG_STRIP = /[([{|-]\s*(incognito|inprivate|private[ -]?browsing)\s*[)\]}]?/ig;
+// WELL-KNOWN SERVICES, NAMED AND DESCRIBED (founder 2026-11-14, on a Google Meet shown as a "website" called by its meeting code: "just ilaa
+// vasthey saripodhu, vallu em chesthunnaro in detail ga ravali, anniki ilaagey"). A browser tab's title says WHICH service it is and often what is
+// open in it; the name of the site is NOT simply the last part of the title ("Meet - abc-defg-hij" is Google Meet, not "abc-defg-hij"). Returns
+// { name, action } - the service as a person would call it, and one plain sentence of what was being done - or null for a page this does not know
+// (the generic reading of the title stays for those). Nothing typed is known: only what the window shows; chats, mail and calls never carry content.
+const MEET_CODE = /\b[a-z]{3}-[a-z]{4}-[a-z]{3}\b/i;
+const quoted = (s) => `“${String(s).trim()}”`;
+function serviceOf(app, title) {
+  const a = String(app || '').replace(/\.exe$/i, '').trim().toLowerCase();
+  if (!title || !BROWSERS.includes(a)) return null;
+  // the page title without the browser's own words, a private-window mark and the unread count some sites put in front: "(38) Inbox - ..."
+  const t = String(title).replace(INCOG_STRIP, ' ').replace(BROWSER_SUFFIX, '').replace(/^\(\d+\)\s*/, '').trim();
+  if (!t) return null;
+  const tail = (re) => { const m = re.exec(t); return m ? String(m[1] || '').trim() : null; };
+  // ViciDial, the calling dialer: its tabs are "Agent web client" / "...: Campaign Login"
+  if (VICIDIAL.test(t)) return { name: 'ViciDial', action: /campaign login|agent login/i.test(t) ? 'Logging in to the ViciDial dialer (campaign login)' : 'On the ViciDial dialer: taking and making calls' };
+  // Google Meet: "Meet - abc-defg-hij" while in a call, "Meet" on the start page
+  if (/^meet\s*[-–—|]\s/i.test(t) || /^meet$/i.test(t) || /google meet|meet\.google/i.test(t)) {
+    const rest = t.replace(/^meet\s*[-–—|]\s*/i, '').replace(/\s*[-–—|]\s*google meet$/i, '').trim();
+    const code = (MEET_CODE.exec(t) || [])[0];
+    if (code) return { name: 'Google Meet', action: `In a Google Meet video call (meeting code ${code})` };
+    if (rest && !/^(google )?meet$/i.test(rest)) return { name: 'Google Meet', action: `In the Google Meet ${quoted(rest)}` };
+    return { name: 'Google Meet', action: 'On Google Meet (start page / joining a call)' };
+  }
+  if (/zoom (meeting|workplace)|zoom\.us|^zoom$/i.test(t)) return { name: 'Zoom', action: 'In a Zoom meeting' };
+  if (/microsoft teams/i.test(t)) return { name: 'Microsoft Teams', action: /meeting|call|meet now/i.test(t) ? 'In a Microsoft Teams meeting or call' : 'Using Microsoft Teams (chat names and messages are never recorded)' };
+  let x;
+  if ((x = tail(/^(.*)\s[-–—|]\s*YouTube$/i)) !== null) return { name: 'YouTube', action: x ? `Watched ${quoted(x)}` : 'Browsed YouTube' };
+  if (/^youtube$/i.test(t)) return { name: 'YouTube', action: 'Browsed YouTube' };
+  const gdoc = /^(.*)\s[-–—]\s*Google (Sheets|Docs|Slides|Forms)$/i.exec(t);
+  if (gdoc) {
+    const what = { sheets: 'the spreadsheet', docs: 'the document', slides: 'the presentation', forms: 'the form' }[gdoc[2].toLowerCase()];
+    return { name: `Google ${gdoc[2]}`, action: `Worked on ${what} ${quoted(gdoc[1])}` };
+  }
+  if ((x = tail(/^(.*)\s[-–—]\s*Google Drive$/i)) !== null) return { name: 'Google Drive', action: x ? `Browsed Google Drive: ${x}` : 'Browsed Google Drive' };
+  if ((x = tail(/^(.*)\s[-–—]\s*Google Search$/i)) !== null) return { name: 'Google Search', action: x ? `Searched Google for ${quoted(x)}` : 'Used Google Search' };
+  const ai = /^(.*?)\s*[-–—|]\s*(ChatGPT|Claude|Gemini|Copilot)$/i.exec(t);
+  if (ai) return { name: ai[2], action: ai[1] ? `Chat with ${ai[2]}: ${quoted(ai[1])}` : `Used ${ai[2]}` };
+  if (/^(chatgpt|claude|gemini|copilot)$/i.test(t)) { const n = t.charAt(0).toUpperCase() + t.slice(1).toLowerCase(); return { name: n === 'Chatgpt' ? 'ChatGPT' : n, action: `Used ${n === 'Chatgpt' ? 'ChatGPT' : n}` }; }
+  if ((x = tail(/^(.*)\s*\|\s*LinkedIn$/i)) !== null) return { name: 'LinkedIn', action: !x || /^feed$/i.test(x) ? 'Browsed the LinkedIn feed' : `Looked at ${quoted(x)} on LinkedIn` };
+  if (/naukri/i.test(t)) return { name: 'Naukri', action: `Used Naukri: ${t.replace(/\s*[-–—|]\s*Naukri.*$/i, '').trim() || 'job portal'}` };
+  if (/\bindeed\b/i.test(t)) return { name: 'Indeed', action: `Used Indeed: ${t.replace(/\s*[-–—|]\s*Indeed.*$/i, '').trim() || 'job portal'}` };
+  if (/facebook/i.test(t) && /(\||[-–—])\s*facebook$|^facebook$/i.test(t)) return { name: 'Facebook', action: 'Browsed Facebook' };
+  if (/instagram/i.test(t) && /(\||[-–—])\s*instagram|^instagram$/i.test(t)) return { name: 'Instagram', action: 'Browsed Instagram' };
+  return null;
+}
 function deriveSite(app, shown) {
   if (!shown || !BROWSERS.includes(String(app).toLowerCase())) return null;
-  if (VICIDIAL.test(shown)) return INCOGNITO.test(shown) ? 'ViciDial (incognito)' : 'ViciDial';
+  const sv = serviceOf(app, shown);
+  if (sv) return INCOGNITO.test(shown) ? `${sv.name} (incognito)` : sv.name;
   const incog = INCOGNITO.test(shown);
   const t = String(shown).replace(INCOG_STRIP, ' ').replace(BROWSER_SUFFIX, '').trim();
   if (!t) return incog ? 'Incognito page' : null;
@@ -870,6 +926,8 @@ async function employeeDetail(employeeId, from, to) {
     if (c.kind !== 'site') { const w = deriveSite(l.appName, shown); if (w) c = { key: `web:${w.toLowerCase()}`, label: w, kind: 'site', category: c.category }; }
     // ViciDial's tabs ("Agent web client", "Campaign Login") all roll up under one ViciDial, whatever a rule named them (founder 2026-11-13)
     if (isVici(l.appName, l.windowTitle) || isVici(l.appName, shown)) c = { key: 'web:vicidial', label: 'ViciDial', kind: 'site', category: c.category };
+    // a website rule an admin typed in lower case ("youtube", "google sheets") is shown under the service's own name; the rule (and its category) stays
+    else if (c.kind === 'site') { const sv = serviceOf(l.appName, shown); if (sv && sv.name.toLowerCase() === String(c.label).toLowerCase()) c = { ...c, label: sv.name }; }
     const u = usage.get(c.key) || { key: c.key, name: c.label, kind: c.kind, category: c.category, seconds: 0, titles: new Map(), items: new Map(), sittings: [] };
     u.seconds += l.durationSeconds;
     if (shown) u.titles.set(shown, (u.titles.get(shown) || 0) + l.durationSeconds);
@@ -891,7 +949,7 @@ async function employeeDetail(employeeId, from, to) {
     key: u.key, name: u.name, kind: u.kind, category: u.category, seconds: u.seconds, hours: hrs(u.seconds),
     topTitles: [...u.titles.entries()].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([title, sec]) => ({ title, minutes: Math.round(sec / 60) })),
     done: workDone(u.appName, u.name, u.kind, [...u.items.values()]),
-    items: [...u.items.values()].sort((x, y) => y.seconds - x.seconds).map((x) => ({ item: x.item, seconds: x.seconds, first: new Date(x.first), last: new Date(x.last), opened: x.pieces })),
+    items: [...u.items.values()].sort((x, y) => y.seconds - x.seconds).map((x) => ({ item: x.item, what: x.item === NO_TITLE ? null : doneOf(u.appName, u.name, u.kind, x.item).action, seconds: x.seconds, first: new Date(x.first), last: new Date(x.last), opened: x.pieces })),
     // the app's own name only (e.g. the Claude desktop app always says "Claude"): only the time is known
     titlesKnown: [...u.items.keys()].some((k) => k !== NO_TITLE && k.toLowerCase() !== String(u.name).toLowerCase()),
     sittings: u.sittings.slice(-300).map((x) => ({ start: new Date(x.start), end: new Date(x.end), seconds: x.seconds, items: [...x.items.entries()].sort((p, q) => q[1] - p[1]).map(([item, sec]) => ({ item, seconds: sec })) })),
@@ -1140,6 +1198,7 @@ function startSweep() {
 }
 
 module.exports = {
+  serviceOf, doneOf, deriveSite, itemOf, workDone,
   liveUpdate, liveRows, liveStatus, absentNow, workDayOf, gapFill, istTime, hmOf, addDays, validDay, shiftDay, atShift, overrideIndex, effective, saveOverride, listOverrides, removeOverride, latestAgent, needsUpdate, isSuper, isIt, isItIn, canManageDevices, totalsOf, newSetupCode, readSetupCode, endSetupCode, agentSetupFile, agentInstaller, CATEGORIES, DEFAULT_POLICY, AUDIT_ENTITIES, isMonitorAdmin, accessOf, heartbeat, usage, auditRows, dataSecurity, settings, saveSettings, hasConsent, recordConsent, hashToken, deviceOf, registerDevice, misuseList,
   ingest, categoryIndex, overview, employeeDetail, reportRows, uncategorised, pcActivity, purge, startSweep, todayIst, istDay, cleanTitle,
 };
