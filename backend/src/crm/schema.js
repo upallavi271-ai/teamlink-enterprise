@@ -125,6 +125,15 @@ const DDL = [
   'CREATE UNIQUE INDEX IF NOT EXISTS "CrmInvoice_deal" ON "CrmInvoice"("dealId")',
   'CREATE INDEX IF NOT EXISTS "CrmInvoice_account" ON "CrmInvoice"("accountId")',
   'CREATE INDEX IF NOT EXISTS "CrmInvoice_status" ON "CrmInvoice"("ownerId", "status")',
+  // The PAYMENT LOG of an invoice (founder 2026-11-14, build order 1): every amount received is a line - date, amount, mode (and a reference like the UTR or cheque no.).
+  // The invoice's paid amount and its Partly paid / Paid status come FROM these lines. No TDS / GST columns until the CA confirms the rules.
+  `CREATE TABLE IF NOT EXISTS "CrmPayment" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "invoiceId" TEXT NOT NULL, "dealId" TEXT, "accountId" TEXT,
+    "amount" REAL NOT NULL, "paidOn" TEXT NOT NULL, "mode" TEXT, "reference" TEXT, "note" TEXT,
+    ${owner}, "createdByName" TEXT
+  )`,
+  'CREATE INDEX IF NOT EXISTS "CrmPayment_invoice" ON "CrmPayment"("invoiceId", "paidOn")',
   // (2026-11-02, Campaigns / Customer Support from the reference) support tickets with their thread; campaigns with their
   // recipients; people who asked for no more campaign messages
   `CREATE TABLE IF NOT EXISTS "CrmTicket" (

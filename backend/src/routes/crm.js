@@ -147,6 +147,8 @@ router.get('/invoices', wrap((req) => CRM.invoices(req.user, req.query || {})));
 router.post('/invoices/backfill', wrap((req) => CRM.backfillInvoices(req.user))); // before /invoices/:id
 router.get('/invoices/:id', wrap((req) => CRM.invoiceDetail(req.user, req.params.id)));
 router.post('/invoices/:id/status', wrap((req) => CRM.setInvoiceStatus(req.user, req.params.id, req.body || {})));
+router.post('/invoices/:id/payments', wrap((req) => CRM.addPayment(req.user, req.params.id, req.body || {}))); // the payment log
+router.delete('/invoices/:id/payments/:pid', wrap((req) => CRM.deletePayment(req.user, req.params.id, req.params.pid)));
 router.get('/invoices/:id/pdf', async (req, res, next) => {
   try {
     const out = await X.invoicePdf(req.user, req.params.id);

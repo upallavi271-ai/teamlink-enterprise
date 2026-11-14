@@ -481,6 +481,85 @@ export function InvoiceStatusSelect({ inv, onSaved }) {
   );
 }
 export const openInvoicePdf = (inv, toast) => download(`/crm/invoices/${inv.id}/pdf`, `${inv.code || 'invoice'}.pdf`, { open: true }).catch(() => toast('The PDF could not be opened.'));
+// ---- the PAYMENT LOG of an invoice (founder 2026-11-14: every amount received is a line - date, amount, mode; Partly paid / Paid follow from it) ----
+export const PAYMENT_MODES = ['Bank transfer', 'UPI', 'Cheque', 'Cash', 'Card', 'Other'];
+function PaymentDialog({ inv, onClose, onSaved }) {
+  const { toast } = useCrm();
+  const left = Math.max(0, Math.round((inv.total - inv.paidAmount) * 100) / 100);
+  const [amount, setAmount] = useState(String(left));
+  const [paidOn, setPaidOn] = useState(istToday());
+  const [mode, setMode] = useState('Bank transfer');
+  const [reference, setReference] = useState('');
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  async function save() {
+    const n = Number(String(amount).replace(/[, ]/g, ''));
+    if (!(n > 0)) { setErr('Write the amount received.'); return; }
+    if (n > left + 0.005) { setErr(`Only ${money(left)} is left on this invoice.`); return; }
+    if (!paidOn) { setErr('Write the date the money came.'); return; }
+    if (paidOn > istToday()) { setErr('The payment date cannot be in the future.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const r = await api.post(`/crm/invoices/${inv.id}/payments`, { amount: n, paidOn, mode, reference, note });
+      toast(r.data.invoice.status === 'Paid' ? `${inv.code} is paid in full.` : `${money(n)} recorded. ${money(r.data.invoice.balance)} is left.`);
+      onSaved(r.data.invoice);
+    } catch (e) { setErr(errOf(e, 'The payment could not be saved.')); } finally { setBusy(false); }
+  }
+  return (
+    <Modal title={`Record a payment · ${inv.code}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save payment'}</button></>}>
+      <div className="small-muted" style={{ marginBottom: 8 }}>Total {money(inv.total)} · received so far {money(inv.paidAmount)} · left {money(left)}</div>
+      <div className="field"><label>Amount received</label><input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount received" /></div>
+      <div className="field"><label>Date the money came</label><DateField value={paidOn} onChange={setPaidOn} style={{ width: 160 }} aria-label="Payment date" /></div>
+      <div className="field"><label>How it came</label>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>{PAYMENT_MODES.map((m) => <button key={m} type="button" className={`btn btn-sm${mode === m ? ' btn-primary' : ''}`} onClick={() => setMode(m)}>{m}</button>)}</div>
+      </div>
+      <div className="field"><label>Reference (UTR / cheque no.) <span className="small-muted">optional</span></label><input value={reference} maxLength={80} onChange={(e) => setReference(e.target.value)} aria-label="Payment reference" /></div>
+      <div className="field"><label>Note <span className="small-muted">optional</span></label><input value={note} maxLength={300} onChange={(e) => setNote(e.target.value)} aria-label="Payment note" /></div>
+      {err && <div className="small-muted" role="alert" style={{ color: 'var(--red)' }}>{err}</div>}
+    </Modal>
+  );
+}
+function PaymentLog({ inv, canEdit, onChanged }) {
+  const { toast } = useCrm();
+  const [adding, setAdding] = useState(false);
+  const pays = inv.payments || [];
+  const left = Math.max(0, Math.round((inv.total - inv.paidAmount) * 100) / 100);
+  async function remove(p) {
+    if (!window.confirm(`Remove the payment of ${money(p.amount)} on ${dateOf(p.paidOn)}? The invoice goes back to what is left to pay.`)) return;
+    try { await api.delete(`/crm/invoices/${inv.id}/payments/${p.id}`); toast('Payment removed.'); onChanged(); } catch (e) { toast(errOf(e, 'The payment could not be removed.')); }
+  }
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px solid var(--line, #e5e7eb)', paddingTop: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <div className="section-label" style={{ margin: 0 }}>Payments</div>
+        <span className="small-muted" style={{ fontSize: 12 }}>{money(inv.paidAmount)} of {money(inv.total)} received{left > 0 && inv.status !== 'Cancelled' ? ` · ${money(left)} left` : ''}</span>
+        {canEdit && left > 0 && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setAdding(true)}>+ Record payment</button>}
+      </div>
+      {!pays.length && <div className="small-muted" style={{ fontSize: 12.5, marginTop: 6 }}>No payment recorded yet.</div>}
+      {pays.length > 0 && (
+        <div className="tbl-wrap" style={{ marginTop: 6 }}>
+          <table>
+            <thead><tr><th>Date</th><th style={{ textAlign: 'right' }}>Amount</th><th>Mode</th><th>Reference / note</th><th>By</th>{canEdit && <th />}</tr></thead>
+            <tbody>
+              {pays.map((p) => (
+                <tr key={p.id}>
+                  <td>{dateOf(p.paidOn)}</td>
+                  <td style={{ textAlign: 'right' }}><b>{money(p.amount)}</b></td>
+                  <td>{p.mode || '—'}</td>
+                  <td>{[p.reference, p.note].filter(Boolean).join(' · ') || '—'}</td>
+                  <td>{p.byName || '—'}</td>
+                  {canEdit && <td><button type="button" className="btn btn-sm" aria-label={`Remove the payment of ${money(p.amount)}`} onClick={() => remove(p)}>Remove</button></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {adding && <PaymentDialog inv={inv} onClose={() => setAdding(false)} onSaved={() => { setAdding(false); onChanged(); }} />}
+    </div>
+  );
+}
 function InvoiceBox({ deal, onChanged }) {
   const { toast, me } = useCrm();
   const [list, setList] = useState(null);
@@ -516,6 +595,7 @@ function InvoiceBox({ deal, onChanged }) {
             <div><div className="small-muted" style={{ fontSize: 11 }}>Total</div><b>{money(inv.total)}</b></div>
             <div><div className="small-muted" style={{ fontSize: 11 }}>Received</div><b>{money(inv.paidAmount)}</b></div>
           </div>
+          <PaymentLog inv={inv} canEdit={me.canEdit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
         </div>
       )}
     </div>
