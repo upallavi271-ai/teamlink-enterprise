@@ -108,6 +108,23 @@ const DDL = [
     "createdById" TEXT, "createdByName" TEXT, "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
   )`,
   'CREATE INDEX IF NOT EXISTS "CrmProposal_deal" ON "CrmProposal"("dealId")',
+  // (founder 2026-11-13, the 5-module CRM blueprint: "Won -> Customer + invoice"). The CRM raises its OWN invoice, self-contained -
+  // never the ATS Accounts Invoice/Client ("crm mottham separate application, dheynithonu include cheyyaku"). One per Won deal.
+  `CREATE TABLE IF NOT EXISTS "CrmInvoice" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "code" TEXT,
+    "dealId" TEXT, "accountId" TEXT, "accountName" TEXT, "title" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'Draft',
+    "issueDate" TEXT NOT NULL, "dueDate" TEXT,
+    "amount" REAL NOT NULL DEFAULT 0, "discountPercent" REAL,
+    "taxPercent" REAL NOT NULL DEFAULT 0, "taxAmount" REAL NOT NULL DEFAULT 0, "total" REAL NOT NULL DEFAULT 0,
+    "paidAmount" REAL NOT NULL DEFAULT 0, "paidAt" TEXT,
+    "fromJson" TEXT, "billToJson" TEXT, "notes" TEXT,
+    ${owner}, "createdByName" TEXT
+  )`,
+  'CREATE UNIQUE INDEX IF NOT EXISTS "CrmInvoice_deal" ON "CrmInvoice"("dealId")',
+  'CREATE INDEX IF NOT EXISTS "CrmInvoice_account" ON "CrmInvoice"("accountId")',
+  'CREATE INDEX IF NOT EXISTS "CrmInvoice_status" ON "CrmInvoice"("ownerId", "status")',
   // (2026-11-02, Campaigns / Customer Support from the reference) support tickets with their thread; campaigns with their
   // recipients; people who asked for no more campaign messages
   `CREATE TABLE IF NOT EXISTS "CrmTicket" (

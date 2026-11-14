@@ -306,6 +306,7 @@ export const CRM_ITEMS = [
   crmLeaf('🎯', '/crm/leads', 'Leads'),
   crmLeaf('⏰', '/crm/followups', 'Follow-ups'),
   crmLeaf('💼', '/crm/deals', 'Deals'),
+  crmLeaf('🧾', '/crm/invoices', 'Invoices'),
   crmLeaf('🏢', '/crm/accounts', 'Accounts & Contacts'),
 ];
 

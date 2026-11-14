@@ -431,6 +431,60 @@ async function proposalPdf(user, id) {
   return { status: 200, pdf: buf, name: `${p.number}.pdf` };
 }
 
+// The CRM's own invoice as a PDF (A4): from / bill-to, the amount, tax, total, due date, bank and terms. Self-contained (founder 2026-11-13).
+async function invoicePdf(user, id) {
+  const r = S.roleOf(user);
+  const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
+  if (!inv || !S.canSeeRow(user, r, inv)) return S.fail(404, 'This invoice is not there.');
+  let from = {}; let to = {};
+  try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
+  try { to = JSON.parse(inv.billToJson || '{}'); } catch { to = {}; }
+  const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
+  const { LOGO } = require('../utils/agreementPdf'); // eslint-disable-line global-require
+  const fs = require('fs'); // eslint-disable-line global-require
+  const money = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const date = (ymd) => (ymd ? new Date(`${ymd}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '-');
+  const buf = await new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margin: 50, info: { Title: `Invoice ${inv.code || inv.id}`, Author: from.name || 'TeamLink Consultants' } });
+    const chunks = [];
+    doc.on('data', (c) => chunks.push(c)); doc.on('end', () => resolve(Buffer.concat(chunks))); doc.on('error', reject);
+    const W = doc.page.width - 100; const NAVY = '#1b2a4a'; const MUTED = '#5b6474';
+    if (fs.existsSync(LOGO)) { try { doc.image(LOGO, 50, 40, { height: 28 }); } catch { /* optional */ } }
+    doc.font('Helvetica-Bold').fontSize(20).fillColor(NAVY).text('INVOICE', 50, 40, { width: W, align: 'right' });
+    doc.font('Helvetica').fontSize(9.5).fillColor(MUTED).text(inv.code || '', { width: W, align: 'right' }).text(`Date: ${date(inv.issueDate)}`, { width: W, align: 'right' }).text(`Due: ${date(inv.dueDate)}`, { width: W, align: 'right' });
+    doc.moveDown(2);
+    const top = doc.y;
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text('FROM', 50, top).text('BILL TO', 310, top);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#222').text(from.name || 'TeamLink Consultants', 50, top + 14, { width: 240 }).text(to.name || inv.accountName || '-', 310, top + 14, { width: 235 });
+    doc.font('Helvetica').fontSize(9.5).fillColor('#333');
+    const lines = (o) => [o.address, [o.state, o.pincode].filter(Boolean).join(' '), o.gstin ? `GSTIN: ${o.gstin}` : '', o.email, o.phone].filter(Boolean).join('\n');
+    const fromY = doc.y; doc.text(lines(from), 50, fromY, { width: 240 }); const leftEnd = doc.y;
+    doc.text(lines(to), 310, fromY, { width: 235 });
+    doc.y = Math.max(leftEnd, doc.y) + 20; doc.x = 50;
+    // item table
+    let y = doc.y;
+    doc.font('Helvetica-Bold').fontSize(9.5).fillColor(MUTED).text('Description', 50, y).text('Amount', 50 + W - 100, y, { width: 100, align: 'right' });
+    y += 16; doc.moveTo(50, y - 3).lineTo(50 + W, y - 3).strokeColor('#d9dee8').stroke();
+    doc.font('Helvetica').fontSize(10.5).fillColor('#222').text(inv.title || 'Services', 50, y, { width: W - 120 });
+    doc.text(money(inv.amount), 50 + W - 100, y, { width: 100, align: 'right' });
+    y = Math.max(doc.y, y + 16) + 6;
+    if (inv.discountPercent) { doc.font('Helvetica-Oblique').fontSize(9).fillColor(MUTED).text(`After a ${inv.discountPercent}% discount`, 50, y - 2); y = doc.y + 6; }
+    doc.moveTo(50, y).lineTo(50 + W, y).strokeColor('#d9dee8').stroke(); y += 8;
+    doc.font('Helvetica').fontSize(10.5).fillColor('#222').text('Subtotal', 50 + W - 220, y, { width: 110 }).text(money(inv.amount), 50 + W - 100, y, { width: 100, align: 'right' });
+    y += 16; doc.text(`Tax (${inv.taxPercent || 0}%)`, 50 + W - 220, y, { width: 110 }).text(money(inv.taxAmount), 50 + W - 100, y, { width: 100, align: 'right' });
+    y += 20; doc.font('Helvetica-Bold').fontSize(12).fillColor(NAVY).text('Total', 50 + W - 220, y, { width: 110 }).text(money(inv.total), 50 + W - 100, y, { width: 100, align: 'right' });
+    if (inv.paidAmount > 0) {
+      y += 20; doc.font('Helvetica').fontSize(10).fillColor('#222').text('Received', 50 + W - 220, y, { width: 110 }).text(money(inv.paidAmount), 50 + W - 100, y, { width: 100, align: 'right' });
+      y += 15; doc.font('Helvetica-Bold').text('Balance', 50 + W - 220, y, { width: 110 }).text(money(Math.max(0, inv.total - inv.paidAmount)), 50 + W - 100, y, { width: 100, align: 'right' });
+    }
+    doc.y = y + 34; doc.x = 50;
+    if (from.bank) { doc.font('Helvetica-Bold').fontSize(10).fillColor(NAVY).text('Bank details', 50); doc.moveDown(0.2); doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(from.bank, 50, doc.y, { width: W }); doc.moveDown(0.8); }
+    if (from.terms) { doc.font('Helvetica-Bold').fontSize(10).fillColor(NAVY).text('Terms', 50); doc.moveDown(0.2); doc.font('Helvetica').fontSize(9.5).fillColor('#333').text(from.terms, 50, doc.y, { width: W }); }
+    doc.end();
+  });
+  return { status: 200, pdf: buf, name: `${inv.code || 'invoice'}.pdf` };
+}
+
 async function sendProposal(user, id, { to, message } = {}) {
   const x = await proposalOf(user, id, { edit: true });
   if (x.error) return x.error;
@@ -578,4 +632,4 @@ async function activities(user, { kind, from, to, owner, q } = {}) {
   return S.okBody({ rows, byKind });
 }
 
-module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, sendProposal, decideProposal, monthRange };
+module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, sendProposal, decideProposal, monthRange };

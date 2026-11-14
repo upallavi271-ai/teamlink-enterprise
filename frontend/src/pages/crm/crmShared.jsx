@@ -52,7 +52,7 @@ export function RecLink({ kind, id, children, className, style, title }) {
   );
 }
 
-const STATUS_CLASS = { Draft: 'review', Sent: 'pending', Accepted: 'joined', Declined: 'rejected', Hot: 'overdue', Warm: 'pending', Cold: 'new', New: 'new', Contacted: 'pending', Qualified: 'active', Junk: 'rejected', Converted: 'joined', Won: 'joined', Lost: 'rejected', Prospect: 'new', Client: 'active' };
+const STATUS_CLASS = { Draft: 'review', Sent: 'pending', Accepted: 'joined', Declined: 'rejected', Hot: 'overdue', Warm: 'pending', Cold: 'new', New: 'new', Contacted: 'pending', Qualified: 'active', Junk: 'rejected', Converted: 'joined', Won: 'joined', Lost: 'rejected', Prospect: 'new', Client: 'active', Paid: 'joined', 'Partly paid': 'pending', Overdue: 'overdue', Cancelled: 'rejected' };
 // a file from the API (CSV, PDF) with the login's token: opened (PDF) or saved (CSV)
 export async function download(url, name, { open } = {}) {
   const r = await api.get(url, { responseType: 'blob' });
@@ -355,6 +355,71 @@ function ConvertLead({ lead, onClose, onDone }) {
   );
 }
 
+// ---- invoices (the CRM's own - founder 2026-11-13: Won -> invoice; never the ATS Accounts invoices) ------------
+export const INVOICE_STATUSES = ['Draft', 'Sent', 'Partly paid', 'Paid', 'Cancelled'];
+export const invoicePill = (inv) => (inv.overdue ? 'Overdue' : inv.status);
+export function InvoiceStatusSelect({ inv, onSaved }) {
+  const { toast } = useCrm();
+  const [busy, setBusy] = useState(false);
+  async function set(status) {
+    let paidAmount;
+    if (status === 'Partly paid') {
+      const v = window.prompt(`How much has been received so far? (the total is ${money(inv.total)})`, String(inv.paidAmount || ''));
+      if (v == null) return;
+      paidAmount = Number(String(v).replace(/[^\d.]/g, ''));
+      if (!(paidAmount > 0)) { toast('Write the amount received.'); return; }
+    }
+    setBusy(true);
+    try { const r = await api.post(`/crm/invoices/${inv.id}/status`, { status, paidAmount }); toast(`${inv.code} is ${status.toLowerCase()}.`); onSaved(r.data.invoice); } catch (e) { toast(errOf(e, 'The invoice could not be changed.')); } finally { setBusy(false); }
+  }
+  return (
+    <select value={inv.status} disabled={busy} onChange={(e) => set(e.target.value)} onClick={(e) => e.stopPropagation()} aria-label={`Status of ${inv.code}`} style={{ width: 'auto', padding: '2px 6px', fontSize: 13 }}>
+      {INVOICE_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+    </select>
+  );
+}
+export const openInvoicePdf = (inv, toast) => download(`/crm/invoices/${inv.id}/pdf`, `${inv.code || 'invoice'}.pdf`, { open: true }).catch(() => toast('The PDF could not be opened.'));
+function InvoiceBox({ deal, onChanged }) {
+  const { toast, me } = useCrm();
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get('/crm/invoices', { params: { dealId: deal.id } }).then((r) => setList(r.data.invoices)).catch(() => setList([]));
+  useEffect(() => { load(); }, [deal.id, deal.stage]); // eslint-disable-line react-hooks/exhaustive-deps
+  async function raise() {
+    setBusy(true);
+    try { const r = await api.post(`/crm/deals/${deal.id}/invoice`); toast(`Invoice ${r.data.invoice.code} is ready.`); load(); if (onChanged) onChanged(); } catch (e) { toast(errOf(e, 'The invoice could not be made.')); } finally { setBusy(false); }
+  }
+  if (!list) return null;
+  const inv = list[0];
+  return (
+    <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', marginBottom: 6 }}>
+        <div className="section-label" style={{ margin: 0 }}>Invoice</div>
+        {!inv && deal.stage === 'Won' && me.canEdit && <button type="button" className="btn btn-sm btn-primary" style={{ marginLeft: 'auto' }} disabled={busy} onClick={raise}>{busy ? 'Making…' : 'Create invoice'}</button>}
+      </div>
+      {!inv && <div className="small-muted">{deal.stage === 'Won' ? 'No invoice yet. Create it: it is made from the deal value after the discount, with tax.' : 'An invoice is made automatically when this deal is Won.'}</div>}
+      {inv && (
+        <div style={{ fontSize: 13 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b>{inv.code}</b> <Pill v={invoicePill(inv)} />
+            <span className="small-muted" style={{ fontSize: 11.5 }}>issued {dateOf(inv.issueDate)}{inv.dueDate ? ` · due ${dateOf(inv.dueDate)}` : ''}</span>
+            <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+              <button type="button" className="btn btn-sm" onClick={() => openInvoicePdf(inv, toast)}>PDF</button>
+              {me.canEdit && <InvoiceStatusSelect inv={inv} onSaved={() => { load(); if (onChanged) onChanged(); }} />}
+            </span>
+          </div>
+          <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}>
+            <div><div className="small-muted" style={{ fontSize: 11 }}>Amount{inv.discountPercent ? ` (after ${inv.discountPercent}% off)` : ''}</div><b>{money(inv.amount)}</b></div>
+            <div><div className="small-muted" style={{ fontSize: 11 }}>Tax {inv.taxPercent}%</div><b>{money(inv.taxAmount)}</b></div>
+            <div><div className="small-muted" style={{ fontSize: 11 }}>Total</div><b>{money(inv.total)}</b></div>
+            <div><div className="small-muted" style={{ fontSize: 11 }}>Received</div><b>{money(inv.paidAmount)}</b></div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---- move a deal (Lost asks the reason) -------------------------------------------------------------------
 export function useMoveDeal(onMoved) {
   const { me, toast } = useCrm();
@@ -364,7 +429,7 @@ export function useMoveDeal(onMoved) {
     if (stage === 'Lost' && !lostReason) { setAsking({ deal }); setReason(''); return; }
     try {
       const r = await api.post(`/crm/deals/${deal.id}/stage`, { stage, lostReason });
-      toast(stage === 'Won' ? '🎉 Won! Add it as a client when you are ready.' : `Moved to ${stage}.`);
+      toast(stage === 'Won' ? (r.data.invoice ? `🎉 Won! Invoice ${r.data.invoice.code} is ready.` : '🎉 Won!') : `Moved to ${stage}.`);
       onMoved(r.data.deal);
     } catch (e) { toast(errOf(e, 'The deal could not be moved.')); }
   }
@@ -623,7 +688,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       ['Next follow-up', nextTask ? <span style={{ color: nextTask.dueDate < today ? 'var(--red)' : undefined, fontWeight: nextTask.dueDate <= today ? 600 : undefined }}>{nextTask.dueDate === today ? 'Today' : dateOf(nextTask.dueDate)} · {nextTask.title}</span> : 'None set'],
       ['Last touched', lastAct ? `${dateTimeOf(lastAct.at)}${lastAct.byName ? ` · ${lastAct.byName}` : ''}` : 'Never'],
     ].filter(([, v]) => v);
-    const tabs = [['overview', 'Overview'], ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals']] : []), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ['notes', 'Notes']];
+    const tabs = [['overview', 'Overview'], ['activities', `Activities (${(d.activities || []).length})`], ['followups', `Follow-ups (${openTasks.length})`], ...(kind === 'deal' ? [['proposals', 'Proposals'], ['invoice', 'Invoice']] : []), ...(kind === 'account' ? [['support', 'Support tickets']] : []), ['notes', 'Notes']];
     const kindPill = kind === 'lead' ? row.status : kind === 'deal' ? row.stage : row.kind;
     body = (
       <>
@@ -734,6 +799,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         )}
         {tab === 'followups' && <TaskList tasks={d.tasks || []} link={link} onChanged={changed} canEdit={d.canEdit} />}
         {tab === 'proposals' && kind === 'deal' && <ProposalBox dealId={row.id} onChanged={changed} />}
+        {tab === 'invoice' && kind === 'deal' && <InvoiceBox deal={row} onChanged={changed} />}
         {tab === 'support' && kind === 'account' && <TicketList accountId={row.id} compact />}
         {tab === 'notes' && (
           <div>

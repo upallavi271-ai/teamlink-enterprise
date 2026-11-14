@@ -33,6 +33,7 @@ const HM = /^\d{2}:\d{2}$/;
 
 const istNow = () => new Date(Date.now() + 5.5 * 3600 * 1000);
 const istToday = () => istNow().toISOString().slice(0, 10);
+const addDaysIso = (ymd, n) => { const d = new Date(`${ymd}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + (Number(n) || 0)); return d.toISOString().slice(0, 10); };
 const newId = (p) => `${p}_${crypto.randomBytes(9).toString('hex')}`;
 const clip = (v, n = 300) => { const s = String(v == null ? '' : v).trim(); return s ? s.slice(0, n) : null; };
 const num = (v) => { if (v === '' || v == null) return null; const n = Number(String(v).replace(/[, ]/g, '')); return Number.isFinite(n) && n >= 0 ? n : null; };
@@ -171,7 +172,7 @@ const audit = (user, action, entity, entityId, toValue, reason) => logAudit({ us
 
 // ---- human-readable codes (founder 2026-11-13): L-0001 lead, D-0001 deal, C-0001 customer -------------
 // The running number is kept in AppSetting 'crm.seq'; old rows get a code once (backfillCodes).
-const CODE_PREFIX = { lead: 'L', deal: 'D', account: 'C' };
+const CODE_PREFIX = { lead: 'L', deal: 'D', account: 'C', invoice: 'INV' };
 const SEQ_KEY = 'crm.seq';
 async function nextCodes(kind, n = 1) {
   const prefix = CODE_PREFIX[kind];
@@ -407,7 +408,10 @@ async function moveDeal(user, id, { stage, lostReason } = {}) {
   if (stage === 'Won' && row.accountId) await update('CrmAccount', row.accountId, { kind: 'Client', updatedAt: now });
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Stage: ${row.stage} → ${stage}`, note: stage === 'Lost' ? `Lost: ${reason}` : null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await audit(user, stage === 'Won' ? 'CRM deal won' : stage === 'Lost' ? 'CRM deal lost' : 'CRM deal stage changed', 'CrmDeal', row.id, `${row.title}: ${row.stage} -> ${stage}`, reason || undefined);
-  return okBody({ ok: true, deal: saved });
+  // Won -> the CRM raises its own invoice (never fail the Won if that errors). founder 2026-11-13.
+  let invoice = null;
+  if (stage === 'Won') { try { invoice = await createInvoiceForDeal(user, saved); } catch (e) { console.error('[crm] invoice on Won:', e.message); } } // eslint-disable-line no-console
+  return okBody({ ok: true, deal: saved, invoice: invoice ? invoiceOut(invoice) : null });
 }
 
 // A Sales manager / Admin approves or rejects a deal's over-limit discount (founder 2026-11-13).
@@ -424,6 +428,88 @@ async function decideDeal(user, id, { decision, note } = {}) {
   await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Discount ${status.toLowerCase()} (${row.discountPercent || 0}%)`, note: clip(note, 300) || null, at: now, dealId: row.id, accountId: row.accountId, byId: user.id, byName: user.name || null, createdAt: now });
   await audit(user, `CRM deal discount ${status.toLowerCase()}`, 'CrmDeal', row.id, `${row.title}: ${row.discountPercent || 0}%`, note || undefined);
   return okBody({ ok: true, deal: saved });
+}
+
+// ---- invoices (founder 2026-11-13: "Won -> Customer + invoice"): the CRM's OWN invoice, self-contained, never ATS Accounts ------
+const INVOICE_STATUSES = ['Draft', 'Sent', 'Paid', 'Partly paid', 'Cancelled'];
+function invoiceAmounts(net, taxPercent) {
+  const amount = Math.round((Number(net) || 0) * 100) / 100;
+  const tax = Math.round(amount * ((Number(taxPercent) || 0) / 100) * 100) / 100;
+  return { amount, taxAmount: tax, total: Math.round((amount + tax) * 100) / 100 };
+}
+// Raise the invoice for a Won deal. Idempotent: one per deal (returns the existing one). Called from moveDeal on Won, and by hand.
+async function createInvoiceForDeal(user, deal, { byHand = false } = {}) {
+  if (!deal || !deal.id) return null;
+  const existing = await DB.one('SELECT * FROM "CrmInvoice" WHERE "dealId" = ?', deal.id).catch(() => null);
+  if (existing) return existing;
+  const st = await SETTINGS.load();
+  const account = deal.accountId ? await getRow('account', deal.accountId).catch(() => null) : null;
+  const net = finalValueOf(deal);
+  const { amount, taxAmount, total } = invoiceAmounts(net, st.invoiceTaxPercent);
+  const now = DB.nowIso();
+  const issue = istToday();
+  const due = st.invoiceDueDays ? addDaysIso(issue, st.invoiceDueDays) : null;
+  const [code] = await nextCodes('invoice', 1);
+  const billTo = account ? { name: account.name, gstin: account.gstin || '', address: account.address || '', state: account.state || '', pincode: account.pincode || '', email: account.email || '', phone: account.phone || '' } : {};
+  const row = await insert('CrmInvoice', {
+    id: newId('inv'), code: code || null, dealId: deal.id, accountId: deal.accountId || null, accountName: account ? account.name : null,
+    title: deal.title || 'Invoice', status: 'Draft', issueDate: issue, dueDate: due,
+    amount, discountPercent: Number(deal.discountPercent) || null, taxPercent: Number(st.invoiceTaxPercent) || 0, taxAmount, total,
+    paidAmount: 0, paidAt: null, fromJson: JSON.stringify(st.invoiceFrom || {}), billToJson: JSON.stringify(billTo), notes: null,
+    ownerId: deal.ownerId || user.id, ownerName: deal.ownerName || user.name || null, createdById: user.id, createdByName: user.name || null, createdAt: now, updatedAt: now,
+  });
+  await insert('CrmActivity', { id: newId('act'), kind: 'note', subject: `Invoice ${code || ''} raised${byHand ? ' by hand' : ' on Won'}`, note: `${total}`, at: now, dealId: deal.id, accountId: deal.accountId, byId: user.id, byName: user.name || null, createdAt: now });
+  await audit(user, 'CRM invoice raised', 'CrmInvoice', row.id, `${code || row.id}: ${total}`);
+  return row;
+}
+// A deal that is already Won but has no invoice yet: raise it by hand (a "Create invoice" button).
+async function invoiceForDeal(user, dealId) {
+  const r = roleOf(user);
+  const deal = await getRow('deal', dealId);
+  if (!deal || !canSeeRow(user, r, deal)) return fail(404, 'This deal is not there.');
+  if (!canEditRow(user, r, deal)) return fail(403, 'You cannot raise an invoice on this deal.');
+  if (deal.stage !== 'Won') return fail(400, 'An invoice is raised once the deal is Won.');
+  const inv = await createInvoiceForDeal(user, deal, { byHand: true });
+  return okBody({ ok: true, invoice: inv });
+}
+async function invoices(user, q = {}) {
+  const r = roleOf(user);
+  const s = scopeSql(user, r, 'x.');
+  const where = [s.sql]; const params = [...s.params];
+  if (q.status && INVOICE_STATUSES.includes(q.status)) { where.push('x."status" = ?'); params.push(q.status); }
+  if (q.accountId) { where.push('x."accountId" = ?'); params.push(clip(q.accountId, 60)); }
+  if (q.dealId) { where.push('x."dealId" = ?'); params.push(clip(q.dealId, 60)); }
+  const rows = await DB.all(`SELECT x.* FROM "CrmInvoice" x WHERE ${where.join(' AND ')} ORDER BY x."createdAt" DESC LIMIT 1000`, ...params);
+  return okBody({ invoices: rows.map(invoiceOut) });
+}
+function invoiceOut(row) {
+  let from = {}; let billTo = {};
+  try { from = row.fromJson ? JSON.parse(row.fromJson) : {}; } catch { from = {}; }
+  try { billTo = row.billToJson ? JSON.parse(row.billToJson) : {}; } catch { billTo = {}; }
+  const overdue = row.status !== 'Paid' && row.status !== 'Cancelled' && row.dueDate && row.dueDate < istToday();
+  return { ...row, from, billTo, overdue };
+}
+async function invoiceDetail(user, id) {
+  const r = roleOf(user);
+  const row = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', String(id || '').slice(0, 60));
+  if (!row || !canSeeRow(user, r, row)) return fail(404, 'This invoice is not there.');
+  return okBody({ invoice: invoiceOut(row) });
+}
+// Mark an invoice Sent / Paid / Partly paid / Cancelled (and the amount received).
+async function setInvoiceStatus(user, id, { status, paidAmount } = {}) {
+  const r = roleOf(user);
+  const row = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', String(id || '').slice(0, 60));
+  if (!row || !canSeeRow(user, r, row)) return fail(404, 'This invoice is not there.');
+  if (!canEditRow(user, r, row)) return fail(403, 'You cannot change this invoice.');
+  if (!INVOICE_STATUSES.includes(status)) return fail(400, 'Pick an invoice status from the list.');
+  const now = DB.nowIso();
+  const data = { status, updatedAt: now };
+  if (status === 'Paid') { data.paidAmount = row.total; data.paidAt = now; }
+  else if (status === 'Partly paid') { const p = num(paidAmount); data.paidAmount = p == null ? row.paidAmount : Math.max(0, Math.min(row.total, p)); data.paidAt = null; }
+  else if (status === 'Draft' || status === 'Sent' || status === 'Cancelled') { data.paidAmount = 0; data.paidAt = null; }
+  const saved = await update('CrmInvoice', row.id, data);
+  await audit(user, 'CRM invoice status', 'CrmInvoice', row.id, `${row.code || row.id}: ${row.status} -> ${status}`);
+  return okBody({ ok: true, invoice: invoiceOut(saved) });
 }
 
 // Convert a lead: an account (or the one picked), a contact (when the lead names a person) and, unless asked not to, a deal.
@@ -690,7 +776,7 @@ async function me(user) {
 }
 
 module.exports = {
-  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
+  roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, invoiceForDeal, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
   ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
