@@ -1643,6 +1643,106 @@ function officeFacts({
 // the table uses, so the KPI chips, the table's TOTAL row and the GST
 // position always agree. `kpi` is ledgerTotals() of those bills — exactly
 // the table's totals. The invoice (outward) side follows the period only.
+// ---------------------------------------------------------------------------
+// AS PER THE GST PORTAL vs AS PER OUR BOOKS, month by month (founder 2026-11-14: "GST portal sheet card loo petu", gst.xlsx).
+// The monthly figures filed on the GST portal (GST Monthly Sales: taxable value, IGST, CGST, SGST; Purchases as per GST Input:
+// taxable value and the three input taxes) are typed in / loaded from the sheet, kept in AppSetting 'gst.portal.monthly' as JSON
+// { 'YYYY-MM': { sTaxable, sIgst, sCgst, sSgst, pTaxable, pIgst, pCgst, pSgst } }. Nothing is fetched from the portal. The books side is
+// worked out from the invoices (by invoice date, net of credit notes) and the bills (by bill date) - the same figures as the card above.
+// Read only for the books; only the portal figures can be edited, and every edit is written to the Audit Log.
+// ---------------------------------------------------------------------------
+const GST_PORTAL_KEY = 'gst.portal.monthly';
+const GST_PORTAL_FIELDS = ['sTaxable', 'sIgst', 'sCgst', 'sSgst', 'pTaxable', 'pIgst', 'pCgst', 'pSgst'];
+// The sheet gst.xlsx (April - September 2026), as the founder gave it. Loaded once, only while nothing has been stored yet.
+const GST_PORTAL_SEED = {
+  '2026-04': { sTaxable: 320590, sIgst: 27000, sCgst: 13409.1, sSgst: 13409.1, pTaxable: 320590, pIgst: 15353, pCgst: 27000, pSgst: 15353 },
+  '2026-05': { sTaxable: 329500, sIgst: 42210, sCgst: 8550, sSgst: 8550, pTaxable: 273394.1, pIgst: 10537.71, pCgst: 19336.62, pSgst: 19336.62 },
+  '2026-06': { sTaxable: 580066, sIgst: 40712.22, sCgst: 31849.73, sSgst: 31849.73, pTaxable: 500975.57, pIgst: 22556.76, pCgst: 33699.03, pSgst: 33699.03 },
+  '2026-07': { sTaxable: 1023190, sIgst: 59901.48, sCgst: 62136.36, sSgst: 62136.36, pTaxable: 350428.4, pIgst: 20610.07, pCgst: 21233.52, pSgst: 21233.52 },
+  '2026-08': { sTaxable: 962904, sIgst: 79017.12, sCgst: 47152.8, sSgst: 47152.8, pTaxable: 275686.38, pIgst: 13709.51, pCgst: 17901.98, pSgst: 17901.98 },
+  '2026-09': { sTaxable: 614568, sIgst: 45736, sCgst: 32443, sSgst: 32443, pTaxable: 267948.21, pIgst: 17608.52, pCgst: 13013.6, pSgst: 17608.52 },
+};
+async function gstPortalLoad() {
+  const row = await prisma.appSetting.findUnique({ where: { key: GST_PORTAL_KEY } }).catch(() => null);
+  if (!row) return { months: JSON.parse(JSON.stringify(GST_PORTAL_SEED)), seeded: true };
+  try { return { months: JSON.parse(row.value) || {}, seeded: false, by: row.updatedByName || null, at: row.updatedAt }; } catch { return { months: {}, seeded: false }; }
+}
+const monthsBetween = (from, to) => {
+  const out = [];
+  let y = Number(from.slice(0, 4)); let m = Number(from.slice(5, 7));
+  const ey = Number(to.slice(0, 4)); const em = Number(to.slice(5, 7));
+  while ((y < ey || (y === ey && m <= em)) && out.length < 60) { out.push(`${y}-${String(m).padStart(2, '0')}`); m += 1; if (m > 12) { m = 1; y += 1; } }
+  return out;
+};
+router.get('/gst-portal', async (req, res) => {
+  const scope = await officeScope(req.query);
+  const { months: stored, by, at } = await gstPortalLoad();
+  const books = new Map();
+  const slot = (k) => { if (!books.has(k)) books.set(k, { sTaxable: 0, sGst: 0, invoices: 0, pTaxable: 0, pGst: 0, bills: 0 }); return books.get(k); };
+  scope.invoices.forEach((i) => { const s = slot(String(i.invoiceDate || '').slice(0, 7)); s.sTaxable += CNU.billedOf(i); s.sGst += CNU.gstBilledOf(i); s.invoices += 1; });
+  scope.all.filter((r) => r.gst > 0.5).forEach((r) => { const s = slot(String(r.expenseDate || '').slice(0, 7)); s.pTaxable += r.base; s.pGst += r.gst; s.bills += 1; });
+  const { range } = scope;
+  let keys;
+  if (range.all) keys = [...new Set([...Object.keys(stored), ...books.keys()])].filter((k) => /^\d{4}-\d{2}$/.test(k)).sort();
+  else keys = monthsBetween(range.from, range.to);
+  const rows = keys.map((k) => {
+    const p = stored[k] || null; const b = books.get(k) || { sTaxable: 0, sGst: 0, invoices: 0, pTaxable: 0, pGst: 0, bills: 0 };
+    const sGstP = p ? ROUND(Number(p.sIgst || 0) + Number(p.sCgst || 0) + Number(p.sSgst || 0)) : null;
+    const pGstP = p ? ROUND(Number(p.pIgst || 0) + Number(p.pCgst || 0) + Number(p.pSgst || 0)) : null;
+    return {
+      month: k,
+      filed: !!p,
+      portal: p ? { ...p, sGst: sGstP, pGst: pGstP } : null,
+      books: {
+        sTaxable: ROUND(b.sTaxable), sGst: ROUND(b.sGst), invoices: b.invoices, pTaxable: ROUND(b.pTaxable), pGst: ROUND(b.pGst), bills: b.bills,
+      },
+      diff: p ? {
+        sTaxable: ROUND(b.sTaxable - Number(p.sTaxable || 0)), sGst: ROUND(b.sGst - sGstP), pTaxable: ROUND(b.pTaxable - Number(p.pTaxable || 0)), pGst: ROUND(b.pGst - pGstP),
+      } : null,
+    };
+  });
+  const sum = (f) => ROUND(rows.reduce((s, r) => s + (f(r) || 0), 0));
+  const filedRows = rows.filter((r) => r.filed);
+  const sumF = (f) => ROUND(filedRows.reduce((s, r) => s + (f(r) || 0), 0));
+  res.json({
+    rows,
+    period: { all: !!range.all, label: range.label },
+    updatedBy: by || null,
+    updatedAt: at || null,
+    totals: {
+      portal: { sTaxable: sumF((r) => r.portal.sTaxable), sGst: sumF((r) => r.portal.sGst), pTaxable: sumF((r) => r.portal.pTaxable), pGst: sumF((r) => r.portal.pGst) },
+      booksFiledMonths: { sTaxable: sumF((r) => r.books.sTaxable), sGst: sumF((r) => r.books.sGst), pTaxable: sumF((r) => r.books.pTaxable), pGst: sumF((r) => r.books.pGst) },
+      books: { sTaxable: sum((r) => r.books.sTaxable), sGst: sum((r) => r.books.sGst), pTaxable: sum((r) => r.books.pTaxable), pGst: sum((r) => r.books.pGst) },
+      filedMonths: filedRows.length,
+    },
+  });
+});
+router.put('/gst-portal', async (req, res) => {
+  const month = String(req.body.month || '');
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: 'Month must look like 2026-07' });
+  const { months } = await gstPortalLoad();
+  if (req.body.clear === true) delete months[month];
+  else {
+    const cur = months[month] || {};
+    const bad = GST_PORTAL_FIELDS.find((f) => req.body[f] !== undefined && req.body[f] !== '' && !(Number.isFinite(Number(req.body[f])) && Number(req.body[f]) >= 0));
+    if (bad) return res.status(400).json({ error: `${bad} must be a number` });
+    GST_PORTAL_FIELDS.forEach((f) => {
+      if (req.body[f] === undefined) return;
+      cur[f] = req.body[f] === '' ? 0 : ROUND(Number(req.body[f]));
+    });
+    GST_PORTAL_FIELDS.forEach((f) => { if (cur[f] === undefined) cur[f] = 0; });
+    months[month] = cur;
+  }
+  const who = req.user.name || req.user.email || null;
+  await prisma.appSetting.upsert({
+    where: { key: GST_PORTAL_KEY },
+    create: { key: GST_PORTAL_KEY, value: JSON.stringify(months), updatedById: req.user.id, updatedByName: who },
+    update: { value: JSON.stringify(months), updatedById: req.user.id, updatedByName: who },
+  });
+  await logAudit({ userId: req.user.id, action: req.body.clear === true ? 'GST portal figures removed' : 'GST portal figures entered', entity: 'GstPortalMonthly', toValue: month });
+  return res.json({ ok: true });
+});
+
 router.get('/overview', async (req, res) => {
   const scope = await officeScope(req.query);
   const lf = ledgerFilter({ ...req.query, from: undefined, to: undefined });

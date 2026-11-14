@@ -12,6 +12,7 @@ import { ALL_TIME, isAllTime } from '../components/accounts/PeriodPicker.jsx';
 import Section from './office/Section.jsx';
 import ExpenseLedger from './office/ExpenseLedger.jsx';
 import GstPosition from './office/GstPosition.jsx';
+import GstPortalCompare from './office/GstPortalCompare.jsx'; // GST portal figures against our books, month by month
 import VendorBillsReview from './office/VendorBillsReview.jsx'; // P3 vendor portal bills
 import VendorModuleBillsReview from './office/VendorModuleBillsReview.jsx'; // vendor invoices / monthly bills of the vendor modules
 import {
@@ -241,6 +242,7 @@ export default function Office() {
           onShowAtRisk={() => { setLf({ ...lf, gst: 'missing' }); jump('expenses'); }}
           onCompany={() => jump('business')}
         />
+        <GstPortalCompare period={period} canManage={canManage} reloadKey={reloadKey} />
       </Section>
 
       <div className="ofp-audit">Every change on this page is written to the Audit Log — who and when; for the business details also the old and the new value.</div>
