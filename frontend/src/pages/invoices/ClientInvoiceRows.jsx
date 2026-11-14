@@ -117,7 +117,8 @@ function Panel({
                     {m.candidateName
                       ? <Link to={`/invoices/${m.id}`} title={`Open ${m.invoiceNumber} — GST, TDS, credit note, certificate`}>{m.candidateName}</Link>
                       : <Link to={`/invoices/${m.id}`}>(no candidate linked)</Link>}
-                    <div className="small-muted">{m.invoiceNumber}{m.recruiter ? ` · ${m.recruiter}` : ''}</div>
+                    <div className="small-muted">{m.invoiceNumber}{m.recruiter ? ` · ${m.recruiter}` : ''}{m.tl ? ` · TL ${m.tl}` : ''}{m.department ? ` · ${m.department}` : ''}</div>
+                    {m.joiningStatus && <span className={`status ${m.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{m.joiningStatus === 'Dropped' ? 'Dropped (left / did not join)' : m.joiningStatus}</span>}
                   </td>
                   <td><JoiningCell m={m} canJoin={canJoin} onChanged={onChanged} /></td>
                   <td>{m.role || '—'}</td>

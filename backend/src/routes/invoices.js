@@ -200,6 +200,11 @@ async function pendingJoinGroups(hier) {
       requirement: a.requirement?.title || null,
       joiningDate: a.joiningDate || null,
       recruiter: a.requirement?.recruiter?.name || null,
+      // what the ATS knows about this joining, shown beside it in Accounts (founder 2026-11-14)
+      joiningStatus: a.joiningStatus || null,
+      rollStatus: a.rollStatus || null,
+      reqCode: a.requirement?.reqCode || null,
+      phone: a.candidate?.phone || null,
       offeredCtc: a.offeredCtc ?? null,
       feePercent: feePct ?? null,
       gstPercent: gstPct,

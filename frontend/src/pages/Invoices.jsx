@@ -971,7 +971,68 @@ export default function Invoices() {
 
       {/* Joinings that are on the register and in every total, but carry no
           invoice number yet — so they cannot appear in the table below. */}
-      {/* Joined candidates come straight into the invoice register from the ATS, with their number (founder 2026-11-13: no "Raise invoice" step). */}
+      {/* ATS-joined candidates that have NO invoice in Accounts (read only: nothing is raised from here; founder 2026-11-14: "ATS lo join ayina candidates info accounts lo kanipinchali"). */}
+      {ni.waiting > 0 && (
+        <section className="inv-notice" ref={noticeRef} aria-live="polite">
+          <div className="inv-notice-head">
+            <div>
+              <strong>
+                <span className="inv-notice-icon">!</span>
+                {ni.waiting} candidate(s) joined in the ATS but have no invoice in Accounts{ni.filtered ? ' — under these filters' : ''}
+              </strong>
+              <p>
+                Their details are shown here as the ATS has them. Nothing is raised from this screen: an invoice that already exists (for example in the
+                accounts sheet) is brought in with Import, and every new joining gets its invoice and number by itself.
+              </p>
+            </div>
+          </div>
+          <div className="inv-minis">
+            <div className="inv-mini"><span>Joined, not in Accounts</span><strong>{ni.waiting}</strong></div>
+            <div className="inv-mini"><span>Fee (before GST)</span><strong>{money(ni.billing || 0)}</strong></div>
+            <div className="inv-mini"><span>Invoice value (after GST)</span><strong>{money(ni.invoiceValue || 0)}</strong></div>
+          </div>
+          {(ni.allRows || []).length > 0 && (
+            <details open className="inv-joinhist">
+              <summary>Joined in the ATS, no invoice yet ({ni.allRows.length})</summary>
+              <div className="tbl-wrap" style={{ maxHeight: 440, overflow: 'auto' }}>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Candidate</th><th>Phone</th><th>Client</th><th>Position</th><th>Req ID</th><th>Recruiter</th><th>Team lead</th><th>Department</th>
+                      <th>Joining status</th><th>Roll</th><th>Joined</th><th className="num">CTC</th><th className="num">Fee</th><th className="num">Fee amount</th><th className="num">GST</th><th className="num">With GST</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {ni.allRows.map((r) => {
+                      const gstAmt = r.billing != null ? Math.round(r.billing * (Number(r.gstPercent) || 0)) / 100 : null;
+                      return (
+                        <tr key={r.applicationId}>
+                          <td><b>{r.name}</b></td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{r.phone || '—'}</td>
+                          <td>{r.client || '—'}</td>
+                          <td>{r.role || r.requirement || '—'}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{r.reqCode || '—'}</td>
+                          <td>{r.recruiter || '—'}</td>
+                          <td>{r.tl || '—'}</td>
+                          <td>{r.department || '—'}</td>
+                          <td><span className={`status ${r.joiningStatus === 'Dropped' ? 'priority-high' : 'priority-low'}`}>{r.joiningStatus || 'Joined'}</span></td>
+                          <td>{r.rollStatus || '—'}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{r.joiningDate ? fmtD(r.joiningDate) : '—'}</td>
+                          <td className="num">{r.offeredCtc != null ? money(r.offeredCtc) : '—'}</td>
+                          <td className="num">{r.feePercent != null ? `${r.feePercent}%` : '—'}</td>
+                          <td className="num">{r.billing != null ? money(r.billing) : <span className="small-muted">CTC / fee needed</span>}</td>
+                          <td className="num">{gstAmt != null ? money(gstAmt) : '—'}</td>
+                          <td className="num">{r.billing != null ? money(r.billing + gstAmt) : '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          )}
+        </section>
+      )}
 
       {/* A filter that finds nothing leaves a screenful of ₹0 cards and no
           reason. This says what is switched on, and clears it in one press. */}

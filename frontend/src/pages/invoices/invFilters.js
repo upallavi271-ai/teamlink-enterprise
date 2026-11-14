@@ -13,13 +13,14 @@ import { ALL, matchesHierarchy, roleMatch } from './invHierarchy';
 export const NONE = '__none'; // the Recruiter filter's "Unassigned"
 
 export const APPLY_TO = [
-  { value: 'invoice', label: 'Invoice date' },
+  // Joining month first (founder 2026-11-14: Accounts counted a month by INVOICE date - June joiners are invoiced in July - so July showed 42 while the ATS had 27 joined)
   { value: 'joining', label: 'Joining month' },
+  { value: 'invoice', label: 'Invoice date' },
   { value: 'due', label: 'Due date' },
   { value: 'payment', label: 'Payment date' },
 ];
 export const PERIOD_PRESETS = ['today', 'yesterday', 'thisWeek', 'lastWeek', 'thisMonth', 'lastMonth', 'thisQuarter', 'lastQuarter', 'cfy', 'pfy', 'custom', 'all'];
-export const ALL_PERIOD = { from: null, to: null, preset: 'all', applyTo: 'invoice' };
+export const ALL_PERIOD = { from: null, to: null, preset: 'all', applyTo: 'joining' };
 export const periodOn = (p) => !!(p && p.from && p.to);
 
 // Status — the spec's six words over the register's own statuses.
@@ -154,7 +155,7 @@ export function periodFromLegacy(sel) {
 export function normPeriod(p) {
   if (typeof p === 'string') return periodFromLegacy(p);
   if (!p || typeof p !== 'object') return { ...ALL_PERIOD };
-  return { ...ALL_PERIOD, ...p, applyTo: APPLY_TO.some((o) => o.value === p.applyTo) ? p.applyTo : 'invoice' };
+  return { ...ALL_PERIOD, ...p, applyTo: APPLY_TO.some((o) => o.value === p.applyTo) ? p.applyTo : 'joining' };
 }
 
 const d10 = (s) => (s ? String(s).slice(0, 10) : '');
