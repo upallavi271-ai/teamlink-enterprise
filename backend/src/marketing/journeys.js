@@ -370,7 +370,10 @@ async function decide(u, draftId, b = {}) {
     if (!nm.ok) return { error: 'The lead\'s phone number does not look right. Fix it in the CRM, then approve again.', status: 400 };
     if ((await CMP.optedOut('whatsapp', nm.e164).catch(() => false)) || (await CMP.optedOut('sms', nm.e164).catch(() => false))) { await DB.run(`UPDATE "${D}" SET "status" = 'rejected', "decidedAt" = ?, "decidedByName" = ?, "result" = 'opted out' WHERE "id" = ?`, iso(), clip(u.name, 80), d.id); await resume(d.runId, 'The lead opted out: nothing was sent.'); return { error: 'This person opted out of messages, so nothing was sent.', status: 409 }; }
     to = core.maskMobile(nm.e164);
-    res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text: body, meta: { audience: 'lead', personName: clip(lead.contactName || lead.company, 80), purpose: 'CRM journey', module: 'AI Marketing', senderUserId: u.id, senderName: clip(u.name, 80) } });
+    const meta = { audience: 'lead', personName: clip(lead.contactName || lead.company, 80), purpose: 'CRM journey', module: 'AI Marketing', senderUserId: u.id, senderName: clip(u.name, 80) };
+    // the official WhatsApp number sends free text only within 24 hours of the person's last message: with an approved "journey" template set (AI usage), the approved words go in as its last blank
+    const tpl = require('./waTemplates').payload((await Cfg.getSettings()).waTemplates, 'journey', { name: String(lead.contactName || '').trim().split(/\s+/)[0] || 'there', brand: (await Cfg.getBrand()).brandName || 'TeamLink', message: body.replace(STOP_LINE, '').replace(/\n+/g, ' ') }); // eslint-disable-line global-require
+    res = await messaging.send('WhatsApp', tpl ? { to: nm.e164, kind: 'text', text: body, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name } } : { to: nm.e164, kind: 'text', text: body, meta });
   } else {
     const em = String(lead.email || '').trim();
     if (await CMP.optedOut('email', em).catch(() => false)) { await DB.run(`UPDATE "${D}" SET "status" = 'rejected', "decidedAt" = ?, "decidedByName" = ?, "result" = 'opted out' WHERE "id" = ?`, iso(), clip(u.name, 80), d.id); await resume(d.runId, 'The lead opted out: nothing was sent.'); return { error: 'This person opted out of emails, so nothing was sent.', status: 409 }; }

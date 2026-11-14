@@ -229,21 +229,21 @@ async function noticeFor(kind, r, { base = '', urls = [] } = {}) {
   const site = siteFor(base);
   const link = site ? `${site}/client-project/${tokenOf(r.id)}` : '';
   const need = (what) => (link ? null : { error: `The ${what} needs the site's https address: open this page on the live site and try again.` });
+  // the details a Meta-approved WhatsApp template is filled with (marketing/waTemplates.js has the contract: which blank is which)
+  const shown = urls.filter((x) => /^https:\/\//i.test(x)).slice(0, 4);
+  const values = { name: firstWord(r.contactName) || 'there', brand, occasion: S.clip(r.occasion, 80) || 'your request', link, reason: S.clip(r.declinedNote, 300) || 'we are not able to help with this one', links: shown.join(' ') || 'on our page' };
   if (kind === 'invite') {
     const n = need('request link'); if (n) return n;
-    return { subject: `${brand}: please tell us what you need`, text: `${hi} this is ${brand}. Please tell us what you need${occ} (it takes about two minutes) on your private page: ${link}` };
+    return { values, subject: `${brand}: please tell us what you need`, text: `${hi} this is ${brand}. Please tell us what you need${occ} (it takes about two minutes) on your private page: ${link}` };
   }
-  if (kind === 'accepted') return { subject: `${brand}: we have started your request`, text: `${hi} thank you for your request${occ}. ${brand} has accepted it and our team has started work. We will message you again as soon as your options are ready.${link ? ` You can follow it here: ${link}` : ''}` };
+  if (kind === 'accepted') return { values, subject: `${brand}: we have started your request`, text: `${hi} thank you for your request${occ}. ${brand} has accepted it and our team has started work. We will message you again as soon as your options are ready.${link ? ` You can follow it here: ${link}` : ''}` };
   if (kind === 'options') {
     const n = need('options link'); if (n) return n;
     const till = S.num(r.linkExpiresAt) > Date.now() ? ` The link works until ${dayWords(r.linkExpiresAt)}.` : '';
-    return { subject: `${brand}: your options are ready`, text: `${hi} your options${occ} are ready. Please open your private page, choose the one you like and add any suggestions: ${link}${till}` };
+    return { values, subject: `${brand}: your options are ready`, text: `${hi} your options${occ} are ready. Please open your private page, choose the one you like and add any suggestions: ${link}${till}` };
   }
-  if (kind === 'declined') return { subject: `${brand}: about your request`, text: `${hi} thank you for your request${occ}. We are sorry, we cannot take it up this time: ${S.clip(r.declinedNote, 300)}${link ? ` Details: ${link}` : ''}` };
-  if (kind === 'posted') {
-    const shown = urls.filter((x) => /^https:\/\//i.test(x)).slice(0, 4);
-    return { subject: `${brand}: your post is live`, text: `${hi} your post${occ} is live${shown.length ? `: ${shown.join(' ')}` : ''}. Thank you for working with ${brand}.` };
-  }
+  if (kind === 'declined') return { values, subject: `${brand}: about your request`, text: `${hi} thank you for your request${occ}. We are sorry, we cannot take it up this time: ${S.clip(r.declinedNote, 300)}${link ? ` Details: ${link}` : ''}` };
+  if (kind === 'posted') return { values, subject: `${brand}: your post is live`, text: `${hi} your post${occ} is live${shown.length ? `: ${shown.join(' ')}` : ''}. Thank you for working with ${brand}.` };
   return { error: 'Unknown message.' };
 }
 // -> { sent: [{ way, ok, to, error }], note }   never throws. opts: { by (a person: their click) | null (automatic), base, urls, ways: ['whatsapp','email'] (manual choice), auto: true }
@@ -269,7 +269,11 @@ async function tellClient(r, kind, opts = {}) {
         const nm = core.normalizeMobile(r.contactPhone);
         if (!nm.ok) { out.sent.push({ way: label, ok: false, local: true, to: '', error: 'The client\'s number does not look right. Fix it in Edit.' }); continue; } // eslint-disable-line no-continue
         to = core.maskMobile(nm.e164);
-        res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, meta }); // eslint-disable-line no-await-in-loop
+        // the official WhatsApp number can send free text only within 24 hours of the person's last message: with an approved template set for this kind (AI usage), the template goes instead
+        const tpl = require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
+        res = await messaging.send('WhatsApp', tpl
+          ? { to: nm.e164, kind: 'text', text: msg.text, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name } }
+          : { to: nm.e164, kind: 'text', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, meta }); // eslint-disable-line no-await-in-loop
       } else {
         if (!String(r.contactEmail || '').trim()) { if (by) out.sent.push({ way: label, ok: false, local: true, to: '', error: 'No email address is saved for this client. Add it in Edit.' }); continue; } // eslint-disable-line no-continue
         to = core.maskEmail(r.contactEmail);
@@ -278,7 +282,8 @@ async function tellClient(r, kind, opts = {}) {
       const ok = !!(res && res.ok);
       const why = ok ? '' : plainWhy(res);
       out.sent.push({ way: label, ok, to, error: why });
-      await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
+      const viaTpl = way === 'whatsapp' && ok && !!require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
+      await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label}${viaTpl ? ' (approved template)' : ''} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
     }
     const bad = out.sent.filter((x) => !x.ok);
     if (!by && bad.length) await tellTeam(r, `The client was not told: "${S.clip(r.title, 60)}"`, `${bad.map((x) => `${x.way}: ${x.error}`).join(' ').slice(0, 300)} Send them the link yourself from Client projects.`);
@@ -318,7 +323,19 @@ async function notifyStatus() {
   let st = {};
   try { st = await require('../utils/messaging').channelStatus(); } catch { st = {}; } // eslint-disable-line global-require
   const way = (k, on) => ({ on: on !== false, ready: !!(st[k] && st[k].configured), via: (st[k] && (st[k].via || st[k].detail)) || '', reason: st[k] && !st[k].configured ? (st[k].reason || 'Not connected') : '' });
-  return { auto: cn.auto === true, whatsapp: way('WhatsApp', cn.whatsapp), email: way('Email', cn.email) };
+  // the approved WhatsApp templates set for each kind of message, and what TeamLink knows of each at Meta (from the templates it already has: approved / waiting / rejected / not known)
+  const WT = require('./waTemplates'); // eslint-disable-line global-require
+  const templates = {};
+  for (const k of WT.KEYS) { // eslint-disable-line no-restricted-syntax
+    const t = (set.waTemplates || {})[k];
+    let known = 'none';
+    if (t && t.name) {
+      const row = (await S.q('SELECT "waApprovalStatus" FROM "OutreachTemplate" WHERE "waTemplateName" = ? AND "channel" = \'whatsapp\' AND "status" = \'active\' ORDER BY "updatedAt" DESC LIMIT 1', t.name).catch(() => []))[0]; // eslint-disable-line no-await-in-loop
+      known = row ? (row.waApprovalStatus || 'draft') : 'unknown';
+    }
+    templates[k] = { name: t ? t.name : '', language: t ? t.language : 'en', known };
+  }
+  return { auto: cn.auto === true, whatsapp: way('WhatsApp', cn.whatsapp), email: way('Email', cn.email), templates, suggestions: WT.suggestions() };
 }
 
 // ---- accept / decline ------------------------------------------------------------------------------------------------------------------------------

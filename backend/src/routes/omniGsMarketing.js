@@ -275,6 +275,9 @@ router.put('/settings', mustAdmin, wrap(async (req, res) => {
   if (c.error) return res.status(400).json({ error: c.error });
   await Cfg.saveSettings(c.value);
   await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: AI limits changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `${c.value.aiDailyPerUser} per person per day; company month limit ${c.value.aiMonthlyCap || 'none'}; Admin may approve own content: ${c.value.selfApprove ? 'yes' : 'no'}; client must approve: ${c.value.clientRequired ? `ON for ${c.value.clientFor.join(', ')}` : 'off'}` });
+  if (JSON.stringify(c.value.waTemplates) !== JSON.stringify(cur.waTemplates)) {
+    await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: WhatsApp templates for TeamLink messages changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: Object.entries(c.value.waTemplates || {}).map(([k, t]) => `${k}: ${t.name} (${t.language})`).join('; ') || 'none (free text)' });
+  }
   if (JSON.stringify(c.value.clientNotify) !== JSON.stringify(cur.clientNotify)) {
     await logAudit({ userId: req.user.id, actorName: req.user.name, action: 'Omni-Channel AI Marketing: telling the client by WhatsApp / email changed', entity: 'OmniMkSettings', entityId: 'settings', toValue: `by itself: ${c.value.clientNotify.auto ? 'on' : 'off'}; WhatsApp: ${c.value.clientNotify.whatsapp ? 'on' : 'off'}; email: ${c.value.clientNotify.email ? 'on' : 'off'}` });
   }

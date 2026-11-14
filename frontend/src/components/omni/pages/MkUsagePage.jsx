@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
-import { PageHead, Btn, Kpi, Kpis, Panel, Pill, Banner, Field, fmtNum, fmtDateTime } from '../ui.jsx';
+import { PageHead, Btn, TinyBtn, Kpi, Kpis, Panel, Pill, Tag, Banner, Field, fmtNum, fmtDateTime } from '../ui.jsx';
 import { AiBanner, aiLabel } from '../marketing/mk.jsx';
 
 // AI MARKETING > AI USAGE: every AI request (who, which module, which model, how big, how long), the limits, and which AI parts are connected.
@@ -11,10 +11,10 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, clientNotify: { auto: true, whatsapp: true, email: true } });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'], autoPostAllowed: false, clientNotify: { auto: true, whatsapp: true, email: true }, waTemplates: {} });
   const [busy, setBusy] = useState(false);
   const [ways, setWays] = useState(null); // is WhatsApp / email connected (what the "tell the client" switch can really use)
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true } }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'], autoPostAllowed: !!x.settings.autoPostAllowed, clientNotify: x.settings.clientNotify || { auto: true, whatsapp: true, email: true }, waTemplates: x.settings.waTemplates || {} }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
   useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
@@ -81,6 +81,29 @@ export default function MkUsagePage() {
               <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, margin: '2px 0' }}><input type="checkbox" checked={lim.clientNotify.whatsapp} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, whatsapp: e.target.checked } })} />WhatsApp {ways ? (ways.whatsapp.ready ? <Pill tone="live" dot>Connected</Pill> : <Pill tone="warn" dot>Not connected: {ways.whatsapp.reason}</Pill>) : null}</label>
               <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, margin: '2px 0' }}><input type="checkbox" checked={lim.clientNotify.email} onChange={(e) => setLim({ ...lim, clientNotify: { ...lim.clientNotify, email: e.target.checked } })} />Email {ways ? (ways.email.ready ? <Pill tone="live" dot>Connected</Pill> : <Pill tone="warn" dot>Not connected: {ways.email.reason}</Pill>) : null}</label>
             </Field>
+            {ways && ways.suggestions ? (
+              <Field label="WHATSAPP TEMPLATES" full hint="Your WhatsApp is the official company number. Meta lets a business send free text only within 24 hours of the person's last message; otherwise a template Meta has approved is needed. For each message below, make a template at Meta with the suggested words (or your own words, with the blanks meaning the same, in the same order), wait for approval, and type its exact name here. With no name, TeamLink sends free text (it may be refused) and the email goes too.">
+                {Object.entries(ways.suggestions).map(([k, sg]) => {
+                  const cur = lim.waTemplates[k] || { name: '', language: 'en' }; const known = (ways.templates && ways.templates[k] && ways.templates[k].known) || 'none';
+                  const set = (p) => setLim({ ...lim, waTemplates: { ...lim.waTemplates, [k]: { ...cur, ...p } } });
+                  const chip = cur.name ? (known === 'approved' ? <Pill tone="live" dot>Approved at Meta</Pill> : known === 'pending' ? <Pill tone="warn" dot>Waiting for Meta</Pill> : known === 'rejected' ? <Pill tone="red" dot>Rejected by Meta</Pill> : <Pill tone="draft">TeamLink cannot check it: Meta decides when it is sent</Pill>) : <Pill tone="draft">Free text</Pill>;
+                  return (
+                    <div key={k} style={{ border: '1px solid var(--line)', borderRadius: 10, padding: '8px 10px', margin: '6px 0' }}>
+                      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b style={{ fontSize: 12.5 }}>{sg.label}</b> <Tag>{sg.category}</Tag> {chip}</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '6px 0' }}>
+                        <input value={cur.name} maxLength={200} placeholder="template_name_at_meta" onChange={(e) => set({ name: e.target.value.trim().toLowerCase() })} style={{ flex: '1 1 220px' }} aria-label={`Template name for ${sg.label}`} />
+                        <select value={cur.language || 'en'} onChange={(e) => set({ language: e.target.value })} aria-label="Language"><option value="en">English (en)</option><option value="te">Telugu (te)</option><option value="hi">Hindi (hi)</option><option value="en_US">English US (en_US)</option></select>
+                      </div>
+                      <details><summary style={{ fontSize: 11.5, cursor: 'pointer' }}>Suggested words and what each blank is</summary>
+                        <div style={{ whiteSpace: 'pre-wrap', fontSize: 12, background: '#f6f8f7', borderRadius: 8, padding: '7px 9px', margin: '6px 0' }}>{sg.body}</div>
+                        <ol style={{ margin: '0 0 4px', paddingLeft: 18, fontSize: 11.5, color: '#54645b' }}>{sg.vars.map((v, i) => <li key={i}>{'{{'}{i + 1}{'}}'} = {v}</li>)}</ol>
+                        <TinyBtn onClick={async () => { try { await navigator.clipboard.writeText(sg.body); toast('Words copied'); } catch { window.prompt('Copy the words:', sg.body); } }}>⧉ Copy the words</TinyBtn>
+                      </details>
+                    </div>
+                  );
+                })}
+              </Field>
+            ) : null}
           </div>
         </Panel>
       )}
