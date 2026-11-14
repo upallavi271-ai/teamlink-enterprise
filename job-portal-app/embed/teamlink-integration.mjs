@@ -666,7 +666,7 @@ export function teamlinkFrontRouter({ root, express }) {
     res.set('Cache-Control', 'no-cache');
     res.sendFile(join(import.meta.dirname, 'kavya-bulk-addon.js'));
   });
-  r.post('/api/ai-calling/campaign', json, wrap(async (req, res) => {
+  r.post(['/api/ai-calling/campaign', '/api/ai-calling/call'], json, wrap(async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const K = await import(pathToFileURL(join(import.meta.dirname, 'kavya-campaign.mjs')).href);
     const { withUser } = await portal();

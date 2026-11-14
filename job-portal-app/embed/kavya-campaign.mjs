@@ -30,7 +30,8 @@ const why = (list) => {
 };
 
 export async function placeCampaign(req, deps) {
-  const b = req.body || {};
+  const b0 = req.body || {};
+  const b = b0.candidateId && !b0.candidateIds ? { ...b0, candidateIds: [b0.candidateId] } : b0; // the single "Start AI Call" button sends one candidateId
   const jobId = String(b.jobId || '').trim();
   const ids = [...new Set((Array.isArray(b.candidateIds) ? b.candidateIds : []).map((x) => String(x || '').trim()).filter(Boolean))];
   if (!jobId || !ids.length || ids.length > 500) return { status: 422, body: { error: 'Choose a job and tick between 1 and 500 candidates.', code: 'VALIDATION_FAILED' } };
