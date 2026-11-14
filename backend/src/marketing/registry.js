@@ -10,7 +10,9 @@
 const MODULES = [
   { id: 'content', no: 1, label: 'AI Content', phase: 1, status: 'live', page: 'mkcontent', blurb: 'Write WhatsApp, SMS, email, RCS and social messages with AI in your brand voice. Nothing is used until a person approves it.' },
   { id: 'email', no: 2, label: 'Email Marketing', phase: 2, status: 'planned', page: null, blurb: 'AI subject lines, A/B subject test, open and click report, approval before a mass email.' },
-  { id: 'messaging', no: 3, label: 'WhatsApp, SMS & RCS campaigns', phase: 2, status: 'planned', page: null, blurb: 'AI-written campaign messages with approval, and RCS added to the Omni campaign sender.' },
+  // 2026-11-14: WhatsApp and SMS are live (marketing/messaging.js): the AI writes the words of a job campaign, a person picks them, they become draft templates and a campaign that is NEVER sent from here.
+  // RCS is not part of it yet: RCS sends from Administration > Integrations > RCS and is not in the Omni campaign sender.
+  { id: 'messaging', no: 3, label: 'WhatsApp & SMS campaigns', phase: 2, status: 'live', page: 'mkcampaigns', blurb: 'The AI writes the WhatsApp and SMS words for one open job in your brand voice; you pick and edit them, make the templates (Meta / DLT approval) and save the campaign. Nothing is sent from here: you press Send in Campaigns. RCS comes later.' },
   { id: 'leads', no: 4, label: 'Lead Generation to CRM', phase: 3, status: 'planned', page: null, blurb: 'Score form, website and ad leads hot / warm / cold, give each an owner, send the first reply.' },
   { id: 'workflow', no: 5, label: 'Workflow Automation', phase: 4, status: 'planned', page: null, blurb: 'If / then branching and event triggers for marketing-to-sales journeys, with an AI-writes-person-approves step.' },
   // 2026-11-14: live. Numbers for words, pictures, videos, the calendar, client approvals and AI use (marketing/reports.js); linking to joinings comes later

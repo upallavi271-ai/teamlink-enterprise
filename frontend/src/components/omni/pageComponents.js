@@ -49,6 +49,7 @@ export const PAGE_COMPONENTS = {
   mkcalendar: lazy(() => import('./pages/MkCalendarPage.jsx')),
   mkreports: lazy(() => import('./pages/MkReportsPage.jsx')),
   mkprojects: lazy(() => import('./pages/MkProjectsPage.jsx')),
+  mkcampaigns: lazy(() => import('./pages/MkCampaignsPage.jsx')),
   mkourwork: lazy(() => import('./pages/MkOurWorkPage.jsx')),
   mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),
   mkusage: lazy(() => import('./pages/MkUsagePage.jsx')),

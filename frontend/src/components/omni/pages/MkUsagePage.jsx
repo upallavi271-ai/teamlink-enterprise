@@ -96,7 +96,7 @@ export default function MkUsagePage() {
       <div className="mk-two" style={{ marginTop: 14, gridTemplateColumns: d.scope === 'all' ? undefined : '1fr' }}>
         <Panel title="By task this month">
           {s.byModule.length === 0 ? <div style={{ fontSize: 12, color: 'var(--muted)' }}>No AI requests yet this month.</div> : (
-            <table className="mk-table"><thead><tr><th>MODULE</th><th>TASK</th><th className="num">REQUESTS</th></tr></thead><tbody>{s.byModule.map((r) => <tr key={`${r.module}${r.task}`}><td>{r.module === 'content' ? 'AI Content' : r.module}</td><td>{TASK[r.task] || r.task}</td><td className="num">{fmtNum(r.calls)}</td></tr>)}</tbody></table>
+            <table className="mk-table"><thead><tr><th>MODULE</th><th>TASK</th><th className="num">REQUESTS</th></tr></thead><tbody>{s.byModule.map((r) => <tr key={`${r.module}${r.task}`}><td>{r.module === 'content' ? 'AI Content' : r.module === 'messaging' ? 'Campaign messages' : r.module}</td><td>{TASK[r.task] || r.task}</td><td className="num">{fmtNum(r.calls)}</td></tr>)}</tbody></table>
           )}
         </Panel>
         {d.scope === 'all' && (

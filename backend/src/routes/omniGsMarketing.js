@@ -15,6 +15,7 @@ const Rep = require('../marketing/reports');
 const Clips = require('../marketing/aiclips');
 const Stock = require('../marketing/stockclips');
 const Prj = require('../marketing/projects');
+const Msg = require('../marketing/messaging');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -162,6 +163,19 @@ router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => se
 // ---- AI clips (marketing/aiclips.js): a real-motion clip from Google Veo; paid, so the cost must be confirmed and a daily limit applies ------------------
 // ---- create from a prompt (marketing/autostudio.js): one sentence -> the plan of a video / picture post (pictures and the video are then made by the screen) ------------------
 router.post('/studio/plan', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/autostudio').plan(req.user, req.body || {}))));
+
+// ---- campaign messages (marketing/messaging.js): the AI writes the WhatsApp / SMS words of a job campaign; templates and a campaign that is saved, NEVER sent from here --------------
+router.get('/campaigns/options', mustWrite, wrap(async (req, res) => send(res, await Msg.options(req.user, { q: String(req.query.q || '') }))));
+router.post('/campaigns/write', mustWrite, wrap(async (req, res) => send(res, await Msg.write(req.user, req.body || {}))));
+router.post('/campaigns/check', mustWrite, wrap(async (req, res) => send(res, await Msg.check(req.user, req.body || {}))));
+router.get('/campaigns', mustWrite, wrap(async (req, res) => send(res, await Msg.list(req.user))));
+router.post('/campaigns', mustWrite, wrap(async (req, res) => send(res, await Msg.save(req.user, { ...(req.body || {}), id: undefined }))));
+router.get('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, await Msg.get(req.user, req.params.id))));
+router.put('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, await Msg.save(req.user, { ...(req.body || {}), id: req.params.id }))));
+router.delete('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, await Msg.remove(req.user, req.params.id))));
+router.post('/campaigns/:id/templates', mustWrite, wrap(async (req, res) => send(res, await Msg.makeTemplates(req.user, req.params.id))));
+router.post('/campaigns/:id/sms-ids', mustWrite, wrap(async (req, res) => send(res, await Msg.setSmsIds(req.user, req.params.id, req.body || {}))));
+router.post('/campaigns/:id/campaign', mustWrite, wrap(async (req, res) => send(res, await Msg.makeCampaign(req.user, req.params.id, req.body || {}))));
 
 // ---- client projects (marketing/projects.js): a client's request -> accepted -> options shown -> the client picks one -> posted ----------------------------
 router.get('/projects/meta', mustWrite, wrap(async (req, res) => res.json({ sources: Prj.SOURCES, deliverables: Prj.DELIVERABLES, platforms: Prj.PLATFORM_KEYS.map((k) => ({ key: k, label: Prj.PLATFORM_LABEL[k] })) })));
