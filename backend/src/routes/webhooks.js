@@ -151,7 +151,15 @@ router.post('/whatsapp', async (req, res) => {
     if (!all.length) return res.status(403).json({ error: 'WhatsApp webhook is not set up (no app secret saved).' });
     let anyValid = valid.size > 0;
     if (!anyValid && knownReferenced === 0) anyValid = all.some((sec) => safeEq(sent, sigOf(sec)));
-    if (!anyValid) return res.status(403).json({ error: 'Bad signature' });
+    if (!anyValid) {
+      // WHY it was refused, without showing any secret: which numbers the call was for and whether ANY saved app secret signs it
+      // (founder 2026-11-14: NonIt and BDE replies never arrived - those numbers belong to another Meta app than the one the saved secret is for).
+      try {
+        const tags = all.filter((sec) => safeEq(sent, sigOf(sec))).map((sec) => WN.tagOf(sec));
+        console.warn(`[wa-sig] refused: numbers ...${[...phoneIds].map((p) => p.slice(-6)).join(', ...')}; saved secret that signs it: ${tags.length ? tags.join(',') : 'none'}`); // eslint-disable-line no-console
+      } catch { /* a log line only */ }
+      return res.status(403).json({ error: 'Bad signature' });
+    }
     await delivery.markSeen('whatsapp');
     // the same call to Omni-Channel's own webhook on this server, so replies show in its Channels > WhatsApp (utils/greenStartWaForward.js)
     require('../utils/greenStartWaForward').forwardSoon(raw, req.get('x-hub-signature-256')); // eslint-disable-line global-require
