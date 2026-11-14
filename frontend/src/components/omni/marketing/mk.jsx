@@ -119,12 +119,13 @@ export async function downloadMkImg(id, name) {
 // the client approval badge on a card (marketing/clientReview.js); nothing for an item that was never sent or whose link was cancelled
 export function ClientChip({ cr }) {
   if (!cr || cr.status === 'revoked') return null;
+  const decide = cr.mode === 'decide'; // the client is the approver (their answer is the approval)
   const stale = cr.outdated && cr.status !== 'sent';
   const [tone, words] = stale ? ['warn', 'Changed after the client saw it']
-    : cr.status === 'approved' ? ['live', `✔ Client approved${cr.decidedByName ? `: ${cr.decidedByName}` : ''}`]
+    : cr.status === 'approved' ? ['live', `✔ ${decide ? 'Approved by the client' : 'Client approved'}${cr.decidedByName ? `: ${cr.decidedByName}` : ''}`]
       : cr.status === 'changes' ? ['red', '↩ Client asked for changes']
         : cr.status === 'expired' ? ['draft', 'Client link expired']
-          : ['warn', cr.outdated ? 'Changed after the link was made' : '⏳ Waiting for the client'];
+          : ['warn', cr.outdated ? 'Changed after the link was made' : decide ? '⏳ Waiting for the client to approve' : '⏳ Waiting for the client'];
   return <Pill tone={tone} dot title={`${cr.clientName}${cr.comment ? `: ${cr.comment}` : ''}`}>{words}</Pill>;
 }
 

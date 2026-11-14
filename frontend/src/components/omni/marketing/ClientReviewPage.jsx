@@ -78,6 +78,7 @@ export default function ClientReviewPage() {
           {r.outdated && r.status === 'sent' ? <div role="status" style={{ background: '#fdecea', color: '#8a1c13', borderRadius: 10, padding: '12px 14px' }}>This was changed after the link was made. Please ask the sender for a new link.</div> : null}
           {open && !done ? (
             <div>
+              {r.mode === 'decide' ? <p style={{ background: '#eef6ff', color: '#1d4fa8', borderRadius: 10, padding: '10px 12px', fontSize: 14, lineHeight: 1.5, margin: '0 0 12px' }}><b>Your answer decides.</b> We will use this only after you approve it. If you ask for changes, we will fix it and send it to you again.</p> : null}
               <label htmlFor="rv-name" style={{ display: 'block', fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Your name</label>
               <input id="rv-name" style={input} value={name} maxLength={80} autoComplete="name" onChange={(e) => setName(e.target.value)} placeholder="So we know who answered" />
               <label htmlFor="rv-comment" style={{ display: 'block', fontSize: 13, fontWeight: 700, margin: '12px 0 4px' }}>{mode === 'changes' ? 'What should change?' : 'A comment (optional for Approve)'}</label>

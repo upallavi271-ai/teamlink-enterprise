@@ -44,7 +44,9 @@ export default function MkApprovePage() {
   const flagsFor = (it) => flagsIn(it.texts);
   const items = data.items;
   const mine = items.filter((i) => i.status === 'waiting' && i.canApprove).sort((a, b) => String(a.submittedAt).localeCompare(String(b.submittedAt))); // oldest first
-  const others = items.filter((i) => i.status === 'waiting' && !i.canApprove);
+  const heldWords = items.filter((i) => i.status === 'waiting' && i.clientHold); // the CLIENT is their approver (clientReview.js mode 'decide'): no Approve button for the team
+  const heldPics = pics.filter((p) => p.clientHold);
+  const others = items.filter((i) => i.status === 'waiting' && !i.canApprove && !i.clientHold);
   const decidedAll = items.filter((i) => (i.status === 'approved' || i.status === 'changes') && i.decidedAt).sort((a, b) => String(b.decidedAt).localeCompare(String(a.decidedAt)));
   const decided = (hist ? decidedAll.filter((i) => i.status === hist) : decidedAll);
   const late = mine.filter((i) => { const a = ageOf(i.submittedAt); return a && a.ms > DAY; }).length;
@@ -134,6 +136,24 @@ export default function MkApprovePage() {
           </>
         ), true))}
       </Panel>
+      {heldWords.length + heldPics.length > 0 && (
+        <Panel title="Waiting for the client" sub="The client is the approver of these: only the client's answer approves them, and nobody on the team can. Their private links are under Client approvals below. If a client does not answer, cancel the link there and the item goes back to Drafts." style={{ marginTop: 14 }} right={<span className="pill live">{heldWords.length + heldPics.length}</span>}>
+          {heldWords.map((it) => card(it, <><ClientChip cr={it.clientReview} /><small style={{ color: 'var(--muted)' }}>Only the client can approve this.</small></>))}
+          {heldPics.length > 0 && (
+            <div className="mki-grid" style={{ marginTop: heldWords.length ? 10 : 0 }}>
+              {heldPics.map((p) => (
+                <div key={p.id} className="card mki-card">
+                  <MkImg id={p.id} lazy alt={p.title} video={p.kind === 'video'} style={{ aspectRatio: p.aspect.replace(':', ' / '), ...(p.kind === 'video' ? { objectFit: 'contain', background: '#000' } : {}) }} />
+                  <b style={{ fontSize: 11.5, marginTop: 6 }}>{p.title}</b>
+                  <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>By {p.createdByName}</small>
+                  <ClientChip cr={p.clientReview} />
+                  <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>Only the client can approve this.</small>
+                </div>
+              ))}
+            </div>
+          )}
+        </Panel>
+      )}
       {picsMine.length > 0 && (
         <Panel title="Pictures and videos waiting for you" sub={`${picsMine.length} waiting · check faces, hands, spelling and watermarks before you approve`} style={{ marginTop: 14 }}>
           <div className="mki-grid">
@@ -166,11 +186,11 @@ export default function MkApprovePage() {
         </Panel>
       )}
       {crs.length > 0 && (
-        <Panel title="Client approvals" sub="Items sent to a client after your team approved them. The client answers on a private link." style={{ marginTop: 14 }} right={<span className="pill live">{crs.length}</span>}>
+        <Panel title="Client approvals" sub="Items sent to a client on a private link. When it says “Client approves”, the client's answer is the approval; otherwise the client confirms what your team already approved." style={{ marginTop: 14 }} right={<span className="pill live">{crs.length}</span>}>
           {crs.slice(0, 20).map((r) => (
             <div className="mk-row" key={r.id}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <b>{r.itemTitle}</b> <small style={{ display: 'inline' }}>({r.kind === 'content' ? 'words' : 'picture / video'})</small> <ClientChip cr={r} />
+                <b>{r.itemTitle}</b> <small style={{ display: 'inline' }}>({r.kind === 'content' ? 'words' : 'picture / video'})</small> {r.mode === 'decide' ? <Tag green title="The client's answer is the approval">Client approves</Tag> : null} <ClientChip cr={r} />
                 <small>For {r.clientName}{r.contactName ? ` · ${r.contactName}` : ''} · sent {fmtDateTime(r.createdAt)} by {r.createdByName || '—'}{r.status === 'sent' ? ` · ${r.views ? `opened ${r.views}×` : 'not opened yet'} · valid until ${fmtDateTime(r.expiresAt)}` : ''}</small>
                 {r.status === 'approved' ? <div className="mk-note ok">Approved by {r.decidedByName} on {fmtDateTime(r.decidedAt)}.{r.comment ? ` “${r.comment}”` : ''}</div> : null}
                 {r.status === 'changes' ? <div className="mk-note">{r.decidedByName} asked for changes: “{r.comment}”</div> : null}

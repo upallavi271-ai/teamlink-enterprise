@@ -178,6 +178,8 @@ export default function MkVideosPage() {
       <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
         <TinyBtn onClick={() => downloadMkImg(v.id, v.title).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download</TinyBtn>
         {v.canSubmit ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
+        {!isClip && v.canSubmit && v.canEdit ? <TinyBtn onClick={() => setToClient(v)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
+        {!isClip && v.clientHold ? <TinyBtn onClick={() => setToClient(v)}>Client…</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
         {!isClip && v.status === 'approved' && v.canEdit ? <TinyBtn onClick={() => setToClient(v)}>{v.clientReview && v.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
         {v.canDelete ? <TinyBtn onClick={() => setDel(v)} aria-label={`Delete ${v.title}`}>🗑</TinyBtn> : null}

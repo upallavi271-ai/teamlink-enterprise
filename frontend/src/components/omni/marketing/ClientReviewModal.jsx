@@ -10,6 +10,9 @@ const digits = (s) => String(s || '').replace(/\D/g, '');
 const WORD = { content: 'message', image: 'picture' };
 
 export default function ClientReviewModal({ kind, item, isVideo, onClose, onChanged, toast }) {
+  // decide: the CLIENT is the approver (nothing has been approved by the team: the item waits and the client's answer is the approval). It is the case for a
+  // draft / sent-back item ("Ask the client to approve") and for an item already waiting on such a link. An item the team approved only gets a confirmation.
+  const decide = item.status !== 'approved';
   const [reviews, setReviews] = useState(null);
   const [clients, setClients] = useState([]);
   const [f, setF] = useState({ clientName: '', clientId: '', contactName: '', contactEmail: '', contactPhone: '', message: '', days: 14 });
@@ -29,7 +32,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   };
   const make = async () => {
     setBusy('make'); setErr('');
-    try { const r = await omni.post('/gs/marketing/client-reviews', { ...f, kind, itemId: item.id, message: f.message || `Please check this ${word} and tell us if it is OK to use.` }); setFresh(r.review); setAgain(false); toast('The private link is ready'); load(); onChanged && onChanged(); } catch (e) { setErr(errOf(e, 'The link could not be made.')); } finally { setBusy(''); }
+    try { const r = await omni.post('/gs/marketing/client-reviews', { ...f, kind, itemId: item.id, ...(decide ? { mode: 'decide' } : {}), message: f.message || `Please check this ${word} and tell us if it is OK to use.` }); setFresh(r.review); setAgain(false); toast(decide ? 'Waiting for the client: the private link is ready' : 'The private link is ready'); load(); onChanged && onChanged(); } catch (e) { setErr(errOf(e, 'The link could not be made.')); } finally { setBusy(''); }
   };
   const act = async (r, what) => {
     setBusy(what + r.id); setErr('');
@@ -60,7 +63,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   );
 
   return (
-    <GsModal title={`Send to client: ${item.title}`} sub={`The client sees this ${word} on a private page and answers Approve or Request changes.`} width={560} onClose={onClose}
+    <GsModal title={`${decide ? 'Ask the client to approve' : 'Send to client'}: ${item.title}`} sub={decide ? `The client's answer is the approval. The ${word} becomes Approved only when the client says yes; until then nobody on your team can approve it.` : `The client sees this ${word} on a private page and answers Approve or Request changes.`} width={560} onClose={onClose}
       foot={<Btn onClick={onClose}>Close</Btn>}>
       {err ? <Banner tone="error">{err}</Banner> : null}
       {!reviews ? <div style={{ fontSize: 12 }}>Loading…</div> : null}
@@ -68,9 +71,9 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
         <div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><b style={{ fontSize: 12 }}>{current.clientName}</b><ClientChip cr={current} /></div>
           {current.status === 'approved' ? <div className="mk-note ok" style={{ marginTop: 8 }}>Approved by {current.decidedByName} on {fmtDateTime(current.decidedAt)}.{current.comment ? ` “${current.comment}”` : ''}</div> : null}
-          {current.status === 'changes' ? <div className="mk-note" style={{ marginTop: 8 }}>{current.decidedByName} asked for changes on {fmtDateTime(current.decidedAt)}: “{current.comment}”. Fix it, get it approved by your team, then send a new link.</div> : null}
-          {current.status === 'expired' ? <div className="mk-note" style={{ marginTop: 8 }}>This link expired on {fmtDateTime(current.expiresAt)}.</div> : null}
-          {open ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Waiting for the client{current.views ? ` · opened ${current.views} time${current.views === 1 ? '' : 's'}` : ' · not opened yet'}.</div> : null}
+          {current.status === 'changes' ? <div className="mk-note" style={{ marginTop: 8 }}>{current.decidedByName} asked for changes on {fmtDateTime(current.decidedAt)}: “{current.comment}”. {current.mode === 'decide' ? 'It is back with the writer: fix it, then ask the client again.' : 'Fix it, get it approved by your team, then send a new link.'}</div> : null}
+          {current.status === 'expired' ? <div className="mk-note" style={{ marginTop: 8 }}>This link expired on {fmtDateTime(current.expiresAt)}.{current.mode === 'decide' ? ' Make a new link, or let your team approve it.' : ''}</div> : null}
+          {open ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Waiting for the client{current.views ? ` · opened ${current.views} time${current.views === 1 ? '' : 's'}` : ' · not opened yet'}.{current.mode === 'decide' ? ' Only the client can approve it. If you cancel the link, it goes back to Drafts.' : ''}</div> : null}
           {open || fresh ? share(current) : null}
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 10 }}>
             {open ? <TinyBtn disabled={!!busy} onClick={() => act(current, 'extend')}>Extend 14 days</TinyBtn> : null}

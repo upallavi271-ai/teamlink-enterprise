@@ -229,21 +229,23 @@ async function list(u, { status = '', q = '', mine = false } = {}) {
   const set = await Cfg.getSettings();
   const rows = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1000`)).filter((r) => visible(u, r, set));
   const needle = String(q || '').trim().toLowerCase();
+  const held = await heldSet();
   const items = rows
     .filter((r) => (!status || r.status === status) && (!mine || r.createdById === u.id) && (!needle || `${r.title} ${r.brief}`.toLowerCase().includes(needle)))
-    .map((r) => view(u, r, set));
+    .map((r) => (held.has(r.id) ? { ...view(u, r, set), canApprove: false, clientHold: true } : view(u, r, set))); // the client is the approver of a held item
   return { items, total: items.length, canWrite: mayWrite(u) };
 }
 async function counts(u) {
   await ensure();
   const set = await Cfg.getSettings();
-  const rows = (await S.q(`SELECT status, decidedAt, updatedAt, createdById, department, deletedAt FROM "${TABLE}" WHERE deletedAt IS NULL`)).filter((r) => visible(u, { ...r, id: '' }, set));
+  const rows = (await S.q(`SELECT id, status, decidedAt, updatedAt, createdById, department, deletedAt FROM "${TABLE}" WHERE deletedAt IS NULL`)).filter((r) => visible(u, { ...r, id: '' }, set));
   const out = { draft: 0, waiting: 0, approved: 0, changes: 0, approvedThisMonth: 0, waitingForMe: 0 };
   const m0 = AI.monthStart();
+  const held = await heldSet();
   rows.forEach((r) => {
     out[r.status] = (out[r.status] || 0) + 1;
     if (r.status === 'approved' && S.num(r.decidedAt) >= m0) out.approvedThisMonth += 1;
-    if (r.status === 'waiting' && canApprove(u, r, set)) out.waitingForMe += 1;
+    if (r.status === 'waiting' && !held.has(r.id) && canApprove(u, r, set)) out.waitingForMe += 1; // not the ones only the client can approve
   });
   return out;
 }
@@ -360,6 +362,38 @@ async function submit(u, id) {
   return { ok: ids.length ? 'Sent for approval. The approvers have been told.' : 'Sent for approval. No approver could be told by notice: ask an Admin to open the Approvals tab.', approvers: ids.length, item: view(u, await row(r.id), set) };
 }
 
+// ---- the CLIENT is the approver (marketing/clientReview.js, mode 'decide') ------------------------------------------------------------------------
+// holdForClient: the words wait (status waiting) but NO team approver is told: only the client can approve. backToDraft: the client link was cancelled.
+// clientDecision: the client's answer from the private link: approve = into the Content Library, changes = back to the writer with the client's comment.
+async function holdForClient(u, r) {
+  if (!Object.keys(parse(r.texts, {})).length) return { error: 'Write at least one channel version first.', status: 400 };
+  if (r.status === 'waiting') return { ok: true };
+  const now = Date.now();
+  await S.run(`UPDATE "${TABLE}" SET status = 'waiting', note = NULL, submittedAt = ?, submittedByName = ?, updatedAt = ? WHERE id = ?`, now, S.clip(u.name, 80), now, r.id);
+  return { ok: true };
+}
+async function backToDraft(id) {
+  const r = await row(id);
+  if (!r || r.status !== 'waiting') return false;
+  await S.run(`UPDATE "${TABLE}" SET status = 'draft', note = NULL, updatedAt = ? WHERE id = ?`, Date.now(), r.id);
+  return true;
+}
+async function clientDecision(id, approve, who, clientName, comment) {
+  await ensure();
+  const r = await row(id);
+  if (!r || r.deletedAt || r.status !== 'waiting') return { applied: false };
+  const now = Date.now(); const label = S.clip(`${who} (client: ${clientName})`, 80); const words = S.clip(comment, 300);
+  if (approve) {
+    const libraryId = await publishToLibrary(r, { id: r.createdById, name: r.createdByName });
+    await S.run(`UPDATE "${TABLE}" SET status = 'approved', note = ?, decidedAt = ?, decidedById = NULL, decidedByName = ?, selfApproved = 0, libraryId = ?, updatedAt = ? WHERE id = ?`, words || null, now, label, libraryId, now, r.id);
+  } else {
+    await S.run(`UPDATE "${TABLE}" SET status = 'changes', note = ?, decidedAt = ?, decidedById = NULL, decidedByName = ?, selfApproved = 0, updatedAt = ? WHERE id = ?`, words || 'The client asked for changes.', now, label, now, r.id);
+  }
+  await logAudit({ userId: r.createdById, actorName: label, action: approve ? 'Omni-Channel AI Marketing: content approved by the client' : 'Omni-Channel AI Marketing: content sent back by the client', entity: TABLE, entityId: r.id, toValue: approve ? `${r.title}; now in the Content Library` : `${r.title}: ${words}` });
+  return { applied: true };
+}
+const heldSet = async () => { try { return await require('./clientReview').heldIds('content'); } catch { return new Set(); } }; // eslint-disable-line global-require
+
 // approving copies the approved words into the Content Library (OmniStudioContent), where the campaign screens find them
 async function publishToLibrary(r, maker) {
   await St.ensure();
@@ -396,6 +430,7 @@ async function decide(u, id, approve, note, edits) {
   const { set } = g;
   let { r } = g;
   if (r.status !== 'waiting') return { error: 'This content is not waiting for approval.', status: 409 };
+  if ((await heldSet()).has(r.id)) return { error: 'This is waiting for the CLIENT to approve it: only the client can. To decide as a team instead, cancel the client link (the content goes back to Drafts).', status: 409, code: 'client_holds' };
   if (!canApprove(u, r, set)) {
     return { error: r.createdById === u.id ? 'You cannot approve your own content. Another approver (a Team Lead of the department, or an Admin) has to do it.' : 'Only an Admin, or a Team Lead of this department, can approve this content.', status: 403 };
   }
@@ -429,4 +464,4 @@ async function decide(u, id, approve, note, edits) {
   return { ok: approve ? (edited ? 'Approved with your changes. It is now in the Content Library, ready for campaigns.' : 'Approved. It is now in the Content Library, ready for campaigns.') : 'Sent back with your note.', edited, item: view(u, await row(r.id), set) };
 }
 
-module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n, e) => decide(u, id, true, n, e), reject: (u, id, n) => decide(u, id, false, n), getRow, rawRow: async (id) => { await ensure(); return row(id); }, view, mayWrite, finish, flagsOf };
+module.exports = { ensure, CHANNELS, KEYS, GOALS, generate, revise, list, counts, create, update, remove, submit, approve: (u, id, n, e) => decide(u, id, true, n, e), reject: (u, id, n) => decide(u, id, false, n), getRow, rawRow: async (id) => { await ensure(); return row(id); }, view, mayWrite, finish, flagsOf, holdForClient, backToDraft, clientDecision };

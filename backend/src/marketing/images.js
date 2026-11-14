@@ -308,7 +308,8 @@ async function list(u, { status: st = '', kind = '' } = {}) {
   const set = await Cfg.getSettings();
   const rows = (await S.q(`SELECT * FROM "${TABLE}" WHERE deletedAt IS NULL ORDER BY createdAt DESC LIMIT 600`))
     .filter((r) => visible(u, r, set) && (!st || r.status === st) && (!kind || (kind === 'video') === isVideo(r)));
-  return { items: rows.map((r) => view(u, r, set)), canWrite: mayWrite(u) };
+  const held = await heldSet();
+  return { items: rows.map((r) => (held.has(r.id) ? { ...view(u, r, set), canApprove: false, clientHold: true } : view(u, r, set))), canWrite: mayWrite(u) }; // the client is the approver of a held item
 }
 async function meta(u) {
   await ensure();
@@ -580,10 +581,34 @@ async function submit(u, id) {
   await logAudit({ userId: u.id, actorName: u.name, action: `Omni-Channel AI Marketing: ${what(r)} sent for approval`, entity: TABLE, entityId: r.id, toValue: `${r.title}; ${ids.length} approver(s) told` });
   return { ok: ids.length ? 'Sent for approval. The approvers have been told.' : 'Sent for approval. No approver could be told by notice: ask an Admin to open Approvals.', item: view(u, await row(r.id), set) };
 }
+// ---- the CLIENT is the approver (marketing/clientReview.js, mode 'decide'): see the same three functions in content.js ----------------------------------
+const heldSet = async () => { try { return await require('./clientReview').heldIds('image'); } catch { return new Set(); } }; // eslint-disable-line global-require
+async function holdForClient(u, r) {
+  if (r.status === 'waiting') return { ok: true };
+  const now = Date.now();
+  await S.run(`UPDATE "${TABLE}" SET status = 'waiting', note = NULL, submittedAt = ?, updatedAt = ? WHERE id = ?`, now, now, r.id);
+  return { ok: true };
+}
+async function backToDraft(id) {
+  const r = await row(id);
+  if (!r || r.status !== 'waiting') return false;
+  await S.run(`UPDATE "${TABLE}" SET status = 'draft', note = NULL, updatedAt = ? WHERE id = ?`, Date.now(), r.id);
+  return true;
+}
+async function clientDecision(id, approve, who, clientName, comment) {
+  await ensure();
+  const r = await row(id);
+  if (!r || r.deletedAt || r.status !== 'waiting') return { applied: false };
+  const now = Date.now(); const label = S.clip(`${who} (client: ${clientName})`, 80); const words = S.clip(comment, 300);
+  await S.run(`UPDATE "${TABLE}" SET status = ?, note = ?, decidedAt = ?, decidedById = NULL, decidedByName = ?, selfApproved = 0, updatedAt = ? WHERE id = ?`, approve ? 'approved' : 'changes', approve ? (words || null) : (words || 'The client asked for changes.'), now, label, now, r.id);
+  await logAudit({ userId: r.createdById, actorName: label, action: approve ? `Omni-Channel AI Marketing: ${what(r)} approved by the client` : `Omni-Channel AI Marketing: ${what(r)} sent back by the client`, entity: TABLE, entityId: r.id, toValue: approve ? r.title : `${r.title}: ${words}` });
+  return { applied: true };
+}
 async function decide(u, id, approve, note) {
   const g = await getRow(u, id); if (!g) return { error: 'This picture was not found.', status: 404 };
   const { r, set } = g;
   if (r.status !== 'waiting') return { error: 'This picture is not waiting for approval.', status: 409 };
+  if ((await heldSet()).has(r.id)) return { error: 'This is waiting for the CLIENT to approve it: only the client can. To decide as a team instead, cancel the client link (it goes back to Drafts).', status: 409, code: 'client_holds' };
   if (!canApprove(u, r, set)) return { error: r.createdById === u.id ? 'You cannot approve your own picture. Another approver has to do it.' : 'Only an Admin, or a Team Lead of this department, can approve this picture.', status: 403 };
   const words = S.clip(note, 300);
   if (!approve && words.length < 5) return { error: 'Write a few words so the person knows what to change.', status: 400 };
@@ -597,5 +622,5 @@ async function decide(u, id, approve, note) {
 
 module.exports = {
   ensure, STYLES, ASPECTS, status, testConnection, meta, list, create, getJob, saveVideo, saveUpload, getRow, rawRow, rawFile, file, publicFile, update, remove, submit,
-  approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng,
+  approve: (u, id, n) => decide(u, id, true, n), reject: (u, id, n) => decide(u, id, false, n), mayWrite, sign, samplePng, holdForClient, backToDraft, clientDecision,
 };

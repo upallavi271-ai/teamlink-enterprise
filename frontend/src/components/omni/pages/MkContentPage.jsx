@@ -249,6 +249,8 @@ export default function MkContentPage() {
             <div className="mk-acts">
               <TinyBtn onClick={() => open(it)}>{it.canEdit ? '✎ Open' : '👁 Look'}</TinyBtn>
               {it.canSubmit ? <TinyBtn disabled={busy === it.id} onClick={() => submitFromList(it)}>Ask for approval</TinyBtn> : null}
+              {it.canSubmit && it.canEdit ? <TinyBtn onClick={() => setToClient(it)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
+              {it.clientHold ? <TinyBtn onClick={() => setToClient(it)}>Client…</TinyBtn> : null}
               {meta.canWrite ? <TinyBtn onClick={() => copyItem(it)} title="Make a new draft from these words" aria-label={`Make a copy of ${it.title}`}>⧉ Copy</TinyBtn> : null}
               {it.status === 'approved' && it.canEdit ? <TinyBtn onClick={() => setToClient(it)}>{it.clientReview && it.clientReview.status !== 'revoked' ? 'Client…' : '➤ Send to client'}</TinyBtn> : null}
               {it.canDelete ? <TinyBtn onClick={() => setDel(it)} title="Delete" aria-label={`Delete ${it.title}`}>🗑</TinyBtn> : null}
