@@ -30,6 +30,7 @@ import ClientAccountModal from './invoices/ClientAccountModal.jsx';
 // B2 — the Credit & debit notes tab.
 import CreditNotesPanel from './invoices/CreditNotesPanel.jsx';
 import PartnerPayoutsPanel from './invoices/PartnerPayoutsPanel.jsx'; // B7: agency / freelancer payouts
+import GstStrip from './invoices/GstStrip.jsx'; // GST for the invoices shown (read only)
 import PaymentCheckPanel from './invoices/PaymentCheckPanel.jsx'; // Issue 6: which Paid has proof behind it (read only)
 import {
   money, money2, fmtD,
@@ -1127,6 +1128,8 @@ export default function Invoices() {
         <div className="inv-stat" title="What is receivable (after TDS, credit notes and adjustments) minus what has been received"><div className="inv-stat-l">Pending amount</div><div className="inv-stat-v">{money(st.pending)}</div><div className="small-muted">{st.overpaidCount ? `after TDS · ${money(Math.abs(st.overpaid))} received in excess on ${st.overpaidCount} invoice${st.overpaidCount === 1 ? '' : 's'} is set off` : 'after TDS is withheld'}</div></div>
         <div className={`inv-stat${st.overdueCount ? ' bad' : ''}`} title="Invoices that still owe money and whose due date is before today"><div className="inv-stat-l">Overdue invoices</div><div className="inv-stat-v">{st.overdueCount}</div><div className="small-muted">{st.overdueCount ? `${money(st.overdueAmount)} past due` : 'nothing past due'}</div></div>
       </section>
+
+      <GstStrip rows={rows} period={period} periodOn={periodOn(period)} clientsOn={(filters.clients || []).length > 0} />
 
       <section className="inv-panel" aria-label="Aging">
         <div className="inv-aging-head">
