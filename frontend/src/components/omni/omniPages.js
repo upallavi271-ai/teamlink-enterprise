@@ -52,6 +52,7 @@ export const PAGES = {
   mkvideos: { label: 'AI Video', icon: '▶', title: 'AI Video' },
   mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
   mkcalendar: { label: 'Calendar', icon: '▦', title: 'Content Calendar' },
+  mkreports: { label: 'Reports', icon: '▤', title: 'AI Marketing reports' },
   mkbrand: { label: 'Brand voice', icon: '❝', title: 'Brand voice' },
   mkusage: { label: 'AI usage', icon: '◔', title: 'AI usage and limits' },
 };
@@ -67,7 +68,7 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkcontent', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkcontent', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);

@@ -47,6 +47,7 @@ export const PAGE_COMPONENTS = {
   mkvideos: lazy(() => import('./pages/MkVideosPage.jsx')),
   mkapprove: lazy(() => import('./pages/MkApprovePage.jsx')),
   mkcalendar: lazy(() => import('./pages/MkCalendarPage.jsx')),
+  mkreports: lazy(() => import('./pages/MkReportsPage.jsx')),
   mkbrand: lazy(() => import('./pages/MkBrandPage.jsx')),
   mkusage: lazy(() => import('./pages/MkUsagePage.jsx')),
 };

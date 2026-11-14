@@ -77,7 +77,7 @@ const G = '/api/outreach/gs/marketing';
   // 2026-11-13: module 7 Content Calendar is live too (marketing/calendar.js); the five others are still planned
   const liveIds = (meta.body.modules || []).filter((m) => m.status === 'live').map((m) => m.id).sort().join(',');
   // module 8 AI Images is live too (marketing/images.js)
-  check('B1 nine modules: AI Content, Content Calendar, AI Images and AI Video live, the other five planned', meta.status === 200 && meta.body.modules.length === 9 && liveIds === 'calendar,content,images,videos' && meta.body.modules.filter((m) => m.status === 'planned').length === 5, meta.text.slice(0, 200));
+  check('B1 nine modules: AI Content, Calendar, AI Images, AI Video and Reports live, the other four planned', meta.status === 200 && meta.body.modules.length === 9 && liveIds === 'calendar,content,images,reports,videos' && meta.body.modules.filter((m) => m.status === 'planned').length === 4, meta.text.slice(0, 200));
   // 'AI Images' left the later-menu when it became module 8 (2026-11-13)
   check('B2 the other 22 names are on the menu (AI Images and AI Videos are built now)', Array.isArray(meta.body.later) && meta.body.later.length === 22 && !meta.body.later.includes('AI Images') && !meta.body.later.includes('AI Videos'), meta.body.later && meta.body.later.length);
   check('B3 text AI is the labelled sample writer in the sandbox; image / video / audio are "not connected"', meta.body.ai.text.demo === true && meta.body.ai.text.ready && ['image', 'video', 'audio'].every((c) => meta.body.ai[c].ready === false), meta.body.ai);

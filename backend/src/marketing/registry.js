@@ -13,7 +13,8 @@ const MODULES = [
   { id: 'messaging', no: 3, label: 'WhatsApp, SMS & RCS campaigns', phase: 2, status: 'planned', page: null, blurb: 'AI-written campaign messages with approval, and RCS added to the Omni campaign sender.' },
   { id: 'leads', no: 4, label: 'Lead Generation to CRM', phase: 3, status: 'planned', page: null, blurb: 'Score form, website and ad leads hot / warm / cold, give each an owner, send the first reply.' },
   { id: 'workflow', no: 5, label: 'Workflow Automation', phase: 4, status: 'planned', page: null, blurb: 'If / then branching and event triggers for marketing-to-sales journeys, with an AI-writes-person-approves step.' },
-  { id: 'reports', no: 6, label: 'Analytics & Reporting', phase: 5, status: 'planned', page: null, blurb: 'One report from content made to joinings, per module, with AI usage and CSV download.' },
+  // 2026-11-14: live. Numbers for words, pictures, videos, the calendar, client approvals and AI use (marketing/reports.js); linking to joinings comes later
+  { id: 'reports', no: 6, label: 'Analytics & Reporting', phase: 1, status: 'live', page: 'mkreports', blurb: 'Plain numbers for any date range: content, pictures, videos, calendar posts, client approvals and AI use, per person, with a CSV download.' },
   // 2026-11-13 (founder's list item 6): what goes out on which day, with "Plan a week with AI"; posted by hand until the social apps are approved
   { id: 'calendar', no: 7, label: 'Content Calendar', phase: 1, status: 'live', page: 'mkcalendar', blurb: 'Plan Facebook, Instagram, LinkedIn, X, WhatsApp and email posts on a calendar. The AI suggests a week of ideas; you post and mark them done.' },
   // 2026-11-13 (founder's list item 3): Google Gemini pictures in the brand colours, with the logo; approved before use (marketing/images.js)

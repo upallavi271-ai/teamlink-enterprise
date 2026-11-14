@@ -11,6 +11,7 @@ const C = require('../marketing/content');
 const Cal = require('../marketing/calendar');
 const Img = require('../marketing/images');
 const CR = require('../marketing/clientReview');
+const Rep = require('../marketing/reports');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -134,6 +135,16 @@ router.get('/client-reviews', wrap(async (req, res) => send(res, await CR.list(r
 router.post('/client-reviews', mustWrite, wrap(async (req, res) => send(res, await CR.create(req.user, req.body || {}))));
 router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => send(res, await CR.revoke(req.user, req.params.id))));
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
+
+// ---- reports (marketing/reports.js): plain numbers for a date range, and the same as a CSV --------------------------------------------------------
+router.get('/reports', mustWrite, wrap(async (req, res) => send(res, await Rep.report(req.user, req.query || {}))));
+router.get('/reports/csv', mustWrite, wrap(async (req, res) => {
+  const out = await Rep.csv(req.user, req.query || {});
+  if (out.error) return res.status(out.status || 400).json({ error: out.error });
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${out.name}"`);
+  return res.send(out.text);
+}));
 
 // ---- AI usage + limits -----------------------------------------------------------------------------------------------------------------
 router.get('/usage', mustWrite, wrap(async (req, res) => {
