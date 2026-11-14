@@ -3,7 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, ConfirmModal, fmtDateTime } from '../ui.jsx';
-import { MkStatus, MkImg, downloadMkImg, ClientChip } from '../marketing/mk.jsx';
+import { MkStatus, MkImg, downloadMkImg, ClientChip, useMkMeta } from '../marketing/mk.jsx';
 import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AiClipPanel from '../marketing/AiClipPanel.jsx';
 import StockClipPanel from '../marketing/StockClipPanel.jsx';
@@ -34,6 +34,8 @@ const CLIP_MAX = 40 * 1024 * 1024;
 
 export default function MkVideosPage() {
   const { toast, go } = useOmni();
+  const { meta: mkMeta } = useMkMeta();
+  const clientVideos = !!(mkMeta && mkMeta.limits && mkMeta.limits.clientRequired && (mkMeta.limits.clientFor || []).includes('videos')); // the Admin rule: only a client approves finished videos
   const [pics, setPics] = useState(null); // approved pictures
   const [aClips, setAClips] = useState(null); // approved clips
   const [mine, setMine] = useState(null); // every clip and made video this login may see
@@ -177,7 +179,7 @@ export default function MkVideosPage() {
       {v.status === 'changes' && v.note ? <div className="mk-note">Sent back by {v.decidedByName}: {v.note}</div> : null}
       <div className="mk-acts" style={{ marginTop: 6, flexWrap: 'wrap' }}>
         <TinyBtn onClick={() => downloadMkImg(v.id, v.title).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download</TinyBtn>
-        {v.canSubmit ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
+        {v.canSubmit && !v.needsClient ? <TinyBtn disabled={busy === v.id} onClick={() => act(v)}>Ask for approval</TinyBtn> : null}
         {!isClip && v.canSubmit && v.canEdit ? <TinyBtn onClick={() => setToClient(v)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
         {!isClip && v.clientHold ? <TinyBtn onClick={() => setToClient(v)}>Client…</TinyBtn> : null}
         {v.publicPath ? <TinyBtn onClick={() => copyLink(v)}>🔗 Copy link</TinyBtn> : null}
@@ -261,7 +263,9 @@ export default function MkVideosPage() {
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                       <Btn onClick={download}>⬇ Download</Btn>
                       <Btn disabled={!!busy} onClick={() => save(false)}>{busy === 'save' ? 'Saving…' : '💾 Save'}</Btn>
-                      <Btn primary disabled={!!busy} onClick={() => save(true)}>{busy === 'submit' ? 'Saving…' : 'Save and ask for approval →'}</Btn>
+                      {clientVideos
+                        ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Save it, then press “➤ Ask client to approve” on its card below: in your company only the client approves videos.</span>
+                        : <Btn primary disabled={!!busy} onClick={() => save(true)}>{busy === 'submit' ? 'Saving…' : 'Save and ask for approval →'}</Btn>}
                     </div>
                   </div>
                 ) : null}

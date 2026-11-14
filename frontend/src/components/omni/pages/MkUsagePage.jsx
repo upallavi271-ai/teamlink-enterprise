@@ -11,9 +11,9 @@ export default function MkUsagePage() {
   const { toast } = useOmni();
   const [d, setD] = useState(null);
   const [err, setErr] = useState('');
-  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true });
+  const [lim, setLim] = useState({ aiDailyPerUser: 60, aiMonthlyCap: 0, selfApprove: true, clientRequired: false, clientFor: ['words', 'pictures', 'videos'] });
   const [busy, setBusy] = useState(false);
-  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
+  const load = useCallback(() => omni.get('/gs/marketing/usage').then((x) => { setD(x); setLim({ aiDailyPerUser: x.settings.aiDailyPerUser, aiMonthlyCap: x.settings.aiMonthlyCap, selfApprove: x.settings.selfApprove, clientRequired: !!x.settings.clientRequired, clientFor: x.settings.clientFor || ['words', 'pictures', 'videos'] }); }).catch((e) => setErr(errOf(e, 'The usage could not be read.'))), []);
   useEffect(() => { load(); }, [load]);
   if (err && !d) return <Banner tone="error">{err}</Banner>;
   if (!d) return <div className="card panel">Loading…</div>;
@@ -46,6 +46,27 @@ export default function MkUsagePage() {
             <Field label="AI REQUESTS PER PERSON PER DAY" hint="0 switches AI off for everybody."><input type="number" min="0" max="2000" value={lim.aiDailyPerUser} onChange={(e) => setLim({ ...lim, aiDailyPerUser: e.target.value })} /></Field>
             <Field label="COMPANY LIMIT PER MONTH" hint="0 = no company limit."><input type="number" min="0" value={lim.aiMonthlyCap} onChange={(e) => setLim({ ...lim, aiMonthlyCap: e.target.value })} /></Field>
             <Field label="AN ADMIN MAY APPROVE THEIR OWN CONTENT" full hint="On: an Admin who wrote something can approve it (it is recorded as self-approved). Off: another approver has to."><select value={lim.selfApprove ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, selfApprove: e.target.value === 'yes' })}><option value="yes">Yes</option><option value="no">No</option></select></Field>
+          </div>
+        </Panel>
+      )}
+      {d.canEdit && (
+        <Panel title="Who approves: your team or the client" sub="Choose whether the client must approve before anything is used." style={{ marginTop: 14 }} right={<Btn primary disabled={busy} onClick={save}>Save</Btn>}>
+          <div className="form-grid">
+            <Field label="ONLY A CLIENT CAN APPROVE" full hint="Off: your team approves, and a client may also be asked to confirm. On: for the kinds ticked below, nobody on the team can approve. The work goes to the client on a private link, and the client's answer is the approval.">
+              <select value={lim.clientRequired ? 'yes' : 'no'} onChange={(e) => setLim({ ...lim, clientRequired: e.target.value === 'yes' })}><option value="no">Off: my team approves</option><option value="yes">On: only the client approves</option></select>
+            </Field>
+            {lim.clientRequired ? (
+              <Field label="THE CLIENT MUST APPROVE" full hint="Raw video clips are never included (they cannot be sent to a client). Things already approved stay approved.">
+                <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12 }}>
+                  {[['words', 'Words (AI Content)'], ['pictures', 'Pictures'], ['videos', 'Finished videos']].map(([k, label]) => (
+                    <label key={k} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input type="checkbox" checked={lim.clientFor.includes(k)} onChange={(e) => setLim({ ...lim, clientFor: e.target.checked ? [...lim.clientFor, k] : lim.clientFor.filter((x) => x !== k) })} />{label}
+                    </label>
+                  ))}
+                </div>
+                {lim.clientFor.includes('pictures') ? <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 6 }}>Note: a picture you want to use inside a video must be approved first, so with Pictures ticked the client approves each picture and then the video. Untick Pictures to let your team approve pictures.</div> : null}
+              </Field>
+            ) : null}
           </div>
         </Panel>
       )}

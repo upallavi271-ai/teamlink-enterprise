@@ -226,7 +226,9 @@ export default function MkContentPage() {
             {ed.ai && ed.ai.provider ? <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>First written by {aiLabel(ed.ai)}. Everything you change by hand is yours.</div> : null}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 14 }}>
               <Btn disabled={!!busy || locked || !meta.canWrite} onClick={() => save(false)}>{busy === 'save' ? 'Saving…' : '💾 Save'}</Btn>
-              <Btn primary disabled={!!busy || locked || !meta.canWrite || ed.status === 'approved'} onClick={() => save(true)}>{busy === 'submit' ? 'Sending…' : 'Save and ask for approval →'}</Btn>
+              {meta.limits && meta.limits.clientRequired && (meta.limits.clientFor || []).includes('words')
+                ? <span style={{ fontSize: 11, color: 'var(--muted)', alignSelf: 'center' }}>Save it, then press “➤ Ask client to approve” on its card in the list: in your company only the client approves words.</span>
+                : <Btn primary disabled={!!busy || locked || !meta.canWrite || ed.status === 'approved'} onClick={() => save(true)}>{busy === 'submit' ? 'Sending…' : 'Save and ask for approval →'}</Btn>}
               {ed.status === 'approved' && ed.libraryId && acc && acc.pages && acc.pages.includes('campaigns') ? <Btn onClick={() => go('campaigns', { content: ed.libraryId })}>Use in a campaign →</Btn> : null}
             </div>
           </Panel>
@@ -248,7 +250,7 @@ export default function MkContentPage() {
             </div>
             <div className="mk-acts">
               <TinyBtn onClick={() => open(it)}>{it.canEdit ? '✎ Open' : '👁 Look'}</TinyBtn>
-              {it.canSubmit ? <TinyBtn disabled={busy === it.id} onClick={() => submitFromList(it)}>Ask for approval</TinyBtn> : null}
+              {it.canSubmit && !it.needsClient ? <TinyBtn disabled={busy === it.id} onClick={() => submitFromList(it)}>Ask for approval</TinyBtn> : null}
               {it.canSubmit && it.canEdit ? <TinyBtn onClick={() => setToClient(it)} title="The client approves it instead of your team: it becomes Approved only when the client says yes">➤ Ask client to approve</TinyBtn> : null}
               {it.clientHold ? <TinyBtn onClick={() => setToClient(it)}>Client…</TinyBtn> : null}
               {meta.canWrite ? <TinyBtn onClick={() => copyItem(it)} title="Make a new draft from these words" aria-label={`Make a copy of ${it.title}`}>⧉ Copy</TinyBtn> : null}

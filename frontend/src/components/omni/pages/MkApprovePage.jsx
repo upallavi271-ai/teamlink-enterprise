@@ -3,6 +3,7 @@ import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Empty, GsModal, Tag, Tabs, ConfirmModal, fmtDateTime } from '../ui.jsx';
 import { useMkMeta, MkStatus, TextsPreview, TextsEditor, aiLabel, MkImg, ClientChip } from '../marketing/mk.jsx';
+import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 
 // AI MARKETING > APPROVALS: what people wrote with AI and asked to have approved. An approver (an Admin, or a Team Lead / BDE TL of the department) reads the
 // words channel by channel, then approves (the words go into the Content Library), corrects small things and approves ("Edit & approve"), or sends it back
@@ -33,6 +34,7 @@ export default function MkApprovePage() {
   const [picBack, setPicBack] = useState(null);
   const [picNote, setPicNote] = useState('');
   const [crs, setCrs] = useState([]); // client approvals: sent to a client, answered (marketing/clientReview.js)
+  const [toClient, setToClient] = useState(null); // { kind, item, isVideo }: an item waiting for the team that the company rule says only a client may approve
   const loadPics = useCallback(() => omni.get('/gs/marketing/images', { status: 'waiting' }).then((d) => setPics(d.items || [])).catch(() => setPics([])), []);
   const loadCrs = useCallback(() => omni.get('/gs/marketing/client-reviews').then((d) => setCrs((d.reviews || []).filter((r) => r.status !== 'revoked'))).catch(() => setCrs([])), []);
   const load = useCallback(() => { loadPics(); loadCrs(); return omni.get('/gs/marketing/items').then((d) => { setData(d); setMsg(''); }).catch((e) => setMsg(errOf(e, 'The list could not be read.'))); }, [loadPics, loadCrs]);
@@ -50,7 +52,7 @@ export default function MkApprovePage() {
   const decidedAll = items.filter((i) => (i.status === 'approved' || i.status === 'changes') && i.decidedAt).sort((a, b) => String(b.decidedAt).localeCompare(String(a.decidedAt)));
   const decided = (hist ? decidedAll.filter((i) => i.status === hist) : decidedAll);
   const late = mine.filter((i) => { const a = ageOf(i.submittedAt); return a && a.ms > DAY; }).length;
-  const pickable = mine.filter((i) => !i.mine);
+  const pickable = mine.filter((i) => !i.mine && !i.needsClient);
   const allPicked = pickable.length > 0 && pickable.every((i) => picked.includes(i.id));
 
   const approveOne = async (it, body) => omni.post(`/gs/marketing/items/${it.id}/approve`, body);
@@ -98,7 +100,7 @@ export default function MkApprovePage() {
     const age = it.status === 'waiting' ? ageOf(it.submittedAt) : null;
     return (
       <div className="mk-row" key={it.id} style={pick && picked.includes(it.id) ? { background: '#f3fbf7' } : undefined}>
-        {pick ? <input type="checkbox" checked={picked.includes(it.id)} disabled={it.mine || busy === 'bulk'} onChange={() => toggle(it.id)} aria-label={`Select ${it.title}`} title={it.mine ? 'Your own content is approved one by one' : 'Select for "Approve selected"'} style={{ alignSelf: 'flex-start', marginTop: 4 }} /> : null}
+        {pick ? <input type="checkbox" checked={picked.includes(it.id)} disabled={it.mine || it.needsClient || busy === 'bulk'} onChange={() => toggle(it.id)} aria-label={`Select ${it.title}`} title={it.mine ? 'Your own content is approved one by one' : 'Select for "Approve selected"'} style={{ alignSelf: 'flex-start', marginTop: 4 }} /> : null}
         <div style={{ flex: 1, minWidth: 0 }}>
           <b>{it.title}</b> <MkStatus status={it.status} />{it.selfApproved ? <> <Tag title="The writer was an Admin who approved their own content">Self-approved</Tag></> : null}
           {age ? <> <Tag green={age.ms <= DAY} title="How long it has been waiting">{age.ms > DAY ? '⚠ ' : ''}waiting {age.words}</Tag></> : null}
@@ -118,6 +120,7 @@ export default function MkApprovePage() {
     <div>
       <PageHead eyebrow="AI Marketing" title="Approvals" lead="AI-written words are used only after a person approves them. Approved words go into the Content Library, where the campaign screens find them." />
       {msg ? <Banner tone="error">{msg}</Banner> : null}
+      {meta.limits && meta.limits.clientRequired ? <Banner tone="info"><b>Company rule: only the client approves</b> {(meta.limits.clientFor || []).map((k) => ({ words: 'words', pictures: 'pictures', videos: 'finished videos' }[k])).join(', ')}. The team cannot approve those: send them to the client (the client's answer is the approval) or send them back. {meta.isAdmin ? 'You can change this rule in AI usage.' : ''}</Banner> : null}
       {avoidErr ? <Banner tone="warn">The never-use word list could not be read, so those words are not highlighted here. Read the words carefully.</Banner> : null}
       <Panel title="Waiting for you" sub={`${mine.length} item${mine.length === 1 ? '' : 's'}${late ? ` · ${late} waiting more than a day` : ''} · oldest first`}
         right={pickable.length > 1 ? (
@@ -127,13 +130,21 @@ export default function MkApprovePage() {
           </div>
         ) : null}>
         {mine.length === 0 ? <Empty title="Nothing is waiting for you">When somebody asks for approval of AI content you can approve, it appears here and you get a notice.</Empty> : mine.map((it) => card(it, (
-          <>
-            <input value={notes[it.id] || ''} placeholder="Note (optional)" maxLength={300} onChange={(e) => setNotes({ ...notes, [it.id]: e.target.value })} aria-label="Note for the writer" style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
-            <Btn primary disabled={!!busy} onClick={() => approve(it)}>{busy === it.id ? 'Approving…' : '✔ Approve'}</Btn>
-            <Btn disabled={!!busy} onClick={() => setEdit({ it, texts: { ...(it.texts || {}) }, subject: it.subject || '', note: notes[it.id] || '' })} title="Correct small things yourself, then approve">✎ Edit &amp; approve</Btn>
-            <Btn disabled={!!busy} onClick={() => { setBack(it); setNote(''); }}>↩ Send back</Btn>
-            {it.mine ? <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>You wrote this. As an Admin you may approve it; it is recorded as self-approved.</small> : null}
-          </>
+          it.needsClient ? (
+            <>
+              <small style={{ fontSize: 10.5, color: '#1d4fa8' }}>Your company requires the CLIENT to approve words: the team cannot approve this.</small>
+              {it.canClient ? <Btn primary disabled={!!busy} onClick={() => setToClient({ kind: 'content', item: it })}>➤ Send to the client</Btn> : <small style={{ fontSize: 10, color: 'var(--muted)' }}>Ask the writer or an Admin to send it to the client.</small>}
+              <Btn disabled={!!busy} onClick={() => { setBack(it); setNote(''); }}>↩ Send back</Btn>
+            </>
+          ) : (
+            <>
+              <input value={notes[it.id] || ''} placeholder="Note (optional)" maxLength={300} onChange={(e) => setNotes({ ...notes, [it.id]: e.target.value })} aria-label="Note for the writer" style={{ border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
+              <Btn primary disabled={!!busy} onClick={() => approve(it)}>{busy === it.id ? 'Approving…' : '✔ Approve'}</Btn>
+              <Btn disabled={!!busy} onClick={() => setEdit({ it, texts: { ...(it.texts || {}) }, subject: it.subject || '', note: notes[it.id] || '' })} title="Correct small things yourself, then approve">✎ Edit &amp; approve</Btn>
+              <Btn disabled={!!busy} onClick={() => { setBack(it); setNote(''); }}>↩ Send back</Btn>
+              {it.mine ? <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>You wrote this. As an Admin you may approve it; it is recorded as self-approved.</small> : null}
+            </>
+          )
         ), true))}
       </Panel>
       {heldWords.length + heldPics.length > 0 && (
@@ -164,7 +175,9 @@ export default function MkApprovePage() {
                 <small style={{ color: 'var(--muted)', fontSize: 9.5 }}>By {p.createdByName}{p.headline ? ` · “${p.headline}”` : ''}{p.demo ? ' · sandbox sample' : ''}</small>
                 <small style={{ fontSize: 9.5 }}>Asked for: {p.prompt}</small>
                 <div className="mk-acts" style={{ marginTop: 6 }}>
-                  <Btn small primary disabled={!!busy} onClick={() => approvePic(p)}>{busy === p.id ? 'Approving…' : '✔ Approve'}</Btn>
+                  {p.needsClient
+                    ? (p.canClient ? <Btn small primary disabled={!!busy} onClick={() => setToClient({ kind: 'image', item: p, isVideo: p.kind === 'video' })}>➤ Send to the client</Btn> : <small style={{ fontSize: 9.5, color: 'var(--muted)' }}>Only the client approves {p.kind === 'video' ? 'videos' : 'pictures'}: ask the maker or an Admin to send it.</small>)
+                    : <Btn small primary disabled={!!busy} onClick={() => approvePic(p)}>{busy === p.id ? 'Approving…' : '✔ Approve'}</Btn>}
                   <Btn small disabled={!!busy} onClick={() => { setPicBack(p); setPicNote(''); }}>↩ Send back</Btn>
                 </div>
                 {p.mine ? <small style={{ fontSize: 9, color: 'var(--muted)' }}>Your own picture: recorded as self-approved.</small> : null}
@@ -212,6 +225,7 @@ export default function MkApprovePage() {
         )))}
         {decided.length > histN ? <div style={{ marginTop: 8 }}><TinyBtn onClick={() => setHistN(histN + 15)}>Show {Math.min(15, decided.length - histN)} more</TinyBtn></div> : null}
       </Panel>
+      {toClient ? <ClientReviewModal kind={toClient.kind} item={toClient.item} isVideo={toClient.isVideo} onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
       {back ? (
         <GsModal title={`Send back "${back.title}"`} sub="Tell the writer what to change. They can edit it and ask again." width={500} onClose={() => setBack(null)}
           foot={<><Btn onClick={() => setBack(null)}>Cancel</Btn><Btn primary disabled={note.trim().length < 5 || busy === back.id} onClick={sendBack}>{busy === back.id ? 'Sending…' : 'Send back'}</Btn></>}>
