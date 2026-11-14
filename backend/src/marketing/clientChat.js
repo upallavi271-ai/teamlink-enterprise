@@ -167,7 +167,7 @@ async function handle(info, result, now) {
     await P.event(p.id, 'chat_failed', 'TeamLink', `The automatic reply could not be sent: ${clip((res && res.error) || 'the sender refused it', 160)}`);
     return { replied: false, why: 'send failed' };
   }
-  await S.run(`INSERT INTO "${T}" (id, e164, projectId, ref, at, dir, kind, text) VALUES (?,?,?,?,?,?,?,?)`, S.newId('mcc'), e164, p.id, null, Date.now(), 'auto', kind, clip(body, 300));
+  await S.run(`INSERT INTO "${T}" (id, e164, projectId, ref, at, dir, kind, text) VALUES (?,?,?,?,?,?,?,?)`, S.newId('mcc'), e164, p.id, null, now, 'auto', kind, clip(body, 300));
   await P.event(p.id, 'chat_auto', 'TeamLink', `Replied on WhatsApp by itself: ${clip(body, 200)}`);
   if (result.personType === 'CLIENT' && result.personId) { // the client's chat page shows our reply too
     await require('../utils/conversations').recordOut({ personType: 'CLIENT', personId: result.personId, personName: info.name || p.contactName, channel: 'WhatsApp', body, address: `+${e164}`, status: 'SENT', statusDetail: 'Sent by TeamLink (automatic reply)', providerRef: res.providerRef || null, templateLabel: 'Automatic reply', senderName: 'TeamLink (automatic)' }).catch(() => {}); // eslint-disable-line global-require

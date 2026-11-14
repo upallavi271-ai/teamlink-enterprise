@@ -150,6 +150,8 @@ async function applyInbound(info) {
   try {
     const out = await processInbound(info, { channel, e164, at, providerId, R, ev });
     if (channel === 'WhatsApp') await require('../omniwa/agent').onInbound(info, out); // Omni-Channel WhatsApp: kept for the inbox and the AI agent; never throws // eslint-disable-line global-require
+    // a contact of an AI Marketing client project wrote: a simple automatic answer + the team is told (marketing/clientChat.js); only for those contacts; never throws
+    if (channel === 'WhatsApp') await require('../marketing/clientChat').onInbound(info, out); // eslint-disable-line global-require
     return out;
   } catch (err) {
     if (R && ev) await R.fail(ev, err);
