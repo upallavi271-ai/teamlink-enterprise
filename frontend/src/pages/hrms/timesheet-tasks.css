@@ -124,6 +124,9 @@
 .tcl-form input, .tcl-form select, .tcl-form textarea { width: 100%; box-sizing: border-box; }
 .tcl-form .tcl-desc textarea { resize: vertical; min-height: 96px; }
 .tcl-actions { display: flex; gap: 8px; }
+/* the From / To pickers: an hour list and a minutes list side by side (they must not take the full width the other fields take) */
+.tcl-form .tcl-time { display: flex; align-items: center; gap: 6px; }
+.tcl-form .tcl-time select { width: auto; flex: 1; min-width: 0; }
 .tcl-table td { vertical-align: top; }
 .tcl-group { margin-bottom: 16px; }
 .tcl-group-head { font-weight: 700; font-size: 14px; padding: 6px 0; border-bottom: 1px solid var(--line, #e3e8ee); margin-bottom: 6px; }

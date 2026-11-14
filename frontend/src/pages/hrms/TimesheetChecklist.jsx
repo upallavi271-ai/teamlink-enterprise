@@ -26,18 +26,30 @@ function quickDays(today) {
   ];
 }
 
-// A plain hours:minutes box - 24-hour, no seconds and no AM/PM (founder 2026-11-12: "sec avasaramledhu, hours and minutes chaluu").
-// Type the four digits (e.g. 0910) and it becomes 09:10; it saves the same "HH:MM" string the time picker did.
+// The time is PICKED, not typed (founder 2026-11-14: typing it was difficult): an hour list (9 am, 10 am ... 12 pm, 1 pm) and a minutes list (00, 05, 10 ... 55).
+// Hours and minutes only, no seconds. It saves the same "HH:MM" (24-hour) string as before, and a time already saved (say 09:07) still shows.
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+const MINUTES = Array.from({ length: 12 }, (_, i) => String(i * 5).padStart(2, '0'));
+const hourWord = (h) => `${h % 12 || 12} ${h < 12 ? 'am' : 'pm'}`;
 function TimeHM({ value, onChange, ariaLabel }) {
-  const onInput = (e) => { const d = e.target.value.replace(/\D/g, '').slice(0, 4); onChange(d.length >= 3 ? `${d.slice(0, 2)}:${d.slice(2)}` : d); };
-  const onBlur = (e) => {
-    const d = e.target.value.replace(/\D/g, '');
-    if (!d) { onChange(''); return; }
-    const h = Math.min(23, parseInt(d.slice(0, 2) || '0', 10));
-    const m = Math.min(59, parseInt((d.slice(2, 4) || '0').padEnd(2, '0'), 10));
-    onChange(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-  };
-  return <input type="text" inputMode="numeric" placeholder="HH:MM" maxLength={5} value={value || ''} aria-label={ariaLabel} onChange={onInput} onBlur={onBlur} />;
+  const [h, m] = String(value || '').split(':');
+  const hv = h === undefined || h === '' ? '' : String(Number(h));
+  const mv = m === undefined || m === '' ? '' : String(Number(m)).padStart(2, '0');
+  const set = (nh, nm) => onChange(nh === '' && nm === '' ? '' : `${String(Number(nh === '' ? 9 : nh)).padStart(2, '0')}:${nm === '' ? '00' : nm}`);
+  return (
+    <span className="tcl-time">
+      <select value={hv} onChange={(e) => set(e.target.value, mv)} aria-label={`${ariaLabel}: hour`}>
+        <option value="">Hour</option>
+        {HOURS.map((x) => <option key={x} value={String(x)}>{hourWord(x)}</option>)}
+      </select>
+      <b>:</b>
+      <select value={mv} onChange={(e) => set(hv, e.target.value)} aria-label={`${ariaLabel}: minutes`}>
+        <option value="">Min</option>
+        {mv && !MINUTES.includes(mv) && <option value={mv}>{mv}</option>}
+        {MINUTES.map((x) => <option key={x} value={x}>{x}</option>)}
+      </select>
+    </span>
+  );
 }
 
 function EntryForm({ statuses, initial, date, onSaved, onCancel }) {
