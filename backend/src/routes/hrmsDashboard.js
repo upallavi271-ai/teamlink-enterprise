@@ -117,7 +117,7 @@ router.get('/progress', requirePerm(null, 'hrms', 'HRMS Dashboard', 'view'), asy
         if (!row) return;
         row.joiningCategories = {
           target: b.total.target, achieved: b.total.achieved, above: b.total.above, closingPct: b.total.closingPct, other: b.otherCount, check: b.checkCount,
-          items: b.categories.filter((c) => c.target != null).map((c) => ({ label: c.short, target: c.target, achieved: c.achieved })),
+          items: b.categories.filter((c) => c.target != null).map((c) => ({ label: c.short, target: c.target, achieved: c.achieved, covered: c.covered || 0 })),
         };
       });
     } catch { /* the category count is a bonus: the chart never depends on it */ }

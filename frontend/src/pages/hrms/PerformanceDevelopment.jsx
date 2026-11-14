@@ -31,16 +31,22 @@ export default function PerformanceDevelopment() {
   // ONE tab (user, 2026-10-09): Monthly Targets, with the recruiter joinings on the
   // same screen as their own section. Both show the ATS joinings and drop-outs of each month; who joined and
   // who dropped (with the reason) opens per person for a login that holds the ATS (founder 2026-11-11).
+  // The plain "Monthly targets" list (Set Target / Export all / Import, empty on the live data) is taken off the screen of everybody who
+  // sees Recruiter joinings (founder 2026-11-14: "remove the above image part"); the Medical category targets and every recruiter's
+  // target now live in Recruiter joinings. Nothing is deleted: a login that does not see Recruiter joinings still gets the list (so its
+  // tab is not empty), and the page and its data are untouched.
   const tabs = [
     {
       key: 'targets',
       label: 'Monthly Targets',
       element: (
         <div className="pd-merged">
-          <section className="pd-section" id="pd-targets">
-            <h2 className="pd-h2">Monthly targets</h2>
-            <Targets />
-          </section>
+          {!joinings && (
+            <section className="pd-section" id="pd-targets">
+              <h2 className="pd-h2">Monthly targets</h2>
+              <Targets />
+            </section>
+          )}
           {joinings && (
             <section className="pd-section" id="pd-joinings">
               <h2 className="pd-h2">Recruiter joinings</h2>

@@ -42,9 +42,9 @@ const MEDICAL = {
   department: 'Medical',
   categories: [
     { key: 'MD_MS_DOCTOR_FT', label: 'MD/MS Doctors', type: 'Full Time', short: 'MD/MS Doctors · Full Time' },
-    { key: 'MD_MS_DOCTOR_PT', label: 'MD/MS Doctors', type: 'Part Time', short: 'MD/MS Doctors · Part Time' },
+    { key: 'MD_MS_DOCTOR_PT', label: 'MD/MS Doctors', type: 'Part Time', short: 'MD/MS Doctors · Part Time', coveredBy: 'MD_MS_DOCTOR_FT' },
     { key: 'MD_MS_FACULTY_FT', label: 'MD/MS Faculty', type: 'Full Time', short: 'MD/MS Faculty · Full Time', note: 'Assistant Professor / Associate Professor / Senior Resident / Professor' },
-    { key: 'MD_MS_FACULTY_PT', label: 'MD/MS Faculty', type: 'Part Time', short: 'MD/MS Faculty · Part Time', note: 'Assistant Professor / Associate Professor / Senior Resident / Professor' },
+    { key: 'MD_MS_FACULTY_PT', label: 'MD/MS Faculty', type: 'Part Time', short: 'MD/MS Faculty · Part Time', note: 'Assistant Professor / Associate Professor / Senior Resident / Professor', coveredBy: 'MD_MS_FACULTY_FT' },
     { key: 'MBBS_DOCTOR_FT', label: 'MBBS Doctors', type: 'Full Time', short: 'MBBS Doctors · Full Time' },
     { key: 'STAFF_NURSE', label: 'Staff Nurses', type: null, short: 'Staff Nurses' },
   ],
@@ -130,18 +130,34 @@ function effectiveTargets(rows, department, month) {
 
 // --- The numbers (pure: tested with hand-made input) ---------------------------------------------------------------------------------
 // people: [{ key, name, ..., classified: [{ category|null, bucket }] }]; targets: Map(category -> { target, incentive })
-function figures(def, people, targets) {
+// opts.fullCoversPart (Super Admin's switch, founder 2026-11-14: "a full time doctor is enough to complete the month's target"): the Full Time joinings of a
+// group that are ABOVE their own target also fill the Part Time target of the same group (MD/MS Doctors, MD/MS Faculty), as far as it is still short. A
+// Part Time joining never fills a Full Time target. Only the closing moves: an incentive is paid for a joining at its OWN category's amount.
+function figures(def, people, targets, opts = {}) {
+  const got = (key) => people.reduce((n, p) => n + (p.counts[key] || 0), 0);
+  const covered = {}; // part-time category -> joinings that fill it from Full Time
+  const usedFor = {}; // full-time category -> its joinings used that way
+  if (opts.fullCoversPart) {
+    def.categories.forEach((c) => {
+      const ft = c.coveredBy ? targets.get(c.coveredBy) : null; const pt = targets.get(c.key);
+      if (!ft || !pt) return;
+      const n = Math.min(Math.max(0, got(c.coveredBy) - (Number(ft.target) || 0)), Math.max(0, (Number(pt.target) || 0) - got(c.key)));
+      if (n > 0) { covered[c.key] = n; usedFor[c.coveredBy] = (usedFor[c.coveredBy] || 0) + n; }
+    });
+  }
   const cats = def.categories.map((c) => {
     const t = targets.get(c.key);
     const target = t ? Number(t.target) || 0 : null;
     const incentive = t && t.incentive != null ? Number(t.incentive) : null;
-    const achieved = people.reduce((n, p) => n + (p.counts[c.key] || 0), 0);
-    const counted = target == null ? 0 : Math.min(achieved, target);
+    const achieved = got(c.key);
+    const cover = covered[c.key] || 0; const used = usedFor[c.key] || 0;
+    const effective = achieved + cover; // what closes this category
+    const counted = target == null ? 0 : Math.min(effective, target);
     return {
-      ...c, target, incentive, achieved, counted,
-      above: target == null ? 0 : Math.max(0, achieved - target),
-      left: target == null ? null : Math.max(0, target - achieved),
-      closingPct: target > 0 ? Math.round((achieved * 100) / target) : null,
+      ...c, target, incentive, achieved, counted, covered: cover, usedForPart: used,
+      above: target == null ? 0 : Math.max(0, effective - target - used),
+      left: target == null ? null : Math.max(0, target - effective),
+      closingPct: target > 0 ? Math.round((effective * 100) / target) : null,
       earned: incentive == null ? null : Math.round(achieved * incentive),
     };
   });
@@ -153,7 +169,7 @@ function figures(def, people, targets) {
   const total = {
     target: totalTarget, achieved: counted, joinedInSix: raw, above: cats.reduce((n, c) => n + c.above, 0),
     closingPct: totalTarget > 0 ? Math.round((counted * 100) / totalTarget) : null,
-    closedCategories: cats.filter((c) => c.target > 0 && c.achieved >= c.target).length,
+    closedCategories: cats.filter((c) => c.target > 0 && c.achieved + c.covered >= c.target).length,
     categories: cats.filter((c) => c.target != null).length,
     incentive: cats.some((c) => c.earned != null) ? cats.reduce((n, c) => n + (c.earned || 0), 0) : null,
     amountsSet,
@@ -185,13 +201,17 @@ async function loadSettings() {
   try {
     const row = await prisma.appSetting.findUnique({ where: { key: SETTINGS_KEY } });
     const v = row ? JSON.parse(row.value) : {};
-    return { facultyImpliesMdMs: v.facultyImpliesMdMs === true };
-  } catch { return { facultyImpliesMdMs: false }; }
+    return { facultyImpliesMdMs: v.facultyImpliesMdMs === true, fullTimeCoversPartTime: v.fullTimeCoversPartTime !== false };
+  } catch { return { facultyImpliesMdMs: false, fullTimeCoversPartTime: true }; }
 }
+const words2 = (v) => `${v.facultyImpliesMdMs ? 'Faculty post with no qualification counts as MD/MS faculty' : 'Faculty post with no qualification needs a check'}; ${v.fullTimeCoversPartTime ? 'Full Time above target also fills Part Time' : 'Full Time does not fill Part Time'}`;
 async function saveSettings(patch, actor) {
   const before = await loadSettings();
-  const next = { ...before, facultyImpliesMdMs: patch.facultyImpliesMdMs === true };
-  if (next.facultyImpliesMdMs === before.facultyImpliesMdMs) return before;
+  const next = {
+    facultyImpliesMdMs: patch.facultyImpliesMdMs === undefined ? before.facultyImpliesMdMs : patch.facultyImpliesMdMs === true,
+    fullTimeCoversPartTime: patch.fullTimeCoversPartTime === undefined ? before.fullTimeCoversPartTime : patch.fullTimeCoversPartTime === true,
+  };
+  if (next.facultyImpliesMdMs === before.facultyImpliesMdMs && next.fullTimeCoversPartTime === before.fullTimeCoversPartTime) return before;
   const value = JSON.stringify(next);
   await prisma.appSetting.upsert({
     where: { key: SETTINGS_KEY },
@@ -200,8 +220,7 @@ async function saveSettings(patch, actor) {
   });
   await logAudit({
     userId: actor.id, actorName: actor.name, action: 'Joining category setting changed', entity: 'AppSetting', entityId: SETTINGS_KEY,
-    fromValue: before.facultyImpliesMdMs ? 'Faculty post with no qualification counts as MD/MS faculty' : 'Faculty post with no qualification needs a check',
-    toValue: next.facultyImpliesMdMs ? 'Faculty post with no qualification counts as MD/MS faculty' : 'Faculty post with no qualification needs a check',
+    fromValue: words2(before), toValue: words2(next),
   });
   RJ.invalidate();
   return next;
@@ -277,10 +296,11 @@ async function departmentBoard(def, month, board, { targetRows = null } = {}) {
   });
   const rowsAll = targetRows || await loadTargetRows();
   const eff = effectiveTargets(rowsAll, def.department, month);
-  const fig = figures(def, people, eff);
+  const settings = await loadSettings();
+  const fig = figures(def, people, eff, { fullCoversPart: settings.fullTimeCoversPartTime });
   const from = [...eff.values()].map((t) => t.fromMonth).sort().slice(-1)[0] || null;
   return {
-    department: def.department, month, label: RJ.monthLabel(month), ...fig, fromMonth: from,
+    department: def.department, month, label: RJ.monthLabel(month), ...fig, fromMonth: from, fullCoversPart: settings.fullTimeCoversPartTime,
     otherCount: people.reduce((n, p) => n + p.other, 0), checkCount: people.reduce((n, p) => n + p.check, 0), assumedCount: people.reduce((n, p) => n + (p.assumed || 0), 0),
     joinings: rows.reduce((n, r) => n + r.joinings, 0),
   };

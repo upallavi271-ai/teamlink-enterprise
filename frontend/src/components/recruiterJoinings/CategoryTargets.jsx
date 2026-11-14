@@ -28,11 +28,12 @@ function TargetsDialog({ dept, month, onClose, onSaved }) {
   const [from, setFrom] = useState(dept.fromMonth || month);
   const [note, setNote] = useState('');
   const [faculty, setFaculty] = useState(false);
+  const [fullCovers, setFullCovers] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [msg, setMsg] = useState('');
   const load = useCallback(() => api.get('/recruiter-joinings/category-targets', { params: { department: dept.department } })
-    .then((r) => { setData(r.data); setFaculty(!!(r.data.settings && r.data.settings.facultyImpliesMdMs)); }).catch((e) => setError(errText(e, 'Could not load the targets.'))), [dept.department]);
+    .then((r) => { setData(r.data); setFaculty(!!(r.data.settings && r.data.settings.facultyImpliesMdMs)); setFullCovers(!(r.data.settings && r.data.settings.fullTimeCoversPartTime === false)); }).catch((e) => setError(errText(e, 'Could not load the targets.'))), [dept.department]);
   useEffect(() => { load(); }, [load]);
   // start from what is in force for the month on screen ...
   useEffect(() => {
@@ -57,7 +58,7 @@ function TargetsDialog({ dept, month, onClose, onSaved }) {
     try {
       if (rows.some((r) => r.target === '' || !(Number(r.target) >= 0))) throw new Error('Give every category a target (0 or more).');
       const res = await api.post('/recruiter-joinings/category-targets', {
-        department: dept.department, fromMonth: from, note, facultyImpliesMdMs: faculty,
+        department: dept.department, fromMonth: from, note, facultyImpliesMdMs: faculty, fullTimeCoversPartTime: fullCovers,
         items: rows.map((r) => ({ category: r.category, target: Number(r.target), incentive: r.incentive === '' ? null : Number(r.incentive) })),
       });
       setMsg(res.data.message); load(); onSaved();
@@ -104,6 +105,11 @@ function TargetsDialog({ dept, month, onClose, onSaved }) {
             </tbody>
           </table>
         </div>
+        <label className="rj-check">
+          <input type="checkbox" checked={fullCovers} onChange={(e) => setFullCovers(e.target.checked)} />
+          <span>A <b>Full Time</b> doctor is enough: Full Time joinings above their own target also fill the <b>Part Time</b> target of the same group (MD/MS Doctors, MD/MS Faculty).
+            <span className="rj-sub"> A Part Time joining never fills a Full Time target. This changes only the closing; the incentive is paid at the amount of the joining&apos;s own category. Applies to every month.</span></span>
+        </label>
         <label className="rj-check">
           <input type="checkbox" checked={faculty} onChange={(e) => setFaculty(e.target.checked)} />
           <span>Count a Professor / Assistant Professor / Associate Professor / Senior Resident joining as <b>MD/MS Faculty</b> even when the candidate&apos;s qualification is not recorded.
@@ -189,7 +195,12 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
                   <tr key={c.key}>
                     <td><b>{c.label}</b>{c.type ? <span className="rj-sub"> · {c.type}</span> : null}{c.note ? <div className="rj-sub">{c.note}</div> : null}</td>
                     <td>{c.target}</td>
-                    <td><b>{c.achieved}</b>{c.above ? <span className="rj-sub"> (+{c.above} above target)</span> : null}</td>
+                    <td>
+                      <b>{c.achieved}</b>
+                      {c.covered ? <span className="rj-sub"> + {c.covered} from Full Time</span> : null}
+                      {c.usedForPart ? <span className="rj-sub"> ({c.usedForPart} of them fill the Part Time target)</span> : null}
+                      {c.above ? <span className="rj-sub"> (+{c.above} above target)</span> : null}
+                    </td>
                     <td><span className={`rj-score ${toneOf(c.achieved, c.target)}`}>{pctWord(c.closingPct)}</span></td>
                     <td>{c.left ? c.left : <span className="rj-tag green">Closed</span>}</td>
                     {money && <td>{c.incentive == null ? <span className="rj-sub">not decided</span> : inr(c.incentive)}</td>}
@@ -216,6 +227,7 @@ function DeptPanel({ dept, month, viewer, ended, onChanged }) {
               {viewer.details ? 'Open a recruiter below to see which category each joining went to and why.' : 'Open ATS to see which ones.'}
             </p>
           )}
+          {dept.fullCoversPart && <p className="rj-hint">A Full Time doctor is enough: Full Time joinings above their own target also fill the Part Time target of the same group (MD/MS Doctors, MD/MS Faculty). A Part Time joining never fills a Full Time target.</p>}
           <p className="rj-hint">
             Full Time or Part Time comes from the joining&apos;s <b>Employment type</b> (ATS → the candidate&apos;s Joining &amp; Drop record → Correct the joining details), else from the job. Jobs and joinings start as Full Time, so a Part Time joining counts as Part Time only once that is set.
           </p>

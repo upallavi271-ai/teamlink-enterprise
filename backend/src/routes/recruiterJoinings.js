@@ -264,7 +264,7 @@ function shapeCategoryBoard(user, viewer, b, partial) {
     recruiters: b.recruiters.map((r) => ({
       ...r, decision: decisionFor(viewer, r.decision), incentive: money ? r.incentive : null, incentiveComplete: money ? r.incentiveComplete : null, hasAmounts: money ? r.hasAmounts : null,
     })),
-    otherCount: b.otherCount, checkCount: b.checkCount, assumedCount: b.assumedCount, joinings: b.joinings,
+    otherCount: b.otherCount, checkCount: b.checkCount, assumedCount: b.assumedCount, fullCoversPart: b.fullCoversPart, joinings: b.joinings,
   };
 }
 router.get('/category-board', guarded(async (req, res) => {
@@ -297,7 +297,10 @@ router.post('/category-targets', guarded(async (req, res) => {
   if (!isSuperAdmin(req.user)) return err(res, 403, 'Only Super Admin can change the category targets and amounts.');
   const b = req.body || {};
   const r = await JC.saveTargets({ department: s(b.department) || 'Medical', fromMonth: s(b.fromMonth), items: b.items, note: b.note }, req.user);
-  if (typeof b.facultyImpliesMdMs === 'boolean') await JC.saveSettings({ facultyImpliesMdMs: b.facultyImpliesMdMs }, req.user);
+  await JC.saveSettings({
+    facultyImpliesMdMs: typeof b.facultyImpliesMdMs === 'boolean' ? b.facultyImpliesMdMs : undefined,
+    fullTimeCoversPartTime: typeof b.fullTimeCoversPartTime === 'boolean' ? b.fullTimeCoversPartTime : undefined,
+  }, req.user);
   res.json({ ok: true, message: `Saved - the ${r.saved} category targets apply from ${RJ.monthLabel(r.fromMonth)}.` });
 }));
 router.delete('/category-targets', guarded(async (req, res) => {
@@ -541,18 +544,18 @@ router.get('/export', guarded(async (req, res) => {
   if (['sa', 'all'].includes(viewer.level)) {
     const cboards = (await JC.monthBoards(month, rawB)).filter((x) => x.set);
     cboards.forEach((c) => {
-      const ch = ['Category', 'Target', 'Joined', 'Closing %', 'Still to go', 'Above target'];
+      const ch = ['Category', 'Target', 'Joined', 'Filled from Full Time', 'Closing %', 'Still to go', 'Above target'];
       if (viewer.money) ch.push('Incentive per joining (₹)', 'Incentive earned (₹)');
       const crow = c.categories.filter((k) => k.target != null).map((k) => {
-        const out = [k.short, k.target, k.achieved, k.closingPct == null ? '' : k.closingPct, k.left, k.above];
+        const out = [k.short, k.target, k.achieved, k.covered || 0, k.closingPct == null ? '' : k.closingPct, k.left, k.above];
         if (viewer.money) out.push(k.incentive, k.earned);
         return out;
       });
-      const tot = ['Total (each category counted up to its target)', c.total.target, c.total.achieved, c.total.closingPct == null ? '' : c.total.closingPct, Math.max(0, c.total.target - c.total.achieved), c.total.above];
+      const tot = ['Total (each category counted up to its target)', c.total.target, c.total.achieved, '', c.total.closingPct == null ? '' : c.total.closingPct, Math.max(0, c.total.target - c.total.achieved), c.total.above];
       if (viewer.money) tot.push('', c.total.incentive);
       crow.push(tot);
-      crow.push([`Joinings not in the six: ${c.otherCount}`, '', '', '', '', '']);
-      crow.push([`Joinings that need a check: ${c.checkCount}`, '', '', '', '', '']);
+      crow.push([`Joinings not in the six: ${c.otherCount}`, '', '', '', '', '', '']);
+      crow.push([`Joinings that need a check: ${c.checkCount}`, '', '', '', '', '', '']);
       sheets.push({ name: `${c.department} categories`.slice(0, 31), headers: ch, rows: crow });
       const rh = ['Recruiter', 'Seat', ...c.categories.filter((k) => k.target != null).map((k) => k.short), 'Not in the six', 'Needs a check', 'Joined in the six', 'Share of team target %'];
       if (viewer.money) rh.push('Incentive (₹)');

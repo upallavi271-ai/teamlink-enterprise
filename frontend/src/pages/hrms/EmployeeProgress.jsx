@@ -42,7 +42,7 @@ const COLUMNS = [
     title: (r) => {
       const jc = r.joiningCategories;
       if (jc) {
-        return `${jc.achieved} of the team's ${jc.target} category joinings this month (each category counted up to its target): ${jc.items.map((i) => `${i.label} ${i.achieved} of ${i.target}`).join(', ')}.`
+        return `${jc.achieved} of the team's ${jc.target} category joinings this month (each category counted up to its target): ${jc.items.map((i) => `${i.label} ${i.achieved}${i.covered ? ` + ${i.covered} from Full Time` : ''} of ${i.target}`).join(', ')}.`
           + `${jc.above ? ` ${jc.above} more joined above a category target.` : ''}${jc.other ? ` ${jc.other} joined in posts that have no target.` : ''}${jc.check ? ` ${jc.check} need a check.` : ''}`;
       }
       return r.joiningTarget == null ? 'No joining target this month' : `${r.joinings} joined in the ATS this month, against joining targets of ${r.joiningTarget}`;

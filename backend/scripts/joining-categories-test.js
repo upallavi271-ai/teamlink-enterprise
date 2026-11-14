@@ -80,6 +80,36 @@ assert.deepStrictEqual([rb.inSix, rb.sharePct, rb.incentive, rb.check], [5, 33, 
 assert.deepStrictEqual([rc.inSix, rc.incentive], [0, 0]);
 assert.strictEqual(ra.cells.STAFF_NURSE.pctOfTarget, 75, '3 of the team target of 4');
 assert.strictEqual(ra.incentive + rb.incentive + rc.incentive, fig.total.incentive, 'the recruiters add up to the total');
+// A FULL TIME DOCTOR IS ENOUGH (switch on): Full Time joinings above their own target fill the Part Time target of the same group
+const fc = JC.figures(def, people, targets, { fullCoversPart: true });
+const fcat = Object.fromEntries(fc.categories.map((c) => [c.key, c]));
+// faculty: 2 Full Time joined of 1, so 1 is above and fills 1 of the 4 Part Time places; nobody joined Part Time
+assert.deepStrictEqual([fcat.MD_MS_FACULTY_FT.achieved, fcat.MD_MS_FACULTY_FT.usedForPart, fcat.MD_MS_FACULTY_FT.above], [2, 1, 0]);
+assert.deepStrictEqual([fcat.MD_MS_FACULTY_PT.achieved, fcat.MD_MS_FACULTY_PT.covered, fcat.MD_MS_FACULTY_PT.left, fcat.MD_MS_FACULTY_PT.closingPct], [0, 1, 3, 25]);
+assert.deepStrictEqual([fc.total.achieved, fc.total.closingPct], [7, 47], 'nurses 4 + faculty FT 1 + faculty PT 1 + MBBS 1 = 7 of 15');
+assert.strictEqual(fc.total.incentive, 5400, 'the incentive is paid at each joining own category: unchanged by the cover');
+assert.deepStrictEqual(fc.recruiters.map((r) => r.incentive), fig.recruiters.map((r) => r.incentive), 'no recruiter incentive moves');
+assert.strictEqual(fc.total.joinedInSix, 9, 'what joined does not change either');
+// 4 Full Time MD/MS doctors of 1: 2 fill the Part Time target of 2, 1 is left above
+const dd = JC.figures(def, [person('D', { MD_MS_DOCTOR_FT: 4 })], targets, { fullCoversPart: true });
+const ddc = Object.fromEntries(dd.categories.map((c) => [c.key, c]));
+assert.deepStrictEqual([ddc.MD_MS_DOCTOR_FT.usedForPart, ddc.MD_MS_DOCTOR_FT.above, ddc.MD_MS_DOCTOR_PT.covered, ddc.MD_MS_DOCTOR_PT.closingPct, ddc.MD_MS_DOCTOR_PT.left], [2, 1, 2, 100, 0]);
+assert.strictEqual(dd.total.closedCategories, 2, 'both MD/MS Doctors categories are closed');
+// Full Time does not fill a different group: faculty is untouched by the doctors
+assert.strictEqual(ddc.MD_MS_FACULTY_PT.covered, 0);
+// a Part Time joining never fills a Full Time target
+const pp = JC.figures(def, [person('E', { MD_MS_DOCTOR_PT: 3 })], targets, { fullCoversPart: true });
+const ppc = Object.fromEntries(pp.categories.map((c) => [c.key, c]));
+assert.deepStrictEqual([ppc.MD_MS_DOCTOR_FT.achieved, ppc.MD_MS_DOCTOR_FT.left, ppc.MD_MS_DOCTOR_FT.closingPct, ppc.MD_MS_DOCTOR_PT.above], [0, 1, 0, 1]);
+// a Part Time target already met leaves the Full Time extras above
+const met = JC.figures(def, [person('F', { MD_MS_DOCTOR_FT: 3, MD_MS_DOCTOR_PT: 2 })], targets, { fullCoversPart: true });
+assert.deepStrictEqual([met.categories[0].usedForPart, met.categories[0].above, met.categories[1].covered], [0, 2, 0]);
+// switch off: nothing is filled
+const off = JC.figures(def, [person('D', { MD_MS_DOCTOR_FT: 4 })], targets, { fullCoversPart: false });
+assert.deepStrictEqual([off.categories[1].covered, off.categories[1].closingPct, off.categories[0].above], [0, 0, 3]);
+// no Part Time target set: nothing to fill
+const noPt = JC.figures(def, [person('D', { MD_MS_DOCTOR_FT: 4 })], new Map([['MD_MS_DOCTOR_FT', { target: 1, incentive: null }]]), { fullCoversPart: true });
+assert.strictEqual(noPt.categories[0].usedForPart, 0);
 // no amount decided: nothing is worked out, nothing is invented
 const bare = new Map([...targets].map(([k, v]) => [k, { target: v.target, incentive: null }]));
 const f0 = JC.figures(def, people, bare);
@@ -137,7 +167,7 @@ console.log('part 1 (pure): all checks passed');
     // the department closing and incentive match the figures function on the same classified counts
     const again = JC.figures(JC.MEDICAL, med.recruiters.map((r) => ({
       counts: Object.fromEntries(JC.MEDICAL.categories.map((c) => [c.key, r.cells[c.key].count])), other: r.other, check: r.check, base: { key: r.key, name: r.name },
-    })), JC.effectiveTargets(await JC.loadTargetRows(), 'Medical', MONTH));
+    })), JC.effectiveTargets(await JC.loadTargetRows(), 'Medical', MONTH), { fullCoversPart: med.fullCoversPart });
     assert.deepStrictEqual(again.total, med.total);
     // the sum of each recruiter's incentive is the department's
     assert.strictEqual(med.recruiters.reduce((n, r) => n + r.incentive, 0), med.total.incentive);
