@@ -18,6 +18,7 @@ const Prj = require('../marketing/projects');
 const Msg = require('../marketing/messaging');
 const Eml = require('../marketing/emailmk');
 const Lead = require('../marketing/leadgen');
+const Jny = require('../marketing/journeys');
 const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
@@ -178,6 +179,17 @@ router.delete('/campaigns/:id', mustWrite, wrap(async (req, res) => send(res, aw
 router.post('/campaigns/:id/templates', mustWrite, wrap(async (req, res) => send(res, await Msg.makeTemplates(req.user, req.params.id))));
 router.post('/campaigns/:id/sms-ids', mustWrite, wrap(async (req, res) => send(res, await Msg.setSmsIds(req.user, req.params.id, req.body || {}))));
 router.post('/campaigns/:id/campaign', mustWrite, wrap(async (req, res) => send(res, await Msg.makeCampaign(req.user, req.params.id, req.body || {}))));
+
+// ---- workflow automation = journeys for CRM leads (marketing/journeys.js): an event starts it, IF / THEN branching, and an AI-writes-a-person-approves message step. Nothing is sent without Approve ----
+router.get('/journeys', mustWrite, wrap(async (req, res) => send(res, await Jny.overview(req.user))));
+router.get('/journeys/drafts', mustWrite, wrap(async (req, res) => send(res, await Jny.draftList(req.user)))); // before /journeys/:id
+router.post('/journeys/drafts/:id/decide', mustWrite, wrap(async (req, res) => send(res, await Jny.decide(req.user, req.params.id, req.body || {}))));
+router.post('/journeys', mustWrite, wrap(async (req, res) => send(res, await Jny.save(req.user, { ...(req.body || {}), id: undefined }))));
+router.put('/journeys/:id', mustWrite, wrap(async (req, res) => send(res, await Jny.save(req.user, { ...(req.body || {}), id: req.params.id }))));
+router.delete('/journeys/:id', mustWrite, wrap(async (req, res) => send(res, await Jny.remove(req.user, req.params.id))));
+router.post('/journeys/:id/on', mustWrite, wrap(async (req, res) => send(res, await Jny.setOn(req.user, req.params.id, true))));
+router.post('/journeys/:id/off', mustWrite, wrap(async (req, res) => send(res, await Jny.setOn(req.user, req.params.id, false))));
+router.get('/journeys/:id/runs', mustWrite, wrap(async (req, res) => send(res, await Jny.runs(req.user, req.params.id))));
 
 // ---- lead generation to the CRM (marketing/leadgen.js): every new lead is scored Hot / Warm / Cold with reasons, given an owner, and the owner is told; nothing here messages anyone -----------------
 router.get('/leads', mustWrite, wrap(async (req, res) => send(res, await Lead.overview(req.user))));

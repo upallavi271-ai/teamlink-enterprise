@@ -77,7 +77,8 @@ const G = '/api/outreach/gs/marketing';
   // 2026-11-13: module 7 Content Calendar is live too (marketing/calendar.js); the five others are still planned
   const liveIds = (meta.body.modules || []).filter((m) => m.status === 'live').map((m) => m.id).sort().join(',');
   // module 8 AI Images is live too (marketing/images.js)
-  check('B1 ten modules: AI Content, Calendar, AI Images, AI Video, Client Projects and Reports live, the other four planned', meta.status === 200 && meta.body.modules.length === 10 && liveIds === 'calendar,content,images,projects,reports,videos' && meta.body.modules.filter((m) => m.status === 'planned').length === 4, meta.text.slice(0, 200));
+  // 2026-11-14: Email marketing, WhatsApp & SMS campaign messages, Lead generation and Workflow automation are live too: all ten modules are live
+  check('B1 ten modules, all live (AI Content, Email, WhatsApp & SMS, Lead generation, Workflow, Reports, Calendar, AI Images, AI Video, Client Projects)', meta.status === 200 && meta.body.modules.length === 10 && liveIds === 'calendar,content,email,images,leads,messaging,projects,reports,videos,workflow' && meta.body.modules.filter((m) => m.status === 'planned').length === 0, meta.text.slice(0, 200));
   // 'AI Images' left the later-menu when it became module 8 (2026-11-13)
   check('B2 the other 22 names are on the menu (AI Images and AI Videos are built now)', Array.isArray(meta.body.later) && meta.body.later.length === 22 && !meta.body.later.includes('AI Images') && !meta.body.later.includes('AI Videos'), meta.body.later && meta.body.later.length);
   check('B3 text AI is the labelled sample writer in the sandbox; image / video / audio are "not connected"', meta.body.ai.text.demo === true && meta.body.ai.text.ready && ['image', 'video', 'audio'].every((c) => meta.body.ai[c].ready === false), meta.body.ai);

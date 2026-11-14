@@ -253,4 +253,4 @@ async function importAds(u, buf, opts = {}) {
   return { status: 200, body: { ...out.body, source, ok: `${out.body.created || 0} lead${out.body.created === 1 ? '' : 's'} added from ${source}.${out.body.skipped && out.body.skipped.length ? ` ${out.body.skipped.length} skipped.` : ''}${(await settings()).on ? ' They are scored within a minute.' : ' Switch scoring on to have them scored.'}` } };
 }
 
-module.exports = { DEFAULTS, SOURCES, settings, saveSettings, score, scoreOne, sweep, start, scoreNow, overview, importAds, phoneState, pickOwner };
+module.exports = { ensureColumns: cols, DEFAULTS, SOURCES, settings, saveSettings, score, scoreOne, sweep, start, scoreNow, overview, importAds, phoneState, pickOwner };

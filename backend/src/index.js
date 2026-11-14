@@ -562,6 +562,7 @@ const server = app.listen(PORT, () => {
   // AI Marketing Content Calendar: one notice to the owner an hour before a planned post (marketing/calendar.js; MK_CALENDAR_SWEEP_MS=0 = off)
   require('./marketing/calendar').startSweep();
   require('./marketing/projects').startAutoPost(); // posts approved client projects whose time has come (only when an Admin allowed it; never in the sandbox)
+  require('./marketing/journeys').start(); // runs the CRM journeys (events, IF / THEN, AI message waiting for a person's approval); only journeys a manager switched on; never in the sandbox
   require('./marketing/leadgen').start(); // scores new CRM leads Hot / Warm / Cold and gives them an owner (only when a Sales manager switched it on; never in the sandbox)
   // AI clips: finish every Veo clip Google already accepted before the last restart (marketing/aiclips.js); one that never reached Google is closed
   setTimeout(() => require('./marketing/aiclips').resume().catch((e) => console.error('[omni-mk] clip resume:', e.message)), 15 * 1000).unref();

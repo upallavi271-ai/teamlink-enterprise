@@ -30,7 +30,8 @@ const DDL = [
   `CREATE INDEX IF NOT EXISTS "${D}_open" ON "${D}"("status", "forUserId")`,
 ];
 let ensured = null;
-const ensure = () => { if (!ensured) ensured = (async () => { await DB.ensure(); for (const sql of DDL) await DB.run(sql); return true; })().catch((e) => { ensured = null; throw e; }); return ensured; }; // eslint-disable-line no-await-in-loop
+// the lead-score columns of CrmLead (a journey reads the score band) are made by Lead generation; make sure they exist before anything here runs
+const ensure = () => { if (!ensured) ensured = (async () => { await DB.ensure(); await require('./leadgen').ensureColumns(); for (const sql of DDL) await DB.run(sql); return true; })().catch((e) => { ensured = null; throw e; }); return ensured; }; // eslint-disable-line no-await-in-loop, global-require
 
 const TRIGGERS = {
   new_lead: 'A new lead arrives', hot_lead: 'A lead is scored Hot', stage_change: 'A lead moves to a stage', idle_lead: 'A lead has had no activity for some days',
@@ -310,6 +311,12 @@ async function tick() {
       await DB.run(`UPDATE "${D}" SET "status" = 'expired', "decidedAt" = ? WHERE "id" = ? AND "status" = 'waiting'`, iso(), d.id); // eslint-disable-line no-await-in-loop
       await resume(d.runId, 'The message was not approved in 3 days: it was skipped.'); out.expired += 1; // eslint-disable-line no-await-in-loop
     }
+    // a lead that closed (won, lost, junk, converted) while its AI message was waiting leaves the journey at once and the draft can no longer be sent
+    for (const w of await DB.all(`SELECT * FROM "${R}" WHERE "status" = 'waiting' ORDER BY "updatedAt" ASC LIMIT 100`)) { // eslint-disable-line no-restricted-syntax
+      if (!closed(await S.getRow('lead', w.leadId))) continue; // eslint-disable-line no-continue, no-await-in-loop
+      await DB.run(`UPDATE "${D}" SET "status" = 'expired', "decidedAt" = ?, "result" = 'the lead closed' WHERE "runId" = ? AND "status" = 'waiting'`, iso(), w.id); // eslint-disable-line no-await-in-loop
+      await finish(w, 'stopped', 'The lead is closed (won, lost, junk or converted): it left the journey and its message was not sent.'); // eslint-disable-line no-await-in-loop
+    }
     const due = await DB.all(`SELECT * FROM "${R}" WHERE "status" = 'running' AND "nextAt" <= ? ORDER BY "nextAt" ASC LIMIT 40`, iso());
     for (const run of due) {
       const j = await DB.one(`SELECT * FROM "${J}" WHERE "id" = ?`, run.journeyId); // eslint-disable-line no-await-in-loop
@@ -361,7 +368,7 @@ async function decide(u, draftId, b = {}) {
   if (d.channel === 'whatsapp') {
     const nm = core.normalizeMobile(lead.phone);
     if (!nm.ok) return { error: 'The lead\'s phone number does not look right. Fix it in the CRM, then approve again.', status: 400 };
-    if (await CMP.optedOut('phone', nm.e164).catch(() => false)) { await DB.run(`UPDATE "${D}" SET "status" = 'rejected', "decidedAt" = ?, "decidedByName" = ?, "result" = 'opted out' WHERE "id" = ?`, iso(), clip(u.name, 80), d.id); await resume(d.runId, 'The lead opted out: nothing was sent.'); return { error: 'This person opted out of messages, so nothing was sent.', status: 409 }; }
+    if ((await CMP.optedOut('whatsapp', nm.e164).catch(() => false)) || (await CMP.optedOut('sms', nm.e164).catch(() => false))) { await DB.run(`UPDATE "${D}" SET "status" = 'rejected', "decidedAt" = ?, "decidedByName" = ?, "result" = 'opted out' WHERE "id" = ?`, iso(), clip(u.name, 80), d.id); await resume(d.runId, 'The lead opted out: nothing was sent.'); return { error: 'This person opted out of messages, so nothing was sent.', status: 409 }; }
     to = core.maskMobile(nm.e164);
     res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text: body, meta: { audience: 'lead', personName: clip(lead.contactName || lead.company, 80), purpose: 'CRM journey', module: 'AI Marketing', senderUserId: u.id, senderName: clip(u.name, 80) } });
   } else {
