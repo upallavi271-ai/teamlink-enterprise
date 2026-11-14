@@ -113,9 +113,10 @@ export default function MkVideosPage() {
   // "Create from a prompt": its pictures become the scenes of the video and the video is made at once (the person then watches it and presses Save)
   const [autoGo, setAutoGo] = useState(false);
   const runRef = useRef(null);
-  const startAuto = (plan, ids) => {
+  const startAuto = (plan, ids, designed) => {
+    // a designed picture already carries its own words, so the video does not write the scene text over it a second time
     setF((cur) => ({ ...cur, title: plan.title || cur.title, headline: plan.headline || cur.headline, tagline: plan.tagline || cur.tagline, cta: plan.cta || cur.cta, format: '9:16', secPer: 3 }));
-    setPick(ids.map((id, i) => ({ id, kind: 'image', caption: (plan.scenes[i] && plan.scenes[i].caption) || '' })));
+    setPick(ids.map((id, i) => ({ id, kind: 'image', caption: designed ? '' : ((plan.scenes[i] && plan.scenes[i].caption) || '') })));
     setAutoGo(true);
   };
   useEffect(() => {
@@ -239,8 +240,8 @@ export default function MkVideosPage() {
       {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
       {canWrite ? (
         <>
-          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
           <AutoStudioPanel kind="video" projectId={projectId} onVideo={startAuto} onMade={load} toast={toast} />
+          <Banner tone="info"><b>Want real, moving video?</b> Pictures only zoom or pan. For real motion, press <b>🎞 Free stock clips</b> below to search real footage (free), or make short clips in the <b>Gemini app</b> (gemini.google.com: your plan's video maker, if it has one), a phone or any tool, press <b>⬆ Upload video clips</b>, get them approved, then mix them with pictures below. Clips from the Gemini app often carry sound: you can keep it.</Banner>
           <StockClipPanel toast={toast} onMade={load} />
           <AiClipPanel pictures={pics} toast={toast} onMade={load} />
           <Panel title="1 · Pick the pictures and clips" sub={sources.length ? `Tap them in the order they should play (up to 8). ${pick.length} picked.` : undefined}>

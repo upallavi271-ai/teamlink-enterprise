@@ -193,6 +193,13 @@ router.post('/projects/:id/posted', mustWrite, wrap(async (req, res) => send(res
 router.get('/stock/meta', mustWrite, wrap(async (req, res) => res.json(await Stock.meta(req.user))));
 router.get('/stock/search', mustWrite, wrap(async (req, res) => send(res, await Stock.search(req.user, req.query || {}))));
 router.post('/stock/import', mustWrite, wrap(async (req, res) => send(res, await Stock.importClip(req.user, req.body || {}))));
+// one free stock photo as picture bytes (the background of a designed picture); the browser sends words and a shape, never an address
+router.get('/stock/photo', mustWrite, wrap(async (req, res) => {
+  const out = await Stock.photo(req.user, req.query || {});
+  if (out.error) return res.status(out.status || 400).json({ error: out.error, code: out.code || undefined });
+  res.set({ 'Content-Type': out.mime, 'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=600', 'X-Photo-Credit': encodeURIComponent(`${out.author} · ${out.source}`) });
+  return res.send(out.buf);
+}));
 router.get('/clip-ai/meta', mustWrite, wrap(async (req, res) => res.json(await Clips.meta(req.user))));
 router.post('/clip-ai', mustWrite, wrap(async (req, res) => send(res, await Clips.create(req.user, req.body || {}))));
 router.get('/clip-ai/jobs/:id', mustWrite, wrap(async (req, res) => send(res, await Clips.getJob(req.user, req.params.id))));

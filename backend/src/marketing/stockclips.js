@@ -39,6 +39,12 @@ const PROVIDERS = [
       return { id: String(v.id), thumb: String(v.image || ''), seconds: Math.round(Number(v.duration) || 0), width: S.num(v.width), height: S.num(v.height), author: S.clip((v.user && v.user.name) || 'Pexels contributor', 80), pageUrl: String(v.url || ''), files: files.map((f) => ({ link: f.link, width: S.num(f.width), height: S.num(f.height), size: 0 })) };
     },
     async one(id, key) { const v = await this.get(`/videos/videos/${id}`, key); return v && String(v.id) === id ? this.card(v) : null; },
+    // free photos (2026-11-14): [{ link, author, pageUrl }] best first
+    async photos(text, shape, key) {
+      const { r, text: body, json } = await call(this, `${this.api()}/v1/search?query=${encodeURIComponent(text)}&per_page=15&orientation=${shape}`, { Authorization: key });
+      if (!r.ok) throw fail(this, r, body, json);
+      return ((json && json.photos) || []).map((x) => ({ link: String((x.src && (x.src.large2x || x.src.large || x.src.original)) || ''), author: S.clip(x.photographer || 'Pexels contributor', 80), pageUrl: String(x.url || '') })).filter((x) => x.link);
+    },
   },
   {
     id: 'pixabay', name: 'Pixabay', channel: 'stock-pixabay', keyField: 'Pixabay API key', env: 'MK_PIXABAY_API', hosts: ['pixabay.com'],
@@ -57,6 +63,11 @@ const PROVIDERS = [
       return { id: String(v.id), thumb: String(ref.thumbnail || (v.picture_id ? `https://i.vimeocdn.com/video/${v.picture_id}_295x166.jpg` : '')), seconds: Math.round(Number(v.duration) || 0), width: S.num(ref.width), height: S.num(ref.height), author: S.clip(v.user || 'Pixabay contributor', 80), pageUrl: String(v.pageURL || ''), files: sizes.map((f) => ({ link: f.url, width: S.num(f.width), height: S.num(f.height), size: S.num(f.size) })) };
     },
     async one(id, key) { const j = await this.get(`/api/videos/?id=${id}`, key); const v = (j.hits || [])[0]; return v && String(v.id) === id ? this.card(v) : null; },
+    async photos(text, shape, key) {
+      const orient = shape === 'portrait' ? '&orientation=vertical' : shape === 'landscape' ? '&orientation=horizontal' : '';
+      const j = await this.get(`/api/?q=${encodeURIComponent(text)}&image_type=photo&safesearch=true&per_page=20&order=popular&min_width=700${orient}`, key);
+      return (j.hits || []).map((x) => ({ link: String(x.largeImageURL || x.webformatURL || ''), author: S.clip(x.user || 'Pixabay contributor', 80), pageUrl: String(x.pageURL || '') })).filter((x) => x.link);
+    },
   },
 ];
 
@@ -176,16 +187,16 @@ const ranked = (x) => {
   const score = (f) => { const side = Math.min(f.width, f.height); return side >= 540 && side <= 1080 ? Math.abs(side - 720) : side > 1080 ? 1000 + side : 2000 - side; };
   return x.files.filter((f) => !f.size || f.size <= MAX_BYTES).sort((a, b) => score(a) - score(b));
 };
-async function fetchBytes(p, url) {
+async function fetchBytes(p, url, cap = MAX_BYTES) {
   const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 90000);
   try {
     const r = await fetch(url, { signal: ctl.signal });
     if (r.url && !hostOk(p, r.url)) throw new AI.AiMkError('The clip came from an address that is not allowed.', 502, 'provider');
     if (!r.ok) throw new AI.AiMkError(`The clip could not be downloaded (HTTP ${r.status}).`, 502, 'provider');
     const len = Number(r.headers && r.headers.get && r.headers.get('content-length')) || 0;
-    if (len > MAX_BYTES) return { big: true };
+    if (len > cap) return { big: true };
     const buf = Buffer.from(await r.arrayBuffer());
-    return buf.length > MAX_BYTES ? { big: true } : { buf };
+    return buf.length > cap ? { big: true } : { buf };
   } catch (e) {
     if (e instanceof AI.AiMkError) throw e;
     throw new AI.AiMkError(e.name === 'AbortError' ? 'The clip download took too long.' : 'The clip could not be downloaded.', 503, 'unreachable');
@@ -216,6 +227,42 @@ async function importClip(u, b = {}) {
   });
 }
 
+// ---- a free stock PHOTO (2026-11-14) ----------------------------------------------------------------------------------------------------------------------
+// The background of a DESIGNED picture ("Create from your content" in AI Video / AI Images, when no paid picture AI is connected): the browser sends only words and a shape, the server asks the
+// source (Pixabay first), downloads ONE photo from the source's own https address (8 MB at most, a real picture only) and hands the bytes back. Cached for 10 minutes; 60 a person in 10 minutes.
+const PHOTO_MAX = 8 * 1024 * 1024;
+const photoCache = new Map(); const photoRate = new Map();
+const photoTooMany = (userId) => { const now = Date.now(); const l = (photoRate.get(userId) || []).filter((t) => now - t < 600000); if (l.length >= 60) { photoRate.set(userId, l); return true; } l.push(now); photoRate.set(userId, l); return false; };
+const looksImage = (buf) => (buf[0] === 0xff && buf[1] === 0xd8 ? 'image/jpeg' : (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47 ? 'image/png' : (buf.slice(0, 4).toString('ascii') === 'RIFF' && buf.slice(8, 12).toString('ascii') === 'WEBP' ? 'image/webp' : '')));
+async function photo(u, q = {}) {
+  if (!mayWrite(u)) return { error: 'Your login cannot search for photos.', status: 403 };
+  const st = await status();
+  if (!st.ready) return { error: st.reason, status: 503, code: 'not_ready' };
+  const text = String(q.q || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  if (text.length < 2) return { error: 'Say what the background should show, for example "office team".', status: 400 };
+  const shape = ORIENT[String(q.shape || '').toLowerCase()] || 'square';
+  const n = Math.max(0, Math.min(19, Math.floor(Number(q.n)) || 0));
+  const c = await active();
+  const ck = `${c.p.id}|${text.toLowerCase()}|${shape}|${n}`;
+  const hit = photoCache.get(ck);
+  if (hit && Date.now() - hit.at < 600000) return hit.data;
+  if (photoTooMany(u.id)) return { error: 'Too many photo searches in a few minutes. Wait a little.', status: 429 };
+  const list = (await c.p.photos(text, shape, c.key)).filter((x) => hostOk(c.p, x.link));
+  if (!list.length) return { error: `No ${c.p.name} photo was found for "${text}". Try other words.`, status: 404, code: 'none' };
+  for (let i = 0; i < Math.min(3, list.length); i += 1) {
+    const pick = list[(n + i) % list.length];
+    let got; try { got = await fetchBytes(c.p, pick.link, PHOTO_MAX); } catch (e) { if (i === 2) throw e; continue; } // eslint-disable-line no-await-in-loop
+    if (!got.buf) continue; // eslint-disable-line no-continue
+    const mime = looksImage(got.buf);
+    if (!mime) continue; // eslint-disable-line no-continue
+    const data = { buf: got.buf, mime, author: pick.author, pageUrl: pick.pageUrl, source: c.p.name };
+    photoCache.set(ck, { at: Date.now(), data });
+    if (photoCache.size > 40) photoCache.delete(photoCache.keys().next().value);
+    return data;
+  }
+  return { error: 'The photo could not be downloaded. Try again or use other words.', status: 502 };
+}
+
 // a source / download problem is returned as plain words and a status, never thrown into the route
 const safe = (fn) => async (...a) => {
   try { return await fn(...a); } catch (e) {
@@ -224,4 +271,4 @@ const safe = (fn) => async (...a) => {
     return { error: 'Stock clips could not be reached just now. Try again in a minute.', status: 502 };
   }
 };
-module.exports = { status, meta, search: safe(search), importClip: safe(importClip), testKey, PROVIDERS };
+module.exports = { status, meta, search: safe(search), importClip: safe(importClip), photo: safe(photo), testKey, PROVIDERS };

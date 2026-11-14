@@ -37,7 +37,7 @@ function systemFor(brand, who, kind, n, language, day, project) {
     !project && brand.hashtags && brand.hashtags.length ? `Brand hashtags you may reuse: ${brand.hashtags.join(' ')}.` : '',
     `Write all the words in ${language}.${day ? ` It is for ${dateLabel(day)}: mention the day or festival only if the request names it.` : ''}`,
     'Use ONLY facts that are in the request. Never invent prices, discounts, phone numbers, addresses, links, dates or claims.',
-    'Answer with ONLY a JSON object: {"title":"<three to six words>","headline":"<the main line, at most 8 words>","tagline":"<one short line, at most 10 words>","cta":"<a short call to action, at most 4 words>","caption":"<the post words, ready to publish, 2 to 4 short sentences>","hashtags":["#tag", ...up to 8],"scenes":[{"caption":"<text shown on the picture, at most 7 words>","imagePrompt":"<describe ONE picture: the subject, the place, the light, the mood. No text, letters, logos or watermarks in the picture>"}]}',
+    'Answer with ONLY a JSON object: {"title":"<three to six words>","headline":"<the main line, at most 8 words>","tagline":"<one short line, at most 10 words>","cta":"<a short call to action, at most 4 words>","caption":"<the post words, ready to publish, 2 to 4 short sentences>","hashtags":["#tag", ...up to 8],"scenes":[{"caption":"<text shown on the picture, at most 7 words>","imagePrompt":"<describe ONE picture: the subject, the place, the light, the mood. No text, letters, logos or watermarks in the picture>","search":"<two or three plain ENGLISH words to find a real background photo, for example: office team meeting>"}]}',
     `The "scenes" array must have exactly ${n} items, each a different picture that tells the story in order.`,
   ].filter(Boolean).join('\n');
 }
@@ -48,25 +48,52 @@ function demoPlan(prompt, who, kind, n, day) {
   return {
     title: S.clip(topic.split(' ').slice(0, 5).join(' '), 60), headline: S.clip(topic.split(' ').slice(0, 7).join(' '), 60), tagline: `From ${who}`, cta: 'Contact us',
     caption: `${topic}. Sample caption from the test writer for ${who}${day ? `, for ${dateLabel(day)}` : ''}.`, hashtags: words.map((w) => `#${w}`),
-    scenes: Array.from({ length: n }, (_, i) => ({ caption: base[i % base.length], imagePrompt: `${base[i % base.length]} for: ${topic}. Natural light, friendly mood.` })),
+    scenes: Array.from({ length: n }, (_, i) => ({ caption: base[i % base.length], imagePrompt: `${base[i % base.length]} for: ${topic}. Natural light, friendly mood.`, search: ['office team', 'people smiling', 'business handshake', 'city office', 'happy customer', 'team celebration'][i % 6] })),
   };
 }
+// the words to look for a background photo with: what the AI said, else plain words from the picture description
+const searchOf = (s) => {
+  const own = String((s && s.search) || '').replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 4).join(' ');
+  if (own.length >= 3) return own.slice(0, 40);
+  const words = String((s && s.imagePrompt) || '').replace(/[^A-Za-z ]+/g, ' ').split(' ').filter((w) => w.length > 3).slice(0, 3).join(' ');
+  return words || 'office team';
+};
 function clean(raw, { n, who, prompt, kind, day }) {
   const r = raw && typeof raw === 'object' ? raw : {};
   const fallback = demoPlan(prompt, who, kind, n, day);
-  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400) })).filter((s) => s.imagePrompt.length >= 8).slice(0, n);
+  const scenes = (Array.isArray(r.scenes) ? r.scenes : []).map((s) => ({ caption: S.clip(s && s.caption, 80), imagePrompt: S.clip(s && s.imagePrompt, 400), search: searchOf(s) })).filter((s) => s.imagePrompt.length >= 8).slice(0, n);
   while (scenes.length < n) scenes.push(fallback.scenes[scenes.length]);
   return {
     title: S.clip(r.title, 80) || fallback.title, headline: S.clip(r.headline, 80) || fallback.headline, tagline: S.clip(r.tagline, 100) || fallback.tagline, cta: S.clip(r.cta, 30) || fallback.cta,
     caption: String(r.caption || '').replace(/\r/g, '').trim().slice(0, 1800) || fallback.caption, hashtags: hashtagsOf(r.hashtags).length ? hashtagsOf(r.hashtags) : hashtagsOf(fallback.hashtags), scenes,
   };
 }
+// What the person wrote themselves always wins over the AI: their title, heading, call to action and content are used exactly (cut only to their size); the content is spread over the scenes,
+// one part each (a line each, or a sentence each). The AI fills only what was left empty.
+function partsOf(content, n) {
+  const text = String(content || '').replace(/\r/g, '').trim();
+  if (!text) return [];
+  let parts = text.split(/\n+/).map((x) => x.trim()).filter(Boolean);
+  if (parts.length < 2) parts = (text.match(/[^.!?\n]+[.!?]*/g) || [text]).map((x) => x.trim()).filter(Boolean);
+  if (parts.length > n) { const head = parts.slice(0, n - 1); head.push(parts.slice(n - 1).join(' ')); parts = head; }
+  return parts.map((x) => S.clip(x, 160));
+}
+function applyMine(p, mine, n) {
+  const out = { ...p, scenes: p.scenes.map((s) => ({ ...s })) };
+  if (mine.title) out.title = mine.title;
+  if (mine.heading) out.headline = mine.heading;
+  if (mine.cta) out.cta = mine.cta;
+  partsOf(mine.content, n).forEach((t, i) => { if (out.scenes[i]) out.scenes[i].caption = t; });
+  return out;
+}
 
-// b: { prompt, kind: 'video' | 'post', scenes, date (YYYY-MM-DD), language, projectId }
+// b: { prompt (the idea), title, heading, content, cta (all optional: what the person wrote themselves), kind: 'video' | 'post', scenes, date (YYYY-MM-DD), language, projectId }
 async function plan(u, b = {}) {
   if (!mayWrite(u)) return { error: 'Your login can look at AI Marketing but not use it to create.', status: 403 };
-  const prompt = String(b.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 800);
-  if (prompt.length < 8) return { error: 'Tell the AI what you want in a sentence: the topic, who it is for and the day. For example: "A Diwali offer video for our software clients, 20% off, for 12 November."', status: 400 };
+  const mine = { title: S.clip(b.title, 80), heading: S.clip(b.heading, 80), cta: S.clip(b.cta, 30), content: String(b.content || '').replace(/\r/g, '').trim().slice(0, 1200) };
+  const idea = String(b.prompt || '').replace(/\s+/g, ' ').trim().slice(0, 800);
+  const prompt = idea.length >= 8 ? idea : `${mine.title} ${mine.heading} ${mine.content}`.replace(/\s+/g, ' ').trim().slice(0, 800);
+  if (prompt.length < 8) return { error: 'Tell the AI what you want in a sentence (the topic, who it is for and the day), or write your own title, heading and content. For example: "A Diwali offer video for our software clients, 20% off, for 12 November."', status: 400 };
   const kind = b.kind === 'post' ? 'post' : 'video';
   const n = kind === 'video' ? clamp(Math.floor(Number(b.scenes)) || 4, 3, 6) : clamp(Math.floor(Number(b.scenes)) || 2, 1, 3);
   const day = validDate(b.date);
@@ -76,12 +103,13 @@ async function plan(u, b = {}) {
   const language = LANGS.includes(b.language) ? b.language : (LANGS.includes(brand.language) ? brand.language : 'English');
   let r;
   try {
-    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}`, json: true, demo: () => demoPlan(prompt, who, kind, n, day), department: S.clip(b.department, 60) || undefined });
+    const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
+    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => demoPlan(prompt, who, kind, n, day), department: S.clip(b.department, 60) || undefined });
   } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
-  const p = clean(r.result, { n, who, prompt, kind, day });
+  const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
   return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '' };
 }
 
-module.exports = { plan, dateLabel, clean }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)
+module.exports = { plan, dateLabel, clean, partsOf, applyMine }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)
