@@ -4,6 +4,7 @@ import api from '../../api';
 import { Modal } from '../proto.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import ChannelStrip from './ChannelStrip.jsx';
+import CallLinePicker, { useCallLines } from './CallLinePicker.jsx';
 import { useContactRule } from './useMayMessage.js';
 import {
   smsInfo, CHANNEL_ICON, canManageTemplates, useTokens, useUsable, useChannels, purposesFor, templateFor,
@@ -103,14 +104,14 @@ export default function ContactDialog({
   const [nextDate, setNextDate] = useState('');
   const [dialed, setDialed] = useState(false);
   // Call through TeamLink (Exotel click-to-call): your own phone rings first, then the person.
-  const [gw, setGw] = useState(null);
+  const CL = useCallLines(); // the line this call goes out on: API / Dinstar / SIP (the dropdown)
+  const gw = CL.gw;
   const [gwNote, setGwNote] = useState(null); // { ok, text }
   const [gwBusy, setGwBusy] = useState(false);
-  useEffect(() => { api.get('/messaging/channels').then((r) => setGw(r.data.call || null)).catch(() => setGw(null)); }, []);
   async function callThrough() {
     setGwBusy(true); setGwNote(null);
     try {
-      const r = await api.post('/messaging/call', { audience, id: personId, applicationId: applicationId || undefined });
+      const r = await api.post('/messaging/call', { audience, id: personId, applicationId: applicationId || undefined, line: CL.line || undefined });
       setDialed(true);
       setGwNote({ ok: true, text: r.data.message + (r.data.sandbox ? ' (Test copy of TeamLink: no real call is made.)' : '') });
     } catch (e) { setGwNote({ ok: false, text: e.response?.data?.error || 'The call could not be started.' }); } finally { setGwBusy(false); }
@@ -318,6 +319,7 @@ export default function ContactDialog({
               {masked ? (
                 <>
                   <div style={{ fontSize: 22, fontWeight: 700 }}>{hint || 'Number hidden'}</div>
+                  <CallLinePicker CL={CL} />
                   {gw && gw.configured ? (
                     <>
                       <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>
@@ -335,6 +337,7 @@ export default function ContactDialog({
               ) : num ? (
                 <>
                   <div style={{ fontSize: 26, fontWeight: 700, letterSpacing: .5 }}>{num}</div>
+                  <CallLinePicker CL={CL} />
                   {gw && gw.configured && (
                     <>
                       <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>

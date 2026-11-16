@@ -111,6 +111,11 @@ router.put('/limits', async (req, res, next) => {
   } catch (err) { return next(err); }
 });
 
+// WHICH LINE a call goes out on (utils/callLines.js): API (calls & msgs), Dinstar (calls & msgs), SIP (call). The dropdown in the Call window reads this.
+router.get('/call-lines', async (req, res, next) => {
+  try { return res.json(await require('../utils/callLines').list()); } catch (err) { return next(err); } // eslint-disable-line global-require
+});
+
 // CALL THROUGH TEAMLINK (Exotel click-to-call, utils/callGateway.js): the caller's own phone rings
 // first, then the person is connected. One person per click. Logged as a call on their history; the
 // result (answered / no answer / how long) is added when Exotel reports it.
@@ -127,9 +132,9 @@ router.post('/call', async (req, res, next) => {
     if (person.doNotContact) return res.status(409).json({ error: 'This person asked not to be contacted.' });
     const own = await require('../utils/messageChannels').ownContact(req.user); // eslint-disable-line global-require
     if (!own.phone) return res.status(409).json({ error: 'Your own phone number is not on your employee profile, so TeamLink does not know which phone to ring first. Add it on your profile.' });
-    const gw = require('../utils/callGateway'); // eslint-disable-line global-require
+    const lines = require('../utils/callLines'); // eslint-disable-line global-require
     const base = String(process.env.APP_BASE_URL || '').replace(/\/+$/, '') || null;
-    const out = await gw.startCall({ agent: own.phone, to: person.mobile, ref: `${audience}:${person.id}`.slice(0, 120), callbackBase: base });
+    const out = await lines.startCall(b.line, { agent: own.phone, to: person.mobile, ref: `${audience}:${person.id}`.slice(0, 120), callbackBase: base });
     if (!out.ok && out.notConfigured) return res.status(409).json({ error: out.error, notConfigured: true });
     if (!out.ok && out.invalid) return res.status(400).json({ error: out.error });
     const detail = out.ok

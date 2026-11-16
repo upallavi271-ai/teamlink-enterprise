@@ -44,10 +44,11 @@ export default function BulkCallQueue({ items, onClose, onDone }) {
   const [gwNote, setGwNote] = useState(null);
   const [gwBusy, setGwBusy] = useState(false);
   useEffect(() => { api.get('/messaging/channels').then((r) => setGw(r.data.call || null)).catch(() => setGw(null)); }, []);
+  const lineOf = () => { try { return localStorage.getItem('tl_call_line') || undefined; } catch { return undefined; } }; // the line chosen in the Call window (API / Dinstar / SIP)
   async function callThrough() {
     setGwBusy(true); setGwNote(null);
     try {
-      const r = await api.post('/messaging/call', { audience: 'candidates', id: cur.id, applicationId: cur.latestApplicationId || undefined });
+      const r = await api.post('/messaging/call', { audience: 'candidates', id: cur.id, applicationId: cur.latestApplicationId || undefined, line: lineOf() });
       setGwNote({ ok: true, text: r.data.message });
     } catch (e) { setGwNote({ ok: false, text: e.response?.data?.error || 'The call could not be started.' }); } finally { setGwBusy(false); }
   }
