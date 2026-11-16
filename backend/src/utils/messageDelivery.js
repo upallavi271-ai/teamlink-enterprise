@@ -115,6 +115,9 @@ async function applyStatusInner(info, status) {
     if (rec && !matched) matched = 1;
   } catch { /* the record is optional */ }
 
+  // 1c. a message sent from a CRM record (crm/contact.js): the report goes on its timeline line
+  matched += await require('../crm/contact').applyDeliveryStatus(String(info.providerRef), status, info.error, at).catch(() => 0); // eslint-disable-line global-require
+
   // 1b. the job broadcast campaign's recipient row (broadcast/replies.js)
   matched += await require('../broadcast/replies').statusReport({ providerRef: String(info.providerRef), status, error: info.error }).catch(() => 0); // eslint-disable-line global-require
 

@@ -73,6 +73,14 @@ async function draftFor(user, kind, id) {
   });
 }
 
+// The timeline line of a message that went out, with the id the provider gave it so its later delivery report (Delivered / Read / Not delivered) can be written on the same line.
+async function logSent(user, kind, id, activity, providerRef, status, detail) {
+  const a = await S.addActivity(user, { ...activity, [`${kind}Id`]: id });
+  const actId = a.body && a.body.activity ? a.body.activity.id : null;
+  if (actId) await DB.run('UPDATE "CrmActivity" SET "providerRef" = ?, "deliveryStatus" = ?, "deliveryDetail" = ? WHERE "id" = ?', providerRef ? String(providerRef).slice(0, 200) : null, status, clip(detail, 300), actId).catch(() => {});
+  return actId;
+}
+
 // One email or WhatsApp message, really sent, then written on the timeline.
 async function send(user, { kind, id, channel, to, subject, text } = {}) {
   if (!CH[channel]) return S.fail(400, 'Pick Email or WhatsApp.');
@@ -94,7 +102,7 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
       meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM email' },
     });
     if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'the mail server refused it.'}`, { notConfigured: !!result.notConfigured });
-    await S.addActivity(user, { kind: 'email', [`${kind}Id`]: id, subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` });
+    await logSent(user, kind, id, { kind: 'email', subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by the mail server');
     return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped, sentAt: new Date().toISOString() });
   }
   // WhatsApp
@@ -102,15 +110,30 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
   if (!m.ok) return S.fail(400, (to || x.phone) ? `That number does not look right: ${m.reason}` : 'This record has no phone number. Type one in the To box.');
   const CMP = require('./campaigns'); // eslint-disable-line global-require
   if (await CMP.optedOut('whatsapp', m.e164).catch(() => false)) return S.fail(409, 'This number asked not to be messaged on WhatsApp. TeamLink does not send to it.');
+  // WHATSAPP'S RULE: a business may write first only with an APPROVED TEMPLATE. Plain words are delivered only inside 24 hours of the person's last message to us;
+  // outside it the API still says "accepted" and WhatsApp drops the message later - which made "Sent" a lie. So: plain words inside the window, else the company's approved
+  // general template (Administration > Integrations > WhatsApp > Template name - bulk / general) with the message as its blank, else it is refused with the reason.
+  const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+  const delivery = require('../utils/messageDelivery'); // eslint-disable-line global-require
+  const route = await WN.planNumber(user, { requestedNumberId: null, department: null, automatic: false, to: m.e164 }).catch(() => ({ legacy: true }));
+  if (!route.legacy && !route.ok) return S.fail(409, route.error || 'No WhatsApp number is allotted to you.', { notConfigured: route.code === 'NOT_CONFIGURED' || /not (been )?configured/i.test(String(route.error || '')) });
+  const windows = route.ok ? await WN.openWindowsFor(route.number) : await delivery.openWindows();
+  const open = !!(windows && windows.has(delivery.digitsOf(m.e164)));
+  const cfg = route.ok ? route.cfg : await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+  const viaTemplate = !open;
+  if (viaTemplate && cfg && cfg.configured !== false && !(cfg.templates && cfg.templates.bulk) && !(cfg.sandbox)) {
+    return S.fail(409, 'WhatsApp will not deliver this: the person has not written to you in the last 24 hours, and no approved WhatsApp template is set for general messages. Ask an Admin to set one (Administration > Integrations > WhatsApp > Template name - bulk / general), or use "Open in WhatsApp" to write from your own WhatsApp.', { needsTemplate: true, outsideWindow: true });
+  }
   result = await require('../utils/messaging').send('WhatsApp', { // eslint-disable-line global-require
-    to: m.e164, text: body, kind: 'direct', actorUserId: user.id, meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM message' },
+    to: m.e164, text: body, kind: open ? 'session' : 'bulk', ...(viaTemplate ? { vars: [body] } : {}), ...(route.ok ? { numberId: route.number.id } : {}), actorUserId: user.id,
+    meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM message' },
   });
   if (!result.ok) {
     const why = result.notConfigured ? 'WhatsApp is not connected.' : (result.error || 'WhatsApp refused the message.');
     return S.fail(result.notConfigured ? 409 : 502, `The WhatsApp message was not sent: ${why}`, { notConfigured: !!result.notConfigured, outsideWindow: /24|re-?engage|template|131047/i.test(String(result.error || '')) });
   }
-  await S.addActivity(user, { kind: 'whatsapp', [`${kind}Id`]: id, subject: 'WhatsApp message sent', note: `To +${m.e164}\n\n${body}` });
-  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp', sentAt: new Date().toISOString() });
+  await logSent(user, kind, id, { kind: 'whatsapp', subject: 'WhatsApp message sent', note: `To +${m.e164}${viaTemplate ? ' (as the approved template: the person had not written in the last 24 hours)' : ''}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by WhatsApp, delivery not confirmed yet');
+  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp', usedTemplate: viaTemplate, sentAt: new Date().toISOString() });
 }
 
 // The person opened their own app instead (mail app / wa.me / the phone's dialler): TeamLink cannot see whether it was sent, and says so on the timeline.
@@ -160,4 +183,21 @@ async function applyCallResult(ref, detail) {
   return 1;
 }
 
-module.exports = { ready, draftFor, send, opened, call, applyCallResult };
+// WhatsApp (or the mail provider) reported what became of a message (utils/messageDelivery.js applyStatusInner hands it here): written on that message's timeline line.
+const RANK = { Sent: 1, Delivered: 2, Read: 3 };
+async function applyDeliveryStatus(providerRef, status, error, at) {
+  const word = { SENT: 'Sent', DELIVERED: 'Delivered', READ: 'Read', FAILED: 'Failed' }[String(status || '').toUpperCase()];
+  if (!word || !providerRef) return 0;
+  const rows = await DB.all('SELECT "id", "deliveryStatus" FROM "CrmActivity" WHERE "providerRef" = ?', String(providerRef)).catch(() => []);
+  let n = 0;
+  const stamp = new Date(at || Date.now()).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+  for (const r of rows) {
+    if (word !== 'Failed' && (RANK[r.deliveryStatus] || 0) >= RANK[word]) continue; // eslint-disable-line no-continue
+    const detail = word === 'Failed' ? `Not delivered ${stamp}${error ? `: ${clip(error, 250)}` : ''}` : `${word} ${stamp}`;
+    await DB.run('UPDATE "CrmActivity" SET "deliveryStatus" = ?, "deliveryDetail" = ? WHERE "id" = ?', word, detail, r.id); // eslint-disable-line no-await-in-loop
+    n += 1;
+  }
+  return n;
+}
+
+module.exports = { ready, draftFor, send, opened, call, applyCallResult, applyDeliveryStatus };

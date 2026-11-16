@@ -199,6 +199,8 @@ const DDL = [
 // Columns added after the first release: added once, "duplicate column" is the normal answer afterwards.
 const COLUMNS = [
   ['CrmLead', 'rating', 'TEXT'],
+  // what became of a message the CRM sent (crm/contact.js): the id the provider gave it, and Sent -> Delivered -> Read / Failed as the provider reports it
+  ['CrmActivity', 'providerRef', 'TEXT'], ['CrmActivity', 'deliveryStatus', 'TEXT'], ['CrmActivity', 'deliveryDetail', 'TEXT'],
   ['CrmDeal', 'nextStep', 'TEXT'],
   // the lead pipeline, website leads and timed reminders (2026-11-06, crm/sales.js)
   ['CrmLead', 'stage', 'TEXT'], ['CrmLead', 'expectedValue', 'REAL'], ['CrmLead', 'lostReason', 'TEXT'],

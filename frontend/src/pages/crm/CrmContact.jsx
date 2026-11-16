@@ -60,7 +60,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
       const r = await api.post('/crm/contact/send', channel === 'Email' ? { ...body, channel, to: to.Email, subject, text: mailText } : { ...body, channel, to: to.WhatsApp, text: waText });
       toast(channel === 'Email' ? `Email sent to ${r.data.to}.` : `WhatsApp sent to ${r.data.to}.`);
       setSentOk((x) => ({ ...x, [channel]: { to: r.data.to, at: new Date() } }));
-      setSentNote(channel === 'Email' ? `Sent to ${r.data.to}. It is on the timeline.` : `Sent to ${r.data.to} from ${(rd.whatsapp && rd.whatsapp.via) || r.data.via}. It is on the timeline.`);
+      setSentNote(channel === 'Email' ? `Sent to ${r.data.to}. It is on the timeline.` : `Handed to WhatsApp for ${r.data.to} (${(rd.whatsapp && rd.whatsapp.via) || r.data.via})${r.data.usedTemplate ? ' as the approved template, because the person had not written to you in the last 24 hours' : ''}. The timeline shows Delivered, or why not, when WhatsApp reports it.`);
       finish();
     } catch (e) {
       const d = e.response && e.response.data;
@@ -117,13 +117,13 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
       {ch === 'WhatsApp' && ready && (
         <>
           {waReady
-            ? <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5 }}>Sent through {rd.whatsapp.via || 'the connected WhatsApp number'}. Free text reaches a person who messaged you in the last 24 hours; otherwise WhatsApp may ask for an approved template.</div>
+            ? <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5 }}>Sent through {rd.whatsapp.via || 'the connected WhatsApp number'}. If the person wrote to you in the last 24 hours your words go as they are; otherwise they go inside the company's approved WhatsApp template (WhatsApp delivers nothing else to a person who has not written first).</div>
             : <Notice>WhatsApp is not connected: {rd.whatsapp.reason} Ask an Admin to connect it in Administration → Integrations. Until then you can open WhatsApp on your own phone or computer.</Notice>}
           <div className="field"><label>To (mobile number)</label><input value={to.WhatsApp} onChange={(e) => setToFor('WhatsApp', e.target.value)} placeholder="98765 43210" aria-label="WhatsApp number" /></div>
           <div className="field"><label>Message</label><textarea rows={6} value={waText} onChange={(e) => setWaText(e.target.value)} aria-label="WhatsApp message" /></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {waReady && (sentOk.WhatsApp
-              ? <><span className="status active" role="status" style={{ alignSelf: 'center', fontSize: 14, padding: '8px 14px' }}>✓ Sent to {sentOk.WhatsApp.to}</span><button type="button" className="btn" onClick={() => { setSentOk((x) => ({ ...x, WhatsApp: null })); setSentNote(''); }}>Send another</button></>
+              ? <><span className="status pending" role="status" style={{ alignSelf: 'center', fontSize: 14, padding: '8px 14px' }}>✓ Handed to WhatsApp · {sentOk.WhatsApp.to}</span><button type="button" className="btn" onClick={() => { setSentOk((x) => ({ ...x, WhatsApp: null })); setSentNote(''); }}>Send another</button></>
               : <button type="button" className="btn btn-primary" disabled={busy === 'WhatsApp' || !digitsOf(to.WhatsApp) || !waText.trim()} onClick={() => send('WhatsApp')}>{busy === 'WhatsApp' ? 'Sending…' : 'Send on WhatsApp'}</button>)}
             <a className={`btn${waReady ? '' : ' btn-primary'}`} href={waLink} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!digitsOf(to.WhatsApp)) { e.preventDefault(); setErr('Write the number first.'); return; } opened('WhatsApp'); }} aria-disabled={!digitsOf(to.WhatsApp)}>Open in WhatsApp</a>
           </div>

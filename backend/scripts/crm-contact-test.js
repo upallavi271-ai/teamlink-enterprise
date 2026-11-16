@@ -96,7 +96,7 @@ let T = {};
 
   console.log('2. The integrations are connected in Administration (nothing is typed again here)');
   await setRow('email', { 'SMTP host': 'smtp.zz-test.invalid', Port: '587', 'Encryption (SSL / STARTTLS / None)': 'STARTTLS', Username: 'zz', 'Password / app key': 'zz-pass', 'From address': 'crm@zz-test.invalid', 'Default from name': 'TeamLink' });
-  await setRow('whatsapp', { [CAT.WA_FIELDS.phoneId]: '1234567890', [CAT.WA_FIELDS.token]: 'zz-test-token', [CAT.WA_FIELDS.display]: '+91 90000 00001' });
+  await setRow('whatsapp', { [CAT.WA_FIELDS.phoneId]: '1234567890', [CAT.WA_FIELDS.token]: 'zz-test-token', [CAT.WA_FIELDS.display]: '+91 90000 00001', [CAT.WA_FIELDS.bulkTpl]: 'zz_general' });
   await setRow('telephony', { [GW.F.provider]: 'Exotel', [GW.F.sid]: 'zzsid', [GW.F.key]: 'zzkey', [GW.F.token]: 'zztoken', [GW.F.callerId]: '08000000000', [GW.F.record]: 'Yes', [GW.F.secret]: 'zz-call-secret' });
   await new Promise((r) => { setTimeout(r, 400); });
   const r1 = (await call('GET', '/crm/contact/ready', null, T.X)).body;
@@ -110,7 +110,8 @@ let T = {};
   check('the email is sent', em.status === 200 && em.body.ok && em.body.to === lead.email, em.body);
   const sent = mails().filter((m) => /Our recruitment services/.test(m.subject));
   check('the mail server was handed it: right address, subject and text, from the person with the company relay', sent.length === 1 && String(sent[0].to).includes(lead.email) && /We can help you hire/.test(sent[0].text) && /ZZ admin/.test(sent[0].from + sent[0].replyTo), sent[0]);
-  const led = await DB.one('SELECT COUNT(*) AS n FROM "OmniCreditLedger" WHERE "userId" = ? AND "channel" = ?', X.id, 'email').catch(() => ({ n: 0 }));
+  let led = { n: 0 };
+  for (let i = 0; i < 10 && !Number(led.n); i += 1) { led = await DB.one('SELECT COUNT(*) AS n FROM "OmniCreditLedger" WHERE "userId" = ? AND "channel" = ?', X.id, 'email').catch(() => ({ n: 0 })); if (!Number(led.n)) await new Promise((r) => { setTimeout(r, 300); }); } // the ledger row is written just after the send returns
   check('the send is counted in the Omni-channel usage ledger (shown as a test send on this sandbox) (it goes through the one send layer, not around it)', Number(led.n) >= 1, led);
   const tl1 = await timeline('lead', lead.id);
   check('it is on the lead\'s timeline with the message', tl1.some((a) => a.kind === 'email' && /Email sent: Our recruitment services/.test(a.subject) && /We can help you hire/.test(a.note)), tl1.map((a) => a.subject));
@@ -128,7 +129,31 @@ let T = {};
   console.log('4. WhatsApp: really sent through the connected number, written on the timeline');
   const wa = await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', text: 'Hello Asha, this is TeamLink.' }, T.X);
   check('the message is sent to the number written as +91 98765 43210 (cleaned to +919876543210)', wa.status === 200 && wa.body.ok && wa.body.to === '+919876543210', wa.body);
+  check('the person has not written in 24 hours, so it goes as the approved template (WhatsApp would drop plain words)', wa.body.usedTemplate === true, wa.body);
   check('and it is on the timeline with the message', (await timeline('lead', lead.id)).some((a) => a.kind === 'whatsapp' && /WhatsApp message sent/.test(a.subject) && /\+919876543210/.test(a.note) && /this is TeamLink/.test(a.note)));
+  // inside the 24 hours (the person wrote to us a moment ago) the words go as they are
+  const digits = '919876543210';
+  await prisma.appSetting.upsert({ where: { key: `wa.window.${digits}` }, create: { key: `wa.window.${digits}`, value: new Date().toISOString() }, update: { value: new Date().toISOString() } });
+  const win = await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', text: 'Plain words inside the window' }, T.X);
+  check('the person wrote to us just now: the words go as they are, not in the template', win.status === 200 && win.body.usedTemplate === false, win.body);
+  // delivery truth: the provider reports back and the timeline line says what became of it
+  const waLine = (await timeline('lead', lead.id)).find((a) => a.kind === 'whatsapp' && /this is TeamLink/.test(a.note || ''));
+  check('the line starts as Sent (accepted), with the id the provider gave it', waLine && waLine.deliveryStatus === 'Sent' && !!waLine.providerRef, waLine);
+  const DEL = require('../src/utils/messageDelivery');
+  await DEL.applyStatus({ providerRef: waLine.providerRef, status: 'delivered', channel: 'WhatsApp' });
+  check('WhatsApp reports Delivered: the same line says Delivered', ((await timeline('lead', lead.id)).find((a) => a.id === waLine.id) || {}).deliveryStatus === 'Delivered');
+  await DEL.applyStatus({ providerRef: waLine.providerRef, status: 'sent', channel: 'WhatsApp' });
+  check('a late "sent" report does not take Delivered back', ((await timeline('lead', lead.id)).find((a) => a.id === waLine.id) || {}).deliveryStatus === 'Delivered');
+  const plainLine = (await timeline('lead', lead.id)).find((a) => a.kind === 'whatsapp' && /Plain words inside the window/.test(a.note || ''));
+  await DEL.applyStatus({ providerRef: plainLine.providerRef, status: 'failed', channel: 'WhatsApp', error: 'Re-engagement message (131047)' });
+  const failedLine = (await timeline('lead', lead.id)).find((a) => a.id === plainLine.id);
+  check('WhatsApp reports it failed: the line says Failed and why', failedLine.deliveryStatus === 'Failed' && /131047/.test(failedLine.deliveryDetail || ''), failedLine);
+  // no template and no window: refused, with what to do
+  await prisma.appSetting.delete({ where: { key: `wa.window.${digits}` } }).catch(() => {});
+  await setRow('whatsapp', { [CAT.WA_FIELDS.phoneId]: '1234567890', [CAT.WA_FIELDS.token]: 'zz-test-token', [CAT.WA_FIELDS.display]: '+91 90000 00001', [CAT.WA_FIELDS.bulkTpl]: '' });
+  const noTpl = await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', text: 'x' }, T.X);
+  check('no template and no 24-hour window: refused, and it says what an Admin must set', noTpl.status === 409 && noTpl.body.needsTemplate === true && /template/i.test(noTpl.body.error), noTpl.body);
+  await setRow('whatsapp', { [CAT.WA_FIELDS.phoneId]: '1234567890', [CAT.WA_FIELDS.token]: 'zz-test-token', [CAT.WA_FIELDS.display]: '+91 90000 00001', [CAT.WA_FIELDS.bulkTpl]: 'zz_general' });
   check('an empty message is refused', (await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', text: '  ' }, T.X)).status === 400);
   check('a number that is not a number is refused, with the reason', (await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', to: '12345', text: 'x' }, T.X)).status === 400);
   check('a record with no number and nothing typed asks for the number', /no phone number/i.test((await call('POST', '/crm/contact/send', { kind: 'lead', id: bare.id, channel: 'WhatsApp', text: 'x' }, T.X)).body.error));
