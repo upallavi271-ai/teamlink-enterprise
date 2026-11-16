@@ -160,9 +160,22 @@ async function forOmni(viewerId, month, opts = {}) {
     detail = lines.map((r) => ({ userId: r.u, day: r.day, label: r.t || 'Message', channel: r.c, messages: num(r.n), tokens: num(r.cr) }));
   }
 
+  // promotions per person (distinct campaigns in the ledger) and what a token costs in rupees (from the recharges: rupees paid / tokens bought, per way of sending)
+  const promoBy = {};
+  if (ids.length) {
+    const marks2 = ids.map(() => '?').join(',');
+    const pr = await prisma.$queryRawUnsafe(`SELECT userId u, COUNT(DISTINCT COALESCE(campaignId, templateLabel)) n FROM "OmniCreditLedger" WHERE at >= ? AND at < ? AND mode = 'live' AND result <> 'failed' AND userId IN (${marks2}) AND COALESCE(templateLabel,'') <> ? GROUP BY userId`, from, to, ...ids, AI_LABEL).catch(() => []);
+    pr.forEach((r) => { promoBy[r.u] = num(r.n); });
+  }
+  const rate = {};
+  try {
+    const rc = await prisma.$queryRawUnsafe('SELECT channel c, COALESCE(SUM(amount),0) a, COALESCE(SUM(costRupees),0) r FROM "OmniRecharge" GROUP BY channel');
+    rc.forEach((r) => { if (num(r.a) > 0 && num(r.r) > 0) rate[r.c] = Math.round((num(r.r) / num(r.a)) * 10000) / 10000; });
+  } catch { /* no recharges recorded: no rupee figure */ }
+
   const departments = [...new Set([...(sc.departments || []), ...persons.map((p) => p.department)])];
   return {
-    ok: true, month: m, detail,
+    ok: true, month: m, detail, rate, promotions: promoBy,
     viewer: { scope, words: sc.words, departments: scope === 'me' ? [] : departments },
     cost: act.rules.cost,
     persons,
