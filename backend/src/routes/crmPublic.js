@@ -44,4 +44,55 @@ router.get('/invoice/:token', async (req, res) => {
   }
 });
 
+// The customer answers a proposal from the email (founder 2026-11-16). GET only SHOWS the proposal with two buttons (a mail scanner opening the link changes nothing);
+// the POST of a button records the answer (crm/extra.js decideByCustomer). The link is signed and expires after 60 days.
+const bad = (res) => { res.set('Content-Type', 'text/html; charset=utf-8'); return res.status(404).send(page('This link has expired', 'Please ask us to send the proposal again.')); };
+router.get('/proposal/:token/pdf', async (req, res) => {
+  const X = require('../crm/extra'); // eslint-disable-line global-require
+  const id = X.proposalOfToken(req.params.token);
+  if (!id) return bad(res);
+  try {
+    const out = await X.proposalPdf(null, id, { signed: true });
+    if (!out.pdf) return bad(res);
+    res.set('Content-Type', 'application/pdf');
+    res.set('Content-Disposition', `inline; filename="${out.name}"`);
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Robots-Tag', 'noindex');
+    return res.send(out.pdf);
+  } catch (e) { return bad(res); }
+});
+const answerPage = (p, token, doneWords) => {
+  const head = `Proposal ${esc(p.number)}${p.company ? ` for ${esc(p.company)}` : ''}`;
+  if (doneWords) return page(head, doneWords);
+  if (['Accepted', 'Declined'].includes(p.status)) return page(head, `This proposal is already marked <b>${esc(p.status)}</b>. To change it, please reply to our email.`);
+  const pdf = `/api/crm-public/proposal/${esc(token)}/pdf`;
+  return page(head, `${p.toName ? `Dear ${esc(p.toName)}, ` : ''}please read the proposal and tell us what you decide.<br><br><a href="${pdf}" target="_blank" rel="noopener" style="color:#2563eb">Open the proposal (PDF)</a><form method="post" action="/api/crm-public/proposal/${esc(token)}" style="margin-top:18px;display:flex;gap:10px;justify-content:center"><button name="decision" value="accept" style="background:#16a34a;color:#fff;border:0;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Accept</button><button name="decision" value="decline" style="background:#fff;color:#b91c1c;border:1px solid #fecaca;border-radius:8px;padding:11px 20px;font-size:15px;cursor:pointer">Decline</button></form>`);
+};
+router.get('/proposal/:token', async (req, res) => {
+  const X = require('../crm/extra'); // eslint-disable-line global-require
+  const id = X.proposalOfToken(req.params.token);
+  const p = id ? await X.proposalForCustomer(id).catch(() => null) : null;
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  res.set('Cache-Control', 'private, no-store');
+  res.set('X-Robots-Tag', 'noindex');
+  if (!p) return bad(res);
+  return res.send(answerPage(p, req.params.token));
+});
+router.post('/proposal/:token', express.urlencoded({ extended: false, limit: '2kb' }), async (req, res) => {
+  const X = require('../crm/extra'); // eslint-disable-line global-require
+  const id = X.proposalOfToken(req.params.token);
+  res.set('Content-Type', 'text/html; charset=utf-8');
+  if (!id) return bad(res);
+  try {
+    const p = await X.proposalForCustomer(id);
+    if (!p) return bad(res);
+    const out = await X.decideByCustomer(id, String((req.body || {}).decision || ''), { ip: req.ip || (req.headers['x-forwarded-for'] || '') });
+    if (out.error) return res.status(400).send(page(`Proposal ${esc(p.number)}`, esc(out.error)));
+    if (out.already) return res.send(answerPage({ ...p, status: out.status }, req.params.token));
+    return res.send(page(`Proposal ${esc(p.number)}`, out.status === 'Accepted' ? 'Thank you. You have <b>accepted</b> the proposal. Our team will contact you shortly with the next steps.' : 'Thank you for letting us know. You have <b>declined</b> the proposal. We will be in touch to understand how we can help better.'));
+  } catch (e) {
+    return res.status(500).send(page('Something went wrong', 'Please try again in a minute, or reply to our email.'));
+  }
+});
+
 module.exports = router;

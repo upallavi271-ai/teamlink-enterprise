@@ -146,7 +146,7 @@ router.get('/proposals/:id/pdf', async (req, res, next) => {
     return res.send(out.pdf);
   } catch (e) { return next(e); }
 });
-router.post('/proposals/:id/send', wrap((req) => X.sendProposal(req.user, req.params.id, req.body || {})));
+router.post('/proposals/:id/send', wrap((req) => X.sendProposal(req.user, req.params.id, req.body || {}, req)));
 router.post('/proposals/:id/status', wrap((req) => X.decideProposal(req.user, req.params.id, req.body || {})));
 router.post('/leads/:id/convert', wrap((req) => CRM.convertLead(req.user, req.params.id, req.body || {})));
 router.post('/deals/:id/stage', wrap((req) => CRM.moveDeal(req.user, req.params.id, req.body || {})));

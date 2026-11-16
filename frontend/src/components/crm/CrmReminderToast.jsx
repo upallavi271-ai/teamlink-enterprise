@@ -4,7 +4,7 @@ import api from '../../api';
 
 // A CRM follow-up that has come due shows on screen on any page (founder 2026-11-06: "bell icon + toast"). It is the same note as in the bell; Open or x hides it here.
 // A login that does not use the CRM gets a 403 once and stops asking. Mounted once, in the app shell.
-const POLL_MS = 60000;
+const POLL_MS = 30000; // 30 s: a customer's Accept / Decline should show soon after it is pressed
 const SEEN = 'tl_crm_toasts';
 const readSeen = () => { try { return JSON.parse(sessionStorage.getItem(SEEN) || '[]'); } catch { return []; } };
 

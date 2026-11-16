@@ -357,17 +357,18 @@ async function createProposal(user, dealId, body = {}) {
   return S.okBody({ ok: true, proposal: p });
 }
 
-async function proposalOf(user, id, { edit } = {}) {
-  const r = S.roleOf(user);
+async function proposalOf(user, id, { edit, signed } = {}) {
+  const r = signed ? null : S.roleOf(user);
   const p = await DB.one('SELECT * FROM "CrmProposal" WHERE "id" = ?', String(id || '').slice(0, 60));
   const deal = p ? await S.getRow('deal', p.dealId) : null;
-  if (!p || !(edit ? S.canEditRow(user, r, deal) : S.canSeeRow(user, r, deal))) return { error: S.fail(404, 'This proposal is not there, or it is not yours.') };
+  // `signed` is only ever passed by the public proposal link AFTER the signed, unexpired token was checked (proposalOfToken)
+  if (!p || !deal || !(signed || (edit ? S.canEditRow(user, r, deal) : S.canSeeRow(user, r, deal)))) return { error: S.fail(404, 'This proposal is not there, or it is not yours.') };
   return { p, deal, data: JSON.parse(p.dataJson || '{}') };
 }
 
 // The proposal as a PDF (pdfkit, A4): the TeamLink logo, who it is for, the positions, the fee and terms, the signature line.
-async function proposalPdf(user, id) {
-  const x = await proposalOf(user, id);
+async function proposalPdf(user, id, { signed } = {}) {
+  const x = await proposalOf(user, id, { signed });
   if (x.error) return x.error;
   const { p, data: d } = x;
   const PDFDocument = require('pdfkit'); // eslint-disable-line global-require
@@ -555,7 +556,57 @@ async function shareInvoice(user, id, req) {
   return S.okBody({ ok: true, url, waUrl, text, number: number.valid ? number.digits : null, contactName: contactName || billTo.name || '', status: inv.status, expiresInDays: SHARE_DAYS });
 }
 
-async function sendProposal(user, id, { to, message } = {}) {
+// ---- the customer ANSWERS the proposal from the email (founder 2026-11-16: "mail lo customer ok cheyyaganey, ikkada accepted kindha update avvali") -----------------
+// The email carries a signed link (the proposal id signed with the server secret, 60 days, no login). It opens a page with Accept / Decline; only the button
+// (a POST) changes anything, so a mail scanner opening the link changes nothing. The answer is written to the proposal, the deal's timeline (with the time and
+// the address it came from) and the deal owner gets a bell; an accepted proposal moves the deal to Negotiation, as when a person marks it.
+const PROPOSAL_DAYS = 60;
+const propSig = (v) => require('crypto').createHmac('sha256', shareSecret()).update(`crm-proposal-link:${v}`).digest('base64url').slice(0, 24); // eslint-disable-line global-require
+function proposalToken(proposalId, days = PROPOSAL_DAYS) {
+  const body = `${proposalId}.${Math.floor(Date.now() / 1000) + days * 86400}`;
+  return `${Buffer.from(body).toString('base64url')}.${propSig(body)}`;
+}
+/** The proposal id a link opens, or null (wrong signature, tampered, expired). */
+function proposalOfToken(token) {
+  const [b, sig] = String(token || '').split('.');
+  if (!b || !sig) return null;
+  let body = '';
+  try { body = Buffer.from(b, 'base64url').toString('utf8'); } catch { return null; }
+  const a = Buffer.from(propSig(body)); const c = Buffer.from(sig);
+  if (a.length !== c.length || !require('crypto').timingSafeEqual(a, c)) return null; // eslint-disable-line global-require
+  const [id, exp] = body.split('.');
+  if (!id || !(Number(exp) > Math.floor(Date.now() / 1000))) return null;
+  return id;
+}
+/** What the public page shows: the proposal's number, who it is for, and where it stands. */
+async function proposalForCustomer(id) {
+  const x = await proposalOf(null, id, { signed: true });
+  if (x.error) return null;
+  return { id: x.p.id, number: x.p.number, status: x.p.status, decidedAt: x.p.decidedAt, company: x.data.company || x.deal.title || '', toName: x.data.toName || '', fromName: x.data.fromName || 'TeamLink Consultants' };
+}
+/** The customer pressed Accept or Decline. Answers { ok, status } or { error }. A proposal already answered is not changed by a second click. */
+async function decideByCustomer(id, decision, { ip } = {}) {
+  const status = decision === 'accept' ? 'Accepted' : decision === 'decline' ? 'Declined' : null;
+  if (!status) return { error: 'Choose Accept or Decline.' };
+  const x = await proposalOf(null, id, { signed: true });
+  if (x.error) return { error: 'This proposal is not available.' };
+  const { p, deal } = x;
+  if (['Accepted', 'Declined'].includes(p.status)) return { ok: true, already: true, status: p.status };
+  if (p.status !== 'Sent') return { error: 'This proposal has not been sent to you yet.' };
+  const now = DB.nowIso();
+  await S.update('CrmProposal', p.id, { status, decidedAt: now, updatedAt: now });
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Proposal ${p.number}: ${status} by the customer`, note: `The customer pressed ${status === 'Accepted' ? 'Accept' : 'Decline'} in the email link${p.sentTo ? ` (sent to ${p.sentTo})` : ''}. Address ${String(ip || 'unknown').slice(0, 60)}.`, at: now, dealId: deal.id, accountId: deal.accountId, byId: null, byName: 'Customer (email link)', createdAt: now });
+  if (status === 'Accepted' && SETTINGS.STAGES.indexOf(deal.stage) < SETTINGS.STAGES.indexOf('Negotiation')) await S.moveDeal({ id: deal.ownerId, name: 'Customer (email link)', role: 'SUPER_ADMIN' }, deal.id, { stage: 'Negotiation' }).catch(() => null);
+  await S.audit({ id: null, name: 'Customer (email link)' }, `CRM proposal ${status.toLowerCase()} by the customer`, 'CrmProposal', p.id, `${p.number}`).catch(() => null);
+  // A POP-UP on screen (founder 2026-11-16: "customer accept chesaru ani, display meedha pop up avvali"): the same note is the bell line AND the on-screen toast with an Open button
+  // (components/crm/CrmReminderToast.jsx reads the 'crm-reply|' notes). It goes to the deal's owner and to the person who made the proposal.
+  const who = [...new Set([deal.ownerId, p.createdById].filter(Boolean))];
+  const why = status === 'Accepted' ? 'The customer pressed Accept in the email. Next: agree the final price and terms (Negotiation), then Won.' : 'The customer pressed Decline in the email. Ask what did not suit and note it on the deal.';
+  await Promise.all(who.map((userId) => prisma.notification.create({ data: { userId, title: `${status === 'Accepted' ? '✅' : '❌'} ${deal.title || 'A customer'} ${status.toLowerCase()} proposal ${p.number}`, message: `${why}\nOpen: /crm/deals?open=deal:${deal.id}`, channel: 'In-App', recipient: `crm-reply|${deal.id}|${Date.now()}`, status: 'Sent' } }).catch(() => null)));
+  return { ok: true, status };
+}
+
+async function sendProposal(user, id, { to, message } = {}, req) {
   const x = await proposalOf(user, id, { edit: true });
   if (x.error) return x.error;
   const { p, deal, data: d } = x;
@@ -563,7 +614,8 @@ async function sendProposal(user, id, { to, message } = {}) {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return S.fail(400, 'Write the client\'s email address.');
   const out = await proposalPdf(user, id);
   if (!out.pdf) return out;
-  const text = `${S.clip(message, 3000) || `Dear ${d.toName || 'Sir / Madam'},\n\nPlease find attached our proposal (${p.number}) for your hiring requirement. We would be glad to discuss it at your convenience.`}\n\nRegards,\n${d.fromName || ''}\nTeamLink Consultants${d.fromPhone ? `\n${d.fromPhone}` : ''}`;
+  const answerUrl = `${require('../utils/offerLink').publicBase(req)}/api/crm-public/proposal/${proposalToken(p.id)}`; // eslint-disable-line global-require
+  const text = `${S.clip(message, 3000) || `Dear ${d.toName || 'Sir / Madam'},\n\nPlease find attached our proposal (${p.number}) for your hiring requirement. We would be glad to discuss it at your convenience.`}\n\nTo accept or decline this proposal online, open: ${answerUrl}\n\nRegards,\n${d.fromName || ''}\nTeamLink Consultants${d.fromPhone ? `\n${d.fromPhone}` : ''}`;
   const sent = await require('../utils/mailer').sendMail({ to: email, subject: `Proposal ${p.number}: recruitment services for ${d.company || 'your hiring'}`, text, attachments: [{ filename: out.name, content: out.pdf, contentType: 'application/pdf' }] }); // eslint-disable-line global-require
   if (!sent || !sent.ok) return S.fail(502, `The email was not sent: ${(sent && sent.error) || 'unknown problem'}. You can download the PDF and send it yourself.`);
   const now = DB.nowIso();
@@ -725,4 +777,4 @@ async function activities(user, { kind, from, to, owner, q } = {}) {
   return S.okBody({ rows, byKind });
 }
 
-module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, shareInvoice, invoiceOfToken, sendProposal, decideProposal, monthRange };
+module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, shareInvoice, invoiceOfToken, sendProposal, decideProposal, proposalOfToken, proposalForCustomer, decideByCustomer, monthRange };
