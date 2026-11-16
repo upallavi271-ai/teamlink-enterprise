@@ -221,6 +221,9 @@ export default function App() {
       {/* Omni-Channel full page (founder 2026-10-29: "full page open avali ... logins adakunda"): the sidebar Omni-Channel opens this in its own tab -
           Green Start alone over the whole window with its own sidebar, already signed in (no TeamLink sidebar / header around it). */}
       <Route path="/green-start" element={<ProtectedRoute><OmniEntry full /></ProtectedRoute>} />
+      {/* AI Marketing, bare (2026-11-16): the screens Green Start shows inside its own "AI Marketing" page (an iframe: no TeamLink sidebar, no tab bar). Same sign-in as the rest of TeamLink. */}
+      <Route path="/embed/ai-marketing" element={<ProtectedRoute><OmniApp embedded /></ProtectedRoute>} />
+      <Route path="/embed/ai-marketing/:view" element={<ProtectedRoute><OmniApp embedded /></ProtectedRoute>} />
       {/* The Job Portal already signed in with the TeamLink login (founder 2026-10-29: recruiters get no separate login). */}
       <Route path="/sso/job-portal" element={<ProtectedRoute><JobPortalLaunch /></ProtectedRoute>} />
 
