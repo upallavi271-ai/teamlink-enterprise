@@ -749,17 +749,22 @@ function ProposalBox({ dealId, onChanged }) {
 }
 
 // ---- the AI assistant on a record: health score, next best actions (rules, always), summary / email draft (the model) ------
-function AiInsight({ kind, id, refresh }) {
+function AiInsight({ kind, id, refresh, onChanged }) {
   const { toast } = useCrm();
   const [d, setD] = useState(null);
   const [out, setOut] = useState(null); // { title, text }
+  const [compose, setCompose] = useState(null); // the AI's email draft, open in the mail window with Send (CrmContact.jsx)
   const [busy, setBusy] = useState('');
   useEffect(() => { if (!['lead', 'deal', 'account'].includes(kind)) return; api.get(`/crm/ai/insight/${kind}/${id}`).then((r) => setD(r.data)).catch(() => setD(null)); }, [kind, id, refresh]);
   async function ask(what) {
     setBusy(what); setOut(null);
     try {
       const r = await api.post(`/crm/ai/${what}/${kind}/${id}`, {});
-      setOut({ title: what === 'summary' ? 'AI summary' : 'Follow-up email draft', text: r.data.text });
+      if (what === 'draft') {
+        const t = String(r.data.text || '').trim();
+        const m = /^subject:\s*(.+)\n+([\s\S]*)$/i.exec(t);
+        setCompose({ subject: m ? m[1].trim() : '', text: m ? m[2].trim() : t });
+      } else setOut({ title: 'AI summary', text: r.data.text });
     } catch (e) { toast(errOf(e, 'The AI is not available right now.')); } finally { setBusy(''); }
   }
   if (!d) return null;
@@ -787,6 +792,7 @@ function AiInsight({ kind, id, refresh }) {
           <details style={{ marginTop: 4 }}><summary className="small-muted" style={{ fontSize: 11.5, cursor: 'pointer' }}>Why this score</summary>{d.reasons.map((r) => <div key={r.why} className="small-muted" style={{ fontSize: 12 }}>{r.pts > 0 ? `+${r.pts}` : r.pts || ''} {r.why}</div>)}</details>
         </div>
       </div>
+      {compose && <CrmContactDialog record={{ kind, id }} channel="Email" initialDraft={compose} onClose={() => setCompose(null)} onDone={onChanged} />}
       {out && (
         <div className="card" style={{ padding: 10, marginTop: 8, whiteSpace: 'pre-wrap', fontSize: 13 }}>
           <div style={{ display: 'flex', marginBottom: 4 }}><b>{out.title}</b><button type="button" className="crm-linkbtn" style={{ marginLeft: 'auto' }} onClick={() => { navigator.clipboard.writeText(out.text).then(() => toast('Copied.')).catch(() => {}); }}>Copy</button></div>
@@ -964,7 +970,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
         </div>
         {tab === 'overview' && (
           <>
-            <AiInsight kind={kind} id={row.id} refresh={d} />
+            <AiInsight kind={kind} id={row.id} refresh={d} onChanged={changed} />
             {kind === 'account' && (
               <div className="grid-2" style={{ marginBottom: 12 }}>
                 <div className="card" style={{ padding: 12 }}>

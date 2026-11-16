@@ -20,7 +20,7 @@ function Notice({ tone = 'warn', children }) {
   return <div className="notice" role="status" style={{ marginBottom: 10, fontSize: 13, ...(tone === 'warn' ? { borderColor: 'var(--amber, #d97706)' } : {}) }}>{children}</div>;
 }
 
-export default function CrmContactDialog({ record, channel: first = 'Email', onClose, onDone }) {
+export default function CrmContactDialog({ record, channel: first = 'Email', initialDraft, onClose, onDone }) {
   const { me, toast } = useCrm();
   const [ch, setCh] = useState(first);
   const [ready, setReady] = useState(null);
@@ -40,7 +40,7 @@ export default function CrmContactDialog({ record, channel: first = 'Email', onC
     api.get('/crm/contact/draft', { params: body }).then((r) => {
       const d = r.data; setDraft(d);
       setTo({ Email: d.to.email || '', WhatsApp: d.to.phone || '', Call: d.to.phone || '' });
-      setSubject(d.email.subject); setMailText(d.email.text); setWaText(d.whatsapp.text);
+      setSubject((initialDraft && initialDraft.subject) || d.email.subject); setMailText((initialDraft && initialDraft.text) || d.email.text); setWaText(d.whatsapp.text);
     }).catch((e) => setErr(errOf(e, 'This record could not be opened.')));
   }, [record.kind, record.id]); // eslint-disable-line react-hooks/exhaustive-deps
 

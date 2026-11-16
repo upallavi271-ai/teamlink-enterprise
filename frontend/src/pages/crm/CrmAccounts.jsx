@@ -7,6 +7,7 @@ import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { useCrm, errOf, dateOf, moneyShort, istToday, Pill, RecordForm, download } from './crmShared.jsx';
 import { TicketList } from './CrmSupport.jsx';
+import CrmContactDialog from './CrmContact.jsx';
 
 
 export default function CrmAccounts() {
@@ -22,6 +23,7 @@ export default function CrmAccounts() {
   const [owner, setOwner] = useState('');
   const [adding, setAdding] = useState(null); // 'account' | 'contact' | 'client'
   const [editContact, setEditContact] = useState(null);
+  const [reach, setReach] = useState(null); // a contact's phone or email clicked: the Call / Email window ({ record, channel })
   const load = () => {
     if (tab === 'tickets') return Promise.resolve();
     setRows(null);
@@ -85,8 +87,8 @@ export default function CrmAccounts() {
                   <td><b>{c.name}</b><div className="small-muted" style={{ fontSize: 11.5 }}>{c.designation || ''}</div></td>
                   <td>{c.accountName || '—'}</td>
                   <td>{c.role || '—'}</td>
-                  <td>{c.phone ? <a href={`tel:${c.phone}`} onClick={(e) => e.stopPropagation()}>{c.phone}</a> : '—'}</td>
-                  <td>{c.email ? <a href={`mailto:${c.email}`} onClick={(e) => e.stopPropagation()}>{c.email}</a> : '—'}</td>
+                  <td>{c.phone ? <a href={`tel:${c.phone}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReach({ record: { kind: 'contact', id: c.id, name: c.name }, channel: 'Call' }); }}>{c.phone}</a> : '—'}</td>
+                  <td>{c.email ? <a href={`mailto:${c.email}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); setReach({ record: { kind: 'contact', id: c.id, name: c.name }, channel: 'Email' }); }}>{c.email}</a> : '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -95,6 +97,7 @@ export default function CrmAccounts() {
       </div>
       </>)}
       {(adding === 'account' || adding === 'contact') && <RecordForm kind={adding} onClose={() => setAdding(null)} onSaved={(row) => { const k = adding; setAdding(null); if (k === 'account') { setTab('accounts'); load(); setOpen({ kind: 'account', id: row.id }); } else { setTab('contacts'); load(); } }} />}
+      {reach && <CrmContactDialog record={reach.record} channel={reach.channel} onClose={() => setReach(null)} onDone={load} />}
       {editContact && <RecordForm kind="contact" row={editContact} onClose={() => setEditContact(null)} onSaved={() => { setEditContact(null); load(); }} />}
     </div>
   );
