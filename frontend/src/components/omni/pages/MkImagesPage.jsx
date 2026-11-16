@@ -8,32 +8,24 @@ import ClientReviewModal from '../marketing/ClientReviewModal.jsx';
 import AutoStudioPanel from '../marketing/AutoStudioPanel.jsx';
 import '../marketing/marketing.css';
 
-// AI MARKETING > AI IMAGES: marketing pictures from a short description with Google Gemini, in the brand colours and with the logo when the model can.
+// AI MARKETING > AI IMAGES: ONE place to make pictures, "✦ Create from your content" (AutoStudioPanel: type an idea, TeamLink makes the post pictures by itself, free).
+// The second, separate "1 · Describe the picture" form (Google Gemini only, which needs billing and so never made a picture here) was removed on the founder's
+// request (16 Nov 2026: "keep one, the best, free"). An AI-made picture is still available inside the one box (More options > Pictures) when a picture AI is connected.
 // Every picture is saved here; it is used (calendar, posts) only after approval, and only approved pictures get a public link. Server: marketing/images.js.
 const STYLE_WORDS = { photo: 'Photo', illustration: 'Illustration', graphic: 'Social graphic', poster: 'Minimal poster', '3d': '3D', upload: 'Uploaded' };
 const UPLOAD_MAX = 10 * 1024 * 1024;
-const STARTERS = [
-  { label: 'Hiring poster', prompt: 'A confident young professional at a modern office desk, smiling, ready for a new job', headline: 'We are hiring', style: 'photo' },
-  { label: 'Walk-in drive', prompt: 'A friendly crowd of job seekers with folders waiting at a bright office reception for interviews', headline: 'Walk-in drive this Saturday', style: 'photo' },
-  { label: 'Nurses', prompt: 'A caring Indian staff nurse in a clean hospital corridor, warm light', headline: 'Staff nurses wanted', style: 'photo' },
-  { label: 'Job tip', prompt: 'A simple flat illustration of a resume, a checklist and a pen on a desk', headline: '3 resume tips', style: 'illustration' },
-  { label: 'Festival greeting', prompt: 'Diyas and soft rangoli patterns in warm colours, festive and calm', headline: 'Happy Diwali', style: 'graphic' },
-  { label: 'Team culture', prompt: 'A small diverse team celebrating together around a laptop in a sunny office', headline: '', style: 'photo' },
-];
 
 export default function MkImagesPage() {
   const { toast, go } = useOmni();
   const [meta, setMeta] = useState(null);
   const [list, setList] = useState(null);
   const [err, setErr] = useState('');
-  const [f, setF] = useState({ prompt: '', headline: '', style: 'photo', aspect: '1:1', count: 2, useColors: true, withLogo: true });
   const [busy, setBusy] = useState('');
   const [msg, setMsg] = useState('');
   const [tab, setTab] = useState('');
   const [view, setView] = useState(null); // the picture opened large
   const [del, setDel] = useState(null);
   const [rename, setRename] = useState(null);
-  const [waitSec, setWaitSec] = useState(0);
   const [toClient, setToClient] = useState(null); // the picture being sent to a client
   const [proj, setProj] = useState(null); // a client project these pictures are made for (?project=<id>): its logo and colours are used (marketing/projects.js)
   const projectId = (() => { try { return new URLSearchParams(window.location.search).get('project') || ''; } catch { return ''; } })();
@@ -66,27 +58,6 @@ export default function MkImagesPage() {
   if (err && (!meta || !list)) return <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Try again</button></Banner>;
   if (!meta || !list) return <div className="card panel">Loading…</div>;
 
-  const ai = meta.ai || {};
-  const left = Math.max(0, (meta.perDay || 0) - (meta.usedToday || 0));
-  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
-  // the server makes the pictures in the background (Google can take longer than the web server waits); this asks every 3 seconds until done
-  const create = async () => {
-    setBusy('create'); setMsg(''); setWaitSec(0);
-    try {
-      const r = await omni.post('/gs/marketing/images', { ...f, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
-      let job = r.job;
-      const t0 = Date.now();
-      while (job && job.status === 'running') {
-        await new Promise((res) => { setTimeout(res, 3000); }); // eslint-disable-line no-await-in-loop
-        setWaitSec(Math.round((Date.now() - t0) / 1000));
-        if (Date.now() - t0 > 6 * 60000) { setMsg('This is taking very long. The pictures are saved in the list below as soon as Google sends them: look again in a minute.'); break; }
-        try { job = (await omni.get(`/gs/marketing/images/jobs/${job.id}`)).job; } catch (e) { if (e.response && e.response.status === 404) { job = null; load(); break; } } // eslint-disable-line no-await-in-loop
-      }
-      if (job && job.status === 'done') { toast(`${job.items.length} picture${job.items.length === 1 ? '' : 's'} made${job.demo ? ' (sandbox samples)' : ''}`); if (job.note) setMsg(job.note); setTab(''); }
-      if (job && job.status === 'failed') { setMsg(job.error || 'The pictures could not be made.'); toast(job.error || 'The pictures could not be made.'); }
-      load();
-    } catch (e) { const m = errOf(e, 'The pictures could not be made.'); setMsg(m); toast(m); load(); } finally { setBusy(''); }
-  };
   const act = async (it, what) => {
     setBusy(it.id);
     try {
@@ -105,7 +76,7 @@ export default function MkImagesPage() {
 
   return (
     <div>
-      <PageHead eyebrow="AI Marketing" title="AI Images" lead="Describe a picture and the AI makes it in your brand colours, with your logo, or upload your own. A picture is used only after it is approved.">
+      <PageHead eyebrow="AI Marketing" title="AI Images" lead="Type your idea and TeamLink makes the post pictures for you, free, in your brand colours and with your logo, or upload your own. A picture is used only after it is approved.">
         {meta.canWrite ? (
           <>
             <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: 'none' }} onChange={upload} />
@@ -120,53 +91,24 @@ export default function MkImagesPage() {
           <Btn small onClick={() => go('mkprojects', { open: proj.id })}>← Back to the project</Btn>
         </div>
       ) : null}
-      {ai.demo ? <Banner tone="test"><b>Test sandbox.</b> No picture is asked from any AI service here: a plain sample in your brand colours is made instead.</Banner> : null}
-      {!ai.ready ? <Banner tone="error"><b>AI pictures are not ready.</b> {ai.reason} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={load}>Check again</button></Banner> : null}
-      {ai.ready && ai.note ? <Banner tone="warn">{ai.note}</Banner> : null}
       {msg ? <Banner tone="error">{msg}</Banner> : null}
 
       {meta.canWrite ? (
-        <div className="mk-two">
-          <Panel title="1 · Describe the picture" sub={ai.ready && !ai.demo ? `Model: ${ai.model} · ${left} of ${meta.perDay} pictures left today` : undefined}>
-            <div className="mk-revise" style={{ marginBottom: 10 }}>
-              <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 700 }}>START FROM:</span>
-              {STARTERS.map((s) => <TinyBtn key={s.label} onClick={() => setF({ ...f, prompt: s.prompt, headline: s.headline, style: s.style })}>{s.label}</TinyBtn>)}
-            </div>
-            <div className="form-grid">
-              <Field label="WHAT SHOULD IT SHOW?" full hint="People, place, mood. Plain words work best."><textarea style={{ minHeight: 90 }} value={f.prompt} maxLength={1000} onChange={set('prompt')} placeholder="A smiling Indian nurse in a bright hospital corridor" /></Field>
-              <Field label="HEADLINE ON THE PICTURE (OPTIONAL)" full hint="Short is best. Leave empty for a picture without words."><input value={f.headline} maxLength={80} onChange={set('headline')} placeholder="Staff nurses wanted" /></Field>
-              <Field label="STYLE"><select value={f.style} onChange={set('style')}>{meta.styles.map((s) => <option key={s} value={s}>{STYLE_WORDS[s] || s}</option>)}</select></Field>
-              <Field label="SIZE"><select value={f.aspect} onChange={set('aspect')}>{meta.aspects.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}</select></Field>
-              <Field label="HOW MANY"><select value={f.count} onChange={(e) => setF({ ...f, count: Number(e.target.value) })}>{[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}</select></Field>
-              <Field label="BRAND" full>
-                <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11 }}>
-                  <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={f.useColors} onChange={(e) => setF({ ...f, useColors: e.target.checked })} />Use the brand colours <span style={{ display: 'inline-flex', gap: 2 }}>{['primary', 'secondary', 'accent'].map((k) => <i key={k} style={{ width: 12, height: 12, borderRadius: 3, background: meta.colors[k], display: 'inline-block' }} />)}</span></label>
-                  <label style={{ display: 'flex', gap: 5, alignItems: 'center', opacity: meta.hasLogo && ai.logoInput ? 1 : 0.55 }} title={!meta.hasLogo ? 'Upload a logo in Brand voice first' : !ai.logoInput ? 'This model cannot take the logo' : ''}><input type="checkbox" checked={f.withLogo && meta.hasLogo && !!ai.logoInput} disabled={!meta.hasLogo || !ai.logoInput} onChange={(e) => setF({ ...f, withLogo: e.target.checked })} />Put our logo on it</label>
-                  {!meta.hasLogo ? <button type="button" className="link-btn" onClick={() => go('mkbrand')}>Upload a logo →</button> : null}
-                </div>
-              </Field>
-            </div>
-            <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Btn primary disabled={busy === 'create' || !ai.ready || f.prompt.trim().length < 8 || (!ai.demo && left < f.count)} onClick={create}>{busy === 'create' ? `Making the pictures… ${waitSec ? `${waitSec}s` : ''}` : `✦ Make ${f.count} picture${f.count === 1 ? '' : 's'}`}</Btn>
-              <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!ai.ready ? 'Not ready: see the red note.' : f.prompt.trim().length < 8 ? 'Describe the picture in a sentence.' : !ai.demo && left < f.count ? `Only ${left} left today.` : busy === 'create' ? 'This can take up to a minute.' : 'Each picture counts against today’s limit.'}</span>
-            </div>
-          </Panel>
-          <Panel title="How it works" sub="Nothing is posted from here.">
-            <ol style={{ fontSize: 11.5, lineHeight: 1.8, margin: 0, paddingLeft: 18 }}>
-              <li>Describe the picture, pick a size for where it will go.</li>
-              <li>Keep the ones you like; delete the rest.</li>
-              <li>Press <b>Ask for approval</b>. A Team Lead or an Admin approves it in <b>Approvals</b>.</li>
-              <li>An approved picture can be downloaded, gets a public link, and can be picked in the <b>Content Calendar</b> and in <b>AI Video</b>.</li>
-            </ol>
-            <div style={{ fontSize: 10.5, marginTop: 10 }}><b>Your own pictures:</b> press <b>⬆ Upload pictures</b> (phone, Canva, the Gemini app). Only upload pictures you own or may use; the place and camera details are removed.</div>
-            <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>Pictures are made by the AI service set in Administration &gt; Integrations ({ai.provider === 'cloudflare' ? 'Cloudflare Workers AI, free daily allowance' : ai.provider === 'gemini' ? 'Google Gemini' : 'none yet'}). Check every picture before you use it: AI can get hands, faces and spelling wrong.</div>
-          </Panel>
-        </div>
+        <Panel title="How it works" sub="Nothing is posted from here.">
+          <ol style={{ fontSize: 11.5, lineHeight: 1.8, margin: 0, paddingLeft: 18 }}>
+            <li>Type your idea in <b>✦ Create from your content</b> above and press <b>Create the post</b>. The pictures are made for you, free.</li>
+            <li>Keep the ones you like; delete the rest.</li>
+            <li>Press <b>Ask for approval</b>. A Team Lead or an Admin approves it in <b>Approvals</b>.</li>
+            <li>An approved picture can be downloaded, gets a public link, and can be picked in the <b>Content Calendar</b> and in <b>AI Video</b>.</li>
+          </ol>
+          <div style={{ fontSize: 10.5, marginTop: 10 }}><b>Your own pictures:</b> press <b>⬆ Upload pictures</b> (phone, Canva, the Gemini app). Only upload pictures you own or may use; the place and camera details are removed.</div>
+          <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>Check every picture before you use it: the words and faces must be right for your client.</div>
+        </Panel>
       ) : <Banner tone="info">You can look at the pictures of your department and approve them in Approvals. Only Marketing and Admins make pictures.</Banner>}
 
       <Panel title="Your pictures" sub="Newest first" style={{ marginTop: 14 }} right={<span className="pill live">{list.length}</span>}>
         <Tabs value={tab} onChange={setTab} tabs={[['', 'All', list.length], ['draft', 'Saved', cnt('draft')], ['waiting', 'Waiting', cnt('waiting')], ['changes', 'Changes needed', cnt('changes')], ['approved', 'Approved', cnt('approved')]]} />
-        {shown.length === 0 ? <Empty title="No pictures here yet">{list.length ? 'Nothing with that status.' : 'Describe a picture above and press Make.'}</Empty> : (
+        {shown.length === 0 ? <Empty title="No pictures here yet">{list.length ? 'Nothing with that status.' : 'Type your idea in the box above and press Create the post.'}</Empty> : (
           <div className="mki-grid">
             {shown.map((it) => (
               <div key={it.id} className="card mki-card">

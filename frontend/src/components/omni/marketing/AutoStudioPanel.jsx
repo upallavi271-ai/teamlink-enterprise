@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import omni, { errOf } from '../omniApi.js';
 import { getState } from '../omniStore.js';
-import { Panel, Btn, Banner, Field, Pill } from '../ui.jsx';
+import { Panel, Btn, Banner, Field, Pill, TinyBtn } from '../ui.jsx';
 import { designPoster, loadImage } from './designPoster.js';
 
 // "✦ CREATE FROM YOUR CONTENT": a person types an idea (or only their own title, heading and content) and TeamLink makes the pictures and the video BY ITSELF.
@@ -16,6 +16,15 @@ const PLATS = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['linkedin'
 const tomorrow = () => new Date(Date.now() + 86400000 + 19800000).toISOString().slice(0, 10);
 const shapeOf = (aspect) => { const [w, h] = aspect.split(':').map(Number); return h > w * 1.1 ? 'portrait' : w > h * 1.1 ? 'landscape' : 'square'; };
 const AI_REFUSED = /billing|quota|limit|not ready|not connected|permission|api key|exceeded|payment|credit/i;
+// one-press starting ideas for a post (they only fill the idea and the heading; the person can change both)
+const STARTERS = [
+  { label: 'Hiring poster', idea: 'We are hiring for several roles: staffing consultancy, join our team, send your CV today', heading: 'We are hiring' },
+  { label: 'Walk-in drive', idea: 'Walk-in interview drive this Saturday for job seekers: bring your CV and ID, come to our office', heading: 'Walk-in drive this Saturday' },
+  { label: 'Nurses', idea: 'Staff nurses wanted at hospitals: good salary, immediate joining, apply now', heading: 'Staff nurses wanted' },
+  { label: 'Job tip', idea: 'Three simple resume tips for job seekers', heading: '3 resume tips' },
+  { label: 'Festival greeting', idea: 'A warm festival greeting post from our team to our clients, calm and festive', heading: 'Happy Diwali' },
+  { label: 'Team culture', idea: 'A short post about our team and our work culture', heading: '' },
+];
 
 export default function AutoStudioPanel({ kind = 'video', projectId = '', onVideo, onMade, toast }) {
   const isVideo = kind === 'video';
@@ -42,13 +51,13 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [when, setWhen] = useState({ date: '', time: '10:00' });
   const [busy, setBusy] = useState('');
   const [kit, setKit] = useState({ colors: null, logo: null, brandName: '', footer: '' }); // the brand (or the client project's) colours, logo and name
-  const [can, setCan] = useState({ stock: false, ai: false });
+  const [can, setCan] = useState({ stock: false, ai: false, aiFree: false });
   const stop = useRef(false);
   const urls = useRef([]);
   useEffect(() => () => { stop.current = true; urls.current.forEach((u) => URL.revokeObjectURL(u)); }, []);
   useEffect(() => {
     omni.get('/gs/marketing/stock/meta').then((m) => setCan((c) => ({ ...c, stock: !!m.ready }))).catch(() => {});
-    omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo) }))).catch(() => {});
+    omni.get('/gs/marketing/meta').then((m) => setCan((c) => ({ ...c, ai: !!(m.ai && m.ai.image && m.ai.image.ready && !m.ai.image.demo), aiFree: !!(m.ai && m.ai.image && m.ai.image.ready && m.ai.image.provider === 'cloudflare') }))).catch(() => {});
     const useBrand = () => Promise.all([omni.get('/gs/marketing/brand'), omni.get('/gs/marketing/brand/logo').catch(() => ({ logo: null }))]).then(([b, l]) => ({ colors: b.brand.colors, brandName: b.brand.brandName, footer: [b.brand.website, b.brand.contact].filter(Boolean).join('  ·  '), logoUrl: l.logo ? l.logo.dataUrl : '' }));
     const go = projectId
       ? omni.get(`/gs/marketing/projects/${projectId}`).then(async (x) => { const base = await useBrand().catch(() => ({ colors: null, brandName: '', footer: '', logoUrl: '' })); const p = x.project; return { colors: { ...(base.colors || {}), ...(p.colors && p.colors.primary ? { primary: p.colors.primary } : {}), ...(p.colors && p.colors.secondary ? { secondary: p.colors.secondary } : {}) }, brandName: p.clientName, footer: [(p.handles || '').split('\n')[0], p.contactPhone].filter(Boolean).join('  ·  '), logoUrl: x.logo || '' }; }).catch(() => useBrand())
@@ -134,6 +143,12 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
       {open ? (
         <div>
           {err ? <Banner tone="error">{err} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={() => setErr('')}>Close</button></Banner> : null}
+          {!isVideo ? (
+            <div className="mk-revise" style={{ marginBottom: 8 }}>
+              <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 700 }}>START FROM:</span>
+              {STARTERS.map((s) => <TinyBtn key={s.label} disabled={working} onClick={() => { setPrompt(s.idea); setHeading(s.heading); }}>{s.label}</TinyBtn>)}
+            </div>
+          ) : null}
           <Field label="YOUR IDEA OR CONCEPT" full hint="For example: A Diwali offer video for our software clients, 20% off all this week, friendly and festive. You can leave this empty if you fill in the title, heading and content below.">
             <textarea rows={3} maxLength={800} value={prompt} disabled={working} onChange={(e) => setPrompt(e.target.value)} placeholder={isVideo ? 'We are hiring freshers: staffing consultancy, join us, apply today' : 'A Republic Day greeting post for our clients, proud and simple'} style={{ width: '100%' }} />
           </Field>
@@ -162,7 +177,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
           {more ? (
             <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 8, fontSize: 12, alignItems: 'center' }}>
               <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={photos} disabled={working || !can.stock} onChange={(e) => setPhotos(e.target.checked)} />Free stock photos behind the words {can.stock ? '' : <span style={{ color: 'var(--muted)' }}>(not set up: an Admin adds a free Pixabay key in Administration &gt; Integrations; brand colours are used)</span>}</label>
-              {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">Made by the AI picture service (paid)</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). AI-made pictures need a paid picture service, which is not connected.</span>}
+              {can.ai ? <label style={{ display: 'flex', gap: 5, alignItems: 'center' }}>Pictures: <select value={look} disabled={working} onChange={(e) => setLook(e.target.value)}><option value="designed">Designed by TeamLink (free)</option><option value="ai">{can.aiFree ? 'Made by the AI picture service (free daily allowance)' : 'Made by the AI picture service (may need billing; designed instead if it says no)'}</option></select></label> : <span style={{ color: 'var(--muted)' }}>Pictures are designed by TeamLink (free). A real AI-made picture needs the free Cloudflare picture service: an Admin adds it in Administration &gt; Integrations.</span>}
             </div>
           ) : null}
           {!mine && !working ? <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Write your idea in a sentence, or fill in the title, heading and content.</div> : null}
