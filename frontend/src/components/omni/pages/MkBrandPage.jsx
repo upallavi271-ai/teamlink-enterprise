@@ -183,7 +183,7 @@ export default function MkBrandPage() {
             <Field label={<>KEY MESSAGES <Count n={rows(f.keyMessages).length} max={L.keyMessages} /></>} full hint={`One per line, up to ${L.keyMessageChars} characters each. What makes you different.`}><textarea style={{ minHeight: 84 }} value={f.keyMessages} onChange={set('keyMessages')} placeholder={'Verified candidates within 7 days\nReplacement guarantee'} disabled={!can} /></Field>
           </div>
         </Panel>
-        <Panel title="Social media" sub="Your pages and hashtags. The Content Calendar and social posts use them.">
+        <Panel title="Social media" sub="Your pages and hashtags. Social posts use them.">
           <div className="form-grid">
             <Field label="FACEBOOK PAGE"><input value={f.socials.facebook} maxLength={120} onChange={setSocial('facebook')} placeholder="facebook.com/yourpage" disabled={!can} /></Field>
             <Field label="INSTAGRAM"><input value={f.socials.instagram} maxLength={120} onChange={setSocial('instagram')} placeholder="@yourbrand" disabled={!can} /></Field>

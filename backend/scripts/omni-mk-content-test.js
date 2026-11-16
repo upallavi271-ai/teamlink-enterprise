@@ -78,7 +78,8 @@ const G = '/api/outreach/gs/marketing';
   const liveIds = (meta.body.modules || []).filter((m) => m.status === 'live').map((m) => m.id).sort().join(',');
   // module 8 AI Images is live too (marketing/images.js)
   // 2026-11-16: AI Content, Email marketing, WhatsApp & SMS campaign messages and Workflow automation were removed (unused); Lead generation is a sub-tab of Client projects: six modules, all live
-  check('B1 six modules, all live (Lead generation, Reports, Calendar, AI Images, AI Video, Client Projects)', meta.status === 200 && meta.body.modules.length === 6 && liveIds === 'calendar,images,leads,projects,reports,videos' && meta.body.modules.filter((m) => m.status === 'planned').length === 0, meta.text.slice(0, 200));
+  // 2026-11-16: the Content Calendar tab was removed too: five modules, all live
+  check('B1 five modules, all live (Lead generation, Reports, AI Images, AI Video, Client Projects)', meta.status === 200 && meta.body.modules.length === 5 && liveIds === 'images,leads,projects,reports,videos' && meta.body.modules.filter((m) => m.status === 'planned').length === 0, meta.text.slice(0, 200));
   // 'AI Images' left the later-menu when it became module 8 (2026-11-13)
   check('B2 the other 22 names are on the menu (AI Images and AI Videos are built now)', Array.isArray(meta.body.later) && meta.body.later.length === 22 && !meta.body.later.includes('AI Images') && !meta.body.later.includes('AI Videos'), meta.body.later && meta.body.later.length);
   check('B3 text AI is the labelled sample writer in the sandbox; image / video / audio are "not connected"', meta.body.ai.text.demo === true && meta.body.ai.text.ready && ['image', 'video', 'audio'].every((c) => meta.body.ai[c].ready === false), meta.body.ai);

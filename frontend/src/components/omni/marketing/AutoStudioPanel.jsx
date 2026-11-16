@@ -12,8 +12,6 @@ import { designPoster, loadImage } from './designPoster.js';
 //            approval (team or client). Nothing is posted from here.
 // kind 'video' | 'post'. projectId: made for a client project (its logo and colours are used).
 const sleep = (ms) => new Promise((r) => { setTimeout(r, ms); });
-const PLATS = [['instagram', 'Instagram'], ['facebook', 'Facebook'], ['linkedin', 'LinkedIn'], ['x', 'X'], ['whatsapp', 'WhatsApp status']];
-const tomorrow = () => new Date(Date.now() + 86400000 + 19800000).toISOString().slice(0, 10);
 const shapeOf = (aspect) => { const [w, h] = aspect.split(':').map(Number); return h > w * 1.1 ? 'portrait' : w > h * 1.1 ? 'landscape' : 'square'; };
 const AI_REFUSED = /billing|quota|limit|not ready|not connected|permission|api key|exceeded|payment|credit/i;
 // one-press starting ideas for a post (they only fill the idea and the heading; the person can change both)
@@ -47,9 +45,6 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   const [open, setOpen] = useState(true);
   const [more, setMore] = useState(false);
   const [thumbs, setThumbs] = useState([]);
-  const [plats, setPlats] = useState(['instagram', 'facebook']);
-  const [when, setWhen] = useState({ date: '', time: '10:00' });
-  const [busy, setBusy] = useState('');
   const [kit, setKit] = useState({ colors: null, logo: null, brandName: '', footer: '' }); // the brand (or the client project's) colours, logo and name
   const [can, setCan] = useState({ stock: false, ai: false, aiFree: false });
   const stop = useRef(false);
@@ -108,7 +103,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     stop.current = false; setErr(''); setNote(''); setPlan(null); setFlags([]); setThumbs([]); setPhase('plan');
     try {
       const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
-      setPlan(r.plan); setFlags(r.flags || []); setWhen((w) => ({ ...w, date: r.plan.date || tomorrow() }));
+      setPlan(r.plan); setFlags(r.flags || []);
       if (r.note) setNote(r.note); // the AI writer was busy: the server made the post from the person's own words
       setPhase('pics'); const ids = []; let useAi = look === 'ai' && can.ai; let anyDesigned = false;
       for (let i = 0; i < r.plan.scenes.length; i += 1) {
@@ -132,10 +127,6 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
   };
 
   const text = plan ? `${plan.caption}${plan.hashtags.length ? `\n\n${plan.hashtags.join(' ')}` : ''}` : '';
-  const addToCalendar = async () => {
-    setBusy('cal'); setErr('');
-    try { await omni.post('/gs/marketing/calendar', { title: plan.title, platforms: plats, text, date: when.date, time: when.time, status: 'idea', note: `Made from: ${(prompt || heading || title).slice(0, 200)}` }); toast('Added to the Content Calendar as an idea'); } catch (e) { setErr(errOf(e, 'It could not be added to the Calendar.')); } finally { setBusy(''); }
-  };
   const mine = prompt.trim().length >= 8 || (title.trim() + heading.trim() + content.trim()).length >= 8;
 
   return (
@@ -204,14 +195,6 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
                 <Btn small onClick={async () => { try { await navigator.clipboard.writeText(text); toast('Words and hashtags copied'); } catch { window.prompt('Copy the words:', text); } }}>⧉ Copy words + hashtags</Btn>
               </div>
-              {phase === 'done' ? (
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
-                  <Field label="PLAN IT IN THE CONTENT CALENDAR"><input type="date" value={when.date} onChange={(e) => setWhen({ ...when, date: e.target.value })} /></Field>
-                  <Field label="TIME"><input type="time" value={when.time} onChange={(e) => setWhen({ ...when, time: e.target.value })} /></Field>
-                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 11.5, alignItems: 'center', paddingBottom: 8 }}>{PLATS.slice(0, 3).map(([k, l]) => <label key={k} style={{ display: 'flex', gap: 4, alignItems: 'center' }}><input type="checkbox" checked={plats.includes(k)} onChange={() => setPlats((p) => (p.includes(k) ? p.filter((x) => x !== k) : [...p, k]))} />{l}</label>)}</div>
-                  <Btn disabled={busy === 'cal' || !plats.length || !when.date} onClick={addToCalendar}>🗓 Add to the Calendar</Btn>
-                </div>
-              ) : null}
             </div>
           ) : null}
         </div>

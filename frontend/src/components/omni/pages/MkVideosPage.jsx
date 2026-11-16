@@ -323,7 +323,7 @@ export default function MkVideosPage() {
         {shown.length === 0 ? <Empty title="No videos here yet">{videosAll.length ? 'Nothing with that status.' : 'Pick pictures or clips above and press Make the video.'}</Empty> : <div className="mki-grid">{shown.map((v) => card(v, false))}</div>}
       </Panel>
       {toClient ? <ClientReviewModal kind="image" item={toClient} isVideo onClose={() => setToClient(null)} onChanged={load} toast={toast} /> : null}
-      {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working and calendar posts that use it lose it.' : 'It is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
+      {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working.' : 'It is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
     </div>
   );
 }

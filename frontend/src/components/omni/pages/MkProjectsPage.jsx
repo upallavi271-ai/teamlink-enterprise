@@ -227,7 +227,6 @@ function Detail({ id, meta, onBack, onChanged }) {
   const [sendF, setSendF] = useState({ days: 14, message: '' });
   const [reason, setReason] = useState('');
   const [postUrl, setPostUrl] = useState('');
-  const [when, setWhen] = useState({ date: new Date(Date.now() + 86400000 + 19800000).toISOString().slice(0, 10), time: '10:00' });
 
   const load = useCallback(() => omni.get(`/gs/marketing/projects/${id}`).then((x) => {
     setD(x); setCaption(x.project.caption || '');
@@ -388,18 +387,7 @@ function Detail({ id, meta, onBack, onChanged }) {
                 {chosen ? <Btn small onClick={() => downloadMkImg(chosen.itemId, `${p.clientName} ${chosen.label}`).catch((e) => toast(errOf(e, 'It could not be downloaded.')))}>⬇ Download the file</Btn> : null}
                 {chosenItem && chosenItem.publicPath ? <Btn small onClick={async () => { const u2 = `${origin()}${chosenItem.publicPath}`; try { await navigator.clipboard.writeText(u2); toast('Link to the file copied'); } catch { window.prompt('Copy the link:', u2); } }}>🔗 Copy the file link</Btn> : null}
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end', marginTop: 12 }}>
-                <Field label="PLAN IT IN THE CONTENT CALENDAR"><input type="date" value={when.date} onChange={(e) => setWhen({ ...when, date: e.target.value })} /></Field>
-                <Field label="TIME"><input type="time" value={when.time} onChange={(e) => setWhen({ ...when, time: e.target.value })} /></Field>
-                <Btn disabled={!!busy || !p.platforms.length || !caption.trim()} title={!p.platforms.length ? 'Pick the pages in the request first' : !caption.trim() ? 'Write the post words first' : ''} onClick={async () => {
-                  setBusy('cal'); setErr('');
-                  try {
-                    await omni.post('/gs/marketing/calendar', { title: `${p.clientName}: ${p.occasion}`.slice(0, 120), platforms: p.platforms.filter((k) => ['facebook', 'instagram', 'linkedin', 'x', 'whatsapp'].includes(k)), text: caption, date: when.date, time: when.time, mediaUrl: chosenItem && chosenItem.publicPath && /^https:/i.test(origin()) ? `${origin()}${chosenItem.publicPath}` : '', note: `Client project. Post on: ${p.handles || p.clientName}` });
-                    await omni.post(`/gs/marketing/projects/${id}/scheduled`, { date: when.date }); toast('Planned in the Content Calendar'); onChanged(); await load();
-                  } catch (e) { const m = errOf(e, 'It could not be planned.'); setErr(m); toast(m); } finally { setBusy(''); }
-                }}>🗓 Add to the Calendar</Btn>
-              </div>
-              {p.scheduledFor ? <div style={{ fontSize: 11, marginTop: 6 }}>Planned for {fmtDate(p.scheduledFor)} <button type="button" className="link-btn" onClick={() => go('mkcalendar')}>Open the Calendar</button></div> : null}
+              {p.scheduledFor ? <div style={{ fontSize: 11, marginTop: 12 }}>Planned for {fmtDate(p.scheduledFor)}</div> : null}
               <div style={{ marginTop: 12 }}><Btn primary disabled={!!busy} onClick={() => { setPostUrl(''); setModal('posted'); }}>✓ Mark as posted</Btn></div>
               <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 8 }}>TeamLink does not publish for you yet: it needs the Facebook, Instagram and LinkedIn apps to be approved. Post by hand, then mark it posted.</div>
             </Panel>

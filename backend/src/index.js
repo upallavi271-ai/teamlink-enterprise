@@ -559,8 +559,8 @@ const server = app.listen(PORT, () => {
   if (sandbox.isSandbox()) { sandbox.banner(PORT); return; }
   // Morning / afternoon / evening reminders + "complete this course" (bell, email, popup) - utils/dayNudges.js (2026-11-04)
   require('./utils/dayNudges').start();
-  // AI Marketing Content Calendar: one notice to the owner an hour before a planned post (marketing/calendar.js; MK_CALENDAR_SWEEP_MS=0 = off)
-  require('./marketing/calendar').startSweep();
+  // AI Marketing Content Calendar: the tab was removed on 2026-11-16 (founder: "not necessary now"), so its "post due in an hour" notice (marketing/calendar.js startSweep,
+  // MK_CALENDAR_SWEEP_MS) is no longer started: it would point people to a screen that is gone. Put the line back with the tab.
   require('./marketing/projects').startAutoPost(); // posts approved client projects whose time has come (only when an Admin allowed it; never in the sandbox)
   require('./marketing/journeys').start(); // runs the CRM journeys (events, IF / THEN, AI message waiting for a person's approval); only journeys a manager switched on; never in the sandbox
   require('./marketing/leadgen').start(); // scores new CRM leads Hot / Warm / Cold and gives them an owner (only when a Sales manager switched it on; never in the sandbox)

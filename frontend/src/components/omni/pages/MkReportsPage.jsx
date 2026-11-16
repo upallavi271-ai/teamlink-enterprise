@@ -46,7 +46,7 @@ export default function MkReportsPage() {
     } catch (e) { toast(errOf(e, 'The CSV could not be made.')); } finally { setBusy(false); }
   };
 
-  const c = d && d.content; const m = d && d.media; const cal = d && d.calendar; const cl = d && d.clients;
+  const c = d && d.content; const m = d && d.media; const cl = d && d.clients;
   return (
     <div>
       <PageHead eyebrow="AI Marketing" title="Reports" lead="Plain numbers for the dates you pick: what was written, made, approved, posted and answered by clients, and how much AI was used.">
@@ -62,8 +62,6 @@ export default function MkReportsPage() {
           <Kpis>
             <Kpi label="Words approved" icon="✔" value={fmtNum(c.approved)} meta={`${fmtNum(c.created)} written`} tone="good" />
             <Kpi label="Pictures and videos" icon="◩" value={fmtNum(m.aiPictures + m.uploadedPictures + m.videosMade + m.clipsUploaded + m.clipsMadeByAi)} meta={`${fmtNum(m.approved)} approved`} />
-            <Kpi label="Posts posted" icon="➤" value={fmtNum(cal.posted)} meta={`of ${fmtNum(cal.planned)} planned`} />
-            <Kpi label="Posts overdue" icon="⚠" value={fmtNum(cal.overdue)} meta="Time passed, not posted" tone={cal.overdue ? 'down' : undefined} />
             <Kpi label="Client approvals" icon="👥" value={fmtNum(cl.approved)} meta={`${fmtNum(cl.sent)} sent · ${fmtNum(cl.waiting)} waiting`} />
             <Kpi label="AI requests" icon="✧" value={fmtNum(d.ai.requests)} meta={`${fmtNum(d.ai.failed)} failed`} />
           </Kpis>
@@ -77,10 +75,6 @@ export default function MkReportsPage() {
             </Panel>
           </div>
           <div className="mk-two" style={{ marginTop: 14 }}>
-            <Panel title="Content Calendar" sub="Posts planned for these dates">
-              <Table head={['', 'Number']} empty="" rows={[['Planned', fmtNum(cal.planned)], ['Posted', fmtNum(cal.posted)], ['Posted more than 3 hours late', fmtNum(cal.postedLate)], ['Skipped', fmtNum(cal.skipped)], ['Overdue', fmtNum(cal.overdue)], ['Still to come', fmtNum(cal.upcoming)]]} />
-              {d.byPlatform.length ? <div style={{ marginTop: 10 }}><Table head={['Platform', 'Posted', 'Planned']} rows={d.byPlatform.map((x) => [PLAT[x.key] || x.key, fmtNum(x.posted), fmtNum(x.total)])} empty="" /></div> : null}
-            </Panel>
             <Panel title="Client approvals" sub="Sent to clients in this period">
               <Table head={['', 'Number']} empty="" rows={[['Sent', fmtNum(cl.sent)], ['Approved', fmtNum(cl.approved)], ['Changes asked', fmtNum(cl.changes)], ['Waiting', fmtNum(cl.waiting)], ['Link expired', fmtNum(cl.expired)], ['Average time to answer', hrs(cl.avgResponseHours)]]} />
             </Panel>

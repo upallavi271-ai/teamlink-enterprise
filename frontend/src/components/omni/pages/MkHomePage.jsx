@@ -31,7 +31,6 @@ export default function MkHomePage() {
     meta.canWrite && ['Set up your brand kit, so the AI writes and draws like your company', ov.brandReady, 'mkbrand', ov.brandReady ? 'Change' : 'Set it up'],
     meta.canWrite && ['Get it approved: only approved work is used', (c.approved || 0) > 0, 'mkapprove', 'Approvals'],
     meta.canWrite && ['Make or upload a picture', !!have.pictures, 'mkimages', 'AI Images'],
-    meta.canWrite && ['Put the week on the calendar', !!have.posts, 'mkcalendar', 'Calendar'],
     meta.canWrite && ['Join pictures and clips into a video', !!have.videos, 'mkvideos', 'AI Video'],
     !meta.canWrite && ['Approve or send back what your team wrote', (c.waitingForMe || 0) === 0, 'mkapprove', 'Open approvals'],
   ].filter(Boolean);
@@ -39,14 +38,11 @@ export default function MkHomePage() {
   const todo = [
     [(at.words || 0) + (at.pictures || 0), 'waiting for your approval', 'mkapprove', 'Open approvals', true],
     [at.clientChanges, 'client answer asking for changes (last 14 days)', 'mkapprove', 'See the answers', true],
-    [at.overdue, 'calendar post overdue: time passed, not posted', 'mkcalendar', 'Open the calendar', true],
-    [at.today, 'calendar post due today', 'mkcalendar', 'Open the calendar', false],
     [at.clientWaiting, 'waiting for a client to answer', 'mkapprove', 'See them', false],
   ].filter((x) => x[0] > 0);
   return (
     <div>
       <PageHead eyebrow={`AI Marketing · ${LOOK[0]}`} title="AI Marketing" lead={LOOK[1]}>
-        {meta.canWrite && <Btn onClick={() => go('mkcalendar')}>▦ Calendar</Btn>}
         {meta.canWrite && <Btn onClick={() => go('mkimages')}>◩ Make a picture</Btn>}
       </PageHead>
       <AiBanner ai={meta.ai} />

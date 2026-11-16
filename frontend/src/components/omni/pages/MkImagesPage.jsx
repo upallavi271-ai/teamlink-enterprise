@@ -99,7 +99,7 @@ export default function MkImagesPage() {
             <li>Type your idea in <b>✦ Create from your content</b> above and press <b>Create the post</b>. The pictures are made for you, free.</li>
             <li>Keep the ones you like; delete the rest.</li>
             <li>Press <b>Ask for approval</b>. A Team Lead or an Admin approves it in <b>Approvals</b>.</li>
-            <li>An approved picture can be downloaded, gets a public link, and can be picked in the <b>Content Calendar</b> and in <b>AI Video</b>.</li>
+            <li>An approved picture can be downloaded, gets a public link, and can be picked in <b>AI Video</b>.</li>
           </ol>
           <div style={{ fontSize: 10.5, marginTop: 10 }}><b>Your own pictures:</b> press <b>⬆ Upload pictures</b> (phone, Canva, the Gemini app). Only upload pictures you own or may use; the place and camera details are removed.</div>
           <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 10 }}>Check every picture before you use it: the words and faces must be right for your client.</div>
@@ -146,7 +146,7 @@ export default function MkImagesPage() {
           <Field label="NAME"><input autoFocus value={rename.title} maxLength={80} onChange={(e) => setRename({ ...rename, title: e.target.value })} /></Field>
         </GsModal>
       ) : null}
-      {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working and calendar posts that use it lose the picture.' : 'The picture is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
+      {del ? <ConfirmModal danger title={`Delete "${del.title}"?`} text={del.status === 'approved' ? 'Its public link stops working.' : 'The picture is removed.'} yes="Delete" onNo={() => setDel(null)} onYes={remove} /> : null}
     </div>
   );
 }
