@@ -432,6 +432,35 @@ function decideCredit(txn, ctx) {
       });
     }
     const split = suggestSplit(theirs, amountP);
+    // 2026-11-16 (founder: cash deposit / any narration with the client or college NAME -> payment status and proof automatic):
+    // the client is named clearly and no exact fit exists, so the money goes oldest-due-first over THEIR open invoices
+    // (part payment = Partially Paid, more than they owe = the rest stays unallocated on the line). Several invoices of exactly
+    // this amount stay a person's choice; undo (unmatch) reverses everything.
+    if (equal.length <= 1 && split.parts.length) {
+      return R.auto({
+        rule: 3, kind: 'invoice', action: { type: 'settle', parts: split.parts.map((p) => ({ invoiceId: p.invoiceId, amount: p.amount })) },
+        invoiceId: split.parts[0].invoiceId, invoiceNumber: split.parts.map((p) => p.invoiceNumber).join(', '), clientId: namedId, client: client.name,
+        evidence: [said, `no invoice balance equals ${amountP / 100}: applied oldest due first over their open invoices (${split.parts.map((p) => `${p.invoiceNumber} ${p.amount}`).join(', ')})${split.unallocated > 0 ? `, ${split.unallocated} more than they owe stays unallocated` : ''}`, 'direction: money in'],
+      });
+    }
+    // The client's invoices are marked received with no payment record (Paid but no proof) and this line is part of / all of
+    // that money: it becomes the proof, oldest first, no money moves.
+    if (!theirs.length && waiting.length) {
+      let left = amountP;
+      const ev = [];
+      oldestDueFirst(waiting).forEach((i) => {
+        if (left <= 0) return;
+        const take = Math.min(left, missingEvidenceP(i, ctx));
+        if (take > 0) { ev.push({ invoiceId: i.id, invoiceNumber: i.invoiceNumber, amount: take / 100 }); left -= take; }
+      });
+      if (ev.length && left === 0) {
+        return R.auto({
+          rule: 3, kind: 'receipt-proof', action: { type: 'evidence', parts: ev.map((p) => ({ invoiceId: p.invoiceId, amount: p.amount })) },
+          invoiceId: ev[0].invoiceId, invoiceNumber: ev.map((p) => p.invoiceNumber).join(', '), clientId: namedId, client: client.name,
+          evidence: [said, `${ev.map((p) => p.invoiceNumber).join(' + ')} already show money received with no payment record; this line (${amountP / 100}) is that payment, oldest first (no money moves)`, 'direction: money in'],
+        });
+      }
+    }
     if (equal.length > 1) {
       return R.review(`${client.name} has ${equal.length} open invoices of exactly ${amountP / 100} - pick which one this pays`, { rule: 3, kind: 'client', clientId: namedId, client: client.name, candidates: { invoiceIds: equal.map((i) => i.id) }, suggested: split });
     }
