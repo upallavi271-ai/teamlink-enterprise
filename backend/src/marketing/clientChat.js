@@ -74,6 +74,8 @@ async function projectsOf(e164) {
   return rows.filter((r) => tail(r.contactPhone) === t);
 }
 const pickOpen = (list) => list.find((r) => OPEN_STATUSES.includes(r.status)) || list[0] || null;
+// is this number the contact of an AI Marketing project? (omniwa/agent.js leaves such a number to this module: the recruitment assistant must not greet a client with "Are you looking for a job?")
+async function handles(e164) { try { return (await projectsOf(e164)).length > 0; } catch { return false; } }
 
 // a PERSON wrote to this number lately (the team is already talking to them)
 async function personActive(e164, now) {
@@ -124,6 +126,7 @@ async function handle(info, result, now) {
   const projects = await projectsOf(e164);
   if (!projects.length) return null; // not the contact of any AI Marketing project: nothing here (other chats are handled elsewhere)
   if (result.stop) return { skipped: 'stop' };
+  if (result.candidateId) return { skipped: 'job seeker' }; // the same number is a candidate: their chat is about a job, not this
   if (!(await ensure())) return null;
   const ref = info.id ? clip(info.id, 200) : null;
   if (ref && (await S.q(`SELECT 1 AS x FROM "${T}" WHERE ref = ? LIMIT 1`, ref)).length) return { skipped: 'again' }; // the provider re-sent it: handled once
@@ -180,4 +183,4 @@ async function onInbound(info, result, now = Date.now()) {
   try { return await handle(info || {}, result || {}, now); } catch (e) { console.error('[omni-mk] client chat:', e && e.message); return null; } // eslint-disable-line no-console
 }
 
-module.exports = { onInbound, intentOf, wordsFor, projectsOf, ensure, SAME_KIND_GAP, DAILY_CAP };
+module.exports = { onInbound, handles, intentOf, wordsFor, projectsOf, ensure, SAME_KIND_GAP, DAILY_CAP };
