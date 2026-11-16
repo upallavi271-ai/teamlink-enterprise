@@ -18,6 +18,15 @@ Administration, Integrations, **Social Media** keeps every connected account (an
 After every change of that list `utils/socialPosting.js` copies each platform's default to the job-posting connection of that place and
 checks it (read-only). It never switches posting ON. Remove the default account and that place stops posting.
 
+## Departments on each account (label and filter only)
+The **Super Admin** can give every account (Facebook Page, Instagram, Threads, X, LinkedIn, YouTube) to the departments they choose: **Assign** /
+**Change** in the *Departments* column (`POST /api/admin/social-accounts/:id/departments`, `utils/socialAccounts.js setDepartments`). The names come
+from the same department list as the WhatsApp numbers. A Facebook Page can take its Instagram account along (ticked by default). The list can be
+filtered by department or "Not assigned". It is **only a label**: job posts, Omni-Channel and AI Marketing still use the default account, nobody gains
+or loses access, no platform is called, and the audit log records who changed it. An Admin never sees the Assign button (Integrations itself is
+Super Admin only unless the Role Catalog grants it, and the save is refused for anyone who is not the Super Admin). Test:
+`node scripts/social-departments-test.js` (copy database only).
+
 ## One-time setup
 * **Facebook + Instagram**: connect the Page (Social Media > Facebook). The Instagram account must be **Business or Creator**, linked to the Page
   (Page > Settings > Linked accounts). The Meta login asks for `instagram_basic` and `instagram_content_publish`. While the Meta app is not Live,

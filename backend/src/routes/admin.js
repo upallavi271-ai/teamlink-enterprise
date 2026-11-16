@@ -1773,8 +1773,22 @@ router.post('/ai-marketing-platform/test', requirePerm(null, 'administration', '
 // ---- SOCIAL MEDIA ACCOUNTS: many Facebook Pages / Instagram accounts / Threads profiles (utils/socialAccounts.js, founder 2026-10-30) ----
 const SA = require('../utils/socialAccounts');
 const saveFacebookDefault = (user, page) => FBC.save(user, page);
+// Only the Super Admin gives a social account to departments (founder 2026-11-16); an Admin sees the labels but cannot change them.
+const mayAssignSocial = (u) => !!u && !u.viewAs && u.role === 'SUPER_ADMIN';
 router.get('/social-accounts', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
-  res.json({ accounts: await SA.list() });
+  const canAssign = mayAssignSocial(req.user);
+  let departments = [];
+  if (canAssign) { try { departments = await require('../utils/waNumbers').departmentsMaster(); } catch { departments = []; } } // eslint-disable-line global-require
+  res.json({ accounts: await SA.list(), canAssign, departments });
+});
+// Label only (nothing is posted, no platform is called, the default account is untouched): registered BEFORE the "mirror the defaults" hook below on purpose.
+router.post('/social-accounts/:id/departments', requirePerm(null, 'administration', 'Integrations', 'view'), async (req, res) => {
+  if (!mayAssignSocial(req.user)) return res.status(403).json({ error: 'Only the Super Admin can give social media accounts to departments.' });
+  const b = req.body || {};
+  const r = await SA.setDepartments(req.user, req.params.id, { departments: b.departments, withInstagram: b.withInstagram !== false });
+  if (r.error) return res.status(r.status || 400).json({ error: r.error });
+  if (r.changed.length) await logAudit({ userId: req.user.id, action: 'Social account departments set', entity: 'Integration', entityId: 'social', toValue: `${r.account.platform}: ${r.account.name} -> ${r.departments.length ? r.departments.join(', ') : 'not assigned'}${r.alsoInstagram ? ` (+${r.alsoInstagram} Instagram)` : ''}` });
+  return res.json({ accounts: await SA.list(), message: r.departments.length ? `${r.account.name} is given to ${r.departments.join(', ')}.` : `${r.account.name} is not assigned to any department now.` });
 });
 // Job posting follows the default account of each platform (Instagram, Threads, LinkedIn): after ANY change of the list the default is
 // copied to that place's job-posting connection and checked (read-only). Posting itself stays OFF until an Admin switches it on.

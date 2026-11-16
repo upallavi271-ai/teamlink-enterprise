@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../../api';
 import FacebookSetup from './FacebookSetup.jsx';
 import Modal from '../../components/Modal.jsx';
+import './SocialMedia.css';
 
 // Administration > Integrations > Social Media (founder 2026-10-30: "separate ga tabs ravali mothaniki okka tab social media anni dantlo
 // facebook anni okka tab and instagram tab ani and threds ... facebook accounts 5 ala unati anni accounts ina connect chesukodaniki undali").
@@ -13,15 +14,35 @@ import Modal from '../../components/Modal.jsx';
 const SUBS = [['facebook', 'Facebook'], ['instagram', 'Instagram'], ['threads', 'Threads'], ['x', 'X (Twitter)'], ['linkedin', 'LinkedIn'], ['youtube', 'YouTube']];
 const X_FIELDS = [['apiKey', 'API Key'], ['apiSecret', 'API Key Secret'], ['accessToken', 'Access Token'], ['accessSecret', 'Access Token Secret']];
 
-function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra }) {
-  if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>No {noun} connected yet.</div>;
+// Departments (founder 2026-11-16, "label and filter only"): the departments an account is given to; only the Super Admin changes them.
+export const NO_DEPT = '__none__';
+export const matchesDept = (a, filter) => {
+  if (!filter) return true;
+  const list = Array.isArray(a.departments) ? a.departments : [];
+  if (filter === NO_DEPT) return list.length === 0;
+  return list.some((d) => String(d).toLowerCase() === String(filter).toLowerCase());
+};
+function DeptCell({ a, canAssign, onAssign, busy }) {
+  const list = a.departments || [];
+  return (
+    <div className="sm-dept">
+      {list.length
+        ? list.map((d) => <span key={d} className="sm-dept-chip">{d}</span>)
+        : <span className="small-muted">Not assigned</span>}
+      {canAssign && onAssign && <button type="button" className="btn btn-sm sm-dept-btn" disabled={busy} onClick={() => onAssign(a)}>{list.length ? 'Change' : 'Assign'}</button>}
+    </div>
+  );
+}
+function AccountList({ rows, noun, onDefault, onRemove, onEdit, busy, extra, canAssign, onAssign, hiddenCount = 0 }) {
+  if (!rows.length) return <div className="small-muted" style={{ padding: '6px 0' }}>{hiddenCount ? `No ${noun} for this department.` : `No ${noun} connected yet.`}</div>;
   return (
     <div className="tbl-wrap"><table>
-      <thead><tr><th>{noun.charAt(0).toUpperCase() + noun.slice(1, -1)}</th><th>Default</th><th>Status</th><th>Connected by</th><th /></tr></thead>
+      <thead><tr><th>{noun.charAt(0).toUpperCase() + noun.slice(1, -1)}</th><th>Default</th><th>Departments</th><th>Status</th><th>Connected by</th><th /></tr></thead>
       <tbody>{rows.map((a) => (
         <tr key={a.id}>
           <td><b>{a.name}</b>{a.username && a.name !== `@${a.username}` ? <span className="small-muted"> · @{a.username}</span> : null}<div className="small-muted" style={{ fontSize: 11.5 }}>{extra ? extra(a) : a.externalId}</div></td>
           <td>{a.isDefault ? <b style={{ color: '#1c7c4a' }}>★ Default</b> : <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onDefault(a)}>Make default</button>}</td>
+          <td><DeptCell a={a} canAssign={canAssign} onAssign={onAssign} busy={busy} /></td>
           <td>{a.status === 'Connected' ? <span style={{ color: '#1c7c4a', fontWeight: 600 }}>Connected</span> : <span style={{ color: '#b42318' }} title={a.error || ''}>{a.status}{a.error ? `: ${a.error}` : ''}</span>}</td>
           <td className="small-muted">{a.connectedByName || ''}{a.connectedAt ? ` · ${new Date(a.connectedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}` : ''}</td>
           <td style={{ whiteSpace: 'nowrap' }}>
@@ -44,6 +65,10 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
   const [xKeys, setXKeys] = useState({ apiKey: '', apiSecret: '', accessToken: '', accessSecret: '' });
   const [showSetup, setShowSetup] = useState(false);
   const [editing, setEditing] = useState(null); // { a, name, token } - the Edit box
+  const [canAssign, setCanAssign] = useState(false); // only the Super Admin gives accounts to departments
+  const [deptMaster, setDeptMaster] = useState([]); // every department there is (sent to the Super Admin only)
+  const [deptFilter, setDeptFilter] = useState(''); // '' = all, NO_DEPT = not assigned, else a department name
+  const [assigning, setAssigning] = useState(null); // { a, picked: [names], withIg } - the Departments box
   const [li, setLi] = useState(null); // LinkedIn app: { hasApp, clientId, hasSecret, redirectUri }
   const [liForm, setLiForm] = useState({ clientId: '', clientSecret: '' });
   const [liPage, setLiPage] = useState('');
@@ -94,7 +119,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     try { const r = await api.post('/admin/social-accounts/linkedin/start', { pageId: liPageOn ? liPage.trim() : '' }); window.location.href = r.data.url; } catch (e) { setErr(e.response?.data?.error || 'Could not open the LinkedIn sign-in.'); setBusy(false); }
   }
 
-  const load =() => api.get('/admin/social-accounts').then((r) => setAcc(r.data.accounts)).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
+  const load =() => api.get('/admin/social-accounts').then((r) => { setAcc(r.data.accounts); setCanAssign(!!r.data.canAssign); setDeptMaster(Array.isArray(r.data.departments) ? r.data.departments : []); }).catch((e) => setErr(e.response?.data?.error || 'Could not load the accounts.'));
   useEffect(() => { load(); }, [reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(fn) {
@@ -102,6 +127,12 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
     try { const r = await fn(); if (r.data.accounts) setAcc(r.data.accounts); setMsg(r.data.message || 'Done.'); } catch (e) { if (e.response?.data?.accounts) setAcc(e.response.data.accounts); setErr(e.response?.data?.error || 'That did not work.'); } finally { setBusy(false); }
   }
   const openEdit = (a) => setEditing({ a, name: a.name, token: '' });
+  const openAssign = (a) => setAssigning({ a, picked: [...(a.departments || [])], withIg: true });
+  async function saveAssign() {
+    const s = assigning;
+    await act(() => api.post(`/admin/social-accounts/${s.a.id}/departments`, { departments: s.picked, withInstagram: s.withIg }));
+    setAssigning(null);
+  }
   async function saveEdit() {
     const e = editing;
     await act(() => api.post(`/admin/social-accounts/${e.a.id}/edit`, { name: e.name, ...(e.token.trim() ? { token: e.token.trim() } : {}) }));
@@ -117,6 +148,14 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
 
   if (!acc) return <div className="small-muted">{err || 'Loading…'}</div>;
   const counts = { facebook: acc.facebook.length, instagram: acc.instagram.length, threads: acc.threads.length, x: (acc.x || []).length, linkedin: (acc.linkedin || []).length, youtube: (acc.youtube || []).length };
+  // department label + filter (founder 2026-11-16): the filter hides rows on every tab, it never changes an account
+  const allRows = Object.values(acc).flat();
+  const deptNames = [...new Map([...deptMaster, ...allRows.flatMap((a) => a.departments || [])].map((d) => [String(d).toLowerCase(), d])).values()].sort((x, y) => String(x).localeCompare(String(y)));
+  const showDeptFilter = canAssign || allRows.some((a) => (a.departments || []).length > 0);
+  const vis = (rows) => (rows || []).filter((a) => matchesDept(a, deptFilter));
+  const hid = (rows) => (rows || []).length - vis(rows).length;
+  const deptProps = { canAssign, onAssign: openAssign };
+  const igOfAssigning = assigning && assigning.a.platform === 'facebook' ? acc.instagram.filter((i) => i.parentId === assigning.a.externalId) : [];
 
   const NAMES = { facebook: 'Page access token', instagram: 'Page access token (of the Page it comes with)', threads: 'Threads access token' };
   return (
@@ -139,6 +178,33 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           <div className="small-muted" style={{ fontSize: 12 }}>A new token is checked first: it must belong to this same account. {editing.a.isDefault ? 'This is the default account, so job posts and Omni-Channel use the new token at once.' : ''}</div>
         </Modal>
       )}
+      {assigning && (
+        <Modal title={`Departments for ${assigning.a.name}`} onClose={() => setAssigning(null)}
+          foot={<><button className="btn" onClick={() => setAssigning(null)}>Cancel</button><button className="btn btn-primary" onClick={saveAssign} disabled={busy}>{busy ? 'Saving…' : 'Save'}</button></>}>
+          <div className="small-muted" style={{ fontSize: 12.5, marginBottom: 8 }}>
+            Tick the departments this account belongs to. It is a label and a filter only: job posts and Omni-Channel still use the ★ default account, and nobody loses or gains access.
+          </div>
+          {deptNames.length === 0 && <div className="small-muted">No departments were found.</div>}
+          <div className="sm-dept-pick">
+            {deptNames.map((d) => {
+              const on = assigning.picked.some((p) => String(p).toLowerCase() === String(d).toLowerCase());
+              return (
+                <label key={d} className="sm-dept-opt">
+                  <input type="checkbox" checked={on} onChange={(e) => setAssigning((s) => ({ ...s, picked: e.target.checked ? [...s.picked, d] : s.picked.filter((p) => String(p).toLowerCase() !== String(d).toLowerCase()) }))} />
+                  <span>{d}</span>
+                </label>
+              );
+            })}
+          </div>
+          {igOfAssigning.length > 0 && (
+            <label className="sm-dept-opt" style={{ marginTop: 10 }}>
+              <input type="checkbox" checked={assigning.withIg} onChange={(e) => setAssigning((s) => ({ ...s, withIg: e.target.checked }))} />
+              <span>Give its Instagram account the same departments ({igOfAssigning.map((i) => i.name).join(', ')})</span>
+            </label>
+          )}
+          <div className="small-muted" style={{ fontSize: 12, marginTop: 8 }}>Tick none to mark it as not assigned.</div>
+        </Modal>
+      )}
       <div className="tabs" style={{ marginBottom: 14 }}>
         {SUBS.map(([k, label]) => (
           <div key={k} className={`tab${sub === k ? ' active' : ''}`} onClick={() => { setSub(k); setMsg(''); setErr(''); }}>
@@ -146,6 +212,17 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
           </div>
         ))}
       </div>
+      {showDeptFilter && (
+        <div className="sm-filter">
+          <label htmlFor="sm-dept-filter">Show accounts of</label>
+          <select id="sm-dept-filter" value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}>
+            <option value="">All departments</option>
+            {deptNames.map((d) => <option key={d} value={d}>{d}</option>)}
+            <option value={NO_DEPT}>Not assigned</option>
+          </select>
+          {deptFilter && <button type="button" className="btn btn-sm btn-ghost" onClick={() => setDeptFilter('')}>Clear</button>}
+        </div>
+      )}
       {msg && <div className="small-muted" role="status" style={{ marginBottom: 10, color: '#1c7c4a' }}>{msg}</div>}
       {err && <div className="error-text" style={{ marginBottom: 10 }}>{err}</div>}
 
@@ -159,7 +236,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
                 <button type="button" className="btn" onClick={() => connectFacebook(true)} disabled={busy} title="Sign in with a different Facebook account and add its Pages">＋ Add another Facebook account</button>
               </div>
             </div>
-            <AccountList rows={acc.facebook} noun="Facebook Pages" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Page ID ${a.externalId}`} />
+            <AccountList rows={vis(acc.facebook)} hiddenCount={hid(acc.facebook)} {...deptProps} noun="Facebook Pages" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Page ID ${a.externalId}`} />
             <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
               Facebook asks which Pages: tick all you want, and tick them all again here. <b>Another Facebook account?</b> On Facebook&apos;s page press
               <b> Log in to another account</b> (or sign out of facebook.com first), then pick its Pages. That account needs a role in your Meta app (App roles → Roles) while the app is in development.
@@ -182,7 +259,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
               <button type="button" className="btn" onClick={() => act(() => api.post('/admin/social-accounts/instagram/refresh'))} disabled={busy || !acc.facebook.length}>↻ Find Instagram accounts again</button>
             </div>
           </div>
-          <AccountList rows={acc.instagram} noun="Instagram accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Through the Page ${a.parentName || a.parentId}`} />
+          <AccountList rows={vis(acc.instagram)} hiddenCount={hid(acc.instagram)} {...deptProps} noun="Instagram accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Through the Page ${a.parentName || a.parentId}`} />
           <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
             Instagram comes with a Facebook Page: an Instagram <b>professional</b> (business / creator) account linked to a connected Page shows here by itself.
             To link one: Facebook Page → <b>Settings → Linked accounts → Instagram → Connect</b>, then press <b>Connect Facebook Pages</b> again on the Facebook tab
@@ -194,7 +271,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
       {sub === 'threads' && (
         <div className="card" style={{ padding: 16 }}>
           <b style={{ fontSize: 15 }}>Threads profiles</b>
-          <div style={{ margin: '10px 0' }}><AccountList rows={acc.threads} noun="Threads profiles" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Threads ID ${a.externalId}`} /></div>
+          <div style={{ margin: '10px 0' }}><AccountList rows={vis(acc.threads)} hiddenCount={hid(acc.threads)} {...deptProps} noun="Threads profiles" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Threads ID ${a.externalId}`} /></div>
           <b>＋ Connect a Threads profile</b> (each profile has its own token, made in the same Meta app):
           <ol style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.7, fontSize: 13.5 }}>
             <li>Meta app: <b>App roles → Roles → Threads testers → Add</b> the Threads account. On threads.net: <b>Settings → Account → Website permissions → Invites → Accept</b>.</li>
@@ -214,7 +291,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
       {sub === 'x' && (
         <div className="card" style={{ padding: 16 }}>
           <b style={{ fontSize: 15 }}>X (Twitter) accounts</b>
-          <div style={{ margin: '10px 0' }}><AccountList rows={acc.x || []} noun="X accounts" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => `X ID ${a.externalId}`} /></div>
+          <div style={{ margin: '10px 0' }}><AccountList rows={vis(acc.x)} hiddenCount={hid(acc.x)} {...deptProps} noun="X accounts" onDefault={makeDefault} onRemove={removeOne} busy={busy} extra={(a) => `X ID ${a.externalId}`} /></div>
           <b>＋ Connect an X account</b> (once - these keys do not expire, and Omni-Channel gets the same account by itself):
           <ol style={{ margin: '6px 0 0', paddingLeft: 18, lineHeight: 1.7, fontSize: 13.5 }}>
             <li>Sign in at <b>developer.x.com</b> with the X account posts should come from → <b>Projects &amp; Apps</b> → your app.</li>
@@ -243,7 +320,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
             <b style={{ fontSize: 15 }}>LinkedIn accounts</b>
             <button type="button" className="btn btn-primary" onClick={connectLinkedin} disabled={busy || !(li && li.hasApp)} title={li && li.hasApp ? '' : 'Do the one-time setup below first'}>＋ Connect LinkedIn</button>
           </div>
-          <AccountList rows={acc.linkedin || []} noun="LinkedIn accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => (a.kind === 'page' ? `Company Page · posts as ${a.externalId.replace('urn:li:organization:', 'page ')}` : 'Your profile')} />
+          <AccountList rows={vis(acc.linkedin)} hiddenCount={hid(acc.linkedin)} {...deptProps} noun="LinkedIn accounts" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => (a.kind === 'page' ? `Company Page · posts as ${a.externalId.replace('urn:li:organization:', 'page ')}` : 'Your profile')} />
           <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 10, fontSize: 13.5 }}>
             <input type="checkbox" checked={liPageOn} onChange={(e) => setLiPageOn(e.target.checked)} style={{ width: 18, height: 18 }} />
             <span>Also post for a <b>Company Page</b> (needs LinkedIn&apos;s approval of the Community Management API for your app)</span>
@@ -280,7 +357,7 @@ export default function SocialMedia({ initialSub = 'facebook', reloadKey = 0 }) 
             <b style={{ fontSize: 15 }}>YouTube channels</b>
             <button type="button" className="btn btn-primary" onClick={connectYoutube} disabled={busy || !(yt && yt.hasApp)} title={yt && yt.hasApp ? '' : 'Do the one-time setup below first'}>＋ Connect YouTube channel</button>
           </div>
-          <AccountList rows={acc.youtube || []} noun="YouTube channels" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Channel ID ${a.externalId}`} />
+          <AccountList rows={vis(acc.youtube)} hiddenCount={hid(acc.youtube)} {...deptProps} noun="YouTube channels" onDefault={makeDefault} onRemove={removeOne} onEdit={openEdit} busy={busy} extra={(a) => `Channel ID ${a.externalId}`} />
           <div className="small-muted" style={{ fontSize: 12.5, marginTop: 10, lineHeight: 1.6 }}>
             You sign in on Google&apos;s own page (the password is never typed in TeamLink) and pick the Google account or <b>Brand Account</b> that owns the channel.
             Press the button again for every other channel / Google account. The <b>★ default</b> channel is the one TeamLink uses.

@@ -1499,5 +1499,5 @@ module.exports = {
   statusFromMeta, check, wabaFix, ensureSubscribed, noteSendOk, afterLegacyTokenChange, keepOldNumbers, tagOf, reconnectAllowed, reconnectLimit: () => RECONNECT_LIMIT, noteSendFailure,
   importMain, create, update, setDefault, setActive, remove, setAccess, historyCount,
   adminList, people, departmentCounts, effectivePeople, myNumbers, labelsOf, chipOf, validate, cleanE164,
-  ASSIGNABLE_ROLES, WORDS, CHIP, UNKNOWN_PROVIDER, DDL,
+  ASSIGNABLE_ROLES, WORDS, CHIP, UNKNOWN_PROVIDER, DDL, departmentsMaster,
 };

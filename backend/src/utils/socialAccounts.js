@@ -35,6 +35,7 @@ const shape = (a) => ({
   id: a.id, platform: a.platform, externalId: a.externalId, name: a.name, username: a.username || null, parentId: a.parentId || null,
   parentName: a.parentName || null, isDefault: !!a.isDefault, status: expired(a) ? 'Expired' : (a.status || 'Connected'), error: expired(a) ? (a.platform === 'youtube' ? 'The YouTube sign-in has expired. Press Connect YouTube again.' : 'The LinkedIn token has expired (they last 60 days). Press Connect LinkedIn again.') : (a.error || null),
   connectedByName: a.connectedByName || null, connectedAt: a.connectedAt || null, viaLogin: a.viaLogin || null, expiresAt: a.expiresAt || null, kind: a.kind || null,
+  departments: Array.isArray(a.departments) ? a.departments.map(String) : [],
 });
 
 async function getJson(url) {
@@ -298,4 +299,32 @@ async function withToken(id) {
   const a = (await readAll()).find((x) => x.id === id && x.status !== 'Removed');
   return a ? { account: shape(a), token: tokenOf(a) } : null;
 }
-module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, withToken, PLATFORMS };
+// DEPARTMENTS (founder 2026-11-16: "this social media accounts also superadmin can assign which department he wants"; chose "Label and filter
+// only"): a plain label on each account - the departments it belongs to. Nothing reads it for posting: job posts, Omni-Channel and AI Marketing
+// still use the default account, exactly as before. Empty list = not assigned. The names come from the same master list as the WhatsApp numbers
+// (every department there is); a name that is not on the list yet is kept as typed. A Facebook Page can take its Instagram account along.
+async function setDepartments(user, id, { departments, withInstagram = true } = {}) {
+  if (!Array.isArray(departments)) return { error: 'Departments are a list of names.', status: 400 };
+  const all = await readAll();
+  const acc = all.find((a) => a.id === id);
+  if (!acc) return { error: 'That account is not in the list any more.', status: 404 };
+  let master = [];
+  try { master = await require('./waNumbers').departmentsMaster(); } catch { master = []; } // eslint-disable-line global-require
+  const picked = [];
+  for (const d of departments) {
+    if (typeof d !== 'string') return { error: 'A department is a name, typed as text.', status: 400 };
+    const typed = d.trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!typed) continue; // eslint-disable-line no-continue
+    const hit = master.find((m) => m.toLowerCase() === typed.toLowerCase()) || typed;
+    if (!picked.includes(hit)) picked.push(hit);
+  }
+  if (picked.length > 30) return { error: 'Pick at most 30 departments for one account.', status: 400 };
+  const targets = [acc, ...(withInstagram && acc.platform === 'facebook' ? all.filter((a) => a.platform === 'instagram' && a.parentId === acc.externalId) : [])];
+  const key = (l) => JSON.stringify([...(Array.isArray(l) ? l : [])].map(String).sort());
+  const changed = targets.filter((t) => key(t.departments) !== key(picked));
+  changed.forEach((t) => { t.departments = picked; t.updatedAt = new Date().toISOString(); });
+  if (changed.length) await writeAll(all);
+  return { ok: true, account: shape(acc), departments: picked, changed: changed.map((t) => ({ id: t.id, platform: t.platform, name: t.name })), alsoInstagram: targets.length - 1 };
+}
+
+module.exports = { addX, defaultXKeys, defaultLinkedin, defaultYoutube, edit, list, addFacebookPages, refreshInstagram, addThreads, addLinkedin, addYoutube, tokenOf, setDefault, remove, writeThreadsChannel, readAll, withToken, setDepartments, PLATFORMS };

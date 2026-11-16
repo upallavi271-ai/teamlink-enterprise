@@ -1,0 +1,15 @@
+/* Administration > Integrations > Social Media: the Departments column, its Assign window and the department filter
+   (founder 2026-11-16: "label and filter only"). */
+.sm-dept { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 120px; }
+.sm-dept-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: #eaf1ff; color: #1d3f8f; border: 1px solid #cfdcf7; font-size: 12px; font-weight: 600; line-height: 1.6; white-space: nowrap; }
+.sm-dept-btn { padding: 1px 8px; font-size: 12px; }
+.sm-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -4px 0 12px; font-size: 13px; }
+.sm-filter label { font-weight: 600; }
+.sm-filter select { max-width: 100%; }
+.sm-dept-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 14px; max-height: 46vh; overflow: auto; padding: 2px; }
+.sm-dept-opt { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.sm-dept-opt input { width: 18px; height: 18px; flex: 0 0 auto; }
+@media (max-width: 640px) {
+  .sm-dept { min-width: 0; }
+  .sm-dept-pick { grid-template-columns: 1fr; }
+}
