@@ -74,6 +74,14 @@ export default function AccountsImport({
         setStmt(res.data.summary.stmt);
         setListKey((k) => k + 1);
         if (!account) setAccount(res.data.summary.stmt.accountId);
+        // EVERY LINE THE PERSON UPLOADS IS IMPORTED (founder 2026-11-16: "nenu import chesina prathi okati import avvali"): the file is saved the moment it is read.
+        // Only the lines the account does not hold yet are saved (the server's own duplicate key), so reading the same file twice never doubles anything.
+        // A statement that looks like another bank's (the red box) still waits for the person's yes.
+        const bc = res.data.summary.bankCheck;
+        const ns = res.data.summary.stmt;
+        if (res.data.permitted && !(bc && bc.ok === false) && Number(ns.counts && ns.counts.notImported) > 0) {
+          await runStatement('new', { batchId: ns.batchId, account: ns.accountId });
+        }
       } else {
         setStmt(null);
         if (res.data.kind === 'bank' && !account && res.data.summary.bankAccounts?.length) setAccount(res.data.summary.bankAccounts[0].id);
@@ -125,10 +133,10 @@ export default function AccountsImport({
   }
 
   // Import New Transactions / Retry failed: the server saves from its own copy of the rows (only Not Imported rows and the rows you chose).
-  async function runStatement(mode) {
+  async function runStatement(mode, over = {}) {
     setErr(''); setBusy(true);
     try {
-      const res = await api.post(`/accounts-import/bank-batch/${stmt.batchId}/${mode === 'retry' ? 'retry' : 'import'}`, { bankAccountId: account || stmt.accountId, autoPost, confirmOtherBank: otherBankOk });
+      const res = await api.post(`/accounts-import/bank-batch/${over.batchId || stmt.batchId}/${mode === 'retry' ? 'retry' : 'import'}`, { bankAccountId: over.account || account || stmt.accountId, autoPost, confirmOtherBank: otherBankOk });
       setResult(res.data);
       setStmt((cur) => (cur ? { ...cur, counts: res.data.stmt } : cur));
       setListKey((k) => k + 1);
