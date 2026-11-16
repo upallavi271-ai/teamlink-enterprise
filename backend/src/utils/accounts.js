@@ -44,7 +44,10 @@ function dayNumber(iso) {
 function deriveInvoiceStatus(invoice, today = new Date()) {
   if (invoice.status === 'Cancelled') return 'Cancelled';
   const outstanding = invoiceOutstanding(invoice);
-  if (outstanding <= SETTLED_TOLERANCE) return 'Paid';
+  // A joining whose fee is not known yet (fee 0, "FEE TO BE FILLED" in the notes: utils/joining.js) owes nothing only because there is no fee: it is NOT paid
+  // (founder 2026-11-16: "evu paid ani vastundi, kani proof attach levu"). It stays Pending / Overdue until the CTC is entered and the fee fills.
+  const feeUnknown = Number(invoice.amount || 0) <= SETTLED_TOLERANCE && /FEE TO BE FILLED/i.test(String(invoice.notes || ''));
+  if (!feeUnknown && outstanding <= SETTLED_TOLERANCE) return 'Paid';
   if (Number(invoice.receivedAmount || 0) > 0) return 'Partially Paid';
   if (invoice.dueDate && String(invoice.dueDate).slice(0, 10) < istDay(today)) return 'Overdue';
   return 'Pending';
