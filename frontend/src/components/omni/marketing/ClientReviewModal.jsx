@@ -3,6 +3,7 @@ import api from '../../../api';
 import omni, { errOf } from '../omniApi.js';
 import { Btn, TinyBtn, GsModal, Field, Banner, fmtDateTime } from '../ui.jsx';
 import { ClientChip } from './mk.jsx';
+import SenderPick from './SenderPick.jsx';
 
 // "SEND TO CLIENT" (AI Marketing > client approval): for an item the team has approved, makes a private link the client opens without a login to Approve or Request
 // changes. "Send from TeamLink" WhatsApps / emails it from the company's own number (and can send the picture itself); Copy, "Open my own WhatsApp" and "Email" are the manual way.
@@ -25,6 +26,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const [phone, setPhone] = useState(null); // the client's WhatsApp number typed in the send box (null = the one saved on the link)
   const [withFile, setWithFile] = useState(false); // also send the picture / video itself
   const [sendNote, setSendNote] = useState(null); // what the last "Send from TeamLink" did
+  const [numberId, setNumberId] = useState(''); // the WhatsApp number to send from ('' = the default company number)
   const word = isVideo ? 'video' : (WORD[kind] || 'item');
 
   const load = () => omni.get('/gs/marketing/client-reviews', { kind, itemId: item.id }).then((d) => setReviews(d.reviews || [])).catch((e) => setErr(errOf(e, 'The client approvals could not be read.')));
@@ -56,7 +58,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const tellIt = async (r, way) => {
     setBusy(`tell${way}`); setErr(''); setSendNote(null);
     try {
-      const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/tell`, { ways: [way], picture: way === 'whatsapp' && withFile && kind === 'image', ...(phone != null && String(phone).trim() ? { phone: String(phone).trim() } : {}) });
+      const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/tell`, { ways: [way], picture: way === 'whatsapp' && withFile && kind === 'image', ...(way === 'whatsapp' && numberId ? { numberId } : {}), ...(phone != null && String(phone).trim() ? { phone: String(phone).trim() } : {}) });
       setSendNote(res.ok); toast(res.ok); if (phone != null) load();
     } catch (e) { setErr(errOf(e, 'It could not be sent.')); } finally { setBusy(''); }
   };
@@ -68,6 +70,7 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
       <input readOnly value={url(r)} onFocus={(e) => e.target.select()} aria-label="The private link" style={{ width: '100%', boxSizing: 'border-box', margin: '6px 0', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
       <div style={{ margin: '8px 0 4px', fontSize: 10, fontWeight: 800, color: '#166534' }}>CLIENT'S WHATSAPP NUMBER</div>
       <input value={phone != null ? phone : (r.contactPhone || '')} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => setPhone(e.target.value)} aria-label="The client's WhatsApp number" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 12 }} />
+      <SenderPick value={numberId} onChange={setNumberId} disabled={!!busy} />
       {kind === 'image' ? (
         <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 11.5, margin: '8px 0 2px' }}>
           <input type="checkbox" checked={withFile} onChange={(e) => setWithFile(e.target.checked)} style={{ marginTop: 2 }} />

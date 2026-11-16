@@ -206,6 +206,9 @@ async function tell(u, id, b = {}, base = '') {
   const first = P.firstWord(r.contactName);
   const text = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${r.itemTitle}" and tell us if it is OK to use:`} ${link}`;
   const meta = { audience: 'client', personName: S.clip(r.contactName || r.clientName, 80), purpose: `AI Marketing: ${word} for the client to approve`, module: 'AI Marketing', senderUserId: u.id, senderName: S.clip(u.name, 80) };
+  const Sender = require('./sender'); // eslint-disable-line global-require -- the WhatsApp number: the default company number unless the person picked another (marketing/sender.js)
+  const pk = ways.includes('whatsapp') ? await Sender.pick(u, b.numberId) : { numberId: null };
+  if (pk.error) return { error: pk.error, status: pk.status || 400 };
   const sent = [];
   for (const way of ways) { // eslint-disable-line no-restricted-syntax
     if (way === 'whatsapp') {
@@ -216,16 +219,16 @@ async function tell(u, id, b = {}, base = '') {
       if (b.picture === true && r.kind === 'image' && item) {
         const f = await mediaFor(item, r.id); // eslint-disable-line no-await-in-loop
         if (f.path) {
-          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text, media: [f], meta }); // eslint-disable-line no-await-in-loop
+          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text, media: [f], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
           f.cleanup();
           if (res && res.ok) mode = 'picture';
           else why = /24 hours/i.test(String((res && res.error) || '')) ? `WhatsApp allows a ${word} only after the client has written to this number in the last 24 hours, so the link was sent instead.` : `The ${word} itself could not be sent (${S.clip((res && res.error) || 'WhatsApp refused it', 120)}), so the link was sent instead.`;
         } else why = `${f.skip} The link was sent instead.`;
       }
-      if (mode !== 'picture') res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta }); // eslint-disable-line no-await-in-loop
+      if (mode !== 'picture') res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
       const ok = !!(res && res.ok);
-      if (ok) await require('./remind').schedule({ kind: 'review', refId: r.id, phone: r.contactPhone, name: P.firstWord(r.contactName), clientName: r.clientName, by: u }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if they do not answer
-      sent.push({ way: 'WhatsApp', ok, to: core.maskMobile(nm.e164), mode, note: ok ? why : '', error: ok ? '' : S.clip((res && (res.notConfigured || res.outcome === 'Not configured') ? `It is not connected: ${res.error || 'ask an Admin to connect it in Administration > Integrations'}` : (res && res.error)) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
+      if (ok) await require('./remind').schedule({ kind: 'review', refId: r.id, phone: r.contactPhone, name: P.firstWord(r.contactName), clientName: r.clientName, by: u, numberId: pk.numberId || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if they do not answer
+      sent.push({ way: 'WhatsApp', ok, to: core.maskMobile(nm.e164), mode, from: Sender.fromWords(res).trim(), note: ok ? why : '', error: ok ? '' : S.clip((res && (res.notConfigured || res.outcome === 'Not configured') ? `It is not connected: ${res.error || 'ask an Admin to connect it in Administration > Integrations'}` : (res && res.error)) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
     } else {
       const em = String(r.contactEmail || '').trim();
       if (!em) { sent.push({ way: 'Email', ok: false, local: true, to: '', error: 'This link has no email address.' }); continue; } // eslint-disable-line no-continue
@@ -238,7 +241,7 @@ async function tell(u, id, b = {}, base = '') {
   if (!good.length) { const err = sent.map((x) => `${x.way}: ${x.error}`).join(' '); return { error: err || 'Nothing could be sent.', sent, status: sent.every((x) => x.local) ? 400 : 502 }; }
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client approval link sent by TeamLink', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle} to ${r.clientName}: ${sent.map((x) => `${x.way} ${x.ok ? (x.mode === 'picture' ? 'sent with the file' : 'sent') : 'failed'}`).join(', ')}` });
   const notes = good.map((x) => x.note).filter(Boolean);
-  return { ok: `Sent by ${good.map((x) => `${x.way}${x.mode === 'picture' ? ` (the ${word} itself, with the link)` : ' (the link)'}`).join(' and ')}.${notes.length ? ` ${notes[0]}` : ''}${sent.some((x) => !x.ok) ? ` Not sent: ${sent.filter((x) => !x.ok).map((x) => `${x.way}: ${x.error}`).join(' ')}` : ''}`, sent };
+  return { ok: `Sent by ${good.map((x) => `${x.way}${x.from ? ` ${x.from}` : ''}${x.mode === 'picture' ? ` (the ${word} itself, with the link)` : ' (the link)'}`).join(' and ')}.${notes.length ? ` ${notes[0]}` : ''}${sent.some((x) => !x.ok) ? ` Not sent: ${sent.filter((x) => !x.ok).map((x) => `${x.way}: ${x.error}`).join(' ')}` : ''}`, sent };
 }
 
 // ---- the client's side (no login): what the link shows, the file, the decision ----------------------------------------------------------------

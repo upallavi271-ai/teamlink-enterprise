@@ -4,6 +4,7 @@ import omni, { errOf } from '../omniApi.js';
 import { useOmni } from '../omniContext.js';
 import { PageHead, Btn, TinyBtn, Panel, Banner, Field, Tabs, Empty, GsModal, Pill, Tag, ConfirmModal, fmtDateTime, fmtDate } from '../ui.jsx';
 import { MkImg, downloadMkImg } from '../marketing/mk.jsx';
+import SenderPick from '../marketing/SenderPick.jsx';
 import '../marketing/marketing.css';
 
 // AI MARKETING > CLIENT PROJECTS: the agency workflow in one place. A client asks (email, WhatsApp, phone, our portal link) -> the team accepts -> makes options with AI
@@ -33,12 +34,13 @@ function ShareBox({ url, phone, email, text, subject, toast, caption, projectId,
   const [nt, setNt] = useState(null); // is each way connected: { whatsapp: { ready, reason }, email: { ... } }
   const [busy, setBusy] = useState('');
   const [res, setRes] = useState(null); // { ok, text }
+  const [numberId, setNumberId] = useState(''); // the WhatsApp number to send from ('' = the default company number)
   useEffect(() => { if (projectId) omni.get('/gs/marketing/projects/notify').then(setNt).catch(() => setNt(null)); }, [projectId]);
   const copy = async () => { try { await navigator.clipboard.writeText(url); toast('Link copied'); } catch { window.prompt('Copy the link:', url); } };
   const tell = async (way) => {
     setBusy(way); setRes(null);
     try {
-      const r = await omni.post(`/gs/marketing/projects/${projectId}/tell`, { kind, ways: [way] });
+      const r = await omni.post(`/gs/marketing/projects/${projectId}/tell`, { kind, ways: [way], ...(way === 'whatsapp' && numberId ? { numberId } : {}) });
       setRes({ ok: true, text: r.ok || 'Sent.' }); toast(r.ok || 'Sent'); if (onSent) onSent();
     } catch (e) { const m = errOf(e, 'It could not be sent.'); setRes({ ok: false, text: m }); if (onSent) onSent(); } finally { setBusy(''); }
   };
@@ -52,6 +54,7 @@ function ShareBox({ url, phone, email, text, subject, toast, caption, projectId,
       {projectId ? (
         <div style={{ marginBottom: 8 }}>
           <div style={{ fontSize: 10, fontWeight: 800, color: '#166534', marginBottom: 4 }}>SEND FROM TEAMLINK</div>
+          <SenderPick value={numberId} onChange={setNumberId} disabled={!!busy} />
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <Btn small primary disabled={!!busy || !!waWhy} title={waWhy || 'TeamLink sends the message to the client\'s WhatsApp'} onClick={() => tell('whatsapp')}>{busy === 'whatsapp' ? 'Sending…' : '✆ Send by WhatsApp'}</Btn>
             <Btn small primary disabled={!!busy || !!emWhy} title={emWhy || 'TeamLink sends the message to the client\'s email'} onClick={() => tell('email')}>{busy === 'email' ? 'Sending…' : '✉ Send by email'}</Btn>

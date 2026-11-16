@@ -260,6 +260,8 @@ async function tellClient(r, kind, opts = {}) {
     const messaging = require('../utils/messaging'); // eslint-disable-line global-require
     const core = require('../utils/messagingCore'); // eslint-disable-line global-require
     const who = by ? by.name : 'TeamLink';
+    const Sender = require('./sender'); // eslint-disable-line global-require -- the WhatsApp number: the default company number unless one is chosen (marketing/sender.js)
+    const pk = await Sender.pick(by || opts.actor || null, opts.numberId);
     const meta = { audience: 'client', personName: S.clip(r.contactName || r.clientName, 80), purpose: `AI Marketing client project: ${kind}`, module: 'AI Marketing', senderUserId: by ? by.id : undefined, senderName: by ? S.clip(by.name, 80) : undefined, automatic: !by };
     for (const way of ways) { // eslint-disable-line no-restricted-syntax
       const label = way === 'whatsapp' ? 'WhatsApp' : 'Email';
@@ -269,12 +271,13 @@ async function tellClient(r, kind, opts = {}) {
         const nm = core.normalizeMobile(r.contactPhone);
         if (!nm.ok) { out.sent.push({ way: label, ok: false, local: true, to: '', error: 'The client\'s number does not look right. Fix it in Edit.' }); continue; } // eslint-disable-line no-continue
         to = core.maskMobile(nm.e164);
+        if (pk.error) { out.sent.push({ way: label, ok: false, local: true, to: '', error: pk.error }); continue; } // eslint-disable-line no-continue
         // the official WhatsApp number can send free text only within 24 hours of the person's last message: with an approved template set for this kind (AI usage), the template goes instead
         const tpl = require('./waTemplates').payload(set.waTemplates, kind, msg.values); // eslint-disable-line global-require
         res = await messaging.send('WhatsApp', tpl
-          ? { to: nm.e164, kind: 'text', text: msg.text, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name } }
+          ? { to: nm.e164, kind: 'text', text: msg.text, template: tpl.template, vars: tpl.vars, meta: { ...meta, template: tpl.template.name }, ...Sender.opts(pk) }
           // no template of its own for this kind: the company's ONE general template ("bulk / general", Administration > Integrations > WhatsApp Business: its blank {{1}} is the whole message) carries it, if an Admin saved one; with none, free text as before
-          : { to: nm.e164, kind: 'bulk', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, vars: [msg.text], meta }); // eslint-disable-line no-await-in-loop
+          : { to: nm.e164, kind: 'bulk', text: `${msg.text}\n\nReply STOP to stop messages about this request.`, vars: [msg.text], meta, ...Sender.opts(pk) }); // eslint-disable-line no-await-in-loop
       } else {
         if (!String(r.contactEmail || '').trim()) { if (by) out.sent.push({ way: label, ok: false, local: true, to: '', error: 'No email address is saved for this client. Add it in Edit.' }); continue; } // eslint-disable-line no-continue
         to = core.maskEmail(r.contactEmail);
@@ -282,15 +285,15 @@ async function tellClient(r, kind, opts = {}) {
       }
       const ok = !!(res && res.ok);
       const why = ok ? '' : plainWhy(res);
-      out.sent.push({ way: label, ok, to, error: why });
-      if (ok && way === 'whatsapp' && kind === 'options') await require('./remind').schedule({ kind: 'project', refId: r.id, phone: r.contactPhone, name: firstWord(r.contactName), clientName: r.clientName, by: by || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if the client does not answer
+      out.sent.push({ way: label, ok, to, error: why, from: way === 'whatsapp' ? Sender.fromWords(res).trim() : '' });
+      if (ok && way === 'whatsapp' && kind === 'options') await require('./remind').schedule({ kind: 'project', refId: r.id, phone: r.contactPhone, name: firstWord(r.contactName), clientName: r.clientName, by: by || null, numberId: pk.numberId || null }); // eslint-disable-line no-await-in-loop, global-require -- ONE reminder after 24 hours if the client does not answer
       const viaTpl = way === 'whatsapp' && ok && (!!require('./waTemplates').payload(set.waTemplates, kind, msg.values) || (res && res.mode === 'template')); // eslint-disable-line global-require
-      await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label}${viaTpl ? ' (approved template)' : ''} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
+      await event(r.id, ok ? 'told' : 'told_failed', who, ok ? `Told the client by ${label}${way === 'whatsapp' ? Sender.fromWords(res) : ''}${viaTpl ? ' (approved template)' : ''} (${to})` : `The client could not be told by ${label}${to ? ` (${to})` : ''}: ${why}`); // eslint-disable-line no-await-in-loop
     }
     const bad = out.sent.filter((x) => !x.ok);
     if (!by && bad.length) await tellTeam(r, `The client was not told: "${S.clip(r.title, 60)}"`, `${bad.map((x) => `${x.way}: ${x.error}`).join(' ').slice(0, 300)} Send them the link yourself from Client projects.`);
     const good = out.sent.filter((x) => x.ok);
-    out.note = good.length ? `The client was told by ${good.map((x) => x.way).join(' and ')}.` : (bad.length ? `The client could not be told: ${bad.map((x) => `${x.way}: ${x.error}`).join(' ')}` : '');
+    out.note = good.length ? `The client was told by ${good.map((x) => (x.from ? `${x.way} ${x.from}` : x.way)).join(' and ')}.` : (bad.length ? `The client could not be told: ${bad.map((x) => `${x.way}: ${x.error}`).join(' ')}` : '');
   } catch (e) { console.error('[omni-mk] tell client:', e.message); } // eslint-disable-line no-console
   return out;
 }
@@ -311,7 +314,7 @@ async function tell(u, id, b = {}, base = '') {
   if (kind === 'options' && r.status !== 'awaiting_client') return { error: 'The options are not with the client.', status: 409 };
   const ways = (Array.isArray(b.ways) ? b.ways : []).map(String).filter((w, i, a) => ['whatsapp', 'email'].includes(w) && a.indexOf(w) === i);
   if (!ways.length) return { error: 'Pick WhatsApp or Email.', status: 400 };
-  const told = await tellClient(r, kind, { by: u, base, ways });
+  const told = await tellClient(r, kind, { by: u, base, ways, numberId: b.numberId });
   if (!told.sent.length) return { error: told.note || 'Nothing could be sent: add the client\'s number or email in Edit.', status: 400 };
   const any = told.sent.some((x) => x.ok);
   if (!any && told.sent.every((x) => x.local)) return { error: told.sent.map((x) => x.error).join(' '), status: 400 }; // nothing was tried: the client has no such number / address on file
@@ -427,7 +430,7 @@ async function send(u, id, b = {}, base = '') {
   await S.run(`UPDATE "${T}" SET status = 'awaiting_client', round = ?, linkExpiresAt = ?, clientMessage = ?, caption = ?, updatedAt = ? WHERE id = ?`, round, now + days * DAY, message || null, b.caption !== undefined ? (S.clip(b.caption, 3000) || null) : r.caption, now, r.id);
   await event(r.id, 'options_sent', u.name, `${opts.length} option${opts.length === 1 ? '' : 's'} sent to the client (round ${round})${message ? `: ${message}` : ''}`);
   await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: project options sent to the client', entity: T, entityId: r.id, toValue: `${r.clientName}: ${opts.length} option(s); link valid ${days} day(s)` });
-  const told = await tellClient(await row(r.id), 'options', { base });
+  const told = await tellClient(await row(r.id), 'options', { base, actor: u, numberId: b && b.numberId });
   return { ok: told.sent.some((x) => x.ok) ? `The options are with the client. ${told.note}` : `The options are with the client. ${told.note || 'Share the private link.'}${told.note ? ' Share the private link yourself.' : ''}`, told: told.sent, project: short(await row(r.id)) };
 }
 async function cancelPresentation(u, id) {

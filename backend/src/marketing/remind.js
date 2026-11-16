@@ -22,7 +22,11 @@ const DDL = [
 let okAt = 0;
 async function ensure() {
   if (okAt && Date.now() - okAt < 600000) return true;
-  try { for (const sql of DDL) await S.run(sql); okAt = Date.now(); return true; } catch (e) { console.error('[omni-mk] remind schema:', e.message); return false; } // eslint-disable-line no-console, no-await-in-loop
+  try {
+    for (const sql of DDL) await S.run(sql); // eslint-disable-line no-await-in-loop
+    try { await S.run(`ALTER TABLE "${T}" ADD COLUMN "numberId" TEXT`); } catch { /* the column is already there */ } // the WhatsApp number the link went from: the reminder leaves from the same one
+    okAt = Date.now(); return true;
+  } catch (e) { console.error('[omni-mk] remind schema:', e.message); return false; } // eslint-disable-line no-console, no-await-in-loop
 }
 
 const HOUR = 3600000;
@@ -34,14 +38,14 @@ const istHour = (ms) => new Date(ms + 330 * 60000).getUTCHours();
 const inHours = (ms) => { const h = istHour(ms); return h >= 9 && h < 20; };
 
 // kind: 'review' (a client-approval link) | 'project' (the options of a client project); refId = its id; phone = the number the link went to
-async function schedule({ kind, refId, phone, name = '', clientName = '', by = null, now = Date.now() } = {}) {
+async function schedule({ kind, refId, phone, name = '', clientName = '', by = null, numberId = null, now = Date.now() } = {}) {
   try {
     if (!['review', 'project'].includes(kind) || !refId) return null;
     const nm = require('../utils/messagingCore').normalizeMobile(phone); // eslint-disable-line global-require
     if (!nm.ok || !(await ensure())) return null;
     await S.run(`UPDATE "${T}" SET status = 'replaced', doneAt = ? WHERE kind = ? AND refId = ? AND status = 'waiting'`, now, kind, String(refId)); // one waiting reminder per link: a new send restarts the 24 hours
     const id = S.newId('rm');
-    await S.run(`INSERT INTO "${T}" (id, kind, refId, e164, name, clientName, sentAt, dueAt, status, createdById, createdByName) VALUES (?,?,?,?,?,?,?,?,'waiting',?,?)`, id, kind, String(refId), nm.e164, clip(name, 80) || null, clip(clientName, 120) || null, now, now + AFTER, (by && by.id) || null, (by && clip(by.name, 80)) || null);
+    await S.run(`INSERT INTO "${T}" (id, kind, refId, e164, name, clientName, sentAt, dueAt, status, createdById, createdByName, numberId) VALUES (?,?,?,?,?,?,?,?,'waiting',?,?,?)`, id, kind, String(refId), nm.e164, clip(name, 80) || null, clip(clientName, 120) || null, now, now + AFTER, (by && by.id) || null, (by && clip(by.name, 80)) || null, numberId ? String(numberId) : null);
     return id;
   } catch (e) { console.error('[omni-mk] remind schedule:', e && e.message); return null; } // eslint-disable-line no-console
 }
@@ -97,7 +101,11 @@ async function one(row, set, now) {
   const messaging = require('../utils/messaging'); // eslint-disable-line global-require
   const meta = { audience: 'client', personName: clip(row.name || row.clientName, 80), purpose: 'AI Marketing: 24-hour reminder', module: 'AI Marketing', automatic: true, template: tpl.template.name };
   const text = require('./waTemplates').KINDS.reminder.body; // eslint-disable-line global-require
-  const res = await messaging.send('WhatsApp', { to: row.e164, kind: 'text', text, template: tpl.template, vars: tpl.vars, meta });
+  // from the number the link went from; if that one is off or gone, the default company number (never the number of whoever scheduled it)
+  const Sender = require('./sender'); // eslint-disable-line global-require
+  let pk = await Sender.pick(null, row.numberId, { trusted: true });
+  if (pk.error) pk = await Sender.pick(null, null);
+  const res = await messaging.send('WhatsApp', { to: row.e164, kind: 'text', text, template: tpl.template, vars: tpl.vars, meta, ...Sender.opts(pk) });
   const ok = !!(res && res.ok);
   const why = ok ? '' : clip(String((res && res.error) || 'The sender refused it.').replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number'), 200);
   await finish(row, ok ? 'sent' : 'failed', ok ? 'sent' : why, now);

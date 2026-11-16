@@ -86,6 +86,14 @@ export const SECTIONS = [
 ];
 // AI MARKETING, simple like Green Start: the six tabs, and for every other screen the tab it belongs under (that tab stays lit and a "back" link is shown)
 export const MK_TABS = ['mkprojects', 'mkcreate', 'mkreview', 'mkreplies', 'mksocial', 'mkaccess'];
+// the TOOLS strip under the six tabs: every other screen, one click away, in plain groups (a group or a tool this login may not open is left out)
+export const MK_TOOLS = [
+  ['Make', ['mkcontent', 'mkimages', 'mkvideos']],
+  ['Send', ['mkemail', 'mkcampaigns', 'mkcalendar']],
+  ['Check', ['mkapprove', 'mkreports', 'mkourwork']],
+  ['Sales', ['mkleads', 'mkjourneys']],
+  ['Set up', ['mkbrand', 'mkusage']],
+];
 export const MK_PARENT = {
   mkhome: 'mkreview', mkourwork: 'mkprojects',
   mkcontent: 'mkcreate', mkimages: 'mkcreate', mkvideos: 'mkcreate', mkemail: 'mkcreate', mkcampaigns: 'mkcreate', mkleads: 'mkcreate', mkjourneys: 'mkcreate', mkbrand: 'mkcreate',

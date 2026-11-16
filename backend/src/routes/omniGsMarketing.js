@@ -80,6 +80,8 @@ router.get('/overview', wrap(async (req, res) => {
   const todo = attention.words + attention.pictures + attention.clientChanges + attention.overdue + attention.today + projects.newRequests + projects.toPost;
   res.json({ counts, usage, attention, projects, todo, have, brandReady: !!brand.brandName, brandName: brand.brandName, ai: (await AI.status()).text });
 }));
+// the WhatsApp numbers this login can send a client message from; the default company number comes first (marketing/sender.js)
+router.get('/senders', mustWrite, wrap(async (req, res) => res.json(await require('../marketing/sender').numbersFor(req.user)))); // eslint-disable-line global-require
 // ONE list of what clients said or decided (marketing/replies.js)
 router.get('/replies', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/replies').list(req.user, { days: req.query.days, limit: req.query.limit })))); // eslint-disable-line global-require
 

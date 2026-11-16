@@ -5,7 +5,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 import { OmniCtx } from './omniContext.js';
 import { useOmniStore, startChrome, pollBadges } from './omniStore.js';
 import omni from './omniApi.js';
-import { PAGES, SECTIONS, resolveRoute, openViews, pagePath, sectionOf, sectionPath, MK_TABS, MK_PARENT } from './omniPages.js';
+import { PAGES, SECTIONS, resolveRoute, openViews, pagePath, sectionOf, sectionPath, MK_TABS, MK_PARENT, MK_TOOLS } from './omniPages.js';
 import { PAGE_COMPONENTS } from './pageComponents.js';
 import './gs.css';
 
@@ -73,7 +73,8 @@ export default function OmniApp() {
   // AI Marketing shows its six simple tabs only; every other screen is opened from one of them and keeps that tab lit (omniPages.js MK_TABS / MK_PARENT)
   const tabsOf = openViews(acc, route.section).filter((v) => route.section !== 'aimarketing' || MK_TABS.includes(v));
   const lit = route.section === 'aimarketing' ? (MK_PARENT[page] || page) : page;
-  const parent = route.section === 'aimarketing' ? MK_PARENT[page] : null;
+  const open = new Set(openViews(acc, route.section));
+  const toolGroups = route.section === 'aimarketing' ? MK_TOOLS.map(([title, ids]) => [title, ids.filter((v) => open.has(v))]).filter(([, ids]) => ids.length) : [];
   const viewing = !!viewAsToken() && !actAsMode(); // View as = read-only
   return (
     <OmniCtx.Provider value={ctx}>
@@ -85,7 +86,22 @@ export default function OmniApp() {
               {tabsOf.map((v) => <button key={v} type="button" role="tab" aria-selected={v === lit} className={`tab${v === lit ? ' active' : ''}`} onClick={() => navigate(sectionPath(route.section, v))}>{PAGES[v].label}{v === 'inbox' && store.badges.inboxUnread > 0 ? ` (${store.badges.inboxUnread})` : ''}{v === 'review' && store.badges.review > 0 ? ` (${store.badges.review})` : ''}{v === 'mkreview' && mkTodo > 0 ? ` (${mkTodo})` : ''}</button>)}
             </div>
           )}
-          {parent && PAGES[parent] ? <div style={{ margin: '-4px 0 12px' }}><button type="button" className="link-btn" style={{ fontSize: 11.5 }} onClick={() => navigate(sectionPath(route.section, parent))}>← {PAGES[parent].label}</button></div> : null}
+          {toolGroups.length > 0 && (
+            <div className="mk-toolstrip" role="navigation" aria-label="AI Marketing tools" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px 18px', alignItems: 'center', margin: '-4px 0 14px', padding: '8px 12px', background: '#f6f8f7', border: '1px solid var(--line)', borderRadius: 10 }}>
+              <span style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.06em', color: 'var(--muted)' }}>TOOLS</span>
+              {toolGroups.map(([title, ids]) => (
+                <span key={title} style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+                  <span style={{ fontSize: 10.5, color: 'var(--muted)', fontWeight: 700 }}>{title}</span>
+                  {ids.map((v) => (
+                    <button key={v} type="button" aria-current={v === page ? 'page' : undefined} onClick={() => navigate(sectionPath(route.section, v))}
+                      style={{ border: `1px solid ${v === page ? '#0f766e' : 'var(--line)'}`, background: v === page ? '#0f766e' : '#fff', color: v === page ? '#fff' : 'inherit', borderRadius: 999, padding: '4px 11px', font: 'inherit', fontSize: 11.5, fontWeight: 600, cursor: 'pointer' }}>
+                      {PAGES[v].label}
+                    </button>
+                  ))}
+                </span>
+              ))}
+            </div>
+          )}
           <Suspense fallback={<div className="card panel">Loading {PAGES[page].label}…</div>}>{Page ? <Page key={`${page}:${store.dept}`} /> : null}</Suspense>
         </div>
         <div className={`toast${toastText ? ' show' : ''}`} role="status" aria-live="polite">{toastText}</div>
