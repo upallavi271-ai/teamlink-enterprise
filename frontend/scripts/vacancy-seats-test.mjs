@@ -1,5 +1,5 @@
 // Names of the vacant seats in the Vacancies table (founder 2026-11-16): node frontend/scripts/vacancy-seats-test.mjs   (no database, no server)
-import { deptCode, teamCode, seatCodes, vacantByDepartment } from '../src/components/dashboard/vacancySeats.js';
+import { deptCode, teamCode, seatCodes, vacantByDepartment, showsSeatNames } from '../src/components/dashboard/vacancySeats.js';
 
 let pass = 0; let fail = 0;
 const eq = (name, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (ok) pass += 1; else fail += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : `  -> got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`}`); };
@@ -45,9 +45,11 @@ const sample = { groups: [
 ] };
 const lines = vacantByDepartment(sample);
 eq('card: labels (a full department, a team, none for a department with nothing vacant)', lines.map((l) => l.label), ['Medical', 'Medical + Manufacturing', 'Education · Team A', 'Education · Team B']);
-eq('card: Medical TL 1 -> Med-3, Employee 2 -> Med-7, Med-8', lines[0].parts, [{ role: 'TL', n: 1, seats: ['Med-3'] }, { role: 'Employee', n: 2, seats: ['Med-7', 'Med-8'] }]);
-eq('card: Medical + Manufacturing STL -> Med+Man-1', lines[1].parts, [{ role: 'STL', n: 1, seats: ['Med+Man-1'] }]);
-eq('card: a team uses the team letter (Edu-A-2, Edu-B-2)', [lines[2].parts[0].seats, lines[2].parts[1].seats, lines[3].parts[0].seats, lines[3].parts[1].seats], [['Edu-A-2'], ['Edu-A-4', 'Edu-A-5'], ['Edu-B-2'], ['Edu-B-5']]);
+// founder 2026-11-16 (asked, "Employee rows only"): only the Employee positions have seat names; STL and TL show just their number
+eq('card: Medical TL 1 has no seat name, Employee 2 -> Med-7, Med-8', lines[0].parts, [{ role: 'TL', n: 1, seats: [] }, { role: 'Employee', n: 2, seats: ['Med-7', 'Med-8'] }]);
+eq('card: Medical + Manufacturing STL 1 has no seat name', lines[1].parts, [{ role: 'STL', n: 1, seats: [] }]);
+eq('card: a team uses the team letter for its Employee seats only (Edu-A-4, Edu-A-5, Edu-B-5)', [lines[2].parts[0].seats, lines[2].parts[1].seats, lines[3].parts[0].seats, lines[3].parts[1].seats], [[], ['Edu-A-4', 'Edu-A-5'], [], ['Edu-B-5']]);
+eq('only Employee has seat names', [showsSeatNames('STL'), showsSeatNames('TL'), showsSeatNames('Employee')], [false, false, true]);
 eq('card: nothing / missing data gives no lines', [vacantByDepartment(null), vacantByDepartment({}), vacantByDepartment({ groups: [] })], [[], [], []]);
 
 console.log(`\n${pass} passed, ${fail} failed`);

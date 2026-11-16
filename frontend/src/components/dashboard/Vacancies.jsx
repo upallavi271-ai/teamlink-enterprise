@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
-import { deptCode, teamCode, seatCodes, vacantByDepartment } from './vacancySeats.js';
+import { deptCode, teamCode, seatCodes, vacantByDepartment, showsSeatNames } from './vacancySeats.js';
 
 // Vacancies on the dashboard (founder 2026-11-02: "dashboard medha vacancies enni unai anni kuda kanipinchali").
 // Planned people per department and role (STL / TL / Employee) vs who is working now. Server: GET /dashboard/vacancies (utils/vacancies.js).
@@ -52,7 +52,7 @@ export default function Vacancies() {
             {lines.map((l) => (
               <span key={l.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 13, lineHeight: 1.6 }}>
                 <b>{l.label}</b>
-                <span style={{ textAlign: 'right' }}>{l.parts.map((p, i) => <span key={p.role}>{i ? ' · ' : ''}{p.role} <b style={{ color: red }}>{p.n}</b> <span style={{ fontSize: 12, fontWeight: 600, color: red }}>({p.seats.join(', ')})</span></span>)}</span>
+                <span style={{ textAlign: 'right' }}>{l.parts.map((p, i) => <span key={p.role}>{i ? ' · ' : ''}{p.role} <b style={{ color: red }}>{p.n}</b>{p.seats.length ? <span style={{ fontSize: 12, fontWeight: 600, color: red }}> ({p.seats.join(', ')})</span> : null}</span>)}</span>
               </span>
             ))}
           </span>
@@ -128,7 +128,8 @@ export function VacanciesPopup({ d, setD, onClose }) {
             // one row, the same look for a department and for a team of it; a team's names start open (founder 2026-11-12: Education = Team A and Team B only)
             const vrow = (label, r, k, startOpen, code) => {
               const shown = open[k] === undefined ? !!startOpen : open[k];
-              const vShown = !!openV[k] && r.vacant > 0;
+              const named = showsSeatNames(r.role); // only the Employee positions have seat names (founder 2026-11-16)
+              const vShown = named && !!openV[k] && r.vacant > 0;
               return (
                 <tr key={k}>
                   <td>{label}</td>
@@ -141,10 +142,10 @@ export function VacanciesPopup({ d, setD, onClose }) {
                     {shown ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(r.people)}</div> : null}
                   </td>
                   <td>
-                    {/* founder 2026-11-16: "click the vacant position, it shows the position, for example Edu-1, Med-1" */}
-                    {r.vacant
+                    {/* founder 2026-11-16: "click the vacant position, it shows the position, for example Edu-1, Med-1" - for the Employee positions only: STL / TL show just the number */}
+                    {r.vacant && named
                       ? <button type="button" className="link-btn" onClick={() => setOpenV((o) => ({ ...o, [k]: !o[k] }))} aria-expanded={vShown} title="Show the vacant positions" style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer' }}><b style={{ color: red, textDecoration: 'underline' }}>{r.vacant}</b></button>
-                      : <b style={{ color: green }}>{r.vacant}</b>}
+                      : <b style={{ color: r.vacant ? red : green }}>{r.vacant}</b>}
                     {vShown ? <div style={{ fontSize: 12.5, marginTop: 4, fontWeight: 600, color: red }}>{seatCodes(code, r).join(', ')}</div> : null}
                   </td>
                 </tr>
