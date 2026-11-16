@@ -12,6 +12,7 @@ const E = require('../calling/voice/engines');
 
 const RATE = 16000; // the interview's audio is heard at the rate the browser sent it: no 8 kHz phone-line round trip (founder 2026-11-16: Telugu / Hindi captions not correct)
 
+const INTERVIEW_WAIT_MS = 12000; // the second listener may take this long (the phone line gives 3 s; an interview answer is much longer than a phone sentence)
 const MIN_SPEECH_MS = 900; // less real speech than this in the clip: no decision
 const LANGS = ['English', 'Telugu', 'Hindi'];
 const MAX_SAY = 400;
@@ -98,7 +99,13 @@ async function hearCore(pcm16k, current, deps = {}) {
     return { ready: true, lang: cur, changed: false, why: 'not english', ...(own ? { text: own } : {}) };
   }
   // Telugu or Hindi: no real words = no proof = no switch
-  const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null, RATE);
+  // already speaking Telugu / Hindi and the sound says the same language: ONE listener (half the work, and the caption does not wait for the other model). Measured 2026-11-16:
+  // the two listeners share one model, so on a long answer the second finished after the phone line's 3 s patience and its empty text let the WRONG language win (Hindi written in Telugu letters)
+  if (cur === found) {
+    const own = await en.stt(pcm, cur, RATE).catch(() => '');
+    if (G.nativeScore(own, cur) >= 1 || scriptRun(own, cur)) return { ready: true, lang: cur, changed: false, text: own };
+  }
+  const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null, RATE, INTERVIEW_WAIT_MS);
   if (!th) {
     // an interview answer is free speech, not the phone line's short list of everyday words (founder 2026-11-11: he spoke Telugu and it stayed English): a clear run of words
     // written in the script the sound was recognised as, from a listener that heard Telugu / Hindi, is proof enough

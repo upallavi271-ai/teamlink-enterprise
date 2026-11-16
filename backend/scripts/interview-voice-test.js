@@ -42,6 +42,10 @@ const eng = ({ detect = null, te = '', hi = '', en = '', speechMs = 3000 }) => (
   const spy = { detect: async (_p, _m, r) => { seen.push(['detect', r]); return 'Telugu'; }, speech: async (_p, r) => { seen.push(['speech', r]); return { speechMs: 3000 }; }, stt: async (_p, l, r) => { seen.push([l, r]); return l === 'Telugu' ? 'నేను మీ దగ్గర పని చేశాను అవును' : ''; }, tts: async () => Buffer.alloc(800) };
   await V.hear(pcm, 'English', { engines: spy });
   check('V11 the interview audio is heard at 16 kHz (no 8 kHz phone round trip) by every listener', seen.length >= 3 && seen.every((x) => x[1] === 16000), seen);
+  const asked = [];
+  const slow = { detect: async () => 'Hindi', speech: async () => ({ speechMs: 3000 }), stt: async (_p, l) => { asked.push(l); if (l === 'Telugu') await new Promise((r) => setTimeout(r, 4000)); return l === 'Hindi' ? 'मैं यहाँ काम करता हूँ और मेरा नाम है' : 'ముఝే'; }, tts: async () => Buffer.alloc(800) };
+  const t0 = Date.now(); const cont = await V.hear(pcm, 'Hindi', { engines: slow });
+  check('V12 a Hindi answer in a Hindi interview asks only the Hindi listener (no slow second listener, no wrong switch)', cont.lang === 'Hindi' && !cont.changed && /मैं/.test(cont.text) && asked.join() === 'Hindi' && Date.now() - t0 < 1500, { cont, asked });
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
