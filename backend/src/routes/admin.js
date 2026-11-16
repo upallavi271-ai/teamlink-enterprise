@@ -2360,6 +2360,17 @@ router.put('/integrations/:id/configure', requirePerm(null, 'administration', 'I
         const own = r.ownToken.filter((o) => !o.sameToken);
         if (own.length) parts.push(`Not changed (they keep their own token): ${own.map((o) => `${o.label}${o.legacyWorks ? ' (the new token works for it: edit the number and choose "The shared token")' : ''}`).join(', ')}.`);
       }
+      // the company's GENERAL template ("bulk / general") must be Approved at Meta AND have a {{1}} blank, or a message sent through it would reach the person without its words / link
+      try {
+        const gcfg = await wa.whatsappConfig();
+        const gname = gcfg && gcfg.templates ? gcfg.templates.bulk : '';
+        if (gname && gcfg.wabaId) {
+          const sh = await require('../outreach/tplWaba').metaShape(gcfg, gname, gcfg.language); // eslint-disable-line global-require
+          if (!sh) parts.push(`Could not confirm that the general template "${gname}" is Approved at Meta yet (it may still be waiting, or Meta did not answer).`);
+          else if (sh.body === 0) parts.push(`WARNING: the general template "${gname}" has NO {{1}} blank at Meta, so TeamLink cannot put a message or a link in it. Make the template with {{1}} (for example "Hello from TeamLink Consultants. {{1}} Reply STOP to stop these messages.") and save its name here.`);
+          else parts.push(`The general template "${gname}" is Approved and has its {{1}} blank.`);
+        }
+      } catch { /* the template check is a courtesy */ }
       shown = await prisma.integration.update({ where: { id: 'whatsapp' }, data: rejected ? { state: 'Token rejected by Meta', error: String(why).slice(0, 300) } : { state: 'Connected', error: null } });
       waCheck = { rejected, summary: `WhatsApp saved. ${parts.join(' ')}`.trim() };
     } catch (e) { waCheck = { rejected: false, summary: 'WhatsApp saved. Could not ask Meta just now: press Test connection.' }; }

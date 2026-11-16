@@ -178,6 +178,13 @@ async function route(opts) {
   }
 }
 
+// The company's GENERAL template ("bulk / general") carries a whole message as its one blank {{1}}. If Meta's version of it has NO blank, it can carry nothing: the person would
+// get only its fixed words, with no message and no link (found 2026-11-16: a client got "We have shared the project details..." without the link). A template that a message
+// brings of its own (own.name: a fixed approved message) is not this and is left alone. -> true = do not send the message through this template.
+function noBlankCarrier(kind, own, shape, have, vars) {
+  return kind === 'bulk' && !(own && own.name) && !!shape && shape.body === 0 && have > 0 && (vars || []).some((v) => String(v == null ? '' : v).trim());
+}
+
 // kind: 'link' | 'otp' | 'bulk'.
 // WHICH NUMBER (utils/waNumbers.js): opts.numberId (the number the sender chose) | opts.user / opts.userId (the person sending) | opts.automatic /
 // opts.department / opts.purpose (system messages). With no numbers added yet none of this matters: the old single connection is used.
@@ -202,7 +209,7 @@ async function sendWhatsApp(opts = {}) {
     if (d.skip) return { ok: true, provider: 'DEDUPED', providerRef: null, deduped: true };
     dupKey = d.key;
   } catch { /* never blocks a message */ }
-  const content = templatePayload(cfg, kind, vars, own)
+  let content = templatePayload(cfg, kind, vars, own)
     || { type: 'text', text: { body: String(text || (vars || []).join(' ')).slice(0, 4096), preview_url: true } };
   if (number && content.type === 'template') {
     const bad = await templateAccountCheck(cfg, content.template.name);
@@ -216,7 +223,15 @@ async function sendWhatsApp(opts = {}) {
     // never sent with empty or "-" blanks; named blanks ({{candidate_name}}) get their names. Unknown shape = sent as before.
     const shape = await require('../outreach/tplWaba').metaShape(cfg, content.template.name, content.template.language.code); // eslint-disable-line global-require
     const bodyC = (content.template.components || []).find((c) => c.type === 'body');
-    if (shape && bodyC) {
+    if (shape && bodyC && noBlankCarrier(kind, own, shape, (bodyC.parameters || []).length, vars)) {
+      // the company's general template has no {{1}} at Meta: sending it would drop the message and its link. Plain text if the 24 hours allow it, else a plain stop.
+      const win = number ? await require('./waNumbers').windowOpenFor(number, to).catch(() => false) : await require('./messageDelivery').windowOpen(to).catch(() => false); // eslint-disable-line global-require
+      if (win && String(text || '').trim()) content = { type: 'text', text: { body: String(text).slice(0, 4096), preview_url: true } };
+      else {
+        SD.release(dupKey);
+        return { ok: false, invalid: true, transient: false, code: 'TEMPLATE_NO_BLANK', error: `The general WhatsApp template "${content.template.name}" has no {{1}} blank at Meta, so TeamLink cannot put the message (or its link) in it: the person would get only the template's own fixed words. Make the template with {{1}} (for example "Hello from TeamLink Consultants. {{1}} Reply STOP to stop these messages."), wait until Meta shows Approved, and save its name in Administration > Integrations > WhatsApp Business > "Template name — bulk / general".` };
+      }
+    } else if (shape && bodyC) {
       const have = (bodyC.parameters || []).length;
       if (have < shape.body || shape.header > 0) {
         SD.release(dupKey);
@@ -268,4 +283,4 @@ async function testConnection(opts) {
   return { ok: false, result: `Failed — ${failure(res).error}` };
 }
 
-module.exports = { whatsappConfig, legacyConfig, sendWhatsApp, testConnection, failure, simulated, route, blockedResult, templateAccountProblem, templateAccountCheck, tplName, GRAPH, VERSION };
+module.exports = { whatsappConfig, legacyConfig, sendWhatsApp, testConnection, failure, simulated, route, blockedResult, templateAccountProblem, templateAccountCheck, tplName, noBlankCarrier, GRAPH, VERSION };
