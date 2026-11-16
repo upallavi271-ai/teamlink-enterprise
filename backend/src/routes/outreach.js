@@ -28,6 +28,7 @@ const Dist = require('../outreach/distribution');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../outreach/recruiterScope').guard('outreach')); // a recruiter reaches Dashboard, Channels and Campaign Center routes only
 router.use(require('./outreachEarly')); // /me and Insights > Credits: before the ATS gate (Finance has no ATS product)
 const needAts = requireProduct('ats');
 router.use((req, res, next) => (A.kind(req.user) === 'marketing' ? next() : needAts(req, res, next))); // Marketing (given by an Admin) needs no ATS role

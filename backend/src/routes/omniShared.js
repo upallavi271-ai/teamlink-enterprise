@@ -26,6 +26,7 @@ const scope = require('../utils/scope');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../outreach/recruiterScope').guard('omni')); // a recruiter reaches Dashboard, Channels and Campaign Center routes only
 const external = (u) => [u.role, u.atsRole].some((r) => ['CLIENT', 'CANDIDATE', 'VENDOR', 'PARTNER'].includes(r));
 router.use((req, res, next) => (external(req.user) ? res.status(403).json({ error: 'Not available to this login.' }) : next()));
 router.use(async (req, res, next) => { try { await Schema.ensure(); next(); } catch (e) { next(e); } });

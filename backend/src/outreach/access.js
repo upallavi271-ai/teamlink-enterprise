@@ -261,6 +261,8 @@ function pagesFor(u) {
   add(l === 'admin', 'superadmin', 'settings', 'waai'); // waai = Settings > WhatsApp AI
   // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page, the Approvals tab and the Content Calendar of their department (read only: marketing/calendar.js)
   add(true, ...mkPagesOf(has('mayAiMarketing')(u), has('mayAiApprove')(u)));
+  // a Recruiter sees Dashboard, Channels and Campaign Center only (outreach/recruiterScope.js; OMNI_RECRUITER_SCOPE=0 switches it off)
+  if (l === 'recruiter') { const RS = require('./recruiterScope'); if (RS.enabled()) return out.filter((p) => RS.RECRUITER_PAGES.includes(p)); } // eslint-disable-line global-require
   return out;
 }
 // AI Marketing: which tabs each kind of login has (pagesFor above and the Admin's "Who sees what" table read this ONE place)

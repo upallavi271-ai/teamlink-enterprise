@@ -25,6 +25,13 @@ const prisma = require('../db');
 const KEY = 'omni.gs.deptLogins';
 const WA_MAP_KEY = 'omni.gs.waMap';
 const ROLE = 'team_leader';
+// ROLE BY KIND OF LOGIN (founder 2026-11-14): a TeamLink Recruiter opens as Green Start's "Recruiter" role (the server then limits it to Dashboard,
+// Channels and Campaign Center: gs-api common/role-scope.ts); a TL / STL (and every other kind that is switched on) as "Team Leader", who sees the
+// campaigns, replies and send figures of the recruiters of the SAME department workspace. Admin / Super Admin: Organization Admin everywhere.
+const RECRUITER_ROLE = 'recruiter';
+// OFF until OMNI_ROLE_BY_KIND=1 in backend/.env: turning it on changes the Green Start role of existing recruiters (Team Leader -> Recruiter) at their next sign-in,
+// which the owner approves after the backup and the list of names.
+const staffRoleFor = (kind) => (kind === 'recruiter' && /^(1|true|yes|on)$/i.test(String(process.env.OMNI_ROLE_BY_KIND || '').trim()) ? RECRUITER_ROLE : ROLE);
 // Super Admin / Admin / developer open Omni-Channel with THEIR OWN email (founder 2026-11-06: "when i open the developer page so omnichannel also open same email"):
 // that account is an Organization Admin of every workspace, so it sees everything the company account sees. The company account stays for TeamLink's background sync only.
 const ADMIN_ROLE = 'organization_admin';
@@ -197,13 +204,13 @@ async function ensureLogin(token, wsId, email, deptTitle, who = {}) {
   const O = require('./rcsOmniSync'); // eslint-disable-line global-require
   const SSO = require('./greenStartSso'); // eslint-disable-line global-require
   const role = who.role || ROLE;
-  if (role === ROLE) await O.call('POST', '/team/roles/standard', { token, ws: wsId, body: { templateKey: ROLE } }); // adds it once; again = the same role
+  if (role === ROLE || role === RECRUITER_ROLE) await O.call('POST', '/team/roles/standard', { token, ws: wsId, body: { templateKey: role } }); // adds it once; again = the same role
   const members = await O.call('GET', '/team/members?pageSize=100', { token, ws: wsId });
   const me = ((members && members.items) || []).find((m) => String((m.user && m.user.email) || m.email || '').toLowerCase() === email);
   if (me) {
     if (((me.role && me.role.key) || me.roleKey) !== role) {
       await O.call('PATCH', `/team/members/${me.id}/role`, { token, ws: wsId, body: { roleKey: role } });
-      return `Ready (role set to ${role === ROLE ? 'Team Leader' : 'Organization Admin'}).`;
+      return `Ready (role set to ${role === ROLE ? 'Team Leader' : role === RECRUITER_ROLE ? 'Recruiter' : 'Organization Admin'}).`;
     }
     return 'Ready.';
   }
@@ -265,8 +272,8 @@ async function ensureAdminLogin(email, name, externalUserId) {
 
 /** A staff member's own Omni-Channel account: Team Leader in ONLY their department's workspace(s). Throws when Green Start will not have it. */
 const staffChecked = new Map(); // email -> when
-async function ensureStaffLogin(email, name, externalUserId, wsIds) {
-  const at = staffChecked.get(email);
+async function ensureStaffLogin(email, name, externalUserId, wsIds, role = ROLE) {
+  const at = staffChecked.get(`${email}|${role}`);
   if (at && Date.now() - at < ADMIN_CHECK_MS) return;
   const GI = require('./greenStartIntegrations'); // eslint-disable-line global-require
   const SSO = require('./greenStartSso'); // eslint-disable-line global-require
@@ -275,12 +282,12 @@ async function ensureStaffLogin(email, name, externalUserId, wsIds) {
   const ids = wsIds.filter(Boolean);
   for (const id of ids) {
     // eslint-disable-next-line no-await-in-loop
-    await ensureLogin(token, id, email, 'Staff', { name, externalUserId });
+    await ensureLogin(token, id, email, 'Staff', { name, externalUserId, role });
   }
   await removeElsewhere(token, wss.filter((x) => !ids.includes(x.id)), email); // a person who changed department leaves the old workspace
   // Green Start can refuse an address (waiting for approval, suspended): find out here, so the person is told why
   await GI.call('POST', '/auth/teamlink', { body: { ticket: SSO.greenStartTicket({ email, name, externalUserId }) } });
-  staffChecked.set(email, Date.now());
+  staffChecked.set(`${email}|${role}`, Date.now());
 }
 
 /**
@@ -313,15 +320,20 @@ async function loginFor(reqUser) {
   // INDIVIDUAL LOGINS (owner 2026-11-10): the person opens with THEIR OWN email, a Team Leader of only their department's workspace(s);
   // the shared department login stays as the fallback until every person has moved (then the owner retires it in Green Start).
   const own = String(u.email || '').trim().toLowerCase();
+  let kind = 'none';
+  try { kind = A.kind(reqUser); } catch { /* keep none */ }
+  const staffRole = staffRoleFor(kind);
   if (hit && SSO.EMAIL_RE.test(own) && own !== String(hit[1].email).toLowerCase()) {
     try {
-      await ensureStaffLogin(own, u.name || 'TeamLink', String(u.id), hit[1].workspaceIds || [hit[1].workspaceId]);
-      return { email: own, own: true, dept: hit[1].dept, workspace: hit[1].workspace };
+      await ensureStaffLogin(own, u.name || 'TeamLink', String(u.id), hit[1].workspaceIds || [hit[1].workspaceId], staffRole);
+      return { email: own, own: true, dept: hit[1].dept, workspace: hit[1].workspace, role: staffRole };
     } catch (err) {
       console.error('[omni] own staff login:', err && err.message); // eslint-disable-line no-console
       if (/approval/i.test(String(err && err.message))) return { blocked: true, reason: 'Get approval from the Super Admin: your Omni-Channel account is waiting for approval.' };
     }
   }
+  // a Recruiter NEVER falls back to the shared department login (it is a Team Leader: it would show them more than their role allows)
+  if (hit && staffRole === RECRUITER_ROLE) return { blocked: true, reason: 'Your own Omni-Channel login could not be made just now. Try again in a minute, or ask an Admin.' };
   if (hit) return { email: hit[1].email, dept: hit[1].dept, workspace: hit[1].workspace };
   const names = [...mine].map(title).join(', ');
   return {
@@ -349,4 +361,4 @@ function schedule(why = 'number saved') {
 }
 const last = async () => getSetting(KEY, {});
 
-module.exports = { run, ensureLogin, ensureAdminLogin, removeElsewhere, loginFor, start, schedule, last, emailFor, findWorkspace, title, KEY };
+module.exports = { staffRoleFor, run, ensureLogin, ensureAdminLogin, removeElsewhere, loginFor, start, schedule, last, emailFor, findWorkspace, title, KEY };

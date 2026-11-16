@@ -21,6 +21,7 @@ const { logAudit } = require('../utils/audit');
 
 const router = express.Router();
 router.use(requireAuth);
+router.use(require('../outreach/recruiterScope').guard('omniwa')); // a recruiter reaches the chats only, not the AI settings
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 router.use((req, res, next) => (A.pagesFor(req.user).includes('whatsapp') || A.pagesFor(req.user).includes('waai') ? next() : res.status(403).json({ error: 'Not available to this login' })));
 const adminOnly = (req, res, next) => (A.pagesFor(req.user).includes('waai') ? next() : res.status(403).json({ error: 'Only an Admin can change this.' }));
