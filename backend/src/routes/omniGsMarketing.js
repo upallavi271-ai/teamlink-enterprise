@@ -68,22 +68,10 @@ router.get('/overview', wrap(async (req, res) => {
     const since = Date.now() - 14 * 86400000;
     ((await CR.list(u, {})).reviews || []).forEach((r) => { if (r.status === 'sent') attention.clientWaiting += 1; else if (r.status === 'changes' && Date.parse(r.decidedAt) >= since) attention.clientChanges += 1; });
   } catch (e) { console.error('[omni-mk] overview client reviews:', e.message); } // eslint-disable-line no-console
-  // the client projects (Clients tab): new requests to accept, work with a client, work approved and waiting to be posted
-  const projects = { newRequests: 0, withClient: 0, toPost: 0 };
-  if (A.has('mayAiMarketing')(u)) {
-    try {
-      const pc = (await Prj.list(u, {})).counts || {};
-      projects.newRequests = pc.request || 0; projects.withClient = pc.awaiting_client || 0; projects.toPost = (pc.approved || 0) + (pc.scheduled || 0);
-    } catch (e) { console.error('[omni-mk] overview projects:', e.message); } // eslint-disable-line no-console
-  }
-  // "Review and publish (N to do)": what THIS login has to do now (words / pictures to approve, client answers to read, posts to publish, new requests to accept, approved work to post)
-  const todo = attention.words + attention.pictures + attention.clientChanges + attention.overdue + attention.today + projects.newRequests + projects.toPost;
-  res.json({ counts, usage, attention, projects, todo, have, brandReady: !!brand.brandName, brandName: brand.brandName, ai: (await AI.status()).text });
+  res.json({ counts, usage, attention, have, brandReady: !!brand.brandName, brandName: brand.brandName, ai: (await AI.status()).text });
 }));
 // the WhatsApp numbers this login can send a client message from; the default company number comes first (marketing/sender.js)
 router.get('/senders', mustWrite, wrap(async (req, res) => res.json(await require('../marketing/sender').numbersFor(req.user)))); // eslint-disable-line global-require
-// ONE list of what clients said or decided (marketing/replies.js)
-router.get('/replies', mustWrite, wrap(async (req, res) => send(res, await require('../marketing/replies').list(req.user, { days: req.query.days, limit: req.query.limit })))); // eslint-disable-line global-require
 
 // ---- brand voice ---------------------------------------------------------------------------------------------------------------
 router.get('/brand', wrap(async (req, res) => res.json({ brand: await Cfg.getBrand(), tones: St.VOICES, languages: Cfg.LANGUAGES, emoji: Cfg.EMOJI, limits: Cfg.LIMITS, canEdit: A.has('mayAiMarketing')(req.user) })));

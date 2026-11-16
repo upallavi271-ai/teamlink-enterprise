@@ -261,28 +261,22 @@ function pagesFor(u) {
   add(['admin', 'depthead', 'teamlead'].includes(l), 'team', 'audit');
   add(l === 'admin', 'superadmin', 'settings', 'waai'); // waai = Settings > WhatsApp AI
   // AI Marketing (2026-11-11): the writers get every tab; an approver (Team Lead / BDE TL) gets the home page, the Approvals tab and the Content Calendar of their department (read only: marketing/calendar.js)
-  add(true, ...mkPagesOf(has('mayAiMarketing')(u), has('mayAiApprove')(u), isAdmin(u)));
+  add(true, ...mkPagesOf(has('mayAiMarketing')(u), has('mayAiApprove')(u)));
   // a Recruiter sees Dashboard, Channels and Campaign Center only (outreach/recruiterScope.js; OMNI_RECRUITER_SCOPE=0 switches it off)
   if (l === 'recruiter') { const RS = require('./recruiterScope'); if (RS.enabled()) return out.filter((p) => RS.RECRUITER_PAGES.includes(p)); } // eslint-disable-line global-require
   return out;
 }
 // AI Marketing: which tabs each kind of login has (pagesFor above and the Admin's "Who sees what" table read this ONE place)
-// 2026-11-16 (founder: "make it simple like Green Start"): the tab bar has SIX sections: Clients, Create, Review and publish, Client replies, Social accounts, Who can see this. Every other
-// page (Overview, AI Content, AI Images, AI Video, Email, Campaign messages, Lead generation, Workflow automation, Calendar, Approvals, Reports, Brand voice, AI usage, Our work) is still there,
-// opened from those sections, so nothing was removed and no old address broke. 'mkhome' stays in every list: the TeamLink sidebar shows its "AI Marketing" entry when a login has it.
-const MK_TAB_PAGES = ['mkprojects', 'mkcreate', 'mkreview', 'mkreplies', 'mksocial', 'mkaccess']; // the six, in order
-const MK_TOOL_PAGES = ['mkhome', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'];
-const MK_WRITER_PAGES = [...MK_TAB_PAGES.filter((p) => p !== 'mkaccess'), ...MK_TOOL_PAGES]; // Marketing: everything except "Who can see this" (an Admin's page)
-const MK_APPROVER_PAGES = ['mkhome', 'mkreview', 'mkapprove', 'mkcalendar']; // an approver (Team Lead / BDE TL): Review and publish, with Approvals and the Calendar
-const MK_PAGE_WORDS = { mkprojects: 'Clients', mkcreate: 'Create', mkreview: 'Review and publish', mkreplies: 'Client replies', mksocial: 'Social accounts', mkaccess: 'Who can see this', mkhome: 'Overview', mkourwork: 'Our work', mkcontent: 'AI Content', mkleads: 'Lead generation', mkjourneys: 'Workflow automation', mkemail: 'Email marketing', mkcampaigns: 'Campaign messages', mkimages: 'AI Images', mkvideos: 'AI Video', mkapprove: 'Approvals', mkcalendar: 'Content calendar', mkreports: 'Reports', mkbrand: 'Brand voice', mkusage: 'AI usage' };
-const mkPagesOf = (writer, approver, admin = false) => (writer ? (admin ? [...MK_WRITER_PAGES, 'mkaccess'] : MK_WRITER_PAGES) : (approver ? MK_APPROVER_PAGES : []));
+const MK_WRITER_PAGES = ['mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'];
+const MK_APPROVER_PAGES = ['mkhome', 'mkapprove', 'mkcalendar'];
+const MK_PAGE_WORDS = { mkhome: 'Overview', mkprojects: 'Client projects', mkourwork: 'Our work', mkcontent: 'AI Content', mkleads: 'Lead generation', mkjourneys: 'Workflow automation', mkemail: 'Email marketing', mkcampaigns: 'Campaign messages', mkimages: 'AI Images', mkvideos: 'AI Video', mkapprove: 'Approvals', mkcalendar: 'Content calendar', mkreports: 'Reports', mkbrand: 'Brand voice', mkusage: 'AI usage' };
+const mkPagesOf = (writer, approver) => (writer ? MK_WRITER_PAGES : (approver ? MK_APPROVER_PAGES : []));
 // the Admin's table: for each kind of login, what it sees and may do in AI Marketing, made from the rules above (never typed by hand)
 function mkRoleTable() {
   const rows = KINDS.map((k) => {
     const writer = RULES.mayAiMarketing.includes(k); const approver = RULES.mayAiApprove.includes(k);
-    const pages = mkPagesOf(writer, approver, k === 'admin');
-    const sections = MK_TAB_PAGES.filter((p) => pages.includes(p));
-    return { kind: k, who: KIND_WORDS[k], pages, sees: (sections.length ? sections : (pages.includes('mkreview') ? ['mkreview'] : [])).map((p) => MK_PAGE_WORDS[p]), writes: writer, approves: approver, settings: k === 'admin' };
+    const pages = mkPagesOf(writer, approver);
+    return { kind: k, who: KIND_WORDS[k], pages, sees: pages.map((p) => MK_PAGE_WORDS[p]), writes: writer, approves: approver, settings: k === 'admin' };
   });
   rows.push({ kind: 'client', who: 'Client login (Client Portal)', pages: [], sees: ['Client Portal > Creative work: approve the work shown to them, send a new request, follow their projects'], writes: false, approves: false, settings: false, outside: true });
   return rows;
@@ -310,4 +304,4 @@ function me(u) {
   };
 }
 
-module.exports = { mkRoleTable, mkPagesOf, MK_TAB_PAGES, GS_KINDS, gsKindsNow, setGsKinds, KIND_WORDS, mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };
+module.exports = { mkRoleTable, mkPagesOf, GS_KINDS, gsKindsNow, setGsKinds, KIND_WORDS, mayGreenStart, hubsForLevel, has, pagesFor, maySendConsole, warm, setMarketingIds, level, hubsFor, isFinance, mayExportReport, mayCreditsView, LEVEL_WORDS, deptScope, mayDepartment, seesTeamActivity, mayCreditSettings, mayExportActivity, me, kind, isAdmin, mayUse, mayRun, mayRunInternal, seesInternal, seesLeads, seesAllLeads, masked, mayOptIn, mayOptOut, mayAdminSettings, mayCampaign, seesCampaigns, mayExportLog, mayWrite, mayRead, departmentsOf, tabsFor, modesFor, summary, manageScheduled, seesSettings, mayExportConsent, seesDistribution, rolesTable, RULES, KINDS };

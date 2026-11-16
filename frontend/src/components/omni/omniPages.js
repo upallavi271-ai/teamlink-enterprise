@@ -58,13 +58,7 @@ export const PAGES = {
   mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
   mkcalendar: { label: 'Calendar', icon: '▦', title: 'Content Calendar' },
   mkreports: { label: 'Reports', icon: '▤', title: 'AI Marketing reports' },
-  mkprojects: { label: 'Clients', icon: '❖', title: 'Clients' },
-  // the other five of the six simple sections (2026-11-16, like Green Start): Create, Review and publish, Client replies, Social accounts, Who can see this
-  mkcreate: { label: 'Create', icon: '✦', title: 'Create' },
-  mkreview: { label: 'Review and publish', icon: '✔', title: 'Review and publish' },
-  mkreplies: { label: 'Client replies', icon: '❝', title: 'Client replies' },
-  mksocial: { label: 'Social accounts', icon: '⚯', title: 'Social accounts' },
-  mkaccess: { label: 'Who can see this', icon: '◔', title: 'Who can see this' },
+  mkprojects: { label: 'Client projects', icon: '❖', title: 'Client projects' },
   mkourwork: { label: 'Our work', icon: '★', title: 'Our work: track record and finished projects' },
   mkbrand: { label: 'Brand voice', icon: '❝', title: 'Brand voice' },
   mkusage: { label: 'AI usage', icon: '◔', title: 'AI usage and limits' },
@@ -81,24 +75,8 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  // `views` = every screen of the section that has an address. The tab bar shows only MK_TABS (the six); the others are opened from them (MK_PARENT says from which)
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkprojects', 'mkcreate', 'mkreview', 'mkreplies', 'mksocial', 'mkaccess', 'mkhome', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkcontent', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
-// AI MARKETING, simple like Green Start: the six tabs, and for every other screen the tab it belongs under (that tab stays lit and a "back" link is shown)
-export const MK_TABS = ['mkprojects', 'mkcreate', 'mkreview', 'mkreplies', 'mksocial', 'mkaccess'];
-// the TOOLS strip under the six tabs: every other screen, one click away, in plain groups (a group or a tool this login may not open is left out)
-export const MK_TOOLS = [
-  ['Make', ['mkcontent', 'mkimages', 'mkvideos']],
-  ['Send', ['mkemail', 'mkcampaigns', 'mkcalendar']],
-  ['Check', ['mkapprove', 'mkreports', 'mkourwork']],
-  ['Sales', ['mkleads', 'mkjourneys']],
-  ['Set up', ['mkbrand', 'mkusage']],
-];
-export const MK_PARENT = {
-  mkhome: 'mkreview', mkourwork: 'mkprojects',
-  mkcontent: 'mkcreate', mkimages: 'mkcreate', mkvideos: 'mkcreate', mkemail: 'mkcreate', mkcampaigns: 'mkcreate', mkleads: 'mkcreate', mkjourneys: 'mkcreate', mkbrand: 'mkcreate',
-  mkapprove: 'mkreview', mkcalendar: 'mkreview', mkreports: 'mkreview', mkusage: 'mkaccess',
-};
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);
 export const HOME = 'overview';
