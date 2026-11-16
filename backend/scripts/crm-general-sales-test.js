@@ -80,6 +80,13 @@ async function stop(code) {
   const det = await call('GET', `/crm/leads/${id}`, null, auth);
   check('a call that reached them makes it Contacted, on its own', det.body.lead.stage === 'Contacted' && det.body.lead.status === 'Contacted', [det.body.lead.stage, det.body.lead.status]);
   check('the move is on the timeline and says it was automatic', det.body.activities.some((x) => x.subject === 'Stage: New → Contacted' && /automatically/.test(x.note || '')), det.body.activities.map((x) => x.subject));
+  await call('POST', '/crm/activities', { kind: 'meeting', leadId: id, subject: 'Meeting set up' }, auth);
+  check('a meeting with no outcome does NOT make it Qualified', (await stageOfLead()) === 'Contacted');
+  await call('POST', '/crm/activities', { kind: 'meeting', leadId: id, subject: 'They did not come', outcome: 'No answer' }, auth);
+  check('a meeting nobody came to does not either', (await stageOfLead()) === 'Contacted');
+  const mt = (await call('POST', '/crm/tasks', { title: 'Demo', type: 'Meeting', dueDate: new Date().toISOString().slice(0, 10), leadId: id }, auth)).body.task;
+  await call('POST', `/crm/tasks/${mt.id}/done`, { note: 'ok' }, auth);
+  check('a Meeting follow-up marked done with no outcome does not qualify it', (await stageOfLead()) === 'Contacted');
   await call('POST', '/crm/activities', { kind: 'meeting', leadId: id, subject: 'Met them', outcome: 'Meeting held' }, auth);
   check('a meeting held makes it Qualified', (await stageOfLead()) === 'Qualified');
   await call('POST', '/crm/activities', { kind: 'call', leadId: id, subject: 'Spoke again', outcome: 'Spoke' }, auth);

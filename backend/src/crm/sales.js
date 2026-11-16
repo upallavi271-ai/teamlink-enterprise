@@ -41,7 +41,7 @@ const stageNames = (st) => st.leadStages.map((x) => x.name);
 
 // STAGES MOVE ON THEIR OWN (founder 2026-11-16: "ivi automatic ga stage ni update avvali, manual ga chese option kaadhu"). Nobody picks a stage. It moves when something is DONE on the lead:
 //   New -> Contacted         a call, WhatsApp, email or meeting (not a call nobody picked up)
-//   Contacted -> Qualified   a meeting held, or details sent, or a meeting logged
+//   Contacted -> Qualified   a meeting HELD (outcome "Meeting held"), or details sent. A meeting with no outcome (or a no-show / postponed one) does not qualify it (founder 2026-11-16)
 //   any open stage -> Lost   "Not interested" is what came of it
 //   a converted lead         follows its deal (Qualified / Proposal / Negotiation / Won / Lost, see stageOf)
 // A lead marked Lost by mistake is put back by "Reopen" (it is not a stage choice: it goes back to where its history says it was).
@@ -58,7 +58,7 @@ async function autoStage(leadId, ev = {}) {
   if (outcome === 'Not interested' && names.includes('Lost')) { to = 'Lost'; why = 'Not interested'; }
   else if (AUTO_CONTACT.includes(ev.kind) && outcome !== 'No answer') {
     if (i === 0 && names.length > 1) { to = names[1]; why = ev.kind === 'email' || ev.kind === 'whatsapp' ? 'A message went to them' : 'They were reached'; }
-    if ((['Meeting held', 'Sent details'].includes(outcome) || ev.kind === 'meeting') && names.includes('Qualified') && names.indexOf('Qualified') > i) { to = 'Qualified'; why = outcome || 'A meeting'; }
+    if (['Meeting held', 'Sent details'].includes(outcome) && names.includes('Qualified') && names.indexOf('Qualified') > i) { to = 'Qualified'; why = outcome || 'A meeting'; }
   }
   if (!to || to === from) return null;
   const j = names.indexOf(to);

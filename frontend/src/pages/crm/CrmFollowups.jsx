@@ -41,6 +41,7 @@ export function DoneDialog({ task, onClose, onDone }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {me.lists.outcomes.map((o) => <button key={o} type="button" className={`btn btn-sm${outcome === o ? ' btn-primary' : ''}`} aria-pressed={outcome === o} onClick={() => setOutcome(outcome === o ? '' : o)}>{o}</button>)}
         </div>
+        {task.type === 'Meeting' && !outcome && <div className="small-muted" style={{ marginTop: 6 }}>Pick <b>Meeting held</b> if the meeting happened: that is what moves the lead to Qualified. A meeting that did not happen leaves the stage as it is.</div>}
       </div>
       <div className="field"><label>What happened?</label><textarea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Spoke to them: wants the proposal by Friday" /></div>
       <div className="small-muted" style={{ marginBottom: 8 }}>This is written on the timeline of the record.</div>
