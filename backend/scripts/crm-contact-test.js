@@ -202,6 +202,23 @@ let T = {};
   check('an email from the customer record goes to the same person', da.status === 200 && da.body.to === `meera.${process.pid}@zz-contact-test.in`, da.body);
   check('something that is not a lead, deal, customer or contact is refused', (await call('POST', '/crm/contact/send', { kind: 'ticket', id: deal.id, channel: 'Email', subject: 's', text: 'x' }, T.X)).status === 400);
 
+  console.log('8. The invoice by email (the PDF goes as an attachment)');
+  const won = await call('POST', `/crm/deals/${deal.id}/stage`, { stage: 'Won' }, T.X);
+  const inv = won.body.invoice;
+  check('a Won deal has its invoice', !!(inv && inv.id), won.body);
+  const idr = await call('GET', `/crm/invoices/${inv.id}/email-draft`, null, T.X);
+  check('the draft is for the deciding contact (the account has no email of its own) with the invoice number in the subject and the amount in the words', idr.status === 200 && idr.body.to === `meera.${process.pid}@zz-contact-test.in` && idr.body.subject.includes(inv.code) && /Rs. 11,800/.test(idr.body.text) && /^Dear Meera,/.test(idr.body.text), idr.body);
+  const before = mails().length;
+  const emI = await call('POST', `/crm/invoices/${inv.id}/email`, { to: idr.body.to, subject: idr.body.subject, text: idr.body.text }, T.X);
+  check('Send email sends it', emI.status === 200 && emI.body.ok && emI.body.to === idr.body.to, emI.body);
+  const got = mails().slice(before).find((m) => String(m.to).includes('meera.') && String(m.subject).includes(inv.code));
+  check('the mail was handed to the mail server (the test mail capture does not record attachments; the PDF travels the same way as the proposal PDF, utils/messaging.js attachments)', !!got, got && Object.keys(got));
+  check('it is on the deal timeline', (await timeline('deal', deal.id)).some((a) => /emailed/.test(a.subject) && a.subject.includes(inv.code)));
+  check('the invoice stays Draft until the person marks it Sent', (await call('GET', `/crm/invoices/${inv.id}`, null, T.X)).body.invoice.status === 'Draft');
+  check('a missing address is refused with a plain message', (await call('POST', `/crm/invoices/${inv.id}/email`, { to: '', subject: 's', text: 'x' }, T.X)).status === 400);
+  check('the Viewer cannot email an invoice', (await call('POST', `/crm/invoices/${inv.id}/email`, { to: idr.body.to, subject: 's', text: 'x' }, T.V)).status >= 400);
+  check('an invoice that is not there is a 404', (await call('GET', '/crm/invoices/inv_nope/email-draft', null, T.X)).status === 404);
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

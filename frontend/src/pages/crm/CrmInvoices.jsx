@@ -4,7 +4,7 @@
 // (`embedded`), not a module of its own: the CRM stays at five (founder 2026-11-14).
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../api';
-import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, INVOICE_STATUSES } from './crmShared.jsx';
+import { useCrm, errOf, money, dateOf, Pill, invoicePill, InvoiceStatusSelect, openInvoicePdf, shareInvoiceWhatsApp, InvoiceEmailDialog, INVOICE_STATUSES } from './crmShared.jsx';
 
 export default function CrmInvoices({ embedded = false }) {
   const { me, toast, openRecord, version } = useCrm();
@@ -14,6 +14,7 @@ export default function CrmInvoices({ embedded = false }) {
   const [status, setStatus] = useState('');
   const [missing, setMissing] = useState(0); // Won deals with no invoice yet (won before invoices existed)
   const [busy, setBusy] = useState(false);
+  const [mailInv, setMailInv] = useState(null); // the invoice whose email window is open
   const load = () => api.get('/crm/invoices').then((r) => { setRows(r.data.invoices); setMissing(r.data.missing || 0); setErr(''); }).catch((e) => setErr(errOf(e, 'The invoices could not be read.')));
   async function backfill() {
     setBusy(true);
@@ -81,13 +82,14 @@ export default function CrmInvoices({ embedded = false }) {
                   <td style={{ textAlign: 'right' }}>{money(x.paidAmount)}</td>
                   <td>{me.canEdit ? <><InvoiceStatusSelect inv={x} onSaved={replace} />{x.overdue && <> <Pill v="Overdue" /></>}</> : <Pill v={invoicePill(x)} />}</td>
                   {me.seesAll && <td>{x.ownerName || '—'}</td>}
-                  <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button>{me.canEdit && x.status !== 'Cancelled' && <> <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" aria-label={`Send ${x.code} on WhatsApp`} onClick={(e) => { e.stopPropagation(); shareInvoiceWhatsApp(x, toast, () => load()); }}>💬</button></>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={(e) => { e.stopPropagation(); openInvoicePdf(x, toast); }}>PDF</button>{me.canEdit && x.status !== 'Cancelled' && <> <button type="button" className="btn btn-sm" title="Emails the invoice with the PDF attached" aria-label={`Email ${x.code}`} onClick={(e) => { e.stopPropagation(); setMailInv(x); }}>✉️</button> <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" aria-label={`Send ${x.code} on WhatsApp`} onClick={(e) => { e.stopPropagation(); shareInvoiceWhatsApp(x, toast, () => load()); }}>💬</button></>}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {mailInv && <InvoiceEmailDialog inv={mailInv} onClose={() => setMailInv(null)} onSent={() => load()} />}
     </div>
   );
 }

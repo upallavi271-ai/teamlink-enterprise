@@ -625,6 +625,38 @@ export async function shareInvoiceWhatsApp(inv, toast, after) {
     toast(errOf(e, 'The WhatsApp message could not be made.'));
   }
 }
+// THE INVOICE BY EMAIL (founder 2026-11-16): a small window with the customer's address, subject and words ready; Send email sends it with the PDF attached.
+export function InvoiceEmailDialog({ inv, onClose, onSent }) {
+  const { toast } = useCrm();
+  const [f, setF] = useState(null);
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get(`/crm/invoices/${inv.id}/email-draft`).then((r) => setF({ to: r.data.to || '', subject: r.data.subject, text: r.data.text })).catch((e) => setErr(errOf(e, 'The email could not be made.'))); }, [inv.id]);
+  async function send() {
+    setBusy(true); setErr('');
+    try {
+      await api.post(`/crm/invoices/${inv.id}/email`, f);
+      toast(`${inv.code || 'The invoice'} emailed to ${f.to} with the PDF attached.`);
+      if (inv.status === 'Draft' && window.confirm(`Mark ${inv.code} as Sent?\n\n(It is a Draft until you do; only sent invoices count as Invoiced.)`)) await api.post(`/crm/invoices/${inv.id}/status`, { status: 'Sent' });
+      if (onSent) onSent();
+      onClose();
+    } catch (e) { setErr(errOf(e, 'It could not be sent.')); setBusy(false); }
+  }
+  return (
+    <Modal title={`Email ${inv.code || 'invoice'}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Close</button><button type="button" className="btn btn-primary" disabled={busy || !f} onClick={send}>{busy ? 'Sending…' : 'Send email'}</button></>}>
+      {!f && !err && <p className="small-muted">Getting the email ready…</p>}
+      {f && (
+        <>
+          <div className="field"><label>To</label><input type="email" value={f.to} placeholder="customer@company.com" onChange={(e) => setF({ ...f, to: e.target.value })} /></div>
+          <div className="field"><label>Subject</label><input type="text" value={f.subject} onChange={(e) => setF({ ...f, subject: e.target.value })} /></div>
+          <div className="field"><label>Message</label><textarea rows={8} value={f.text} onChange={(e) => setF({ ...f, text: e.target.value })} /></div>
+          <div className="small-muted" style={{ fontSize: 12.5 }}>📎 The invoice PDF ({inv.code}) goes with the email. It is sent from your own name through the company mailbox; replies come to you.</div>
+        </>
+      )}
+      {err && <div className="notice" style={{ marginTop: 10 }} role="alert">{err}</div>}
+    </Modal>
+  );
+}
 export const openInvoicePdf = (inv, toast) => download(`/crm/invoices/${inv.id}/pdf`, `${inv.code || 'invoice'}.pdf`, { open: true }).catch(() => toast('The PDF could not be opened.'));
 // ---- the PAYMENT LOG of an invoice (founder 2026-11-14: every amount received is a line - date, amount, mode; Partly paid / Paid follow from it) ----
 export const PAYMENT_MODES = ['Bank transfer', 'UPI', 'Cheque', 'Cash', 'Card', 'Other'];
@@ -701,6 +733,7 @@ function PaymentLog({ inv, canEdit, onChanged }) {
 }
 function InvoiceBox({ deal, onChanged }) {
   const { toast, me } = useCrm();
+  const [mailing, setMailing] = useState(false);
   const [list, setList] = useState(null);
   const [busy, setBusy] = useState(false);
   const load = () => api.get('/crm/invoices', { params: { dealId: deal.id } }).then((r) => setList(r.data.invoices)).catch(() => setList([]));
@@ -725,6 +758,7 @@ function InvoiceBox({ deal, onChanged }) {
             <span className="small-muted" style={{ fontSize: 11.5 }}>issued {dateOf(inv.issueDate)}{inv.dueDate ? ` · due ${dateOf(inv.dueDate)}` : ''}</span>
             <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6, alignItems: 'center' }}>
               <button type="button" className="btn btn-sm" onClick={() => openInvoicePdf(inv, toast)}>PDF</button>
+              {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Emails the invoice with the PDF attached" onClick={() => setMailing(true)}>✉️ Email</button>}
               {me.canEdit && inv.status !== 'Cancelled' && <button type="button" className="btn btn-sm" title="Opens WhatsApp with the message and a link to the invoice; you press Send" onClick={() => shareInvoiceWhatsApp(inv, toast, () => { load(); if (onChanged) onChanged(); })}>💬 WhatsApp</button>}
               {me.canEdit && <InvoiceStatusSelect inv={inv} onSaved={() => { load(); if (onChanged) onChanged(); }} />}
             </span>
@@ -738,6 +772,7 @@ function InvoiceBox({ deal, onChanged }) {
           <PaymentLog inv={inv} canEdit={me.canEdit} onChanged={() => { load(); if (onChanged) onChanged(); }} />
         </div>
       )}
+      {mailing && inv && <InvoiceEmailDialog inv={inv} onClose={() => setMailing(false)} onSent={() => { load(); if (onChanged) onChanged(); }} />}
     </div>
   );
 }

@@ -606,6 +606,69 @@ async function decideByCustomer(id, decision, { ip } = {}) {
   return { ok: true, status };
 }
 
+// ---- the invoice by EMAIL (founder 2026-11-16: "ikkada mail option kuda vundali, only wtsp ey kaadhu") -----------------------------------------------------------
+// Like WhatsApp, but the PDF itself goes as an attachment, from the person's own name through the company mailbox, through the app's one send door (credits, opt-out, ledger).
+// emailInvoiceDraft = the box's starting words and the customer's address (the account's, else the deciding contact's); emailInvoice = the send. The status is left as it is:
+// the screen asks "Mark as Sent?" afterwards, as it does after WhatsApp.
+async function invoiceMailOf(user, id) {
+  const r = S.roleOf(user);
+  const inv = await DB.one('SELECT * FROM "CrmInvoice" WHERE "id" = ?', S.clip(id, 60));
+  if (!inv || !S.canSeeRow(user, r, inv)) return { error: S.fail(404, 'This invoice is not there.') };
+  if (!S.canEditRow(user, r, inv)) return { error: S.fail(403, 'You cannot send this invoice.') };
+  if (inv.status === 'Cancelled') return { error: S.fail(400, 'This invoice is cancelled. It is not sent to the customer.') };
+  return { inv };
+}
+async function emailInvoiceDraft(user, id) {
+  const x = await invoiceMailOf(user, id);
+  if (x.error) return x.error;
+  const { inv } = x;
+  let billTo = {}; let from = {};
+  try { billTo = JSON.parse(inv.billToJson || '{}'); } catch { billTo = {}; }
+  try { from = JSON.parse(inv.fromJson || '{}'); } catch { from = {}; }
+  let to = String(billTo.email || '').trim(); let contactName = '';
+  if (inv.accountId) {
+    const ct = await DB.one('SELECT "name", "email" FROM "CrmContact" WHERE "accountId" = ? ORDER BY CASE "role" WHEN \'Decision maker\' THEN 0 WHEN \'HR\' THEN 1 ELSE 2 END, CASE WHEN "email" IS NULL OR "email" = \'\' THEN 1 ELSE 0 END LIMIT 1', inv.accountId).catch(() => null);
+    if (ct) { contactName = ct.name || ''; if (!to) to = String(ct.email || '').trim(); }
+  }
+  const inr = (v) => `Rs. ${(Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  const left = Math.max(0, inv.total - inv.paidAmount);
+  const due = inv.dueDate ? new Date(`${inv.dueDate}T00:00:00Z`).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' }) : '';
+  const text = [
+    `Dear ${contactName ? String(contactName).split(/\s+/)[0] : (billTo.name || 'Sir / Madam')},`,
+    '',
+    `Please find attached invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'} for ${inr(left > 0 && inv.paidAmount > 0 ? left : inv.total)}${inv.paidAmount > 0 && left > 0 ? ' (balance)' : ''}${due ? `, due on ${due}` : ''}.`,
+    '',
+    'Please let us know if you need anything else.',
+  ].join('\n');
+  return S.okBody({ ok: true, to, subject: `Invoice ${inv.code || ''} from ${from.name || 'TeamLink Consultants'}`, text, status: inv.status });
+}
+async function emailInvoice(user, id, { to, subject, text } = {}) {
+  const x = await invoiceMailOf(user, id);
+  if (x.error) return x.error;
+  const { inv } = x;
+  const addr = S.clip(to, 200);
+  if (!addr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) return S.fail(400, addr ? 'That email address does not look right.' : 'Write the customer\'s email address in the To box.');
+  const subj = S.clip(subject, 200);
+  const body = S.clip(text, 4000);
+  if (!subj) return S.fail(400, 'Write the subject.');
+  if (!body) return S.fail(400, 'Write the message first.');
+  const CMP = require('./campaigns'); // eslint-disable-line global-require
+  if (await CMP.optedOut('email', addr).catch(() => false)) return S.fail(409, 'This address asked not to be emailed (unsubscribed). TeamLink does not send to it.');
+  const out = await invoicePdf(user, id);
+  if (!out.pdf) return out;
+  const own = await require('../utils/messageChannels').ownContact(user); // eslint-disable-line global-require
+  const result = await require('../utils/messaging').send('Email', { // eslint-disable-line global-require
+    to: addr, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
+    attachments: [{ filename: out.name, content: out.pdf, contentType: 'application/pdf' }],
+    meta: { audience: 'crm', personName: inv.accountName || '', senderUserId: user.id, senderName: user.name, purpose: 'CRM invoice email' },
+  });
+  if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'unknown problem'}`);
+  const now = DB.nowIso();
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'email', subject: `Invoice ${inv.code || ''} emailed`, note: `To ${addr}\n\n${body}\n\n(the invoice PDF was attached)`, at: now, dealId: inv.dealId || null, accountId: inv.accountId || null, byId: user.id, byName: user.name || null, createdAt: now });
+  await S.audit(user, 'CRM invoice emailed', 'CrmInvoice', inv.id, `${inv.code || inv.id} to ${addr}`);
+  return S.okBody({ ok: true, to: addr, status: inv.status });
+}
+
 async function sendProposal(user, id, { to, message } = {}, req) {
   const x = await proposalOf(user, id, { edit: true });
   if (x.error) return x.error;
@@ -777,4 +840,4 @@ async function activities(user, { kind, from, to, owner, q } = {}) {
   return S.okBody({ rows, byKind });
 }
 
-module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, shareInvoice, invoiceOfToken, sendProposal, decideProposal, proposalOfToken, proposalForCustomer, decideByCustomer, monthRange };
+module.exports = { overview, activities, people, reports, setTarget, saveSettings, bulkLeads, importLeads, exportCsv, proposalDefaults, createProposal, proposalPdf, invoicePdf, shareInvoice, invoiceOfToken, sendProposal, emailInvoiceDraft, emailInvoice, decideProposal, proposalOfToken, proposalForCustomer, decideByCustomer, monthRange };
