@@ -219,7 +219,7 @@ export default function MkBrandPage() {
       <Panel title="Try the voice" sub="The AI writes one short introduction in the saved brand voice, so you can hear how it sounds. It uses one AI request." style={{ marginTop: 14 }}>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Btn disabled={trialBusy || !can || dirty || !b.brandName || !(meta && aiReady(meta.ai))} onClick={tryVoice}>{trialBusy ? 'Writing…' : '✦ Write a sample'}</Btn>
-          <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!can ? 'Your login cannot use AI writing.' : dirty ? 'Save your changes first: the sample uses the saved voice.' : !b.brandName ? 'Save a brand name first.' : meta && !aiReady(meta.ai) ? 'The AI is not ready (see AI Content for the reason).' : ''}</span>
+          <span style={{ fontSize: 10, color: 'var(--muted)' }}>{!can ? 'Your login cannot use AI writing.' : dirty ? 'Save your changes first: the sample uses the saved voice.' : !b.brandName ? 'Save a brand name first.' : meta && !aiReady(meta.ai) ? 'The AI is not ready (see AI usage for the reason).' : ''}</span>
         </div>
         {trial && trial.error ? <Banner tone="error">{trial.error}</Banner> : null}
         {trial && trial.variants && trial.variants[0] ? <div style={{ marginTop: 10 }}><TextsPreview chans={chans} texts={trial.variants[0].texts} subject={trial.variants[0].subject} />{trial.ai && trial.ai.demo ? <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>Written by the test sandbox sample writer.</div> : null}</div> : null}

@@ -8,9 +8,8 @@
 // status: 'live' = works now · 'planned' = on the plan, not built yet (the screens say so; nothing is faked).
 // ---------------------------------------------------------------------------
 const MODULES = [
-  { id: 'content', no: 1, label: 'AI Content', phase: 1, status: 'live', page: 'mkcontent', blurb: 'Write WhatsApp, SMS, email, RCS and social messages with AI in your brand voice. Nothing is used until a person approves it.' },
-  // 2026-11-16: the founder removed four tabs from AI Marketing (Lead generation, Workflow automation, Email marketing, Campaign messages): their screens are gone and they are no longer listed here.
-  // The server code (marketing/leadgen.js, journeys.js, emailmk.js, messaging.js) is still in the project and its routes still answer, so a tab can be brought back without rebuilding it.
+  // 2026-11-16: the founder removed AI Content and four more tabs from AI Marketing (AI Content, Lead generation, Workflow automation, Email marketing, Campaign messages): their screens are gone and they are no longer listed here.
+  // The server code (marketing/content.js, leadgen.js, journeys.js, emailmk.js, messaging.js) is still in the project and its routes still answer, so a tab can be brought back without rebuilding it.
   // 2026-11-14: live. Numbers for words, pictures, videos, the calendar, client approvals and AI use (marketing/reports.js); linking to joinings comes later
   { id: 'reports', no: 6, label: 'Analytics & Reporting', phase: 1, status: 'live', page: 'mkreports', blurb: 'Plain numbers for any date range: content, pictures, videos, calendar posts, client approvals and AI use, per person, with a CSV download.' },
   // 2026-11-13 (founder's list item 6): what goes out on which day, with "Plan a week with AI"; posted by hand until the social apps are approved

@@ -242,7 +242,7 @@ function EntryModal({ ed, setEd, plats, busy, canWrite, onSave, onClose, onPoste
         {edit ? (
           <Field label="TAKE THE WORDS FROM APPROVED AI CONTENT" full hint="Only approved words are offered. You can still change them here.">
             {srcs === null ? <TinyBtn onClick={loadSrcs}>Show approved content</TinyBtn>
-              : srcs.length === 0 ? <small style={{ color: 'var(--muted)' }}>No approved AI content yet. Write some in AI Content and get it approved.</small>
+              : srcs.length === 0 ? <small style={{ color: 'var(--muted)' }}>Nothing approved yet. Make a picture or a video and get it approved first.</small>
                 : <select value="" onChange={(e) => useSource(e.target.value)}><option value="">Pick approved content…</option>{srcs.map((s) => <option key={s.id} value={s.id}>{s.title}</option>)}</select>}
             {srcErr ? <small style={{ color: '#b3261e' }}>{srcErr}</small> : null}
           </Field>

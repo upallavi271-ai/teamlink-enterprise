@@ -18,20 +18,18 @@ export default function MkHomePage() {
   if (ovErr && !ov) return <Banner tone="error">{ovErr} <button type="button" className="tiny-btn" style={{ marginLeft: 8 }} onClick={loadOv}>Try again</button></Banner>;
   if (!meta || !ov) return <div className="card panel">Loading…</div>;
   const c = ov.counts || {}; const u = ov.usage || {};
-  const started = (c.draft || 0) + (c.waiting || 0) + (c.changes || 0) + (c.approved || 0) > 0;
   const at = ov.attention || {}; const have = ov.have || {};
   // THREE LOOKS (the server decides who is which: outreach/access.js): an Admin sees everything and the settings, a Marketing login sees its working tools, an approver sees what waits for them
   const look = meta.isAdmin ? 'admin' : (meta.canWrite ? 'team' : 'approver');
   const LOOK = {
     admin: ['Admin view', 'Everything in AI Marketing, and the settings: AI limits, who approves, telling clients, posting. Nothing is posted or spent without a person\'s approval; short notices to clients go by themselves and can be switched off in AI usage.'],
-    team: ['Marketing team', 'Your tools for words, pictures, videos, campaigns and client projects. What you make waits for an approver before it is used.'],
-    approver: ['Approver', 'What your team wrote and made is waiting for you here. Approve it, or send it back with a note.'],
+    team: ['Marketing team', 'Your tools for pictures, videos and client projects. What you make waits for an approver before it is used.'],
+    approver: ['Approver', 'What your team made is waiting for you here. Approve it, or send it back with a note.'],
   }[look];
   const steps = [
     look === 'admin' && ['Check who sees what, the AI limits and who approves (AI usage)', false, 'mkusage', 'Open AI usage'],
     meta.canWrite && ['Set up your brand kit, so the AI writes and draws like your company', ov.brandReady, 'mkbrand', ov.brandReady ? 'Change' : 'Set it up'],
-    meta.canWrite && ['Write your first message with AI', started, 'mkcontent', 'Write'],
-    meta.canWrite && ['Get it approved: only approved words reach the Content Library and campaigns', (c.approved || 0) > 0, 'mkapprove', 'Approvals'],
+    meta.canWrite && ['Get it approved: only approved work is used', (c.approved || 0) > 0, 'mkapprove', 'Approvals'],
     meta.canWrite && ['Make or upload a picture', !!have.pictures, 'mkimages', 'AI Images'],
     meta.canWrite && ['Put the week on the calendar', !!have.posts, 'mkcalendar', 'Calendar'],
     meta.canWrite && ['Join pictures and clips into a video', !!have.videos, 'mkvideos', 'AI Video'],
@@ -50,7 +48,6 @@ export default function MkHomePage() {
       <PageHead eyebrow={`AI Marketing · ${LOOK[0]}`} title="AI Marketing" lead={LOOK[1]}>
         {meta.canWrite && <Btn onClick={() => go('mkcalendar')}>▦ Calendar</Btn>}
         {meta.canWrite && <Btn onClick={() => go('mkimages')}>◩ Make a picture</Btn>}
-        {meta.canWrite && <Btn primary onClick={() => go('mkcontent')}>✦ Write with AI</Btn>}
       </PageHead>
       <AiBanner ai={meta.ai} />
       <Panel title="Needs your attention" sub={todo.length ? 'What is waiting for you right now' : undefined} style={{ marginBottom: 14 }} right={<Btn small onClick={loadOv}>Refresh</Btn>}>
@@ -63,7 +60,6 @@ export default function MkHomePage() {
         )}
       </Panel>
       <Kpis>
-        {meta.canWrite && <Kpi label="Saved" icon="✎" value={fmtNum(c.draft || 0)} meta="Not sent for approval" onClick={() => go('mkcontent')} />}
         <Kpi label="Waiting for approval" icon="⏳" value={fmtNum(c.waiting || 0)} meta={(c.waitingForMe || 0) > 0 ? `${c.waitingForMe} waiting for you` : 'Nothing waits for you'} tone={(c.waitingForMe || 0) > 0 ? 'warn' : 'neutral'} onClick={() => go('mkapprove')} />
         <Kpi label="Approved this month" icon="✔" value={fmtNum(c.approvedThisMonth || 0)} meta={`${fmtNum(c.approved || 0)} approved in all`} tone="good" />
         {meta.canWrite && <Kpi label="AI requests this month" icon="✧" value={fmtNum(u.month || 0)} meta={`${fmtNum(u.today || 0)} today`} onClick={() => go('mkusage')} />}
