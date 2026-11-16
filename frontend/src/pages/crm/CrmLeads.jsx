@@ -173,7 +173,7 @@ export default function CrmLeads() {
             <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <b>{picked.size} ticked:</b>
               {me.canAssign && <select defaultValue="" onChange={(e) => { if (e.target.value) bulk({ ownerId: e.target.value }); e.target.value = ''; }} aria-label="Give to"><option value="">Give to…</option>{me.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>}
-              <select defaultValue="" onChange={(e) => { if (e.target.value) bulk({ status: e.target.value }); e.target.value = ''; }} aria-label="Set status"><option value="">Set status…</option>{['New', 'Contacted', 'Qualified', 'Junk'].map((s) => <option key={s} value={s}>{s}</option>)}</select>
+              <button type="button" className="btn btn-sm" onClick={() => bulk({ status: 'Junk' })} title="Stages move on their own; the one thing set by hand is Junk">Mark junk</button>
               <select defaultValue="" onChange={(e) => { if (e.target.value) bulk({ rating: e.target.value }); e.target.value = ''; }} aria-label="Set rating"><option value="">Set rating…</option>{me.lists.ratings.map((s) => <option key={s} value={s}>{s}</option>)}</select>
               <button type="button" className="btn btn-sm" onClick={() => setPicked(new Set())}>Clear</button>
             </span>

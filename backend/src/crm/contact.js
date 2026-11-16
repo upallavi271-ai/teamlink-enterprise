@@ -81,6 +81,27 @@ async function logSent(user, kind, id, activity, providerRef, status, detail) {
   return actId;
 }
 
+// HOW A WHATSAPP MESSAGE TO THIS NUMBER WOULD GO, from what the WhatsApp integration already holds (the number allotted to this person, its general template, the 24-hour window).
+async function waPlan(user, e164) {
+  const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
+  const delivery = require('../utils/messageDelivery'); // eslint-disable-line global-require
+  const route = await WN.planNumber(user, { requestedNumberId: null, department: null, automatic: false, to: e164 }).catch(() => ({ legacy: true }));
+  if (!route.legacy && !route.ok) return { route, error: route.error || 'No WhatsApp number is allotted to you.', notConfigured: route.code === 'NOT_CONFIGURED' || /not (been )?configured/i.test(String(route.error || '')) };
+  const windows = route.ok ? await WN.openWindowsFor(route.number) : await delivery.openWindows();
+  const open = !!(windows && windows.has(delivery.digitsOf(e164)));
+  const cfg = route.ok ? route.cfg : await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
+  const template = (cfg && cfg.templates && cfg.templates.bulk) || null;
+  return { route, cfg, open, template, viaTemplate: !open, numberLabel: route.ok ? route.number.label : null, blocked: !open && !template && !!cfg && cfg.configured !== false };
+}
+const waPlanOut = (p) => (p.error ? { ok: false, error: p.error, notConfigured: !!p.notConfigured } : { ok: true, windowOpen: p.open, viaTemplate: p.viaTemplate, template: p.template, number: p.numberLabel, blocked: p.blocked });
+async function whatsappPlan(user, { kind, id, to } = {}) {
+  const x = await recipientOf(user, kind, id);
+  if (x.error) return x.error;
+  const m = require('../utils/messagingCore').normalizeMobile(to || x.phone); // eslint-disable-line global-require
+  if (!m.ok) return S.okBody({ ok: false, error: m.reason });
+  return S.okBody(waPlanOut(await waPlan(user, m.e164)));
+}
+
 // One email or WhatsApp message, really sent, then written on the timeline.
 async function send(user, { kind, id, channel, to, subject, text } = {}) {
   if (!CH[channel]) return S.fail(400, 'Pick Email or WhatsApp.');
@@ -113,15 +134,10 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
   // WHATSAPP'S RULE: a business may write first only with an APPROVED TEMPLATE. Plain words are delivered only inside 24 hours of the person's last message to us;
   // outside it the API still says "accepted" and WhatsApp drops the message later - which made "Sent" a lie. So: plain words inside the window, else the company's approved
   // general template (Administration > Integrations > WhatsApp > Template name - bulk / general) with the message as its blank, else it is refused with the reason.
-  const WN = require('../utils/waNumbers'); // eslint-disable-line global-require
-  const delivery = require('../utils/messageDelivery'); // eslint-disable-line global-require
-  const route = await WN.planNumber(user, { requestedNumberId: null, department: null, automatic: false, to: m.e164 }).catch(() => ({ legacy: true }));
-  if (!route.legacy && !route.ok) return S.fail(409, route.error || 'No WhatsApp number is allotted to you.', { notConfigured: route.code === 'NOT_CONFIGURED' || /not (been )?configured/i.test(String(route.error || '')) });
-  const windows = route.ok ? await WN.openWindowsFor(route.number) : await delivery.openWindows();
-  const open = !!(windows && windows.has(delivery.digitsOf(m.e164)));
-  const cfg = route.ok ? route.cfg : await require('../utils/whatsappCloud').whatsappConfig().catch(() => null); // eslint-disable-line global-require
-  const viaTemplate = !open;
-  if (viaTemplate && cfg && cfg.configured !== false && !(cfg.templates && cfg.templates.bulk) && !(cfg.sandbox)) {
+  const plan = await waPlan(user, m.e164);
+  if (plan.error) return S.fail(409, plan.error, { notConfigured: !!plan.notConfigured });
+  const { route, open, viaTemplate } = plan;
+  if (plan.blocked) {
     return S.fail(409, 'WhatsApp will not deliver this: the person has not written to you in the last 24 hours, and no approved WhatsApp template is set for general messages. Ask an Admin to set one (Administration > Integrations > WhatsApp > Template name - bulk / general), or use "Open in WhatsApp" to write from your own WhatsApp.', { needsTemplate: true, outsideWindow: true });
   }
   result = await require('../utils/messaging').send('WhatsApp', { // eslint-disable-line global-require
@@ -200,4 +216,4 @@ async function applyDeliveryStatus(providerRef, status, error, at) {
   return n;
 }
 
-module.exports = { ready, draftFor, send, opened, call, applyCallResult, applyDeliveryStatus };
+module.exports = { ready, draftFor, send, opened, call, applyCallResult, applyDeliveryStatus, whatsappPlan };

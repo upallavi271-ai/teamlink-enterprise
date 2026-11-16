@@ -106,7 +106,7 @@ const ymd = (offset) => new Date(Date.now() + 5.5 * 3600000 + offset * 86400000)
   const det = await call('GET', `/crm/leads/${leadId}`, null, auth);
   const act = det.body.activities.find((a) => /Visit done: Visit their office/.test(a.subject || ''));
   check('the outcome and note are on the lead timeline', act && act.kind === 'meeting' && /Outcome: Meeting held/.test(act.note) && /HR head/.test(act.note), det.body.activities.map((a) => a.subject));
-  check('a reached lead is now Contacted', det.body.lead.status === 'Contacted', det.body.lead.status);
+  check('a visit with "Meeting held" makes the lead Qualified, on its own', det.body.lead.status === 'Qualified' && det.body.lead.stage === 'Qualified', [det.body.lead.status, det.body.lead.stage]);
   const again = await call('POST', `/crm/tasks/${t1.body.task.id}/done`, { outcome: 'Spoke', next: { dueDate: ymd(5) } }, auth);
   check('Done twice does not make a second next follow-up', again.status === 200 && !again.body.next, again.body);
 

@@ -131,11 +131,17 @@ let T = {};
   check('the message is sent to the number written as +91 98765 43210 (cleaned to +919876543210)', wa.status === 200 && wa.body.ok && wa.body.to === '+919876543210', wa.body);
   check('the person has not written in 24 hours, so it goes as the approved template (WhatsApp would drop plain words)', wa.body.usedTemplate === true, wa.body);
   check('and it is on the timeline with the message', (await timeline('lead', lead.id)).some((a) => a.kind === 'whatsapp' && /WhatsApp message sent/.test(a.subject) && /\+919876543210/.test(a.note) && /this is TeamLink/.test(a.note)));
+  const plan1 = (await call('GET', `/crm/contact/wa-plan?kind=lead&id=${lead.id}`, null, T.X)).body;
+  check('before sending, the screen can say how it will go: outside 24 hours, in the integration template zz_general', plan1.ok && plan1.windowOpen === false && plan1.viaTemplate === true && plan1.template === 'zz_general' && plan1.blocked === false, plan1);
   // inside the 24 hours (the person wrote to us a moment ago) the words go as they are
   const digits = '919876543210';
   await prisma.appSetting.upsert({ where: { key: `wa.window.${digits}` }, create: { key: `wa.window.${digits}`, value: new Date().toISOString() }, update: { value: new Date().toISOString() } });
   const win = await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'WhatsApp', text: 'Plain words inside the window' }, T.X);
   check('the person wrote to us just now: the words go as they are, not in the template', win.status === 200 && win.body.usedTemplate === false, win.body);
+  const plan2 = (await call('GET', `/crm/contact/wa-plan?kind=lead&id=${lead.id}`, null, T.X)).body;
+  check('with the window of the person open the plan says the words go as they are', plan2.ok && plan2.windowOpen === true && plan2.viaTemplate === false, plan2);
+  check('a number that is not usable is explained', (await call('GET', `/crm/contact/wa-plan?kind=lead&id=${lead.id}&to=123`, null, T.X)).body.ok === false);
+  check('another Salesperson cannot ask about a lead that is not their own', (await call('GET', `/crm/contact/wa-plan?kind=lead&id=${leadA.id}`, null, T.B)).status === 404);
   // delivery truth: the provider reports back and the timeline line says what became of it
   const waLine = (await timeline('lead', lead.id)).find((a) => a.kind === 'whatsapp' && /this is TeamLink/.test(a.note || ''));
   check('the line starts as Sent (accepted), with the id the provider gave it', waLine && waLine.deliveryStatus === 'Sent' && !!waLine.providerRef, waLine);

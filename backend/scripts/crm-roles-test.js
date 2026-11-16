@@ -91,12 +91,15 @@ const near = (a, b) => Math.abs(a - b) < 0.01;
   check('A cannot hand a lead to B (only a manager assigns)', (await call('POST', '/crm/leads/bulk', { ids: [LA.id], ownerId: B.id }, tk.A)).status === 403);
   check('the manager can', (await call('POST', '/crm/leads/bulk', { ids: [LA.id], ownerId: A.id }, tk.M)).status === 200);
 
-  console.log('3. The "log a call first" rule');
+  console.log('3. Stages move on their own (nobody picks one)');
+  const stageA = async () => (await call('GET', `/crm/leads/${LA.id}`, null, tk.A)).body.lead.stage;
   const early = await call('PUT', `/crm/leads/${LA.id}`, { status: 'Contacted' }, tk.A);
-  check('A cannot mark a lead Contacted before anything is logged on it', early.status === 409 && early.body.needsLog === true, early.body);
+  check('A cannot make a lead Contacted by editing it: the status is not taken', early.status === 200 && (await stageA()) === 'New', early.body);
+  check('nor by picking a stage', (await call('POST', `/crm/leads/${LA.id}/stage`, { stage: 'Contacted' }, tk.A)).status === 409 && (await stageA()) === 'New');
   const logged = await call('POST', '/crm/activities', { kind: 'call', leadId: LA.id, subject: 'Spoke to Ravi', outcome: 'Spoke' }, tk.A);
-  check('A logs a call on it', logged.status === 200, logged.body);
-  check('now it can be Contacted', (await call('PUT', `/crm/leads/${LA.id}`, { status: 'Contacted' }, tk.A)).status === 200);
+  check('A logs a call that reached them', logged.status === 200, logged.body);
+  check('now it is Contacted, by itself', (await stageA()) === 'Contacted');
+  check('A cannot reopen or touch the stage of a lead that is not theirs', (await call('POST', `/crm/leads/${LB.id}/reopen`, null, tk.A)).status === 404);
 
   console.log('4. Follow-ups are your own');
   const tomorrow = new Date(Date.now() + 5.5 * 3600000 + 86400000).toISOString().slice(0, 10);

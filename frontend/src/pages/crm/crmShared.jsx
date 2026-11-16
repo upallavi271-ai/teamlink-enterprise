@@ -10,7 +10,6 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
 import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
-import { useMoveLead } from './CrmLeadBoard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
 import CrmContactDialog, { ContactPanel } from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
@@ -209,7 +208,6 @@ function fieldsFor(kind, me) {
       { k: 'phone', label: 'Phone', type: 'tel' }, { k: 'email', label: 'Email', type: 'email' }, { k: 'industry', label: 'Industry' },
       { k: 'city', label: 'City' }, { k: 'source', label: 'Source', type: 'select', options: L.sources }, { k: 'expectedValue', label: 'Expected value (₹)', type: 'number' },
       { k: 'rating', label: 'Rating', type: 'select', options: L.ratings },
-      { k: 'status', label: 'Status', type: 'select', options: L.leadStatuses.filter((s) => s !== 'Converted'), editOnly: true },
       { k: 'notes', label: 'Notes', type: 'textarea', wide: true },
     ];
   }
@@ -869,7 +867,6 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
   useEffect(() => { setD(null); setErr(''); load(); }, [kind, id]); // eslint-disable-line react-hooks/exhaustive-deps
   const changed = () => { load(); if (onChanged) onChanged(); };
   const { move, dialog } = useMoveDeal(changed);
-  const { move: moveLead, dialog: leadDialog } = useMoveLead(changed);
   const L = me.lists;
   const row = d && d[kind];
   const name = row ? (row.company || row.name || row.title) : '';
@@ -953,10 +950,13 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
                 <button type="button" className="btn btn-sm" onClick={() => decideDiscount('reject')}>Reject</button>
               </>
             )}
-            {d.canEdit && kind === 'lead' && row.status !== 'Converted' && (
-              <select value={row.stage || ''} onChange={(e) => moveLead(row, e.target.value)} aria-label="Stage" style={{ width: 'auto' }}>
-                {L.leadStages.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
-              </select>
+            {kind === 'lead' && (
+              <span className="crm-stage-auto" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }} title="The stage moves on its own: Contacted when you call, message or mail the lead, Qualified after a meeting or details sent, Lost when it is not interested.">
+                <Pill v={row.stage || row.status} /><span className="small-muted" style={{ fontSize: 11 }}>moves on its own</span>
+              </span>
+            )}
+            {d.canEdit && kind === 'lead' && row.status !== 'Converted' && (row.stage === 'Lost') && (
+              <button type="button" className="btn btn-sm" title={row.lostReason ? `Lost: ${row.lostReason}` : 'Put this lead back to work'} onClick={() => api.post(`/crm/leads/${row.id}/reopen`).then(() => { toast('The lead is back to work.'); changed(); }).catch((e) => toast(errOf(e, 'The lead could not be reopened.')))}>Reopen</button>
             )}
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-sm" title="Stop or start the automatic mails, SMS, WhatsApp and calls to this lead" onClick={() => api.post(`/crm/leads/${row.id}/auto`, { paused: !row.autoPaused }).then(() => { toast(row.autoPaused ? 'Automatic follow-through is on for this lead.' : 'Automatic follow-through stopped for this lead.'); changed(); }).catch((e) => toast(errOf(e, 'This could not be changed.')))}>{row.autoPaused ? 'Start automatic' : 'Stop automatic'}</button>}
             {d.canEdit && kind === 'lead' && row.status !== 'Converted' && <button type="button" className="btn btn-primary btn-sm" onClick={() => setConverting(true)}>Convert to deal</button>}
@@ -1060,7 +1060,7 @@ export function RecordPanel({ kind, id, onClose, onChanged }) {
       <Modal title={kind === 'lead' ? 'Lead record' : kind === 'deal' ? 'Deal record' : 'Customer record'} size="xwide" onClose={onClose}>{body}</Modal>
       {editing && <RecordForm kind={editing.kind} row={editing.row} preset={editing.preset} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); changed(); }} />}
       {converting && row && <ConvertLead lead={row} onClose={() => setConverting(false)} onDone={(out) => { setConverting(false); changed(); if (out.deal) openRecord('deal', out.deal.id); }} />}
-      {dialog}{leadDialog}
+      {dialog}
     </>
   );
 }

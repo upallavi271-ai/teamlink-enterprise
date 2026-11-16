@@ -66,7 +66,8 @@ router.post('/tasks/:id/done', wrap((req) => CRM.finishTask(req.user, req.params
 router.post('/tasks/:id/cancel', wrap((req) => SALES.cancelTask(req.user, req.params.id)));
 router.post('/tasks/:id/snooze', wrap((req) => CRM.snoozeTask(req.user, req.params.id, req.body || {})));
 // the lead pipeline, the website form and the on-screen reminders (crm/sales.js)
-router.post('/leads/:id/stage', wrap((req) => SALES.moveLead(req.user, req.params.id, req.body || {})));
+router.post('/leads/:id/stage', wrap((req) => SALES.moveLead(req.user, req.params.id, req.body || {}))); // refused: stages move on their own
+router.post('/leads/:id/reopen', wrap((req) => SALES.reopenLead(req.user, req.params.id))); // the one undo of an automatic Lost
 router.get('/website', wrap((req) => SALES.websiteGet(req.user)));
 router.put('/website', wrap((req) => SALES.websiteSave(req.user, req.body || {})));
 router.post('/website/key', wrap((req) => SALES.websiteNewKey(req.user)));
@@ -108,6 +109,7 @@ router.post('/ai/draft/:kind/:id', wrap((req) => AI.draftEmail(req.user, req.par
 router.post('/ai/ask', wrap((req) => AI.ask(req.user, req.body || {})));
 // Call, WhatsApp and Email from a lead / deal / customer (crm/contact.js): what is connected, the first words, the real send, the call, and "opened my own app"
 router.get('/contact/ready', wrap((req) => CONTACT.ready(req.user)));
+router.get('/contact/wa-plan', wrap((req) => CONTACT.whatsappPlan(req.user, { kind: String(req.query.kind || ''), id: String(req.query.id || ''), to: String(req.query.to || '') })));
 router.get('/contact/draft', wrap((req) => CONTACT.draftFor(req.user, String(req.query.kind || ''), String(req.query.id || ''))));
 router.post('/contact/send', require('../channels/rateLimit').limiter(), wrap((req) => CONTACT.send(req.user, req.body || {})));
 router.post('/contact/call', require('../channels/rateLimit').limiter(), wrap((req) => CONTACT.call(req.user, req.body || {})));

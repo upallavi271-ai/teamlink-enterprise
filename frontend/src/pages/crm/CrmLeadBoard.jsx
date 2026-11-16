@@ -41,9 +41,6 @@ export function useMoveLead(onMoved) {
 
 export default function CrmLeadBoard({ rows, onMoved }) {
   const { me, openRecord } = useCrm();
-  const { move, dialog } = useMoveLead(onMoved);
-  const [dragId, setDragId] = useState(null);
-  const [over, setOver] = useState(null);
   const [logging, setLogging] = useState(null); // 📞 Log on a card
   const today = istToday();
   return (
@@ -53,21 +50,12 @@ export default function CrmLeadBoard({ rows, onMoved }) {
         {me.lists.leadStages.map((s) => {
           const ls = rows.filter((l) => l.stage === s.name);
           return (
-            <div
-              key={s.name}
-              className={`crm-col${over === s.name ? ' drop' : ''}`}
-              onDragOver={(e) => { if (dragId) { e.preventDefault(); setOver(s.name); } }}
-              onDragLeave={() => setOver((o) => (o === s.name ? null : o))}
-              onDrop={(e) => { e.preventDefault(); const l = rows.find((x) => x.id === dragId); setOver(null); setDragId(null); if (l && l.stage !== s.name) move(l, s.name); }}
-            >
+            <div key={s.name} className="crm-col">
               <div className="crm-col-head" style={{ borderTop: `3px solid ${s.color}` }}><span>{s.name} · {ls.length}</span><span className="sum">{short(ls.reduce((a, l) => a + (Number(l.expectedValue) || 0), 0))}</span></div>
               {ls.map((l) => (
                 <div
                   key={l.id}
                   className="crm-card"
-                  draggable={me.canEdit && l.status !== 'Converted'}
-                  onDragStart={(e) => { setDragId(l.id); e.dataTransfer.effectAllowed = 'move'; }}
-                  onDragEnd={() => { setDragId(null); setOver(null); }}
                   onClick={() => openRecord('lead', l.id)}
                   onKeyDown={(e) => { if (e.key === 'Enter') openRecord('lead', l.id); }}
                   role="button"
@@ -85,7 +73,6 @@ export default function CrmLeadBoard({ rows, onMoved }) {
           );
         })}
       </div>
-      {dialog}
     </>
   );
 }

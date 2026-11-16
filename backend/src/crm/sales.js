@@ -23,8 +23,14 @@ const REMIND_BEFORE = [0, 15, 60, 1440]; // minutes
 
 // ---- the stage of a lead ---------------------------------------------------------------------------------
 // a lead from before stages stood where its status says; a stage that was removed from the settings = the first stage
+// a converted lead stands where its DEAL stands (when the deal's stage is known: lead.dealStage): working it = Qualified, a proposal sent = Proposal, haggling = Negotiation, closed = Won / Lost
+const DEAL_TO_LEAD = { 'Proposal sent': 'Proposal', Negotiation: 'Negotiation', Won: 'Won', Lost: 'Lost' };
 function stageOf(lead, names) {
-  if (lead.status === 'Converted') return 'Won';
+  if (lead.status === 'Converted') {
+    if (!lead.dealStage) return 'Won';
+    const m = DEAL_TO_LEAD[lead.dealStage] || 'Qualified';
+    return names.includes(m) ? m : (names.includes('Qualified') ? 'Qualified' : 'Won');
+  }
   if (lead.status === 'Junk') return 'Lost';
   if (lead.stage && names.includes(lead.stage)) return lead.stage;
   if (lead.status === 'Contacted' && names.includes('Contacted')) return 'Contacted';
@@ -33,7 +39,56 @@ function stageOf(lead, names) {
 }
 const stageNames = (st) => st.leadStages.map((x) => x.name);
 
-async function moveLead(user, id, { stage, lostReason } = {}) {
+// STAGES MOVE ON THEIR OWN (founder 2026-11-16: "ivi automatic ga stage ni update avvali, manual ga chese option kaadhu"). Nobody picks a stage. It moves when something is DONE on the lead:
+//   New -> Contacted         a call, WhatsApp, email or meeting (not a call nobody picked up)
+//   Contacted -> Qualified   a meeting held, or details sent, or a meeting logged
+//   any open stage -> Lost   "Not interested" is what came of it
+//   a converted lead         follows its deal (Qualified / Proposal / Negotiation / Won / Lost, see stageOf)
+// A lead marked Lost by mistake is put back by "Reopen" (it is not a stage choice: it goes back to where its history says it was).
+const AUTO_CONTACT = ['call', 'email', 'whatsapp', 'meeting'];
+async function autoStage(leadId, ev = {}) {
+  const row = await S.getRow('lead', leadId);
+  if (!row || ['Converted', 'Junk'].includes(row.status)) return null;
+  const names = stageNames(await SETTINGS.load());
+  const from = stageOf(row, names);
+  if (['Won', 'Lost'].includes(from)) return null;
+  const outcome = String(ev.outcome || '');
+  const i = names.indexOf(from);
+  let to = null; let why = '';
+  if (outcome === 'Not interested' && names.includes('Lost')) { to = 'Lost'; why = 'Not interested'; }
+  else if (AUTO_CONTACT.includes(ev.kind) && outcome !== 'No answer') {
+    if (i === 0 && names.length > 1) { to = names[1]; why = ev.kind === 'email' || ev.kind === 'whatsapp' ? 'A message went to them' : 'They were reached'; }
+    if ((['Meeting held', 'Sent details'].includes(outcome) || ev.kind === 'meeting') && names.includes('Qualified') && names.indexOf('Qualified') > i) { to = 'Qualified'; why = outcome || 'A meeting'; }
+  }
+  if (!to || to === from) return null;
+  const j = names.indexOf(to);
+  const status = to === 'Lost' ? row.status : (j === 0 ? 'New' : (j === 1 ? 'Contacted' : 'Qualified'));
+  const now = DB.nowIso();
+  await S.update('CrmLead', row.id, { stage: to, status, lostReason: to === 'Lost' ? why : null, updatedAt: now });
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Stage: ${from} → ${to}`, note: `Moved automatically: ${why}${to === 'Lost' ? '. Reopen the lead if this was a mistake.' : ''}`, at: now, leadId: row.id, accountId: row.accountId || null, byId: null, byName: 'TeamLink', createdAt: now });
+  return to;
+}
+// Put a Lost lead back to work (the only "undo" of an automatic Lost): Contacted when something has been done on it, else New.
+async function reopenLead(user, id) {
+  const r = S.roleOf(user);
+  const row = await S.getRow('lead', id);
+  if (!S.canEditRow(user, r, row)) return S.fail(404, 'This lead is not there, or it is not yours.');
+  const names = stageNames(await SETTINGS.load());
+  if (row.status === 'Converted' || stageOf(row, names) !== 'Lost') return S.fail(400, 'This lead is not Lost.');
+  const worked = await S.hasLoggedWork(row.id);
+  const to = worked && names.length > 1 ? names[1] : names[0];
+  const now = DB.nowIso();
+  const lead = await S.update('CrmLead', row.id, { stage: to, status: worked ? 'Contacted' : 'New', lostReason: null, updatedAt: now });
+  await S.insert('CrmActivity', { id: S.newId('act'), kind: 'note', subject: `Stage: Lost → ${to}`, note: `Reopened by ${user.name || 'a person'}`, at: now, leadId: row.id, accountId: row.accountId || null, byId: user.id, byName: user.name || null, createdAt: now });
+  await S.audit(user, 'CRM lead reopened', 'CrmLead', row.id, `${row.company}: Lost → ${to}`);
+  return S.okBody({ ok: true, lead: { ...lead, stage: to } });
+}
+
+async function moveLead(user, id) {
+  if (user) return S.fail(409, 'Stages move on their own now: a lead becomes Contacted when you call, message or mail it, Qualified when you meet or send details, and Lost when it says it is not interested. Log what you did on the lead.', { automatic: true });
+  return S.fail(409, 'Stages move on their own.');
+}
+async function moveLeadByHand(user, id, { stage, lostReason } = {}) { // kept for a one-off data fix by a developer, no route reaches it
   const r = S.roleOf(user);
   const row = await S.getRow('lead', id);
   if (!S.canEditRow(user, r, row)) return S.fail(404, 'This lead is not there, or it is not yours.');
@@ -307,5 +362,5 @@ async function escalateOverdue({ now = Date.now(), notify } = {}) {
 }
 
 module.exports = {
-  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
+  PRIORITIES, OUTCOMES, firstFollowUp, escalateOverdue, TASK_TYPES, REMIND_BEFORE, stageOf, stageNames, moveLead, autoStage, reopenLead, capture, websiteGet, websiteSave, websiteNewKey, taskExtras, cancelTask, liveReminders, runDue,
 };

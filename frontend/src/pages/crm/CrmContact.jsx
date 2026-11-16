@@ -34,6 +34,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [sentNote, setSentNote] = useState('');
+  const [plan, setPlan] = useState(null); // how a WhatsApp message to this number would go (from the WhatsApp integration)
   const [sentOk, setSentOk] = useState({ Email: null, WhatsApp: null }); // { to, at } once a message really went: the Send button says Sent
   const [how, setHow] = useState(null); // after a call: { via: 'gateway' | 'phone' }
   const body = { kind: record.kind, id: record.id };
@@ -46,6 +47,12 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
       setSubject((initialDraft && initialDraft.subject) || d.email.subject); setMailText((initialDraft && initialDraft.text) || d.email.text); setWaText(d.whatsapp.text);
     }).catch((e) => setErr(errOf(e, 'This record could not be opened.')));
   }, [record.kind, record.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (ch !== 'WhatsApp') return undefined;
+    const t = setTimeout(() => { api.get('/crm/contact/wa-plan', { params: { ...body, to: to.WhatsApp || undefined } }).then((r) => setPlan(r.data)).catch(() => setPlan(null)); }, 350);
+    return () => clearTimeout(t);
+  }, [ch, to.WhatsApp, record.kind, record.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchTo = (c) => { setCh(c); setErr(''); setSentNote(''); setHow(null); };
   const setToFor = (c, v) => setTo((t) => ({ ...t, [c]: v }));
@@ -119,6 +126,16 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
           {waReady
             ? <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5 }}>Sent through {rd.whatsapp.via || 'the connected WhatsApp number'}. If the person wrote to you in the last 24 hours your words go as they are; otherwise they go inside the company's approved WhatsApp template (WhatsApp delivers nothing else to a person who has not written first).</div>
             : <Notice>WhatsApp is not connected: {rd.whatsapp.reason} Ask an Admin to connect it in Administration → Integrations. Until then you can open WhatsApp on your own phone or computer.</Notice>}
+          {waReady && plan && plan.ok && (
+            <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5, padding: '6px 10px', borderRadius: 8, background: 'var(--surface-2, #f4f6fa)' }} role="status">
+              {plan.windowOpen
+                ? <>✓ This person wrote to you in the last 24 hours: your words go <b>as you write them</b>{plan.number ? ` from ${plan.number}` : ''}.</>
+                : plan.template
+                  ? <>This person has not written in the last 24 hours, so it goes in your WhatsApp integration's approved template <b>“{plan.template}”</b>{plan.number ? ` from ${plan.number}` : ''}, with your message as its blank.</>
+                  : <><b>Cannot be sent from here:</b> no 24-hour window and no "Template name — bulk / general" in the WhatsApp integration{plan.number ? ` (${plan.number})` : ''}. Use "Open in WhatsApp" below.</>}
+            </div>
+          )}
+          {waReady && plan && !plan.ok && plan.error && <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5, color: 'var(--red)' }}>{plan.error}</div>}
           <div className="field"><label>To (mobile number)</label><input value={to.WhatsApp} onChange={(e) => setToFor('WhatsApp', e.target.value)} placeholder="98765 43210" aria-label="WhatsApp number" /></div>
           <div className="field"><label>Message</label><textarea rows={6} value={waText} onChange={(e) => setWaText(e.target.value)} aria-label="WhatsApp message" /></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

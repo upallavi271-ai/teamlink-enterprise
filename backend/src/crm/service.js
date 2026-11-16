@@ -257,7 +257,7 @@ async function list(user, kind, q = {}) {
     if (q.to && YMD.test(q.to)) { where.push('x."createdAt" <= ?'); params.push(`${q.to}T23:59:59.999Z`); }
     const SALES = require('./sales'); // eslint-disable-line global-require
     const names = SALES.stageNames(await SETTINGS.load());
-    const rows = (await DB.all(`SELECT x.*, ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT 1000`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
+    const rows = (await DB.all(`SELECT x.*, (SELECT d."stage" FROM "CrmDeal" d WHERE d."id" = x."dealId") AS "dealStage", ${LAST_ACT('leadId')}, ${NEXT_TASK('leadId')} FROM "CrmLead" x WHERE ${where.join(' AND ')} ORDER BY x."updatedAt" DESC LIMIT 1000`, ...params)).map((l) => ({ ...l, stage: SALES.stageOf(l, names) }));
     if (q.stage) return rows.filter((l) => l.stage === q.stage);
     return q.status ? rows : rows.filter((l) => !['Won', 'Lost'].includes(l.stage)); // the open leads: a won or lost one stays on the board
   }
@@ -305,7 +305,8 @@ async function detail(user, kind, id) {
   const out = { [kind]: row, canEdit: canEditRow(user, r, row) };
   if (kind === 'lead') {
     const SALES = require('./sales'); // eslint-disable-line global-require
-    out.lead = { ...row, stage: SALES.stageOf(row, SALES.stageNames(await SETTINGS.load())) };
+    const dealRow = row.dealId ? await getRow('deal', row.dealId) : null;
+    out.lead = { ...row, dealStage: dealRow ? dealRow.stage : null, stage: SALES.stageOf({ ...row, dealStage: dealRow ? dealRow.stage : null }, SALES.stageNames(await SETTINGS.load())) };
     Object.assign(out, await timelineOf('leadId', [row.id]));
   }
   if (kind === 'deal') {
@@ -388,7 +389,7 @@ async function edit(user, kind, id, body = {}) {
   if (c.error) return fail(400, c.error);
   const data = { ...c.data };
   if (kind === 'lead' && data.status === 'Converted' && row.status !== 'Converted') return fail(400, 'Use "Convert" to turn a lead into an account and a deal.');
-  if (kind === 'lead' && ['Contacted', 'Qualified'].includes(data.status) && data.status !== row.status && !(await hasLoggedWork(row.id))) return fail(409, NEEDS_LOGGED_WORK, { needsLog: true, leadId: row.id });
+  if (kind === 'lead' && 'status' in data && data.status !== row.status && data.status !== 'Junk') delete data.status; // the stage moves on its own (crm/sales.js autoStage); only Junk is set by hand
   if (kind === 'lead' && data.source && !(await SETTINGS.load()).sources.includes(data.source)) data.source = 'Other';
   if ('ownerId' in body && body.ownerId && body.ownerId !== row.ownerId) {
     if (!mayAssign(r)) return fail(403, 'Only a Sales manager or an Admin can give a record to another salesperson.');
@@ -721,9 +722,9 @@ async function addActivity(user, body = {}) {
   const now = DB.nowIso();
   const lk = linksOf(link.kind, link.row);
   const activity = await insert('CrmActivity', { id: newId('act'), kind, subject, note, at, leadId: lk.leadId || null, accountId: lk.accountId || null, dealId: lk.dealId || null, contactId: lk.contactId || clip(body.contactId, 60), byId: user.id, byName: user.name || null, createdAt: now });
-  // a New lead that was called / mailed / met is Contacted now - unless the call was only an attempt (outcome 'No answer')
-  if (link.kind === 'lead' && link.row.status === 'New' && kind !== 'note' && body.outcome !== 'No answer') await update('CrmLead', link.row.id, { status: 'Contacted', updatedAt: now });
-  else await update(KINDS[link.kind].table, link.row.id, { updatedAt: now });
+  // the stage moves on its own (crm/sales.js autoStage): called / mailed / met -> Contacted, a meeting held or details sent -> Qualified, not interested -> Lost
+  await update(KINDS[link.kind].table, link.row.id, { updatedAt: now });
+  if (link.kind === 'lead') await require('./sales').autoStage(link.row.id, { kind, outcome: body.outcome }).catch(() => null); // eslint-disable-line global-require
   // "next follow-up" given with the activity
   let task = null;
   if (body.followUp && body.followUp.dueDate) {
@@ -775,9 +776,7 @@ async function finishTask(user, id, input) {
   const table = row.dealId ? 'CrmDeal' : row.leadId ? 'CrmLead' : row.accountId ? 'CrmAccount' : null;
   const recId = row.dealId || row.leadId || row.accountId;
   if (table) await update(table, recId, { updatedAt: now });
-  if (!row.dealId && row.leadId && kind !== 'note' && outcome !== 'No answer') {
-    await DB.run('UPDATE "CrmLead" SET "status" = ? WHERE "id" = ? AND "status" = ?', 'Contacted', row.leadId, 'New');
-  }
+  if (!row.dealId && row.leadId) await SALES.autoStage(row.leadId, { kind, outcome }).catch(() => null);
   let next = null;
   if (nx) {
     next = await insert('CrmTask', {

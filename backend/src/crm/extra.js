@@ -165,7 +165,7 @@ async function bulkLeads(user, { ids, ownerId, status, rating } = {}) {
     data.ownerId = o.id; data.ownerName = o.name;
   }
   if (status) {
-    if (!['New', 'Contacted', 'Qualified', 'Junk'].includes(status)) return S.fail(400, 'Pick a status (a lead becomes Converted only with "Convert").');
+    if (status !== 'Junk') return S.fail(409, 'Stages move on their own. In bulk you can only mark leads Junk.');
     data.status = status;
   }
   if (rating) {
