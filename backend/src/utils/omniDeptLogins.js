@@ -317,23 +317,38 @@ async function loginFor(reqUser) {
   const mine = new Set([...WN.departmentsOfUser(u), ...WN.departmentsOfUser(reqUser)]);
   const logins = (await getSetting(KEY, {})).departments || {};
   const hit = Object.entries(logins).find(([k, row]) => mine.has(k) && row.state === 'ready' && row.email);
-  // INDIVIDUAL LOGINS (owner 2026-11-10): the person opens with THEIR OWN email, a Team Leader of only their department's workspace(s);
-  // the shared department login stays as the fallback until every person has moved (then the owner retires it in Green Start).
+  // INDIVIDUAL LOGINS (owner 2026-11-10): the person opens with THEIR OWN email, with a role in only their department's workspace(s). Since 2026-11-16 this does NOT
+  // wait for the shared department login to be "ready" (owner: "admin add cheyyakunda, automatic ga greenstart open avvali"): the workspaces come from the department's
+  // row (ready or not) or, with no row at all, from the workspaces NAMED for the department ("Teamlink <Dept>", "- 2" ...). The shared login stays a fallback for non-recruiters.
   const own = String(u.email || '').trim().toLowerCase();
   let kind = 'none';
   try { kind = A.kind(reqUser); } catch { /* keep none */ }
   const staffRole = staffRoleFor(kind);
-  if (hit && SSO.EMAIL_RE.test(own) && own !== String(hit[1].email).toLowerCase()) {
+  let wsIds = []; let deptName = ''; let wsName = '';
+  const anyRow = Object.entries(logins).find(([k, row]) => mine.has(k) && Array.isArray(row.workspaceIds) && row.workspaceIds.length);
+  if (anyRow) { wsIds = anyRow[1].workspaceIds; deptName = anyRow[1].dept; wsName = anyRow[1].workspace; } else if (SSO.EMAIL_RE.test(own)) {
     try {
-      await ensureStaffLogin(own, u.name || 'TeamLink', String(u.id), hit[1].workspaceIds || [hit[1].workspaceId], staffRole);
-      return { email: own, own: true, dept: hit[1].dept, workspace: hit[1].workspace, role: staffRole };
+      const GI = require('./greenStartIntegrations'); // eslint-disable-line global-require
+      const { token } = await GI.signIn();
+      const wss = await GI.workspacesOf(token);
+      for (const k of mine) {
+        const found = [];
+        for (let i = 1; i <= 10; i += 1) { const w = findWorkspace(wss, k, i); if (!w) break; found.push(w); }
+        if (found.length) { wsIds = found.map((w) => w.id); deptName = title(k); wsName = found.map((w) => w.name).join(', '); break; }
+      }
+    } catch (err) { console.error('[omni] workspace lookup:', err && err.message); } // eslint-disable-line no-console
+  }
+  if (wsIds.length && SSO.EMAIL_RE.test(own) && (!hit || own !== String(hit[1].email).toLowerCase())) {
+    try {
+      await ensureStaffLogin(own, u.name || 'TeamLink', String(u.id), wsIds, staffRole);
+      return { email: own, own: true, dept: deptName, workspace: wsName, role: staffRole };
     } catch (err) {
       console.error('[omni] own staff login:', err && err.message); // eslint-disable-line no-console
       if (/approval/i.test(String(err && err.message))) return { blocked: true, reason: 'Get approval from the Super Admin: your Omni-Channel account is waiting for approval.' };
     }
   }
   // a Recruiter NEVER falls back to the shared department login (it is a Team Leader: it would show them more than their role allows)
-  if (hit && staffRole === RECRUITER_ROLE) return { blocked: true, reason: 'Your own Omni-Channel login could not be made just now. Try again in a minute, or ask an Admin.' };
+  if ((hit || wsIds.length) && staffRole === RECRUITER_ROLE) return { blocked: true, reason: 'Your own Omni-Channel login could not be made just now. Try again in a minute, or ask an Admin.' };
   if (hit) return { email: hit[1].email, dept: hit[1].dept, workspace: hit[1].workspace };
   const names = [...mine].map(title).join(', ');
   return {
