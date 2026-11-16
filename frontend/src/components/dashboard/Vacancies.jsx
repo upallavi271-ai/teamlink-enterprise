@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
+import { deptCode, teamCode, seatCodes } from './vacancySeats.js';
 
 // Vacancies on the dashboard (founder 2026-11-02: "dashboard medha vacancies enni unai anni kuda kanipinchali").
 // Planned people per department and role (STL / TL / Employee) vs who is working now. Server: GET /dashboard/vacancies (utils/vacancies.js).
@@ -72,6 +73,7 @@ export default function Vacancies() {
 // the table by department and role, in a popup; the Super Admin changes the numbers here
 export function VacanciesPopup({ d, setD, onClose }) {
   const [open, setOpen] = useState({}); // "group|role" -> names shown
+  const [openV, setOpenV] = useState({}); // "group|role" -> the vacant seats shown (Edu-1, Med-1 ...)
   const [edit, setEdit] = useState(null); // the plan being changed
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -130,8 +132,9 @@ export function VacanciesPopup({ d, setD, onClose }) {
           <thead><tr><th>Department</th><th>Role</th><th>Should have</th><th>Working now</th><th>Vacant</th></tr></thead>
           <tbody>{d.groups.flatMap((g) => {
             // one row, the same look for a department and for a team of it; a team's names start open (founder 2026-11-12: Education = Team A and Team B only)
-            const vrow = (label, r, k, startOpen) => {
+            const vrow = (label, r, k, startOpen, code) => {
               const shown = open[k] === undefined ? !!startOpen : open[k];
+              const vShown = !!openV[k] && r.vacant > 0;
               return (
                 <tr key={k}>
                   <td>{label}</td>
@@ -143,14 +146,20 @@ export function VacanciesPopup({ d, setD, onClose }) {
                     {r.over ? <span className="small-muted"> (+{r.over} more than planned)</span> : null}
                     {shown ? <div className="small-muted" style={{ fontSize: 12, marginTop: 4 }}>{nameList(r.people)}</div> : null}
                   </td>
-                  <td><b style={{ color: r.vacant ? red : green }}>{r.vacant}</b></td>
+                  <td>
+                    {/* founder 2026-11-16: "click the vacant position, it shows the position, for example Edu-1, Med-1" */}
+                    {r.vacant
+                      ? <button type="button" className="link-btn" onClick={() => setOpenV((o) => ({ ...o, [k]: !o[k] }))} aria-expanded={vShown} title="Show the vacant positions" style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer' }}><b style={{ color: red, textDecoration: 'underline' }}>{r.vacant}</b></button>
+                      : <b style={{ color: green }}>{r.vacant}</b>}
+                    {vShown ? <div style={{ fontSize: 12.5, marginTop: 4, fontWeight: 600, color: red }}>{seatCodes(code, r).join(', ')}</div> : null}
+                  </td>
                 </tr>
               );
             };
             // a department split into teams shows its own roles (the STL) and then its teams: the TL / Employee rows are the teams added together, so they are not drawn twice
             const split = new Set((g.teams || []).flatMap((t) => t.rows.map((r) => r.role)));
-            const out = g.rows.filter((r) => !split.has(r.role)).map((r, i) => vrow(i === 0 ? <b>{g.name}</b> : '', r, `${g.name}|${r.role}`, false));
-            (g.teams || []).forEach((t) => t.rows.forEach((r, i) => out.push(vrow(i === 0 ? <b>{g.name} · {t.name}</b> : '', r, `${g.name}|${t.name}|${r.role}`, true))));
+            const out = g.rows.filter((r) => !split.has(r.role)).map((r, i) => vrow(i === 0 ? <b>{g.name}</b> : '', r, `${g.name}|${r.role}`, false, deptCode(g.name)));
+            (g.teams || []).forEach((t) => t.rows.forEach((r, i) => out.push(vrow(i === 0 ? <b>{g.name} · {t.name}</b> : '', r, `${g.name}|${t.name}|${r.role}`, true, [deptCode(g.name), teamCode(t.name)].filter(Boolean).join('-')))));
             (g.teamless || []).forEach((x, i) => out.push(
               <tr key={`${g.name}|noteam|${x.role}`}>
                 <td>{i === 0 ? <b>{g.name} · No team set</b> : ''}</td>
