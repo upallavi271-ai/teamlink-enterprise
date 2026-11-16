@@ -47,7 +47,7 @@ const call = async (method, url, body, token) => {
 };
 const mails = () => (fs.existsSync(MAILS) ? fs.readFileSync(MAILS, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 const tokenOf = async (id) => jwt.sign({ ...tokenPayload(await resolveIdentity(id)), tms: Date.now() }, env.JWT_SECRET, { expiresIn: '1h' });
-const mkUser = (tag, data) => prisma.user.create({ data: { name: `ZZ ${tag}`, email: `zz.crmcontact.${tag}.${process.pid}@example.test`, passwordHash: 'x', status: 'Active', passwordChangedAt: new Date(Date.now() - 3600e3), ...data } });
+const mkUser = (tag, data) => prisma.user.create({ data: { name: `ZZ ${tag}`, email: `zz.crmcontact.${tag}.${process.pid}@zz-contact-test.in`, passwordHash: 'x', status: 'Active', passwordChangedAt: new Date(Date.now() - 3600e3), ...data } });
 const setRow = async (id, fields, enabled = true) => {
   const w = await writeValues(id, fields);
   await prisma.integration.upsert({ where: { id }, create: { id, values: JSON.stringify(w.values), enabled, connected: enabled, state: enabled ? 'Connected' : 'Not Connected' }, update: { values: JSON.stringify(w.values), enabled, connected: enabled, state: enabled ? 'Connected' : 'Not Connected' } });
@@ -76,8 +76,8 @@ let T = {};
   await call('PUT', '/crm/settings', { salesTeam: [{ userId: A.id, name: A.name, role: 'rep', rights: own }, { userId: B.id, name: B.name, role: 'rep', rights: own }, { userId: V.id, name: V.name, role: 'viewer' }] }, T.X);
   await new Promise((r) => { setTimeout(r, 300); });
 
-  const lead = (await call('POST', '/crm/leads', { company: `ZZ Contact Co ${process.pid}`, contactName: 'Asha Rao', phone: '+91 98765 43210', email: `asha.${process.pid}@example.test`, expectedValue: 50000 }, T.X)).body.lead;
-  const leadA = (await call('POST', '/crm/leads', { company: `ZZ Contact A ${process.pid}`, contactName: 'Ravi', phone: '9876500011', email: `ravi.${process.pid}@example.test` }, T.A)).body.lead;
+  const lead = (await call('POST', '/crm/leads', { company: `ZZ Contact Co ${process.pid}`, contactName: 'Asha Rao', phone: '+91 98765 43210', email: `asha.${process.pid}@zz-contact-test.in`, expectedValue: 50000 }, T.X)).body.lead;
+  const leadA = (await call('POST', '/crm/leads', { company: `ZZ Contact A ${process.pid}`, contactName: 'Ravi', phone: '9876500011', email: `ravi.${process.pid}@zz-contact-test.in` }, T.A)).body.lead;
   const bare = (await call('POST', '/crm/leads', { company: `ZZ Contact Bare ${process.pid}` }, T.X)).body.lead;
 
   console.log('1. Nothing connected yet: the screen says so, and nothing is "sent"');
@@ -110,6 +110,8 @@ let T = {};
   check('the email is sent', em.status === 200 && em.body.ok && em.body.to === lead.email, em.body);
   const sent = mails().filter((m) => /Our recruitment services/.test(m.subject));
   check('the mail server was handed it: right address, subject and text, from the person with the company relay', sent.length === 1 && String(sent[0].to).includes(lead.email) && /We can help you hire/.test(sent[0].text) && /ZZ admin/.test(sent[0].from + sent[0].replyTo), sent[0]);
+  const led = await DB.one('SELECT COUNT(*) AS n FROM "OmniCreditLedger" WHERE "userId" = ? AND "channel" = ?', X.id, 'email').catch(() => ({ n: 0 }));
+  check('the send is counted in the Omni-channel usage ledger (shown as a test send on this sandbox) (it goes through the one send layer, not around it)', Number(led.n) >= 1, led);
   const tl1 = await timeline('lead', lead.id);
   check('it is on the lead\'s timeline with the message', tl1.some((a) => a.kind === 'email' && /Email sent: Our recruitment services/.test(a.subject) && /We can help you hire/.test(a.note)), tl1.map((a) => a.subject));
   check('and the New lead is now Contacted (a person wrote to it)', (await call('GET', `/crm/leads/${lead.id}`, null, T.X)).body.lead.status === 'Contacted');
@@ -118,7 +120,7 @@ let T = {};
   check('an address that is not an address: refused', (await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'Email', to: 'not-an-email', subject: 's', text: 'x' }, T.X)).status === 400);
   const noMail = await call('POST', '/crm/contact/send', { kind: 'lead', id: bare.id, channel: 'Email', subject: 's', text: 'x' }, T.X);
   check('a record with no email and nothing typed: asks for the address', noMail.status === 400 && /no email address/i.test(noMail.body.error), noMail.body);
-  const typed = await call('POST', '/crm/contact/send', { kind: 'lead', id: bare.id, channel: 'Email', to: `typed.${process.pid}@example.test`, subject: 'Typed address', text: 'x' }, T.X);
+  const typed = await call('POST', '/crm/contact/send', { kind: 'lead', id: bare.id, channel: 'Email', to: `typed.${process.pid}@zz-contact-test.in`, subject: 'Typed address', text: 'x' }, T.X);
   check('an address typed in the To box is used', typed.status === 200 && mails().some((m) => String(m.to).includes('typed.')), typed.body);
   await call('POST', '/crm/opt-out', { channel: 'email', value: lead.email }, T.X);
   check('an address that unsubscribed is not mailed', (await call('POST', '/crm/contact/send', { kind: 'lead', id: lead.id, channel: 'Email', subject: 's2', text: 'x' }, T.X)).status === 409);
@@ -158,14 +160,14 @@ let T = {};
 
   console.log('7. Deals and customers use the contact who decides');
   const acc = (await call('POST', '/crm/accounts', { name: `ZZ Contact Acc ${process.pid}` }, T.X)).body.account;
-  await call('POST', '/crm/contacts', { accountId: acc.id, name: 'Meera Rao', role: 'Decision maker', phone: '098111 22233', email: `meera.${process.pid}@example.test` }, T.X);
+  await call('POST', '/crm/contacts', { accountId: acc.id, name: 'Meera Rao', role: 'Decision maker', phone: '098111 22233', email: `meera.${process.pid}@zz-contact-test.in` }, T.X);
   const deal = (await call('POST', '/crm/deals', { title: 'ZZ Contact Deal', accountId: acc.id, value: '10000' }, T.X)).body.deal;
   const dr2 = (await call('GET', `/crm/contact/draft?kind=deal&id=${deal.id}`, null, T.X)).body;
-  check('a deal\'s draft is for the account\'s decision maker: her name, number and email', dr2.to.name === 'Meera Rao' && dr2.to.phone === '098111 22233' && dr2.to.email === `meera.${process.pid}@example.test` && /^Hello Meera,/.test(dr2.email.text), dr2);
+  check('a deal\'s draft is for the account\'s decision maker: her name, number and email', dr2.to.name === 'Meera Rao' && dr2.to.phone === '098111 22233' && dr2.to.email === `meera.${process.pid}@zz-contact-test.in` && /^Hello Meera,/.test(dr2.email.text), dr2);
   const dm = await call('POST', '/crm/contact/send', { kind: 'deal', id: deal.id, channel: 'WhatsApp', text: 'About the deal' }, T.X);
   check('a WhatsApp message from the deal goes to her (leading 0 cleaned), and is on the deal\'s timeline', dm.status === 200 && dm.body.to === '+919811122233' && (await timeline('deal', deal.id)).some((a) => /WhatsApp message sent/.test(a.subject)), dm.body);
   const da = await call('POST', '/crm/contact/send', { kind: 'account', id: acc.id, channel: 'Email', subject: 'Hello customer', text: 'x' }, T.X);
-  check('an email from the customer record goes to the same person', da.status === 200 && da.body.to === `meera.${process.pid}@example.test`, da.body);
+  check('an email from the customer record goes to the same person', da.status === 200 && da.body.to === `meera.${process.pid}@zz-contact-test.in`, da.body);
   check('something that is not a lead, deal, customer or contact is refused', (await call('POST', '/crm/contact/send', { kind: 'ticket', id: deal.id, channel: 'Email', subject: 's', text: 'x' }, T.X)).status === 400);
 
   console.log(`\n${total - failed}/${total} passed`);

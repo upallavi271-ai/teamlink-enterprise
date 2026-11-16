@@ -34,6 +34,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [sentNote, setSentNote] = useState('');
+  const [sentOk, setSentOk] = useState({ Email: null, WhatsApp: null }); // { to, at } once a message really went: the Send button says Sent
   const [how, setHow] = useState(null); // after a call: { via: 'gateway' | 'phone' }
   const body = { kind: record.kind, id: record.id };
 
@@ -58,6 +59,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
     try {
       const r = await api.post('/crm/contact/send', channel === 'Email' ? { ...body, channel, to: to.Email, subject, text: mailText } : { ...body, channel, to: to.WhatsApp, text: waText });
       toast(channel === 'Email' ? `Email sent to ${r.data.to}.` : `WhatsApp sent to ${r.data.to}.`);
+      setSentOk((x) => ({ ...x, [channel]: { to: r.data.to, at: new Date() } }));
       setSentNote(channel === 'Email' ? `Sent to ${r.data.to}. It is on the timeline.` : `Sent to ${r.data.to} from ${(rd.whatsapp && rd.whatsapp.via) || r.data.via}. It is on the timeline.`);
       finish();
     } catch (e) {
@@ -103,7 +105,9 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
           <div className="field"><label>Subject</label><input value={subject} onChange={(e) => setSubject(e.target.value)} aria-label="Subject" /></div>
           <div className="field"><label>Message</label><textarea rows={8} value={mailText} onChange={(e) => setMailText(e.target.value)} aria-label="Email message" /></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {mailReady && <button type="button" className="btn btn-primary" disabled={busy === 'Email' || !to.Email || !subject.trim() || !mailText.trim()} onClick={() => send('Email')}>{busy === 'Email' ? 'Sending…' : 'Send email'}</button>}
+            {mailReady && (sentOk.Email
+              ? <><span className="status active" role="status" style={{ alignSelf: 'center', fontSize: 14, padding: '8px 14px' }}>✓ Sent to {sentOk.Email.to}</span><button type="button" className="btn" onClick={() => { setSentOk((x) => ({ ...x, Email: null })); setSentNote(''); }}>Send another</button></>
+              : <button type="button" className="btn btn-primary" disabled={busy === 'Email' || !to.Email || !subject.trim() || !mailText.trim()} onClick={() => send('Email')}>{busy === 'Email' ? 'Sending…' : 'Send email'}</button>)}
             <a className={`btn${mailReady ? '' : ' btn-primary'}`} href={mailto} onClick={(e) => { if (!to.Email) { e.preventDefault(); setErr('Write the email address first.'); return; } opened('Email'); }} aria-disabled={!to.Email}>Open in my mail app</a>
             <AiDraft record={record} onText={(s, t) => { if (s) setSubject(s); setMailText(t); }} />
           </div>
@@ -118,7 +122,9 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
           <div className="field"><label>To (mobile number)</label><input value={to.WhatsApp} onChange={(e) => setToFor('WhatsApp', e.target.value)} placeholder="98765 43210" aria-label="WhatsApp number" /></div>
           <div className="field"><label>Message</label><textarea rows={6} value={waText} onChange={(e) => setWaText(e.target.value)} aria-label="WhatsApp message" /></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {waReady && <button type="button" className="btn btn-primary" disabled={busy === 'WhatsApp' || !digitsOf(to.WhatsApp) || !waText.trim()} onClick={() => send('WhatsApp')}>{busy === 'WhatsApp' ? 'Sending…' : 'Send on WhatsApp'}</button>}
+            {waReady && (sentOk.WhatsApp
+              ? <><span className="status active" role="status" style={{ alignSelf: 'center', fontSize: 14, padding: '8px 14px' }}>✓ Sent to {sentOk.WhatsApp.to}</span><button type="button" className="btn" onClick={() => { setSentOk((x) => ({ ...x, WhatsApp: null })); setSentNote(''); }}>Send another</button></>
+              : <button type="button" className="btn btn-primary" disabled={busy === 'WhatsApp' || !digitsOf(to.WhatsApp) || !waText.trim()} onClick={() => send('WhatsApp')}>{busy === 'WhatsApp' ? 'Sending…' : 'Send on WhatsApp'}</button>)}
             <a className={`btn${waReady ? '' : ' btn-primary'}`} href={waLink} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!digitsOf(to.WhatsApp)) { e.preventDefault(); setErr('Write the number first.'); return; } opened('WhatsApp'); }} aria-disabled={!digitsOf(to.WhatsApp)}>Open in WhatsApp</a>
           </div>
           <div className="small-muted" style={{ marginTop: 6, fontSize: 11.5 }}>"Open in WhatsApp" uses your own WhatsApp: TeamLink cannot see whether you pressed Send, and says so on the timeline.</div>

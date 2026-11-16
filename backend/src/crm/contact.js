@@ -89,25 +89,28 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
     const subj = clip(subject, 200);
     if (!subj) return S.fail(400, 'Write the subject.');
     const own = await require('../utils/messageChannels').ownContact(user); // eslint-disable-line global-require
-    result = await require('../utils/mailer').sendMail({ to: addr, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name }); // eslint-disable-line global-require
-    if (!result.ok) return S.fail(result.notConfigured ? 409 : 502, result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'the mail server refused it.'}`, { notConfigured: !!result.notConfigured });
+    result = await require('../utils/messaging').send('Email', { // eslint-disable-line global-require
+      to: addr, subject: subj, text: body, senderEmail: own.email || undefined, senderName: own.name || user.name, actorUserId: user.id,
+      meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM email' },
+    });
+    if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'the mail server refused it.'}`, { notConfigured: !!result.notConfigured });
     await S.addActivity(user, { kind: 'email', [`${kind}Id`]: id, subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` });
-    return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped });
+    return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped, sentAt: new Date().toISOString() });
   }
   // WhatsApp
   const m = require('../utils/messagingCore').normalizeMobile(to || x.phone); // eslint-disable-line global-require
   if (!m.ok) return S.fail(400, (to || x.phone) ? `That number does not look right: ${m.reason}` : 'This record has no phone number. Type one in the To box.');
   const CMP = require('./campaigns'); // eslint-disable-line global-require
   if (await CMP.optedOut('whatsapp', m.e164).catch(() => false)) return S.fail(409, 'This number asked not to be messaged on WhatsApp. TeamLink does not send to it.');
-  result = await require('../channels/send').sendWhatsApp({ // eslint-disable-line global-require
-    to: m.e164, text: body, kind: 'direct', meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM message' },
+  result = await require('../utils/messaging').send('WhatsApp', { // eslint-disable-line global-require
+    to: m.e164, text: body, kind: 'direct', actorUserId: user.id, meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM message' },
   });
   if (!result.ok) {
     const why = result.notConfigured ? 'WhatsApp is not connected.' : (result.error || 'WhatsApp refused the message.');
     return S.fail(result.notConfigured ? 409 : 502, `The WhatsApp message was not sent: ${why}`, { notConfigured: !!result.notConfigured, outsideWindow: /24|re-?engage|template|131047/i.test(String(result.error || '')) });
   }
   await S.addActivity(user, { kind: 'whatsapp', [`${kind}Id`]: id, subject: 'WhatsApp message sent', note: `To +${m.e164}\n\n${body}` });
-  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp' });
+  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp', sentAt: new Date().toISOString() });
 }
 
 // The person opened their own app instead (mail app / wa.me / the phone's dialler): TeamLink cannot see whether it was sent, and says so on the timeline.

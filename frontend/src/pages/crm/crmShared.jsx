@@ -381,7 +381,7 @@ export function Timeline({ activities }) {
       {activities.map((a) => (
         <div key={a.id} className="timeline-item">
           <div className="timeline-date">{dateTimeOf(a.at)}{a.byName ? ` · ${a.byName}` : ''}</div>
-          <div className="timeline-label">{ACT_ICON[a.kind] || '•'} {a.subject || (a.kind === 'note' ? 'Note' : a.kind)}</div>
+          <div className="timeline-label">{ACT_ICON[a.kind] || '•'} {a.subject || (a.kind === 'note' ? 'Note' : a.kind)}{/^(Email sent|WhatsApp message sent|Invoice .* sent on WhatsApp)/.test(a.subject || '') && <> <span className="status active" style={{ fontSize: 11 }}>✓ Sent</span></>}{/^(Mail app opened|WhatsApp opened)/.test(a.subject || '') && <> <span className="status pending" style={{ fontSize: 11 }} title="Opened in the person's own app: TeamLink cannot see whether it was sent">Not confirmed</span></>}</div>
           {a.note && <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', whiteSpace: 'pre-wrap' }}>{a.note}</div>}
         </div>
       ))}
