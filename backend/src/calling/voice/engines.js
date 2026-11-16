@@ -157,7 +157,7 @@ function whisperHttp({ url, key }) {
     // how much real speech the clip holds (Silero VAD on the server): { speechMs, parts }; an older server has no /speech -> null
     speech: async (pcm8k, rate = 8000) => { try { return await post('/speech', pcm8k, undefined, rate); } catch { return null; } },
     // the same, with the sureness: { text, conf }
-    sttEx: async (pcm8k, lang, prompt = '', exact = false) => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}), ...(exact ? { 'X-Model': 'open' } : {}) }); return { text: j.text || '', conf: j.conf || null }; },
+    sttEx: async (pcm8k, lang, prompt = '', exact = false, rate = 8000) => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}), ...(exact ? { 'X-Model': 'open' } : {}) }, rate); return { text: j.text || '', conf: j.conf || null }; },
   };
 }
 
@@ -266,7 +266,7 @@ function fromEnv(env = process.env) {
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
     stt: (pcm, lang, rate = 8000, prompt = '') => (lang === 'English' && wh ? wh.stt(pcm, 'English', rate, prompt) : vstt(pcm, lang === 'English' ? 'Hindi' : lang, rate)),
     // { text, conf }: conf only from Whisper (English); IndicConformer gives no sureness, so Telugu / Hindi get null - never a made-up number
-    sttEx: async (pcm, lang, prompt, exact) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English', prompt, exact) : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
+    sttEx: async (pcm, lang, prompt, exact, rate = 8000) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English', prompt, exact, rate) : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
     detect: wh ? wh.detect : null,
     speech: wh ? wh.speech : null,
     sttAny: wh ? (pcm) => wh.stt(pcm, 'auto') : null,

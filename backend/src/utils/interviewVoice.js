@@ -42,9 +42,25 @@ async function indicProof(en, pcm, G) {
   try {
     const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l, RATE).catch(() => '')));
     const sT = G.nativeScore(te, 'Telugu'); const sH = G.nativeScore(hi, 'Hindi');
-    if (Math.max(sT, sH) >= 2) return sT >= sH ? { lang: 'Telugu', changed: true, text: te, why: 'words' } : { lang: 'Hindi', changed: true, text: hi, why: 'words' };
+    // the Hindi listener writes Hindi function words (मैं, का, में) over Telugu AND English sound, so Hindi needs a clear lead; Telugu needs a smaller one (2026-11-16 founder: English and Telugu were taken as Hindi)
+    if (sH >= 2 && sH - sT >= 1.5) return { lang: 'Hindi', changed: true, text: hi, why: 'words', score: sH };
+    if (sT >= 2 && sT - sH >= 1) return { lang: 'Telugu', changed: true, text: te, why: 'words', score: sT };
   } catch (e) { /* stays */ }
   return {};
+}
+// real, confident English from Whisper (an Indian-English answer is written as Hindi words by the Hindi listener: "मैं ग्रेजुएशन फ्रम ... डिग्री कॉलेज")
+function clearEnglish(ex) {
+  const t = String((ex && ex.text) || '').trim();
+  const words = t.toLowerCase().replace(/[^a-z' ]/g, ' ').split(/\s+/).filter(Boolean);
+  const letters = (t.match(/\p{L}/gu) || []).length;
+  if (words.length < 4 || !letters || (t.match(/[A-Za-z]/g) || []).length / letters < 0.9) return false;
+  if (new Set(words).size < Math.ceil(words.length * 0.7)) return false;
+  const c = ex.conf || {};
+  return (c.logprob == null || c.logprob >= -0.8) && (c.noSpeech == null || c.noSpeech < 0.6) && (c.ratio == null || c.ratio < 2.4);
+}
+async function englishStays(en, pcm) {
+  if (!en.sttEx) return false;
+  try { return clearEnglish(await en.sttEx(pcm, 'English', '', false, RATE)); } catch (e) { return false; }
 }
 
 const EN_IN_TELUGU = ['అండ్', 'ఇన్', 'ఇస్', 'టు', 'ఆఫ్', 'మై', 'విత్', 'ఫర్', 'ఎట్', 'దట్', 'వాస్', 'హావ్', 'ఆర్', 'ఆఐ', 'ఎమ్', 'ద', 'ఇట్', 'బట్', 'అవర్', 'యు'];
@@ -55,7 +71,7 @@ function englishProof(own, english) {
   if (e.length < 6 || !/[A-Za-z]/.test(String(english))) return false;
   if (new Set(e).size < Math.ceil(e.length * 0.7)) return false;           // "going to be going to be going to be..." is Whisper talking to itself
   const marks = w(own).filter((x) => EN_IN_TELUGU.includes(x) || EN_IN_HINDI.includes(x)).length;
-  return marks >= 2;
+  return marks >= 3 && marks >= Math.ceil(w(own).length * 0.25); // the Telugu / Hindi listener's ordinary short words (ద, ఇన్ ...) are not proof
 }
 
 // numbers only (no audio): how long, how loud, how much of it the speech detector called speech - for the log
@@ -85,10 +101,14 @@ async function hearCore(pcm16k, current, deps = {}) {
       if (so >= 2 && so > sc) return { ready: true, lang: other, changed: true, text: other === 'Telugu' ? te : hi };
       return { ready: true, lang: cur, changed: false, why: 'unsure', text: cur === 'Telugu' ? te : hi };
     }
+    if (await englishStays(en, pcm)) return { ready: true, lang: cur, changed: false, why: 'clear english' };
     return { ready: true, lang: cur, changed: false, why: 'unsure', ...(await indicProof(en, pcm, G)) };
   }
   if (found === 'English') {
-    if (cur === 'English') return { ready: true, lang: cur, changed: false, ...(await indicProof(en, pcm, G)) };
+    if (cur === 'English') {
+      if (await englishStays(en, pcm)) return { ready: true, lang: cur, changed: false, why: 'clear english' };
+      return { ready: true, lang: cur, changed: false, ...(await indicProof(en, pcm, G)) };
+    }
     // the phone line's rule: English-looking sound over real words of the current language stays in that language
     const own = await en.stt(pcm, cur, RATE).catch(() => '');
     if (G.nativeScore(own, cur) >= 1) return { ready: true, lang: cur, changed: false, why: 'own words' };

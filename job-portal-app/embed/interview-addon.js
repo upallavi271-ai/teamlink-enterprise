@@ -699,10 +699,10 @@
     if (LG.serverHears) {
       ensureCapture(a);
       /* English: a check after 3.5 s of voice, then again every 3.5 s more (up to 6), so a switch to Telugu / Hindi later in the answer is heard too.
-         Telugu / Hindi: every 2.5 s, with the whole answer, because that is also the caption. */
+         Telugu / Hindi: every 1.5 s (was 2.5 s: the Telugu caption felt slow), with the whole answer, because that is also the caption. */
       if (LG.proc && !LG.busy) {
         var due = LG.cur !== 'en'
-          ? (LG.voicedMs >= 1200 && Date.now() - LG.lastAt >= 2500 && LG.voicedMs >= LG.lastVoiced + 600)
+          ? (LG.voicedMs >= 900 && Date.now() - LG.lastAt >= 1500 && LG.voicedMs >= LG.lastVoiced + 400)
           : (LG.checks < 6 && LG.voicedMs >= 2000 && LG.voicedMs >= LG.lastVoiced + 3000);
         if (due) check(key);
       }

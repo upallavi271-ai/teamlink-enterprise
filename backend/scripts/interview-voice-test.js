@@ -46,6 +46,12 @@ const eng = ({ detect = null, te = '', hi = '', en = '', speechMs = 3000 }) => (
   const slow = { detect: async () => 'Hindi', speech: async () => ({ speechMs: 3000 }), stt: async (_p, l) => { asked.push(l); if (l === 'Telugu') await new Promise((r) => setTimeout(r, 4000)); return l === 'Hindi' ? 'मैं यहाँ काम करता हूँ और मेरा नाम है' : 'ముఝే'; }, tts: async () => Buffer.alloc(800) };
   const t0 = Date.now(); const cont = await V.hear(pcm, 'Hindi', { engines: slow });
   check('V12 a Hindi answer in a Hindi interview asks only the Hindi listener (no slow second listener, no wrong switch)', cont.lang === 'Hindi' && !cont.changed && /मैं/.test(cont.text) && asked.join() === 'Hindi' && Date.now() - t0 < 1500, { cont, asked });
+  const engl = { detect: async () => 'English', speech: async () => ({ speechMs: 4000 }), stt: async (_p, l) => (l === 'Hindi' ? 'मैं ग्रेजुएशन फ्रम कॉलेज मेरी डिग्री का नाम है' : ''), sttEx: async () => ({ text: 'I did my graduation from a degree college in Hyderabad', conf: { logprob: -0.3, noSpeech: 0.05, ratio: 1.4 } }), tts: async () => Buffer.alloc(800) };
+  const eIn = await V.hear(pcm, 'English', { engines: engl });
+  check('V13 clear English that the Hindi listener writes as Hindi words: stays English', !eIn.changed && eIn.lang === 'English', eIn);
+  const tel = { detect: async () => 'Hindi', speech: async () => ({ speechMs: 4000 }), stt: async (_p, l) => (l === 'Hindi' ? 'मैं का में है' : 'నేను మీ దగ్గర పని చేశాను అవును'), sttEx: async () => ({ text: '', conf: null }), tts: async () => Buffer.alloc(800) };
+  const tIn = await V.hear(pcm, 'English', { engines: tel });
+  check('V14 Telugu speech called Hindi by Whisper: Telugu words win over Hindi function words', tIn.changed && tIn.lang === 'Telugu', tIn);
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();
