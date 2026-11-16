@@ -891,9 +891,9 @@ async function dashboard(user, { mine } = {}) {
   await remind({ userId: user.id }).catch(() => 0);
   const ist = istNow();
   const monthStart = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - 5.5 * 3600 * 1000).toISOString();
-  const deals = await DB.all(`SELECT "id", "title", "stage", "value", "probability", "expectedClose", "wonAt", "lostAt", "lostReason", "ownerName", "accountId" FROM "CrmDeal" WHERE ${s.sql}`, ...s.params);
+  const deals = await DB.all(`SELECT "id", "title", "stage", "value", "finalValue", "probability", "expectedClose", "wonAt", "lostAt", "lostReason", "ownerName", "accountId" FROM "CrmDeal" WHERE ${s.sql}`, ...s.params);
   const open = deals.filter((d) => !['Won', 'Lost'].includes(d.stage));
-  const byStage = STAGES.map((st) => { const ds = deals.filter((d) => d.stage === st && (!['Won', 'Lost'].includes(st) || (d.wonAt || d.lostAt || '') >= monthStart)); return { stage: st, count: ds.length, value: ds.reduce((a, d) => a + (d.value || 0), 0) }; });
+  const byStage = STAGES.map((st) => { const ds = deals.filter((d) => d.stage === st && (!['Won', 'Lost'].includes(st) || (d.wonAt || d.lostAt || '') >= monthStart)); return { stage: st, count: ds.length, value: ds.reduce((a, d) => a + ((st === 'Won' ? (d.finalValue != null ? d.finalValue : d.value) : d.value) || 0), 0) }; });
   const wonM = deals.filter((d) => d.stage === 'Won' && (d.wonAt || '') >= monthStart);
   const lostM = deals.filter((d) => d.stage === 'Lost' && (d.lostAt || '') >= monthStart);
   const today = istToday();
@@ -909,6 +909,7 @@ async function dashboard(user, { mine } = {}) {
   const countBy = (rows, key) => Object.entries(rows.reduce((m, x) => { const k = x[key] || 'Not given'; m[k] = (m[k] || 0) + 1; return m; }, {})).map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
   const lostReasons = countBy(deals.filter((d) => d.stage === 'Lost' && (d.lostAt || '') >= new Date(Date.now() - 90 * 86400000).toISOString()), 'lostReason');
   const sumV = (ds) => ds.reduce((a, d) => a + (d.value || 0), 0);
+  const sumWon = (ds) => ds.reduce((a, d) => a + ((d.finalValue != null ? d.finalValue : d.value) || 0), 0); // won money = after the discount
   const recent = await DB.all(`SELECT x.*, COALESCE(d."title", l."company", a."name") AS "recordName",
       CASE WHEN x."dealId" IS NOT NULL THEN 'deal' WHEN x."leadId" IS NOT NULL THEN 'lead' ELSE 'account' END AS "recordKind",
       COALESCE(x."dealId", x."leadId", x."accountId") AS "recordId"
@@ -919,7 +920,7 @@ async function dashboard(user, { mine } = {}) {
     today,
     scope: s.sql === '1=1' ? 'all' : 'mine',
     pipeline: { open: open.length, value: sumV(open), weighted: Math.round(open.reduce((a, d) => a + (d.value || 0) * (d.probability || 0) / 100, 0)) },
-    month: { won: wonM.length, wonValue: sumV(wonM), lost: lostM.length, lostValue: sumV(lostM), winRate: closedM ? Math.round((wonM.length / closedM) * 100) : null },
+    month: { won: wonM.length, wonValue: sumWon(wonM), lost: lostM.length, lostValue: sumV(lostM), winRate: closedM ? Math.round((wonM.length / closedM) * 100) : null },
     leads: {
       open: leads.filter((l) => !['Converted', 'Junk'].includes(l.status)).length,
       newThisMonth: leads.filter((l) => (l.createdAt || '') >= monthStart).length,

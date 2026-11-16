@@ -128,6 +128,20 @@ const near = (a, b) => Math.abs(a - b) < 0.01;
   const missing = await cash();
   check('a Won deal with no invoice is counted ("Won, no invoice yet")', missing.wonNoInvoice === noD.wonNoInvoice + 1, [missing.wonNoInvoice, noD.wonNoInvoice]);
 
+  console.log('A discounted Won deal counts at its value AFTER the discount (the same figure its invoice is made from)');
+  const ov0 = (await call('GET', '/crm/overview?period=month', null, auth)).body;
+  const dsh0 = (await call('GET', '/crm/dashboard', null, auth)).body;
+  const dd = await call('POST', '/crm/deals', { title: 'Zz Rev Discounted', accountId, value: '50000', discountPercent: '4' }, auth);
+  const dw = await call('POST', `/crm/deals/${dd.body.deal.id}/stage`, { stage: 'Won' }, auth);
+  check('the invoice is made from 48,000 (+18% = 56,640)', dw.body.invoice && near(dw.body.invoice.total, 56640), dw.body.invoice && dw.body.invoice.total);
+  const ov1 = (await call('GET', '/crm/overview?period=month', null, auth)).body;
+  check('BOOKED rises by 48,000, not 50,000', near(ov1.cash.booked.value - ov0.cash.booked.value, 48000), [ov0.cash.booked.value, ov1.cash.booked.value]);
+  check('the Won value (revenue card) and the sales target progress use 48,000 too', near(ov1.cards.revenue.value - ov0.cards.revenue.value, 48000) && near(ov1.cards.target.achieved - ov0.cards.target.achieved, 48000), [ov0.cards.revenue, ov1.cards.revenue]);
+  const dsh1 = (await call('GET', '/crm/dashboard', null, auth)).body;
+  check('the older dashboard (month won value) agrees', near(dsh1.month.wonValue - dsh0.month.wonValue, 48000), [dsh0.month.wonValue, dsh1.month.wonValue]);
+  const wonStage = (dsh1.byStage || []).find((x) => x.stage === 'Won'); const wonStage0 = (dsh0.byStage || []).find((x) => x.stage === 'Won');
+  check('and so does the Won row of the pipeline by stage', !wonStage || near(wonStage.value - ((wonStage0 || {}).value || 0), 48000), [wonStage0, wonStage]);
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

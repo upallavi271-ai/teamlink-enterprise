@@ -45,7 +45,7 @@ async function reports(user, { month } = {}) {
   const leads = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n" FROM "CrmLead" WHERE ${own} AND "createdAt" >= ? AND "createdAt" < ? GROUP BY "ownerId"`, ...p, from, to), 'ownerId');
   const conv = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n" FROM "CrmLead" WHERE ${own} AND "convertedAt" >= ? AND "convertedAt" < ? GROUP BY "ownerId"`, ...p, from, to), 'ownerId');
   const acts = await DB.all(`SELECT "byId", "kind", COUNT(*) AS "n" FROM "CrmActivity" WHERE ${all ? '1=1' : '"byId" = ?'} AND "at" >= ? AND "at" < ? AND COALESCE("subject", '') NOT LIKE 'Stage:%' GROUP BY "byId", "kind"`, ...p, from, to);
-  const won = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n", COALESCE(SUM("value"), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ? GROUP BY "ownerId"`, ...p, from, to), 'ownerId');
+  const won = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n", COALESCE(SUM(COALESCE("finalValue", "value")), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ? GROUP BY "ownerId"`, ...p, from, to), 'ownerId');
   const lost = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Lost' AND "lostAt" >= ? AND "lostAt" < ? GROUP BY "ownerId"`, ...p, from, to), 'ownerId');
   const open = byKey(await DB.all(`SELECT "ownerId", COUNT(*) AS "n", COALESCE(SUM("value"), 0) AS "v", COALESCE(SUM("value" * "probability" / 100.0), 0) AS "w" FROM "CrmDeal" WHERE ${own} AND "stage" NOT IN ('Won', 'Lost') GROUP BY "ownerId"`, ...p), 'ownerId');
   const targets = byKey(await DB.all(`SELECT * FROM "CrmTarget" WHERE "month" = ? AND ${own}`, ym, ...p), 'ownerId');
@@ -731,8 +731,8 @@ async function overview(user, { period, mine } = {}) {
   const leadsBefore = await count(`SELECT COUNT(*) AS "n" FROM "CrmLead" WHERE ${own} AND "createdAt" >= ? AND "createdAt" < ?`, ...p, R.prevFrom, R.prevTo);
   const openLeads = await count(`SELECT COUNT(*) AS "n" FROM "CrmLead" WHERE ${own} AND "status" NOT IN ('Converted', 'Junk')`, ...p);
   const customers = await count(`SELECT COUNT(*) AS "n" FROM "CrmAccount" WHERE ${own} AND "kind" = 'Client'`, ...p);
-  const wonNow = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM("value"), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, R.from, R.to);
-  const wonBefore = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM("value"), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, R.prevFrom, R.prevTo);
+  const wonNow = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM(COALESCE("finalValue", "value")), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, R.from, R.to);
+  const wonBefore = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM(COALESCE("finalValue", "value")), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, R.prevFrom, R.prevTo);
   const marks = R.months.map(() => '?').join(', ');
   const target = ((await DB.one(`SELECT COALESCE(SUM("amount"), 0) AS "v" FROM "CrmTarget" WHERE "month" IN (${marks}) AND ${own}`, ...R.months, ...p)) || {}).v || 0;
   const dueToday = await count(`SELECT COUNT(*) AS "n" FROM "CrmTask" WHERE ${own} AND "status" = 'Open' AND "dueDate" = ?`, ...p, today);
@@ -788,7 +788,7 @@ async function overview(user, { period, mine } = {}) {
   for (let i = 5; i >= 0; i -= 1) {
     const ym = addMonths(thisM, -i); const [f, t] = monthRange(ym);
     // eslint-disable-next-line no-await-in-loop
-    const w = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM("value"), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, f, t);
+    const w = await DB.one(`SELECT COUNT(*) AS "n", COALESCE(SUM(COALESCE("finalValue", "value")), 0) AS "v" FROM "CrmDeal" WHERE ${own} AND "stage" = 'Won' AND "wonAt" >= ? AND "wonAt" < ?`, ...p, f, t);
     trend.push({ month: ym, won: w.n, value: w.v });
   }
 
