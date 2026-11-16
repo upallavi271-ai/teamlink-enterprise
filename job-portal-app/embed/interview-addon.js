@@ -561,9 +561,9 @@
       if (r.changed && !LG.manual && r.lang) { LG.prefix = ''; LG.all = []; LG.allN = 0; switchTo(r.lang, r.text || ''); if (r.text) LG.caps = true; return; }
       if (asr && r.text && r.lang === LG.cur) {
         LG.caps = true; setCaption(r.text);
-        /* a long answer: what has been heard is kept as text, and the audio starts again from here */
+        /* what has been heard so far is kept as text, and the audio starts again from here */
         /* ... only at a pause (the last 0.3 s of what was sent was quiet), so a word is never cut in two; after 22 s it is cut anyway */
-        if (LG.allN > (LG.rate || 48000) * 18 && (quietTail(LG.all.slice(0, took), 300) || LG.allN > (LG.rate || 48000) * 22)) { LG.prefix = (LG.prefix ? LG.prefix + ' ' : '') + r.text; LG.all.splice(0, took); LG.allN = 0; LG.all.forEach(function (c) { LG.allN += c.length; }); }
+        if (LG.allN > (LG.rate || 48000) * 4 && (quietTail(LG.all.slice(0, took), 350) || LG.allN > (LG.rate || 48000) * 9)) { LG.prefix = (LG.prefix ? LG.prefix + ' ' : '') + r.text; LG.all.splice(0, took); LG.allN = 0; LG.all.forEach(function (c) { LG.allN += c.length; }); }
       }
     }, function () { LG.busy = false; });
   }
@@ -699,10 +699,10 @@
     if (LG.serverHears) {
       ensureCapture(a);
       /* English: a check after 3.5 s of voice, then again every 3.5 s more (up to 6), so a switch to Telugu / Hindi later in the answer is heard too.
-         Telugu / Hindi: every 1.5 s (was 2.5 s: the Telugu caption felt slow), with the whole answer, because that is also the caption. */
+         Telugu / Hindi: every 0.8 s; the audio sent is only the part since the last pause of 0.35 s (cut after 4 s of speech, at the latest 9 s), so a check costs ~1 s however long the answer is (2026-11-16: the Telugu caption was slow because the whole answer was heard again each time), because that is also the caption. */
       if (LG.proc && !LG.busy) {
         var due = LG.cur !== 'en'
-          ? (LG.voicedMs >= 900 && Date.now() - LG.lastAt >= 1500 && LG.voicedMs >= LG.lastVoiced + 400)
+          ? (LG.voicedMs >= 700 && Date.now() - LG.lastAt >= 800 && LG.voicedMs >= LG.lastVoiced + 300)
           : (LG.checks < 6 && LG.voicedMs >= 2000 && LG.voicedMs >= LG.lastVoiced + 3000);
         if (due) check(key);
       }
