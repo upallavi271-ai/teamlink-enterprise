@@ -281,6 +281,20 @@ async function handOverOmni(row, input, e164) {
         if (vac.Q[key] && Object.keys(answers).length) faq.push({ key, pattern: vac.Q[key].source, answers });
       });
     }
+    // "which number do I send my resume / WhatsApp to?": the number the recruiter gave when the campaign was run (contactNumber), said digit by digit in every language
+    const resumeNo = String(a.contactNumber || (a.facts && /\d{6,}/.test(String(a.facts.channel || '')) ? a.facts.channel : '') || '').replace(/[^\d+]/g, '');
+    if (resumeNo) {
+      const spoken = resumeNo.replace(/^\+?91(?=\d{10}$)/, '').split('').join(' ');
+      faq.push({
+        key: 'resume',
+        pattern: String.raw`(resume|\bcv\b|whats\s?app|which number|what('?s| is) (the |your )?(number|no)\b|send (it|them)|share (it|my)|e-?mail|రెజ్యూమ్|రెజ్యుమ్|రిజ్యూమ్|సీవీ|వాట్సాప్|వాట్సప్|నంబర్|నెంబర్|ఏ నంబర్|ఎక్కడికి పంప|రిज्यूमे|रिज्यूम|सीवी|व्हाट्सएप|व्हाट्सऐप|नंबर|कहाँ भेज|कहां भेज)`,
+        answers: {
+          English: `Please send your resume on WhatsApp to ${spoken}.`,
+          Telugu: `మీ రెజ్యూమ్ ని ${spoken} కి వాట్సాప్ లో పంపండి.`,
+          Hindi: `कृपया अपना रिज्यूमे ${spoken} पर व्हाट्सएप कर दीजिए।`,
+        },
+      });
+    }
     const r = await client.request('POST', '/api/v1/script-calls', {
       externalId: String(input.externalId || ''), toNumber: P.phoneKey(e164), name: clip(sj.omni && sj.omni.name, 80), script: greetIn(a.text, a.language || 'English'), scriptLanguage: a.language || 'English', scripts, faq, agentName: clip(a.name || 'Kavya', 60),
     }, 30000);
