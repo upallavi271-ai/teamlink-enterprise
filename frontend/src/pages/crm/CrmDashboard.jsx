@@ -10,7 +10,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday } from './crmShared.jsx';
+import { useCrm, errOf, money, moneyShort, dateOf, dateTimeOf, TaskList, ACT_ICON, RecLink, RecordForm, Pill, DateField, download, istToday, ActNote } from './crmShared.jsx';
 import { TeamTargets, ForecastFunnel, CrmSettings } from './CrmReports.jsx';
 import { TicketList } from './CrmSupport.jsx';
 
@@ -382,7 +382,7 @@ function Activities({ mine }) {
           <span className="ic" style={{ background: KIND_COLOR[a.kind] }} aria-hidden="true">{ACT_ICON[a.kind]}</span>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: 13.5 }}><b>{a.subject || me.lists.activityKinds[a.kind]}</b>{a.recordName && <> · <RecLink kind={a.recordKind} id={a.recordId}>{a.recordName}</RecLink></>}</div>
-            {a.note && <div className="small-muted" style={{ fontSize: 12.5, whiteSpace: 'pre-wrap' }}>{a.note}</div>}
+            <ActNote note={a.note} className="small-muted" style={{ fontSize: 12.5 }} />
           </div>
           <div className="small-muted" style={{ fontSize: 11.5, textAlign: 'right', whiteSpace: 'nowrap' }}>{dateTimeOf(a.at)}<br />{a.byName || ''}</div>
         </div>

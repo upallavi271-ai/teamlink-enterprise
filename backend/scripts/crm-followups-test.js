@@ -193,6 +193,29 @@ const ymd = (offset) => new Date(Date.now() + 5.5 * 3600000 + offset * 86400000)
   const ca = await call('GET', '/crm/tasks/counts', null, auth);
   check('the count for the tab is overdue + today', ca.body.counts.needsAction === ca.body.counts.overdue + ca.body.counts.today && ca.body.counts.needsAction === needAct.body.tasks.length, [ca.body.counts, needAct.body.tasks.length]);
 
+  console.log('After a call is logged, the screen is told which follow-ups are still open (to ask "Mark this follow-up done?")');
+  const al = (await call('POST', '/crm/leads', { company: 'Zz Ask Done Co', contactName: 'Ravi', phone: '9000155501' }, auth)).body.lead;
+  const lateT = (await call('POST', '/crm/tasks', { title: 'Chase the late quote', dueDate: ymd(-2), leadId: al.id, type: 'Call' }, auth)).body.task;
+  const todayT = (await call('POST', '/crm/tasks', { title: 'Send the brochure', dueDate: ymd(0), leadId: al.id, type: 'Email' }, auth)).body.task;
+  await call('POST', '/crm/tasks', { title: 'Next month check-in', dueDate: ymd(20), leadId: al.id, type: 'Call' }, auth);
+  const noteLog = await call('POST', '/crm/activities', { kind: 'note', leadId: al.id, subject: 'A note' }, auth);
+  check('a plain note asks nothing', noteLog.status === 200 && (noteLog.body.openFollowUps || []).length === 0, noteLog.body.openFollowUps);
+  const callLog = await call('POST', '/crm/activities', { kind: 'call', leadId: al.id, subject: 'Spoke', outcome: 'Spoke' }, auth);
+  const asked = (callLog.body.openFollowUps || []).map((t) => t.title);
+  check('a call logged on a lead lists its late and due-today follow-ups (the automatic First call too), the late one first', asked.length === 3 && asked[0] === 'Chase the late quote' && asked.includes('Send the brochure') && asked.includes('First call: Zz Ask Done Co'), asked);
+  check('a follow-up that is not due yet is not asked about', !asked.includes('Next month check-in'));
+  const actsBefore = (await call('GET', `/crm/leads/${al.id}`, null, auth)).body.activities.length;
+  const closed = await call('POST', `/crm/tasks/${lateT.id}/done`, { outcome: 'Spoke', noActivity: true }, auth);
+  const afterDet = await call('GET', `/crm/leads/${al.id}`, null, auth);
+  check('"Mark done" closes it with the outcome and writes NO second line on the timeline (the call is already there)', closed.status === 200 && closed.body.task.status === 'Done' && closed.body.task.outcome === 'Spoke' && closed.body.activity == null && afterDet.body.activities.length === actsBefore, [closed.body.task && closed.body.task.status, afterDet.body.activities.length, actsBefore]);
+  const callLog2 = await call('POST', '/crm/activities', { kind: 'call', leadId: al.id, subject: 'Spoke again', outcome: 'Spoke' }, auth);
+  check('once it is done it is not asked about again; the two still open are', (callLog2.body.openFollowUps || []).map((t) => t.title).sort().join('|') === 'First call: Zz Ask Done Co|Send the brochure');
+  const withNext = await call('POST', '/crm/activities', { kind: 'call', leadId: al.id, subject: 'Spoke a third time', outcome: 'Spoke', followUp: { dueDate: ymd(0), title: 'The one just made' } }, auth);
+  check('the follow-up made together with the call is not asked about', !(withNext.body.openFollowUps || []).some((t) => t.title === 'The one just made'));
+  const normalDone = await call('POST', `/crm/tasks/${todayT.id}/done`, { outcome: 'Sent details' }, auth);
+  check('the normal Done (from the Follow-ups page) still writes its line on the timeline', normalDone.status === 200 && normalDone.body.activity && /done: Send the brochure/.test(normalDone.body.activity.subject), normalDone.body.activity);
+  check('a lead that is not there asks nothing and is a 404', (await call('POST', '/crm/activities', { kind: 'call', leadId: 'lead_nope', subject: 'x' }, auth)).status === 404);
+
   console.log(`\n${total - failed}/${total} passed`);
   await stop(failed ? 1 : 0);
 })().catch(async (e) => { console.error(e); await stop(1); });

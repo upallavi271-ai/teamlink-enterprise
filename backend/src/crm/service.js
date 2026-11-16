@@ -708,6 +708,13 @@ async function addTaskRow(user, r, link, body) {
   return { task };
 }
 
+// The follow-ups of a record that are open and due today or late: after a call / mail / WhatsApp / meeting is logged on the record the screen asks "Mark this follow-up done?"
+async function openFollowUpsFor(kind, id, exceptId) {
+  const col = { lead: 'leadId', deal: 'dealId', account: 'accountId' }[kind];
+  if (!col) return [];
+  const rows = await DB.all(`SELECT "id", "title", "dueDate", "dueTime", "type", "priority" FROM "CrmTask" WHERE "${col}" = ? AND "status" = 'Open' AND "dueDate" <= ? ORDER BY "dueDate", COALESCE("dueTime", '') LIMIT 4`, id, istToday()).catch(() => []);
+  return rows.filter((t) => t.id !== exceptId);
+}
 async function addActivity(user, body = {}) {
   const r = roleOf(user);
   if (!mayEdit(r)) return fail(403, 'Your role can read the CRM but not add to it.');
@@ -732,7 +739,8 @@ async function addActivity(user, body = {}) {
     if (t.error) return t.error;
     task = t.task;
   }
-  return okBody({ ok: true, activity, task });
+  const openFollowUps = kind !== 'note' ? await openFollowUpsFor(link.kind, link.row.id, task && task.id) : [];
+  return okBody({ ok: true, activity, task, openFollowUps });
 }
 
 async function addTask(user, body = {}) {
@@ -766,7 +774,7 @@ async function finishTask(user, id, input) {
   const kind = TASK_ACTIVITY[row.type] || 'note';
   const what = outcome || note;
   let activity = null;
-  if (what) {
+  if (what && !body.noActivity) {
     activity = await insert('CrmActivity', {
       id: newId('act'), kind, subject: `${row.type || 'Follow-up'} done: ${row.title}`, note: [outcome ? `Outcome: ${outcome}` : '', note].filter(Boolean).join('. ') || null, at: now,
       leadId: row.leadId || null, accountId: row.accountId || null, dealId: row.dealId || null, byId: user.id, byName: user.name || null, createdAt: now,
@@ -776,7 +784,7 @@ async function finishTask(user, id, input) {
   const table = row.dealId ? 'CrmDeal' : row.leadId ? 'CrmLead' : row.accountId ? 'CrmAccount' : null;
   const recId = row.dealId || row.leadId || row.accountId;
   if (table) await update(table, recId, { updatedAt: now });
-  if (!row.dealId && row.leadId) await SALES.autoStage(row.leadId, { kind, outcome }).catch(() => null);
+  if (!row.dealId && row.leadId && !body.noActivity) await SALES.autoStage(row.leadId, { kind, outcome }).catch(() => null);
   let next = null;
   if (nx) {
     next = await insert('CrmTask', {
@@ -985,5 +993,5 @@ module.exports = {
   roleOf, crmRoleFor, can, rightsOf, me, list, detail, create, edit, moveDeal, decideDeal, taskCounts, snoozeTask, hasLoggedWork, NEEDS_LOGGED_WORK, backfillInvoices, invoiceForDeal, addPayment, deletePayment, PAYMENT_MODES, invoices, invoiceDetail, setInvoiceStatus, createInvoiceForDeal, convertLead, addActivity, addTask, finishTask, tasks, remind, dashboard, remove, duplicatesOf, dealValue,
   STAGES, LEAD_STATUSES, RATINGS,
   // shared with crm/extra.js
-  resetCodeCounters, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
+  openFollowUpsFor, resetCodeCounters, ownerOptions, getRow, insert, update, audit, canSeeRow, canEditRow, seesAll, mayEdit, mayAssign, scopeSql, newId, clip, num, fail, okBody, istToday, istNow, normCo, phone10, cleanFields, CONTACT_ROLES,
 };

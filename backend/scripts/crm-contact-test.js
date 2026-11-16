@@ -113,6 +113,7 @@ let T = {};
   let led = { n: 0 };
   for (let i = 0; i < 10 && !Number(led.n); i += 1) { led = await DB.one('SELECT COUNT(*) AS n FROM "OmniCreditLedger" WHERE "userId" = ? AND "channel" = ?', X.id, 'email').catch(() => ({ n: 0 })); if (!Number(led.n)) await new Promise((r) => { setTimeout(r, 300); }); } // the ledger row is written just after the send returns
   check('the send is counted in the Omni-channel usage ledger (shown as a test send on this sandbox) (it goes through the one send layer, not around it)', Number(led.n) >= 1, led);
+  check('the send says which follow-ups of the lead are still open (the automatic First call), so the screen can ask Mark done', (em.body.openFollowUps || []).some((t) => /^First call/.test(t.title)), em.body.openFollowUps);
   const tl1 = await timeline('lead', lead.id);
   check('it is on the lead\'s timeline with the message', tl1.some((a) => a.kind === 'email' && /Email sent: Our recruitment services/.test(a.subject) && /We can help you hire/.test(a.note)), tl1.map((a) => a.subject));
   check('and the New lead is now Contacted (a person wrote to it)', (await call('GET', `/crm/leads/${lead.id}`, null, T.X)).body.lead.status === 'Contacted');

@@ -10,7 +10,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, istToday, addDays } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
+import { useCrm, errOf, istToday, addDays, MarkDonePrompt } from './crmShared.jsx'; // eslint-disable-line import/no-cycle
 
 const TABS = [['Email', '✉️ Email'], ['WhatsApp', '💬 WhatsApp'], ['Call', '📞 Call']];
 const digitsOf = (v) => String(v || '').replace(/\D/g, '');
@@ -34,6 +34,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
   const [busy, setBusy] = useState('');
   const [err, setErr] = useState('');
   const [sentNote, setSentNote] = useState('');
+  const [ask, setAsk] = useState(null); // follow-ups of this record still open: "Mark done?" once a message or call outcome is saved
   const [plan, setPlan] = useState(null); // how a WhatsApp message to this number would go (from the WhatsApp integration)
   const [sentOk, setSentOk] = useState({ Email: null, WhatsApp: null }); // { to, at } once a message really went: the Send button says Sent
   const [how, setHow] = useState(null); // after a call: { via: 'gateway' | 'phone' }
@@ -67,6 +68,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
       const r = await api.post('/crm/contact/send', channel === 'Email' ? { ...body, channel, to: to.Email, subject, text: mailText } : { ...body, channel, to: to.WhatsApp, text: waText });
       toast(channel === 'Email' ? `Email sent to ${r.data.to}.` : `WhatsApp sent to ${r.data.to}.`);
       setSentOk((x) => ({ ...x, [channel]: { to: r.data.to, at: new Date() } }));
+      if ((r.data.openFollowUps || []).length) setAsk({ items: r.data.openFollowUps, outcome: 'Sent details' });
       setSentNote(channel === 'Email' ? `Sent to ${r.data.to}. It is on the timeline.` : `Handed to WhatsApp for ${r.data.to} (${(rd.whatsapp && rd.whatsapp.via) || r.data.via})${r.data.usedTemplate ? ' as the approved template, because the person had not written to you in the last 24 hours' : ''}. The timeline shows Delivered, or why not, when WhatsApp reports it.`);
       finish();
     } catch (e) {
@@ -161,10 +163,11 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
             <a className={`btn${gwReady && rd.call.myPhone ? '' : ' btn-primary'}`} href={`tel:+${intl(to.Call)}`} onClick={(e) => { if (!digitsOf(to.Call)) { e.preventDefault(); setErr('Write the number first.'); return; } setHow({ via: 'phone' }); }} aria-disabled={!digitsOf(to.Call)}>{gwReady && rd.call.myPhone ? 'Use my phone\'s dialler' : '📞 Call from my phone'}</a>
             {!how && <button type="button" className="btn" onClick={() => setHow({ via: 'phone' })}>I already called: save how it went</button>}
           </div>
-          {how && <HowDidItGo record={record} body={body} via={how.via} onSaved={() => { toast('Saved on the timeline.'); finish(); setHow(null); setSentNote('Saved.'); }} />}
+          {how && <HowDidItGo record={record} body={body} via={how.via} onSaved={(items, oc) => { toast('Saved on the timeline.'); finish(); setHow(null); setSentNote('Saved.'); if (items && items.length) setAsk({ items, outcome: oc }); }} />}
         </>
       )}
       {!me.canEdit && <div className="small-muted">Your role can read the CRM but not contact from it.</div>}
+      {ask && <MarkDonePrompt items={ask.items} outcome={ask.outcome} onClose={() => setAsk(null)} />}
     </>
   );
 }
@@ -205,12 +208,12 @@ function HowDidItGo({ record, body, via, onSaved }) {
     if (!outcome && !note.trim()) { toast('Pick what came of it or write a line about it.'); return; }
     setBusy(true);
     try {
-      await api.post('/crm/activities', {
+      const saved = await api.post('/crm/activities', {
         kind: 'call', [`${record.kind}Id`]: record.id, subject: `Call outcome${outcome ? `: ${outcome}` : ''}${via === 'phone' ? ' (from the phone)' : ''}`,
         note: note.trim() || undefined, outcome: outcome || undefined,
         followUp: next ? { dueDate: next, title: `Follow up: ${record.name || 'call'}` } : undefined,
       });
-      onSaved();
+      onSaved((saved.data && saved.data.openFollowUps) || [], outcome);
     } catch (e) { toast(errOf(e, 'This could not be saved.')); setBusy(false); }
   }
   return (

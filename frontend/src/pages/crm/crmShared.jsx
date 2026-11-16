@@ -73,8 +73,40 @@ export const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n *
 // window - what it was, what came of it, a note, and optionally the next follow-up - opened from a row of the Leads table, a card on the board, or by
 // itself when a move was refused for want of a log (then the move is tried again). `record` is a lead.
 const LOG_KINDS = [['call', 'Call'], ['whatsapp', 'WhatsApp'], ['email', 'Email'], ['meeting', 'Meeting'], ['note', 'Note']];
+// "MARK THE FOLLOW-UP DONE?" (the founder's review 2026-11-16: "call chesanu kani still late ani vastundi"): after a call / mail / WhatsApp / meeting is logged on a record that still has a
+// follow-up open and due, ask once, with one button per follow-up. It is closed as done with the outcome just logged (no second line on the timeline).
+export function MarkDonePrompt({ items, outcome, onClose }) {
+  const { toast } = useCrm();
+  const [left, setLeft] = useState(items || []);
+  const doneIds = useRef(new Set()); // ids already closed (two quick clicks must not leave a stale list)
+  const [busy, setBusy] = useState('');
+  const today = istToday();
+  async function done(t) {
+    setBusy(t.id);
+    try {
+      await api.post(`/crm/tasks/${t.id}/done`, { outcome: outcome || undefined, noActivity: true });
+      toast(`"${t.title}" is done.`);
+      doneIds.current.add(t.id);
+      const rest = (items || []).filter((x) => !doneIds.current.has(x.id));
+      if (!rest.length) onClose(true); else setLeft(rest);
+    } catch (e) { toast(errOf(e, 'The follow-up could not be closed.')); } finally { setBusy(''); }
+  }
+  return (
+    <Modal title="Mark the follow-up done?" onClose={() => onClose(false)} foot={<button type="button" className="btn" onClick={() => onClose(false)}>Not yet</button>}>
+      <p className="small-muted" style={{ marginTop: 0 }}>You have just logged this. This record still has {left.length === 1 ? 'a follow-up' : 'follow-ups'} waiting, so it keeps showing as late:</p>
+      {left.map((t) => (
+        <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '1px solid var(--line-soft, #eef0f4)' }}>
+          <div style={{ flex: 1, minWidth: 0 }}><b>{t.title}</b><div className="small-muted" style={{ fontSize: 12 }}>{t.type || 'Follow-up'} · due {dateOf(t.dueDate)}{t.dueTime ? ` ${t.dueTime}` : ''}{t.dueDate < today ? ' · late' : ''}</div></div>
+          <button type="button" className="btn btn-primary btn-sm" disabled={busy === t.id} onClick={() => done(t)}>{busy === t.id ? 'Saving…' : 'Mark done'}</button>
+        </div>
+      ))}
+    </Modal>
+  );
+}
+
 export function QuickLog({ record, intro, onClose, onLogged }) {
   const { me, toast } = useCrm();
+  const [ask, setAsk] = useState(null); // open follow-ups of this lead, asked about after the log is saved
   const [kind, setKind] = useState('call');
   const [outcome, setOutcome] = useState('');
   const [note, setNote] = useState('');
@@ -93,16 +125,20 @@ export function QuickLog({ record, intro, onClose, onLogged }) {
     if (!outcome && !note.trim()) { toast('Pick what came of it or write a line about it.'); return; }
     setBusy(true);
     try {
-      await api.post('/crm/activities', {
+      const r = await api.post('/crm/activities', {
         kind, leadId: record.id, subject: `${label}${outcome ? `: ${outcome}` : ''}`, note: note.trim() || undefined, outcome: outcome || undefined,
         followUp: next ? { dueDate: next, dueTime: nextTime || undefined, title: `Follow up: ${record.company}` } : undefined,
       });
       toast(`Logged on ${record.company}.`);
+      const items = (r.data && r.data.openFollowUps) || [];
+      if (items.length && kind !== 'note') { setAsk({ items }); setBusy(false); return; }
       onLogged();
     } catch (e) { toast(errOf(e, 'This could not be saved.')); setBusy(false); }
   }
   const today = istToday();
   return (
+    <>
+    {ask && <MarkDonePrompt items={ask.items} outcome={outcome} onClose={() => { setAsk(null); onLogged(); }} />}
     <Modal title={`${act ? 'Contact' : 'Log'}: ${record.company}`} size={act ? 'wide' : undefined} onClose={closeIt} foot={act ? <button type="button" className="btn" onClick={closeIt}>Close</button> : <><button type="button" className="btn" onClick={closeIt}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
       {intro && <div className="notice" style={{ marginBottom: 10 }}>{intro}</div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
@@ -135,6 +171,7 @@ export function QuickLog({ record, intro, onClose, onLogged }) {
       </div>
       </>}
     </Modal>
+    </>
   );
 }
 // a deal still open with nothing logged for N days (CRM settings) is "going cold": the number of days, or 0
@@ -331,6 +368,7 @@ export function RecordForm({ kind, row, preset, onClose, onSaved }) {
 // ---- log a call / meeting / ... and the next follow-up ---------------------------------------------------
 function LogActivity({ link, onDone }) {
   const { me, toast } = useCrm();
+  const [ask, setAsk] = useState(null);
   const [kind, setKind] = useState('call');
   const [subject, setSubject] = useState('');
   const [note, setNote] = useState('');
@@ -341,15 +379,18 @@ function LogActivity({ link, onDone }) {
   async function save() {
     setBusy(true); setErr('');
     try {
-      await api.post('/crm/activities', { kind, subject, note, ...link, followUp: next ? { dueDate: next, title: nextTitle || undefined } : undefined });
+      const r = await api.post('/crm/activities', { kind, subject, note, ...link, followUp: next ? { dueDate: next, title: nextTitle || undefined } : undefined });
       setSubject(''); setNote(''); setNext(''); setNextTitle('');
       toast(next ? 'Logged, with the next follow-up.' : 'Logged.');
+      const items = (r.data && r.data.openFollowUps) || [];
+      if (items.length) setAsk({ items });
       onDone();
     } catch (e) { setErr(errOf(e, 'This could not be saved.')); } finally { setBusy(false); }
   }
   const today = istToday();
   return (
     <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+      {ask && <MarkDonePrompt items={ask.items} onClose={() => { setAsk(null); onDone(); }} />}
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
         {Object.entries(me.lists.activityKinds).map(([k, label]) => (
           <button key={k} type="button" className={`btn btn-sm${kind === k ? ' btn-primary' : ''}`} onClick={() => setKind(k)}>{ACT_ICON[k]} {label}</button>
@@ -372,6 +413,24 @@ function LogActivity({ link, onDone }) {
   );
 }
 
+// A long note (a sent email or WhatsApp message with its whole text) is one short line with "View details" (founder 2026-11-16: "open or view details ani yedhokati ivvu, click chesthe
+// open ayyelaaga"); a short note stays as it is. For a sent message the first line is "To <address>".
+export function ActNote({ note, className, style }) {
+  const [open, setOpen] = useState(false);
+  const text = String(note || '');
+  if (!text) return null;
+  const lines = text.split('\n');
+  const long = text.length > 140 || lines.length > 2;
+  if (!long) return <div className={className} style={{ whiteSpace: 'pre-wrap', ...style }}>{text}</div>;
+  const head = lines[0].slice(0, 110);
+  return (
+    <div className={className} style={style}>
+      {open ? <div style={{ whiteSpace: 'pre-wrap' }}>{text}</div> : <div>{head}{lines.length > 1 || lines[0].length > 110 ? ' …' : ''}</div>}
+      <button type="button" className="crm-linkbtn" style={{ marginTop: 2 }} aria-expanded={open} onClick={(e) => { e.stopPropagation(); setOpen(!open); }}>{open ? 'Hide details' : 'View details'}</button>
+    </div>
+  );
+}
+
 export function Timeline({ activities }) {
   if (!activities.length) return <div className="small-muted" style={{ padding: '6px 0' }}>Nothing logged yet. Log the first call, meeting or note above.</div>;
   return (
@@ -380,7 +439,7 @@ export function Timeline({ activities }) {
         <div key={a.id} className="timeline-item">
           <div className="timeline-date">{dateTimeOf(a.at)}{a.byName ? ` · ${a.byName}` : ''}</div>
           <div className="timeline-label">{ACT_ICON[a.kind] || '•'} {a.subject || (a.kind === 'note' ? 'Note' : a.kind)}{a.deliveryStatus === 'Failed' && <> <span className="status rejected" style={{ fontSize: 11 }} title={a.deliveryDetail || ''}>✗ Not delivered</span></>}{a.deliveryStatus === 'Read' && <> <span className="status active" style={{ fontSize: 11 }} title={a.deliveryDetail || ''}>✓✓ Read</span></>}{a.deliveryStatus === 'Delivered' && <> <span className="status active" style={{ fontSize: 11 }} title={a.deliveryDetail || ''}>✓✓ Delivered</span></>}{a.deliveryStatus === 'Sent' && <> <span className="status pending" style={{ fontSize: 11 }} title={a.deliveryDetail || ''}>✓ Sent{a.kind === 'whatsapp' ? ' · waiting for WhatsApp' : ''}</span></>}{!a.deliveryStatus && /^Email sent/.test(a.subject || '') && <> <span className="status active" style={{ fontSize: 11 }}>✓ Sent</span></>}{/^(Mail app opened|WhatsApp opened)/.test(a.subject || '') && <> <span className="status pending" style={{ fontSize: 11 }} title="Opened in the person's own app: TeamLink cannot see whether it was sent">Not confirmed</span></>}</div>
-          {a.note && <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', whiteSpace: 'pre-wrap' }}>{a.note}</div>}
+          <ActNote note={a.note} style={{ fontSize: 12.5, color: 'var(--ink-soft)' }} />
           {a.deliveryDetail && a.deliveryStatus === 'Failed' && <div style={{ fontSize: 12.5, color: 'var(--red)' }}>{a.deliveryDetail}</div>}
         </div>
       ))}

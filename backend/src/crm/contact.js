@@ -78,7 +78,7 @@ async function logSent(user, kind, id, activity, providerRef, status, detail) {
   const a = await S.addActivity(user, { ...activity, [`${kind}Id`]: id });
   const actId = a.body && a.body.activity ? a.body.activity.id : null;
   if (actId) await DB.run('UPDATE "CrmActivity" SET "providerRef" = ?, "deliveryStatus" = ?, "deliveryDetail" = ? WHERE "id" = ?', providerRef ? String(providerRef).slice(0, 200) : null, status, clip(detail, 300), actId).catch(() => {});
-  return actId;
+  return { actId, openFollowUps: (a.body && a.body.openFollowUps) || [] };
 }
 
 // HOW A WHATSAPP MESSAGE TO THIS NUMBER WOULD GO, from what the WhatsApp integration already holds (the number allotted to this person, its general template, the 24-hour window).
@@ -123,8 +123,8 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
       meta: { audience: 'crm', personName: x.name, senderUserId: user.id, senderName: user.name, purpose: 'CRM email' },
     });
     if (!result.ok) return S.fail(result.notConfigured ? 409 : (result.invalid || result.creditsBlocked ? 400 : 502), result.notConfigured ? `Email is not connected: ${result.error}` : `The email was not sent: ${result.error || 'the mail server refused it.'}`, { notConfigured: !!result.notConfigured });
-    await logSent(user, kind, id, { kind: 'email', subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by the mail server');
-    return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped, sentAt: new Date().toISOString() });
+    const logged = await logSent(user, kind, id, { kind: 'email', subject: `Email sent: ${subj}`, note: `To ${addr}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by the mail server');
+    return S.okBody({ ok: true, channel, to: addr, via: 'Email (SMTP)', deduped: !!result.deduped, sentAt: new Date().toISOString(), openFollowUps: logged.openFollowUps });
   }
   // WhatsApp
   const m = require('../utils/messagingCore').normalizeMobile(to || x.phone); // eslint-disable-line global-require
@@ -148,8 +148,8 @@ async function send(user, { kind, id, channel, to, subject, text } = {}) {
     const why = result.notConfigured ? 'WhatsApp is not connected.' : (result.error || 'WhatsApp refused the message.');
     return S.fail(result.notConfigured ? 409 : 502, `The WhatsApp message was not sent: ${why}`, { notConfigured: !!result.notConfigured, outsideWindow: /24|re-?engage|template|131047/i.test(String(result.error || '')) });
   }
-  await logSent(user, kind, id, { kind: 'whatsapp', subject: 'WhatsApp message sent', note: `To +${m.e164}${viaTemplate ? ' (as the approved template: the person had not written in the last 24 hours)' : ''}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by WhatsApp, delivery not confirmed yet');
-  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp', usedTemplate: viaTemplate, sentAt: new Date().toISOString() });
+  const loggedWa = await logSent(user, kind, id, { kind: 'whatsapp', subject: 'WhatsApp message sent', note: `To +${m.e164}${viaTemplate ? ' (as the approved template: the person had not written in the last 24 hours)' : ''}\n\n${body}` }, result.providerRef, 'Sent', 'Accepted by WhatsApp, delivery not confirmed yet');
+  return S.okBody({ ok: true, channel, to: `+${m.e164}`, via: result.provider || 'WhatsApp', usedTemplate: viaTemplate, sentAt: new Date().toISOString(), openFollowUps: loggedWa.openFollowUps });
 }
 
 // The person opened their own app instead (mail app / wa.me / the phone's dialler): TeamLink cannot see whether it was sent, and says so on the timeline.
