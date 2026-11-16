@@ -9,6 +9,9 @@ const fs = require('fs');
 const wa = require('../utils/whatsappCloud');
 const core = require('../utils/messagingCore');
 
+// how WhatsApp shows a file: a JPEG / PNG as a picture, an MP4 / 3GP as a video, anything else as a document
+const modeOf = (mime) => { const x = String(mime || 'application/pdf').toLowerCase(); return /^image\/(jpeg|png)$/.test(x) ? 'image' : (/^video\/(mp4|3gpp)$/.test(x) ? 'video' : 'document'); };
+
 async function sendWithMedia(m) {
   // WHICH NUMBER (utils/waNumbers.js); with no numbers added yet this is the old single connection
   const r = await wa.route({ ...m, numberId: m.numberId, to: m.to });
@@ -27,7 +30,9 @@ async function sendWithMedia(m) {
     return { ok: false, transient: false, error: 'A file can be sent on the official WhatsApp only in the 24 hours after the person wrote to you. Send the approved template first, or use the QR-linked number.' };
   }
   const file = m.media[0];
-  if (wa.simulated(cfg)) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, sandbox: true, mode: 'document', ...through };
+  // a JPEG / PNG goes as a PICTURE and an MP4 / 3GP as a VIDEO (the person sees it in the chat); anything else as a document
+  const mode = modeOf(file.mime);
+  if (wa.simulated(cfg)) return { ok: true, provider: 'SANDBOX', providerRef: `sandbox-wa-${Date.now().toString(36)}`, sandbox: true, mode, ...through };
   let buf;
   try { buf = fs.readFileSync(file.path); } catch { return { ok: false, transient: false, error: 'The file could not be read.' }; }
   const form = new FormData();
@@ -39,15 +44,15 @@ async function sendWithMedia(m) {
   if (!up.ok || !up.json || !up.json.id) return { ok: false, provider: 'WHATSAPP', transient: core.isTransientHttp(up.status), error: core.tidy(`WhatsApp file upload failed: ${(up.json && up.json.error && up.json.error.message) || up.networkError || up.status}`) };
   const res = await core.httpJson(`${cfg.base}/${wa.VERSION}/${encodeURIComponent(cfg.phoneId)}/messages`, {
     method: 'POST', headers: { authorization: `Bearer ${cfg.token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: mobile.e164, type: 'document', document: { id: up.json.id, filename: file.name || 'file', caption: String(m.text || '').slice(0, 1000) || undefined } }),
+    body: JSON.stringify({ messaging_product: 'whatsapp', recipient_type: 'individual', to: mobile.e164, type: mode, ...(mode === 'document' ? { document: { id: up.json.id, filename: file.name || 'file', caption: String(m.text || '').slice(0, 1000) || undefined } } : { [mode]: { id: up.json.id, caption: String(m.text || '').slice(0, 1000) || undefined } }) }),
   });
   if (res.ok && res.json && Array.isArray(res.json.messages) && res.json.messages[0]) {
     if (number) await require('../utils/waNumbers').noteMessage({ numberId: number.id, to: mobile.e164, providerRef: res.json.messages[0].id || null, dir: 'OUT' }); // eslint-disable-line global-require
     if (number) await require('../utils/waNumbers').noteSendOk(number.id); // eslint-disable-line global-require
-    return { ok: true, provider: 'WHATSAPP', providerRef: res.json.messages[0].id || null, mode: 'document', ...through };
+    return { ok: true, provider: 'WHATSAPP', providerRef: res.json.messages[0].id || null, mode, ...through };
   }
   const e = (res.json && res.json.error) || {};
   return { ok: false, provider: 'WHATSAPP', transient: core.isTransientHttp(res.status), error: core.tidy(`WhatsApp HTTP ${res.status}: ${e.message || res.networkError || res.text}`) };
 }
 
-module.exports = { sendWithMedia };
+module.exports = { sendWithMedia, modeOf };

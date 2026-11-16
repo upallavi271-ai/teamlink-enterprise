@@ -5,7 +5,8 @@ import { Btn, TinyBtn, GsModal, Field, Banner, fmtDateTime } from '../ui.jsx';
 import { ClientChip } from './mk.jsx';
 
 // "SEND TO CLIENT" (AI Marketing > client approval): for an item the team has approved, makes a private link the client opens without a login to Approve or Request
-// changes. TeamLink does not send the link itself (no email / WhatsApp is connected): this window gives Copy, WhatsApp and Email buttons. Server: marketing/clientReview.js.
+// changes. "Send from TeamLink" WhatsApps / emails it from the company's own number (and can send the picture itself); Copy, "Open my own WhatsApp" and "Email" are the manual way.
+// Server: marketing/clientReview.js.
 const digits = (s) => String(s || '').replace(/\D/g, '');
 const WORD = { content: 'message', image: 'picture' };
 
@@ -20,10 +21,14 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const [err, setErr] = useState('');
   const [again, setAgain] = useState(false); // "make a new link" pressed
   const [fresh, setFresh] = useState(null); // the review just made
+  const [ways, setWays] = useState(null); // is the company WhatsApp / email connected, and from which number
+  const [phone, setPhone] = useState(null); // the client's WhatsApp number typed in the send box (null = the one saved on the link)
+  const [withFile, setWithFile] = useState(false); // also send the picture / video itself
+  const [sendNote, setSendNote] = useState(null); // what the last "Send from TeamLink" did
   const word = isVideo ? 'video' : (WORD[kind] || 'item');
 
   const load = () => omni.get('/gs/marketing/client-reviews', { kind, itemId: item.id }).then((d) => setReviews(d.reviews || [])).catch((e) => setErr(errOf(e, 'The client approvals could not be read.')));
-  useEffect(() => { load(); api.get('/clients').then((r) => setClients(Array.isArray(r.data) ? r.data : (r.data && r.data.clients) || [])).catch(() => setClients([])); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); omni.get('/gs/marketing/projects/notify').then(setWays).catch(() => setWays(null)); api.get('/clients').then((r) => setClients(Array.isArray(r.data) ? r.data : (r.data && r.data.clients) || [])).catch(() => setClients([])); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const names = useMemo(() => clients.map((c) => c.name).filter(Boolean), [clients]);
 
   const pickClient = (name) => {
@@ -46,19 +51,43 @@ export default function ClientReviewModal({ kind, item, isVideo, onClose, onChan
   const url = (r) => `${window.location.origin}${r.link}`;
   const text = (r) => `Hello${r.contactName ? ` ${r.contactName}` : ''}, please review the ${word} "${item.title}" and tell us if it is OK to use: ${url(r)}`;
   const copy = async (r) => { try { await navigator.clipboard.writeText(url(r)); toast('Link copied'); } catch { window.prompt('Copy the link:', url(r)); } };
-  const wa = (r) => window.open(`https://wa.me/${digits(r.contactPhone)}?text=${encodeURIComponent(text(r))}`, '_blank', 'noopener');
+  const wa = (r) => window.open(`https://wa.me/${digits(phone != null ? phone : r.contactPhone)}?text=${encodeURIComponent(text(r))}`, '_blank', 'noopener');
+  // a person's click: the company's own WhatsApp number / mailbox sends it (no WhatsApp login needed here)
+  const tellIt = async (r, way) => {
+    setBusy(`tell${way}`); setErr(''); setSendNote(null);
+    try {
+      const res = await omni.post(`/gs/marketing/client-reviews/${r.id}/tell`, { ways: [way], picture: way === 'whatsapp' && withFile && kind === 'image', ...(phone != null && String(phone).trim() ? { phone: String(phone).trim() } : {}) });
+      setSendNote(res.ok); toast(res.ok); if (phone != null) load();
+    } catch (e) { setErr(errOf(e, 'It could not be sent.')); } finally { setBusy(''); }
+  };
   const mail = (r) => { window.location.href = `mailto:${encodeURIComponent(r.contactEmail || '')}?subject=${encodeURIComponent(`Please review: ${item.title}`)}&body=${encodeURIComponent(text(r))}`; };
 
   const share = (r) => (
     <div style={{ background: '#f3fbf7', border: '1px solid #cfe9dc', borderRadius: 10, padding: 12, marginTop: 10 }}>
       <div style={{ fontSize: 10, fontWeight: 800, color: '#166534' }}>PRIVATE LINK FOR {r.clientName.toUpperCase()}</div>
       <input readOnly value={url(r)} onFocus={(e) => e.target.select()} aria-label="The private link" style={{ width: '100%', boxSizing: 'border-box', margin: '6px 0', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 11 }} />
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <Btn small primary onClick={() => copy(r)}>⧉ Copy link</Btn>
-        <Btn small onClick={() => wa(r)} title={r.contactPhone ? '' : 'No number: WhatsApp will ask for one'}>WhatsApp ↗</Btn>
-        <Btn small onClick={() => mail(r)}>Email ↗</Btn>
+      <div style={{ margin: '8px 0 4px', fontSize: 10, fontWeight: 800, color: '#166534' }}>CLIENT'S WHATSAPP NUMBER</div>
+      <input value={phone != null ? phone : (r.contactPhone || '')} maxLength={30} inputMode="tel" placeholder="+91…" onChange={(e) => setPhone(e.target.value)} aria-label="The client's WhatsApp number" style={{ width: '100%', boxSizing: 'border-box', border: '1px solid var(--line)', borderRadius: 8, padding: '7px 9px', font: 'inherit', fontSize: 12 }} />
+      {kind === 'image' ? (
+        <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 11.5, margin: '8px 0 2px' }}>
+          <input type="checkbox" checked={withFile} onChange={(e) => setWithFile(e.target.checked)} style={{ marginTop: 2 }} />
+          <span>Also send the {word} itself on WhatsApp. WhatsApp allows this only if the client has written to us in the last 24 hours; if not, the link is sent instead.</span>
+        </label>
+      ) : null}
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 8 }}>
+        <Btn small primary disabled={!!busy || (ways && !ways.whatsapp.ready)} onClick={() => tellIt(r, 'whatsapp')} title={ways && !ways.whatsapp.ready ? `WhatsApp is not connected: ${ways.whatsapp.reason || 'ask an Admin'}` : 'TeamLink sends it from the company WhatsApp number'}>{busy === 'tellwhatsapp' ? 'Sending…' : 'Send on WhatsApp from TeamLink'}</Btn>
+        <Btn small disabled={!!busy || !(r.contactEmail) || (ways && !ways.email.ready)} onClick={() => tellIt(r, 'email')} title={r.contactEmail ? 'TeamLink sends it from the company mailbox' : 'This link has no email address'}>{busy === 'tellemail' ? 'Sending…' : 'Send email from TeamLink'}</Btn>
+        <Btn small onClick={() => copy(r)}>⧉ Copy link</Btn>
       </div>
-      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>TeamLink does not send it for you: press a button, then send the message yourself. The client needs no login. Valid until {fmtDateTime(r.expiresAt)}.</div>
+      {sendNote ? <div className="mk-note ok" style={{ marginTop: 8 }}>{sendNote}</div> : null}
+      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>
+        {ways && ways.whatsapp.ready ? `WhatsApp goes from the company number${ways.whatsapp.via ? ` (${ways.whatsapp.via})` : ''}: no WhatsApp login is needed here.` : 'WhatsApp from TeamLink needs the company WhatsApp to be connected (Administration > Integrations).'} The client needs no login. Valid until {fmtDateTime(r.expiresAt)}.
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6, alignItems: 'center' }}>
+        <span style={{ fontSize: 10, color: 'var(--muted)' }}>Or by hand:</span>
+        <TinyBtn onClick={() => wa(r)} title="Opens WhatsApp Web / your own WhatsApp: it asks you to log in there">Open my own WhatsApp ↗</TinyBtn>
+        <TinyBtn onClick={() => mail(r)}>My own email app ↗</TinyBtn>
+      </div>
     </div>
   );
 

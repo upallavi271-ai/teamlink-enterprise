@@ -160,6 +160,7 @@ router.post('/images/:id/reject', wrap(async (req, res) => send(res, await Img.r
 // ---- client approval (marketing/clientReview.js): after the team approves, the client approves on a private link --------------------------------------
 router.get('/client-reviews', wrap(async (req, res) => send(res, await CR.list(req.user, { kind: String(req.query.kind || ''), itemId: String(req.query.itemId || '') }))));
 router.post('/client-reviews', mustWrite, wrap(async (req, res) => send(res, await CR.create(req.user, req.body || {}))));
+router.post('/client-reviews/:id/tell', mustWrite, wrap(async (req, res) => send(res, await CR.tell(req.user, req.params.id, req.body || {}, siteOf(req))))); // a person's click: WhatsApp / email the link (and the picture) from TeamLink
 router.post('/client-reviews/:id/revoke', mustWrite, wrap(async (req, res) => send(res, await CR.revoke(req.user, req.params.id))));
 router.post('/client-reviews/:id/extend', mustWrite, wrap(async (req, res) => send(res, await CR.extend(req.user, req.params.id, (req.body || {}).days))));
 

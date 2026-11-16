@@ -8,7 +8,9 @@
 //   link     /client-review/<id>.<signature>: the signature is an HMAC of the id (MK_REVIEW_SECRET or JWT_SECRET), so it cannot be guessed and nothing secret
 //            is stored. It stops working when it is revoked, when it expires (14 days by default, 1-30) and for a changed item (the content is checked
 //            against what was sent). The client decides ONCE; changes asked for mean the sender fixes it and makes a new link.
-//   sending  TeamLink does not send the link itself (no email / WhatsApp is connected): the screen gives Copy, WhatsApp and Email buttons.
+//   sending  a person's click on "Send from TeamLink" (tell() below) sends the link by the company's own WhatsApp number and / or email, through the connections in
+//            Administration > Integrations; with "also send the picture" the picture / video itself goes too when WhatsApp allows it (the client wrote in the last 24
+//            hours), else the link only. Copy, "Open my WhatsApp" (wa.me: it needs WhatsApp Web) and "Email" (the person's own mail app) stay as the manual way.
 //   audit    every send, decision, revoke and extension is in the audit log ("Omni-Channel AI Marketing: client ..."); the sender gets an in-app notice.
 // ---------------------------------------------------------------------------
 const crypto = require('crypto');
@@ -162,6 +164,82 @@ async function extend(u, id, days) {
   return { ok: `The link works for ${d} more day${d === 1 ? '' : 's'}.`, review: full(await row(g.r.id)) };
 }
 
+// ---- sending the link FROM TEAMLINK (2026-11-16) ---------------------------------------------------------------------------------------------------------
+// Founder: "when I click Send to WhatsApp it asks me to log in to WhatsApp, but we have the Team Link Consultants number: send the picture to the client's number from it".
+// A person's click (never automatic). ways: ['whatsapp','email']; b.phone = the client's number if the person types or changes it (saved on the link); b.picture = also send the
+// picture / video itself on WhatsApp. WhatsApp allows a file only in the 24 hours after the client wrote to this number: if it cannot go, the LINK goes (as the company's
+// general template when one is saved) and the answer says so. -> { ok, sent: [{ way, ok, to, mode: 'picture'|'link', error }] }
+const safeName = (t) => String(t || 'file').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'file';
+async function mediaFor(item, id) { // the file WhatsApp can take, or { skip: why }
+  const fs = require('fs'); const os = require('os'); const path = require('path'); // eslint-disable-line global-require
+  const f = require('./images').rawFile(item); // eslint-disable-line global-require
+  if (!f) return { skip: 'The file is not on the server any more.' };
+  if (/^video\//.test(String(item.mime || ''))) {
+    if (item.mime !== 'video/mp4') return { skip: 'WhatsApp takes MP4 videos only.' };
+    if (fs.statSync(f.path).size > 16 * 1024 * 1024) return { skip: 'The video is bigger than 16 MB, which WhatsApp does not take.' };
+    return { path: f.path, name: `${safeName(item.title)}.mp4`, mime: 'video/mp4', cleanup: () => {} };
+  }
+  try { // WhatsApp takes a JPEG / PNG up to 5 MB: a JPEG of at most 2048 px is made from the picture
+    const buf = await require('sharp')(f.path).rotate().flatten({ background: '#ffffff' }).resize({ width: 2048, height: 2048, fit: 'inside', withoutEnlargement: true }).jpeg({ quality: 88 }).toBuffer(); // eslint-disable-line global-require
+    const p = path.join(os.tmpdir(), `mk-send-${safeName(id)}-${Date.now()}.jpg`);
+    fs.writeFileSync(p, buf);
+    return { path: p, name: `${safeName(item.title)}.jpg`, mime: 'image/jpeg', cleanup: () => { try { fs.unlinkSync(p); } catch { /* already gone */ } } };
+  } catch { return { skip: 'The picture could not be prepared for WhatsApp.' }; }
+}
+async function tell(u, id, b = {}, base = '') {
+  const g = await mine(u, id); if (g.error) return g;
+  let r = g.r;
+  if (effective(r) !== 'sent') return { error: 'This link is not open any more. Make a new link first.', status: 409 };
+  const P = require('./projects'); // eslint-disable-line global-require
+  const site = P.siteFor(base);
+  if (!site) return { error: 'The link needs the site\'s https address: open this page on the live site and try again.', status: 400 };
+  const ways = (Array.isArray(b.ways) ? b.ways : []).map(String).filter((w, i, a) => ['whatsapp', 'email'].includes(w) && a.indexOf(w) === i);
+  if (!ways.length) return { error: 'Pick WhatsApp or Email.', status: 400 };
+  const core = require('../utils/messagingCore'); // eslint-disable-line global-require
+  const messaging = require('../utils/messaging'); // eslint-disable-line global-require
+  const typed = S.clip(b.phone, 30);
+  if (typed && !core.normalizeMobile(typed).ok) return { error: 'That WhatsApp number does not look right. Check it and try again.', status: 400 }; // checked BEFORE it is saved: a wrong number never replaces the good one
+  if (typed && typed !== (r.contactPhone || '')) { await S.run(`UPDATE "${TABLE}" SET contactPhone = ?, updatedAt = ? WHERE id = ?`, typed, Date.now(), r.id); r = { ...r, contactPhone: typed }; }
+  const item = await moduleOf(r.kind).rawRow(r.itemId);
+  const word = r.kind === 'image' ? (item && /^video\//.test(item.mime || '') ? 'video' : 'picture') : 'message';
+  const link = `${site}/client-review/${tokenOf(r.id)}`;
+  const first = P.firstWord(r.contactName);
+  const text = `${first ? `Hello ${first},` : 'Hello,'} ${r.message ? S.clip(r.message, 400) : `please review the ${word} "${r.itemTitle}" and tell us if it is OK to use:`} ${link}`;
+  const meta = { audience: 'client', personName: S.clip(r.contactName || r.clientName, 80), purpose: `AI Marketing: ${word} for the client to approve`, module: 'AI Marketing', senderUserId: u.id, senderName: S.clip(u.name, 80) };
+  const sent = [];
+  for (const way of ways) { // eslint-disable-line no-restricted-syntax
+    if (way === 'whatsapp') {
+      if (!String(r.contactPhone || '').trim()) { sent.push({ way: 'WhatsApp', ok: false, local: true, to: '', error: 'Type the client\'s WhatsApp number first.' }); continue; } // eslint-disable-line no-continue
+      const nm = core.normalizeMobile(r.contactPhone);
+      if (!nm.ok) { sent.push({ way: 'WhatsApp', ok: false, local: true, to: '', error: 'That number does not look right. Check it.' }); continue; } // eslint-disable-line no-continue
+      let res = null; let mode = 'link'; let why = '';
+      if (b.picture === true && r.kind === 'image' && item) {
+        const f = await mediaFor(item, r.id); // eslint-disable-line no-await-in-loop
+        if (f.path) {
+          res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'text', text, media: [f], meta }); // eslint-disable-line no-await-in-loop
+          f.cleanup();
+          if (res && res.ok) mode = 'picture';
+          else why = /24 hours/i.test(String((res && res.error) || '')) ? `WhatsApp allows a ${word} only after the client has written to this number in the last 24 hours, so the link was sent instead.` : `The ${word} itself could not be sent (${S.clip((res && res.error) || 'WhatsApp refused it', 120)}), so the link was sent instead.`;
+        } else why = `${f.skip} The link was sent instead.`;
+      }
+      if (mode !== 'picture') res = await messaging.send('WhatsApp', { to: nm.e164, kind: 'bulk', text: `${text}\n\nReply STOP to stop messages from us.`, vars: [text], meta }); // eslint-disable-line no-await-in-loop
+      const ok = !!(res && res.ok);
+      sent.push({ way: 'WhatsApp', ok, to: core.maskMobile(nm.e164), mode, note: ok ? why : '', error: ok ? '' : S.clip((res && (res.notConfigured || res.outcome === 'Not configured') ? `It is not connected: ${res.error || 'ask an Admin to connect it in Administration > Integrations'}` : (res && res.error)) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
+    } else {
+      const em = String(r.contactEmail || '').trim();
+      if (!em) { sent.push({ way: 'Email', ok: false, local: true, to: '', error: 'This link has no email address.' }); continue; } // eslint-disable-line no-continue
+      const res = await messaging.send('Email', { to: em, subject: `Please review: ${r.itemTitle}`, text, meta }); // eslint-disable-line no-await-in-loop
+      const ok = !!(res && res.ok);
+      sent.push({ way: 'Email', ok, to: core.maskEmail(em), mode: 'link', note: '', error: ok ? '' : S.clip((res && res.error) || 'The sender refused it.', 200).replace(/(\+?\d[\d\s-]{8,}\d)/g, 'a number') });
+    }
+  }
+  const good = sent.filter((x) => x.ok);
+  if (!good.length) { const err = sent.map((x) => `${x.way}: ${x.error}`).join(' '); return { error: err || 'Nothing could be sent.', sent, status: sent.every((x) => x.local) ? 400 : 502 }; }
+  await logAudit({ userId: u.id, actorName: u.name, action: 'Omni-Channel AI Marketing: client approval link sent by TeamLink', entity: TABLE, entityId: r.id, toValue: `${r.itemTitle} to ${r.clientName}: ${sent.map((x) => `${x.way} ${x.ok ? (x.mode === 'picture' ? 'sent with the file' : 'sent') : 'failed'}`).join(', ')}` });
+  const notes = good.map((x) => x.note).filter(Boolean);
+  return { ok: `Sent by ${good.map((x) => `${x.way}${x.mode === 'picture' ? ` (the ${word} itself, with the link)` : ' (the link)'}`).join(' and ')}.${notes.length ? ` ${notes[0]}` : ''}${sent.some((x) => !x.ok) ? ` Not sent: ${sent.filter((x) => !x.ok).map((x) => `${x.way}: ${x.error}`).join(' ')}` : ''}`, sent };
+}
+
 // ---- the client's side (no login): what the link shows, the file, the decision ----------------------------------------------------------------
 async function load(token) {
   await ensure();
@@ -224,4 +302,4 @@ async function publicDecide(token, b = {}, ip = '') {
   return { ok: approve ? 'Thank you. Your approval has been recorded.' : 'Thank you. Your request for changes has been sent.' };
 }
 
-module.exports = { ensure, attach, create, list, revoke, extend, publicView, publicFile, publicDecide, tokenOf, idOfToken, snapshotOf, heldIds };
+module.exports = { ensure, attach, create, list, revoke, extend, tell, publicView, publicFile, publicDecide, tokenOf, idOfToken, snapshotOf, heldIds };
