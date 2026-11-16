@@ -49,10 +49,10 @@ register('text', {
       return { ready: !!st.available, provider: st.provider || aiLib.provider(), model: st.model || null, reason: st.available ? '' : (st.reason || 'The AI model is not ready.') };
     } catch (e) { return { ready: false, provider: 'model', model: null, reason: e.message || 'The AI model is not ready.' }; }
   },
-  async json(system, prompt) {
+  async json(system, prompt, lim = {}) {
     const aiLib = require('../utils/ai'); // eslint-disable-line global-require
     let out;
-    try { out = await aiLib.chatJson(system, [{ role: 'user', content: prompt }], { maxTokens: 4000 }); } catch (e) { throw new AiMkError(e.message || 'The AI model did not answer.', e.status || 503, e.code || 'unavailable'); }
+    try { out = await aiLib.chatJson(system, [{ role: 'user', content: prompt }], { maxTokens: 4000, ...(lim.timeoutMs ? { timeoutMs: lim.timeoutMs, waitMs: lim.waitMs } : {}) }); } catch (e) { throw new AiMkError(e.message || 'The AI model did not answer.', e.status || 503, e.code || 'unavailable'); }
     // utils/ai.js answers an unreadable reply with the assistant's "clarify" object instead of throwing. No marketing prompt asks for an `action`,
     // so that object here means the model's words could not be read: a failed call (logged as failed, not counted against the daily limit).
     if (!out || (out.action === 'clarify' && Object.keys(out).every((k) => ['action', 'params', 'summary'].includes(k)))) {
@@ -121,7 +121,9 @@ async function logUsage({ user, module, task, provider, model, ok, inChars, outC
 //   json: true  -> answer is an object (the model must answer JSON);  false -> plain text
 //   demo: () => object|string  the sample answer for the sandbox (same shape as the model answer)
 // -> { result, provider, model, demo, ms }   (throws AiMkError with a plain-English message; every call, ok or not, is logged)
-async function generate({ user, module, task, system, prompt, json = true, demo, department, itemId }) {
+// quickMs (optional): the answer must come within this many ms (a screen behind the web server's 60-second limit). The model waits at most a few seconds for live calls, is asked to stop at quickMs,
+// and a miss is an AiMkError with code 'timeout' (logged as failed) so the caller can use a plain fallback instead of showing a gateway error.
+async function generate({ user, module, task, system, prompt, json = true, demo, department, itemId, quickMs = 0 }) {
   await ensure();
   await checkLimits(user);
   const p = pick('text');
@@ -138,7 +140,7 @@ async function generate({ user, module, task, system, prompt, json = true, demo,
     if (p.id === 'demo') {
       if (typeof demo !== 'function') throw new AiMkError('This task has no sample answer in the test sandbox.', 501, 'no_demo');
       result = await demo();
-    } else if (json) result = await p.json(system, prompt);
+    } else if (json) result = await p.json(system, prompt, quickMs ? { timeoutMs: quickMs, waitMs: Math.min(5000, Math.floor(quickMs / 4)) } : {});
     else result = await p.text(system, prompt);
     const ms = Date.now() - t0;
     const outChars = typeof result === 'string' ? result.length : JSON.stringify(result || {}).length;

@@ -51,6 +51,18 @@ function demoPlan(prompt, who, kind, n, day) {
     scenes: Array.from({ length: n }, (_, i) => ({ caption: base[i % base.length], imagePrompt: `${base[i % base.length]} for: ${topic}. Natural light, friendly mood.`, search: ['office team', 'people smiling', 'business handshake', 'city office', 'happy customer', 'team celebration'][i % 6] })),
   };
 }
+// The plan TeamLink makes by itself when the AI writer cannot answer in time (it is one small model on this server and shares it with the WhatsApp assistant): only the
+// person's own words and the company name, nothing invented, no "sample" wording. Free, instant, and the post words stay editable on the screen.
+function plainPlan(prompt, who, kind, n, day) {
+  const base = demoPlan(prompt, who, kind, n, day);
+  const topic = S.clip(prompt.replace(/\s+/g, ' ').trim(), 220).replace(/[.!?\s]+$/, '');
+  const parts = partsOf(prompt, n);
+  return {
+    ...base,
+    caption: `${topic}. Contact ${who} to know more.`,
+    scenes: base.scenes.map((s, i) => ({ ...s, caption: i > 0 && parts.length > 1 ? S.clip(parts[i] || '', 80) : '' })),
+  };
+}
 // the words to look for a background photo with: what the AI said, else plain words from the picture description
 const searchOf = (s) => {
   const own = String((s && s.search) || '').replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim().split(' ').slice(0, 4).join(' ');
@@ -102,14 +114,21 @@ async function plan(u, b = {}) {
   const who = (project && project.clientName) || brand.brandName || 'our company';
   const language = LANGS.includes(b.language) ? b.language : (LANGS.includes(brand.language) ? brand.language : 'English');
   let r;
+  let note = '';
   try {
     const given = [mine.title ? `Title: ${mine.title}` : '', mine.heading ? `Heading: ${mine.heading}` : '', mine.cta ? `Call to action: ${mine.cta}` : '', mine.content ? `Content the person wrote (use it as it is, do not change a word): ${mine.content}` : ''].filter(Boolean).join('\n');
-    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => demoPlan(prompt, who, kind, n, day), department: S.clip(b.department, 60) || undefined });
-  } catch (e) { return { error: e.message, status: e.status || 503, code: e.code }; }
+    // quickMs: the web server (nginx) gives up at 60 seconds, so the AI writer gets 40: the one small model here is shared with the WhatsApp assistant and can be busy for minutes
+    r = await AI.generate({ user: u, module: 'studio', task: kind, system: systemFor(brand, who, kind, n, language, day, project), prompt: `Request: ${prompt}${given ? `\n${given}` : ''}`, json: true, demo: () => demoPlan(prompt, who, kind, n, day), department: S.clip(b.department, 60) || undefined, quickMs: 40000 });
+  } catch (e) {
+    // a person's own limit (429) or a refused login (403) is shown as it is; anything else (the AI busy, off, or unreadable) must never stop a post: make the plain plan from the person's own words
+    if (e.status === 429 || e.status === 403) return { error: e.message, status: e.status, code: e.code };
+    r = { result: plainPlan(prompt, who, kind, n, day), provider: 'standard', demo: false };
+    note = 'The AI writer is busy right now, so TeamLink made the post from your own words. Change the post words below if you like.';
+  }
   const p = applyMine(clean(r.result, { n, who, prompt, kind, day }), mine, n);
   const text = `${p.title} ${p.headline} ${p.tagline} ${p.caption} ${p.scenes.map((s) => s.caption).join(' ')}`;
   const flags = (brand.avoidWords || []).filter((w) => new RegExp(`(^|[^\\p{L}\\p{N}])${String(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^\\p{L}\\p{N}])`, 'iu').test(text));
-  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '' };
+  return { plan: { ...p, kind, language, date: day, dateLabel: dateLabel(day), who }, flags, demo: !!r.demo, provider: r.provider || '', ...(note ? { note } : {}) };
 }
 
 module.exports = { plan, dateLabel, clean, partsOf, applyMine }; // clean: exported for the tests (a model answer that is incomplete or too long is repaired, never trusted)

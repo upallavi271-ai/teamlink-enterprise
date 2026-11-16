@@ -141,10 +141,11 @@ function postJson(url, payload, timeoutMs) {
 // 3 of 4 cores (was 2): measured on this server, 2 threads read ~35 prompt tokens a second and 3 about 50, and the model already waits for live calls to end (whenQuiet)
 const modelThreads = () => Math.max(1, Number(process.env.OLLAMA_NUM_THREAD) || Math.max(2, require('os').cpus().length - 1)); // eslint-disable-line global-require
 
-async function ollamaChat(systemPrompt, history, { json = false, model: wanted = null, timeoutMs = null } = {}) {
+// waitMs: how long THIS call may wait for live AI calls to end (default as above); a screen that must answer inside the web server's 60 seconds passes a few seconds
+async function ollamaChat(systemPrompt, history, { json = false, model: wanted = null, timeoutMs = null, waitMs = null } = {}) {
   const model = wanted || ollamaModel();
   let res;
-  try { await require('../calling/voice/liveLoad').whenQuiet(Number(process.env.OLLAMA_WAIT_FOR_CALLS_MS) || 120000); } catch { /* never blocks */ } // eslint-disable-line global-require
+  try { await require('../calling/voice/liveLoad').whenQuiet(waitMs != null ? waitMs : (Number(process.env.OLLAMA_WAIT_FOR_CALLS_MS) || 120000)); } catch { /* never blocks */ } // eslint-disable-line global-require
   try {
     res = await postJson(`${ollamaBase()}/api/chat`, {
       model,
@@ -317,12 +318,12 @@ async function chat(systemPrompt, history) {
 
 // Parsed JSON. An unreadable reply is a clarify result, never a throw — the
 // agent route validates whatever comes back against its allowlist anyway.
-// opts: { model, timeoutMs } for one call (the WhatsApp agent's own settings); empty = the app's model and time limit.
+// opts: { model, timeoutMs, waitMs } for one call (the WhatsApp agent's own settings; AI Marketing's quick plan); empty = the app's model and time limit.
 async function chatJson(systemPrompt, history, opts = {}) {
   refuseWhileViewingAs();
   const text = provider() === 'claude'
     ? await claudeChat(systemPrompt, history, { json: true, model: opts.model, maxTokens: opts.maxTokens })
-    : await ollamaChat(systemPrompt, history, { json: true, model: opts.model, timeoutMs: opts.timeoutMs });
+    : await ollamaChat(systemPrompt, history, { json: true, model: opts.model, timeoutMs: opts.timeoutMs, waitMs: opts.waitMs });
   const parsed = parseJsonLoose(text);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...CLARIFY_UNREADABLE };
   return parsed;

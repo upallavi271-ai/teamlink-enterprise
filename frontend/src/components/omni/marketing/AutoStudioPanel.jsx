@@ -109,6 +109,7 @@ export default function AutoStudioPanel({ kind = 'video', projectId = '', onVide
     try {
       const r = await omni.post('/gs/marketing/studio/plan', { prompt, title, heading, content, cta, kind, scenes, date, ...(projectId ? { projectId } : {}), ...(getState().dept ? { department: getState().dept } : {}) });
       setPlan(r.plan); setFlags(r.flags || []); setWhen((w) => ({ ...w, date: r.plan.date || tomorrow() }));
+      if (r.note) setNote(r.note); // the AI writer was busy: the server made the post from the person's own words
       setPhase('pics'); const ids = []; let useAi = look === 'ai' && can.ai; let anyDesigned = false;
       for (let i = 0; i < r.plan.scenes.length; i += 1) {
         setStep({ i: i + 1, n: r.plan.scenes.length });
