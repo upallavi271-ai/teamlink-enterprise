@@ -13,7 +13,7 @@ import { DoneDialog, REMIND_WORDS } from './CrmFollowups.jsx';
 import { useMoveLead } from './CrmLeadBoard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { TicketList } from './CrmSupport.jsx'; // eslint-disable-line import/no-cycle
-import CrmContactDialog from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
+import CrmContactDialog, { ContactPanel } from './CrmContact.jsx'; // eslint-disable-line import/no-cycle
 
 export const CrmCtx = createContext(null);
 export const useCrm = () => useContext(CrmCtx);
@@ -83,6 +83,13 @@ export function QuickLog({ record, intro, onClose, onLogged }) {
   const [nextTime, setNextTime] = useState('');
   const [busy, setBusy] = useState(false);
   const label = LOG_KINDS.find((k) => k[0] === kind)[1];
+  // Call / WhatsApp / Email in this window are the real thing (founder 2026-11-16: "ikkada nunchey calls, wtsp msgs, email msgs send cheyyali"): the contact panel, with the person's own
+  // integrations. "Only write it down" keeps the old log form for something done another way. Meeting and Note are always the log form.
+  const ACT = { call: 'Call', whatsapp: 'WhatsApp', email: 'Email' };
+  const [justLog, setJustLog] = useState(false);
+  const [did, setDid] = useState(false); // something was sent / called from here: closing then counts as logged (the refused move is tried again)
+  const act = !!ACT[kind] && !justLog;
+  const closeIt = () => (did ? onLogged() : onClose());
   async function save() {
     if (!outcome && !note.trim()) { toast('Pick what came of it or write a line about it.'); return; }
     setBusy(true);
@@ -97,11 +104,18 @@ export function QuickLog({ record, intro, onClose, onLogged }) {
   }
   const today = istToday();
   return (
-    <Modal title={`Log: ${record.company}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
+    <Modal title={`${act ? 'Contact' : 'Log'}: ${record.company}`} size={act ? 'wide' : undefined} onClose={closeIt} foot={act ? <button type="button" className="btn" onClick={closeIt}>Close</button> : <><button type="button" className="btn" onClick={closeIt}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
       {intro && <div className="notice" style={{ marginBottom: 10 }}>{intro}</div>}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-        {LOG_KINDS.map(([k, l]) => <button key={k} type="button" className={`btn btn-sm${kind === k ? ' btn-primary' : ''}`} aria-pressed={kind === k} onClick={() => setKind(k)}>{l}</button>)}
+        {LOG_KINDS.map(([k, l]) => <button key={k} type="button" className={`btn btn-sm${kind === k ? ' btn-primary' : ''}`} aria-pressed={kind === k} onClick={() => { setKind(k); setJustLog(false); }}>{l}</button>)}
       </div>
+      {act && (
+        <>
+          <ContactPanel key={kind} record={{ kind: 'lead', id: record.id, name: record.contactName || record.company }} channel={ACT[kind]} hideTabs onDone={() => setDid(true)} />
+          <div className="small-muted" style={{ marginTop: 12, fontSize: 12.5 }}>Did it another way? <button type="button" className="crm-linkbtn" onClick={() => setJustLog(true)}>Only write it down</button></div>
+        </>
+      )}
+      {!act && <>
       {kind !== 'note' && (
         <div className="field">
           <label>What came of it?</label>
@@ -120,6 +134,7 @@ export function QuickLog({ record, intro, onClose, onLogged }) {
         <div className="field"><label>Date</label><DateField min={today} value={next} onChange={setNext} aria-label="Next follow-up date" /></div>
         <div className="field"><label>Time</label><input type="time" value={nextTime} disabled={!next} onChange={(e) => setNextTime(e.target.value)} /></div>
       </div>
+      </>}
     </Modal>
   );
 }

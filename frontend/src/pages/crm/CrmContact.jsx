@@ -20,7 +20,9 @@ function Notice({ tone = 'warn', children }) {
   return <div className="notice" role="status" style={{ marginBottom: 10, fontSize: 13, ...(tone === 'warn' ? { borderColor: 'var(--amber, #d97706)' } : {}) }}>{children}</div>;
 }
 
-export default function CrmContactDialog({ record, channel: first = 'Email', initialDraft, onClose, onDone }) {
+// The Call / WhatsApp / Email panel on its own (no window around it), so the Log window of a lead can hold it too (founder 2026-11-16).
+// hideTabs: the caller already chose the channel.
+export function ContactPanel({ record, channel: first = 'Email', initialDraft, hideTabs, onDone }) {
   const { me, toast } = useCrm();
   const [ch, setCh] = useState(first);
   const [ready, setReady] = useState(null);
@@ -81,10 +83,13 @@ export default function CrmContactDialog({ record, channel: first = 'Email', ini
   const whereTo = (draft && draft.to) || {};
 
   return (
-    <Modal title={`${record.name || whereTo.name || 'Contact'}${whereTo.company && whereTo.company !== record.name ? ` · ${whereTo.company}` : ''}`} size="wide" onClose={onClose} foot={<button type="button" className="btn" onClick={onClose}>Close</button>}>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
-        {TABS.map(([c, label]) => <button key={c} type="button" className={`btn btn-sm${ch === c ? ' btn-primary' : ''}`} aria-pressed={ch === c} onClick={() => switchTo(c)}>{label}</button>)}
-      </div>
+    <>
+      {!hideTabs && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+          {TABS.map(([c, label]) => <button key={c} type="button" className={`btn btn-sm${ch === c ? ' btn-primary' : ''}`} aria-pressed={ch === c} onClick={() => switchTo(c)}>{label}</button>)}
+        </div>
+      )}
+      {hideTabs && whereTo.name && <div className="small-muted" style={{ marginBottom: 8, fontSize: 12.5 }}>To <b>{whereTo.name}</b>{whereTo.company && whereTo.company !== whereTo.name ? ` · ${whereTo.company}` : ''}</div>}
       {!ready && !err && <div className="small-muted">Checking what is connected…</div>}
       {err && <div className="notice" role="alert" style={{ color: 'var(--red)', marginBottom: 10 }}>{err}</div>}
       {sentNote && <div className="notice" role="status" style={{ marginBottom: 10, borderColor: 'var(--green, #16a34a)' }}>{sentNote}</div>}
@@ -137,6 +142,14 @@ export default function CrmContactDialog({ record, channel: first = 'Email', ini
         </>
       )}
       {!me.canEdit && <div className="small-muted">Your role can read the CRM but not contact from it.</div>}
+    </>
+  );
+}
+
+export default function CrmContactDialog({ record, channel, initialDraft, onClose, onDone }) {
+  return (
+    <Modal title={record.name || 'Contact'} size="wide" onClose={onClose} foot={<button type="button" className="btn" onClick={onClose}>Close</button>}>
+      <ContactPanel record={record} channel={channel} initialDraft={initialDraft} onDone={onDone} />
     </Modal>
   );
 }
