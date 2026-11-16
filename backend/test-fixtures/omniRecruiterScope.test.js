@@ -20,7 +20,8 @@ for (const must of ['overview', 'inbox', 'connections', 'campaigns']) assert.ok(
 for (const never of ['templates', 'customers', 'segments', 'automation', 'analytics', 'settings', 'billing', 'team', 'audit', 'superadmin', 'social', 'mkhome', 'console', 'botbuilder', 'forms']) assert.ok(!rp.includes(never), `recruiter has no ${never}`);
 const tp = A.pagesFor(tl);
 for (const p of ['overview', 'inbox', 'campaigns', 'templates', 'customers', 'team', 'audit']) assert.ok(tp.includes(p), `TL has ${p}`);
-const ap = A.pagesFor(admin);
+assert.ok(tp.includes('teamcampaigns'), 'TL has My team'); assert.ok(!rp.includes('teamcampaigns'), 'recruiter has no My team');
+const ap = A.pagesFor(admin); assert.ok(ap.includes('teamcampaigns'), 'Admin has My team');
 for (const p of ['overview', 'campaigns', 'settings', 'superadmin', 'team', 'billing', 'templates']) assert.ok(ap.includes(p), `Admin has ${p}`);
 
 // ---- server routes

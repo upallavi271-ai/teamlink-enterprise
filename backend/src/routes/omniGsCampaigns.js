@@ -39,6 +39,10 @@ router.use((req, res, next) => (A.hubsFor(req.user).campaigns ? next() : res.sta
 const filtersOf = (req) => ({ channel: req.query.channel, status: req.query.status, q: req.query.q, objective: req.query.objective, sort: req.query.sort, dir: req.query.dir === 'asc' ? 'asc' : 'desc', page: req.query.page, pageSize: req.query.pageSize, dept: deptOf(req.user, req.query.dept) });
 const mustCreate = (req, res) => { if (A.mayCampaign(req.user) || A.kind(req.user) === 'hr' || A.isAdmin(req.user)) return true; res.status(403).json({ error: 'You can look at campaigns, but only the BDE team, Team Leads and Admins can make or send them.' }); return false; };
 
+// ---- MY TEAM: the recruiters of the login's own department and what they ran (outreach/teamView.js; Team Lead + Admin only) ----------------------------------
+router.get('/team', limit(), wrap(async (req, res) => send(res, await require('../outreach/teamView').team(req.user, { from: req.query.from, to: req.query.to, department: req.query.department })))); // eslint-disable-line global-require
+router.get('/team/campaign/:id/people', limit(), wrap(async (req, res) => send(res, await require('../outreach/teamView').campaignPeople(req.user, req.params.id, { page: req.query.page, pageSize: req.query.pageSize })))); // eslint-disable-line global-require
+
 // ---- the list ------------------------------------------------------------------------------------------------------------------------
 router.get('/list', limit(), wrap(async (req, res) => res.json(await Gs.list(req.user, filtersOf(req)))));
 router.get('/export', limit(30), wrap(async (req, res) => {

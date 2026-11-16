@@ -247,6 +247,7 @@ function pagesFor(u) {
   add(h.inbox, 'whatsapp'); // Inbox & Replies > WhatsApp: the chats with the AI agent's state, promotions (each login within its own people)
   add(h.campaigns && maySendConsole(u), 'console');
   add(h.campaigns, 'aivoice'); // AI Voice: campaigns of the existing AI Calling (the AI Calling roles decide who may start one)
+  add(h.campaigns && ['admin', 'tl', 'bdetl'].includes(kind(u)), 'teamcampaigns'); // Campaigns > My team: the recruiters of the login's own department (outreach/teamView.js)
   add(h.campaigns, 'campaigns', 'appcampaigns'); // appcampaigns = campaigns made from the ATS / Job Portal / HRMS / Accounts screens
   add(h.campaigns, 'credituse'); // Credits & joinings: credits used vs joinings given, Useful / Wasted (each login in its own scope, a Recruiter only their own)
   add(mayExternalShells(u), 'social');

@@ -35,6 +35,7 @@ export const PAGE_COMPONENTS = {
   // 2026-10-17: the tabs the ten sections added
   review: lazy(() => import('./pages/ReviewPage.jsx')),
   tplshared: lazy(() => import('./pages/TemplateLibraryPage.jsx')),
+  teamcampaigns: lazy(() => import('./pages/TeamCampaignsPage.jsx')),
   appcampaigns: lazy(() => import('./pages/AppCampaignsPage.jsx')),
   aivoice: lazy(() => import('./pages/AiVoicePage.jsx')),
   credituse: lazy(() => import('./pages/CreditUsePage.jsx')),
