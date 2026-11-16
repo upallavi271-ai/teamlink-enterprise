@@ -135,6 +135,8 @@ function siteOf(app, title) {
 }
 
 // which time column to highlight for a chosen status, and the one line that says what is shown
+// the Away card (founder 2026-11-16: "away card meedha click chesthuntey work avatledhu"): everybody who is not at the PC for a reason that is not Offline / Leave / Absent
+const AWAY = ['On break', 'Clocked out', 'Laptop closed'];
 const HI_OF = { Online: 'active', Idle: 'idle', 'On break': 'break', Offline: 'away' };
 const HI_WORD = { Online: 'Active people and how long each has been working.', Idle: 'Idle people and how long each has been idle.', 'On break': 'People on a break and how long each has been on it.', Offline: 'People off the PC and how long the PC has had no signal.' };
 // ------------------------------------------------------------------------------------------------ Misuse (the same button over and over)
@@ -310,7 +312,7 @@ function Overview({ onOpen }) {
   const allRows = useMemo(() => ((data && data.rows) || []).map((r) => ({ ...r, ...(fresh.get(r.employeeId) || {}) })), [data, fresh]);
   const rows = useMemo(() => {
     const out = allRows.filter((r) => (!dept || r.department === dept) && (!team || r.team === team)
-      && (!status || r.status === status || (status === 'On leave' && r.status === 'Leave pending'))
+      && (!status || r.status === status || (status === 'On leave' && r.status === 'Leave pending') || (status === 'Away' && AWAY.includes(r.status)))
       && (!q.trim() || `${r.name} ${r.code || ''}`.toLowerCase().includes(q.trim().toLowerCase())));
     const n = (r, k) => Number(r[k]) || 0;
     const by = {
@@ -325,7 +327,7 @@ function Overview({ onOpen }) {
   }, [allRows, dept, team, status, q, sortBy]);
   // the statuses actually on the board now, in a sensible order, for the Status filter (founder 2026-11-12: "idle, break etc vetiki pettukovadaniki")
   // every status is offered, so any one can be filtered on even when nobody is in it right now (founder 2026-11-12: "dropdown lo anni raavali")
-  const statusOptions = ['Online', 'Idle', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave', 'Leave pending', 'Absent'];
+  const statusOptions = ['Online', 'Idle', 'Away', 'On break', 'Offline', 'Laptop closed', 'Clocked out', 'Old agent', 'Stopped', 'On leave', 'Leave pending', 'Absent'];
   const c = data && data.cards ? { ...data.cards, ...((now && now.cards) || {}) } : null;
   const first = ((data && data.rows) || []).find((r) => r.workHours > 0) || null;
   const card = (s) => ({ active: status === s, onClick: live ? () => setStatus(status === s ? '' : s) : undefined });
@@ -361,12 +363,13 @@ function Overview({ onOpen }) {
       {error && <div className="notice red">{error}</div>}
       {/* when a time-based status is filtered, that one time stands out (founder 2026-11-12: idle meedha click chesthey entha sepu idle lo vunnaro) */}
       {live && HI_OF[status] && <div className="small-muted" style={{ margin: '0 0 8px' }}>{HI_WORD[status]}</div>}
+      {live && status === 'Away' && <div className="small-muted" style={{ margin: '0 0 8px' }}>People on a break, clocked out, or with the laptop closed.</div>}
       <KpiRow>
         <KpiTile icon="users" tone="blue" label="Tracked" value={c ? c.tracked : null} loading={loading && !c} sub={live && status ? 'Show all with a PC' : 'With a registered PC'} {...(live ? { active: !status, onClick: () => setStatus('') } : {})} />
         <KpiTile icon="check" tone="green" label="Online" value={live && c ? c.online : (live ? null : '—')} loading={loading && !c} sub="Using the PC now" {...card('Online')} />
         <KpiTile icon="pause" tone="amber" label="Idle" value={live && c ? c.idle : (live ? null : '—')} loading={loading && !c} sub="PC on, not in use" {...card('Idle')} />
         <KpiTile icon="x" tone="slate" label="Offline" value={live && c ? c.offline : (live ? null : '—')} loading={loading && !c} sub={c && c.closed ? `No signal for 3 minutes · ${c.closed} laptop${c.closed === 1 ? '' : 's'} closed` : 'No signal for 3 minutes'} {...card('Offline')} />
-        <KpiTile icon="pause" tone="violet" label="Away" value={live && c ? Math.max(0, (c.tracked || 0) - (c.online || 0) - (c.idle || 0) - (c.offline || 0) - (c.onLeave || 0) - (c.absent || 0)) : (live ? null : '—')} loading={loading && !c} sub={c ? `Break ${c.onBreak || 0} · Laptop closed ${c.closed || 0}` : 'On break or laptop closed'} title="On break, clocked out or laptop closed - so Online + Idle + Offline + Away + On leave + Absent add up to Tracked. Pick a status in the filter to see who." />
+        <KpiTile icon="pause" tone="violet" label="Away" value={live && c ? Math.max(0, (c.tracked || 0) - (c.online || 0) - (c.idle || 0) - (c.offline || 0) - (c.onLeave || 0) - (c.absent || 0)) : (live ? null : '—')} loading={loading && !c} sub={c ? `Break ${c.onBreak || 0} · Laptop closed ${c.closed || 0}` : 'On break or laptop closed'} {...card('Away')} title="On break, clocked out or laptop closed - so Online + Idle + Offline + Away + On leave + Absent add up to Tracked. Pick a status in the filter to see who." />
         <KpiTile icon="leave" tone="violet" label="On leave" value={c ? c.onLeave : null} loading={loading && !c} sub={c && c.leavePending ? `Approved ${Math.max(0, (c.onLeave || 0) - c.leavePending)} · waiting for approval ${c.leavePending}` : 'Approved leave today'} {...card('On leave')} />
         <KpiTile icon="x" tone="red" label="Absent" value={live && c ? (c.absent || 0) : (live ? null : '—')} loading={loading && !c} sub="No signal all day, no leave" title="A working day, no leave, no signal from the PC at all today, and 4 hours of the work day gone." {...card('Absent')} />
         <KpiTile icon="clock" tone="teal" label="Avg active" value={c ? `${c.avgActiveHours} h` : null} loading={loading && !c} sub={`Avg idle ${c ? c.avgIdleHours : 0} h${first && first.workHours ? ` · out of ${hm(first.workHours)}` : ''}`} />
