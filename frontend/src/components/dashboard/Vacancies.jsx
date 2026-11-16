@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../Modal.jsx';
-import { deptCode, teamCode, seatCodes } from './vacancySeats.js';
+import { deptCode, teamCode, seatCodes, vacantByDepartment } from './vacancySeats.js';
 
 // Vacancies on the dashboard (founder 2026-11-02: "dashboard medha vacancies enni unai anni kuda kanipinchali").
 // Planned people per department and role (STL / TL / Employee) vs who is working now. Server: GET /dashboard/vacancies (utils/vacancies.js).
@@ -10,31 +10,25 @@ const red = '#b42318';
 const green = '#1c7c4a';
 
 // the numbers (null until loaded, or when this login may not see them)
+// founder 2026-11-16: "the position on the dashboard is not updated" - loaded on opening AND again whenever the person comes back to this
+// tab (and every 5 minutes while it is open), so a joining / leaving / a changed plan shows without pressing refresh.
 export function useVacancies() {
   const [d, setD] = useState(null);
   useEffect(() => {
     let alive = true;
-    api.get('/dashboard/vacancies').then((r) => { if (alive) setD(r.data); }).catch(() => {});
-    return () => { alive = false; };
+    const load = () => { api.get('/dashboard/vacancies').then((r) => { if (alive) setD(r.data); }).catch(() => {}); };
+    load();
+    const onShow = () => { if (document.visibilityState === 'visible') load(); };
+    document.addEventListener('visibilitychange', onShow);
+    window.addEventListener('focus', onShow);
+    const timer = setInterval(onShow, 5 * 60 * 1000);
+    return () => { alive = false; document.removeEventListener('visibilitychange', onShow); window.removeEventListener('focus', onShow); clearInterval(timer); };
   }, []);
   return [d, setD];
 }
 
-// WHICH POSITIONS ARE VACANT, DEPARTMENT BY DEPARTMENT (founder 2026-11-13: "dashboard lo vacancies card lo positions wise vacancies em unai,
-// ahh department lo kavali"): one line per department (or per team of a department that is split into teams), listing only the positions
-// (STL / TL / Employee) that still have a vacancy, e.g. "Medical: TL 1 · Employee 2". The same numbers as the table in the popup.
-export function vacantByDepartment(d) {
-  const out = [];
-  ((d && d.groups) || []).forEach((g) => {
-    const parts = (rows) => (rows || []).filter((r) => r.vacant > 0).map((r) => ({ role: r.role, n: r.vacant }));
-    // a department split into teams: its TL / Employee rows are the teams added together, so show the teams (and the roles the teams do not plan, the STL)
-    const split = new Set((g.teams || []).flatMap((t) => t.rows.map((r) => r.role)));
-    const own = parts((g.rows || []).filter((r) => !split.has(r.role)));
-    if (own.length) out.push({ label: g.name, parts: own });
-    (g.teams || []).forEach((t) => { const p = parts(t.rows); if (p.length) out.push({ label: `${g.name} · ${t.name}`, parts: p }); });
-  });
-  return out;
-}
+// which positions are vacant, department by department, with their seat names: see vacancySeats.js (same names as the table's Vacant click)
+export { vacantByDepartment };
 
 // the small card (the Super Admin / Admin home); the HRMS dashboard shows the same number as a tile in its Attendance row
 export default function Vacancies() {
@@ -58,7 +52,7 @@ export default function Vacancies() {
             {lines.map((l) => (
               <span key={l.label} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, fontSize: 13, lineHeight: 1.6 }}>
                 <b>{l.label}</b>
-                <span>{l.parts.map((p, i) => <span key={p.role}>{i ? ' · ' : ''}{p.role} <b style={{ color: red }}>{p.n}</b></span>)}</span>
+                <span style={{ textAlign: 'right' }}>{l.parts.map((p, i) => <span key={p.role}>{i ? ' · ' : ''}{p.role} <b style={{ color: red }}>{p.n}</b> <span style={{ fontSize: 12, fontWeight: 600, color: red }}>({p.seats.join(', ')})</span></span>)}</span>
               </span>
             ))}
           </span>

@@ -30,3 +30,21 @@ export function seatCodes(code, row) {
   const first = Math.max(1, planned - vacant + 1);
   return Array.from({ length: vacant }, (_, i) => `${code}-${first + i}`);
 }
+
+// WHICH POSITIONS ARE VACANT, DEPARTMENT BY DEPARTMENT (founder 2026-11-13: "dashboard lo vacancies card lo positions wise vacancies em unai,
+// ahh department lo kavali"; 2026-11-16: "the position on the dashboard is not updated" = the card must show the seat names too):
+// one line per department (or per team of a department that is split into teams), listing only the positions (STL / TL / Employee) that
+// still have a vacancy, with the seat names the table's Vacant click shows: "Medical: TL 1 (Med-2) · Employee 2 (Med-4, Med-5)".
+export function vacantByDepartment(d) {
+  const out = [];
+  ((d && d.groups) || []).forEach((g) => {
+    const dc = deptCode(g.name);
+    const parts = (rows, code) => (rows || []).filter((r) => r.vacant > 0).map((r) => ({ role: r.role, n: r.vacant, seats: seatCodes(code, r) }));
+    // a department split into teams: its TL / Employee rows are the teams added together, so show the teams (and the roles the teams do not plan, the STL)
+    const split = new Set((g.teams || []).flatMap((t) => t.rows.map((r) => r.role)));
+    const own = parts((g.rows || []).filter((r) => !split.has(r.role)), dc);
+    if (own.length) out.push({ label: g.name, parts: own });
+    (g.teams || []).forEach((t) => { const p = parts(t.rows, [dc, teamCode(t.name)].filter(Boolean).join('-')); if (p.length) out.push({ label: `${g.name} · ${t.name}`, parts: p }); });
+  });
+  return out;
+}

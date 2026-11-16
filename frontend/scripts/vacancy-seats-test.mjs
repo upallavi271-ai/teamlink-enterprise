@@ -1,5 +1,5 @@
 // Names of the vacant seats in the Vacancies table (founder 2026-11-16): node frontend/scripts/vacancy-seats-test.mjs   (no database, no server)
-import { deptCode, teamCode, seatCodes } from '../src/components/dashboard/vacancySeats.js';
+import { deptCode, teamCode, seatCodes, vacantByDepartment } from '../src/components/dashboard/vacancySeats.js';
 
 let pass = 0; let fail = 0;
 const eq = (name, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (ok) pass += 1; else fail += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${ok ? '' : `  -> got ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`}`); };
@@ -31,6 +31,24 @@ eq('a team: Edu-A-1', seatCodes(`${deptCode('Education')}-${teamCode('Team A')}`
 eq('nothing vacant -> no seats', seatCodes('Med', { planned: 5, vacant: 0 }), []);
 eq('more people than planned (vacant 0) -> no seats', seatCodes('BDE', { planned: 5, vacant: 0 }), []);
 eq('odd input never throws or goes below 1', [seatCodes('X', null), seatCodes('X', { planned: 0, vacant: 2 }), seatCodes('X', { planned: '3', vacant: '1' })], [[], ['X-1', 'X-2'], ['X-3']]);
+
+// the dashboard card: one line per department / team with the roles that have a vacancy, and the seat names
+const row = (role, planned, vacant) => ({ role, planned, vacant, filled: planned - vacant, people: [] });
+const sample = { groups: [
+  { name: 'Medical', rows: [row('STL', 1, 0), row('TL', 3, 1), row('Employee', 8, 2)] },
+  { name: 'Medical + Manufacturing', rows: [row('STL', 1, 1)] },
+  { name: 'Education', rows: [row('STL', 1, 0), row('TL', 4, 2), row('Employee', 10, 3)], teams: [
+    { name: 'Team A', rows: [row('TL', 2, 1), row('Employee', 5, 2)] },
+    { name: 'Team B', rows: [row('TL', 2, 1), row('Employee', 5, 1)] },
+  ] },
+  { name: 'BDE', rows: [row('TL', 2, 0)] },
+] };
+const lines = vacantByDepartment(sample);
+eq('card: labels (a full department, a team, none for a department with nothing vacant)', lines.map((l) => l.label), ['Medical', 'Medical + Manufacturing', 'Education · Team A', 'Education · Team B']);
+eq('card: Medical TL 1 -> Med-3, Employee 2 -> Med-7, Med-8', lines[0].parts, [{ role: 'TL', n: 1, seats: ['Med-3'] }, { role: 'Employee', n: 2, seats: ['Med-7', 'Med-8'] }]);
+eq('card: Medical + Manufacturing STL -> Med+Man-1', lines[1].parts, [{ role: 'STL', n: 1, seats: ['Med+Man-1'] }]);
+eq('card: a team uses the team letter (Edu-A-2, Edu-B-2)', [lines[2].parts[0].seats, lines[2].parts[1].seats, lines[3].parts[0].seats, lines[3].parts[1].seats], [['Edu-A-2'], ['Edu-A-4', 'Edu-A-5'], ['Edu-B-2'], ['Edu-B-5']]);
+eq('card: nothing / missing data gives no lines', [vacantByDepartment(null), vacantByDepartment({}), vacantByDepartment({ groups: [] })], [[], [], []]);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
