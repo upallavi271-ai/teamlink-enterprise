@@ -48,11 +48,8 @@ export const PAGES = {
   audit: { label: 'Audit log', icon: '☰', title: 'Audit log' },
   // AI Marketing (2026-11-11): the AI Marketing OS, six modules built phase by phase (Phase 1 = AI Content). Page ids are lower-case letters only (they are in the address).
   mkhome: { label: 'Overview', icon: '✧', title: 'AI Marketing' },
-  // four screens that are SUB-TABS of another tab (2026-11-16): Lead generation and Workflow automation under Client projects, Email marketing and Campaign messages under Calendar (MK_SUBTABS below)
-  mkjourneys: { label: 'Workflow automation', icon: '⟳', title: 'Workflow automation: journeys for CRM leads' },
+  // Lead generation is a SUB-TAB of Client projects (2026-11-16; MK_SUBTABS below). Workflow automation, Email marketing and Campaign messages were removed: nothing had ever been made in them.
   mkleads: { label: 'Lead generation', icon: '◎', title: 'Lead generation: scored leads for the CRM' },
-  mkemail: { label: 'Email marketing', icon: '✉', title: 'Email marketing: subject lines, A/B test, campaign' },
-  mkcampaigns: { label: 'Campaign messages', icon: '✆', title: 'Campaign messages: WhatsApp and SMS' },
   mkimages: { label: 'AI Images', icon: '◩', title: 'AI Images' },
   mkvideos: { label: 'AI Video', icon: '▶', title: 'AI Video' },
   mkapprove: { label: 'Approvals', icon: '✔', title: 'AI Marketing approvals' },
@@ -75,12 +72,12 @@ export const SECTIONS = [
   { id: 'connections', label: 'Channel Connections', icon: '⚯', views: ['connections', 'fbchannel', 'igchannel', 'fbcatalogs', 'shopify'] },
   { id: 'reports', label: 'Reports', icon: '⌁', views: ['analytics'] },
   { id: 'settings', label: 'Settings & Audit Log', icon: '⚙', views: ['settings', 'waai', 'team', 'billing', 'superadmin', 'audit'] },
-  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
+  { id: 'aimarketing', label: 'AI Marketing', icon: '✧', views: ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'] },
 ];
 // AI MARKETING SUB-TABS: a tab that has more screens under it. The tab bar shows the parent only; opening the parent (or one of its screens) shows the row of sub-tabs under the bar,
 // the first one being the parent itself. A screen the login may not open is left out of the row.
-export const MK_SUBTABS = { mkprojects: ['mkprojects', 'mkleads', 'mkjourneys'], mkcalendar: ['mkcalendar', 'mkemail', 'mkcampaigns'] };
-export const MK_SUB_PARENT = { mkleads: 'mkprojects', mkjourneys: 'mkprojects', mkemail: 'mkcalendar', mkcampaigns: 'mkcalendar' };
+export const MK_SUBTABS = { mkprojects: ['mkprojects', 'mkleads'] };
+export const MK_SUB_PARENT = { mkleads: 'mkprojects' };
 export const SECTION_IDS = SECTIONS.map((s) => s.id);
 export const ALL_IDS = Object.keys(PAGES);
 export const HOME = 'overview';
