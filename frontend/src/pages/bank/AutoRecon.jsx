@@ -448,6 +448,55 @@ function TxnModal({ id, canManage, say, onClose, onChanged }) {
   );
 }
 
+// Lines filed as "Advance received - <client>" (the client paid, nothing to apply it to at the time): put the money on
+// the client's invoices now - Paid-without-proof invoices first (the line becomes their proof), then open ones oldest
+// first, so the invoice shows Partially Paid / Paid with the Bank line. Each line is its own short save.
+function AdvanceCard({ canManage, say, onChanged }) {
+  const [lines, setLines] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [report, setReport] = useState('');
+  const load = useCallback(() => api.get('/bank/client-payment/advances').then((r) => setLines(r.data.lines || [])).catch(() => setLines([])), []);
+  useEffect(() => { load(); }, [load]);
+  async function plan(l) {
+    if (!l.clientId) return null;
+    const r = await api.get('/bank/client-payment/invoices', { params: { clientId: l.clientId, amount: l.amount } });
+    const allocations = [
+      ...(r.data.proofInvoices || []).filter((i) => i.suggested > 0).map((i) => ({ invoiceId: i.id, amount: i.suggested, proof: true })),
+      ...(r.data.invoices || []).filter((i) => i.suggested > 0).map((i) => ({ invoiceId: i.id, amount: i.suggested })),
+    ];
+    return allocations.length ? allocations : null;
+  }
+  async function run(apply) {
+    setBusy(true); setReport('');
+    let can = 0; let done = 0; let skipped = 0; let failed = 0;
+    for (const l of lines) {
+      try {
+        const allocations = await plan(l);
+        if (!allocations) { skipped += 1; continue; }
+        can += 1;
+        if (apply) { await api.post(`/bank/${l.id}/client-payment`, { clientId: l.clientId, allocations, applyAdvance: true }); done += 1; }
+      } catch (e) { failed += 1; }
+    }
+    setReport(apply ? `${done} line(s) applied to invoices${failed ? `, ${failed} could not be applied` : ''}${skipped ? `, ${skipped} left as advance (nothing to apply to)` : ''}.` : `${can} of ${lines.length} advance line(s) can be applied to invoices; ${skipped} have nothing to apply to. Nothing was changed.`);
+    setBusy(false);
+    if (apply) { load(); if (onChanged) onChanged(); } else say('Try-out done. Nothing changed.');
+  }
+  if (!lines || !lines.length) return null;
+  return (
+    <div className="card section" style={{ marginBottom: 12 }}>
+      <b>{lines.length} bank line(s) are filed as &quot;Advance received&quot;</b> ({money2(lines.reduce((s, l) => s + l.amount, 0))}).
+      <div className="small-muted">Put that money on each client&apos;s invoices now: invoices already marked received get this line as their proof, the others become Partially Paid / Paid, oldest first.</div>
+      {canManage && (
+        <div className="ar-btnrow">
+          <button type="button" className="btn btn-primary" disabled={busy} onClick={() => run(false)}>Check first (nothing changes)</button>
+          <button type="button" className="btn" disabled={busy} onClick={() => run(true)}>Apply to invoices</button>
+        </div>
+      )}
+      {report && <div className="small-muted" role="status">{report}</div>}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------- Reconcile existing
 function RunTab({ accounts, canManage, settings, say, openList, onChanged }) {
   const [acc, setAcc] = useState('');
@@ -511,6 +560,8 @@ function RunTab({ accounts, canManage, settings, say, openList, onChanged }) {
           {live && <span className="small-muted">A run is going. Wait for it to finish.</span>}
         </div>
       ) : <div className="small-muted">You can look at results, but starting a run needs permission to edit Bank &amp; Reconciliation.</div>}
+
+      <AdvanceCard canManage={canManage} say={say} onChanged={onChanged} />
 
       <h3 className="ar-h3">Runs</h3>
       {runs.length === 0 ? <div className="card section">No run yet.</div> : runs.map((r) => {

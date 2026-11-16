@@ -2047,6 +2047,17 @@ router.get('/client-payment/invoices', async (req, res) => {
   });
 });
 
+// A line the panel filed as "Advance received — <client>" (no invoice to apply it to at the time). Applying it later
+// (applyAdvance) clears that filing and records the receipts, in the same short transaction.
+const isAdvance = (t) => t.categoryKind === 'other' && String(t.category || '').startsWith('Advance received — ') && !t.createdBillId && !t.billLinks;
+router.get('/client-payment/advances', async (req, res) => {
+  const rows = await prisma.bankTransaction.findMany({ where: { type: 'Credit', categoryKind: 'other', category: { startsWith: 'Advance received — ' } } });
+  const names = [...new Set(rows.map((r) => r.counterparty).filter(Boolean))];
+  const clients = await prisma.client.findMany({ where: { name: { in: names } }, select: { id: true, name: true } });
+  const byName = new Map(clients.map((c) => [c.name, c.id]));
+  res.json({ lines: rows.filter(isAdvance).map((r) => ({ id: r.id, date: r.date, amount: ROUND(r.amount), client: r.counterparty, clientId: byName.get(r.counterparty) || null })) });
+});
+
 router.post('/:id/client-payment', async (req, res) => {
   const txn = await loadTxn(req.params.id);
   if (!txn) return res.status(404).json({ error: 'Transaction not found' });
@@ -2054,7 +2065,8 @@ router.post('/:id/client-payment', async (req, res) => {
   if (state === 'Reconciled') return res.status(400).json({ error: 'This line is already posted — undo it first' });
   if (state === 'Ignored' || state === 'Reversed') return res.status(400).json({ error: 'This line is ignored — restore it first' });
   if (txn.type !== 'Credit') return res.status(400).json({ error: 'Only money received can be a client payment' });
-  if (txn.category || txn.categoryKind) return res.status(400).json({ error: 'This line is already filed — undo that first' });
+  const applyAdvance = !!(req.body && req.body.applyAdvance) && isAdvance(txn);
+  if ((txn.category || txn.categoryKind) && !applyAdvance) return res.status(400).json({ error: 'This line is already filed — undo that first' });
   const body = req.body || {};
   const clientId = String(body.clientId || '');
   const client = clientId ? await prisma.client.findUnique({ where: { id: clientId }, select: { id: true, name: true } }) : null;
@@ -2069,7 +2081,7 @@ router.post('/:id/client-payment', async (req, res) => {
   try {
     out = await prisma.$transaction(async (tx) => {
       const fresh = await tx.bankTransaction.findUnique({ where: { id: txn.id } });
-      if (!fresh || fresh.category || fresh.categoryKind || fresh.reconStatus === 'Reconciled') throw conflict('This line was just filed by someone else — reload and look again.', 409);
+      if (!fresh || fresh.reconStatus === 'Reconciled' || ((fresh.category || fresh.categoryKind) && !(applyAdvance && isAdvance(fresh)))) throw conflict('This line was just filed by someone else — reload and look again.', 409);
       const done = await tx.invoicePayment.findMany({ where: { bankTxnId: txn.id }, select: { amount: true } });
       const posted = done.reduce((s, p) => s + BIC.toPaise(p.amount), 0) / 100;
       const invs = await tx.invoice.findMany({ where: { id: { in: allocations.map((a) => a.invoiceId) } } });
@@ -2110,10 +2122,12 @@ router.post('/:id/client-payment', async (req, res) => {
           data: {
             matched: true, matchedInvoiceId: plan.parts[0].invoiceId, reconStatus: 'Reconciled', matchedBy: actor(req),
             matchedDate: toIsoDate(new Date()), clientName: client.name, excess: plan.unapplied > 0.004 ? plan.unapplied : null,
+            ...(applyAdvance ? { category: null, categoryKind: null, counterparty: null } : {}),
           },
         });
       } else {
         // Nothing to an invoice: the whole line is the client's advance / on-account credit.
+        if (applyAdvance) return { plan, updated: fresh };
         updated = await tx.bankTransaction.update({
           where: { id: fresh.id },
           data: { category: `Advance received — ${client.name}`, categoryKind: 'other', counterparty: client.name, clientName: client.name },
