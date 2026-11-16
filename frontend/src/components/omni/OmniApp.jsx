@@ -4,7 +4,7 @@ import api, { viewAsToken, actAsMode } from '../../api';
 import { useAuth } from '../../context/AuthContext.jsx';
 import { OmniCtx } from './omniContext.js';
 import { useOmniStore, startChrome, pollBadges } from './omniStore.js';
-import { PAGES, SECTIONS, resolveRoute, openViews, pagePath, sectionOf, sectionPath } from './omniPages.js';
+import { PAGES, SECTIONS, resolveRoute, openViews, pagePath, sectionOf, sectionPath, MK_SUBTABS, MK_SUB_PARENT } from './omniPages.js';
 import { PAGE_COMPONENTS } from './pageComponents.js';
 import './gs.css';
 
@@ -59,7 +59,12 @@ export default function OmniApp() {
   if (!page) return <div className="gsx"><div className="content"><div className="card panel" role="status">There is nothing for your login in Omni-Channel yet.</div></div></div>;
   const Page = PAGE_COMPONENTS[page];
   const sec = SECTIONS.find((x) => x.id === route.section);
-  const tabsOf = openViews(acc, route.section);
+  // AI Marketing: a screen that is a SUB-TAB (Lead generation, Workflow automation, Email marketing, Campaign messages) has no tab of its own: its parent tab stays lit and a row of sub-tabs shows under the bar
+  const inMk = route.section === 'aimarketing';
+  const openAll = openViews(acc, route.section);
+  const tabsOf = openAll.filter((v) => !(inMk && MK_SUB_PARENT[v]));
+  const lit = inMk ? (MK_SUB_PARENT[page] || page) : page;
+  const subs = inMk && MK_SUBTABS[lit] ? MK_SUBTABS[lit].filter((v) => openAll.includes(v)) : [];
   const viewing = !!viewAsToken() && !actAsMode(); // View as = read-only
   return (
     <OmniCtx.Provider value={ctx}>
@@ -68,7 +73,17 @@ export default function OmniApp() {
           {viewing && <div role="status" style={{ background: '#fff1d6', border: '1px solid #f0b34a', color: '#7a4a00', borderRadius: 10, padding: '9px 12px', fontSize: 11, marginBottom: 12 }}><b>You are in View as mode: this page is read-only.</b> Changes need &quot;Switch to Act as (edit)&quot;.</div>}
           {tabsOf.length > 1 && (
             <div className="tabs omni-sec-tabs" role="tablist" aria-label={sec ? sec.label : 'Omni-Channel'} style={{ marginBottom: 14 }}>
-              {tabsOf.map((v) => <button key={v} type="button" role="tab" aria-selected={v === page} className={`tab${v === page ? ' active' : ''}`} onClick={() => navigate(sectionPath(route.section, v))}>{PAGES[v].label}{v === 'inbox' && store.badges.inboxUnread > 0 ? ` (${store.badges.inboxUnread})` : ''}{v === 'review' && store.badges.review > 0 ? ` (${store.badges.review})` : ''}</button>)}
+              {tabsOf.map((v) => <button key={v} type="button" role="tab" aria-selected={v === lit} className={`tab${v === lit ? ' active' : ''}`} onClick={() => navigate(sectionPath(route.section, v))}>{PAGES[v].label}{v === 'inbox' && store.badges.inboxUnread > 0 ? ` (${store.badges.inboxUnread})` : ''}{v === 'review' && store.badges.review > 0 ? ` (${store.badges.review})` : ''}</button>)}
+            </div>
+          )}
+          {subs.length > 1 && (
+            <div className="omni-sub-tabs" role="tablist" aria-label={`${PAGES[lit].label}: more`} style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '-6px 0 14px 2px' }}>
+              {subs.map((v) => (
+                <button key={v} type="button" role="tab" aria-selected={v === page} onClick={() => navigate(sectionPath(route.section, v))}
+                  style={{ border: `1px solid ${v === page ? '#0f766e' : 'var(--line)'}`, background: v === page ? '#0f766e' : '#fff', color: v === page ? '#fff' : 'inherit', borderRadius: 999, padding: '5px 13px', font: 'inherit', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                  {PAGES[v].label}
+                </button>
+              ))}
             </div>
           )}
           <Suspense fallback={<div className="card panel">Loading {PAGES[page].label}…</div>}>{Page ? <Page key={`${page}:${store.dept}`} /> : null}</Suspense>

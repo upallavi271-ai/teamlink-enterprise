@@ -267,9 +267,9 @@ function pagesFor(u) {
   return out;
 }
 // AI Marketing: which tabs each kind of login has (pagesFor above and the Admin's "Who sees what" table read this ONE place)
-const MK_WRITER_PAGES = ['mkhome', 'mkprojects', 'mkourwork', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'];
+const MK_WRITER_PAGES = ['mkhome', 'mkprojects', 'mkourwork', 'mkleads', 'mkjourneys', 'mkemail', 'mkcampaigns', 'mkimages', 'mkvideos', 'mkapprove', 'mkcalendar', 'mkreports', 'mkbrand', 'mkusage'];
 const MK_APPROVER_PAGES = ['mkhome', 'mkapprove', 'mkcalendar'];
-const MK_PAGE_WORDS = { mkhome: 'Overview', mkprojects: 'Client projects', mkourwork: 'Our work', mkimages: 'AI Images', mkvideos: 'AI Video', mkapprove: 'Approvals', mkcalendar: 'Content calendar', mkreports: 'Reports', mkbrand: 'Brand voice', mkusage: 'AI usage' };
+const MK_PAGE_WORDS = { mkhome: 'Overview', mkprojects: 'Client projects', mkourwork: 'Our work', mkleads: 'Lead generation', mkjourneys: 'Workflow automation', mkemail: 'Email marketing', mkcampaigns: 'Campaign messages', mkimages: 'AI Images', mkvideos: 'AI Video', mkapprove: 'Approvals', mkcalendar: 'Content calendar', mkreports: 'Reports', mkbrand: 'Brand voice', mkusage: 'AI usage' };
 const mkPagesOf = (writer, approver) => (writer ? MK_WRITER_PAGES : (approver ? MK_APPROVER_PAGES : []));
 // the Admin's table: for each kind of login, what it sees and may do in AI Marketing, made from the rules above (never typed by hand)
 function mkRoleTable() {

@@ -8,8 +8,17 @@
 // status: 'live' = works now · 'planned' = on the plan, not built yet (the screens say so; nothing is faked).
 // ---------------------------------------------------------------------------
 const MODULES = [
-  // 2026-11-16: the founder removed AI Content and four more tabs from AI Marketing (AI Content, Lead generation, Workflow automation, Email marketing, Campaign messages): their screens are gone and they are no longer listed here.
-  // The server code (marketing/content.js, leadgen.js, journeys.js, emailmk.js, messaging.js) is still in the project and its routes still answer, so a tab can be brought back without rebuilding it.
+  // 2026-11-16: the founder removed the AI Content tab (not listed any more; marketing/content.js stays because Approvals, the Calendar and Reports read it). Email marketing, Campaign messages, Lead generation and
+  // Workflow automation are SUB-TABS now: Email marketing and Campaign messages under Calendar, Lead generation and Workflow automation under Client projects (frontend omniPages.js MK_SUBTABS).
+  // 2026-11-14: live (marketing/emailmk.js). Clicks are counted; opens are NOT (plain-text emails carry no tracking picture), and the page says so.
+  { id: 'email', no: 2, label: 'Email Marketing', phase: 2, status: 'live', page: 'mkemail', blurb: 'The AI writes subject lines and the email for one open job; an A/B subject test sends A to half and B to half and reports the clicks; approval before the campaign goes out. Nothing is sent from here: you press Send in Campaigns.' },
+  // 2026-11-14: WhatsApp and SMS are live (marketing/messaging.js): the AI writes the words of a job campaign, a person picks them, they become draft templates and a campaign that is NEVER sent from here.
+  // RCS is not part of it yet: RCS sends from Administration > Integrations > RCS and is not in the Omni campaign sender.
+  { id: 'messaging', no: 3, label: 'WhatsApp & SMS campaigns', phase: 2, status: 'live', page: 'mkcampaigns', blurb: 'The AI writes the WhatsApp and SMS words for one open job in your brand voice; you pick and edit them, make the templates (Meta / DLT approval) and save the campaign. Nothing is sent from here: you press Send in Campaigns. RCS comes later.' },
+  // 2026-11-14: live (marketing/leadgen.js). Scores and owners are built here; the first reply is the CRM's own Autopilot (crm/autopilot.js), shown on the page.
+  { id: 'leads', no: 4, label: 'Lead Generation to CRM', phase: 3, status: 'live', page: 'mkleads', blurb: 'Every new website, ad-file or hand-entered lead is scored Hot / Warm / Cold with the reasons, given an owner in turn, and the owner is told. The first reply is the CRM Autopilot, shown per lead.' },
+  // 2026-11-14: live (marketing/journeys.js): journeys for CRM leads. Nothing is ever sent without a person pressing Approve on the AI's draft.
+  { id: 'workflow', no: 5, label: 'Workflow Automation', phase: 4, status: 'live', page: 'mkjourneys', blurb: 'Journeys for CRM leads: an event starts one (new lead, Hot lead, a stage, quiet for N days), steps run with IF / THEN / ELSE branching, and the AI writes a message that a person approves before anything is sent.' },
   // 2026-11-14: live. Numbers for words, pictures, videos, the calendar, client approvals and AI use (marketing/reports.js); linking to joinings comes later
   { id: 'reports', no: 6, label: 'Analytics & Reporting', phase: 1, status: 'live', page: 'mkreports', blurb: 'Plain numbers for any date range: content, pictures, videos, calendar posts, client approvals and AI use, per person, with a CSV download.' },
   // 2026-11-13 (founder's list item 6): what goes out on which day, with "Plan a week with AI"; posted by hand until the social apps are approved
