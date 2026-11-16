@@ -73,11 +73,16 @@ const DEBIT_KINDS = [
   ['transfer', 'Our own transfer — not an expense'],
 ];
 const CREDIT_KINDS = [
+  ['client', 'Customer (client) payment — money from a client'],
   ['other', 'Other income — not a client receipt'],
+  ['interest', 'Interest received'],
+  ['refund', 'Refund received (vendor / other)'],
   ['hand', 'Hand loan taken — not income'],
   ['transfer', 'Our own transfer — not income'],
 ];
 
+// "Interest received" and "Refund received" are Other income with the account already named.
+const PRESET = { interest: 'Interest received', refund: 'Refund received' };
 const ROUND = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // The same arithmetic the server uses (routes/bank.js billMoney): the bank
@@ -136,7 +141,54 @@ export default function MatchPanel({
     party: '',
     loanId: '',
   });
-  const set = (k) => (e) => setF((x) => ({ ...x, [k]: e.target.value }));
+  const set = (key) => (e) => setF((x) => ({ ...x, [key]: e.target.value }));
+  const k = PRESET[f.kind] ? 'other' : f.kind;
+  const pickKind = (e) => {
+    const v = e.target.value;
+    setF((x) => ({ ...x, kind: v, expenseAccount: PRESET[v] || (PRESET[x.kind] ? '' : x.expenseAccount) }));
+  };
+
+  // ---- Customer (client) payment: who paid, when, and which invoice(s) the money goes to.
+  const [clients, setClients] = useState([]);
+  const [cp, setCp] = useState({
+    name: '', clientId: '', date: String(txn.date || '').slice(0, 10), reference: txn.reference || '', notes: '', rows: [], loading: false, err: '',
+  });
+  useEffect(() => {
+    if (!isCredit) return;
+    api.get('/bank/client-payment/clients').then((r) => setClients(r.data.clients || [])).catch(() => {});
+  }, [isCredit]);
+  const clientByName = (n) => clients.find((c) => c.name.toLowerCase() === String(n || '').trim().toLowerCase());
+  // The narration may already name the client: offer it, never force it.
+  useEffect(() => {
+    if (cp.name || !data?.client || !clients.length) return;
+    const c = clientByName(data.client);
+    if (c) setCp((x) => ({ ...x, name: c.name }));
+  }, [data, clients]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const c = clientByName(cp.name);
+    if (!c) { setCp((x) => (x.clientId ? { ...x, clientId: '', rows: [] } : x)); return undefined; }
+    if (c.id === cp.clientId) return undefined;
+    let live = true;
+    setCp((x) => ({ ...x, clientId: c.id, loading: true, err: '', rows: [] }));
+    api.get('/bank/client-payment/invoices', { params: { clientId: c.id, amount: ROUND(txn.amount) } }).then((r) => {
+      if (live) setCp((x) => ({ ...x, loading: false, rows: (r.data.invoices || []).map((i) => ({ ...i, amt: i.suggested ? String(i.suggested) : '' })) }));
+    }).catch((e) => live && setCp((x) => ({ ...x, loading: false, err: e.response?.data?.error || "Could not read that client's invoices." })));
+    return () => { live = false; };
+  }, [cp.name, clients]); // eslint-disable-line react-hooks/exhaustive-deps
+  const cpApplied = ROUND(cp.rows.reduce((s2, r) => s2 + (Number(r.amt) || 0), 0));
+  const cpLeft = ROUND(ROUND(txn.amount) - cpApplied);
+  const setAmt = (id, v) => setCp((x) => ({ ...x, rows: x.rows.map((r) => (r.id === id ? { ...r, amt: v } : r)) }));
+  const fillOldest = () => setCp((x) => {
+    let left = ROUND(txn.amount);
+    return {
+      ...x,
+      rows: x.rows.map((r) => {
+        const t = Math.max(0, Math.min(left, r.outstanding));
+        left = ROUND(left - t);
+        return { ...r, amt: t > 0 ? String(t) : '' };
+      }),
+    };
+  });
 
   useEffect(() => {
     let live = true;
@@ -204,11 +256,23 @@ export default function MatchPanel({
   const m = billMoney(f, Number(f.amount) || amount);
   function validate(remember) {
     const e = {};
-    if (!f.kind) e.kind = 'Choose the category.';
-    if (f.kind === 'expense' || f.kind === 'other') {
-      if (!String(f.expenseAccount).trim()) e.expenseAccount = f.kind === 'expense' ? 'Choose the expense account.' : 'Say what this income is.';
+    if (k === 'client') {
+      if (!cp.clientId) e.client = 'Choose the client who paid — start typing the name.';
+      if (!cp.date) e.cpDate = 'Enter the date the money arrived.';
+      cp.rows.forEach((r) => {
+        const a = Number(r.amt) || 0;
+        if (a < 0) e['amt' + r.id] = 'Cannot be negative.';
+        else if (a > r.outstanding + 0.5) e['amt' + r.id] = `More than the ${money2(r.outstanding)} still owed.`;
+      });
+      if (cpApplied > amount + 0.004) e.cpSum = `The invoices add up to ${money2(cpApplied)} — more than the bank amount ${money2(amount)}.`;
+      setErrs(e);
+      return !Object.keys(e).length;
     }
-    if (f.kind === 'expense') {
+    if (!k) e.kind = 'Choose the category.';
+    if (k === 'expense' || k === 'other') {
+      if (!String(f.expenseAccount).trim()) e.expenseAccount = k === 'expense' ? 'Choose the expense account.' : 'Say what this income is.';
+    }
+    if (k === 'expense') {
       const a = Number(f.amount);
       if (!(a > 0)) e.amount = 'Enter the amount that left the bank.';
       else if (Math.abs(a - amount) > 20) e.amount = `The bank line is ${money2(amount)} — the bill has to match it.`;
@@ -220,9 +284,9 @@ export default function MatchPanel({
       if (file && file.size > MAX_BYTES) e.file = 'That file is larger than 8 MB.';
       if (file && !FILE_TYPES.includes(file.type)) e.file = 'Attach a PDF, PNG, JPEG or WebP file.';
     }
-    if (f.kind === 'hand' && loans.length && !f.loanId) e.loanId = 'Choose the hand loan this belongs to.';
-    if (f.kind === 'hand' && !loans.length && !f.party.trim()) e.party = 'Say who the loan is with — or add it under Hand loans first.';
-    if (remember && f.kind !== 'hand') {
+    if (k === 'hand' && loans.length && !f.loanId) e.loanId = 'Choose the hand loan this belongs to.';
+    if (k === 'hand' && !loans.length && !f.party.trim()) e.party = 'Say who the loan is with — or add it under Hand loans first.';
+    if (remember && k !== 'hand') {
       if (!f.match.trim()) e.match = 'Type the words to remember, e.g. EPF0.';
       else if (f.match.replace(/[^A-Za-z0-9]/g, '').length < 3) e.match = 'Use at least three letters or digits.';
     }
@@ -233,8 +297,17 @@ export default function MatchPanel({
   async function save(remember) {
     setFail('');
     if (!validate(remember)) { setFail('Some fields need attention.'); return; }
-    if (f.kind === 'hand' && f.loanId) { await linkLoan(f.loanId); return; }
-    if (f.kind === 'expense') {
+    if (k === 'client') {
+      const allocations = cp.rows.filter((r) => Number(r.amt) > 0).map((r) => ({ invoiceId: r.id, amount: Number(r.amt) }));
+      await post(`/bank/${txn.id}/client-payment`, {
+        clientId: cp.clientId, date: cp.date, reference: cp.reference, notes: cp.notes, allocations,
+      }, (d) => (d.parts.length
+        ? `Recorded ${money2(d.posted)} from ${d.client} against ${d.parts.map((x) => x.invoiceNumber).join(', ')}${d.unallocated > 0.5 ? ` — ${money2(d.unallocated)} left unapplied (advance)` : ''}. The invoice(s) now show this bank line as proof.`
+        : `Recorded ${money2(d.unallocated)} from ${d.client} as an advance — no invoice yet.`));
+      return;
+    }
+    if (k === 'hand' && f.loanId) { await linkLoan(f.loanId); return; }
+    if (k === 'expense') {
       const payload = {
         ...f, fileAsBill: true, amount: Number(f.amount), remember: !!remember,
       };
@@ -251,8 +324,8 @@ export default function MatchPanel({
       return;
     }
     await post(`/bank/${txn.id}/categorise`, {
-      kind: f.kind,
-      category: f.kind === 'other' ? f.expenseAccount : '',
+      kind: k,
+      category: k === 'other' ? f.expenseAccount : '',
       party: f.party || null,
       vendor: null,
       remember: !!remember,
@@ -464,27 +537,89 @@ export default function MatchPanel({
             <form className="bkp-form" onSubmit={(e) => { e.preventDefault(); save(false); }} noValidate>
               <label className="field">
                 <span>Category</span>
-                <Combo value={f.kind} onChange={set('kind')} aria-invalid={!!errs.kind}>
+                <Combo value={f.kind} onChange={pickKind} aria-invalid={!!errs.kind}>
                   {kinds.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </Combo>
                 <Err msg={errs.kind} />
               </label>
 
-              {(f.kind === 'expense' || f.kind === 'other') && (
+              {k === 'client' && (
+                <>
+                  <label className="field bkp-span2">
+                    <span>Client who paid</span>
+                    <input list="bkp-cp-clients" value={cp.name} onChange={(e) => setCp((x) => ({ ...x, name: e.target.value }))} placeholder="Start typing the client name" aria-invalid={!!errs.client} autoComplete="off" />
+                    <datalist id="bkp-cp-clients">{clients.map((c) => <option key={c.id} value={c.name} />)}</datalist>
+                    <Err msg={errs.client} />
+                  </label>
+                  <label className="field">
+                    <span>Date the money arrived</span>
+                    <input type="date" value={cp.date} onChange={(e) => setCp((x) => ({ ...x, date: e.target.value }))} aria-invalid={!!errs.cpDate} />
+                    <div className="bkp-help">Comes from the bank line — change it only if the client paid on another day.</div>
+                    <Err msg={errs.cpDate} />
+                  </label>
+                  <label className="field">
+                    <span>Reference</span>
+                    <input value={cp.reference} onChange={(e) => setCp((x) => ({ ...x, reference: e.target.value }))} placeholder="UTR / cheque no" />
+                  </label>
+                  <div className="field bkp-span2">
+                    <span>Amount received <b>{money2(amount)}</b> — apply it to the client&apos;s invoices</span>
+                    {cp.loading && <div className="bkp-help">Reading the client&apos;s open invoices…</div>}
+                    {cp.err && <Err msg={cp.err} />}
+                    {cp.clientId && !cp.loading && !cp.rows.length && !cp.err && (
+                      <div className="bkp-help">{cp.name} has no open invoice. Save it as an advance (nothing applied) and it stays on the client.</div>
+                    )}
+                    {cp.rows.length > 0 && (
+                      <div className="bkp-tbl">
+                        <table>
+                          <thead><tr><th>Invoice</th><th>Date</th><th className="num">Net still to come</th><th className="num">Apply</th></tr></thead>
+                          <tbody>
+                            {cp.rows.map((r) => (
+                              <tr key={r.id}>
+                                <td><b className="bkp-mono">{r.invoiceNumber}</b>{r.candidate ? ` · ${r.candidate}` : ''}<div className="small-muted">{r.kind} · {r.status}</div></td>
+                                <td>{fmtD(r.invoiceDate)}</td>
+                                <td className="num">
+                                  {money2(r.outstanding)}
+                                  {r.tds > 0.005 && <div className="small-muted">after TDS {money2(r.tds)}{r.tdsPercent ? ` @ ${pct(r.tdsPercent)}` : ''} the client keeps back</div>}
+                                </td>
+                                <td className="num">
+                                  <input inputMode="decimal" value={r.amt} onChange={(e) => setAmt(r.id, e.target.value)} aria-label={`Amount to ${r.invoiceNumber}`} aria-invalid={!!errs['amt' + r.id]} style={{ width: 110, textAlign: 'right' }} />
+                                  <Err msg={errs['amt' + r.id]} />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                    <Err msg={errs.cpSum} />
+                    <div className="bkp-summary" aria-live="polite">
+                      Applied <b>{money2(cpApplied)}</b> · {cpLeft >= 0 ? <>unapplied (advance) <b>{money2(cpLeft)}</b></> : <span className="bkp-off">over by {money2(-cpLeft)}</span>}
+                      {cp.rows.length > 0 && <> · <button type="button" className="link-btn" onClick={fillOldest}>Fill oldest first</button></>}
+                    </div>
+                    <div className="bkp-help">Each amount becomes a real receipt on that invoice with this bank line as its proof, so it shows Paid / Partially Paid. TDS the client deducts is already out of the amount still to come.</div>
+                  </div>
+                  <label className="field bkp-span2">
+                    <span>Note</span>
+                    <input value={cp.notes} onChange={(e) => setCp((x) => ({ ...x, notes: e.target.value }))} placeholder="Optional" />
+                  </label>
+                </>
+              )}
+
+              {(k === 'expense' || k === 'other') && (
                 <label className="field">
                   <span>
-                    {f.kind === 'expense' ? 'Expense account' : 'Income account'}
-                    {rec && f.kind === 'expense' && f.expenseAccount === rec.account && (
+                    {k === 'expense' ? 'Expense account' : 'Income account'}
+                    {rec && k === 'expense' && f.expenseAccount === rec.account && (
                       <span className="status priority-low bkp-chip" title={rec.why}>recognised — from {rec.why}</span>
                     )}
                   </span>
-                  <input list="bkp-accounts" value={f.expenseAccount} onChange={set('expenseAccount')} placeholder={f.kind === 'expense' ? 'e.g. PF' : 'e.g. Interest received'} aria-invalid={!!errs.expenseAccount} />
+                  <input list="bkp-accounts" value={f.expenseAccount} onChange={set('expenseAccount')} placeholder={k === 'expense' ? 'e.g. PF' : 'e.g. Interest received'} aria-invalid={!!errs.expenseAccount} />
                   <datalist id="bkp-accounts">{(data.categories || []).map((c) => <option key={c} value={c} />)}</datalist>
                   <Err msg={errs.expenseAccount} />
                 </label>
               )}
 
-              {f.kind === 'hand' && (
+              {k === 'hand' && (
                 loans.length ? (
                   <label className="field">
                     <span>Which hand loan</span>
@@ -504,7 +639,7 @@ export default function MatchPanel({
                 )
               )}
 
-              {f.kind === 'expense' && (
+              {k === 'expense' && (
                 <>
                   <label className="field">
                     <span>Paid to (vendor)</span>
@@ -607,19 +742,32 @@ export default function MatchPanel({
                 </>
               )}
 
-              {(f.kind === 'other' || f.kind === 'transfer') && (
+              {(k === 'other' || k === 'transfer') && (
                 <label className="field">
                   <span>{isCredit ? 'Received from' : 'Paid to'}</span>
                   <input value={f.party} onChange={set('party')} placeholder="Optional" />
                 </label>
               )}
+              {k === 'other' && (
+                <>
+                  <label className="field">
+                    <span>Date</span>
+                    <input type="date" value={String(txn.date || '').slice(0, 10)} disabled />
+                  </label>
+                  <label className="field">
+                    <span>Amount</span>
+                    <input value={money2(amount)} disabled />
+                    <div className="bkp-help">Date and amount are the bank line&apos;s own and cannot be changed here.</div>
+                  </label>
+                </>
+              )}
 
               <label className="field bkp-span2">
                 <span>Description</span>
-                <input value={f.description} onChange={set('description')} disabled={f.kind !== 'expense'} />
+                <input value={f.description} onChange={set('description')} disabled={k !== 'expense'} />
               </label>
 
-              {f.kind === 'expense' && (
+              {k === 'expense' && (
                 <label className="field bkp-span2">
                   <span>Attach the bill or receipt</span>
                   <input
@@ -633,7 +781,7 @@ export default function MatchPanel({
                 </label>
               )}
 
-              {f.kind !== 'hand' && (
+              {k !== 'hand' && k !== 'client' && (
                 <label className="field bkp-span2">
                   <span>Remember this narration as</span>
                   <input value={f.match} onChange={set('match')} placeholder="e.g. EPF0" aria-invalid={!!errs.match} />
@@ -645,7 +793,7 @@ export default function MatchPanel({
                 </label>
               )}
 
-              {f.kind === 'expense' && (
+              {k === 'expense' && (
                 <div className="bkp-summary bkp-span2" aria-live="polite">
                   Bill before GST <b>{money2(m.base)}</b>
                   {' · '}
@@ -668,8 +816,8 @@ export default function MatchPanel({
             </button>
           ) : (
             <>
-              <button type="button" className="btn" disabled={busy || !data} onClick={() => save(false)}>{busy ? 'Saving…' : 'Save'}</button>
-              {f.kind !== 'hand' && (
+              <button type="button" className={k === 'client' ? 'btn btn-primary' : 'btn'} disabled={busy || !data} onClick={() => save(false)}>{busy ? 'Saving…' : (k === 'client' ? 'Record client payment' : 'Save')}</button>
+              {k !== 'hand' && k !== 'client' && (
                 <button type="button" className="btn btn-primary" disabled={busy || !data} onClick={() => save(true)}>Save &amp; remember this narration</button>
               )}
             </>

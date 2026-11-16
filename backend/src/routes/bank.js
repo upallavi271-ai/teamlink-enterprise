@@ -6,8 +6,9 @@ const attachments = require('../utils/attachments');
 const { GST_STATES, checkGstin } = require('../utils/gstin');
 const {
   ROUND, invoiceTotal, invoiceOutstanding, deriveInvoiceStatus,
-  suggestInvoiceFor, txnState, toIsoDate, isOpenInvoice, normName,
+  suggestInvoiceFor, txnState, toIsoDate, isOpenInvoice, normName, invoiceAfterReceipt,
 } = require('../utils/accounts');
+const CP = require('../utils/clientPayment');
 // P4 — the invoice's GST / TDS breakdown for the matching panel.
 const TAX = require('../utils/invoiceTax');
 // Is an office bill really paid, and may a matched line pay it? (utils/expensePaymentState.js)
@@ -1996,6 +1997,119 @@ router.post('/:id/settle-invoices', async (req, res) => {
   });
   return res.json({
     ...updated, state: 'Reconciled', parts: out.plan.parts, unallocated: out.plan.unallocated, posted: ROUND(txn.amount - out.plan.unallocated),
+  });
+});
+
+// CATEGORISE MANUALLY -> Customer (client) payment (2026-11-16, Zoho "Categorize"). The person picks the client
+// and says how much of this money-in line goes to each open invoice; the rest is left unapplied (an advance).
+// Rules live in utils/clientPayment.js. One short transaction re-reads the line and its receipts, so the same line
+// can never be applied twice; each receipt is an InvoicePayment pointing at this line (shows "Bank line" proof).
+router.get('/client-payment/clients', async (req, res) => {
+  const rows = await prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  res.json({ clients: rows });
+});
+
+router.get('/client-payment/invoices', async (req, res) => {
+  const clientId = String(req.query.clientId || '');
+  if (!clientId) return res.status(400).json({ error: 'Choose a client.' });
+  const company = (await prisma.company.findFirst().catch(() => null)) || {};
+  const rows = await prisma.invoice.findMany({ where: { clientId }, include: { candidate: true } });
+  const open = CP.oldestFirst(rows);
+  const amount = ROUND(req.query.amount);
+  const fill = CP.defaultAllocation(open, amount);
+  const byId = new Map(fill.allocations.map((a) => [a.invoiceId, a.amount]));
+  res.json({
+    invoices: open.map((i) => {
+      const tv = TAX.taxView(i, { company });
+      return {
+        id: i.id, invoiceNumber: i.invoiceNumber || i.id.slice(-6), invoiceDate: i.invoiceDate, dueDate: i.dueDate || null,
+        kind: i.candidateId ? 'Placement fee' : 'Service invoice', candidate: i.candidate?.name || null, status: i.status,
+        gross: tv.gross, tds: tv.tds, tdsPercent: tv.tdsPercent, received: ROUND(i.receivedAmount),
+        outstanding: invoiceOutstanding(i), suggested: byId.get(i.id) || 0,
+      };
+    }),
+    unapplied: fill.unapplied,
+  });
+});
+
+router.post('/:id/client-payment', async (req, res) => {
+  const txn = await loadTxn(req.params.id);
+  if (!txn) return res.status(404).json({ error: 'Transaction not found' });
+  const state = txnState(txn);
+  if (state === 'Reconciled') return res.status(400).json({ error: 'This line is already posted — undo it first' });
+  if (state === 'Ignored' || state === 'Reversed') return res.status(400).json({ error: 'This line is ignored — restore it first' });
+  if (txn.type !== 'Credit') return res.status(400).json({ error: 'Only money received can be a client payment' });
+  if (txn.category || txn.categoryKind) return res.status(400).json({ error: 'This line is already filed — undo that first' });
+  const body = req.body || {};
+  const clientId = String(body.clientId || '');
+  const client = clientId ? await prisma.client.findUnique({ where: { id: clientId }, select: { id: true, name: true } }) : null;
+  if (!client) return res.status(400).json({ error: 'Choose the client who paid.' });
+  const date = String(body.date || txn.date || '').slice(0, 10);
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  const allocations = (Array.isArray(body.allocations) ? body.allocations : []).map((a) => ({ invoiceId: String(a.invoiceId || ''), amount: Number(a.amount) || 0 }));
+  const reference = String(body.reference || txn.reference || '').trim().slice(0, 120) || null;
+  const note = String(body.notes || '').trim().slice(0, 300);
+  const conflict = (message, http = 400) => Object.assign(new Error(message), { http });
+  let out;
+  try {
+    out = await prisma.$transaction(async (tx) => {
+      const fresh = await tx.bankTransaction.findUnique({ where: { id: txn.id } });
+      if (!fresh || fresh.category || fresh.categoryKind || fresh.reconStatus === 'Reconciled') throw conflict('This line was just filed by someone else — reload and look again.', 409);
+      const done = await tx.invoicePayment.findMany({ where: { bankTxnId: txn.id }, select: { amount: true } });
+      const posted = done.reduce((s, p) => s + BIC.toPaise(p.amount), 0) / 100;
+      const invoices = await tx.invoice.findMany({ where: { id: { in: allocations.map((a) => a.invoiceId) } } });
+      const plan = CP.planClientPayment({
+        line: { amount: fresh.amount }, alreadyPosted: posted, allocations, invoices, clientId, date, today,
+      });
+      if (plan.error) throw conflict(plan.error);
+      for (let i = 0; i < plan.parts.length; i += 1) {
+        const part = plan.parts[i];
+        const invoice = invoices.find((x) => x.id === part.invoiceId);
+        await tx.invoicePayment.create({
+          data: {
+            invoiceId: invoice.id, date, dateSource: 'entered', amount: part.amount, method: 'Bank Transfer', reference,
+            notes: `Bank statement · ${fresh.description}${plan.parts.length > 1 ? ` · part ${i + 1} of ${plan.parts.length} of ${fmtMoney(fresh.amount)}` : ''}${note ? ` · ${note}` : ''}`,
+            bankTxnId: fresh.id, bankLinked: true, recordedBy: actor(req),
+          },
+        });
+        const after = invoiceAfterReceipt(invoice, part.amount, date);
+        await tx.invoice.update({ where: { id: invoice.id }, data: { ...after, bankTxnId: fresh.id } });
+      }
+      let updated;
+      if (plan.parts.length) {
+        updated = await tx.bankTransaction.update({
+          where: { id: fresh.id },
+          data: {
+            matched: true, matchedInvoiceId: plan.parts[0].invoiceId, reconStatus: 'Reconciled', matchedBy: actor(req),
+            matchedDate: toIsoDate(new Date()), clientName: client.name, excess: plan.unapplied > 0.004 ? plan.unapplied : null,
+          },
+        });
+      } else {
+        // Nothing to an invoice: the whole line is the client's advance / on-account credit.
+        updated = await tx.bankTransaction.update({
+          where: { id: fresh.id },
+          data: { category: `Advance received — ${client.name}`, categoryKind: 'other', counterparty: client.name, clientName: client.name },
+        });
+      }
+      return { plan, updated };
+    }, { timeout: 30000, maxWait: 15000 });
+  } catch (err) {
+    if (err && err.http) return res.status(err.http).json({ error: err.message });
+    throw err;
+  }
+  const { plan, updated } = out;
+  await logAudit({
+    userId: req.user.id, action: 'Bank line recorded as a client payment', entity: 'BankTransaction', entityId: txn.id,
+    toValue: `${client.name} · ${fmtMoney(plan.applied)} to ${plan.parts.length ? plan.parts.map((p) => `${p.invoiceNumber} ${fmtMoney(p.amount)}`).join(', ') : 'no invoice'}${plan.unapplied > 0.004 ? ` · ${fmtMoney(plan.unapplied)} unapplied (advance)` : ''} · dated ${date}`,
+  });
+  for (const p of plan.parts) {
+    await logAudit({
+      userId: req.user.id, action: 'Payment recorded', entity: 'Invoice', entityId: p.invoiceId,
+      toValue: `₹${p.amount} from the bank line of ${txn.date}${reference ? ` (Ref ${reference})` : ''}, recorded by hand by ${actor(req)}`,
+    });
+  }
+  return res.json({
+    ...updated, state: txnState(updated), parts: plan.parts, posted: plan.applied, unallocated: plan.unapplied, client: client.name,
   });
 });
 
