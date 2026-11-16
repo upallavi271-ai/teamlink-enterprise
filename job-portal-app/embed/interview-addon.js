@@ -518,9 +518,14 @@
   function pcm16k(chunks) {
     chunks = chunks || LG.chunks;
     var n = 0, i, k; chunks.forEach(function (c) { n += c.length; });
-    var step = (LG.rate || 48000) / 16000, out = new Int16Array(Math.floor(n / step)), all = new Float32Array(n), at = 0;
+    var step = (LG.rate || 48000) / 16000, out = new Int16Array(Math.floor(n / step)), all = new Float32Array(n), at = 0, j, a, b, sum;
     chunks.forEach(function (c) { all.set(c, at); at += c.length; });
-    for (i = 0; i < out.length; i++) { k = all[Math.floor(i * step)]; out[i] = Math.max(-1, Math.min(1, k)) * 32767; }
+    /* every 16 kHz sample is the AVERAGE of the 48 kHz samples it stands for (a low-pass): picking one sample in three folds the high sounds back into the speech as hiss, which the recogniser then hears as wrong letters (2026-11-16) */
+    for (i = 0; i < out.length; i++) {
+      a = Math.floor(i * step); b = Math.min(n, Math.max(a + 1, Math.floor((i + 1) * step))); sum = 0;
+      for (j = a; j < b; j++) sum += all[j];
+      k = sum / (b - a); out[i] = Math.max(-1, Math.min(1, k)) * 32767;
+    }
     var bytes = new Uint8Array(out.buffer), s = '';
     for (i = 0; i < bytes.length; i += 8192) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
     return btoa(s);
@@ -532,6 +537,16 @@
     a.sttFinal = full + ' '; a.sttText = full; a.spoke = true;
     if (window.TLVI && window.TLVI.transcript && window.TLVI.transcript.live) window.TLVI.transcript.live(full);
     else { var e = document.getElementById('aiivTranscript'); if (e) e.textContent = full; }
+  }
+  /* did the last `ms` of these chunks hold no voice? (the same loudness line as the voiced-time count) */
+  function quietTail(chunks, ms) {
+    var need = ((LG.rate || 48000) * ms) / 1000, got = 0, i, c, sum, k;
+    for (i = chunks.length - 1; i >= 0 && got < need; i--) {
+      c = chunks[i]; sum = 0; for (k = 0; k < c.length; k++) sum += c[k] * c[k];
+      if (Math.sqrt(sum / c.length) > 0.015) return false;
+      got += c.length;
+    }
+    return got >= need;
   }
   function check(key) {
     var asr = LG.cur !== 'en';                       /* in Telugu / Hindi the whole answer goes, and the words come back as the caption */
@@ -547,7 +562,8 @@
       if (asr && r.text && r.lang === LG.cur) {
         LG.caps = true; setCaption(r.text);
         /* a long answer: what has been heard is kept as text, and the audio starts again from here */
-        if (LG.allN > (LG.rate || 48000) * 18) { LG.prefix = (LG.prefix ? LG.prefix + ' ' : '') + r.text; LG.all.splice(0, took); LG.allN = 0; LG.all.forEach(function (c) { LG.allN += c.length; }); }
+        /* ... only at a pause (the last 0.3 s of what was sent was quiet), so a word is never cut in two; after 22 s it is cut anyway */
+        if (LG.allN > (LG.rate || 48000) * 18 && (quietTail(LG.all.slice(0, took), 300) || LG.allN > (LG.rate || 48000) * 22)) { LG.prefix = (LG.prefix ? LG.prefix + ' ' : '') + r.text; LG.all.splice(0, took); LG.allN = 0; LG.all.forEach(function (c) { LG.allN += c.length; }); }
       }
     }, function () { LG.busy = false; });
   }

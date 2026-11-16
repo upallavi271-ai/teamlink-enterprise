@@ -38,6 +38,10 @@ const eng = ({ detect = null, te = '', hi = '', en = '', speechMs = 3000 }) => (
   check('V9 say gives a WAV', s.ready && s.wav.slice(0, 4).toString() === 'RIFF', s.ready);
   const n = await V.say('x', 'Telugu', { engines: null });
   check('V10 say without engines: ready false', n.ready === false, n);
+  const seen = [];
+  const spy = { detect: async (_p, _m, r) => { seen.push(['detect', r]); return 'Telugu'; }, speech: async (_p, r) => { seen.push(['speech', r]); return { speechMs: 3000 }; }, stt: async (_p, l, r) => { seen.push([l, r]); return l === 'Telugu' ? 'నేను మీ దగ్గర పని చేశాను అవును' : ''; }, tts: async () => Buffer.alloc(800) };
+  await V.hear(pcm, 'English', { engines: spy });
+  check('V11 the interview audio is heard at 16 kHz (no 8 kHz phone round trip) by every listener', seen.length >= 3 && seen.every((x) => x[1] === 16000), seen);
   console.log(`\n${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

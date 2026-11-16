@@ -108,7 +108,8 @@ function vexylTts({ url, key, style }) {
 // --- VEXYL-STT: one session per sentence (start -> 16 kHz audio -> stop -> finals) -------------------------------------------
 function vexylStt({ url, key }) {
   const WS = require('ws'); // eslint-disable-line global-require
-  return (pcm8k, lang) => new Promise((resolve, reject) => {
+  // rate: 8000 (the phone line, the default) or 16000 (the Job Portal interview sends 16 kHz: no 8 kHz round trip, measured 2026-11-16: Telugu CER 5.4% -> 3.4% on laptop-mic clips)
+  return (pcm8k, lang, rate = 8000) => new Promise((resolve, reject) => {
     const ws = new WS(url, { headers: key ? { 'X-API-Key': key } : {} });
     const parts = [];
     const t = setTimeout(() => { try { ws.close(); } catch { /* */ } reject(new Error('VEXYL-STT took too long')); }, 60000);
@@ -117,7 +118,7 @@ function vexylStt({ url, key }) {
       let m; try { m = JSON.parse(String(raw)); } catch { return; }
       if (m.type === 'ready') ws.send(JSON.stringify({ type: 'start', lang: CODE[lang] || 'hi-IN', session_id: crypto.randomBytes(4).toString('hex') }));
       else if (m.type === 'started') {
-        const pcm16 = resample(pcm8k, 8000, 16000);
+        const pcm16 = rate === 16000 ? pcm8k : resample(pcm8k, 8000, 16000);
         for (let i = 0; i < pcm16.length; i += 3200) ws.send(pcm16.subarray(i, i + 3200));
         ws.send(JSON.stringify({ type: 'stop' }));
       } else if (m.type === 'final') { if (m.text) parts.push(String(m.text).trim()); } else if (m.type === 'stopped') done(resolve, parts.join(' ').trim());
@@ -134,27 +135,27 @@ function promptHeader(prompt) {
   return t ? { 'X-Prompt': encodeURIComponent(t) } : {};
 }
 function whisperHttp({ url, key }) {
-  const post = async (path, pcm8k, extra) => {
+  const post = async (path, pcm8k, extra, rate = 8000) => {
     const r = await fetch(`${url}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/octet-stream', ...(key ? { 'X-API-Key': key } : {}), ...(extra || {}) },
-      body: resample(pcm8k, 8000, 16000),
+      body: rate === 16000 ? pcm8k : resample(pcm8k, 8000, 16000),
     });
     if (!r.ok) throw new Error(`Whisper ${r.status}`);
     return r.json();
   };
   return {
     // minProb: how sure Whisper must be before the assistant switches (stricter for short answers)
-    detect: async (pcm8k, minProb = 0.7) => { const j = await post('/detect', pcm8k); return j.prob >= minProb ? (FROM_ISO[j.lang] || null) : null; },
+    detect: async (pcm8k, minProb = 0.7, rate = 8000) => { const j = await post('/detect', pcm8k, undefined, rate); return j.prob >= minProb ? (FROM_ISO[j.lang] || null) : null; },
     // English mode in one pass: { lang: 'Telugu' | 'Hindi' | 'English', text } - the English words only when it is English
     // conf: Whisper's own sureness of the words ({ logprob, noSpeech, ratio }, whisper_server.py); null from an older server
     // prompt: the question the assistant just asked (English); Whisper hears a short answer far better knowing it (2026-10-29)
     // exact: an OPEN answer (city, years, notice period) - the server's more exact model, when it has one (X-Model: open)
     hear: async (pcm8k, minProb = 0.6, prompt = '', exact = false) => { const j = await post('/hear', pcm8k, { 'X-Min-Prob': String(minProb), ...promptHeader(prompt), ...(exact ? { 'X-Model': 'open' } : {}) }); return { lang: FROM_ISO[j.lang] || 'English', text: j.text || '', conf: j.conf || null, prob: typeof j.prob === 'number' ? j.prob : null }; },
     // lang 'auto': Whisper writes what it hears in the language it hears (Telugu / Hindi letters = the person switched)
-    stt: async (pcm8k, lang) => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2) })).text || '',
+    stt: async (pcm8k, lang, rate = 8000, prompt = '') => (await post('/transcribe', pcm8k, { 'X-Lang': lang === 'auto' ? 'auto' : (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}) }, rate)).text || '',
     // how much real speech the clip holds (Silero VAD on the server): { speechMs, parts }; an older server has no /speech -> null
-    speech: async (pcm8k) => { try { return await post('/speech', pcm8k); } catch { return null; } },
+    speech: async (pcm8k, rate = 8000) => { try { return await post('/speech', pcm8k, undefined, rate); } catch { return null; } },
     // the same, with the sureness: { text, conf }
     sttEx: async (pcm8k, lang, prompt = '', exact = false) => { const j = await post('/transcribe', pcm8k, { 'X-Lang': (CODE[lang] || 'en-IN').slice(0, 2), ...(lang === 'English' ? promptHeader(prompt) : {}), ...(exact ? { 'X-Model': 'open' } : {}) }); return { text: j.text || '', conf: j.conf || null }; },
   };
@@ -263,7 +264,7 @@ function fromEnv(env = process.env) {
     ttsWide: async (text, lang) => (usePiper && !(lang === 'Hindi' && hindi) ? tts(text, lang, 'native') : { pcm: await (lang === 'Hindi' && hindi ? hindi(text) : tts(text, lang)), rate: 8000 }),
     // English goes to Whisper; Telugu / Hindi to VEXYL-STT. Without Whisper, English is heard through the Hindi model
     // (IndicConformer has no English) - set AI_VOICE_WHISPER_URL for English calls.
-    stt: (pcm, lang) => (lang === 'English' && wh ? wh.stt(pcm, 'English') : vstt(pcm, lang === 'English' ? 'Hindi' : lang)),
+    stt: (pcm, lang, rate = 8000, prompt = '') => (lang === 'English' && wh ? wh.stt(pcm, 'English', rate, prompt) : vstt(pcm, lang === 'English' ? 'Hindi' : lang, rate)),
     // { text, conf }: conf only from Whisper (English); IndicConformer gives no sureness, so Telugu / Hindi get null - never a made-up number
     sttEx: async (pcm, lang, prompt, exact) => (lang === 'English' && wh ? wh.sttEx(pcm, 'English', prompt, exact) : { text: await vstt(pcm, lang === 'English' ? 'Hindi' : lang), conf: null }),
     detect: wh ? wh.detect : null,

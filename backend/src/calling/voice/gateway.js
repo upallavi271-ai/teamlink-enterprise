@@ -172,7 +172,7 @@ function nativeScore(text, lang) {
 // are real everyday words wins; Whisper's guess only breaks a tie. No real words in either = no proof (null).
 // known: { Telugu?: text, Hindi?: text } already heard, not asked again.
 // prefer: the Telugu / Hindi the person already spoke in this call - it wins a tie (a person rarely changes language)
-async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
+async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null, rate = 8000) {
   // already heard and clearly that language (2+ everyday words) and the sound did not say the other: no second listener
   for (const l of ['Telugu', 'Hindi']) {
     if (known[l] == null || guess === (l === 'Telugu' ? 'Hindi' : 'Telugu')) continue;
@@ -180,7 +180,7 @@ async function teluguOrHindi(engines, pcm, guess, known = {}, prefer = null) {
     known[l] = t; // eslint-disable-line no-param-reassign
     if (nativeScore(t, l) >= 2) return { lang: l, text: t, sT: l === 'Telugu' ? nativeScore(t, l) : 0, sH: l === 'Hindi' ? nativeScore(t, l) : 0 };
   }
-  const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => late(known[l] != null ? known[l] : engines.stt(pcm, l).catch(() => ''), SECOND_MS, '')));
+  const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => late(known[l] != null ? known[l] : engines.stt(pcm, l, rate).catch(() => ''), SECOND_MS, '')));
   const sT = nativeScore(te, 'Telugu'); const sH = nativeScore(hi, 'Hindi');
   if (sT < 1 && sH < 1) return null; // no real word in either
   const tie = ['Telugu', 'Hindi'].includes(prefer) ? prefer : (guess === 'Hindi' ? 'Hindi' : 'Telugu');

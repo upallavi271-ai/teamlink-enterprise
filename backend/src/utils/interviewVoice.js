@@ -10,6 +10,8 @@
 // ---------------------------------------------------------------------------
 const E = require('../calling/voice/engines');
 
+const RATE = 16000; // the interview's audio is heard at the rate the browser sent it: no 8 kHz phone-line round trip (founder 2026-11-16: Telugu / Hindi captions not correct)
+
 const MIN_SPEECH_MS = 900; // less real speech than this in the clip: no decision
 const LANGS = ['English', 'Telugu', 'Hindi'];
 const MAX_SAY = 400;
@@ -37,7 +39,7 @@ function scriptRun(text, lang) {
 // Telugu letters has none. -> {} (stay) or { lang, changed: true, text }
 async function indicProof(en, pcm, G) {
   try {
-    const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l).catch(() => '')));
+    const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l, RATE).catch(() => '')));
     const sT = G.nativeScore(te, 'Telugu'); const sH = G.nativeScore(hi, 'Hindi');
     if (Math.max(sT, sH) >= 2) return sT >= sH ? { lang: 'Telugu', changed: true, text: te, why: 'words' } : { lang: 'Hindi', changed: true, text: hi, why: 'words' };
   } catch (e) { /* stays */ }
@@ -59,7 +61,7 @@ function englishProof(own, english) {
 function levels(pcm, speechMs) {
   let peak = 0; let sum = 0; const n = Math.floor(pcm.length / 2);
   for (let i = 0; i < n; i++) { const v = Math.abs(pcm.readInt16LE(i * 2)); if (v > peak) peak = v; sum += v * v; }
-  return { secs: +(n / 8000).toFixed(1), peak, rms: Math.round(Math.sqrt(sum / (n || 1))), speechMs };
+  return { secs: +(n / RATE).toFixed(1), peak, rms: Math.round(Math.sqrt(sum / (n || 1))), speechMs };
 }
 
 async function hearCore(pcm16k, current, deps = {}) {
@@ -68,14 +70,14 @@ async function hearCore(pcm16k, current, deps = {}) {
   const cur = langOf(current);
   const G = require('../calling/voice/gateway'); // eslint-disable-line global-require
   // a laptop microphone is faint (the phone line has the same: gateway.louder brings the loudest moment up to a normal level, at most 4x): heard at that level
-  const pcm = G.louder(E.resample(pcm16k, 16000, 8000));
-  const sp = en.speech ? await en.speech(pcm).catch(() => null) : null;
+  const pcm = G.louder(pcm16k); // gain only (not rate bound); the model proved level-robust, 4x cap kept
+  const sp = en.speech ? await en.speech(pcm, RATE).catch(() => null) : null;
   if (sp && Number.isFinite(sp.speechMs) && sp.speechMs < MIN_SPEECH_MS) return { ready: true, lang: cur, changed: false, why: 'noise', dbg: levels(pcm, sp.speechMs) };
-  const found = await en.detect(pcm, 0.7).catch(() => null);
+  const found = await en.detect(pcm, 0.7, RATE).catch(() => null);
   if (!found) {
     // Whisper was not sure (Hindi after Telugu was never heard this way): somebody already speaking Telugu / Hindi is asked of both listeners, and only REAL everyday words of the other language switch
     if (cur !== 'English') {
-      const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l).catch(() => '')));
+      const [te, hi] = await Promise.all(['Telugu', 'Hindi'].map((l) => en.stt(pcm, l, RATE).catch(() => '')));
       const sT = G.nativeScore(te, 'Telugu'); const sH = G.nativeScore(hi, 'Hindi');
       const other = cur === 'Telugu' ? 'Hindi' : 'Telugu';
       const so = other === 'Telugu' ? sT : sH; const sc = cur === 'Telugu' ? sT : sH;
@@ -87,23 +89,23 @@ async function hearCore(pcm16k, current, deps = {}) {
   if (found === 'English') {
     if (cur === 'English') return { ready: true, lang: cur, changed: false, ...(await indicProof(en, pcm, G)) };
     // the phone line's rule: English-looking sound over real words of the current language stays in that language
-    const own = await en.stt(pcm, cur).catch(() => '');
+    const own = await en.stt(pcm, cur, RATE).catch(() => '');
     if (G.nativeScore(own, cur) >= 1) return { ready: true, lang: cur, changed: false, why: 'own words' };
     // Whisper calls Telugu speech English and writes a plausible sentence ("I'm going to change that one." / "I'm going to be going to be...", 2026-11-12): it only wins when the
     // clip really IS English - the Telugu / Hindi listener then writes English words in its own letters (అండ్, ఇన్, ఇస్, టు...) and the English listener's text is real, not repeated words
-    const english = await en.stt(pcm, 'English').catch(() => '');
+    const english = await en.stt(pcm, 'English', RATE).catch(() => '');
     if (englishProof(own, english)) return { ready: true, lang: 'English', changed: true, text: english };
     return { ready: true, lang: cur, changed: false, why: 'not english', ...(own ? { text: own } : {}) };
   }
   // Telugu or Hindi: no real words = no proof = no switch
-  const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null);
+  const th = await G.teluguOrHindi(en, pcm, found, {}, ['Telugu', 'Hindi'].includes(cur) ? cur : null, RATE);
   if (!th) {
     // an interview answer is free speech, not the phone line's short list of everyday words (founder 2026-11-11: he spoke Telugu and it stayed English): a clear run of words
     // written in the script the sound was recognised as, from a listener that heard Telugu / Hindi, is proof enough
     // Whisper often calls Telugu 'Hindi' (and the Hindi listener then writes the Telugu sound in Devanagari): when NO real everyday word of either was found, the Telugu listener is asked first
-    const te = await en.stt(pcm, 'Telugu').catch(() => '');
+    const te = await en.stt(pcm, 'Telugu', RATE).catch(() => '');
     if (scriptRun(te, 'Telugu')) return { ready: true, lang: 'Telugu', changed: cur !== 'Telugu', text: te };
-    const hi = found === 'Hindi' ? await en.stt(pcm, 'Hindi').catch(() => '') : '';
+    const hi = found === 'Hindi' ? await en.stt(pcm, 'Hindi', RATE).catch(() => '') : '';
     if (scriptRun(hi, 'Hindi')) return { ready: true, lang: 'Hindi', changed: cur !== 'Hindi', text: hi };
     return { ready: true, lang: cur, changed: false, why: 'no real words' };
   }
@@ -127,7 +129,7 @@ async function hear(pcm16k, current, deps = {}) {
   keepClip(pcm16k, current, out);
   if (!out || !out.ready || out.text || out.why === 'noise' || !['Telugu', 'Hindi'].includes(out.lang)) return out;
   const en = Object.prototype.hasOwnProperty.call(deps, 'engines') ? deps.engines : engines();
-  const text = en && en.stt ? await en.stt(E.resample(pcm16k, 16000, 8000), out.lang).catch(() => '') : '';
+  const text = en && en.stt ? await en.stt(require('../calling/voice/gateway').louder(pcm16k), out.lang, RATE).catch(() => '') : '';
   return text ? { ...out, text } : out;
 }
 
