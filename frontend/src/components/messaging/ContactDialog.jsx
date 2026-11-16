@@ -114,7 +114,16 @@ export default function ContactDialog({
       const r = await api.post('/messaging/call', { audience, id: personId, applicationId: applicationId || undefined, line: CL.line || undefined });
       setDialed(true);
       setGwNote({ ok: true, text: r.data.message + (r.data.sandbox ? ' (Test copy of TeamLink: no real call is made.)' : '') });
-    } catch (e) { setGwNote({ ok: false, text: e.response?.data?.error || 'The call could not be started.' }); } finally { setGwBusy(false); }
+    } catch (e) {
+      setNeedPhone(e.response?.data?.code === 'own-phone-missing');
+      setGwNote({ ok: false, text: e.response?.data?.error || 'The call could not be started.' });
+    } finally { setGwBusy(false); }
+  }
+  // the number the call rings first, when this login has none on an employee record: written once, kept for this login, then the call is tried again
+  const [needPhone, setNeedPhone] = useState(false);
+  const [myPhone, setMyPhone] = useState('');
+  async function saveMyPhone() {
+    try { await api.put('/messaging/my-phone', { phone: myPhone }); setNeedPhone(false); setMyPhone(''); callThrough(); } catch (e) { setGwNote({ ok: false, text: e.response?.data?.error || 'The number could not be saved.' }); }
   }
   const [asked, setAsked] = useState(null);
   async function askColleague(channel) {
@@ -325,6 +334,12 @@ export default function ContactDialog({
                       <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>
                       <div className="small-muted" style={{ marginTop: 4 }}>Your own phone rings first. Pick up, and TeamLink connects {name}. The number is never shown to you.</div>
                       {gwNote && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginTop: 6 }}>{gwNote.text}</div>}
+                      {needPhone && (
+                        <div style={{ marginTop: 8, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <input type="tel" value={myPhone} onChange={(e) => setMyPhone(e.target.value)} placeholder="Your mobile number" aria-label="Your own mobile number" style={{ width: 190 }} />
+                          <button type="button" className="btn btn-primary" disabled={!myPhone.trim()} onClick={saveMyPhone}>Save and call</button>
+                        </div>
+                      )}
                     </>
                   ) : (
                     <>
@@ -343,6 +358,12 @@ export default function ContactDialog({
                       <button type="button" className="btn btn-primary" style={{ marginTop: 6, fontSize: 15 }} disabled={gwBusy} onClick={callThrough}>{gwBusy ? 'Starting…' : '📞 Call through TeamLink'}</button>
                       <div className="small-muted" style={{ marginTop: 4 }}>Your own phone rings first. Pick up, and TeamLink connects {name}. The result is saved on the history.{gw.recording ? ' This call is recorded: tell them.' : ''}</div>
                       {gwNote && <div className={`msg-box ${gwNote.ok ? 'green' : 'red'}`} style={{ marginTop: 6 }}>{gwNote.text}</div>}
+                      {needPhone && (
+                        <div style={{ marginTop: 8, display: 'flex', gap: 6, justifyContent: 'center', flexWrap: 'wrap' }}>
+                          <input type="tel" value={myPhone} onChange={(e) => setMyPhone(e.target.value)} placeholder="Your mobile number" aria-label="Your own mobile number" style={{ width: 190 }} />
+                          <button type="button" className="btn btn-primary" disabled={!myPhone.trim()} onClick={saveMyPhone}>Save and call</button>
+                        </div>
+                      )}
                     </>
                   )}
                   <a className={`btn${gw && gw.configured ? '' : ' btn-primary'}`} style={{ display: 'inline-block', marginTop: 6, fontSize: gw && gw.configured ? 13 : 15 }} href={`tel:+${intl(num)}`} onClick={() => setDialed(true)}>{gw && gw.configured ? 'Or call from my own phone' : '📞 Call now'}</a>

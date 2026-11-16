@@ -114,13 +114,29 @@ async function stop(code) {
   const none = await lib.startCall(undefined, { agent: '9000000001', to: '9000000002', ref: 'x', callbackBase: null });
   check('no line given is the API line (the old behaviour, so the bulk call queue and old screens still work)', none.line === 'api', none);
 
-  console.log('3. The route');
+  console.log('3. The route, and the caller\'s own phone');
   const cand = await prisma.candidate.findFirst({ where: { phone: { not: null } }, select: { id: true } });
-  if (cand) {
-    await prisma.user.update({ where: { id: adminRow.id }, data: { passwordResetRequired: false } });
-    const r = await call('POST', '/messaging/call', { audience: 'candidates', id: cand.id, line: 'dinstar' });
-    check('POST /messaging/call with line dinstar is refused, not pretended (409 with a reason)', [409, 403].includes(r.status) && !!(r.body && r.body.error), r);
-  } else check('(no candidate with a number in this copy: route check skipped)', true);
+  await prisma.candidate.update({ where: { id: cand.id }, data: { phone: '9100654424' } }); // a TEST number (the phone line is in Test mode)
+  await prisma.employee.updateMany({ where: { userId: adminRow.id }, data: { phone: null } }); // this login has no phone on an employee record
+  await prisma.appSetting.deleteMany({ where: { key: { startsWith: 'call.ownPhone:' } } });
+  const mine0 = await call('GET', '/messaging/my-phone');
+  check('a login with no phone is told so', mine0.status === 200 && mine0.body.has === false, mine0);
+  const dn = await call('POST', '/messaging/call', { audience: 'candidates', id: cand.id, line: 'dinstar' });
+  check('POST /messaging/call with line dinstar is refused, not pretended (409 with a reason)', [409, 403].includes(dn.status) && !!(dn.body && dn.body.error), dn);
+  const noPhone = await call('POST', '/messaging/call', { audience: 'candidates', id: cand.id, line: 'sip' });
+  check('SIP with no caller phone: refused with the code the screen uses to ask for the number', noPhone.status === 409 && noPhone.body.code === 'own-phone-missing', noPhone);
+  const before = asked.length;
+  check('and nothing was dialled', before === asked.length);
+  const bad = await call('PUT', '/messaging/my-phone', { phone: '12345' });
+  check('a number that is not a mobile number is refused with a plain message', bad.status === 400 && /mobile number/.test(bad.body.error || ''), bad);
+  const saved = await call('PUT', '/messaging/my-phone', { phone: '98765 43210' });
+  check('a good number is saved for this login (spaces fine) and shown only as the last 4 digits', saved.status === 200 && saved.body.hint === '•••3210', saved);
+  const mine1 = await call('GET', '/messaging/my-phone');
+  check('the login now has a phone, and the full number is never sent back', mine1.body.has === true && mine1.body.hint === '•••3210' && !JSON.stringify(mine1.body).includes('98765'), mine1);
+  const go = await call('POST', '/messaging/call', { audience: 'candidates', id: cand.id, line: 'sip' });
+  check('SIP now starts: Asterisk is asked to ring that number first', go.status === 200 && go.body.ok === true && asked.length === before + 1, [go.status, go.body]);
+  const o2 = asked[asked.length - 1] || {};
+  check('first leg = the saved number, second leg = the candidate, both on the gateway trunk', o2.Channel === 'PJSIP/9876543210@teamlink-gw' && /^PJSIP\/9100654424@teamlink-gw,/.test(o2.Data || ''), o2);
   const noAuth = await fetch(`${API}/messaging/call-lines`);
   check('the list needs a login', noAuth.status === 401);
 
