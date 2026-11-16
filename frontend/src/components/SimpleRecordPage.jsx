@@ -162,7 +162,7 @@ export default function SimpleRecordPage({
   // Where the money goes. HR (who pays) sees the full bank account from the employee's profile; the claimant sees the masked note.
   function paidTo(r) {
     if (r.payMethod === 'QR') return r.payQrFile ? <button type="button" className="link-btn" onClick={() => openQr(r)}>QR code (view)</button> : <span className="small-muted">QR (not uploaded)</span>;
-    if (r.payMethod === 'PHONE') return <span>{r.payPhone}{r.payPhoneVerifiedAt ? <span className="small-muted"> · verified</span> : null}</span>;
+    if (r.payMethod === 'PHONE') return <span>{r.payPhone}<span className="small-muted">{r.payPhoneVerifiedAt ? ' · verified' : ' · not verified'}</span></span>;
     if (r.payMethod === 'BANK') {
       const e = r.employee || {};
       return isHR && e.bankAccountNumber
@@ -201,10 +201,11 @@ export default function SimpleRecordPage({
         if (qrFile.size > MAX_BILL_BYTES) { setError('The QR picture is larger than 5MB.'); return; }
         if (!['image/png', 'image/jpeg', 'image/webp'].includes(qrFile.type)) { setError('The QR must be a picture (PNG, JPEG or WebP).'); return; }
       }
-      if (pay.method === 'PHONE' && !phoneOk) { setError('Verify the phone number with the SMS code first.'); return; }
+      // SMS verification is OPTIONAL (founder 2026-11-16): the typed number is saved; the proof goes along only when the code was checked
+      if (pay.method === 'PHONE' && String(pay.phone).replace(/\D/g, '').length < 10) { setError('Enter the 10-digit phone number the money should go to.'); return; }
       if (pay.method === 'BANK' && !(pay.bank && pay.bank.onFile)) { setError('Your bank account is not on your profile yet. Add it in My Profile, or choose QR / phone number.'); return; }
       payload.payMethod = pay.method;
-      if (pay.method === 'PHONE') { payload.payPhone = pay.provedPhone; payload.payPhoneProof = pay.proof; }
+      if (pay.method === 'PHONE') { payload.payPhone = pay.phone; if (phoneOk) payload.payPhoneProof = pay.proof; }
     }
     let created;
     setBusy(true);
@@ -367,12 +368,12 @@ export default function SimpleRecordPage({
                 </Field>
               )}
               {pay.method === 'PHONE' && (
-                <Field label="Phone number" hint={phoneOk ? `Verified: ${pay.provedPhone}` : 'We send a code by SMS to prove the number is yours.'}>
+                <Field label="Phone number" hint={phoneOk ? `Verified: ${pay.provedPhone}` : 'The 10-digit number the money should go to. You can prove it with an SMS code, but you do not have to.'}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <input inputMode="numeric" placeholder="10-digit mobile" value={pay.phone} style={{ flex: '1 1 160px' }}
                       onChange={(e) => setP({ phone: e.target.value, proof: '', provedPhone: '', sent: '', code: '', msg: '' })} />
                     {phoneOk ? <span className="status">Verified ✓</span> : (
-                      <button type="button" className="btn btn-sm" disabled={pay.busy || String(pay.phone).replace(/\D/g, '').length < 10} onClick={sendPayCode}>{pay.sent ? 'Send again' : 'Send code'}</button>
+                      <button type="button" className="btn btn-sm" disabled={pay.busy || String(pay.phone).replace(/\D/g, '').length < 10} onClick={sendPayCode}>{pay.sent ? 'Send again' : 'Send code (optional)'}</button>
                     )}
                   </div>
                   {pay.sent && !phoneOk && (

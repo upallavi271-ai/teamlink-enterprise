@@ -131,8 +131,10 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
   // HOW AN EXPENSE IS PAID (founder 2026-10-30: "QR,Phone Numbers,Bank Details anni estey edhi select chestey dani daka feilds
   // ravali ... QR upload ... phone number verification ... bank details antey employee echina bank detail through money padali"):
   //   QR     the employee's UPI QR image, uploaded right after the claim (POST /:id/pay-qr, images only)
-  //   PHONE  a phone / UPI number the employee proved with an SMS code (utils/claimPayPhone.js): the claim keeps it only with
-  //          the proof the code check gave this same employee for this same number
+  //   PHONE  a phone / UPI number. The SMS code (utils/claimPayPhone.js) is OPTIONAL now (founder 2026-11-16: "not necessary to send
+  //          message, just take and save the record"): the claim is saved with the typed number either way; it is marked verified
+  //          (payPhoneVerifiedAt) only with the proof the code check gave this same employee for this same number, so whoever pays
+  //          can still see which numbers were proved and which were only typed
   //   BANK   the bank account on the employee's own HRMS profile - the money goes there; the claim keeps a masked note of it,
   //          the full account stays on the profile (HR reads it there when paying)
   async function payData(body, employeeId) {
@@ -142,8 +144,8 @@ function employeeRecordRouter(type, { createRoles = null, attachments: withFiles
       const P = require('../utils/claimPayPhone'); // eslint-disable-line global-require
       const phone = P.normalise(body.payPhone);
       if (!phone) return { error: 'Enter the 10-digit phone number the money should go to.' };
-      if (!P.proofOk(employeeId, phone, body.payPhoneProof)) return { error: 'Verify the phone number with the SMS code first.' };
-      return { data: { payMethod: 'PHONE', payPhone: phone, payPhoneVerifiedAt: new Date() } };
+      const proved = !!body.payPhoneProof && P.proofOk(employeeId, phone, body.payPhoneProof);
+      return { data: { payMethod: 'PHONE', payPhone: phone, payPhoneVerifiedAt: proved ? new Date() : null } };
     }
     if (method === 'BANK') {
       const e = await prisma.employee.findUnique({ where: { id: employeeId }, select: { bankName: true, bankAccountNumber: true, ifscCode: true } });

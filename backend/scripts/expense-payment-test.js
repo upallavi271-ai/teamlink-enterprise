@@ -73,10 +73,18 @@ const stub = (rel, exports) => { const f = require.resolve(rel); require.cache[f
     r = await call('POST', '/pay/phone/confirm', { phone: '9876543210', code: lastCode });
     const proof = r.body.proof;
     ok('phone: the right code proves the number', r.status === 200 && r.body.verified === true && proof);
+    // THE SMS CODE IS OPTIONAL (founder 2026-11-16): the typed number is saved either way; only the real proof marks it verified
+    r = await call('POST', '/', { title: 'ZZ test auto', amount: 120, payMethod: 'PHONE', payPhone: '9876543210', employeeId: me.id });
+    made.push(r.body.id);
+    ok('phone: a claim with no code step at all is saved with the typed number, NOT marked verified', r.status === 201 && r.body.payPhone === '9876543210' && !r.body.payPhoneVerifiedAt, r.body.error);
     r = await call('POST', '/', { title: 'ZZ test auto', amount: 120, payMethod: 'PHONE', payPhone: '9876543210', payPhoneProof: 'bad.proof', employeeId: me.id });
-    ok('phone: a claim without the real proof is refused', r.status === 400 && /Verify the phone/.test(r.body.error));
+    made.push(r.body.id);
+    ok('phone: a claim with a made-up proof is saved too, NOT marked verified', r.status === 201 && r.body.payPhone === '9876543210' && !r.body.payPhoneVerifiedAt, r.body.error);
     r = await call('POST', '/', { title: 'ZZ test auto', amount: 120, payMethod: 'PHONE', payPhone: '9999999999', payPhoneProof: proof, employeeId: me.id });
-    ok('phone: the proof for one number does not cover another', r.status === 400);
+    made.push(r.body.id);
+    ok('phone: the proof for one number does not make another number verified', r.status === 201 && r.body.payPhone === '9999999999' && !r.body.payPhoneVerifiedAt, r.body.error);
+    r = await call('POST', '/', { title: 'ZZ test auto', amount: 120, payMethod: 'PHONE', payPhone: '12345', employeeId: me.id });
+    ok('phone: a number that is not a 10-digit mobile is still refused', r.status === 400 && /10-digit/.test(r.body.error));
     r = await call('POST', '/', { title: 'ZZ test auto', amount: 120, payMethod: 'PHONE', payPhone: '9876543210', payPhoneProof: proof, employeeId: me.id });
     made.push(r.body.id);
     ok('phone: claim saved with the proved number, marked verified', r.status === 201 && r.body.payPhone === '9876543210' && !!r.body.payPhoneVerifiedAt);
