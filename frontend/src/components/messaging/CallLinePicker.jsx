@@ -31,6 +31,7 @@ export default function CallLinePicker({ CL }) {
         {lines.map((l) => <option key={l.id} value={l.id} disabled={!l.ready}>{l.text}{l.ready ? '' : ' - not connected yet'}</option>)}
       </select>
       {cur && !cur.ready && <div className="small-muted" style={{ fontSize: 12, marginTop: 3 }}>{cur.reason}</div>}
+      {cur && cur.ready && cur.note && <div className="small-muted" style={{ fontSize: 12, marginTop: 3 }}>{cur.note}</div>}
     </div>
   );
 }
