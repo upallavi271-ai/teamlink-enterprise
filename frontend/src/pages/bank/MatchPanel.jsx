@@ -171,13 +171,16 @@ export default function MatchPanel({
     let live = true;
     setCp((x) => ({ ...x, clientId: c.id, loading: true, err: '', rows: [] }));
     api.get('/bank/client-payment/invoices', { params: { clientId: c.id, amount: ROUND(txn.amount) } }).then((r) => {
-      if (live) setCp((x) => ({ ...x, loading: false, rows: (r.data.invoices || []).map((i) => ({ ...i, amt: i.suggested ? String(i.suggested) : '' })) }));
+      if (live) setCp((x) => ({ ...x, loading: false, rows: [
+        ...(r.data.proofInvoices || []).map((i) => ({ ...i, rid: `${i.id}:p`, proof: true, outstanding: i.unproven, tds: 0, amt: i.suggested ? String(i.suggested) : '' })),
+        ...(r.data.invoices || []).map((i) => ({ ...i, rid: i.id, amt: i.suggested ? String(i.suggested) : '' })),
+      ] }));
     }).catch((e) => live && setCp((x) => ({ ...x, loading: false, err: e.response?.data?.error || "Could not read that client's invoices." })));
     return () => { live = false; };
   }, [cp.name, clients]); // eslint-disable-line react-hooks/exhaustive-deps
   const cpApplied = ROUND(cp.rows.reduce((s2, r) => s2 + (Number(r.amt) || 0), 0));
   const cpLeft = ROUND(ROUND(txn.amount) - cpApplied);
-  const setAmt = (id, v) => setCp((x) => ({ ...x, rows: x.rows.map((r) => (r.id === id ? { ...r, amt: v } : r)) }));
+  const setAmt = (id, v) => setCp((x) => ({ ...x, rows: x.rows.map((r) => (r.rid === id ? { ...r, amt: v } : r)) }));
   const fillOldest = () => setCp((x) => {
     let left = ROUND(txn.amount);
     return {
@@ -261,8 +264,8 @@ export default function MatchPanel({
       if (!cp.date) e.cpDate = 'Enter the date the money arrived.';
       cp.rows.forEach((r) => {
         const a = Number(r.amt) || 0;
-        if (a < 0) e['amt' + r.id] = 'Cannot be negative.';
-        else if (a > r.outstanding + 0.5) e['amt' + r.id] = `More than the ${money2(r.outstanding)} still owed.`;
+        if (a < 0) e['amt' + r.rid] = 'Cannot be negative.';
+        else if (a > r.outstanding + 0.5) e['amt' + r.rid] = (r.proof ? `More than the ${money2(r.outstanding)} marked received without proof.` : `More than the ${money2(r.outstanding)} still owed.`);
       });
       if (cpApplied > amount + 0.004) e.cpSum = `The invoices add up to ${money2(cpApplied)} — more than the bank amount ${money2(amount)}.`;
       setErrs(e);
@@ -298,7 +301,7 @@ export default function MatchPanel({
     setFail('');
     if (!validate(remember)) { setFail('Some fields need attention.'); return; }
     if (k === 'client') {
-      const allocations = cp.rows.filter((r) => Number(r.amt) > 0).map((r) => ({ invoiceId: r.id, amount: Number(r.amt) }));
+      const allocations = cp.rows.filter((r) => Number(r.amt) > 0).map((r) => ({ invoiceId: r.id, amount: Number(r.amt), proof: !!r.proof }));
       await post(`/bank/${txn.id}/client-payment`, {
         clientId: cp.clientId, date: cp.date, reference: cp.reference, notes: cp.notes, allocations,
       }, (d) => (d.parts.length
@@ -571,19 +574,19 @@ export default function MatchPanel({
                     {cp.rows.length > 0 && (
                       <div className="bkp-tbl">
                         <table>
-                          <thead><tr><th>Invoice</th><th>Date</th><th className="num">Net still to come</th><th className="num">Apply</th></tr></thead>
+                          <thead><tr><th>Invoice</th><th>Date</th><th className="num">Net still to come / to prove</th><th className="num">Apply</th></tr></thead>
                           <tbody>
                             {cp.rows.map((r) => (
-                              <tr key={r.id}>
-                                <td><b className="bkp-mono">{r.invoiceNumber}</b>{r.candidate ? ` · ${r.candidate}` : ''}<div className="small-muted">{r.kind} · {r.status}</div></td>
+                              <tr key={r.rid}>
+                                <td><b className="bkp-mono">{r.invoiceNumber}</b>{r.candidate ? ` · ${r.candidate}` : ''}<div className="small-muted">{r.kind} · {r.status}{r.proof ? ' · marked received, no proof yet' : ''}</div></td>
                                 <td>{fmtD(r.invoiceDate)}</td>
                                 <td className="num">
-                                  {money2(r.outstanding)}
+                                  {money2(r.outstanding)}{r.proof && <div className="small-muted">already received — this line becomes its proof</div>}
                                   {r.tds > 0.005 && <div className="small-muted">after TDS {money2(r.tds)}{r.tdsPercent ? ` @ ${pct(r.tdsPercent)}` : ''} the client keeps back</div>}
                                 </td>
                                 <td className="num">
-                                  <input inputMode="decimal" value={r.amt} onChange={(e) => setAmt(r.id, e.target.value)} aria-label={`Amount to ${r.invoiceNumber}`} aria-invalid={!!errs['amt' + r.id]} style={{ width: 110, textAlign: 'right' }} />
-                                  <Err msg={errs['amt' + r.id]} />
+                                  <input inputMode="decimal" value={r.amt} onChange={(e) => setAmt(r.rid, e.target.value)} aria-label={`Amount to ${r.invoiceNumber}`} aria-invalid={!!errs['amt' + r.rid]} style={{ width: 110, textAlign: 'right' }} />
+                                  <Err msg={errs['amt' + r.rid]} />
                                 </td>
                               </tr>
                             ))}
@@ -596,7 +599,7 @@ export default function MatchPanel({
                       Applied <b>{money2(cpApplied)}</b> · {cpLeft >= 0 ? <>unapplied (advance) <b>{money2(cpLeft)}</b></> : <span className="bkp-off">over by {money2(-cpLeft)}</span>}
                       {cp.rows.length > 0 && <> · <button type="button" className="link-btn" onClick={fillOldest}>Fill oldest first</button></>}
                     </div>
-                    <div className="bkp-help">Each amount becomes a real receipt on that invoice with this bank line as its proof, so it shows Paid / Partially Paid. TDS the client deducts is already out of the amount still to come.</div>
+                    <div className="bkp-help">Each amount becomes a real receipt on that invoice with this bank line as its proof, so it shows Paid / Partially Paid. For an invoice already marked received with no proof, the line only becomes its proof (no money is added twice). TDS the client deducts is already out of the amount still to come.</div>
                   </div>
                   <label className="field bkp-span2">
                     <span>Note</span>

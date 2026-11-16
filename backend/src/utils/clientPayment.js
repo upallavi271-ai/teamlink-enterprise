@@ -57,15 +57,23 @@ function planClientPayment({
     const amtP = paise(a.amount);
     if (amtP === 0) continue; // a blank / zero row is "nothing to this invoice"
     if (amtP < 0) return { error: 'An amount cannot be negative.' };
-    if (seen.has(a.invoiceId)) return { error: 'The same invoice is listed twice.' };
-    seen.add(a.invoiceId);
+    const key = `${a.invoiceId}:${a.proof ? 'p' : 'r'}`;
+    if (seen.has(key)) return { error: 'The same invoice is listed twice.' };
+    seen.add(key);
     const inv = invoices.find((i) => i.id === a.invoiceId);
     if (!inv) return { error: 'One of the invoices could not be found.' };
     if (inv.clientId !== clientId) return { error: `${inv.invoiceNumber || 'An invoice'} belongs to a different client.` };
-    const problem = receiptProblem(inv, rupees(amtP));
-    if (problem) return { error: `${inv.invoiceNumber || 'Invoice'}: ${problem}` };
+    if (a.proof) {
+      // This line is the proof of money ALREADY marked received on the invoice (Paid with no payment record behind it):
+      // no money moves, the invoice's received amount / status stay as they are.
+      if (inv.status === 'Cancelled') return { error: `${inv.invoiceNumber || 'Invoice'}: This invoice is cancelled` };
+      if (amtP > paise(inv.unproven) + 1) return { error: `${inv.invoiceNumber || 'Invoice'}: only ${rupees(paise(inv.unproven)).toFixed(2)} is marked received without proof` };
+    } else {
+      const problem = receiptProblem(inv, rupees(amtP));
+      if (problem) return { error: `${inv.invoiceNumber || 'Invoice'}: ${problem}` };
+    }
     appliedP += amtP;
-    parts.push({ invoiceId: inv.id, invoiceNumber: inv.invoiceNumber || String(inv.id).slice(-6), amount: rupees(amtP) });
+    parts.push({ invoiceId: inv.id, invoiceNumber: inv.invoiceNumber || String(inv.id).slice(-6), amount: rupees(amtP), proof: !!a.proof });
   }
   if (appliedP > lineP) {
     return { error: `The invoices add up to ${rupees(appliedP).toFixed(2)} - more than the bank amount ${rupees(lineP).toFixed(2)}.` };

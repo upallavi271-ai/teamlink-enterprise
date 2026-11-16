@@ -2004,6 +2004,7 @@ router.post('/:id/settle-invoices', async (req, res) => {
 // and says how much of this money-in line goes to each open invoice; the rest is left unapplied (an advance).
 // Rules live in utils/clientPayment.js. One short transaction re-reads the line and its receipts, so the same line
 // can never be applied twice; each receipt is an InvoicePayment pointing at this line (shows "Bank line" proof).
+const paise2 = (n) => Math.round((Number(n) || 0) * 100);
 router.get('/client-payment/clients', async (req, res) => {
   const rows = await prisma.client.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
   res.json({ clients: rows });
@@ -2016,9 +2017,23 @@ router.get('/client-payment/invoices', async (req, res) => {
   const rows = await prisma.invoice.findMany({ where: { clientId }, include: { candidate: true } });
   const open = CP.oldestFirst(rows);
   const amount = ROUND(req.query.amount);
-  const fill = CP.defaultAllocation(open, amount);
+  // Money marked received on an invoice with no receipt row behind it ("Paid" but no proof): this line can be that proof.
+  const pays = await prisma.invoicePayment.groupBy({ by: ['invoiceId'], where: { invoiceId: { in: rows.map((r) => r.id) } }, _sum: { amount: true } });
+  const paidRows = new Map(pays.map((p) => [p.invoiceId, p._sum.amount || 0]));
+  const unproven = (i) => (i.status === 'Cancelled' ? 0 : ROUND(Math.max(0, Number(i.receivedAmount || 0) - (paidRows.get(i.id) || 0))));
+  const proofRows = CP.oldestFirst(rows.map((i) => ({ ...i, status: i.status === 'Cancelled' ? 'Cancelled' : 'Pending', amount: unproven(i), gst: 0, tds: 0, receivedAmount: 0, creditedAmount: 0, adjustedAmount: 0, debitedAmount: 0, _real: i })))
+    .map((x) => x._real);
+  let left = paise2(amount);
+  const proofFill = new Map();
+  proofRows.forEach((i) => { const t = Math.min(left, paise2(unproven(i))); if (t > 0) { proofFill.set(i.id, t / 100); left -= t; } });
+  const fill = CP.defaultAllocation(open, left / 100);
   const byId = new Map(fill.allocations.map((a) => [a.invoiceId, a.amount]));
   res.json({
+    proofInvoices: proofRows.map((i) => ({
+      id: i.id, invoiceNumber: i.invoiceNumber || i.id.slice(-6), invoiceDate: i.invoiceDate, status: i.status,
+      kind: i.candidateId ? 'Placement fee' : 'Service invoice', candidate: i.candidate?.name || null,
+      unproven: unproven(i), suggested: proofFill.get(i.id) || 0,
+    })),
     invoices: open.map((i) => {
       const tv = TAX.taxView(i, { company });
       return {
@@ -2046,7 +2061,7 @@ router.post('/:id/client-payment', async (req, res) => {
   if (!client) return res.status(400).json({ error: 'Choose the client who paid.' });
   const date = String(body.date || txn.date || '').slice(0, 10);
   const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
-  const allocations = (Array.isArray(body.allocations) ? body.allocations : []).map((a) => ({ invoiceId: String(a.invoiceId || ''), amount: Number(a.amount) || 0 }));
+  const allocations = (Array.isArray(body.allocations) ? body.allocations : []).map((a) => ({ invoiceId: String(a.invoiceId || ''), amount: Number(a.amount) || 0, proof: !!a.proof }));
   const reference = String(body.reference || txn.reference || '').trim().slice(0, 120) || null;
   const note = String(body.notes || '').trim().slice(0, 300);
   const conflict = (message, http = 400) => Object.assign(new Error(message), { http });
@@ -2057,7 +2072,10 @@ router.post('/:id/client-payment', async (req, res) => {
       if (!fresh || fresh.category || fresh.categoryKind || fresh.reconStatus === 'Reconciled') throw conflict('This line was just filed by someone else — reload and look again.', 409);
       const done = await tx.invoicePayment.findMany({ where: { bankTxnId: txn.id }, select: { amount: true } });
       const posted = done.reduce((s, p) => s + BIC.toPaise(p.amount), 0) / 100;
-      const invoices = await tx.invoice.findMany({ where: { id: { in: allocations.map((a) => a.invoiceId) } } });
+      const invs = await tx.invoice.findMany({ where: { id: { in: allocations.map((a) => a.invoiceId) } } });
+      const rowsOf = await tx.invoicePayment.groupBy({ by: ['invoiceId'], where: { invoiceId: { in: invs.map((i) => i.id) } }, _sum: { amount: true } });
+      const rowSum = new Map(rowsOf.map((r) => [r.invoiceId, r._sum.amount || 0]));
+      const invoices = invs.map((i) => ({ ...i, unproven: ROUND(Math.max(0, Number(i.receivedAmount || 0) - (rowSum.get(i.id) || 0))) }));
       const plan = CP.planClientPayment({
         line: { amount: fresh.amount }, alreadyPosted: posted, allocations, invoices, clientId, date, today,
       });
@@ -2065,6 +2083,16 @@ router.post('/:id/client-payment', async (req, res) => {
       for (let i = 0; i < plan.parts.length; i += 1) {
         const part = plan.parts[i];
         const invoice = invoices.find((x) => x.id === part.invoiceId);
+        if (part.proof) {
+          await tx.invoicePayment.create({
+            data: {
+              invoiceId: invoice.id, date, dateSource: 'bank-evidence', amount: part.amount, method: 'Bank Transfer', reference,
+              notes: `Bank statement · ${fresh.description} · the payment behind money already marked received${note ? ` · ${note}` : ''}`,
+              bankTxnId: fresh.id, bankLinked: true, recordedBy: actor(req),
+            },
+          });
+          continue;
+        }
         await tx.invoicePayment.create({
           data: {
             invoiceId: invoice.id, date, dateSource: 'entered', amount: part.amount, method: 'Bank Transfer', reference,

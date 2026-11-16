@@ -55,5 +55,12 @@ assert.match(planClientPayment({ line: { amount: 100 }, clientId: 'c1', date: '2
 r = ok(planClientPayment({ line: { amount: 1300 }, clientId: 'c1', date: '2026-10-10', today: '2026-11-16', allocations: [{ invoiceId: 'a', amount: 0 }], invoices: all }));
 assert.equal(r.parts.length, 0); assert.equal(r.unapplied, 1300);
 
+// Paid-but-no-proof: the line becomes the proof (no extra money), limited to what is marked received without proof
+const P = inv('p', 'INV-P', '2026-06-01', 1000, { receivedAmount: 1000, status: 'Paid', unproven: 1000 });
+r = ok(planClientPayment({ line: { amount: 600 }, clientId: 'c1', allocations: [{ invoiceId: 'p', amount: 600, proof: true }], invoices: [P] }));
+assert.equal(r.parts[0].proof, true); assert.equal(r.unapplied, 0);
+assert.match(planClientPayment({ line: { amount: 1500 }, clientId: 'c1', allocations: [{ invoiceId: 'p', amount: 1500, proof: true }], invoices: [P] }).error, /without proof/);
+assert.match(planClientPayment({ line: { amount: 500 }, clientId: 'c1', allocations: [{ invoiceId: 'p', amount: 500 }], invoices: [P] }).error, /still outstanding|more than/);
+
 console.log('clientPayment: all passed');
 process.exit(0);
