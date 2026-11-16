@@ -149,9 +149,20 @@ async function forOmni(viewerId, month, opts = {}) {
     pastBy.set(k, o);
   });
 
+  // THE DETAIL LIST (founder 2026-11-16: "number meeda click chesthe evaru eppudu chesaru"): per person, per day, per template and way of sending, the live sends that used tokens.
+  // Only the people this viewer already sees (ids), so the scope is exactly the page's.
+  let detail = [];
+  if (ids.length) {
+    const marks = ids.map(() => '?').join(',');
+    const lines = await prisma.$queryRawUnsafe(`SELECT userId u, strftime('%Y-%m-%d', (at + 19800000) / 1000, 'unixepoch') day, COALESCE(templateLabel,'') t, channel c, COUNT(*) n, COALESCE(SUM(credits),0) cr
+      FROM "OmniCreditLedger" WHERE at >= ? AND at < ? AND mode = 'live' AND result <> 'failed' AND userId IN (${marks}) AND COALESCE(templateLabel,'') <> ?
+      GROUP BY userId, day, t, c ORDER BY day DESC LIMIT 6000`, from, to, ...ids, AI_LABEL).catch(() => []);
+    detail = lines.map((r) => ({ userId: r.u, day: r.day, label: r.t || 'Message', channel: r.c, messages: num(r.n), tokens: num(r.cr) }));
+  }
+
   const departments = [...new Set([...(sc.departments || []), ...persons.map((p) => p.department)])];
   return {
-    ok: true, month: m,
+    ok: true, month: m, detail,
     viewer: { scope, words: sc.words, departments: scope === 'me' ? [] : departments },
     cost: act.rules.cost,
     persons,
