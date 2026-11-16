@@ -104,6 +104,45 @@ export function MarkDonePrompt({ items, outcome, onClose }) {
   );
 }
 
+// THE COMPANY'S ONE MEETING LINK (founder 2026-11-16: "okate meet link andhariki standard ga undeylaaga pettu, evari meeting ayina aa link through send cheyyadaniki"): CRM Settings holds it once
+// (Meeting link: Google Meet / Zoom); a Meeting follow-up gets "Send invite" (and is offered right after it is made): the mail / WhatsApp window opens with the date, the time and the link
+// written in, the person presses Send. In any mail or WhatsApp the window also has "Add meeting link".
+const clock12 = (hm) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(hm || '')); if (!m) return ''; const h = Number(m[1]); return `${h % 12 || 12}${m[2] === '00' ? '' : `:${m[2]}`} ${h < 12 ? 'am' : 'pm'}`; };
+export const meetingWhen = (dueDate, dueTime) => (dueDate ? `${dateOf(dueDate)}${dueTime ? ` at ${clock12(dueTime)}` : ''}` : '');
+export const recordOfTask = (t) => {
+  if (t.recordKind && t.recordId) return { kind: t.recordKind, id: t.recordId, name: t.recordName };
+  if (t.dealId) return { kind: 'deal', id: t.dealId, name: t.recordName };
+  if (t.leadId) return { kind: 'lead', id: t.leadId, name: t.recordName };
+  if (t.accountId) return { kind: 'account', id: t.accountId, name: t.recordName };
+  return null;
+};
+export function InviteButton({ task, record }) {
+  const [open, setOpen] = useState(false);
+  const rec = record || recordOfTask(task);
+  if (!task || task.type !== 'Meeting' || task.status !== 'Open' || !rec) return null;
+  return (
+    <>
+      <button type="button" className="btn btn-sm" title="Opens the email with the date, time and the company meeting link written in; you press Send" onClick={(e) => { e.stopPropagation(); setOpen(true); }}>📅 Send invite</button>
+      {open && <CrmContactDialog record={rec} channel="Email" invite={{ when: meetingWhen(task.dueDate, task.dueTime) }} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+export function MeetingInvitePrompt({ record, when, onClose }) {
+  const [ch, setCh] = useState(null);
+  const { me } = useCrm();
+  if (ch) return <CrmContactDialog record={record} channel={ch} invite={{ when }} onClose={onClose} />;
+  return (
+    <Modal title="Send the meeting invite now?" onClose={onClose} foot={<button type="button" className="btn" onClick={onClose}>Later</button>}>
+      <p style={{ marginTop: 0 }}>The meeting is set for <b>{when || 'the day you picked'}</b>. The invite has the date, the time and the company meeting link.</p>
+      {!me.meetingLink && <div className="notice" style={{ marginBottom: 10, fontSize: 13 }}>The company meeting link is not set yet, so the invite will go without it. A Sales manager sets it once in CRM &gt; Dashboard &gt; Settings (Meeting link).</div>}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        <button type="button" className="btn btn-primary" onClick={() => setCh('Email')}>✉️ Email the invite</button>
+        <button type="button" className="btn" onClick={() => setCh('WhatsApp')}>💬 WhatsApp the invite</button>
+      </div>
+    </Modal>
+  );
+}
+
 export function QuickLog({ record, intro, onClose, onLogged }) {
   const { me, toast } = useCrm();
   const [ask, setAsk] = useState(null); // open follow-ups of this lead, asked about after the log is saved
@@ -501,6 +540,7 @@ export function TaskList({ tasks, link, onChanged, showRecord, canEdit = true })
                 <span style={{ textDecoration: t.status === 'Done' ? 'line-through' : undefined }}>{t.title}</span>
                 {t.type && t.type !== 'Call' && <span className="small-muted"> · {t.type}</span>}
                 {t.status === 'Open' && (t.priority === 'High' || t.priority === 'Low') && <> <PriorityPill v={t.priority} /></>}
+                {t.status === 'Open' && t.type === 'Meeting' && canEdit && <> <InviteButton task={t} record={link ? { kind: Object.keys(link)[0].replace('Id', ''), id: Object.values(link)[0], name: '' } : recordOfTask(t)} /></>}
               </div>
               <div className="small-muted" style={{ fontSize: 11.5 }}>
                 <span style={{ color: late ? 'var(--red)' : undefined, fontWeight: late ? 600 : undefined }}>{t.dueDate === today ? 'Today' : dateOf(t.dueDate)}{t.dueTime ? ` ${t.dueTime}` : ''}{late ? ` · ${daysLate(t.dueDate)} day${daysLate(t.dueDate) === 1 ? '' : 's'} late` : ''}</span>

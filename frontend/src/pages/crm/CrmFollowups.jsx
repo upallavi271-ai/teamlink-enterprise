@@ -6,7 +6,7 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import Modal from '../../components/Modal.jsx';
-import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField } from './crmShared.jsx';
+import { useCrm, errOf, dateOf, istToday, daysLate, RecLink, PriorityPill, DateField, InviteButton, MeetingInvitePrompt, meetingWhen, recordOfTask } from './crmShared.jsx';
 
 const TABS = [['action', 'Needs action'], ['upcoming', 'Upcoming'], ['done', 'Completed']];
 export const REMIND_WORDS = { 0: 'At the time', 15: '15 minutes before', 60: '1 hour before', 1440: '1 day before' };
@@ -22,14 +22,18 @@ export function DoneDialog({ task, onClose, onDone }) {
   const [nextType, setNextType] = useState(task.type || 'Call');
   const [nextPriority, setNextPriority] = useState(task.priority || 'Medium');
   const [busy, setBusy] = useState(false);
+  const [invite, setInvite] = useState(null); // a Meeting was set: offer to send the invite with the company link
   async function save() {
     setBusy(true);
     try {
       await api.post(`/crm/tasks/${task.id}/done`, { note, outcome: outcome || undefined, next: next ? { dueDate: next, dueTime: nextTime || undefined, title: nextTitle || undefined, type: nextType, priority: nextPriority } : undefined });
       toast(next ? 'Done. The next follow-up is set.' : 'Done.');
+      const rec = recordOfTask(task);
+      if (next && nextType === 'Meeting' && rec) { setInvite({ record: rec, when: meetingWhen(next, nextTime) }); setBusy(false); return; }
       onDone();
     } catch (e) { toast(errOf(e, 'This could not be saved.')); setBusy(false); }
   }
+  if (invite) return <MeetingInvitePrompt record={invite.record} when={invite.when} onClose={onDone} />;
   return (
     <Modal title={`Done: ${task.title}`} onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy} onClick={save}>{busy ? 'Saving…' : 'Save'}</button></>}>
       <div className="field">
@@ -70,6 +74,7 @@ function NewFollowUp({ onClose, onAdded }) {
   const [wa, setWa] = useState(false);
   const [sms, setSms] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [invite, setInvite] = useState(null);
   useEffect(() => {
     const text = q.trim();
     if (text.length < 2) { setFound(null); return undefined; }
@@ -92,10 +97,12 @@ function NewFollowUp({ onClose, onAdded }) {
     try {
       await api.post('/crm/tasks', { title: title.trim(), dueDate: due, dueTime: time || undefined, type, priority, remindBefore: Number(before), notifyApp: inApp, notifyWhatsapp: wa, notifySms: sms, [`${rec.kind}Id`]: rec.id });
       toast('Follow-up added.');
+      if (type === 'Meeting') { setInvite({ record: { kind: rec.kind, id: rec.id, name: rec.name }, when: meetingWhen(due, time) }); setBusy(false); return; }
       onAdded();
     } catch (e) { toast(errOf(e, 'The follow-up could not be added.')); setBusy(false); }
   }
   const ready = rec && title.trim() && due;
+  if (invite) return <MeetingInvitePrompt record={invite.record} when={invite.when} onClose={onAdded} />;
   return (
     <Modal title="New follow-up" onClose={onClose} foot={<><button type="button" className="btn" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" disabled={busy || !ready} onClick={save}>{busy ? 'Saving…' : 'Add follow-up'}</button></>}>
       <div className="field">
@@ -249,6 +256,7 @@ export default function CrmFollowups() {
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {tab === 'done' ? <span className="small-muted">{[t.outcome, t.doneNote].filter(Boolean).join(' · ') || '—'}</span> : (me.canEdit && (
                       <span style={{ display: 'flex', gap: 6 }}>
+                        {t.type === 'Meeting' && <InviteButton task={t} />}
                         <select value="" onChange={(e) => { const v = e.target.value; if (v === 'pick') setMoving(t); else if (v) snooze(t, Number(v)); }} aria-label={`Snooze or move "${t.title}"`} style={{ width: 'auto', padding: '2px 6px', fontSize: 12.5 }}>
                           <option value="">Snooze…</option><option value="1">Tomorrow</option><option value="3">In 3 days</option><option value="7">Next week</option><option value="pick">Pick a date…</option>
                         </select>

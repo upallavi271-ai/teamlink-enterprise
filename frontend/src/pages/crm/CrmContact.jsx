@@ -16,13 +16,29 @@ const TABS = [['Email', '✉️ Email'], ['WhatsApp', '💬 WhatsApp'], ['Call',
 const digitsOf = (v) => String(v || '').replace(/\D/g, '');
 const intl = (v) => { const d = digitsOf(v); if (d.length === 10) return `91${d}`; if (d.length === 11 && d.startsWith('0')) return `91${d.slice(1)}`; return d; };
 
+// the words of a meeting invite (the company's one meeting link comes from CRM Settings)
+function inviteWords(when, link) {
+  const on = when ? `on ${when} (India time)` : 'as agreed';
+  return {
+    subject: `Meeting with TeamLink Consultants${when ? `: ${when}` : ''}`,
+    mail: `Thank you for your time. Our meeting is ${on}.${link ? `\n\nJoin the meeting here: ${link}` : ''}\n\nIf this time does not suit you, please reply and we will change it.`,
+    wa: `Our meeting is ${on}.${link ? ` Join here: ${link}` : ''}`,
+  };
+}
+// the link written into a message (before the sign-off of a mail); not twice
+const withLink = (text, link) => {
+  if (String(text).includes(link)) return text;
+  const add = `Join the meeting here: ${link}`;
+  return /\n\nRegards,/.test(text) ? text.replace('\n\nRegards,', `\n\n${add}\n\nRegards,`) : `${String(text).replace(/\s+$/, '')}\n\n${add}`;
+};
+
 function Notice({ tone = 'warn', children }) {
   return <div className="notice" role="status" style={{ marginBottom: 10, fontSize: 13, ...(tone === 'warn' ? { borderColor: 'var(--amber, #d97706)' } : {}) }}>{children}</div>;
 }
 
 // The Call / WhatsApp / Email panel on its own (no window around it), so the Log window of a lead can hold it too (founder 2026-11-16).
 // hideTabs: the caller already chose the channel.
-export function ContactPanel({ record, channel: first = 'Email', initialDraft, hideTabs, onDone }) {
+export function ContactPanel({ record, channel: first = 'Email', initialDraft, invite, hideTabs, onDone }) {
   const { me, toast } = useCrm();
   const [ch, setCh] = useState(first);
   const [ready, setReady] = useState(null);
@@ -45,7 +61,10 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
     api.get('/crm/contact/draft', { params: body }).then((r) => {
       const d = r.data; setDraft(d);
       setTo({ Email: d.to.email || '', WhatsApp: d.to.phone || '', Call: d.to.phone || '' });
-      setSubject((initialDraft && initialDraft.subject) || d.email.subject); setMailText((initialDraft && initialDraft.text) || d.email.text); setWaText(d.whatsapp.text);
+      const inv = invite ? inviteWords(invite.when, me.meetingLink) : null; // a meeting invite: the date, the time and the company link written in
+      setSubject((initialDraft && initialDraft.subject) || (inv ? inv.subject : d.email.subject));
+      setMailText((initialDraft && initialDraft.text) || (inv ? d.email.text.replace('\n\n\n\n', `\n\n${inv.mail}\n\n`) : d.email.text));
+      setWaText(inv ? `${d.whatsapp.text}${inv.wa}` : d.whatsapp.text);
     }).catch((e) => setErr(errOf(e, 'This record could not be opened.')));
   }, [record.kind, record.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -119,6 +138,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
               : <button type="button" className="btn btn-primary" disabled={busy === 'Email' || !to.Email || !subject.trim() || !mailText.trim()} onClick={() => send('Email')}>{busy === 'Email' ? 'Sending…' : 'Send email'}</button>)}
             <a className={`btn${mailReady ? '' : ' btn-primary'}`} href={mailto} onClick={(e) => { if (!to.Email) { e.preventDefault(); setErr('Write the email address first.'); return; } opened('Email'); }} aria-disabled={!to.Email}>Open in my mail app</a>
             <AiDraft record={record} onText={(s, t) => { if (s) setSubject(s); setMailText(t); }} />
+            <button type="button" className="btn" title="Writes the company meeting link into the message" onClick={() => { if (!me.meetingLink) { setErr('The company meeting link is not set yet. A Sales manager sets it once in CRM > Dashboard > Settings (Meeting link).'); return; } setErr(''); setMailText((t) => withLink(t, me.meetingLink)); }}>📹 Add meeting link</button>
           </div>
         </>
       )}
@@ -144,6 +164,7 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
             {waReady && (sentOk.WhatsApp
               ? <><span className="status pending" role="status" style={{ alignSelf: 'center', fontSize: 14, padding: '8px 14px' }}>✓ Handed to WhatsApp · {sentOk.WhatsApp.to}</span><button type="button" className="btn" onClick={() => { setSentOk((x) => ({ ...x, WhatsApp: null })); setSentNote(''); }}>Send another</button></>
               : <button type="button" className="btn btn-primary" disabled={busy === 'WhatsApp' || !digitsOf(to.WhatsApp) || !waText.trim()} onClick={() => send('WhatsApp')}>{busy === 'WhatsApp' ? 'Sending…' : 'Send on WhatsApp'}</button>)}
+            <button type="button" className="btn" title="Writes the company meeting link into the message" onClick={() => { if (!me.meetingLink) { setErr('The company meeting link is not set yet. A Sales manager sets it once in CRM > Dashboard > Settings (Meeting link).'); return; } setErr(''); setWaText((t) => (t.includes(me.meetingLink) ? t : `${t.replace(/\s+$/, '')} Join the meeting here: ${me.meetingLink}`)); }}>📹 Add meeting link</button>
             <a className={`btn${waReady ? '' : ' btn-primary'}`} href={waLink} target="_blank" rel="noopener noreferrer" onClick={(e) => { if (!digitsOf(to.WhatsApp)) { e.preventDefault(); setErr('Write the number first.'); return; } opened('WhatsApp'); }} aria-disabled={!digitsOf(to.WhatsApp)}>Open in WhatsApp</a>
           </div>
           <div className="small-muted" style={{ marginTop: 6, fontSize: 11.5 }}>"Open in WhatsApp" uses your own WhatsApp: TeamLink cannot see whether you pressed Send, and says so on the timeline.</div>
@@ -172,10 +193,10 @@ export function ContactPanel({ record, channel: first = 'Email', initialDraft, h
   );
 }
 
-export default function CrmContactDialog({ record, channel, initialDraft, onClose, onDone }) {
+export default function CrmContactDialog({ record, channel, initialDraft, invite, onClose, onDone }) {
   return (
     <Modal title={record.name || 'Contact'} size="wide" onClose={onClose} foot={<button type="button" className="btn" onClick={onClose}>Close</button>}>
-      <ContactPanel record={record} channel={channel} initialDraft={initialDraft} onDone={onDone} />
+      <ContactPanel record={record} channel={channel} initialDraft={initialDraft} invite={invite} onDone={onDone} />
     </Modal>
   );
 }
